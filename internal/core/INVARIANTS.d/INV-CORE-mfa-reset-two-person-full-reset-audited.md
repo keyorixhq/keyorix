@@ -32,5 +32,13 @@
   `TestMFAReset_ApprovalLocksUsersInIDOrder`), `server/admin`
   `reset_mfa_test.go`.
   **UNGUARDED**: no static guard restricts the callers of `DeleteMFAForUser` /
-  `DeleteWebAuthnCredential` to the reviewed paths (design §1 asks for one; follow-up), and
-  the account-setup gate does not yet read `mfa_enrolment_required`.
+  `DeleteWebAuthnCredential` to the reviewed paths (design §1 asks for one; follow-up).
+  The account-setup gate reads `mfa_enrolment_required` (`MFAEnrolmentOwed`, an input of
+  `PendingAccountSetupSteps` on HTTP and gRPC, #3799): a reset account owes enroll_mfa on
+  every interactive session whether or not `security.require_mfa` is on, until a second
+  factor is enrolled; TOTP activation clears the flag in its own transaction. Guard:
+  `mfa_reset_enrolment_owed_test.go`, `server/http`
+  `TestAccountSetup_MFAResetOwesEnrolment_WithoutRequireMFA`, `server/grpc`
+  `TestGRPCAccountSetup_MFAResetOwesEnrolment_WithoutRequireMFA`. Not seen: the login and
+  profile responses' `pending_steps` (`PendingSetupStepsFor`, informational) do not report
+  the owed step; the gate's 403 does.
