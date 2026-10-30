@@ -471,11 +471,11 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"from-file secret":     `kubectl create secret generic s --from-file=metrics_token="$f"`,
 		"allow marker curl":    `curl -H "Authorization: Bearer $T" "$URL" # docs-secrets:allow (fixture)`,
 		// SCRIPTS-SECRETS-3 safe forms.
-		"var body stdin":     `printf '%s' "$body" | curl -sf "$URL" --data-binary @-`,
-		"var body marker":    `curl -fsS -d "$msg" "$URL" # docs-secrets:allow (alert text, no credential)`,
-		"date -d variable":   `d=$(date -u -d "$added" +%s)`,
-		"literal body":       `curl -s -X POST -d "$(printf x)" "$URL"`,
-		"cont marker":        "curl -sf \"$URL\" \\\n  -d \"$msg\" >/dev/null # docs-secrets:allow (alert text)",
+		"var body stdin":   `printf '%s' "$body" | curl -sf "$URL" --data-binary @-`,
+		"var body marker":  `curl -fsS -d "$msg" "$URL" # docs-secrets:allow (alert text, no credential)`,
+		"date -d variable": `d=$(date -u -d "$added" +%s)`,
+		"literal body":     `curl -s -X POST -d "$(printf x)" "$URL"`,
+		"cont marker":      "curl -sf \"$URL\" \\\n  -d \"$msg\" >/dev/null # docs-secrets:allow (alert text)",
 	} {
 		if hits := scanShellForSecrets(sh); len(hits) != 0 {
 			t.Errorf("shell guard false positive (%s): %q -> %+v", name, sh, hits)
