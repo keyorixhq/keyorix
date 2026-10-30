@@ -9,6 +9,16 @@ import "github.com/keyorixhq/keyorix/internal/secretenv"
 // only while the environment still names the same file.
 var secretSnapshot = secretenv.NewSnapshot()
 
+// LookupSecretEnv is secretenv.Lookup answered from secretSnapshot: for a
+// *_FILE secret Load took, the bytes of the descriptor the boot checks judged
+// (live only for a name Load did not take). Server code that reads a secret
+// config.Load names must use this, not secretenv.Lookup, which re-opens the file
+// and could see a file the permission check never saw (#3830).
+// TestNoLiveSecretenvLookupOfConfigSecrets enforces it.
+func LookupSecretEnv(name string) (value string, found bool, err error) {
+	return secretSnapshot.Lookup(name)
+}
+
 // snapshotSecrets records the non-key-material *_FILE secrets this config uses.
 // Key material is read and judged by its own consumer (secretenv.LookupChecked)
 // and is not kept.
