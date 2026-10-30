@@ -28,8 +28,7 @@ func assertNoLeak(t *testing.T, err error) {
 	}
 	// RedactErrorURLs removes every *url.Error layer (the one that holds the full
 	// URL) from the chain; errors.As must not be able to recover it.
-	var ue *url.Error
-	if errors.As(err, &ue) {
+	if ue, ok := errors.AsType[*url.Error](err); ok {
 		t.Errorf("a *url.Error is still reachable through the chain: %v", ue)
 	}
 }
