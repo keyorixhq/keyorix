@@ -277,6 +277,16 @@ after the break is not notarised: decide soon.
      started that acceptance yourself: a resume of a seal you did not just run is a rollback of
      the database until proven otherwise (section 8).
    - `--reason` and `--operator` are stored in the audit chain. Put no secrets in them.
+   - On SQLite the plan also reads the host's `.audit-highwater-witness`. A witness that
+     authenticates under the current seals counts in "certified before the loss" (it is the one
+     certification outside the database, so it still counts rows after an in-database rollback
+     of the metadata), and the plan prints a `host witness file: ... confirming LOWERS it` line
+     when the acceptance will lower it. If its certified head is gone, name that id as well (the
+     plan refuses until you do, so the seal records the tail loss). The apply re-reads the
+     witness before it writes anything and refuses if it now certifies more than the plan named.
+     A witness signed under a seal list the database does not hold (more seals, or another list
+     of the same length) is refused as a rollback of the database, seal record included
+     (section 8).
 
    Afterwards:
 
@@ -287,22 +297,37 @@ after the break is not notarised: decide soon.
    | Deleted, altered, moved or replayed seal record, removed seal event, rows removed or put back around the gap | BROKEN, on both verifiers (except a rollback that reads as an unfinished acceptance, section 8) |
 
    Then write and export a fresh anchor (above) and keep it with the evidence. A `rotate-kek` or
-   `migrate-provider` carries the seal over. A restore of an archive taken before the seal
+   `migrate-provider` carries the seal over; if the seal record cannot be trusted when the key
+   change completes, completion stops and signs nothing (key-rotation-runbook.md §5). A restore of an archive taken before the seal
    is refused as a rollback unless `--allow-rollback` is given. `admin recover-admin` never seals:
    it records a break in its event and leaves the decision to this command.
 
 ## 8. Gaps in the product today
 
-- A resume can hide a rollback. Someone with write access to the database and a copy from
-  before an acceptance (the evidence copy in section 6, or any backup) can cut rows certified
-  after a completed seal and put the copy's high-water mark and verification state back. Inside
-  the database that reads exactly like an acceptance that stopped part way, and `accept-loss`
-  offers to complete it. On SQLite the command reads the host's `.audit-highwater-witness` and
-  refuses when it certifies rows that are gone (or when the witness exists but is damaged). On
-  PostgreSQL there is no witness and nothing inside the database tells the two apart. Treat a
-  resume of a seal you did not just run (check the "recorded ... by ..." line of the plan) as a
-  rollback until proven otherwise: compare the trail with an external anchor (`export-checkpoint`)
-  taken after the seal before you confirm.
+- **Whole-trail rollback.** Someone with write access to the database and an older copy of it
+  (the evidence copy in section 6, or any backup) can put back every audit row, the seal record,
+  the checkpoints, the high-water mark and the verification state as they were at an earlier
+  point. Everything inside the database then agrees with itself. What `accept-loss` can and
+  cannot tell:
+
+  | Rolled back to | SQLite, witness file untouched | PostgreSQL, or SQLite with the witness rolled back too |
+  |---|---|---|
+  | Part way through a completed acceptance (record and event kept, later rows cut) | Detected if any row certified after the seal is gone: the witness, signed under the seal, certifies it and the resume is refused. Rows written after the last checkpoint were never certified and are not detected | Not detected: it reads as an acceptance that stopped part way and the plan offers to resume it |
+  | Before a completed acceptance (record and event gone) | Detected: the witness is signed under a seal list the database no longer holds and the plan is refused as a rollback | Not detected: it reads as a fresh, unsealed loss, and a new acceptance would record it again |
+  | Before the last checkpoint, no acceptance involved | Not raised by the running server, which does not read the witness (only `admin restore` and `accept-loss` do). `accept-loss` counts the witness, so naming its missing head as a truncation measures and records the cut rows | Not detected |
+
+  The witness only helps while it is intact: an absent witness is treated as none (it cannot be
+  told apart from an install that never wrote one), and a host snapshot that restores the data
+  directory restores the witness with it. Against a rollback that includes the witness, or on
+  PostgreSQL, the only defence is evidence held off the host: an `export-checkpoint` file
+  written after the seal (section 7). Pass it with `--anchor`; an anchor exported under a seal
+  the database no longer holds does not authenticate and the command refuses. Treat a resume of
+  a seal you did not just run (check the "recorded ... by ..." line of the plan) as a rollback
+  until proven otherwise, and compare the trail with such an anchor before you confirm.
+- An acceptance left unfinished and then a `rotate-kek` or `migrate-provider`: the key change
+  does not complete while the seal is pending (nothing is signed against an untrusted seal
+  list), and the `accept-loss` resume is refused because the latest checkpoint is still signed
+  under the previous key. Re-run `accept-loss` to finish an acceptance before any key change.
 - A verification state discontinuity with an intact chain (a deleted or garbled state row, a
   key epoch problem) cannot be accepted: `accept-loss` seals only lost rows (section 7, option 3),
   and those discontinuities stay sticky.
