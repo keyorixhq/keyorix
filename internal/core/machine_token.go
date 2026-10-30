@@ -153,7 +153,7 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 		AllowedCIDRs:      cidrJSON,
 		ExpiresAt:         params.ExpiresAt,
 		Classification:    classification,
-		CreatedAt:         c.now(),
+		CreatedAt:         c.now().UTC(),
 	}
 	// AUDIT-TX-2: the token_issued row is the last statement of the transaction that
 	// creates the credential, so a credential never commits unaudited.

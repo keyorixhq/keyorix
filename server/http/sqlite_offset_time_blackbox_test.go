@@ -369,7 +369,16 @@ func TestSQLiteOffsetTimes_BlackBox_NonUTCHost(t *testing.T) {
 					map[string]any{"name": "ot-cred", "expires_in_days": 1})
 				e.row("machine credential expires_at", "expires_in_days=1", e.stored("SELECT typeof(expires_at), expires_at FROM machine_identity_credentials WHERE machine_identity_id = ?", mi.ID),
 					fmt.Sprintf("issue=%d", status))
+				e.row("machine credential created_at", "(server clock)", e.stored("SELECT typeof(created_at), created_at FROM machine_identity_credentials WHERE machine_identity_id = ?", mi.ID),
+					"the column the raw credential lookup also scans")
 				require.Equal(t, http.StatusCreated, status, string(body))
+			})
+
+			t.Run("pat_created_at", func(t *testing.T) {
+				e.t = t
+				status, body := e.do("POST", "/api/v1/auth/tokens", e.admin, map[string]any{"name": "pat-host-zone"})
+				require.Equal(t, http.StatusCreated, status, string(body))
+				e.row("PAT created_at", "(server clock)", e.stored("SELECT typeof(created_at), created_at FROM personal_access_tokens ORDER BY id DESC LIMIT 1"), "create=201")
 			})
 
 			t.Run("invitation", func(t *testing.T) {
