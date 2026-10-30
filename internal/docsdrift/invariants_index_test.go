@@ -9,10 +9,17 @@ package docsdrift
 //
 // What this checks: each package appears in one row only, each row's
 // Invariants = Guarded + UNGUARDED, there is exactly one Total row, and its
-// three numbers are the column sums. What it does NOT check: that a row's
-// numbers match the bullets in that package's INVARIANTS.md and
-// INVARIANTS.d/ (they drift as invariants are added; re-derive by the recipe
-// in the file's "Maintaining this index" section).
+// three numbers are the column sums. Every line of the counts table (the
+// "| Package |" header through the last consecutive "|" line) must be the
+// header, the separator, a package row or the Total row: any other line is
+// reported, because a row the patterns do not match would otherwise be left
+// out of the sums without a word.
+//
+// What it does NOT check: that a row's numbers match the bullets in that
+// package's INVARIANTS.md and INVARIANTS.d/ (they drift as invariants are
+// added; re-derive by the recipe in the file's "Maintaining this index"
+// section), that the linked file exists, or any "|" table elsewhere in the
+// document (only the table under the "| Package |" header is scanned).
 
 import (
 	"fmt"
@@ -29,6 +36,10 @@ var (
 	invIndexRowRE = regexp.MustCompile("^\\|\\s*(`[^|]+?(?:\\s+\\(\\+[^|]*\\))?)\\s*\\|\\s*\\[[^\\]]+\\]\\([^)]+\\)\\s*\\|\\s*(\\d+)\\s*\\|\\s*(\\d+)\\s*\\|\\s*(\\d+)\\s*\\|\\s*$")
 	// | **Total** | | **248** | **211** | **37** |
 	invIndexTotalRE = regexp.MustCompile(`^\|\s*\*\*Total\*\*\s*\|[^|]*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*$`)
+	// | Package | File | Invariants | Guarded | UNGUARDED |
+	invIndexHeaderRE = regexp.MustCompile(`^\|\s*Package\s*\|`)
+	// |---|---|---|---|---|
+	invIndexSepRE = regexp.MustCompile(`^\|[\s:|-]+\|\s*$`)
 )
 
 // checkInvariantsIndex returns one message per problem in the index document.
@@ -40,8 +51,18 @@ func checkInvariantsIndex(doc string) []string {
 	var sum counts
 	var totals []counts
 
+	inTable := false
 	for i, line := range strings.Split(doc, "\n") {
 		n := i + 1
+		switch {
+		case invIndexHeaderRE.MatchString(line):
+			inTable = true
+			continue
+		case inTable && !strings.HasPrefix(line, "|"):
+			inTable = false
+		case inTable && invIndexSepRE.MatchString(line):
+			continue
+		}
 		if m := invIndexTotalRE.FindStringSubmatch(line); m != nil {
 			c := counts{line: n}
 			c.inv, _ = strconv.Atoi(m[1])
@@ -52,6 +73,9 @@ func checkInvariantsIndex(doc string) []string {
 		}
 		m := invIndexRowRE.FindStringSubmatch(line)
 		if m == nil {
+			if inTable {
+				problems = append(problems, fmt.Sprintf("line %d: table row matches neither the package-row nor the Total pattern, so it is not counted: %q", n, line))
+			}
 			continue
 		}
 		pkg := strings.TrimSpace(m[1])
