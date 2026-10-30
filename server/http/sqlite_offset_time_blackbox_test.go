@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +97,8 @@ func newOTEnv(t *testing.T) *otEnv {
 	require.NoError(t, err)
 	require.NotEmpty(t, envs)
 
+	// A nil deliverer is out-of-band; the base URL is what makes an invitation mint its setup link.
+	c.SetCredentialDelivery(nil, "https://keyorix.example.test")
 	c.SetConnectManager(connect.NewManager([]connect.Connector{otConnector{}}))
 	c.SetConnectOwnership(map[string]core.ConnectOwnership{"otconn": {Scope: "project", ProjectID: projects[0].ID}})
 
@@ -159,6 +162,8 @@ var nonUTCText = regexp.MustCompile(`[+-]\d{2}:?\d{2}(\s|$)|\sm=[+-]`)
 func (e *otEnv) row(entry, offset, stored, roundTrip string) {
 	e.t.Helper()
 	e.rows = append(e.rows, fmt.Sprintf("| %-40s | %-30s | %-46s | %s |", entry, offset, stored, roundTrip))
+	// A read that found nothing (or failed) must not pass as "not non-UTC": the row has to hold a time.
+	require.True(e.t, strings.HasPrefix(stored, "text:"), "%s: no stored time was read back: %s", entry, stored)
 	require.False(e.t, nonUTCText.MatchString(stored), "%s: a non-UTC time reached the column: %s", entry, stored)
 }
 
