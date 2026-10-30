@@ -280,6 +280,36 @@ func (c *KeyorixCore) RequestSecretAccess(ctx context.Context, secretID, userID 
 	return created, nil
 }
 
+// loadSecretAccessRequestForResolver loads requestID for approve/reject and checks
+// the caller's admin authority at the request's own project BEFORE anything about
+// the request is reported (AUTHZ-ORACLE-1). These routes carry no permission gate,
+// so this check is their authorization; run after the kind, state, expiry and
+// secret checks, as it used to be, it let any signed-in user learn from the
+// refusal whether a request ID exists, whether it is secret-scoped, its state,
+// whether it expired and whether its secret is gone (and the expiry path even
+// wrote the row). A missing request and one the caller may not resolve now both
+// answer "access request not found", the refusal GetSecretAccessRequest already
+// gives. Approving read access to a "restricted" secret is at least as sensitive
+// as granting a non-admin project role, so it carries the same admin-authority
+// ceiling requireAuthorityForRole applies to an admin-role grant — there is no
+// weaker "roles.assign"-shaped permission that fits (this grants no role at all).
+// A failure to RESOLVE the caller's authority is returned as is: it fails closed
+// and is not read as a refusal.
+func (c *KeyorixCore) loadSecretAccessRequestForResolver(ctx context.Context, requestID, approverID uint) (*models.AccessRequest, error) {
+	notFound := fmt.Errorf("access request not found")
+	req, err := c.storage.GetAccessRequest(ctx, requestID)
+	if err != nil {
+		return nil, notFound
+	}
+	if err := c.requireAccessRequestAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
+		if errors.Is(err, errAdminAuthorityRequired) {
+			return nil, notFound
+		}
+		return nil, err
+	}
+	return req, nil
+}
+
 // ApproveSecretAccessRequest approves a pending secret-scoped access request,
 // letting the classification gate above find it on the requester's next read.
 // Unlike ApproveAccessRequestWithExpiry, no role is granted — approval only
@@ -287,9 +317,9 @@ func (c *KeyorixCore) RequestSecretAccess(ctx context.Context, secretID, userID 
 // SecretID is nil: that is a project/role request and belongs to
 // ApproveAccessRequestWithExpiry instead.
 func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID, approverID uint) (*models.AccessRequest, error) {
-	req, err := c.storage.GetAccessRequest(ctx, requestID)
+	req, err := c.loadSecretAccessRequestForResolver(ctx, requestID, approverID)
 	if err != nil {
-		return nil, fmt.Errorf("access request not found")
+		return nil, err
 	}
 	if req.SecretID == nil {
 		return nil, fmt.Errorf("access request %d is a project/role request, not a secret-scoped one — use ApproveAccessRequestWithExpiry", requestID)
@@ -320,14 +350,6 @@ func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID,
 	// Maker ≠ checker, same as the project/role flow.
 	if approverID == req.UserID {
 		return nil, fmt.Errorf("a requester cannot approve their own access request")
-	}
-	// Approving read access to a "restricted" secret is at least as sensitive as
-	// granting a non-admin project role, so it carries the same admin-authority
-	// ceiling requireAuthorityForRole applies to an admin-role grant — there is no
-	// weaker "roles.assign"-shaped permission that fits (this grants no role at
-	// all), so the bar is set at the ceiling rather than invented lower.
-	if err := c.requireAccessRequestAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
-		return nil, fmt.Errorf("only an administrator can approve access to a restricted secret: %w", err)
 	}
 	now := c.now()
 	req.State = AccessRequestApproved
@@ -397,18 +419,15 @@ func (c *KeyorixCore) GetSecretAccessRequest(ctx context.Context, requestID, act
 // gate on. Reuses RejectAccessRequest's own state-transition/audit/notify
 // logic unchanged once the ceiling has cleared, rather than re-deriving it.
 func (c *KeyorixCore) RejectSecretAccessRequest(ctx context.Context, requestID, approverID, approverMachineID uint, reason string) (*models.AccessRequest, error) {
-	req, err := c.storage.GetAccessRequest(ctx, requestID)
+	req, err := c.loadSecretAccessRequestForResolver(ctx, requestID, approverID)
 	if err != nil {
-		return nil, fmt.Errorf("access request not found")
+		return nil, err
 	}
 	if req.SecretID == nil {
 		return nil, fmt.Errorf("access request %d is a project/role request, not a secret-scoped one", requestID)
 	}
 	if req.State != AccessRequestPending {
 		return nil, fmt.Errorf("only a pending request can be rejected (state is %s)", req.State)
-	}
-	if err := c.requireAccessRequestAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
-		return nil, fmt.Errorf("only an administrator can reject access to a restricted secret: %w", err)
 	}
 	return c.RejectAccessRequest(ctx, req.ProjectID, requestID, approverID, approverMachineID, reason)
 }

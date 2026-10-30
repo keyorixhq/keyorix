@@ -89,6 +89,13 @@ func (c *KeyorixCore) RequireGranterHoldsRolePermissions(ctx context.Context, ac
 	return c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine)
 }
 
+// errAdminAuthorityRequired is requireAdminAuthorityAt's (and
+// requireAccessRequestAuthorityAt's) refusal when the actor resolved fine but holds
+// no admin role. A failure to resolve the actor's roles is a different error, so a
+// caller that hides the refusal (ApproveSecretAccessRequest) can still let a
+// storage failure through as one.
+var errAdminAuthorityRequired = errors.New("admin authority is required")
+
 // requireAdminAuthorityAt refuses unless actorID holds an admin role (adminRoleNames)
 // directly assigned at the given project scope (0 = global). The shared primitive
 // behind requireAuthorityForRole (gating a role GRANT) and any other action that
@@ -105,7 +112,7 @@ func (c *KeyorixCore) requireAdminAuthorityAt(ctx context.Context, actorID, proj
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
 	if !containsAdmin {
-		return fmt.Errorf("admin authority is required")
+		return errAdminAuthorityRequired
 	}
 	return nil
 }
