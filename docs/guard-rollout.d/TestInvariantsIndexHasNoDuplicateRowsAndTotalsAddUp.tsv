@@ -1,1 +1,1 @@
-TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp	internal/docsdrift	#TBD	new guard on a table every invariants PR edits (DOCS-OPS-TAILS-2), report-only until its first green nightly on main
+TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp	internal/docsdrift	#3819	new guard on a table every invariants PR edits (DOCS-OPS-TAILS-2), report-only until its first green nightly on main
