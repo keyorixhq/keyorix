@@ -25,7 +25,14 @@
   binding is refused, and the re-seal never lowers a witness signed under the current seals. It skips only its own
   half-written artifacts (a checkpoint or mark signed under the seals before it): one that
   authenticates under neither, or a mark missing although the seal recorded a certification,
-  is refused, not read as "no certification". It refuses ids other than the seal's own, and
+  is refused, not read as "no certification". After a key change (#3814) an artifact still
+  signed under the previous key counts, or is skipped, only when the active key transition
+  record, MACed by both keys, names its exact digest with the binding the prepare (holding
+  the old key) authenticated it under (`auditKeyTransitionSealing`, `audit_seal_key_change.go`;
+  the naming is tied to the newest seal's number and digest and followed through a chain of
+  key changes); a witness counts that way only when it mirrors a mark so named under the seal.
+  Nothing the record does not name is accepted on the new key's behalf, and the record names
+  nothing that authenticated under no seal binding. It refuses ids other than the seal's own, and
   keeps any discontinuity or failure the state carries in its accepted list; its plan names
   when, by whom and why the seal was recorded. A first acceptance refuses a missing mark beside
   a signed checkpoint, and an operator name or reason with a control or format character, a
@@ -45,7 +52,9 @@
   `_ResumeRefusesUnreadableWitness`, `_CrashAtEveryStepResumesWithWitness`,
   `_ResealKeepsHigherWitness`, `_RefusesMissingHighWater`,
   `_RefusesUnsafeOperatorText`, `_WitnessAboveDatabaseCountsInPlan`,
-  `_ApplyRefusesUnnamedHigherWitness`, `_WitnessUnderRolledBackSealRefused`), `TestSealDifferential_*`
+  `_ApplyRefusesUnnamedHigherWitness`, `_WitnessUnderRolledBackSealRefused`,
+  `_ResumeAfterKeyChange`, `_ResumeAfterTwoKeyChanges`, `_ResumeAfterKeyChangeRefusesUnaccounted`),
+  `TestSealDifferential_*`
   (`internal/auditverify`), `TestPerformRecoverAdmin_NeverSealsALoss`,
   `TestAcceptLoss_RequiresConfirmThenSeals`, `scripts/drills/accept-loss.sh`. Not covered: a
   verification state discontinuity with an intact chain cannot be accepted (it stays
