@@ -66,6 +66,7 @@ func writeSentinelFile(t *testing.T, dir, content string, mode os.FileMode) {
 var secretLookupFuncs = map[string]int{
 	"Lookup":            0, // secretenv
 	"LookupChecked":     0, // secretenv
+	"LookupSecretEnv":   0, // internal/config: Lookup answered from the Load snapshot (server callers use it, #3830)
 	"resolveSecret":     0, // internal/config
 	"ResolvePassphrase": 1, // internal/crypto
 	"FileVars":          0, // secretenv (cmd/keyorix-k8s-sync, PassphraseSource.Describe)
