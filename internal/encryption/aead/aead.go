@@ -21,6 +21,18 @@ const (
 	AESCipherSuite = "AES-256-GCM"
 )
 
+// gcmNonceSize is the AES-GCM nonce length. The service's AEAD is
+// cipher.NewGCMWithRandomNonce (FIPS-GCM-NONCE-1): Seal draws the nonce itself
+// and returns nonce||ciphertext||tag, Open reads the nonce back from that
+// prefix, and its NonceSize() is 0. The stored layout is unchanged from the
+// earlier cipher.NewGCM code (the 12-byte nonce in Metadata.Nonce,
+// ciphertext||tag in Data): seal splits the prefix off and open puts it back,
+// so a ciphertext written by either version opens under the other
+// (internal/encryption/gcm_compat_test.go, testdata/gcm_legacy_vectors.json).
+// A caller-supplied nonce is what Go's FIPS 140-3 mode (GODEBUG=fips140=only)
+// refuses, which is why the nonce is no longer generated here.
+const gcmNonceSize = 12
+
 // nonceBudgetWarnThreshold is a conservative, coarse checkpoint on the number of
 // Encrypt/EncryptWithAAD calls made under a single DEK, logged as a one-time loud
 // warning to nudge an operator toward a routine `keyorix-server admin encryption rotate` well
@@ -150,7 +162,7 @@ func NewEncryptionService(kek []byte) (*EncryptionService, error) {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
@@ -177,12 +189,7 @@ func (es *EncryptionService) Encrypt(plaintext []byte, keyVersion string) (*Encr
 	}
 	es.checkNonceBudget()
 
-	nonce := make([]byte, es.gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	ciphertext := es.gcm.Seal(nil, nonce, plaintext, nil)
+	nonce, ciphertext := es.seal(plaintext, nil)
 
 	metadata := EncryptionMetadata{
 		Algorithm:   AESCipherSuite,
@@ -210,14 +217,12 @@ func (es *EncryptionService) Decrypt(encryptedData *EncryptedData) ([]byte, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode nonce: %w", err)
 	}
-	// gcm.Open PANICS on a wrong-length nonce rather than returning an error. The nonce
-	// comes from stored metadata, so a corrupt/tampered row would otherwise crash the
-	// request goroutine (caught by recovery middleware as a 500); guard it as an error.
-	if len(nonce) != es.gcm.NonceSize() {
+	// A wrong-length stored nonce is rejected by open as an error, never a panic.
+	if len(nonce) != gcmNonceSize {
 		return nil, fmt.Errorf("invalid nonce length %d", len(nonce))
 	}
 
-	plaintext, err := es.gcm.Open(nil, nonce, encryptedData.Data, nil)
+	plaintext, err := es.open(nonce, encryptedData.Data, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data: %w", err)
 	}
@@ -234,12 +239,7 @@ func (es *EncryptionService) EncryptWithAAD(plaintext []byte, keyVersion string,
 	}
 	es.checkNonceBudget()
 
-	nonce := make([]byte, es.gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	ciphertext := es.gcm.Seal(nil, nonce, plaintext, aad)
+	nonce, ciphertext := es.seal(plaintext, aad)
 
 	metadata := EncryptionMetadata{
 		Algorithm:   AESCipherSuite,
@@ -269,17 +269,34 @@ func (es *EncryptionService) DecryptWithAAD(encryptedData *EncryptedData, aad []
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode nonce: %w", err)
 	}
-	// gcm.Open panics on a wrong-length nonce; treat a corrupt stored nonce as an error.
-	if len(nonce) != es.gcm.NonceSize() {
+	// A corrupt stored nonce is an error, never a panic.
+	if len(nonce) != gcmNonceSize {
 		return nil, fmt.Errorf("invalid nonce length %d", len(nonce))
 	}
 
-	plaintext, err := es.gcm.Open(nil, nonce, encryptedData.Data, aad)
+	plaintext, err := es.open(nonce, encryptedData.Data, aad)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data (AAD mismatch or corruption): %w", err)
 	}
 
 	return plaintext, nil
+}
+
+// seal encrypts plaintext under a fresh nonce the AEAD draws itself and returns
+// the nonce and ciphertext||tag separately, the layout EncryptedData stores.
+func (es *EncryptionService) seal(plaintext, aad []byte) (nonce, ciphertext []byte) {
+	sealed := es.gcm.Seal(nil, nil, plaintext, aad) // #nosec G407 -- nil nonce: NewGCMWithRandomNonce draws a fresh one and prepends it
+	return sealed[:gcmNonceSize:gcmNonceSize], sealed[gcmNonceSize:]
+}
+
+// open is the inverse of seal: it puts the stored nonce back in front of
+// ciphertext||tag, the input NewGCMWithRandomNonce's Open reads. Callers check
+// len(nonce) == gcmNonceSize first; a wrong length here would only fail the tag.
+func (es *EncryptionService) open(nonce, ciphertext, aad []byte) ([]byte, error) {
+	// No computed capacity: append sizes the buffer itself (CodeQL
+	// go/allocation-size-overflow flagged a len+len make here).
+	msg := append(append([]byte(nil), nonce...), ciphertext...)
+	return es.gcm.Open(nil, nil, msg, aad)
 }
 
 // EncryptChunked encrypts large data by splitting it into chunks

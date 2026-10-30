@@ -497,22 +497,24 @@ func (km *KeyManager) unwrapDEK(kek []byte) ([]byte, error) {
 }
 
 // wrapKey encrypts plainKey with kek using AES-256-GCM.
-// Output: nonce (12 bytes) || ciphertext.
+// Output: nonce (12 bytes) || ciphertext || tag (16 bytes). The nonce is drawn
+// by cipher.NewGCMWithRandomNonce, which emits exactly this layout, the same
+// bytes the earlier cipher.NewGCM code built by hand (FIPS-GCM-NONCE-1: Go's
+// FIPS 140-3 mode refuses a caller-supplied GCM nonce).
 func wrapKey(plainKey, kek []byte) ([]byte, error) {
 	block, err := aes.NewCipher(kek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-	return gcm.Seal(nonce, nonce, plainKey, nil), nil
+	return gcm.Seal(nil, nil, plainKey, nil), nil // #nosec G407 -- nil nonce: NewGCMWithRandomNonce draws a fresh one and prepends it
 }
+
+// wrappedKeyNonceSize is the nonce prefix of a wrapKey output.
+const wrappedKeyNonceSize = 12
 
 // unwrapKey decrypts a wrapped key using AES-256-GCM with kek.
 func unwrapKey(wrapped, kek []byte) ([]byte, error) {
@@ -520,16 +522,15 @@ func unwrapKey(wrapped, kek []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-	nonceSize := gcm.NonceSize()
-	if len(wrapped) < nonceSize {
+	// NewGCMWithRandomNonce's NonceSize() is 0: the nonce is the input's prefix.
+	if len(wrapped) < wrappedKeyNonceSize {
 		return nil, fmt.Errorf("wrapped key too short")
 	}
-	nonce, ciphertext := wrapped[:nonceSize], wrapped[nonceSize:]
-	plainKey, err := gcm.Open(nil, nonce, ciphertext, nil)
+	plainKey, err := gcm.Open(nil, nil, wrapped, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GCM open failed: %w", err)
 	}
