@@ -1,0 +1,25 @@
+- **INV-STORE-system-metadata-write-target-checked** The role-permission generation target's
+  catalog statement also reads `system_metadata`, the table the generation triggers, the in-app
+  bump and the check's own invalidation `UPDATE` (`systemMetadataWriteTargetSQL`). It must be a
+  plain table without inheritance children, with no non-internal trigger except the
+  retention-anchor trigger exactly as `EnsureAuditRetentionAnchorTrigger` creates it
+  (`systemMetadataAnchorTriggerOK`: BEFORE UPDATE FOR EACH ROW, its function, and its
+  `WHEN (key = 'audit_retention_anchor')` clause), no rule, and `relrowsecurity` and
+  `relforcerowsecurity` false. The xmin of its `pg_class` row and of each trigger and rule row is
+  part of the fingerprint. On a violation the check logs `SECURITY:`, counts `reason="tamper"`, and
+  the repair (`restoreSystemMetadataWriteTarget`, in the repair transaction under its
+  `lock_timeout`) drops the foreign triggers and rules, re-creates the anchor trigger if it dropped
+  it, turns row level security off, and bumps the generation. A failed first invalidation (a rule
+  makes PostgreSQL refuse every bump's `INSERT ... ON CONFLICT`) does not stop the repair. Why:
+  #3713. A `BEFORE UPDATE` trigger keeping `OLD.value`, a rule, or forced row level security with
+  an `UPDATE` policy hiding the generation row made every bump a no-op, including the check's own,
+  while every trigger and function the check compared read as correct; the permission cache has no
+  TTL, so a direct-SQL revocation kept authorizing from warm caches. Residual risk, stated: a
+  `system_metadata` that is not a plain table is reported every tick but not repaired; a release
+  that needs its own trigger, rule or policy on `system_metadata` must first ship a check that
+  allows it; a superuser below SQL is not detected; SQLite is not checked. Guard: (pg-gated)
+  `TestRolePermGenerationIntegrity_SystemMetadataBeforeUpdateTriggerIsRemovedAndFlushed_Postgres`,
+  `_SystemMetadataRuleIsRemovedAndFlushed_Postgres`,
+  `_SystemMetadataForcedRowSecurityIsTurnedOffAndFlushed_Postgres`,
+  `_SystemMetadataAnchorTriggerWithoutItsWhenIsRestored_Postgres` (all red on the base by
+  behaviour), `_SystemMetadataUpkeepDoesNotFlush_Postgres`.
