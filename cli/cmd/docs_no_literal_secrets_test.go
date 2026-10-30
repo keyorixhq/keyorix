@@ -23,8 +23,9 @@
 //     *_FILE form where a file is natural), --from-file, or a stdin pipe. This
 //     also catches (SCRIPTS-SECRETS-2) a credential in curl -H/-d/--json/-u and in
 //     docker -e NAME=VALUE; the exact shapes and what is NOT recognised (variable-held
-//     headers/bodies, helm --set, kubectl --from-literal, interpreter argv) are listed
-//     above findSecretArgvShape.
+//     headers, curl through a variable, wget, -F, interpreter argv) are listed above
+//     findSecretArgvShape. A curl body held in a bare variable is recognised
+//     (SCRIPTS-SECRETS-3).
 //   - Only the flags in secretFlags. A new secret-carrying flag must be added.
 //
 // An intentional "don't do this" example opts out per line with the marker
@@ -196,11 +197,17 @@ func scanShellForSecrets(content string) []docsSecretHit {
 //     file>` and `--set-file KEY=<path>` are the safe forms.
 //   - kubectl `--from-literal=KEY=VALUE` whose KEY is a credential name. Use `--from-file`.
 //
-// NOT recognised, so a green run is not more than this: a header or body held in a
-// variable ("$hdr", "$body") or built by a function; a header split from its flag by a
-// line continuation; a helm --set whose key is held in a variable; an interpreter's argv
-// (python3 -c / jq --arg). `NAME=value cmd` environment prefixes are not argv and are
-// deliberately allowed.
+// Also recognised (SCRIPTS-SECRETS-3, scanShellForVarBodies, shell scripts only): a curl
+// body flag (the same list as above) whose value is a bare variable (`$NAME`, `${NAME}`,
+// `${NAME:-x}`, `$1`, `$@`) on the logical line, backslash continuations joined.
+//
+// NOT recognised, so a green run is not more than this: a header held in a variable
+// ("$hdr") or built by a function; a body built by a function or command substitution
+// (`-d "$(...)"`) or mixed with literal text (`-d "x=$v"`); a curl invoked through a
+// variable or array (`"${CURL[@]}" -d "$b"`); wget --post-data; curl -F/--form; a header
+// split from its flag by a line continuation; a helm --set whose key is held in a
+// variable; an interpreter's argv (python3 -c / jq --arg). `NAME=value cmd` environment
+// prefixes are not argv and are deliberately allowed.
 var (
 	credHeaderFlagRE = regexp.MustCompile(`(?i)(?:^|[\s(])(?:-H|--header)(?:=|\s+)["']?(?:Authorization|Proxy-Authorization|Cookie|X-[A-Za-z0-9-]*(?:Token|Key|Secret|Auth|Password)[A-Za-z0-9-]*)\s*:`)
 	curlBodyFlagRE   = regexp.MustCompile(`(?:^|[\s(])(-d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii|--json)(?:=|\s+)(\S.*)$`)
@@ -276,7 +283,12 @@ func findSecretArgvShape(line string) string {
 // --data-binary @-` (or `-d @file`). Matched on the logical line (backslash continuations
 // joined) because the flag usually sits on a continuation line of its curl. A body that
 // is known not to be a credential (an alert message) opts out with the usual marker.
-var curlVarBodyRE = regexp.MustCompile(`(?:^|[\s(])(?:-d|--data|--data-raw|--data-urlencode|--data-ascii|--json)(?:=|\s+)["']?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?["']?(?:\s|$|\))`)
+//
+// The flag list mirrors curlBodyFlagRE (--data-binary "$body" puts the body on argv exactly as
+// -d does; only `--data-binary @-` is safe). The value is a bare `$NAME`, `${NAME}`, a
+// `${NAME:-default}`-style expansion, or a positional/special parameter (`$1`, `$@`, `$*`); an
+// attached quoted value (`-d"$body"`) counts, an attached bare word (`-dfoo`) does not.
+var curlVarBodyRE = regexp.MustCompile(`(?:^|[\s(])(?:-d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii|--json)(?:(?:=|\s+)["']?|["'])\$(?:[0-9@*]|\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)["']?(?:\s|$|\))`)
 
 var curlWordRE = regexp.MustCompile(`\bcurl\b`)
 
@@ -285,7 +297,9 @@ func scanShellForVarBodies(content string) []docsSecretHit {
 	lines := strings.Split(content, "\n")
 	for i := 0; i < len(lines); i++ {
 		first, joined := i, strings.TrimSpace(lines[i])
-		for strings.HasSuffix(joined, "\\") && i+1 < len(lines) {
+		// A shell comment does not continue onto the next line, so a trailing backslash on
+		// one must not swallow the real command below it.
+		for !strings.HasPrefix(joined, "#") && strings.HasSuffix(joined, "\\") && i+1 < len(lines) {
 			i++
 			joined = strings.TrimSuffix(joined, "\\") + " " + strings.TrimSpace(lines[i])
 		}
@@ -437,6 +451,13 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"var body":         `curl -sf "${H[@]}" -X "$method" "${ADDR}/v1/${path}" -d "$body"`,
 		"var body braces":  `curl -sf "$URL" --data "${payload}"`,
 		"var body on cont": "curl -sf \"$URL\" \\\n  -H 'X: y' \\\n  -d \"$body\" >/dev/null",
+		// Sibling flag and variable forms (review of #3829).
+		"var body data-binary":   `curl -sf "$URL" --data-binary "$body"`,
+		"var body data-binary =": `curl -sf "$URL" --data-binary="${body}"`,
+		"var body positional":    `curl -sf "$URL" -d "$1"`,
+		"var body default":       `curl -sf "$URL" -d "${3:-}"`,
+		"var body attached":      `curl -sf "$URL" -d"$body"`,
+		"var body after comment": "# note \\\ncurl -sf \"$URL\" -d \"$body\"",
 	} {
 		if len(scanShellForSecrets(sh)) == 0 {
 			t.Errorf("shell guard missed (%s): %q", name, sh)
@@ -475,6 +496,9 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"var body marker":  `curl -fsS -d "$msg" "$URL" # docs-secrets:allow (alert text, no credential)`,
 		"date -d variable": `d=$(date -u -d "$added" +%s)`,
 		"literal body":     `curl -s -X POST -d "$(printf x)" "$URL"`,
+		"binary stdin":     `printf '%s' "$body" | curl -sf "$URL" --data-binary @-`,
+		"binary file var":  `curl -sf "$URL" --data-binary @"$f"`,
+		"no flag attached": `curl -sf "$URL" -dfoo`,
 		"cont marker":      "curl -sf \"$URL\" \\\n  -d \"$msg\" >/dev/null # docs-secrets:allow (alert text)",
 	} {
 		if hits := scanShellForSecrets(sh); len(hits) != 0 {
