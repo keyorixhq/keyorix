@@ -36,6 +36,7 @@ later checks have not run yet.
 
 Contents: [Configuration](#configuration) · [TLS](#tls) ·
 [Database and storage](#database-and-storage) · [Keys and secret files](#keys-and-secret-files) ·
+[Key files and DEK](#key-files-and-dek) ·
 [Upgrade, schema epoch and rollback](#upgrade-schema-epoch-and-rollback) ·
 [Security posture](#security-posture) · [HA and multiple replicas](#ha-and-multiple-replicas) ·
 [Admin commands](#admin-commands) · [What this page does not cover](#what-this-page-does-not-cover)
@@ -609,7 +610,13 @@ key file security: key material is readable beyond its owner: <path> (mode 644) 
 key file security: key material is owned by an account the server does not trust: <path> (owned by uid 1000; the server runs as uid 1001 and trusts only that uid and root, because the owner can replace the file) — refusing to start (...)
 ```
 
-**Match:** `key material is readable beyond its owner`, `key material is owned by an account the server does not trust`
+**Match:** `key material is readable beyond its owner`, `key material is owned by an account the server does not trust`, `refusing to start (chmod 600 and chown the files to the server's user`
+
+Not reproduced natively. On SQLite, with `auto_fix_file_permissions: false` and a `0644`
+`keys/dek.key` or `certs/server.key`, the earlier `permissions or ownership audit found
+unresolved issues` refusal ([above](#key-file-readable-by-others-explicit-enable_file_permission_check))
+stopped the start before this check ran, with or without `enable_file_permission_check` set.
+A wrong owner needs a second account to `chown` to. The wording is read from the source.
 
 **Cause.** This is the always-on second check of the wrapped DEK, the KEK salt and the TLS
 private keys. The first form: group or other can read the file. The second (#3410): the
@@ -699,9 +706,173 @@ starts as before and logs every fallback decrypt. **In place:** yes.
 | `is group- or world-readable (mode` | `--passphrase-file` is not `0600` |
 | `(the user the server runs as) or to root` | `--passphrase-file`, or the KEK file of `key_provider: file`, is owned by an account other than the server's user and root (#3410: that account could replace it); the message names the owner uid. `chown` it. No override |
 | `refusing to trust it as key material` | the KEK file of `key_provider: file` is not `0600`/`0400`; `chmod` it. No override |
+| `owner cannot be determined -- refusing to trust it` | the owner check could not read who owns the file (the file's status carries no unix owner), so it fails closed, as for a foreign owner; no override. Not run: a regular file on Linux or macOS always reports its owner, so the message is not reachable from the native binary here; it is read from the source. If you meet it, the file is on a filesystem that does not report owners: move it to a local one |
 | `secret-value encryption did not engage` | encryption is configured but did not start; the server refuses to store secrets in plaintext. Check the key provider settings and earlier log lines |
 | `refusing to start rather than leave a webhook credential unencrypted at rest` | the start-up pass that encrypts stored notification URLs failed; fix the database error shown first (permissions, disk) and restart |
 | `DEK-rotation crash recovery failed` | an interrupted `admin encryption rotate` could not be completed on start; do **not** delete files; see [j6](j6-key-rotation.md) |
+
+---
+
+## Key files and DEK
+
+Refusals about generating, replacing or moving key material: the wrapped DEK, the KEK salt
+and the key set a Secret carries. The refusals about the *state* of existing key files
+(permissions, owner, missing or mixed files) are in [Keys and secret files](#keys-and-secret-files).
+All of them stop before any key file is written or replaced.
+
+Key paths in the blocks below are relative because the commands ran with the data directory
+as the working directory (`dek_path: "keys/dek.key"`, the value `admin init` writes). The
+PostgreSQL blocks come from a database created for the run (`storage.type: postgres`).
+
+### No wrapped DEK, but the database already holds encrypted data
+
+Real output (PostgreSQL, `storage.encryption.key_dir_lock: database`, `keys/` emptied after a
+first start had recorded the DEK epoch):
+
+```
+failed to initialize core service: failed to initialize encryption: no wrapped DEK at "keys/dek.key", but the database already records a DEK epoch (another replica generated the deployment's DEK): refusing to generate a new DEK. With storage.encryption.key_dir_lock: database every replica must read the same key files (one shared volume, or the same mounted Secret); copy the key set from a running replica or restore it from backup (docs/multi-replica-keys.md)
+```
+
+The same refusal when the database holds secret values but no recorded epoch (real output;
+the epoch row was deleted and one `secret_versions` row inserted for the run):
+
+```
+failed to initialize core service: failed to initialize encryption: no wrapped DEK at "keys/dek.key", but the database already holds encrypted secret versions: refusing to generate a new DEK. With storage.encryption.key_dir_lock: database every replica must read the same key files (one shared volume, or the same mounted Secret); copy the key set from a running replica or restore it from backup (docs/multi-replica-keys.md)
+```
+
+**Match:** `but the database already records a DEK epoch`, `but the database already holds encrypted secret versions`
+
+**Cause.** With `key_dir_lock: database` the replicas of one deployment share one DEK, and each
+must read the same key files. This replica found no wrapped DEK at `dek_path` (a per-pod volume
+that is empty, a Secret that did not mount, a wrong path) while the database already holds data
+under a DEK. Generating a new one here would split the deployment into replicas writing under
+two keys, so the server stops instead. The check runs only when the file is missing, under the
+key-initialisation lock, so two replicas starting at once on empty directories cannot both pass.
+**Fix.** Give this replica the deployment's key set: mount the shared volume or the same Secret,
+copy the files from a running replica, or restore them from your key backup (all files, from
+one backup). Do **not** remove the database rows or point `dek_path` at a new directory to "make
+it start". **In place:** no. [multi-replica-keys.md](../multi-replica-keys.md#design-storageencryptionkey_dir_lock-database),
+[SELF_HOSTING.md](../SELF_HOSTING.md), [drill-backup-restore.md](drill-backup-restore.md).
+
+### Key-initialisation lock lost — from code
+
+```
+the key-initialisation lock was lost while this replica was generating or recovering the key files, so another replica may have written them at the same time; refusing to start with keys that may not match the key directory -- restart to load the files now on disk (docs/multi-replica-keys.md)
+```
+
+**Match:** `the key-initialisation lock was lost while this replica was generating or recovering the key files`
+
+Not run: it needs the PostgreSQL connection that holds the lock to die while the key files are
+being written, which the native run cannot arrange on demand. Wording is exact; the line after
+the message (a parenthesised detail on why the lock was lost) is not shown.
+
+**Cause.** The advisory lock that keeps replicas from generating or recovering the key files at
+the same time was lost (the database connection dropped, or the database restarted) in the middle
+of that work, so another replica may have written the same files. **Fix.** Restart the server: it
+reads the files now on disk instead of trusting what it just wrote. If it then refuses with a
+mixed or incomplete key set, follow [Key file set incomplete or mixed](#key-file-set-incomplete-or-mixed--from-code).
+**In place:** yes, a restart; **no** if the next start names a key-set problem.
+[multi-replica-keys.md](../multi-replica-keys.md).
+
+### DEK rotation refused under `--force`
+
+Real output (PostgreSQL, a server running on the database, `admin encryption rotate --force --confirm`):
+
+```
+WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
+Error: refusing to rotate the DEK: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342), and --force cannot override it for a DEK rotation on PostgreSQL: a replica on another host that is still running would commit rows under the old DEK after the sweep, and they become undecryptable once the old DEK is gone. Stop every server that uses this database (every replica, on every host), then retry without --force; a lock left by a dead connection is released when PostgreSQL closes it (emergency SQL: SELECT pid, granted, mode FROM pg_locks WHERE locktype = 'advisory' AND objid = 872342; then, only for a connection that is not a live replica, SELECT pg_terminate_backend(<pid>))
+```
+
+With `storage.encryption.key_dir_lock: database` the command stops one step earlier, at the lock
+itself, with a message that ends the same way (real output):
+
+```
+Error: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342), and --force cannot override it with storage.encryption.key_dir_lock: database: running replicas hold no key-directory lock, so this lock is what keeps admin commands away from them. Stop every replica first (scale to 0); a lock left by a dead connection is released when PostgreSQL closes it (emergency SQL: SELECT pid, granted, mode FROM pg_locks WHERE locktype = 'advisory' AND objid = 872342; then, only for a connection that is not a live replica, SELECT pg_terminate_backend(<pid>))
+```
+
+**Match:** `and --force cannot override it for a DEK rotation on PostgreSQL`, `and --force cannot override it with storage.encryption.key_dir_lock: database`
+
+**Cause.** A server (or another admin command) holds this database's presence lock, and
+`--force` got the command past it. The key-directory lock (`dek.lock`) only protects one host's
+key directory, so a replica on another host would keep committing rows under the old DEK, and
+those rows become unreadable once the old DEK is gone. A dry run is not refused; every
+other `admin` command still accepts `--force` as described in
+[An admin command while the server is running](#an-admin-command-while-the-server-is-running).
+**Fix.** Stop every server that uses this database, on every host, and run the rotation again
+**without** `--force`. If the lock is held by a connection whose server is gone, the emergency
+SQL in the message names the session; terminate only a session that is not a live replica.
+**In place:** stop first (every replica). [key-rotation-runbook.md](key-rotation-runbook.md),
+[multi-replica-keys.md](../multi-replica-keys.md#rotation-in-secret-mode).
+
+### `migrate-provider cleanup` while the key directory is in use
+
+Real output (PostgreSQL, a server running on the database, `admin encryption migrate-provider cleanup --confirm --force`;
+without `--force` the command stops earlier at the database lock, see the previous entry):
+
+```
+WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
+Error: refusing to clean up migrate-backup files: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable — a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry
+```
+
+**Match:** `refusing to clean up migrate-backup files`
+
+**Cause.** `cleanup` deletes the `<dek_path>.migrate-backup.*` files, and a `migrate-provider`
+that is still running (or was killed and not yet recovered) may need one to restore the DEK. It
+takes the key-directory lock exclusively, and a live server holds it. `--force` only goes past
+the database lock, never this one. **Fix.** Stop the server (or wait for the other command),
+then run it again; run it with `--dry-run` first to see what it would delete. Delete the
+backups only once the server has started with the new provider. **In place:** stop first.
+[key-rotation-runbook.md](key-rotation-runbook.md#interrupted-rotate-kek-or-migrate-provider).
+
+### `key-secret`: where the key material may go
+
+`admin encryption key-secret generate` and `export` write a Kubernetes Secret manifest that
+holds the wrapped DEK and the KEK salt. They refuse any destination where that manifest would
+end up in a log or over another key set, and `unpack` refuses a directory that is not empty.
+
+Real output (`--out -` with `KUBERNETES_SERVICE_HOST` set, as it is inside any pod):
+
+```
+Error: --out -: refusing to write key material to stdout inside a Kubernetes pod, where stdout is collected as the pod log; write it to a file (--out <path>) on a volume you control
+```
+
+Real output (`--out -` with `JOURNAL_STREAM` set, as it is for a systemd service whose output goes to the journal):
+
+```
+Error: --out -: refusing to write key material to stdout under systemd, where stdout goes to the journal; use --out <path>
+```
+
+Real output (`--out` naming a file that exists, here from running `generate` twice with the same path):
+
+```
+Error: --out keys-secret.yaml already exists: refusing to overwrite it (it may hold the only copy of a key set)
+```
+
+Real output (`unpack --in keys-secret.yaml --dir keys` into the live key directory):
+
+```
+Error: --dir keys is not empty: refusing to write a key set over another one (an interrupted rotation's workspace holds the only copy of its new DEK)
+```
+
+From code (not run: a terminal as stdout needs a pseudo-terminal, which the capture
+environment could not open):
+
+```
+Error: --out -: refusing to print key material to a terminal; pipe it (… --out - | kubectl create -f -) or use --out <path>
+```
+
+**Match:** `refusing to write key material to stdout inside a Kubernetes pod`, `refusing to write key material to stdout under systemd`, `refusing to print key material to a terminal`, `already exists: refusing to overwrite it (it may hold the only copy of a key set)`, `is not empty: refusing to write a key set over another one`
+
+**Cause.** `--out -` writes the manifest to stdout, which is safe only when stdout is a pipe you
+control: a terminal keeps it in scrollback, the container runtime collects a pod's stdout as the
+pod log, and journald records a service's. `--out <path>` never replaces a file, because the
+file may be the only copy of a key set; `unpack` never writes over a directory that already
+holds files, because the workspace of an interrupted rotation holds the only copy of its new DEK.
+**Fix.** Write to a new file (`--out keyorix-keys-1.yaml`, created `0600`), or pipe stdout
+(`... --out - | kubectl create -f -`, from a shell that is not inside a pod or a service). Pick
+a new path rather than deleting an old file you have not checked; unpack into an empty or new
+directory. **In place:** yes: nothing was written.
+[multi-replica-keys.md](../multi-replica-keys.md#first-install-who-creates-the-first-key).
 
 ---
 
@@ -1085,9 +1256,21 @@ target. **In place:** no. [drill-backup-restore.md](drill-backup-restore.md).
 |---|---|
 | `Re-run with --confirm` | rotation changes keys/rewraps data and is not run without `--confirm` (dry-run first for the DEK) |
 | `stop the running server before rotating` | the key lock is held; stop the server |
+| `stop the running server before running it` | the key lock is held (`rotate`, `upgrade-aad`, `rotate-kek`, `migrate-provider` and the authentication-data commands print `refusing to <command>:` first); stop the server or wait for the other key command |
 | `must run on the server host` | the config says `storage.type: remote`; run on the server's host |
 
-**In place:** stop first. [j6-key-rotation.md](j6-key-rotation.md).
+Real output of the `stop the running server before running it` row (SQLite, a server running
+on the data directory, `admin encryption rotate --confirm --force`; `--force` only gets past
+the first lock, the WARNING line, never the key lock):
+
+```
+WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
+⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
+Error: refusing to rotate: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable — stop the running server before running it
+```
+
+**In place:** stop first. [j6-key-rotation.md](j6-key-rotation.md). With several replicas on PostgreSQL,
+[DEK rotation refused under `--force`](#dek-rotation-refused-under---force).
 
 ---
 
