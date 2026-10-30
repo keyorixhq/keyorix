@@ -164,3 +164,46 @@ func TestRolePermGenerationIntegrity_SystemMetadataUpkeepDoesNotFlush_Postgres(t
 	}
 	require.Equal(t, before, testutil.ToFloat64(rolePermGenerationTamperTotal))
 }
+
+// TestRolePermGenerationIntegrity_SystemMetadataFenceTriggerIsLeftAlone_Postgres:
+// single_writer mode fences the generation row with AFTER triggers on
+// system_metadata that execute internal/solewriter's guard function. The
+// check must leave those alone (dropping them would break the fence on every
+// tick), and still remove a trigger that only borrows the fence's name.
+func TestRolePermGenerationIntegrity_SystemMetadataFenceTriggerIsLeftAlone_Postgres(t *testing.T) {
+	w, c := smWriteTargetWorld(t)
+	db := w.writer.db
+	fence := SoleWriterFenceTriggerPrefix + "guard"
+	install := func(body string) {
+		require.NoError(t, db.Exec("CREATE OR REPLACE FUNCTION "+SoleWriterGuardFunc+"() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $keyorix$"+body+"$keyorix$").Error)
+	}
+	install(SoleWriterGuardFuncBody)
+	// The fence's TRUNCATE trigger: it never fires here (the guard's check
+	// function belongs to the fence and is not installed in this test).
+	require.NoError(t, db.Exec("CREATE TRIGGER "+fence+" AFTER TRUNCATE ON system_metadata FOR EACH STATEMENT EXECUTE PROCEDURE "+SoleWriterGuardFunc+"()").Error)
+	st, err := readRolePermGenerationIntegrity(context.Background(), db)
+	require.NoError(t, err)
+	require.Empty(t, st.problem, "a fence trigger is not foreign")
+	_, err = c.check(context.Background()) // the fence's install is a catalog change: one flush
+	require.NoError(t, err)
+	for range 2 {
+		flushed, err := c.check(context.Background())
+		require.NoError(t, err)
+		require.False(t, flushed)
+	}
+	install(SoleWriterGuardFuncBody) // the fence rewrites its function on every start
+	flushed, err := c.check(context.Background())
+	require.NoError(t, err)
+	require.False(t, flushed, "a single-writer restart is not a change")
+	triggers, _, _, _ := systemMetadataObjects(t, db)
+	require.Equal(t, []string{fence, AuditRetentionAnchorTrigger}, triggers) // by name
+
+	install("\nBEGIN\n  RETURN NULL;\nEND;\n")
+	st, err = readRolePermGenerationIntegrity(context.Background(), db)
+	require.NoError(t, err)
+	require.Contains(t, st.problem, fence, "a fence-named trigger on another body is foreign")
+	flushed, err = c.check(context.Background())
+	require.NoError(t, err)
+	require.True(t, flushed)
+	requireSystemMetadataClean(t, db)
+}

@@ -199,8 +199,11 @@ from the server's role. The same catalog statement now also reads `system_metada
 (`systemMetadataWriteTargetSQL`) and requires a plain table without inheritance children, no
 non-internal trigger except the retention-anchor trigger exactly as its installer creates it
 (BEFORE UPDATE FOR EACH ROW, its function, and its `WHEN (key = 'audit_retention_anchor')`
-clause, which keeps that function off the generation row whatever its body says), no rule, and
-`relrowsecurity` and `relforcerowsecurity` false. The `xmin` of the table's `pg_class` row and of
+clause, which keeps that function off the generation row whatever its body says) and the
+`single_writer` fence's AFTER triggers (`trg_ksw_*`, executing `internal/solewriter`'s guard
+function with exactly its body; store keeps a copy because it cannot import that package, and
+`TestFenceGuard_MatchesTheStore` fails on drift), no rule, and `relrowsecurity` and
+`relforcerowsecurity` false. The `xmin` of the table's `pg_class` row and of
 each trigger and rule row joins the fingerprint, so an object added and removed between two ticks
 still shows. On a violation the repair drops the foreign triggers and rules (re-creating the
 anchor trigger if it was the one dropped) and turns row-level security off in the repair
@@ -208,7 +211,9 @@ transaction, then bumps. A rule makes PostgreSQL refuse the `INSERT ... ON CONFL
 starts with, so the check's first invalidation fails there; the check then still repairs, and
 the repair's own bump is the one that counts. A table that is not a plain table is reported every
 tick and left to an operator. A future release that needs its own trigger, rule or policy on
-`system_metadata` must first ship a release whose check allows it.
+`system_metadata` must first ship a release whose check allows it. Turning `single_writer` on or
+off adds or removes the fence's triggers, which reads as one catalog change: one `SECURITY:` line
+and one flush per replica, no repair.
 
 ### C. Periodic content digest of `role_permissions` and `permissions`
 
