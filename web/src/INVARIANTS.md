@@ -97,12 +97,14 @@ quotes CSV-special characters...'`). See `internal/core/INVARIANTS.md` INV-CORE-
   asserts 403 and 404 look identical. **Not covered**: range checks that include 404, computed
   status values, and branches on the response body's `error` string.
 
-## Structural completeness — none found
+## Structural completeness
 
-- **INV-WEB-07** No structural/completeness test exists in `web/src` analogous to the Go
-  backend's AST sweeps (e.g. nothing asserts "every service file uses `apiClient`" or "every
-  mutating page attaches CSRF" as a repo-wide check rather than a per-file unit test).
-  `__tests__/App.test.tsx`, `constants.test.ts`, `test/infrastructure.test.ts` are component/
-  unit/smoke tests, not sweeps. UNGUARDED as a class (#issue: the lowest-effort version would be
-  an ESLint custom rule or a small Node script walking `web/src/services` and `web/src/pages`
-  rather than a hand-maintained convention).
+- **INV-WEB-07** Repo-wide structural sweeps, not per-file unit tests, hold the service layer's
+  shape. Guard: `__tests__/structure/servicesUseApiClient.test.ts` walks `web/src/services`
+  (AST): every service file except `client.ts`/`auth.ts` imports `apiClient` or `authApi`, builds no
+  client of its own (`axios.create`, `new Axios`, axios default import), and sends every
+  state-changing call (`.post/.put/.patch/.delete/.request`) through one of the two instances, so the
+  CSRF attach of INV-WEB-02 applies; `setup.ts` is exempt with its ADR-028 reason. Calibration cases are
+  red per violation shape. Also `__tests__/structure/routeReachability.test.ts` (App.tsx routes vs.
+  Sidebar NAV). **Not covered**: pages/features (no client there by INV-WEB-01's lint rule); runtime
+  CSRF attach (INV-WEB-02's tests).

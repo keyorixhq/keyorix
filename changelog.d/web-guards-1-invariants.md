@@ -1,0 +1,2 @@
+### Testing
+- **web/src INVARIANTS closed (INV-WEB-01/03/06/07).** INV-WEB-01 (ESLint rule + `eslintGuards.test.ts`), INV-WEB-03 (`sessionTokenNeverPersisted.test.ts`) and INV-WEB-06 (`noNotFoundBranching.test.ts`) were already guarded on main; their invariant text now names the guards and what they do not cover. New `servicesUseApiClient.test.ts` is the INV-WEB-07 sweep: every `web/src/services` file goes through `apiClient`/`authApi`, builds no client of its own, and sends no state-changing call through any other receiver.
