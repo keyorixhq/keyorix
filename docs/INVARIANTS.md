@@ -14,9 +14,9 @@ silently removing it.
 
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
-| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 131 | 129 | 2 |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 135 | 133 | 2 |
 | `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 43 | 40 | 3 |
-| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 67 | 67 | 0 |
+| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 69 | 69 | 0 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 40 | 40 | 0 |
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 20 | 20 | 0 |
 | `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 33 | 32 | 1 |
@@ -30,7 +30,7 @@ silently removing it.
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
-| **Total** | | **465** | **448** | **17** |
+| **Total** | | **471** | **454** | **17** |
 
 ## Highest-priority UNGUARDED gaps
 

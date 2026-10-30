@@ -1909,7 +1909,7 @@ auto_rotation:
 | `auto_rotation.backends[].name` | The backend's registry key. |
 | `auto_rotation.backends[].type` | `postgresql`, `mysql`, `mongodb`, `redis`, `aws-iam`, `gcp-service-account` or `azure-app`. An unknown type is skipped with a warning at start. A cloud type this binary was built without (a `noaws`, `nogcp` or `noazure` build tag) fails startup instead of being skipped. |
 | `auto_rotation.backends[].region` | Used by the cloud backend that takes one (`aws-iam`); ignored by the others. |
-| `auto_rotation.backends[].allowed_refs` | Prefix allowlist of the references the backend may rotate. **Required**: a backend without it is refused at start (`refusing to register (fail-closed; set allowed_refs)`). An entry matches a reference that equals it or continues it after a non-alphanumeric boundary, so `myapp` admits `myapp-1` but not `myapp2`; end an entry with a delimiter such as `app_` to make the boundary explicit. |
+| `auto_rotation.backends[].allowed_refs` | Prefix allowlist of the references the backend may rotate. **Required**: a backend without it is not registered (a warning `refusing to register (fail-closed; set allowed_refs)` is logged and the server still starts; binding a secret to that backend is refused and its rotations fail with `unknown rotation backend`). An entry matches a reference that equals it or continues it after a non-alphanumeric boundary, so `myapp` admits `myapp-1` but not `myapp2`; end an entry with a delimiter such as `app_` to make the boundary explicit. |
 
 ## rotation_reminders
 
