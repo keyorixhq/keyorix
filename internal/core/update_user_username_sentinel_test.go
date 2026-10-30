@@ -98,30 +98,27 @@ func TestLocalStorage_UsernameRenameRace_TwoWriters(t *testing.T) {
 					start := make(chan struct{})
 					var wg sync.WaitGroup
 					for i, u := range users {
-						wg.Add(1)
-						go func() {
-							defer wg.Done()
+						wg.Go(func() {
 							renamed := *u
 							renamed.Username, renamed.UsernameFolded = contested, contested
 							<-start
 							errs[i] = p.write(ctx, w, &renamed)
-						}()
+						})
 					}
 					close(start)
 					wg.Wait()
 
 					winners, losers := 0, 0
 					for i, err := range errs {
-						switch {
-						case err == nil:
+						if err == nil {
 							winners++
-						default:
-							losers++
-							assert.ErrorIs(t, err, storage.ErrDuplicateUsername, "round %d writer %d: %v", round, i, err)
-							var got models.User
-							require.NoError(t, w.db.First(&got, users[i].ID).Error)
-							assert.Equal(t, users[i].UsernameFolded, got.UsernameFolded, "the loser keeps its old name")
+							continue
 						}
+						losers++
+						assert.ErrorIs(t, err, storage.ErrDuplicateUsername, "round %d writer %d: %v", round, i, err)
+						var got models.User
+						require.NoError(t, w.db.First(&got, users[i].ID).Error)
+						assert.Equal(t, users[i].UsernameFolded, got.UsernameFolded, "the loser keeps its old name")
 					}
 					assert.Equal(t, 1, winners, "round %d: exactly one rename wins", round)
 					assert.Equal(t, 1, losers, "round %d: the other is refused", round)
