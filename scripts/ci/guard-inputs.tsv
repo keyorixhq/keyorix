@@ -108,6 +108,7 @@ cli/internal/regularfile/guard_test.go	!operator/**	walks the cli module only
 internal/config/audit_durability_reachability_test.go	!operator/**,!**/*.yaml	skips cli/ and operator/; reads .go only
 internal/config/insecure_settings_messages_guard_test.go	!operator/**	walks internal/, server/, cli/
 internal/config/keyless_mode_reachability_test.go	!operator/**	skips cli/ and operator/
+internal/config/live_secret_lookup_guard_test.go	operator/**/*.go	walks the repository root for non-test .go files (operator/ included; skips web/ and internal/config, internal/secretenv)
 internal/core/guards/actor_kind_literal_completeness_test.go	!operator/**	walks internal/core and server/
 internal/core/guards/csv_writer_completeness_test.go	!operator/**	skips operator/
 internal/core/guards/dynamic_secret_column_scoped_guard_test.go	!operator/**	walks internal/core, internal/storage/store, server/
