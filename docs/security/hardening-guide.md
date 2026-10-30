@@ -36,11 +36,12 @@ Both origins count toward the exit code. Two findings under the
   `break_glass.enabled` is set, because turning the feature off does not review
   what was activated. *Remediation:* have a second administrator review each
   activation.
-- **Independent review impossible.** The install has exactly one administrator,
-  so every activation is reviewed by the person who activated it. It is
-  reported even when every activation has been reviewed, because a clean
-  record from a single administrator carries no independent assurance. Skipped
-  while `break_glass.enabled` is false, since nothing can then be activated.
+- **Independent review impossible.** The install has exactly one administrator.
+  Self-review is refused, so that administrator cannot have their own
+  activations reviewed, and no second administrator exists to provide
+  independent review. It is reported even when every activation has been
+  reviewed. Skipped while `break_glass.enabled` is false, since nothing can
+  then be activated.
   *Remediation:* add a second administrator.
 
 If the activation query fails, the report says the check was **not evaluated**

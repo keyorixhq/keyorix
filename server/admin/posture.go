@@ -131,7 +131,7 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 		return nil
 	})
 	if dbErr != nil {
-		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the admin-MFA check and the enable_file_permission_check grace-period check were NOT evaluated: %v", dbErr))
+		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the require-MFA, SSO-only, admin-MFA and break-glass review checks and the enable_file_permission_check grace-period check were NOT evaluated: %v", dbErr))
 	}
 	collectInsecureSettingsPosture(cfg, explicit, report)
 	collectStartupValidationStatePosture(cfg, fileGraceKnown, fileEnforcedSince, report)
@@ -711,11 +711,12 @@ func requireMFAGraceWindow(ctx context.Context, store corestorage.Storage) (stri
 //     set: switching the feature off does not review what was activated while
 //     it was on.
 //  2. "independent review impossible" when the install has exactly ONE
-//     admin-tier holder. A SEPARATE finding, not a detail of the first: with a
-//     single admin every activation is reviewed by the person who activated it,
-//     so a clean review record carries no independent assurance at all. It
-//     fires even when every activation HAS been reviewed -- otherwise the install
-//     with the weakest possible review process is the one that looks compliant.
+//     admin-tier holder. A SEPARATE finding, not a detail of the first: core
+//     refuses self-review (ErrBreakGlassSelfReview), so the only administrator
+//     cannot have their own activations reviewed, and no second administrator
+//     exists to provide independent review. It fires even when every
+//     activation HAS been reviewed -- otherwise the install with the weakest
+//     possible review process is the one that looks compliant.
 //     Like collectTLSPosture's skip of a disabled listener, it is skipped when
 //     break_glass.enabled is false: nothing can be activated, so there is
 //     nothing to review and a default single-admin install is not flagged for a
@@ -732,9 +733,13 @@ func collectBreakGlassReviewPosture(ctx context.Context, cfg *config.Config, cor
 	} else if len(unreviewed) > 0 {
 		items := make([]string, 0, len(unreviewed))
 		for _, a := range unreviewed {
-			items = append(items, fmt.Sprintf("#%d (project %d, activated %s)", a.ID, a.ProjectID, a.CreatedAt.UTC().Format(time.RFC3339)))
+			degraded := ""
+			if a.Degraded {
+				degraded = ", degraded"
+			}
+			items = append(items, fmt.Sprintf("#%d (project %d, activated %s%s)", a.ID, a.ProjectID, a.CreatedAt.UTC().Format(time.RFC3339), degraded))
 		}
-		report.deviate("break-glass-review", fmt.Sprintf("%d break-glass activation(s) unreviewed past the %s review window (break_glass.review_window): %s. A second administrator must review each",
+		report.deviate("break-glass-review", fmt.Sprintf("%d break-glass activation(s) unreviewed past the %s review window (break_glass.review_window) or degraded (review due at once): %s. A second administrator must review each",
 			len(unreviewed), window, strings.Join(items, ", ")))
 	}
 
@@ -747,7 +752,7 @@ func collectBreakGlassReviewPosture(ctx context.Context, cfg *config.Config, cor
 		return
 	}
 	if len(admins) == 1 {
-		report.deviate("break-glass-review", fmt.Sprintf("independent review impossible: the install has exactly one administrator (%s), so every break-glass activation is reviewed by the person who activated it, and a clean review record carries no independent assurance. Add a second administrator", admins[0].Username))
+		report.deviate("break-glass-review", fmt.Sprintf("independent review impossible: the install has exactly one administrator (%s), who cannot have their own break-glass activations reviewed (self-review is refused), and no second administrator exists to provide independent review. Add a second administrator", admins[0].Username))
 	}
 }
 

@@ -150,6 +150,38 @@ func TestCollectBreakGlassReviewPosture_InsideWindowAndReviewedAreClean(t *testi
 	})
 }
 
+// A degraded activation is listed whatever its age (the storage query does
+// so), so one inside the window is a finding, tagged degraded, and the line
+// does not call it merely "past the review window".
+func TestCollectBreakGlassReviewPosture_DegradedInsideWindowIsTagged(t *testing.T) {
+	breakGlassPostureBackends(t, func(t *testing.T, cfg *config.Config) {
+		err := withUsableStorage(cfg, func(store corestorage.Storage) error {
+			ctx := context.Background()
+			a1 := seedAdmin(ctx, t, store, "alice")
+			seedAdmin(ctx, t, store, "bob")
+
+			got, err := store.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+				ProjectID: 7, UserID: a1.ID, RoleName: "project_developer",
+				Justification: "SECRET-JUSTIFICATION-MUST-NOT-APPEAR", State: "expired",
+				CreatedAt: time.Now().Add(-time.Hour), Degraded: true,
+			})
+			require.NoError(t, err)
+
+			report := &postureReport{}
+			collectBreakGlassReviewPosture(ctx, cfg, core.NewKeyorixCore(store), report)
+			findings := breakGlassFindings(report)
+			require.Len(t, findings, 1, "a degraded activation inside the window is a finding: %+v", report.deviations)
+			d := findings[0].detail
+			assert.Contains(t, d, "review window (break_glass.review_window) or degraded")
+			assert.Contains(t, d, fmt.Sprintf("#%d (project 7, activated ", got.ID))
+			assert.Contains(t, d, ", degraded)")
+			assert.NotContains(t, d, "SECRET-JUSTIFICATION")
+			return nil
+		})
+		require.NoError(t, err)
+	})
+}
+
 // One admin fires "independent review impossible" with no activations at all,
 // and still when every activation has been reviewed; two admins do not.
 func TestCollectBreakGlassReviewPosture_IndependentReviewImpossible(t *testing.T) {
@@ -170,6 +202,10 @@ func TestCollectBreakGlassReviewPosture_IndependentReviewImpossible(t *testing.T
 			require.Len(t, findings, 1, "got %+v", report.deviations)
 			assert.Contains(t, findings[0].detail, "independent review impossible")
 			assert.Contains(t, findings[0].detail, "alice")
+			// Core refuses self-review (ErrBreakGlassSelfReview): the finding
+			// must say so, never claim activations are self-reviewed.
+			assert.Contains(t, findings[0].detail, "self-review is refused")
+			assert.NotContains(t, findings[0].detail, "reviewed by the person who activated it")
 
 			// Every activation reviewed: the finding stays.
 			seedActivation(ctx, t, store, a1.ID, 9, 100*time.Hour, true)
@@ -242,6 +278,36 @@ func TestCollectBreakGlassReviewPosture_QueryErrorIsADeviation(t *testing.T) {
 		assert.Contains(t, findings[0].detail, "NOT evaluated")
 		assert.Contains(t, findings[0].detail, "connection refused")
 		assert.Contains(t, findings[1].detail, "independent review impossible")
+		return nil
+	}))
+}
+
+// ListGlobalAdminHolders failing (the global role-assignment read) is a
+// "NOT evaluated" deviation, never read as "not exactly one admin".
+func TestCollectBreakGlassReviewPosture_AdminListErrorIsADeviation(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.BreakGlass.Enabled = true
+	cfg.Storage.Type = "local"
+	cfg.Storage.Database.Path = filepath.Join(t.TempDir(), "posture.db")
+	require.NoError(t, i18n.InitializeForTesting())
+
+	require.NoError(t, withUsableStorage(cfg, func(store corestorage.Storage) error {
+		ctx := context.Background()
+		seedAdmin(ctx, t, store, "alice")
+		failing := storagetest.Hooked(store, &storagetest.StoreHooks{
+			ListProjectRoleAssignments: func(corestorage.Storage, context.Context, uint) ([]corestorage.RoleAssignment, error) {
+				return nil, errors.New("connection refused")
+			},
+		})
+
+		report := &postureReport{}
+		collectBreakGlassReviewPosture(ctx, cfg, core.NewKeyorixCore(failing), report)
+		findings := breakGlassFindings(report)
+		require.Len(t, findings, 1, "a failing admin list must not read as a clean report: %+v", report.deviations)
+		assert.Contains(t, findings[0].detail, "could not list administrators")
+		assert.Contains(t, findings[0].detail, "NOT evaluated")
+		assert.Contains(t, findings[0].detail, "connection refused")
+		assert.NotContains(t, findings[0].detail, "independent review impossible")
 		return nil
 	}))
 }
