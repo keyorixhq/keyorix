@@ -227,8 +227,9 @@ func hasMarker(body, marker, id, name string) bool {
 
 // indexFold returns the byte offset in s of the first case-insensitive
 // occurrence of sub, or -1. The offset is into s itself: strings.ToLower can
-// change a rune's byte length (U+0130 is 2 bytes, 3 lowered), so an offset
-// found in a lowered copy must never be used to slice the original.
+// change a rune's byte length (U+0130 is 2 bytes, 1 lowered; U+023A is 2
+// bytes, 3 lowered: both directions occur), so an offset found in a lowered
+// copy must never be used to slice the original.
 func indexFold(s, sub string) int {
 	for i := range s {
 		if hasPrefixFold(s[i:], sub) {
