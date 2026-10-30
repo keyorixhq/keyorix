@@ -38,6 +38,28 @@ func approverPrincipal(approverID, approverMachineID uint) (actorType string, pr
 	return ActorTypeUser, approverID
 }
 
+// bulkAccessRequestNotFound is the per-item answer for a request ID that does not
+// exist AND for one in a project where the approver lacks roles.assign
+// (AUTHZ-ORACLE-1): the bulk routes are gated on roles.assign anywhere, so a
+// distinct "permission denied" told a project-scoped approver which IDs exist in
+// other projects.
+const bulkAccessRequestNotFound = "access request not found"
+
+// bulkAccessRequestRefusal checks the approver's roles.assign at req's own project
+// and returns the per-item error to report, or "" when the approver may act on it.
+// A failure to resolve the approver's authority is reported as such (fail closed,
+// never read as "allowed" or as a not-found).
+func (k *KeyorixCore) bulkAccessRequestRefusal(ctx context.Context, actorType string, principalID uint, req *models.AccessRequest) string {
+	allowed, err := k.AuthorizePrincipal(ctx, actorType, principalID, permRolesAssign, Scope{ProjectID: req.ProjectID})
+	switch {
+	case err != nil:
+		return "failed to verify authorization"
+	case !allowed:
+		return bulkAccessRequestNotFound
+	}
+	return ""
+}
+
 // ── Result types ─────────────────────────────────────────────────────────────
 
 // BulkApproveResult is the outcome of a bulk-approve call.
@@ -110,7 +132,7 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 		if !ok {
 			result.Failed = append(result.Failed, BulkAccessError{
 				RequestID: id,
-				Error:     "access request not found",
+				Error:     bulkAccessRequestNotFound,
 			})
 			continue
 		}
@@ -125,12 +147,8 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 		// already actor-aware (RequireScopedPermission → AuthorizePrincipal), so a
 		// machine identity holding roles.assign reaches this handler; resolving its
 		// authority as if it were user 0 denied every item unconditionally.
-		if allowed, authErr := k.AuthorizePrincipal(ctx, actorType, principalID, permRolesAssign,
-			Scope{ProjectID: req.ProjectID}); authErr != nil || !allowed {
-			result.Failed = append(result.Failed, BulkAccessError{
-				RequestID: id,
-				Error:     "permission denied",
-			})
+		if refusal := k.bulkAccessRequestRefusal(ctx, actorType, principalID, req); refusal != "" {
+			result.Failed = append(result.Failed, BulkAccessError{RequestID: id, Error: refusal})
 			continue
 		}
 		// Delegate to existing single-request logic (carries all validation).
@@ -198,16 +216,12 @@ func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs [
 		if !ok {
 			result.Failed = append(result.Failed, BulkAccessError{
 				RequestID: id,
-				Error:     "access request not found",
+				Error:     bulkAccessRequestNotFound,
 			})
 			continue
 		}
-		if allowed, authErr := k.AuthorizePrincipal(ctx, actorType, principalID, permRolesAssign,
-			Scope{ProjectID: req.ProjectID}); authErr != nil || !allowed {
-			result.Failed = append(result.Failed, BulkAccessError{
-				RequestID: id,
-				Error:     "permission denied",
-			})
+		if refusal := k.bulkAccessRequestRefusal(ctx, actorType, principalID, req); refusal != "" {
+			result.Failed = append(result.Failed, BulkAccessError{RequestID: id, Error: refusal})
 			continue
 		}
 		_, rejectErr := k.RejectAccessRequest(ctx, req.ProjectID, id, approverID, approverMachineID, reason)

@@ -289,6 +289,11 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 		if errors.Is(err, storage.ErrDuplicateEmail) {
 			return nil, fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
 		}
+		// The same race on the username (GetUserByUsername pre-check vs the partial
+		// unique index on users.username_folded).
+		if errors.Is(err, storage.ErrDuplicateUsername) {
+			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
@@ -416,6 +421,9 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 			// #117: same race/translation as CreateUser above — see its comment.
 			if errors.Is(err, storage.ErrDuplicateEmail) {
 				return fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
+			}
+			if errors.Is(err, storage.ErrDuplicateUsername) {
+				return fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
 			}
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}

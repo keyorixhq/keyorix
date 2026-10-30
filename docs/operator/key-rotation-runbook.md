@@ -184,6 +184,16 @@ passphrase with the current binary, then rotate forward again with it.
 
 A seal (an accepted audit loss, `admin audit accept-loss`) is carried over like the other signed
 artifacts: the chain still reads `sealed` after the rotation, online and with the new key offline.
+If the seal record cannot be trusted when the transition completes (replaced, garbled or forged
+after the rotation was prepared, or an acceptance left unfinished), completion stops with
+`the audit seal record cannot be trusted ... not completed` and signs nothing: no high-water
+mark or checkpoint is re-signed against a seal list it cannot authenticate. The key change itself
+stands. Treat the seal record as tampered with
+([audit-chain-break-runbook.md](audit-chain-break-runbook.md) §7 and §8) and investigate. The
+server retries the completion at every start and finishes it once the seals authenticate again.
+Finish an unfinished acceptance (re-run `admin audit accept-loss`) **before** a key change: on top
+of a key change its resume is refused, because the checkpoint it would replace is still signed
+under the previous key (audit-chain-break-runbook.md §8, #3814).
 
 ## 6. Rollback
 

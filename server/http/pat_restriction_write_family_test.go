@@ -300,7 +300,10 @@ func allowedResolveSecretAccessRequest(t *testing.T, w *patGuardWorld) {
 
 		for _, persona := range patGuardRestrictedPersonas {
 			code, resp := w.do(t, http.MethodPut, w.tokens[o.prefix+persona], path, body)
-			assert.Equal(t, http.StatusForbidden, code, "%s: %s", persona, resp)
+			// AUTHZ-ORACLE-1: core refuses a caller without authority at the
+			// request's project with the missing-ID answer (404), not a 403 that
+			// would confirm the request exists.
+			assert.Equal(t, http.StatusNotFound, code, "%s: %s", persona, resp)
 			assert.NotContains(t, resp, core.ErrRestrictedPATSelfServiceWrite.Error(), "%s: refused by core, not by the table", persona)
 			got, gerr := w.core.GetSecretAccessRequest(ctx, req.ID, owner)
 			require.NoError(t, gerr)

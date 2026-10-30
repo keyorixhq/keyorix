@@ -108,6 +108,7 @@ type StoreHooks struct {
 	ListGroupMembers                          func(next storage.Storage, ctx context.Context, groupID uint) ([]*models.User, error)
 	ListGroups                                func(next storage.Storage, ctx context.Context) ([]*models.Group, error)
 	ListPendingAuditEvents                    func(next storage.Storage, ctx context.Context, afterID uint, limit int) ([]*models.PendingAuditEvent, error)
+	ListPersonalAccessTokensByUser            func(next storage.Storage, ctx context.Context, userID uint) ([]*models.PersonalAccessToken, error)
 	ListProjectMembers                        func(next storage.Storage, ctx context.Context, projectID uint) ([]storage.ProjectMember, error)
 	ListProjectRoleAssignments                func(next storage.Storage, ctx context.Context, projectID uint) ([]storage.RoleAssignment, error)
 	ListProjects                              func(next storage.Storage, ctx context.Context) ([]*models.Project, error)
@@ -140,6 +141,7 @@ type StoreHooks struct {
 	RemoveRoleFromGroup                       func(next storage.Storage, ctx context.Context, groupID uint, roleID uint, scope storage.Scope) error
 	RemoveUserFromGroup                       func(next storage.Storage, ctx context.Context, userID uint, groupID uint, projectID uint) error
 	ReserveLoginAttempt                       func(next storage.Storage, ctx context.Context, ip string, at time.Time, key string) (uint, error)
+	RevokeAllPersonalAccessTokensForUser      func(next storage.Storage, ctx context.Context, userID uint) ([]string, error)
 	ResolveMachinePermissionAt                func(next storage.Storage, ctx context.Context, machineID uint, scope storage.Scope, permission string) (*storage.PrincipalPermission, error)
 	ResolveUserPermissionAt                   func(next storage.Storage, ctx context.Context, userID uint, scope storage.Scope, permission string) (*storage.PrincipalPermission, error)
 	RestoreGroup                              func(next storage.Storage, ctx context.Context, id uint) error

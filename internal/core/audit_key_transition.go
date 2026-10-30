@@ -492,8 +492,16 @@ func (c *KeyorixCore) CompleteAuditKeyTransition(ctx context.Context) (bool, err
 			return fmt.Errorf("key transition #%d (%s): %w", t.Seq, aktStepSeals, err)
 		}
 		done = done || sealed
-		if _, err := c.loadAuditSeals(ctx); err != nil {
+		seals, err := c.loadAuditSeals(ctx)
+		if err != nil {
 			return err
+		}
+		// Nothing below is signed against a seal list that cannot be trusted
+		// (replaced, garbled or left pending after prepare): the mark and the
+		// checkpoint would be bound to N < 0. Stop with the transition still
+		// open; it completes at the next start once the seals are repaired.
+		if seals.problem != "" {
+			return fmt.Errorf("key transition #%d (%s): %w: %s; not completed", t.Seq, aktStepSeals, ErrAuditSealsUntrusted, seals.problem)
 		}
 		if err := c.aktHook(aktStepSeals); err != nil {
 			return err
@@ -593,7 +601,12 @@ func (c *KeyorixCore) resignCarriedHighWater(ctx context.Context, t *auditKeyTra
 		return false, nil
 	}
 	hw.KeyVersion = c.auditCkptKeyVersion
-	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, auditHighWaterValueSealed(hw, c.sealBinding(), c.signCheckpoint(hw))); err != nil {
+	bind := c.sealBinding()
+	sig, err := c.signCheckpointUnder(hw, bind)
+	if err != nil {
+		return false, err
+	}
+	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, auditHighWaterValueSealed(hw, bind, sig)); err != nil {
 		return false, err
 	}
 	c.bumpWatermark(hw.ChainedEvents)

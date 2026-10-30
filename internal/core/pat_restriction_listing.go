@@ -24,7 +24,6 @@ package core
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -126,7 +125,7 @@ func patNotificationScope(ctx context.Context) (storage.NotificationScope, bool)
 // which the router gates on roles.assign.
 func (c *KeyorixCore) requireAccessRequestAuthorityAt(ctx context.Context, actorID, projectID uint) error {
 	if !patRestrictionFromContext(ctx).Allows(permRolesAssign, Scope{ProjectID: projectID}) {
-		return fmt.Errorf("admin authority is required")
+		return errAdminAuthorityRequired
 	}
 	return c.requireAdminAuthorityAt(ctx, actorID, projectID)
 }
