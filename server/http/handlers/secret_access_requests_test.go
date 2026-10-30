@@ -262,7 +262,9 @@ func TestGetSecretAccessRequest_RequesterAndApproverCanSee(t *testing.T) {
 
 // ── ResolveSecretAccessRequest ───────────────────────────────────────────────
 
-func TestResolveSecretAccessRequest_ApproveByNonAdminForbidden(t *testing.T) {
+// AUTHZ-ORACLE-1: a caller without admin authority at the request's project gets
+// the missing-ID answer (404), not a 403 that would confirm the request exists.
+func TestResolveSecretAccessRequest_ApproveByNonAdminAnswersNotFound(t *testing.T) {
 	f := newSecretAccessRequestFixture(t)
 	createBody := fmt.Sprintf(`{"secret_id":%d,"reason":"need it"}`, f.secretID)
 	createReq := withUserCtxSAR(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(createBody)), f.requesterID)
@@ -274,7 +276,7 @@ func TestResolveSecretAccessRequest_ApproveByNonAdminForbidden(t *testing.T) {
 	req := withChiParam(withUserCtxSAR(httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString(`{"action":"approve"}`)), nonAdmin.ID), "requestId", "1")
 	w := httptest.NewRecorder()
 	f.handler.ResolveSecretAccessRequest(w, req)
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestResolveSecretAccessRequest_SelfApprovalForbidden(t *testing.T) {
@@ -282,6 +284,11 @@ func TestResolveSecretAccessRequest_SelfApprovalForbidden(t *testing.T) {
 	createBody := fmt.Sprintf(`{"secret_id":%d,"reason":"need it"}`, f.secretID)
 	createReq := withUserCtxSAR(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(createBody)), f.requesterID)
 	f.handler.CreateSecretAccessRequest(httptest.NewRecorder(), createReq)
+	// The requester must hold admin authority at the project to get past the
+	// authority check (AUTHZ-ORACLE-1) and reach the maker != checker rule.
+	adminRole, err := f.st.GetRoleByName(context.Background(), "admin")
+	require.NoError(t, err)
+	require.NoError(t, f.st.AssignRole(context.Background(), f.requesterID, adminRole.ID, storage.Scope{ProjectID: f.projectID}))
 
 	req := withChiParam(withUserCtxSAR(httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString(`{"action":"approve"}`)), f.requesterID), "requestId", "1")
 	w := httptest.NewRecorder()

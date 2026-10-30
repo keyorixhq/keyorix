@@ -405,7 +405,8 @@ func mapUserError(err error) error {
 	case errors.Is(err, corestorage.ErrUserNotFound), errors.Is(err, corestorage.ErrRoleNotFound),
 		errors.Is(err, corestorage.ErrGroupNotFound), errors.Is(err, corestorage.ErrProjectNotFound):
 		return status.Error(codes.NotFound, "user not found")
-	case errors.Is(err, core.ErrUserAlreadyExists), errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail):
+	case errors.Is(err, core.ErrUserAlreadyExists), errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail),
+		errors.Is(err, corestorage.ErrDuplicateUsername):
 		return status.Error(codes.AlreadyExists, "a user with that username or email already exists")
 	// Not yet typed: core's roles.assign ceiling refusals (internal/core/authz.go,
 	// three fmt.Errorf sites) carry no sentinel. Match their fixed leading phrase

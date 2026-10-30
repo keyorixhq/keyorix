@@ -2,14 +2,9 @@
 # Read by TestEveryConfigKeyIsDocumented (config_leaves_documented_test.go).
 # This list only shrinks. Never add a line: document the key in docs/CONFIGURATION.md.
 # A line whose key is documented now, or is no longer a key, fails the test: delete it.
-auto_rotation.backends.allowed_refs
-auto_rotation.backends.name
-auto_rotation.backends.region
-auto_rotation.backends.type
-auto_rotation.enabled
-auto_rotation.schedule
-client.auth.api_key
-client.auth.type
-client.endpoint
-client.timeout
-connect.connectors.environment
+# A key that stays is one an operator never sets. Its line is `<key> <reason>`; a line
+# without a reason fails the test.
+client.auth.api_key legacy pre-ADR-108 CLI connection setting: the server ignores it (it only feeds the secrets-must-differ check in ConfiguredSecretValues); the current CLI keeps its own credential store
+client.auth.type legacy pre-ADR-108 CLI connection setting: nothing in the server or the current CLI reads it
+client.endpoint legacy pre-ADR-108 CLI connection setting: the server ignores it; `keyorix login` reads the old CLI's cli.yaml through its own struct (cli/internal/migrate) to offer the URL again
+client.timeout legacy pre-ADR-108 CLI connection setting: nothing in the server or the current CLI reads it

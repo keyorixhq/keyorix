@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 const (
@@ -171,7 +172,7 @@ type sealedGap struct {
 // auditSealBinding is what a checkpoint written after a seal is bound to: the
 // number of seals and the newest record's digest. The zero value (no seal)
 // keeps the v1 canonical form; N < 0 is a seal list that cannot be trusted,
-// against which nothing authenticates.
+// against which nothing is signed or authenticates (checkpointMACUnder).
 type auditSealBinding struct {
 	N      int
 	Digest string
@@ -194,6 +195,42 @@ func checkpointCanonicalSealed(cpEvents int64, headID uint, headHash, keyVersion
 		return fmt.Sprintf("v1\x00%d\x00%d\x00%s\x00%s", cpEvents, headID, headHash, keyVersion)
 	}
 	return fmt.Sprintf("v2\x00%d\x00%s\x00%d\x00%d\x00%s\x00%s", b.N, b.Digest, cpEvents, headID, headHash, keyVersion)
+}
+
+// ErrAuditSealsUntrusted: the seal record cannot be trusted (binding N < 0),
+// so no checkpoint or high-water canonical form is signed against it and a key
+// transition is not completed until it is repaired.
+var ErrAuditSealsUntrusted = errors.New("the audit seal record cannot be trusted")
+
+// checkpointMACUnder is the checkpoint-key signature of cp under seal binding
+// b. ok is false for an untrusted binding (N < 0): nothing is signed or
+// authenticated against a seal list that cannot be trusted, so a signature
+// over the "v2\x00-1\x00..." form never exists to verify the next time the
+// binding is untrusted.
+func (c *KeyorixCore) checkpointMACUnder(cp *models.AuditCheckpoint, b auditSealBinding) (mac string, ok bool) {
+	if b.N < 0 {
+		return "", false
+	}
+	h := hmac.New(sha256.New, c.auditCkptKey)
+	h.Write([]byte(checkpointCanonicalSealed(cp.ChainedEvents, cp.HeadID, cp.HeadHash, cp.KeyVersion, b)))
+	return hex.EncodeToString(h.Sum(nil)), true
+}
+
+// checkpointSigMatchesUnder reports whether sig is cp's signature under seal
+// binding b; always false under an untrusted binding.
+func (c *KeyorixCore) checkpointSigMatchesUnder(cp *models.AuditCheckpoint, b auditSealBinding, sig string) bool {
+	mac, ok := c.checkpointMACUnder(cp, b)
+	return ok && hmac.Equal([]byte(mac), []byte(sig))
+}
+
+// signCheckpointUnder signs cp under seal binding b (the current key), and
+// refuses an untrusted binding with ErrAuditSealsUntrusted.
+func (c *KeyorixCore) signCheckpointUnder(cp *models.AuditCheckpoint, b auditSealBinding) (string, error) {
+	mac, ok := c.checkpointMACUnder(cp, b)
+	if !ok {
+		return "", fmt.Errorf("%w: refusing to sign a checkpoint or high-water mark (%d events through #%d) against it", ErrAuditSealsUntrusted, cp.ChainedEvents, cp.HeadID)
+	}
+	return mac, nil
 }
 
 func auditSealMAC(key []byte, kid string, payload []byte) string {

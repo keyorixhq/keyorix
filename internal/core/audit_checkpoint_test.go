@@ -707,9 +707,9 @@ func TestAuditCheckpoint_SignDeterministicAndBinding(t *testing.T) {
 	c := &KeyorixCore{}
 	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x1}, 32), "v1")
 	cp := &models.AuditCheckpoint{ChainedEvents: 5, HeadID: 5, HeadHash: "abc", KeyVersion: "v1"}
-	sig := c.signCheckpoint(cp)
+	sig := mustSignCheckpoint(t, c, cp)
 	require.NotEmpty(t, sig)
-	assert.Equal(t, sig, c.signCheckpoint(cp), "deterministic for fixed inputs")
+	assert.Equal(t, sig, mustSignCheckpoint(t, c, cp), "deterministic for fixed inputs")
 
 	cp.Signature = sig
 	assert.True(t, c.checkpointSignatureValid(cp))
