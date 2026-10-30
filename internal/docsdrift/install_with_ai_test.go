@@ -43,11 +43,12 @@ import (
 //   - prompt: the text block under "## The prompt" still states the rules.
 //
 // A script given to `sh|bash|zsh|dash -c` (also through docker compose exec) is
-// read like the rest of the line (iwaShellCScript).
+// read like the rest of the line (iwaShellCScript), and a backtick span is split
+// like `$(` (`X=`cat f``). Every fence is read as shell whatever its info string
+// says, except ```text (the prompt block).
 //
-// What it does not check: prose that is not in a code span, fences whose info
-// string is not a shell (the prompt is ```text) or that use ~~~ instead of
-// backticks, the keyorix CLI credential file (~/.config/keyorix/credentials.json,
+// What it does not check: prose that is not in a code span, fences that use ~~~
+// instead of backticks, the keyorix CLI credential file (~/.config/keyorix/credentials.json,
 // not in iwaSecretPath), whether a reader not in iwaReaders can read a file, and
 // whether the steps work (the transcript test in the page's maintainer notes,
 // pending the e2e VM).
@@ -120,7 +121,9 @@ func iwaParse(doc string) (lines []iwaLine, prompt string) {
 			}
 			info = strings.TrimSpace(info)
 			inFence = true
-			shellFence = slices.Contains([]string{"", "bash", "sh", "shell", "console"}, info)
+			// Fail closed: any fence but ```text (the prompt) is read as shell, so a
+			// zsh, Bash or shell-session info string cannot hide a read.
+			shellFence = !strings.EqualFold(info, "text")
 			inPrompt = section == "The prompt" && info == "text"
 			continue
 		}
@@ -165,6 +168,7 @@ func iwaWords(line string) []string {
 		cur.Reset()
 		has = false
 	}
+	inTick := false
 	for i := 0; i < len(line); i++ {
 		c := line[i]
 		switch {
@@ -173,14 +177,24 @@ func iwaWords(line string) []string {
 			if j < 0 {
 				j = len(line) - i - 1
 			}
-			if quoted := line[i+1 : i+1+j]; (c == '"' && strings.Contains(quoted, "$(")) || (!has && iwaShellCScript(words)) {
-				flush() // "$(cat x)" and `sh -c '...'` run a command: split it like unquoted text
+			if quoted := line[i+1 : i+1+j]; (c == '"' && (strings.Contains(quoted, "$(") || strings.Contains(quoted, "`"))) || (!has && iwaShellCScript(words)) {
+				flush() // "$(cat x)", "`cat x`" and `sh -c '...'` run a command: split it like unquoted text
 				words = append(words, iwaWords(quoted)...)
 			} else {
 				cur.WriteString(quoted)
 				has = true
 			}
 			i += j + 1
+		case c == '`':
+			// `cmd` is command substitution like $(cmd): the span opens and closes a
+			// command, so X=`cat f` reads f as the command word `cat`.
+			flush()
+			if inTick {
+				words = append(words, ")")
+			} else {
+				words = append(words, "(")
+			}
+			inTick = !inTick
 		case c == ' ' || c == '\t':
 			flush()
 		case c == '#' && !has:
@@ -396,6 +410,9 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		"docker compose exec -T backend cat /run/secrets/master_password",
 		"export X=\"$(base64 < keys/dek.key)\"",
 		"export X=$(cat secrets/bootstrap_token)",
+		// backtick command substitution, the sibling of $( )
+		"X=`cat secrets/master_password`",
+		"export X=\"`cat secrets/bootstrap_token`\"",
 		"sha256sum certs/server.key",
 		"KEYORIX_ADMIN_PASSWORD=hunter2 ./bin/keyorix system init",
 		"./bin/keyorix mfa enroll",
@@ -431,6 +448,17 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		if (len(f) != 0) != want {
 			t.Errorf("human line %q: findings %+v, want reported=%v", line, f, want)
 		}
+	}
+	// A fence is read as shell whatever its info string says, except ```text (the
+	// prompt): a zsh, Bash or shell-session fence must not hide a read.
+	for _, info := range []string{"zsh", "Bash", "shell-session", "BASH"} {
+		doc := good + "\n```" + info + "\ncat secrets/master_password\n```\n"
+		if f := iwaFind(iwaParse(doc)); len(f) == 0 {
+			t.Errorf("read planted in a ```%s fence not reported", info)
+		}
+	}
+	if f := iwaFind(iwaParse(good + "\n```text\ncat secrets/master_password\n```\n")); len(f) != 0 {
+		t.Errorf("a ```text fence is not shell and must not be scanned: %+v", f)
 	}
 	// The posture proof must stay last, and the prompt must keep its rules.
 	noProof := strings.Replace(good, "docker compose run --rm backend ./keyorix-server admin validate --posture\n",
