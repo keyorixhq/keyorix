@@ -21,7 +21,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // scopeStaleAfter is how long a scope file can go without reconciliation
@@ -217,49 +216,25 @@ func anyFileMatchesSecurityCategory(repoRoot string, touched []member) bool {
 }
 
 // hasMarker reports whether the FIRST case-insensitive occurrence of marker
-// anywhere in body (it need not start a line), read from the marker to the end
-// of that line, also mentions id or name (so a marker for a DIFFERENT family
-// doesn't accidentally suppress this one).
+// in body (anywhere in a line, not only at its start) has, on the rest of that
+// same line, the family's id or interface name. Only that first occurrence is
+// looked at: a later marker line that names this family is ignored when an
+// earlier one names another (see README.md, "Markers"). The family-name
+// requirement stops a marker for a DIFFERENT family suppressing this one.
 func hasMarker(body, marker, id, name string) bool {
 	ok, _ := dismissalReason(body, marker, id, name)
 	return ok
 }
 
-// indexFold returns the byte offset in s of the first case-insensitive
-// occurrence of sub, or -1. The offset is into s itself: strings.ToLower can
-// change a rune's byte length (U+0130 is 2 bytes, 1 lowered; U+023A is 2
-// bytes, 3 lowered: both directions occur), so an offset found in a lowered
-// copy must never be used to slice the original.
-func indexFold(s, sub string) int {
-	for i := range s {
-		if hasPrefixFold(s[i:], sub) {
-			return i
-		}
-	}
-	return -1
-}
-
-// hasPrefixFold reports whether s starts with prefix, comparing rune by rune
-// with simple case folding (so the two sides may differ in byte length).
-func hasPrefixFold(s, prefix string) bool {
-	for _, p := range prefix {
-		if s == "" {
-			return false
-		}
-		r, size := utf8.DecodeRuneInString(s)
-		if r != p && !strings.EqualFold(string(r), string(p)) {
-			return false
-		}
-		s = s[size:]
-	}
-	return true
-}
-
 func dismissalReason(body, marker, id, name string) (bool, string) {
-	idx := indexFold(body, marker)
-	if idx < 0 {
+	// Search the original body: lower-casing it first can change byte offsets
+	// (a non-ASCII letter whose lower case has another UTF-8 length), which
+	// would shift idx into the middle of the wrong line.
+	loc := regexp.MustCompile("(?i)" + regexp.QuoteMeta(marker)).FindStringIndex(body)
+	if loc == nil {
 		return false, ""
 	}
+	idx := loc[0]
 	// Take the rest of that line as the reason/scope; require it also names
 	// this family (by id or interface name) so one marker can't blanket-
 	// dismiss every family in a PR that touches several.
@@ -272,7 +247,7 @@ func dismissalReason(body, marker, id, name string) (bool, string) {
 	if !strings.Contains(lowerLine, strings.ToLower(id)) && !strings.Contains(lowerLine, strings.ToLower(name)) {
 		return false, ""
 	}
-	reason := strings.TrimSpace(strings.TrimPrefix(line, marker))
+	reason := strings.TrimSpace(line[loc[1]-idx:])
 	reason = strings.TrimPrefix(strings.TrimSpace(reason), "—")
 	reason = strings.TrimPrefix(strings.TrimSpace(reason), "-")
 	return true, strings.TrimSpace(reason)
