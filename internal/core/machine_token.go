@@ -11,12 +11,12 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/rules"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -533,22 +533,20 @@ func credentialRowGone(err error) bool {
 }
 
 // machineTokenCIDRCorrupted is returned by machineRestrictionFrom when the stored
-// column is non-empty but fails JSON parsing. Returning nil would silently widen
-// the token to global network access; the sentinel contains no valid CIDR so
-// IPInCIDRs blocks all source IPs until the token is re-issued.
-var machineTokenCIDRCorrupted = []string{"<corrupted>"}
+// column is non-empty but names no CIDR (unparseable JSON, `null`, `[]`, a blank
+// entry). Returning nil would silently widen the token to global network access; the
+// sentinel contains no valid CIDR so IPInCIDRs blocks all source IPs until the token
+// is re-issued. It is the PAT path's sentinel (rules.PATCIDRCorrupted).
+var machineTokenCIDRCorrupted = rules.PATCIDRCorrupted
 
 // machineRestrictionFrom decodes the JSON AllowedCIDRs on a credential into a
-// MachineTokenRestriction. Returns nil when no CIDRs are set.
+// MachineTokenRestriction through the PAT codec (rules.DecodePATCIDRs, #3396): an
+// empty column means no restriction (nil); IssueMachineToken stores "" for that and
+// never `null` or `[]`, so a non-empty column that names no CIDR is a corrupted or
+// hand-edited row and fails closed with machineTokenCIDRCorrupted.
 func machineRestrictionFrom(cred *models.MachineIdentityCredential) *MachineTokenRestriction {
-	if cred.AllowedCIDRs == "" {
-		return nil
-	}
-	var cidrs []string
-	if err := json.Unmarshal([]byte(cred.AllowedCIDRs), &cidrs); err != nil {
-		return &MachineTokenRestriction{AllowedCIDRs: machineTokenCIDRCorrupted}
-	}
-	if len(cidrs) == 0 {
+	cidrs := rules.DecodePATCIDRs(cred.AllowedCIDRs)
+	if cidrs == nil {
 		return nil
 	}
 	return &MachineTokenRestriction{AllowedCIDRs: cidrs}
