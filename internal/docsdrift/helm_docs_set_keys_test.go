@@ -44,7 +44,7 @@ var valuesKeysWithoutDefault = map[string]string{
 }
 
 var (
-	setFlagRe = regexp.MustCompile(`--set(?:-string|-file)?[ =]+['"]?([A-Za-z_][A-Za-z0-9_.\[\]-]*)`)
+	setFlagRe  = regexp.MustCompile(`--set(?:-string|-file)?[ =]+['"]?([A-Za-z_][A-Za-z0-9_.\[\]-]*)`)
 	cliSetRe   = regexp.MustCompile(`\bkeyorix\s+(?:secret|project|env|environment)\b`)
 	readmeKeyR = regexp.MustCompile("^\\|\\s*`([A-Za-z_][A-Za-z0-9_.\\[\\]-]*)`\\s*\\|")
 	indexRe    = regexp.MustCompile(`\[[0-9]*\]`)
