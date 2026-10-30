@@ -27,12 +27,12 @@ silently removing it.
 | `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 13 | 9 | 4 |
 | `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 8 | 8 | 0 |
 | `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 13 | 10 | 3 |
-| `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 7 | 5 | 2 |
+| `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 7 | 6 | 1 |
 | `internal/solewriter` | [internal/solewriter/INVARIANTS.md](../internal/solewriter/INVARIANTS.md) | 16 | 16 | 0 |
 | `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 8 | 1 |
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 2 | 2 | 0 |
-| **Total** | | **248** | **214** | **34** |
+| **Total** | | **248** | **215** | **33** |
 
 ## Highest-priority UNGUARDED gaps
 

@@ -83,15 +83,19 @@ quotes CSV-special characters...'`). See `internal/core/INVARIANTS.md` INV-CORE-
 
 ## Anti-enumeration — holds by omission, not by a guard
 
-- **INV-WEB-06** The frontend does not currently leak a resource's existence via differential
-  rendering of "doesn't exist" vs. "exists but forbidden" — confirmed by grep: zero frontend
-  code branches on `status === 404` specifically anywhere in `web/src`; generic error handling
-  (`handleApiError`/`apiErrorMessage`) treats non-2xx uniformly except for a few explicit
-  401/403/429/5xx branches aimed at session/permission UX (none of which are per-resource
-  existence distinctions). This holds because no code path TRIES to distinguish 404 from 403
-  at all, not because of a deliberate guard. UNGUARDED (#issue: no test asserts this invariant
-  — if a future PR adds a 404-specific UI branch for some resource, nothing catches it reopening
-  an existence oracle that the backend's ADR-096 403-for-both convention was built to close).
+- **INV-WEB-06** The frontend does not leak a resource's existence via differential
+  rendering of "doesn't exist" vs. "exists but forbidden". No frontend code branches on
+  `status === 404` specifically; generic error handling (`handleApiError`/`apiErrorMessage`)
+  treats non-2xx uniformly except for explicit 401/403/429/5xx branches aimed at
+  session/permission UX (none a per-resource existence distinction). Guard:
+  `__tests__/structure/noNotFoundBranching.test.ts` parses every non-test `.ts/.tsx` file with the
+  TypeScript compiler API and fails on `=== == !== !=` comparisons with `404`/`'404'`, `case 404`,
+  `HttpStatusCode.NotFound`, and an object key `404`, against a reasoned allowlist (one entry
+  today: `OIDCFederationSection.tsx`, a feature-deployed probe, not a per-resource lookup),
+  with calibration cases red per spelling and green for 403/4xx-range; and
+  `pages/__tests__/notFoundVsForbiddenRendering.test.tsx` renders real per-resource pages and
+  asserts 403 and 404 look identical. **Not covered**: range checks that include 404, computed
+  status values, and branches on the response body's `error` string.
 
 ## Structural completeness — none found
 
