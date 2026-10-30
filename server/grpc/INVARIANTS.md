@@ -57,10 +57,12 @@ Format: `INV-GRPC-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-GRPC-05** `CreateSecretRequest`'s `reserved 11 to 20` field numbers (earmarked for
   retired `description`/`classification` fields) are never reassigned to unrelated fields —
   protobuf field numbers can never be reused once spent. Why: ADR-105 §2,
-  `server/proto/keyorix.proto:263`. UNGUARDED at the unit-test level (#issue: `buf breaking:
-  FILE` in `buf.yaml` would catch a field-number reuse against a previous commit if wired into
-  CI — verify `.github/workflows/ci.yml` actually runs it before relying on this; no test
-  asserts the `reserved` statement itself stays present).
+  `server/proto/keyorix.proto:263`. Guard: `server/grpc/proto_reserved_fields_test.go`
+  (#2521) — `TestCreateSecretRequest_HeldFieldNumbers_CompiledDescriptor` and
+  `_ProtoSource` check each of 11–20 is still reserved or used only by its earmarked field
+  (11 `description`, 12 `classification`); `TestHeldFieldViolations_Calibration` is the
+  red/green calibration. `buf breaking: FILE` (`buf.yaml`) is not run by
+  `.github/workflows/ci.yml` (no `buf` step there), so this test is the only automated check.
 - **INV-GRPC-06** ADR-105 §5's proposed ledger-and-CI-gate (three-state HTTP-capability
   classification, failing on any unclassified route) and ADR-106's generated-surface guarantee
   are explicitly **"proposed, not ratified"** / **"withdrawn"** — no such ledger or generated-
@@ -73,10 +75,12 @@ Format: `INV-GRPC-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-GRPC-07** `AuthInterceptor`/`StreamAuthInterceptor` authenticate every RPC except an
   explicit, short public-method allowlist (`grpcPublicMethods`: health check,
   `SystemService/HealthCheck`); mirrors the HTTP `BlockWhenImpersonating` guard for
-  credential-minting RPCs. Guard: `interceptors/auth.go` lines ~91-184, 466-473. UNGUARDED for
-  completeness (#issue: no test enumerates every non-public registered RPC and asserts it
-  actually runs through `AuthInterceptor` — only the narrower credential-minting blocklist
-  below is guarded that way).
+  credential-minting RPCs. Implementation: `interceptors/auth.go` lines ~91-184, 466-473.
+  Guard: `server/grpc/auth_interceptor_completeness_test.go:TestEveryNonPublicGRPCMethod_IsRejectedByAuthInterceptor`
+  (#2522) — enumerates every unary and streaming RPC from the real `NewServer`
+  (`GetServiceInfo`), invokes each over bufconn with no credential and requires the
+  interceptor's own "Missing authorization header" rejection; the public set is pinned in
+  `expectedPublicGRPCMethods`. Does not cover per-method authorization (INV-GRPC-04).
 - **INV-GRPC-08** Any gRPC RPC whose name matches the mint-a-durable-credential naming
   convention (`^(Issue|Create|Generate|Mint)\w*Token$`) is in `credentialMintingMethods` and
   therefore blocked while impersonating — derived from the naming pattern across EVERY
