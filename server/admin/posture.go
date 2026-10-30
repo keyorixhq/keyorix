@@ -692,15 +692,30 @@ func requireMFAGraceWindow(ctx context.Context, store corestorage.Storage) (stri
 	return fmt.Sprintf("ends at %s (%d day(s) left)", deadline.UTC().Format(time.RFC3339), days), nil
 }
 
-// collectBreakGlassReviewPosture is the first of the two findings Andrei decided
-// on #2461 (the second, "independent review impossible", is added in the next
-// commit): every activation older than break_glass.review_window that nobody has
-// reviewed is a "break-glass-review" deviation, listing each activation id,
-// project and activation time (never the justification or any credential). A
-// degraded activation (BREAKGLASS-OWED-1) is listed whatever its age, because
-// the storage query does so. A query that fails is a deviation of its own
-// saying the check was NOT evaluated, the way the database collector reports
-// it, never a silent pass; it does not abort the collectors after it.
+// collectBreakGlassReviewPosture is the two findings Andrei decided on #2461,
+// both under the "break-glass-review" category:
+//
+//  1. Every activation older than break_glass.review_window that nobody has
+//     reviewed is a deviation, listing each activation id, project and
+//     activation time (never the justification or any credential). A degraded
+//     activation (BREAKGLASS-OWED-1) is listed whatever its age, because the
+//     storage query does so. This runs whether or not break_glass.enabled is
+//     set: switching the feature off does not review what was activated while
+//     it was on.
+//  2. "independent review impossible" when the install has exactly ONE
+//     admin-tier holder. A SEPARATE finding, not a detail of the first: with a
+//     single admin every activation is reviewed by the person who activated it,
+//     so a clean review record carries no independent assurance at all. It
+//     fires even when every activation HAS been reviewed -- otherwise the install
+//     with the weakest possible review process is the one that looks compliant.
+//     Like collectTLSPosture's skip of a disabled listener, it is skipped when
+//     break_glass.enabled is false: nothing can be activated, so there is
+//     nothing to review and a default single-admin install is not flagged for a
+//     feature it never turned on.
+//
+// A query that fails is a deviation of its own saying the check was NOT
+// evaluated, the way the database collector reports it, never a silent pass.
+// It does not abort the collectors after it.
 func collectBreakGlassReviewPosture(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore, report *postureReport) {
 	window := cfg.BreakGlass.GetReviewWindow()
 	unreviewed, err := coreService.ListUnreviewedBreakGlassActivations(ctx, window)
@@ -713,6 +728,18 @@ func collectBreakGlassReviewPosture(ctx context.Context, cfg *config.Config, cor
 		}
 		report.deviate("break-glass-review", fmt.Sprintf("%d break-glass activation(s) unreviewed past the %s review window (break_glass.review_window): %s. A second administrator must review each",
 			len(unreviewed), window, strings.Join(items, ", ")))
+	}
+
+	if !cfg.BreakGlass.Enabled {
+		return
+	}
+	admins, err := coreService.ListGlobalAdminHolders(ctx)
+	if err != nil {
+		report.deviate("break-glass-review", fmt.Sprintf("posture check could not list administrators, so the independent-review check was NOT evaluated: %v", err))
+		return
+	}
+	if len(admins) == 1 {
+		report.deviate("break-glass-review", fmt.Sprintf("independent review impossible: the install has exactly one administrator (%s), so every break-glass activation is reviewed by the person who activated it, and a clean review record carries no independent assurance. Add a second administrator", admins[0].Username))
 	}
 }
 

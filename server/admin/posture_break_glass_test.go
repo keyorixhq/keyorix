@@ -1,6 +1,7 @@
 package admin
 
-// Tests for collectBreakGlassReviewPosture (the findings Andrei decided on #2461). The
+// Tests for collectBreakGlassReviewPosture (the two findings Andrei decided on
+// #2461). The
 // break-glass tests run on SQLite always and on PostgreSQL when
 // KEYORIX_TEST_PG_DSN is set (pgAdminTestDSN skips otherwise).
 
@@ -149,7 +150,75 @@ func TestCollectBreakGlassReviewPosture_InsideWindowAndReviewedAreClean(t *testi
 	})
 }
 
-// A storage failure must surface as a deviation, never as a clean pass.
+// One admin fires "independent review impossible" with no activations at all,
+// and still when every activation has been reviewed; two admins do not.
+func TestCollectBreakGlassReviewPosture_IndependentReviewImpossible(t *testing.T) {
+	breakGlassPostureBackends(t, func(t *testing.T, cfg *config.Config) {
+		err := withUsableStorage(cfg, func(store corestorage.Storage) error {
+			ctx := context.Background()
+			svc := core.NewKeyorixCore(store)
+
+			// No admin at all: not "exactly one".
+			report := &postureReport{}
+			collectBreakGlassReviewPosture(ctx, cfg, svc, report)
+			assert.Empty(t, breakGlassFindings(report))
+
+			a1 := seedAdmin(ctx, t, store, "alice")
+			report = &postureReport{}
+			collectBreakGlassReviewPosture(ctx, cfg, svc, report)
+			findings := breakGlassFindings(report)
+			require.Len(t, findings, 1, "got %+v", report.deviations)
+			assert.Contains(t, findings[0].detail, "independent review impossible")
+			assert.Contains(t, findings[0].detail, "alice")
+
+			// Every activation reviewed: the finding stays.
+			seedActivation(ctx, t, store, a1.ID, 9, 100*time.Hour, true)
+			report = &postureReport{}
+			collectBreakGlassReviewPosture(ctx, cfg, svc, report)
+			findings = breakGlassFindings(report)
+			require.Len(t, findings, 1, "got %+v", report.deviations)
+			assert.Contains(t, findings[0].detail, "independent review impossible")
+
+			// A second administrator removes it.
+			seedAdmin(ctx, t, store, "bob")
+			report = &postureReport{}
+			collectBreakGlassReviewPosture(ctx, cfg, svc, report)
+			assert.Empty(t, breakGlassFindings(report), "got %+v", report.deviations)
+			return nil
+		})
+		require.NoError(t, err)
+	})
+}
+
+// With break_glass disabled nothing can be activated, so a single-admin install
+// is not flagged (as collectTLSPosture skips a disabled listener); an
+// activation left unreviewed from before it was switched off still is.
+func TestCollectBreakGlassReviewPosture_DisabledFeature(t *testing.T) {
+	breakGlassPostureBackends(t, func(t *testing.T, cfg *config.Config) {
+		cfg.BreakGlass.Enabled = false
+		err := withUsableStorage(cfg, func(store corestorage.Storage) error {
+			ctx := context.Background()
+			a1 := seedAdmin(ctx, t, store, "alice")
+			svc := core.NewKeyorixCore(store)
+
+			report := &postureReport{}
+			collectBreakGlassReviewPosture(ctx, cfg, svc, report)
+			assert.Empty(t, breakGlassFindings(report), "single admin, feature off: got %+v", report.deviations)
+
+			seedActivation(ctx, t, store, a1.ID, 7, 100*time.Hour, false)
+			report = &postureReport{}
+			collectBreakGlassReviewPosture(ctx, cfg, svc, report)
+			findings := breakGlassFindings(report)
+			require.Len(t, findings, 1, "got %+v", report.deviations)
+			assert.Contains(t, findings[0].detail, "project 7")
+			return nil
+		})
+		require.NoError(t, err)
+	})
+}
+
+// A storage failure must surface as a deviation, never as a clean pass, and
+// the independent-review check after it must still run.
 func TestCollectBreakGlassReviewPosture_QueryErrorIsADeviation(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.BreakGlass.Enabled = true
@@ -169,9 +238,10 @@ func TestCollectBreakGlassReviewPosture_QueryErrorIsADeviation(t *testing.T) {
 		report := &postureReport{}
 		collectBreakGlassReviewPosture(ctx, cfg, core.NewKeyorixCore(failing), report)
 		findings := breakGlassFindings(report)
-		require.Len(t, findings, 1, "a failing query must not read as a clean report: %+v", report.deviations)
+		require.Len(t, findings, 2, "a failing query must not read as a clean report: %+v", report.deviations)
 		assert.Contains(t, findings[0].detail, "NOT evaluated")
 		assert.Contains(t, findings[0].detail, "connection refused")
+		assert.Contains(t, findings[1].detail, "independent review impossible")
 		return nil
 	}))
 }
