@@ -169,8 +169,19 @@ const pgRolePermGenerationFuncOK = "p.proname = '" + rolePermGenerationFunc + "'
 const pgRolePermGenerationTriggerDefOK = "t.tgtype = 60 AND t.tgnargs = 0 AND t.tgqual IS NULL AND t.tgconstraint = 0 AND COALESCE(pg_catalog.array_length(t.tgattr::pg_catalog.int2[], 1), 0) = 0"
 
 func ensurePostgresRolePermGenerationTriggers(tx *gorm.DB) error {
+	return installPostgresRolePermGenerationTriggers(tx, rolePermGenerationDef)
+}
+
+// installPostgresRolePermGenerationTriggers installs d (this release's
+// definition, or in tests another release's) unless a newer release's
+// definition is already installed (pgTriggerDef.newerThan): an older replica
+// booting during a rolling upgrade must not take the fix back (#3717).
+func installPostgresRolePermGenerationTriggers(tx *gorm.DB, d *pgTriggerDef) error {
 	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(postgresRolePermGenerationLockKey)).Error; err != nil {
 		return fmt.Errorf("acquire role-permission generation trigger advisory lock: %w", err)
+	}
+	if newer, err := leaveNewerTriggerDef(tx, d, "role-permission generation"); newer || err != nil {
+		return err
 	}
 	// Rewrite the function only when it is missing or differs. A rewrite of a
 	// correct function would give its pg_proc row a new xmin on every boot of
@@ -178,19 +189,22 @@ func ensurePostgresRolePermGenerationTriggers(tx *gorm.DB) error {
 	// with a cache flush on every replica.
 	var current []bool
 	if err := tx.Raw(`SELECT `+pgRolePermGenerationFuncOK+` FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang
-WHERE p.proname = '`+rolePermGenerationFunc+`' AND p.pronargs = 0
+WHERE p.proname = '`+d.funcName+`' AND p.pronargs = 0
   AND p.pronamespace = (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname = pg_catalog.current_schema())`,
-		postgresRolePermGenerationFuncBody).Scan(&current).Error; err != nil {
+		d.body).Scan(&current).Error; err != nil {
 		return fmt.Errorf("failed to read %s() definition: %w", rolePermGenerationFunc, err)
 	}
 	if len(current) == 0 || !current[0] {
 		if len(current) > 0 {
 			log.Printf("role-permission generation: replacing a %s() whose definition differs from this release's (an upgrade from an older release, or tampering)", rolePermGenerationFunc)
 		}
-		if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + rolePermGenerationFunc + `() RETURNS trigger
-LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$` + postgresRolePermGenerationFuncBody + `$keyorix$`).Error; err != nil {
-			return fmt.Errorf("failed to create %s(): %w", rolePermGenerationFunc, err)
+		if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + d.funcName + `() RETURNS trigger
+LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$` + d.body + `$keyorix$`).Error; err != nil {
+			return fmt.Errorf("failed to create %s(): %w", d.funcName, err)
 		}
+	}
+	if err := ensureTriggerDefMarker(tx, d); err != nil {
+		return err
 	}
 	for _, t := range rolePermGenerationTables {
 		var state []struct {
