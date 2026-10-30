@@ -22,8 +22,8 @@
 //   - the write is accepted when expr is traceably UTC: a call chain ending in `.UTC()`; or an
 //     identifier (optionally behind `&`) that the same function assigns from such a chain; or an
 //     identifier assigned from a chain rooted at another identifier that is itself traceably UTC
-//     (`now := c.now().UTC(); expires := now.Add(ttl)`; at most 4 hops); or an identifier that a
-//     `.UTC()` call elsewhere in the same function names in its receiver (`u := exp.UTC()`).
+//     (`now := c.now().UTC(); expires := now.Add(ttl)`; `u := exp.UTC(); exp = &u`; at most 4
+//     hops). A `.UTC()` call that only formats a value (an audit string) does not count.
 //
 // What it does NOT catch:
 //   - assignments outside a composite literal (`x.ExpiresAt = v`, `Updates(map[string]any{...})`),
@@ -212,17 +212,6 @@ func rootIdent(e ast.Expr) *ast.Ident {
 	}
 }
 
-func mentions(e ast.Expr, name string) bool {
-	found := false
-	ast.Inspect(e, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && id.Name == name {
-			found = true
-		}
-		return !found
-	})
-	return found
-}
-
 // tracesToUTC reports whether expr is traceably UTC within body (see the file comment).
 func tracesToUTC(expr ast.Expr, body *ast.BlockStmt, depth int) bool {
 	if endsInUTC(expr) {
@@ -235,22 +224,10 @@ func tracesToUTC(expr ast.Expr, body *ast.BlockStmt, depth int) bool {
 	if root == nil {
 		return false
 	}
-	// A `.UTC()` call anywhere in the function whose receiver names the identifier.
-	utcOnIt := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "UTC" && mentions(sel.X, root.Name) {
-			utcOnIt = true
-		}
-		return !utcOnIt
-	})
-	if utcOnIt {
-		return true
-	}
-	// Or the identifier is assigned from a chain that is itself traceably UTC.
+	// The identifier is assigned from a chain that is itself traceably UTC: `x = x.UTC()`,
+	// `exp := t.UTC()`, `x = &u` with `u := t.UTC()`, or `expires := now.Add(ttl)` with a UTC `now`.
+	// A `.UTC()` used only to format (`x.UTC().Format(...)` in an audit string) is not an assignment
+	// and does not count: CreateRiskException did exactly that while storing the client offset as sent.
 	traced := false
 	ast.Inspect(body, func(n ast.Node) bool {
 		as, ok := n.(*ast.AssignStmt)
@@ -293,6 +270,7 @@ func TestExpiryWriteScanner_Calibration(t *testing.T) {
 		"client pointer as sent": "package core\nfunc f(expiresAt *time.Time) {\n\t_ = &models.ConnectRefGrant{ExpiresAt: expiresAt}\n}",
 		"server clock, local":    "package core\nfunc f() {\n\tnow := c.now()\n\texpires := now.Add(ttl)\n\t_ = &models.ProjectInvitation{ExpiresAt: &expires}\n}",
 		"inline server clock":    "package core\nfunc f() {\n\t_ = models.SSOLoginState{ExpiresAt: c.now().Add(ttl)}\n}",
+		"UTC only to format":     "package core\nfunc f(expiresAt time.Time) {\n\t_ = expiresAt.UTC().Format(time.RFC3339)\n\t_ = &models.RiskException{ExpiresAt: expiresAt}\n}",
 	} {
 		got := scan(src)
 		if len(got) != 1 || got[0].UTC {
