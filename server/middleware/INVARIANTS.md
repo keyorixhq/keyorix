@@ -70,10 +70,11 @@ Format: `INV-MW-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `server/http/credential_gone_cache_hit_test.go` (two replicas, every end-of-credential
   path, sqlite + Postgres), `internal/core/credential_row_gone_sentinel_test.go`.
 - **INV-MW-06** The network allowlist is enforced per-request even on a cache hit, using the
-  freshly-refreshed restriction, never the stale cached one. Guard: `auth.go` lines ~571-577.
-  UNGUARDED as an isolated assertion (#issue: no test isolates "allowlist checked against
-  freshly-cloned `effective`, not stale `entry.userCtx`" — only covered incidentally by the
-  CIDR-refresh test).
+  freshly-refreshed restriction, never the stale cached one. Implementation: `auth.go` lines
+  ~571-577. Guard: `cache_hit_fresh_allowlist_test.go:TestCacheHit_NetworkAllowlist_EvaluatedAgainstFreshRestriction`
+  (#2519) — caches a token, rewrites its stored `AllowedCIDRs`, then probes from IPs that the
+  stale and fresh lists disagree on (narrowed, restriction added, restriction removed; PAT and
+  machine credentials) and asserts the cached restriction pointers are not mutated in place.
 
 ## Cache eviction / cross-transport invalidation
 

@@ -29,13 +29,13 @@ Format: `INV-CLI-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   defeating a naive check) no longer applies — no code in `cli/` resolves or validates an
   arbitrary connector-controlled target host at all; the module only ever talks to the one
   operator-configured server URL. Not a gap to guard — confirmed structurally absent.
-- **INV-CLI-03** `depguard`'s `forbiddenPrefixes` list does not name `internal/crypto` or
-  `internal/encryption` — not a live violation today (confirmed via `go list -deps`), but the
-  test's own stated intent ("no server/core/storage") is broader than its literal prefix list,
-  and a future direct import of e.g. `internal/crypto`'s base passphrase/PBKDF2 code (no SDK
-  dependency itself, only its `awskms`/etc. subpackages pull one in) would slip through
-  unnoticed. UNGUARDED (#issue: add `internal/crypto` and `internal/encryption` to
-  `forbiddenPrefixes` defensively).
+- **INV-CLI-03** `depguard`'s `forbiddenPrefixes` names `internal/crypto` and
+  `internal/encryption` explicitly (unslashed, so subpackages and `internal/encryptionops` are
+  covered too), not only transitively: `internal/crypto`'s base passphrase/PBKDF2 code has no
+  SDK dependency of its own, so a direct import of it would otherwise slip past the SDK
+  prefixes. No current import (`go list -deps ./...` clean). Guard:
+  `cli/internal/depguard/depguard_test.go:TestNoServerOrCloudSDKDependencies` (#2524). Run it
+  with `GOWORK=off go -C cli test ./internal/depguard`.
 
 ## Authentication / credential storage
 
@@ -44,13 +44,16 @@ Format: `INV-CLI-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-CLI-05** `NewHardenedHTTPClient` wraps every API call with a timeout, a response-size
   cap, and redirect refusal — ported explicitly from the old CLI's hardening (#1521/#1606), not
   reinvented. Guard: `cli/internal/apiclient/hardened_client_test.go`.
-- **INV-CLI-06** No AST/completeness sweep confirms every mutating subcommand routes through
-  `newAPIClient` rather than rolling its own HTTP call — verified by hand in this research pass
-  (zero `go/ast`/`go/parser`/`go/packages` usage anywhere in `cli/`, zero raw
-  `http.NewRequest`/`http.Client{}`/`http.Get`/`http.Post` outside `client.go` itself). The
-  invariant holds today by inspection only. UNGUARDED (#issue: add a structural sweep analogous
-  to `internal/core`'s atomicity guards, since `go/ast` IS available to this module unlike a
-  cloud SDK).
+- **INV-CLI-06** Every subcommand reaches the server only through the client `newAPIClient`
+  builds: outside that one function (and `internal/apiclient`, the transport layer) no non-test
+  file may use a `net/http` client surface (`http.Client`, `Get/Post/Head/PostForm`,
+  `NewRequest*`, `DefaultClient`, `Transport`, a dot-import), import `net`/`net/*` (other than
+  `net/url`) or `crypto/tls`, or call an `apiclient.New*`/`With*` constructor or build an
+  `apiclient.Client` literal. A `go/parser` walk with per-file import-alias resolution, so it
+  asserts the condition rather than a per-command "calls newAPIClient" check. Does not see
+  shelling out, cgo or reflection. Guard:
+  `cli/internal/clientguard/clientguard_test.go:TestNoHTTPClientOutsideNewAPIClient`, with
+  `TestSweepFileCatchesEachShape` as the red/green calibration (#2525).
 - **INV-CLI-07** Local credentials (`credstore.FileStore`) are stored in a plaintext YAML file
   at `os.UserConfigDir()/keyorix/credentials.yaml`, always mode 0600 via an explicit `Chmod`
   after open (not relying on `O_CREATE`'s mode, since `O_TRUNC` preserves a pre-existing file's
