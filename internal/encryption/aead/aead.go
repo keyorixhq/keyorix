@@ -293,8 +293,9 @@ func (es *EncryptionService) seal(plaintext, aad []byte) (nonce, ciphertext []by
 // ciphertext||tag, the input NewGCMWithRandomNonce's Open reads. Callers check
 // len(nonce) == gcmNonceSize first; a wrong length here would only fail the tag.
 func (es *EncryptionService) open(nonce, ciphertext, aad []byte) ([]byte, error) {
-	msg := make([]byte, 0, len(nonce)+len(ciphertext))
-	msg = append(append(msg, nonce...), ciphertext...)
+	// No computed capacity: append sizes the buffer itself (CodeQL
+	// go/allocation-size-overflow flagged a len+len make here).
+	msg := append(append([]byte(nil), nonce...), ciphertext...)
 	return es.gcm.Open(nil, nil, msg, aad)
 }
 
