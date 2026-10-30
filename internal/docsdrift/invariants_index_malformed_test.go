@@ -15,15 +15,15 @@ import (
 
 // TestInvariantsIndexCheck_MalformedRowIsReported plants each kind of
 // malformed row into a copy of the real table (in memory; the file on disk is
-// not touched) and requires exactly one problem that names the planted line.
-// It first requires the unmodified table to be clean, so a red here means the
-// check, not the document.
+// not touched) and requires exactly one problem more than the unmodified
+// table has, naming the planted line. Comparing against the unmodified
+// table's own problems keeps this test about the check: whether the live
+// document is clean is TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp's
+// job, under its rollout row, and must not turn fatal here.
 func TestInvariantsIndexCheck_MalformedRowIsReported(t *testing.T) {
 	g := guardrules.Rollout(t)
 	doc := readDoc(g, "docs/INVARIANTS.md")
-	if got := checkInvariantsIndex(doc); len(got) != 0 {
-		t.Fatalf("docs/INVARIANTS.md is not clean, fix it before reading this test: %v", got)
-	}
+	base := checkInvariantsIndex(doc)
 
 	const marker = "| **Total** |"
 	plants := []struct{ name, row string }{
@@ -38,9 +38,17 @@ func TestInvariantsIndexCheck_MalformedRowIsReported(t *testing.T) {
 			t.Fatalf("no %q row in docs/INVARIANTS.md", marker)
 		}
 		planted := doc[:at] + p.row + "\n" + doc[at:]
+		// Line numbers in the unmodified table's problems shift by one
+		// after the planted line, so compare counts, not messages.
 		got := checkInvariantsIndex(planted)
-		if len(got) != 1 || !strings.Contains(got[0], "not counted") || !strings.Contains(got[0], "planted/pkg") {
-			t.Errorf("%s: want one problem naming the planted row, got %v", p.name, got)
+		named := 0
+		for _, problem := range got {
+			if strings.Contains(problem, "not counted") && strings.Contains(problem, "planted/pkg") {
+				named++
+			}
+		}
+		if len(got) != len(base)+1 || named != 1 {
+			t.Errorf("%s: want the unmodified table's %d problem(s) plus one naming the planted row, got %v", p.name, len(base), got)
 		}
 	}
 
@@ -49,7 +57,7 @@ func TestInvariantsIndexCheck_MalformedRowIsReported(t *testing.T) {
 	if after == doc {
 		t.Fatal("anchor heading not found in docs/INVARIANTS.md")
 	}
-	if got := checkInvariantsIndex(after); len(got) != 0 {
-		t.Errorf("a table after the counts table must not be scanned, got %v", got)
+	if got := checkInvariantsIndex(after); len(got) != len(base) {
+		t.Errorf("a table after the counts table must not be scanned: want the unmodified table's %d problem(s), got %v", len(base), got)
 	}
 }
