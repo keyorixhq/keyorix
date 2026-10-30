@@ -250,7 +250,10 @@ func TestAcquireExclusiveKeyLock_OpenFileFailure_Error(t *testing.T) {
 	badDir := filepath.Join(t.TempDir(), "does", "not", "exist")
 	_, err := acquireExclusiveKeyLock(badDir, "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "open DEK lock file")
+	// #3742: a missing key directory is reported as such, not as lock contention.
+	var missing *KeyDirMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Contains(t, err.Error(), "does not exist")
 }
 
 // TestAcquireSharedKeyLock_OpenFileFailure_Error mirrors the above for
@@ -259,7 +262,10 @@ func TestAcquireSharedKeyLock_OpenFileFailure_Error(t *testing.T) {
 	badDir := filepath.Join(t.TempDir(), "does", "not", "exist")
 	_, err := acquireSharedKeyLock(badDir, "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "open DEK lock file")
+	// #3742: a missing key directory is reported as such, not as lock contention.
+	var missing *KeyDirMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Contains(t, err.Error(), "does not exist")
 }
 
 // ─── key_provider_downgrade.go: auditKeyProviderDowngrade ─────────────────────
