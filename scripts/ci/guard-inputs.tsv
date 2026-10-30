@@ -33,6 +33,7 @@ internal/core/guards/ledger_fragments_test.go	!README.md	fixtures in t.TempDir()
 internal/core/upgrading_scim_sso_check_query_test.go	docs/UPGRADING.md	the SCIM/SSO check query in UPGRADING.md
 internal/docsdrift/env_and_secrets_test.go	**/*.md,**/*.go,**/*.sh,**/*.yml,**/*.yaml,**/*.tpl,**/*.conf,**/*.txt,**/*.toml,**/Dockerfile*,**/Makefile	documented env vars and secret flags against every source kind envVarSourceFile accepts
 internal/docsdrift/links_test.go	**/*.md	relative links in every Markdown file
+internal/docsdrift/install_with_ai_test.go	INSTALL-WITH-AI.md	the assistant-run lines and the prompt block of INSTALL-WITH-AI.md (secret-blind rules)
 internal/docsdrift/upgrading_sections_test.go	docs/**/*.md,changelog.d/**/*.md,SECURITY.md,README.md,!**	UPGRADING.md section numbers, and references to them in every .md under docs/ and changelog.d/ plus SECURITY.md and README.md; nothing else is walked
 internal/docsdrift/versioning_deprecations_test.go	docs/VERSIONING.md	deprecated config aliases (Go source) against the VERSIONING.md deprecations table
 internal/metricsdoc/metricsdoc_test.go	docs/operations/metrics.md,operator/**/*.go	metrics doc against metric registrations, operator/ included
@@ -46,7 +47,7 @@ internal/storage/store/child_parent_liveness_registry_test.go	docs/child-parent-
 internal/storage/store/full_row_write_guard_test.go	docs/full-row-write-exempt.tsv,!operator/**	exemption ledger; walks internal/storage/store and internal/core only
 internal/storage/migrate_timestamp_guard_test.go	!operator/**	walks only non-test Go files under internal/storage (#3440); its input globs are the default Go-job selection
 internal/threatmodelcheck/evidence_test.go	**/*.go,**/*.md,**/*.tsv,**/*.yaml,**/*.yml,**/*.sh,**/*.sql,**/*.proto,**/*.json,**/*.toml	threat-model evidence: every cited path (pathExts) must exist, every cited test must exist in a *_test.go
-server/admin/docs_commands_test.go	QUICK_START.md,docs/CONFIGURATION.md,docs/SELF_HOSTING.md,docs/AIRGAP_RUNBOOK.md,docs/operator/*.md,!operator/**,!docs/**	documented server admin commands; "operator" names docs/operator only
+server/admin/docs_commands_test.go	QUICK_START.md,INSTALL-WITH-AI.md,docs/CONFIGURATION.md,docs/SELF_HOSTING.md,docs/AIRGAP_RUNBOOK.md,docs/operator/*.md,!operator/**,!docs/**	documented server admin commands; "operator" names docs/operator only
 server/admin/docs_container_admin_test.go	QUICK_START.md,README.md,docs/SELF_HOSTING.md,docs/UPGRADING.md	container admin commands in the docs
 server/admin/quickstart_commands_test.go	QUICK_START.md,INSTALL-WITH-AI.md,docs/install/offline-install.sh,!server/**/*.md	quick-start commands; server/entrypoint.sh is read, server/ Markdown is not
 server/faultops/consume_first_oracle_test.go	docs/atomicity-exempt.tsv	atomicity exemption ledger

@@ -21,7 +21,7 @@ import (
 // implement the same rules independently; if they ever disagree, the script's
 // output on the tree is the tie-breaker to investigate.
 //
-// Checked, in every *.md under docs/ plus QUICK_START.md and README.md:
+// Checked, in every *.md under docs/ plus QUICK_START.md, README.md and INSTALL-WITH-AI.md:
 //   - a relative [text](target) or ![alt](target) whose file or directory does not
 //     exist (a leading "/" is relative to the repository root);
 //   - a #fragment (same file or cross file) naming a .md file that has no heading
@@ -185,7 +185,7 @@ func TestDocLinksResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files = append(files, filepath.Join(root, "QUICK_START.md"), filepath.Join(root, "README.md"))
+	files = append(files, filepath.Join(root, "QUICK_START.md"), filepath.Join(root, "README.md"), filepath.Join(root, "INSTALL-WITH-AI.md"))
 	if len(files) < 50 {
 		t.Fatalf("found only %d markdown files: the walk has drifted", len(files))
 	}
