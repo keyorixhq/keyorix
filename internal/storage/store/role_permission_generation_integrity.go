@@ -48,9 +48,16 @@
 //     cannot fix (a session not in 'origin') is invalidated once per reading,
 //     not every tick.
 //
+// Releases: each function carries a version marker (pgTriggerDef.marker,
+// #3717). A newer release's self-consistent definition, at most one version
+// ahead, is invalidated once and warned about under its own counter label, and
+// left in place by the check and the installers, so a rolling upgrade that
+// changes a definition does not have both releases re-installing their own
+// every tick. The rule and its residual are at triggerDefMaxNewerSkew.
+//
 // A false alarm (a catalog rewrite this file does not foresee, such as a
-// pg_upgrade or an older release's replica rewriting the function at boot
-// during a rolling upgrade) changes no decision. It costs one cache refill:
+// pg_upgrade or a replica of a release from before the markers rewriting the
+// function at boot during a rolling upgrade) changes no decision. It costs one cache refill:
 // for the role-permission target one bump; for the cache epoch one UPDATE of
 // every live secret_nodes row per replica per detection, in batches of secretNodeCacheEpochInvalidateBatch rows, spread
 // over as many ticks as the table needs.
@@ -75,10 +82,16 @@
 package store
 
 import (
+	"cmp"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"log"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,26 +120,58 @@ var rolePermGenerationRepairLockTimeout = time.Second
 // over; the batches of one invalidation continue across ticks.
 var secretNodeCacheEpochInvalidateBatch = 5000
 
-var rolePermGenerationTamperTotal = promauto.NewCounter(prometheus.CounterOpts{
-	Name: "keyorix_role_permission_generation_tamper_total",
-	Help: "Times the role-permission generation triggers were found changed (replaced function, re-created or re-enabled trigger) and every replica's permission cache was invalidated.",
-})
+// rolePermGenerationNewerDefinitionRewarn is how often a checker repeats its
+// warning while a newer release's definition stays installed.
+var rolePermGenerationNewerDefinitionRewarn = time.Hour
 
-var secretNodeCacheEpochTamperTotal = promauto.NewCounter(prometheus.CounterOpts{
+// The reason label of both counters: tamper (changed outside any release:
+// restored, flushed) or newer_definition (a newer release's definition, read
+// during a rolling upgrade: flushed, not restored).
+const (
+	triggerIntegrityReasonTamper = "tamper"
+	triggerIntegrityReasonNewer  = "newer_definition"
+)
+
+var rolePermGenerationTamperVec = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "keyorix_role_permission_generation_tamper_total",
+	Help: "Times the role-permission generation triggers were found changed and every replica's permission cache was invalidated. reason: tamper (changed outside a release; restored) or newer_definition (a newer release's definition during a rolling upgrade; left in place).",
+}, []string{"reason"})
+
+var (
+	rolePermGenerationTamperTotal          = rolePermGenerationTamperVec.WithLabelValues(triggerIntegrityReasonTamper)
+	rolePermGenerationNewerDefinitionTotal = rolePermGenerationTamperVec.WithLabelValues(triggerIntegrityReasonNewer)
+)
+
+var secretNodeCacheEpochTamperVec = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "keyorix_secret_node_cache_epoch_tamper_total",
-	Help: "Times the secret_nodes cache-epoch trigger was found changed (replaced function, re-created or re-enabled trigger) and every replica's secret metadata cache was invalidated.",
-})
+	Help: "Times the secret_nodes cache-epoch trigger was found changed and every replica's secret metadata cache was invalidated. reason: tamper (changed outside a release; restored) or newer_definition (a newer release's definition during a rolling upgrade; left in place).",
+}, []string{"reason"})
+
+var (
+	secretNodeCacheEpochTamperTotal          = secretNodeCacheEpochTamperVec.WithLabelValues(triggerIntegrityReasonTamper)
+	secretNodeCacheEpochNewerDefinitionTotal = secretNodeCacheEpochTamperVec.WithLabelValues(triggerIntegrityReasonNewer)
+)
+
+// pgTriggerDef is one release's definition of a trigger function and the
+// triggers that call it: what the installer creates and the check compares.
+// version moves whenever body, settings or trigger shape change, and is
+// written next to the function as its version marker (marker).
+type pgTriggerDef struct {
+	version  int
+	funcName string
+	body     string
+	triggers []triggerSpec
+	tgtype   int // every trigger's pg_trigger.tgtype
+	// sql reads one row per trigger (see triggerIntegritySQL); $1 is body.
+	sql string
+}
 
 // triggerIntegrityTarget is one set of triggers and their function that the
 // check watches.
 type triggerIntegrityTarget struct {
 	what  string // log noun: "role-permission generation"
 	cache string // what invalidate flushes: "permission cache"
-	// sql reads one row per trigger (see triggerIntegritySQL); $1 is body.
-	sql      string
-	body     string
-	triggers int
-	funcName string
+	def   *pgTriggerDef
 	// invalidate makes every replica's cache miss, inside tx.
 	invalidate func(ctx context.Context, tx *gorm.DB) error
 	// invalidateFrom, set instead of invalidate, is an invalidation that goes
@@ -134,71 +179,266 @@ type triggerIntegrityTarget struct {
 	// inside tx it makes the next limit live rows with an id above after miss
 	// and returns their ids. Such a target is checked by checkRepairFirst.
 	invalidateFrom func(ctx context.Context, tx *gorm.DB, after uint, limit int) ([]uint, error)
-	// repair re-installs the triggers inside tx.
-	repair func(tx *gorm.DB) error
-	tamper prometheus.Counter
+	// repair re-installs the triggers of def inside tx (and restores the row
+	// they write, where the reading covers it). It leaves a newer release's
+	// definition in place.
+	repair   func(tx *gorm.DB, def *pgTriggerDef) error
+	tamper   prometheus.Counter
+	newerDef prometheus.Counter
 }
 
 type triggerSpec struct{ table, trigger string }
 
+// Version markers (#3717). The installer writes
+//
+//	keyorix-trigger-def <function> v<version> sha256:<digest>
+//
+// as the function's COMMENT (pg_description), not into its body: a release
+// from before markers compares prosrc exactly, so a marker in the body would
+// read as tampering to it, and the upgrade that ships markers would ping-pong
+// like the ones markers stop. <digest> is triggerDefDigest of the definition
+// the marker names: the function's language, settings, SECURITY DEFINER flag
+// and body, and each checked trigger's table, name and shape.
+//
+// A checker accepts its own version only as exactly its own definition (the
+// body, settings and shape comparisons plus the marker string), so a
+// definition at or below its version is restored as before. A higher version,
+// at most triggerDefMaxNewerSkew above its own, whose digest matches what the
+// catalog holds, is a newer release's definition: the checker invalidates once
+// and warns, and neither the check nor the installer restores its own over it.
+// Anything else (no marker, a malformed one, an older or equal version that is
+// not exactly this release's, a version further ahead, a digest that does not
+// match the catalog) is tampering.
+//
+// The digest is not a signature: the owner who can replace the function can
+// also write a self-consistent marker one version ahead. Older replicas then
+// leave that definition alone (they warn, and the newer_definition counter
+// moves), until a release at that version, which compares exactly, restores
+// its own. The skew bound keeps a forged marker from outranking every future
+// release.
+const triggerDefMaxNewerSkew = 1
+
+var triggerDefMarkerRE = regexp.MustCompile(`^keyorix-trigger-def ([a-z_][a-z0-9_]*) v(0|[1-9][0-9]{0,8}) sha256:([0-9a-f]{64})$`)
+
+// triggerDefFacts is what a definition digest covers, as the catalog holds it.
+type triggerDefFacts struct {
+	lang, config, body string
+	secdef             bool
+	triggers           []triggerShapeFacts
+}
+
+// triggerShapeFacts is one trigger's shape: pg_trigger.tgtype (timing, level,
+// events), its argument count, its UPDATE OF column count, whether it has a
+// WHEN clause and whether it is a constraint trigger.
+type triggerShapeFacts struct {
+	table, name         string
+	tgtype, nargs, cols int
+	when, constraint    bool
+}
+
+// triggerDefDigest is the hex SHA-256 of a canonical text of funcName's
+// definition at version; the triggers are taken in (table, name) order.
+func triggerDefDigest(funcName string, version int, f triggerDefFacts) string {
+	trig := slices.Clone(f.triggers)
+	slices.SortFunc(trig, func(a, b triggerShapeFacts) int {
+		return cmp.Or(cmp.Compare(a.table, b.table), cmp.Compare(a.name, b.name))
+	})
+	text := fmt.Sprintf("keyorix-trigger-def\nfunction %q\nversion %d\nlanguage %q\nconfig %q\nsecurity-definer %t\nbody %q\n",
+		funcName, version, f.lang, f.config, f.secdef, f.body)
+	for _, t := range trig {
+		text += fmt.Sprintf("trigger %q on %q type %d nargs %d columns %d when %t constraint %t\n",
+			t.name, t.table, t.tgtype, t.nargs, t.cols, t.when, t.constraint)
+	}
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+// pgTriggerFuncConfigText is pg_proc.proconfig::text for the pinned search_path.
+const pgTriggerFuncConfigText = `{"search_path=` + pgTriggerFuncSearchPath + `"}`
+
+// marker is the version marker of d as the installer creates it.
+func (d *pgTriggerDef) marker() string {
+	f := triggerDefFacts{lang: "plpgsql", config: pgTriggerFuncConfigText, body: d.body}
+	for _, t := range d.triggers {
+		f.triggers = append(f.triggers, triggerShapeFacts{table: t.table, name: t.trigger, tgtype: d.tgtype})
+	}
+	m := fmt.Sprintf("keyorix-trigger-def %s v%d sha256:%s", d.funcName, d.version, triggerDefDigest(d.funcName, d.version, f))
+	if !triggerDefMarkerRE.MatchString(m) {
+		panic("pgTriggerDef: marker " + m + " does not parse") // it is also inlined into COMMENT ON
+	}
+	return m
+}
+
+// newerThan reports whether marker names a newer release's definition of
+// d's function that the reading (proname, pronargs, sameNS, facts) holds, and
+// otherwise why not.
+func (d *pgTriggerDef) newerThan(marker, proname string, pronargs int64, sameNS bool, facts triggerDefFacts) (string, bool) {
+	m := triggerDefMarkerRE.FindStringSubmatch(marker)
+	if m == nil {
+		if marker == "" {
+			return d.funcName + "() carries no version marker", false
+		}
+		return fmt.Sprintf("%s() carries a malformed version marker %q", d.funcName, marker), false
+	}
+	v, err := strconv.Atoi(m[2])
+	switch {
+	case err != nil || m[1] != d.funcName || proname != d.funcName || pronargs != 0 || !sameNS:
+		return fmt.Sprintf("version marker %q does not name %s() in this schema", marker, d.funcName), false
+	case v <= d.version:
+		return fmt.Sprintf("%s() is marked v%d but is not this release's v%d definition", d.funcName, v, d.version), false
+	case v > d.version+triggerDefMaxNewerSkew:
+		return fmt.Sprintf("%s() is marked v%d, more than %d ahead of this release's v%d", d.funcName, v, triggerDefMaxNewerSkew, d.version), false
+	case triggerDefDigest(d.funcName, v, facts) != m[3]:
+		return fmt.Sprintf("%s() is marked v%d but its body, settings or triggers do not match the marker's digest", d.funcName, v), false
+	}
+	return fmt.Sprintf("v%d", v), true
+}
+
 // triggerIntegritySQL reads one row per trigger: its enabled state, whether
-// its definition and its function are this binary's, and its row versions,
-// joined to this connection's session_replication_role so a row comes back
-// even when no trigger does. One native bind ($1): the expected body, which
-// is funcOK's single `?`. triggerDefOK takes no bind, and a `?` in it panics
-// at package init instead of silently taking the body's place.
-func triggerIntegritySQL(triggers []triggerSpec, triggerDefOK, funcOK string) string {
-	if strings.Contains(triggerDefOK, "?") || strings.Count(funcOK, "?") != 1 {
-		panic("triggerIntegritySQL: the trigger shape takes no bind and the function check exactly one (the body)")
+// its definition and its function are this binary's, the facts a version
+// marker's digest covers, the marker, and its row versions, joined to this
+// connection's session_replication_role and to writeTargetSQL's
+// (problem, version) row so a row comes back even when no trigger does.
+// writeTargetSQL ("" for none) checks the table the triggers write. One
+// native bind ($1): the expected body, which is funcOK's single `?`.
+// triggerDefOK and writeTargetSQL take no bind, and a `?` in them panics at
+// package init instead of silently taking the body's place.
+func triggerIntegritySQL(triggers []triggerSpec, triggerDefOK, funcOK, writeTargetSQL string) string {
+	if strings.Contains(triggerDefOK, "?") || strings.Contains(writeTargetSQL, "?") || strings.Count(funcOK, "?") != 1 {
+		panic("triggerIntegritySQL: the trigger shape and write target take no bind and the function check exactly one (the body)")
+	}
+	if writeTargetSQL == "" {
+		writeTargetSQL = "SELECT ''::text AS problem, ''::text AS version"
 	}
 	var conds []string
 	for _, t := range triggers {
 		conds = append(conds, "(t.tgrelid = '"+t.table+"'::regclass AND t.tgname = '"+t.trigger+"')")
 	}
 	funcOK = strings.Replace(funcOK, "?", "$1", 1)
-	return `SELECT s.repl, g.name, g.state, g.def_ok, g.func_ok, g.version
-FROM (SELECT pg_catalog.current_setting('session_replication_role') AS repl) s
+	return `SELECT s.repl, s.write_problem, s.write_version, g.name, g.state, g.def_ok, g.func_ok, g.version,
+  g.relname, g.tgtype, g.tgnargs, g.cols, g.has_when, g.is_constraint,
+  g.proname, g.pronargs, g.same_ns, g.lang, g.config, g.secdef, g.body, g.marker
+FROM (SELECT pg_catalog.current_setting('session_replication_role') AS repl, w.problem AS write_problem, w.version AS write_version
+  FROM (` + writeTargetSQL + `) w) s
 LEFT JOIN (
   SELECT t.tgname::text AS name, t.tgenabled::text AS state,
     (` + triggerDefOK + `) AS def_ok,
     COALESCE(` + funcOK + ` AND p.pronamespace = c.relnamespace, false) AS func_ok,
-    t.tgfoid::text || ':' || t.xmin::text || ':' || COALESCE(p.xmin::text, '-') AS version
+    t.tgfoid::text || ':' || t.xmin::text || ':' || COALESCE(p.xmin::text, '-') || ':' || COALESCE(d.xmin::text, '-') AS version,
+    c.relname::text AS relname, t.tgtype::int AS tgtype, t.tgnargs::int AS tgnargs,
+    COALESCE(pg_catalog.array_length(t.tgattr::pg_catalog.int2[], 1), 0) AS cols,
+    t.tgqual IS NOT NULL AS has_when, t.tgconstraint <> 0 AS is_constraint,
+    p.proname::text AS proname, p.pronargs::int AS pronargs, COALESCE(p.pronamespace = c.relnamespace, false) AS same_ns,
+    l.lanname::text AS lang, COALESCE(p.proconfig::text, '') AS config, COALESCE(p.prosecdef, false) AS secdef,
+    p.prosrc AS body, d.description AS marker
   FROM pg_catalog.pg_trigger t
   JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
   LEFT JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
   LEFT JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+  LEFT JOIN pg_catalog.pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.objsubid = 0
   WHERE NOT t.tgisinternal AND (` + strings.Join(conds, " OR ") + `)
 ) g ON true
 ORDER BY g.name`
 }
 
-var rolePermGenerationIntegrityTarget = func() *triggerIntegrityTarget {
-	var triggers []triggerSpec
-	for _, t := range rolePermGenerationTables {
-		triggers = append(triggers, triggerSpec{t.table, t.trigger})
+// rolePermGenerationDef is this release's role-permission generation
+// definition. Its version moves with any change to the body, the settings or
+// the trigger shape (#3717).
+var rolePermGenerationDef = newPGTriggerDef(&pgTriggerDef{
+	version:  1,
+	funcName: rolePermGenerationFunc,
+	body:     postgresRolePermGenerationFuncBody,
+	triggers: func() []triggerSpec {
+		var triggers []triggerSpec
+		for _, t := range rolePermGenerationTables {
+			triggers = append(triggers, triggerSpec{t.table, t.trigger})
+		}
+		return triggers
+	}(),
+	tgtype: 60, // pgRolePermGenerationTriggerDefOK
+}, pgRolePermGenerationTriggerDefOK, pgRolePermGenerationFuncOK, "")
+
+// secretNodeCacheEpochDef is this release's secret_nodes cache-epoch
+// definition, versioned the same way.
+var secretNodeCacheEpochDef = newPGTriggerDef(&pgTriggerDef{
+	version:  1,
+	funcName: secretNodeCacheEpochFunc,
+	body:     postgresCacheEpochFuncBody,
+	triggers: []triggerSpec{{"secret_nodes", SecretNodeCacheEpochTrigger}},
+	tgtype:   19, // pgCacheEpochTriggerDefOK
+}, pgCacheEpochTriggerDefOK, pgCacheEpochFuncOK, "")
+
+// newPGTriggerDef fills d's reading statement.
+func newPGTriggerDef(d *pgTriggerDef, triggerDefOK, funcOK, writeTargetSQL string) *pgTriggerDef {
+	d.sql = triggerIntegritySQL(d.triggers, triggerDefOK, funcOK, writeTargetSQL)
+	d.marker() // panics at init on a marker that does not parse
+	return d
+}
+
+// leaveNewerTriggerDef is the installers' first step after their advisory
+// lock: when the installed definition is a newer release's, it only turns
+// back to ENABLE ALWAYS a trigger that is not (that state is no part of any
+// definition), logs, and reports true, and the installer installs nothing.
+func leaveNewerTriggerDef(tx *gorm.DB, d *pgTriggerDef, what string) (bool, error) {
+	st, err := readInstalledTriggerDef(tx, d)
+	if err != nil {
+		return false, fmt.Errorf("read the installed %s() definition: %w", d.funcName, err)
 	}
-	return &triggerIntegrityTarget{
-		what:     "role-permission generation",
-		cache:    "permission cache",
-		sql:      triggerIntegritySQL(triggers, pgRolePermGenerationTriggerDefOK, pgRolePermGenerationFuncOK),
-		body:     postgresRolePermGenerationFuncBody,
-		triggers: len(triggers),
-		funcName: rolePermGenerationFunc,
-		invalidate: func(ctx context.Context, tx *gorm.DB) error {
-			return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
-		},
-		repair: ensurePostgresRolePermGenerationTriggers,
-		tamper: rolePermGenerationTamperTotal,
+	if st.newer == "" {
+		return false, nil
 	}
-}()
+	log.Printf("%s: leaving a newer release's %s() in place (%q; this release writes v%d)", what, d.funcName, st.newer, d.version)
+	for _, t := range d.triggers {
+		var state []string
+		if err := tx.Raw("SELECT t.tgenabled::text FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid = ?::regclass AND t.tgname = ?",
+			t.table, t.trigger).Scan(&state).Error; err != nil {
+			return true, fmt.Errorf("failed to read %s state: %w", t.trigger, err)
+		}
+		if len(state) == 1 && state[0] != "A" {
+			if err := tx.Exec("ALTER TABLE " + t.table + " ENABLE ALWAYS TRIGGER " + t.trigger).Error; err != nil {
+				return true, fmt.Errorf("failed to enable %s: %w", t.trigger, err)
+			}
+		}
+	}
+	return true, nil
+}
+
+// ensureTriggerDefMarker writes d's version marker as its function's comment
+// when the comment differs. A correct comment is left alone, so a replica's
+// boot does not move its pg_description row's xmin, which the check reads.
+func ensureTriggerDefMarker(tx *gorm.DB, d *pgTriggerDef) error {
+	want := d.marker()
+	var cur []sql.NullString
+	if err := tx.Raw("SELECT pg_catalog.obj_description(?::pg_catalog.regprocedure, 'pg_proc')", d.funcName+"()").Scan(&cur).Error; err != nil {
+		return fmt.Errorf("failed to read the %s() version marker: %w", d.funcName, err)
+	}
+	if len(cur) == 1 && cur[0].Valid && cur[0].String == want {
+		return nil
+	}
+	// No binds in DDL: the marker is this file's text and matches
+	// triggerDefMarkerRE (no quote can occur in it).
+	if err := tx.Exec("COMMENT ON FUNCTION " + d.funcName + "() IS '" + want + "'").Error; err != nil {
+		return fmt.Errorf("failed to write the %s() version marker: %w", d.funcName, err)
+	}
+	return nil
+}
+
+var rolePermGenerationIntegrityTarget = &triggerIntegrityTarget{
+	what:  "role-permission generation",
+	cache: "permission cache",
+	def:   rolePermGenerationDef,
+	invalidate: func(ctx context.Context, tx *gorm.DB) error {
+		return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
+	},
+	repair:   installPostgresRolePermGenerationTriggers,
+	tamper:   rolePermGenerationTamperTotal,
+	newerDef: rolePermGenerationNewerDefinitionTotal,
+}
 
 var secretNodeCacheEpochIntegrityTarget = &triggerIntegrityTarget{
-	what:     "secret_nodes cache-epoch",
-	cache:    "secret metadata cache",
-	sql:      triggerIntegritySQL([]triggerSpec{{"secret_nodes", SecretNodeCacheEpochTrigger}}, pgCacheEpochTriggerDefOK, pgCacheEpochFuncOK),
-	body:     postgresCacheEpochFuncBody,
-	triggers: 1,
-	funcName: secretNodeCacheEpochFunc,
+	what:  "secret_nodes cache-epoch",
+	cache: "secret metadata cache",
+	def:   secretNodeCacheEpochDef,
 	// Every live row: a soft-deleted row never hits (readLiveNodeStamp), and
 	// undeleting it is an UPDATE the restored trigger stamps. A row an earlier
 	// batch already passed is stamped by that trigger when it changes again.
@@ -211,16 +451,18 @@ var secretNodeCacheEpochIntegrityTarget = &triggerIntegrityTarget{
 UPDATE secret_nodes s SET cache_epoch = s.cache_epoch + 1 FROM b WHERE s.id = b.id RETURNING s.id`, after, limit).Scan(&ids).Error
 		return ids, err
 	},
-	repair: ensurePostgresCacheEpochTrigger,
-	tamper: secretNodeCacheEpochTamperTotal,
+	repair:   installPostgresCacheEpochTrigger,
+	tamper:   secretNodeCacheEpochTamperTotal,
+	newerDef: secretNodeCacheEpochNewerDefinitionTotal,
 }
 
 // triggerIntegrityState is one reading: problem is "" when the definition is
-// this binary's and the session is in 'origin', version the concatenated row
-// versions.
+// this binary's (or a newer release's, then named by newer) and the session
+// is in 'origin', version the concatenated row versions.
 type triggerIntegrityState struct {
 	problem string
 	version string
+	newer   string
 }
 
 // readTriggerIntegrity goes through the underlying *sql.DB, not GORM: the
@@ -233,17 +475,41 @@ func readTriggerIntegrity(ctx context.Context, db *gorm.DB, target *triggerInteg
 	if err != nil {
 		return triggerIntegrityState{}, err
 	}
-	rs, err := sqlDB.QueryContext(ctx, target.sql, target.body)
+	rs, err := sqlDB.QueryContext(ctx, target.def.sql, target.def.body)
 	if err != nil {
 		return triggerIntegrityState{}, err
 	}
+	return scanTriggerIntegrity(rs, target.def)
+}
+
+// readInstalledTriggerDef is readTriggerIntegrity inside an installer's
+// transaction, on that transaction's connection.
+func readInstalledTriggerDef(tx *gorm.DB, d *pgTriggerDef) (triggerIntegrityState, error) {
+	ctx := tx.Statement.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rs, err := tx.Statement.ConnPool.QueryContext(ctx, d.sql, d.body)
+	if err != nil {
+		return triggerIntegrityState{}, err
+	}
+	return scanTriggerIntegrity(rs, d)
+}
+
+// scanTriggerIntegrity turns triggerIntegritySQL's rows into a reading of d.
+func scanTriggerIntegrity(rs *sql.Rows, d *pgTriggerDef) (triggerIntegrityState, error) {
 	defer func() { _ = rs.Close() }()
-	var versions, problems []string
-	repl, foid, present := "", "", 0
+	var versions, problems, defProblems []string
+	var facts triggerDefFacts
+	repl, writeProblem, writeVersion, foid, marker, proname := "", "", "", "", "", ""
+	present, pronargs, sameNS, oneFunc := 0, int64(-1), true, true
 	for rs.Next() {
-		var name, state, version sql.NullString
-		var defOK, funcOK sql.NullBool
-		if err := rs.Scan(&repl, &name, &state, &defOK, &funcOK, &version); err != nil {
+		var name, state, version, relname, pname, lang, config, body, mark sql.NullString
+		var defOK, funcOK, hasWhen, isConstraint, sameNs, secdef sql.NullBool
+		var tgtype, nargs, cols, pnargs sql.NullInt64
+		if err := rs.Scan(&repl, &writeProblem, &writeVersion, &name, &state, &defOK, &funcOK, &version,
+			&relname, &tgtype, &nargs, &cols, &hasWhen, &isConstraint,
+			&pname, &pnargs, &sameNs, &lang, &config, &secdef, &body, &mark); err != nil {
 			return triggerIntegrityState{}, err
 		}
 		if !name.Valid {
@@ -251,30 +517,61 @@ func readTriggerIntegrity(ctx context.Context, db *gorm.DB, target *triggerInteg
 		}
 		present++
 		versions = append(versions, name.String+"="+version.String)
-		switch {
-		case state.String != "A":
+		if state.String != "A" {
 			problems = append(problems, fmt.Sprintf("%s is not ENABLE ALWAYS (tgenabled %q)", name.String, state.String))
+		}
+		switch {
 		case !defOK.Bool:
-			problems = append(problems, name.String+" was re-created with a different definition")
+			defProblems = append(defProblems, name.String+" was re-created with a different definition")
 		case !funcOK.Bool:
-			problems = append(problems, name.String+" calls a function that is not this release's "+target.funcName+"()")
+			defProblems = append(defProblems, name.String+" calls a function that is not this release's "+d.funcName+"()")
 		}
 		f, _, _ := strings.Cut(version.String, ":")
 		if foid != "" && f != foid {
 			problems = append(problems, "the triggers call different functions")
+			oneFunc = false
 		}
 		foid = f
+		facts.triggers = append(facts.triggers, triggerShapeFacts{table: relname.String, name: name.String,
+			tgtype: int(tgtype.Int64), nargs: int(nargs.Int64), cols: int(cols.Int64), when: hasWhen.Bool, constraint: isConstraint.Bool})
+		facts.lang, facts.config, facts.body, facts.secdef = lang.String, config.String, body.String, secdef.Bool
+		marker, proname, pronargs, sameNS = mark.String, pname.String, pnargs.Int64, sameNS && sameNs.Bool
+		if !pname.Valid {
+			pronargs = -1
+		}
 	}
 	if err := rs.Err(); err != nil {
 		return triggerIntegrityState{}, err
 	}
-	if present != target.triggers {
-		problems = append(problems, fmt.Sprintf("%d of %d triggers present", present, target.triggers))
+	if present != len(d.triggers) {
+		problems = append(problems, fmt.Sprintf("%d of %d triggers present", present, len(d.triggers)))
 	}
+	newer := ""
+	if present > 0 && (len(defProblems) > 0 || marker != d.marker()) {
+		// A newer release's definition only with every trigger present and on
+		// one function: the digest covers each of them.
+		why, ok := "", false
+		if present == len(d.triggers) && oneFunc {
+			why, ok = d.newerThan(marker, proname, pronargs, sameNS, facts)
+		}
+		if ok {
+			newer, defProblems = marker, nil
+		} else if why != "" {
+			defProblems = append(defProblems, why)
+		}
+	}
+	problems = append(problems, defProblems...)
 	if repl != "origin" {
 		problems = append(problems, fmt.Sprintf("this server's database session runs with session_replication_role %q, not origin (ALTER ROLE/DATABASE ... SET or a connection option), so ordinary triggers and foreign keys do not fire for it", repl))
 	}
-	return triggerIntegrityState{problem: strings.Join(problems, "; "), version: strings.Join(versions, ",")}, nil
+	if writeProblem != "" {
+		problems = append(problems, writeProblem)
+	}
+	v := strings.Join(versions, ",")
+	if writeVersion != "" {
+		v += ";write-target=" + writeVersion
+	}
+	return triggerIntegrityState{problem: strings.Join(problems, "; "), version: v, newer: newer}, nil
 }
 
 // readRolePermGenerationIntegrity reads the role-permission generation target.
@@ -304,6 +601,26 @@ type triggerIntegrityChecker struct {
 	round   string
 	cursor  uint
 	doneFor string
+	// newerWarned is when the checker last warned that a newer release's
+	// definition is installed.
+	newerWarned time.Time
+}
+
+// warnNewer repeats, at most every rolePermGenerationNewerDefinitionRewarn, the
+// warning that st holds a newer release's definition: outside a rolling
+// upgrade to that release it is a forged marker (pgTriggerDef.newerThan).
+func (c *triggerIntegrityChecker) warnNewer(st triggerIntegrityState) {
+	if st.newer == "" || time.Since(c.newerWarned) < rolePermGenerationNewerDefinitionRewarn {
+		return
+	}
+	c.newerWarned = time.Now()
+	c.logf("%s triggers: a newer release's definition is installed (%q; this release writes v%d), as during a rolling upgrade to it. This replica leaves it in place and cannot verify it; if no such upgrade is under way, treat it as tampering.", c.target.what, st.newer, c.target.def.version)
+}
+
+// newerDefinitionLog is the line for a newly read newer definition.
+func (c *triggerIntegrityChecker) newerDefinitionLog(st triggerIntegrityState) {
+	c.newerWarned = time.Now()
+	c.logf("%s triggers: a newer release's definition was installed (%q; this release writes v%d; catalog row versions %s, were %s), as during a rolling upgrade to it. Leaving it in place and invalidating every replica's %s once; if no such upgrade is under way, treat it as tampering.", c.target.what, st.newer, c.target.def.version, st.version, c.baseline, c.target.cache)
 }
 
 // integrityKey identifies a reading, problem included.
@@ -328,11 +645,18 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 		c.logf("SECURITY: retrying the %s invalidation after a failed attempt (catalog row versions %s, last good %s).", t.cache, st.version, c.baseline)
 	case c.baseline == "" || st.version == c.baseline:
 		c.baseline = st.version
+		c.warnNewer(st)
 		return false, nil
+	case st.newer != "":
+		c.newerDefinitionLog(st)
 	default:
 		c.logf("SECURITY: %s trigger or function rewritten outside this server (catalog row versions %s, were %s), now matching this release again. Invalidating every replica's %s; find who has DDL on this schema.", t.what, st.version, c.baseline, t.cache)
 	}
-	t.tamper.Inc()
+	if st.problem == "" && st.newer != "" {
+		t.newerDef.Inc()
+	} else {
+		t.tamper.Inc()
+	}
 	c.pending = true
 	// The invalidation commits on its own first: it never waits on, or rolls
 	// back with, a repair that cannot finish.
@@ -354,7 +678,7 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = %d", rolePermGenerationRepairLockTimeout.Milliseconds())).Error; err != nil {
 				return err
 			}
-			if err := t.repair(tx); err != nil {
+			if err := t.repair(tx, t.def); err != nil {
 				return err
 			}
 			return t.invalidate(ctx, tx)
@@ -406,12 +730,19 @@ func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, e
 		c.logf("SECURITY: %s triggers read as this release's (catalog row versions %s, last good %s) while an invalidation is owed. Invalidating every replica's %s from the first row.", t.what, st.version, c.baseline, t.cache)
 	case c.baseline == "" || st.version == c.baseline:
 		c.baseline = st.version
+		c.warnNewer(st)
 		return false, nil
+	case st.newer != "":
+		c.newerDefinitionLog(st)
 	default:
 		c.logf("SECURITY: %s trigger or function rewritten outside this server (catalog row versions %s, were %s), now matching this release again. Invalidating every replica's %s; find who has DDL on this schema.", t.what, st.version, c.baseline, t.cache)
 	}
 	if !c.pending || integrityKey(st) != c.round {
-		t.tamper.Inc()
+		if st.problem == "" && st.newer != "" {
+			t.newerDef.Inc()
+		} else {
+			t.tamper.Inc()
+		}
 	}
 	c.pending = true
 	if st.problem != "" {
@@ -422,7 +753,7 @@ func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, e
 			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = %d", rolePermGenerationRepairLockTimeout.Milliseconds())).Error; err != nil {
 				return err
 			}
-			return t.repair(tx)
+			return t.repair(tx, t.def)
 		}); err != nil {
 			// The trigger may have been wrong while earlier batches ran: the
 			// invalidation starts again once a repair commits.
