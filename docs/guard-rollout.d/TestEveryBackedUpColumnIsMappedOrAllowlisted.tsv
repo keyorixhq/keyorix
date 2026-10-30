@@ -1,0 +1,1 @@
+TestEveryBackedUpColumnIsMappedOrAllowlisted	server/admin	#3818	new repo-wide guard (ADMIN-BACKUP-TAILS-1), report-only until its first green nightly on main
