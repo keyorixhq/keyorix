@@ -48,6 +48,12 @@
 //     cannot fix (a session not in 'origin') is invalidated once per reading,
 //     not every tick.
 //
+// The role-permission reading also covers the table the generation triggers
+// and every invalidation write, system_metadata (systemMetadataWriteTargetSQL,
+// #3713): a trigger, rule or row level security there could make every bump,
+// this check's own included, a no-op while the triggers read as correct. The
+// repair removes them (restoreSystemMetadataWriteTarget).
+//
 // Releases: each function carries a version marker (pgTriggerDef.marker,
 // #3717). A newer release's self-consistent definition, at most one version
 // ahead, is invalidated once and warned about under its own counter label, and
@@ -95,6 +101,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"gorm.io/gorm"
@@ -134,7 +141,7 @@ const (
 
 var rolePermGenerationTamperVec = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "keyorix_role_permission_generation_tamper_total",
-	Help: "Times the role-permission generation triggers were found changed and every replica's permission cache was invalidated. reason: tamper (changed outside a release; restored) or newer_definition (a newer release's definition during a rolling upgrade; left in place).",
+	Help: "Times the role-permission generation triggers or the system_metadata row they write were found changed and every replica's permission cache was invalidated. reason: tamper (changed outside a release; restored) or newer_definition (a newer release's definition during a rolling upgrade; left in place).",
 }, []string{"reason"})
 
 var (
@@ -341,6 +348,93 @@ LEFT JOIN (
 ORDER BY g.name`
 }
 
+// systemMetadataAnchorTriggerOK is true, over pg_trigger t on pg_class c
+// (system_metadata), for the one trigger that table may carry: the audit
+// retention-anchor trigger (audit_retention_anchor_trigger.go) as its
+// installer creates it, BEFORE UPDATE FOR EACH ROW (tgtype 19) calling
+// keyorix_keep_retention_anchor_v2() and limited by its WHEN clause to the
+// anchor row, so whatever its function does never reaches the generation row.
+// The function's body is not compared: its installer rewrites it on every
+// boot, and the WHEN clause, not the body, is what keeps it off that row.
+// Never NULL (a trigger without a WHEN clause has a NULL tgqual): it is
+// negated to find the other triggers.
+const systemMetadataAnchorTriggerOK = "COALESCE(t.tgname = '" + AuditRetentionAnchorTrigger + "' AND t.tgtype = 19 AND t.tgnargs = 0 AND t.tgconstraint = 0" +
+	" AND COALESCE(pg_catalog.array_length(t.tgattr::pg_catalog.int2[], 1), 0) = 0" +
+	" AND pg_catalog.pg_get_expr(t.tgqual, t.tgrelid) = '(key = ''audit_retention_anchor''::text)'" +
+	" AND EXISTS (SELECT 1 FROM pg_catalog.pg_proc ap WHERE ap.oid = t.tgfoid AND ap.proname = '" + auditRetentionAnchorFunc + "' AND ap.pronargs = 0 AND ap.pronamespace = c.relnamespace), false)"
+
+// systemMetadataWriteTargetSQL is the role-permission generation target's
+// write-target check (#3713): one (problem, version) row for system_metadata,
+// the table the generation triggers and every invalidation, the check's own
+// included, UPDATE. A BEFORE UPDATE trigger that keeps OLD.value, a rule that
+// rewrites or drops the UPDATE, or row level security that hides the row
+// from the server's role turns every bump into a no-op (or an error), while
+// every trigger and function this file compares still reads as correct. So:
+// a plain table without inheritance children, no non-internal trigger but a
+// correct retention-anchor one, no rule, relrowsecurity and
+// relforcerowsecurity both false. version carries the xmin of its pg_class
+// row and of each trigger and rule row, so an object added and removed again
+// between two ticks still shows.
+const systemMetadataWriteTargetSQL = `SELECT pg_catalog.concat_ws('; ',
+    CASE WHEN c.relkind <> 'r' OR EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid) THEN 'system_metadata is not a plain table without inheritance children' END,
+    CASE WHEN c.relrowsecurity OR c.relforcerowsecurity THEN 'system_metadata has row level security enabled' END,
+    (SELECT 'system_metadata has rules (' || pg_catalog.string_agg(r.rulename::text, ', ' ORDER BY r.rulename) || ')' FROM pg_catalog.pg_rewrite r WHERE r.ev_class = c.oid AND r.rulename <> '_RETURN'),
+    (SELECT 'system_metadata has triggers other than the retention-anchor one (' || pg_catalog.string_agg(t.tgname::text, ', ' ORDER BY t.tgname) || ')'
+       FROM pg_catalog.pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal AND NOT (` + systemMetadataAnchorTriggerOK + `))
+  ) AS problem,
+  c.xmin::text
+    || '|' || COALESCE((SELECT pg_catalog.string_agg(t.tgname::text || '@' || t.xmin::text, ',' ORDER BY t.tgname) FROM pg_catalog.pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal), '')
+    || '|' || COALESCE((SELECT pg_catalog.string_agg(r.rulename::text || '@' || r.xmin::text, ',' ORDER BY r.rulename) FROM pg_catalog.pg_rewrite r WHERE r.ev_class = c.oid), '') AS version
+FROM pg_catalog.pg_class c WHERE c.oid = 'system_metadata'::pg_catalog.regclass`
+
+// restoreSystemMetadataWriteTarget undoes, inside tx, what
+// systemMetadataWriteTargetSQL reports and this server can undo: it drops
+// every non-internal trigger on system_metadata but a correct retention-anchor
+// one (re-creating the anchor trigger when it was the one dropped), drops
+// every rule and turns row level security off. A table that is not a plain
+// table is left to an operator: the re-read after the repair reports it again,
+// every tick. Nothing in Keyorix puts any of these on system_metadata, and
+// the repair's lock_timeout bounds the DROP's ACCESS EXCLUSIVE wait.
+func restoreSystemMetadataWriteTarget(tx *gorm.DB) error {
+	var triggers, rules []string
+	if err := tx.Raw(`SELECT t.tgname::text FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+WHERE c.oid = 'system_metadata'::pg_catalog.regclass AND NOT t.tgisinternal AND NOT (` + systemMetadataAnchorTriggerOK + `) ORDER BY 1`).Scan(&triggers).Error; err != nil {
+		return fmt.Errorf("read system_metadata triggers: %w", err)
+	}
+	if err := tx.Raw(`SELECT r.rulename::text FROM pg_catalog.pg_rewrite r
+WHERE r.ev_class = 'system_metadata'::pg_catalog.regclass AND r.rulename <> '_RETURN' ORDER BY 1`).Scan(&rules).Error; err != nil {
+		return fmt.Errorf("read system_metadata rules: %w", err)
+	}
+	var rls []struct{ Enabled, Forced bool }
+	if err := tx.Raw(`SELECT c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced FROM pg_catalog.pg_class c
+WHERE c.oid = 'system_metadata'::pg_catalog.regclass`).Scan(&rls).Error; err != nil {
+		return fmt.Errorf("read system_metadata row level security: %w", err)
+	}
+	var stmts []string
+	for _, t := range triggers {
+		stmts = append(stmts, "DROP TRIGGER "+pgx.Identifier{t}.Sanitize()+" ON system_metadata")
+	}
+	for _, r := range rules {
+		stmts = append(stmts, "DROP RULE "+pgx.Identifier{r}.Sanitize()+" ON system_metadata")
+	}
+	if len(rls) == 1 && rls[0].Forced {
+		stmts = append(stmts, "ALTER TABLE system_metadata NO FORCE ROW LEVEL SECURITY")
+	}
+	if len(rls) == 1 && rls[0].Enabled {
+		stmts = append(stmts, "ALTER TABLE system_metadata DISABLE ROW LEVEL SECURITY")
+	}
+	for _, s := range stmts {
+		log.Printf("role-permission generation: %s (it can make the generation bump a no-op)", s)
+		if err := tx.Exec(s).Error; err != nil { // #nosec G202 -- identifiers from the catalog, quoted by pgx.Identifier; DDL takes no binds
+			return fmt.Errorf("restore system_metadata: %s: %w", s, err)
+		}
+	}
+	if slices.Contains(triggers, AuditRetentionAnchorTrigger) {
+		return EnsureAuditRetentionAnchorTrigger(tx)
+	}
+	return nil
+}
+
 // rolePermGenerationDef is this release's role-permission generation
 // definition. Its version moves with any change to the body, the settings or
 // the trigger shape (#3717).
@@ -356,7 +450,7 @@ var rolePermGenerationDef = newPGTriggerDef(&pgTriggerDef{
 		return triggers
 	}(),
 	tgtype: 60, // pgRolePermGenerationTriggerDefOK
-}, pgRolePermGenerationTriggerDefOK, pgRolePermGenerationFuncOK, "")
+}, pgRolePermGenerationTriggerDefOK, pgRolePermGenerationFuncOK, systemMetadataWriteTargetSQL)
 
 // secretNodeCacheEpochDef is this release's secret_nodes cache-epoch
 // definition, versioned the same way.
@@ -430,7 +524,12 @@ var rolePermGenerationIntegrityTarget = &triggerIntegrityTarget{
 	invalidate: func(ctx context.Context, tx *gorm.DB) error {
 		return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
 	},
-	repair:   installPostgresRolePermGenerationTriggers,
+	repair: func(tx *gorm.DB, def *pgTriggerDef) error {
+		if err := restoreSystemMetadataWriteTarget(tx); err != nil {
+			return err
+		}
+		return installPostgresRolePermGenerationTriggers(tx, def)
+	},
 	tamper:   rolePermGenerationTamperTotal,
 	newerDef: rolePermGenerationNewerDefinitionTotal,
 }
@@ -660,14 +759,21 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 	c.pending = true
 	// The invalidation commits on its own first: it never waits on, or rolls
 	// back with, a repair that cannot finish.
+	flushed := true
 	if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return t.invalidate(ctx, tx)
 	}); err != nil {
-		// pending stays set and the baseline is left alone: the next tick
-		// invalidates (and repairs) again, never adopts the current reading.
-		return false, fmt.Errorf("invalidate the %s: %w", t.cache, err)
+		if st.problem == "" {
+			// pending stays set and the baseline is left alone: the next tick
+			// invalidates again, never adopts the current reading.
+			return false, fmt.Errorf("invalidate the %s: %w", t.cache, err)
+		}
+		// What the repair restores can be what made this fail (a rule or
+		// forced row level security on system_metadata): repair anyway, and
+		// the repair's own invalidation is the one that counts.
+		c.logf("%s: the invalidation before the repair failed (%v); the repair invalidates again", t.what, err)
+		flushed = false
 	}
-	flushed := true
 	if st.problem != "" {
 		// The repair invalidates again in its own transaction, so a write made
 		// through the wrong trigger after the first invalidation is flushed
@@ -819,7 +925,7 @@ func (ls *LocalStorage) StartTriggerIntegrityCheck(logf func(string, ...any)) {
 		return
 	}
 	var checkers []*triggerIntegrityChecker
-	if storeTableExists(ls.db, "role_permissions") && storeTableExists(ls.db, "permissions") {
+	if storeTableExists(ls.db, "role_permissions") && storeTableExists(ls.db, "permissions") && storeTableExists(ls.db, "system_metadata") {
 		checkers = append(checkers, &triggerIntegrityChecker{ls: ls, logf: logf, target: rolePermGenerationIntegrityTarget})
 	}
 	if secretNodesTableExists(ls.db) {
