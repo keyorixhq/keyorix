@@ -193,7 +193,7 @@ stands. Treat the seal record as tampered with
 server retries the completion at every start and finishes it once the seals authenticate again.
 Finish an unfinished acceptance (re-run `admin audit accept-loss`) **before** a key change: on top
 of a key change its resume is refused, because the checkpoint it would replace is still signed
-under the previous key (audit-chain-break-runbook.md §8).
+under the previous key (audit-chain-break-runbook.md §8, #3814).
 
 ## 6. Rollback
 

@@ -327,7 +327,7 @@ after the break is not notarised: decide soon.
 - An acceptance left unfinished and then a `rotate-kek` or `migrate-provider`: the key change
   does not complete while the seal is pending (nothing is signed against an untrusted seal
   list), and the `accept-loss` resume is refused because the latest checkpoint is still signed
-  under the previous key. Re-run `accept-loss` to finish an acceptance before any key change.
+  under the previous key. Re-run `accept-loss` to finish an acceptance before any key change (#3814).
 - A verification state discontinuity with an intact chain (a deleted or garbled state row, a
   key epoch problem) cannot be accepted: `accept-loss` seals only lost rows (section 7, option 3),
   and those discontinuities stay sticky.
