@@ -27,9 +27,13 @@ import (
 // sessionEvictions is what a revocation path captured before its write: the user's
 // session-token hashes, or the error (ListErr) that stopped it from listing them even
 // after the retry. A caller may fold other hashes it did get (PATs) into Hashes.
+// RevokeErr is set by setAccountStateInTx when the in-transaction session delete or
+// PAT revocation still failed after its retry (AUTHZ-ORACLE-1): the state change
+// committed, but those credentials are still valid in storage.
 type sessionEvictions struct {
-	Hashes  []string
-	ListErr error
+	Hashes    []string
+	ListErr   error
+	RevokeErr error
 }
 
 // sessionEvictMode picks the auth-cache primitive for a successful listing and decides
@@ -115,6 +119,13 @@ func (c *KeyorixCore) evictSessions(userID uint, ev sessionEvictions, mode sessi
 	} else {
 		c.clearCachedTokens(ev.Hashes...)
 	}
+	if ev.RevokeErr != nil {
+		swept := c.evictUserTokenCache(userID)
+		log.Printf("SECURITY: %s: could not revoke the sessions/personal access tokens of user %d (%v) -- they remain valid in storage and the account-state check is the only thing refusing them; per-user auth-cache eviction ran: %t (best-effort, primary operation already succeeded)", reason, userID, ev.RevokeErr, swept)
+		if ev.ListErr == nil {
+			return
+		}
+	}
 	if ev.ListErr == nil {
 		return
 	}
@@ -147,6 +158,10 @@ func (c *KeyorixCore) evictUserTokenCache(userID uint) (ok bool) {
 // best-effort like deleteSessionsForUserAndEvict's own audit write (it never fails the
 // caller). A widening change (evictClearWidening) is not audited: nothing was revoked.
 func (c *KeyorixCore) auditSessionListFailure(ctx context.Context, userID uint, ev sessionEvictions, mode sessionEvictMode, reason string) {
+	if ev.RevokeErr != nil {
+		c.writeAuditEventFailedFull(ctx, EventSessionRevocationFailed, &userID, nil, nil, "",
+			fmt.Sprintf("%s: could not revoke the sessions/personal access tokens of user %d (%v) -- they remain valid in storage and would authenticate again if the account were reactivated; revoke them manually", reason, userID, ev.RevokeErr))
+	}
 	if ev.ListErr == nil || mode == evictClearWidening {
 		return
 	}
