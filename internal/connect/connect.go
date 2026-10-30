@@ -59,8 +59,9 @@ func prefixAllowed(allowed []string, ref string) bool {
 // it starting with '/'. This stops a prefix such as "db/prod" from also matching
 // the unrelated sibling "db/production-other-team" — an over-grant a plain
 // strings.HasPrefix would allow. A prefix already ending in '/' is treated as
-// already segment-scoped (any continuation is fine). An empty prefix p matches
-// nothing (use a separate empty-prefix guard to mean "allow all"). The
+// already segment-scoped (any continuation is fine). An empty prefix p is NOT a
+// safe "match nothing": it matches only the empty ref and any ref starting with
+// '/'; callers must handle p == "" themselves (prefixAllowed skips it). The
 // implementation moved to ports.RefWithinPrefix (ADR-109 step 4) alongside
 // RefHasDotSegment above — see its doc comment for the same two-line-re-export
 // rationale.
