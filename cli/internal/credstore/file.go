@@ -104,6 +104,63 @@ func (s *FileStore) Load() (Credentials, error) {
 	return c, nil
 }
 
+// ForgetSession drops the session from the credentials file -- the token and the active
+// project, which belongs to the session's user -- and keeps the operator's settings: the
+// server URL and ca_file (not secrets; losing ca_file made the next login fail TLS
+// verification). The file is rewritten through a temp file in the same directory and renamed
+// over the original, at 0600, so a crash never leaves a half-written or world-readable file.
+//
+// Nothing stored is not an error. A file that cannot be read back safely (a symlink, a mode
+// wider than 0600, unparseable) is removed instead, as Clear does: it may still hold a token,
+// and failing closed on the token matters more than keeping a setting we cannot trust. When
+// no setting is left to keep, the file is removed.
+func (s *FileStore) ForgetSession() error {
+	if _, err := os.Lstat(s.path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat credentials file: %w", err)
+	}
+	c, err := s.Load()
+	if err != nil || (c.ServerURL == "" && c.CAFile == "") {
+		return s.Clear()
+	}
+	kept := Credentials{ServerURL: c.ServerURL, CAFile: c.CAFile}
+	data, err := yaml.Marshal(kept)
+	if err != nil {
+		return fmt.Errorf("marshal credentials: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".credentials-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp credentials file: %w", err)
+	}
+	tmpName := tmp.Name()
+	fail := func(what string, err error) error {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		return fail("chmod temp credentials file", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fail("write temp credentials file", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fail("sync temp credentials file", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close temp credentials file: %w", err)
+	}
+	if err := os.Rename(tmpName, s.path); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("replace credentials file: %w", err)
+	}
+	return nil
+}
+
 // Clear removes the credentials file. Clearing when none exists is not an error.
 func (s *FileStore) Clear() error {
 	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
