@@ -804,6 +804,10 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		if errors.Is(err, storage.ErrDuplicateEmail) {
 			return nil, fmt.Errorf("a user with this email already exists")
 		}
+		// Same race on the derived username (deriveSCIMUsername vs the username index).
+		if errors.Is(err, storage.ErrDuplicateUsername) {
+			return nil, fmt.Errorf("a user with this username already exists")
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	role := roleName

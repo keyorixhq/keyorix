@@ -809,6 +809,15 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		if errors.Is(err, ErrUserActiveStateConflict) {
 			return nil, err
 		}
+		// The GetUserByUsername/GetUserByEmail pre-checks above are check-then-act reads:
+		// a concurrent rename to the same name reaches the partial unique index, and the
+		// loser answers what the winner's sequential check would (AlreadyExists / 409).
+		if errors.Is(err, storage.ErrDuplicateUsername) {
+			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
+		}
+		if errors.Is(err, storage.ErrDuplicateEmail) {
+			return nil, fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if deactivating {
