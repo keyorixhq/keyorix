@@ -20,13 +20,11 @@ func TestCaptureLogBuf_ConcurrentLoggerWritesAndReads(t *testing.T) {
 		const writers, lines = 4, 200
 		var wg sync.WaitGroup
 		for range writers {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for range lines {
 					log.Printf("late goroutine line")
 				}
-			}()
+			})
 		}
 		// Read while the writers are still logging.
 		for range lines {
