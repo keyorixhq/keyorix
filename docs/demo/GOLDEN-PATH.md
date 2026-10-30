@@ -618,8 +618,6 @@ secret should count as "new" remains a product question, not a demo one.
   [#3736](https://github.com/keyorixhq/keyorix/issues/3736).
 - `secret restore` on a secret that is not deleted says "Storage operation failed:
   Secret not found": [#3737](https://github.com/keyorixhq/keyorix/issues/3737).
-- A fresh dashboard shows "Inactive users: 1 — no login in 30 days" for users who
-  have not logged in yet: [#3740](https://github.com/keyorixhq/keyorix/issues/3740).
 - `break-glass list` shows the user as a number:
   [#3741](https://github.com/keyorixhq/keyorix/issues/3741).
 - A missing key directory is reported as "a live server ... is using this key

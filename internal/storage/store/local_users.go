@@ -505,7 +505,13 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 	}
 	if filter.InactiveSince != nil {
 		// G81 (User.LastLoginAt): normalize internally — see GetAuditLogs.
-		query = query.Where("last_login_at IS NULL OR last_login_at < ?", filter.InactiveSince.UTC())
+		cutoff := filter.InactiveSince.UTC()
+		if filter.InactiveSpareNewAccounts {
+			// A never-logged-in account is dormant only if it has existed longer than the window.
+			query = query.Where("(last_login_at IS NULL AND created_at < ?) OR last_login_at < ?", cutoff, cutoff)
+		} else {
+			query = query.Where("last_login_at IS NULL OR last_login_at < ?", cutoff)
+		}
 	}
 
 	var total int64
