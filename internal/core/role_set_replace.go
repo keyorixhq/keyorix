@@ -154,7 +154,7 @@ func (c *KeyorixCore) requireGranterHoldsRoleSet(ctx context.Context, r roleSetR
 // the direct grants at exactly scope that commit 1 removes; the refusal is
 // requireGranterHoldsRolePermissions' own. Any other actor is unaffected by commit 1.
 func (c *KeyorixCore) requireSelfGrantCeilingAfterRemovals(ctx context.Context, r roleSetReplace, removable func(id uint) bool, add []uint) error {
-	if len(add) == 0 || r.actorIsMachine || r.actorID == 0 || r.actorID != r.userID {
+	if len(add) == 0 || r.actorIsMachine || r.actorID != r.userID {
 		return nil
 	}
 	current, err := c.storage.GetUserRoleIDsExact(ctx, r.userID, r.scope)
