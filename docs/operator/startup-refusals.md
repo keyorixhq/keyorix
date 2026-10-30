@@ -54,7 +54,7 @@ Real output:
 
 ```
 Failed to load configuration: failed to unmarshal config: yaml: unmarshal errors:
-  line 18: unknown key "webauthn" under security (check its spelling and section in docs/CONFIGURATION.md)
+  line 189: unknown key "webauthn" under security (check its spelling and section in docs/CONFIGURATION.md)
 ```
 
 **Match:** `failed to unmarshal config`, `check its spelling and section in docs/CONFIGURATION.md`
@@ -491,7 +491,8 @@ interrupted before it replaced the DEK: start with the **previous** passphrase, 
 a `rotate-kek` / `migrate-provider` left the DEK wrapped under a KEK the configuration does
 not produce yet (the extra lines above). The message names the source the
 passphrase was read from (`--passphrase-fd N`, `--passphrase-file "<path>"`,
-`--passphrase-stdin`, `KEYORIX_MASTER_PASSWORD_FILE="<path>"` or `KEYORIX_MASTER_PASSWORD`):
+`--passphrase-stdin`, `KEYORIX_MASTER_PASSWORD_FILE="<path>"` or `KEYORIX_MASTER_PASSWORD`; a
+relative path is not printed, the message says `a relative path, not shown: it may be the secret itself`):
 check that it is the one you meant, since a leftover variable in the environment is easy to miss. **Fix.** If the
 message has a leftover line, follow it (full procedure:
 [key-rotation-runbook.md](key-rotation-runbook.md#interrupted-rotate-kek-or-migrate-provider)) and keep
@@ -503,11 +504,13 @@ delete the key files to "start fresh": a new key cannot open existing data.
 
 ### Key file readable by others (explicit `enable_file_permission_check`)
 
-Real output (`dek.enc` at mode 644, `security.enable_file_permission_check: true` set):
+Real output (`keys/dek.key` at mode 644, `security.enable_file_permission_check: true` set;
+the config `admin init` writes also has `auto_fix_file_permissions: true`, which resets a wrong
+mode at every start, so the block was made with it set to `false`):
 
 ```
-[WARN] File <datadir>/dek.enc has mode 644 but expected 600
-startup validation: file permission validation failed: permissions or ownership audit found unresolved issues: File <datadir>/dek.enc has mode 644 but expected 600 -- fix each file named (chmod to the expected mode, chown to the server's user), restore a missing one from backup, or set security.auto_fix_file_permissions: true to fix modes and owners at start
+[WARN] File keys/dek.key has mode 644 but expected 600
+startup validation: file permission validation failed: permissions or ownership audit found unresolved issues: File keys/dek.key has mode 644 but expected 600 -- fix each file named (chmod to the expected mode, chown to the server's user), restore a missing one from backup, or set security.auto_fix_file_permissions: true to fix modes and owners at start
 ```
 
 **Match:** `permissions or ownership audit found unresolved issues`
@@ -523,16 +526,17 @@ yes: permissions only. See the [hardening guide](../security/hardening-guide.md)
 
 ### A key file is missing on a later start
 
-From code (`salt.bin` deleted, database and `dek.enc` present): the same refusal as
-above, naming the file:
+Real output (`keys/kek.salt` deleted, the database and `keys/dek.key` present,
+`security.enable_file_permission_check: true`): the same refusal as above, naming the file:
 
 ```
-startup validation: file permission validation failed: permissions or ownership audit found unresolved issues: cannot open <datadir>/salt.bin (no such file or directory) -- fix each file named ...
+[WARN] Cannot open file keys/kek.salt: open keys/kek.salt: no such file or directory
+startup validation: file permission validation failed: permissions or ownership audit found unresolved issues: cannot open keys/kek.salt (no such file or directory) -- fix each file named (chmod to the expected mode, chown to the server's user), restore a missing one from backup, or set security.auto_fix_file_permissions: true to fix modes and owners at start
 ```
 
 **Match:** `permissions or ownership audit found unresolved issues`
 
-**Cause.** The database exists, so this is not a first boot, but `salt.bin` (or `dek.enc`)
+**Cause.** The database exists, so this is not a first boot, but `keys/kek.salt` (or `keys/dek.key`)
 is gone: an unmounted key volume, a restore that missed a file, or a deletion.
 **Fix.** Restore **both** key files from the same backup, or mount the right volume. Do not
 start with the files missing: with the check off, the server would generate a *new*
@@ -545,7 +549,7 @@ Real output (`security.enable_file_permission_check: true` written before the fi
 no key file and no database yet):
 
 ```
-startup validation: file permission validation failed: no key material exists (<datadir>/salt.bin, <datadir>/dek.enc) and there is no local database: security.enable_file_permission_check is set explicitly, and an explicit setting never treats missing key material as a first boot, because a key volume that failed to mount looks the same and starting would generate new keys over encrypted data. On a brand-new install, remove security.enable_file_permission_check from the config for the first start (the default runs the same checks and generates the keys), then set it again; on an existing install, mount or restore the key files (all of them, from one backup)
+startup validation: file permission validation failed: no key material exists (keys/kek.salt, keys/dek.key) and there is no local database: security.enable_file_permission_check is set explicitly, and an explicit setting never treats missing key material as a first boot, because a key volume that failed to mount looks the same and starting would generate new keys over encrypted data. On a brand-new install, remove security.enable_file_permission_check from the config for the first start (the default runs the same checks and generates the keys), then set it again; on an existing install, mount or restore the key files (all of them, from one backup)
 ```
 
 **Match:** `no key material exists`, `an explicit setting never treats missing key material as a first boot`
@@ -663,8 +667,11 @@ upgrade grace period, with the check off or with the override, both forms only w
 Real output (`KEYORIX_MASTER_PASSWORD_FILE=<datadir>/mp` at mode 644):
 
 ```
-secret file security: KEYORIX_MASTER_PASSWORD_FILE: secret file "<datadir>/mp": mode 0644 is too open (accessible to other users) -- refusing to trust it; chmod 0600/0400, or mount it from the orchestrator owned by root with a group the process belongs to (fsGroup / group_add) and mode 0440 (key material: security.insecure_allow_unsafe_file_permissions does not apply to it; the server refuses it wherever it reads it, so fix the file) -- refused until the file is fixed
+secret file security: KEYORIX_MASTER_PASSWORD_FILE="<datadir>/mp": mode 0644 is too open (accessible to other users) -- refusing to trust it; chmod 0600/0400, or mount it from the orchestrator owned by root with a group the process belongs to (fsGroup / group_add) and mode 0440 (key material: security.insecure_allow_unsafe_file_permissions does not apply to it; the server refuses it wherever it reads it, so fix the file) -- refused until the file is fixed
 ```
+
+When the variable holds a relative path, the message does not print it (it may be the secret
+itself): `KEYORIX_MASTER_PASSWORD_FILE (a relative path, not shown: it may be the secret itself): mode 0644 is too open ...`.
 
 For a file that is not key material (database password, bootstrap token ...) the end reads
 `-- refused until the file is fixed (for the files that are not key
@@ -898,11 +905,13 @@ directory. **In place:** yes: nothing was written.
 
 ### Database newer than this binary (no compatibility floor)
 
-Real output, captured at schema epoch 9 (schema epoch edited to 999 to stand in for a newer release):
+Real output, re-captured on 2026-10-30 at schema epoch 9 (`currentSchemaEpoch` in
+`internal/storage/factory_schema_epoch.go`; `schema_epoch` edited to 999 and the floor row
+deleted, to stand in for a newer release):
 
 ```
 storage: opening existing SQLite database at <datadir>/keyorix.db (configured: "<datadir>/keyorix.db")
-failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database schema epoch 999 is newer than this binary's schema epoch 9 (recorded at 2026-10-29T10:49:28+01:00, 37s ago) -- this database was migrated by a newer version of Keyorix. Two things produce this, and this process cannot tell them apart on its own: (a) a rolling upgrade in progress -- ... (b) this binary was downgraded against a schema a newer version already migrated -- if so, upgrade this binary to match, or restore a backup taken before the newer version ran. No minimum compatible schema epoch is recorded, so nothing declares this schema safe for an older binary. Refusing to start is the safe default in both cases (ADR-097, ADR-101)
+failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database schema epoch 999 is newer than this binary's schema epoch 9 (recorded at 2026-10-30T18:28:16+01:00, 20m48s ago) -- this database was migrated by a newer version of Keyorix. Two things produce this, and this process cannot tell them apart on its own: (a) a rolling upgrade in progress -- ... (b) this binary was downgraded against a schema a newer version already migrated -- if so, upgrade this binary to match, or restore a backup taken before the newer version ran. No minimum compatible schema epoch is recorded, so nothing declares this schema safe for an older binary. Refusing to start is the safe default in both cases (ADR-097, ADR-101)
 ```
 
 **Match:** `is newer than this binary's schema epoch`, `checked before migrating; nothing was migrated`
@@ -916,10 +925,10 @@ schema. **In place:** no. [UPGRADING.md §7 Rollback](../UPGRADING.md#7-rollback
 
 ### Database declares a compatibility floor above this binary
 
-Real output, captured at schema epoch 9 (floor edited to 999):
+Real output, re-captured on 2026-10-30 at schema epoch 9 (floor edited to 999):
 
 ```
-failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database declares a minimum compatible schema epoch of 999 (database schema epoch 9), above this binary's schema epoch 9 (floor recorded at 2026-10-29T09:50:10Z, 1s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 999 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
+failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database declares a minimum compatible schema epoch of 999 (database schema epoch 9), above this binary's schema epoch 9 (floor recorded at 2026-10-30T17:49:10Z, 4s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 999 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
 ```
 
 **Match:** `database declares a minimum compatible schema epoch of`
@@ -935,7 +944,7 @@ recorded floor from 2 to 3. v0.96.x words the prefix differently (`failed to mig
 database:`):
 
 ```
-failed to initialize core service: failed to initialize storage: failed to migrate database: database declares a minimum compatible schema epoch of 3 (database schema epoch 9), above this binary's schema epoch 2 (floor recorded at 2026-10-29T10:50:31+01:00, 0s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 3 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
+failed to initialize core service: failed to initialize storage: failed to migrate database: database declares a minimum compatible schema epoch of 3 (database schema epoch 9), above this binary's schema epoch 2 (floor recorded at 2026-10-30T18:53:27+01:00, 0s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 3 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
 ```
 
 Floor 3 is why: v0.96.x misreads the v2 audit retention anchor and never writes the suspend
@@ -968,10 +977,10 @@ Error: backup archive's schema epoch <n> is newer than this binary's schema epoc
 
 ### Restore: older than this host's own history (rollback protection)
 
-Real output (restoring a backup taken before the last two audit events, over the running data directory):
+Real output (restoring a backup taken before two `admin encryption rotate` runs, which each add audit events, over the same data directory with `--overwrite-existing`; backups taken later add only the backup tool's own bookkeeping events, which do not count as "behind"):
 
 ```
-Error: refusing to restore: this backup's audit trail (9 event(s)) is 2 event(s) BEHIND this host's own last known state (12 event(s)) -- restoring it would silently un-revoke any user/credential access revoked since this backup was taken. Pass --allow-rollback if this is a genuine disaster-recovery restore of an intentionally older backup
+Error: refusing to restore: this backup's audit trail (15 event(s)) is 2 event(s) BEHIND this host's own last known state (18 event(s)) -- restoring it would silently un-revoke any user/credential access revoked since this backup was taken. Pass --allow-rollback if this is a genuine disaster-recovery restore of an intentionally older backup
 ```
 
 **Match:** `refusing to restore: this backup's audit trail`
@@ -1193,6 +1202,13 @@ Real output (server running on the same SQLite database, `admin backup`):
 
 ```
 Error: on SQLite, admin backup needs the database to itself -- stop the server first (a live backup without downtime needs Postgres): a Keyorix server (or another admin command) appears to be using this database (another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe.
+Run admin commands with the server stopped: stop the server (for example 'systemctl stop keyorix'), run this command again, then start the server.
+```
+
+Inside a container (Compose) the last lines name the Compose sequence instead (from code, not
+run here: the capture host is not a container):
+
+```
 With Docker Compose, run admin commands in a throwaway container while the server is stopped:
   docker compose stop backend
   docker compose run --rm backend ./keyorix-server admin <command>
