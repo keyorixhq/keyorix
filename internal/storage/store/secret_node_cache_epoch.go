@@ -188,6 +188,13 @@ func EnsureSecretNodeCacheEpoch(db *gorm.DB) error {
 // creates the TRIGGER only when it is absent, so a correct trigger is never
 // dropped and no trigger-less window exists.
 func ensurePostgresCacheEpochTrigger(tx *gorm.DB) error {
+	return installPostgresCacheEpochTrigger(tx, secretNodeCacheEpochDef)
+}
+
+// installPostgresCacheEpochTrigger installs d (this release's definition, or
+// in tests another release's) unless a newer release's definition is already
+// installed, as installPostgresRolePermGenerationTriggers does (#3717).
+func installPostgresCacheEpochTrigger(tx *gorm.DB, d *pgTriggerDef) error {
 	// Serialise concurrent callers before touching pg_proc.
 	//
 	// CREATE OR REPLACE FUNCTION is atomic with respect to READERS — there is no
@@ -206,6 +213,9 @@ func ensurePostgresCacheEpochTrigger(tx *gorm.DB) error {
 	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(postgresCacheEpochLockKey)).Error; err != nil {
 		return fmt.Errorf("acquire cache_epoch migration advisory lock: %w", err)
 	}
+	if newer, err := leaveNewerTriggerDef(tx, d, "cache epoch"); newer || err != nil {
+		return err
+	}
 	// Rewrite the function only when it is missing or differs, as the
 	// role-permission generation installer does: a rewrite of a correct
 	// function gives its pg_proc row a new xmin on every boot of every
@@ -213,9 +223,9 @@ func ensurePostgresCacheEpochTrigger(tx *gorm.DB) error {
 	// reads as tampering.
 	var current []bool
 	if err := tx.Raw(`SELECT `+pgCacheEpochFuncOK+` FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang
-WHERE p.proname = '`+secretNodeCacheEpochFunc+`' AND p.pronargs = 0
+WHERE p.proname = '`+d.funcName+`' AND p.pronargs = 0
   AND p.pronamespace = (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname = pg_catalog.current_schema())`,
-		postgresCacheEpochFuncBody).Scan(&current).Error; err != nil {
+		d.body).Scan(&current).Error; err != nil {
 		return fmt.Errorf("failed to read %s() definition: %w", secretNodeCacheEpochFunc, err)
 	}
 	if len(current) == 0 || !current[0] {
@@ -226,10 +236,13 @@ WHERE p.proname = '`+secretNodeCacheEpochFunc+`' AND p.pronargs = 0
 		// never be mistaken for a pgx $N placeholder. The search_path is pinned
 		// (pgTriggerFuncSetClause): the body's operator then resolves the same
 		// way whatever the writing session's search_path is.
-		if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + secretNodeCacheEpochFunc + `() RETURNS trigger
-LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$` + postgresCacheEpochFuncBody + `$keyorix$`).Error; err != nil {
-			return fmt.Errorf("failed to create %s(): %w", secretNodeCacheEpochFunc, err)
+		if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + d.funcName + `() RETURNS trigger
+LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$` + d.body + `$keyorix$`).Error; err != nil {
+			return fmt.Errorf("failed to create %s(): %w", d.funcName, err)
 		}
+	}
+	if err := ensureTriggerDefMarker(tx, d); err != nil {
+		return err
 	}
 	var state []struct {
 		State string
