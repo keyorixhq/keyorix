@@ -363,6 +363,37 @@ const systemMetadataAnchorTriggerOK = "COALESCE(t.tgname = '" + AuditRetentionAn
 	" AND pg_catalog.pg_get_expr(t.tgqual, t.tgrelid) = '(key = ''audit_retention_anchor''::text)'" +
 	" AND EXISTS (SELECT 1 FROM pg_catalog.pg_proc ap WHERE ap.oid = t.tgfoid AND ap.proname = '" + auditRetentionAnchorFunc + "' AND ap.pronargs = 0 AND ap.pronamespace = c.relnamespace), false)"
 
+// The single_writer fence's (internal/solewriter) trigger prefix, guard
+// function and that function's body as pg_proc.prosrc stores it. The fence
+// installs AFTER triggers on system_metadata that execute it, and the
+// write-target check must tell them from foreign ones. A copy, because store
+// cannot import solewriter (solewriter's tests import store);
+// solewriter's TestFenceGuard_MatchesTheStore fails when they drift.
+const (
+	SoleWriterFenceTriggerPrefix = "trg_ksw_"
+	SoleWriterGuardFunc          = "keyorix_sole_writer_guard"
+	SoleWriterGuardFuncBody      = `
+BEGIN
+  EXECUTE pg_catalog.format('SELECT %I.keyorix_sole_writer_check($1)', TG_TABLE_SCHEMA) USING TG_TABLE_SCHEMA::text;
+  EXECUTE pg_catalog.format('UPDATE %I.keyorix_write_epoch SET n = n + 1 WHERE id = 1 AND xmin <> pg_catalog.xid(pg_catalog.pg_current_xact_id())', TG_TABLE_SCHEMA);
+  RETURN NULL;
+END;
+`
+)
+
+// systemMetadataFenceTriggerOK is true, over pg_trigger t on pg_class c
+// (system_metadata), for a single_writer fence trigger (internal/solewriter,
+// which fences the generation row): named with the fence's prefix, AFTER
+// (an AFTER trigger cannot change the row it fires for), calling the fence's
+// guard function in this schema with exactly that package's body, plpgsql,
+// not SECURITY DEFINER. The fence rewrites that function on every
+// single-writer start, so its row version is not part of the fingerprint;
+// while the fence runs, its own census checks the rest. Never NULL.
+var systemMetadataFenceTriggerOK = "COALESCE(pg_catalog.left(t.tgname::text, " + strconv.Itoa(len(SoleWriterFenceTriggerPrefix)) + ") = '" + SoleWriterFenceTriggerPrefix + "' AND t.tgtype & 66 = 0" +
+	" AND EXISTS (SELECT 1 FROM pg_catalog.pg_proc fp JOIN pg_catalog.pg_language fl ON fl.oid = fp.prolang" +
+	" WHERE fp.oid = t.tgfoid AND fp.proname = '" + SoleWriterGuardFunc + "' AND fp.pronargs = 0 AND fp.pronamespace = c.relnamespace" +
+	" AND fl.lanname = 'plpgsql' AND NOT fp.prosecdef AND fp.prosrc = '" + strings.ReplaceAll(SoleWriterGuardFuncBody, "'", "''") + "'), false)"
+
 // systemMetadataWriteTargetSQL is the role-permission generation target's
 // write-target check (#3713): one (problem, version) row for system_metadata,
 // the table the generation triggers and every invalidation, the check's own
@@ -371,16 +402,16 @@ const systemMetadataAnchorTriggerOK = "COALESCE(t.tgname = '" + AuditRetentionAn
 // from the server's role turns every bump into a no-op (or an error), while
 // every trigger and function this file compares still reads as correct. So:
 // a plain table without inheritance children, no non-internal trigger but a
-// correct retention-anchor one, no rule, relrowsecurity and
-// relforcerowsecurity both false. version carries the xmin of its pg_class
+// correct retention-anchor one or single_writer fence triggers, no rule,
+// relrowsecurity and relforcerowsecurity both false. version carries the xmin of its pg_class
 // row and of each trigger and rule row, so an object added and removed again
 // between two ticks still shows.
-const systemMetadataWriteTargetSQL = `SELECT pg_catalog.concat_ws('; ',
+var systemMetadataWriteTargetSQL = `SELECT pg_catalog.concat_ws('; ',
     CASE WHEN c.relkind <> 'r' OR EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid) THEN 'system_metadata is not a plain table without inheritance children' END,
     CASE WHEN c.relrowsecurity OR c.relforcerowsecurity THEN 'system_metadata has row level security enabled' END,
     (SELECT 'system_metadata has rules (' || pg_catalog.string_agg(r.rulename::text, ', ' ORDER BY r.rulename) || ')' FROM pg_catalog.pg_rewrite r WHERE r.ev_class = c.oid AND r.rulename <> '_RETURN'),
-    (SELECT 'system_metadata has triggers other than the retention-anchor one (' || pg_catalog.string_agg(t.tgname::text, ', ' ORDER BY t.tgname) || ')'
-       FROM pg_catalog.pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal AND NOT (` + systemMetadataAnchorTriggerOK + `))
+    (SELECT 'system_metadata has triggers other than the retention-anchor one and the single_writer fence''s (' || pg_catalog.string_agg(t.tgname::text, ', ' ORDER BY t.tgname) || ')'
+       FROM pg_catalog.pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal AND NOT (` + systemMetadataAnchorTriggerOK + ` OR ` + systemMetadataFenceTriggerOK + `))
   ) AS problem,
   c.xmin::text
     || '|' || COALESCE((SELECT pg_catalog.string_agg(t.tgname::text || '@' || t.xmin::text, ',' ORDER BY t.tgname) FROM pg_catalog.pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal), '')
@@ -390,7 +421,9 @@ FROM pg_catalog.pg_class c WHERE c.oid = 'system_metadata'::pg_catalog.regclass`
 // restoreSystemMetadataWriteTarget undoes, inside tx, what
 // systemMetadataWriteTargetSQL reports and this server can undo: it drops
 // every non-internal trigger on system_metadata but a correct retention-anchor
-// one (re-creating the anchor trigger when it was the one dropped), drops
+// one and correct single_writer fence ones (re-creating the anchor trigger
+// when it was the one dropped; the fence re-installs its own at its next
+// start), drops
 // every rule and turns row level security off. A table that is not a plain
 // table is left to an operator: the re-read after the repair reports it again,
 // every tick. Nothing in Keyorix puts any of these on system_metadata, and
@@ -398,7 +431,7 @@ FROM pg_catalog.pg_class c WHERE c.oid = 'system_metadata'::pg_catalog.regclass`
 func restoreSystemMetadataWriteTarget(tx *gorm.DB) error {
 	var triggers, rules []string
 	if err := tx.Raw(`SELECT t.tgname::text FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
-WHERE c.oid = 'system_metadata'::pg_catalog.regclass AND NOT t.tgisinternal AND NOT (` + systemMetadataAnchorTriggerOK + `) ORDER BY 1`).Scan(&triggers).Error; err != nil {
+WHERE c.oid = 'system_metadata'::pg_catalog.regclass AND NOT t.tgisinternal AND NOT (` + systemMetadataAnchorTriggerOK + ` OR ` + systemMetadataFenceTriggerOK + `) ORDER BY 1`).Scan(&triggers).Error; err != nil {
 		return fmt.Errorf("read system_metadata triggers: %w", err)
 	}
 	if err := tx.Raw(`SELECT r.rulename::text FROM pg_catalog.pg_rewrite r
