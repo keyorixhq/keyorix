@@ -150,8 +150,8 @@ KEYORIX_INITIAL_PASSWORD='<a long passphrase>' ./bin/keyorix user create \
 
 The server confines **dana** to the security page
 (`/profile?tab=security&mfa=required`) until she enrols — enter the setup key in
-any TOTP app (the dialog shows no QR code yet, #3738: type the 32-character key
-into the phone, or use a desktop authenticator), enter the 6-digit code and her
+any TOTP app (the dialog shows a QR code to scan; on a desktop authenticator type
+the 32-character key instead), enter the 6-digit code and her
 password, confirm. Log
 out, log back in — the server now challenges for the code. While she is not yet
 enrolled, Compliance's second-factor coverage drops below 100% and that control is
@@ -618,11 +618,6 @@ secret should count as "new" remains a product question, not a demo one.
   [#3736](https://github.com/keyorixhq/keyorix/issues/3736).
 - `secret restore` on a secret that is not deleted says "Storage operation failed:
   Secret not found": [#3737](https://github.com/keyorixhq/keyorix/issues/3737).
-- The web TOTP dialog has no QR code:
-  [#3738](https://github.com/keyorixhq/keyorix/issues/3738).
-- A `project_viewer` sees New Project / edit / delete on Projects (the server
-  refuses them): [#3739](https://github.com/keyorixhq/keyorix/issues/3739). Do not
-  click them in the least-privilege part.
 - A fresh dashboard shows "Inactive users: 1 — no login in 30 days" for users who
   have not logged in yet: [#3740](https://github.com/keyorixhq/keyorix/issues/3740).
 - `break-glass list` shows the user as a number:
