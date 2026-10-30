@@ -29,6 +29,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -173,13 +175,53 @@ func (e *otEnv) dump() {
 	}
 }
 
-// setHostZone makes time.Now() carry the given zone for the rest of the test,
-// like a server whose host TZ is not UTC.
-func setHostZone(t *testing.T, loc *time.Location) {
+// otHostTZChildEnv selects helper mode: the value is the zone this process was
+// started under (TZ=<zone>) and must run the test body once.
+const otHostTZChildEnv = "KEYORIX_TEST_OT_HOST_TZ_CHILD"
+
+// otHostTZChild returns the zone when this process is a host-TZ subprocess,
+// after checking that the runtime really adopted it as time.Local.
+func otHostTZChild(t *testing.T) (string, bool) {
 	t.Helper()
-	old := time.Local
-	time.Local = loc
-	t.Cleanup(func() { time.Local = old })
+	tz := os.Getenv(otHostTZChildEnv)
+	if tz == "" {
+		return "", false
+	}
+	want, err := time.LoadLocation(tz)
+	require.NoError(t, err)
+	for _, ref := range []time.Time{
+		time.Date(1850, 6, 1, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+	} {
+		_, gotOff := ref.In(time.Local).Zone()
+		_, wantOff := ref.In(want).Zone()
+		require.Equal(t, wantOff, gotOff, "subprocess time.Local does not match TZ=%s at %v", tz, ref)
+	}
+	return tz, true
+}
+
+// runInOTHostTZ re-executes this test binary for test `name` with TZ=tz, like a
+// server whose host TZ is not UTC, and requires that the test ran and passed.
+// No test assigns time.Local: it is a process-wide global, so writing it races
+// with every goroutine that calls time.Now.
+func runInOTHostTZ(t *testing.T, name, tz string) {
+	t.Helper()
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "TZ=") && !strings.HasPrefix(kv, otHostTZChildEnv+"=") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "TZ="+tz, otHostTZChildEnv+"="+tz)
+	cmd := exec.Command(exe, "-test.run=^"+name+"$", "-test.v", "-test.count=1")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "subprocess TZ=%s failed:\n%s", tz, out)
+	require.Contains(t, string(out), "--- PASS: "+name+" ", "subprocess TZ=%s did not run %s:\n%s", tz, name, out)
+	require.NotContains(t, string(out), "--- SKIP", "subprocess TZ=%s skipped:\n%s", tz, out)
 }
 
 func loadZone(t *testing.T, name string) *time.Location {
@@ -350,72 +392,82 @@ func TestSQLiteOffsetTimes_BlackBox_ClientOffsets(t *testing.T) {
 // TestSQLiteOffsetTimes_BlackBox_NonUTCHost: entry points whose expiry is a
 // duration added to the server clock. The offset comes from the HOST zone.
 func TestSQLiteOffsetTimes_BlackBox_NonUTCHost(t *testing.T) {
-	zones := map[string]func(*testing.T) *time.Location{
-		"iana_Pacific_Kiritimati_plus14":  func(t *testing.T) *time.Location { return loadZone(t, "Pacific/Kiritimati") },
-		"iana_America_St_Johns_minus0330": func(t *testing.T) *time.Location { return loadZone(t, "America/St_Johns") },
+	if _, child := otHostTZChild(t); child {
+		nonUTCHostOnThisHost(t)
+		return
 	}
-	for name, mk := range zones {
+	zones := map[string]string{
+		"iana_Pacific_Kiritimati_plus14":  "Pacific/Kiritimati",
+		"iana_America_St_Johns_minus0330": "America/St_Johns",
+	}
+	for name, zone := range zones {
 		t.Run(name, func(t *testing.T) {
-			e := newOTEnv(t)
-			defer e.dump()
-			setHostZone(t, mk(t))
-			ctx := context.Background()
-
-			t.Run("machine_credential", func(t *testing.T) {
-				e.t = t
-				mi, err := e.c.CreateMachineIdentity(ctx, e.project, "ot-runner", "ci", "", "", e.adminID, 0)
-				require.NoError(t, err)
-				status, body := e.do("POST", fmt.Sprintf("/api/v1/projects/%d/machine-identities/%d/tokens", e.project, mi.ID), e.admin,
-					map[string]any{"name": "ot-cred", "expires_in_days": 1})
-				e.row("machine credential expires_at", "expires_in_days=1", e.stored("SELECT typeof(expires_at), expires_at FROM machine_identity_credentials WHERE machine_identity_id = ?", mi.ID),
-					fmt.Sprintf("issue=%d", status))
-				e.row("machine credential created_at", "(server clock)", e.stored("SELECT typeof(created_at), created_at FROM machine_identity_credentials WHERE machine_identity_id = ?", mi.ID),
-					"the column the raw credential lookup also scans")
-				require.Equal(t, http.StatusCreated, status, string(body))
-			})
-
-			t.Run("pat_created_at", func(t *testing.T) {
-				e.t = t
-				status, body := e.do("POST", "/api/v1/auth/tokens", e.admin, map[string]any{"name": "pat-host-zone"})
-				require.Equal(t, http.StatusCreated, status, string(body))
-				e.row("PAT created_at", "(server clock)", e.stored("SELECT typeof(created_at), created_at FROM personal_access_tokens ORDER BY id DESC LIMIT 1"), "create=201")
-			})
-
-			t.Run("invitation", func(t *testing.T) {
-				e.t = t
-				status, body := e.do("POST", fmt.Sprintf("/api/v1/projects/%d/invitations", e.project), e.admin,
-					map[string]any{"email": "ot-invitee@example.com", "role": "project_viewer"})
-				ls, lb := e.do("GET", fmt.Sprintf("/api/v1/projects/%d/invitations", e.project), e.admin, nil)
-				e.row("invitation expires_at", "(server TTL)", e.stored("SELECT typeof(expires_at), expires_at FROM project_invitations WHERE email = ?", "ot-invitee@example.com"),
-					fmt.Sprintf("create=%d list=%d", status, ls))
-				require.Equal(t, http.StatusCreated, status, string(body))
-				require.Equal(t, http.StatusOK, ls, string(lb))
-			})
-
-			// The invitation's setup link is a second row with its own expiry.
-			t.Run("invitation_setup_token", func(t *testing.T) {
-				e.t = t
-				e.row("invitation setup_token expires_at", "(server TTL)", e.stored("SELECT typeof(expires_at), expires_at FROM setup_tokens ORDER BY id DESC LIMIT 1"), "minted with the invitation")
-			})
-
-			t.Run("break_glass", func(t *testing.T) {
-				e.t = t
-				e.c.SetBreakGlassPolicy(core.BreakGlassPolicy{Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour})
-				u, err := e.c.CreateUser(ctx, &core.CreateUserRequest{Username: "otbg", Email: "otbg@example.com", DisplayName: "OT", Password: "TestPassword123!"})
-				require.NoError(t, err)
-				require.NoError(t, e.c.AddProjectMember(ctx, e.adminID, e.project, u.ID, "project_viewer", false))
-				us, _, err := e.c.Login(ctx, &core.LoginRequest{Username: "otbg", Password: "TestPassword123!"})
-				require.NoError(t, err)
-				status, body := e.do("POST", fmt.Sprintf("/api/v1/projects/%d/break-glass", e.project), us.SessionToken,
-					map[string]any{"justification": "SQLITE-TIME-TAILS-1 probe: production outage", "ttl": "1h"})
-				ls, lb := e.do("GET", fmt.Sprintf("/api/v1/projects/%d/break-glass", e.project), e.admin, nil)
-				e.row("break-glass expires_at", "ttl=1h", e.stored("SELECT typeof(expires_at), expires_at FROM break_glass_activations ORDER BY id DESC LIMIT 1"),
-					fmt.Sprintf("activate=%d list=%d", status, ls))
-				require.Equal(t, http.StatusCreated, status, string(body))
-				require.Equal(t, http.StatusOK, ls, string(lb))
-			})
+			loadZone(t, zone)
+			runInOTHostTZ(t, "TestSQLiteOffsetTimes_BlackBox_NonUTCHost", zone)
 		})
 	}
+}
+
+// nonUTCHostOnThisHost is the body of the NonUTCHost test, run inside a
+// subprocess whose time.Local came from TZ.
+func nonUTCHostOnThisHost(t *testing.T) {
+	e := newOTEnv(t)
+	defer e.dump()
+	ctx := context.Background()
+
+	t.Run("machine_credential", func(t *testing.T) {
+		e.t = t
+		mi, err := e.c.CreateMachineIdentity(ctx, e.project, "ot-runner", "ci", "", "", e.adminID, 0)
+		require.NoError(t, err)
+		status, body := e.do("POST", fmt.Sprintf("/api/v1/projects/%d/machine-identities/%d/tokens", e.project, mi.ID), e.admin,
+			map[string]any{"name": "ot-cred", "expires_in_days": 1})
+		e.row("machine credential expires_at", "expires_in_days=1", e.stored("SELECT typeof(expires_at), expires_at FROM machine_identity_credentials WHERE machine_identity_id = ?", mi.ID),
+			fmt.Sprintf("issue=%d", status))
+		e.row("machine credential created_at", "(server clock)", e.stored("SELECT typeof(created_at), created_at FROM machine_identity_credentials WHERE machine_identity_id = ?", mi.ID),
+			"the column the raw credential lookup also scans")
+		require.Equal(t, http.StatusCreated, status, string(body))
+	})
+
+	t.Run("pat_created_at", func(t *testing.T) {
+		e.t = t
+		status, body := e.do("POST", "/api/v1/auth/tokens", e.admin, map[string]any{"name": "pat-host-zone"})
+		require.Equal(t, http.StatusCreated, status, string(body))
+		e.row("PAT created_at", "(server clock)", e.stored("SELECT typeof(created_at), created_at FROM personal_access_tokens ORDER BY id DESC LIMIT 1"), "create=201")
+	})
+
+	t.Run("invitation", func(t *testing.T) {
+		e.t = t
+		status, body := e.do("POST", fmt.Sprintf("/api/v1/projects/%d/invitations", e.project), e.admin,
+			map[string]any{"email": "ot-invitee@example.com", "role": "project_viewer"})
+		ls, lb := e.do("GET", fmt.Sprintf("/api/v1/projects/%d/invitations", e.project), e.admin, nil)
+		e.row("invitation expires_at", "(server TTL)", e.stored("SELECT typeof(expires_at), expires_at FROM project_invitations WHERE email = ?", "ot-invitee@example.com"),
+			fmt.Sprintf("create=%d list=%d", status, ls))
+		require.Equal(t, http.StatusCreated, status, string(body))
+		require.Equal(t, http.StatusOK, ls, string(lb))
+	})
+
+	// The invitation's setup link is a second row with its own expiry.
+	t.Run("invitation_setup_token", func(t *testing.T) {
+		e.t = t
+		e.row("invitation setup_token expires_at", "(server TTL)", e.stored("SELECT typeof(expires_at), expires_at FROM setup_tokens ORDER BY id DESC LIMIT 1"), "minted with the invitation")
+	})
+
+	t.Run("break_glass", func(t *testing.T) {
+		e.t = t
+		e.c.SetBreakGlassPolicy(core.BreakGlassPolicy{Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour})
+		u, err := e.c.CreateUser(ctx, &core.CreateUserRequest{Username: "otbg", Email: "otbg@example.com", DisplayName: "OT", Password: "TestPassword123!"})
+		require.NoError(t, err)
+		require.NoError(t, e.c.AddProjectMember(ctx, e.adminID, e.project, u.ID, "project_viewer", false))
+		us, _, err := e.c.Login(ctx, &core.LoginRequest{Username: "otbg", Password: "TestPassword123!"})
+		require.NoError(t, err)
+		status, body := e.do("POST", fmt.Sprintf("/api/v1/projects/%d/break-glass", e.project), us.SessionToken,
+			map[string]any{"justification": "SQLITE-TIME-TAILS-1 probe: production outage", "ttl": "1h"})
+		ls, lb := e.do("GET", fmt.Sprintf("/api/v1/projects/%d/break-glass", e.project), e.admin, nil)
+		e.row("break-glass expires_at", "ttl=1h", e.stored("SELECT typeof(expires_at), expires_at FROM break_glass_activations ORDER BY id DESC LIMIT 1"),
+			fmt.Sprintf("activate=%d list=%d", status, ls))
+		require.Equal(t, http.StatusCreated, status, string(body))
+		require.Equal(t, http.StatusOK, ls, string(lb))
+	})
 }
 
 // dataID extracts data.<key> (a JSON number) from an envelope response.
