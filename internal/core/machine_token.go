@@ -532,18 +532,13 @@ func credentialRowGone(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, sql.ErrNoRows)
 }
 
-// machineTokenCIDRCorrupted is returned by machineRestrictionFrom when the stored
-// column is non-empty but names no CIDR (unparseable JSON, `null`, `[]`, a blank
-// entry). Returning nil would silently widen the token to global network access; the
-// sentinel contains no valid CIDR so IPInCIDRs blocks all source IPs until the token
-// is re-issued. It is the PAT path's sentinel (rules.PATCIDRCorrupted).
-var machineTokenCIDRCorrupted = rules.PATCIDRCorrupted
-
 // machineRestrictionFrom decodes the JSON AllowedCIDRs on a credential into a
 // MachineTokenRestriction through the PAT codec (rules.DecodePATCIDRs, #3396): an
 // empty column means no restriction (nil); IssueMachineToken stores "" for that and
-// never `null` or `[]`, so a non-empty column that names no CIDR is a corrupted or
-// hand-edited row and fails closed with machineTokenCIDRCorrupted.
+// never `null` or `[]`, so a non-empty column that names no CIDR (unparseable JSON,
+// `null`, `[]`, a blank entry) is a corrupted or hand-edited row: it fails closed with
+// rules.PATCIDRCorrupted, which no source IP matches, so the token is blocked from
+// every network until it is re-issued.
 func machineRestrictionFrom(cred *models.MachineIdentityCredential) *MachineTokenRestriction {
 	cidrs := rules.DecodePATCIDRs(cred.AllowedCIDRs)
 	if cidrs == nil {
