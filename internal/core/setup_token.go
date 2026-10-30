@@ -149,7 +149,7 @@ func (c *KeyorixCore) mintSetupTokenOn(ctx context.Context, st storage.Storage, 
 	if ttl <= 0 {
 		ttl = DefaultSetupTokenTTL
 	}
-	now := c.now()
+	now := c.now().UTC()
 
 	tok := &models.SetupToken{
 		TokenHash:                  sha256Hex(raw),
