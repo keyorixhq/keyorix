@@ -56,6 +56,18 @@ func isDuplicateEmailViolation(err error) bool {
 		strings.Contains(msg, "users.email_folded") // SQLite column name
 }
 
+// isDuplicateUsernameViolation is isDuplicateEmailViolation for the partial users
+// username index (uniq_users_username_folded_active, #1642): the Postgres constraint
+// name, or the column SQLite names instead.
+func isDuplicateUsernameViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "uniq_users_username_folded_active") || // Postgres constraint name
+		strings.Contains(msg, "users.username_folded") // SQLite column name
+}
+
 // --- Users ---
 
 // CreateUser ignores the optional plaintextPassword variadic (#499): user
@@ -72,6 +84,11 @@ func (ls *LocalStorage) CreateUser(ctx context.Context, user *models.User, _ ...
 			// instead of a raw constraint-violation message.
 			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
 		}
+		if isDuplicateUsernameViolation(err) {
+			// Same race on the username index: a concurrent create of the identical
+			// (folded) username committed first.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateUsername, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return user, nil
@@ -85,6 +102,9 @@ func (ls *LocalStorage) CreateUserWithRoleGrants(ctx context.Context, user *mode
 		if err := tx.Create(user).Error; err != nil {
 			if isDuplicateEmailViolation(err) {
 				return fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
+			}
+			if isDuplicateUsernameViolation(err) {
+				return fmt.Errorf("%w: %v", storage.ErrDuplicateUsername, err)
 			}
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}

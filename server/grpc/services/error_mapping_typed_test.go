@@ -74,6 +74,7 @@ func TestMapUserError_ClassifiesBySentinel(t *testing.T) {
 		{"user exists", fmt.Errorf("create user: %w", core.ErrUserAlreadyExists), codes.AlreadyExists},
 		{"email in use", fmt.Errorf("update user: %w", core.ErrEmailInUse), codes.AlreadyExists},
 		{"duplicate email (storage)", fmt.Errorf("create user: %w", storage.ErrDuplicateEmail), codes.AlreadyExists},
+		{"duplicate username (storage)", fmt.Errorf("create user: %w", storage.ErrDuplicateUsername), codes.AlreadyExists},
 		{"invalid input", fmt.Errorf("update user: %w", core.ErrInvalidInput), codes.InvalidArgument},
 		{"empty identity name", fmt.Errorf("validation: %w", identity.ErrEmpty), codes.InvalidArgument},
 		// Not yet typed: the core/users.go validation wording and the roles.assign ceiling.
