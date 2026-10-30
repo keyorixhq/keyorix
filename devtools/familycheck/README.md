@@ -19,6 +19,24 @@ its head) plus the PR's changed-files list and body text, it flags two modes:
   family. Exits 1 until confirmed with a PR-body line:
   `family-check: new-member-verified — <Interface>: <what you checked>`
 
+**Marker matching reads only the first marker line.** For each marker kind
+(`family-check: intentional`, `family-check: new-member-verified`) the tool finds
+the FIRST case-insensitive occurrence of the marker text anywhere in the PR body
+(it need not start a line) and takes the rest of that one line. That line must
+also contain the family's ID or interface name, or the marker counts as absent.
+Later lines with the same marker are never read. Consequences:
+
+- A PR that needs to dismiss or confirm several families can only do so for the
+  family named on the first marker line of each kind; the others stay flagged
+  (Mode A keeps nudging, Mode B keeps failing). Put the family that needs the
+  marker first, or split the change so each PR touches one family.
+- Do not quote the marker text earlier in the body (an example, a checklist
+  template, a copied bot comment): the quoted occurrence becomes the first line
+  and shadows the real one.
+- The reason shown in the report is the text after the marker on that line, with
+  a leading `—` or `-` removed. The prefix strip is case-sensitive, so a marker
+  typed in another case still matches but keeps its own text in the reason.
+
 "In scope" is deliberately narrow (see the 2026-09-05 report's own instruction
 not to let this become noise): a family is in scope if its ID is in
 `.github/family-check-scope.json`'s `families` list, OR if ANY of its
