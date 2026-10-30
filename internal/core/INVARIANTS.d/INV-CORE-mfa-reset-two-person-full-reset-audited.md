@@ -31,8 +31,16 @@
   `mfa_reset_approver_revocation_test.go` (`TestMFAReset_ApproverChangedInsideApproval_Refused`,
   `TestMFAReset_ApprovalLocksUsersInIDOrder`), `server/admin`
   `reset_mfa_test.go`.
-  **UNGUARDED**: no static guard restricts the callers of `DeleteMFAForUser` /
-  `DeleteWebAuthnCredential` to the reviewed paths (design §1 asks for one; follow-up).
+  The callers that clear a second factor (`DeleteMFAForUser`, `DeleteWebAuthnCredential`,
+  `SetUserMFAEnabled`/`SetUserWebAuthnEnabled` with anything but `true`, an assignment of
+  `MFAEnabled`/`WebAuthnEnabled` to anything but `true`) are allowlisted by
+  `internal/core/guards` `TestEverySecondFactorClearerCallerIsAllowlisted` (report-only
+  until its first green nightly; calibration `TestSecondFactorClearerGuard_RejectsAnUnlistedCallSite`;
+  what it does not see is in its header). The race guards are Postgres cross-replica tests
+  that force the interleaving with barriers (#3801): `mfa_reset_cross_replica_test.go`
+  `TestMFAReset_ConcurrentRequestsForSameTarget_CrossReplicaPostgres_RowLockDecides` (with
+  its no-lock calibration) and `TestMFAReset_TwoAdminsApproveAtOnce_CrossReplica*_ExactlyOneWins`
+  (the loser is refused inside its transaction).
   The account-setup gate reads `mfa_enrolment_required` (`MFAEnrolmentOwed`, an input of
   `PendingAccountSetupSteps` on HTTP and gRPC, #3799): a reset account owes enroll_mfa on
   every interactive session whether or not `security.require_mfa` is on, until a second
