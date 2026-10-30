@@ -92,7 +92,7 @@ func TestBulkApproveAccessRequests_ApproveError(t *testing.T) {
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{5}).
 		Return([]*models.AccessRequest{req}, nil)
 	// The per-project Authorize check calls scopedRoleIDs which reads these two
-	// tables; return empty → no permission → "permission denied" in Failed.
+	// tables; return empty → no permission → "access request not found" in Failed (AUTHZ-ORACLE-1).
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
@@ -160,14 +160,14 @@ func TestBulkApproveAccessRequests_MixedResults(t *testing.T) {
 	req1 := pendingReq(1)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{1, 99}).
 		Return([]*models.AccessRequest{req1}, nil) // only req1 returned
-	// Authorize check: empty roles → denied → "permission denied" in Failed.
+	// Authorize check: empty roles → denied → "access request not found" in Failed (AUTHZ-ORACLE-1).
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
 	result, err := k.BulkApproveAccessRequests(context.Background(), []uint{1, 99}, 2, 0)
 	require.NoError(t, err)
 
-	// ID 1: failed (permission denied by Authorize); ID 99: failed (not in pre-fetch).
+	// ID 1: failed (refused by Authorize, answered as not found); ID 99: failed (not in pre-fetch).
 	assert.Empty(t, result.Approved)
 	assert.Len(t, result.Failed, 2)
 }
@@ -233,7 +233,7 @@ func TestBulkRejectAccessRequests_RejectError(t *testing.T) {
 	req := pendingReq(7)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{7}).
 		Return([]*models.AccessRequest{req}, nil)
-	// Authorize check: empty roles → denied → "permission denied" in Failed.
+	// Authorize check: empty roles → denied → "access request not found" in Failed (AUTHZ-ORACLE-1).
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
@@ -325,7 +325,7 @@ func TestBulkRejectAccessRequests_MixedResults(t *testing.T) {
 	req3 := pendingReq(3)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{3, 77}).
 		Return([]*models.AccessRequest{req3}, nil) // only req3 returned
-	// Authorize check: empty roles → denied → "permission denied" for ID 3.
+	// Authorize check: empty roles → denied → "access request not found" for ID 3 (AUTHZ-ORACLE-1).
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
