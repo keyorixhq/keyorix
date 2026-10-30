@@ -265,7 +265,8 @@ srv_start "$I" "$P"
 login_admin "$I" "$P"
 wait_status sealed 60
 srv_stop "$I"
-tail -n +$((L0 + 1)) "$d/server.log" | grep -q 'audit key transition to key version .* completed' || fail "the server start did not complete the key transition"
+out="$(tail -n +$((L0 + 1)) "$d/server.log")"
+grep -q 'audit key transition to key version .* completed' <<<"$out" || fail "the server start did not complete the key transition"
 ok "server start completed the key transition"
 offline 4
 
