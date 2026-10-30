@@ -12,9 +12,9 @@ import (
 // INSTALL-WITH-AI-1 item 3: INSTALL-WITH-AI.md is followed literally by an AI
 // assistant, and everything the assistant runs or reads lands in its transcript.
 // TestInstallWithAIIsSecretBlind checks the page's lines against the rules its own
-// prompt states. Lines inside a blockquote (`> ...`) are HUMAN STEPs, run by the
-// user in their own terminal; every other fenced shell line and inline code span
-// is an assistant line.
+// prompt states. A fence opened inside a blockquote (`> ```bash`) holds HUMAN
+// STEPs, run by the user in their own terminal; every other fenced shell line and
+// inline code span is an assistant line.
 //
 //   - read: an assistant line does not read a secret file. A secret path (see
 //     iwaSecretPath) is refused as the input redirection of a command, or as an
@@ -48,7 +48,7 @@ import (
 // says, except ```text (the prompt block).
 //
 // What it does not check: prose that is not in a code span, fences that use ~~~
-// instead of backticks, the keyorix CLI credential file (~/.config/keyorix/credentials.json,
+// instead of backticks, 4-space indented code blocks, the keyorix CLI credential file (~/.config/keyorix/credentials.json,
 // not in iwaSecretPath), whether a reader not in iwaReaders can read a file, and
 // whether the steps work (the transcript test in the page's maintainer notes,
 // pending the e2e VM).
@@ -90,7 +90,9 @@ var (
 	iwaAssign         = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	iwaWrappers       = []string{"sudo", "nohup", "time", "exec", "env", "xargs"}
 	iwaSeparators     = []string{"|", "||", "&&", ";", "&"}
-	iwaInlineSpan     = regexp.MustCompile("`([^`\n]+)`")
+	// iwaRedirect matches a redirection that carries its own target: >&2, 2>&1.
+	iwaRedirect   = regexp.MustCompile(`^[0-9]*>&[0-9-]*$`)
+	iwaInlineSpan = regexp.MustCompile("`([^`\n]+)`")
 )
 
 // iwaLine is one command line of the page.
@@ -103,14 +105,24 @@ type iwaLine struct {
 }
 
 // iwaParse returns the shell lines and inline code spans of the page, and the
-// prompt block's text.
+// prompt block's text. HUMAN is decided per fence, by whether the opening ```
+// line is in a blockquote, not per line.
 func iwaParse(doc string) (lines []iwaLine, prompt string) {
-	section, inFence, shellFence, inPrompt := "", false, false, false
+	section, inFence, shellFence, inPrompt, fenceQuoted := "", false, false, false, false
 	var pending *iwaLine
 	for i, raw := range strings.Split(doc, "\n") {
 		trim := strings.TrimSpace(raw)
 		quoted := strings.HasPrefix(trim, ">")
-		body := strings.TrimSpace(strings.TrimPrefix(trim, ">"))
+		// Inside a fence the fence decides: a leading > in a fence opened outside a
+		// blockquote is shell text (`>&2 cat x`), not a blockquote marker, so it
+		// stays an assistant line and keeps its >.
+		if inFence {
+			quoted = fenceQuoted
+		}
+		body := trim
+		if quoted {
+			body = strings.TrimSpace(strings.TrimPrefix(trim, ">"))
+		}
 		if !inFence && strings.HasPrefix(trim, "## ") {
 			section = strings.TrimPrefix(trim, "## ")
 		}
@@ -120,7 +132,7 @@ func iwaParse(doc string) (lines []iwaLine, prompt string) {
 				continue
 			}
 			info = strings.TrimSpace(info)
-			inFence = true
+			inFence, fenceQuoted = true, quoted
 			// Fail closed: any fence but ```text (the prompt) is read as shell, so a
 			// zsh, Bash or shell-session info string cannot hide a read.
 			shellFence = !strings.EqualFold(info, "text")
@@ -203,6 +215,16 @@ func iwaWords(line string) []string {
 		case strings.IndexByte(";|&<>()", c) >= 0:
 			flush()
 			op := string(c)
+			if c == '>' && i+1 < len(line) && line[i+1] == '&' {
+				// >&2 duplicates a descriptor: one word, not a background operator
+				j := i + 2
+				for j < len(line) && (line[j] >= '0' && line[j] <= '9' || line[j] == '-') {
+					j++
+				}
+				words = append(words, line[i:j])
+				i = j - 1
+				continue
+			}
 			if i+1 < len(line) && (line[i+1] == c || (c == '&' && line[i+1] == '&')) && c != '(' && c != ')' {
 				op += string(c)
 				i++
@@ -265,7 +287,16 @@ func iwaCommands(words []string) [][]string {
 // iwaCommandWord returns the index of the word that is the command: the first one
 // that is not an assignment, a wrapper or a wrapper's option.
 func iwaCommandWord(cmd []string) int {
-	for i, w := range cmd {
+	for i := 0; i < len(cmd); i++ {
+		w := cmd[i]
+		// a leading redirection (`>&2 printenv`, `> file cat x`) is not the command
+		if w == ">" || w == ">>" || w == "<" {
+			i++ // its target
+			continue
+		}
+		if iwaRedirect.MatchString(w) {
+			continue
+		}
 		if iwaAssign.MatchString(w) || slices.Contains(iwaWrappers, w) || (i > 0 && slices.Contains(iwaWrappers, cmd[i-1]) && strings.HasPrefix(w, "-")) {
 			continue
 		}
@@ -432,6 +463,12 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		"sed -i.bak 's|^    # dsn: .*|    dsn: \"postgres://u:hunter2@h/db\"|' keyorix.yaml",
 		"keyorix login --server https://localhost:8080",
 		"docker compose run --rm backend keyorix whoami",
+		// a leading redirection in an unquoted fence is shell text, not a blockquote
+		// marker: the line is still an assistant line
+		">&2 cat secrets/master_password",
+		">&2 printenv",
+		"> /dev/stderr cat secrets/master_password",
+		">&2 ./bin/keyorix mfa enroll",
 	}
 	for _, line := range bad {
 		doc := strings.Replace(good, "rm -f secrets/bootstrap_token\n", "rm -f secrets/bootstrap_token\n"+line+"\n", 1)
