@@ -10,6 +10,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/solewriter"
 	"github.com/keyorixhq/keyorix/internal/startup"
@@ -135,6 +136,7 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 	collectInsecureSettingsPosture(cfg, explicit, report)
 	collectStartupValidationStatePosture(cfg, fileGraceKnown, fileEnforcedSince, report)
 	collectAuditDurabilityPosture(cfg, report)
+	report.info(encryption.FIPS140ModeLine())
 
 	printPostureReport(report)
 
