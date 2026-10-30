@@ -24,10 +24,7 @@ package core
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -359,7 +356,9 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 		HeadHash:      raw.HeadHash,
 		KeyVersion:    c.auditCkptKeyVersion,
 	}
-	newCP.Signature = c.signCheckpoint(newCP)
+	if newCP.Signature, err = c.signCheckpoint(newCP); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrAuditCheckpointRefused, err)
+	}
 	if err := c.storage.CreateAuditCheckpoint(ctx, newCP); err != nil {
 		return nil, fmt.Errorf("failed to write audit checkpoint: %w", err)
 	}
@@ -525,10 +524,10 @@ func (c *KeyorixCore) checkpointCanonical(cp *models.AuditCheckpoint) string {
 	return checkpointCanonicalSealed(cp.ChainedEvents, cp.HeadID, cp.HeadHash, cp.KeyVersion, c.sealBinding())
 }
 
-func (c *KeyorixCore) signCheckpoint(cp *models.AuditCheckpoint) string {
-	mac := hmac.New(sha256.New, c.auditCkptKey)
-	mac.Write([]byte(c.checkpointCanonical(cp)))
-	return hex.EncodeToString(mac.Sum(nil))
+// signCheckpoint signs cp under the current seal binding; it refuses with
+// ErrAuditSealsUntrusted while the seal record cannot be trusted.
+func (c *KeyorixCore) signCheckpoint(cp *models.AuditCheckpoint) (string, error) {
+	return c.signCheckpointUnder(cp, c.sealBinding())
 }
 
 func (c *KeyorixCore) checkpointSignatureValid(cp *models.AuditCheckpoint) bool {
@@ -539,7 +538,7 @@ func (c *KeyorixCore) checkpointSignatureValid(cp *models.AuditCheckpoint) bool 
 // Used for both a checkpoint row (sig == cp.Signature) and the high-water mark (where
 // the signature is stored alongside the canonical fields, not on the cp struct).
 func (c *KeyorixCore) checkpointSigMatches(cp *models.AuditCheckpoint, sig string) bool {
-	return hmac.Equal([]byte(c.signCheckpoint(cp)), []byte(sig))
+	return c.checkpointSigMatchesUnder(cp, c.sealBinding(), sig)
 }
 
 // --- audit high-water mark (anti-rollback for checkpoints) ---------------------
@@ -787,7 +786,13 @@ func (c *KeyorixCore) advanceAuditHighWater(ctx context.Context, cp *models.Audi
 		c.bumpWatermark(floor)
 		return
 	}
-	val := auditHighWaterValueSealed(cp, c.sealBinding(), c.signCheckpoint(cp))
+	bind := c.sealBinding()
+	sig, err := c.signCheckpointUnder(cp, bind)
+	if err != nil {
+		log.Printf("audit high-water: mark at %d events not written: %v", cp.ChainedEvents, err)
+		return
+	}
+	val := auditHighWaterValueSealed(cp, bind, sig)
 	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, val); err != nil {
 		log.Printf("audit high-water: failed to persist mark at %d events: %v", cp.ChainedEvents, err)
 	}

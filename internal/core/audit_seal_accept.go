@@ -19,9 +19,6 @@ package core
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,6 +106,12 @@ type AuditLossPlan struct {
 	LostEvents int64
 	Anchor     *AuditSealAnchor
 	Accepted   []AuditSealAccepted
+	// Witness is the host's high-water witness file (SQLite installs) when it
+	// authenticates under the seal list before this acceptance; it counts in
+	// Before, and the re-seal lowers it to After. WitnessNote says why a
+	// witness that is present is not counted (it is replaced all the same).
+	Witness     *AuditSealCount
+	WitnessNote string
 	// Resume: an earlier acceptance stopped before it finished; this run
 	// completes it and writes no new record.
 	Resume bool
@@ -139,6 +142,13 @@ func (p *AuditLossPlan) Describe() []string {
 		out = append(out, "  certified before the loss: nothing authenticated covers the lost rows (the loss is unmeasured)")
 	}
 	out = append(out, fmt.Sprintf("  surviving: %d events through #%d; a new checkpoint and high-water mark are signed for them", p.After.Events, p.After.HeadID))
+	if w := p.Witness; w != nil && w.Events > p.After.Events {
+		out = append(out, fmt.Sprintf("  host witness file: certifies %d events through #%d (hash %s); confirming LOWERS it to the surviving %d events through #%d",
+			w.Events, w.HeadID, shortHash(w.HeadHash), p.After.Events, p.After.HeadID))
+	}
+	if p.WitnessNote != "" {
+		out = append(out, "  host witness file: "+p.WitnessNote)
+	}
 	if a := p.Anchor; a != nil {
 		if a.Verified {
 			out = append(out, fmt.Sprintf("  external anchor %s: authenticated, %d events through #%d", a.Digest, a.ChainedEvents, a.HeadID))
@@ -226,7 +236,10 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 	purged := anchorPurgedEvents(f.anchor)
 	plan.After = AuditSealCount{Events: full.ChainedEvents + purged, HeadID: full.HeadID, HeadHash: full.HeadHash, Source: "walk"}
 
-	before, err := c.auditLossBefore(ctx, f)
+	if plan.Witness, plan.WitnessNote, err = c.auditLossWitness(f); err != nil {
+		return nil, err
+	}
+	before, err := c.auditLossBefore(ctx, f, plan.Witness)
 	if err != nil {
 		return nil, err
 	}
@@ -252,6 +265,9 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 		plan.Truncation = t
 	} else if len(gaps) == 0 {
 		return nil, auditLossRefused("nothing to accept")
+	}
+	if err := c.auditLossBeforeHeadNamed(ctx, f, before, plan.Truncation); err != nil {
+		return nil, err
 	}
 	if before != nil && before.HeadID != 0 {
 		through, err := c.walkAuditChainGaps(ctx, storage.AuditChainSegment{Anchor: f.anchor, ThroughID: before.HeadID}, all)
@@ -445,9 +461,9 @@ func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *audi
 	}
 	if cp != nil {
 		switch {
-		case hmac.Equal([]byte(c.signCheckpointUnder(cp, cur)), []byte(cp.Signature)):
+		case c.checkpointSigMatchesUnder(cp, cur, cp.Signature):
 			out = append(out, AuditSealCount{Events: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash, Source: fmt.Sprintf("signed checkpoint #%d", cp.ID)})
-		case hmac.Equal([]byte(c.signCheckpointUnder(cp, prev)), []byte(cp.Signature)):
+		case c.checkpointSigMatchesUnder(cp, prev, cp.Signature):
 			// Signed before this seal: the re-seal has not replaced it yet.
 		default:
 			return nil, auditLossRefused("the latest checkpoint #%d authenticates neither under seal #%d nor before it (deleted newer checkpoints or a garbled signature, not a half-written acceptance): investigate before completing seal #%d", cp.ID, last.Seq, last.Seq)
@@ -460,9 +476,9 @@ func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *audi
 	if ok {
 		hw, b, sig, parsed := parseAuditHighWaterSealed(val)
 		switch {
-		case parsed && b == cur && hmac.Equal([]byte(c.signCheckpointUnder(hw, cur)), []byte(sig)):
+		case parsed && b == cur && c.checkpointSigMatchesUnder(hw, cur, sig):
 			out = append(out, AuditSealCount{Events: hw.ChainedEvents, HeadID: hw.HeadID, HeadHash: hw.HeadHash, Source: "the signed high-water mark"})
-		case parsed && b == prev && hmac.Equal([]byte(c.signCheckpointUnder(hw, prev)), []byte(sig)):
+		case parsed && b == prev && c.checkpointSigMatchesUnder(hw, prev, sig):
 			// Signed before this seal: the re-seal has not lowered it yet.
 		default:
 			return nil, auditLossRefused("the audit high-water mark authenticates neither under seal #%d nor before it (garbled or relabelled, not a half-written acceptance): investigate before completing seal #%d", last.Seq, last.Seq)
@@ -486,9 +502,9 @@ func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *audi
 	}
 	if found {
 		switch {
-		case wb == cur && hmac.Equal([]byte(c.signCheckpointUnder(wcp, cur)), []byte(wsig)):
+		case wb == cur && c.checkpointSigMatchesUnder(wcp, cur, wsig):
 			out = append(out, AuditSealCount{Events: wcp.ChainedEvents, HeadID: wcp.HeadID, HeadHash: wcp.HeadHash, Source: "the host's high-water witness file"})
-		case wb == prev && (wcp.KeyVersion != c.auditCkptKeyVersion || hmac.Equal([]byte(c.signCheckpointUnder(wcp, prev)), []byte(wsig))):
+		case wb == prev && (wcp.KeyVersion != c.auditCkptKeyVersion || c.checkpointSigMatchesUnder(wcp, prev, wsig)):
 			// Written before this seal: the re-seal has not replaced it yet.
 		default:
 			return nil, auditLossRefused("the host's high-water witness file authenticates neither under seal #%d nor before it (garbled or replaced, not a half-written acceptance): investigate before completing seal #%d", last.Seq, last.Seq)
@@ -645,8 +661,11 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 }
 
 // auditLossBefore is the newest authenticated certification before the loss:
-// the largest of the latest checkpoint, the high-water mark and the state pin.
-func (c *KeyorixCore) auditLossBefore(ctx context.Context, f *auditLossFindings) (*AuditSealCount, error) {
+// the largest of the latest checkpoint, the high-water mark, the state pin and
+// the host witness (witness, from auditLossWitness; nil when there is none).
+// The witness lives outside the database, so after an in-database rollback of
+// the metadata it is the one certification that still counts the lost rows.
+func (c *KeyorixCore) auditLossBefore(ctx context.Context, f *auditLossFindings, witness *AuditSealCount) (*AuditSealCount, error) {
 	var best *AuditSealCount
 	take := func(events int64, id uint, hash, source string) {
 		if events > 0 && (best == nil || events > best.Events) {
@@ -670,7 +689,109 @@ func (c *KeyorixCore) auditLossBefore(ctx context.Context, f *auditLossFindings)
 	if p := f.state.Pin; p != nil && f.state.Seals == len(f.seals.recs) {
 		take(p.Events, p.HeadID, p.HeadHash, "signed verification state")
 	}
+	if witness != nil {
+		take(witness.Events, witness.HeadID, witness.HeadHash, witness.Source)
+	}
 	return best, nil
+}
+
+// auditLossWitness reads the host's high-water witness for a new acceptance
+// over the seal list f holds. It returns the certification when the witness
+// authenticates under that list, a note when it is present but does not
+// authenticate under the current key (written before a key change; nothing
+// to count, and the re-seal replaces it), and a refusal when it is damaged or
+// authenticates under a seal list the database does not hold: a longer list,
+// or another list of the same length, means the database, seal record
+// included, was rolled back past the witness's last write.
+func (c *KeyorixCore) auditLossWitness(f *auditLossFindings) (*AuditSealCount, string, error) {
+	w, wb, sig, found, err := c.readAuditWitness()
+	if err != nil {
+		return nil, "", auditLossRefused("the host's high-water witness file cannot be used (%v): a damaged witness is not treated as absent; investigate", err)
+	}
+	if !found {
+		return nil, "", nil
+	}
+	pre := sealBindingOf(f.seals.recs)
+	switch {
+	case !c.checkpointSigMatchesUnder(w, wb, sig):
+		return nil, fmt.Sprintf("present but it does not authenticate under the current key (key version %q, written before a key change); it is replaced", w.KeyVersion), nil
+	case wb == pre:
+		return &AuditSealCount{Events: w.ChainedEvents, HeadID: w.HeadID, HeadHash: w.HeadHash, Source: "the host's high-water witness file"}, "", nil
+	case wb.N >= pre.N:
+		return nil, "", auditLossRefused("%s: if this was a sanctioned `admin restore --allow-rollback`, compare the trail with an external anchor, move the witness file aside and re-run", auditWitnessRollback(w, wb, pre))
+	}
+	// Written under an earlier seal list (a re-seal without a witness path):
+	// it certified the chain before an accepted loss and is replaced.
+	return nil, fmt.Sprintf("written under %d seal(s), before an earlier accepted loss; it is replaced", wb.N), nil
+}
+
+// auditWitnessRollback describes a witness that authenticates under a seal
+// list the database does not hold.
+func auditWitnessRollback(w *models.AuditCheckpoint, wb, db auditSealBinding) string {
+	return fmt.Sprintf("the host's high-water witness file certifies %d events through #%d under %d accepted loss(es) (seal digest %s), but the database holds %d seal(s) (digest %s): the database, seal record included, was rolled back or replaced past the witness",
+		w.ChainedEvents, w.HeadID, wb.N, shortHash(wb.Digest), db.N, shortHash(db.Digest))
+}
+
+// auditLossBeforeHeadNamed refuses a plan whose newest certification before
+// the loss names a head that is gone (and not purged under the authenticated
+// retention anchor) unless the plan accepts it as the truncated head: the
+// record would otherwise place the tail loss inside a gap, and the re-seal
+// would lower that certification without naming where its rows went.
+func (c *KeyorixCore) auditLossBeforeHeadNamed(ctx context.Context, f *auditLossFindings, before *AuditSealCount, t *AuditSealTruncation) error {
+	if before == nil || before.HeadID == 0 || (t != nil && t.CertifiedHeadID == before.HeadID) {
+		return nil
+	}
+	if f.anchor != nil && before.HeadID < f.anchor.RowID {
+		return nil
+	}
+	hash, found, err := c.storage.AuditEntryHashByID(ctx, before.HeadID)
+	switch {
+	case err != nil:
+		return err
+	case !found:
+		return auditLossRefused("%s certifies %d events through #%d, and audit event #%d is gone: name it as well (--first-broken-id %d) so the seal records the tail loss", before.Source, before.Events, before.HeadID, before.HeadID, before.HeadID)
+	case hash != before.HeadHash:
+		return auditLossRefused("audit event #%d differs from the head %s certified (rewritten, not lost)", before.HeadID, before.Source)
+	}
+	return nil
+}
+
+// auditWitnessLowerProblem says why the re-seal of the acceptance that moves
+// the seal binding from pre to post (the last record names before as its
+// newest certification before the loss) must not overwrite the host witness
+// with a mark of survivors events ("" when it may). A witness that
+// authenticates under post certified rows written after this seal; one under
+// pre is lowered only when the record names a certification at least as high
+// (the plan the operator confirmed showed it); one under another list of at
+// least pre's length is a rollback. A damaged witness is not treated as
+// absent.
+func (c *KeyorixCore) auditWitnessLowerProblem(pre, post auditSealBinding, before *AuditSealCount, survivors int64) string {
+	w, wb, sig, found, err := c.readAuditWitness()
+	if err != nil {
+		return fmt.Sprintf("the host's high-water witness file cannot be used (%v): a damaged witness is not treated as absent; investigate", err)
+	}
+	if !found || !c.checkpointSigMatchesUnder(w, wb, sig) {
+		return ""
+	}
+	switch {
+	case wb == post:
+		if w.ChainedEvents > survivors {
+			return fmt.Sprintf("the host's high-water witness file certifies %d events through #%d under the current seal list, only %d remain: rows certified after the seal are gone; investigate",
+				w.ChainedEvents, w.HeadID, survivors)
+		}
+	case wb == pre:
+		if w.ChainedEvents > survivors && (before == nil || w.ChainedEvents > before.Events) {
+			named := "none"
+			if before != nil {
+				named = fmt.Sprintf("%d events through #%d, %s", before.Events, before.HeadID, before.Source)
+			}
+			return fmt.Sprintf("the host's high-water witness file certifies %d events through #%d from before this acceptance, more than the certification its record names (%s): it would be lowered without being named; re-run accept-loss so the plan shows it",
+				w.ChainedEvents, w.HeadID, named)
+		}
+	case wb.N >= pre.N:
+		return auditWitnessRollback(w, wb, pre)
+	}
+	return ""
 }
 
 // auditLossAnchor authenticates an export-checkpoint file under the current
@@ -683,8 +804,7 @@ func (c *KeyorixCore) auditLossAnchor(ctx context.Context, f *auditLossFindings,
 	}
 	ok := false
 	for k := 0; k <= len(f.seals.recs) && !ok; k++ {
-		sig := c.signCheckpointUnder(&models.AuditCheckpoint{ChainedEvents: a.ChainedEvents, HeadID: a.HeadID, HeadHash: a.HeadHash, KeyVersion: a.KeyVersion}, sealBindingOf(f.seals.recs[:k]))
-		ok = hmac.Equal([]byte(sig), []byte(a.Signature))
+		ok = c.checkpointSigMatchesUnder(&models.AuditCheckpoint{ChainedEvents: a.ChainedEvents, HeadID: a.HeadID, HeadHash: a.HeadHash, KeyVersion: a.KeyVersion}, sealBindingOf(f.seals.recs[:k]), a.Signature)
 	}
 	if !ok {
 		return nil, auditLossRefused("the anchor file does not authenticate under the current checkpoint key")
@@ -702,13 +822,6 @@ func (c *KeyorixCore) auditLossAnchor(ctx context.Context, f *auditLossFindings,
 		return nil, auditLossRefused("audit event #%d differs from the anchor file (rewritten, not lost)", a.HeadID)
 	}
 	return &AuditSealAnchor{Digest: strings.ToLower(a.Digest), Verified: true, ChainedEvents: a.ChainedEvents, HeadID: a.HeadID, HeadHash: a.HeadHash}, nil
-}
-
-// signCheckpointUnder signs cp under seal binding b (the current key).
-func (c *KeyorixCore) signCheckpointUnder(cp *models.AuditCheckpoint, b auditSealBinding) string {
-	mac := hmac.New(sha256.New, c.auditCkptKey)
-	mac.Write([]byte(checkpointCanonicalSealed(cp.ChainedEvents, cp.HeadID, cp.HeadHash, cp.KeyVersion, b)))
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // planAuditTruncation accepts a tail loss: the named id must be the missing
@@ -801,6 +914,11 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 			}
 			r.kid = c.auditCkptKeyVersion
 			r.mac = auditSealMAC(c.auditCkptKey, r.kid, r.payload)
+			// The witness the re-seal will lower must be the one the plan
+			// named: checked before anything is written.
+			if why := c.auditWitnessLowerProblem(sealBindingOf(recs), sealBindingOf(append(slices.Clone(recs), r)), r.Before, r.After.Events); why != "" {
+				return fmt.Errorf("accept-loss: %s", why)
+			}
 			if err := c.storage.SetSystemMetadata(ctx, auditSealsKey, encodeAuditSeals(append(recs, r))); err != nil {
 				return fmt.Errorf("accept-loss: write the seal record: %w", err)
 			}
@@ -853,7 +971,8 @@ func (c *KeyorixCore) sealHook(step string) error {
 // resealAuditCheckpoint writes a checkpoint and high-water mark of the sealed
 // chain under the current seal binding. The mark is overwritten, not advanced:
 // it is lowered to what survives (the accepted loss). The witness is lowered
-// with it only from a binding before the current one.
+// with it only from the binding before the newest seal, and only as far as
+// that seal's record names (auditWitnessLowerProblem).
 func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditCheckpoint, string, error) {
 	anchor, err := c.loadAuditRetentionAnchor(ctx)
 	if err != nil {
@@ -867,14 +986,23 @@ func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditC
 		return nil, "", fmt.Errorf("accept-loss: the sealed chain does not verify: %s", v.Reason)
 	}
 	cp := &models.AuditCheckpoint{ChainedEvents: v.ChainedEvents + anchorPurgedEvents(anchor), HeadID: v.HeadID, HeadHash: v.HeadHash, KeyVersion: c.auditCkptKeyVersion}
-	cp.Signature = c.signCheckpoint(cp)
+	bind := c.sealBinding()
+	if cp.Signature, err = c.signCheckpointUnder(cp, bind); err != nil {
+		return nil, "", fmt.Errorf("accept-loss: %w", err)
+	}
 	// A witness under the current seal list certified rows written after this
-	// seal; lowering it would destroy the evidence of their loss. Checked
+	// seal, and one from before it may count rows the record does not name;
+	// lowering either would destroy the evidence of their loss. Checked
 	// before anything is written.
-	if w, b, sig, found, err := c.readAuditWitness(); err == nil && found && b == c.sealBinding() &&
-		hmac.Equal([]byte(c.signCheckpointUnder(w, b)), []byte(sig)) && w.ChainedEvents > cp.ChainedEvents {
-		return nil, "", fmt.Errorf("accept-loss: the host's high-water witness file certifies %d events through #%d under the current seal list, only %d remain: rows certified after the seal are gone; investigate",
-			w.ChainedEvents, w.HeadID, cp.ChainedEvents)
+	c.auditSealMu.Lock()
+	recs := c.auditSealRecs
+	c.auditSealMu.Unlock()
+	if len(recs) == 0 {
+		return nil, "", errors.New("accept-loss: no seal record to re-seal under")
+	}
+	last := recs[len(recs)-1]
+	if why := c.auditWitnessLowerProblem(sealBindingOf(recs[:len(recs)-1]), bind, last.Before, cp.ChainedEvents); why != "" {
+		return nil, "", fmt.Errorf("accept-loss: %s", why)
 	}
 	if err := c.storage.CreateAuditCheckpoint(ctx, cp); err != nil {
 		return nil, "", fmt.Errorf("accept-loss: write the checkpoint: %w", err)
@@ -883,7 +1011,7 @@ func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditC
 	if err := c.sealHook("checkpoint"); err != nil {
 		return nil, "", err
 	}
-	hw := auditHighWaterValueSealed(cp, c.sealBinding(), c.signCheckpoint(cp))
+	hw := auditHighWaterValueSealed(cp, bind, cp.Signature)
 	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, hw); err != nil {
 		return nil, "", fmt.Errorf("accept-loss: write the high-water mark: %w", err)
 	}
