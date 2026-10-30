@@ -8,6 +8,7 @@
 #
 #   offline-install.sh setup --bin-dir DIR --admin-email EMAIL [--dir DIR]
 #                            [--recipient AGE1_OR_SSH_PUB] [--http-port N] [--grpc-port N]
+#                            [--postgres-dsn "host=... user=... dbname=... sslmode=verify-full sslrootcert=..."]
 #   (operator: sign in and enrol MFA, as printed)
 #   offline-install.sh finish [--dir DIR]   # stop, drop the bootstrap token, posture proof, start
 #   offline-install.sh stop|start [--dir DIR]
@@ -15,6 +16,8 @@
 # --bin-dir holds keyorix and keyorix-server (built with `make build`, or copied in
 # from a connected machine). --dir defaults to ~/keyorix. Exits non-zero on the
 # first failing step; nothing already created is overwritten by a re-run.
+# --postgres-dsn uses PostgreSQL instead of SQLite: the DSN must not contain the
+# password; the operator writes it to DIR/secrets/db_password (0600) before setup.
 set -eu
 
 die() { echo "offline-install: $*" >&2; exit 1; }
@@ -28,6 +31,7 @@ admin_email=""
 recipient=""
 http_port=8080
 grpc_port=9090
+pg_dsn=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --dir) dir="$2"; shift 2 ;;
@@ -36,15 +40,24 @@ while [ $# -gt 0 ]; do
         --recipient) recipient="$2"; shift 2 ;;
         --http-port) http_port="$2"; shift 2 ;;
         --grpc-port) grpc_port="$2"; shift 2 ;;
-        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+        --postgres-dsn) pg_dsn="$2"; shift 2 ;;
+        -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
 done
 
 # Secrets reach the commands only as file paths. A plain KEYORIX_* value already
 # in the environment would make them refuse ("both ... set"), so drop it here.
-unset KEYORIX_MASTER_PASSWORD KEYORIX_BOOTSTRAP_TOKEN KEYORIX_ADMIN_PASSWORD
+unset KEYORIX_MASTER_PASSWORD KEYORIX_BOOTSTRAP_TOKEN KEYORIX_ADMIN_PASSWORD KEYORIX_DB_PASSWORD
 umask 077
+
+# A PostgreSQL install keeps its database password in secrets/db_password; every
+# keyorix-server command that opens the database needs it by path. Run from $dir.
+use_db_password() {
+    if [ -f secrets/db_password ]; then
+        export KEYORIX_DB_PASSWORD_FILE=secrets/db_password
+    fi
+}
 
 health() {
     curl -fs --retry 30 --retry-connrefused --retry-delay 1 --cacert certs/server.crt \
@@ -84,9 +97,18 @@ setup)
     [ -n "$bin_dir" ] || die "--bin-dir is required"
     [ -n "$admin_email" ] || die "--admin-email is required"
     [ -x "$bin_dir/keyorix" ] && [ -x "$bin_dir/keyorix-server" ] || die "$bin_dir must contain keyorix and keyorix-server"
+    bin_dir=$(cd "$bin_dir" && pwd) # the copy below runs after cd "$dir"
     "$bin_dir/keyorix-server" admin generate-secrets --help >/dev/null 2>&1 ||
         die "$bin_dir/keyorix-server has no 'admin generate-secrets': build a newer one"
     [ -e "$dir/keyorix.yaml" ] && die "$dir already has a keyorix.yaml; use 'finish', or a new --dir"
+    if [ -n "$pg_dsn" ]; then
+        case "$pg_dsn" in
+            *password*) die "--postgres-dsn must not contain the password; put it in $dir/secrets/db_password" ;;
+            *'|'* | *'&'* | *\\* | *'"'*) die "--postgres-dsn must not contain a | & backslash or double quote" ;;
+        esac
+        [ -f "$dir/secrets/db_password" ] ||
+            die "--postgres-dsn needs the database password in $dir/secrets/db_password first: (umask 077; cat > $dir/secrets/db_password)"
+    fi
 
     say "1. install directory $dir"
     mkdir -p "$dir"
@@ -99,7 +121,17 @@ setup)
     ./bin/keyorix-server admin generate-secrets
 
     say "3. config, TLS certificate, metrics token"
-    ./bin/keyorix-server admin init --config ./keyorix.yaml
+    if [ -n "$pg_dsn" ]; then
+        ./bin/keyorix-server admin init --storage-type postgres --config ./keyorix.yaml
+        sed "s|^    # dsn: .*|    dsn: \"$pg_dsn\"|" keyorix.yaml > keyorix.yaml.new
+        mv keyorix.yaml.new keyorix.yaml
+        grep -q '^    dsn: ' keyorix.yaml || die "could not set storage.database.dsn in keyorix.yaml"
+        echo "storage: postgres (dsn set, password from secrets/db_password)"
+        use_db_password
+        KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin init --config ./keyorix.yaml
+    else
+        ./bin/keyorix-server admin init --config ./keyorix.yaml
+    fi
     if [ "$http_port" != 8080 ] || [ "$grpc_port" != 9090 ]; then
         sed "s/port: \"8080\"/port: \"$http_port\"/; s/port: \"9090\"/port: \"$grpc_port\"/" keyorix.yaml > keyorix.yaml.new
         mv keyorix.yaml.new keyorix.yaml
@@ -135,7 +167,7 @@ In a terminal of your own on this host:
   cd $dir
   ./bin/keyorix login --server https://localhost:$(port) --username admin < secrets/admin_password
   ./bin/keyorix mfa enroll        # add the printed secret to your authenticator app
-  ./bin/keyorix mfa activate      # code from the app, then the password from secrets/admin_password
+  KEYORIX_PASSWORD_FILE=secrets/admin_password ./bin/keyorix mfa activate   # asks for a code from the app
 
 Move secrets/admin_password into your password manager, save the recovery codes
 'mfa activate' prints, then delete the file (shred -u, or rm -P on macOS).
@@ -144,6 +176,7 @@ EOF
     ;;
 finish)
     cd "$dir" || die "no $dir"
+    use_db_password
     say "10. stop the server, drop the bootstrap token"
     stop_server
     rm -f secrets/bootstrap_token
@@ -167,12 +200,13 @@ EOF
     start_server
     cat <<EOF
 
-Done. Back up keys/, keyorix.db and keyorix.yaml together, and secrets/master_password
+Done. Back up keys/, the database, keyorix.yaml, secrets/metrics_token (and
+secrets/db_password for PostgreSQL) together, and secrets/master_password
 SEPARATELY and offline: without it every stored secret is lost. Replace certs/server.crt
 with a CA-issued certificate (same paths) before other machines connect.
 EOF
     ;;
-start) cd "$dir" || die "no $dir"; start_server ;;
+start) cd "$dir" || die "no $dir"; use_db_password; start_server ;;
 stop) cd "$dir" || die "no $dir"; stop_server ;;
 *) die "usage: $0 setup|finish|start|stop [options] (see --help)" ;;
 esac
