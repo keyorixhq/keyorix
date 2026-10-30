@@ -103,7 +103,7 @@ setup)
     [ -e "$dir/keyorix.yaml" ] && die "$dir already has a keyorix.yaml; use 'finish', or a new --dir"
     if [ -n "$pg_dsn" ]; then
         case "$pg_dsn" in
-            *password*) die "--postgres-dsn must not contain the password; put it in $dir/secrets/db_password" ;;
+            *password* | *://*:*@*) die "--postgres-dsn must not contain the password (password= or user:password@); put it in $dir/secrets/db_password" ;;
             *'|'* | *'&'* | *\\* | *'"'*) die "--postgres-dsn must not contain a | & backslash or double quote" ;;
         esac
         [ -f "$dir/secrets/db_password" ] ||

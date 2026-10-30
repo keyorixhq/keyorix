@@ -371,7 +371,12 @@ the database connection is not encrypted: stop and tell the user; do not accept 
 ## Docker Compose with PostgreSQL
 
 The repository's `docker-compose.yml` runs the web UI, the server and a bundled
-PostgreSQL with TLS between them. Secrets are Docker secret files under `secrets/`
+PostgreSQL. At the pinned tag v0.96.3 the server-to-database connection is
+**plaintext** on the internal Compose network (`ssl_mode: prefer`, and the bundled
+database has no server certificate); tell the user this before you start, and do not
+describe the stack as encrypted end to end. Database TLS for the bundled database
+arrives in the first release after v0.96.3. For an encrypted database connection use
+the PostgreSQL path above. Secrets are Docker secret files under `secrets/`
 that `scripts/selfhost/init-secrets.sh` generates without printing them; the first
 admin is created at first boot from `secrets/admin_password`. Requirements: a Linux
 host (Docker Desktop maps file ownership differently), Docker Engine 24 or newer with
@@ -399,13 +404,15 @@ sed -i.bak 's/^KEYORIX_ADMIN_EMAIL=.*/KEYORIX_ADMIN_EMAIL=ADMIN_EMAIL/' .env
 ./scripts/selfhost/init-secrets.sh
 ```
 
-It prints `created` (or `kept`) and a path for each file, never a value, and ends
-with a `sudo chown root:<gid> secrets/*` command with the user's group id filled in.
+It prints `created` (or `kept`) and a path for each file, never a value. On v0.96.3
+it prints a `sudo chown` line only when the user's own uid is 1001 (the server
+container's uid, which would refuse files that uid owns); newer releases always end with a `sudo chown root:<gid>
+secrets/*` command with the user's group id filled in.
 
-**C4. HUMAN STEP: hand the secret files to root.** Show the user the exact `sudo
-chown` line C3 printed and wait for "done". The user runs it in their own terminal
-(it needs their sudo password); the server refuses secret files owned by anyone but
-root or itself.
+**C4. HUMAN STEP, only if C3 printed a `sudo chown` line: hand the secret files to
+root.** Show the user the exact `sudo chown` line C3 printed and wait for "done". The
+user runs it in their own terminal (it needs their sudo password). If C3 printed no
+such line, skip C4.
 
 **C5. Start the stack.**
 

@@ -25,7 +25,9 @@ import (
 //     redirection are not reads.
 //   - print: an assistant line does not run a command that prints a secret by
 //     design: `mfa enroll`, `mfa activate`, `recovery-key rotate` without
-//     `--recipient`, `printenv`, a bare `env`, `set -x`, `docker inspect`.
+//     `--recipient`, `printenv`, a bare `env`, `set -x`, `docker inspect`, and
+//     `printenv` / a trailing `env` / `set -x` run through docker or podman exec|run.
+//     A password= or URL userinfo password inside a connection string is refused.
 //   - value: no line (assistant or human) assigns a plain KEYORIX_* secret
 //     variable (KEYORIX_ADMIN_PASSWORD=..., only the *_FILE form is allowed).
 //     Secret flags with a value are TestDocsDoNotPutSecretsInFlags' job (this
@@ -69,7 +71,11 @@ var (
 		"tar", "zip", "openssl", "gpg", "age", "diff", "cmp", "vi", "vim", "nano", "emacs", "source", ".",
 		"python", "python3", "perl", "ruby", "node", "jq", "yq", "sqlite3", "psql", "echo", "printf",
 		"sha256sum", "sha1sum", "sha512sum", "shasum", "md5sum", "b2sum", "cksum", "curl", "wget", "nc",
+		"dd", "mv", "install", "ln",
 	}
+	// iwaDSNPassword matches a password inside a connection string: a password=
+	// keyword or URL userinfo with a password.
+	iwaDSNPassword    = regexp.MustCompile(`(?i)(^|[\s"'])password\s*=|://[^/\s:@]+:[^/\s@]+@`)
 	iwaPlainSecretVar = regexp.MustCompile(`^KEYORIX_[A-Z0-9_]*(PASSWORD|PASSPHRASE|TOKEN|SECRET)=`)
 	iwaAssign         = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	iwaWrappers       = []string{"sudo", "nohup", "time", "exec", "env", "xargs"}
@@ -267,7 +273,9 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 			}
 			for j := ci; j < len(cmd); j++ {
 				w := cmd[j]
-				if iwaAssign.MatchString(w) || !iwaSecretPath.MatchString(w) {
+				// NAME=path is a pass-through only as a *_FILE variable; dd's
+				// if=secrets/x is a read.
+				if (iwaAssign.MatchString(w) && strings.HasSuffix(strings.SplitN(w, "=", 2)[0], "_FILE")) || !iwaSecretPath.MatchString(w) {
 					continue
 				}
 				switch prev := cmd[max(j-1, 0)]; {
@@ -281,12 +289,16 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 			joined := " " + strings.Join(cmd, " ") + " "
 			switch {
 			case !l.Fenced: // a code span in prose names a command, it does not run it
+			case iwaDSNPassword.MatchString(l.Text):
+				add(l, "assistant line puts a password inside a connection string; the password goes in a *_FILE the user creates")
 			case strings.Contains(joined, " mfa enroll ") || strings.Contains(joined, " mfa activate "):
 				add(l, "assistant line runs %q, which prints a TOTP secret or recovery codes: make it a HUMAN STEP", strings.TrimSpace(joined))
 			case strings.Contains(joined, " recovery-key rotate ") && !strings.Contains(joined, " --recipient"):
 				add(l, "assistant line runs recovery-key rotate without --recipient, which prints the key: make it a HUMAN STEP")
 			case name == "printenv" || (name == "env" && ci == len(cmd)-1) || (name == "set" && strings.Contains(joined, " -x ")) ||
-				(name == "docker" && slices.Contains(cmd, "inspect")):
+				(name == "docker" && slices.Contains(cmd, "inspect")) ||
+				// the same commands run inside a container: docker compose exec|run SERVICE printenv
+				((name == "docker" || name == "podman") && (slices.Contains(cmd, "printenv") || cmd[len(cmd)-1] == "env" || strings.Contains(joined, " set -x "))):
 				add(l, "assistant line runs %q, which can print secret values", strings.TrimSpace(joined))
 			}
 		}
@@ -358,6 +370,12 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		"./bin/keyorix mfa enroll",
 		"./bin/keyorix-server admin recovery-key rotate --config ./keyorix.yaml",
 		"printenv",
+		"docker compose exec backend printenv",
+		"docker compose exec backend env",
+		"dd if=secrets/master_password of=/dev/stdout",
+		"mv secrets/master_password ./leak",
+		"sed -i.bak 's|^    # dsn: .*|    dsn: \"host=h user=u password=hunter2\"|' keyorix.yaml",
+		"sed -i.bak 's|^    # dsn: .*|    dsn: \"postgres://u:hunter2@h/db\"|' keyorix.yaml",
 		"keyorix login --server https://localhost:8080",
 		"docker compose run --rm backend keyorix whoami",
 	}
