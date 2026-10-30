@@ -10,13 +10,18 @@ Format: `INV-WEB-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 
 ## API layer convention
 
-- **INV-WEB-01** Exactly two HTTP client instances exist in `web/src`: `services/client.ts`'s
+- **INV-WEB-01** Exactly two HTTP client instances serve the app: `services/client.ts`'s
   `apiClient` (general) and `services/auth.ts`'s `authApi` (separate, to avoid a circular
-  import `auth.ts → client.ts → authStore.ts → auth.ts`) — no raw `fetch(`,
-  `axios.get|post|put|delete|patch(`, or `XMLHttpRequest` exists anywhere else (confirmed by
-  repo-wide grep; the only other `fetch(` hits are React Query `refetch()` calls). UNGUARDED
-  mechanically (#issue: no `eslint.config.mjs` rule — e.g. `no-restricted-syntax` banning raw
-  `fetch`/`axios` outside these two files — enforces this; it holds today by inspection only).
+  import `auth.ts → client.ts → authStore.ts → auth.ts`). The one documented exception is
+  `services/setup.ts` (ADR-028 single-use setup-token flow: deliberately unauthenticated, no
+  session cookie). Nothing else may use raw `fetch(`, `XMLHttpRequest`/`WebSocket`/`EventSource`,
+  `navigator.sendBeacon`, or an axios default import (the only route to `axios.create|get|post|...`).
+  Guard: `eslint.config.mjs`'s `no-restricted-syntax` / `no-restricted-imports` override for
+  `src/**` (allowlist: those three files; tests exempt because they mock axios and fake XHR), run
+  by `pnpm lint`; `__tests__/structure/eslintGuards.test.ts` lints source strings with ESLint's
+  Node API and is red on each banned shape, green on `refetch()` and the allowlisted files.
+  **Not covered**: an HTTP library other than axios (needs a `package.json` change a reviewer
+  sees); reaching `fetch` through indirection such as `window['fet' + 'ch']`.
 
 ## CSRF — well guarded
 
