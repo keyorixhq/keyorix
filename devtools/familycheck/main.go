@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // scopeStaleAfter is how long a scope file can go without reconciliation
@@ -215,18 +216,46 @@ func anyFileMatchesSecurityCategory(repoRoot string, touched []member) bool {
 	return false
 }
 
-// hasMarker reports whether body contains a case-insensitive line starting
-// with marker that also mentions id or name (so a marker for a DIFFERENT
-// family doesn't accidentally suppress this one).
+// hasMarker reports whether the FIRST case-insensitive occurrence of marker
+// anywhere in body (it need not start a line), read from the marker to the end
+// of that line, also mentions id or name (so a marker for a DIFFERENT family
+// doesn't accidentally suppress this one).
 func hasMarker(body, marker, id, name string) bool {
 	ok, _ := dismissalReason(body, marker, id, name)
 	return ok
 }
 
+// indexFold returns the byte offset in s of the first case-insensitive
+// occurrence of sub, or -1. The offset is into s itself: strings.ToLower can
+// change a rune's byte length (U+0130 is 2 bytes, 3 lowered), so an offset
+// found in a lowered copy must never be used to slice the original.
+func indexFold(s, sub string) int {
+	for i := range s {
+		if hasPrefixFold(s[i:], sub) {
+			return i
+		}
+	}
+	return -1
+}
+
+// hasPrefixFold reports whether s starts with prefix, comparing rune by rune
+// with simple case folding (so the two sides may differ in byte length).
+func hasPrefixFold(s, prefix string) bool {
+	for _, p := range prefix {
+		if s == "" {
+			return false
+		}
+		r, size := utf8.DecodeRuneInString(s)
+		if r != p && !strings.EqualFold(string(r), string(p)) {
+			return false
+		}
+		s = s[size:]
+	}
+	return true
+}
+
 func dismissalReason(body, marker, id, name string) (bool, string) {
-	lower := strings.ToLower(body)
-	markerLower := strings.ToLower(marker)
-	idx := strings.Index(lower, markerLower)
+	idx := indexFold(body, marker)
 	if idx < 0 {
 		return false, ""
 	}
