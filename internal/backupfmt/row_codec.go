@@ -174,5 +174,12 @@ func unmarshalRow(data []byte, dest any) error {
 			return fmt.Errorf("field %s: %w", f.Name, err)
 		}
 	}
+	// Archived instants carry the offset of the host that wrote them (a v0.95.x
+	// archive has "+01:00"). Inserted as decoded, the driver stores a fixed-zone
+	// time as "... +0100 +0100", which it can parse back only on a host whose
+	// time.Local has that same offset: on a UTC host the restored database failed
+	// every later read with "unsupported Scan, storing driver.Value type string
+	// into type *time.Time". UTC is the inverse of marshalRow's normalization.
+	v.Set(normalizeTimesToUTC(v))
 	return nil
 }
