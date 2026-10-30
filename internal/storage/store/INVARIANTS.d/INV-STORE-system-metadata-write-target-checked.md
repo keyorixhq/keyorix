@@ -4,7 +4,10 @@
   plain table without inheritance children, with no non-internal trigger except the
   retention-anchor trigger exactly as `EnsureAuditRetentionAnchorTrigger` creates it
   (`systemMetadataAnchorTriggerOK`: BEFORE UPDATE FOR EACH ROW, its function, and its
-  `WHEN (key = 'audit_retention_anchor')` clause), no rule, and `relrowsecurity` and
+  `WHEN (key = 'audit_retention_anchor')` clause) and the single_writer fence's AFTER triggers
+  (`systemMetadataFenceTriggerOK`: `SoleWriterFenceTriggerPrefix`, executing
+  `SoleWriterGuardFunc` with exactly `SoleWriterGuardFuncBody`, a copy of `internal/solewriter`'s
+  that `TestFenceGuard_MatchesTheStore` keeps in step), no rule, and `relrowsecurity` and
   `relforcerowsecurity` false. The xmin of its `pg_class` row and of each trigger and rule row is
   part of the fingerprint. On a violation the check logs `SECURITY:`, counts `reason="tamper"`, and
   the repair (`restoreSystemMetadataWriteTarget`, in the repair transaction under its
@@ -22,4 +25,6 @@
   `_SystemMetadataRuleIsRemovedAndFlushed_Postgres`,
   `_SystemMetadataForcedRowSecurityIsTurnedOffAndFlushed_Postgres`,
   `_SystemMetadataAnchorTriggerWithoutItsWhenIsRestored_Postgres` (all red on the base by
-  behaviour), `_SystemMetadataUpkeepDoesNotFlush_Postgres`.
+  behaviour), `_SystemMetadataUpkeepDoesNotFlush_Postgres`,
+  `_SystemMetadataFenceTriggerIsLeftAlone_Postgres`; `TestFenceGuard_MatchesTheStore`
+  (internal/solewriter, default CI).
