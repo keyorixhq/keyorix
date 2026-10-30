@@ -26,7 +26,7 @@ integrity; ENS).
 
 ### What exists to build on
 
-- **Signing primitives.** Internal integrity uses **HMAC** (DEK-derived, `<keyVersion>:<hmac>`)
+- **Signing primitives.** Internal integrity uses **HMAC** (KEK-derived, `<keyVersion>:<hmac>`)
   for evidence packs and audit checkpoints (`internal/core/evidence_signing.go`,
   `audit_checkpoint.go`) — symmetric, server-held. `ed25519` is already a dependency
   (OIDC JWKS, `internal/oidcverify/oidc_jwks.go`).
