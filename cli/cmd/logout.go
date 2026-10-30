@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/keyorixhq/keyorix/cli/internal/credstore"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +48,11 @@ func runLogout(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := store.ForgetSession(); err != nil {
+	if err := store.ForgetSession(); errors.Is(err, credstore.ErrSettingsDropped) {
+		// The token is gone (the whole file was removed); only the settings were lost.
+		fmt.Fprintln(os.Stderr, "Warning:", err)
+		fmt.Fprintln(os.Stderr, `Run "keyorix login --server <url>" (and "keyorix config set ca_file <path>" if you use one) next time.`)
+	} else if err != nil {
 		return fmt.Errorf("forget local session: %w", err)
 	}
 

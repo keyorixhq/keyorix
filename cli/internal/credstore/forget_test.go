@@ -1,9 +1,12 @@
 package credstore
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -76,5 +79,57 @@ func TestForgetSession_NoSettingsLeftRemovesFile(t *testing.T) {
 	}
 	if _, err := os.Stat(s.Path()); !os.IsNotExist(err) {
 		t.Fatalf("file survived (stat err = %v)", err)
+	}
+}
+
+// REVIEW-3839-DEEP-1 M1: when the rewrite that keeps the settings fails (ENOSPC, EDQUOT, EIO
+// on the temp file), the token must still leave the disk. ForgetSession falls back to
+// removing the file, as the old logout did, and says the settings went with it.
+func TestForgetSession_RewriteFailureStillRemovesToken(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFileStore(filepath.Join(dir, "credentials.yaml"))
+	if err := s.Save(Credentials{ServerURL: "https://k.example", Token: "tok-secret", CAFile: "/etc/k/ca.pem"}); err != nil {
+		t.Fatal(err)
+	}
+	orig := writeTempCredentials
+	t.Cleanup(func() { writeTempCredentials = orig })
+	writeTempCredentials = func(*os.File, []byte) error { return syscall.ENOSPC }
+
+	err := s.ForgetSession()
+	if raw, rerr := os.ReadFile(s.Path()); rerr == nil {
+		t.Fatalf("token-bearing file survived a failed rewrite:\n%s", raw)
+	} else if !os.IsNotExist(rerr) {
+		t.Fatal(rerr)
+	}
+	if !errors.Is(err, ErrSettingsDropped) {
+		t.Fatalf("ForgetSession err = %v, want ErrSettingsDropped", err)
+	}
+	if !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("ForgetSession err = %v, want the rewrite cause kept", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("files left behind: %v", entries)
+	}
+}
+
+// When neither the rewrite nor the removal works, the caller gets a real error (not the
+// "settings dropped" outcome), so logout fails instead of claiming the token is gone.
+func TestForgetSession_RewriteAndRemoveFailingIsAnError(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs unix directory permissions as a non-root user")
+	}
+	dir := t.TempDir()
+	s := NewFileStore(filepath.Join(dir, "credentials.yaml"))
+	if err := s.Save(Credentials{ServerURL: "https://k.example", Token: "tok-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	err := s.ForgetSession()
+	if err == nil || errors.Is(err, ErrSettingsDropped) {
+		t.Fatalf("ForgetSession err = %v, want a hard error", err)
 	}
 }

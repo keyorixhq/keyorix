@@ -1,6 +1,7 @@
 package credstore
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,7 +114,9 @@ func (s *FileStore) Load() (Credentials, error) {
 // Nothing stored is not an error. A file that cannot be read back safely (a symlink, a mode
 // wider than 0600, unparseable) is removed instead, as Clear does: it may still hold a token,
 // and failing closed on the token matters more than keeping a setting we cannot trust. When
-// no setting is left to keep, the file is removed.
+// no setting is left to keep, the file is removed. When the rewrite itself fails, the file is
+// removed too and the returned error wraps ErrSettingsDropped; only if that removal also
+// fails is the token possibly still on disk, and the error is a plain one.
 func (s *FileStore) ForgetSession() error {
 	if _, err := os.Lstat(s.path); err != nil {
 		if os.IsNotExist(err) {
@@ -125,7 +128,20 @@ func (s *FileStore) ForgetSession() error {
 	if err != nil || (c.ServerURL == "" && c.CAFile == "") {
 		return s.Clear()
 	}
-	kept := Credentials{ServerURL: c.ServerURL, CAFile: c.CAFile}
+	if err := s.writeKept(Credentials{ServerURL: c.ServerURL, CAFile: c.CAFile}); err != nil {
+		// The original file still holds the token. Remove it, as Clear does, rather than
+		// leave a credential on disk because the settings could not be kept (ENOSPC, EIO).
+		if cerr := s.Clear(); cerr != nil {
+			return errors.Join(err, cerr)
+		}
+		return fmt.Errorf("%w: %w", ErrSettingsDropped, err)
+	}
+	return nil
+}
+
+// writeKept replaces the credentials file with kept, through a 0600 temp file in the same
+// directory renamed over the original. On error the original file is left as it was.
+func (s *FileStore) writeKept(kept Credentials) error {
 	data, err := yaml.Marshal(kept)
 	if err != nil {
 		return fmt.Errorf("marshal credentials: %w", err)
@@ -144,7 +160,7 @@ func (s *FileStore) ForgetSession() error {
 	if err := tmp.Chmod(0600); err != nil {
 		return fail("chmod temp credentials file", err)
 	}
-	if _, err := tmp.Write(data); err != nil {
+	if err := writeTempCredentials(tmp, data); err != nil {
 		return fail("write temp credentials file", err)
 	}
 	if err := tmp.Sync(); err != nil {
@@ -159,6 +175,18 @@ func (s *FileStore) ForgetSession() error {
 		return fmt.Errorf("replace credentials file: %w", err)
 	}
 	return nil
+}
+
+// ErrSettingsDropped is wrapped in ForgetSession's error when the settings could not be
+// rewritten and the whole file was removed instead: the token is gone, but so are server_url
+// and ca_file. Callers treat it as a warning, not a failure.
+var ErrSettingsDropped = errors.New("could not keep server_url and ca_file; removed the credentials file instead")
+
+// writeTempCredentials writes the kept settings to the temp file. A test seam: tests replace
+// it to make the rewrite fail.
+var writeTempCredentials = func(f *os.File, data []byte) error {
+	_, err := f.Write(data)
+	return err
 }
 
 // Clear removes the credentials file. Clearing when none exists is not an error.
