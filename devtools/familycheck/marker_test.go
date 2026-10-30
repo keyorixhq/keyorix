@@ -4,8 +4,9 @@ import "testing"
 
 // TestDismissalReason_NonASCIIBeforeMarker pins the index mismatch: the marker
 // was located in strings.ToLower(body) but the line was sliced from the
-// original body. "İ" (U+0130) is 2 bytes and lower-cases to 3, so every such
-// letter before the marker moved the slice start one byte into the marker.
+// original body. "İ" (U+0130) is 2 bytes and strings.ToLower makes it "i"
+// (1 byte), so every such letter before the marker moved the slice start one
+// byte earlier, back into the text before the marker.
 func TestDismissalReason_NonASCIIBeforeMarker(t *testing.T) {
 	const marker = "family-check: intentional"
 	cases := []struct {
