@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [secret_value_policy](#secret_value_policy) · [secret_name_policy](#secret_name_policy) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035, ADR-058) — includes [revocation semantics by backend](#credential-revocation-semantics-by-backend)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [expiry_reminders](#expiry_reminders) · [license_expiry](#license_expiry) · [read_quota_alerts](#read_quota_alerts) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [dual_control](#dual_control) (A.5.3) · [classification](#classification) (A.5.12/A.5.13) · [audit.siem](#auditsiem)
+- [auto_rotation](#auto_rotation) (ADR-046, ADR-047) · [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [expiry_reminders](#expiry_reminders) · [license_expiry](#license_expiry) · [read_quota_alerts](#read_quota_alerts) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [dual_control](#dual_control) (A.5.3) · [classification](#classification) (A.5.12/A.5.13) · [audit.siem](#auditsiem)
 - [scim](#scim) (RFC 7644) · [sso](#sso) (OIDC) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028) · [crypto_inventory](#crypto_inventory)
 
 ---
@@ -1873,6 +1873,44 @@ is never alerted about their own request. License-expiry and machine-credential
 expiry have no project and go to every install-wide admin; personal-token,
 role-grant and read-quota reminders go to the owner of the item.
 
+## auto_rotation
+
+An opt-in background scheduler (ADR-046) that rotates every auto-rotate-enabled secret
+that is overdue under an active rotation policy, writing a new version and auditing each
+rotation. Within a project a secret rotates only after the secrets it depends on; a
+dependent whose dependency did not rotate in the same run is deferred and audited.
+Single-replica-gated (ADR-039), so a secret rotates once per tick in an HA deployment.
+Off by default.
+
+```yaml
+auto_rotation:
+  enabled: true
+  schedule: "1h"          # Go duration between runs (default 1h; unparseable or <= 0 also means 1h)
+  # Upstream rotation backends (ADR-047), only needed to rotate a credential inside an
+  # external system (a database role, an IAM user, ...). Without any, a secret is
+  # regenerated inside Keyorix only.
+  backends:
+    - name: prod-pg                 # registry key a secret's rotation backend setting refers to
+      type: postgresql              # postgresql | mysql | mongodb | redis | aws-iam | gcp-service-account | azure-app
+      dsn_env: PROD_PG_ADMIN_DSN    # env var holding the admin connection string (or PROD_PG_ADMIN_DSN_FILE); never in this file
+      allowed_refs:                 # REQUIRED: the references (role/user names) this backend may rotate
+        - app_
+    - name: prod-iam
+      type: aws-iam
+      region: eu-west-1             # cloud backends only; credentials come from the ambient identity chain
+      allowed_refs:
+        - svc-keyorix-
+```
+
+| Key | Meaning |
+|---|---|
+| `auto_rotation.enabled` | Start the scheduler. With `false` (the default) nothing rotates automatically. |
+| `auto_rotation.schedule` | Go duration between runs; default `1h`. |
+| `auto_rotation.backends[].name` | The backend's registry key. |
+| `auto_rotation.backends[].type` | `postgresql`, `mysql`, `mongodb`, `redis`, `aws-iam`, `gcp-service-account` or `azure-app`. An unknown type is skipped with a warning at start. A cloud type this binary was built without (a `noaws`, `nogcp` or `noazure` build tag) fails startup instead of being skipped. |
+| `auto_rotation.backends[].region` | Used by the cloud backend that takes one (`aws-iam`); ignored by the others. |
+| `auto_rotation.backends[].allowed_refs` | Prefix allowlist of the references the backend may rotate. **Required**: a backend without it is not registered (a warning `refusing to register (fail-closed; set allowed_refs)` is logged and the server still starts; binding a secret to that backend is refused and its rotations fail with `unknown rotation backend`). An entry matches a reference that equals it or continues it after a non-alphanumeric boundary, so `myapp` admits `myapp-1` but not `myapp2`; end an entry with a delimiter such as `app_` to make the boundary explicit. |
+
 ## rotation_reminders
 
 An opt-in background scheduler that notifies project admins (in-app) of secrets
@@ -2854,6 +2892,10 @@ connect:
         - secret/data/keyorix/
 ```
 
+- `connect.connectors[].environment` is **reserved and not enforced** (ADR-082 §G): the
+  server accepts and stores it, but nothing reads it, so every environment within a
+  `project`-scoped connector's `project` is treated the same. Setting it does not
+  narrow access.
 - Reads are **read-only** and gated by the dedicated `connect.read` permission
   (ADR-044) — distinct from `secrets.read`, so external-store access is granted
   explicitly (it ships granted to `admin` / `system_admin`); each is audited as
