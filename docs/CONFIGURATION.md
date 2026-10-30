@@ -1067,8 +1067,13 @@ database TLS disabled, unauthenticated `/metrics`, a log-delivered setup link â€
 because of what it does, independently of whether its `insecure_` naming has
 been settled yet. Also reported: `enable_file_permission_check` disabled, a real
 file-permission/encryption/database problem, an incomplete key-file set, a
-cleartext listener contradicting `require_transport_tls`, and an admin without
-MFA or a passkey.
+cleartext listener contradicting `require_transport_tls`, an admin without
+MFA or a passkey, and two `break-glass-review` findings: every break-glass
+activation still unreviewed after `break_glass.review_window` (listed with its
+id, project and activation time), and "independent review impossible" when the
+install has exactly one administrator (it fires even when every activation has
+been reviewed, and is skipped while `break_glass.enabled` is false; an
+unreviewed activation is reported either way).
 
 Each deviation says whether it comes from a **shipped default** or an
 **explicit** config choice, so "this install has not been hardened yet" is
@@ -1087,7 +1092,10 @@ works this out from the database the same way the server does; if it cannot read
 the database it counts the deviation instead of assuming the deployment enforces.
 A setting on its implicit default with a real problem is also its own deviation. Only TLS mode and the KEK salt
 file's age are informational: no rotation-age threshold is defined anywhere in
-this codebase, so a number there would be a guess.
+this codebase, so a number there would be a guess. TLS mode is printed as, for
+example, `HTTP listener TLS mode: default (TLS 1.2 floor, ...)` or `... strict
+(TLS 1.3 only)` for each listener that terminates TLS itself (ADR-112 keeps
+TLS 1.2 compliant, so neither is a deviation).
 
 Like every `admin` command, `admin validate --posture` needs the database to
 itself: it refuses while the server runs (stop it, or in Docker Compose use
