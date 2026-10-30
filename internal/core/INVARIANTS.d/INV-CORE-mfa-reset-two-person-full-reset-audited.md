@@ -12,8 +12,9 @@
   rows. The host command (`server/admin/reset_mfa_logic.go`) applies the same function with
   its `admin.reset_mfa` row in its own transaction. Global admins, SSO/SCIM, suspended or
   inactive accounts and machine identities are refused on both paths. At approval the
-  requester must still be an active, not login-blocked global admin, and the requester
-  and target rules are re-checked on their row locks inside the approval transaction; at
+  requester must still be an active, not login-blocked global admin, and the requester,
+  approver (role, active, second factor) and target rules are re-checked on their row locks
+  inside the approval transaction, locked in ascending user-ID order (#3800); at
   most one request per target is pending (decided on the target's row lock in the create
   transaction). Why: a reset that
   keeps the password turns a stolen password into a takeover, and a one-admin reset is the
@@ -26,7 +27,9 @@
   (`TestMFAReset_RequesterNoLongerActive_ApprovalRefused`,
   `TestMFAReset_RequesterChangedInsideApproval_Refused`,
   `TestMFAReset_TargetChangedInsideApproval_Refused`,
-  `TestMFAReset_ConcurrentRequestForSameTarget_OnlyOnePending`), `server/admin`
+  `TestMFAReset_ConcurrentRequestForSameTarget_OnlyOnePending`),
+  `mfa_reset_approver_revocation_test.go` (`TestMFAReset_ApproverChangedInsideApproval_Refused`,
+  `TestMFAReset_ApprovalLocksUsersInIDOrder`), `server/admin`
   `reset_mfa_test.go`.
   **UNGUARDED**: no static guard restricts the callers of `DeleteMFAForUser` /
   `DeleteWebAuthnCredential` to the reviewed paths (design §1 asks for one; follow-up), and
