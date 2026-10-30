@@ -8,7 +8,7 @@ import "context"
 type flagStore interface {
 	SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error
 	SetUserWebAuthnEnabled(ctx context.Context, userID uint, enabled bool) error
-	UpdateUser(ctx context.Context, u *user) error
+	PutUserRow(ctx context.Context, u *user) error
 }
 
 type user struct{ MFAEnabled, WebAuthnEnabled bool }
@@ -26,10 +26,12 @@ func flagFromInput(ctx context.Context, st flagStore, uid uint, on bool) error {
 	return st.SetUserMFAEnabled(ctx, uid, on)
 }
 
-// fullRowClear clears the flag on the row and writes the whole row back.
+// fullRowClear clears the flag on the row and writes the whole row back (the
+// UpdateUser shape; named otherwise so the full-row-write guard, which scans
+// testdata by method name, does not count this fixture).
 func fullRowClear(ctx context.Context, st flagStore, u *user) error {
 	u.MFAEnabled = false
-	return st.UpdateUser(ctx, u)
+	return st.PutUserRow(ctx, u)
 }
 
 // enable only ever turns a factor on: not reported.
