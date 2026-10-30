@@ -358,6 +358,10 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("read audit high-water mark: %w", err)
 	}
+	// Before the archive file exists: a refusal must leave nothing behind.
+	if err := refuseUnmigratedLegacyNotificationURLs(readDB); err != nil {
+		return err
+	}
 
 	f, err := os.OpenFile(backupOutput, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600) // #nosec G304 -- operator-supplied output path, the whole point of this flag
 	if err != nil {

@@ -14,25 +14,23 @@ silently removing it.
 
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
-| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 40 | 35 | 5 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 29 | 6 |
-| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 21 | 17 | 4 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 28 | 7 |
-| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 22 | 18 | 4 |
-| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 27 | 24 | 3 |
-| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 28 | 25 | 3 |
-| `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 15 | 12 | 3 |
-| `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 22 | 20 | 2 |
-| `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 19 | 19 | 0 |
-| `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 13 | 9 | 4 |
-| `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 8 | 8 | 0 |
-| `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 13 | 10 | 3 |
-| `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 7 | 2 | 5 |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 135 | 134 | 1 |
+| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 43 | 40 | 3 |
+| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 69 | 69 | 0 |
+| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 40 | 40 | 0 |
+| `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 20 | 20 | 0 |
+| `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 33 | 33 | 0 |
+| `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 40 | 39 | 1 |
+| `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 20 | 20 | 0 |
+| `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 9 | 9 | 0 |
+| `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 19 | 19 | 0 |
+| `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 11 | 7 | 4 |
 | `internal/solewriter` | [internal/solewriter/INVARIANTS.md](../internal/solewriter/INVARIANTS.md) | 16 | 16 | 0 |
-| `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 8 | 1 |
+| `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 7 | 2 |
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 2 | 2 | 0 |
-| **Total** | | **248** | **211** | **37** |
+| `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
+| **Total** | | **471** | **460** | **11** |
 
 ## Highest-priority UNGUARDED gaps
 
@@ -63,9 +61,15 @@ but no ledger entry).
 
 ## Maintaining this index
 
-- Package-count and guarded/unguarded totals above are a snapshot as of this writing
-  (2026-10-03). They will drift as invariants are added, closed, or re-guarded — re-derive by
-  counting `- **INV-<PKG>-NN` bullets per file, and per bullet whether its own text contains
+- The table is written by hand; no generator exists. `TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp`
+  (`internal/docsdrift`) fails on a package listed twice, on a row whose Invariants is not
+  Guarded + UNGUARDED, and on a Total that is not the column sums. It does not check a row
+  against its package's files. When two PRs both change a row, keep ONE row with the current counts.
+- Package-count and guarded/unguarded totals above are a snapshot (re-counted 2026-10-30,
+  including `INVARIANTS.d/` fragments, which are one invariant per file). They drift as
+  invariants are added, closed, or re-guarded — re-derive by
+  counting `- **INV-<PKG>-NN` bullets per file plus the `INVARIANTS.d/` fragments, and per
+  bullet or fragment whether its own text contains
   `UNGUARDED`. **Do not `grep -c UNGUARDED` the whole file** — every file's own intro line
   ("Format: `INV-<PKG>-NN ... UNGUARDED (#issue)`") contains the literal word and will inflate
   a naive count by one per file (this is exactly what happened on the first draft of this
