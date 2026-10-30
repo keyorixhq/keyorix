@@ -19,9 +19,6 @@ package core
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -445,9 +442,9 @@ func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *audi
 	}
 	if cp != nil {
 		switch {
-		case hmac.Equal([]byte(c.signCheckpointUnder(cp, cur)), []byte(cp.Signature)):
+		case c.checkpointSigMatchesUnder(cp, cur, cp.Signature):
 			out = append(out, AuditSealCount{Events: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash, Source: fmt.Sprintf("signed checkpoint #%d", cp.ID)})
-		case hmac.Equal([]byte(c.signCheckpointUnder(cp, prev)), []byte(cp.Signature)):
+		case c.checkpointSigMatchesUnder(cp, prev, cp.Signature):
 			// Signed before this seal: the re-seal has not replaced it yet.
 		default:
 			return nil, auditLossRefused("the latest checkpoint #%d authenticates neither under seal #%d nor before it (deleted newer checkpoints or a garbled signature, not a half-written acceptance): investigate before completing seal #%d", cp.ID, last.Seq, last.Seq)
@@ -460,9 +457,9 @@ func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *audi
 	if ok {
 		hw, b, sig, parsed := parseAuditHighWaterSealed(val)
 		switch {
-		case parsed && b == cur && hmac.Equal([]byte(c.signCheckpointUnder(hw, cur)), []byte(sig)):
+		case parsed && b == cur && c.checkpointSigMatchesUnder(hw, cur, sig):
 			out = append(out, AuditSealCount{Events: hw.ChainedEvents, HeadID: hw.HeadID, HeadHash: hw.HeadHash, Source: "the signed high-water mark"})
-		case parsed && b == prev && hmac.Equal([]byte(c.signCheckpointUnder(hw, prev)), []byte(sig)):
+		case parsed && b == prev && c.checkpointSigMatchesUnder(hw, prev, sig):
 			// Signed before this seal: the re-seal has not lowered it yet.
 		default:
 			return nil, auditLossRefused("the audit high-water mark authenticates neither under seal #%d nor before it (garbled or relabelled, not a half-written acceptance): investigate before completing seal #%d", last.Seq, last.Seq)
@@ -486,9 +483,9 @@ func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *audi
 	}
 	if found {
 		switch {
-		case wb == cur && hmac.Equal([]byte(c.signCheckpointUnder(wcp, cur)), []byte(wsig)):
+		case wb == cur && c.checkpointSigMatchesUnder(wcp, cur, wsig):
 			out = append(out, AuditSealCount{Events: wcp.ChainedEvents, HeadID: wcp.HeadID, HeadHash: wcp.HeadHash, Source: "the host's high-water witness file"})
-		case wb == prev && (wcp.KeyVersion != c.auditCkptKeyVersion || hmac.Equal([]byte(c.signCheckpointUnder(wcp, prev)), []byte(wsig))):
+		case wb == prev && (wcp.KeyVersion != c.auditCkptKeyVersion || c.checkpointSigMatchesUnder(wcp, prev, wsig)):
 			// Written before this seal: the re-seal has not replaced it yet.
 		default:
 			return nil, auditLossRefused("the host's high-water witness file authenticates neither under seal #%d nor before it (garbled or replaced, not a half-written acceptance): investigate before completing seal #%d", last.Seq, last.Seq)
@@ -683,8 +680,7 @@ func (c *KeyorixCore) auditLossAnchor(ctx context.Context, f *auditLossFindings,
 	}
 	ok := false
 	for k := 0; k <= len(f.seals.recs) && !ok; k++ {
-		sig := c.signCheckpointUnder(&models.AuditCheckpoint{ChainedEvents: a.ChainedEvents, HeadID: a.HeadID, HeadHash: a.HeadHash, KeyVersion: a.KeyVersion}, sealBindingOf(f.seals.recs[:k]))
-		ok = hmac.Equal([]byte(sig), []byte(a.Signature))
+		ok = c.checkpointSigMatchesUnder(&models.AuditCheckpoint{ChainedEvents: a.ChainedEvents, HeadID: a.HeadID, HeadHash: a.HeadHash, KeyVersion: a.KeyVersion}, sealBindingOf(f.seals.recs[:k]), a.Signature)
 	}
 	if !ok {
 		return nil, auditLossRefused("the anchor file does not authenticate under the current checkpoint key")
@@ -702,13 +698,6 @@ func (c *KeyorixCore) auditLossAnchor(ctx context.Context, f *auditLossFindings,
 		return nil, auditLossRefused("audit event #%d differs from the anchor file (rewritten, not lost)", a.HeadID)
 	}
 	return &AuditSealAnchor{Digest: strings.ToLower(a.Digest), Verified: true, ChainedEvents: a.ChainedEvents, HeadID: a.HeadID, HeadHash: a.HeadHash}, nil
-}
-
-// signCheckpointUnder signs cp under seal binding b (the current key).
-func (c *KeyorixCore) signCheckpointUnder(cp *models.AuditCheckpoint, b auditSealBinding) string {
-	mac := hmac.New(sha256.New, c.auditCkptKey)
-	mac.Write([]byte(checkpointCanonicalSealed(cp.ChainedEvents, cp.HeadID, cp.HeadHash, cp.KeyVersion, b)))
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // planAuditTruncation accepts a tail loss: the named id must be the missing
@@ -867,12 +856,15 @@ func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditC
 		return nil, "", fmt.Errorf("accept-loss: the sealed chain does not verify: %s", v.Reason)
 	}
 	cp := &models.AuditCheckpoint{ChainedEvents: v.ChainedEvents + anchorPurgedEvents(anchor), HeadID: v.HeadID, HeadHash: v.HeadHash, KeyVersion: c.auditCkptKeyVersion}
-	cp.Signature = c.signCheckpoint(cp)
+	bind := c.sealBinding()
+	if cp.Signature, err = c.signCheckpointUnder(cp, bind); err != nil {
+		return nil, "", fmt.Errorf("accept-loss: %w", err)
+	}
 	// A witness under the current seal list certified rows written after this
 	// seal; lowering it would destroy the evidence of their loss. Checked
 	// before anything is written.
 	if w, b, sig, found, err := c.readAuditWitness(); err == nil && found && b == c.sealBinding() &&
-		hmac.Equal([]byte(c.signCheckpointUnder(w, b)), []byte(sig)) && w.ChainedEvents > cp.ChainedEvents {
+		c.checkpointSigMatchesUnder(w, b, sig) && w.ChainedEvents > cp.ChainedEvents {
 		return nil, "", fmt.Errorf("accept-loss: the host's high-water witness file certifies %d events through #%d under the current seal list, only %d remain: rows certified after the seal are gone; investigate",
 			w.ChainedEvents, w.HeadID, cp.ChainedEvents)
 	}
@@ -883,7 +875,7 @@ func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditC
 	if err := c.sealHook("checkpoint"); err != nil {
 		return nil, "", err
 	}
-	hw := auditHighWaterValueSealed(cp, c.sealBinding(), c.signCheckpoint(cp))
+	hw := auditHighWaterValueSealed(cp, bind, cp.Signature)
 	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, hw); err != nil {
 		return nil, "", fmt.Errorf("accept-loss: write the high-water mark: %w", err)
 	}
