@@ -73,7 +73,9 @@ func (c *KeyorixCore) replaceUserRoleSet(ctx context.Context, r roleSetReplace) 
 		}
 	}
 	// The grant ceiling is the actor's own authority, so it is judged before anything
-	// changes; commit 2 judges it again under its lock.
+	// changes; commit 2 judges it again under its lock. An actor replacing their own
+	// set is also judged on the set commit 1 leaves, before commit 1
+	// (requireSelfGrantCeilingAfterRemovals, #3684).
 	if err := c.requireGranterHoldsRoleSet(ctx, r, add); err != nil {
 		return err
 	}
@@ -87,8 +89,10 @@ func (c *KeyorixCore) replaceUserRoleSet(ctx context.Context, r roleSetReplace) 
 	if len(add) == 0 {
 		return nil
 	}
+	ceilingRefused := false
 	err = c.storage.WithNamedLock(ctx, sodGrantLockKey("user", r.userID), func(ctx context.Context) error {
 		if err := c.requireGranterHoldsRoleSet(ctx, r, add); err != nil {
+			ceilingRefused = true
 			return err
 		}
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
@@ -105,10 +109,13 @@ func (c *KeyorixCore) replaceUserRoleSet(ctx context.Context, r roleSetReplace) 
 		return nil
 	}
 	if err != nil && len(removed) > 0 {
+		// A ceiling refusal here means the actor's authority changed between the
+		// commits (a concurrent revocation): the retry would be refused as well.
 		return &PartialMutationError{
-			Applied:    fmt.Sprintf("removal of role(s) %v", removed),
-			NotApplied: fmt.Sprintf("addition of role(s) %v", add),
-			Err:        err,
+			Applied:      fmt.Sprintf("removal of role(s) %v", removed),
+			NotApplied:   fmt.Sprintf("addition of role(s) %v", add),
+			Err:          err,
+			RetryRefused: ceilingRefused,
 		}
 	}
 	return err
@@ -138,6 +145,69 @@ func (c *KeyorixCore) requireGranterHoldsRoleSet(ctx context.Context, r roleSetR
 	return nil
 }
 
+// requireSelfGrantCeilingAfterRemovals refuses, before commit 1, a replacement of the
+// actor's OWN role set whose additions the actor could not grant once the removals
+// the caller's guard approved (removable) are gone (#3684): commit 2 judges the
+// ceiling after commit 1, so without this the removals committed, commit 2 refused,
+// and the retry was refused by the pre-check. The set it judges is the actor's role
+// set at scope (ListUserRoleGrants, the rows ResolveUserPermissionAt reads) minus
+// the direct grants at exactly scope that commit 1 removes; the refusal is
+// requireGranterHoldsRolePermissions' own. Any other actor is unaffected by commit 1.
+func (c *KeyorixCore) requireSelfGrantCeilingAfterRemovals(ctx context.Context, r roleSetReplace, removable func(id uint) bool, add []uint) error {
+	if len(add) == 0 || r.actorIsMachine || r.actorID == 0 || r.actorID != r.userID {
+		return nil
+	}
+	current, err := c.storage.GetUserRoleIDsExact(ctx, r.userID, r.scope)
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	remove, _ := roleSetDiff(current, r.want)
+	remove = slices.DeleteFunc(remove, func(id uint) bool { return !removable(id) })
+	if len(remove) == 0 {
+		return nil
+	}
+	grants, err := c.storage.ListUserRoleGrants(ctx, r.userID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	var left []uint
+	for _, g := range grants {
+		removedHere := !g.ViaGroup && g.ProjectID == r.scope.ProjectID && g.EnvironmentID == r.scope.EnvironmentID &&
+			slices.Contains(remove, g.RoleID)
+		if g.AppliesAt(r.scope) && !removedHere && !slices.Contains(left, g.RoleID) {
+			left = append(left, g.RoleID)
+		}
+	}
+	need := []string{"roles.assign"}
+	for _, id := range add {
+		perms, err := c.storage.GetRolePermissions(ctx, id)
+		if err != nil {
+			return fmt.Errorf("failed to resolve role permissions: %w", err)
+		}
+		for _, p := range perms {
+			need = append(need, p.Name)
+		}
+	}
+	bypass := false
+	if len(left) > 0 {
+		if bypass, err = c.storage.RoleSetBypassesPermissionChecks(ctx, left); err != nil {
+			return fmt.Errorf("failed to resolve actor authority: %w", err)
+		}
+	}
+	for _, p := range need {
+		ok := bypass
+		if !ok && len(left) > 0 {
+			if ok, err = c.storage.RoleSetHasPermission(ctx, left, p); err != nil {
+				return fmt.Errorf("failed to resolve actor authority: %w", err)
+			}
+		}
+		if !ok {
+			return fmt.Errorf("cannot grant this role: you do not hold permission %q yourself", p)
+		}
+	}
+	return nil
+}
+
 // narrowUserRoleSet is commit 1: the removals in one owed transaction under the lock
 // and guard their scope needs (RemoveUserRole's), its rows settled after the
 // eviction and the lock. swapped reports that the whole replacement was applied as
@@ -145,6 +215,10 @@ func (c *KeyorixCore) requireGranterHoldsRoleSet(ctx context.Context, r roleSetR
 func (c *KeyorixCore) narrowUserRoleSet(ctx context.Context, r roleSetReplace, add []uint) (removed []uint, swapped bool, err error) {
 	var settle func()
 	owed := func(ctx context.Context, fence txFence, removable func(id uint) bool, adminIDs []uint) error {
+		// Under the caller's guard lock, before anything commits (#3684).
+		if err := c.requireSelfGrantCeilingAfterRemovals(ctx, r, removable, add); err != nil {
+			return err
+		}
 		var rerr error
 		settle, rerr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 			if err := fence(ctx, tx); err != nil {
