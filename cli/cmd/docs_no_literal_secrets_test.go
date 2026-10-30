@@ -158,6 +158,7 @@ func scanTextForSecrets(content string) []docsSecretHit {
 // line is still scanned, and the explicit marker opts a line out.
 func scanShellForSecrets(content string) []docsSecretHit {
 	var hits []docsSecretHit
+	hits = append(hits, scanShellForVarBodies(content)...)
 	for i, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
@@ -267,6 +268,35 @@ func findSecretArgvShape(line string) string {
 		return "credential in curl -u on argv"
 	}
 	return ""
+}
+
+// SCRIPTS-SECRETS-3: a curl body held in a variable (`curl ... -d "$body"`). The body is
+// built elsewhere and may carry a password or a secret value; once expanded onto argv it is
+// visible in ps whatever it holds, so the safe form is `printf '%s' "$body" | curl
+// --data-binary @-` (or `-d @file`). Matched on the logical line (backslash continuations
+// joined) because the flag usually sits on a continuation line of its curl. A body that
+// is known not to be a credential (an alert message) opts out with the usual marker.
+var curlVarBodyRE = regexp.MustCompile(`(?:^|[\s(])(?:-d|--data|--data-raw|--data-urlencode|--data-ascii|--json)(?:=|\s+)["']?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?["']?(?:\s|$|\))`)
+
+var curlWordRE = regexp.MustCompile(`\bcurl\b`)
+
+func scanShellForVarBodies(content string) []docsSecretHit {
+	var hits []docsSecretHit
+	lines := strings.Split(content, "\n")
+	for i := 0; i < len(lines); i++ {
+		first, joined := i, strings.TrimSpace(lines[i])
+		for strings.HasSuffix(joined, "\\") && i+1 < len(lines) {
+			i++
+			joined = strings.TrimSuffix(joined, "\\") + " " + strings.TrimSpace(lines[i])
+		}
+		if strings.HasPrefix(joined, "#") || strings.Contains(joined, docsSecretsAllowMarker) || !curlWordRE.MatchString(joined) {
+			continue
+		}
+		if m := curlVarBodyRE.FindString(joined); m != "" {
+			hits = append(hits, docsSecretHit{first + 1, "curl body held in a variable on argv: " + strings.TrimSpace(m), strings.TrimSpace(lines[first])})
+		}
+	}
+	return hits
 }
 
 var docsSecretsSkipDirs = map[string]bool{
@@ -403,6 +433,10 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"helm set db":         `helm install r ./c --set postgresql.auth.password="$DB"`,
 		"helm set-string tok": `helm upgrade r ./c --set-string server.metrics.token=abc`,
 		"from-literal":        `kubectl create secret generic s --from-literal=api_token="$T"`,
+		// SCRIPTS-SECRETS-3 shape: a body held in a variable, flag on a continuation line.
+		"var body":         `curl -sf "${H[@]}" -X "$method" "${ADDR}/v1/${path}" -d "$body"`,
+		"var body braces":  `curl -sf "$URL" --data "${payload}"`,
+		"var body on cont": "curl -sf \"$URL\" \\\n  -H 'X: y' \\\n  -d \"$body\" >/dev/null",
 	} {
 		if len(scanShellForSecrets(sh)) == 0 {
 			t.Errorf("shell guard missed (%s): %q", name, sh)
@@ -436,6 +470,12 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"helm set existing":    `helm install r ./c --set secureBaseline.existingSecret="$S"`,
 		"from-file secret":     `kubectl create secret generic s --from-file=metrics_token="$f"`,
 		"allow marker curl":    `curl -H "Authorization: Bearer $T" "$URL" # docs-secrets:allow (fixture)`,
+		// SCRIPTS-SECRETS-3 safe forms.
+		"var body stdin":     `printf '%s' "$body" | curl -sf "$URL" --data-binary @-`,
+		"var body marker":    `curl -fsS -d "$msg" "$URL" # docs-secrets:allow (alert text, no credential)`,
+		"date -d variable":   `d=$(date -u -d "$added" +%s)`,
+		"literal body":       `curl -s -X POST -d "$(printf x)" "$URL"`,
+		"cont marker":        "curl -sf \"$URL\" \\\n  -d \"$msg\" >/dev/null # docs-secrets:allow (alert text)",
 	} {
 		if hits := scanShellForSecrets(sh); len(hits) != 0 {
 			t.Errorf("shell guard false positive (%s): %q -> %+v", name, sh, hits)
