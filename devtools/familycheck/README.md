@@ -57,6 +57,33 @@ fails the build) once `last_reconciled` is more than ~100 days old, missing,
 or unparsable — see `warnIfScopeStale` in `main.go`. That warning is the
 forcing function to re-run the scan, not a formality to silence.
 
+## Marker lines: only the FIRST one per kind counts
+
+`familycheck` looks for each marker (`family-check: intentional` and
+`family-check: new-member-verified`) with a case-insensitive substring search over
+the whole PR body and examines **only the first occurrence of that marker** (see
+`dismissalReason` in `main.go`). The rest of that line, from the marker to the end
+of the line, must name the family, by its ID or its interface name (also
+case-insensitive). If the first line names a different family, the family is not
+dismissed, even when a later line names it. The tool does not look at a second
+line. The marker also does not have to start the line. Each marker kind is searched
+separately, so an `intentional` line never confirms a new member.
+
+Consequences, run against a PR that touches 1 of 2 members of each of two families,
+`Alpha` and `Beta`, with no other changes:
+
+| PR body | Outcome |
+|---|---|
+| `family-check: intentional — Alpha: only A1 has the bug` then, on the next line, `family-check: intentional — Beta: only B1 has the bug` | Alpha is dismissed (`(dismissed: Alpha — "Alpha: only A1 has the bug")`). **Beta is still reported** as an active Mode A nudge: the second line is never read. |
+| `family-check: intentional — Beta: …` then `family-check: intentional — Alpha: …` | The mirror image: Beta is dismissed, Alpha is reported. |
+| One line: `family-check: intentional — Alpha, Beta: only A1 and B1 have the bug` | Both are dismissed, each with that line's text as the reason. |
+| No marker line | Both are reported, each with the `If intentional: …` hint. |
+
+So when one PR needs several families dismissed or confirmed, put all of their
+names on **one** marker line (`… — Alpha, Beta: <reason>`). Mode A is non-blocking either
+way. For Mode B (`new-member-verified`) the same rule decides whether the exit code
+is 1, so a second family confirmed on its own line still blocks the build.
+
 ## Usage
 
 ```

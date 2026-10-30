@@ -37,7 +37,9 @@ import (
 // Keys that were already undocumented when the check was added are listed in
 // testdata/undocumented_config_leaves.txt. The list can only shrink: a key that is not
 // documented and not listed fails (new undocumented key), and a listed key that is
-// documented now or no longer exists fails (delete the line).
+// documented now or no longer exists fails (delete the line). A key that stays on the
+// list is one that is not meant for an operator (legacy, inert or internal); its line is
+// `<key> <reason>`, and a line without a reason fails.
 
 const (
 	configLeavesFile        = "internal/config/testdata/config_surface_leaves.txt"
@@ -64,6 +66,21 @@ func readLeafList(t testing.TB, rel string) []string {
 		}
 	}
 	return out
+}
+
+// parseExemptions reads the undocumented-leaves list: `<key> <reason>` per line. It
+// returns the key -> reason map and one message per line that has no reason.
+func parseExemptions(lines []string) (map[string]string, []string) {
+	out := map[string]string{}
+	var noReason []string
+	for _, l := range lines {
+		key, reason, _ := strings.Cut(l, " ")
+		out[key] = strings.TrimSpace(reason)
+		if out[key] == "" {
+			noReason = append(noReason, key)
+		}
+	}
+	return out, noReason
 }
 
 // documentedConfigLeaves returns the leaves among the given ones that the docs name.
@@ -141,9 +158,13 @@ func TestEveryConfigKeyIsDocumented(t *testing.T) {
 	}
 	documented := documentedConfigLeaves(configReferenceDocs(g), leaves)
 
+	exempt, noReason := parseExemptions(readLeafList(g, undocumentedLeavesFile))
+	for _, k := range noReason {
+		g.Errorf("%s lists %q without a reason: write `<key> <why an operator never sets it>`, or document the key in docs/CONFIGURATION.md and delete the line", undocumentedLeavesTitle, k)
+	}
 	known := map[string]bool{}
-	for _, l := range readLeafList(g, undocumentedLeavesFile) {
-		known[l] = true
+	for k := range exempt {
+		known[k] = true
 	}
 	onSurface := map[string]bool{}
 	var missing []string
@@ -171,6 +192,16 @@ func TestEveryConfigKeyIsDocumented(t *testing.T) {
 		g.Errorf("%s lists %s: delete the line", undocumentedLeavesTitle, s)
 	}
 	g.Logf("%d config keys, %d documented, %d known undocumented", len(leaves), len(documented), len(known))
+}
+
+func TestParseExemptions_RequiresAReason(t *testing.T) {
+	got, bad := parseExemptions([]string{"a.b legacy: nothing reads it", "c.d", "e.f   spaced reason  "})
+	if got["a.b"] != "legacy: nothing reads it" || got["e.f"] != "spaced reason" {
+		t.Errorf("reasons not parsed: %v", got)
+	}
+	if len(bad) != 1 || bad[0] != "c.d" {
+		t.Errorf("want only c.d reported as lacking a reason, got %v", bad)
+	}
 }
 
 // TestEveryConfigKeyDocCheckCatchesPlantedError is the red proof for both directions:
