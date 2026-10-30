@@ -65,8 +65,10 @@ but no ledger entry).
 
 - The table is written by hand; no generator exists. `TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp`
   (`internal/docsdrift`) fails on a package listed twice, on a row whose Invariants is not
-  Guarded + UNGUARDED, and on a Total that is not the column sums. It does not check a row
-  against its package's files. When two PRs both change a row, keep ONE row with the current counts.
+  Guarded + UNGUARDED, on a Total that is not the column sums, and on any line of this table
+  that matches neither the package-row nor the Total pattern (it would otherwise be left out
+  of the sums). It does not check a row against its package's files or that the linked file
+  exists. When two PRs both change a row, keep ONE row with the current counts.
 - Package-count and guarded/unguarded totals above are a snapshot (re-counted 2026-10-30,
   including `INVARIANTS.d/` fragments, which are one invariant per file). They drift as
   invariants are added, closed, or re-guarded — re-derive by
