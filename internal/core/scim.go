@@ -212,6 +212,11 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 		if errors.Is(err, storage.ErrDuplicateEmail) {
 			return nil, ErrSCIMUserExists
 		}
+		// The derived username (deriveSCIMUsername) is a check-then-act pick too: a
+		// concurrent create that took the same name answers the same uniqueness error.
+		if errors.Is(err, storage.ErrDuplicateUsername) {
+			return nil, ErrSCIMUserExists
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return created, nil
