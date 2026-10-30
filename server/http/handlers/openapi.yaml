@@ -4163,7 +4163,6 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
-        '409': {$ref: '#/components/responses/Error'}
   /api/v1/projects/{id}/secrets/deleted:
     get:
       tags: [Secrets]
