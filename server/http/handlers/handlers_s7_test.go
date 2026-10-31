@@ -733,7 +733,7 @@ func TestRemoveMachineRole_NotFound_S7(t *testing.T) {
 func TestDenyAuthz_MFABlocked_S7(t *testing.T) {
 	h := newDynamicSecretHandlerS7(t)
 	w := httptest.NewRecorder()
-	h.denyAuthz(w, true) // mfaBlocked=true → middleware.WriteProjectMFARequired
+	h.denyAuthz(w, httptest.NewRequest(http.MethodGet, "/", nil), true, nil) // mfaBlocked=true → middleware.WriteProjectMFARequired
 	// MFA-required writes a 403 (or whatever middleware sets; just not 200).
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
@@ -742,7 +742,7 @@ func TestDenyAuthz_MFABlocked_S7(t *testing.T) {
 func TestDenyAuthz_PermDenied_S7(t *testing.T) {
 	h := newDynamicSecretHandlerS7(t)
 	w := httptest.NewRecorder()
-	h.denyAuthz(w, false) // mfaBlocked=false → 403 Forbidden
+	h.denyAuthz(w, httptest.NewRequest(http.MethodGet, "/", nil), false, nil) // mfaBlocked=false → 403 Forbidden
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -1175,9 +1175,10 @@ func TestParseScopeQuery_EmptyParams_S7(t *testing.T) {
 func TestDynamicSecrets_Authorize_NilUser_S7(t *testing.T) {
 	h := newDynamicSecretHandlerS7(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	ok, mfaBlocked := h.authorize(req, "secrets.read", core.Scope{ProjectID: 1, EnvironmentID: 1})
+	ok, mfaBlocked, lookupErr := h.authorize(req, "secrets.read", core.Scope{ProjectID: 1, EnvironmentID: 1})
 	assert.False(t, ok)
 	assert.False(t, mfaBlocked)
+	assert.NoError(t, lookupErr)
 }
 
 // ── dynamic_secrets.go: CreateConfig branches ────────────────────────────────

@@ -75,29 +75,34 @@ func NewDynamicSecretHandler(coreService *core.KeyorixCore) *DynamicSecretHandle
 
 // authorize checks both RBAC and the per-project MFA policy (ADR-037). It returns
 // the failure mode so the caller can send the right response: permission denied
-// vs. MFA required.
-func (h *DynamicSecretHandler) authorize(r *http.Request, perm string, scope core.Scope) (ok bool, mfaBlocked bool) {
+// vs. MFA required vs. the permission lookup itself failing (lookupErr, which
+// denyAuthz answers 503 when it is a storage outage).
+func (h *DynamicSecretHandler) authorize(r *http.Request, perm string, scope core.Scope) (ok bool, mfaBlocked bool, lookupErr error) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		return false, false
+		return false, false, nil
 	}
 	allowed, err := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), perm, scope)
 	if err != nil || !allowed {
-		return false, false
+		return false, false, err
 	}
 	if middleware.ProjectMFABlocked(r, h.coreService, scope.ProjectID) {
-		return false, true
+		return false, true, nil
 	}
-	return true, false
+	return true, false, nil
 }
 
-// denyAuthz writes the appropriate response for a failed authorize().
-func (h *DynamicSecretHandler) denyAuthz(w http.ResponseWriter, mfaBlocked bool) {
+// denyAuthz writes the appropriate response for a failed authorize(): MFA
+// required, 503 + Retry-After when the permission lookup hit a storage outage,
+// otherwise the 403.
+func (h *DynamicSecretHandler) denyAuthz(w http.ResponseWriter, r *http.Request, mfaBlocked bool, lookupErr error) {
 	if mfaBlocked {
 		middleware.WriteProjectMFARequired(w)
 		return
 	}
-	sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+	refuseUnlessAuthorized(w, r, false, lookupErr, func() {
+		sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+	})
 }
 
 // CreateConfig handles POST /api/v1/dynamic-secrets/configs
@@ -124,8 +129,8 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	scope := core.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	if ok, mfaBlocked := h.authorize(r, permSecretsWrite, scope); !ok {
-		h.denyAuthz(w, mfaBlocked)
+	if ok, mfaBlocked, lookupErr := h.authorize(r, permSecretsWrite, scope); !ok {
+		h.denyAuthz(w, r, mfaBlocked, lookupErr)
 		return
 	}
 	cfg, err := h.coreService.CreateDynamicSecretConfig(r.Context(), &core.CreateDynamicSecretConfigRequest{
@@ -157,8 +162,8 @@ func (h *DynamicSecretHandler) ListConfigs(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if ok, mfaBlocked := h.authorize(r, permSecretsRead, core.Scope{ProjectID: projectID, EnvironmentID: environmentID}); !ok {
-		h.denyAuthz(w, mfaBlocked)
+	if ok, mfaBlocked, lookupErr := h.authorize(r, permSecretsRead, core.Scope{ProjectID: projectID, EnvironmentID: environmentID}); !ok {
+		h.denyAuthz(w, r, mfaBlocked, lookupErr)
 		return
 	}
 	cfgs, err := h.coreService.ListDynamicSecretConfigs(r.Context(), projectID, environmentID)
