@@ -264,7 +264,8 @@ func (s *UserGRPCService) ListUsers(ctx context.Context, req *pb.ListUsersReques
 		Page:           page,
 		PageSize:       pageSize,
 	}
-	// "inactive" surfaces accounts with no login in the last 30 days.
+	// "inactive" surfaces accounts whose last login (or creation, if they never
+	// logged in) is more than 30 days ago (#3740).
 	if req.GetFilter() == "inactive" {
 		cutoff := time.Now().AddDate(0, 0, -30)
 		filter.InactiveSince = &cutoff

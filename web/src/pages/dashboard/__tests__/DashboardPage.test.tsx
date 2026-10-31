@@ -220,6 +220,8 @@ describe('DashboardPage — operational signals', () => {
         render(<DashboardPage />);
         const card = screen.getByText('Inactive Users').closest('button')!;
         expect(within(card).getByText('2')).toBeInTheDocument();
+        // #3740: a never-logged-in user counts only once the account is 30+ days old.
+        expect(within(card).getByText('not logged in for 30+ days')).toBeInTheDocument();
     });
 
     it('shows a "warn" severity (not urgent, not expired) when a secret expires beyond 7 days', () => {
