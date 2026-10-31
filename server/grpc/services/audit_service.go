@@ -358,7 +358,7 @@ func (s *AuditGRPCService) WriteAuditCheckpoint(ctx context.Context, _ *emptypb.
 	}
 	if !written {
 		return nil, status.Error(codes.FailedPrecondition,
-			"signed audit checkpoints require encryption to be enabled (the signing key is derived from the DEK)")
+			"signed audit checkpoints require encryption to be enabled (the signing key is derived from the KEK)")
 	}
 	resp := &pb.WriteAuditCheckpointResponse{
 		Id:             uintToU32(cp.ID),
