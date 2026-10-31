@@ -926,7 +926,12 @@ func handleScopedSecretPermissionRequest(next http.Handler, w http.ResponseWrite
 		if authorizeLookupUnavailable(w, r, err) {
 			return
 		}
-		handleScopeResolutionError(w, r, cs, userCtx, permission, errTargetNotFound, defaultDenyMessage)
+		// A non-transient read FAULT is not "no such secret" either (STORAGE-ERR-CLASS-3).
+		resolveErr := errTargetNotFound
+		if fault := core.ReadFault(err); fault != nil {
+			resolveErr = fmt.Errorf("%w: %w", errTargetReadFault, fault)
+		}
+		handleScopeResolutionError(w, r, cs, userCtx, permission, resolveErr, defaultDenyMessage)
 		return
 	}
 	core.NoteSecretReadSubject(r.Context(), secret)
@@ -1429,6 +1434,10 @@ func ScopeFromEnvParam(param string) ScopeResolver {
 		}
 		env, err := cs.Storage().GetEnvironment(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such environment" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: env.ProjectID, EnvironmentID: id}, nil
@@ -1446,6 +1455,10 @@ func ScopeFromSecretParam(param string) ScopeResolver {
 		}
 		secret, err := cs.Storage().GetSecret(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such secret" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
@@ -1463,6 +1476,10 @@ func ScopeFromDeletedSecretParam(param string) ScopeResolver {
 		}
 		secret, err := cs.Storage().GetSecretIncludingDeleted(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such secret" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
@@ -1479,10 +1496,17 @@ func ScopeFromShareParam(param string) ScopeResolver {
 		}
 		share, err := cs.Storage().GetShareRecord(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such share" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		secret, err := cs.Storage().GetSecret(r.Context(), share.SecretID)
 		if err != nil {
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
@@ -1499,6 +1523,10 @@ func ScopeFromRotationPolicyParam(param string) ScopeResolver {
 		}
 		policy, err := cs.Storage().GetRotationPolicy(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such rotation policy" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{
@@ -1526,6 +1554,10 @@ func ScopeFromDynamicSecretConfigParam(param string) ScopeResolver {
 		}
 		cfg, err := cs.GetDynamicSecretConfig(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such config" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID}, nil
