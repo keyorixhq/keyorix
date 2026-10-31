@@ -63,6 +63,7 @@ func newTestClient(keys *fakeKeys, keyVersion string) *client {
 }
 
 func TestAzureKMS_EncryptPinsVersionAndSurvivesRotation(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture wraps a short stand-in KEK ('kek'/'old-kek'); the envelope MAC keys HMAC-SHA256 with the unwrapped KEK, under the 112-bit minimum. Production KEKs are 32 bytes (see the FIPS observations note for the unvalidated-length case)")
 	fk := &fakeKeys{currentVersion: "v1"}
 	c := newTestClient(fk, "") // unversioned kms_key_id — the documented default usage
 
@@ -152,6 +153,7 @@ func TestAzureKMS_LegacyExplicitlyVersionedBlobStillDecrypts(t *testing.T) {
 }
 
 func TestAzureKMS_EncryptDecryptRoundTrip(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture wraps a short stand-in KEK ('kek'/'old-kek'); the envelope MAC keys HMAC-SHA256 with the unwrapped KEK, under the 112-bit minimum. Production KEKs are 32 bytes (see the FIPS observations note for the unvalidated-length case)")
 	fk := &fakeKeys{currentVersion: "v1"}
 	c := newTestClient(fk, "")
 	ct, err := c.Encrypt(context.Background(), []byte("hello"))
