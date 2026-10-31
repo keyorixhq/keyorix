@@ -16,7 +16,21 @@
   approver (role, active, second factor) and target rules are re-checked on their row locks
   inside the approval transaction, locked in ascending user-ID order (#3800); at
   most one request per target is pending (decided on the target's row lock in the create
-  transaction). Why: a reset that
+  transaction). Every dual-control refusal of an approval of an existing request (machine or
+  non-admin approver, approver without a second factor, self- or target approval, request
+  already decided or expired, requester no longer an active global admin, target refused
+  by the target rules) leaves a DENIED `mfa.reset_approved` row, whether decided before the
+  transaction or inside it (request decided meanwhile, requester, approver or target changed
+  on the row lock): `auditMFAResetApprovalDenied` writes the in-transaction one through
+  `c.storage` after the rollback, never on the transaction handle (MFA-RESET-TAILS-2; guards
+  `mfa_reset_in_tx_denial_test.go` `TestMFAReset_InTxRefusal_*`,
+  `mfa_reset_pre_tx_denial_test.go` `TestMFAReset_PreTxRefusal_LeavesDeniedRow`; the
+  admin-rank-ceiling target refusal has no DENIED-row test of its own). Not
+  covered by that row: an unknown request id, a storage error, and a failed
+  re-authentication (`requireReauth` audits it as `mfa.failed` / `mfa.error`). An audit-log
+  outage on approval answers HTTP 503 through `sendAuditUnavailable` (Retry-After, code
+  `audit_unavailable`) and applies nothing (`server/http/handlers`
+  `TestApproveMFAReset_AuditOutage_SharedAuditUnavailable503`). Why: a reset that
   keeps the password turns a stolen password into a takeover, and a one-admin reset is the
   single-admin takeover REISSUE-1 closed (docs/design/recovery-options.md §1). Guard:
   `mfa_reset_test.go` (`TestMFAReset_SelfApprovalRefusedAndAudited`,
@@ -44,8 +58,11 @@
   The account-setup gate reads `mfa_enrolment_required` (`MFAEnrolmentOwed`, an input of
   `PendingAccountSetupSteps` on HTTP and gRPC, #3799): a reset account owes enroll_mfa on
   every interactive session whether or not `security.require_mfa` is on, until a second
-  factor is enrolled; TOTP activation clears the flag in its own transaction. Guard:
-  `mfa_reset_enrolment_owed_test.go`, `server/http`
+  factor is enrolled; TOTP activation and passkey registration (`FinishWebAuthnRegistration`)
+  each clear the flag in the transaction that stores the factor, so removing that factor
+  later does not owe the reset's enrolment again. Guard:
+  `mfa_reset_enrolment_owed_test.go`, `mfa_reset_passkey_enrolment_test.go`
+  (`TestMFAReset_PasskeyRegistrationClearsOwedEnrolment_SQLite`/`_Postgres`), `server/http`
   `TestAccountSetup_MFAResetOwesEnrolment_WithoutRequireMFA`, `server/grpc`
   `TestGRPCAccountSetup_MFAResetOwesEnrolment_WithoutRequireMFA`. Not seen: the login and
   profile responses' `pending_steps` (`PendingSetupStepsFor`, informational) do not report

@@ -317,7 +317,18 @@ func (c *KeyorixCore) FinishWebAuthnRegistration(ctx context.Context, userID uin
 		if err := tx.CreateWebAuthnCredential(ctx, row); err != nil {
 			return fmt.Errorf("failed to store credential: %w", err)
 		}
-		return tx.SetUserWebAuthnEnabled(ctx, userID, true)
+		if err := tx.SetUserWebAuthnEnabled(ctx, userID, true); err != nil {
+			return err
+		}
+		// #3799 (as ActivateMFA): a passkey is the enrolment an administrator MFA
+		// reset demanded, so the flag clears in the same transaction; left set, it
+		// would confine the user to enrolment again once this passkey is removed.
+		if wu.user.MFAEnrolmentRequired {
+			if err := tx.SetUserMFAEnrolmentRequired(ctx, userID, false); err != nil {
+				return fmt.Errorf("failed to clear the owed MFA enrolment: %w", err)
+			}
+		}
+		return nil
 	}); err != nil {
 		return nil, err
 	}
