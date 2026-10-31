@@ -69,6 +69,12 @@ permission on the shared secret is the **higher** of the two:
   failed request writes no such event, and neither does an action the
   recipient's role already allowed. Share create, update and revoke events
   name the share ID too.
+- Opening the share list (`GET /api/v1/shares`, `GET /api/v1/shares/owned`)
+  names each secret you can read. When some of those names are readable only
+  because of a share, the list call writes ONE `share_access_elevated` event
+  with action `shares.list`: how many secrets, and the secret and share IDs
+  (the first 50; `truncated` says when there are more). It does not write one
+  event per secret on the page.
 
 `keyorix secret access --id N` (and the API's `GET /secrets/{id}/access`) shows
 each user's **effective** level on the secret, the grant that gives it, and every
