@@ -306,10 +306,13 @@ func (d *pgTriggerDef) newerThan(marker, proname string, pronargs int64, sameNS 
 // marker's digest covers, the marker, and its row versions, joined to this
 // connection's session_replication_role and to writeTargetSQL's
 // (problem, version) row so a row comes back even when no trigger does.
-// writeTargetSQL ("" for none) checks the table the triggers write. One
-// native bind ($1): the expected body, which is funcOK's single `?`.
-// triggerDefOK and writeTargetSQL take no bind, and a `?` in them panics at
-// package init instead of silently taking the body's place.
+// writeTargetSQL ("" for none) checks the table the triggers write. Two
+// native binds: $1, the expected body, which is funcOK's single `?`, and $2,
+// the schema of the server's tables, which names every table
+// (catalogRelSQL): the statement runs under readCatalog's search_path, which
+// holds no schema but pg_catalog. triggerDefOK and writeTargetSQL take no
+// `?`, and a `?` in them panics at package init instead of silently taking
+// the body's place.
 func triggerIntegritySQL(triggers []triggerSpec, triggerDefOK, funcOK, writeTargetSQL string) string {
 	if strings.Contains(triggerDefOK, "?") || strings.Contains(writeTargetSQL, "?") || strings.Count(funcOK, "?") != 1 {
 		panic("triggerIntegritySQL: the trigger shape and write target take no bind and the function check exactly one (the body)")
@@ -319,7 +322,7 @@ func triggerIntegritySQL(triggers []triggerSpec, triggerDefOK, funcOK, writeTarg
 	}
 	var conds []string
 	for _, t := range triggers {
-		conds = append(conds, "(t.tgrelid = '"+t.table+"'::regclass AND t.tgname = '"+t.trigger+"')")
+		conds = append(conds, "(t.tgrelid = "+catalogRelSQL("$2", t.table)+" AND t.tgname = '"+t.trigger+"')")
 	}
 	funcOK = strings.Replace(funcOK, "?", "$1", 1)
 	return `SELECT s.repl, s.write_problem, s.write_version, g.name, g.state, g.def_ok, g.func_ok, g.version,
@@ -442,7 +445,7 @@ func systemMetadataWriteTargetSQL(singleWriter bool) string {
   c.xmin::text
     || '|' || COALESCE((SELECT pg_catalog.string_agg(t.tgname::text || '@' || t.xmin::text, ',' ORDER BY t.tgname) FROM pg_catalog.pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal), '')
     || '|' || COALESCE((SELECT pg_catalog.string_agg(r.rulename::text || '@' || r.xmin::text, ',' ORDER BY r.rulename) FROM pg_catalog.pg_rewrite r WHERE r.ev_class = c.oid), '') AS version
-FROM pg_catalog.pg_class c WHERE c.oid = 'system_metadata'::pg_catalog.regclass`
+FROM pg_catalog.pg_class c WHERE c.oid = ` + catalogRelSQL("$2", "system_metadata")
 }
 
 // restoreSystemMetadataWriteTarget undoes, inside tx, what
@@ -457,18 +460,23 @@ FROM pg_catalog.pg_class c WHERE c.oid = 'system_metadata'::pg_catalog.regclass`
 // the repair's lock_timeout bounds the DROP's ACCESS EXCLUSIVE wait.
 func restoreSystemMetadataWriteTarget(tx *gorm.DB, singleWriter bool) error {
 	var triggers, rules []string
-	if err := tx.Raw(`SELECT t.tgname::text FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
-WHERE c.oid = 'system_metadata'::pg_catalog.regclass AND NOT t.tgisinternal AND NOT (` + systemMetadataAllowedTriggerOK(singleWriter) + `) ORDER BY 1`).Scan(&triggers).Error; err != nil {
-		return fmt.Errorf("read system_metadata triggers: %w", err)
-	}
-	if err := tx.Raw(`SELECT r.rulename::text FROM pg_catalog.pg_rewrite r
-WHERE r.ev_class = 'system_metadata'::pg_catalog.regclass AND r.rulename <> '_RETURN' ORDER BY 1`).Scan(&rules).Error; err != nil {
-		return fmt.Errorf("read system_metadata rules: %w", err)
-	}
 	var rls []struct{ Enabled, Forced bool }
-	if err := tx.Raw(`SELECT c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced FROM pg_catalog.pg_class c
-WHERE c.oid = 'system_metadata'::pg_catalog.regclass`).Scan(&rls).Error; err != nil {
-		return fmt.Errorf("read system_metadata row level security: %w", err)
+	if err := readCatalog(tx, func(schema string) error {
+		if err := tx.Raw(`SELECT t.tgname::text FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+WHERE c.oid = `+catalogRelSQL("?", "system_metadata")+` AND NOT t.tgisinternal AND NOT (`+systemMetadataAllowedTriggerOK(singleWriter)+`) ORDER BY 1`, schema).Scan(&triggers).Error; err != nil {
+			return fmt.Errorf("read system_metadata triggers: %w", err)
+		}
+		if err := tx.Raw(`SELECT r.rulename::text FROM pg_catalog.pg_rewrite r
+WHERE r.ev_class = `+catalogRelSQL("?", "system_metadata")+` AND r.rulename <> '_RETURN' ORDER BY 1`, schema).Scan(&rules).Error; err != nil {
+			return fmt.Errorf("read system_metadata rules: %w", err)
+		}
+		if err := tx.Raw(`SELECT c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced FROM pg_catalog.pg_class c
+WHERE c.oid = `+catalogRelSQL("?", "system_metadata"), schema).Scan(&rls).Error; err != nil {
+			return fmt.Errorf("read system_metadata row level security: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	var stmts []string
 	for _, t := range triggers {
@@ -547,8 +555,10 @@ func leaveNewerTriggerDef(tx *gorm.DB, d *pgTriggerDef, what string) (bool, erro
 	log.Printf("%s: leaving a newer release's %s() in place (%q; this release writes v%d)", what, d.funcName, st.newer, d.version)
 	for _, t := range d.triggers {
 		var state []string
-		if err := tx.Raw("SELECT t.tgenabled::text FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid = ?::regclass AND t.tgname = ?",
-			t.table, t.trigger).Scan(&state).Error; err != nil {
+		if err := readCatalog(tx, func(schema string) error {
+			return tx.Raw("SELECT t.tgenabled::text FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid = "+catalogRelSQL("?", t.table)+" AND t.tgname = ?",
+				schema, t.trigger).Scan(&state).Error
+		}); err != nil {
 			return true, fmt.Errorf("failed to read %s state: %w", t.trigger, err)
 		}
 		if len(state) == 1 && state[0] != "A" {
@@ -648,17 +658,15 @@ type triggerIntegrityState struct {
 // session's search_path with pg_catalog taken out of it (and pg_temp put
 // last): pg_catalog is then searched first, implicitly, and every other
 // schema keeps its place, so current_schema() and what the statements after
-// it create or name stay the same. The reading compares deparsed text
-// (pg_get_triggerdef prints an operator unqualified when looking its name up
-// in the search_path finds it), and a search_path that lists a schema before
-// pg_catalog lets an operator the server's role created there deparse like
-// pg_catalog's: the anchor trigger's WHEN (old.key = ...) then reads as
-// installed while it calls that operator (REVIEW-3841-DEEP-3 B2). The
-// search_path is a setting the role can change (ALTER ROLE ... SET, a DSN
-// option), like session_replication_role. The repair runs under it too, so
-// the anchor trigger it re-creates calls pg_catalog's operator. This
-// statement is itself parsed under the session's search_path: every function
-// and operator in it is qualified.
+// it create or name stay the same. The repair's DDL runs under it, so the
+// anchor trigger it re-creates calls pg_catalog's `=` on (text, text) even
+// when the role's search_path lists a schema holding another one first
+// (REVIEW-3841-DEEP-3 B2). It is not a defence for a read: an operator whose
+// argument types match exactly is picked before one reached by a coercion,
+// wherever it sits in the search_path, and the server's schema is on it. The
+// catalog reads run under readCatalog instead. This statement is itself
+// parsed under the session's search_path: every function and operator in it
+// is qualified.
 const pinCatalogSearchPathSQL = `SELECT pg_catalog.set_config('search_path', pg_catalog.array_to_string(pg_catalog.array_append(ARRAY(
   SELECT pg_catalog.quote_ident(s.n) FROM pg_catalog.unnest(pg_catalog.current_schemas(false)) WITH ORDINALITY AS s(n, i)
   WHERE s.n OPERATOR(pg_catalog.<>) 'pg_catalog' AND pg_catalog.left(s.n::text, 7) OPERATOR(pg_catalog.<>) 'pg_temp' ORDER BY s.i), 'pg_temp'), ', '), true)`
@@ -671,12 +679,66 @@ func pinCatalogSearchPath(tx *gorm.DB) error {
 	return nil
 }
 
+// readCatalog runs read in tx's transaction with the search_path
+// pg_catalog, pg_temp (pgTriggerFuncSearchPath), handing it the schema of the
+// server's tables (current_schema() under pinCatalogSearchPathSQL), and then
+// gives the transaction its search_path back. With no other schema on the
+// path, read resolves every operator, function and type in pg_catalog
+// (pg_temp is never searched for operators or functions, and is searched
+// after pg_catalog for types): an operator the server's role creates in its
+// own schema, with argument types that match a comparison exactly where
+// pg_catalog's needs a coercion (`=` on (oid, regclass) for
+// `tgrelid = 'system_metadata'::regclass`, PR #3841 fourth review C1), cannot
+// take part. read names a table through catalogRelSQL. tx must be a
+// transaction.
+func readCatalog(tx *gorm.DB, read func(schema string) error) error {
+	ctx := tx.Statement.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return readCatalogConn(ctx, tx.Statement.ConnPool, read)
+}
+
+// readCatalogConn is readCatalog on a transaction's connection.
+func readCatalogConn(ctx context.Context, conn gorm.ConnPool, read func(schema string) error) error {
+	var saved string
+	if err := conn.QueryRowContext(ctx, "SELECT pg_catalog.current_setting('search_path')").Scan(&saved); err != nil {
+		return fmt.Errorf("read the search_path: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, pinCatalogSearchPathSQL); err != nil {
+		return fmt.Errorf("pin the search_path: %w", err)
+	}
+	var schema sql.NullString
+	if err := conn.QueryRowContext(ctx, "SELECT pg_catalog.current_schema()").Scan(&schema); err != nil {
+		return fmt.Errorf("read the schema: %w", err)
+	}
+	if !schema.Valid {
+		return fmt.Errorf("the search_path %q names no existing schema", saved)
+	}
+	if _, err := conn.ExecContext(ctx, "SELECT pg_catalog.set_config('search_path', $1, true)", pgTriggerFuncSearchPath); err != nil {
+		return fmt.Errorf("set the catalog search_path: %w", err)
+	}
+	if err := read(schema.String); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "SELECT pg_catalog.set_config('search_path', $1, true)", saved); err != nil {
+		return fmt.Errorf("restore the search_path: %w", err)
+	}
+	return nil
+}
+
+// catalogRelSQL is table, in the schema bound at bind ($2 or ?), as a regclass
+// under readCatalog's search_path, which holds none of the server's tables.
+func catalogRelSQL(bind, table string) string {
+	return "(pg_catalog.quote_ident(" + bind + ") || '." + table + "')::pg_catalog.regclass"
+}
+
 // readTriggerIntegrity goes through the underlying *sql.DB, not GORM: the
 // background job would otherwise run GORM's callback chain concurrently with
 // anything that registers a callback on the shared *gorm.DB (tests count
 // queries that way), a data race inside GORM. Only the repair path, which is
-// rare, uses GORM. It reads in a transaction of its own, under
-// pinCatalogSearchPathSQL; the transaction writes nothing and is rolled back.
+// rare, uses GORM. It reads in a transaction of its own, under readCatalog's
+// search_path; the transaction writes nothing and is rolled back.
 func readTriggerIntegrity(ctx context.Context, db *gorm.DB, target *triggerIntegrityTarget) (triggerIntegrityState, error) {
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -687,44 +749,35 @@ func readTriggerIntegrity(ctx context.Context, db *gorm.DB, target *triggerInteg
 		return triggerIntegrityState{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, pinCatalogSearchPathSQL); err != nil {
-		return triggerIntegrityState{}, fmt.Errorf("pin the search_path: %w", err)
-	}
-	rs, err := tx.QueryContext(ctx, target.def.sql, target.def.body)
-	if err != nil {
-		return triggerIntegrityState{}, err
-	}
-	return scanTriggerIntegrity(rs, target.def)
+	var st triggerIntegrityState
+	err = readCatalogConn(ctx, tx, func(schema string) error {
+		rs, err := tx.QueryContext(ctx, target.def.sql, target.def.body, schema)
+		if err != nil {
+			return err
+		}
+		st, err = scanTriggerIntegrity(rs, target.def)
+		return err
+	})
+	return st, err
 }
 
 // readInstalledTriggerDef is readTriggerIntegrity inside an installer's
-// transaction, on that transaction's connection. It reads under
-// pinCatalogSearchPathSQL and then gives the transaction its search_path back.
+// transaction, on that transaction's connection, under readCatalog.
 func readInstalledTriggerDef(tx *gorm.DB, d *pgTriggerDef) (triggerIntegrityState, error) {
-	ctx := tx.Statement.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	conn := tx.Statement.ConnPool
-	var saved string
-	if err := conn.QueryRowContext(ctx, "SELECT pg_catalog.current_setting('search_path')").Scan(&saved); err != nil {
-		return triggerIntegrityState{}, fmt.Errorf("read the search_path: %w", err)
-	}
-	if _, err := conn.ExecContext(ctx, pinCatalogSearchPathSQL); err != nil {
-		return triggerIntegrityState{}, fmt.Errorf("pin the search_path: %w", err)
-	}
-	rs, err := conn.QueryContext(ctx, d.sql, d.body)
-	if err != nil {
-		return triggerIntegrityState{}, err
-	}
-	st, err := scanTriggerIntegrity(rs, d)
-	if err != nil {
-		return triggerIntegrityState{}, err
-	}
-	if _, err := conn.ExecContext(ctx, "SELECT pg_catalog.set_config('search_path', $1, true)", saved); err != nil {
-		return triggerIntegrityState{}, fmt.Errorf("restore the search_path: %w", err)
-	}
-	return st, nil
+	var st triggerIntegrityState
+	err := readCatalog(tx, func(schema string) error {
+		ctx := tx.Statement.Context
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		rs, err := tx.Statement.ConnPool.QueryContext(ctx, d.sql, d.body, schema)
+		if err != nil {
+			return err
+		}
+		st, err = scanTriggerIntegrity(rs, d)
+		return err
+	})
+	return st, err
 }
 
 // scanTriggerIntegrity turns triggerIntegritySQL's rows into a reading of d.
@@ -956,9 +1009,9 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 		// when the repair commits. lock_timeout: its DROP TRIGGER takes an
 		// ACCESS EXCLUSIVE lock on the table, and a request queued behind an
 		// open transaction would stall every reader of the table behind it.
-		// The search_path is pinned as for the reading: the repair finds what
-		// it drops with the reading's comparison, and re-creates triggers whose
-		// operators must be pg_catalog's.
+		// The search_path is pinned for the repair's DDL, so the triggers it
+		// re-creates call pg_catalog's operators; its catalog reads run under
+		// readCatalog, as the reading does.
 		if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = %d", rolePermGenerationRepairLockTimeout.Milliseconds())).Error; err != nil {
 				return err
@@ -1037,8 +1090,8 @@ func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, e
 	if st.problem != "" {
 		// lock_timeout: its DROP TRIGGER takes an ACCESS EXCLUSIVE lock on the
 		// table, and a request queued behind an open transaction would stall
-		// every reader of the table behind it. The search_path is pinned as
-		// for the reading.
+		// every reader of the table behind it. The search_path is pinned for
+		// the repair's DDL; its catalog reads run under readCatalog.
 		if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = %d", rolePermGenerationRepairLockTimeout.Milliseconds())).Error; err != nil {
 				return err

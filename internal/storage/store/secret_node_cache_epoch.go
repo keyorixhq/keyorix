@@ -221,11 +221,15 @@ func installPostgresCacheEpochTrigger(tx *gorm.DB, d *pgTriggerDef) error {
 	// function gives its pg_proc row a new xmin on every boot of every
 	// replica, which the integrity check (role_permission_generation_integrity.go)
 	// reads as tampering.
+	// The catalog reads run under readCatalog: an operator the server's role
+	// creates cannot answer for them.
 	var current []bool
-	if err := tx.Raw(`SELECT `+pgCacheEpochFuncOK+` FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+	if err := readCatalog(tx, func(schema string) error {
+		return tx.Raw(`SELECT `+pgCacheEpochFuncOK+` FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang
 WHERE p.proname = '`+d.funcName+`' AND p.pronargs = 0
-  AND p.pronamespace = (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname = pg_catalog.current_schema())`,
-		d.body).Scan(&current).Error; err != nil {
+  AND p.pronamespace = (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname = ?)`,
+			d.body, schema).Scan(&current).Error
+	}); err != nil {
 		return fmt.Errorf("failed to read %s() definition: %w", secretNodeCacheEpochFunc, err)
 	}
 	if len(current) == 0 || !current[0] {
@@ -248,9 +252,11 @@ LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$` + d.body + `$keyor
 		State string
 		DefOK bool
 	}
-	if err := tx.Raw(`SELECT t.tgenabled::text AS state, (`+pgCacheEpochTriggerDefOK+` AND t.tgfoid = '`+secretNodeCacheEpochFunc+`()'::regprocedure) AS def_ok
-FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid = 'secret_nodes'::regclass AND t.tgname = ?`,
-		SecretNodeCacheEpochTrigger).Scan(&state).Error; err != nil {
+	if err := readCatalog(tx, func(schema string) error {
+		return tx.Raw(`SELECT t.tgenabled::text AS state, (`+pgCacheEpochTriggerDefOK+` AND t.tgfoid = (pg_catalog.quote_ident(?) || '.`+secretNodeCacheEpochFunc+`()')::pg_catalog.regprocedure) AS def_ok
+FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid = `+catalogRelSQL("?", d.triggers[0].table)+` AND t.tgname = ?`,
+			schema, schema, SecretNodeCacheEpochTrigger).Scan(&state).Error
+	}); err != nil {
 		return fmt.Errorf("failed to read %s state: %w", SecretNodeCacheEpochTrigger, err)
 	}
 	if len(state) > 0 && !state[0].DefOK {
