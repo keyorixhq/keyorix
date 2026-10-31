@@ -62,7 +62,9 @@ func newSWWorld(t *testing.T) *swWorld {
 		}
 	})
 	dsn := pgdsn.PGSearchPathDSN(base, schema)
-	cfg := &config.Config{Storage: config.StorageConfig{Type: "postgres", Database: config.DatabaseConfig{DSN: dsn}}}
+	// SingleWriter: the world models a single-writer server, whose fence
+	// triggers the store's integrity check allows only in that mode.
+	cfg := &config.Config{Storage: config.StorageConfig{Type: "postgres", Database: config.DatabaseConfig{DSN: dsn, SingleWriter: true}}}
 	st, err := storage.NewStorageFactory().CreateStorage(cfg)
 	require.NoError(t, err)
 	// Close the migration pool: left open, every world keeps its connections
