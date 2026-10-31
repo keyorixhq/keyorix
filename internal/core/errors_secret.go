@@ -16,6 +16,14 @@ var ErrAlreadyCurrentVersion = errors.New("target version is already the current
 // project and environment. The handler answers 409.
 var ErrSecretAlreadyExists = errors.New("secret already exists")
 
+// ErrSecretNotDeleted: RestoreSecret found a live (not soft-deleted) secret, so
+// there is nothing to restore. The handler answers 409.
+var ErrSecretNotDeleted = errors.New("secret is not deleted")
+
+func errSecretNotDeleted(id uint) error {
+	return storage.Typed(ErrSecretNotDeleted, fmt.Sprintf("secret %d is not deleted; nothing to restore", id), nil)
+}
+
 // ErrSecretTargetInvalid: CreateSecret's target environment does not exist or
 // does not belong to the requested project. The handler answers 422.
 var ErrSecretTargetInvalid = errors.New("secret target environment is invalid")
