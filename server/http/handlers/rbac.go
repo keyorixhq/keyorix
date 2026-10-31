@@ -386,6 +386,9 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 			sendError(w, "Forbidden", "Cannot update built-in role: "+role.Name, http.StatusForbidden, nil)
 		} else if errors.Is(err, core.ErrRoleValidation) {
 			sendError(w, "ValidationError", "assignable_scope must be one of: global, project, any", http.StatusBadRequest, nil)
+		} else if errors.Is(err, storage.ErrRoleNotFound) {
+			// The role was deleted between the read above and the write.
+			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to update role", http.StatusInternalServerError, nil)
 		}
