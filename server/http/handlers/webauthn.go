@@ -492,6 +492,9 @@ var webauthnSafeMessages = map[string]bool{
 // "failed to store credential: %w") — is logged server-side and replaced with
 // clientSafe()'s generic message before it reaches the client.
 func (h *AuthHandler) writeWebAuthnErr(w http.ResponseWriter, err error) {
+	if writeTOTPUnavailable(w, err) {
+		return
+	}
 	if errors.Is(err, core.ErrWebAuthnDisabled) {
 		sendError(w, "NotImplemented", err.Error(), http.StatusNotImplemented, nil) // nosemgrep: keyorix-raw-error-to-client -- ErrWebAuthnDisabled is a fixed sentinel with a known-safe message, not a raw backend/driver error
 		return

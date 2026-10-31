@@ -749,6 +749,9 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	user, err := h.coreService.UpdateOwnProfile(r.Context(), userCtx.UserID, body.DisplayName, body.Email, body.CurrentPassword)
 	h.settleCredentialCheck(r, att, userCtx, "email_change", err)
 	if err != nil {
+		if writeTOTPUnavailable(w, err) {
+			return
+		}
 		if errors.Is(err, core.ErrIncorrectCurrentPassword) {
 			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
 			return

@@ -45,6 +45,7 @@ func sendMFAResetError(w http.ResponseWriter, op string, err error) {
 		{core.ErrMFAResetRequestExpired, http.StatusConflict, "Conflict", core.MFAResetRequestExpiredMessage},
 		{core.ErrMFAResetRequesterChanged, http.StatusConflict, "Conflict", core.MFAResetRequesterChangedMessage},
 		{core.ErrMutationAuditUnavailable, http.StatusServiceUnavailable, "AuditUnavailable", core.ErrMutationAuditUnavailable.Error()},
+		{core.ErrTOTPUnavailableInFIPSMode, http.StatusServiceUnavailable, "TOTPUnavailable", errTOTPUnavailableInFIPSMode},
 	} {
 		if errors.Is(err, m.target) {
 			sendError(w, m.code, m.msg, m.status, nil)
