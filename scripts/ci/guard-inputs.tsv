@@ -139,6 +139,7 @@ server/secret_file_relative_echo_test.go	!**	Go walk skips nested modules; also 
 migrate/internal/accessplan/smt_model_export_test.go	docs/formal/smt/cases/**/*.json	RD-SMT-FIX-1 (#3658): TestSMTModels_MatchAccessplanOnRealPolicies reads the SMT case input/model JSON under docs/formal/smt/cases
 configs/template_keys_read_test.go	configs/dev.yaml,configs/test.yaml,!operator/**,!web/**,!demo/**,!**/*.yaml	reads configs/dev.yaml and test.yaml and every non-test .go file of the root module; skips operator/, web/ and cli/, so other yaml and operator Go are not read
 internal/config/lock_loss_metrics_test.go	!operator/**/*.go	walks internal/ and server/ only; operator/ Go is not read
+internal/core/guards/errtext_classification_guard_test.go	!operator/**/*.go	scans the core family's non-test .go files and everything under server/; operator/ Go is not walked
 internal/core/guards/named_source_files_guard_test.go	!operator/**/*.go	reads _test.go files under internal/core and its family dirs; operator/ is not walked
 internal/core/guards/secret_ownership_guard_test.go	!internal/core/**/*.md	reads only the core family's non-test .go files; the Markdown under internal/core is not read
 internal/core/guards/test_only_packages_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files for imports of test-only packages; operator/ included

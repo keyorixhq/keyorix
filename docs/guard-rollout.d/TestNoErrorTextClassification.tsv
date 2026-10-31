@@ -1,0 +1,1 @@
+TestNoErrorTextClassification	internal/core/guards	#3864	new repo-wide guard (ERRSTRING-CLASS-1), report-only until its first green nightly on main

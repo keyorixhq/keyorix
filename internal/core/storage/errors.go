@@ -182,6 +182,29 @@ var ErrDuplicateProjectName = errors.New("a project with this name already exist
 // constraint").
 var ErrDuplicateGroupName = errors.New("a group with this name already exists")
 
+// ErrInvalidGroupRequest is matched (errors.Is) by the refusals core's group
+// operations (CreateGroup, GetGroup, UpdateGroup, DeleteGroup, RestoreGroup, the
+// membership calls and GetGroupMembers) return for a malformed request: a missing
+// group or user id, an empty or over-long name or description. The refusal text is
+// unchanged. Transports map it to InvalidArgument / 400; classify with errors.Is,
+// never by matching the words "invalid" or "required" in err.Error(), which an
+// untyped storage or driver error can contain too (ERRSTRING-CLASS-1).
+var ErrInvalidGroupRequest = errors.New("invalid group request")
+
+// ErrShareExpiryNotInFuture is matched (errors.Is) by core's refusal of a time-bound
+// share (ShareSecret, ShareSecretWithGroup, UpdateSharePermission) whose expiry is
+// not after now: such a share would never authorize. The refusal text ("... share
+// expiry must be in the future") is unchanged. Transports answer InvalidArgument /
+// 400; match it with errors.Is, not the phrase (ERRSTRING-CLASS-1).
+var ErrShareExpiryNotInFuture = errors.New("share expiry must be in the future")
+
+// ErrInvalidSecretACLRequest is matched (errors.Is) by core's refusals of a malformed
+// secret-ACL request (GrantSecretACL, RevokeSecretACL): a missing actor, secret, user or
+// ACL id, an empty permission set, or a permission outside the valid set. The refusal
+// text is unchanged. Transports answer InvalidArgument; a storage or driver error that
+// merely contains "invalid" or "required" is not one (ERRSTRING-CLASS-1).
+var ErrInvalidSecretACLRequest = errors.New("invalid secret ACL request")
+
 // ErrDuplicateNotificationChannelName is returned (wrapped) by CreateNotificationChannel
 // when the insert collides with the unique index on notification_channels.name (#2779).
 var ErrDuplicateNotificationChannelName = errors.New("a notification channel with this name already exists")

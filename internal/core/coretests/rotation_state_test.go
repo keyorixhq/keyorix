@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -53,7 +54,7 @@ func TestGetRotationState_NoPolicy(t *testing.T) {
 	c := core.NewKeyorixCore(store)
 
 	store.On("GetRotationPolicyBySecret", mock.Anything, uint(7)).
-		Return(nil, errors.New("rotation policy not found"))
+		Return(nil, storage.NotFound(storage.ErrRotationPolicyNotFound, storage.ErrRotationPolicyNotFound.Error(), errors.New("record not found")))
 
 	info, err := c.GetRotationState(context.Background(), 7)
 	require.NoError(t, err)
@@ -140,7 +141,7 @@ func TestSetRotationState_NotFound(t *testing.T) {
 	c := core.NewKeyorixCore(store)
 
 	store.On("UpdateRotationState", mock.Anything, uint(99), core.RotationStateIdle, "").
-		Return(errors.New("rotation policy not found"))
+		Return(storage.NotFound(storage.ErrRotationPolicyNotFound, storage.ErrRotationPolicyNotFound.Error(), errors.New("record not found")))
 
 	err := c.SetRotationState(context.Background(), 99, core.RotationStateIdle, "")
 	require.Error(t, err)

@@ -43,7 +43,7 @@ const (
 // EncodeSecretACLPerms JSON-encodes a permission list for storage.
 func EncodeSecretACLPerms(perms []string) (string, error) {
 	if len(perms) == 0 {
-		return "", fmt.Errorf("%s: at least one permission is required", i18n.T("ErrorValidation", nil))
+		return "", invalidACLRequest(fmt.Errorf("%s: at least one permission is required", i18n.T("ErrorValidation", nil)))
 	}
 	b, err := json.Marshal(perms)
 	if err != nil {
@@ -61,20 +61,20 @@ func EncodeSecretACLPerms(perms []string) (string, error) {
 // Emits a secret.acl_granted audit event.
 func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, userID uint, perms []string) error {
 	if actorID == 0 {
-		return fmt.Errorf("%s: actor ID is required", i18n.T("ErrorValidation", nil))
+		return invalidACLRequest(fmt.Errorf("%s: actor ID is required", i18n.T("ErrorValidation", nil)))
 	}
 	if secretID == 0 {
-		return fmt.Errorf("%s: secret ID is required", i18n.T("ErrorValidation", nil))
+		return invalidACLRequest(fmt.Errorf("%s: secret ID is required", i18n.T("ErrorValidation", nil)))
 	}
 	if userID == 0 {
-		return fmt.Errorf("%s: user ID is required", i18n.T("ErrorValidation", nil))
+		return invalidACLRequest(fmt.Errorf("%s: user ID is required", i18n.T("ErrorValidation", nil)))
 	}
 	if len(perms) == 0 {
-		return fmt.Errorf("%s: at least one permission is required", i18n.T("ErrorValidation", nil))
+		return invalidACLRequest(fmt.Errorf("%s: at least one permission is required", i18n.T("ErrorValidation", nil)))
 	}
 	for _, p := range perms {
 		if !slices.Contains(validACLPermissions, p) {
-			return fmt.Errorf("%s: invalid ACL permission %q — must be one of %v", i18n.T("ErrorValidation", nil), p, validACLPermissions)
+			return invalidACLRequest(fmt.Errorf("%s: invalid ACL permission %q — must be one of %v", i18n.T("ErrorValidation", nil), p, validACLPermissions))
 		}
 	}
 
@@ -123,7 +123,7 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 // secret.acl_revoked audit event.
 func (c *KeyorixCore) RevokeSecretACL(ctx context.Context, actorID, secretID, aclID uint) error {
 	if aclID == 0 {
-		return fmt.Errorf("%s: ACL ID is required", i18n.T("ErrorValidation", nil))
+		return invalidACLRequest(fmt.Errorf("%s: ACL ID is required", i18n.T("ErrorValidation", nil)))
 	}
 
 	// Look up all ACLs for this secret to verify the aclID belongs here.

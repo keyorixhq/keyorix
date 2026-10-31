@@ -59,35 +59,37 @@ func TestGroupError_InUse(t *testing.T) {
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
+// ERRSTRING-CLASS-1: the validation and permission classes are chosen by sentinel
+// (storage.ErrInvalidGroupRequest, core.ErrPermissionDenied), not by the words in the
+// text; the untyped-text counterparts are in group_error_untyped_text_test.go.
 func TestGroupError_Required(t *testing.T) {
-	err := groupError(errors.New("name is required"))
+	err := groupError(fmt.Errorf("validation: %w: name is required", storage.ErrInvalidGroupRequest))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestGroupError_Invalid(t *testing.T) {
-	err := groupError(errors.New("invalid group name"))
+	err := groupError(fmt.Errorf("validation: %w: invalid group name", storage.ErrInvalidGroupRequest))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestGroupError_Exceeds(t *testing.T) {
-	err := groupError(errors.New("name exceeds maximum length"))
+	err := groupError(fmt.Errorf("validation: %w: name exceeds maximum length", storage.ErrInvalidGroupRequest))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestGroupError_Permission(t *testing.T) {
-	err := groupError(errors.New("permission denied"))
+	err := groupError(fmt.Errorf("add member: %w", core.ErrPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestGroupError_Denied(t *testing.T) {
-	err := groupError(errors.New("access denied to group"))
+	err := groupError(fmt.Errorf("access denied to group: %w", core.ErrSoDPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-func TestGroupError_AdministratorCanGrant(t *testing.T) {
-	err := groupError(errors.New("only an administrator can grant membership"))
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
+// The roles.assign ceiling and restore-authority refusals on the group paths are typed
+// in core (permissionDeniedf; internal/core/groups_typed_refusals_test.go), so they keep
+// PermissionDenied without a text match.
 
 func TestGroupError_RefusingToRemoveLast(t *testing.T) {
 	err := groupError(fmt.Errorf("remove member: %w", core.ErrLastAdminGroupGuard))
@@ -119,8 +121,9 @@ func TestMapUserError_Duplicate(t *testing.T) {
 }
 
 func TestMapUserError_AdministratorCanGrant(t *testing.T) {
-	err := mapUserError(errors.New("cannot grant this role: you do not hold permission \"system.write\" yourself"))
+	err := mapUserError(fmt.Errorf("cannot grant this role: you do not hold permission %q yourself: %w", "system.write", core.ErrPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.NotContains(t, status.Convert(err).Message(), "system.write", "the permission name must not reach the client")
 }
 
 func TestMapUserError_Validation(t *testing.T) {
