@@ -6,3 +6,6 @@
 
 ### Testing
 - **A wording guard fails when a non-ADR doc or a Go comment calls a checkpoint or evidence key DEK-derived.** `TestNoDEKDerivedWordingForKEKDerivedKeys` (`internal/docsdrift`) is report-only until its first green nightly on main.
+
+### Internal
+- **Web dependency audit.** `follow-redirects` (pulled in by axios) is overridden to `>=1.16.2` (GHSA-mrwp-f3q8-3g9p) so `pnpm audit --prod` passes again, and `scripts/ci/guard-inputs.tsv` maps the new wording guard to the paths it reads.
