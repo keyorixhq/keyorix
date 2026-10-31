@@ -23,7 +23,11 @@
   `triggerIntegrityReadFailureLimit` failures in a row on it is logged `SECURITY:`, counted
   `reason="tamper"` once per run, and an invalidation is owed until a reading verifies (PR #3841
   review N1: an anchor-named trigger whose WHEN clause referenced `NEW` failed every reading, so
-  nothing was flushed, reported or repaired). Why:
+  nothing was flushed, reported or repaired). The reading, the installers' reading and the repair
+  run with pg_catalog searched first (`pinCatalogSearchPathSQL`: the session's search_path without
+  pg_catalog), so the deparsed clause names pg_catalog's `=` and the re-created anchor trigger calls
+  it (PR #3841 review B2: an `=` the role created in its own schema, under a role-level search_path
+  listing that schema first, deparsed as installed while it let the generation row through). Why:
   #3713. A `BEFORE UPDATE` trigger keeping `OLD.value`, a rule, or forced row level security with
   an `UPDATE` policy hiding the generation row made every bump a no-op, including the check's own,
   while every trigger and function the check compared read as correct; the permission cache has no
@@ -42,5 +46,8 @@
   `_SystemMetadataFenceTriggerIsLeftAlone_Postgres`,
   `_SystemMetadataFenceShapedTriggerOutsideSingleWriterIsRemovedAndFlushed_Postgres`,
   `_SystemMetadataFenceShapedTriggerOutsideSingleWriterSeenAtBoot_Postgres` (both red on the PR's
-  first head by behaviour); `TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode`
+  first head by behaviour), `_SystemMetadataAnchorShadowedOperatorSeenAtBoot_Postgres`,
+  `_SystemMetadataAnchorShadowedOperatorIsRemovedAndFlushed_Postgres`,
+  `_InstallerReadingIgnoresShadowedSearchPath_Postgres` (red on the PR's 3f8937204 head by
+  behaviour); `TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode`
   (default CI); `TestFenceGuard_MatchesTheStore` (internal/solewriter, default CI).
