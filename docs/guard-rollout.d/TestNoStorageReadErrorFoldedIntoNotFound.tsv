@@ -1,0 +1,1 @@
+TestNoStorageReadErrorFoldedIntoNotFound	internal/core/guards	#TBD	widened to server/middleware scope resolvers (STORAGE-ERR-CLASS-3), report-only until its first green nightly on main
