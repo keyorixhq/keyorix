@@ -120,6 +120,17 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	// (secrets_bulk_delete.go's handler uses userCtx.UserID), so this
 	// fallback never weakens the multi-tenant per-ID re-authorization #G31
 	// added for that path.
+	//
+	// A storage FAULT is not a "not found": the item is reported as "storage
+	// temporarily unavailable, please retry" (distinct text), because the
+	// operator would otherwise read a transient outage as "already gone" and not
+	// retry. Probed on the plain read first since the authorization-checked
+	// fetches below fold every failure into the uniform denial.
+	if ferr := c.secretReadFault(ctx, id); ferr != nil {
+		log.Printf("bulk delete: secret %d not processed, storage read failed: %v", id, ferr)
+		result.Failed = append(result.Failed, BulkOpError{SecretID: id, Error: StorageReadUnavailableMessage})
+		return
+	}
 	var secret *models.SecretNode
 	var err error
 	if actorID == 0 {

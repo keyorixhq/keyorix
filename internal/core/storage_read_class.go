@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -55,6 +56,20 @@ func isPositiveNotFound(err error) bool {
 		storage.IsSecretNotFound(err) ||
 		errors.Is(err, storage.ErrMachineCredentialNotFound) ||
 		errors.Is(err, storage.ErrOIDCBindingNotFound)
+}
+
+// secretReadFault returns a non-nil ErrStorageReadUnavailable when reading secret id
+// FAILS (a fault), and nil both when the read succeeds and when the row is positively
+// absent. The authorization-checked fetches (GetSecretWithPermissionCheck, ...) fold
+// every failure into one uniform denial by design (#G14), which hides a fault; bulk
+// callers that report per-item outcomes probe the plain read first so a fault is
+// reported as "retry" while a not-found, a cross-project secret and a denial keep
+// the uniform text.
+func (c *KeyorixCore) secretReadFault(ctx context.Context, id uint) error {
+	if _, err := c.storage.GetSecret(ctx, id); err != nil && !isPositiveNotFound(err) {
+		return classifyReadError(err, "secret not found")
+	}
+	return nil
 }
 
 // classifyReadError turns a failed storage read into the caller-visible error: a
