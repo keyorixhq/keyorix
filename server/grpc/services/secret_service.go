@@ -52,7 +52,7 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	// project. Mirrors the HTTP CreateSecret handler (scope from the body).
 	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
 	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), permSecretsWrite, scope); err != nil || !allowed {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create secrets in this project")
+		return nil, authorizeRefusal(ctx, err, "insufficient permissions to create secrets in this project")
 	}
 	if err := enforceProjectMFA(ctx, s.core, user, scope.ProjectID); err != nil {
 		return nil, err
@@ -389,7 +389,7 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecrets
 	// filters the results to what the caller may actually see.
 	listScope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
 	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), permSecretsRead, listScope); err != nil || !allowed {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list secrets")
+		return nil, authorizeRefusal(ctx, err, "insufficient permissions to list secrets")
 	}
 	if err := enforceProjectMFA(ctx, s.core, user, listScope.ProjectID); err != nil {
 		return nil, err
@@ -649,7 +649,9 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 	// denial note on ctx (GetSecretValue, #3273); they never change the answer.
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
-		core.NoteSecretReadDenial(ctx, core.SecretReadDeniedNotFound)
+		if !core.IsAuthorizeTransient(ctx, err) {
+			core.NoteSecretReadDenial(ctx, core.SecretReadDeniedNotFound)
+		}
 		return authorizeScopedTarget(ctx, cs, actor, perm, err, core.Scope{}, "secret not found")
 	}
 	core.NoteSecretReadSubject(ctx, secret)
@@ -658,9 +660,12 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 		core.NoteSecretReadDenial(ctx, core.SecretReadDeniedForbidden)
 		return status.Error(codes.PermissionDenied, core.ShareActionNotElevatedMessage)
 	}
+	if aerr != nil && core.IsAuthorizeTransient(ctx, aerr) {
+		return authorizeRefusal(ctx, aerr, "insufficient permissions")
+	}
 	if aerr != nil || !decision.Allowed {
 		core.NoteSecretReadDenial(ctx, core.SecretReadDeniedForbidden)
-		return status.Error(codes.PermissionDenied, "insufficient permissions")
+		return authorizeRefusal(ctx, aerr, "insufficient permissions")
 	}
 	if err := enforceProjectMFA(ctx, cs, actor, secret.ProjectID); err != nil {
 		core.NoteSecretReadDenial(ctx, core.SecretReadDeniedMFARequired)

@@ -1,0 +1,13 @@
+# Green control: a default egress rule on an unrelated port (and a UDP/5432 one, which
+# does not reach TCP/5432). The default-egress check must NOT flag this.
+networkPolicy:
+  egress:
+    extraRules:
+      - to:
+          - ipBlock:
+              cidr: 10.20.0.0/24
+        ports:
+          - protocol: TCP
+            port: 6379
+          - protocol: UDP
+            port: 5432

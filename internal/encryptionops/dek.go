@@ -19,9 +19,9 @@ package encryptionops
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
@@ -98,22 +98,15 @@ func missingKeysError(cfg *config.Config, baseDir string) error {
 		dekPath, cfg.Storage.Encryption.DEKPath, baseDir)
 }
 
-// exclusiveKeyLockError explains a failed AcquireExclusiveKeyLock. A key
-// directory that does not exist (an interrupted `admin init`) is not a busy one:
-// nothing is running, so it says which directory is missing and how to create it
-// (#3742). Anything else is lock contention and keeps the live-server hint.
-func exclusiveKeyLockError(cfg *config.Config, baseDir string, err error) error {
-	if errors.Is(err, fs.ErrNotExist) {
-		dir := filepath.Dir(cfg.Storage.Encryption.DEKPath)
-		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(baseDir, dir)
-		}
-		if abs, aerr := filepath.Abs(dir); aerr == nil {
-			dir = abs
-		}
-		return fmt.Errorf("key directory %s does not exist: run `keyorix-server admin init` (or create it with mode 0700)", dir)
+// withLockContentionHint appends hint to err only when the lock is held by another process
+// (flock refused with EWOULDBLOCK). A missing key directory, permission denied and any other
+// failure to open the lock file are returned as they are: telling the operator to stop a
+// server that is not running sends them the wrong way.
+func withLockContentionHint(err error, hint string) error {
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return fmt.Errorf("%w — %s", err, hint)
 	}
-	return fmt.Errorf("%w — a live server or an in-progress key operation is using this key directory; stop it or wait for it to finish, then retry", err)
+	return err
 }
 
 // InitLocalKeyOpService constructs and initializes the encryption.Service for
@@ -136,7 +129,7 @@ func InitLocalKeyOpService(cfg *config.Config, baseDir, passphrase string, creat
 			return nil, err
 		}
 		if err := service.AcquireExclusiveKeyLock(); err != nil {
-			return nil, exclusiveKeyLockError(cfg, baseDir, err)
+			return nil, withLockContentionHint(err, "a live server or an in-progress key operation is using this key directory; stop it or wait for it to finish, then retry")
 		}
 	} else if err := requireExistingKeys(cfg, service, baseDir); err != nil {
 		return nil, err
@@ -147,7 +140,7 @@ func InitLocalKeyOpService(cfg *config.Config, baseDir, passphrase string, creat
 	}
 	if err := service.AcquireSharedKeyLock(); err != nil {
 		service.Shutdown()
-		return nil, fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+		return nil, withLockContentionHint(err, "a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry")
 	}
 	return service, nil
 }

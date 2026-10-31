@@ -94,7 +94,8 @@ func (h *ShareHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 // (core.ListOwnedShareViews). Same filters, paging and response shape as ListShares.
 // The route gate (RequirePermissionInAnyScope) refuses a caller with no secrets.read
 // anywhere; core refuses machine identities. Both refusals carry
-// core.OwnedShareListDeniedMessage. Like ListShares, a read: no audit event.
+// core.OwnedShareListDeniedMessage. Like ListShares, a read: at most one
+// share_access_elevated row per call, when a share made a listed name readable (#3456).
 func (h *ShareHandler) ListOwnedShares(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
