@@ -12,16 +12,20 @@
 // TestEveryUnhookedExpiryWriteInCoreIsUTC used to list as known exceptions, and the probes for the
 // last-used writers that bypass the model BeforeSave hooks (utc_writes_last_used_test.go).
 //
-// None of these tests is parallel: time.Local is process-global. A parallel test only resumes
-// after every sequential test has finished, so setting and restoring it here cannot be observed.
+// time.Local is process-global, so these tests never assign it: forEachUTCDialect re-executes the
+// test binary with TZ=Asia/Tokyo and the body runs there (the runInHostTZ pattern of
+// server/admin/backup_restore_tz_test.go).
 
 package core
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
@@ -40,17 +44,48 @@ const hostZoneOffset = "+0900"
 // utcWritesInstant is the fixed instant the clock reports (09:00 UTC = 18:00 in the host zone).
 var utcWritesInstant = time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
 
-// setNonUTCHostZone makes time.Local a fixed non-UTC zone for the rest of the test, the way a
-// server started on a Tokyo host sees it, and restores it on cleanup.
+// utcWritesChildEnv marks a subprocess of the test binary started with TZ=utcWritesHostTZ. The host
+// zone is process-global, so it is never assigned in-process (TestNoTestAssignsTimeLocal); the
+// dialect subtests run in a child that the runtime itself started in that zone.
+const utcWritesChildEnv = "KEYORIX_TEST_UTC_WRITES_CHILD"
+
+// utcWritesHostTZ is a Tokyo host: +0900 all year, abbreviated "JST", which is what SQLite stores
+// ("... +0900 JST").
+const utcWritesHostTZ = "Asia/Tokyo"
+
+// setNonUTCHostZone returns the host zone of the subprocess the test runs in, after checking that
+// the runtime really adopted utcWritesHostTZ as time.Local.
 func setNonUTCHostZone(t *testing.T) *time.Location {
 	t.Helper()
-	// Named like the abbreviation a real Tokyo host formats ("JST"), not "Asia/Tokyo": the text
-	// SQLite stores is "... +0900 JST".
-	zone := time.FixedZone("JST", 9*60*60)
-	prev := time.Local
-	time.Local = zone
-	t.Cleanup(func() { time.Local = prev })
-	return zone
+	require.Equal(t, utcWritesHostTZ, os.Getenv(utcWritesChildEnv), "must run inside forEachUTCDialect's host-zone subprocess")
+	name, off := utcWritesInstant.In(time.Local).Zone()
+	require.Equal(t, "JST", name)
+	require.Equal(t, 9*60*60, off)
+	return time.Local
+}
+
+// runInUTCWritesHostTZ re-executes this test binary (same flags, so -race is kept) for the subtest
+// `top/sub` with TZ=utcWritesHostTZ and requires that it ran and passed. A skip in the child (no
+// PostgreSQL DSN) is a skip here.
+func runInUTCWritesHostTZ(t *testing.T, top, sub string) {
+	t.Helper()
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "TZ=") && !strings.HasPrefix(kv, utcWritesChildEnv+"=") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "TZ="+utcWritesHostTZ, utcWritesChildEnv+"="+utcWritesHostTZ)
+	cmd := exec.Command(exe, "-test.run=^"+top+"$/^"+sub+"$", "-test.v", "-test.count=1", "-test.timeout=20m")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "subprocess TZ=%s failed:\n%s", utcWritesHostTZ, out)
+	if strings.Contains(string(out), "--- SKIP: "+top+"/"+sub+" ") {
+		t.Skipf("skipped in the TZ=%s subprocess", utcWritesHostTZ)
+	}
+	require.Contains(t, string(out), "--- PASS: "+top+"/"+sub+" ", "subprocess TZ=%s did not run %s/%s:\n%s", utcWritesHostTZ, top, sub, out)
 }
 
 // hostClock is c.now as production has it: the fixed instant, expressed in the host zone.
@@ -64,11 +99,20 @@ type utcDialect struct {
 	pg   bool
 }
 
-// forEachUTCDialect runs body once on the production SQLite dialect and once on PostgreSQL.
+// forEachUTCDialect runs body once on the production SQLite dialect and once on PostgreSQL, each in
+// a subprocess whose host zone is utcWritesHostTZ. In the parent it only launches and checks the
+// child; the body runs in the child.
 func forEachUTCDialect(t *testing.T, body func(t *testing.T, d utcDialect)) {
 	t.Helper()
+	child := os.Getenv(utcWritesChildEnv) != ""
 	for _, d := range []utcDialect{{name: "sqlite"}, {name: "postgres", pg: true}} {
-		t.Run(d.name, func(t *testing.T) { body(t, d) })
+		t.Run(d.name, func(t *testing.T) {
+			if !child {
+				runInUTCWritesHostTZ(t, strings.SplitN(t.Name(), "/", 2)[0], d.name)
+				return
+			}
+			body(t, d)
+		})
 	}
 }
 
