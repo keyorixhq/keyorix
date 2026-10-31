@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -150,6 +151,13 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
+	// The expiry is compared as text against UTC bounds: store it in UTC whatever zone the
+	// caller built it in (CreateUserWithOneTimePassword already does).
+	var otpExpiresAt *time.Time
+	if req.OneTimePasswordExpiresAt != nil {
+		u := req.OneTimePasswordExpiresAt.UTC()
+		otpExpiresAt = &u
+	}
 	user := &models.User{
 		Username:          req.Username,
 		UsernameFolded:    foldedUsername.Folded(),
@@ -163,7 +171,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 		CreatedAt:         now,
 		UpdatedAt:         now,
 
-		OneTimePasswordExpiresAt: req.OneTimePasswordExpiresAt,
+		OneTimePasswordExpiresAt: otpExpiresAt,
 	}
 	return user, string(hash), nil
 }

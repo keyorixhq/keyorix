@@ -192,7 +192,7 @@ func (c *KeyorixCore) BeginSSO(ctx context.Context, providerName, returnTo strin
 		Provider:     providerName,
 		ReturnTo:     sanitizeReturnTo(returnTo),
 		CodeVerifier: verifier,
-		ExpiresAt:    c.now().Add(ssoStateTTL),
+		ExpiresAt:    c.now().Add(ssoStateTTL).UTC(),
 		CreatedAt:    c.now(),
 	}); err != nil {
 		return "", err
@@ -373,7 +373,7 @@ func (c *KeyorixCore) BeginSAML(ctx context.Context, name, returnTo string) (str
 		Nonce:     requestID,
 		Provider:  name,
 		ReturnTo:  sanitizeReturnTo(returnTo),
-		ExpiresAt: c.now().Add(ssoStateTTL),
+		ExpiresAt: c.now().Add(ssoStateTTL).UTC(),
 		CreatedAt: c.now(),
 	}); err != nil {
 		return "", err
