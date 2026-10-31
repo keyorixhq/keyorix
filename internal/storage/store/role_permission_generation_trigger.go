@@ -187,11 +187,15 @@ func installPostgresRolePermGenerationTriggers(tx *gorm.DB, d *pgTriggerDef) err
 	// correct function would give its pg_proc row a new xmin on every boot of
 	// every replica, which the integrity check reads as tampering and answers
 	// with a cache flush on every replica.
+	// The catalog reads run under readCatalog: an operator the server's role
+	// creates cannot answer for them.
 	var current []bool
-	if err := tx.Raw(`SELECT `+pgRolePermGenerationFuncOK+` FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+	if err := readCatalog(tx, func(schema string) error {
+		return tx.Raw(`SELECT `+pgRolePermGenerationFuncOK+` FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang
 WHERE p.proname = '`+d.funcName+`' AND p.pronargs = 0
-  AND p.pronamespace = (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname = pg_catalog.current_schema())`,
-		d.body).Scan(&current).Error; err != nil {
+  AND p.pronamespace = (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname = ?)`,
+			d.body, schema).Scan(&current).Error
+	}); err != nil {
 		return fmt.Errorf("failed to read %s() definition: %w", rolePermGenerationFunc, err)
 	}
 	if len(current) == 0 || !current[0] {
@@ -211,9 +215,11 @@ LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$` + d.body + `$keyor
 			State string
 			DefOK bool
 		}
-		if err := tx.Raw(`SELECT t.tgenabled::text AS state, (`+pgRolePermGenerationTriggerDefOK+` AND t.tgfoid = '`+rolePermGenerationFunc+`()'::regprocedure) AS def_ok
-FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid = ?::regclass AND t.tgname = ?`,
-			t.table, t.trigger).Scan(&state).Error; err != nil {
+		if err := readCatalog(tx, func(schema string) error {
+			return tx.Raw(`SELECT t.tgenabled::text AS state, (`+pgRolePermGenerationTriggerDefOK+` AND t.tgfoid = (pg_catalog.quote_ident(?) || '.`+rolePermGenerationFunc+`()')::pg_catalog.regprocedure) AS def_ok
+FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid = `+catalogRelSQL("?", t.table)+` AND t.tgname = ?`,
+				schema, schema, t.trigger).Scan(&state).Error
+		}); err != nil {
 			return fmt.Errorf("failed to read %s state: %w", t.trigger, err)
 		}
 		if len(state) > 0 && !state[0].DefOK {
