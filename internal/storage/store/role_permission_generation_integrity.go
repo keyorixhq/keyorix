@@ -356,11 +356,17 @@ ORDER BY g.name`
 // anchor row, so whatever its function does never reaches the generation row.
 // The function's body is not compared: its installer rewrites it on every
 // boot, and the WHEN clause, not the body, is what keeps it off that row.
-// Never NULL (a trigger without a WHEN clause has a NULL tgqual): it is
-// negated to find the other triggers.
+// The WHEN clause is read from pg_get_triggerdef, which deparses any clause a
+// trigger can carry: pg_get_expr(tgqual, tgrelid) raises an error for one
+// that references NEW, and that error failed the whole reading on every tick
+// (REVIEW-3841-DEEP-2 N1). The text between the first " FOR EACH ROW WHEN ("
+// and the last ") EXECUTE FUNCTION " (PROCEDURE before PostgreSQL 11) must be
+// the installer's clause exactly; what follows is the function, checked by
+// oid below, and the trigger has no arguments. Never NULL (a trigger without
+// a WHEN clause does not match): it is negated to find the other triggers.
 const systemMetadataAnchorTriggerOK = "COALESCE(t.tgname = '" + AuditRetentionAnchorTrigger + "' AND t.tgtype = 19 AND t.tgnargs = 0 AND t.tgconstraint = 0" +
 	" AND COALESCE(pg_catalog.array_length(t.tgattr::pg_catalog.int2[], 1), 0) = 0" +
-	" AND pg_catalog.pg_get_expr(t.tgqual, t.tgrelid) = '(key = ''audit_retention_anchor''::text)'" +
+	" AND pg_catalog.substring(pg_catalog.pg_get_triggerdef(t.oid), ' FOR EACH ROW WHEN \\((.*)\\) EXECUTE (FUNCTION|PROCEDURE) ') = '(old.key = ''audit_retention_anchor''::text)'" +
 	" AND EXISTS (SELECT 1 FROM pg_catalog.pg_proc ap WHERE ap.oid = t.tgfoid AND ap.proname = '" + auditRetentionAnchorFunc + "' AND ap.pronargs = 0 AND ap.pronamespace = c.relnamespace), false)"
 
 // The single_writer fence's (internal/solewriter) trigger prefix, guard
@@ -777,6 +783,49 @@ type triggerIntegrityChecker struct {
 	// newerWarned is when the checker last warned that a newer release's
 	// definition is installed.
 	newerWarned time.Time
+	// readFailures counts the ticks in a row whose reading failed
+	// (readFailed).
+	readFailures int
+}
+
+// triggerIntegrityReadFailureLimit is how many ticks in a row a reading may
+// fail before the checker reports it as tampering: one failure can be a
+// dropped connection, a reading that keeps failing can be catalog state the
+// server's role planted to blind the check.
+const triggerIntegrityReadFailureLimit = 2
+
+// readFailed fails closed on a reading that errors (err). The role-permission
+// invalidation does not depend on the reading, so every failed tick runs it;
+// from triggerIntegrityReadFailureLimit failures in a row on, the tick is
+// also reported (SECURITY, counted as tamper once per run of failures) and an
+// invalidation is owed (pending), so the first reading that works again is
+// re-verified and invalidated before it becomes the baseline. A target with
+// invalidateFrom (checkRepairFirst) runs no invalidation here: its batches
+// are complete only behind a verified trigger, so the owed one runs from the
+// first row once the reading works. A cancelled tick changes nothing.
+func (c *triggerIntegrityChecker) readFailed(ctx context.Context, err error) (bool, error) {
+	t := c.target
+	err = fmt.Errorf("read the %s triggers: %w", t.what, err)
+	if ctx.Err() != nil {
+		return false, err
+	}
+	c.readFailures++
+	if c.readFailures >= triggerIntegrityReadFailureLimit {
+		c.logf("SECURITY: the %s triggers could not be read %d ticks in a row (%v). Invalidating every replica's %s until they can be read and verified; find who has DDL on this schema.", t.what, c.readFailures, err, t.cache)
+		if c.readFailures == triggerIntegrityReadFailureLimit {
+			t.tamper.Inc()
+		}
+		c.pending, c.round = true, ""
+	}
+	if t.invalidateFrom != nil {
+		return false, err
+	}
+	if ierr := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return t.invalidate(ctx, tx)
+	}); ierr != nil {
+		return false, fmt.Errorf("%w; invalidate the %s: %v", err, t.cache, ierr)
+	}
+	return true, err
 }
 
 // warnNewer repeats, at most every rolePermGenerationNewerDefinitionRewarn, the
@@ -809,8 +858,9 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 	}
 	st, err := readTriggerIntegrity(ctx, c.ls.db, t)
 	if err != nil {
-		return false, fmt.Errorf("read the %s triggers: %w", t.what, err)
+		return c.readFailed(ctx, err)
 	}
+	c.readFailures = 0
 	switch {
 	case st.problem != "":
 		c.logf("SECURITY: %s triggers cannot be trusted: %s. Restoring them and invalidating every replica's %s; find who has DDL on this schema or changed the server role's database settings.", t.what, st.problem, t.cache)
@@ -899,8 +949,9 @@ func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, e
 	t := c.target
 	st, err := readTriggerIntegrity(ctx, c.ls.db, t)
 	if err != nil {
-		return false, fmt.Errorf("read the %s triggers: %w", t.what, err)
+		return c.readFailed(ctx, err)
 	}
+	c.readFailures = 0
 	switch {
 	case st.problem != "":
 		c.logf("SECURITY: %s triggers cannot be trusted: %s. Restoring them and invalidating every replica's %s; find who has DDL on this schema or changed the server role's database settings.", t.what, st.problem, t.cache)
