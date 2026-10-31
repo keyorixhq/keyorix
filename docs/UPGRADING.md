@@ -203,7 +203,7 @@ not applicable to the bundled Helm chart, which is pinned to 1 replica.
   then applies your previous values on top. Plain `--reuse-values` replaces the new
   chart's defaults with the values of your old release, so a value that did not exist
   then is missing. Chart **0.96.1 and newer** fills those in itself and works with
-  either flag. Chart **0.96.0 does not** work with `--reuse-values` from a 0.95.x
+  either flag. Chart **0.96.0 does not** work with `--reuse-values` from a v0.95.x
   release (`nil pointer evaluating interface {}.enabled` at
   `.Values.secureBaseline.enabled`, and further missing keys behind it): upgrade
   straight to 0.96.1 or use `--reset-then-reuse-values`. On Helm older than 3.14,
@@ -425,7 +425,7 @@ skip.
   look the Secret up, set `auth.existingSecretKeys.adminPassword` /
   `.bootstrapToken` to `true`. Prefer `helm upgrade --reset-then-reuse-values`;
 plain `--reuse-values` works only from chart 0.96.1 on (it fails on 0.96.0 coming
-from a 0.95.x release, see the v0.96.0 section above).
+from a v0.95.x release, see the v0.96.0 section above).
 - **Docker Compose: credentials moved from `.env` to `./secrets`.** Run
   `./scripts/selfhost/init-secrets.sh --from-env .env` before `docker compose up
   -d` (details in `docs/SELF_HOSTING.md` §3); it keeps the same master and
@@ -1355,7 +1355,7 @@ incomplete or mixed", "Key operation interrupted mid-commit").
 
 ## 7. Rollback
 
-The step-by-step version, with the commands verified on 0.96.1 → 0.96.3 (Docker
+The step-by-step version, with the commands verified on v0.96.1 → v0.96.3 (Docker
 Compose, SQLite and PostgreSQL), is [operator/upgrade-rollback.md](operator/upgrade-rollback.md).
 
 **First decide which rollback is possible.** A server refuses to start when the
@@ -1363,7 +1363,7 @@ database records a compatibility floor above its own schema epoch (ADR-101).
 
 - **Same floor (e.g. within v0.96.x, all epoch 2): put the old binary or image back.**
   Stop the new version, put back the old binary (or set the Compose pins back), and
-  start. Data written on the new version is kept. Checked for 0.96.3 → 0.96.1: the old
+  start. Data written on the new version is kept. Checked for v0.96.3 → v0.96.1: the old
   release read and wrote the upgraded data, and `admin verify-audit` stayed VALID with
   both binaries.
 - **Floor raised (v0.96.x → v0.97.0, floor 3, §6q): restore the backup.** The old
