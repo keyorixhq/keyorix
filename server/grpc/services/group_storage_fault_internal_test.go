@@ -3,7 +3,10 @@ package services
 // CORE-GRPC-ERR-TAILS-1 item 1: the counterpart of TestGroupRPCs_MissingGroupIsNotFound.
 // A storage fault under a group RPC is a server failure, not a missing group: it answers
 // Internal with the static message, never NotFound (which would tell a caller the id does
-// not exist) and never the raw storage text.
+// not exist) and never the raw storage text. The injected text contains "not found" on
+// purpose, so the test fails if groupError ever goes back to classifying by error text.
+// It covers faults whose text avoids the permission/invalid/required/exceeds fallback
+// words in groupError; untyped faults using those words are not covered here.
 
 import (
 	"errors"
@@ -49,7 +52,7 @@ func TestGroupRPCs_StorageFaultIsInternal(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fs.Arm(&faultstorage.FaultSpec{
 				Method: c.method, NthCall: 1, Kind: faultstorage.KindError,
-				Err: errors.New("injected " + c.method + " fault"),
+				Err: errors.New("injected " + c.method + " fault: record not found"),
 			})
 			err := c.call()
 			fired := fs.Fired()
