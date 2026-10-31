@@ -17,8 +17,28 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// breakGlassActivationWire is one list row: the stored activation, unchanged,
+// plus the additive `username` of the activating user (omitted when the user
+// cannot be read, e.g. deleted; user_id always stays).
+type breakGlassActivationWire struct {
+	*models.BreakGlassActivation
+	Username string `json:"username,omitempty"`
+}
+
+func withBreakGlassUsernames(rows []*models.BreakGlassActivation, names map[uint]string) []breakGlassActivationWire {
+	out := make([]breakGlassActivationWire, 0, len(rows))
+	for _, a := range rows {
+		if a == nil {
+			continue
+		}
+		out = append(out, breakGlassActivationWire{BreakGlassActivation: a, Username: names[a.UserID]})
+	}
+	return out
+}
 
 // ActivateBreakGlass handles POST /api/v1/projects/{id}/break-glass (self-service).
 func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +156,8 @@ func (h *CatalogHandler) ListBreakGlassActivations(w http.ResponseWriter, r *htt
 	}
 	s := h.coreService.BreakGlassSettings()
 	sendSuccess(w, map[string]any{
-		"activations": activations, "count": len(activations), "scope": scope,
+		"activations": withBreakGlassUsernames(activations, h.coreService.BreakGlassUsernames(r.Context(), activations)),
+		"count":       len(activations), "scope": scope,
 		// Only reached for a caller the list authorization allowed (a project member or a
 		// roles.read holder) and after the MFA policy: deployment limits, no secrets.
 		"settings": map[string]any{

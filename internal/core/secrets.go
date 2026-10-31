@@ -920,6 +920,13 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 		}
 		return fmt.Errorf("%s: reading secret %d before restoring it: %w", i18n.T("ErrorStorageFailed", nil), id, cmp.Or(errors.Unwrap(err), err))
 	}
+	// A live secret has nothing to restore: say so (409) instead of letting the
+	// storage restore match no row and answer a storage-flavoured "not found".
+	// The route's scoped secrets.write gate has already run against this secret's
+	// own scope, so only an authorized caller can learn that it is live.
+	if !secret.DeletedAt.Valid {
+		return errSecretNotDeleted(id)
+	}
 	// RESTORE-SECRET-AUDIT-TX: the restore and its secret.restored row commit in ONE
 	// transaction, the append last (secret_mutation_audit.go), so a failed append
 	// rolls the restore back. The storage restore takes the environment's named lock
