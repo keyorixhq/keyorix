@@ -254,8 +254,9 @@ func (c *KeyorixCore) RequirePasswordReset(ctx context.Context, adminID, userID 
 // FOR UPDATE) does the same across replicas — the identical pattern recordFailedLogin
 // uses for the login-lockout counter (see login_lockout.go).
 //
-// #454: persists via SetAccountState, not the generic UpdateUser — an admin
-// suspend/reactivate is an explicit security directive, so a backend that cannot
+// #454: persists via SetAccountState, which writes only account_state (plus
+// updated_at), never a full-row save that could revert a concurrent writer's
+// columns — an admin suspend/reactivate is an explicit security directive, so a backend that cannot
 // actually persist account_state must fail this call outright rather than silently
 // succeed while the account stays unchanged. See SetAccountState's doc comment on
 // storage.Storage.
