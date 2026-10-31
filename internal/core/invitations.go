@@ -699,7 +699,7 @@ func (c *KeyorixCore) revokeAssignmentGrants(ctx context.Context, inv *models.Pr
 func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, projectID, invitationID, actorID uint) (*ProvisionSetupResult, error) {
 	inv, err := c.storage.GetProjectInvitation(ctx, invitationID)
 	if err != nil {
-		return nil, fmt.Errorf("invitation not found")
+		return nil, classifyReadError(err, "invitation not found")
 	}
 	// The caller is authorized within projectID; an invitation in another project
 	// must not be resendable through it (cross-project guard).
@@ -750,7 +750,7 @@ func (c *KeyorixCore) ListProjectInvitations(ctx context.Context, projectID uint
 func (c *KeyorixCore) RevokeInvitation(ctx context.Context, projectID, invitationID, actorID uint) error {
 	inv, err := c.storage.GetProjectInvitation(ctx, invitationID)
 	if err != nil {
-		return fmt.Errorf("invitation not found")
+		return classifyReadError(err, "invitation not found")
 	}
 	if inv.ProjectID != projectID {
 		return fmt.Errorf("invitation not found")
@@ -990,7 +990,7 @@ func dualControlLockKey(requestID uint) string {
 func (c *KeyorixCore) approveAccessRequestWithExpiryLocked(ctx context.Context, projectID, requestID, approverID, approverMachineID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return nil, fmt.Errorf("access request not found")
+		return nil, classifyReadError(err, "access request not found")
 	}
 	// The approver is authorized within projectID; a request belonging to another
 	// project must not be approvable through it, or the role grant would land in a
@@ -1285,7 +1285,7 @@ func (c *KeyorixCore) notifyApprovalProgress(ctx context.Context, req *models.Ac
 func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, projectID, requestID, approverID, approverMachineID uint, reason string) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return nil, fmt.Errorf("access request not found")
+		return nil, classifyReadError(err, "access request not found")
 	}
 	if req.ProjectID != projectID {
 		return nil, fmt.Errorf("access request not found")
@@ -1337,7 +1337,7 @@ func (c *KeyorixCore) WithdrawAccessRequest(ctx context.Context, requestID, user
 	notFound := fmt.Errorf("access request not found")
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return notFound
+		return classifyReadError(err, notFound.Error())
 	}
 	if req.UserID != userID {
 		return notFound
