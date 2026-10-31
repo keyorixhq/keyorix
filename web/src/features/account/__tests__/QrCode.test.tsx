@@ -3,7 +3,7 @@ import qrcode from 'qrcode-generator';
 import { render, screen } from '../../../test/test-utils';
 import { QrCode, qrPath } from '../QrCode';
 
-const URI = 'otpauth://totp/Keyorix:alice?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Keyorix';
+const URI = 'otpauth://totp/Keyorix:alice?secret=AAAAAAAAAAAAAAAA&issuer=Keyorix';
 
 describe('QrCode', () => {
     it('renders an SVG with dark modules for a known otpauth URI', () => {
