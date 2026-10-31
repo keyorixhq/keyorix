@@ -1115,8 +1115,9 @@ func TestDynamicSecretLease_CRUD(t *testing.T) {
 	assert.Len(t, list, 1)
 
 	// Update.
-	lease.Status = "revoked"
-	require.NoError(t, ls.UpdateDynamicSecretLease(ctx, lease))
+	matched, err := ls.RecordDynamicSecretLeaseRevocation(ctx, lease.LeaseID, "revoked", "test", "", nil)
+	require.NoError(t, err)
+	require.True(t, matched)
 	got2, err := ls.GetDynamicSecretLease(ctx, "lease-001")
 	require.NoError(t, err)
 	assert.Equal(t, "revoked", got2.Status)

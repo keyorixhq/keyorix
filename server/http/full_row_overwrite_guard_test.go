@@ -118,9 +118,10 @@ var fullRowOverwriteMethods = map[string]bool{
 	"UpdateProject":             true,
 	"UpdateLegalHold":           true,
 	"UpdateDynamicSecretConfig": true,
-	"UpdateDynamicSecretLease":  true,
-	"UpdateUser":                true,
-	"SaveAnomalyConfig":         true,
+	// UpdateDynamicSecretLease was here until STORE-STALE-WRITE-1 deleted it:
+	// no caller was left after #2825 moved renew/revoke onto column-scoped writes.
+	"UpdateUser":        true,
+	"SaveAnomalyConfig": true,
 	// UpdateSecret was here until #2695 replaced it with UpdateSecretFields (a
 	// per-field-pointer conditional UPDATE); TransitionSecretStatus was in the
 	// Select("*") group above until the same PR whitelisted it to Status and

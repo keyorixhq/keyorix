@@ -29,6 +29,16 @@ const testAdminActorID = uint(1)
 // clock, and a fake credential engine in place of a real Postgres target. Seeds
 // testAdminActorID with a global "admin" role grant so CreateDynamicSecretConfig's
 // admin-authority check (#162) passes for the tests that use it.
+// backdateLeaseExpiry moves only a lease's expires_at (a test fixture; production
+// has no unconditional expiry write). UTC, as DynamicSecretLease.BeforeSave would
+// store it: a raw Update bypasses that hook.
+func backdateLeaseExpiry(t *testing.T, db *gorm.DB, leaseID string, at time.Time) {
+	t.Helper()
+	res := db.Model(&models.DynamicSecretLease{}).Where("lease_id = ?", leaseID).Update("expires_at", at.UTC())
+	require.NoError(t, res.Error)
+	require.EqualValues(t, 1, res.RowsAffected)
+}
+
 func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamictest.FakeEngine, time.Time) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -477,7 +487,7 @@ func TestDynamicSecrets_IssueListRevoke(t *testing.T) {
 
 func TestDynamicSecrets_SweepRevokesExpired(t *testing.T) {
 	t.Parallel()
-	c, _, fake, fixed := newDynamicTestCore(t)
+	c, db, fake, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
 
@@ -487,7 +497,7 @@ func TestDynamicSecrets_SweepRevokesExpired(t *testing.T) {
 	// Backdate the lease past its expiry, then sweep.
 	lease, _ := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
 	lease.ExpiresAt = fixed.Add(-time.Hour)
-	require.NoError(t, c.storage.UpdateDynamicSecretLease(ctx, lease))
+	backdateLeaseExpiry(t, db, lease.LeaseID, lease.ExpiresAt)
 
 	n, err := c.RevokeExpiredLeases(ctx, fixed)
 	require.NoError(t, err)
@@ -562,7 +572,7 @@ func TestDynamicSecrets_RevokeLeaseRetrySucceeds(t *testing.T) {
 // failure as an error so a mass TTL-enforcement outage isn't reported as a clean pass.
 func TestDynamicSecrets_RevokeFailedIsRetryable(t *testing.T) {
 	t.Parallel()
-	c, _, fake, fixed := newDynamicTestCore(t)
+	c, db, fake, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
 
@@ -582,7 +592,7 @@ func TestDynamicSecrets_RevokeFailedIsRetryable(t *testing.T) {
 	// Backdate past expiry: the sweep must pick up the revoke_failed lease and, while the
 	// target is still down, surface the persistent failure as a non-nil error.
 	failed.ExpiresAt = fixed.Add(-time.Hour)
-	require.NoError(t, c.storage.UpdateDynamicSecretLease(ctx, failed))
+	backdateLeaseExpiry(t, db, failed.LeaseID, failed.ExpiresAt)
 	_, serr := c.RevokeExpiredLeases(ctx, fixed)
 	require.Error(t, serr, "the sweep surfaces a still-failing revoke")
 
@@ -1015,7 +1025,7 @@ func TestDynamicSecrets_RenewRejectsInactiveLease(t *testing.T) {
 // should be dead, so RenewLease must refuse and must NOT call the engine.
 func TestDynamicSecrets_RenewRejectsExpiredLease(t *testing.T) {
 	t.Parallel()
-	c, _, fake, fixed := newDynamicTestCore(t)
+	c, db, fake, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
 
@@ -1026,7 +1036,7 @@ func TestDynamicSecrets_RenewRejectsExpiredLease(t *testing.T) {
 	lease, err := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
 	require.NoError(t, err)
 	lease.ExpiresAt = fixed.Add(-time.Minute)
-	require.NoError(t, c.storage.UpdateDynamicSecretLease(ctx, lease))
+	backdateLeaseExpiry(t, db, lease.LeaseID, lease.ExpiresAt)
 	require.Equal(t, "active", lease.Status)
 
 	_, err = c.RenewLease(ctx, issued.LeaseID, 1200, 7)
