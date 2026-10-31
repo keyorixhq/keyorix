@@ -25,7 +25,7 @@ enrolled it asks for an authenticator code (or an unused recovery code) after th
 password; `--mfa-code` supplies it non-interactively. Prefer the prompts over
 `--password` on a command line, where it is visible in `ps` and shell history.
 
-`keyorix logout` revokes the stored session and forgets it. `keyorix status` shows the
+`keyorix logout` revokes the stored session and forgets it (the token only: the server URL and `ca_file` stay, so the next `keyorix login` needs neither again). `keyorix status` shows the
 configured server, whether you are logged in, and the server/CLI version-skew check.
 
 ## Non-interactive use (CI, scripts, applications)

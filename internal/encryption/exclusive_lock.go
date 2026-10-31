@@ -25,7 +25,9 @@
 package encryption
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -69,9 +71,43 @@ func lockRelPath(dekPath string) string {
 func openKeyLockFile(baseDir, dekPath string) (*os.File, error) {
 	f, err := securefiles.SecureOpenBeneath(baseDir, lockRelPath(dekPath), unix.O_CREAT|unix.O_RDWR, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open DEK lock file: %w", err)
+		return nil, wrapLockOpenError(filepath.Join(baseDir, filepath.Dir(dekPath)), "", err)
 	}
 	return f, nil
+}
+
+// KeyDirMissingError is the failure to open the DEK lock file because the key directory does
+// not exist. It is not lock contention: callers must not suggest that a live server holds the
+// lock (errors.As finds it; errors.Is(err, fs.ErrNotExist) still holds).
+type KeyDirMissingError struct {
+	Dir string
+	Err error
+}
+
+func (e *KeyDirMissingError) Error() string {
+	return fmt.Sprintf("key directory %s does not exist: run `keyorix-server admin init` (or create it with mode 0700)", e.Dir)
+}
+
+func (e *KeyDirMissingError) Unwrap() error { return e.Err }
+
+// wrapLockOpenError explains why the DEK lock file could not be opened. A missing key directory
+// becomes a KeyDirMissingError; every other failure (permission denied, ...) keeps the plain
+// "open DEK lock file" wording. lockPath is empty when the caller has no full path to show.
+func wrapLockOpenError(dir, lockPath string, err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		// ENOENT can also come from a directory that exists (a racing rename in it, ...): only
+		// claim the directory is missing when it really is.
+		if _, serr := os.Stat(dir); errors.Is(serr, fs.ErrNotExist) {
+			if abs, aerr := filepath.Abs(dir); aerr == nil {
+				dir = abs
+			}
+			return &KeyDirMissingError{Dir: dir, Err: err}
+		}
+	}
+	if lockPath != "" {
+		return fmt.Errorf("open DEK lock file %s: %w", lockPath, err)
+	}
+	return fmt.Errorf("open DEK lock file: %w", err)
 }
 
 // acquireExclusiveKeyLock takes a non-blocking exclusive advisory lock on the key
