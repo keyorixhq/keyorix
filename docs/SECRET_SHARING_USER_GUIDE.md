@@ -29,7 +29,7 @@ Secret sharing in Keyorix allows you to securely collaborate by giving other use
   member of the secret's project (they hold a role in that project). A global
   role, such as the bootstrap `admin`, does not make anyone a member of a
   project: give yourself a project role first (for example `project_admin`).
-- **Users with Write ("Read & Write") Permission**: Can read the secret, update its value and
+- **Users with Write ("Read + update value/metadata, rotate") Permission**: Can read the secret, update its value and
   metadata (description, tags, type), and rotate it. Nothing else: see the next section.
 - **Users with Read Permission**: Can view shared secrets but cannot modify them
 
@@ -278,7 +278,7 @@ When group membership changes:
 #### Web Interface
 - Shared secrets appear in your main secrets list
 - Look for the share icon and "Shared with you" in the **Sharing** column
-- The list has no "shared with me" filter
+- The list has no filter for shared secrets
 - The owner is shown under the modified date ("by <owner>")
 
 ### Working with Shared Secrets
@@ -319,7 +319,7 @@ When viewing a shared secret, you'll see:
 ### Removing Yourself from Shares
 
 Sometimes you may want to remove yourself from a shared secret. The web UI has
-no "Leave share" action; use the CLI (`keyorix share self-remove`) or the API:
+no action for this; use the CLI (`keyorix share self-remove`) or the API:
 
 #### Via API
 ```bash
