@@ -105,6 +105,13 @@ type setupGRPCEnv struct {
 // bootstrap admin "testadmin".
 func newSetupGRPCEnv(t *testing.T) *setupGRPCEnv {
 	t.Helper()
+	return newSetupGRPCEnvPolicy(t, true)
+}
+
+// newSetupGRPCEnvPolicy is newSetupGRPCEnv with security.require_mfa set to
+// requireMFA.
+func newSetupGRPCEnvPolicy(t *testing.T, requireMFA bool) *setupGRPCEnv {
+	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
 	db := sqlitetest.OpenWithConfig(t, "kxgrpc_setup_", &gorm.Config{})
@@ -112,7 +119,7 @@ func newSetupGRPCEnv(t *testing.T) *setupGRPCEnv {
 	require.NoError(t, db.AutoMigrate(&models.SecretAccessLog{}))
 	f := &faultySessionReads{Storage: store.NewLocalStorage(db)}
 	c := core.NewKeyorixCore(f)
-	c.SetRequireMFA(true)
+	c.SetRequireMFA(requireMFA)
 	c.SetBootstrapToken("test-bootstrap-token")
 	_, err := c.BootstrapSystem(context.Background(), &core.BootstrapRequest{
 		Username: "testadmin", Email: "testadmin@example.com",
@@ -121,7 +128,7 @@ func newSetupGRPCEnv(t *testing.T) *setupGRPCEnv {
 	require.NoError(t, err)
 
 	cfg := &config.Config{}
-	cfg.Security.RequireMFA = true
+	cfg.Security.RequireMFA = requireMFA
 	srv, err := keyorixgrpc.NewServer(cfg, c)
 	require.NoError(t, err)
 	lis := bufconn.Listen(1024 * 1024)

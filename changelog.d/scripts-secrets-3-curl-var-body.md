@@ -1,0 +1,2 @@
+### Security
+- **Script secrets stay off curl argv when the body sits in a variable.** `scripts/vault-migration-testbed/seed.sh` sent every Vault request body (user passwords, secret values) as `curl -d "$body"`; it now pipes the body to `--data-binary @-`. The no-secrets-on-command-line guard (`cli/cmd/docs_no_literal_secrets_test.go`) now flags `curl ... -d "$var"` (flag and variable on any line of a continuation) in `scripts/**/*.sh` and `deploy/**/*.sh`; the three ntfy alert senders opt out with a reasoned `docs-secrets:allow` marker.

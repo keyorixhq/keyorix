@@ -17,7 +17,9 @@
 package encryptionops
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -96,6 +98,24 @@ func missingKeysError(cfg *config.Config, baseDir string) error {
 		dekPath, cfg.Storage.Encryption.DEKPath, baseDir)
 }
 
+// exclusiveKeyLockError explains a failed AcquireExclusiveKeyLock. A key
+// directory that does not exist (an interrupted `admin init`) is not a busy one:
+// nothing is running, so it says which directory is missing and how to create it
+// (#3742). Anything else is lock contention and keeps the live-server hint.
+func exclusiveKeyLockError(cfg *config.Config, baseDir string, err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		dir := filepath.Dir(cfg.Storage.Encryption.DEKPath)
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(baseDir, dir)
+		}
+		if abs, aerr := filepath.Abs(dir); aerr == nil {
+			dir = abs
+		}
+		return fmt.Errorf("key directory %s does not exist: run `keyorix-server admin init` (or create it with mode 0700)", dir)
+	}
+	return fmt.Errorf("%w — a live server or an in-progress key operation is using this key directory; stop it or wait for it to finish, then retry", err)
+}
+
 // InitLocalKeyOpService constructs and initializes the encryption.Service for
 // a short-lived, LOCAL key-management operation that does not change the DEK
 // or its wrapping — status/validate/fix-perms/rotate --dry-run/init — and has
@@ -116,7 +136,7 @@ func InitLocalKeyOpService(cfg *config.Config, baseDir, passphrase string, creat
 			return nil, err
 		}
 		if err := service.AcquireExclusiveKeyLock(); err != nil {
-			return nil, fmt.Errorf("%w — a live server or an in-progress key operation is using this key directory; stop it or wait for it to finish, then retry", err)
+			return nil, exclusiveKeyLockError(cfg, baseDir, err)
 		}
 	} else if err := requireExistingKeys(cfg, service, baseDir); err != nil {
 		return nil, err

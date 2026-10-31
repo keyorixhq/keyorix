@@ -10,7 +10,9 @@
   suspension with the PATs still live in storage (usable again on reactivation) and nothing
   reported. Guard: `account_state_pat_failure_test.go` (one-off faults retried, SQLite and
   Postgres), `account_state_pat_failure_persistent_test.go` (persistent failures reported),
-  `session_eviction_list_failure_test.go`.
+  `session_eviction_list_failure_test.go`, `account_state_session_delete_failure_test.go`
+  (session delete: one-off fault retried with the rows gone; persistent failure retried,
+  reported, state kept, leftover session refused while the account is blocked; ERRLOSS-TAILS-2).
   **Not covered**: the auth-cache entries themselves when no per-user evictor is wired (the log
   line says so), and session cleanup outside a transaction (`RefreshSession` deleting an
   already-refused session).

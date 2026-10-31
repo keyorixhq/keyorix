@@ -6,7 +6,7 @@ import (
 )
 
 // TestWipeDEK_ServiceRefusesUseAfterWipe pins WipeDEK to ending the service's
-// ability to use the key, not only to zeroing es.dek. cipher.NewGCM keeps its
+// ability to use the key, not only to zeroing es.dek. The GCM AEAD keeps its
 // own expanded AES key schedule, so before REVIEW-COVERAGE-1 a wiped service
 // (IsDEKWiped()==true) still encrypted and decrypted with the superseded DEK:
 // any reference that outlived a rotation or Shutdown kept a working key, and

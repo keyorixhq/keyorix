@@ -136,13 +136,32 @@ const (
 	auditCheckpointKeyIDInfo = "keyorix-audit-checkpoint-kek-id-v2"
 )
 
+// MinKEKLen, ErrKEKTooShort and KEKTooShortError are auditverify's: one typed
+// error for every KEK-derived HKDF key (evidence-signing, audit-checkpoint,
+// backup-manifest), so a caller checks errors.Is(err, ErrKEKTooShort) once
+// whichever derivation refused. Defined there because auditverify must not
+// import this package (its dependency guard), while this package already
+// imports auditverify for DeriveBackupManifestKey.
+const MinKEKLen = auditverify.MinKEKLen
+
+// ErrKEKTooShort is matched by every *KEKTooShortError (errors.Is).
+var ErrKEKTooShort = auditverify.ErrKEKTooShort
+
+// KEKTooShortError reports a KEK below MinKEKLen; no key was derived.
+type KEKTooShortError = auditverify.KEKTooShortError
+
 // deriveEvidenceSignKey derives the 32-byte evidence-signing HMAC key and its
 // 16-byte public key-ID fingerprint from kek via HKDF-SHA256 (two independently
 // domain-separated outputs of the same KEK, so the fingerprint reveals nothing
 // about the key itself). Both are pure, deterministic functions of the KEK alone,
 // so they are stable across a DEK rotation (same KEK) and only change when the KEK
-// itself does (KEK-provider migration).
+// itself does (KEK-provider migration). A KEK shorter than MinKEKLen is refused
+// with a *KEKTooShortError before any derivation, identically in every FIPS
+// mode: under GODEBUG=fips140=only crypto/hkdf would otherwise panic on it.
 func deriveEvidenceSignKey(kek []byte) (key []byte, keyID string, err error) {
+	if err := auditverify.CheckKEKLen("evidence-signing key", kek); err != nil {
+		return nil, "", err
+	}
 	keyR := hkdf.New(sha256.New, kek, nil, []byte(evidenceSignKeyInfo))
 	key = make([]byte, 32)
 	if _, err = io.ReadFull(keyR, key); err != nil {
@@ -163,7 +182,11 @@ func deriveEvidenceSignKey(kek []byte) (key []byte, keyID string, err error) {
 // neither output reveals anything about the other, or about the KEK itself).
 // Both are pure, deterministic functions of the KEK alone, so they are stable
 // across a DEK rotation (same KEK) and only change when the KEK itself does.
+// Short-KEK handling is the same as deriveEvidenceSignKey's.
 func deriveAuditCheckpointKey(kek []byte) (key []byte, keyID string, err error) {
+	if err := auditverify.CheckKEKLen("audit-checkpoint key", kek); err != nil {
+		return nil, "", err
+	}
 	keyR := hkdf.New(sha256.New, kek, nil, []byte(auditCheckpointKeyInfo))
 	key = make([]byte, 32)
 	if _, err = io.ReadFull(keyR, key); err != nil {
@@ -497,22 +520,24 @@ func (km *KeyManager) unwrapDEK(kek []byte) ([]byte, error) {
 }
 
 // wrapKey encrypts plainKey with kek using AES-256-GCM.
-// Output: nonce (12 bytes) || ciphertext.
+// Output: nonce (12 bytes) || ciphertext || tag (16 bytes). The nonce is drawn
+// by cipher.NewGCMWithRandomNonce, which emits exactly this layout, the same
+// bytes the earlier cipher.NewGCM code built by hand (FIPS-GCM-NONCE-1: Go's
+// FIPS 140-3 mode refuses a caller-supplied GCM nonce).
 func wrapKey(plainKey, kek []byte) ([]byte, error) {
 	block, err := aes.NewCipher(kek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-	return gcm.Seal(nonce, nonce, plainKey, nil), nil
+	return gcm.Seal(nil, nil, plainKey, nil), nil // #nosec G407 -- nil nonce: NewGCMWithRandomNonce draws a fresh one and prepends it
 }
+
+// wrappedKeyNonceSize is the nonce prefix of a wrapKey output.
+const wrappedKeyNonceSize = 12
 
 // unwrapKey decrypts a wrapped key using AES-256-GCM with kek.
 func unwrapKey(wrapped, kek []byte) ([]byte, error) {
@@ -520,16 +545,15 @@ func unwrapKey(wrapped, kek []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-	nonceSize := gcm.NonceSize()
-	if len(wrapped) < nonceSize {
+	// NewGCMWithRandomNonce's NonceSize() is 0: the nonce is the input's prefix.
+	if len(wrapped) < wrappedKeyNonceSize {
 		return nil, fmt.Errorf("wrapped key too short")
 	}
-	nonce, ciphertext := wrapped[:nonceSize], wrapped[nonceSize:]
-	plainKey, err := gcm.Open(nil, nonce, ciphertext, nil)
+	plainKey, err := gcm.Open(nil, nil, wrapped, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GCM open failed: %w", err)
 	}
