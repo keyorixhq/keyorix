@@ -24,7 +24,7 @@ var ladder = []rung{
 	// verified in-process, so a match is not binary identity.
 	{"running binary identity (fs-verity enabled)", []string{CheckFSVerity}},
 	{"IMA appraise policy loaded", []string{CheckIMA}},
-	{"KEK sealed to a TPM", []string{CheckTPMSealing}},
+	{"KEK sealed to a TPM (no weaker fallback configured)", []string{CheckTPMSealing}},
 	{"Keylime agent present", []string{CheckKeylime}},
 }
 
