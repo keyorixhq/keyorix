@@ -65,6 +65,11 @@ type AuditLossRequest struct {
 	// Anchor (a verified file) or AnchorDigest (a digest only, recorded).
 	Anchor       *AuditLossAnchor
 	AnchorDigest string
+	// ResumeSeal is the digest of the unfinished seal record the operator
+	// read in the plan (--resume-seal): without it a resume writes nothing
+	// (#3803), so a habitual re-run with --confirm cannot complete a record
+	// the operator never looked at.
+	ResumeSeal string
 }
 
 // Limits on the operator name and reason, which the seal stores in its record
@@ -117,10 +122,13 @@ type AuditLossPlan struct {
 	// excluded (#3802). The seal records them.
 	Unpinned []AuditSealSpan
 	// Resume: an earlier acceptance stopped before it finished; this run
-	// completes it and writes no new record.
-	Resume bool
+	// completes it and writes no new record, and only when the request named
+	// ResumeDigest, the digest of that record (resumeNamed).
+	Resume       bool
+	ResumeDigest string
 
-	seal *auditSeal
+	seal        *auditSeal
+	resumeNamed bool
 }
 
 // Describe is the human summary the command prints before confirming.
@@ -129,7 +137,8 @@ func (p *AuditLossPlan) Describe() []string {
 	if p.Resume {
 		out = append(out, fmt.Sprintf("Seal #%d was recorded but its acceptance did not finish; this run completes it (no new record).", p.Seq),
 			fmt.Sprintf("  recorded %s by %q (host user %q), reason %q", p.seal.At.UTC().Format(time.RFC3339), p.seal.Operator, p.seal.OSUser, p.seal.Reason),
-			"  If you did not start this acceptance, do not confirm: a resume you did not start is a rollback of the database until proven otherwise (compare the trail with an external anchor first).")
+			"  If you did not start this acceptance, do not confirm: a resume you did not start is a rollback of the database until proven otherwise (compare the trail with an external anchor first).",
+			fmt.Sprintf("  record digest %s: completing it requires --resume-seal %s (nothing is written without it, even with --confirm)", p.ResumeDigest, p.ResumeDigest))
 	}
 	out = append(out, fmt.Sprintf("Seal #%d accepts %s.", p.Seq, p.seal.lostRange()))
 	for _, g := range p.Gaps {
@@ -207,11 +216,19 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 		if named := last.namedIDs(); len(req.BrokenIDs) > 0 && !sameIDs(req.BrokenIDs, named) {
 			return nil, auditLossRefused("seal #%d was recorded for audit events %v but its acceptance did not finish: re-run without --first-broken-id (or with %v) to complete it, then accept a new loss", last.Seq, named, named)
 		}
+		digest := last.digest()
+		if req.ResumeSeal != "" && !strings.EqualFold(req.ResumeSeal, digest) {
+			return nil, auditLossRefused("--resume-seal %s does not name the unfinished seal #%d (record digest %s): run without --resume-seal, read the plan, then pass the digest it prints", req.ResumeSeal, last.Seq, digest)
+		}
 		if err := c.auditLossResumeCheck(ctx, f, last); err != nil {
 			return nil, err
 		}
 		return &AuditLossPlan{Seq: last.Seq, Gaps: last.Gaps, Truncation: last.Truncation, Before: last.Before, After: last.After,
-			LostEvents: last.LostEvents, Anchor: last.Anchor, Accepted: auditLossResumeAccepted(last, f.state), Unpinned: last.Unpinned, Resume: true, seal: last}, nil
+			LostEvents: last.LostEvents, Anchor: last.Anchor, Accepted: auditLossResumeAccepted(last, f.state), Unpinned: last.Unpinned,
+			Resume: true, ResumeDigest: digest, seal: last, resumeNamed: req.ResumeSeal != ""}, nil
+	}
+	if req.ResumeSeal != "" {
+		return nil, auditLossRefused("--resume-seal names seal record %s, but no acceptance is unfinished: there is nothing to resume (drop --resume-seal to accept a new loss)", req.ResumeSeal)
 	}
 	if len(req.BrokenIDs) == 0 {
 		return nil, auditLossRefused("name the id where the walk breaks (--first-broken-id)")
@@ -935,6 +952,10 @@ type AuditLossResult struct {
 func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) (*AuditLossResult, error) {
 	if plan == nil || plan.seal == nil {
 		return nil, errors.New("accept-loss: no plan")
+	}
+	if plan.Resume && !plan.resumeNamed {
+		return nil, auditLossRefused("nothing was written: this run would complete the unfinished seal #%d, recorded by %q; read its plan and, only if you started that acceptance, re-run with --resume-seal %s",
+			plan.Seq, plan.seal.Operator, plan.ResumeDigest)
 	}
 	res := &AuditLossResult{Seq: plan.Seq}
 	err := c.storage.WithAuditCheckpointLock(ctx, func(ctx context.Context) error {

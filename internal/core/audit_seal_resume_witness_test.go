@@ -152,7 +152,7 @@ func TestAuditSeal_CrashAtEveryStepResumesWithWitness(t *testing.T) {
 				fcTick(t, e, withWitness(e.restart(), w)) // a server ran before the operator re-ran the command
 
 				c := withWitness(e.restart(), w)
-				again, err := c.PlanAuditLossAcceptance(ctx, sealReq())
+				again, err := sealResumePlan(t, c, sealReq())
 				require.NoError(t, err, "a re-run resumes")
 				require.True(t, again.Resume)
 				desc := strings.Join(again.Describe(), "\n")

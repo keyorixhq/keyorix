@@ -288,10 +288,13 @@ after the break is not notarised: decide soon.
      measures the loss. `--anchor-sha256` only records the digest of one kept elsewhere.
    - It writes the seal record, **one** `system.audit_loss_accepted` event, a fresh checkpoint
      and high-water mark of what survives, and the verification state, in that order. If it stops
-     part way the chain reads broken; run the same command again, which completes it. The
-     resume plan says when the seal was recorded, by whom and why. Confirm a resume only if you
-     started that acceptance yourself: a resume of a seal you did not just run is a rollback of
-     the database until proven otherwise (section 8).
+     part way the chain reads broken until the acceptance is completed. Run the command again
+     **without** `--confirm`: the resume plan says when the seal was recorded, by whom and why,
+     and prints the record digest. Complete it only if you started that acceptance yourself,
+     with `--resume-seal <that digest> --confirm`. A resume never writes without
+     `--resume-seal`, even with `--confirm` (it exits 1 with "nothing was written"), so a
+     habitual re-run cannot complete a record you did not read. A resume of a seal you did not
+     just run is a rollback of the database until proven otherwise (section 8).
    - `--reason` and `--operator` are stored in the audit chain. Put no secrets in them.
    - On SQLite the plan also reads the host's `.audit-highwater-witness`. A witness that
      authenticates under the current seals counts in "certified before the loss" (it is the one
@@ -328,7 +331,7 @@ after the break is not notarised: decide soon.
 
   | Rolled back to | SQLite, witness file untouched | PostgreSQL, or SQLite with the witness rolled back too |
   |---|---|---|
-  | Part way through a completed acceptance (record and event kept, later rows cut) | Detected if any row certified after the seal is gone: the witness, signed under the seal, certifies it and the resume is refused. Rows written after the last checkpoint were never certified and are not detected | Not detected: it reads as an acceptance that stopped part way and the plan offers to resume it |
+  | Part way through a completed acceptance (record and event kept, later rows cut) | Detected if any row certified after the seal is gone: the witness, signed under the seal, certifies it and the resume is refused. Rows written after the last checkpoint were never certified and are not detected | Not detected by the database: it reads as an acceptance that stopped part way. The plan offers to resume it, but nothing is written until you name its record with `--resume-seal <digest>`, so read the plan's "recorded ... by ..." line first |
   | Before a completed acceptance (record and event gone) | Detected: the witness is signed under a seal list the database no longer holds and the plan is refused as a rollback | Not detected: it reads as a fresh, unsealed loss, and a new acceptance would record it again |
   | Before the last checkpoint, no acceptance involved | Not raised by the running server, which does not read the witness (only `admin restore` and `accept-loss` do). `accept-loss` counts the witness, so naming its missing head as a truncation measures and records the cut rows | Not detected |
 
@@ -342,7 +345,8 @@ after the break is not notarised: decide soon.
   until proven otherwise, and compare the trail with such an anchor before you confirm.
 - An acceptance left unfinished and then a `rotate-kek` or `migrate-provider`: the key change
   does not complete while the seal is pending (nothing is signed against an untrusted seal
-  list). Re-run `accept-loss` with the new key: the key change's record, signed by both keys,
+  list). Re-run `accept-loss` with the new key, without `--confirm`, then complete it with the
+  `--resume-seal <digest>` its plan prints: the key change's record, signed by both keys,
   names the checkpoint and high-water mark the acceptance had not rewritten yet, so the resume
   completes over them, and the next server start completes the key change (#3814). The resume
   still refuses a checkpoint, mark or witness that the record does not name and that does not

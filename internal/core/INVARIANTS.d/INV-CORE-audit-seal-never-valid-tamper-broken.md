@@ -29,7 +29,10 @@
   a state from another seal segment reads broken. Key changes carry the record (the
   transition names its digest, completion re-signs it first). `recover-admin` never seals.
   The writes go record, event, checkpoint and high-water mark, state; an acceptance stopped
-  after any of them reads broken until a re-run of the command completes it, which first
+  after any of them reads broken until a re-run of the command completes it. The re-run writes
+  nothing unless the request names the unfinished record's digest (`--resume-seal`, #3803;
+  `AcceptAuditLoss` refuses a resume plan made without it), so `--confirm` alone never
+  completes a record the operator did not read. Completing it first
   checks the chain still holds what the seal recorded as surviving and everything the latest
   checkpoint, the high-water mark, the state's pin and the host's high-water witness file
   (SQLite) signed under the current seals certify (a post-seal truncation is refused, never
@@ -67,11 +70,12 @@
   `_RefusesUnsafeOperatorText`, `_WitnessAboveDatabaseCountsInPlan`,
   `_ApplyRefusesUnnamedHigherWitness`, `_WitnessUnderRolledBackSealRefused`,
   `_ResumeAfterKeyChange`, `_ResumeAfterTwoKeyChanges`, `_ResumeAfterKeyChangeRefusesUnaccounted`,
+  `_ResumeWithoutDigestWritesNothing`, `_ResumeNeedsRecordDigest`, `_ResumeSealWithoutPendingRefused`,
   `_PrefixRewriteBeforeLossRefused`, `_RewrittenRowNoIDMissingRefused`, `_RewriteOverIDHoleRefused`,
   `_GenuineDeletionPinnedPrefixSeals`, `_UnpinnedPrefixRecorded`),
   `TestSealDifferential_*`
   (`internal/auditverify`), `TestPerformRecoverAdmin_NeverSealsALoss`,
-  `TestAcceptLoss_RequiresConfirmThenSeals`, `scripts/drills/accept-loss.sh`. Not covered: a
+  `TestAcceptLoss_RequiresConfirmThenSeals`, `TestAcceptLoss_ResumeNeedsResumeSeal`, `scripts/drills/accept-loss.sh`. Not covered: a
   verification state discontinuity with an intact chain cannot be accepted (it stays
   sticky), and a holder of the checkpoint key can seal anything this command would accept. A
   whole-trail rollback (every row, the seal record, checkpoints, mark and state put back to an

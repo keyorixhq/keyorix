@@ -16,8 +16,10 @@
 #      missing head is named, and the confirmed acceptance lowers it only as the plan said;
 #   7. (#3814, AUDIT-SEAL-TAILS-2) an acceptance left unfinished after its seal record (the
 #      database and witness put back to what a crash after that write leaves), then rotate-kek:
-#      the audit transition waits for the pending seal, the accept-loss re-run on the new key
-#      resumes and completes it, and the next server start completes the key change; SEALED;
+#      the audit transition waits for the pending seal; the accept-loss re-run on the new key
+#      writes nothing on --confirm alone (#3803) and completes it only with --resume-seal
+#      naming the record digest the plan printed; the next server start completes the key
+#      change; SEALED;
 #   8. (AUDIT-SEAL-TAILS-1 finding 1) the seal record is garbled and rotate-kek runs again: the
 #      key change completes but the audit transition stops with "cannot be trusted" and signs
 #      no high-water mark or checkpoint.
@@ -238,6 +240,8 @@ if inst_admin "$I" audit accept-loss "${common3[@]}" >"$DRILL_DIR/al3-unfinished
 fi
 grep -q "Seal #$SEQ was recorded but its acceptance did not finish" "$DRILL_DIR/al3-unfinished.log" \
     || { cat "$DRILL_DIR/al3-unfinished.log" >&2; fail "the put-back database does not read as an unfinished acceptance"; }
+RSEAL="$(sed -n 's/.*requires --resume-seal \([0-9a-f]\{64\}\).*/\1/p' "$DRILL_DIR/al3-unfinished.log" | head -n 1)"
+[ -n "$RSEAL" ] || { cat "$DRILL_DIR/al3-unfinished.log" >&2; fail "the resume plan does not print the record digest to pass"; }
 ok "seal #$SEQ recorded, acceptance unfinished"
 NEW_PW3="drill-rotated3-$(rand_hex 16)"
 out="$(env KEYORIX_NEW_MASTER_PASSWORD="$NEW_PW3" bash -c 'cd "$1" && shift && exec "$@"' _ "$d" \
@@ -251,7 +255,17 @@ export KEYORIX_MASTER_PASSWORD="$NEW_PW3"
 rm -f "$d/ckpt.key"
 inst_admin "$I" audit export-checkpoint-key --output ./ckpt.key >/dev/null || fail "export-checkpoint-key (new key) failed"
 offline 1
-inst_admin "$I" audit accept-loss "${common3[@]}" --confirm >"$DRILL_DIR/al3-resume.log" 2>&1 \
+EVN="$(db_query "SELECT COUNT(*) FROM audit_events")"
+CPN3="$(db_query "SELECT COUNT(*) FROM audit_checkpoints")"
+if inst_admin "$I" audit accept-loss "${common3[@]}" --confirm >"$DRILL_DIR/al3-noseal.log" 2>&1; then
+    cat "$DRILL_DIR/al3-noseal.log" >&2; fail "a resume completed on --confirm alone, without --resume-seal (#3803)"
+fi
+grep -q "nothing was written: this completes the unfinished seal #$SEQ" "$DRILL_DIR/al3-noseal.log" \
+    || { cat "$DRILL_DIR/al3-noseal.log" >&2; fail "the resume without --resume-seal did not say why nothing was written"; }
+[ "$(db_query "SELECT COUNT(*) FROM audit_events")" = "$EVN" ] || fail "the refused resume appended an audit event"
+[ "$(db_query "SELECT COUNT(*) FROM audit_checkpoints")" = "$CPN3" ] || fail "the refused resume wrote a checkpoint"
+ok "resume on --confirm alone refused, nothing written"
+inst_admin "$I" audit accept-loss "${common3[@]}" --resume-seal "$RSEAL" --confirm >"$DRILL_DIR/al3-resume.log" 2>&1 \
     || { cat "$DRILL_DIR/al3-resume.log" >&2; fail "the accept-loss re-run on the new key failed (#3814)"; }
 grep -q "this run completes it" "$DRILL_DIR/al3-resume.log" || { cat "$DRILL_DIR/al3-resume.log" >&2; fail "the re-run did not resume seal #$SEQ"; }
 grep -q "Accepted: seal #$SEQ" "$DRILL_DIR/al3-resume.log" || { cat "$DRILL_DIR/al3-resume.log" >&2; fail "the re-run did not complete seal #$SEQ"; }

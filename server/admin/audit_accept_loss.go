@@ -38,6 +38,7 @@ var (
 	acceptLossAnchorFile   string
 	acceptLossAnchorSHA256 string
 	acceptLossConfirm      bool
+	acceptLossResumeSeal   string
 	acceptLossPassphrase   crypto.PassphraseSource
 )
 
@@ -65,8 +66,12 @@ earlier seal.
 It prints what it will accept and writes nothing without --confirm. With --confirm
 it writes, in this order: the seal record, ONE in-chain system.audit_loss_accepted
 event, a fresh checkpoint and high-water mark of what survives, and the
-verification state. If it stops part way, the chain reads broken until you run the
-same command again, which completes it.
+verification state. If it stops part way, the chain reads broken until the
+acceptance is completed: run the command again without --confirm, read the plan
+(it says when the unfinished seal was recorded, by whom and why, and prints its
+record digest), and only if you started that acceptance complete it with
+--resume-seal <digest> --confirm. A resume never writes without --resume-seal: a
+seal you did not just run is a rollback of the database until proven otherwise.
 
 Afterwards every view reports the chain as "sealed": not_proven until a full
 verification completes, then sealed (online status, posture, evidence pack;
@@ -93,6 +98,7 @@ func init() {
 	f.StringVar(&acceptLossAnchorFile, "anchor", "", "An 'export-checkpoint' file taken after the lost rows existed: authenticated, must cover the lost range, measures the loss")
 	f.StringVar(&acceptLossAnchorSHA256, "anchor-sha256", "", "SHA-256 of an anchor file kept elsewhere (recorded only, not checked)")
 	f.BoolVar(&acceptLossConfirm, "confirm", false, "Write the seal (without it, only print what would be accepted)")
+	f.StringVar(&acceptLossResumeSeal, "resume-seal", "", "Complete an unfinished acceptance: the record digest its plan prints (required for a resume, even with --confirm)")
 	registerPassphraseFlags(acceptLossCmd, &acceptLossPassphrase)
 	auditCmd.AddCommand(acceptLossCmd)
 }
@@ -145,7 +151,10 @@ func acceptLossRequest() (core.AuditLossRequest, error) {
 		return req, fmt.Errorf("--anchor-sha256 must be a 64-hex-digit SHA-256")
 	case acceptLossAnchorFile != "" && acceptLossAnchorSHA256 != "":
 		return req, fmt.Errorf("pass --anchor or --anchor-sha256, not both")
+	case acceptLossResumeSeal != "" && !sha256HexRE.MatchString(acceptLossResumeSeal):
+		return req, fmt.Errorf("--resume-seal must be the 64-hex-digit record digest the plan of the unfinished acceptance prints")
 	}
+	req.ResumeSeal = strings.ToLower(acceptLossResumeSeal)
 	req.AnchorDigest = strings.ToLower(acceptLossAnchorSHA256)
 	if acceptLossAnchorFile != "" {
 		data, err := secretenv.ReadRegularFile("audit anchor", acceptLossAnchorFile)
@@ -185,13 +194,16 @@ func acceptLoss(ctx context.Context, cfg *config.Config, store corestorage.Stora
 	for _, line := range plan.Describe() {
 		fmt.Println(line)
 	}
+	if plan.Resume && req.ResumeSeal == "" {
+		return fmt.Errorf("nothing was written: this completes the unfinished seal #%d; read the plan above and, only if you started that acceptance, re-run with --resume-seal %s --confirm", plan.Seq, plan.ResumeDigest)
+	}
 	if !acceptLossConfirm {
 		return fmt.Errorf("nothing was written: re-run with --confirm to accept this loss")
 	}
 	fmt.Fprintln(os.Stderr, "Writing the seal record, the audit event, a fresh checkpoint and the verification state...")
 	res, err := c.AcceptAuditLoss(ctx, plan)
 	if err != nil {
-		return fmt.Errorf("%w (if part of it was written, the chain reads broken until you run this command again)", err)
+		return fmt.Errorf("%w (if part of it was written, the chain reads broken until the acceptance is completed: run this command again without --confirm, read the plan, then complete it with the --resume-seal it prints)", err)
 	}
 	fmt.Printf("Accepted: seal #%d (record %s). New checkpoint #%d certifies %d events through #%d.\n",
 		res.Seq, res.Digest, res.Checkpoint.ID, res.Checkpoint.ChainedEvents, res.Checkpoint.HeadID)

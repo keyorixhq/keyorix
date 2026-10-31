@@ -192,8 +192,10 @@ mark or checkpoint is re-signed against a seal list it cannot authenticate. The 
 stands. Treat the seal record as tampered with
 ([audit-chain-break-runbook.md](audit-chain-break-runbook.md) §7 and §8) and investigate. The
 server retries the completion at every start and finishes it once the seals authenticate again.
-Finish an unfinished acceptance (re-run `admin audit accept-loss`) before a key change when you
-can. If the key change came first, re-run `accept-loss` with the new key: the transition record
+Finish an unfinished acceptance (re-run `admin audit accept-loss`, read the plan, then complete it
+with the `--resume-seal <digest>` the plan prints) before a key change when you can. If the key
+change came first, do the same with the new key (the record digest does not change with the
+key): the transition record
 names the checkpoint and high-water mark the acceptance had not rewritten yet, signed under the
 previous key, so the resume completes; the next server start then completes the key change
 (audit-chain-break-runbook.md §8, #3814).
