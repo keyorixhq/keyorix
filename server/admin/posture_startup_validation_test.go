@@ -107,6 +107,7 @@ func deviationLines(out string) string {
 // how any of them reads is a reviewed diff of testdata/posture_*.golden.
 // Regenerate with: go test ./server/admin -run StartupValidationGolden -update-posture-golden
 func TestRunAdminValidatePosture_StartupValidationGolden(t *testing.T) {
+	skipUnderFIPS140Only(t, "the goldens record the default-mode FIPS lines ('Go FIPS 140-3 mode: off', 'fips140 enforced: no ...'); the enforced lines are checked by TestRunAdminValidatePosture_FIPSSelfTestLine")
 	wd, err := os.Getwd() // writePostureFixture chdirs away; resolve testdata first
 	require.NoError(t, err)
 	for _, tc := range []struct {
