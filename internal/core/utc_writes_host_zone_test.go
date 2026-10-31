@@ -65,8 +65,10 @@ func setNonUTCHostZone(t *testing.T) *time.Location {
 }
 
 // runInUTCWritesHostTZ re-executes this test binary (same flags, so -race is kept) for the subtest
-// `top/sub` with TZ=utcWritesHostTZ and requires that it ran and passed. A skip in the child (no
-// PostgreSQL DSN) is a skip here.
+// `top/sub` with TZ=utcWritesHostTZ and requires that it ran and passed. A skip of `top/sub` itself
+// in the child (no PostgreSQL DSN, see forEachUTCDialect) is a skip here. A skip of any subtest
+// nested under it fails: the child would still print PASS for `top/sub`, and the parent would
+// report coverage that never ran.
 func runInUTCWritesHostTZ(t *testing.T, top, sub string) {
 	t.Helper()
 	exe, err := os.Executable()
@@ -85,6 +87,7 @@ func runInUTCWritesHostTZ(t *testing.T, top, sub string) {
 	if strings.Contains(string(out), "--- SKIP: "+top+"/"+sub+" ") {
 		t.Skipf("skipped in the TZ=%s subprocess", utcWritesHostTZ)
 	}
+	require.NotContains(t, string(out), "--- SKIP: "+top+"/"+sub+"/", "subprocess TZ=%s skipped a subtest of %s/%s, so its PASS covers nothing:\n%s", utcWritesHostTZ, top, sub, out)
 	require.Contains(t, string(out), "--- PASS: "+top+"/"+sub+" ", "subprocess TZ=%s did not run %s/%s:\n%s", utcWritesHostTZ, top, sub, out)
 }
 
@@ -101,7 +104,9 @@ type utcDialect struct {
 
 // forEachUTCDialect runs body once on the production SQLite dialect and once on PostgreSQL, each in
 // a subprocess whose host zone is utcWritesHostTZ. In the parent it only launches and checks the
-// child; the body runs in the child.
+// child; the body runs in the child. Without KEYORIX_TEST_PG_DSN the postgres subtest skips here,
+// at the dialect level, before body runs, so the parent sees the skip even when body opens the
+// database inside nested subtests.
 func forEachUTCDialect(t *testing.T, body func(t *testing.T, d utcDialect)) {
 	t.Helper()
 	child := os.Getenv(utcWritesChildEnv) != ""
@@ -110,6 +115,9 @@ func forEachUTCDialect(t *testing.T, body func(t *testing.T, d utcDialect)) {
 			if !child {
 				runInUTCWritesHostTZ(t, strings.SplitN(t.Name(), "/", 2)[0], d.name)
 				return
+			}
+			if d.pg && os.Getenv("KEYORIX_TEST_PG_DSN") == "" {
+				t.Skip("KEYORIX_TEST_PG_DSN not set — skipping the PostgreSQL half of this UTC-write test")
 			}
 			body(t, d)
 		})
