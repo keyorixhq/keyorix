@@ -29,6 +29,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 )
 
 // cacheEpochReplicaWorld is a Postgres schema with secret_nodes migrated by the
@@ -56,6 +57,7 @@ func cacheEpochReplicaWorld(t *testing.T) (*gorm.DB, *LocalStorage, *models.Secr
 // with a direct UPDATE. The warm entry must not be served.
 func TestSecretNodeCacheEpoch_ReplicaRoleWriter_StillMovesStamp_Postgres(t *testing.T) {
 	db, ls, created := cacheEpochReplicaWorld(t)
+	pgpriv.RequireReplicationRolePrivilege(t, db)
 	ctx := context.Background()
 
 	sqlDB, err := db.DB()
@@ -82,6 +84,7 @@ func TestSecretNodeCacheEpoch_ReplicaRoleWriter_StillMovesStamp_Postgres(t *test
 // untrusted, so the cache neither hits nor stores.
 func TestSecretNodeCacheEpoch_ProofFailsClosedInReplicaSession_Postgres(t *testing.T) {
 	db, _, created := cacheEpochReplicaWorld(t)
+	pgpriv.RequireReplicationRolePrivilege(t, db)
 	ctx := context.Background()
 
 	sqlDB, err := db.DB()
