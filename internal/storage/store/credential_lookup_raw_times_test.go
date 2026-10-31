@@ -38,9 +38,11 @@ func directTimeCredentialScan(ctx context.Context, t *testing.T, ls *LocalStorag
 // finding): on the production dialect (modernc) a timestamp carrying a fixed
 // non-UTC zone (the +02:00 fixture below) is stored in a form that scans back as
 // a string, "unsupported Scan, storing driver.Value type string into type
-// *time.Time", for sql.NullTime as well as time.Time. Whether a non-UTC value
-// can reach these columns in production is the open question; the fixture is
-// not changed to UTC because that would drop the zone coverage.
+// *time.Time", for sql.NullTime as well as time.Time. Such values do reach
+// production (REVIEW-3837-DEEP-1): a user-supplied RFC3339 expiry with an offset
+// is stored without .UTC() (PAT expires_at, secret expiration, risk-exception
+// expires_at). The fix is a separate fix(security) change; the fixture is not
+// changed to UTC because that would drop the zone coverage.
 func TestCredentialLookupRaw_TimesMatchDirectScan(t *testing.T) {
 	for _, backend := range principalPermBackends(t) {
 		t.Run(backend, func(t *testing.T) {

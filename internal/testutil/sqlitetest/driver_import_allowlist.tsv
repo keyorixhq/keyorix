@@ -5,7 +5,7 @@
 #
 # Deliberate: the test is about the other driver, or runs a different claim.
 internal/testutil/sqlitetest/sqlitetest_test.go	self-test of the helper: opens the default driver on purpose as the uncapped-pool control
-internal/storage/store/credential_lookup_raw_times_test.go	FINDING (SQLITE-FIDELITY-1): on modernc a non-UTC fixed-zone timestamp scans back as a string; stays on mattn until the coordinator decides whether such values reach production
+internal/storage/store/credential_lookup_raw_times_test.go	FINDING (SQLITE-FIDELITY-1): on modernc a non-UTC fixed-zone timestamp scans back as a string; such values reach production (offset RFC3339 expiries, REVIEW-3837-DEEP-1); stays on mattn until the separate fix(security) change lands
 # Fault-injection harness and wrapper tests: schema, inventory and reset helpers, no claim about storage error translation.
 internal/faultstorage/faultstorage_test.go	unit tests of the fault wrapper over a trivially migrated store; the wrapper's behaviour does not depend on the driver
 server/faultops/snapshot_self_test.go	fault-world harness self-test: snapshot/restore of a migrated schema

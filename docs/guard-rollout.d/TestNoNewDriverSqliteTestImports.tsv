@@ -1,1 +1,1 @@
-TestNoNewDriverSqliteTestImports	internal/testutil/sqlitetest	#3685	new repo-wide guard (SQLITE-FIDELITY-1), report-only until its first green nightly on main
+TestNoNewDriverSqliteTestImports	internal/testutil/sqlitetest	#3837	new repo-wide guard (SQLITE-FIDELITY-1), report-only until its first green nightly on main
