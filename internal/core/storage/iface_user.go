@@ -41,7 +41,6 @@ type UserStore interface {
 	// login-lockout failed-attempt count) that must not lose updates under concurrency.
 	LockUserForUpdate(ctx context.Context, id uint) (*models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
-	UpdateUser(ctx context.Context, user *models.User) (*models.User, error)
 	// UpdateUserIfActiveStateMatches persists ONLY the profile columns UpdateUser
 	// applies in memory from a request (username/username_folded, email/
 	// email_folded, display name, the new IsActive value, updated_at) — never the
@@ -55,23 +54,23 @@ type UserStore interface {
 	// state = ?` / UpdateProjectInvitation's `WHERE id = ? AND state = 'pending'`
 	// pattern (#388/#412) for this codebase's other state-transition TOCTOU class.
 	//
-	// UpdateUser is a general-purpose multi-field update (username, email,
-	// display name, IsActive, ...), not a single-purpose state-transition
-	// function, so a plain c.storage.UpdateUser write is fine for requests that
-	// leave IsActive untouched. But whenever req.IsActive != nil, UpdateUser
-	// routes its final persist through THIS method instead: IsActive can flip
-	// concurrently with any other UpdateUser call touching the same user (a
-	// profile edit racing an admin deactivation, or two deactivation attempts
-	// racing each other), and a plain write silently clobbers whichever change
-	// lost the race, with no error to either caller. This exists for the exact
-	// same reason TransitionMachineIdentityState does: the now-deleted
-	// RemoteStorage's WithTransaction was a no-op passthrough, so a naive
-	// GetUser-then-UpdateUser sequence run against it got none of the atomicity
-	// LocalStorage provides via a real DB transaction — routing the actual write
-	// through this one conditional round trip restores the same
-	// guarantee LocalStorage already has, without making any validation decision
-	// here: the caller (core.UpdateUser) still decides which fields to mutate and
-	// what fromActive to assert before calling this; a false match result must be
+	// core.UpdateUser is a general-purpose multi-field update (username, email,
+	// display name, IsActive, ...) and persists every request through THIS
+	// method: IsActive can flip concurrently with any other update touching the
+	// same user (a profile edit racing an admin deactivation, or two
+	// deactivation attempts racing each other), and a plain write would
+	// silently clobber whichever change lost the race, with no error to either
+	// caller. (STORE-DEAD-PRIMITIVES-1 deleted the full-row UpdateUser storage
+	// primitive that used to sit beside this one: it had no caller and its
+	// Save could revert any column.) This exists for the exact same reason
+	// TransitionMachineIdentityState does: the now-deleted RemoteStorage's
+	// WithTransaction was a no-op passthrough, so a naive GetUser-then-write
+	// sequence run against it got none of the atomicity LocalStorage provides
+	// via a real DB transaction — routing the actual write through this one
+	// conditional round trip restores the same guarantee LocalStorage already
+	// has, without making any validation decision here: the caller
+	// (core.UpdateUser) still decides which fields to mutate and what
+	// fromActive to assert before calling this; a false match result must be
 	// treated as a lost-race error, not retried or silently overwritten.
 	UpdateUserIfActiveStateMatches(ctx context.Context, user *models.User, fromActive bool) (bool, error)
 	// UpdateLastLogin stamps the user's last_login_at column without touching any

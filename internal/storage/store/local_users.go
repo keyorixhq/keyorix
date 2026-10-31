@@ -217,27 +217,6 @@ func (ls *LocalStorage) GetUserByExternalID(ctx context.Context, externalID stri
 	return &user, nil
 }
 
-func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
-	if err := ls.db.WithContext(ctx).Save(user).Error; err != nil {
-		if isDuplicateEmailViolation(err) {
-			// The partial unique index uniq_users_email_folded_active (#117) caught a concurrent
-			// duplicate: another update (e.g. a racing UpdateSCIMUser, #120/#218) already
-			// committed the identical (case-insensitive) email to a different user before
-			// this write landed. Translate to the sentinel so callers surface a clean
-			// "email already in use" error instead of a raw constraint-violation message.
-			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
-		}
-		if isDuplicateUsernameViolation(err) {
-			// Same race on the username index: a concurrent rename (or create) to the
-			// identical folded username committed first. The error is non-nil, so any
-			// enclosing transaction rolls back.
-			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateUsername, err)
-		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return user, nil
-}
-
 // UpdateUserIfActiveStateMatches persists the profile columns of user via a
 // conditional UPDATE gated on the row's CURRENT is_active still being
 // fromActive (closing the IsActive TOCTOU race described in the storage.Storage
