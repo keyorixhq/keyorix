@@ -153,10 +153,10 @@ var azureKeyVaultHostSuffixes = []string{
 func validateKeyVaultHost(vaultOrigin string) error {
 	u, err := url.Parse(vaultOrigin)
 	if err != nil {
-		return fmt.Errorf("azure-kms: invalid vault URL %q: %w", vaultOrigin, err)
+		return fmt.Errorf("azure-kms: invalid vault URL %q: %w", netutil.RedactURLHost(vaultOrigin), netutil.RedactErrorURLs(err))
 	}
 	if u.Scheme != "https" {
-		return fmt.Errorf("azure-kms: vault URL %q must use https", vaultOrigin)
+		return fmt.Errorf("azure-kms: vault URL %q must use https", netutil.RedactURLHost(vaultOrigin))
 	}
 	host := strings.ToLower(u.Hostname())
 	for _, suffix := range azureKeyVaultHostSuffixes {
@@ -221,10 +221,10 @@ func New(_ context.Context, keyID string) (keyorixcrypto.KMSClient, error) {
 func parseKeyID(keyID string) (vaultURL, name, version string, err error) {
 	u, err := url.Parse(keyID)
 	if err != nil {
-		return "", "", "", fmt.Errorf("azure-kms: invalid kms_key_id %q: %w", keyID, err)
+		return "", "", "", fmt.Errorf("azure-kms: invalid kms_key_id %q: %w", netutil.RedactURLHost(keyID), netutil.RedactErrorURLs(err))
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return "", "", "", fmt.Errorf("azure-kms: kms_key_id must be a key identifier URL (https://{vault}.vault.azure.net/keys/{name}[/{version}]), got %q", keyID)
+		return "", "", "", fmt.Errorf("azure-kms: kms_key_id must be a key identifier URL (https://{vault}.vault.azure.net/keys/{name}[/{version}]), got %q", netutil.RedactURLHost(keyID))
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] != "keys" || parts[1] == "" {

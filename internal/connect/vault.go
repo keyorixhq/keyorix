@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // vaultMaxResponseBytes caps the read body (a KV secret is small); guards a hostile/
@@ -141,13 +143,13 @@ func (c *VaultConnector) CheckTokenTTL(ctx context.Context) (ttlSeconds int, ren
 func validateConnectorURL(address string) error {
 	u, err := url.Parse(address)
 	if err != nil {
-		return fmt.Errorf("vault: invalid connector address %q: %w", address, err)
+		return fmt.Errorf("vault: invalid connector address %q: %w", netutil.RedactURLHost(address), netutil.RedactErrorURLs(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("vault: connector address %q must use http or https", address)
+		return fmt.Errorf("vault: connector address %q must use http or https", netutil.RedactURLHost(address))
 	}
 	if u.Host == "" {
-		return fmt.Errorf("vault: connector address %q is missing a host", address)
+		return fmt.Errorf("vault: connector address %q is missing a host", netutil.RedactURLHost(address))
 	}
 	return nil
 }
