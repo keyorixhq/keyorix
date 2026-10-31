@@ -7,10 +7,11 @@ package guards
 // fixed, where "not found" tells the operator the revoke is moot. Reporting them as a
 // storage fault is a follow-up; delete a row when its site calls classifyReadError.
 //
-// STORAGE-ERR-CLASS-2 classified catalog.go, classification_gate.go, users.go and
-// secret_copy_environment.go. The rows left are not this session's: machine_token.go and
-// dynamic_secrets.go belong to ERR-CLASS-LEFTOVERS-1, the rest are listed in the
-// STORAGE-ERR-CLASS-2 report.
+// STORAGE-ERR-CLASS-2 classified catalog.go, classification_gate.go, users.go,
+// secret_copy_environment.go, invitations.go and membership_lifecycle.go. The rows left:
+// machine_token.go and dynamic_secrets.go belong to ERR-CLASS-LEFTOVERS-1;
+// setup_consume.go:completeInvitationAccept is on the setup-link path (CompleteSetup),
+// whose handler FIX-3277 owns and keeps non-oracle, so its 503 mapping lands there.
 
 func init() {
 	const why = "grant/create/renew path: the fold refuses the operation (fail closed), nothing is applied; classify as a fault in a follow-up"
@@ -19,9 +20,7 @@ func init() {
 		"dynamic_secrets.go:RenewLease",
 		"dynamic_secrets.go:CreateDynamicSecretConfig",
 		"dynamic_secrets.go:IssueLease",
-		"invitations.go:approveAccessRequestWithExpiryLocked",
 		"machine_token.go:requireEnvironmentInProject",
-		"membership_lifecycle.go:inviteMemberWithMode",
 		"setup_consume.go:completeInvitationAccept",
 	} {
 		registerFoldedReadException(key, why)

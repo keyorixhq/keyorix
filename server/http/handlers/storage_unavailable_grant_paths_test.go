@@ -145,6 +145,41 @@ func TestStorageUnavailable_GrantPathsREST(t *testing.T) {
 		assert.NotEqual(t, http.StatusServiceUnavailable, w.Code)
 	})
 
+	t.Run("invite project member", func(t *testing.T) {
+		n := 0
+		call := func() *httptest.ResponseRecorder {
+			n++
+			name := "gp-inv-" + strconv.Itoa(n)
+			u, uerr := local.CreateUser(ctx, &models.User{
+				Username: name, UsernameFolded: name, Email: name + "@example.com", EmailFolded: name + "@example.com",
+				IsActive: true, AccountState: "active",
+			})
+			require.NoError(t, uerr)
+			w := httptest.NewRecorder()
+			cat.InviteMember(w, suReq(http.MethodPost, `{"user_id":`+suID(u.ID)+`,"role":"gp-bypass"}`, map[string]string{"id": pid}))
+			return w
+		}
+		assert.GreaterOrEqual(t, sweepREST(t, faulty, "GetRoleByName", []int{http.StatusBadRequest, http.StatusNotFound}, call), 1)
+		assert.GreaterOrEqual(t, sweepREST(t, faulty, "GetProject", []int{http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError}, call), 1)
+		w := httptest.NewRecorder()
+		cat.InviteMember(w, suReq(http.MethodPost, `{"user_id":5,"role":"no-such-role"}`, map[string]string{"id": pid}))
+		assert.Equal(t, http.StatusBadRequest, w.Code, "an absent role stays 400: %s", w.Body.String())
+	})
+
+	t.Run("approve project access request", func(t *testing.T) {
+		n := 0
+		call := func() *httptest.ResponseRecorder {
+			n++
+			req := &models.AccessRequest{ProjectID: proj.ID, UserID: 200 + uint(n), SuggestedRole: "gp-bypass", State: core.AccessRequestPending, CreatedAt: time.Now()}
+			require.NoError(t, db.Create(req).Error)
+			w := httptest.NewRecorder()
+			cat.ResolveAccessRequest(w, suReq(http.MethodPut, `{"action":"approve"}`, map[string]string{"id": pid, "requestId": suID(req.ID)}))
+			return w
+		}
+		assert.GreaterOrEqual(t, sweepREST(t, faulty, "GetProject", []int{http.StatusConflict, http.StatusNotFound}, call), 1)
+		assert.GreaterOrEqual(t, sweepREST(t, faulty, "GetRoleByName", []int{http.StatusConflict, http.StatusBadRequest, http.StatusNotFound}, call), 1)
+	})
+
 	t.Run("resolve secret access request", func(t *testing.T) {
 		secret := &models.SecretNode{ProjectID: proj.ID, EnvironmentID: srcEnv.ID, Name: "gp-secret", IsSecret: true}
 		require.NoError(t, db.Create(secret).Error)
