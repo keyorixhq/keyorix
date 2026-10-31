@@ -128,6 +128,7 @@ internal/storage/explicit_columns_guard_test.go	!operator/**	walks internal/ and
 internal/storage/store/audit_write_context_completeness_test.go	!operator/**	skips operator/
 internal/storage/store/pg_trigger_registry_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/testutil/pgdsn/shared_database_lock_guard_test.go	!operator/**	walks internal/ and server/
+internal/testutil/pgpriv/replication_role_guard_test.go	!operator/**,!scripts/**/*.txt	repo-root walk reading only *_test.go files; skips nested modules (go.mod) and testdata
 internal/testutil/srcpath/runtime_caller_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/urlleakguard/urlleakguard_test.go	!operator/**	skips nested modules (go.mod)
 server/httpguards/grant_primitive_gate_table_test.go	!operator/**	skipSecretACLDir skips nested modules

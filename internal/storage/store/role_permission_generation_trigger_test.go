@@ -12,6 +12,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 )
 
 // rpgWorld is a warm reader (ls), a second store on its own connection that
@@ -88,6 +89,7 @@ func rpgCases() []rpgCase {
 			// ENABLE ALWAYS so they still fire. One transaction, so SET LOCAL
 			// and the DELETE share a connection. Needs a superuser (the test DSN's
 			// role is one, as in CI).
+			pgpriv.RequireReplicationRolePrivilege(t, w.writer.db)
 			require.NoError(t, w.writer.db.Transaction(func(tx *gorm.DB) error {
 				if err := tx.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
 					return err
