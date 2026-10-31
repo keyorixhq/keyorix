@@ -411,15 +411,13 @@ func (ls *LocalStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context
 // TouchPersonalAccessToken bumps last_used_at only when older than staleness (or NULL),
 // keeping the auth hot path from writing on every request (mirrors TouchSession).
 //
-// #1507: this UpdateColumn write bypasses model hooks, so last_used_at is
-// whatever Location usedAt itself carries (currently always c.now(), the same
-// accessor CountStalePATs (local_hygiene_counts.go) uses to derive its own
-// range-query bound) — safe ONLY as long as every last_used_at reader keeps
-// using that same source. If a future range query on this column is added
-// anywhere using a differently-sourced time (e.g. a raw time.Now().UTC()),
-// normalize explicitly at this call site (there is no BeforeSave hook that
-// can reach an UpdateColumn write) before trusting the comparison.
+// #1507: this UpdateColumn write bypasses model hooks (and GORM's NowFunc), so
+// it normalises usedAt, and the cutoff it compares against, to UTC itself
+// (SQLITE-UTC-NOWFUNC-1): core passes c.now() in the host zone, and on SQLite a
+// non-UTC time is stored as text that neither scans back nor orders against a
+// UTC bound (the touched token then fails every read).
 func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
+	usedAt = usedAt.UTC()
 	cutoff := usedAt.Add(-staleness)
 	return ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
 		Where("id = ? AND (last_used_at IS NULL OR last_used_at < ?)", id, cutoff).
