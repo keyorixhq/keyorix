@@ -19,9 +19,10 @@
   re-creates a same-named trigger whose definition differs, and never rewrites a function row
   that is already correct: a clean boot of another replica must not read as tampering.
   `postgresRolePermGenerationFuncBody` is the one source of the function body. A release that
-  changes it must also let the check accept the previous body during a rolling upgrade, or older
-  replicas' boots read as tampering on newer ones (a cache flush each time, not a wrong decision).
-  The release that adds this check is itself such a change: older replicas re-create the function
+  changes it, the settings or the trigger shape bumps `rolePermGenerationDef.version`, so that
+  older replicas leave its definition in place during a rolling upgrade
+  (INV-STORE-trigger-definition-version-marker). The release that added this check was such a
+  change before markers existed: older replicas re-create the function
   without the `SET` clause on every boot, so during that rollout each of their boots raises the
   `SECURITY:` line, the tamper counter, a repair and a fleet-wide flush on the new replicas.
   This complements INV-STORE-role-permission-generation-trigger-maintained, whose per-statement

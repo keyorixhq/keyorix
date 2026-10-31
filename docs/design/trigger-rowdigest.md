@@ -121,12 +121,22 @@ this, every replica boot would rewrite the `pg_proc` row and flush every cache o
   between the tamper and the flush, also while a repair keeps failing (every pending tick bumps).
   It applies only to deliberate DDL by the owner or a superuser. Accidental states keep the
   zero-window per-statement proof.
-- Rolling upgrade to this release: a replica still on an older release runs
-  `CREATE OR REPLACE FUNCTION` without the `SET search_path` clause on every boot. Each such boot
-  therefore reads as tampering on the new replicas: a `SECURITY:` log line, a
+- Rolling upgrade to the release that added the check (#3631): a replica still on an older
+  release runs `CREATE OR REPLACE FUNCTION` without the `SET search_path` clause on every boot.
+  Each such boot therefore reads as tampering on the new replicas: a `SECURITY:` log line, a
   `keyorix_role_permission_generation_tamper_total` increment, a repair that re-pins the function
   and a fleet-wide cache flush. No decision is wrong. Expect these alarms until every replica runs
-  this release, and treat them as tampering only after that.
+  that release, and treat them as tampering only after that.
+- Rolling upgrade between two releases that both run the check (#3717). Before version markers,
+  any release that changed a definition ping-ponged with the previous one for the whole
+  mixed-version window: every 30 s tick, each side read the other's definition as tampering and
+  re-installed its own, with a `SECURITY:` line and a tamper increment per tick on both sides,
+  fleet-wide flushes, repeated `DROP`/`CREATE TRIGGER` under ACCESS EXCLUSIVE when the trigger
+  shape differed, and the older replicas undoing a security fix (such as the `search_path` pin)
+  part of the time. See "Definition versions" below for how this is closed. The release that adds
+  the markers keeps both function bodies byte-identical and writes the marker as a function
+  `COMMENT`, which the check of the releases before it does not read, so its own rollout raises
+  nothing either.
 - Catches: body replacement, `ALTER FUNCTION ... SET`, `SECURITY DEFINER`, re-pointed triggers,
   the in-transaction sandwich, and tamper-then-restore between two ticks.
 - Cost: zero on the request path. One small catalog statement per replica per interval.
@@ -135,6 +145,75 @@ this, every replica boot would rewrite the `pg_proc` row and flush every cache o
 - Misses (residual): a superuser below SQL (native code, data files, a modified plpgsql handler,
   or a redefined `pg_catalog` function the body calls); a change during the window; SQLite (an
   embedded single-process file, where an attacker who can write the file controls everything).
+
+#### Definition versions (#3717)
+
+Each trigger function carries a version marker as its `COMMENT` (`pg_description`):
+`keyorix-trigger-def <function> v<N> sha256:<digest>`. The digest is SHA-256 over a canonical text
+of the definition that version names: the function's language, `proconfig`, `prosecdef` and body,
+and each checked trigger's table, name, `tgtype`, argument count, `UPDATE OF` column count, WHEN
+clause and constraint flag (`triggerDefDigest`). The marker is a comment, not part of the body,
+so that the releases before it, which compare `prosrc` exactly, do not read it as tampering.
+`pgTriggerDef.version` moves with every change to the body, the settings or the trigger shape.
+
+The rule, as each checker and installer applies it (`pgTriggerDef.newerThan`):
+
+1. Exactly this release's definition (the body, settings and shape comparisons above) plus
+   exactly this release's marker string is the good state.
+2. A marker one version ahead (`triggerDefMaxNewerSkew`), naming this function in this schema,
+   whose digest matches what the catalog holds now, with every checked trigger present and on one
+   function, is a newer release's definition. The checker logs a distinct, non-`SECURITY` line,
+   increments the tamper counter under `reason="newer_definition"`, invalidates every replica's
+   cache once (it cannot verify that body), takes the reading as its baseline and repeats the
+   warning hourly. Neither the check nor the installer re-installs over it; the installer only
+   turns a non-`ENABLE ALWAYS` trigger back to `ENABLE ALWAYS`.
+3. Anything else is tampering, as before (`reason="tamper"`, restored, flushed): no marker, a
+   malformed marker, an equal or older version that is not exactly this release's definition, a
+   version more than one ahead, or a digest that does not match the catalog (a newer body edited
+   in place, `ALTER FUNCTION ... SET`, `SECURITY DEFINER`, a trigger re-created on other events).
+
+So during an upgrade from N to N+1, the first N+1 replica's migration installs v(N+1); the N
+replicas each log and flush once and leave it; N+1 replicas read their own definition. A genuine
+tamper of v(N+1) is restored by the N+1 replicas to their own definition. An N replica that reads
+it first restores v(N), which the N+1 replicas then upgrade again: one alarm on each side, not a
+loop.
+
+Residual, stated: the digest is not a signature. The owner who can replace the function can also
+write a self-consistent marker one version ahead over a body of their choice. Replicas at N leave
+it in place (warning hourly, the `newer_definition` series moving) until a release at N+1, which
+compares exactly, restores its own. The skew bound keeps a forged marker from outranking every
+future release, and the warning says to treat it as tampering outside an upgrade. Alert on
+`increase(keyorix_role_permission_generation_tamper_total{reason="newer_definition"}[1h]) > 0`
+outside a deploy window. Two operational rules follow: a rolling upgrade must not skip a
+definition version (one that does behaves as before markers, a ping-pong for the window), and a
+release may change the body, the settings and the shape of the existing triggers but not the set
+of trigger names a target checks (that needs a new function name).
+
+#### The table the triggers write (#3713)
+
+The generation triggers, the in-app bump and the check's own invalidation all `UPDATE`
+`system_metadata`. The check compares the triggers and the function, so the owner could still make
+every bump a no-op on that table: a `BEFORE UPDATE` trigger that keeps `OLD.value` for the
+generation key, a rule, or forced row-level security with an `UPDATE` policy that hides the row
+from the server's role. The same catalog statement now also reads `system_metadata`
+(`systemMetadataWriteTargetSQL`) and requires a plain table without inheritance children, no
+non-internal trigger except the retention-anchor trigger exactly as its installer creates it
+(BEFORE UPDATE FOR EACH ROW, its function, and its `WHEN (key = 'audit_retention_anchor')`
+clause, which keeps that function off the generation row whatever its body says) and the
+`single_writer` fence's AFTER triggers (`trg_ksw_*`, executing `internal/solewriter`'s guard
+function with exactly its body; store keeps a copy because it cannot import that package, and
+`TestFenceGuard_MatchesTheStore` fails on drift), no rule, and `relrowsecurity` and
+`relforcerowsecurity` false. The `xmin` of the table's `pg_class` row and of
+each trigger and rule row joins the fingerprint, so an object added and removed between two ticks
+still shows. On a violation the repair drops the foreign triggers and rules (re-creating the
+anchor trigger if it was the one dropped) and turns row-level security off in the repair
+transaction, then bumps. A rule makes PostgreSQL refuse the `INSERT ... ON CONFLICT` every bump
+starts with, so the check's first invalidation fails there; the check then still repairs, and
+the repair's own bump is the one that counts. A table that is not a plain table is reported every
+tick and left to an operator. A future release that needs its own trigger, rule or policy on
+`system_metadata` must first ship a release whose check allows it. Turning `single_writer` on or
+off adds or removes the fence's triggers, which reads as one catalog change: one `SECURITY:` line
+and one flush per replica, no repair.
 
 ### C. Periodic content digest of `role_permissions` and `permissions`
 
@@ -181,7 +260,12 @@ interval. C costs a table scan for little gain over B. D leaves a silent, unboun
   (`secretNodeCacheEpochIntegrityTarget`) and invalidates by moving `cache_epoch` on every live row
   after the repair (INV-STORE-secret-node-cache-epoch-trigger-integrity-checked). Both targets
   also reject a reading taken on a session that is not in `session_replication_role = origin`.
-- The check covers the triggers and their function, not the row they write. The owner can make
+- The check covered the triggers and their function, not the row they write. The owner could make
   the bump a no-op on `system_metadata` itself (a `BEFORE UPDATE` trigger on the generation key
   that keeps `OLD.value`, a rule, or forced row-level security that hides the row from the
-  server's role), and the job's own bump goes through the same table. Also a follow-up.
+  server's role), and the job's own bump goes through the same table. Closed by
+  TRIGGER-INTEGRITY-1 (#3713): see "The table the triggers write" above
+  (INV-STORE-system-metadata-write-target-checked). The cache-epoch target has no such write
+  target (its function assigns `NEW.cache_epoch`); a second `BEFORE UPDATE` trigger on
+  `secret_nodes` remains the residual INV-STORE-secret-node-cache-epoch-trigger-integrity-checked
+  states.
