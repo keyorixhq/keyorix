@@ -542,7 +542,9 @@ paste them as they are. Things to know:
 `KEYORIX_TEST_PG_DSN`, the connection the Postgres-gated tests use, accepts both
 forms too. The tests create their own throwaway databases on that server by
 swapping the database name, keeping the other settings as written (including
-`sslmode` and a percent-encoded password).
+`sslmode` and a percent-encoded password). The tests that set
+`session_replication_role` need a superuser role (or `GRANT SET ON PARAMETER`); on any other role they skip, unless `CI=true` or
+`KEYORIX_REQUIRE_PG_SUPERUSER=1` is set, which makes the missing privilege a failure.
 
 ### PostgreSQL connection fields (without a `dsn`)
 
