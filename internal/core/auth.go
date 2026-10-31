@@ -376,7 +376,9 @@ func (c *KeyorixCore) newSessionRow(userID uint, userAgent, ip string, setupOnly
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session family id: %w", err)
 	}
-	now := c.now()
+	// UTC: LastSeenAt and the ceiling below are written as given (no BeforeSave covers them),
+	// and TouchSession later orders its UTC stamp against this one as text.
+	now := c.now().UTC()
 	expiresAt := now.Add(c.accessTTL())
 	session := &models.Session{
 		UserID:       userID,
@@ -405,7 +407,7 @@ func (c *KeyorixCore) newSessionRow(userID uint, userAgent, ip string, setupOnly
 // capSetupSession clamps a setup-only session's access window and absolute
 // ceiling to SetupSessionTTL from now, never lengthening an earlier ceiling.
 func capSetupSession(session *models.Session, now time.Time) {
-	ceiling := now.Add(SetupSessionTTL)
+	ceiling := now.Add(SetupSessionTTL).UTC()
 	if session.AbsoluteExpiresAt == nil || session.AbsoluteExpiresAt.After(ceiling) {
 		session.AbsoluteExpiresAt = &ceiling
 	}
@@ -504,7 +506,7 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		}
 		return nil, fmt.Errorf("session not found or expired")
 	}
-	now := c.now()
+	now := c.now().UTC() // also stamps the replacement's LastSeenAt and the rotation time
 	if old.RotatedAt != nil {
 		// The token maps to a session that was already rotated away by an earlier,
 		// successful refresh — a reuse of a stale refresh token.
@@ -570,6 +572,13 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
+	// The ceiling is copied from the stored row, which a login on a non-UTC host wrote as
+	// host-zone text: store the replacement's in UTC whatever the old row held.
+	var absoluteExpiresAt *time.Time
+	if old.AbsoluteExpiresAt != nil {
+		u := old.AbsoluteExpiresAt.UTC()
+		absoluteExpiresAt = &u
+	}
 	session := &models.Session{
 		UserID:            old.UserID,
 		SessionToken:      newToken,
@@ -578,7 +587,7 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		IPAddress:         old.IPAddress,
 		LastSeenAt:        &now,
 		ExpiresAt:         &expiresAt,
-		AbsoluteExpiresAt: old.AbsoluteExpiresAt,
+		AbsoluteExpiresAt: absoluteExpiresAt,
 		// #3024: a setup-only session stays one through every rotation, or a refresh
 		// would launder it into a full session. A session whose account has since come
 		// to owe both setup steps (e.g. an admin forced a reset on a factor-less user

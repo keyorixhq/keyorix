@@ -58,7 +58,7 @@ import (
 // by registerClientTimeUTCException from init() in client_time_utc_exceptions_test.go.
 var clientTimeUTCExceptions = map[string]string{}
 
-func registerClientTimeUTCException(key, reason string) {
+func registerClientTimeUTCException(key, reason string) { //nolint:unused // the list is empty today (UTC-WRITES-1); its next row is a call in client_time_utc_exceptions_test.go
 	if _, dup := clientTimeUTCExceptions[key]; dup {
 		panic("duplicate client-time-UTC exception " + key)
 	}

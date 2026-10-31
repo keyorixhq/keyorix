@@ -261,14 +261,15 @@ func (ls *LocalStorage) ListSessionTokenHashesForUser(ctx context.Context, userI
 // TouchSession bumps last_seen_at only if the stored value is older than staleness
 // (or NULL), keeping the auth hot path from writing on every request.
 //
-// #1507: this UpdateColumn write bypasses model hooks too, but unlike
-// PersonalAccessToken.LastUsedAt/MachineIdentityCredential.LastUsedAt there is
-// no separate consumer to diverge from — the WHERE bound and the SET value
-// below both come from this function's own seenAt parameter, in the same
-// call. If a future range query on last_seen_at is ever added elsewhere
-// (there is none today — verified repo-wide), it would need the same
-// call-site normalization the other two #1507 fields document.
+// #1507: this UpdateColumn write bypasses model hooks too, so seenAt is
+// normalised to UTC here (UTC-WRITES-1): callers pass c.now(), the host zone,
+// and the stored text is compared as text — a host-zone value was stored with
+// its offset and overwrote a newer UTC one. The WHERE bound and the SET value
+// both come from seenAt, so they stay in one zone. If a future range query on
+// last_seen_at is added elsewhere (there is none today — verified repo-wide),
+// its bound must be UTC as well.
 func (ls *LocalStorage) TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error {
+	seenAt = seenAt.UTC()
 	cutoff := seenAt.Add(-staleness)
 	return ls.db.WithContext(ctx).Model(&models.Session{}).
 		Where("id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)", id, cutoff).
@@ -411,15 +412,14 @@ func (ls *LocalStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context
 // TouchPersonalAccessToken bumps last_used_at only when older than staleness (or NULL),
 // keeping the auth hot path from writing on every request (mirrors TouchSession).
 //
-// #1507: this UpdateColumn write bypasses model hooks, so last_used_at is
-// whatever Location usedAt itself carries (currently always c.now(), the same
-// accessor CountStalePATs (local_hygiene_counts.go) uses to derive its own
-// range-query bound) — safe ONLY as long as every last_used_at reader keeps
-// using that same source. If a future range query on this column is added
-// anywhere using a differently-sourced time (e.g. a raw time.Now().UTC()),
-// normalize explicitly at this call site (there is no BeforeSave hook that
-// can reach an UpdateColumn write) before trusting the comparison.
+// #1507: this UpdateColumn write bypasses model hooks (no BeforeSave can reach
+// it), so usedAt is normalised to UTC here (UTC-WRITES-1). Callers pass
+// c.now(), the host zone; stored as text it carried its offset, and the
+// "older than" comparison below ordered it against a UTC value by wall clock.
+// CountStalePATs (local_hygiene_counts.go) range-queries the column and
+// normalises its bound to UTC too. Both ends must stay UTC.
 func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
+	usedAt = usedAt.UTC()
 	cutoff := usedAt.Add(-staleness)
 	return ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
 		Where("id = ? AND (last_used_at IS NULL OR last_used_at < ?)", id, cutoff).
