@@ -1729,7 +1729,7 @@ func (e *AuditEvent) BeforeSave(_ *gorm.DB) error {
 
 // AuditCheckpoint is a signed notarisation of the audit hash-chain head
 // (ADR-029). Signature is an HMAC over (ChainedEvents, HeadID, HeadHash,
-// KeyVersion) keyed by a DEK-derived key the database/DBA does not hold, so a
+// KeyVersion) keyed by a KEK-derived key the database/DBA does not hold, so a
 // checkpoint cannot be forged from database access alone. Re-verifying the live
 // chain against the latest signed checkpoint detects on-box tail-truncation or a
 // genesis re-seed — which an unanchored re-walk of a self-consistent (shorter)

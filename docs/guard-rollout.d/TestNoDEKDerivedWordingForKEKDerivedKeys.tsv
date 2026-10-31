@@ -1,0 +1,1 @@
+TestNoDEKDerivedWordingForKEKDerivedKeys	internal/docsdrift	#3862	new wording guard (LEAK-WORDING-TAILS-1), report-only until its first green nightly on main

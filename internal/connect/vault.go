@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // vaultMaxResponseBytes caps the read body (a KV secret is small); guards a hostile/
@@ -141,13 +143,13 @@ func (c *VaultConnector) CheckTokenTTL(ctx context.Context) (ttlSeconds int, ren
 func validateConnectorURL(address string) error {
 	u, err := url.Parse(address)
 	if err != nil {
-		return fmt.Errorf("vault: invalid connector address %q: %w", address, err)
+		return fmt.Errorf("vault: invalid connector address %q: %w", netutil.RedactURLHost(address), netutil.RedactErrorURLs(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("vault: connector address %q must use http or https", address)
+		return fmt.Errorf("vault: connector address %q must use http or https", netutil.RedactURLHost(address))
 	}
 	if u.Host == "" {
-		return fmt.Errorf("vault: connector address %q is missing a host", address)
+		return fmt.Errorf("vault: connector address %q is missing a host", netutil.RedactURLHost(address))
 	}
 	return nil
 }
@@ -301,7 +303,7 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, vaultMaxResponseBytes))
-		return "", fmt.Errorf("vault: %s returned HTTP %d for %q", c.address, resp.StatusCode, ref)
+		return "", fmt.Errorf("vault: %s returned HTTP %d for %q", netutil.RedactURLHost(c.address), resp.StatusCode, ref)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, vaultMaxResponseBytes))
 	if err != nil {
