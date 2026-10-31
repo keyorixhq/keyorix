@@ -103,6 +103,7 @@ internal/secretenv/describe_guard_test.go	operator/**/*.go	repo-root walk over n
 internal/secretenv/cited_tests_guard_test.go	operator/**/*_test.go,!operator/**	repo-root walk over _test.go files (all modules) for Test func declarations; reads no other operator/ file
 internal/guardrules/calendar_guard_test.go	operator/**/*.go,docs/guard-rollout.d/*.tsv	repo-root walk over _test.go files (all modules); also reads every docs/guard-rollout.d row
 internal/testutil/sqlitetest/factory_path_guard_test.go	operator/**/*.go	repo-root walk over .go files; skips no module
+internal/testutil/sqlitetest/driver_import_guard_test.go	operator/**/*.go,!scripts/**/*.tsv	repo-root walk over _test.go files; skips no module; reads only its own allowlist tsv, not scripts/ ones
 operator/api/v1alpha1/keyorixsecret_types_test.go	operator/config/crd/bases/*.yaml	generated CRD against the Go types (the operator job runs it too)
 #
 # --- reviewed: does not read operator/ (subtree walk, or skips it / nested modules) --
