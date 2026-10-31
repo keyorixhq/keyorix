@@ -233,6 +233,13 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 		if err := tx.CreateMFARecoveryCodes(ctx, userID, hashes); err != nil {
 			return fmt.Errorf("failed to store recovery codes: %w", err)
 		}
+		// #3799: the enrolment an administrator MFA reset demanded is made, in the
+		// same transaction, so the flag never outlives (or precedes) the factor.
+		if user.MFAEnrolmentRequired {
+			if err := tx.SetUserMFAEnrolmentRequired(ctx, userID, false); err != nil {
+				return fmt.Errorf("failed to clear the owed MFA enrolment: %w", err)
+			}
+		}
 		return nil
 	}); err != nil {
 		return nil, err

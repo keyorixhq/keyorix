@@ -3,7 +3,10 @@
   risk score. Never key bytes, PEM bodies, a private-key file's content or the stored
   recovery-key hash. It is gated by `audit.read` (system_admin and system_auditor), and every
   successful read writes exactly one `compliance.crypto_inventory_read` audit event carrying
-  counts only; a rejected request (401, 400) discloses nothing and records nothing. The
+  counts only; a rejected request (401, 400) discloses nothing and records nothing. The row
+  is written BEFORE the response (audit-before-disclosure, #3716): when it does not land
+  (`LogCryptoInventoryRead` returns the wrapped `ErrMutationAuditUnavailable`) the answer is
+  503 `audit_unavailable` with Retry-After and no inventory byte. The
   exporter cannot carry a key by construction: `cryptoinventory.Asset` has no field for key
   material and the CBOM `relatedCryptoMaterialProperties` struct has no `value` field. A TLS
   certificate file is read for its CERTIFICATE block only; a private key in the same file is
@@ -11,7 +14,8 @@
   Why: RD-CBOM-1; the inventory maps where every key lives, so it must stay a locator and
   never a source of the key.
   Guard: `server/http/handlers` `TestCryptoInventoryHandler_NoKeyMaterialInResponses`,
-  `TestCryptoInventoryHandler_IsAudited`; `internal/cryptoinventory`
+  `TestCryptoInventoryHandler_IsAudited`, `TestCryptoInventoryHandler_AuditWriteFails_DisclosesNothing`;
+  `internal/cryptoinventory`
   `TestBuild_NeverEmitsKeyMaterial`, `TestAssetJSONHasNoSecretFields`,
   `TestCBOM_Structure`; the `audit.read` gate is pinned by `TestRouteInventoryIsCurrent`
   (`scripts/e2e/routes.json`, `gate_perms: permAuditRead`).
