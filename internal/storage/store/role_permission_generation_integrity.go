@@ -387,12 +387,27 @@ END;
 // (an AFTER trigger cannot change the row it fires for), calling the fence's
 // guard function in this schema with exactly that package's body, plpgsql,
 // not SECURITY DEFINER. The fence rewrites that function on every
-// single-writer start, so its row version is not part of the fingerprint;
-// while the fence runs, its own census checks the rest. Never NULL.
+// single-writer start, so its row version is not part of the fingerprint.
+// What the guard calls (keyorix_sole_writer_check, keyorix_write_epoch) and
+// its settings are not compared here: the fence's own census checks them, and
+// only while it runs. So this is allowed only in single_writer mode
+// (systemMetadataAllowedTriggerOK); without it no fence exists, and a trigger
+// of this shape is foreign. Never NULL.
 var systemMetadataFenceTriggerOK = "COALESCE(pg_catalog.left(t.tgname::text, " + strconv.Itoa(len(SoleWriterFenceTriggerPrefix)) + ") = '" + SoleWriterFenceTriggerPrefix + "' AND t.tgtype & 66 = 0" +
 	" AND EXISTS (SELECT 1 FROM pg_catalog.pg_proc fp JOIN pg_catalog.pg_language fl ON fl.oid = fp.prolang" +
 	" WHERE fp.oid = t.tgfoid AND fp.proname = '" + SoleWriterGuardFunc + "' AND fp.pronargs = 0 AND fp.pronamespace = c.relnamespace" +
 	" AND fl.lanname = 'plpgsql' AND NOT fp.prosecdef AND fp.prosrc = '" + strings.ReplaceAll(SoleWriterGuardFuncBody, "'", "''") + "'), false)"
+
+// systemMetadataAllowedTriggerOK is true, over pg_trigger t on pg_class c
+// (system_metadata), for a trigger that table may carry: the retention-anchor
+// one, and with singleWriter (storage.database.single_writer) the fence's.
+// Never NULL.
+func systemMetadataAllowedTriggerOK(singleWriter bool) string {
+	if singleWriter {
+		return systemMetadataAnchorTriggerOK + " OR " + systemMetadataFenceTriggerOK
+	}
+	return systemMetadataAnchorTriggerOK
+}
 
 // systemMetadataWriteTargetSQL is the role-permission generation target's
 // write-target check (#3713): one (problem, version) row for system_metadata,
@@ -402,36 +417,42 @@ var systemMetadataFenceTriggerOK = "COALESCE(pg_catalog.left(t.tgname::text, " +
 // from the server's role turns every bump into a no-op (or an error), while
 // every trigger and function this file compares still reads as correct. So:
 // a plain table without inheritance children, no non-internal trigger but a
-// correct retention-anchor one or single_writer fence triggers, no rule,
-// relrowsecurity and relforcerowsecurity both false. version carries the xmin of its pg_class
-// row and of each trigger and rule row, so an object added and removed again
-// between two ticks still shows.
-var systemMetadataWriteTargetSQL = `SELECT pg_catalog.concat_ws('; ',
+// correct retention-anchor one (and, with singleWriter, single_writer fence
+// triggers), no rule, relrowsecurity and relforcerowsecurity both false.
+// version carries the xmin of its pg_class row and of each trigger and rule
+// row, so an object added and removed again between two ticks still shows.
+func systemMetadataWriteTargetSQL(singleWriter bool) string {
+	allowed := "the retention-anchor one"
+	if singleWriter {
+		allowed += " and the single_writer fence''s"
+	}
+	return `SELECT pg_catalog.concat_ws('; ',
     CASE WHEN c.relkind <> 'r' OR EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid) THEN 'system_metadata is not a plain table without inheritance children' END,
     CASE WHEN c.relrowsecurity OR c.relforcerowsecurity THEN 'system_metadata has row level security enabled' END,
     (SELECT 'system_metadata has rules (' || pg_catalog.string_agg(r.rulename::text, ', ' ORDER BY r.rulename) || ')' FROM pg_catalog.pg_rewrite r WHERE r.ev_class = c.oid AND r.rulename <> '_RETURN'),
-    (SELECT 'system_metadata has triggers other than the retention-anchor one and the single_writer fence''s (' || pg_catalog.string_agg(t.tgname::text, ', ' ORDER BY t.tgname) || ')'
-       FROM pg_catalog.pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal AND NOT (` + systemMetadataAnchorTriggerOK + ` OR ` + systemMetadataFenceTriggerOK + `))
+    (SELECT 'system_metadata has triggers other than ` + allowed + ` (' || pg_catalog.string_agg(t.tgname::text, ', ' ORDER BY t.tgname) || ')'
+       FROM pg_catalog.pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal AND NOT (` + systemMetadataAllowedTriggerOK(singleWriter) + `))
   ) AS problem,
   c.xmin::text
     || '|' || COALESCE((SELECT pg_catalog.string_agg(t.tgname::text || '@' || t.xmin::text, ',' ORDER BY t.tgname) FROM pg_catalog.pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal), '')
     || '|' || COALESCE((SELECT pg_catalog.string_agg(r.rulename::text || '@' || r.xmin::text, ',' ORDER BY r.rulename) FROM pg_catalog.pg_rewrite r WHERE r.ev_class = c.oid), '') AS version
 FROM pg_catalog.pg_class c WHERE c.oid = 'system_metadata'::pg_catalog.regclass`
+}
 
 // restoreSystemMetadataWriteTarget undoes, inside tx, what
 // systemMetadataWriteTargetSQL reports and this server can undo: it drops
 // every non-internal trigger on system_metadata but a correct retention-anchor
-// one and correct single_writer fence ones (re-creating the anchor trigger
-// when it was the one dropped; the fence re-installs its own at its next
-// start), drops
+// one and, with singleWriter, correct single_writer fence ones (re-creating
+// the anchor trigger when it was the one dropped; the fence re-installs its
+// own at its next start), drops
 // every rule and turns row level security off. A table that is not a plain
 // table is left to an operator: the re-read after the repair reports it again,
 // every tick. Nothing in Keyorix puts any of these on system_metadata, and
 // the repair's lock_timeout bounds the DROP's ACCESS EXCLUSIVE wait.
-func restoreSystemMetadataWriteTarget(tx *gorm.DB) error {
+func restoreSystemMetadataWriteTarget(tx *gorm.DB, singleWriter bool) error {
 	var triggers, rules []string
 	if err := tx.Raw(`SELECT t.tgname::text FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
-WHERE c.oid = 'system_metadata'::pg_catalog.regclass AND NOT t.tgisinternal AND NOT (` + systemMetadataAnchorTriggerOK + ` OR ` + systemMetadataFenceTriggerOK + `) ORDER BY 1`).Scan(&triggers).Error; err != nil {
+WHERE c.oid = 'system_metadata'::pg_catalog.regclass AND NOT t.tgisinternal AND NOT (` + systemMetadataAllowedTriggerOK(singleWriter) + `) ORDER BY 1`).Scan(&triggers).Error; err != nil {
 		return fmt.Errorf("read system_metadata triggers: %w", err)
 	}
 	if err := tx.Raw(`SELECT r.rulename::text FROM pg_catalog.pg_rewrite r
@@ -470,20 +491,28 @@ WHERE c.oid = 'system_metadata'::pg_catalog.regclass`).Scan(&rls).Error; err != 
 
 // rolePermGenerationDef is this release's role-permission generation
 // definition. Its version moves with any change to the body, the settings or
-// the trigger shape (#3717).
-var rolePermGenerationDef = newPGTriggerDef(&pgTriggerDef{
-	version:  1,
-	funcName: rolePermGenerationFunc,
-	body:     postgresRolePermGenerationFuncBody,
-	triggers: func() []triggerSpec {
-		var triggers []triggerSpec
-		for _, t := range rolePermGenerationTables {
-			triggers = append(triggers, triggerSpec{t.table, t.trigger})
-		}
-		return triggers
-	}(),
-	tgtype: 60, // pgRolePermGenerationTriggerDefOK
-}, pgRolePermGenerationTriggerDefOK, pgRolePermGenerationFuncOK, systemMetadataWriteTargetSQL)
+// the trigger shape (#3717). Its reading allows no single_writer fence
+// trigger on system_metadata; rolePermGenerationSingleWriterDef is the same
+// definition read in single_writer mode.
+var rolePermGenerationDef = newRolePermGenerationDef(false)
+
+var rolePermGenerationSingleWriterDef = newRolePermGenerationDef(true)
+
+func newRolePermGenerationDef(singleWriter bool) *pgTriggerDef {
+	return newPGTriggerDef(&pgTriggerDef{
+		version:  1,
+		funcName: rolePermGenerationFunc,
+		body:     postgresRolePermGenerationFuncBody,
+		triggers: func() []triggerSpec {
+			var triggers []triggerSpec
+			for _, t := range rolePermGenerationTables {
+				triggers = append(triggers, triggerSpec{t.table, t.trigger})
+			}
+			return triggers
+		}(),
+		tgtype: 60, // pgRolePermGenerationTriggerDefOK
+	}, pgRolePermGenerationTriggerDefOK, pgRolePermGenerationFuncOK, systemMetadataWriteTargetSQL(singleWriter))
+}
 
 // secretNodeCacheEpochDef is this release's secret_nodes cache-epoch
 // definition, versioned the same way (declared with its target, whose
@@ -545,21 +574,32 @@ func ensureTriggerDefMarker(tx *gorm.DB, d *pgTriggerDef) error {
 	return nil
 }
 
-var rolePermGenerationIntegrityTarget = &triggerIntegrityTarget{
-	what:  "role-permission generation",
-	cache: "permission cache",
-	def:   rolePermGenerationDef,
-	invalidate: func(ctx context.Context, tx *gorm.DB) error {
-		return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
-	},
-	repair: func(tx *gorm.DB, def *pgTriggerDef) error {
-		if err := restoreSystemMetadataWriteTarget(tx); err != nil {
-			return err
-		}
-		return installPostgresRolePermGenerationTriggers(tx, def)
-	},
-	tamper:   rolePermGenerationTamperTotal,
-	newerDef: rolePermGenerationNewerDefinitionTotal,
+// rolePermGenerationIntegrityTarget is the role-permission generation target
+// of a server without storage.database.single_writer;
+// rolePermGenerationSingleWriterIntegrityTarget, of one with it, also leaves
+// the fence's triggers on system_metadata alone.
+var (
+	rolePermGenerationIntegrityTarget             = newRolePermGenerationIntegrityTarget(rolePermGenerationDef, false)
+	rolePermGenerationSingleWriterIntegrityTarget = newRolePermGenerationIntegrityTarget(rolePermGenerationSingleWriterDef, true)
+)
+
+func newRolePermGenerationIntegrityTarget(def *pgTriggerDef, singleWriter bool) *triggerIntegrityTarget {
+	return &triggerIntegrityTarget{
+		what:  "role-permission generation",
+		cache: "permission cache",
+		def:   def,
+		invalidate: func(ctx context.Context, tx *gorm.DB) error {
+			return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
+		},
+		repair: func(tx *gorm.DB, def *pgTriggerDef) error {
+			if err := restoreSystemMetadataWriteTarget(tx, singleWriter); err != nil {
+				return err
+			}
+			return installPostgresRolePermGenerationTriggers(tx, def)
+		},
+		tamper:   rolePermGenerationTamperTotal,
+		newerDef: rolePermGenerationNewerDefinitionTotal,
+	}
 }
 
 var secretNodeCacheEpochIntegrityTarget = &triggerIntegrityTarget{
@@ -948,9 +988,28 @@ func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, e
 	return flushed, nil
 }
 
+// SetSingleWriter records storage.database.single_writer, before
+// StartTriggerIntegrityCheck. It comes from the configuration, not from the
+// running fence (swstate), so the check never drops the fence's triggers in
+// the window between InstallFence and the guard's Run.
+func (ls *LocalStorage) SetSingleWriter(on bool) {
+	ls.singleWriter = on
+}
+
+// rolePermGenerationTarget is the role-permission generation target for
+// this store's mode.
+func (ls *LocalStorage) rolePermGenerationTarget() *triggerIntegrityTarget {
+	if ls.singleWriter {
+		return rolePermGenerationSingleWriterIntegrityTarget
+	}
+	return rolePermGenerationIntegrityTarget
+}
+
 // StartTriggerIntegrityCheck runs the check of every target whose tables
 // exist every rolePermGenerationIntegrityInterval in the background, the
-// first one now. PostgreSQL only (a no-op on SQLite); Close stops it. A
+// first one now. In single_writer mode (SetSingleWriter) the role-permission
+// target leaves the fence's triggers on system_metadata alone; without it
+// they are foreign. PostgreSQL only (a no-op on SQLite); Close stops it. A
 // failed check is logged and retried at the next tick, never fatal: the
 // per-statement proofs still fail closed for a missing or disabled trigger
 // in the meantime.
@@ -960,7 +1019,7 @@ func (ls *LocalStorage) StartTriggerIntegrityCheck(logf func(string, ...any)) {
 	}
 	var checkers []*triggerIntegrityChecker
 	if storeTableExists(ls.db, "role_permissions") && storeTableExists(ls.db, "permissions") && storeTableExists(ls.db, "system_metadata") {
-		checkers = append(checkers, &triggerIntegrityChecker{ls: ls, logf: logf, target: rolePermGenerationIntegrityTarget})
+		checkers = append(checkers, &triggerIntegrityChecker{ls: ls, logf: logf, target: ls.rolePermGenerationTarget()})
 	}
 	if secretNodesTableExists(ls.db) {
 		checkers = append(checkers, &triggerIntegrityChecker{ls: ls, logf: logf, target: secretNodeCacheEpochIntegrityTarget})
