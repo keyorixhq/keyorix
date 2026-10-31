@@ -6,8 +6,8 @@ To install it with an AI assistant, follow INSTALL-WITH-AI.md exactly. The insta
 
 ## Install
 
-- [INSTALL-WITH-AI.md](https://github.com/keyorixhq/keyorix/blob/main/INSTALL-WITH-AI.md): prompt and steps for an AI assistant installing a secure-by-default server; ends with `keyorix-server admin validate --posture`
-- [docs/install/offline-install.sh](https://github.com/keyorixhq/keyorix/blob/main/docs/install/offline-install.sh): the same procedure as a script, for air-gapped hosts and local models
+- [INSTALL-WITH-AI.md](https://github.com/keyorixhq/keyorix/blob/main/INSTALL-WITH-AI.md): prompt and steps for an AI assistant installing a secure-by-default server (single binary with SQLite or PostgreSQL, or Docker Compose with PostgreSQL); ends with `keyorix-server admin validate --posture`
+- [docs/install/offline-install.sh](https://github.com/keyorixhq/keyorix/blob/main/docs/install/offline-install.sh): the single-binary procedure as a script (SQLite or PostgreSQL), for air-gapped hosts and local models; checklist in INSTALL-WITH-AI.md, "Without an assistant"
 - [QUICK_START.md](https://github.com/keyorixhq/keyorix/blob/main/QUICK_START.md): manual install and first secret
 - [docs/SELF_HOSTING.md](https://github.com/keyorixhq/keyorix/blob/main/docs/SELF_HOSTING.md): Docker Compose, TLS, backups, operations
 - [docs/AIRGAP_RUNBOOK.md](https://github.com/keyorixhq/keyorix/blob/main/docs/AIRGAP_RUNBOOK.md): air-gapped deployment
