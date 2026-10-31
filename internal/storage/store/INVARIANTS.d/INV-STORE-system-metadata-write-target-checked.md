@@ -4,11 +4,15 @@
   plain table without inheritance children, with no non-internal trigger except the
   retention-anchor trigger exactly as `EnsureAuditRetentionAnchorTrigger` creates it
   (`systemMetadataAnchorTriggerOK`: BEFORE UPDATE FOR EACH ROW, its function, and its
-  `WHEN (key = 'audit_retention_anchor')` clause) and the single_writer fence's AFTER triggers
+  `WHEN (key = 'audit_retention_anchor')` clause) and, only in single_writer mode
+  (`LocalStorage.SetSingleWriter` from `storage.database.single_writer`, so
+  `rolePermGenerationSingleWriterIntegrityTarget`), the fence's AFTER triggers
   (`systemMetadataFenceTriggerOK`: `SoleWriterFenceTriggerPrefix`, executing
   `SoleWriterGuardFunc` with exactly `SoleWriterGuardFuncBody`, a copy of `internal/solewriter`'s
-  that `TestFenceGuard_MatchesTheStore` keeps in step), no rule, and `relrowsecurity` and
-  `relforcerowsecurity` false. The xmin of its `pg_class` row and of each trigger and rule row is
+  that `TestFenceGuard_MatchesTheStore` keeps in step). What the guard calls and its settings are
+  checked by the fence's own census, which runs only in that mode; outside it a fence-named trigger
+  is foreign (PR #3841 review F1: a planted callee pinned the generation row back). It must have
+  no rule, and `relrowsecurity` and `relforcerowsecurity` must be false. The xmin of its `pg_class` row and of each trigger and rule row is
   part of the fingerprint. On a violation the check logs `SECURITY:`, counts `reason="tamper"`, and
   the repair (`restoreSystemMetadataWriteTarget`, in the repair transaction under its
   `lock_timeout`) drops the foreign triggers and rules, re-creates the anchor trigger if it dropped
@@ -26,5 +30,8 @@
   `_SystemMetadataForcedRowSecurityIsTurnedOffAndFlushed_Postgres`,
   `_SystemMetadataAnchorTriggerWithoutItsWhenIsRestored_Postgres` (all red on the base by
   behaviour), `_SystemMetadataUpkeepDoesNotFlush_Postgres`,
-  `_SystemMetadataFenceTriggerIsLeftAlone_Postgres`; `TestFenceGuard_MatchesTheStore`
-  (internal/solewriter, default CI).
+  `_SystemMetadataFenceTriggerIsLeftAlone_Postgres`,
+  `_SystemMetadataFenceShapedTriggerOutsideSingleWriterIsRemovedAndFlushed_Postgres`,
+  `_SystemMetadataFenceShapedTriggerOutsideSingleWriterSeenAtBoot_Postgres` (both red on the PR's
+  first head by behaviour); `TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode`
+  (default CI); `TestFenceGuard_MatchesTheStore` (internal/solewriter, default CI).

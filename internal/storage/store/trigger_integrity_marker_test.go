@@ -44,6 +44,19 @@ func TestTriggerDefMarker_TestReleaseLiterals(t *testing.T) {
 	}
 }
 
+// TestTriggerDefMarker_ThisReleaseLiterals pins this release's own markers by
+// literal, so a change to a body, its settings or a trigger's shape without a
+// version bump fails here. Two releases at one version with different
+// definitions would each restore its own over the other's (#3717). On a
+// failure, bump the def's version and then update the literal; never update
+// only the literal.
+func TestTriggerDefMarker_ThisReleaseLiterals(t *testing.T) {
+	require.Equal(t, "keyorix-trigger-def keyorix_bump_role_permissions_generation v1 sha256:9aea9a29c5654b35953ed726ad7d659e9ba2c03aab91b17de9bc5e77158683b7",
+		rolePermGenerationDef.marker())
+	require.Equal(t, "keyorix-trigger-def keyorix_secret_nodes_bump_cache_epoch v1 sha256:2b68c58c2646b8298eab807c8a4f6a0391c0ef25f95042d23284e46cbab1d73e",
+		secretNodeCacheEpochDef.marker())
+}
+
 func TestTriggerDefMarker_NewerThan(t *testing.T) {
 	n := rolePermGenerationDef // v1
 	next := *n
@@ -92,4 +105,21 @@ func TestTriggerDefMarker_NewerThan(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode: the
+// single_writer fence's triggers on system_metadata are allowed by the check
+// and its repair only in single_writer mode (PR #3841 review F1), and that
+// mode comes from SetSingleWriter.
+func TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode(t *testing.T) {
+	ls := &LocalStorage{}
+	require.Same(t, rolePermGenerationIntegrityTarget, ls.rolePermGenerationTarget())
+	require.NotContains(t, rolePermGenerationIntegrityTarget.def.sql, SoleWriterGuardFunc)
+	require.NotContains(t, systemMetadataAllowedTriggerOK(false), SoleWriterGuardFunc)
+	ls.SetSingleWriter(true)
+	require.Same(t, rolePermGenerationSingleWriterIntegrityTarget, ls.rolePermGenerationTarget())
+	require.Contains(t, rolePermGenerationSingleWriterIntegrityTarget.def.sql, SoleWriterGuardFunc)
+	require.Contains(t, systemMetadataAllowedTriggerOK(true), SoleWriterGuardFunc)
+	// Both read the same definition: only the write-target check differs.
+	require.Equal(t, rolePermGenerationDef.marker(), rolePermGenerationSingleWriterIntegrityTarget.def.marker())
 }
