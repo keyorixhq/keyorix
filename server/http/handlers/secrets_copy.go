@@ -56,8 +56,10 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := core.Scope{ProjectID: source.ProjectID, EnvironmentID: reqBody.EnvironmentID}
-	if allowed, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope); aerr != nil || !allowed {
+	allowed, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope)
+	if refuseUnlessAuthorized(w, r, allowed, aerr, func() {
 		h.sendError(w, "Forbidden", "Insufficient permissions for the target environment", http.StatusForbidden, nil)
+	}) {
 		return
 	}
 

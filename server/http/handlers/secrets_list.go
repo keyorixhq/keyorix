@@ -170,8 +170,9 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 		allowed, aerr := h.coreService.AuthorizePrincipal(
 			r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead, scope,
 		)
-		if aerr != nil || !allowed {
+		if refuseUnlessAuthorized(w, r, allowed, aerr, func() {
 			h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+		}) {
 			return
 		}
 		// A machine owns no secrets and has none shared with it (ADR-030), and
