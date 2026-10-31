@@ -1821,17 +1821,14 @@ type RecoveryKeyRecord struct {
 // sets every other field but not CreatedAt) — it's GORM's own auto-populated
 // timestamp column. Empirically verified (G81 bug-class sweep) that BeforeSave
 // fires BEFORE GORM's auto-CreatedAt assignment: a hook here would see and
-// normalize a zero time.Time, then GORM's own NowFunc (default time.Now, local)
-// overwrites it moments later, unaffected by the hook — the exact same silent
-// no-op shape as User.LastLoginAt's UpdateColumn bypass, just via a different
-// mechanism (GORM callback ordering instead of a hook-skipping write path).
-// Currently latent regardless: the write (GORM's local NowFunc) and the one
-// read bound (local_stats.go, bare time.Now()) are both consistently local
-// today. Fixing this properly would require either converting CreatedAt to an
-// explicit Go-side assignment first (so a hook has something to normalize) or
-// configuring the *gorm.DB connection's NowFunc to return UTC globally —
-// deliberately not done here since neither is a per-model BeforeSave hook, and
-// the field is only latent, not live.
+// normalize a zero time.Time, then GORM's own NowFunc overwrites it moments
+// later, unaffected by the hook — the exact same silent no-op shape as
+// User.LastLoginAt's UpdateColumn bypass, just via a different mechanism (GORM
+// callback ordering instead of a hook-skipping write path). The column is UTC
+// anyway because the *gorm.DB connection's NowFunc returns UTC
+// (internal/storage/factory.go gormConfig, SQLITE-UTC-NOWFUNC-1), and the one
+// read bound (local_stats.go, GetPreviousStatsSnapshot) is time.Now().UTC() to
+// match. A new read bound on this column must be UTC too.
 type StatsSnapshot struct {
 	ID                  uint `gorm:"primaryKey;autoIncrement"`
 	UserID              uint `gorm:"index"`
@@ -2143,8 +2140,14 @@ type MachineIdentity struct {
 // c.now(), consistently, today). LastSeenAt has no write path anywhere in this
 // codebase today (always NULL in practice), so it carries no live hazard to
 // fix.
+//
+// UpdatedAt is normalised too: core assigns it explicitly from c.now() (host
+// zone), so GORM's NowFunc never stamps it for these writes and, with
+// CreatedAt alone converted, a non-UTC host stored updated_at with its zone
+// offset (SQLITE-UTC-NOWFUNC-1).
 func (m *MachineIdentity) BeforeSave(_ *gorm.DB) error {
 	m.CreatedAt = m.CreatedAt.UTC()
+	m.UpdatedAt = m.UpdatedAt.UTC()
 	return nil
 }
 

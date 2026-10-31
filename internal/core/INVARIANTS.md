@@ -419,10 +419,17 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated);
   share revoke (#2648, the revoke side): `guards/share_revoke_column_scoped_guard_test.go:TestRevokeShare_IsColumnScoped`
   — `RevokeShare`, `RemoveSelfFromShare`, `DeleteShareRecord` and `DeleteExpiredShareRecords` stay
-  conditional soft deletes and never persist a pre-read share. **Open, not guarded**:
-  `createShareRecordTx` (`internal/storage/store/local_sharing.go`) still `Save`s an existing share
-  on the re-share path and in its unique-violation fallback, the same resurrection primitive on the
-  create side; owned by SHARE-CAS-1;
+  conditional soft deletes and never persist a pre-read share;
+  share re-share/create race (#2801/#2802, fixed by LEASE-SHARE-RACE-1): `createShareRecordTx`'s
+  re-share path and its unique-violation fallback both write through ONE helper
+  (`reshareOntoLiveRow` -> `applyShareRequest`: permission, expires_at, updated_at, WHERE id AND
+  deleted_at IS NULL) that re-runs the lookup once on a miss and otherwise fails closed with
+  `ErrShareNotFound`, never creating a fresh row:
+  `guards/share_create_column_scoped_guard_test.go:TestCreateShareRecord_IsColumnScoped` +
+  `internal/storage/store/local_sharing_create_race_test.go` (SQLite, and Postgres with a second
+  connection when `KEYORIX_TEST_PG_DSN` is set). Not covered: on SQLite the race cannot occur
+  (writers serialize), so the SQLite run lands the revoke in the same transaction and proves the
+  write's behaviour, not the interleaving;
   secret auto-rotate config (#2650, fixed):
   `guards/secret_autorotate_column_scoped_guard_test.go:TestSetSecretAutoRotate_IsColumnScoped` +
   `TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres` (pg-gated); secret

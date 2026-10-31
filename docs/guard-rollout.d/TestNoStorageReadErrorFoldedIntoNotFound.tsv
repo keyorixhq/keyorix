@@ -1,1 +1,0 @@
-TestNoStorageReadErrorFoldedIntoNotFound	internal/core/guards	#3861	new repo-wide guard (STORAGE-ERR-CLASS-1), report-only until its first green nightly on main

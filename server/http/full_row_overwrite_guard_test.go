@@ -103,11 +103,13 @@ var fullRowOverwriteMethods = map[string]bool{
 	// UPDATEs). Same reasoning; their replacements take scalars and pointers,
 	// not a caller-built *models.X, so there is no unfetched-struct shape here
 	// either.
-	"UpdateRole":                 true,
-	"UpdateBreakGlassActivation": true,
-	"UpdateWebAuthnCredential":   true,
-	"UpdateSecretTemplate":       true,
-	"UpdateRotationPolicy":       true,
+	"UpdateRole":               true,
+	"UpdateWebAuthnCredential": true,
+	"UpdateSecretTemplate":     true,
+	"UpdateRotationPolicy":     true,
+	// UpdateBreakGlassActivation was here until STORE-DEAD-PRIMITIVES-1 deleted
+	// it: no caller was left after #3109 moved the grant into the activation's
+	// own transaction.
 	// UpdateRotationPolicy, UpdateSecretTemplate and UpdateWebAuthnCredential
 	// went the same way in #2700, replaced by column-scoped,
 	// RowsAffected-checked writers (UpdateRotationPolicyFields,
@@ -118,9 +120,11 @@ var fullRowOverwriteMethods = map[string]bool{
 	"UpdateProject":             true,
 	"UpdateLegalHold":           true,
 	"UpdateDynamicSecretConfig": true,
-	"UpdateDynamicSecretLease":  true,
-	"UpdateUser":                true,
-	"SaveAnomalyConfig":         true,
+	// UpdateDynamicSecretLease was here until STORE-STALE-WRITE-1 deleted it:
+	// no caller was left after #2825 moved renew/revoke onto column-scoped writes.
+	// UpdateUser (the full-row storage primitive) was here until
+	// STORE-DEAD-PRIMITIVES-1 deleted it: it had no caller left.
+	"SaveAnomalyConfig": true,
 	// UpdateSecret was here until #2695 replaced it with UpdateSecretFields (a
 	// per-field-pointer conditional UPDATE); TransitionSecretStatus was in the
 	// Select("*") group above until the same PR whitelisted it to Status and

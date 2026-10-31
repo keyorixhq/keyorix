@@ -20,9 +20,11 @@ type rung struct {
 var ladder = []rung{
 	{"Secure Boot enabled", []string{CheckSecureBoot}},
 	{"kernel lockdown integrity or confidentiality", []string{CheckLockdown}},
-	{"running binary identity (fs-verity, or a matching release manifest)", []string{CheckFSVerity, CheckManifest}},
+	// The release manifest is deliberately not a rung: its signature is never
+	// verified in-process, so a match is not binary identity.
+	{"running binary identity (fs-verity enabled)", []string{CheckFSVerity}},
 	{"IMA appraise policy loaded", []string{CheckIMA}},
-	{"KEK sealed to a TPM", []string{CheckTPMSealing}},
+	{"KEK sealed to a TPM (no weaker fallback configured)", []string{CheckTPMSealing}},
 	{"Keylime agent present", []string{CheckKeylime}},
 }
 

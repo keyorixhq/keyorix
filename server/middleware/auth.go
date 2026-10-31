@@ -783,6 +783,10 @@ func extractRequestToken(r *http.Request) (string, error) {
 var (
 	errInvalidTarget  = errors.New("invalid target")
 	errTargetNotFound = errors.New("target not found")
+	// errTargetReadFault: the resolver's read of the target FAILED (as opposed to
+	// finding no such row). It wraps core.ErrStorageReadUnavailable and says nothing
+	// about whether the target exists (STORAGE-ERR-CLASS-2).
+	errTargetReadFault = errors.New("target read failed")
 )
 
 // ScopeResolver derives the project/environment a request acts on. It may load
@@ -1127,6 +1131,23 @@ func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core
 	// A resolver that failed because storage is down says nothing about the target
 	// (INV-MW-authorize-lookup-error-is-503): retry, not 400/403/404.
 	if authorizeLookupUnavailable(w, r, err) {
+		return
+	}
+	if errors.Is(err, errTargetReadFault) {
+		// The target read failed, so the target's existence is unknown to everyone.
+		// A caller who holds the permission globally is told to retry (503); anyone
+		// else keeps the 403 they get for an absent target, so a fault adds no
+		// existence signal for them. The audit row records the truth either way.
+		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedInternalError)
+		held, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+		if aerr != nil && authorizeLookupUnavailable(w, r, aerr) {
+			return
+		}
+		if aerr == nil && held {
+			storageUnavailableResponse(w, err)
+		} else {
+			forbiddenResponse(w, denyMessage)
+		}
 		return
 	}
 	if errors.Is(err, errTargetNotFound) {
@@ -1524,6 +1545,10 @@ func ScopeFromDynamicSecretLeaseParam(param string) ScopeResolver {
 		}
 		lease, err := cs.GetDynamicSecretLease(r.Context(), leaseID)
 		if err != nil {
+			// A read FAULT is not "no such lease": the credential may still be live.
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}, nil
@@ -1918,6 +1943,19 @@ func tooManyRequestsResponse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": "RateLimited", "message": message, "code": http.StatusTooManyRequests,
+	})
+}
+
+// storageUnavailableResponse is the middleware twin of the handlers package's
+// sendStorageUnavailable (same code, text and Retry-After): the answer to a request
+// whose storage READ failed. The wrapped cause goes to the server log, never the body.
+func storageUnavailableResponse(w http.ResponseWriter, err error) {
+	log.Printf("operation refused, storage read failed (HTTP 503): %s", core.StorageReadFaultDetail(err))
+	w.Header().Set(hdrContentType, mimeJSON)
+	w.Header().Set("Retry-After", "5")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": "storage_unavailable", "message": core.StorageReadUnavailableMessage, "code": http.StatusServiceUnavailable,
 	})
 }
 

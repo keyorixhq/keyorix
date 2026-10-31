@@ -1,0 +1,2 @@
+### Documentation
+- **The "migrate off Vault" demo works again** (#3638). `demo/vault-migration/run.sh` ran `keyorix secret import --source vault`, which the CLI no longer has; it now runs `keyorix-migrate vault --apply` with both tokens passed through files, and stops with a clear message when `keyorix-migrate` is not installed. The demo README and `docs/specs/vault-migration-fidelity.md` point to `docs/migrate-from-vault.md`, which now notes that `--force` needs `--apply`.

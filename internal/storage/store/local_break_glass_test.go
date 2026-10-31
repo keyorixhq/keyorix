@@ -62,8 +62,7 @@ func TestCreateBreakGlassActivation_AllowsReactivationAfterPriorIsInactive(t *te
 	})
 	require.NoError(t, err)
 
-	first.State = "revoked"
-	require.NoError(t, ls.UpdateBreakGlassActivation(ctx, first))
+	require.NoError(t, ls.db.Model(&models.BreakGlassActivation{}).Where("id = ?", first.ID).Update("state", "revoked").Error)
 
 	second, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
 		ProjectID: 2, UserID: 10, RoleID: 3, RoleName: "editor", State: "active",

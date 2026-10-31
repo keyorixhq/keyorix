@@ -56,6 +56,11 @@ var fipsSelfTestPaths = []fipsSelfTestPath{
 	{"backup-manifest key derivation and signature (HKDF-SHA256 + HMAC-SHA256)", selfTestKEKDerivedMAC(auditverify.DeriveBackupManifestKey)},
 }
 
+// fipsSelfTestEnforced is fips140.Enforced, a variable so a default-mode test
+// can drive the boot refusal (no CI job runs GODEBUG=fips140=only); production
+// code never changes it.
+var fipsSelfTestEnforced = fips140.Enforced
+
 var (
 	fipsSelfTestMu     sync.Mutex
 	fipsSelfTestRan    bool
@@ -69,7 +74,7 @@ var (
 // returns nil: there is no self-test cost outside that mode. The result is
 // remembered for FIPSSelfTestPostureLine.
 func RunFIPSSelfTest() error {
-	if !fips140.Enforced() {
+	if !fipsSelfTestEnforced() {
 		return nil
 	}
 	err := runFIPSSelfTestPaths(fipsSelfTestPaths)
@@ -95,7 +100,7 @@ func BootFIPSSelfTest() error {
 // than implying it passed. It reports the runtime mode only, never a
 // validation or compliance claim (see FIPS140ModeLine).
 func FIPSSelfTestPostureLine() string {
-	if !fips140.Enforced() {
+	if !fipsSelfTestEnforced() {
 		return "fips140 enforced: no (self-test not run)"
 	}
 	fipsSelfTestMu.Lock()

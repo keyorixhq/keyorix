@@ -47,6 +47,12 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 	// checked. verifyMFAStepUpCode used to collapse both cases into a single
 	// bool, which is exactly the bug #2548 fixed for the login path but never
 	// reached here — this is that same sibling, found during the FIX-1 sweep.
+	if isTOTPShaped(code) && totpFIPSEnforced() {
+		// Pre-verdict, like a storage fault before any code was looked at:
+		// not counted, the handler hands the slot back.
+		c.auditTOTPUnavailable(ctx, userID, "stepup")
+		return totpUnavailablePreVerdict()
+	}
 	verified, storageErr := c.verifyMFAStepUpCode(ctx, userID, code)
 	if !verified {
 		if storageErr != nil {
