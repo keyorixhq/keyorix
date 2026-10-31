@@ -9,7 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// HELM-PILOT-TAILS-2: render matrix. The chart must render, pass kubeconform and keep
+// HELM-PILOT-TAILS-2: render matrix. The chart must render, pass kubeconform (when it is
+// on PATH and can fetch schemas; otherwise that subtest is SKIPPED, see kubeconformCheck) and keep
 // every credential out of a ConfigMap for the topologies operators actually run
 // (1 and 2 replicas, bundled and external database, keys PVC and keys Secret, with
 // the NetworkPolicy, Ingress, secure baseline and an existing auth Secret), and refuse
@@ -65,14 +66,19 @@ func decodeAll(t *testing.T, manifest string) []map[string]any {
 	return docs
 }
 
-// kubeconformCheck validates the manifest the way CI does. It skips (not passes) when
-// the tool is absent or cannot fetch the schemas, so an offline run says what it did not check.
+// kubeconformCheck runs kubeconform (-strict, Kubernetes 1.29.0) over the manifest. It
+// skips (not passes) when the binary is not on PATH or cannot fetch the schemas, so a run
+// without it reports SKIP instead of a green test that validated nothing. Call it from its
+// own subtest: the skip then marks only the schema check, not the render assertions.
+//
+// This is NOT the CI chart job's kubeconform: that job installs ./kubeconform in the
+// workspace and validates its own renders, and it is not on PATH for the Go test jobs, so
+// the Go test-suite normally skips this check.
 func kubeconformCheck(t *testing.T, manifest string) {
 	t.Helper()
 	bin, err := exec.LookPath("kubeconform")
 	if err != nil {
-		t.Log("kubeconform not installed: schema validation not run (CI runs it)")
-		return
+		t.Skip("kubeconform not installed: schema validation not run")
 	}
 	cmd := exec.Command(bin, "-strict", "-summary", "-kubernetes-version", "1.29.0") //nolint:gosec // resolved binary, fixed flags
 	cmd.Stdin = strings.NewReader(manifest)
@@ -80,8 +86,7 @@ func kubeconformCheck(t *testing.T, manifest string) {
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
 		if strings.Contains(out.String(), "could not find schema") || strings.Contains(out.String(), "failed downloading") {
-			t.Logf("kubeconform could not fetch schemas (offline): %s", strings.TrimSpace(out.String()))
-			return
+			t.Skipf("kubeconform could not fetch schemas (offline), schema validation not run: %s", strings.TrimSpace(out.String()))
 		}
 		t.Errorf("kubeconform: %v\n%s", err, out.String())
 	}
@@ -143,7 +148,7 @@ func TestHelmRenderMatrix(t *testing.T) {
 					}
 				}
 			}
-			kubeconformCheck(t, out)
+			t.Run("kubeconform", func(t *testing.T) { kubeconformCheck(t, out) })
 		})
 	}
 }
