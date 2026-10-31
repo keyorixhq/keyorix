@@ -133,7 +133,7 @@ func requireUnavailable(t *testing.T, rec *httptest.ResponseRecorder) {
 	t.Helper()
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "a lookup outage is 503, not 403")
 	assert.NotEmpty(t, rec.Header().Get("Retry-After"), "503 must tell the client when to retry")
-	assert.Contains(t, rec.Body.String(), authorizeLookupUnavailableMessage)
+	assert.Contains(t, rec.Body.String(), "authorization temporarily unavailable, please retry")
 	assert.NotContains(t, rec.Body.String(), "refused", "no storage error text reaches the client")
 }
 

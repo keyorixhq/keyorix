@@ -87,7 +87,7 @@ func requireUnavailable(t *testing.T, err error) {
 	t.Helper()
 	require.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err), "a lookup outage is Unavailable, not PermissionDenied: %v", err)
-	assert.Equal(t, authorizeUnavailableMessage, status.Convert(err).Message(), "fixed message, no storage error text")
+	assert.Equal(t, "authorization temporarily unavailable, please retry", status.Convert(err).Message(), "fixed message, no storage error text")
 }
 
 // TestSecretRPC_AuthorizeLookupFault_IsUnavailableThenRecovers covers the three
