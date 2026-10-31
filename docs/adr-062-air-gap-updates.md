@@ -14,8 +14,12 @@ there is no commercial entitlement mechanism (the product is AGPL-3.0). To answe
 air-gap prospect with "designed, ~4 weeks to ship," the architecture is decided now and
 built on first pull (roadmap P2 #15).
 
-Existing signing is **HMAC** (DEK-derived, symmetric) for evidence/audit integrity — the
-verifier holds the key. That model cannot work across an air gap, where the customer must
+Existing signing is **HMAC** (KEK-derived via HKDF-SHA256, symmetric) for evidence/audit
+integrity — the verifier holds the key. The audit-checkpoint signing key and the
+evidence-signing key are derived from the KEK, not the DEK, so a DEK rotation does not
+change them (`deriveAuditCheckpointKey` and `deriveEvidenceSignKey` in
+`internal/encryption/keymanager_lifecycle.go`; `TestAuditCheckpointKey_StableAcrossDEKRotation`
+in `internal/encryption/audit_checkpoint_key_test.go`). That model cannot work across an air gap, where the customer must
 verify *without* the signing secret.
 
 ## Decision
