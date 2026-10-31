@@ -58,6 +58,13 @@ func newSetupGateEnv(t *testing.T) *setupGateEnv {
 // newTestCoreWrapped).
 func newSetupGateEnvWrapped(t *testing.T, wrap func(storage.Storage) storage.Storage) *setupGateEnv {
 	t.Helper()
+	return newSetupGateEnvPolicy(t, wrap, true)
+}
+
+// newSetupGateEnvPolicy is newSetupGateEnvWrapped with security.require_mfa set
+// to requireMFA.
+func newSetupGateEnvPolicy(t *testing.T, wrap func(storage.Storage) storage.Storage, requireMFA bool) *setupGateEnv {
+	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
 	c := newTestCoreWrapped(t, wrap)
@@ -69,7 +76,7 @@ func newSetupGateEnvWrapped(t *testing.T, wrap func(storage.Storage) storage.Sto
 	createTestToken(t, c) // bootstrap testadmin + roles
 
 	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
-	cfg.Security.RequireMFA = true
+	cfg.Security.RequireMFA = requireMFA
 	router, err := NewRouter(cfg, c)
 	require.NoError(t, err)
 	srv := httptest.NewServer(router)

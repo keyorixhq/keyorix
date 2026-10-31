@@ -213,15 +213,23 @@ func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 		// LOWER on both sides: LIKE is case-insensitive (ASCII) on SQLite but
 		// case-sensitive on Postgres, so without it the same search returned
 		// different rows per backend.
-		cond := `user_id IN (SELECT id FROM users WHERE LOWER(username) LIKE LOWER(?) ESCAPE '\' AND deleted_at IS NULL)`
+		// A machine-identity row stores no user_id: its actor is
+		// machine_identity_id, named by machine_identities.name (the name the
+		// ACTOR column shows, storage.AuditActorName, #3150), so the term also
+		// matches that table (#3736). Machine identities have no soft-delete
+		// column; a revoked one keeps its name, as in the displayed actor.
+		cond := `(user_id IN (SELECT id FROM users WHERE LOWER(username) LIKE LOWER(?) ESCAPE '\' AND deleted_at IS NULL)` +
+			` OR machine_identity_id IN (SELECT id FROM machine_identities WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\'))`
 		if q.Dialector.Name() == "postgres" {
 			// Same set, but ARRAY(subquery) is evaluated once (an InitPlan): Postgres
 			// turns a plain IN (subquery) into a semi-join and then sorts the join
 			// output, losing the newest-first index walk (pinned by
 			// TestAuditListQueries_UseTheirIndexes_Postgres).
-			cond = `user_id = ANY(ARRAY(SELECT id FROM users WHERE LOWER(username) LIKE LOWER(?) ESCAPE '\' AND deleted_at IS NULL))`
+			cond = `(user_id = ANY(ARRAY(SELECT id FROM users WHERE LOWER(username) LIKE LOWER(?) ESCAPE '\' AND deleted_at IS NULL))` +
+				` OR machine_identity_id = ANY(ARRAY(SELECT id FROM machine_identities WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\')))`
 		}
-		args := []any{"%" + escapeLIKE(*f.ActorUsername) + "%"}
+		pattern := "%" + escapeLIKE(*f.ActorUsername) + "%"
+		args := []any{pattern, pattern}
 		// Rows of kind "system" are displayed with actor "system" (#2951), so a
 		// term that is part of "system" (ASCII case-insensitive, e.g. "sys") also
 		// finds exactly those rows: the same rule as actor_type=system

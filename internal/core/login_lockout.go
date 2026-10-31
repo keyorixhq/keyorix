@@ -443,8 +443,11 @@ func (c *KeyorixCore) RecordPostVerdictLoginFailure(ctx context.Context, user *m
 // nevertheless held, unaudited, and a 500 a wrong credential never gets. A clear
 // that does not happen leaves the counter where the credential check found it,
 // the strict side. Recovering here rather than at each call site keeps every
-// future caller covered.
+// future caller covered. The top-level defer covers the whole body (the budget
+// fallback clear too), which is what makes the best-effort call-site guard
+// treat this function as self-recovering, so its callers need no allow rows.
 func (c *KeyorixCore) clearLoginFailures(ctx context.Context, user *models.User) {
+	defer besteffort.RunRecover("login.clearLoginFailures")()
 	c.budgetFallbackClear(c.accountBudget(), accountBudgetKey(user.ID))
 	if user.FailedLoginAttempts == 0 && user.LoginLockedUntil == nil && user.LoginLockoutCount == 0 {
 		return

@@ -420,6 +420,9 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 			if errors.Is(err, storage.ErrDuplicateEmail) {
 				return fmt.Errorf("failed to create admin user: %w: user with email already exists", ErrUserAlreadyExists)
 			}
+			if errors.Is(err, storage.ErrDuplicateUsername) {
+				return fmt.Errorf("failed to create admin user: %w: username already exists", ErrUserAlreadyExists)
+			}
 			return fmt.Errorf("failed to create admin user: %w", err)
 		}
 

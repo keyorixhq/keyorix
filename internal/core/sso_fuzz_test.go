@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
@@ -94,8 +95,13 @@ func FuzzVerifyIDToken(f *testing.F) {
 	// HMAC alg confusion — must be rejected (asymmetric only).
 	hmacTok := jwt.NewWithClaims(jwt.SigningMethodHS256, base())
 	hmacTok.Header["kid"] = "kid-1"
-	if hs, herr := hmacTok.SignedString([]byte("secret")); herr == nil {
-		f.Add(hs)
+	// Not seeded under fips140=only: crypto/hmac panics on the 6-byte fixture
+	// secret there (112-bit minimum). The verifier's method allowlist rejects
+	// HS256 before any HMAC, so the seed tests nothing FIPS-specific.
+	if !fips140.Enforced() {
+		if hs, herr := hmacTok.SignedString([]byte("secret")); herr == nil {
+			f.Add(hs)
+		}
 	}
 	// alg:none — must be rejected.
 	noneTok := jwt.NewWithClaims(jwt.SigningMethodNone, base())

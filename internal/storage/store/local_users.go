@@ -227,6 +227,12 @@ func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*mod
 			// "email already in use" error instead of a raw constraint-violation message.
 			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
 		}
+		if isDuplicateUsernameViolation(err) {
+			// Same race on the username index: a concurrent rename (or create) to the
+			// identical folded username committed first. The error is non-nil, so any
+			// enclosing transaction rolls back.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateUsername, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return user, nil
@@ -277,6 +283,10 @@ func (ls *LocalStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user
 			// update already committed the identical (case-insensitive) email to a
 			// different user before this write landed.
 			return false, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, res.Error)
+		}
+		if isDuplicateUsernameViolation(res.Error) {
+			// Username twin of the email translation above.
+			return false, fmt.Errorf("%w: %v", storage.ErrDuplicateUsername, res.Error)
 		}
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
