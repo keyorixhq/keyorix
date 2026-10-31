@@ -176,6 +176,7 @@ func selfTestSecretAEAD() error {
 	if err != nil {
 		return err
 	}
+	defer wipeBytes(dek)
 	es, err := NewEncryptionService(dek)
 	if err != nil {
 		return err
@@ -230,9 +231,9 @@ func selfTestSecretAEAD() error {
 }
 
 func selfTestPassphraseKEK() error {
-	salt, err := selfTestRandomKey(32)
-	if err != nil {
-		return err
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("random salt: %w", err)
 	}
 	// One iteration: the self-test checks the primitive is accepted, not the
 	// work factor (DefaultKEKIterations would add about 100 ms to every boot).
