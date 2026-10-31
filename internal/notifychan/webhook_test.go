@@ -200,14 +200,14 @@ func TestWebhookSink_SignsPayloadWhenSecretSet(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	sink, err := NewWebhook(WebhookConfig{Endpoint: srv.URL, SigningSecret: "shh"})
+	sink, err := NewWebhook(WebhookConfig{Endpoint: srv.URL, SigningSecret: "shh-signing-key!"}) // >= 14 bytes, valid under fips140=only too
 	require.NoError(t, err)
 	sink.Deliver(core.NotificationEvent{UserID: 1, Type: "x"})
 	sink.Close()
 
 	mu.Lock()
 	defer mu.Unlock()
-	mac := hmac.New(sha256.New, []byte("shh"))
+	mac := hmac.New(sha256.New, []byte("shh-signing-key!"))
 	mac.Write(body)
 	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	assert.Equal(t, want, sig, "payload must be HMAC-signed so the receiver can verify it")

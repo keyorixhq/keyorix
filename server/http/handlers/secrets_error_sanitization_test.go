@@ -206,15 +206,16 @@ func TestCopyEnvironmentSecrets_StorageErrorSanitizedInResponseButLogged(t *test
 
 	logs := captureLog(t)
 
-	// A real storage failure in core.CopyEnvironmentSecrets' GetEnvironment
-	// lookup (the environments table is gone). It is wrapped as "Validation
-	// error: <driver error>" — capital-V "Validation" doesn't match the
-	// handler's lowercase "validation" substring check, so it falls to the
-	// default/else branch that must sanitize. (This used to drive the branch
-	// with a missing source environment; since AUTHZ-ORACLE-1 a missing
-	// environment answers the same 400 as one in another project, so it no
-	// longer reaches the storage-error branch.)
-	require.NoError(t, db.Migrator().DropTable(&models.Environment{}))
+	// A real storage failure in core.CopyEnvironmentSecrets that is NOT a classified
+	// environment-lookup fault: the secret listing of the source environment (the
+	// secret_nodes table is gone). It is wrapped as "Retrieval failed: <driver
+	// error>", matches none of the handler's 400 substrings, and so falls to the
+	// default/else branch that must sanitize. (This used to drive the branch with a
+	// missing source environment, then with a failed environment lookup; a missing
+	// environment answers the same 400 as one in another project since
+	// AUTHZ-ORACLE-1, and a failed lookup is now a 503 storage_unavailable
+	// (STORAGE-ERR-CLASS-2), so neither reaches the storage-error branch.)
+	require.NoError(t, db.Migrator().DropTable(&models.SecretNode{}))
 	_, _, rawErr := coreService.CopyEnvironmentSecrets(context.Background(), 1, 10, 11, "alice", 1, "", "")
 	require.Error(t, rawErr)
 	require.NotContains(t, rawErr.Error(), "must ")

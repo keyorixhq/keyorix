@@ -570,6 +570,13 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
+	// The old row's value is re-stored; convert it so a row written in another zone
+	// (before SQLITE-UTC-NOWFUNC-1) is not copied forward as it was read.
+	var absoluteExpiresAt *time.Time
+	if old.AbsoluteExpiresAt != nil {
+		u := old.AbsoluteExpiresAt.UTC()
+		absoluteExpiresAt = &u
+	}
 	session := &models.Session{
 		UserID:            old.UserID,
 		SessionToken:      newToken,
@@ -578,7 +585,7 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		IPAddress:         old.IPAddress,
 		LastSeenAt:        &now,
 		ExpiresAt:         &expiresAt,
-		AbsoluteExpiresAt: old.AbsoluteExpiresAt,
+		AbsoluteExpiresAt: absoluteExpiresAt,
 		// #3024: a setup-only session stays one through every rotation, or a refresh
 		// would launder it into a full session. A session whose account has since come
 		// to owe both setup steps (e.g. an admin forced a reset on a factor-less user

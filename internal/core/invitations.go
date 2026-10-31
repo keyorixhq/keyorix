@@ -1009,7 +1009,8 @@ func (c *KeyorixCore) approveAccessRequestWithExpiryLocked(ctx context.Context, 
 	// approval still makes sense. GetProject's default soft-delete scope makes this check
 	// double as the soft-delete check.
 	if _, err := c.storage.GetProject(ctx, req.ProjectID); err != nil {
-		return nil, fmt.Errorf("cannot approve: project %d no longer exists", req.ProjectID)
+		// A read FAULT is a retry answer, not "the project is gone".
+		return nil, classifyReadError(err, fmt.Sprintf("cannot approve: project %d no longer exists", req.ProjectID))
 	}
 	// Enforce the request's own TTL here, not only on the list path. GetAccessRequest
 	// returns the stored record verbatim, so a request whose expiry has passed is still
@@ -1053,6 +1054,9 @@ func (c *KeyorixCore) approveAccessRequestWithExpiryLocked(ctx context.Context, 
 	}
 	roleModel, err := c.storage.GetRoleByName(ctx, role)
 	if err != nil {
+		if !isPositiveNotFound(err) {
+			return nil, classifyReadError(err, "") // a read FAULT is a retry answer, not "unknown role"
+		}
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
 	// Privilege ceiling: an approver may not grant a role unless they themselves

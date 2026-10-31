@@ -41,7 +41,9 @@ func TestDynamicSecretWrites_AreColumnScoped(t *testing.T) {
 // a #2651 call site. #2675 has since landed SetDynamicSecretConfigAdminDSN and
 // moved that write off UpdateDynamicSecretConfig, so the allowance below is now
 // empty — both full-row methods are production-callerless and can be deleted
-// in a follow-up.
+// in a follow-up. STORE-STALE-WRITE-1 deleted UpdateDynamicSecretLease (storage
+// interface, LocalStorage, mock, faultstorage); the sweep keeps its name so a
+// reintroduced method of that name with a caller is still red.
 //
 // So the property is enforced by derivation instead of by removal, which is the
 // stronger form anyway: a sweep over every non-test file under internal/core and

@@ -235,10 +235,6 @@ func (ls *LocalStorage) ListDynamicSecretLeases(ctx context.Context, configID ui
 	return ls2, nil
 }
 
-func (ls *LocalStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error {
-	return ls.db.WithContext(ctx).Save(l).Error
-}
-
 // CountActiveLeases returns the number of leases for a config that still hold a live
 // credential upstream — status "active" AND "revoke_failed" (#411: a revoke_failed
 // lease's earlier revoke attempt failed on the target, so its credential is still live,
