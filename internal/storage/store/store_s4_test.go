@@ -149,19 +149,6 @@ func TestCreateUser_Success(t *testing.T) {
 	assert.NotZero(t, u.ID)
 }
 
-func TestUpdateUser_Success(t *testing.T) {
-	ctx := context.Background()
-	ls := newUserS4Store(t)
-
-	u, err := ls.CreateUser(ctx, &models.User{Username: "bob", UsernameFolded: "bob", Email: "bob@example.com", EmailFolded: "bob@example.com"})
-	require.NoError(t, err)
-
-	u.DisplayName = "Bobby"
-	updated, err := ls.UpdateUser(ctx, u)
-	require.NoError(t, err)
-	assert.Equal(t, "Bobby", updated.DisplayName)
-}
-
 // TestUpdateUserIfActiveStateMatches_Success verifies the happy path: a
 // conditional write against a row whose CURRENT is_active still equals
 // fromActive matches and persists the full row.

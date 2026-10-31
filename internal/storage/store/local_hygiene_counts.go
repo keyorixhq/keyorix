@@ -46,10 +46,12 @@ func (ls *LocalStorage) ListHygieneTrendSnapshots(ctx context.Context, days int)
 // that have not been used since threshold (or never used).
 func (ls *LocalStorage) CountStalePATs(ctx context.Context, threshold time.Time) (int, error) {
 	// G81 (PersonalAccessToken.ExpiresAt): normalize the expires_at bound
-	// internally — see GetAuditLogs. last_used_at (threshold) is intentionally
-	// left as-is: its sole write path (TouchPersonalAccessToken) bypasses model
-	// hooks via UpdateColumn, so it's a separate, currently-latent hazard tracked
-	// in #1507, not fixed here.
+	// internally — see GetAuditLogs. #1507 (last_used_at): its sole write path,
+	// TouchPersonalAccessToken, stores UTC (SQLITE-UTC-NOWFUNC-1), so threshold
+	// is normalised to UTC here too. Core derives it from c.now() in the host
+	// zone, and on SQLite the comparison is on the stored text: a zoned bound
+	// against UTC text miscounts by the host's offset.
+	threshold = threshold.UTC()
 	var count int64
 	err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
 		Where("revoked = ? AND (expires_at IS NULL OR expires_at > ?) AND (last_used_at IS NULL OR last_used_at < ?)",
@@ -75,12 +77,11 @@ func (ls *LocalStorage) CountExpiredPATs(ctx context.Context) (int, error) {
 // LastUsedAt is NULL or before threshold.
 func (ls *LocalStorage) CountStaleMachineCredentials(ctx context.Context, threshold time.Time) (int, error) {
 	// #1507 (MachineIdentityCredential.LastUsedAt): last_used_at's sole write
-	// path (TouchMachineIdentityCredential) bypasses model hooks via
-	// UpdateColumn, so this range query is safe only as long as threshold and
-	// the write both keep coming from the same c.now() accessor — see
-	// TouchMachineIdentityCredential's own #1507 comment (local_machine_credentials.go)
-	// for the normalization point if that ever stops being true. Same shape as
-	// CountStalePATs's #1507 comment just below for PersonalAccessToken.LastUsedAt.
+	// path, TouchMachineIdentityCredential (local_machine_credentials.go),
+	// stores UTC (SQLITE-UTC-NOWFUNC-1), so threshold is normalised to UTC here
+	// too, as in CountStalePATs above: core derives it from c.now() in the host
+	// zone, and on SQLite the comparison is on the stored text.
+	threshold = threshold.UTC()
 	//
 	// Subquery: machine identity IDs that have at least one credential used
 	// since threshold (i.e. NOT stale).

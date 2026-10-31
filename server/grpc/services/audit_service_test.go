@@ -118,6 +118,15 @@ func TestAuditService_WriteAuditCheckpoint_RequiresEncryption(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
+// The checkpoint signing key is KEK-derived, so the error text must say KEK.
+func TestAuditService_WriteAuditCheckpoint_RequiresEncryption_NamesKEK(t *testing.T) {
+	svc := newAuditService(t)
+	_, err := svc.WriteAuditCheckpoint(auditCtx(), &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Contains(t, status.Convert(err).Message(), "the signing key is derived from the KEK")
+	assert.NotContains(t, status.Convert(err).Message(), "DEK")
+}
+
 // TestAuditService_WriteAuditCheckpoint_RequiresAuditReadAndSystemWrite is the
 // G16 regression test: the HTTP route stacks TWO permissions on POST
 // /audit/checkpoint — the /audit group's base audit.read plus a route-specific

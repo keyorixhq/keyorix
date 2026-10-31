@@ -1,7 +1,7 @@
 // audit_search.go — SearchAuditLogs HTTP handler.
 //
 // GET /api/v1/audit/search exposes the richer AuditSearchRequest filters
-// (actor username partial match, IP address, resource type, success flag,
+// (actor name partial match: user or machine identity, IP address, resource type, success flag,
 // RFC3339 time range, limit/offset) on top of the existing GET /audit/logs
 // endpoint. It shares the same audit.read permission gate.
 package handlers
@@ -140,7 +140,7 @@ func parseAuditSearchRequest(r *http.Request) (core.AuditSearchRequest, error) {
 //
 // Supported query parameters:
 //
-//	actor        — partial username match
+//	actor        — partial actor-name match (username or machine identity name, #3736)
 //	user_id      — exact numeric user ID
 //	project_id   — exact numeric project ID
 //	action       — exact event_type (e.g. secret.read)

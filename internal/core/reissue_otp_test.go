@@ -205,9 +205,10 @@ func TestReissueOneTimePassword_RefusesSSOOnlyUser(t *testing.T) {
 		Username: "sso-user", Email: "sso-user@example.com", DisplayName: "SSO", Password: reissueTargetOldPassword,
 	})
 	require.NoError(t, err)
-	sso.ExternalID = "sso:corp:corp|123" // JIT/SCIM-provisioned, provider-scoped
-	_, err = f.st.UpdateUser(ctx, sso)
+	// JIT/SCIM-provisioned, provider-scoped
+	claimed, err := f.st.ClaimUserExternalIDIfUnset(ctx, sso.ID, "sso:corp:corp|123", time.Now())
 	require.NoError(t, err)
+	require.True(t, claimed)
 	before := f.reload(t, sso.ID)
 
 	_, err = f.c.ReissueOneTimePassword(ctx, f.admin.ID, sso.ID)

@@ -379,6 +379,10 @@ func mapUserError(err error) error {
 	if aerr, ok := auditUnavailableStatus(err); ok {
 		return aerr
 	}
+	// STORAGE-ERR-CLASS-2: a failed parent read (role, project) is retryable, not InvalidArgument.
+	if serr, ok := storageUnavailableStatus(err); ok {
+		return serr
+	}
 	// S1 (CLI-split inventory #2012): checked via errors.Is, not the substring
 	// switch below, so the specific permission name requireEqualOrGreaterAdminAuthority
 	// wraps into the error text never reaches this function's substring matching

@@ -58,11 +58,10 @@ func TestDecrypt_PinnedEnvelopeWithoutMACStillDecrypts(t *testing.T) {
 // And the other side of the same boundary: one byte of MAC is enough to engage
 // the check, so a wrong MAC is refused.
 func TestDecrypt_PinnedEnvelopeWithWrongMACRefused(t *testing.T) {
-	skipUnderFIPS140Only(t, "the fixture wraps a short stand-in KEK ('kek'/'old-kek'); the envelope MAC keys HMAC-SHA256 with the unwrapped KEK, under the 112-bit minimum. Production KEKs are 32 bytes (see the FIPS observations note for the unvalidated-length case)")
 	fk := &fakeKeys{currentVersion: "v1"}
 	c := newTestClient(fk, "")
 
-	wrapped, err := json.Marshal(fakeWrapped{Version: "v1", Plaintext: []byte("kek")})
+	wrapped, err := json.Marshal(fakeWrapped{Version: "v1", Plaintext: []byte(testKEK32)})
 	require.NoError(t, err)
 	body, err := json.Marshal(envelope{Version: "v1", Ciphertext: wrapped, MAC: []byte{0x00}})
 	require.NoError(t, err)

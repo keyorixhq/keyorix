@@ -108,6 +108,10 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 	// codebase treats other capabilities that need encryption (audit-checkpoint
 	// signing, evidence signing): "unavailable" when encryption is off, not
 	// silently weaker.
+	// A TOTP secret that can never be verified in this mode must not be issued.
+	if err := totpUnavailable(); err != nil {
+		return "", "", err
+	}
 	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
 		return "", "", fmt.Errorf("MFA enrolment requires at-rest encryption to be enabled (the TOTP secret must not be stored in plaintext); ask an administrator to enable encryption")
 	}
@@ -171,6 +175,10 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 // consume on the ActivateMFA path — spelled out because PR #2840 originally
 // attributed it to requireReauth and was wrong (coordinator review).
 func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, password, keepSessionToken string) ([]string, error) {
+	// Refused before the password or the code is evaluated (nothing counted).
+	if err := totpUnavailable(); err != nil {
+		return nil, err
+	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("user not found")
@@ -509,6 +517,13 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	var consumedTOTPStep *int64 // non-nil iff verified via a freshly-marked TOTP step (#2567, see VerifyMFALogin)
 	// Exactly one path evaluates a given input (#2894 review): see isTOTPShaped.
 	totpShaped := isTOTPShaped(code)
+	if totpShaped && totpFIPSEnforced() {
+		// Pre-verdict: no code evaluated, the slot goes back, nothing counted.
+		// The challenge is spent; the user signs in again and can use a
+		// recovery code or a passkey.
+		c.auditTOTPUnavailable(ctx, ch.UserID, "login")
+		return nil, false, nil, nil, totpUnavailablePreVerdict()
+	}
 	if totpShaped {
 		if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err != nil {
 			storageErr = err
@@ -794,6 +809,11 @@ func (c *KeyorixCore) validateTOTPStep(secret, code string) (int64, bool) {
 	if code == "" {
 		return 0, false
 	}
+	// Defence in depth: every caller refuses TOTP under FIPS enforcement before
+	// it gets here (ErrTOTPUnavailableInFIPSMode). HMAC-SHA-1 would panic.
+	if totpFIPSEnforced() {
+		return 0, false
+	}
 	now := c.now().UTC()
 	for _, delta := range []int64{0, -1, 1} {
 		t := now.Add(time.Duration(delta*totpPeriod) * time.Second)
@@ -951,7 +971,16 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	// confirmed wrong answer, the exact ambiguity storageErr exists to avoid in
 	// the other direction.
 	var storageErr, postVerdictErr error
-	if user.MFAEnabled {
+	// Under FIPS enforcement a TOTP-shaped input is refused before anything is
+	// evaluated: neither the code nor (a six-digit) password is checked, so the
+	// refusal is no oracle and is not counted. Any other input skips the TOTP
+	// path and gets the usual password (+ step-up grant) check and accounting.
+	totpOff := user.MFAEnabled && totpFIPSEnforced()
+	if totpOff && isTOTPShaped(codeOrPassword) {
+		c.auditTOTPUnavailable(ctx, user.ID, phase)
+		return ErrTOTPUnavailableInFIPSMode
+	}
+	if user.MFAEnabled && !totpOff {
 		if secret, err := c.loadTOTPSecret(ctx, user.ID); err != nil {
 			storageErr = err
 		} else if step, matched := c.validateTOTPStep(secret, codeOrPassword); matched {

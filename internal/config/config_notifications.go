@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/fips140"
+	"fmt"
 	"time"
 )
 
@@ -110,4 +112,28 @@ func (c *NotificationWebhookConfig) GetToken() string {
 // GetSigningSecret returns the resolved webhook signing secret, preferring the env var.
 func (c *NotificationWebhookConfig) GetSigningSecret() string {
 	return resolveSecret("KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET", c.SigningSecret)
+}
+
+// MinWebhookSigningSecretLen is the shortest notifications.webhook.signing_secret,
+// in bytes (112 bits), accepted under GODEBUG=fips140=only: Go's FIPS 140-only
+// mode refuses a shorter HMAC key (crypto/hmac panics on it).
+const MinWebhookSigningSecretLen = 14
+
+// webhookSigningFIPSEnforced is fips140.Enforced, a variable so default-mode
+// tests can drive the refusal.
+var webhookSigningFIPSEnforced = fips140.Enforced
+
+// validateNotificationsSection rejects, under GODEBUG=fips140=only, an enabled
+// webhook whose signing secret is set but shorter than
+// MinWebhookSigningSecretLen: every signed delivery would fail. Outside that
+// mode nothing is checked, as before.
+func validateNotificationsSection(c *Config) error {
+	wc := &c.Notifications.Webhook
+	if !wc.Enabled || !webhookSigningFIPSEnforced() {
+		return nil
+	}
+	if s := wc.GetSigningSecret(); s != "" && len(s) < MinWebhookSigningSecretLen {
+		return fmt.Errorf("notifications.webhook.signing_secret (or KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET) is %d bytes; under GODEBUG=fips140=only it must be at least %d bytes (112 bits)", len(s), MinWebhookSigningSecretLen)
+	}
+	return nil
 }

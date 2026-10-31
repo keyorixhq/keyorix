@@ -475,13 +475,17 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 	// otherwise a caller who held write on a since-deleted project could re-establish a
 	// usable scope under it (GetProject excludes soft-deleted projects).
 	if _, perr := h.coreService.Storage().GetProject(r.Context(), uint(id)); perr != nil {
+		// A read FAULT is 503, not "Project not found" (core.ReadFault is nil for a true not-found).
+		if sendStorageUnavailable(w, core.ReadFault(perr)) {
+			return
+		}
 		sendError(w, "NotFound", "Project not found", http.StatusNotFound, nil)
 		return
 	}
 	// AUDIT-TX-2: core writes environment.created inside the create's transaction.
 	env, err := h.coreService.CreateEnvironment(core.WithMutationAuditActor(r.Context(), actorID(r)), uint(id), body.Name)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		log.Printf("Error creating environment for project %d: %v", id, err)

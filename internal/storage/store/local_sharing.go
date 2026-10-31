@@ -107,17 +107,7 @@ func createShareRecordTx(tx *gorm.DB, share *models.ShareRecord) (*models.ShareR
 		share.SecretID, share.RecipientID, share.IsGroup).First(&existing)
 
 	if result.Error == nil {
-		existing.Permission = share.Permission
-		// ExpiresAt reflects the caller's requested value verbatim (nil = permanent,
-		// non-nil = time-bound), mirroring UpdateShareRecord's behaviour — a re-share
-		// must be able to tighten (or clear) an existing grant's expiry, not just its
-		// permission. Save writes nil as NULL.
-		existing.ExpiresAt = share.ExpiresAt
-		existing.UpdatedAt = time.Now()
-		if err := tx.Save(&existing).Error; err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
-		}
-		return &existing, nil
+		return reshareOntoLiveRow(tx, &existing, share)
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), result.Error)
 	}
@@ -137,17 +127,99 @@ func createShareRecordTx(tx *gorm.DB, share *models.ShareRecord) (*models.ShareR
 		if isUniqueConstraintErr(err) {
 			if tx.Where(sqlWhereShareActive,
 				share.SecretID, share.RecipientID, share.IsGroup).First(&existing).Error == nil {
-				existing.Permission = share.Permission
-				existing.UpdatedAt = time.Now()
-				if serr := tx.Save(&existing).Error; serr != nil {
-					return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), serr)
-				}
-				return &existing, nil
+				return reshareOntoLiveRow(tx, &existing, share)
 			}
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return share, nil
+}
+
+// reshareOntoLiveRow is the one place createShareRecordTx's two upsert paths (an
+// existing live share, and the row that won the #136 create race) apply the caller's
+// request to that row. It writes permission, expires_at and updated_at only, through
+// the conditional UPDATE UpdateShareRecord uses (WHERE id AND deleted_at IS NULL).
+//
+// Bug origin (#2801, #2802):
+//
+//	Introduced-by: #136 (the unique-violation fallback) and the original re-share Save
+//	Detected-by:   review (FIX-2 triage of #2703)
+//	Class:         race (stale full-row Save) + duplicated field-copy logic
+//	Severity:      medium (a revoked share live again; a time-bound share permanent)
+//	Guard:         TestFullRowWriteGuard_NoStaleFullRowWriteOnSecurityStateModels (no
+//	               exemption row for createShareRecordTx any more), core
+//	               TestCreateShareRecord_IsColumnScoped, and the race tests in
+//	               local_sharing_create_race_test.go
+//
+// Both paths used to Save the row they had read. The fallback copied Permission but
+// not ExpiresAt, so a 1-hour share that lost the race came back permanent (#2801).
+// And Save is an upsert: when a revoke commits between the read and the write, its
+// UPDATE ... WHERE deleted_at IS NULL matches nothing and GORM falls back to
+// INSERT ... ON CONFLICT (id) DO UPDATE SET <every column>, deleted_at = NULL
+// included, so the revoked row id was live again with the re-share's permission
+// (#2802). It also wrote back a stale owner_id over a concurrent ownership transfer.
+//
+// No row matched means the share was revoked after the lookup. The lookup is re-run
+// once: a live row found then (another re-share won meanwhile) gets the same
+// conditional write; otherwise, or on a second miss, the call fails closed with
+// ErrShareNotFound and the transaction rolls back. It never creates a fresh row on
+// the caller's behalf: the revoker was told the grant is gone, and a new grant
+// should be a deliberate retry, not a side effect of a lost race. A failed UPDATE that
+// matches no row does not abort a Postgres transaction, so the re-read is safe.
+func reshareOntoLiveRow(tx *gorm.DB, existing, share *models.ShareRecord) (*models.ShareRecord, error) {
+	for attempt := 0; ; attempt++ {
+		matched, err := applyShareRequest(tx, existing, share)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+		}
+		if matched {
+			return existing, nil
+		}
+		if attempt > 0 {
+			break
+		}
+		var again models.ShareRecord
+		rerr := tx.Where(sqlWhereShareActive, share.SecretID, share.RecipientID, share.IsGroup).First(&again).Error
+		if errors.Is(rerr, gorm.ErrRecordNotFound) {
+			break
+		}
+		if rerr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), rerr)
+		}
+		*existing = again
+	}
+	return nil, storage.NotFound(storage.ErrShareNotFound, i18n.T("ErrorShareNotFound", nil), nil)
+}
+
+// applyShareRequest writes share's permission and expiry onto the live row
+// existing.ID, and reports whether a live row matched. ExpiresAt is the caller's
+// value verbatim (nil = permanent), so a re-share can tighten or clear an expiry,
+// as UpdateShareRecord can. A map update bypasses ShareRecord.BeforeSave, so the
+// expiry is normalised to UTC here (G81). existing is updated only on a match.
+func applyShareRequest(tx *gorm.DB, existing, share *models.ShareRecord) (bool, error) {
+	var expiresAt *time.Time
+	if share.ExpiresAt != nil {
+		u := share.ExpiresAt.UTC()
+		expiresAt = &u
+	}
+	now := time.Now()
+	res := tx.Model(&models.ShareRecord{}).
+		Where("id = ? AND deleted_at IS NULL", existing.ID).
+		Updates(map[string]any{
+			"permission": share.Permission,
+			"expires_at": expiresAt,
+			"updated_at": now,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	if res.RowsAffected != 1 {
+		return false, nil
+	}
+	existing.Permission = share.Permission
+	existing.ExpiresAt = expiresAt
+	existing.UpdatedAt = now
+	return true, nil
 }
 
 // GetShareRecord retrieves a share record by ID.

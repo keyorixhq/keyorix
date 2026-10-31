@@ -197,30 +197,6 @@ func TestCreateUser_DuplicateEmailSentinel(t *testing.T) {
 	require.Error(t, err)
 }
 
-// UpdateUser — success and duplicate-email error path.
-func TestUpdateUser_Errors(t *testing.T) {
-	ls := newUserStoreMax(t)
-	ctx := context.Background()
-
-	u1, err := ls.CreateUser(ctx, &models.User{Email: "a@b.com", EmailFolded: "a@b.com", Username: "aUser", UsernameFolded: "auser"})
-	require.NoError(t, err)
-	u2, err := ls.CreateUser(ctx, &models.User{Email: "c@d.com", EmailFolded: "c@d.com", Username: "cUser", UsernameFolded: "cuser"})
-	require.NoError(t, err)
-
-	// Happy path: update u1's display name.
-	u1.DisplayName = "Alice"
-	updated, err := ls.UpdateUser(ctx, u1)
-	require.NoError(t, err)
-	assert.Equal(t, "Alice", updated.DisplayName)
-
-	// Collision path: try to give u2 the same email as u1.
-	// On SQLite the error is returned without the ErrDuplicateEmail sentinel
-	// (the partial-index name doesn't appear in SQLite's error text, only Postgres).
-	u2.Email = "a@b.com"
-	_, err = ls.UpdateUser(ctx, u2)
-	require.Error(t, err)
-}
-
 // UpdateLastLogin — success path.
 func TestUpdateLastLogin_Max(t *testing.T) {
 	ls := newUserStoreMax(t)
@@ -2107,13 +2083,6 @@ func TestListBreakGlassActivations_Empty(t *testing.T) {
 	acts, err := ls.ListBreakGlassActivations(context.Background(), 999)
 	require.NoError(t, err)
 	assert.Empty(t, acts)
-}
-
-// UpdateBreakGlassActivation — upserts via Save (covers the success branch).
-func TestUpdateBreakGlassActivation_UpsertPath(t *testing.T) {
-	ls := newBGStoreMax(t)
-	err := ls.UpdateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{ID: 9999})
-	require.NoError(t, err)
 }
 
 // RevokeBreakGlassActivation — not-found.

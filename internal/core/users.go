@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -150,6 +151,12 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
+	// The setup flow hands in a server-clock expiry in the host zone.
+	var otpExpiresAt *time.Time
+	if req.OneTimePasswordExpiresAt != nil {
+		u := req.OneTimePasswordExpiresAt.UTC()
+		otpExpiresAt = &u
+	}
 	user := &models.User{
 		Username:          req.Username,
 		UsernameFolded:    foldedUsername.Folded(),
@@ -163,7 +170,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 		CreatedAt:         now,
 		UpdatedAt:         now,
 
-		OneTimePasswordExpiresAt: req.OneTimePasswordExpiresAt,
+		OneTimePasswordExpiresAt: otpExpiresAt,
 	}
 	return user, string(hash), nil
 }
@@ -359,7 +366,8 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	}
 	sr, err := c.storage.GetRoleByName(ctx, sysRole)
 	if err != nil {
-		return nil, fmt.Errorf("%s: unknown role %q (system)", i18n.T("ErrorValidation", nil), sysRole)
+		// A read FAULT is a retry answer, not "unknown role".
+		return nil, classifyReadError(err, fmt.Sprintf("%s: unknown role %q (system)", i18n.T("ErrorValidation", nil), sysRole))
 	}
 	// #3546: the system role lands at the global scope, so a project-tier role
 	// there would apply in every project. Project roles go in assignments.
@@ -466,11 +474,11 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 		return storage.RoleGrant{}, fmt.Errorf("%s: each project assignment needs a project_id and a role", i18n.T("ErrorValidation", nil))
 	}
 	if _, err := c.storage.GetProject(ctx, a.ProjectID); err != nil {
-		return storage.RoleGrant{}, fmt.Errorf("%s: unknown project %d", i18n.T("ErrorValidation", nil), a.ProjectID)
+		return storage.RoleGrant{}, classifyReadError(err, fmt.Sprintf("%s: unknown project %d", i18n.T("ErrorValidation", nil), a.ProjectID))
 	}
 	r, err := c.storage.GetRoleByName(ctx, a.Role)
 	if err != nil {
-		return storage.RoleGrant{}, fmt.Errorf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role)
+		return storage.RoleGrant{}, classifyReadError(err, fmt.Sprintf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role))
 	}
 	// #3546: an install-wide role never lands at one project, the same check
 	// AssignUserRole and the InviteGlobal assignments apply.
@@ -521,7 +529,7 @@ func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID ui
 	roleIDs := make([]uint, 0, len(grants))
 	for _, g := range grants {
 		if _, err := c.storage.GetRole(ctx, g.RoleID); err != nil {
-			return fmt.Errorf("%s: unknown role id %d", i18n.T("ErrorValidation", nil), g.RoleID)
+			return classifyReadError(err, fmt.Sprintf("%s: unknown role id %d", i18n.T("ErrorValidation", nil), g.RoleID))
 		}
 		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, g.RoleID, Scope{ProjectID: g.Scope.ProjectID, EnvironmentID: g.Scope.EnvironmentID}, actorIsMachine); err != nil {
 			return err
