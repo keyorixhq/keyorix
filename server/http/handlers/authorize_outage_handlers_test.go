@@ -151,6 +151,56 @@ func TestHandlerPermissionLookupOutageIs503(t *testing.T) {
 	}
 }
 
+// The value-read routes wrapped by AuditSecretValueReadDenials record a refused read
+// only when a layer noted the reason or the status is 403/404. A 503 carries neither,
+// so the handler must note internal_error itself (as the middleware gate does), or an
+// outage on these checks would leave no audit row at all.
+func TestHandlerPermissionLookupOutageNotesInternalErrorOnValueReads(t *testing.T) {
+	sites := []struct {
+		name    string
+		fault   string
+		machine bool
+		call    func(t *testing.T, ctx context.Context, cs *core.KeyorixCore, fx secretsFixture, uc *middleware.UserContext) *httptest.ResponseRecorder
+	}{
+		{"CopySecret", "ResolveUserPermissionAt", false,
+			func(t *testing.T, ctx context.Context, cs *core.KeyorixCore, fx secretsFixture, uc *middleware.UserContext) *httptest.ResponseRecorder {
+				h, err := NewSecretHandler(cs)
+				require.NoError(t, err)
+				body := fmt.Sprintf(`{"environment_id":%d,"name":"outage-copy"}`, fx.envID)
+				req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)).WithContext(ctx), "id", fx.id())
+				w := httptest.NewRecorder()
+				h.CopySecret(w, outageCtx(req, uc))
+				return w
+			}},
+		// No resolved secret on the context: the machine fallback re-authorizes the
+		// principal against the path secret itself.
+		{"GetSecretMachineFallback", "ResolveMachinePermissionAt", true,
+			func(t *testing.T, ctx context.Context, cs *core.KeyorixCore, fx secretsFixture, uc *middleware.UserContext) *httptest.ResponseRecorder {
+				h, err := NewSecretHandler(cs)
+				require.NoError(t, err)
+				req := withChiParam(httptest.NewRequest(http.MethodGet, "/?include_value=true", nil).WithContext(ctx), "id", fx.id())
+				w := httptest.NewRecorder()
+				h.GetSecret(w, outageCtx(req, uc))
+				return w
+			}},
+	}
+	for _, site := range sites {
+		t.Run(site.name, func(t *testing.T) {
+			_, db := freshCoreS12WithAdmin(t)
+			fx := seedSecretsFixture(t, db)
+			fcs, faulty := outageFaultCore(db, site.fault, fmt.Errorf("injected: dial tcp: %w", syscall.ECONNREFUSED))
+			ctx, note := core.WithSecretReadDenialNote(context.Background(), "outage/"+site.name)
+
+			w := site.call(t, ctx, fcs, fx, outageActor(outageSite{machine: site.machine}, false))
+
+			require.True(t, faulty.Fired(), "%s must reach storage method %s", site.name, site.fault)
+			require.Equal(t, http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
+			assert.Equal(t, core.SecretReadDeniedInternalError, note.Reason(),
+				"a refused value read stays audited (outcome=failed) during an outage")
+		})
+	}
+}
+
 // A genuine denial still answers 403 with the same error type and message as before.
 func TestHandlerPermissionDenialStays403(t *testing.T) {
 	for _, site := range outageSites() {

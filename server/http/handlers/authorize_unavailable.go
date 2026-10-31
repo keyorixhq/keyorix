@@ -24,7 +24,8 @@ const authorizeLookupUnavailableRetryAfter = "2"
 //
 //   - err is a storage outage (core.IsAuthorizeTransient): 503 + Retry-After and the
 //     fixed message. The caller was not judged, so a client may retry; the request is
-//     refused, never served.
+//     refused, never served. On a value-read route the denial note records
+//     internal_error, as the middleware gate does.
 //   - any other err, or err == nil with allowed == false: forbidden() writes the
 //     handler's own 403, so a genuine denial keeps its status and body. An error the
 //     classifier does not recognise stays a fail-closed denial.
@@ -35,6 +36,10 @@ const authorizeLookupUnavailableRetryAfter = "2"
 func refuseUnlessAuthorized(w http.ResponseWriter, r *http.Request, allowed bool, err error, forbidden func()) bool {
 	if err != nil {
 		if core.IsAuthorizeTransient(r.Context(), err) {
+			// A refused value read stays audited (outcome=failed): the 503 carries
+			// neither a 403/404 status nor a note otherwise, so AuditSecretValueReadDenials
+			// would write no row. A no-op on routes without a note.
+			core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedInternalError)
 			w.Header().Set("Retry-After", authorizeLookupUnavailableRetryAfter)
 			sendError(w, "ServiceUnavailable", authorizeLookupUnavailableMessage, http.StatusServiceUnavailable, nil)
 			return true
