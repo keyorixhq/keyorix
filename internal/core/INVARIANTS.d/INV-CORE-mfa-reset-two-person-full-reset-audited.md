@@ -12,8 +12,9 @@
   rows. The host command (`server/admin/reset_mfa_logic.go`) applies the same function with
   its `admin.reset_mfa` row in its own transaction. Global admins, SSO/SCIM, suspended or
   inactive accounts and machine identities are refused on both paths. At approval the
-  requester must still be an active, not login-blocked global admin, and the requester
-  and target rules are re-checked on their row locks inside the approval transaction; at
+  requester must still be an active, not login-blocked global admin, and the requester,
+  approver (role, active, second factor) and target rules are re-checked on their row locks
+  inside the approval transaction, locked in ascending user-ID order (#3800); at
   most one request per target is pending (decided on the target's row lock in the create
   transaction). Why: a reset that
   keeps the password turns a stolen password into a takeover, and a one-admin reset is the
@@ -26,8 +27,26 @@
   (`TestMFAReset_RequesterNoLongerActive_ApprovalRefused`,
   `TestMFAReset_RequesterChangedInsideApproval_Refused`,
   `TestMFAReset_TargetChangedInsideApproval_Refused`,
-  `TestMFAReset_ConcurrentRequestForSameTarget_OnlyOnePending`), `server/admin`
+  `TestMFAReset_ConcurrentRequestForSameTarget_OnlyOnePending`),
+  `mfa_reset_approver_revocation_test.go` (`TestMFAReset_ApproverChangedInsideApproval_Refused`,
+  `TestMFAReset_ApprovalLocksUsersInIDOrder`), `server/admin`
   `reset_mfa_test.go`.
-  **UNGUARDED**: no static guard restricts the callers of `DeleteMFAForUser` /
-  `DeleteWebAuthnCredential` to the reviewed paths (design §1 asks for one; follow-up), and
-  the account-setup gate does not yet read `mfa_enrolment_required`.
+  The callers that clear a second factor (`DeleteMFAForUser`, `DeleteWebAuthnCredential`,
+  `SetUserMFAEnabled`/`SetUserWebAuthnEnabled` with anything but `true`, an assignment of
+  `MFAEnabled`/`WebAuthnEnabled` to anything but `true`) are allowlisted by
+  `internal/core/guards` `TestEverySecondFactorClearerCallerIsAllowlisted` (report-only
+  until its first green nightly; calibration `TestSecondFactorClearerGuard_RejectsAnUnlistedCallSite`;
+  what it does not see is in its header). The race guards are Postgres cross-replica tests
+  that force the interleaving with barriers (#3801): `mfa_reset_cross_replica_test.go`
+  `TestMFAReset_ConcurrentRequestsForSameTarget_CrossReplicaPostgres_RowLockDecides` (with
+  its no-lock calibration) and `TestMFAReset_TwoAdminsApproveAtOnce_CrossReplica*_ExactlyOneWins`
+  (the loser is refused inside its transaction).
+  The account-setup gate reads `mfa_enrolment_required` (`MFAEnrolmentOwed`, an input of
+  `PendingAccountSetupSteps` on HTTP and gRPC, #3799): a reset account owes enroll_mfa on
+  every interactive session whether or not `security.require_mfa` is on, until a second
+  factor is enrolled; TOTP activation clears the flag in its own transaction. Guard:
+  `mfa_reset_enrolment_owed_test.go`, `server/http`
+  `TestAccountSetup_MFAResetOwesEnrolment_WithoutRequireMFA`, `server/grpc`
+  `TestGRPCAccountSetup_MFAResetOwesEnrolment_WithoutRequireMFA`. Not seen: the login and
+  profile responses' `pending_steps` (`PendingSetupStepsFor`, informational) do not report
+  the owed step; the gate's 403 does.
