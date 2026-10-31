@@ -25,6 +25,7 @@ func newAuditSearchStore(t *testing.T) (*LocalStorage, *gorm.DB) {
 	db := sqlitetest.OpenWithDialector(t, "localauditsearch_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
+		&models.MachineIdentity{},
 		&models.AuditEvent{},
 	))
 	return NewLocalStorage(db), db

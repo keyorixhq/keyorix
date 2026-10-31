@@ -22,7 +22,7 @@ dast_alert() {
         chmod 600 "$cfg"
         printf 'url = "%s"\n' "$NTFY_TOPIC" > "$cfg"
         curl -fsS -K "$cfg" -H "Title: Keyorix DAST alert" -H "Priority: high" -H "Tags: rotating_light" \
-            -d "$msg" >/dev/null 2>&1 || echo "DAST-ALERT: (also) failed to push to ntfy"
+            -d "$msg" >/dev/null 2>&1 || echo "DAST-ALERT: (also) failed to push to ntfy" # docs-secrets:allow (alert text, no credential; the ntfy topic is in the 0600 -K config)
         rm -f "$cfg"
     fi
 }

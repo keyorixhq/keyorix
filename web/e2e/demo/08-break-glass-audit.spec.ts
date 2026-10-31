@@ -75,7 +75,7 @@ test('a break-glass activation and its revocation are visible in the audit log',
         await adminPage.getByPlaceholder('Filter by actor…').fill(member.username);
         const row = auditRow(adminPage, 'Break-glass activated', justification);
         await expect(row).toBeVisible({ timeout: 5_000 });
-        await expect(row).toContainText(`user ${member.id} self-granted "project_developer"`);
+        await expect(row).toContainText(`user ${member.id} ("${member.username}") self-granted "project_developer"`);
         await expect(row).toContainText(member.username);
     }).toPass({ timeout: 60_000 });
 

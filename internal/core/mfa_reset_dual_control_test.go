@@ -200,7 +200,11 @@ func TestMFAReset_RequestRefusesExternalOrBlockedTarget(t *testing.T) {
 // "Already pending" is decided inside the create transaction: a request for the same
 // target that commits after the pre-transaction read (here: while the requester's
 // code is being checked) still makes the second one fail, so at most one request
-// per target is ever pending.
+// per target is ever pending. This one commits the competitor BEFORE the create
+// transaction starts, so the in-transaction re-read alone decides it; that the
+// target's row lock decides two transactions in flight at once is
+// TestMFAReset_ConcurrentRequestsForSameTarget_CrossReplicaPostgres_RowLockDecides
+// (mfa_reset_cross_replica_test.go, #3801).
 func TestMFAReset_ConcurrentRequestForSameTarget_OnlyOnePending(t *testing.T) {
 	f := newMFAResetFixture(t)
 	ctx := context.Background()

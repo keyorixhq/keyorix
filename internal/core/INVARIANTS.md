@@ -291,10 +291,10 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   subpackages). Red proof is a permanent test: `TestBestEffortCallSites_MutationKillsRecoverWrapper`
   breaks one recover wrapper in a copy and requires the guard to report the callers;
   `TestBestEffortCallSites_ScannerFixture` plants each violation form. Complements GUARD-1
-  (`guards/besteffort_guard_test.go`, which keys on discards after a write, not on the callee). Open
-  finding: three MFA handlers (`requireReauth`, `VerifyMFAStepUp`, `FinishWebAuthnReauth`) call
-  `clearLoginFailures` bare after the grant committed, where `sso.go` wraps it in `besteffort.Run`;
-  allowlisted with a reason and reported to the coordinator (FIX-3277 owns the handlers).
+  (`guards/besteffort_guard_test.go`, which keys on discards after a write, not on the callee).
+  `clearLoginFailures` recovers its own panic (a top-level `besteffort.RunRecover` defer), so
+  `requireReauth`, `VerifyMFAStepUp` and `FinishWebAuthnReauth` call it bare with no allow row
+  (#3712); the mutation test deletes that defer and requires the three callers to be reported.
 
 ## Atomicity / transactions
 

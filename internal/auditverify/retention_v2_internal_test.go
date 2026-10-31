@@ -18,6 +18,7 @@ func TestRetentionAnchorCanonicalV2_ExactByteFormat(t *testing.T) {
 }
 
 func TestParseRetentionAnchorValue_V2RoundTrip(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture signs with a 1-byte or nil HMAC key, under crypto/hmac's 112-bit minimum; production keys are 32-byte KEK-derived keys")
 	key := []byte("k")
 	sig := SignRetentionAnchorV2(3, "prev", "entry", 17, "v1", key)
 	val := strings.Join([]string{"v2", "3", "prev", "entry", "17", "v1", sig}, auditRetentionAnchorSep)
@@ -32,6 +33,7 @@ func TestParseRetentionAnchorValue_V2RoundTrip(t *testing.T) {
 }
 
 func TestParseRetentionAnchorValue_V1IsPurgedZero(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture signs with a 1-byte or nil HMAC key, under crypto/hmac's 112-bit minimum; production keys are 32-byte KEK-derived keys")
 	key := []byte("k")
 	sig := SignRetentionAnchor(3, "prev", "entry", "v1", key)
 	a, ok := ParseRetentionAnchorValue(strings.Join([]string{"v1", "3", "prev", "entry", "v1", sig}, auditRetentionAnchorSep))
@@ -44,6 +46,7 @@ func TestParseRetentionAnchorValue_V1IsPurgedZero(t *testing.T) {
 // A v2 signature never verifies once the value is relabelled v1 (count
 // dropped), and vice versa: the layouts are domain-separated.
 func TestParseRetentionAnchorValue_LayoutsDomainSeparated(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture signs with a 1-byte or nil HMAC key, under crypto/hmac's 112-bit minimum; production keys are 32-byte KEK-derived keys")
 	key := []byte("k")
 	v2sig := SignRetentionAnchorV2(3, "prev", "entry", 0, "v1", key)
 	a, ok := ParseRetentionAnchorValue(strings.Join([]string{"v1", "3", "prev", "entry", "v1", v2sig}, auditRetentionAnchorSep))

@@ -131,7 +131,7 @@ func (c *KeyorixCore) checkRestrictedSecretReadApproval(ctx context.Context, sec
 		return nil
 	}
 	if userID == 0 {
-		return permissionDeniedf("secret %q is restricted: this read has no identifiable user — automated/machine reads of restricted secrets are always denied when any classification gate is active", secret.Name)
+		return classificationGateDeniedf("secret %q is restricted: this read has no identifiable user — automated/machine reads of restricted secrets are always denied when any classification gate is active", secret.Name)
 	}
 
 	// Gate 1: narrower RBAC permission (fast path — no per-secret DB query).
@@ -156,6 +156,30 @@ func (c *KeyorixCore) checkRestrictedSecretReadApproval(ctx context.Context, sec
 	return nil
 }
 
+// ErrClassificationGateDenied is matched (errors.Is) by every refusal of the
+// restricted-classification gate (checkRestrictedSecretReadApproval): no
+// identifiable user, the restricted-read permission, an approved access request
+// or a recent MFA step-up missing. It also matches ErrPermissionDenied, so a
+// transport still answers it 403 by kind; a caller that folds ErrPermissionDenied
+// into "not found" to hide a secret's existence (CopySecret) checks it first:
+// the gate runs only after the caller's ordinary read permission was granted, so
+// its reason (e.g. "re-authenticate with your second factor") is the actionable
+// answer, not an existence oracle (#3804).
+var ErrClassificationGateDenied = errors.New("restricted-classification gate refused the read")
+
+// classificationGateDeniedError renders as its own text and matches
+// ErrClassificationGateDenied and ErrPermissionDenied.
+type classificationGateDeniedError struct{ msg string }
+
+func (e *classificationGateDeniedError) Error() string { return e.msg }
+func (e *classificationGateDeniedError) Is(target error) bool {
+	return target == ErrClassificationGateDenied || target == ErrPermissionDenied
+}
+
+func classificationGateDeniedf(format string, a ...any) error {
+	return &classificationGateDeniedError{msg: fmt.Sprintf(format, a...)}
+}
+
 func (c *KeyorixCore) checkRestrictedPermissionGate(ctx context.Context, secret *models.SecretNode, userID uint) error {
 	scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
 	ok, err := c.Authorize(ctx, userID, PermSecretReadRestricted, scope)
@@ -163,7 +187,7 @@ func (c *KeyorixCore) checkRestrictedPermissionGate(ctx context.Context, secret 
 		return fmt.Errorf("secret %q is restricted: could not verify the %q permission: %w", secret.Name, PermSecretReadRestricted, err)
 	}
 	if !ok {
-		return permissionDeniedf("secret %q is restricted: the %q permission is required at the project scope to read this secret's value", secret.Name, PermSecretReadRestricted)
+		return classificationGateDeniedf("secret %q is restricted: the %q permission is required at the project scope to read this secret's value", secret.Name, PermSecretReadRestricted)
 	}
 	return nil
 }
@@ -174,7 +198,7 @@ func (c *KeyorixCore) checkRestrictedApprovalGate(ctx context.Context, secret *m
 		return fmt.Errorf("secret %q is restricted: could not verify an approved access request: %w", secret.Name, err)
 	}
 	if !ok {
-		return permissionDeniedf("secret %q is restricted: an approved access request for this specific secret is required before its value can be read", secret.Name)
+		return classificationGateDeniedf("secret %q is restricted: an approved access request for this specific secret is required before its value can be read", secret.Name)
 	}
 	return nil
 }
@@ -185,7 +209,7 @@ func (c *KeyorixCore) checkRestrictedMFAGate(ctx context.Context, secret *models
 		return fmt.Errorf("secret %q is restricted: could not verify MFA step-up: %w", secret.Name, err)
 	}
 	if grant == nil {
-		return permissionDeniedf("secret %q is restricted: a recent MFA verification (within %s) is required to read this secret's value — re-authenticate with your second factor", secret.Name, c.mfaStepUpWindow())
+		return classificationGateDeniedf("secret %q is restricted: a recent MFA verification (within %s) is required to read this secret's value — re-authenticate with your second factor", secret.Name, c.mfaStepUpWindow())
 	}
 	return nil
 }
