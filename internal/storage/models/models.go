@@ -2143,8 +2143,14 @@ type MachineIdentity struct {
 // c.now(), consistently, today). LastSeenAt has no write path anywhere in this
 // codebase today (always NULL in practice), so it carries no live hazard to
 // fix.
+//
+// UpdatedAt is normalised too: core assigns it explicitly from c.now() (host
+// zone), so GORM's NowFunc never stamps it for these writes and, with
+// CreatedAt alone converted, a non-UTC host stored updated_at with its zone
+// offset (SQLITE-UTC-NOWFUNC-1).
 func (m *MachineIdentity) BeforeSave(_ *gorm.DB) error {
 	m.CreatedAt = m.CreatedAt.UTC()
+	m.UpdatedAt = m.UpdatedAt.UTC()
 	return nil
 }
 
