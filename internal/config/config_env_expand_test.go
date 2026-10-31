@@ -41,7 +41,12 @@ func TestLoadExpandsEnvVarFallsBackToDefaultWhenUnset(t *testing.T) {
 		"server:\n  http:\n    domain: \"${KEYORIX_DOMAIN:-localhost}\"\n",
 	), 0600))
 
-	t.Setenv("KEYORIX_DOMAIN", "") // ensure not set from the outer environment
+	// t.Setenv registers the restore of the outer value; Unsetenv then makes the variable
+	// really absent (Setenv(..., "") would leave it set-but-empty, the next test's case).
+	t.Setenv("KEYORIX_DOMAIN", "")
+	require.NoError(t, os.Unsetenv("KEYORIX_DOMAIN"))
+	_, set := os.LookupEnv("KEYORIX_DOMAIN")
+	require.False(t, set, "KEYORIX_DOMAIN must be unset, not empty")
 	cfg, err := Load(p)
 	require.NoError(t, err)
 	assert.Equal(t, "localhost", cfg.Server.HTTP.Domain)
@@ -57,6 +62,8 @@ func TestLoadExpandsEnvVarFallsBackToDefaultWhenEmpty(t *testing.T) {
 	), 0600))
 
 	t.Setenv("KEYORIX_DOMAIN", "")
+	v, set := os.LookupEnv("KEYORIX_DOMAIN")
+	require.True(t, set && v == "", "KEYORIX_DOMAIN must be set to the empty string")
 	cfg, err := Load(p)
 	require.NoError(t, err)
 	assert.Equal(t, "localhost", cfg.Server.HTTP.Domain)
