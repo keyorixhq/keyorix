@@ -191,6 +191,13 @@ var ErrDuplicateGroupName = errors.New("a group with this name already exists")
 // untyped storage or driver error can contain too (ERRSTRING-CLASS-1).
 var ErrInvalidGroupRequest = errors.New("invalid group request")
 
+// ErrShareExpiryNotInFuture is matched (errors.Is) by core's refusal of a time-bound
+// share (ShareSecret, ShareSecretWithGroup, UpdateSharePermission) whose expiry is
+// not after now: such a share would never authorize. The refusal text ("... share
+// expiry must be in the future") is unchanged. Transports answer InvalidArgument /
+// 400; match it with errors.Is, not the phrase (ERRSTRING-CLASS-1).
+var ErrShareExpiryNotInFuture = errors.New("share expiry must be in the future")
+
 // ErrDuplicateNotificationChannelName is returned (wrapped) by CreateNotificationChannel
 // when the insert collides with the unique index on notification_channels.name (#2779).
 var ErrDuplicateNotificationChannelName = errors.New("a notification channel with this name already exists")

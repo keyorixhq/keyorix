@@ -507,18 +507,9 @@ func (c *KeyorixCore) GetGroupMembers(ctx context.Context, groupID uint) ([]*mod
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-// invalidGroupRequestError renders exactly as the wrapped error and matches
-// storage.ErrInvalidGroupRequest in addition to everything the wrapped error
-// matches (the markPermissionDenied pattern), so transports classify a malformed
-// group request by errors.Is and the refusal text stays as it was.
-type invalidGroupRequestError struct{ err error }
-
-func (e *invalidGroupRequestError) Error() string { return e.err.Error() }
-func (e *invalidGroupRequestError) Unwrap() []error {
-	return []error{storage.ErrInvalidGroupRequest, e.err}
-}
-
-func invalidGroupRequest(err error) error { return &invalidGroupRequestError{err: err} }
+// invalidGroupRequest types a malformed-group-request refusal (storage.ErrInvalidGroupRequest)
+// without changing its text.
+func invalidGroupRequest(err error) error { return refuseAs(storage.ErrInvalidGroupRequest, err) }
 
 func (c *KeyorixCore) validateCreateGroupRequest(req *CreateGroupRequest) error {
 	if req.Name == "" {

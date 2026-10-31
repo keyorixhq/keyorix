@@ -8,7 +8,7 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"strings"
+	"errors"
 	"sync"
 	"time"
 
@@ -75,23 +75,21 @@ func goSafe(fn func()) {
 }
 
 // isSafeConnectError mirrors the HTTP handlers' connect.go allowlist: it
-// reports whether msg is one of the small set of deliberately-crafted, safe
-// messages core.ReadFederatedSecret / CreateConnectRefGrant /
+// reports whether err is one of the small set of deliberately-crafted, safe
+// sentinel errors core.ReadFederatedSecret / CreateConnectRefGrant /
 // DeleteConnectRefGrant themselves produce. Anything else may originate from
 // storage or an upstream connector (e.g. Vault) and must be sanitized.
-func isSafeConnectError(msg string) bool {
-	for _, marker := range []string{
-		"keyorix connect is not enabled",
-		"unknown connector",
-		"a role is required for a connect ref-grant",
-		"connector is platform-scoped",
-		"is not permitted for your roles on connector",
-	} {
-		if strings.Contains(msg, marker) {
-			return true
-		}
-	}
-	return false
+//
+// Matched with errors.Is, never by phrase in err.Error(): the ref and the
+// ref-prefix are caller-controlled, so an upstream or storage error that echoes
+// one back could otherwise carry a safe phrase and be forwarded verbatim
+// (ERRSTRING-CLASS-1; backlog #116).
+func isSafeConnectError(err error) bool {
+	return errors.Is(err, core.ErrConnectDisabled) ||
+		errors.Is(err, core.ErrConnectUnknownConnector) ||
+		errors.Is(err, core.ErrConnectRoleRequired) ||
+		errors.Is(err, core.ErrConnectRefGrantAgainstPlatformConnector) ||
+		errors.Is(err, core.ErrConnectRefNotPermitted)
 }
 
 // --- Identity & authorization ---

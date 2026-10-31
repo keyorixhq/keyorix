@@ -93,8 +93,8 @@ func TestMapShareError_ClassifiesBySentinel(t *testing.T) {
 		{"missing recipient", fmt.Errorf("share: %w", storage.ErrUserNotFound), codes.NotFound},
 		{"authz refusal", fmt.Errorf("share: %w", core.ErrPermissionDenied), codes.PermissionDenied},
 		{"specific share refusal", core.ErrShareActionNotElevated, codes.PermissionDenied},
-		// Not yet typed: the expiry refusal (three fmt.Errorf sites in core/sharing*.go).
-		{"untyped expiry", errors.New("validation failed: share expiry must be in the future"), codes.InvalidArgument},
+		{"expiry refusal", fmt.Errorf("share: %w", storage.ErrShareExpiryNotInFuture), codes.InvalidArgument},
+		{"text only: expiry phrase", errors.New("validation failed: share expiry must be in the future"), codes.Internal},
 		{"text only: not found", errors.New("record not found"), codes.Internal},
 		{"text only: not authorized", errors.New("not authorized to do that"), codes.Internal},
 		{"text only: permission denied", errors.New("open x: permission denied"), codes.Internal},

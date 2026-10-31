@@ -78,7 +78,7 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 	// A time-bound share must expire in the future; a past/now expiry would create a
 	// share that never authorizes.
 	if req.ExpiresAt != nil && !req.ExpiresAt.After(c.now()) {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "share expiry must be in the future")
+		return nil, shareExpiryNotInFuture()
 	}
 
 	shareRecord := &models.ShareRecord{
@@ -161,7 +161,7 @@ func (c *KeyorixCore) UpdateSharePermission(ctx context.Context, req *UpdateShar
 	var wantExpiry *time.Time
 	if req.ExpiresAt != nil && !req.ClearExpiry {
 		if !req.ExpiresAt.After(c.now()) {
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "share expiry must be in the future")
+			return nil, shareExpiryNotInFuture()
 		}
 		wantExpiry = req.ExpiresAt
 	}
