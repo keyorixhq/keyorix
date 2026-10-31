@@ -137,7 +137,10 @@ is sticky: no verification, `--full` included, clears it, so this alert keeps fi
 `before a recorded break`). An older replica that saves the state during a rolling upgrade or after
 a binary rollback no longer raises it: that state is restarted instead (KeyorixAuditVerifyStateRejected,
 #3708). It still raises it when a recorded break, a discontinuity event or a newer checkpoint follows
-the older replica's save, or when the deployment's newest marker event predates #3708.
+the older replica's save, when the older replica's own load rejected the row (deleted, put back,
+garbled), or when the deployment's newest marker event predates #3708. While an accepted loss or a
+key transition exists, an older replica's save raises it as kind `seal` / `key transition` (it drops
+those fields): in such deployments stop older replicas before upgrading.
 **Do.** Freeze and keep evidence before touching anything, then treat it like a truncation: follow
 the [audit-chain break runbook](../../docs/operator/audit-chain-break-runbook.md) (sections 2, 5, 6
 and 7) and compare against an external anchor, a backup or the high-water witness file.

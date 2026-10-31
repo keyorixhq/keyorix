@@ -53,9 +53,13 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
   `system.audit_verification_state_rejected` event, "re-signed by an older server version")
   and the next passing full verification re-places it (#3708). It is still a `before a
   recorded break` discontinuity when a break, a discontinuity or a newer checkpoint was
-  recorded after the older replica's save, or when the newest
+  recorded after the older replica's save, when the older replica's own load rejected the
+  row (deleted, put back or garbled: its save would launder that), or when the newest
   `system.audit_verification_state_initialized` event names no state generation (written by
-  a server from before #3708; the next save appends one that does). `admin audit
+  a server from before #3708; the next save appends one that does). While an accepted loss
+  or a key transition exists, an older replica's save is a `seal` / `key transition`
+  discontinuity (it drops those fields), so stop older replicas before upgrading such a
+  deployment. `admin audit
   accept-loss` accepts a discontinuity only together with a proven loss of rows; over an
   intact chain it stays sticky.
 - New audit events keep chaining onto the current tail, so the service keeps working and

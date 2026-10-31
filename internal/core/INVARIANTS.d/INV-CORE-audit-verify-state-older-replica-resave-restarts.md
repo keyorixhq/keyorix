@@ -9,18 +9,33 @@
   every save appends one when the newest marker names none) and the row's generation is
   higher (every row from before the upgrade has a lower one); no failure event names a higher
   generation, and, when the row carries no failure, no failure event without a generation lies
-  above the marker; and the row is not older than the signed checkpoint trail or than a
-  generation this process read. Otherwise it is the `before a recorded break` discontinuity of
+  above the marker; the row is not older than the signed checkpoint trail or than a
+  generation this process read; and the row carries no rejection recorded above the marker's
+  generation other than this binary's own restart of a re-sign (`auditVerifyResavedRE`): an
+  older replica whose load rejected the row (deleted, put back below a generation it read,
+  older than the trail, garbled) saves at the next generation and the current trail, so only
+  that rejection, kept by its later saves, tells its laundering save from an honest re-sign
+  (REVIEW-3854-DEEP-1). Otherwise it is the `before a recorded break` discontinuity of
   INV-CORE-audit-verify-state-never-silently-restarts. So an older replica's save no longer
   makes `audit verify`, the posture and `keyorix_audit_verify_failure_recorded` read broken with
   no clearing command, while a row from before the upgrade, a replayed one, one saved before a
-  recorded break and a re-sign that dropped a discontinuity still latch, and a deleted or
+  recorded break, a re-sign that dropped a discontinuity and an older replica's save after it
+  rejected the row (a deletion or put-back it would otherwise launder) still latch, and a deleted or
   rewritten chain row still reads broken. Why: #3708 (Helm `RollingUpdate`, ADR-039). Guard:
   `internal/core/audit_verify_state_rolling_upgrade_test.go` (`TestAuditVerifyStateRollingUpgrade_OlderReplicaResaveHeals`,
   `_RealDeletionStillBroken`, `_ResaveBeforeRecordedBreakLatches`, `_StaleResaveLatches`) and
   `audit_verify_state_rolling_upgrade_marker_test.go` (`_PreUpgradeRowLatches`,
   `_UnnamedMarkerLatches`, `_UnnamedMarkerIsRenamed`, `_UnnamedFailureAboveMarkerLatches`,
-  `TestAuditVerifyMarkerGen`), SQLite and PostgreSQL. Not covered: a deployment whose newest
+  `TestAuditVerifyMarkerGen`) and `audit_verify_state_rolling_upgrade_rejecting_test.go`
+  (`_OlderReplicaRejectingResaveLatches`: deleted, deleted then more saves, garbled, put back
+  below the generation read, stale trail; `TestAuditVerifyResavedRE`), SQLite and PostgreSQL.
+  Not covered: an older replica that rejected the row and then completed a full verification
+  started after the rejection, before any replica of this version loaded the row, has cleared
+  the rejection and its row passes as a re-sign; a replay this binary rejected after the
+  marker latches (fail closed) once an older replica re-signs it; the marker is appended after
+  the save that placed the state, outside the checkpoint lock, so a failure event without a
+  generation that an older replica appends in that gap lies below the marker and does not
+  latch a row without a failure; a deployment whose newest
   marker predates #3708 latches an older replica's re-sign saved before its first save under
   this version (the marker is renamed by that save); the in-process generation condition has no
   test of its own; an older replica's re-sign while an accepted loss or a key transition exists

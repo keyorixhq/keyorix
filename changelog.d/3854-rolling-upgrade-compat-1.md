@@ -10,7 +10,12 @@
   the rollout) until a full verification passes, which a rolling cycle does on its own, or
   run `keyorix audit verify --full` once every replica runs the new version. A row from
   before the upgrade, a replayed row, a row saved before a recorded break and a re-sign that
-  dropped a discontinuity still latch. A deployment whose marker event predates this change
+  dropped a discontinuity still latch, and so does an older replica's save after its load
+  rejected the row (deleted, put back, garbled), which would otherwise launder the deletion.
+  While an accepted loss (`admin audit accept-loss`) or a key transition exists, an older
+  replica's save still latches (kind `seal` / `key transition`: it drops `seals` and
+  `key_epoch`), so such deployments still read BROKEN during a rolling update: stop older
+  replicas before upgrading them. A deployment whose marker event predates this change
   gets a named one with its next state save; an older replica's save before that still
   latches, so finish that first rollout before rolling back.
 

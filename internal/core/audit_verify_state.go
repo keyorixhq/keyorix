@@ -38,9 +38,10 @@
 // against the chain: once that marker or a discontinuity exists it is an older
 // row put back, and a discontinuity too (auditVerifyStateUnplaced), unless the
 // marker names the generation that placed the state and the row was saved after
-// it, at the current checkpoint trail, below no recorded break: that is an older
-// replica's re-sign during a rolling upgrade (#3708), which a full verification
-// re-places instead.
+// it, at the current checkpoint trail, below no recorded break, without a
+// rejection an older replica recorded after it: that is an older replica's
+// re-sign during a rolling upgrade (#3708), which a full verification re-places
+// instead.
 package core
 
 import (
@@ -696,7 +697,16 @@ func auditVerifyStateSealProblem(s *auditVerifyState, seals *auditSealSet, ev au
 //     generation (an older binary's) lies above the marker;
 //   - the row is not older than the signed checkpoint trail or a generation
 //     this process read (a replay; every checkpoint write saves the state, so
-//     an older replica's re-sign is at the current trail until the next save).
+//     an older replica's re-sign is at the current trail until the next save);
+//   - the row carries no rejection recorded after the marker's generation,
+//     other than this binary's own restart of a re-sign (auditVerifyResavedRE).
+//     An older replica that rejects the row it loads (deleted, put back below
+//     a generation it read, older than the trail, garbled) starts over at the
+//     next generation and the current trail, so its save passes every check
+//     above: only the rejection it records under that generation, which its
+//     later saves keep until a full verification it starts after it
+//     completes, tells it apart (REVIEW-3854-DEEP-1). A replay this binary
+//     rejected after the marker latches too once an older replica re-signs it.
 //
 // A failure event alone cannot place a row: the older binary appends those too.
 func auditVerifyStateUnplaced(s *auditVerifyState, ev auditVerifyEvidence, cur auditVerifyBinding, seen uint64) (latch, resaved string) {
@@ -708,11 +718,18 @@ func auditVerifyStateUnplaced(s *auditVerifyState, ev auditVerifyEvidence, cur a
 	case ev.discontinuity > 0, ev.markerGen == 0, s.Gen <= ev.markerGen,
 		ev.maxFailureGen > s.Gen,
 		s.Failure == nil && ev.failureUnnamed > ev.marker,
-		s.Gen < seen, s.Bind.CheckpointID < cur.CheckpointID, s.Bind.HighWater < cur.HighWater:
+		s.Gen < seen, s.Bind.CheckpointID < cur.CheckpointID, s.Bind.HighWater < cur.HighWater,
+		s.Rejected != nil && s.Rejected.Gen > ev.markerGen && !auditVerifyResavedRE.MatchString(s.Rejected.Reason):
 		return fmt.Sprintf("the persisted verification state carries no audit head (signed by, or re-signed by, a server version from before audit event #%d recorded that the current state format is in use): an older row put back, or an older replica that dropped its fields", id), ""
 	}
-	return "", fmt.Sprintf("the persisted verification state (generation %d) was re-signed by an older server version after generation %d placed it against the chain (a mixed-version rolling upgrade) and was restarted: a full verification re-places it", s.Gen, ev.markerGen)
+	return "", fmt.Sprintf(auditVerifyResavedText, s.Gen, ev.markerGen)
 }
+
+// auditVerifyResavedText is the reason this binary restarts an older replica's
+// re-sign with; no older binary records a rejection in this form.
+const auditVerifyResavedText = "the persisted verification state (generation %d) was re-signed by an older server version after generation %d placed it against the chain (a mixed-version rolling upgrade) and was restarted: a full verification re-places it"
+
+var auditVerifyResavedRE = regexp.MustCompile(`^the persisted verification state \(generation [1-9][0-9]{0,19}\) was re-signed by an older server version after generation [1-9][0-9]{0,19} placed it against the chain \(a mixed-version rolling upgrade\) and was restarted: `)
 
 // auditCheckpointTrailUnauthenticated describes a latest checkpoint or
 // high-water mark that exists but fails its signature under the current key

@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,6 +36,20 @@ func TestAuditVerifyMarkerGen(t *testing.T) {
 		"x audit verification state in use (state generation 3): ": 0,
 	} {
 		assert.Equal(t, want, auditVerifyMarkerGen(in), in)
+	}
+}
+
+// The reason this binary restarts a re-sign with is the one rejection an
+// unplaced row may carry above the marker; any other text latches.
+func TestAuditVerifyResavedRE(t *testing.T) {
+	require.Regexp(t, auditVerifyResavedRE, fmt.Sprintf(auditVerifyResavedText, uint64(18446744073709551615), 1))
+	for _, r := range []string{
+		"the persisted verification state is missing although this server already read generation 3 (deleted or rolled back) and was ignored",
+		"the persisted verification state is malformed and was ignored",
+		"x " + fmt.Sprintf(auditVerifyResavedText, 4, 3),
+		fmt.Sprintf(auditVerifyResavedText, 0, 3),
+	} {
+		require.NotRegexp(t, auditVerifyResavedRE, r)
 	}
 }
 
