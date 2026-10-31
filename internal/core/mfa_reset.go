@@ -133,6 +133,8 @@ func (c *KeyorixCore) requireMFAResetActor(ctx context.Context, actorID uint, ac
 		return nil, fmt.Errorf("read actor: %w", err)
 	}
 	if !userHasSecondFactor(actor) {
+		c.writeAuditEventFailed(ctx, eventType, actorPtr(actorID), nil, "",
+			fmt.Sprintf("MFA reset %s DENIED: user %d has no second factor", what, actorID))
 		return nil, ErrMFAResetActorNeedsMFA
 	}
 	return actor, nil
@@ -145,6 +147,18 @@ func (c *KeyorixCore) requireMFAResetActor(ctx context.Context, actorID uint, ac
 func (c *KeyorixCore) auditMFAResetApprovalDenied(ctx context.Context, actorID, requestID uint, why string) {
 	c.writeAuditEventFailed(ctx, EventMFAResetApproved, actorPtr(actorID), nil, "",
 		fmt.Sprintf("MFA reset request %d approval DENIED: %s", requestID, why))
+}
+
+// mfaResetTargetRefusal is the DENIED reason of a refuseMFAResetTarget refusal,
+// or "" for an error that is not a refusal (a storage or ceiling-resolution
+// failure). Fixed texts and IDs only: the wrapped ceiling error is not copied.
+func mfaResetTargetRefusal(err error, targetID uint) string {
+	for _, refusal := range []error{ErrMFAResetExternalIdentity, ErrMFAResetAccountBlocked, ErrMFAResetGlobalAdmin, ErrInsufficientAdminAuthority} {
+		if errors.Is(err, refusal) {
+			return fmt.Sprintf("target %d refused: %v", targetID, refusal)
+		}
+	}
+	return ""
 }
 
 // eligibleMFAResetApprovers counts the active global admins other than the
@@ -377,9 +391,12 @@ func (c *KeyorixCore) refuseMFAResetTarget(ctx context.Context, actorID uint, ta
 // reset. Refused (and the refusal audited where it is an attempt to get around
 // dual control): the requester approving their own request, the target approving,
 // a non-admin or machine approver, a request already approved or cancelled (a
-// replay), an expired one, and a requester who has since lost the admin role.
-// Every refusal decided inside the approval transaction is audited as DENIED
-// too, after the rollback (auditMFAResetApprovalDenied).
+// replay), an expired one, a requester who has since lost the admin role, and a
+// target the rules refuse. Each of these refusals leaves a DENIED
+// mfa.reset_approved row, whether decided before the transaction or inside it
+// (written after the rollback, auditMFAResetApprovalDenied). Not covered: a
+// request that does not exist, a storage error, and a failed re-authentication
+// (requireReauth audits that one as mfa.failed / mfa.error).
 func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIsMachine bool, requestID uint, code string) (*MFAResetApproval, error) {
 	actor, err := c.requireMFAResetActor(ctx, actorID, actorIsMachine, EventMFAResetApproved, fmt.Sprintf("approval of request %d", requestID))
 	if err != nil {
@@ -395,6 +412,7 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 	switch mfaResetEffectiveStatus(req, c.now()) {
 	case models.MFAResetStatusPending:
 	case "expired":
+		c.auditMFAResetApprovalDenied(ctx, actorID, requestID, "it expired")
 		return nil, ErrMFAResetRequestExpired
 	default:
 		c.auditMFAResetApprovalDenied(ctx, actorID, requestID, fmt.Sprintf("it is already %s", req.Status))
@@ -410,9 +428,15 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 	}
 	requester, err := mfaResetRequester(ctx, c.storage, req.RequestedBy, false)
 	if err != nil {
+		if errors.Is(err, ErrMFAResetRequesterChanged) {
+			c.auditMFAResetApprovalDenied(ctx, actorID, requestID, fmt.Sprintf("requester %d no longer exists", req.RequestedBy))
+		}
 		return nil, err
 	}
 	if err := refuseMFAResetRequesterChanged(ctx, c.storage, requester); err != nil {
+		if errors.Is(err, ErrMFAResetRequesterChanged) {
+			c.auditMFAResetApprovalDenied(ctx, actorID, requestID, fmt.Sprintf("requester %d is no longer an active global administrator", req.RequestedBy))
+		}
 		return nil, err
 	}
 	target, err := c.storage.GetUser(ctx, req.TargetUserID)
@@ -420,6 +444,9 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 		return nil, err
 	}
 	if err := c.refuseMFAResetTarget(ctx, actorID, target); err != nil {
+		if why := mfaResetTargetRefusal(err, target.ID); why != "" {
+			c.auditMFAResetApprovalDenied(ctx, actorID, requestID, why)
+		}
 		return nil, err
 	}
 	if err := c.requireReauth(ctx, actor, code, "mfa_reset_approve"); err != nil {
