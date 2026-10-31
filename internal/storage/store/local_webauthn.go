@@ -90,7 +90,7 @@ func (ls *LocalStorage) DisableWebAuthnCredential(ctx context.Context, id uint) 
 // model rather than to close a race at this call site.
 func (ls *LocalStorage) SetWebAuthnCredentialCounterState(ctx context.Context, id uint, blob []byte, lastUsedAt time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.WebAuthnCredential{}).Where(sqlWhereID, id).
-		Updates(map[string]any{"credential_blob": blob, "last_used_at": lastUsedAt})
+		Updates(map[string]any{"credential_blob": blob, "last_used_at": lastUsedAt.UTC()})
 	if res.Error != nil {
 		return false, res.Error
 	}
