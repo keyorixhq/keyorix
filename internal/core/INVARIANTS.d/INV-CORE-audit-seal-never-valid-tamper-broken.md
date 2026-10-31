@@ -32,7 +32,9 @@
   after any of them reads broken until a re-run of the command completes it. The re-run writes
   nothing unless the request names the unfinished record's digest (`--resume-seal`, #3803;
   `AcceptAuditLoss` refuses a resume plan made without it), so `--confirm` alone never
-  completes a record the operator did not read. Completing it first
+  completes a record the operator did not read; the apply re-checks under the lock that the
+  unfinished record is still the one that digest names, and refuses another record swapped in
+  since the plan (`TestAuditSeal_ResumeRefusesSwappedUnfinishedRecord`). Completing it first
   checks the chain still holds what the seal recorded as surviving and everything the latest
   checkpoint, the high-water mark, the state's pin and the host's high-water witness file
   (SQLite) signed under the current seals certify (a post-seal truncation is refused, never

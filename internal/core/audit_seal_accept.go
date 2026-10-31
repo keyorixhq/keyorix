@@ -987,6 +987,11 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 			return err
 		}
 		recs := set.recs
+		// A resume completes only the record the --resume-seal digest named:
+		// another unfinished record put in its place since the plan is refused.
+		if plan.Resume && ((set.problem != "" && !set.pending) || len(recs) != plan.Seq || recs[plan.Seq-1].digest() != plan.ResumeDigest) {
+			return fmt.Errorf("accept-loss: the seal record changed since the plan was made (seal #%d is no longer record %s); nothing was written, re-run and read the new plan", plan.Seq, plan.ResumeDigest)
+		}
 		if !plan.Resume {
 			if set.problem != "" || len(recs) != plan.Seq-1 {
 				return fmt.Errorf("accept-loss: the seal record changed since the plan was made")
