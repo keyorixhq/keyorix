@@ -192,7 +192,7 @@ func TestAuditSeal_ResealKeepsHigherWitness(t *testing.T) {
 		witness := readWitnessFile(t, w)
 		require.NoError(t, e.db.Exec("DELETE FROM audit_events WHERE id >= ?", cp.HeadID-2).Error)
 
-		_, _, err = withWitness(e.restart(), w).resealAuditCheckpoint(ctx)
+		_, _, err = withWitness(e.restart(), w).resealAuditCheckpoint(ctx, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "witness")
 		assert.Equal(t, witness, readWitnessFile(t, w), "the witness is not lowered")

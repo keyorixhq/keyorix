@@ -303,6 +303,12 @@ after the break is not notarised: decide soon.
      when the acceptance will lower it. If its certified head is gone, name that id as well (the
      plan refuses until you do, so the seal records the tail loss). The apply re-reads the
      witness before it writes anything and refuses if it now certifies more than the plan named.
+     A witness that claims the current key version but fails its signature is refused as
+     garbled or replaced (only one under the previous key version is a pre-key-change witness,
+     which the acceptance replaces). If a resume refuses because the witness certifies more
+     than the unfinished record names, re-running cannot help (the record cannot change):
+     compare the trail with an off-host anchor, and only if it accounts for those rows move
+     the witness file aside and run the resume again.
      A witness signed under a seal list the database does not hold (more seals, or another list
      of the same length) is refused as a rollback of the database, seal record included
      (section 8).

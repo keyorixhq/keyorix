@@ -54,11 +54,16 @@
   a signed checkpoint, and an operator name or reason with a control or format character, a
   line or paragraph separator, or over its length limit. A first acceptance counts the host
   witness in `Before` when it authenticates under the seals before it, prints it in the plan
-  with the fact that confirming lowers it, refuses a damaged witness and one that authenticates
+  with the fact that confirming lowers it, refuses a damaged witness, one that claims the current
+  key version without authenticating under it (garbled or replaced; only one under another key
+  version is a pre-key-change witness that is replaced), and one that authenticates
   under a seal list the database does not hold (a rollback of the seal record), and refuses a
   `Before` whose head is gone unless that head is named as the truncation. Before writing the
   record, and again in the re-seal, the witness is lowered only from the seals before the
-  newest one and only as far as the record's `Before` names (`auditWitnessLowerProblem`).
+  newest one and only as far as the record's `Before` names (`auditWitnessLowerProblem`, which
+  refuses the garbled current-key witness too; on a resume its refusal names the way out:
+  compare with an off-host anchor, then move the witness aside, since re-running cannot change
+  the record).
   Why: AUDIT-ACCEPT-LOSS-1, constraints 1-8 of docs/design/recovery-options.md §2. Guard:
   `TestAuditSeal_*` (`internal/core`, SQLite and PostgreSQL; `_CrashAtEveryStepResumes`,
   `_DeletedSealKeepsStatePin`,
@@ -70,6 +75,7 @@
   `_RefusesUnsafeOperatorText`, `_WitnessAboveDatabaseCountsInPlan`,
   `_ApplyRefusesUnnamedHigherWitness`, `_WitnessUnderRolledBackSealRefused`,
   `_ResumeAfterKeyChange`, `_ResumeAfterTwoKeyChanges`, `_ResumeAfterKeyChangeRefusesUnaccounted`,
+  `_GarbledCurrentKeyWitnessRefused`, `_ResumeRefusalNamesWitnessWayOut`,
   `_ResumeWithoutDigestWritesNothing`, `_ResumeNeedsRecordDigest`, `_ResumeSealWithoutPendingRefused`,
   `_PrefixRewriteBeforeLossRefused`, `_RewrittenRowNoIDMissingRefused`, `_RewriteOverIDHoleRefused`,
   `_GenuineDeletionPinnedPrefixSeals`, `_UnpinnedPrefixRecorded`),
