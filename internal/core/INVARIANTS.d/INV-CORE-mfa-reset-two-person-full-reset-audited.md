@@ -16,11 +16,18 @@
   approver (role, active, second factor) and target rules are re-checked on their row locks
   inside the approval transaction, locked in ascending user-ID order (#3800); at
   most one request per target is pending (decided on the target's row lock in the create
-  transaction). Every refused approval leaves a DENIED `mfa.reset_approved` row, including a
-  refusal decided inside the approval transaction (request decided meanwhile, requester,
-  approver or target changed on the row lock): `auditMFAResetApprovalDenied` writes it
-  through `c.storage` after the rollback, never on the transaction handle (MFA-RESET-TAILS-2;
-  guard `mfa_reset_in_tx_denial_test.go` `TestMFAReset_InTxRefusal_*`). An audit-log
+  transaction). Every dual-control refusal of an approval of an existing request (machine or
+  non-admin approver, approver without a second factor, self- or target approval, request
+  already decided or expired, requester no longer an active global admin, target refused
+  by the target rules) leaves a DENIED `mfa.reset_approved` row, whether decided before the
+  transaction or inside it (request decided meanwhile, requester, approver or target changed
+  on the row lock): `auditMFAResetApprovalDenied` writes the in-transaction one through
+  `c.storage` after the rollback, never on the transaction handle (MFA-RESET-TAILS-2; guards
+  `mfa_reset_in_tx_denial_test.go` `TestMFAReset_InTxRefusal_*`,
+  `mfa_reset_pre_tx_denial_test.go` `TestMFAReset_PreTxRefusal_LeavesDeniedRow`; the
+  admin-rank-ceiling target refusal has no DENIED-row test of its own). Not
+  covered by that row: an unknown request id, a storage error, and a failed
+  re-authentication (`requireReauth` audits it as `mfa.failed` / `mfa.error`). An audit-log
   outage on approval answers HTTP 503 through `sendAuditUnavailable` (Retry-After, code
   `audit_unavailable`) and applies nothing (`server/http/handlers`
   `TestApproveMFAReset_AuditOutage_SharedAuditUnavailable503`). Why: a reset that

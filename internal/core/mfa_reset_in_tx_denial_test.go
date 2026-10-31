@@ -15,8 +15,9 @@ import (
 // MFA-RESET-TAILS-2 item 2 (REVIEW-3838-DEEP-1 L2): an approval refused INSIDE the
 // approval transaction (the request decided meanwhile, the approver, requester or
 // target changed on the row lock) leaves a DENIED mfa.reset_approved row, as the
-// refusals before the transaction do. The row is written after the rollback: on
-// the transaction handle it would roll back with the approval.
+// same refusals before the transaction do (TestMFAReset_PreTxRefusal_LeavesDeniedRow).
+// The row is written after the rollback: on the transaction handle it would roll
+// back with the approval.
 
 // approvalRows counts the mfa.reset_approved rows by outcome.
 func (f *mfaResetFixture) approvalRows(t *testing.T) (succeeded, denied int) {
