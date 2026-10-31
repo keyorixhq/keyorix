@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 func defaultExecutable() (string, error) { return os.Executable() }
@@ -19,7 +21,8 @@ func defaultExecutable() (string, error) { return os.Executable() }
 const secureBootVar = "sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
 
 func readUnder(root, rel string) ([]byte, error) {
-	return os.ReadFile(filepath.Join(root, filepath.FromSlash(rel))) // #nosec G304 -- rel is a constant, root is the injectable fake-tree root
+	// FIFO-safe: a FIFO planted at one of these paths is refused, not waited on.
+	return secretenv.ReadRegularFile("integrity source", filepath.Join(root, filepath.FromSlash(rel)))
 }
 
 func unreadable(id, what string, err error) Line {
@@ -161,7 +164,7 @@ func checkManifest(e Env) Line {
 		}
 	}
 	mpath := filepath.Join(dir, manifestName)
-	f, err := os.Open(mpath) // #nosec G304 -- next to the running binary, read-only
+	f, err := secretenv.OpenRegularNamed("release manifest", mpath) // a FIFO named checksums.txt is refused, not waited on
 	if errors.Is(err, fs.ErrNotExist) {
 		return Line{ID: CheckManifest, State: StateNotChecked, Detail: "no release manifest (" + manifestName + ") next to the binary; nothing to compare, nothing fetched"}
 	}
@@ -192,7 +195,7 @@ func checkManifest(e Env) Line {
 }
 
 func hashFile(path string) (string, error) {
-	f, err := os.Open(path) // #nosec G304 -- the running binary
+	f, err := secretenv.OpenRegularNamed("running binary", path)
 	if err != nil {
 		return "", err
 	}
