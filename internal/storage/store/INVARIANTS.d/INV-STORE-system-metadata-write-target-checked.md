@@ -23,11 +23,18 @@
   `triggerIntegrityReadFailureLimit` failures in a row on it is logged `SECURITY:`, counted
   `reason="tamper"` once per run, and an invalidation is owed until a reading verifies (PR #3841
   review N1: an anchor-named trigger whose WHEN clause referenced `NEW` failed every reading, so
-  nothing was flushed, reported or repaired). The reading, the installers' reading and the repair
-  run with pg_catalog searched first (`pinCatalogSearchPathSQL`: the session's search_path without
-  pg_catalog), so the deparsed clause names pg_catalog's `=` and the re-created anchor trigger calls
-  it (PR #3841 review B2: an `=` the role created in its own schema, under a role-level search_path
-  listing that schema first, deparsed as installed while it let the generation row through). Why:
+  nothing was flushed, reported or repaired). The reading, the installers' reading, the write-target
+  repair's reads and the installers' definition reads run under `readCatalog`: search_path
+  `pg_catalog, pg_temp`, with the server's schema bound and every table named through
+  `catalogRelSQL`, so no operator, function or type outside pg_catalog takes part and the deparsed
+  clause names pg_catalog's `=` only when it is pg_catalog's. Search_path order alone is no defence
+  for a read: an operator whose argument types match exactly is picked before one reached by a
+  coercion, wherever it sits (PR #3841 fourth review C1: an `=` on (oid, regclass) the role created
+  in its own schema pointed `'system_metadata'::regclass` at a decoy table, with the default
+  search_path). The repair's DDL runs with pg_catalog searched first (`pinCatalogSearchPathSQL`), so
+  the anchor trigger it re-creates calls pg_catalog's `=` on (text, text) (PR #3841 review B2: an
+  `=` the role created in its own schema, under a role-level search_path listing that schema first,
+  deparsed as installed while it let the generation row through). Why:
   #3713. A `BEFORE UPDATE` trigger keeping `OLD.value`, a rule, or forced row level security with
   an `UPDATE` policy hiding the generation row made every bump a no-op, including the check's own,
   while every trigger and function the check compared read as correct; the permission cache has no
@@ -49,5 +56,10 @@
   first head by behaviour), `_SystemMetadataAnchorShadowedOperatorSeenAtBoot_Postgres`,
   `_SystemMetadataAnchorShadowedOperatorIsRemovedAndFlushed_Postgres`,
   `_InstallerReadingIgnoresShadowedSearchPath_Postgres` (red on the PR's 3f8937204 head by
-  behaviour); `TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode`
+  behaviour), `_SystemMetadataDecoyOperatorSeenAtBoot_Postgres`,
+  `_SystemMetadataDecoyOperatorIsRemovedAndFlushed_Postgres`,
+  `TestTriggerIntegrity_CatalogReadsIgnoreExactMatchOperators_Postgres` and
+  `TestSecretNodeCacheEpochIntegrity_CatalogReadsIgnoreExactMatchOperators_Postgres` (class guard: a
+  raising operator for every cross-type pair of catalog types pg_catalog has no exact operator for;
+  red on the PR's c9506de59 head by behaviour); `TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode`
   (default CI); `TestFenceGuard_MatchesTheStore` (internal/solewriter, default CI).

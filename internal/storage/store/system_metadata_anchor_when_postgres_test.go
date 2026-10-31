@@ -83,7 +83,7 @@ func TestRolePermGenerationIntegrity_FailingReadingFailsClosed_Postgres(t *testi
 	db := w.writer.db
 	good := c.target
 	failingDef := *good.def
-	failingDef.sql = "SELECT pg_catalog.length($1::text) / 0"
+	failingDef.sql = "SELECT pg_catalog.length($1::text || $2::text) / 0" // both binds: the body and the schema
 	failing := *good
 	failing.def = &failingDef
 	var logs []string
@@ -150,7 +150,7 @@ func TestSecretNodeCacheEpochIntegrity_FailingReadingFailsClosed_Postgres(t *tes
 	w := newEpochIntegrityWorld(t)
 	good := w.c.target
 	failingDef := *good.def
-	failingDef.sql = "SELECT pg_catalog.length($1::text) / 0"
+	failingDef.sql = "SELECT pg_catalog.length($1::text || $2::text) / 0" // both binds: the body and the schema
 	failing := *good
 	failing.def = &failingDef
 	w.c.target = &failing
