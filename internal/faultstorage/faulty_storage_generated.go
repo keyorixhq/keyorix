@@ -7594,22 +7594,6 @@ func (w *FaultyStorage) UpdateDynamicSecretConfig(ctx context.Context, c *models
 	return w.real.UpdateDynamicSecretConfig(ctx, c)
 }
 
-func (w *FaultyStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error {
-	fire, kind, injected := w.check("UpdateDynamicSecretLease")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			return injected
-		case KindEffectThenError:
-			_ = w.real.UpdateDynamicSecretLease(ctx, l)
-			return injected
-		}
-	}
-	return w.real.UpdateDynamicSecretLease(ctx, l)
-}
-
 func (w *FaultyStorage) UpdateGroupFields(ctx context.Context, id uint, name *string, nameFolded *string, description *string, updatedAt time.Time) (bool, error) {
 	fire, kind, injected := w.check("UpdateGroupFields")
 	if fire {

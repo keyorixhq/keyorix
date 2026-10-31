@@ -19,4 +19,8 @@
   (a derived repo sweep, failing both on a new caller and on a stale allowance) and
   `TestDynamicSecretWrites_AreColumnScoped` (structural), plus
   `TestCTAReview_ClassifyDynamicSecretConfig_vs_KillSwitch_CrossReplicaPostgres` and
-  `TestCTAReview_RenewLease_vs_RevokeLease_CrossReplicaPostgres` (pg-gated).
+  `TestCTAReview_RenewLease_vs_RevokeLease_CrossReplicaPostgres` (pg-gated), and for a revoke whose
+  target drop failed `TestCTAReview_RenewLease_vs_RevokeFailed_SQLite` (default-ci) /
+  `..._CrossReplicaPostgres` (pg-gated): the lease stays `revoke_failed` with its original
+  `expires_at`, so the sweep retries it on time. The full-row `UpdateDynamicSecretLease`
+  primitive is deleted (STORE-STALE-WRITE-1): no lease write can carry a pre-read row any more.

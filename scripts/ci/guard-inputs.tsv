@@ -36,6 +36,7 @@ internal/docsdrift/helm_docs_set_keys_test.go	README.md,deploy/helm/keyorix/READ
 internal/docsdrift/links_test.go	**/*.md	relative links in every Markdown file
 internal/docsdrift/upgrading_sections_test.go	docs/**/*.md,changelog.d/**/*.md,SECURITY.md,README.md,!**	UPGRADING.md section numbers, and references to them in every .md under docs/ and changelog.d/ plus SECURITY.md and README.md; nothing else is walked
 internal/docsdrift/versioning_deprecations_test.go	docs/VERSIONING.md	deprecated config aliases (Go source) against the VERSIONING.md deprecations table
+internal/docsdrift/demo_cli_commands_test.go	demo/**/*.sh,demo/**/*.md,docs/cli-reference.md,internal/docsdrift/testdata/demo_cli_exemptions.tsv,!**	keyorix commands and flags in demo/**/*.sh and demo/**/*.md against docs/cli-reference.md, plus its exemption table; nothing else is walked
 internal/metricsdoc/metricsdoc_test.go	docs/operations/metrics.md,operator/**/*.go	metrics doc against metric registrations, operator/ included
 internal/metricsdoc/observability_assets_test.go	deploy/observability/**	alerts, dashboard and runbook
 internal/refusaldocs/refusaldocs_test.go	docs/operator/startup-refusals.md,!operator/**	startup-refusals doc against server/ and internal/ sources only

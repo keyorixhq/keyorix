@@ -72,7 +72,6 @@ type DynamicStore interface {
 	// lease's earlier revoke attempt failed on the target, so the credential is
 	// still live) — used to enforce the config's MaxActiveLeases ceiling.
 	CountActiveLeases(ctx context.Context, configID uint) (int64, error)
-	UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error
 	// ExtendDynamicSecretLeaseExpiry persists ONLY expires_at, and only for a
 	// lease whose status is STILL "active": "UPDATE ... SET expires_at WHERE
 	// lease_id = ? AND status = 'active'". matched=false (no error) means the

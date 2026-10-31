@@ -33,11 +33,15 @@ func (c *KeyorixCore) annotateShareViewSecrets(ctx context.Context, userID uint,
 		return // no names rather than unchecked names
 	}
 	// One batch decision for the page, equal to AuthorizeSecret(secrets.read) per secret
-	// (SHARES-BATCH-AUTHZ-1); a failed read leaves every name out.
-	allowed, aerr := c.AuthorizeSecretsBatch(ctx, userID, permSecretsRead, secrets)
+	// (SHARES-BATCH-AUTHZ-1); a failed read leaves every name out. The share
+	// elevations it decides are audited as one row for the list (#3456,
+	// share_list_elevation_audit.go), not one per secret.
+	listCtx, rec := shareListElevations(ctx)
+	allowed, aerr := c.AuthorizeSecretsBatch(listCtx, userID, permSecretsRead, secrets)
 	if aerr != nil {
 		return
 	}
+	c.writeShareListElevationSummary(ctx, userID, permSecretsRead, rec)
 	readable := make(map[uint]*models.SecretNode, len(secrets))
 	for _, sec := range secrets {
 		if sec != nil && allowed[sec.ID] {

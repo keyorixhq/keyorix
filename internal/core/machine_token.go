@@ -58,10 +58,15 @@ type IssueMachineTokenResult struct {
 // caller authorized at project A cannot act on a machine in project B by passing
 // its id in the path (the route gate only proves rights at the path's project).
 // A project mismatch is reported as "not found" to avoid cross-project id
-// enumeration.
+// enumeration, and is byte-identical to a true not-found. A storage FAULT on the
+// read is not either: it is ErrStorageReadUnavailable (classifyReadError), so an
+// outage never reads as "the machine is already gone".
 func (c *KeyorixCore) machineInProject(ctx context.Context, projectID, machineID uint) (*models.MachineIdentity, error) {
 	m, err := c.storage.GetMachineIdentity(ctx, machineID)
-	if err != nil || m.ProjectID != projectID {
+	if err != nil {
+		return nil, classifyReadError(err, "machine identity not found")
+	}
+	if m.ProjectID != projectID {
 		return nil, fmt.Errorf("machine identity not found")
 	}
 	return m, nil
@@ -89,7 +94,10 @@ func (c *KeyorixCore) validateReplacementCredential(ctx context.Context, machine
 		return "", nil
 	}
 	oldCred, err := c.storage.GetMachineIdentityCredentialByID(ctx, replaceID)
-	if err != nil || oldCred.MachineIdentityID != machineID {
+	if err != nil {
+		return "", classifyReadError(err, "replace_credential_id: credential not found on this machine")
+	}
+	if oldCred.MachineIdentityID != machineID {
 		return "", fmt.Errorf("replace_credential_id: credential not found on this machine")
 	}
 	return oldCred.TokenHash, nil
@@ -231,7 +239,10 @@ func (c *KeyorixCore) RevokeMachineToken(ctx context.Context, projectID, machine
 		return "", err
 	}
 	cred, err := c.storage.GetMachineIdentityCredentialByID(ctx, credentialID)
-	if err != nil || cred.MachineIdentityID != machineID {
+	if err != nil {
+		return "", classifyReadError(err, "token not found")
+	}
+	if cred.MachineIdentityID != machineID {
 		return "", fmt.Errorf("token not found")
 	}
 	// AUDIT-TX-3: a revocation: never blocked by the audit log, row owed.
@@ -281,7 +292,10 @@ func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machi
 		return nil, err
 	}
 	cred, err := c.storage.GetMachineIdentityCredentialByID(ctx, credentialID)
-	if err != nil || cred.MachineIdentityID != machineID {
+	if err != nil {
+		return nil, classifyReadError(err, "token not found")
+	}
+	if cred.MachineIdentityID != machineID {
 		return nil, fmt.Errorf("token not found")
 	}
 	if cred.Classification == level {
