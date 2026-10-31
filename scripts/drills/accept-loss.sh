@@ -24,12 +24,17 @@
 #
 # Usage: [DRILL_BACKEND=postgres DRILL_PG_DSN_FILE=a.txt] [DRILL_SERVER_BIN=... DRILL_CLI_BIN=...] \
 #        scripts/drills/accept-loss.sh
-# Postgres needs psql on PATH (to delete the audit row the way an attacker or a botched cleanup would).
+# Postgres deletes the audit row the way an attacker or a botched cleanup would, with psql when it is on
+# PATH and otherwise with the go-run stand-in tools/pgsql.go.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 drill_begin accept-loss
+if [ "$DRILL_BACKEND" = "postgres" ] && ! command -v psql >/dev/null; then
+    step "no psql on PATH: building the tools/pgsql.go stand-in"
+    (cd "$DRILL_REPO_ROOT/scripts/drills/tools" && go build -o "$DRILL_DIR/bin/pgsql" pgsql.go) || fail "cannot build pgsql helper"
+fi
 I=inst
 P="$(drill_port 31)"
 d="$DRILL_DIR/$I"
@@ -37,16 +42,30 @@ d="$DRILL_DIR/$I"
 # db_exec <sql>: run SQL against the instance database behind keyorix's back.
 db_exec() {
     if [ "$DRILL_BACKEND" = "postgres" ]; then
-        PGPASSWORD="$PG_PASS" psql "postgres://$PG_USER@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable" -v ON_ERROR_STOP=1 -q -c "$1"
+        pg_sql exec "$1"
     else
         sqlite3 "$d/keyorix.db" "$1"
+    fi
+}
+
+# pg_sql <exec|query> <sql>: psql when installed, else tools/pgsql.go (hosts without a psql client).
+pg_sql() {
+    local url="postgres://$PG_USER@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable"
+    if command -v psql >/dev/null; then
+        if [ "$1" = exec ]; then
+            PGPASSWORD="$PG_PASS" psql "$url" -v ON_ERROR_STOP=1 -q -c "$2"
+        else
+            PGPASSWORD="$PG_PASS" psql "$url" -v ON_ERROR_STOP=1 -At -c "$2"
+        fi
+    else
+        PGPASSWORD="$PG_PASS" "$DRILL_DIR/bin/pgsql" "$1" "$url" "$2"
     fi
 }
 
 # db_query <sql>: one value from the instance database (no headers).
 db_query() {
     if [ "$DRILL_BACKEND" = "postgres" ]; then
-        PGPASSWORD="$PG_PASS" psql "postgres://$PG_USER@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable" -v ON_ERROR_STOP=1 -At -c "$1"
+        pg_sql query "$1"
     else
         sqlite3 "$d/keyorix.db" "$1"
     fi
