@@ -105,6 +105,9 @@ func (h *CatalogHandler) RevokeProjectAccessReview(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := h.coreService.RevokeAccessReviewGrant(r.Context(), actorID, projectID, decision); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -131,6 +134,9 @@ func (h *CatalogHandler) AttestProjectAccessReview(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := h.coreService.AttestAccessReviewGrant(r.Context(), actorID, projectID, decision); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
