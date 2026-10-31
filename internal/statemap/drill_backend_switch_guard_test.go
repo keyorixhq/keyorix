@@ -134,3 +134,42 @@ func TestDrillScripts_BackendSwitchHasPostgresBranch(t *testing.T) {
 		t.Error(p)
 	}
 }
+
+// drillCoverageRows returns "drill | backends" for each table row of a markdown file whose first
+// cell is a backticked drill name; the later columns (README: runtime, what it proves) are ignored.
+func drillCoverageRows(md string) []string {
+	var rows []string
+	for _, line := range strings.Split(md, "\n") {
+		if !strings.HasPrefix(line, "| `") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "| "), " | ")
+		if len(cells) < 2 {
+			continue
+		}
+		rows = append(rows, strings.TrimSpace(cells[0])+" | "+strings.TrimSpace(cells[1]))
+	}
+	return rows
+}
+
+// The covered-backends table in docs/operator/drill-disaster.md repeats the first two columns of
+// scripts/drills/README.md; a drill whose coverage changes must change both.
+func TestDrillScripts_DocsCoverageTableMatchesReadme(t *testing.T) {
+	root := repoRoot(t)
+	readme, err := os.ReadFile(filepath.Join(root, "scripts", "drills", "README.md"))
+	if err != nil {
+		t.Fatalf("scripts/drills/README.md: %v", err)
+	}
+	doc, err := os.ReadFile(filepath.Join(root, "docs", "operator", "drill-disaster.md"))
+	if err != nil {
+		t.Fatalf("docs/operator/drill-disaster.md: %v", err)
+	}
+	want, got := drillCoverageRows(string(readme)), drillCoverageRows(string(doc))
+	if len(want) == 0 {
+		t.Fatal("no drill rows found in scripts/drills/README.md")
+	}
+	if strings.Join(want, "\n") != strings.Join(got, "\n") {
+		t.Errorf("docs/operator/drill-disaster.md covered-backends table differs from scripts/drills/README.md\nREADME:\n  %s\ndocs:\n  %s",
+			strings.Join(want, "\n  "), strings.Join(got, "\n  "))
+	}
+}
