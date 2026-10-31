@@ -261,14 +261,14 @@ func (ls *LocalStorage) ListSessionTokenHashesForUser(ctx context.Context, userI
 // TouchSession bumps last_seen_at only if the stored value is older than staleness
 // (or NULL), keeping the auth hot path from writing on every request.
 //
-// #1507: this UpdateColumn write bypasses model hooks too, but unlike
-// PersonalAccessToken.LastUsedAt/MachineIdentityCredential.LastUsedAt there is
-// no separate consumer to diverge from — the WHERE bound and the SET value
-// below both come from this function's own seenAt parameter, in the same
-// call. If a future range query on last_seen_at is ever added elsewhere
-// (there is none today — verified repo-wide), it would need the same
-// call-site normalization the other two #1507 fields document.
+// #1507: this UpdateColumn write bypasses model hooks (and GORM's NowFunc), so
+// it normalises seenAt, and the cutoff it compares against, to UTC itself
+// (SQLITE-UTC-NOWFUNC-1), like TouchPersonalAccessToken and
+// TouchMachineIdentityCredential: the last-used coalescer passes its clock's
+// time in the host zone, and on SQLite a non-UTC time is stored as text that
+// does not scan back (the session then fails every read).
 func (ls *LocalStorage) TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error {
+	seenAt = seenAt.UTC()
 	cutoff := seenAt.Add(-staleness)
 	return ls.db.WithContext(ctx).Model(&models.Session{}).
 		Where("id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)", id, cutoff).

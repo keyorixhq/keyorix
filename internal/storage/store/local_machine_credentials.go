@@ -173,8 +173,8 @@ func (ls *LocalStorage) RevokeMachineIdentityCredential(ctx context.Context, pro
 // (SQLITE-UTC-NOWFUNC-1). Core passes c.now() (host zone, via
 // TouchMachineTokenLastUsed); on SQLite a non-UTC time is stored as text that
 // neither scans back (the credential then fails every lookup) nor orders
-// against the UTC bounds CountStaleMachineCredentials (local_hygiene_counts.go)
-// uses.
+// against the bound CountStaleMachineCredentials (local_hygiene_counts.go)
+// compares it with, which that function also normalises to UTC.
 func (ls *LocalStorage) TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
 	usedAt = usedAt.UTC()
 	cutoff := usedAt.Add(-staleness)
