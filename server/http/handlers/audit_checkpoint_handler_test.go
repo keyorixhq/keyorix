@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// With encryption disabled the core holds no DEK-derived signing key, so an
+// With encryption disabled the core holds no KEK-derived signing key, so an
 // on-demand checkpoint write is a precondition failure (412), not a 500.
 func TestAuditHandler_WriteCheckpoint_RequiresEncryption(t *testing.T) {
 	db := openTestDB(t)
