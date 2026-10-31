@@ -6,12 +6,15 @@ package guards
 // is left half-applied, unlike the revoke / suspend / unbind family STORAGE-ERR-CLASS-1
 // fixed, where "not found" tells the operator the revoke is moot. Reporting them as a
 // storage fault is a follow-up; delete a row when its site calls classifyReadError.
+//
+// STORAGE-ERR-CLASS-2 classified catalog.go, classification_gate.go, users.go and
+// secret_copy_environment.go. The rows left are not this session's: machine_token.go and
+// dynamic_secrets.go belong to ERR-CLASS-LEFTOVERS-1, the rest are listed in the
+// STORAGE-ERR-CLASS-2 report.
 
 func init() {
 	const why = "grant/create/renew path: the fold refuses the operation (fail closed), nothing is applied; classify as a fault in a follow-up"
 	for _, key := range []string{
-		"catalog.go:CreateEnvironment",
-		"classification_gate.go:ApproveSecretAccessRequest",
 		"dynamic_secrets.go:requireLiveProjectAndEnvironment",
 		"dynamic_secrets.go:RenewLease",
 		"dynamic_secrets.go:CreateDynamicSecretConfig",
@@ -19,11 +22,7 @@ func init() {
 		"invitations.go:approveAccessRequestWithExpiryLocked",
 		"machine_token.go:requireEnvironmentInProject",
 		"membership_lifecycle.go:inviteMemberWithMode",
-		"secret_copy_environment.go:projectEnvironment",
 		"setup_consume.go:completeInvitationAccept",
-		"users.go:CreateUserWithAssignments",
-		"users.go:resolveProjectRoleGrant",
-		"users.go:ValidateRoleGrantAuthority",
 	} {
 		registerFoldedReadException(key, why)
 	}
