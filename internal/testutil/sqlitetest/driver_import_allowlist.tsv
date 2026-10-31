@@ -1,0 +1,29 @@
+# Test files that may import gorm.io/driver/sqlite instead of running on the production
+# dialect (internal/storage/sqlitedialect). One row per file: path<TAB>one-line reason.
+# Guard: driver_import_guard_test.go (TestNoNewDriverSqliteTestImports). The list only
+# shrinks: a file that stops importing the driver must be removed from here.
+#
+# Deliberate: the test is about the other driver, or runs a different claim.
+internal/testutil/sqlitetest/sqlitetest_test.go	self-test of the helper: opens the default driver on purpose as the uncapped-pool control
+internal/storage/store/credential_lookup_raw_times_test.go	FINDING (SQLITE-FIDELITY-1): on modernc a non-UTC fixed-zone timestamp scans back as a string; such values reach production (offset RFC3339 expiries, REVIEW-3837-DEEP-1); stays on mattn until the separate fix(security) change lands
+# Fault-injection harness and wrapper tests: schema, inventory and reset helpers, no claim about storage error translation.
+internal/faultstorage/faultstorage_test.go	unit tests of the fault wrapper over a trivially migrated store; the wrapper's behaviour does not depend on the driver
+server/faultops/snapshot_self_test.go	fault-world harness self-test: snapshot/restore of a migrated schema
+server/faultops/dump_inventory_test.go	fault-world harness inventory dump: table and column listing
+server/faultops/world_reuse_test.go	fault-world harness: table reset and sqlite_sequence handling of the harness itself
+# Handler and admin plumbing: injected or generic errors, rendering and filtering over a plain schema.
+server/admin_encryption_integration_test.go	encryption wiring over a file database; the claim is key handling, not error translation
+server/admin/restore_otp_expiry_test.go	restore-time backfill of one column on an already migrated schema
+server/http/handlers/bulk_access_requests_test.go	closed connection: every call fails with a generic database/sql error, identical on both drivers
+server/http/handlers/init_system_error_body_test.go	error is injected through the fault wrapper; no real storage error is translated
+server/http/handlers/handlers_s4_test.go	handler response plumbing over a plain schema; no error-translation or constraint claim (grep and read)
+server/http/handlers/handlers_s14_test.go	handler response plumbing over a plain schema; no error-translation or constraint claim (grep and read)
+server/http/handlers/admin_billing_test.go	billing summary rendering over a plain schema
+server/http/handlers/audit_search_handler_test.go	audit search filtering and pagination over a plain schema
+# Pure logic with a schema: clock arithmetic, not storage behaviour.
+internal/core/secret_value_clock_regression_test.go	clock-step logic of enforceSecretReadGuards; storage only holds the row
+internal/core/clock_fuzz_test.go	clock-jump fuzz over expiring credentials; storage only holds the rows
+# Owned by another running session: swap after it lands (class (a), not swapped here to avoid a conflict).
+internal/core/mfa_reset_cross_replica_test.go	edited by CORE-AUTH-TAILS-1; cross-replica claim, swap to sqlitedialect once that session lands
+server/http/handlers/login_budget_count_failures_test.go	login/MFA owner (FIX-3277); claim depends on error handling, swap once FIX-3277 lands
+server/http/handlers/project_mfa_toggle_http_test.go	login/MFA owner (FIX-3277); swap once FIX-3277 lands
