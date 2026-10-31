@@ -12,6 +12,7 @@ auth.go
 auth_bootstrap.go
 auth_budget.go
 auth_storage_unavailable.go
+authorize_transient.go
 authz.go
 authz_secret_batch.go
 bcrypt_cost.go
@@ -71,6 +72,7 @@ session_undelivered.go
 setup_consume.go
 setup_delivery.go
 setup_token.go
+storage_read_class.go
 user_baseline_role_reconcile.go
 users.go
 users_types.go

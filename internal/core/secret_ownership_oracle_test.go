@@ -59,6 +59,9 @@ func TestTransferOwnership_UnauthorizedActorGetsIdenticalRefusal(t *testing.T) {
 				_, err := c.TransferSecretOwnership(ctx, id, newOwner, 2, ActorTypeUser)
 				require.Error(t, err, label)
 				assert.ErrorIs(t, err, tc.sentinel, "%s: %v", label, err)
+				// Both refusals are authorization refusals, so transports map them
+				// through ErrPermissionDenied (403 / PermissionDenied) by errors.Is.
+				assert.ErrorIs(t, err, ErrPermissionDenied, "%s: %v", label, err)
 				assert.False(t, errors.Is(err, coreStorage.ErrUserNotFound), "%s: refusal reveals the user lookup: %v", label, err)
 				assert.False(t, errors.Is(err, ErrSecretInvalidInput), "%s: refusal reveals the current owner: %v", label, err)
 				refusals = append(refusals, err.Error())

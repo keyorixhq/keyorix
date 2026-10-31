@@ -24,6 +24,7 @@ import (
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	keyorixgrpc "github.com/keyorixhq/keyorix/server/grpc"
 	"github.com/keyorixhq/keyorix/server/grpc/services"
@@ -34,7 +35,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
-	sqlite "gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 

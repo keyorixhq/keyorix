@@ -218,13 +218,13 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 func validateFetcherBaseURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
-		return fmt.Errorf("invalid keyorix_url %q", raw)
+		return fmt.Errorf("invalid keyorix_url %q", netutil.RedactURLHost(raw))
 	}
 	if u.Scheme == "https" {
 		return nil
 	}
 	if u.Scheme != "http" || !isLoopbackHostname(u.Hostname()) {
-		return fmt.Errorf("keyorix_url %q must use https (http is allowed only for a loopback host)", raw)
+		return fmt.Errorf("keyorix_url %q must use https (http is allowed only for a loopback host)", netutil.RedactURLHost(raw))
 	}
 	return nil
 }

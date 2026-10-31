@@ -320,3 +320,39 @@ func TestFoldedCredential_CrossReplicaInvalidation(t *testing.T) {
 		}
 	})
 }
+
+// TestFoldedCredential_CredentialRelabelIsNotADecision (REVIEW-LEVER2 follow-up
+// (a), the credential side): the folded statement selects the credential's own
+// classification label (c.classification) with the rest of the row. Relabelling
+// the token on replica A is a change to a column the fold reads, and it must not
+// become a verdict on either path: B (warm, folded) answers exactly as C (cold)
+// and as before the change, and still folds. A label that silently denied, or
+// that left B reading a stale row, would show here.
+func TestFoldedCredential_CredentialRelabelIsNotADecision(t *testing.T) {
+	cgBackends(t, func(t *testing.T, backend string) {
+		for _, level := range []string{"restricted", "public", ""} {
+			t.Run("relabel-"+level, func(t *testing.T) {
+				w := newFCWorld(t, backend, 3)
+				sec, v1 := w.newSecret(t, nil)
+				fcWarm(t, w, w.b, sec, v1, true)
+				cred := fcMachineCred(t, w)
+				if level == "" {
+					// Clearing is only a change from a label: set one first.
+					_, err := w.a.c.ClassifyMachineToken(context.Background(), w.projID, cred.MachineIdentityID, cred.ID, "internal", w.adminID)
+					require.NoError(t, err)
+				}
+				_, err := w.a.c.ClassifyMachineToken(context.Background(), w.projID, cred.MachineIdentityID, cred.ID, level, w.adminID)
+				require.NoError(t, err)
+				var got models.MachineIdentityCredential
+				require.NoError(t, w.a.db.First(&got, cred.ID).Error)
+				require.Equal(t, level, got.Classification, "the relabel reached the credential row")
+
+				tok := w.tokens["machine"]
+				read, folded := fcReadObserved(w.b, tok, sec.ID)
+				require.True(t, folded, "B's read after the relabel must take the folded path")
+				require.Equal(t, "200 "+v1, read, "a credential label is not a verdict")
+				require.Equal(t, fcRead(w.c, tok, sec.ID), read, "B (warm, folded) must answer as C (cold)")
+			})
+		}
+	})
+}

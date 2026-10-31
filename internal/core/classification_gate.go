@@ -273,7 +273,7 @@ func (c *KeyorixCore) RequestSecretAccess(ctx context.Context, secretID, userID 
 			return nil, fmt.Errorf("you already have a pending access request for this secret")
 		}
 	}
-	now := c.now()
+	now := c.now().UTC()
 	expires := now.Add(accessRequestTTL)
 	sid := secretID
 	req := &models.AccessRequest{

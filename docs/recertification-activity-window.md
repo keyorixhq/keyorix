@@ -12,7 +12,7 @@ the whole audit log.
 | Where | Window (N days) |
 | --- | --- |
 | Project access review (`GET /api/v1/projects/{id}/access-review`), and the items a campaign snapshots from it | The review cadence, `recertification.cadence_days` (default 90), at most 366 |
-| Dormant role grants in the compliance posture, the `dormant-access` control, the digest and the evidence export | 90 days, the dormancy threshold the count is judged against (not the cadence) |
+| Dormant role grants in the compliance posture, the `dormant-access` control, the digest and the evidence export | The review cadence too (#3459): a grant is dormant when what it confers went unused for more than `cadence_days` days (default 90, at most 366) |
 
 `recertification.cadence_days` is read whether or not the recertification scheduler is
 enabled (see [CONFIGURATION.md](CONFIGURATION.md#recertification)). A value above 366
@@ -39,7 +39,9 @@ exactly N days before the lookup counts.
   before this change says `all_history`: its `last_used_at` looked back over the whole
   audit log.
 - **Compliance controls and digest.** The `dormant-access` control detail and the
-  digest line read "N dormant role grant(s) (no use in the last 90 days)".
+  digest line read "N dormant role grant(s) (no use in the last N days)", N being the
+  cadence. Before #3459 the dormancy threshold was a fixed 90 days whatever the
+  cadence; with the default cadence nothing changes.
 - **CLI.** `keyorix access-review` still prints `never` for an entry without
   `last_used_at`; read it as "none in the last `activity_window_days` days" (the API
   response it reads carries the window). The CLI wording is not changed here and is a

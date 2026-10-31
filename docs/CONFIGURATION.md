@@ -1648,8 +1648,10 @@ overdue signal is visible to auditors even before you enable `auto_open`.
 `cadence_days` is also the **look-back of the "last used" column** in the access review
 and in a campaign's items: a user with no secret activity in the last `cadence_days`
 days (at most 366) shows no last use, meaning "none within the review period", not
-"never". It applies whether or not the scheduler is enabled. See
-[recertification-activity-window.md](recertification-activity-window.md).
+"never". It applies whether or not the scheduler is enabled. It is also the **dormancy
+threshold** of the compliance posture's dormant role grants and the `dormant-access`
+control: a grant whose capability went unused for more than `cadence_days` days is
+dormant. See [recertification-activity-window.md](recertification-activity-window.md).
 
 ```yaml
 recertification:

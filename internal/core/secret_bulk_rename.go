@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -115,6 +116,13 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 		// (or that they can't individually act on) from the shape of the failure
 		// alone, even though they're plainly a real, existing secret.
 		secret, err := c.storage.GetSecret(ctx, rn.ID)
+		if err != nil && !isPositiveNotFound(err) {
+			// A storage fault is not "secret not found": report it distinctly so the
+			// caller retries instead of concluding the secret is gone.
+			log.Printf("bulk rename: secret %d skipped, storage read failed: %s", rn.ID, StorageReadFaultDetail(err))
+			skip(rn.ID, "", newName, StorageReadUnavailableMessage)
+			continue
+		}
 		if err != nil || secret == nil || secret.ProjectID != projectID {
 			skip(rn.ID, "", newName, "secret not found")
 			continue
