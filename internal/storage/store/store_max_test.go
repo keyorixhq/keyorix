@@ -38,7 +38,7 @@ import (
 
 func newMaxStore(t *testing.T, tag string, ms ...any) *LocalStorage {
 	t.Helper()
-	db := sqlitetest.OpenWithDialector(t, "storemax_", sqlite.Open, &gorm.Config{})
+	db := sqlitetest.OpenWithDialector(t, "storemax_", sqlite.Open, &gorm.Config{NowFunc: func() time.Time { return time.Now().UTC() }})
 	if len(ms) > 0 {
 		require.NoError(t, db.AutoMigrate(ms...))
 	}
@@ -1022,7 +1022,7 @@ func TestPurgeDeletedUsersBefore_DeletesUsers(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ls.DeleteUser(ctx, u.ID))
 
-	n, err := ls.PurgeDeletedUsersBefore(ctx, time.Now().Add(time.Hour))
+	n, err := ls.PurgeDeletedUsersBefore(ctx, time.Now().UTC().Add(time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
@@ -1044,7 +1044,7 @@ func TestPurgeDeletedProjectsBefore_DeletesProjects(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ls.DeleteProject(ctx, p.ID))
 
-	n, err := ls.PurgeDeletedProjectsBefore(ctx, time.Now().Add(time.Hour))
+	n, err := ls.PurgeDeletedProjectsBefore(ctx, time.Now().UTC().Add(time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
@@ -1068,7 +1068,7 @@ func TestPurgeDeletedSecretsBefore_DeletesSecrets(t *testing.T) {
 	_, _ = ls.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: s.ID, VersionNumber: 1, EncryptedValue: []byte("enc")})
 	require.NoError(t, ls.DeleteSecret(ctx, s.ID))
 
-	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now().Add(time.Hour))
+	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now().UTC().Add(time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
