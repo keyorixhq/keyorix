@@ -111,7 +111,7 @@ func TestAuditService_GetAuditRetention(t *testing.T) {
 
 func TestAuditService_WriteAuditCheckpoint_RequiresEncryption(t *testing.T) {
 	svc := newAuditService(t)
-	// The test core has no encryption configured, so the DEK-derived signing key is
+	// The test core has no encryption configured, so the KEK-derived signing key is
 	// unavailable and a checkpoint cannot be written — a precondition failure.
 	_, err := svc.WriteAuditCheckpoint(auditCtx(), &emptypb.Empty{})
 	require.Error(t, err)
