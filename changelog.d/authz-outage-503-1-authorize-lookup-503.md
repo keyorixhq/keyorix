@@ -1,0 +1,3 @@
+### Fixed
+
+- While PostgreSQL was down or a request hit its deadline, an authenticated caller's write (and any scoped read) failed in the permission lookup and the client got `403 Forbidden` ("you are not allowed"), which clients do not retry (#3458). A failed permission lookup now answers `503 Service Unavailable` with `Retry-After` over REST and `Unavailable` over gRPC, the same as a failed credential lookup; the request is still refused and nothing is cached. A real denial is unchanged (`403` / `PermissionDenied`, same body), and a lookup error that is not an outage stays a fail-closed denial. Alert on a rise in `503` during a database outage, not on `403`.

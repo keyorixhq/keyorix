@@ -39,7 +39,9 @@ does not crash. After it: the same server process serves again within seconds wi
 restart, the write refused during the outage left nothing behind, nothing acknowledged is
 lost, the audit chain verifies. (The `401` that older builds returned during an outage, and
 cached afterwards, was a bug this drill found: fixed by the credential-lookup change in the
-same release. Alert on a rise in `503`, not on `401`.)
+same release. Alert on a rise in `503`, not on `401`.) The permission lookup behind an
+authenticated request answers the same way: an admin's write during the outage gets a retryable
+`503` (gRPC `Unavailable`), not a `403` that no client retries.
 
 ## diskfull: the data directory fills up
 
