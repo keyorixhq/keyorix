@@ -31,11 +31,20 @@ What it does and checks:
    decrypts, versions, share, machine token, revoked token, suspended and deleted secret,
    break-glass history, group and dynamic-secret issue all work; the chain still verifies
    after the server has run.
-5. **Failure and rollback**: `admin restore` is killed with `kill -9` while migrating the
-   target and while loading rows, each time recovered both with `--overwrite-existing`
-   and with the manual cleanup. It checks the SQLite file's SHA-256 is unchanged, the
-   load left no partial rows, a plain re-run is refused, and each recovery ends with
-   tables equal to the source and a VALID chain. Finally the SQLite source still starts.
+5. **The other direction, PostgreSQL to SQLite**: `admin backup` of the migrated
+   PostgreSQL instance (after the server ran on it) and `admin restore` into a config that
+   points at an empty SQLite file, with the same checks as 3. and 4.: every table equal to the
+   PostgreSQL instance, restore's `verify-audit` VALID, the chain also valid against the
+   checkpoint exported before the first move, retention anchor byte-identical, and the server
+   boots on SQLite with the same logins, secrets, share, tokens, history, group and
+   dynamic-secret behaviour.
+6. **Failure and rollback**: `admin restore` is killed with `kill -9` while migrating the
+   target and while loading rows. It checks the SQLite file's SHA-256 is unchanged, the
+   load left no partial rows, a plain re-run is refused (naming the interrupted restore),
+   and the documented recovery works: `admin restore --recover` rolls back, the restore is
+   run again (with `--overwrite-existing` when the refusal says the killed restore's empty
+   schema is still there), and it ends with tables equal to the source and a VALID chain.
+   Finally the SQLite source still starts.
 
 ```sh
 # three databases: A (migration target), B (target of the kill legs), C (any database the
@@ -50,8 +59,9 @@ The last line is `SQLITE -> POSTGRESQL MIGRATION CHECK PASSED`. Environment:
 build this checkout), `DRILL_KEEP=1` (keep the work area).
 
 What it does **not** cover: the container variants (`docker compose`, Helm) are pending a
-run on the e2e VM; the PostgreSQL to SQLite direction; a PostgreSQL target that already
-holds data; very large databases (the run is sized for tens of thousands of rows).
+run on the e2e VM; a PostgreSQL target that already holds data; very large databases (this run
+is sized for tens of thousands of rows; for millions of rows see
+[backup-restore-scale.md](backup-restore-scale.md) and `scripts/migrate/scale-check.sh`).
 
 ## Findings fixed by this check
 
