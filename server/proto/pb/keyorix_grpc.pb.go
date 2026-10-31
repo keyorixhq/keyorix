@@ -1644,7 +1644,7 @@ type AuditServiceClient interface {
 	// whether the trail is intact, naming the first divergent event on failure.
 	VerifyAuditChain(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*VerifyAuditChainResponse, error)
 	// Write a signed checkpoint of the verified audit-chain head on demand (ADR-029).
-	// Requires encryption (the signing key is DEK-derived) and a chain that verifies.
+	// Requires encryption (the signing key is KEK-derived) and a chain that verifies.
 	WriteAuditCheckpoint(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*WriteAuditCheckpointResponse, error)
 	// Report the audit trail's retention coverage (total events, oldest/newest, and
 	// whether it demonstrably covers the NIS2 12-month window).
@@ -1744,7 +1744,7 @@ type AuditServiceServer interface {
 	// whether the trail is intact, naming the first divergent event on failure.
 	VerifyAuditChain(context.Context, *emptypb.Empty) (*VerifyAuditChainResponse, error)
 	// Write a signed checkpoint of the verified audit-chain head on demand (ADR-029).
-	// Requires encryption (the signing key is DEK-derived) and a chain that verifies.
+	// Requires encryption (the signing key is KEK-derived) and a chain that verifies.
 	WriteAuditCheckpoint(context.Context, *emptypb.Empty) (*WriteAuditCheckpointResponse, error)
 	// Report the audit trail's retention coverage (total events, oldest/newest, and
 	// whether it demonstrably covers the NIS2 12-month window).
