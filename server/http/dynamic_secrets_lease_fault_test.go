@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"syscall"
 	"testing"
 	"time"
 
@@ -163,6 +164,30 @@ func TestDynamicSecretLeaseRoutes_ReadFaultIs503ForGlobalHolders(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, respGone.StatusCode, bodyGone)
 		assert.Equal(t, bodyGone, bodyFault, "a fault and an absent lease are one answer for a non-holder (no oracle)")
 		assert.Empty(t, respFault.Header.Get("Retry-After"))
+	})
+
+	// A TRANSIENT cause (connection refused, a driver timeout, a cancelled ctx) is
+	// caught first by authorizeLookupUnavailable (INV-MW-authorize-lookup-error-is-503):
+	// every caller, holder or not, gets the same 503 "authorization temporarily
+	// unavailable". The outage hits every target alike, so it is no existence signal.
+	t.Run("a transient lease-read fault is the same 503 for every caller", func(t *testing.T) {
+		transient := fmt.Errorf("dial tcp 127.0.0.1:5432: %w", syscall.ECONNREFUSED)
+		faulty.Arm(&faultstorage.FaultSpec{Method: "GetDynamicSecretLease", NthCall: 1, Kind: faultstorage.KindError, Err: transient})
+		respAdmin, bodyAdmin := revoke(adminToken, lease.LeaseID)
+		require.True(t, faulty.Fired())
+		faulty.Arm(&faultstorage.FaultSpec{Method: "GetDynamicSecretLease", NthCall: 1, Kind: faultstorage.KindError, Err: transient})
+		respLim, bodyLim := revoke(limitedToken, lease.LeaseID)
+		require.True(t, faulty.Fired())
+		faulty.Arm(nil)
+		assert.Equal(t, http.StatusServiceUnavailable, respAdmin.StatusCode, bodyAdmin)
+		assert.Equal(t, http.StatusServiceUnavailable, respLim.StatusCode, bodyLim)
+		assert.Equal(t, bodyAdmin, bodyLim, "a transient fault is one answer for holder and non-holder")
+		assert.NotEmpty(t, respLim.Header.Get("Retry-After"))
+		assert.NotContains(t, bodyLim, "connection refused", "the driver cause must not reach the client")
+
+		got, gerr := testCore.Storage().GetDynamicSecretLease(ctx, lease.LeaseID)
+		require.NoError(t, gerr)
+		assert.Equal(t, "active", got.Status, "the 503 means the revoke was not applied")
 	})
 
 	t.Run("a true not-found is still 404 for a global holder", func(t *testing.T) {

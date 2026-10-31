@@ -1946,11 +1946,6 @@ func tooManyRequestsResponse(w http.ResponseWriter, message string) {
 	})
 }
 
-// serviceUnavailableResponse sends a 503 Service Unavailable response for a
-// transient failure (e.g. a storage-layer hiccup during token validation, see
-// isTransientValidationError) that the caller should simply retry, as opposed
-// to a 401 which tells the caller its credential itself is bad. Retry-After is
-// short — this is meant for a brief infrastructure blip, not a sustained outage.
 // storageUnavailableResponse is the middleware twin of the handlers package's
 // sendStorageUnavailable (same code, text and Retry-After): the answer to a request
 // whose storage READ failed. The wrapped cause goes to the server log, never the body.
@@ -1964,6 +1959,11 @@ func storageUnavailableResponse(w http.ResponseWriter, err error) {
 	})
 }
 
+// serviceUnavailableResponse sends a 503 Service Unavailable response for a
+// transient failure (e.g. a storage-layer hiccup during token validation, see
+// isTransientValidationError) that the caller should simply retry, as opposed
+// to a 401 which tells the caller its credential itself is bad. Retry-After is
+// short — this is meant for a brief infrastructure blip, not a sustained outage.
 func serviceUnavailableResponse(w http.ResponseWriter, message string) {
 	w.Header().Set(hdrContentType, mimeJSON)
 	w.Header().Set("Retry-After", "2")
