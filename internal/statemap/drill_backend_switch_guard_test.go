@@ -139,7 +139,7 @@ func TestDrillScripts_BackendSwitchHasPostgresBranch(t *testing.T) {
 // cell is a backticked drill name; the later columns (README: runtime, what it proves) are ignored.
 func drillCoverageRows(md string) []string {
 	var rows []string
-	for _, line := range strings.Split(md, "\n") {
+	for line := range strings.SplitSeq(md, "\n") {
 		if !strings.HasPrefix(line, "| `") {
 			continue
 		}
