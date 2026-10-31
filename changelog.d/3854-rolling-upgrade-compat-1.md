@@ -11,7 +11,9 @@
   run `keyorix audit verify --full` once every replica runs the new version. A row from
   before the upgrade, a replayed row, a row saved before a recorded break and a re-sign that
   dropped a discontinuity still latch, and so does an older replica's save after its load
-  rejected the row (deleted, put back, garbled), which would otherwise launder the deletion.
+  rejected the row (deleted, put back, garbled), whatever generation that replica last read,
+  which would otherwise launder the deletion. An older replica's re-sign of a row that still
+  carries a rejection no full verification has cleared yet latches too (fail closed).
   While an accepted loss (`admin audit accept-loss`) or a key transition exists, an older
   replica's save still latches (kind `seal` / `key transition`: it drops `seals` and
   `key_epoch`), so such deployments still read BROKEN during a rolling update: stop older

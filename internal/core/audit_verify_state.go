@@ -698,15 +698,19 @@ func auditVerifyStateSealProblem(s *auditVerifyState, seals *auditSealSet, ev au
 //   - the row is not older than the signed checkpoint trail or a generation
 //     this process read (a replay; every checkpoint write saves the state, so
 //     an older replica's re-sign is at the current trail until the next save);
-//   - the row carries no rejection recorded after the marker's generation,
-//     other than this binary's own restart of a re-sign (auditVerifyResavedRE).
-//     An older replica that rejects the row it loads (deleted, put back below
-//     a generation it read, older than the trail, garbled) starts over at the
+//   - the row carries no rejection, other than this binary's own restart of a
+//     re-sign (auditVerifyResavedRE), whatever its generation. An older
+//     replica that rejects the row it loads (deleted, put back below a
+//     generation it read, older than the trail, garbled) starts over at the
 //     next generation and the current trail, so its save passes every check
-//     above: only the rejection it records under that generation, which its
-//     later saves keep until a full verification it starts after it
-//     completes, tells it apart (REVIEW-3854-DEEP-1). A replay this binary
-//     rejected after the marker latches too once an older replica re-signs it.
+//     above: only the rejection it records, which its later saves keep until
+//     a full verification it starts after it completes, tells it apart
+//     (REVIEW-3854-DEEP-1). Its generation does not: an older replica started
+//     before the upgrade read a generation below the marker's, stamps its
+//     rejection below it too, and its next save is above it
+//     (REVIEW-3854-DEEP-2). Fail-closed cost: a replay this binary rejected,
+//     or a rejection a placed row still carries from before the marker, also
+//     latches once an older replica re-signs the row.
 //
 // A failure event alone cannot place a row: the older binary appends those too.
 func auditVerifyStateUnplaced(s *auditVerifyState, ev auditVerifyEvidence, cur auditVerifyBinding, seen uint64) (latch, resaved string) {
@@ -719,7 +723,7 @@ func auditVerifyStateUnplaced(s *auditVerifyState, ev auditVerifyEvidence, cur a
 		ev.maxFailureGen > s.Gen,
 		s.Failure == nil && ev.failureUnnamed > ev.marker,
 		s.Gen < seen, s.Bind.CheckpointID < cur.CheckpointID, s.Bind.HighWater < cur.HighWater,
-		s.Rejected != nil && s.Rejected.Gen > ev.markerGen && !auditVerifyResavedRE.MatchString(s.Rejected.Reason):
+		s.Rejected != nil && !auditVerifyResavedRE.MatchString(s.Rejected.Reason):
 		return fmt.Sprintf("the persisted verification state carries no audit head (signed by, or re-signed by, a server version from before audit event #%d recorded that the current state format is in use): an older row put back, or an older replica that dropped its fields", id), ""
 	}
 	return "", fmt.Sprintf(auditVerifyResavedText, s.Gen, ev.markerGen)

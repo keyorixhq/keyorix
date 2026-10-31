@@ -54,7 +54,8 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
   and the next passing full verification re-places it (#3708). It is still a `before a
   recorded break` discontinuity when a break, a discontinuity or a newer checkpoint was
   recorded after the older replica's save, when the older replica's own load rejected the
-  row (deleted, put back or garbled: its save would launder that), or when the newest
+  row (deleted, put back or garbled: its save would launder that), when the row it re-signed
+  still carried a rejection no full verification had cleared (fail closed), or when the newest
   `system.audit_verification_state_initialized` event names no state generation (written by
   a server from before #3708; the next save appends one that does). While an accepted loss
   or a key transition exists, an older replica's save is a `seal` / `key transition`

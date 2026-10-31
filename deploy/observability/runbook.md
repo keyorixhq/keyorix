@@ -138,7 +138,8 @@ is sticky: no verification, `--full` included, clears it, so this alert keeps fi
 a binary rollback no longer raises it: that state is restarted instead (KeyorixAuditVerifyStateRejected,
 #3708). It still raises it when a recorded break, a discontinuity event or a newer checkpoint follows
 the older replica's save, when the older replica's own load rejected the row (deleted, put back,
-garbled), or when the deployment's newest marker event predates #3708. While an accepted loss or a
+garbled), when the row it re-signed still carried a rejection no full verification had cleared
+(fail closed), or when the deployment's newest marker event predates #3708. While an accepted loss or a
 key transition exists, an older replica's save raises it as kind `seal` / `key transition` (it drops
 those fields): in such deployments stop older replicas before upgrading.
 **Do.** Freeze and keep evidence before touching anything, then treat it like a truncation: follow
