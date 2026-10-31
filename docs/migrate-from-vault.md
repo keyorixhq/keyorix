@@ -118,7 +118,8 @@ This prints a plan: every Vault path found, what Keyorix secret name it maps
 to, and whether it would be `create`d, `update`d, `skip`ped (already imported
 and unchanged), or is a `conflict` (a secret already exists at that name that
 this tool didn't create — resolve by renaming one side, or re-run with
-`--force` to overwrite it). Nothing is written yet.
+`--apply --force` to overwrite it; `--force` is refused without `--apply`).
+Nothing is written yet.
 
 A Vault path whose latest version was deleted shows up as `skip`, with the
 reason — not silently missing from the plan.

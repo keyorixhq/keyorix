@@ -3,17 +3,21 @@
 #
 # Stands up Keyorix (docker compose) + a throwaway HashiCorp Vault, seeds Vault
 # with sample secrets, then migrates EVERY secret into Keyorix with one command
-# (`keyorix secret import --source vault`) and shows them. Tears everything down
-# on exit.
+# (`keyorix-migrate vault`, the separate migration tool) and shows them. Tears
+# everything down on exit.
 #
-# Requires: docker, curl, jq, and the `keyorix` CLI on PATH
-#   (curl -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/main/install.sh | sh)
-# For testing against a locally-built CLI: KEYORIX_BIN=/path/to/keyorix ./run.sh
+# Requires: docker, curl, jq, the `keyorix` CLI and the `keyorix-migrate` tool on PATH
+#   keyorix:         curl -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/main/install.sh | sh
+#   keyorix-migrate: release binary or `make build` in migrate/ (docs/migrate-from-vault.md)
+# For locally-built binaries:
+#   KEYORIX_BIN=/path/to/keyorix KEYORIX_MIGRATE_BIN=/path/to/keyorix-migrate ./run.sh
+# The Vault and Keyorix tokens reach keyorix-migrate through files, never argv.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 COMPOSE="docker compose -f ${ROOT}/docker-compose.yml -p keyorix-demo"
 KX="${KEYORIX_BIN:-keyorix}"
+KM="${KEYORIX_MIGRATE_BIN:-keyorix-migrate}"
 KEYORIX_URL="http://localhost:8088"
 VAULT_PORT="8200"
 VAULT_ADDR="http://localhost:${VAULT_PORT}"
@@ -63,7 +67,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-command -v "$KX" >/dev/null 2>&1 || { echo "keyorix CLI not found — install it first (see header)"; exit 1; }
+command -v "$KX" >/dev/null 2>&1 || { echo "keyorix CLI not found — install it first (see header), or set KEYORIX_BIN"; exit 1; }
+command -v "$KM" >/dev/null 2>&1 || { echo "keyorix-migrate not found — the Vault import lives in this separate tool: download it or build it from migrate/ (docs/migrate-from-vault.md), then put it on PATH or set KEYORIX_MIGRATE_BIN"; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "jq is required"; exit 1; }
 
 c "1/5  Starting Keyorix (Postgres + API + web UI)"
@@ -103,10 +108,22 @@ echo "  secret/demo/prod/stripe    → value"
 echo "  secret/demo/prod/redis     → url"
 
 c "4/5  Migrating EVERY secret into Keyorix — one command"
-echo "  \$ keyorix secret import --source vault --vault-path demo/prod --project default --env production"
-KEYORIX_SERVER="$KEYORIX_URL" KEYORIX_TOKEN="$TOKEN" \
-VAULT_ADDR="$VAULT_ADDR" VAULT_TOKEN="$VAULT_TOKEN" \
-  "$KX" secret import --source vault --vault-path demo/prod --project default --env production
+# keyorix-migrate takes numeric project/environment IDs: look up "default" / "production".
+AUTH_HDR="Authorization: Bearer ${TOKEN}"
+PROJECT_ID="$(curl -sf -H "$AUTH_HDR" "${KEYORIX_URL}/api/v1/projects" | jq -r '.data.projects[] | select(.name=="default") | .id' | head -1)"
+[[ -n "$PROJECT_ID" ]] || { echo "could not find the 'default' project on ${KEYORIX_URL}"; exit 1; }
+ENV_ID="$(curl -sf -H "$AUTH_HDR" "${KEYORIX_URL}/api/v1/projects/${PROJECT_ID}/environments" | jq -r '.data.environments[] | select(.name=="production") | .id' | head -1)"
+[[ -n "$ENV_ID" ]] || { echo "could not find the 'production' environment in project ${PROJECT_ID}"; exit 1; }
+# Both tokens go in 0600 files inside the demo secrets dir (removed on exit): a flag value
+# would show in ps and shell history.
+(umask 077; printf '%s\n' "$TOKEN" > "${DEMO_SECRETS_DIR}/keyorix.token"; printf '%s\n' "$VAULT_TOKEN" > "${DEMO_SECRETS_DIR}/vault.token")
+echo "  \$ keyorix-migrate vault --server ${KEYORIX_URL} --project ${PROJECT_ID} --environment ${ENV_ID} \\"
+echo "      --vault-addr ${VAULT_ADDR} --vault-mount secret --vault-path demo/prod \\"
+echo "      --token-file <keyorix token file> --vault-token-file <vault token file> --apply"
+"$KM" vault --server "$KEYORIX_URL" --project "$PROJECT_ID" --environment "$ENV_ID" \
+  --vault-addr "$VAULT_ADDR" --vault-mount secret --vault-path demo/prod \
+  --token-file "${DEMO_SECRETS_DIR}/keyorix.token" --vault-token-file "${DEMO_SECRETS_DIR}/vault.token" \
+  --apply
 
 c "5/5  The secrets now live in Keyorix"
 KEYORIX_SERVER="$KEYORIX_URL" KEYORIX_TOKEN="$TOKEN" "$KX" secret list
