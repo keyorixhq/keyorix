@@ -618,7 +618,7 @@ func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Reque
 	}
 	if !written {
 		sendError(w, "PreconditionFailed",
-			"signed audit checkpoints require encryption to be enabled (the signing key is derived from the DEK)",
+			"signed audit checkpoints require encryption to be enabled (the signing key is derived from the KEK)",
 			http.StatusPreconditionFailed, nil)
 		return
 	}

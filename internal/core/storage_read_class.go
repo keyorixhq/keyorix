@@ -53,6 +53,10 @@ func isPositiveNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound) ||
 		storage.IsUserNotFound(err) ||
 		storage.IsSecretNotFound(err) ||
+		storage.IsSessionNotFound(err) ||
+		storage.IsRoleNotFound(err) ||
+		storage.IsProjectNotFound(err) ||
+		storage.IsEnvironmentNotFound(err) ||
 		errors.Is(err, storage.ErrMachineCredentialNotFound) ||
 		errors.Is(err, storage.ErrOIDCBindingNotFound)
 }

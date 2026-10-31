@@ -27,20 +27,30 @@ startup or any refusal. An unreadable source is `unknown`, never `ok`.
 | `integrity/kernel-lockdown` | `/sys/kernel/security/lockdown` | mode `integrity` or `confidentiality` | mode `none` | file absent, unreadable, unparseable |
 | `integrity/ima` | `/sys/kernel/security/ima/policy` (root-only) | policy has an `appraise` rule | only `measure` rules, or empty | file absent or unreadable |
 | `integrity/fs-verity` | `FS_IOC_GETFLAGS` on the running binary | fs-verity flag set | flag clear | ioctl failed (filesystem without the interface) |
-| `integrity/release-manifest` | `checksums.txt` next to the binary | binary SHA-256 is listed (signature file present, **not verified here**) | hash not listed | manifest unreadable |
-| `integrity/tpm-sealing` | `key_provider.type` and the sealed blob | provider is `tpm` and the blob exists | provider is not `tpm`, or no blob yet | blob unreadable |
+| `integrity/release-manifest` | `checksums.txt` next to the binary | never plain `ok`: a listed SHA-256 prints `ok (signature not verified)` | hash not listed | manifest unreadable |
+| `integrity/tpm-sealing` | `key_provider.type` and the sealed blob | provider is `tpm`, the blob exists and no weaker fallback is configured; with one it prints `ok (weaker fallback configured: <kind>)` | provider is not `tpm`, or no blob yet | blob unreadable |
 | `integrity/keylime-agent` | `/proc/*/comm` | a `keylime_agent` process exists (presence only) | none found | `/proc` unreadable |
 
 Notes:
 
 - `release-manifest` is `not checked` when no manifest is shipped next to the
   binary, or when it has no signature file next to it. Nothing is fetched. The
-  signature is not verified by the server; run `scripts/release/verify-release.sh`
-  for that.
+  signature is not verified by the server (a signature file of any content,
+  even an empty one, only unlocks the comparison), so a match prints
+  `ok (signature not verified)` and does **not** count toward the tier. Run
+  `scripts/release/verify-release.sh` for the real check.
 - `ima` `ok` means a policy with appraise rules is loaded. Whether it is
   enforcing depends on the `ima_appraise=` boot mode, which this check does not read.
 - `tpm-sealing` reads configuration and a file's existence. It does not talk to
   the TPM. The seal binds the KEK to the chip, not to a verified boot state.
+  Only the primary provider's type and the `fallbacks` types are read. A
+  fallback weaker than a TPM (password, file, env, exec, shamir, or an
+  unrecognised type; allowed only with `insecure_allow_weaker_kek_fallback`)
+  means the KEK is also recoverable without the TPM, so the line prints
+  `ok (weaker fallback configured: <kind>)` and tier 5 is **not** credited.
+- Every source is opened as a regular file only. A FIFO, device or directory at
+  one of those paths (for example a FIFO named `checksums.txt`) gives
+  `unknown` at once instead of blocking the command.
 - `keylime-agent` is presence of a process. It does not say whether a Keylime
   verifier currently accepts the host.
 - On macOS and Windows the Linux-only lines print `not applicable`.
@@ -48,15 +58,16 @@ Notes:
 ## Detected integrity tier (0 to 6)
 
 The tier counts consecutive rungs from the top of the table; the first rung that
-is not `ok` stops the count. `degraded`, `unknown` and `not checked` all stop it.
+is not plain `ok` stops the count. `degraded`, `unknown`, `not checked` and a
+qualified `ok (...)` all stop it.
 
 | Tier | Rung reached (all rungs above it also hold) |
 |---|---|
 | 1 | Secure Boot enabled |
 | 2 | kernel lockdown integrity or confidentiality |
-| 3 | running binary identity (fs-verity, or a matching release manifest) |
+| 3 | running binary identity (fs-verity enabled) |
 | 4 | IMA appraise policy loaded |
-| 5 | KEK sealed to a TPM |
+| 5 | KEK sealed to a TPM (no weaker fallback configured) |
 | 6 | Keylime agent present |
 
 Tier 0 means Secure Boot is not reported `ok`. The tier line also names the rung
@@ -67,8 +78,9 @@ that stopped the climb.
 An image-based OS with a signed boot chain (Secure Boot on, kernel lockdown set
 by the distribution) reaches tier 2 with no Keyorix configuration. Serving the
 binary from a verity-protected filesystem, or enabling fs-verity on it, adds
-tier 3. Loading an IMA policy with `appraise` rules (the measured-boot image
+tier 3 (a release manifest next to the binary does not: its signature is not
+verified here). Loading an IMA policy with `appraise` rules (the measured-boot image
 ships one) adds tier 4. Setting `storage.encryption.key_provider.type: tpm`
-adds tier 5, and running a Keylime agent tier 6. The tier is a label for what
+and no weaker fallback adds tier 5, and running a Keylime agent tier 6. The tier is a label for what
 the host reports; moving up it does not make the report evidence. For evidence,
 use TPM attestation as above.

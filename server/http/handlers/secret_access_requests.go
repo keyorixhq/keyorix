@@ -155,7 +155,7 @@ func (h *CatalogHandler) ResolveSecretAccessRequest(w http.ResponseWriter, r *ht
 		return
 	}
 	if resolveErr != nil {
-		if sendAuditUnavailable(w, resolveErr) {
+		if sendAuditUnavailable(w, resolveErr) || sendStorageUnavailable(w, resolveErr) {
 			return
 		}
 		status := http.StatusInternalServerError

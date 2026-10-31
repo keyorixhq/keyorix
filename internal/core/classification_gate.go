@@ -323,7 +323,9 @@ func (c *KeyorixCore) loadSecretAccessRequestForResolver(ctx context.Context, re
 	notFound := fmt.Errorf("access request not found")
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return nil, notFound
+		// A read FAULT is a retry answer; it is storage-wide, so it says nothing
+		// about this request's existence (no oracle, AUTHZ-ORACLE-1).
+		return nil, classifyReadError(err, notFound.Error())
 	}
 	if err := c.requireAccessRequestAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
 		if errors.Is(err, errAdminAuthorityRequired) {
@@ -353,7 +355,8 @@ func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID,
 	}
 	secret, err := c.storage.GetSecret(ctx, *req.SecretID)
 	if err != nil {
-		return nil, fmt.Errorf("cannot approve: secret %d no longer exists", *req.SecretID)
+		// A read FAULT is a retry answer, not "the secret is gone".
+		return nil, classifyReadError(err, fmt.Sprintf("cannot approve: secret %d no longer exists", *req.SecretID))
 	}
 	// Mirrors ApproveAccessRequestWithExpiry's own lazy-expire-and-refuse (#277):
 	// GetAccessRequest returns the row verbatim, so a request whose TTL already

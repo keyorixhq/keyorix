@@ -192,6 +192,24 @@ fix is to correct the value. **In place:** yes.
 | `keyorix has no SAML assertion-replay cache` | a provider sets `insecure_allow_idp_initiated_saml` (or `allow_idp_initiated`); IdP-initiated SAML is not supported, remove the key |
 | `refusing cross-host redirect to` | OIDC discovery was redirected to another host (a scheme downgrade is refused the same way); configure the issuer URL that serves its own discovery document |
 
+### Webhook signing secret too short under `GODEBUG=fips140=only`
+
+Real output (`GODEBUG=fips140=only`, `notifications.webhook.signing_secret` of 12 bytes):
+
+```
+Configuration is invalid: notifications.webhook.signing_secret (or KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET) is 12 bytes; under GODEBUG=fips140=only it must be at least 14 bytes (112 bits)
+```
+
+**Match:** `under GODEBUG=fips140=only it must be at least`
+
+**Cause.** Go's FIPS 140-only mode refuses an HMAC key shorter than 112 bits, and the
+webhook channel signs every payload with HMAC-SHA256 under this secret, so no signed
+delivery could be sent. Only checked when the process runs with `GODEBUG=fips140=only` and
+the webhook channel is enabled; outside that mode any length is accepted, as before.
+**Fix.** Set a signing secret of at least 14 bytes (a random 32-byte value is better) in
+`KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET` and the same value on the receiver, then restart.
+**In place:** yes.
+
 ### Two sources for one secret
 
 Real output (a master passphrase given both as a variable and a file):
@@ -1027,6 +1045,26 @@ storage.database.insecure_audit_skip_reads: true is refused while the compliance
 
 The list of compliance profiles is empty in this release, so the refusal cannot occur yet.
 Listed so it is not a surprise when the first profile ships.
+
+### FIPS 140-only boot self-test failed — from code
+
+```
+Refusing to start: fips140 self-test failed on <path>: <cause>
+```
+
+**Match:** `fips140 self-test failed on`
+
+**Cause.** With `GODEBUG=fips140=only`, the server first runs each encryption path it uses
+once with a throwaway key: DEK wrap/unwrap, secret encrypt/decrypt, PBKDF2 KEK derivation,
+and the evidence-signing, audit-checkpoint and backup-manifest keys with an HMAC under each.
+`<path>` names the one that failed and `<cause>` says why; a refusal by the Go FIPS module
+reads `panic: crypto/...: ... is not allowed in FIPS 140-only mode`. This runs before any
+key file is read, so nothing on disk was touched. Outside that mode the self-test does not
+run, and the log says `fips140 enforced: no (self-test not run)`.
+**Fix.** Not a configuration problem: this build cannot run that path in FIPS 140-only
+mode. Run without `GODEBUG=fips140=only`, or use a build where the line logged at start is
+`fips140 enforced: yes, self-test passed (N paths)`, and report the message as a bug.
+**In place:** yes (nothing was started).
 
 ### Weak SCIM token
 

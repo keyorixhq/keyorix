@@ -43,6 +43,9 @@ func (h *AuthHandler) MFAStepUp(w http.ResponseWriter, r *http.Request) {
 	err := h.coreService.VerifyMFAStepUp(r.Context(), userCtx.UserID, body.Code)
 	h.settleCredentialCheck(r, att, userCtx, "mfa_stepup", err)
 	if err != nil {
+		if writeTOTPUnavailable(w, err) {
+			return
+		}
 		if errors.Is(err, core.ErrMFAVerificationUnavailable) {
 			// FIX-1 (#2548 sibling) + #2740 review: no code was evaluated, so
 			// "retry" leaks nothing. See errMFAVerificationUnavailable (mfa.go).

@@ -111,11 +111,20 @@ func TestAuditService_GetAuditRetention(t *testing.T) {
 
 func TestAuditService_WriteAuditCheckpoint_RequiresEncryption(t *testing.T) {
 	svc := newAuditService(t)
-	// The test core has no encryption configured, so the DEK-derived signing key is
+	// The test core has no encryption configured, so the KEK-derived signing key is
 	// unavailable and a checkpoint cannot be written — a precondition failure.
 	_, err := svc.WriteAuditCheckpoint(auditCtx(), &emptypb.Empty{})
 	require.Error(t, err)
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+}
+
+// The checkpoint signing key is KEK-derived, so the error text must say KEK.
+func TestAuditService_WriteAuditCheckpoint_RequiresEncryption_NamesKEK(t *testing.T) {
+	svc := newAuditService(t)
+	_, err := svc.WriteAuditCheckpoint(auditCtx(), &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Contains(t, status.Convert(err).Message(), "the signing key is derived from the KEK")
+	assert.NotContains(t, status.Convert(err).Message(), "DEK")
 }
 
 // TestAuditService_WriteAuditCheckpoint_RequiresAuditReadAndSystemWrite is the

@@ -240,6 +240,11 @@ replace each `CHANGE-ME`.
   database backups (another store, other access) and the master password in a
   third place: you need all three to recover, and none opens a secret alone.
 - **TLS:** terminate at the ingress (`ingress.tls` + cert-manager annotations).
+- **Web pod probes:** liveness is `/nginx-health`, a static answer from the
+  web nginx alone, so a backend outage never restarts the pod. Readiness is
+  `/health`, proxied to the server Service's `/health`: the web pod is Ready
+  only while the backend answers, and leaves the Service endpoints (no restart)
+  while it is down.
 - **Secure baseline (`secureBaseline.enabled=true`):** Helm generates a
   `<fullname>-secure-baseline` Secret (e.g. `kx-keyorix-secure-baseline`) on first install, kept across upgrades:
   the server's self-signed certificate for its Service names, the `/metrics`
