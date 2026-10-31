@@ -20,7 +20,8 @@
 #       kgh is on PATH, with `kgh pr list`. Neither works: exit 2 naming both.
 #       In a sandboxed session kgh may not run from inside this script (it
 #       needs to be a standalone command): run `kgh pr list --state open
-#       --limit N --json number -q '.[].number'` yourself and pass the numbers.
+#       --limit N --search "sort:updated-desc" --json number -q '.[].number'`
+#       yourself and pass the numbers.
 #   PR  a PR number, or a local branch/commit (e.g. to prove the run goes red).
 #   -L  list the PRs that would be tested and exit (no git, no tests).
 #   --self-test  prove the gh / kgh / neither selection with fake binaries.
@@ -31,7 +32,8 @@ set -euo pipefail
 # list_open_prs: write the open PR numbers (one per line) to $work/prs.txt.
 # Tries $KEYORIX_GH (default gh) first; when it is missing or refuses (the
 # session sandbox blocks raw gh) and kgh is on PATH, tries
-# `kgh pr list ... --json number -q '.[].number'`. Neither: exit 2 naming both.
+# `kgh pr list ... --search "sort:updated-desc" --json number -q '.[].number'`
+# (the same PR set as gh). Neither: exit 2 naming both.
 # kgh must run as its own command (no pipe, no $(...)), so its output goes to a
 # file. Inside the sandbox even a redirect can stop kgh from reading its token;
 # then run the printed kgh command as a standalone step and pass the numbers.
@@ -43,10 +45,10 @@ list_open_prs() {
 	fi
 	if command -v kgh >/dev/null 2>&1; then
 		echo "guard-meets-open-prs: '$gh' unavailable or refused; trying kgh" >&2
-		if kgh pr list --state open --limit "$n" --json number -q '.[].number' >"$out" 2>/dev/null; then
+		if kgh pr list --state open --limit "$n" --search "sort:updated-desc" --json number -q '.[].number' >"$out" 2>/dev/null; then
 			return 0
 		fi
-		echo "guard-meets-open-prs: kgh failed too (in a sandbox run it as its own command: kgh pr list --state open --limit $n --json number -q '.[].number') and pass the PR numbers as arguments" >&2
+		echo "guard-meets-open-prs: kgh failed too (in a sandbox run it as its own command: kgh pr list --state open --limit $n --search \"sort:updated-desc\" --json number -q '.[].number') and pass the PR numbers as arguments" >&2
 		exit 2
 	fi
 	echo "guard-meets-open-prs: cannot list open PRs: '$gh' is missing or refused, and kgh is not on PATH; pass the PR numbers as arguments" >&2
@@ -58,12 +60,16 @@ self_test() {
 	local d fails=0 got
 	d=$(mktemp -d "${TMPDIR:-/tmp}/gmop-test.XXXXXX")
 	trap 'rm -rf "$d"' RETURN
-	mkdir -p "$d/gh" "$d/kgh" "$d/none"
-	printf '#!/bin/sh\nprintf "11\\n12\\n"\n' >"$d/gh/gh"
+	mkdir -p "$d/gh" "$d/kgh" "$d/both" "$d/none"
+	# The working fakes answer only when asked for the most recently UPDATED
+	# PRs (sort:updated-desc), so a lister that drops the flag goes red.
+	printf '#!/bin/sh\ncase "$*" in *sort:updated-desc*) printf "11\\n12\\n" ;; *) exit 1 ;; esac\n' >"$d/gh/gh"
 	printf '#!/bin/sh\nexit 1\n' >"$d/kgh/gh"
-	printf '#!/bin/sh\nprintf "21\\n22\\n"\n' >"$d/kgh/kgh"
+	printf '#!/bin/sh\ncase "$*" in *sort:updated-desc*) printf "21\\n22\\n" ;; *) exit 1 ;; esac\n' >"$d/kgh/kgh"
 	printf '#!/bin/sh\nexit 1\n' >"$d/gh/kgh"
-	chmod +x "$d"/gh/* "$d"/kgh/*
+	printf '#!/bin/sh\nexit 1\n' >"$d/both/gh"
+	printf '#!/bin/sh\nexit 1\n' >"$d/both/kgh"
+	chmod +x "$d"/gh/* "$d"/kgh/* "$d"/both/*
 	check() { # check <name> <want-rc> <want-out-regex> <path-dir>
 		local rc=0
 		got=$(TMPDIR="$d" PATH="$4:/usr/bin:/bin" KEYORIX_GH=gh "$BASH" "$0" -L -p x -r x 2>"$d/err.txt") || rc=$?
@@ -77,6 +83,7 @@ self_test() {
 	check "gh works: used" 0 '^11$' "$d/gh"
 	check "gh refuses, kgh works: used" 0 '^21$' "$d/kgh"
 	check "neither: exit 2 naming gh and kgh" 2 "gh.*kgh|kgh.*gh" "$d/none"
+	check "both refuse: exit 2, hint keeps sort:updated-desc" 2 "kgh pr list .*sort:updated-desc" "$d/both"
 	[ "$fails" -eq 0 ]
 }
 
