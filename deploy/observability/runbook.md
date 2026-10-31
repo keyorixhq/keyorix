@@ -134,8 +134,10 @@ this point. `keyorix_audit_verify_failure_recorded` is 1 too (KeyorixAuditChainB
 is sticky: no verification, `--full` included, clears it, so this alert keeps firing.
 **Check.** The `system.audit_verification_state_discontinuity` audit event names the kind
 (`deleted`, `garbled`, `other key epoch`, `key transition`, `past the chain head`,
-`before a recorded break`). A `before a recorded break` kind can come from an older replica saving
-the state during a rolling upgrade or a binary rollback.
+`before a recorded break`). An older replica that saves the state during a rolling upgrade or after
+a binary rollback no longer raises it: that state is restarted instead (KeyorixAuditVerifyStateRejected,
+#3708). It still raises it when a recorded break, a discontinuity event or a newer checkpoint follows
+the older replica's save, or when the deployment's newest marker event predates #3708.
 **Do.** Freeze and keep evidence before touching anything, then treat it like a truncation: follow
 the [audit-chain break runbook](../../docs/operator/audit-chain-break-runbook.md) (sections 2, 5, 6
 and 7) and compare against an external anchor, a backup or the high-water witness file.
@@ -143,10 +145,13 @@ and 7) and compare against an external anchor, a backup or the high-water witnes
 ## KeyorixAuditVerifyStateRejected
 
 **Means.** The stored verification state failed its signature or looked replayed or rolled back, so
-the audit status is `not_proven`. The cause can be a KEK-provider migration, a database restore, or
+the audit status is `not_proven`. The cause can be a KEK-provider migration, a database restore,
+a replica of an older version saving the state during a rolling upgrade or after a rollback, or
 someone editing the state row.
-**Check.** An audit event `system.audit_verification_state_rejected` records the reason.
-**Do.** After a known restore or migration, a passing full verification clears it. Without a known
+**Check.** An audit event `system.audit_verification_state_rejected` records the reason. An older
+replica's save reads "was re-signed by an older server version after generation N placed it".
+**Do.** After a known restore, migration or rolling upgrade (once every replica runs the new
+version), a passing full verification (`keyorix audit verify --full`) clears it. Without a known
 cause, treat it as KeyorixAuditChainBreakRecorded.
 
 ## KeyorixAuditVerifyStale
