@@ -186,7 +186,9 @@ srv_start() {
     )
     DRILL_PIDS+=("$(cat "$d/server.pid")")
     local i
-    for i in $(seq 1 60); do
+    # 90 s: a Postgres start once took 38 s before "Encryption initialised" (shared database host,
+    # not reproduced in the next run); a timeout detects a hang, it must not enforce speed.
+    for i in $(seq 1 180); do
         if curl -fs --cacert "$d/certs/server.crt" "https://127.0.0.1:$port/health" >/dev/null 2>&1; then
             return 0
         fi

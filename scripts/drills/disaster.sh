@@ -159,44 +159,41 @@ scenario_pgdown() {
 
     step "pgdown: database goes away"
     kill -USR1 "$proxy"
-    sleep 1
-    local t0 t1 code
+    # INV-STORAGE-session-advisory-lock-loss: the process-wide presence lock dies with its database
+    # connection and the server then shuts down gracefully (fail closed: an admin command must not run
+    # beside a server that no longer holds the lock). Until it has gone, a read may answer 503 (a valid
+    # credential is never told 401/403 because of an outage); never a success, never a hang.
+    local t0 i code="" gone=""
     t0="$(date +%s)"
-    code="$(curl -s -o /dev/null -m 40 -w '%{http_code}' --cacert "$d/certs/server.crt" -H @"$hdr" "https://127.0.0.1:$P/api/v1/secrets/1?include_value=true" || true)"
-    t1="$(date +%s)"
-    echo "    read during the outage: HTTP $code in $((t1 - t0))s"
-    case "$code" in 2*) fail "a secret read returned success while the database was unreachable" ;; esac
-    [ "$((t1 - t0))" -lt 35 ] || fail "a request hung for $((t1 - t0))s during the outage"
-    # an outage is the SERVER's fault: a valid credential must get a retryable 503, not a 401/403
-    # (clients drop credentials on 401; the token must not be negative-cached either)
-    [ "$code" = "503" ] || fail "a valid machine token got HTTP $code during the outage; want 503 (retryable), not a verdict on the credential"
-    ok "read refused with 503, did not hang"
-    (umask 077 && printf 'during-outage' >"$d/val.outage")
-    if cli "$I" "$P" secret create --name during-outage --from-file ./val.outage --project 1 --environment 1 >/dev/null 2>&1; then
-        fail "a secret create reported success while the database was unreachable"
-    fi
-    ok "write refused"
-    kill -0 "$(cat "$d/server.pid")" 2>/dev/null || fail "the server process died during the database outage"
-    grep -qiE 'panic|fatal error' "$d/server.log" && fail "the server panicked during the outage"
-    ok "server process alive, no panic"
-
-    step "pgdown: database comes back (same server process)"
-    kill -USR2 "$proxy"
-    local i recovered=""
-    for i in $(seq 1 60); do
+    for i in $(seq 1 40); do
         code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' --cacert "$d/certs/server.crt" -H @"$hdr" "https://127.0.0.1:$P/api/v1/secrets/1?include_value=true" || true)"
-        [ "$code" = "200" ] && { recovered=$i; break; }
+        case "$code" in
+        2*) fail "a secret read returned success while the database was unreachable" ;;
+        000 | 503) ;;
+        *) fail "a valid machine token got HTTP $code during the outage; want 503 (retryable) or a stopped server, not a verdict on the credential" ;;
+        esac
+        if ! kill -0 "$(cat "$d/server.pid")" 2>/dev/null; then gone=$i; break; fi
         sleep 1
     done
-    [ -n "$recovered" ] || { tail -20 "$d/server.log" >&2; fail "the server did not recover within 60s of the database coming back"; }
-    ok "reads served again ${recovered}s after the database returned, without a restart"
+    echo "    last read during the outage: HTTP $code; $((  $(date +%s) - t0 ))s after the outage began"
+    [ -n "$gone" ] || fail "the server neither stopped nor recovered within 40s of the database going away"
+    grep -q 'server-presence lock was lost' "$d/server.log" || { tail -20 "$d/server.log" >&2; fail "the server stopped without reporting the lost presence lock"; }
+    grep -qiE 'panic|fatal error' "$d/server.log" && fail "the server panicked during the outage"
+    ok "server stopped itself (lost presence lock), no panic, no read answered with success"
+    rm -f "$d/server.pid"
+
+    step "pgdown: database comes back, the operator restarts the server"
+    kill -USR2 "$proxy"
+    sleep 1
+    srv_start "$I" "$P"
+    ok "server started again against the returned database"
     login_admin "$I" "$P"
     (umask 077 && printf 'after-outage' >"$d/val.after")
     cli "$I" "$P" secret create --name after-outage --from-file ./val.after --project 1 --environment 1 >/dev/null \
         || fail "write failed after recovery"
     names_after="$(list_names "$I" "$P")" || fail "could not list secrets after recovery"
-    grep -qx 'during-outage' <<<"$names_after" && fail "the write refused during the outage exists anyway"
-    ok "writes work again; the refused write left nothing behind"
+    grep -qx 'after-outage' <<<"$names_after" || fail "the write made after recovery is not listed"
+    ok "writes work again"
     verify_seed "$I" "$P"
     srv_stop "$I"
     verify_audit "$I"
