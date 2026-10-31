@@ -84,6 +84,10 @@ type TPMState struct {
 	BlobPresent bool
 	// BlobErr: the blob could not be examined (anything but not-exist).
 	BlobErr error
+	// WeakerFallback is the type of the first configured key_provider fallback
+	// that is weaker than a TPM (empty when there is none). With one, the KEK is
+	// also recoverable without the TPM, so the seal is not the only way in.
+	WeakerFallback string
 }
 
 // FSVerity reports whether fs-verity is enabled on a file. It is an interface

@@ -215,6 +215,9 @@ func checkTPM(e Env) Line {
 		return unreadable(CheckTPMSealing, "the TPM-sealed KEK blob", t.BlobErr)
 	case !t.BlobPresent:
 		return Line{ID: CheckTPMSealing, State: StateDegraded, Detail: "key_provider.type is tpm but no sealed KEK blob exists yet"}
+	case t.WeakerFallback != "":
+		// Not StateOK: the rung assumes TPM-only recovery, which a weaker fallback breaks.
+		return Line{ID: CheckTPMSealing, State: StateOKQualified, Qualifier: "weaker fallback configured: " + t.WeakerFallback, Detail: "key_provider.type is tpm and a sealed KEK blob exists, but the " + t.WeakerFallback + " fallback can recover the KEK without the TPM (insecure_allow_weaker_kek_fallback), so this does not count toward the tier. The seal binds the KEK to this TPM chip, not to a verified boot state (no PCR policy)"}
 	default:
 		return Line{ID: CheckTPMSealing, State: StateOK, Detail: "key_provider.type is tpm and a sealed KEK blob exists. The seal binds the KEK to this TPM chip, not to a verified boot state (no PCR policy)"}
 	}
