@@ -783,7 +783,7 @@ func (c *KeyorixCore) ListBreakGlassActivationsForCaller(ctx context.Context, ac
 // the same lookup as the audit descriptions (auditObjectName), so a user that is
 // deleted or unreadable is simply absent from the map (the caller renders the
 // bare ID) and the list never fails on it. Usernames only, never an email.
-func (c *KeyorixCore) BreakGlassUsernames(ctx context.Context, rows []*models.BreakGlassActivation) map[uint]string {
+func (c *KeyorixCore) BreakGlassUsernames(ctx context.Context, rows []*models.BreakGlassActivation) map[uint]string { // nosemgrep: keyorix-unbounded-bulk-slice-param -- rows is the project's stored activation list from ListBreakGlassActivationsForCaller (a storage query result, not a client-supplied array); the per-item lookup runs over the deduped user-id set
 	names := make(map[uint]string)
 	seen := make(map[uint]bool)
 	for _, a := range rows {
