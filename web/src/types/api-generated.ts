@@ -4389,7 +4389,7 @@ export interface paths {
         put?: never;
         /**
          * Write a signed audit-chain checkpoint on demand (ADR-029)
-         * @description Signs a checkpoint of the current verified chain head for on-box truncation detection. Requires system.write (above the audit group's audit.read) and server-side encryption (the signing key is KEK-derived). Use to re-baseline immediately after a KEK-provider migration.
+         * @description Signs a checkpoint of the current verified chain head for on-box truncation detection. Requires system.write (above the audit group's audit.read) and server-side encryption (the signing key is KEK-derived). Use to re-baseline immediately after a KEK rotation (rotate-kek) or KEK-provider migration.
          */
         post: operations["writeAuditCheckpoint"];
         delete?: never;
@@ -4994,7 +4994,7 @@ export interface paths {
         put?: never;
         /**
          * Verify an exported evidence pack against its signature
-         * @description Recomputes the HMAC over the supplied evidence-pack bytes with the server's KEK-derived signing key and compares it to the detached signature — proving an archived pack was produced by this deployment and is unmodified. The pack is base64-encoded in data_b64 so arbitrary JSON can ride in the envelope. A signature made under a superseded key version (post KEK-provider migration) is reported as unverifiable, distinct from a tamper mismatch. Requires audit.read (not the universal system_viewer baseline).
+         * @description Recomputes the HMAC over the supplied evidence-pack bytes with the server's KEK-derived signing key and compares it to the detached signature — proving an archived pack was produced by this deployment and is unmodified. The pack is base64-encoded in data_b64 so arbitrary JSON can ride in the envelope. A signature made under a superseded key version (after a KEK rotation or KEK-provider migration) is reported as unverifiable, distinct from a tamper mismatch. Requires audit.read (not the universal system_viewer baseline).
          */
         post: operations["verifyComplianceEvidence"];
         delete?: never;
