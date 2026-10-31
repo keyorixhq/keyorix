@@ -491,7 +491,7 @@ type KeyorixCore struct {
 	// alongside the roots it verifies against.
 	checkpointAnchorVerify ports.VerifyReceiptFunc
 	// evidenceSignKey / evidenceSignKeyVersion sign and verify exported compliance-
-	// evidence packs (HMAC, DEK-derived, domain-separated from the checkpoint key).
+	// evidence packs (HMAC, KEK-derived, domain-separated from the checkpoint key).
 	// nil = signing unavailable (encryption disabled). Set via SetEvidenceSignKey.
 	evidenceSignKey        []byte
 	evidenceSignKeyVersion string
