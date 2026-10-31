@@ -982,6 +982,9 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.RevokeOwnSession(r.Context(), userCtx.UserID, uint(id)); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		sendError(w, "NotFound", "Session not found", http.StatusNotFound, nil)
 		return
 	}

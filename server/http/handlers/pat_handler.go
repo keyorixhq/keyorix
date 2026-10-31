@@ -225,6 +225,9 @@ func (h *PATHandler) RevokePAT(w http.ResponseWriter, r *http.Request) {
 	}
 	tokenHash, err := h.coreService.RevokeOwnPAT(r.Context(), userCtx.UserID, uint(id))
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		sendError(w, "NotFound", "Token not found", http.StatusNotFound, nil)
 		return
 	}
