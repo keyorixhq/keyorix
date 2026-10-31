@@ -52,7 +52,7 @@ type Config struct {
 	AutoRotation AutoRotationConfig `yaml:"auto_rotation"`
 	// AuditCheckpoints configures the opt-in background scheduler that writes
 	// signed checkpoints of the audit hash chain (ADR-029) for on-box truncation
-	// detection. Requires encryption enabled (the signing key is DEK-derived).
+	// detection. Requires encryption enabled (the signing key is KEK-derived).
 	AuditCheckpoints AuditCheckpointsConfig `yaml:"audit_checkpoints"`
 	// JITAccessExpiry configures the opt-in background sweeper that removes
 	// time-bound role grants whose expiry has passed (just-in-time access).

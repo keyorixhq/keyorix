@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
@@ -162,7 +163,7 @@ func (c *Config) validate() error {
 func validateKeyorixURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
-		return fmt.Errorf("invalid keyorix_url %q", raw)
+		return fmt.Errorf("invalid keyorix_url %q", netutil.RedactURLHost(raw))
 	}
 	switch u.Scheme {
 	case "https":
@@ -175,9 +176,9 @@ func validateKeyorixURL(raw string) error {
 		// K8SSYNC-007: only the hostname "localhost" is allowed over http, not any
 		// loopback IP — an attacker who controls DNS can map a loopback IP to a
 		// hostname of their choosing, so accepting raw IPs widens the bypass surface.
-		return fmt.Errorf("keyorix_url %q must use https (http is allowed only for localhost); sending the bearer token over plaintext would expose it", raw)
+		return fmt.Errorf("keyorix_url %q must use https (http is allowed only for localhost); sending the bearer token over plaintext would expose it", netutil.RedactURLHost(raw))
 	default:
-		return fmt.Errorf("keyorix_url %q must use https", raw)
+		return fmt.Errorf("keyorix_url %q must use https", netutil.RedactURLHost(raw))
 	}
 }
 
