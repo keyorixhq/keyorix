@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"gorm.io/gorm"
@@ -58,6 +57,18 @@ func isPositiveNotFound(err error) bool {
 		errors.Is(err, storage.ErrOIDCBindingNotFound)
 }
 
+// ReadFault is for transports that read through a pass-through core getter which
+// returns the raw storage error (GetDynamicSecretLease): nil for a nil error and for
+// a positive not-found, otherwise an ErrStorageReadUnavailable-wrapped fault. The
+// REST handler answers it 503 and the gRPC service Unavailable, instead of folding
+// it into "lease not found".
+func ReadFault(err error) error {
+	if err == nil || isPositiveNotFound(err) {
+		return nil
+	}
+	return classifyReadError(err, "not found")
+}
+
 // secretReadFault returns a non-nil ErrStorageReadUnavailable when reading secret id
 // FAILS (a fault), and nil both when the read succeeds and when the row is positively
 // absent. The authorization-checked fetches (GetSecretWithPermissionCheck, ...) fold
@@ -89,5 +100,16 @@ func classifyReadError(err error, notFound string) error {
 	if isPositiveNotFound(err) {
 		return errors.New(notFound)
 	}
-	return &storageReadFault{cause: fmt.Errorf("%s: %w", notFound, err)}
+	return &storageReadFault{cause: err}
+}
+
+// StorageReadFaultDetail is the text for the SERVER LOG of a storage read fault: the
+// driver cause that the client-facing message deliberately omits. For any other
+// error it is err.Error().
+func StorageReadFaultDetail(err error) string {
+	var f *storageReadFault
+	if errors.As(err, &f) && f.cause != nil {
+		return f.cause.Error()
+	}
+	return err.Error()
 }

@@ -127,7 +127,7 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	// retry. Probed on the plain read first since the authorization-checked
 	// fetches below fold every failure into the uniform denial.
 	if ferr := c.secretReadFault(ctx, id); ferr != nil {
-		log.Printf("bulk delete: secret %d not processed, storage read failed: %v", id, ferr)
+		log.Printf("bulk delete: secret %d not processed, storage read failed: %s", id, StorageReadFaultDetail(ferr))
 		result.Failed = append(result.Failed, BulkOpError{SecretID: id, Error: StorageReadUnavailableMessage})
 		return
 	}
