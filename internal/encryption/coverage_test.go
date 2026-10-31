@@ -13,6 +13,7 @@ package encryption
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -121,27 +122,22 @@ func TestDeriveEvidenceSignKey_KeyAndIDHaveExpectedPrefixAndLength(t *testing.T)
 	}
 }
 
-// TestDeriveEvidenceSignKey_EmptyKEK verifies that deriving from an empty (zero-
-// length) KEK still succeeds — HKDF-SHA256 is defined for any key material
-// length, including zero, so this is a valid call. It is NOT an error path for
-// the function itself; the caller (Initialize) is responsible for ensuring the
-// KEK is a proper 32-byte value before passing it.
+// TestDeriveEvidenceSignKey_EmptyKEK verifies that an empty KEK is refused with
+// a *KEKTooShortError (FIPS-TAILS-1): HKDF itself accepts zero-length input
+// keying material in default mode but panics on it under GODEBUG=fips140=only,
+// so the derivation rejects it up front in every mode. A 32-byte all-zero KEK
+// is long enough and still derives (providers reject all-zero material; this
+// function only enforces the length floor).
 func TestDeriveEvidenceSignKey_EmptyKEK(t *testing.T) {
-	// HKDF does not fail on empty key material; this covers the
-	// "different KEK produces different output" property.
 	key1, id1, err1 := deriveEvidenceSignKey([]byte{})
-	key2, id2, err2 := deriveEvidenceSignKey(make([]byte, 32))
-	if err1 != nil {
-		t.Fatalf("empty KEK: %v", err1)
+	if !errors.Is(err1, ErrKEKTooShort) {
+		t.Fatalf("empty KEK: err = %v, want ErrKEKTooShort", err1)
 	}
-	if err2 != nil {
-		t.Fatalf("32-zero KEK: %v", err2)
+	if key1 != nil || id1 != "" {
+		t.Fatalf("empty KEK: got key %x / id %q alongside the error, want none", key1, id1)
 	}
-	if bytes.Equal(key1, key2) {
-		t.Error("empty-KEK and zero-32-KEK produced the same signing key")
-	}
-	if id1 == id2 {
-		t.Error("empty-KEK and zero-32-KEK produced the same signing key ID")
+	if _, _, err := deriveEvidenceSignKey(make([]byte, 32)); err != nil {
+		t.Fatalf("32-zero KEK: %v", err)
 	}
 }
 
@@ -170,22 +166,19 @@ func TestDeriveAuditCheckpointKey_KeyAndIDHaveExpectedPrefixAndLength(t *testing
 	}
 }
 
-// TestDeriveAuditCheckpointKey_EmptyVsZeroKEK verifies domain separation for
-// different KEK values (mirrors the evidence-sign-key variant).
+// TestDeriveAuditCheckpointKey_EmptyVsZeroKEK mirrors the evidence-sign-key
+// variant: an empty KEK is refused with a *KEKTooShortError, a 32-byte zero KEK
+// still derives.
 func TestDeriveAuditCheckpointKey_EmptyVsZeroKEK(t *testing.T) {
 	key1, id1, err1 := deriveAuditCheckpointKey([]byte{})
-	key2, id2, err2 := deriveAuditCheckpointKey(make([]byte, 32))
-	if err1 != nil {
-		t.Fatalf("empty KEK: %v", err1)
+	if !errors.Is(err1, ErrKEKTooShort) {
+		t.Fatalf("empty KEK: err = %v, want ErrKEKTooShort", err1)
 	}
-	if err2 != nil {
-		t.Fatalf("32-zero KEK: %v", err2)
+	if key1 != nil || id1 != "" {
+		t.Fatalf("empty KEK: got key %x / id %q alongside the error, want none", key1, id1)
 	}
-	if bytes.Equal(key1, key2) {
-		t.Error("empty-KEK and zero-32-KEK produced the same checkpoint key")
-	}
-	if id1 == id2 {
-		t.Error("empty-KEK and zero-32-KEK produced the same checkpoint key ID")
+	if _, _, err := deriveAuditCheckpointKey(make([]byte, 32)); err != nil {
+		t.Fatalf("32-zero KEK: %v", err)
 	}
 }
 

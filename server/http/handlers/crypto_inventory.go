@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -30,7 +31,8 @@ const (
 
 // MakeCryptoInventoryHandler serves the crypto inventory. Gated by audit.read at
 // the router (a deployment-wide disclosure of key locations, like
-// /compliance/evidence); every successful read is audited. ?format=json (default)
+// /compliance/evidence); every read is audited before it is answered, and a read
+// whose audit row does not land is 503 with no inventory. ?format=json (default)
 // returns the API envelope, ?format=cbom a bare CycloneDX 1.6 document.
 func MakeCryptoInventoryHandler(cfg *config.Config, coreService *core.KeyorixCore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +69,15 @@ func MakeCryptoInventoryHandler(cfg *config.Config, coreService *core.KeyorixCor
 				return
 			}
 		}
-		coreService.LogCryptoInventoryRead(r.Context(), userCtx.UserID, format, inv.Summary.Total, inv.Summary.QuantumVulnerable)
+		// Audit-before-disclosure (#3716, as the secret-value reads): the inventory
+		// names every key's location, so not one byte of it is sent unless its read
+		// is on record. Detached so a client that hangs up cannot drop the row.
+		if aerr := coreService.LogCryptoInventoryRead(core.DetachedAuditContext(r.Context()), userCtx.UserID, format, inv.Summary.Total, inv.Summary.QuantumVulnerable); aerr != nil {
+			log.Printf("SECURITY: crypto inventory: audit write failed (%v) -- failing closed, inventory NOT returned", aerr)
+			w.Header().Set("Retry-After", strconv.Itoa(auditUnavailableRetryAfterSeconds))
+			sendError(w, auditUnavailableCode, core.CryptoInventoryAuditUnavailableMessage, http.StatusServiceUnavailable, nil)
+			return
+		}
 
 		if format == cryptoInventoryFormatCBOM {
 			w.Header().Set("Content-Type", "application/vnd.cyclonedx+json; version=1.6")

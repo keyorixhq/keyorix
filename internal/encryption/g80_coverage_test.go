@@ -191,27 +191,41 @@ func TestDecryptWithAAD_InvalidBase64Nonce_Error(t *testing.T) {
 // makes the branch genuinely unreachable from a test in this Go toolchain, not
 // merely hard to set up; forcing it would crash the whole test binary.
 
-// TestEncryptionService_Encrypt_RandFailure_Error covers Encrypt's nonce-generation
-// io.ReadFull(rand.Reader, ...) error branch (encryption.go:139).
-func TestEncryptionService_Encrypt_RandFailure_Error(t *testing.T) {
+// The GCM nonce is no longer read from crypto/rand.Reader (FIPS-GCM-NONCE-1):
+// cipher.NewGCMWithRandomNonce draws it inside the crypto module, so the
+// "failed to generate nonce" branches these tests used to reach are gone. They
+// now pin that a swapped, failing rand.Reader neither fails encryption nor
+// controls the nonce: each call still gets a fresh 12-byte nonce and the result
+// still decrypts.
+
+func TestEncryptionService_Encrypt_NonceIndependentOfRandReader(t *testing.T) {
 	es, err := NewEncryptionService(make([]byte, 32))
 	require.NoError(t, err)
 	withFailingRand(t, func() {
-		_, err := es.Encrypt([]byte("data"), "v1")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to generate nonce")
+		a, err := es.Encrypt([]byte("data"), "v1")
+		require.NoError(t, err)
+		b, err := es.Encrypt([]byte("data"), "v1")
+		require.NoError(t, err)
+		assert.NotEqual(t, a.Metadata.Nonce, b.Metadata.Nonce, "two encryptions reused a nonce")
+		assert.NotEqual(t, a.Data, b.Data)
+		pt, err := es.Decrypt(a)
+		require.NoError(t, err)
+		assert.Equal(t, "data", string(pt))
 	})
 }
 
-// TestEncryptionService_EncryptWithAAD_RandFailure_Error covers EncryptWithAAD's
-// nonce-generation error branch (encryption.go:247).
-func TestEncryptionService_EncryptWithAAD_RandFailure_Error(t *testing.T) {
+func TestEncryptionService_EncryptWithAAD_NonceIndependentOfRandReader(t *testing.T) {
 	es, err := NewEncryptionService(make([]byte, 32))
 	require.NoError(t, err)
 	withFailingRand(t, func() {
-		_, err := es.EncryptWithAAD([]byte("data"), "v1", []byte("aad"))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to generate nonce")
+		a, err := es.EncryptWithAAD([]byte("data"), "v1", []byte("aad"))
+		require.NoError(t, err)
+		b, err := es.EncryptWithAAD([]byte("data"), "v1", []byte("aad"))
+		require.NoError(t, err)
+		assert.NotEqual(t, a.Metadata.Nonce, b.Metadata.Nonce, "two encryptions reused a nonce")
+		pt, err := es.DecryptWithAAD(a, []byte("aad"))
+		require.NoError(t, err)
+		assert.Equal(t, "data", string(pt))
 	})
 }
 
@@ -227,17 +241,24 @@ func TestEncryptionService_EncryptChunked_StreamIDRandFailure_Error(t *testing.T
 	})
 }
 
-// TestEncryptionService_EncryptChunked_PerChunkEncryptFailure_Error covers the
-// inner EncryptWithAAD-call error branch inside EncryptChunked's loop
-// (encryption.go:318) — the 16-byte stream ID read succeeds, but the first
-// chunk's nonce read (12 bytes, immediately after) fails.
-func TestEncryptionService_EncryptChunked_PerChunkEncryptFailure_Error(t *testing.T) {
+// TestEncryptionService_EncryptChunked_ChunkNoncesIndependentOfRandReader:
+// the 16-byte stream ID still comes from rand.Reader, the per-chunk nonces no
+// longer do (see above). With rand.Reader failing right after the stream ID,
+// every chunk still encrypts under its own nonce and the stream reassembles.
+func TestEncryptionService_EncryptChunked_ChunkNoncesIndependentOfRandReader(t *testing.T) {
 	es, err := NewEncryptionService(make([]byte, 32))
 	require.NoError(t, err)
 	withRandFailingAfter(t, 16, func() {
-		_, err := es.EncryptChunked([]byte("some data to chunk into pieces"), 4, "v1")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to encrypt chunk 0")
+		chunks, err := es.EncryptChunked([]byte("some data to chunk into pieces"), 4, "v1")
+		require.NoError(t, err)
+		seen := map[string]bool{}
+		for _, c := range chunks {
+			require.False(t, seen[c.Metadata.Nonce], "two chunks share a nonce")
+			seen[c.Metadata.Nonce] = true
+		}
+		pt, err := es.DecryptChunked(chunks)
+		require.NoError(t, err)
+		assert.Equal(t, "some data to chunk into pieces", string(pt))
 	})
 }
 
@@ -336,13 +357,21 @@ func TestUnwrapKey_BadKEKLength_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to create AES cipher")
 }
 
-// TestWrapKey_RandFailure_Error covers wrapKey's nonce-generation error branch
-// (keymanager_lifecycle.go — the wrapKey helper's rand.Reader call).
-func TestWrapKey_RandFailure_Error(t *testing.T) {
+// TestWrapKey_NonceIndependentOfRandReader: wrapKey's nonce is drawn by
+// cipher.NewGCMWithRandomNonce, not read from rand.Reader (FIPS-GCM-NONCE-1),
+// so its old "failed to generate nonce" branch is gone. A failing rand.Reader
+// still yields two different wrappings that both unwrap.
+func TestWrapKey_NonceIndependentOfRandReader(t *testing.T) {
+	kek := make([]byte, 32)
 	withFailingRand(t, func() {
-		_, err := wrapKey(make([]byte, 32), make([]byte, 32))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to generate nonce")
+		a, err := wrapKey(make([]byte, 32), kek)
+		require.NoError(t, err)
+		b, err := wrapKey(make([]byte, 32), kek)
+		require.NoError(t, err)
+		assert.NotEqual(t, a[:12], b[:12], "two wrappings reused a nonce")
+		plain, err := unwrapKey(a, kek)
+		require.NoError(t, err)
+		assert.Equal(t, make([]byte, 32), plain)
 	})
 }
 
@@ -605,21 +634,11 @@ func TestRotateKEKPassphrase_NewSaltRandFailure_Error(t *testing.T) {
 	})
 }
 
-// TestRotateKEKPassphrase_WrapNewDEKFailure_Error covers the
-// wrapKey(km.currentDEK, newKEK) error branch (keymanager_kek_rotation.go:103):
-// the first 32 bytes of rand output (the new salt) succeed, but wrapKey's own
-// 12-byte nonce read (which happens after) fails.
-func TestRotateKEKPassphrase_WrapNewDEKFailure_Error(t *testing.T) {
-	dir := t.TempDir()
-	km := NewKeyManager(dir, "dek.key", "kek.salt")
-	require.NoError(t, km.Initialize("passphrase"))
-
-	withRandFailingAfter(t, 32, func() {
-		err := km.RotateKEKPassphrase("passphrase", "new-passphrase")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "wrap DEK with new KEK")
-	})
-}
+// The "wrap DEK with new KEK" branches of RotateKEKPassphrase and RewrapDEK are
+// no longer driven from here. They were reached by failing wrapKey's own nonce
+// read from rand.Reader; since FIPS-GCM-NONCE-1 the nonce is drawn by
+// cipher.NewGCMWithRandomNonce, and wrapKey can fail only on a KEK that is not
+// a valid AES key length, which both callers rule out before calling it.
 
 // TestRotateKEKPassphrase_CommitFailure_Error covers the commitNewKEKFiles error
 // propagation branch (keymanager_kek_rotation.go:107) by pre-creating
@@ -726,22 +745,6 @@ func TestRewrapDEK_LockFailure_Error(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestRewrapDEK_WrapKeyFailure_Error covers wrapKey's error branch inside
-// RewrapDEK (keymanager_rewrap.go:80) via a rand.Reader failure — the new
-// provider's KEK is a valid 32 bytes (passes the length check), so wrapKey
-// itself must be what's reached and what fails.
-func TestRewrapDEK_WrapKeyFailure_Error(t *testing.T) {
-	dir := t.TempDir()
-	km := NewKeyManager(dir, "dek.key", "kek.salt")
-	require.NoError(t, km.Initialize("passphrase"))
-
-	withFailingRand(t, func() {
-		err := km.RewrapDEK(&mockKeyProvider{kek: make([]byte, 32)})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "wrap DEK with new KEK")
-	})
-}
-
 // TestRewrapDEK_WritePendingFailure_Error covers the SecureWriteFileSync failure
 // branch (keymanager_rewrap.go:90), using the same pre-create-lock-then-readonly
 // technique as the RotateDEKWithSweep equivalent above.
@@ -780,35 +783,35 @@ func g80SvcInit(t *testing.T, passphrase string) (*Service, string) {
 }
 
 // ─── service.go: EncryptSecret / EncryptSecretWithAAD / EncryptLargeSecret ────
-// ─── rand.Reader failure branches                                            ──
+// ─── inner encrypt failure branches (a wiped EncryptionService)             ──
 
-func TestService_EncryptSecret_RandFailure_Error(t *testing.T) {
+func TestService_EncryptSecret_EncryptFailure_Error(t *testing.T) {
 	svc, _ := g80SvcInit(t, "g80-svc-encrypt-rand")
 	defer svc.Shutdown()
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, svc.encryptionService, func() {
 		_, _, err := svc.EncryptSecret([]byte("plaintext"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to encrypt secret")
 	})
 }
 
-func TestService_EncryptSecretWithAAD_RandFailure_Error(t *testing.T) {
+func TestService_EncryptSecretWithAAD_EncryptFailure_Error(t *testing.T) {
 	svc, _ := g80SvcInit(t, "g80-svc-encrypt-aad-rand")
 	defer svc.Shutdown()
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, svc.encryptionService, func() {
 		_, _, err := svc.EncryptSecretWithAAD([]byte("plaintext"), []byte("aad"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to encrypt secret with AAD")
 	})
 }
 
-func TestService_EncryptLargeSecret_RandFailure_Error(t *testing.T) {
+func TestService_EncryptLargeSecret_EncryptFailure_Error(t *testing.T) {
 	svc, _ := g80SvcInit(t, "g80-svc-encrypt-large-rand")
 	defer svc.Shutdown()
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, svc.encryptionService, func() {
 		_, _, err := svc.EncryptLargeSecret([]byte("a large secret payload to chunk"), 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to encrypt chunked secret")
@@ -950,7 +953,7 @@ func TestSweepSecretVersions_ReEncryptFailure(t *testing.T) {
 	ver := &models.SecretVersion{SecretNodeID: node.ID, VersionNumber: 1, EncryptedValue: encBytes}
 	require.NoError(t, db.Create(ver).Error)
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, newSvc, func() {
 		_, _, err := sweepSecretVersions(db, oldSvc, newSvc, "v2", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to re-encrypt secret_version")
@@ -1044,7 +1047,7 @@ func TestSweepAPITokens_ReEncryptFailure(t *testing.T) {
 	row := &models.APIToken{Token: "h-reenc-fail", EncryptedToken: encBytes}
 	require.NoError(t, db.Create(row).Error)
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, newSvc, func() {
 		_, _, err := sweepAPITokens(db, oldSvc, newSvc, "v2", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to re-encrypt api_token")
@@ -1063,7 +1066,7 @@ func TestSweepAPIClients_ReEncryptFailure(t *testing.T) {
 	row := &models.APIClient{ClientID: "cl-reenc-fail", EncryptedClientSecret: encBytes}
 	require.NoError(t, db.Create(row).Error)
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, newSvc, func() {
 		_, err := sweepAPIClients(db, oldSvc, newSvc, "v2", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to re-encrypt api_client")
@@ -1082,7 +1085,7 @@ func TestSweepMFASecrets_ReEncryptFailure(t *testing.T) {
 	row := &models.MFASecret{UserID: 9, SecretEnc: encBytes}
 	require.NoError(t, db.Create(row).Error)
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, newSvc, func() {
 		_, _, err := sweepMFASecrets(db, oldSvc, newSvc, "v2", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to re-encrypt mfa_secret")
@@ -1101,7 +1104,7 @@ func TestSweepDynamicSecretConfigs_ReEncryptFailure(t *testing.T) {
 	row := &models.DynamicSecretConfig{ProjectID: 2, EnvironmentID: 3, AdminDSNEnc: encBytes}
 	require.NoError(t, db.Create(row).Error)
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, newSvc, func() {
 		_, _, err := sweepDynamicSecretConfigs(db, oldSvc, newSvc, "v2", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to re-encrypt dynamic_secret_config")
@@ -1120,7 +1123,7 @@ func TestSweepDynamicSecretLeases_ReEncryptFailure(t *testing.T) {
 	row := &models.DynamicSecretLease{LeaseID: "lease-1", ConfigID: 4, CredentialEnc: encBytes}
 	require.NoError(t, db.Create(row).Error)
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, newSvc, func() {
 		_, _, err := sweepDynamicSecretLeases(db, oldSvc, newSvc, "v2", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to re-encrypt dynamic_secret_lease")
@@ -1139,7 +1142,7 @@ func TestSweepPasswordResets_ReEncryptFailure(t *testing.T) {
 	row := &models.PasswordReset{UserID: 11, EncryptedToken: encBytes}
 	require.NoError(t, db.Create(row).Error)
 
-	withFailingRand(t, func() {
+	withNewSvcWiped(t, newSvc, func() {
 		_, _, err := sweepPasswordResets(db, oldSvc, newSvc, "v2", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to re-encrypt password_reset")

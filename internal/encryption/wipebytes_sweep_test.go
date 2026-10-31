@@ -79,6 +79,7 @@ var keyMaterialSources = map[string]string{
 	"deriveAuditCheckpointKey": "KEK-derived audit-checkpoint key",
 	"DeriveBackupManifestKey":  "auditverify.DeriveBackupManifestKey: KEK-derived backup-manifest key",
 	"GenerateKEK":              "PBKDF2-derived KEK",
+	"selfTestRandomKey":        "fips_selftest.go: throwaway random KEK/DEK for the boot self-test",
 	"GetDEK":                   "returns a fresh copy of the DEK; the caller owns the copy",
 	"GetEvidenceSignKey":       "returns a fresh copy of the evidence-signing key",
 	"GetAuditCheckpointKey":    "returns a fresh copy of the audit-checkpoint key",

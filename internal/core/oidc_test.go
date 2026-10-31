@@ -140,6 +140,7 @@ func TestOIDCVerify_Rejections(t *testing.T) {
 	})
 
 	t.Run("HMAC algorithm rejected", func(t *testing.T) {
+		skipUnderFIPS140Only(t, "the fixture forges an HS256 token with a 6-byte secret, under crypto/hmac's 112-bit minimum; the verifier under test rejects HMAC algorithms before any HMAC is computed")
 		tok := jwt.NewWithClaims(jwt.SigningMethodHS256, base())
 		tok.Header["kid"] = "kid-1"
 		raw, err := tok.SignedString([]byte("secret"))
