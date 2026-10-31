@@ -24,7 +24,7 @@ import (
 // "alice%admin" must NOT match a user whose name is "alice-admin" (#r124-M).
 func TestGetAuditLogs_LIKEEscape_ActorUsername(t *testing.T) {
 	db := sqlitetest.OpenWithDialector(t, "kxlikeescape_actor_", sqlite.Open, &gorm.Config{})
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}, &models.MachineIdentity{}))
 
 	// Seed two users with similar names: "alice-admin" and "alice_admin".
 	alice := &models.User{Username: "alice-admin", Email: "a@ex.com", PasswordHash: "x"}
@@ -74,7 +74,7 @@ func TestGetAuditLogs_LIKEEscape_ActorUsername(t *testing.T) {
 // resource prefix and not unrelated event types (#r124-M).
 func TestGetAuditLogs_LIKEEscape_ResourceType(t *testing.T) {
 	db := sqlitetest.OpenWithDialector(t, "kxlikeescape_restype_", sqlite.Open, &gorm.Config{})
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}, &models.MachineIdentity{}))
 
 	tru := true
 	// Seed events for two different resource types.
@@ -124,7 +124,7 @@ func TestGetAuditLogs_LIKEEscape_ResourceType(t *testing.T) {
 // (#r124-M pagination DoS).
 func TestGetAuditLogs_ClampPage(t *testing.T) {
 	db := sqlitetest.OpenWithDialector(t, "kxlikeescape_clamppage_", sqlite.Open, &gorm.Config{})
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}, &models.MachineIdentity{}))
 
 	ls := NewLocalStorage(db)
 	ctx := context.Background()

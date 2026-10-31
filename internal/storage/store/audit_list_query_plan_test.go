@@ -73,7 +73,7 @@ func newAuditPlanWorld(t *testing.T, pg bool) *auditPlanWorld {
 		require.NoError(t, err)
 		sqlDB.SetMaxOpenConns(1)
 	}
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}, &models.MachineIdentity{}))
 	if pg {
 		sqlDB, err := db.DB()
 		require.NoError(t, err)

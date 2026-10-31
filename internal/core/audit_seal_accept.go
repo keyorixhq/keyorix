@@ -452,18 +452,31 @@ func (c *KeyorixCore) auditLossResumeCheck(ctx context.Context, f *auditLossFind
 // latest checkpoint or a mark that authenticates under neither binding, or a
 // mark that is missing although seal last recorded a certification before the
 // loss (the acceptance overwrites the mark, it never deletes it), is refused.
+// After a key change, an artifact still signed under the previous key is
+// counted or skipped only as the active transition record names it
+// (audit_seal_key_change.go, #3814).
 func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *auditLossFindings, last *auditSeal) ([]AuditSealCount, error) {
 	var out []AuditSealCount
 	cur, prev := sealBindingOf(f.seals.recs), sealBindingOf(f.seals.recs[:len(f.seals.recs)-1])
+	// Signed under the key before a key change (#3814): only what the
+	// transition record, MACed by both keys, names with its binding counts.
+	carried, err := c.activeAuditSealing(ctx, f.seals.recs)
+	if err != nil {
+		return nil, err
+	}
+	const viaKeyChange = " (signed under the previous key, named by the key transition)"
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if cp != nil {
+		named := carried.binding(auditCheckpointDigest(cp))
 		switch {
 		case c.checkpointSigMatchesUnder(cp, cur, cp.Signature):
 			out = append(out, AuditSealCount{Events: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash, Source: fmt.Sprintf("signed checkpoint #%d", cp.ID)})
-		case c.checkpointSigMatchesUnder(cp, prev, cp.Signature):
+		case named == auditCarriedUnder:
+			out = append(out, AuditSealCount{Events: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash, Source: fmt.Sprintf("signed checkpoint #%d", cp.ID) + viaKeyChange})
+		case c.checkpointSigMatchesUnder(cp, prev, cp.Signature), named == auditCarriedBefore:
 			// Signed before this seal: the re-seal has not replaced it yet.
 		default:
 			return nil, auditLossRefused("the latest checkpoint #%d authenticates neither under seal #%d nor before it (deleted newer checkpoints or a garbled signature, not a half-written acceptance): investigate before completing seal #%d", cp.ID, last.Seq, last.Seq)
@@ -475,10 +488,13 @@ func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *audi
 	}
 	if ok {
 		hw, b, sig, parsed := parseAuditHighWaterSealed(val)
+		named := carried.binding(auditDigest(val))
 		switch {
 		case parsed && b == cur && c.checkpointSigMatchesUnder(hw, cur, sig):
 			out = append(out, AuditSealCount{Events: hw.ChainedEvents, HeadID: hw.HeadID, HeadHash: hw.HeadHash, Source: "the signed high-water mark"})
-		case parsed && b == prev && c.checkpointSigMatchesUnder(hw, prev, sig):
+		case parsed && b == cur && named == auditCarriedUnder:
+			out = append(out, AuditSealCount{Events: hw.ChainedEvents, HeadID: hw.HeadID, HeadHash: hw.HeadHash, Source: "the signed high-water mark" + viaKeyChange})
+		case parsed && b == prev && (c.checkpointSigMatchesUnder(hw, prev, sig) || named == auditCarriedBefore):
 			// Signed before this seal: the re-seal has not lowered it yet.
 		default:
 			return nil, auditLossRefused("the audit high-water mark authenticates neither under seal #%d nor before it (garbled or relabelled, not a half-written acceptance): investigate before completing seal #%d", last.Seq, last.Seq)
@@ -504,6 +520,9 @@ func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *audi
 		switch {
 		case wb == cur && c.checkpointSigMatchesUnder(wcp, cur, wsig):
 			out = append(out, AuditSealCount{Events: wcp.ChainedEvents, HeadID: wcp.HeadID, HeadHash: wcp.HeadHash, Source: "the host's high-water witness file"})
+		case wb == cur && carried.binding(auditHighWaterDigestOf(wcp, wb, wsig)) == auditCarriedUnder:
+			// The mirror of a mark the transition names under this seal.
+			out = append(out, AuditSealCount{Events: wcp.ChainedEvents, HeadID: wcp.HeadID, HeadHash: wcp.HeadHash, Source: "the host's high-water witness file" + viaKeyChange})
 		case wb == prev && (wcp.KeyVersion != c.auditCkptKeyVersion || c.checkpointSigMatchesUnder(wcp, prev, wsig)):
 			// Written before this seal: the re-seal has not replaced it yet.
 		default:
