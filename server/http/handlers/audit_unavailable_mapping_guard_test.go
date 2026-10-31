@@ -48,12 +48,10 @@ var auditUnavailableMappingExempt = map[string]string{
 	"scim_groups.go:CreateGroup":  "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
 	"scim_groups.go:PatchGroup":   "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
 	"scim_groups.go:ReplaceGroup": "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
-	// Listed once the registry was regenerated (CORE-AUTH-TAILS-1): both map the
-	// outage to 503 in sendMFAResetError's table, which this guard cannot follow
-	// into, with the code AuditUnavailable and no Retry-After (follow-up: route
-	// that row through sendAuditUnavailable).
-	"mfa_reset.go:ApproveMFAReset": "maps ErrMutationAuditUnavailable to 503 in sendMFAResetError (a helper the guard does not follow)",
-	"mfa_reset.go:RequestMFAReset": "maps ErrMutationAuditUnavailable to 503 in sendMFAResetError (a helper the guard does not follow)",
+	// Both hand the error to sendMFAResetError, which calls sendAuditUnavailable
+	// first (MFA-RESET-TAILS-2); the guard does not follow into that helper.
+	"mfa_reset.go:ApproveMFAReset": "#3858: mapped by sendAuditUnavailable inside sendMFAResetError, a helper the guard does not follow",
+	"mfa_reset.go:RequestMFAReset": "#3858: mapped by sendAuditUnavailable inside sendMFAResetError, a helper the guard does not follow",
 }
 
 func readAuditUnavailableReachingMethods(t *testing.T) map[string]bool {

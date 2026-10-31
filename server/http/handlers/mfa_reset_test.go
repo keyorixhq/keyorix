@@ -93,6 +93,7 @@ func TestMFAResetRoutes_NoActorIsUnauthorized(t *testing.T) {
 // two TOTP-enrolled global admins (a, b) and an enrolled non-admin target.
 type mfaResetHandlerWorld struct {
 	cs      *core.KeyorixCore
+	enc     *encryption.Service
 	st      *store.LocalStorage
 	a, b    *models.User
 	target  *models.User
@@ -115,7 +116,7 @@ func newMFAResetHandlerWorld(t *testing.T) *mfaResetHandlerWorld {
 	require.NoError(t, enc.Initialize("test-passphrase"))
 	cs.SetAuthEncryptor(enc)
 
-	w := &mfaResetHandlerWorld{cs: cs, st: st, secrets: map[uint]string{}}
+	w := &mfaResetHandlerWorld{cs: cs, enc: enc, st: st, secrets: map[uint]string{}}
 	w.a, err = st.GetUserByUsername(ctx, "admin")
 	require.NoError(t, err)
 	roleIDs, err := st.GetUserRoleIDsAt(ctx, w.a.ID, corestorage.Scope{})
