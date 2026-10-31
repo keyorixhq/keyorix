@@ -86,7 +86,7 @@ func TestAuditSeal_ResumeAfterKeyChange(t *testing.T) {
 					}
 					c, plan := sealCrashThenKeyChange(t, e, step, w, nil)
 
-					again, err := c.PlanAuditLossAcceptance(ctx, sealReq())
+					again, err := sealResumePlan(t, c, sealReq())
 					require.NoError(t, err, "a re-run on the new key resumes the acceptance")
 					require.True(t, again.Resume)
 					assert.Equal(t, plan.seal.digest(), again.seal.digest(), "the same seal is completed, no new record")
@@ -124,7 +124,7 @@ func TestAuditSeal_ResumeAfterTwoKeyChanges(t *testing.T) {
 		}
 		c3 := e.restart()
 		c3.SetAuditCheckpointKey(aktKey3, "v3")
-		again, err := c3.PlanAuditLossAcceptance(ctx, sealReq())
+		again, err := sealResumePlan(t, c3, sealReq())
 		require.NoError(t, err, "a re-run on the third key resumes the acceptance")
 		require.True(t, again.Resume)
 		_, err = c3.AcceptAuditLoss(ctx, again)

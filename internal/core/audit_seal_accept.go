@@ -65,6 +65,11 @@ type AuditLossRequest struct {
 	// Anchor (a verified file) or AnchorDigest (a digest only, recorded).
 	Anchor       *AuditLossAnchor
 	AnchorDigest string
+	// ResumeSeal is the digest of the unfinished seal record the operator
+	// read in the plan (--resume-seal): without it a resume writes nothing
+	// (#3803), so a habitual re-run with --confirm cannot complete a record
+	// the operator never looked at.
+	ResumeSeal string
 }
 
 // Limits on the operator name and reason, which the seal stores in its record
@@ -112,11 +117,18 @@ type AuditLossPlan struct {
 	// witness that is present is not counted (it is replaced all the same).
 	Witness     *AuditSealCount
 	WitnessNote string
+	// Unpinned are the surviving rows before each break that no signed
+	// artifact pins: a rewrite of them before this acceptance cannot be
+	// excluded (#3802). The seal records them.
+	Unpinned []AuditSealSpan
 	// Resume: an earlier acceptance stopped before it finished; this run
-	// completes it and writes no new record.
-	Resume bool
+	// completes it and writes no new record, and only when the request named
+	// ResumeDigest, the digest of that record (resumeNamed).
+	Resume       bool
+	ResumeDigest string
 
-	seal *auditSeal
+	seal        *auditSeal
+	resumeNamed bool
 }
 
 // Describe is the human summary the command prints before confirming.
@@ -125,7 +137,8 @@ func (p *AuditLossPlan) Describe() []string {
 	if p.Resume {
 		out = append(out, fmt.Sprintf("Seal #%d was recorded but its acceptance did not finish; this run completes it (no new record).", p.Seq),
 			fmt.Sprintf("  recorded %s by %q (host user %q), reason %q", p.seal.At.UTC().Format(time.RFC3339), p.seal.Operator, p.seal.OSUser, p.seal.Reason),
-			"  If you did not start this acceptance, do not confirm: a resume you did not start is a rollback of the database until proven otherwise (compare the trail with an external anchor first).")
+			"  If you did not start this acceptance, do not confirm: a resume you did not start is a rollback of the database until proven otherwise (compare the trail with an external anchor first).",
+			fmt.Sprintf("  record digest %s: completing it requires --resume-seal %s (nothing is written without it, even with --confirm)", p.ResumeDigest, p.ResumeDigest))
 	}
 	out = append(out, fmt.Sprintf("Seal #%d accepts %s.", p.Seq, p.seal.lostRange()))
 	for _, g := range p.Gaps {
@@ -148,6 +161,9 @@ func (p *AuditLossPlan) Describe() []string {
 	}
 	if p.WitnessNote != "" {
 		out = append(out, "  host witness file: "+p.WitnessNote)
+	}
+	for _, s := range p.Unpinned {
+		out = append(out, fmt.Sprintf("  unauthenticated: audit events #%d through #%d are pinned by no signed checkpoint, mark, anchor or state; a rewrite of them before this acceptance cannot be excluded (the seal records it)", s.FromID, s.ThroughID))
 	}
 	if a := p.Anchor; a != nil {
 		if a.Verified {
@@ -200,11 +216,19 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 		if named := last.namedIDs(); len(req.BrokenIDs) > 0 && !sameIDs(req.BrokenIDs, named) {
 			return nil, auditLossRefused("seal #%d was recorded for audit events %v but its acceptance did not finish: re-run without --first-broken-id (or with %v) to complete it, then accept a new loss", last.Seq, named, named)
 		}
+		digest := last.digest()
+		if req.ResumeSeal != "" && !strings.EqualFold(req.ResumeSeal, digest) {
+			return nil, auditLossRefused("--resume-seal %s does not name the unfinished seal #%d (record digest %s): run without --resume-seal, read the plan, then pass the digest it prints", req.ResumeSeal, last.Seq, digest)
+		}
 		if err := c.auditLossResumeCheck(ctx, f, last); err != nil {
 			return nil, err
 		}
 		return &AuditLossPlan{Seq: last.Seq, Gaps: last.Gaps, Truncation: last.Truncation, Before: last.Before, After: last.After,
-			LostEvents: last.LostEvents, Anchor: last.Anchor, Accepted: auditLossResumeAccepted(last, f.state), Resume: true, seal: last}, nil
+			LostEvents: last.LostEvents, Anchor: last.Anchor, Accepted: auditLossResumeAccepted(last, f.state), Unpinned: last.Unpinned,
+			Resume: true, ResumeDigest: digest, seal: last, resumeNamed: req.ResumeSeal != ""}, nil
+	}
+	if req.ResumeSeal != "" {
+		return nil, auditLossRefused("--resume-seal names seal record %s, but no acceptance is unfinished: there is nothing to resume (drop --resume-seal to accept a new loss)", req.ResumeSeal)
 	}
 	if len(req.BrokenIDs) == 0 {
 		return nil, auditLossRefused("name the id where the walk breaks (--first-broken-id)")
@@ -274,14 +298,24 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 		if err != nil {
 			return nil, err
 		}
-		if lost := before.Events - (through.ChainedEvents + purged); through.Valid && lost > 0 {
+		lost := before.Events - (through.ChainedEvents + purged)
+		switch {
+		case through.Valid && lost > 0:
 			plan.LostEvents = lost
+		case through.Valid && slices.ContainsFunc(gaps, func(g AuditSealGap) bool { return before.HeadID > g.LastGoodID }):
+			// Signed while the rows the gap names existed, so it counted
+			// them: a measured loss of 0 is a rewritten row (#3802).
+			return nil, auditLossRefused("%s certifies %d events through #%d, signed after the rows before the gap, and counts every row still there (%d): nothing was lost, so the break is a rewritten row; investigate",
+				before.Source, before.Events, before.HeadID, through.ChainedEvents+purged)
 		}
+	}
+	if plan.Unpinned, err = c.auditLossCheckPins(ctx, f, plan); err != nil {
+		return nil, err
 	}
 	plan.Accepted = auditLossAccepted(f.state, gaps, plan.Truncation)
 	plan.seal = &auditSeal{V: 1, Seq: plan.Seq, At: c.now().UTC(), Operator: strings.TrimSpace(req.Operator), OSUser: req.OSUser,
 		Reason: strings.TrimSpace(req.Reason), Evidence: strings.ToLower(req.Evidence), Gaps: gaps, Truncation: plan.Truncation,
-		Before: plan.Before, After: plan.After, LostEvents: plan.LostEvents, Anchor: plan.Anchor, Accepted: plan.Accepted}
+		Before: plan.Before, After: plan.After, LostEvents: plan.LostEvents, Anchor: plan.Anchor, Accepted: plan.Accepted, Unpinned: plan.Unpinned}
 	return plan, nil
 }
 
@@ -664,6 +698,12 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 		if !pre.Valid {
 			return nil, nil, auditLossRefused("the chain before audit event #%d does not verify (%s)", id, pre.Reason)
 		}
+		if pre.HeadID+1 == id {
+			// The walk reads in id order: with no id between them, nothing
+			// was deleted, so the row before (it still recomputes, so its
+			// hash was recomputed too) was rewritten (#3802).
+			return nil, nil, auditLossRefused("audit event #%d's prev_hash does not link to #%d, the row right before it, and no id is missing between them: a rewritten row, not a lost one; investigate", id, pre.HeadID)
+		}
 		if pre.HeadID > 1 {
 			// The chained row before pre's head (the walk reads in id order).
 			q, err := c.walkAuditChainGaps(ctx, storage.AuditChainSegment{Anchor: f.anchor, ThroughID: pre.HeadID - 1}, all)
@@ -716,12 +756,14 @@ func (c *KeyorixCore) auditLossBefore(ctx context.Context, f *auditLossFindings,
 
 // auditLossWitness reads the host's high-water witness for a new acceptance
 // over the seal list f holds. It returns the certification when the witness
-// authenticates under that list, a note when it is present but does not
-// authenticate under the current key (written before a key change; nothing
-// to count, and the re-seal replaces it), and a refusal when it is damaged or
-// authenticates under a seal list the database does not hold: a longer list,
-// or another list of the same length, means the database, seal record
-// included, was rolled back past the witness's last write.
+// authenticates under that list, a note when it is signed under another key
+// version (written before a key change; nothing to count, and the re-seal
+// replaces it), and a refusal when it is damaged, claims the current key
+// version without authenticating under it (garbled or replaced, as the resume
+// path refuses it), or authenticates under a seal list the database does not
+// hold: a longer list, or another list of the same length, means the
+// database, seal record included, was rolled back past the witness's last
+// write.
 func (c *KeyorixCore) auditLossWitness(f *auditLossFindings) (*AuditSealCount, string, error) {
 	w, wb, sig, found, err := c.readAuditWitness()
 	if err != nil {
@@ -732,8 +774,10 @@ func (c *KeyorixCore) auditLossWitness(f *auditLossFindings) (*AuditSealCount, s
 	}
 	pre := sealBindingOf(f.seals.recs)
 	switch {
+	case !c.checkpointSigMatchesUnder(w, wb, sig) && w.KeyVersion == c.auditCkptKeyVersion:
+		return nil, "", auditLossRefused("%s", auditWitnessGarbled(w))
 	case !c.checkpointSigMatchesUnder(w, wb, sig):
-		return nil, fmt.Sprintf("present but it does not authenticate under the current key (key version %q, written before a key change); it is replaced", w.KeyVersion), nil
+		return nil, fmt.Sprintf("present but signed under key version %q, not the current %q (written before a key change); it is replaced", w.KeyVersion, c.auditCkptKeyVersion), nil
 	case wb == pre:
 		return &AuditSealCount{Events: w.ChainedEvents, HeadID: w.HeadID, HeadHash: w.HeadHash, Source: "the host's high-water witness file"}, "", nil
 	case wb.N >= pre.N:
@@ -742,6 +786,13 @@ func (c *KeyorixCore) auditLossWitness(f *auditLossFindings) (*AuditSealCount, s
 	// Written under an earlier seal list (a re-seal without a witness path):
 	// it certified the chain before an accepted loss and is replaced.
 	return nil, fmt.Sprintf("written under %d seal(s), before an earlier accepted loss; it is replaced", wb.N), nil
+}
+
+// auditWitnessGarbled describes a witness that claims the current key
+// version but does not authenticate under it: not one written before a key
+// change, so it is not replaced silently.
+func auditWitnessGarbled(w *models.AuditCheckpoint) string {
+	return fmt.Sprintf("the host's high-water witness file claims the current key version %q but does not authenticate under it (garbled or replaced; a witness from before a key change names the previous key version): a damaged witness is not treated as absent; investigate", w.KeyVersion)
 }
 
 // auditWitnessRollback describes a witness that authenticates under a seal
@@ -782,15 +833,23 @@ func (c *KeyorixCore) auditLossBeforeHeadNamed(ctx context.Context, f *auditLoss
 // authenticates under post certified rows written after this seal; one under
 // pre is lowered only when the record names a certification at least as high
 // (the plan the operator confirmed showed it); one under another list of at
-// least pre's length is a rollback. A damaged witness is not treated as
-// absent.
-func (c *KeyorixCore) auditWitnessLowerProblem(pre, post auditSealBinding, before *AuditSealCount, survivors int64) string {
+// least pre's length is a rollback. A damaged witness, and one that claims
+// the current key version without authenticating under it, is not treated as
+// absent. resume: the run completes an unfinished acceptance, whose record
+// cannot change, so a re-run does not help.
+func (c *KeyorixCore) auditWitnessLowerProblem(pre, post auditSealBinding, before *AuditSealCount, survivors int64, resume bool) string {
 	w, wb, sig, found, err := c.readAuditWitness()
 	if err != nil {
 		return fmt.Sprintf("the host's high-water witness file cannot be used (%v): a damaged witness is not treated as absent; investigate", err)
 	}
-	if !found || !c.checkpointSigMatchesUnder(w, wb, sig) {
+	if !found {
 		return ""
+	}
+	if !c.checkpointSigMatchesUnder(w, wb, sig) {
+		if w.KeyVersion == c.auditCkptKeyVersion {
+			return auditWitnessGarbled(w)
+		}
+		return "" // written before a key change: replaced
 	}
 	switch {
 	case wb == post:
@@ -804,8 +863,12 @@ func (c *KeyorixCore) auditWitnessLowerProblem(pre, post auditSealBinding, befor
 			if before != nil {
 				named = fmt.Sprintf("%d events through #%d, %s", before.Events, before.HeadID, before.Source)
 			}
-			return fmt.Sprintf("the host's high-water witness file certifies %d events through #%d from before this acceptance, more than the certification its record names (%s): it would be lowered without being named; re-run accept-loss so the plan shows it",
-				w.ChainedEvents, w.HeadID, named)
+			way := "re-run accept-loss so the plan shows it"
+			if resume {
+				way = "a resume cannot change the record, so re-running refuses the same way: compare the trail with an off-host anchor (an export-checkpoint file kept elsewhere), and only if it accounts for those rows move the witness file aside and re-run"
+			}
+			return fmt.Sprintf("the host's high-water witness file certifies %d events through #%d from before this acceptance, more than the certification its record names (%s): it would be lowered without being named; %s",
+				w.ChainedEvents, w.HeadID, named, way)
 		}
 	case wb.N >= pre.N:
 		return auditWitnessRollback(w, wb, pre)
@@ -913,6 +976,10 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 	if plan == nil || plan.seal == nil {
 		return nil, errors.New("accept-loss: no plan")
 	}
+	if plan.Resume && !plan.resumeNamed {
+		return nil, auditLossRefused("nothing was written: this run would complete the unfinished seal #%d, recorded by %q; read its plan and, only if you started that acceptance, re-run with --resume-seal %s",
+			plan.Seq, plan.seal.Operator, plan.ResumeDigest)
+	}
 	res := &AuditLossResult{Seq: plan.Seq}
 	err := c.storage.WithAuditCheckpointLock(ctx, func(ctx context.Context) error {
 		set, err := c.loadAuditSeals(ctx)
@@ -920,6 +987,11 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 			return err
 		}
 		recs := set.recs
+		// A resume completes only the record the --resume-seal digest named:
+		// another unfinished record put in its place since the plan is refused.
+		if plan.Resume && ((set.problem != "" && !set.pending) || len(recs) != plan.Seq || recs[plan.Seq-1].digest() != plan.ResumeDigest) {
+			return fmt.Errorf("accept-loss: the seal record changed since the plan was made (seal #%d is no longer record %s); nothing was written, re-run and read the new plan", plan.Seq, plan.ResumeDigest)
+		}
 		if !plan.Resume {
 			if set.problem != "" || len(recs) != plan.Seq-1 {
 				return fmt.Errorf("accept-loss: the seal record changed since the plan was made")
@@ -935,7 +1007,7 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 			r.mac = auditSealMAC(c.auditCkptKey, r.kid, r.payload)
 			// The witness the re-seal will lower must be the one the plan
 			// named: checked before anything is written.
-			if why := c.auditWitnessLowerProblem(sealBindingOf(recs), sealBindingOf(append(slices.Clone(recs), r)), r.Before, r.After.Events); why != "" {
+			if why := c.auditWitnessLowerProblem(sealBindingOf(recs), sealBindingOf(append(slices.Clone(recs), r)), r.Before, r.After.Events, false); why != "" {
 				return fmt.Errorf("accept-loss: %s", why)
 			}
 			if err := c.storage.SetSystemMetadata(ctx, auditSealsKey, encodeAuditSeals(append(recs, r))); err != nil {
@@ -964,7 +1036,7 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 		if set.problem != "" {
 			return fmt.Errorf("accept-loss: the seal record does not verify after writing it: %s", set.problem)
 		}
-		cp, hw, err := c.resealAuditCheckpoint(ctx)
+		cp, hw, err := c.resealAuditCheckpoint(ctx, plan.Resume)
 		if err != nil {
 			return err
 		}
@@ -992,7 +1064,7 @@ func (c *KeyorixCore) sealHook(step string) error {
 // it is lowered to what survives (the accepted loss). The witness is lowered
 // with it only from the binding before the newest seal, and only as far as
 // that seal's record names (auditWitnessLowerProblem).
-func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditCheckpoint, string, error) {
+func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context, resume bool) (*models.AuditCheckpoint, string, error) {
 	anchor, err := c.loadAuditRetentionAnchor(ctx)
 	if err != nil {
 		return nil, "", err
@@ -1020,7 +1092,7 @@ func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditC
 		return nil, "", errors.New("accept-loss: no seal record to re-seal under")
 	}
 	last := recs[len(recs)-1]
-	if why := c.auditWitnessLowerProblem(sealBindingOf(recs[:len(recs)-1]), bind, last.Before, cp.ChainedEvents); why != "" {
+	if why := c.auditWitnessLowerProblem(sealBindingOf(recs[:len(recs)-1]), bind, last.Before, cp.ChainedEvents, resume); why != "" {
 		return nil, "", fmt.Errorf("accept-loss: %s", why)
 	}
 	if err := c.storage.CreateAuditCheckpoint(ctx, cp); err != nil {

@@ -287,6 +287,8 @@ func TestReviewAV_RowsOutsideTheWalkAreBroken(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, auditverify.VerdictBroken, r.Verdict, "batch size %d: %s", bs, r.Reason)
 			}
+			// The online verifier agrees (#3808).
+			assert.False(t, f.oracle().Valid, "online VerifyAuditChain must not read valid")
 		})
 	}
 }
