@@ -12,8 +12,10 @@
 #             database, so a TCP forwarder (tools/tcpproxy.go) sits between the server and
 #             PostgreSQL and is taken down (open connections reset, new ones refused) and up again --
 #             what a PostgreSQL restart looks like from the server. During the outage requests
-#             must fail (never hang, never report success), the server must not crash; after it
-#             the SAME server process serves again and nothing acknowledged is lost.
+#             must fail (never hang, never report success) and the server must not panic. The
+#             presence advisory lock dies with its connection and the server then shuts itself
+#             down gracefully (INV-STORAGE-session-advisory-lock-loss); once the database is back
+#             the operator restarts it and it serves and accepts writes again.
 #             (A real `docker restart postgres` variant: pending the e2e VM.)
 #   diskfull  The data directory fills up. A real full filesystem cannot be made without a
 #             privileged mount, so the server runs under `ulimit -f` just above the SQLite file
@@ -138,7 +140,7 @@ scenario_kill9() {
 
 # ---------------------------------------------------------------------------
 scenario_pgdown() {
-    [ "$DRILL_BACKEND" = "postgres" ] || { echo "==> pgdown: skipped (needs DRILL_BACKEND=postgres)"; return 0; }
+    [ "$DRILL_BACKEND" = "postgres" ] || { drill_skip sqlite "pgdown: needs a PostgreSQL server to take away (DRILL_BACKEND=postgres)"; return 0; }
     step "pgdown: provision directly, then route the server through a TCP forwarder"
     local I=pg P PP
     P="$(drill_port 32)"
@@ -159,42 +161,53 @@ scenario_pgdown() {
 
     step "pgdown: database goes away"
     kill -USR1 "$proxy"
-    sleep 1
-    local t0 t1 code
+    # INV-STORAGE-session-advisory-lock-loss: the process-wide presence lock dies with its database
+    # connection and the server then shuts down gracefully (fail closed: an admin command must not run
+    # beside a server that no longer holds the lock). Until it has gone, a read may answer 503 (a valid
+    # credential is never told 401/403 because of an outage); never a success, never a hang.
+    local t0 tw i rc code="" gone=""
     t0="$(date +%s)"
-    code="$(curl -s -o /dev/null -m 40 -w '%{http_code}' --cacert "$d/certs/server.crt" -H @"$hdr" "https://127.0.0.1:$P/api/v1/secrets/1?include_value=true" || true)"
-    t1="$(date +%s)"
-    echo "    read during the outage: HTTP $code in $((t1 - t0))s"
-    case "$code" in 2*) fail "a secret read returned success while the database was unreachable" ;; esac
-    [ "$((t1 - t0))" -lt 35 ] || fail "a request hung for $((t1 - t0))s during the outage"
-    # an outage is the SERVER's fault: a valid credential must get a retryable 503, not a 401/403
-    # (clients drop credentials on 401; the token must not be negative-cached either)
-    [ "$code" = "503" ] || fail "a valid machine token got HTTP $code during the outage; want 503 (retryable), not a verdict on the credential"
-    ok "read refused with 503, did not hang"
+    # A write during the outage must be refused (an HTTP error or a refused connection, either is
+    # fine) within a bound, and must not appear after the database returns (checked below).
     (umask 077 && printf 'during-outage' >"$d/val.outage")
     if cli "$I" "$P" secret create --name during-outage --from-file ./val.outage --project 1 --environment 1 >/dev/null 2>&1; then
         fail "a secret create reported success while the database was unreachable"
     fi
-    ok "write refused"
-    kill -0 "$(cat "$d/server.pid")" 2>/dev/null || fail "the server process died during the database outage"
-    grep -qiE 'panic|fatal error' "$d/server.log" && fail "the server panicked during the outage"
-    ok "server process alive, no panic"
-
-    step "pgdown: database comes back (same server process)"
-    kill -USR2 "$proxy"
-    local i recovered=""
-    for i in $(seq 1 60); do
-        code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' --cacert "$d/certs/server.crt" -H @"$hdr" "https://127.0.0.1:$P/api/v1/secrets/1?include_value=true" || true)"
-        [ "$code" = "200" ] && { recovered=$i; break; }
+    tw="$(($(date +%s) - t0))"
+    [ "$tw" -lt 35 ] || fail "a write hung for ${tw}s during the outage"
+    ok "write refused in ${tw}s"
+    for i in $(seq 1 40); do
+        # curl exit 28 = its own -m timeout: the request hung (a stopped server refuses the
+        # connection at once: exit 7, code 000)
+        rc=0
+        code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' --cacert "$d/certs/server.crt" -H @"$hdr" "https://127.0.0.1:$P/api/v1/secrets/1?include_value=true")" || rc=$?
+        [ "$rc" -ne 28 ] || fail "a secret read hung for 10s during the outage (curl timed out)"
+        case "$code" in
+        2*) fail "a secret read returned success while the database was unreachable" ;;
+        000 | 503) ;;
+        *) fail "a valid machine token got HTTP $code during the outage; want 503 (retryable) or a stopped server, not a verdict on the credential" ;;
+        esac
+        if ! kill -0 "$(cat "$d/server.pid")" 2>/dev/null; then gone=$i; break; fi
         sleep 1
     done
-    [ -n "$recovered" ] || { tail -20 "$d/server.log" >&2; fail "the server did not recover within 60s of the database coming back"; }
-    ok "reads served again ${recovered}s after the database returned, without a restart"
+    echo "    last read during the outage: HTTP $code; $((  $(date +%s) - t0 ))s after the outage began"
+    [ -n "$gone" ] || fail "the server neither stopped nor recovered within 40s of the database going away"
+    grep -q 'server-presence lock was lost' "$d/server.log" || { tail -20 "$d/server.log" >&2; fail "the server stopped without reporting the lost presence lock"; }
+    grep -qiE 'panic|fatal error' "$d/server.log" && fail "the server panicked during the outage"
+    ok "server stopped itself (lost presence lock), no panic, no read answered with success, nothing hung"
+    rm -f "$d/server.pid"
+
+    step "pgdown: database comes back, the operator restarts the server"
+    kill -USR2 "$proxy"
+    sleep 1
+    srv_start "$I" "$P"
+    ok "server started again against the returned database"
     login_admin "$I" "$P"
     (umask 077 && printf 'after-outage' >"$d/val.after")
     cli "$I" "$P" secret create --name after-outage --from-file ./val.after --project 1 --environment 1 >/dev/null \
         || fail "write failed after recovery"
     names_after="$(list_names "$I" "$P")" || fail "could not list secrets after recovery"
+    grep -qx 'after-outage' <<<"$names_after" || fail "the write made after recovery is not listed"
     grep -qx 'during-outage' <<<"$names_after" && fail "the write refused during the outage exists anyway"
     ok "writes work again; the refused write left nothing behind"
     verify_seed "$I" "$P"
@@ -205,7 +218,7 @@ scenario_pgdown() {
 
 # ---------------------------------------------------------------------------
 scenario_diskfull() {
-    [ "$DRILL_BACKEND" = "sqlite" ] || { echo "==> diskfull: skipped (SQLite data directory; needs DRILL_BACKEND=sqlite)"; return 0; }
+    [ "$DRILL_BACKEND" = "sqlite" ] || { drill_skip postgres "diskfull: fills the SQLite data directory; a PostgreSQL data directory is not ours to fill"; return 0; }
     step "diskfull: provision and seed"
     local I=df P
     P="$(drill_port 34)"
@@ -270,7 +283,7 @@ scenario_diskfull() {
             || fail "$reads_ok values were handed out while the disk was full but only $((audited_after - audited_before)) reads were audited"
         ok "no value was disclosed without an audit row"
     else
-        echo "    (sqlite3 not installed: skipped the audit-row count)"
+        drill_skip sqlite "diskfull: sqlite3 is not installed, so the audit-row count is not checked"
     fi
 
     step "diskfull: space is back"
