@@ -365,7 +365,7 @@ func TestEveryUnhookedExpiryWriteInCoreIsUTC(t *testing.T) {
 	// expiry writes are the invitation, access-request, risk-exception, connect-grant,
 	// MFA-reset and SSO-state literals.
 	if len(all) < 8 {
-		t.Fatalf("scanner found only %d unhooked expiry writes in the whole core family; it has stopped matching", len(all))
+		g.Fatalf("scanner found only %d unhooked expiry writes in the whole core family; it has stopped matching", len(all))
 	}
 
 	used := map[string]bool{}
