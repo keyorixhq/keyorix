@@ -46,9 +46,12 @@ func (ls *LocalStorage) ListHygieneTrendSnapshots(ctx context.Context, days int)
 // that have not been used since threshold (or never used).
 func (ls *LocalStorage) CountStalePATs(ctx context.Context, threshold time.Time) (int, error) {
 	// G81 (PersonalAccessToken.ExpiresAt): normalize the expires_at bound
-	// internally — see GetAuditLogs. last_used_at's sole write path
-	// (TouchPersonalAccessToken) bypasses model hooks via UpdateColumn and
-	// stores UTC (#1507, UTC-WRITES-1), so threshold is normalised to match.
+	// internally — see GetAuditLogs. #1507 (last_used_at): its sole write path,
+	// TouchPersonalAccessToken, stores UTC (SQLITE-UTC-NOWFUNC-1), so threshold
+	// is normalised to UTC here too. Core derives it from c.now() in the host
+	// zone, and on SQLite the comparison is on the stored text: a zoned bound
+	// against UTC text miscounts by the host's offset.
+	threshold = threshold.UTC()
 	var count int64
 	err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
 		Where("revoked = ? AND (expires_at IS NULL OR expires_at > ?) AND (last_used_at IS NULL OR last_used_at < ?)",
@@ -74,9 +77,11 @@ func (ls *LocalStorage) CountExpiredPATs(ctx context.Context) (int, error) {
 // LastUsedAt is NULL or before threshold.
 func (ls *LocalStorage) CountStaleMachineCredentials(ctx context.Context, threshold time.Time) (int, error) {
 	// #1507 (MachineIdentityCredential.LastUsedAt): last_used_at's sole write
-	// path (TouchMachineIdentityCredential) bypasses model hooks via
-	// UpdateColumn and stores UTC (UTC-WRITES-1), so threshold is normalised to
-	// UTC below. Same shape as CountStalePATs for PersonalAccessToken.LastUsedAt.
+	// path, TouchMachineIdentityCredential (local_machine_credentials.go),
+	// stores UTC (SQLITE-UTC-NOWFUNC-1), so threshold is normalised to UTC here
+	// too, as in CountStalePATs above: core derives it from c.now() in the host
+	// zone, and on SQLite the comparison is on the stored text.
+	threshold = threshold.UTC()
 	//
 	// Subquery: machine identity IDs that have at least one credential used
 	// since threshold (i.e. NOT stale).

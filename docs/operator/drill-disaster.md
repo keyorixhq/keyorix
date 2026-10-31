@@ -14,6 +14,26 @@ DRILL_SCENARIOS=kill9 scripts/drills/disaster.sh             # pick scenarios
 (Each PostgreSQL scenario needs its own EMPTY database; the URL files hold
 `postgres://user:password@host:port/db`.)
 
+## Which backend each drill covers
+
+Every drill under `scripts/drills/` runs on SQLite (the default) and on PostgreSQL
+(`DRILL_BACKEND=postgres`) unless the table says otherwise. A leg a backend does not cover
+prints `SKIP <backend>: <reason>` and the drill carries on; a failed check exits non-zero.
+The same table, with run times and what each drill proves, is in `scripts/drills/README.md`.
+
+| Drill | Backends covered |
+| --- | --- |
+| `accept-loss.sh` | sqlite, postgres (step 6, the host witness file, is SQLite only: `SKIP postgres`) |
+| `upgrade.sh` | sqlite, postgres |
+| `backup-restore.sh` | sqlite, postgres (needs `DRILL_PG_DSN_FILE2`; the tamper leg also `DRILL_PG_DSN_FILE3`, else `SKIP postgres`) |
+| `key-rotation.sh` | sqlite, postgres (needs `DRILL_PG_DSN_FILE2`) |
+| `disaster.sh` `kill9` | sqlite, postgres |
+| `disaster.sh` `pgdown` | postgres only (`SKIP sqlite`; needs `DRILL_PG_DSN_FILE2` or `DRILL_PG_DSN_FILE`) |
+| `disaster.sh` `diskfull` | sqlite only (`SKIP postgres`) |
+| `rotation-under-load.sh` | sqlite, postgres |
+| `kill9-soak.sh` | sqlite, postgres |
+| `selftest.sh` | none (no server; helper functions and a static scan of these scripts) |
+
 ## kill9: SIGKILL under write load
 
 Four writers create secrets in a loop; the server is killed with `kill -9`; three rounds.
@@ -33,17 +53,18 @@ copy the `-wal` and `-shm` files with it, or use `admin backup`.
 The drill cannot restart a shared database, so it puts a TCP forwarder
 (`scripts/drills/tools/tcpproxy.go`) between the server and PostgreSQL and takes it down
 (open connections reset, new ones refused) and up again, which is what a PostgreSQL restart
-looks like from the server. During the outage: reads and writes are refused (a valid machine
-token gets a retryable `503` with `Retry-After`, never `401`), nothing hangs, the server
-does not crash. After it: the same server process serves again within seconds with no
-restart, the write refused during the outage left nothing behind, nothing acknowledged is
-lost, the audit chain verifies. (The `401` that older builds returned during an outage, and
-cached afterwards, was a bug this drill found: fixed by the credential-lookup change in the
-same release. Alert on a rise in `503`, not on `401`.) The permission lookup behind an
-authenticated request answers the same way where a middleware gate performs it (and over gRPC,
-`Unavailable`): a retryable `503`, not a `403` that no client retries. Routes that check the
-permission inside the REST handler (for example secret create) still answer `403` until a
-follow-up change.
+looks like from the server. During the outage: reads and writes are refused and never
+reported as successes, nothing hangs, the server does not panic. The server holds a
+process-wide advisory lock on its database connection; when that connection is lost the
+server shuts itself down gracefully (fail closed, so an admin command cannot run beside a
+server that no longer holds the lock). A request that arrives before it has gone gets a
+retryable `503` rather than a `401`. After the database is back: restart the server (the
+drill does) and it serves and accepts writes again, nothing acknowledged is lost, the audit
+chain verifies. Alert on a stopped server and on a rise in `503`, not on `401`. The
+permission lookup behind an authenticated request answers the same way where a middleware
+gate performs it (and over gRPC, `Unavailable`): a retryable `503`, not a `403` that no
+client retries. Routes that check the permission inside the REST handler (for example
+secret create) still answer `403` until a follow-up change.
 
 ## diskfull: the data directory fills up
 

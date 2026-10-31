@@ -151,8 +151,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
-	// The expiry is compared as text against UTC bounds: store it in UTC whatever zone the
-	// caller built it in (CreateUserWithOneTimePassword already does).
+	// The setup flow hands in a server-clock expiry in the host zone.
 	var otpExpiresAt *time.Time
 	if req.OneTimePasswordExpiresAt != nil {
 		u := req.OneTimePasswordExpiresAt.UTC()

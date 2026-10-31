@@ -572,8 +572,8 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
-	// The ceiling is copied from the stored row, which a login on a non-UTC host wrote as
-	// host-zone text: store the replacement's in UTC whatever the old row held.
+	// The old row's value is re-stored; convert it so a row written in another zone
+	// (before SQLITE-UTC-NOWFUNC-1) is not copied forward as it was read.
 	var absoluteExpiresAt *time.Time
 	if old.AbsoluteExpiresAt != nil {
 		u := old.AbsoluteExpiresAt.UTC()

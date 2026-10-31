@@ -261,13 +261,12 @@ func (ls *LocalStorage) ListSessionTokenHashesForUser(ctx context.Context, userI
 // TouchSession bumps last_seen_at only if the stored value is older than staleness
 // (or NULL), keeping the auth hot path from writing on every request.
 //
-// #1507: this UpdateColumn write bypasses model hooks too, so seenAt is
-// normalised to UTC here (UTC-WRITES-1): callers pass c.now(), the host zone,
-// and the stored text is compared as text — a host-zone value was stored with
-// its offset and overwrote a newer UTC one. The WHERE bound and the SET value
-// both come from seenAt, so they stay in one zone. If a future range query on
-// last_seen_at is added elsewhere (there is none today — verified repo-wide),
-// its bound must be UTC as well.
+// #1507: this UpdateColumn write bypasses model hooks (and GORM's NowFunc), so
+// it normalises seenAt, and the cutoff it compares against, to UTC itself
+// (SQLITE-UTC-NOWFUNC-1), like TouchPersonalAccessToken and
+// TouchMachineIdentityCredential: the last-used coalescer passes its clock's
+// time in the host zone, and on SQLite a non-UTC time is stored as text that
+// does not scan back (the session then fails every read).
 func (ls *LocalStorage) TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error {
 	seenAt = seenAt.UTC()
 	cutoff := seenAt.Add(-staleness)
@@ -412,12 +411,11 @@ func (ls *LocalStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context
 // TouchPersonalAccessToken bumps last_used_at only when older than staleness (or NULL),
 // keeping the auth hot path from writing on every request (mirrors TouchSession).
 //
-// #1507: this UpdateColumn write bypasses model hooks (no BeforeSave can reach
-// it), so usedAt is normalised to UTC here (UTC-WRITES-1). Callers pass
-// c.now(), the host zone; stored as text it carried its offset, and the
-// "older than" comparison below ordered it against a UTC value by wall clock.
-// CountStalePATs (local_hygiene_counts.go) range-queries the column and
-// normalises its bound to UTC too. Both ends must stay UTC.
+// #1507: this UpdateColumn write bypasses model hooks (and GORM's NowFunc), so
+// it normalises usedAt, and the cutoff it compares against, to UTC itself
+// (SQLITE-UTC-NOWFUNC-1): core passes c.now() in the host zone, and on SQLite a
+// non-UTC time is stored as text that neither scans back nor orders against a
+// UTC bound (the touched token then fails every read).
 func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
 	usedAt = usedAt.UTC()
 	cutoff := usedAt.Add(-staleness)

@@ -186,14 +186,15 @@ func (c *KeyorixCore) BeginSSO(ctx context.Context, providerName, returnTo strin
 	// depth on top of the confidential-client secret and the single-use state row —
 	// the OAuth 2.1 / OIDC baseline (F1, adversarial-review 2026-09-14).
 	verifier := oauth2.GenerateVerifier()
+	now := c.now().UTC()
 	if err := c.storage.CreateSSOLoginState(ctx, &models.SSOLoginState{
 		State:        state,
 		Nonce:        nonce,
 		Provider:     providerName,
 		ReturnTo:     sanitizeReturnTo(returnTo),
 		CodeVerifier: verifier,
-		ExpiresAt:    c.now().Add(ssoStateTTL).UTC(),
-		CreatedAt:    c.now(),
+		ExpiresAt:    now.Add(ssoStateTTL),
+		CreatedAt:    now,
 	}); err != nil {
 		return "", err
 	}
@@ -368,13 +369,14 @@ func (c *KeyorixCore) BeginSAML(ctx context.Context, name, returnTo string) (str
 	}
 	// Reuse the SSO login-state row: State is the RelayState lookup key, Nonce carries
 	// the AuthnRequest ID (matched against InResponseTo at the ACS).
+	now := c.now().UTC()
 	if err := c.storage.CreateSSOLoginState(ctx, &models.SSOLoginState{
 		State:     relayState,
 		Nonce:     requestID,
 		Provider:  name,
 		ReturnTo:  sanitizeReturnTo(returnTo),
-		ExpiresAt: c.now().Add(ssoStateTTL).UTC(),
-		CreatedAt: c.now(),
+		ExpiresAt: now.Add(ssoStateTTL),
+		CreatedAt: now,
 	}); err != nil {
 		return "", err
 	}

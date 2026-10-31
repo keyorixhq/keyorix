@@ -41,6 +41,7 @@ internal/metricsdoc/metricsdoc_test.go	docs/operations/metrics.md,operator/**/*.
 internal/metricsdoc/observability_assets_test.go	deploy/observability/**	alerts, dashboard and runbook
 internal/refusaldocs/refusaldocs_test.go	docs/operator/startup-refusals.md,!operator/**	startup-refusals doc against server/ and internal/ sources only
 internal/statemap/completeness_test.go	docs/state-map/**	state-map entrypoints/stores/class-overrides TSVs
+internal/statemap/drill_backend_switch_guard_test.go	scripts/drills/**/*.md,scripts/drills/**/*.sh	reads the drill scripts and README to check each backend switch has a Postgres branch and the README coverage table
 internal/statemap/generated_drift_guard_test.go	docs/state-map/**	generated state-map files
 internal/statemap/invariants_fragments_guard_test.go	**/INVARIANTS.md,**/INVARIANTS.d/**,!**	every INVARIANTS.md, INVARIANTS.d fragment and docs/INVARIANTS.md
 internal/statemap/statemap_test.go	!cli/**/*.md,!internal/**/*.md	"cli"/"internal" name Go packages here; no Markdown is read
@@ -129,6 +130,7 @@ internal/storage/explicit_columns_guard_test.go	!operator/**	walks internal/ and
 internal/storage/store/audit_write_context_completeness_test.go	!operator/**	skips operator/
 internal/storage/store/pg_trigger_registry_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/testutil/pgdsn/shared_database_lock_guard_test.go	!operator/**	walks internal/ and server/
+internal/testutil/pgpriv/replication_role_guard_test.go	!operator/**,!scripts/**/*.txt	repo-root walk reading only *_test.go files; skips nested modules (go.mod) and testdata
 internal/testutil/srcpath/runtime_caller_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/urlleakguard/urlleakguard_test.go	!operator/**	skips nested modules (go.mod)
 server/httpguards/grant_primitive_gate_table_test.go	!operator/**	skipSecretACLDir skips nested modules

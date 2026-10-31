@@ -168,12 +168,13 @@ func (ls *LocalStorage) RevokeMachineIdentityCredential(ctx context.Context, pro
 	return nil
 }
 
-// #1507: this UpdateColumn write bypasses model hooks (no BeforeSave can reach
-// it), so usedAt is normalised to UTC here (UTC-WRITES-1). Callers pass
-// c.now(), the host zone, and the column is compared as text:
-// CountStaleMachineCredentials (local_hygiene_counts.go), reachable from
-// GetHygieneTrends/RecordHygieneTrendPoint, range-queries it and now
-// normalises its bound to UTC too. Both ends must stay UTC.
+// #1507: this UpdateColumn write bypasses model hooks (and GORM's NowFunc), so
+// it normalises usedAt, and the cutoff it compares against, to UTC itself
+// (SQLITE-UTC-NOWFUNC-1). Core passes c.now() (host zone, via
+// TouchMachineTokenLastUsed); on SQLite a non-UTC time is stored as text that
+// neither scans back (the credential then fails every lookup) nor orders
+// against the bound CountStaleMachineCredentials (local_hygiene_counts.go)
+// compares it with, which that function also normalises to UTC.
 func (ls *LocalStorage) TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
 	usedAt = usedAt.UTC()
 	cutoff := usedAt.Add(-staleness)

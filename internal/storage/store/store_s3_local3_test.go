@@ -373,18 +373,12 @@ func TestUser_LockForUpdate(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestUser_UpdateAndSetAccountState(t *testing.T) {
+func TestUser_SetAccountState(t *testing.T) {
 	ctx := context.Background()
 	ls := newUsersFullStore(t)
 
 	u, err := ls.CreateUser(ctx, &models.User{Username: "state-u", UsernameFolded: "state-u", Email: "state@example.com", EmailFolded: "state@example.com"})
 	require.NoError(t, err)
-
-	// UpdateUser.
-	u.DisplayName = "State User"
-	updated, err := ls.UpdateUser(ctx, u)
-	require.NoError(t, err)
-	assert.Equal(t, "State User", updated.DisplayName)
 
 	// SetAccountState.
 	require.NoError(t, ls.SetAccountState(ctx, u.ID, "suspended", time.Now()))

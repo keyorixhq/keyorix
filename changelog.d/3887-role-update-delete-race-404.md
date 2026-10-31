@@ -1,0 +1,2 @@
+### Fixed
+- **Updating a role that was deleted concurrently answers 404, not 500.** `PUT /api/v1/roles/{id}` now maps `ErrRoleNotFound` from the update itself (the role vanished between the handler's read and the write) to the same `404 Role not found` the read branches return. The gRPC `UpdateRole` already answered `NotFound` through `mapRoleError`. Guarded by `TestUpdateRole_RoleDeletedConcurrentlyAnswers404`.

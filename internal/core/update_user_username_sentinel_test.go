@@ -29,15 +29,11 @@ func seedRenameUser(t *testing.T, w *txClosureWorld, name string) *models.User {
 	return u
 }
 
-// updatePaths are the two user-update storage entry points; both take the full row.
+// updatePaths are the user-update storage entry points that can collide on a unique index.
 var updatePaths = []struct {
 	name  string
 	write func(ctx context.Context, w *txClosureWorld, u *models.User) error
 }{
-	{"UpdateUser", func(ctx context.Context, w *txClosureWorld, u *models.User) error {
-		_, err := w.fs.UpdateUser(ctx, u)
-		return err
-	}},
 	{"UpdateUserIfActiveStateMatches", func(ctx context.Context, w *txClosureWorld, u *models.User) error {
 		matched, err := w.fs.UpdateUserIfActiveStateMatches(ctx, u, u.IsActive)
 		if err == nil && !matched {

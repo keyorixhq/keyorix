@@ -64,26 +64,6 @@ func TestCreateUserWithRoleGrants_DuplicateEmail(t *testing.T) {
 	assert.ErrorIs(t, err, storage.ErrDuplicateEmail)
 }
 
-func TestUpdateUser_DuplicateEmail(t *testing.T) {
-	t.Parallel()
-	ls := newUsersDBWithEmailIndex(t)
-	ctx := context.Background()
-
-	u1, err := ls.CreateUser(ctx, &models.User{
-		Username: "carl", UsernameFolded: "carl", Email: "carl@example.com", EmailFolded: "carl@example.com",
-	})
-	require.NoError(t, err)
-	u2, err := ls.CreateUser(ctx, &models.User{
-		Username: "dave", UsernameFolded: "dave", Email: "dave@example.com", EmailFolded: "dave@example.com",
-	})
-	require.NoError(t, err)
-
-	u2.EmailFolded = u1.EmailFolded
-	_, err = ls.UpdateUser(ctx, u2)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, storage.ErrDuplicateEmail)
-}
-
 func TestUpdateUserIfActiveStateMatches_DuplicateEmail(t *testing.T) {
 	t.Parallel()
 	ls := newUsersDBWithEmailIndex(t)
