@@ -138,6 +138,15 @@ func (c *KeyorixCore) requireMFAResetActor(ctx context.Context, actorID uint, ac
 	return actor, nil
 }
 
+// auditMFAResetApprovalDenied writes the DENIED mfa.reset_approved row of a refused
+// approval. It always goes through c.storage, never a transaction handle, so a
+// refusal decided inside the approval transaction keeps its row after that
+// transaction rolls back.
+func (c *KeyorixCore) auditMFAResetApprovalDenied(ctx context.Context, actorID, requestID uint, why string) {
+	c.writeAuditEventFailed(ctx, EventMFAResetApproved, actorPtr(actorID), nil, "",
+		fmt.Sprintf("MFA reset request %d approval DENIED: %s", requestID, why))
+}
+
 // eligibleMFAResetApprovers counts the active global admins other than the
 // requester and the target who have a second factor, i.e. who could approve.
 func (c *KeyorixCore) eligibleMFAResetApprovers(ctx context.Context, requesterID, targetID uint) (int, error) {
@@ -369,6 +378,8 @@ func (c *KeyorixCore) refuseMFAResetTarget(ctx context.Context, actorID uint, ta
 // dual control): the requester approving their own request, the target approving,
 // a non-admin or machine approver, a request already approved or cancelled (a
 // replay), an expired one, and a requester who has since lost the admin role.
+// Every refusal decided inside the approval transaction is audited as DENIED
+// too, after the rollback (auditMFAResetApprovalDenied).
 func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIsMachine bool, requestID uint, code string) (*MFAResetApproval, error) {
 	actor, err := c.requireMFAResetActor(ctx, actorID, actorIsMachine, EventMFAResetApproved, fmt.Sprintf("approval of request %d", requestID))
 	if err != nil {
@@ -386,18 +397,15 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 	case "expired":
 		return nil, ErrMFAResetRequestExpired
 	default:
-		c.writeAuditEventFailed(ctx, EventMFAResetApproved, actorPtr(actorID), nil, "",
-			fmt.Sprintf("MFA reset request %d approval DENIED: it is already %s", requestID, req.Status))
+		c.auditMFAResetApprovalDenied(ctx, actorID, requestID, fmt.Sprintf("it is already %s", req.Status))
 		return nil, ErrMFAResetRequestDecided
 	}
 	if actorID == req.RequestedBy {
-		c.writeAuditEventFailed(ctx, EventMFAResetApproved, actorPtr(actorID), nil, "",
-			fmt.Sprintf("MFA reset request %d approval DENIED: requester %d cannot approve their own request", requestID, actorID))
+		c.auditMFAResetApprovalDenied(ctx, actorID, requestID, fmt.Sprintf("requester %d cannot approve their own request", actorID))
 		return nil, ErrMFAResetSelfApproval
 	}
 	if actorID == req.TargetUserID {
-		c.writeAuditEventFailed(ctx, EventMFAResetApproved, actorPtr(actorID), nil, "",
-			fmt.Sprintf("MFA reset request %d approval DENIED: user %d is the target", requestID, actorID))
+		c.auditMFAResetApprovalDenied(ctx, actorID, requestID, fmt.Sprintf("user %d is the target", actorID))
 		return nil, ErrCannotActOnSelf
 	}
 	requester, err := mfaResetRequester(ctx, c.storage, req.RequestedBy, false)
@@ -428,11 +436,22 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 	}
 	now := c.now()
 	expiresAt := now.Add(c.effectiveOneTimePasswordExpiry()).UTC()
-	var eff *MFAResetEffect
+	var (
+		eff *MFAResetEffect
+		// denied is set by a refusal decided inside the transaction. Its DENIED row
+		// is written after the rollback, through c.storage: written on tx it would
+		// roll back with everything else.
+		denied string
+	)
 	err = func() error {
 		c.accountStateMu.Lock()
 		defer c.accountStateMu.Unlock()
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			denied = ""
+			deny := func(refusal error, why string) error {
+				denied = why
+				return refusal
+			}
 			// The decision first: of two concurrent approvals exactly one matches, and
 			// the loser changes nothing (its transaction rolls back).
 			matched, derr := tx.DecideMFAResetRequestIfPending(ctx, requestID, models.MFAResetStatusApproved, actorID, now)
@@ -440,7 +459,7 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 				return derr
 			}
 			if !matched {
-				return ErrMFAResetRequestDecided
+				return deny(ErrMFAResetRequestDecided, "it was approved, cancelled or expired while this approval ran")
 			}
 			// Every rule read before the transaction holds again on the row locks of
 			// the requester, the approver and the target, taken in ascending user-ID
@@ -448,23 +467,34 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 			// suspension, demotion, IdP link or promotion of any of the three that
 			// committed in between refuses the approval. Revocation wins.
 			rows, lerr := lockMFAResetApprovalRows(ctx, tx, req.RequestedBy, actorID, req.TargetUserID)
-			if lerr != nil {
+			switch {
+			case errors.Is(lerr, ErrMFAResetRequesterChanged):
+				return deny(lerr, fmt.Sprintf("requester %d no longer exists", req.RequestedBy))
+			case errors.Is(lerr, ErrMFAResetAdminRequired):
+				return deny(lerr, fmt.Sprintf("approver %d no longer exists", actorID))
+			case lerr != nil:
 				return lerr
 			}
 			if qerr := refuseMFAResetRequesterChanged(ctx, tx, rows[req.RequestedBy]); qerr != nil {
+				if errors.Is(qerr, ErrMFAResetRequesterChanged) {
+					return deny(qerr, fmt.Sprintf("requester %d is no longer an active global administrator", req.RequestedBy))
+				}
 				return qerr
 			}
 			if aerr := refuseMFAResetApproverChanged(ctx, tx, rows[actorID]); aerr != nil {
+				if errors.Is(aerr, ErrMFAResetAdminRequired) || errors.Is(aerr, ErrMFAResetActorNeedsMFA) {
+					return deny(aerr, fmt.Sprintf("approver %d is no longer an active global administrator with a second factor", actorID))
+				}
 				return aerr
 			}
 			locked := rows[req.TargetUserID]
 			if verr := validateMFAResetTarget(locked); verr != nil {
-				return verr
+				return deny(verr, fmt.Sprintf("target %d changed: %v", locked.ID, verr))
 			}
 			if role, gerr := isGlobalAdminRoleNameOn(ctx, tx, locked.ID); gerr != nil {
 				return fmt.Errorf("check target's admin role: %w", gerr)
 			} else if role != "" {
-				return ErrMFAResetGlobalAdmin
+				return deny(ErrMFAResetGlobalAdmin, fmt.Sprintf("target %d is now a global administrator", locked.ID))
 			}
 			e, rerr := ResetMFACredentialsInTx(ctx, tx, locked, string(hash), expiresAt, now)
 			if rerr != nil {
@@ -482,6 +512,9 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 		})
 	}()
 	if err != nil {
+		if denied != "" {
+			c.auditMFAResetApprovalDenied(ctx, actorID, requestID, denied)
+		}
 		return nil, err
 	}
 	// After commit, never before: a rolled-back reset must not evict live entries.

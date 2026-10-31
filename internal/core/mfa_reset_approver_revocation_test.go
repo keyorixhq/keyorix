@@ -44,7 +44,8 @@ func TestMFAReset_ApproverChangedInsideApproval_Refused(t *testing.T) {
 			ran := f.changeInsideApproval(t, f.b.ID, func(tx storage.Storage) error { return tc.change(f, role, tx) })
 			f.assertApprovalRefused(t, req, tc.want)
 			assert.True(t, *ran, "the change never ran inside the approval transaction")
-			assert.Zero(t, f.auditCount(t, EventMFAResetApproved), "a refused approval left an approval row")
+			ok, _ := f.approvalRows(t) // its DENIED row is TestMFAReset_InTxRefusal_LeavesDeniedRow's
+			assert.Zero(t, ok, "a refused approval left a success row")
 		})
 	}
 }
