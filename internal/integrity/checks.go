@@ -137,7 +137,8 @@ func checkFSVerity(e Env) Line {
 
 // manifestName and manifestSigs: the release ships checksums.txt with a
 // cosign signature (RELEASING.md). Only a manifest with a signature file next
-// to it is used; an unsigned checksum list proves nothing about the binary.
+// to it is compared, and even then the result is only "ok (signature not
+// verified)": it never counts toward a tier rung.
 const manifestName = "checksums.txt"
 
 var manifestSigs = []string{"checksums.txt.sig", "checksums.txt.sigstore.json", "checksums.txt.bundle"}
@@ -179,7 +180,9 @@ func checkManifest(e Env) Line {
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
 		if len(fields) >= 2 && strings.EqualFold(fields[0], sum) {
-			return Line{ID: CheckManifest, State: StateOK, Detail: fmt.Sprintf("binary SHA-256 matches %q in %s; the signature file %s is present but NOT verified by this check (run scripts/release/verify-release.sh)", strings.TrimPrefix(fields[1], "*"), manifestName, sigFile)}
+			// Never StateOK: the signature file is not verified here, so the match
+			// proves nothing about the binary and must not count toward a tier rung.
+			return Line{ID: CheckManifest, State: StateOKQualified, Qualifier: "signature not verified", Detail: fmt.Sprintf("binary SHA-256 matches %q in %s; the signature file %s is present but NOT verified by this check, so this does not count toward the tier (run scripts/release/verify-release.sh)", strings.TrimPrefix(fields[1], "*"), manifestName, sigFile)}
 		}
 	}
 	if err := sc.Err(); err != nil {

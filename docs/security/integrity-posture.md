@@ -27,7 +27,7 @@ startup or any refusal. An unreadable source is `unknown`, never `ok`.
 | `integrity/kernel-lockdown` | `/sys/kernel/security/lockdown` | mode `integrity` or `confidentiality` | mode `none` | file absent, unreadable, unparseable |
 | `integrity/ima` | `/sys/kernel/security/ima/policy` (root-only) | policy has an `appraise` rule | only `measure` rules, or empty | file absent or unreadable |
 | `integrity/fs-verity` | `FS_IOC_GETFLAGS` on the running binary | fs-verity flag set | flag clear | ioctl failed (filesystem without the interface) |
-| `integrity/release-manifest` | `checksums.txt` next to the binary | binary SHA-256 is listed (signature file present, **not verified here**) | hash not listed | manifest unreadable |
+| `integrity/release-manifest` | `checksums.txt` next to the binary | never plain `ok`: a listed SHA-256 prints `ok (signature not verified)` | hash not listed | manifest unreadable |
 | `integrity/tpm-sealing` | `key_provider.type` and the sealed blob | provider is `tpm` and the blob exists | provider is not `tpm`, or no blob yet | blob unreadable |
 | `integrity/keylime-agent` | `/proc/*/comm` | a `keylime_agent` process exists (presence only) | none found | `/proc` unreadable |
 
@@ -35,8 +35,10 @@ Notes:
 
 - `release-manifest` is `not checked` when no manifest is shipped next to the
   binary, or when it has no signature file next to it. Nothing is fetched. The
-  signature is not verified by the server; run `scripts/release/verify-release.sh`
-  for that.
+  signature is not verified by the server (a signature file of any content,
+  even an empty one, only unlocks the comparison), so a match prints
+  `ok (signature not verified)` and does **not** count toward the tier. Run
+  `scripts/release/verify-release.sh` for the real check.
 - `ima` `ok` means a policy with appraise rules is loaded. Whether it is
   enforcing depends on the `ima_appraise=` boot mode, which this check does not read.
 - `tpm-sealing` reads configuration and a file's existence. It does not talk to
@@ -48,13 +50,14 @@ Notes:
 ## Detected integrity tier (0 to 6)
 
 The tier counts consecutive rungs from the top of the table; the first rung that
-is not `ok` stops the count. `degraded`, `unknown` and `not checked` all stop it.
+is not plain `ok` stops the count. `degraded`, `unknown`, `not checked` and a
+qualified `ok (...)` all stop it.
 
 | Tier | Rung reached (all rungs above it also hold) |
 |---|---|
 | 1 | Secure Boot enabled |
 | 2 | kernel lockdown integrity or confidentiality |
-| 3 | running binary identity (fs-verity, or a matching release manifest) |
+| 3 | running binary identity (fs-verity enabled) |
 | 4 | IMA appraise policy loaded |
 | 5 | KEK sealed to a TPM |
 | 6 | Keylime agent present |
