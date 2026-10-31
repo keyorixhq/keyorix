@@ -1,9 +1,12 @@
 // utc_writes_host_zone_test.go -- UTC-WRITES-1.
 //
 // On the production SQLite dialect (modernc) a time.Time is stored as text in the zone it carries,
-// and the expiry queries compare that text against UTC "now" bounds. A core write that keeps the
-// host zone therefore stores "+0900" text on a non-UTC host, and the row expires hours early or
-// late. PostgreSQL stores an instant, so the same write is harmless there.
+// and SQLite compares that text by wall clock. A core write that keeps the host zone therefore
+// stores "+0900" text on a non-UTC host, inconsistent with every other expiry column; any SQL
+// predicate over it (the last-used "only move forward" updates, the stale counts) orders it
+// against UTC bounds by wall clock. The expiry columns covered here are checked in Go with
+// Before/After, so for them the tests prove the stored text, not an early or late expiry.
+// PostgreSQL stores an instant, so the same write is harmless there.
 //
 // Each test runs with time.Local set to a fixed non-UTC zone and drives one write through the real
 // core code. On SQLite it reads the stored column back as text and asserts the UTC wall clock was
