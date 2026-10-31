@@ -1,1 +1,1 @@
-TestEveryReplicationRoleTestRequiresThePrivilege	internal/testutil/pgpriv	#0000	new repo-wide guard (TESTS-PG-PRIV-1), report-only until its first green nightly on main
+TestEveryReplicationRoleTestRequiresThePrivilege	internal/testutil/pgpriv	#3859	new repo-wide guard (TESTS-PG-PRIV-1), report-only until its first green nightly on main
