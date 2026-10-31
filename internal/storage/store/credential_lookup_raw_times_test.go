@@ -38,11 +38,31 @@ func directTimeCredentialScan(ctx context.Context, t *testing.T, ls *LocalStorag
 // finding): on the production dialect (modernc) a timestamp carrying a fixed
 // non-UTC zone (the +02:00 fixture below) is stored in a form that scans back as
 // a string, "unsupported Scan, storing driver.Value type string into type
-// *time.Time", for sql.NullTime as well as time.Time. Such values do reach
-// production (REVIEW-3837-DEEP-1): a user-supplied RFC3339 expiry with an offset
-// is stored without .UTC() (PAT expires_at, secret expiration, risk-exception
-// expires_at). The fix is a separate fix(security) change; the fixture is not
-// changed to UTC because that would drop the zone coverage.
+// *time.Time", for sql.NullTime as well as time.Time. The fixture is not changed
+// to UTC because that would drop the zone coverage.
+//
+// Can production still write such a value to the two credential tables
+// (personal_access_tokens, machine_identity_credentials) that this lookup and
+// the PAT reader scan? No, since SQLITE-UTC-NOWFUNC-1. Every writer of
+// created_at / expires_at / last_used_at on them:
+//   - created_at: core/pat.go and core/machine_token.go assign c.now().UTC()
+//     (the only two creators; CreatePersonalAccessToken and
+//     CreateMachineIdentityCredential have no other non-test caller); a zero
+//     created_at is stamped by GORM's NowFunc, which gormConfig now returns in
+//     UTC (internal/storage/nowfunc_utc_test.go).
+//   - expires_at: only set on the model at create, and both models'
+//     BeforeSave hooks convert it to UTC, so a client RFC3339 offset
+//     (server/http sqlite_offset_time_blackbox_test.go) is stored as UTC.
+//     No Updates / UpdateColumn writes expires_at on either table.
+//   - last_used_at: only TouchPersonalAccessToken and
+//     TouchMachineIdentityCredential (both UTC since this change,
+//     touch_last_used_utc_test.go), reached from the core last-used coalescer.
+//   - restore: backupfmt decodes every archived row through
+//     normalizeTimesToUTC (row_codec.go), including a v0.95.x archive with
+//     "+01:00" offsets.
+//
+// What this does not cover: rows already stored zoned by an earlier release stay
+// unscannable until rewritten, and a future writer that is not on this list.
 func TestCredentialLookupRaw_TimesMatchDirectScan(t *testing.T) {
 	for _, backend := range principalPermBackends(t) {
 		t.Run(backend, func(t *testing.T) {
