@@ -53,6 +53,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -86,12 +87,7 @@ func isLookupFaultMethod(method string) bool {
 	if authzReadMethods[method] {
 		return true
 	}
-	for _, m := range credentialLookupFaultMethods {
-		if m == method {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(credentialLookupFaultMethods, method)
 }
 
 // injectedErrorFor is the error the fuzzer arms for a fault on method.
