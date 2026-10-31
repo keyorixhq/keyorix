@@ -155,7 +155,7 @@ func (h *CatalogHandler) ResolveSecretAccessRequest(w http.ResponseWriter, r *ht
 		return
 	}
 	if resolveErr != nil {
-		if sendAuditUnavailable(w, resolveErr) {
+		if sendAuditUnavailable(w, resolveErr) || sendStorageUnavailable(w, resolveErr) {
 			return
 		}
 		status := http.StatusInternalServerError
@@ -200,6 +200,9 @@ func (h *CatalogHandler) WithdrawSecretAccessRequest(w http.ResponseWriter, r *h
 		return
 	}
 	if err := h.coreService.WithdrawAccessRequest(r.Context(), reqID, actor.UserID); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {

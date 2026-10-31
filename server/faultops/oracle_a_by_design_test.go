@@ -566,7 +566,14 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 				consulted = true
 			}
 		}
-		_, outcome, reason := driveFaultCase(t, k.op, k.method, k.nth, k.kind)
+		// One subtest per row: each case builds its own worlds, and a test may hold
+		// only 8 open at once (oracle_a_by_design_test.go's world budget), which a
+		// list of more than a handful of rows would exceed in one function.
+		var outcome driveOutcome
+		var reason string
+		t.Run(label, func(t *testing.T) {
+			_, outcome, reason = driveFaultCase(t, k.op, k.method, k.nth, k.kind)
+		})
 		observeKnownOpenMatch = prev
 
 		_, baselined := toleranceDeadPendingTriage[label]

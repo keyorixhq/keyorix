@@ -82,7 +82,8 @@ func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sou
 func (c *KeyorixCore) projectEnvironment(ctx context.Context, projectID, envID uint) (*models.Environment, error) {
 	env, err := c.storage.GetEnvironment(ctx, envID)
 	if err != nil && !isEnvironmentNotFoundErr(err) {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		// A read FAULT is a retry answer, not a validation verdict on the request.
+		return nil, classifyReadError(err, "")
 	}
 	if err != nil || env.ProjectID != projectID {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "both environments must belong to the given project")

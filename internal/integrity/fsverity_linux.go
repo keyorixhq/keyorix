@@ -4,9 +4,10 @@ package integrity
 
 import (
 	"fmt"
-	"os"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // fsVerityFlag is FS_VERITY_FL from <linux/fs.h>: set in the FS_IOC_GETFLAGS
@@ -18,7 +19,9 @@ type platformFSVerity struct{}
 // Enabled reads the file's inode flags. An ioctl failure (a filesystem
 // without the flag interface) is an error, so the line becomes unknown.
 func (platformFSVerity) Enabled(path string) (bool, error) {
-	f, err := os.Open(path) // #nosec G304 -- the running binary
+	// A FIFO at the executable path is refused at once, not waited on: this open
+	// runs before the manifest hash, so it is the first to touch the path.
+	f, err := secretenv.OpenRegularNamed("running binary", path)
 	if err != nil {
 		return false, err
 	}

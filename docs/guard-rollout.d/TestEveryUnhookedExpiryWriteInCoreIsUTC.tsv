@@ -1,1 +1,0 @@
-TestEveryUnhookedExpiryWriteInCoreIsUTC	internal/core/guards	#3847	new repo-wide guard (SQLITE-TIME-TAILS-1), report-only until its first green nightly on main

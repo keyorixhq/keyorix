@@ -231,7 +231,7 @@ func TestManifest(t *testing.T) {
 	t.Run("match is ok", func(t *testing.T) {
 		m := "deadbeef  other\n" + realHash(t) + "  keyorix-server\n"
 		l := lineOf(Collect(setup(t, &m, "checksums.txt.sig")), CheckManifest)
-		if l.State != StateOK || !strings.Contains(l.Detail, "NOT verified") {
+		if l.State != StateOKQualified || !strings.Contains(l.Detail, "NOT verified") || !strings.Contains(l.String(), "ok (signature not verified)") {
 			t.Fatalf("line = %+v", l)
 		}
 	})

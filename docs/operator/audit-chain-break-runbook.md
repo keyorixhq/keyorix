@@ -47,11 +47,22 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
   (`docs/design-audit-key-transition.md`), so an honest key change does not produce one.
   `key transition` means the transition record is missing, forged or for another epoch, and
   `other key epoch` means a key change that did not carry the state over (an older binary).
-  A `before a recorded break` discontinuity also appears when a replica running a version
-  from before this check saves the state during a rolling upgrade (it drops the fields that
-  place the row against the chain): stop older replicas before upgrading. A binary rollback
-  to such a version (upgrade-rollback.md §4A) followed by a re-upgrade has the same effect.
-  There is no command to accept a discontinuity yet (`docs/design-audit-reseal-options.md`).
+  A replica running a version from before this check that saves the state during a rolling
+  upgrade, or after a binary rollback (upgrade-rollback.md §4A) and re-upgrade, drops the
+  fields that place the row against the chain. That row is restarted (`not_proven`, a
+  `system.audit_verification_state_rejected` event, "re-signed by an older server version")
+  and the next passing full verification re-places it (#3708). It is still a `before a
+  recorded break` discontinuity when a break, a discontinuity or a newer checkpoint was
+  recorded after the older replica's save, when the older replica's own load rejected the
+  row (deleted, put back or garbled: its save would launder that), when the row it re-signed
+  still carried a rejection no full verification had cleared (fail closed), or when the newest
+  `system.audit_verification_state_initialized` event names no state generation (written by
+  a server from before #3708; the next save appends one that does). While an accepted loss
+  or a key transition exists, an older replica's save is a `seal` / `key transition`
+  discontinuity (it drops those fields), so stop older replicas before upgrading such a
+  deployment. `admin audit
+  accept-loss` accepts a discontinuity only together with a proven loss of rows; over an
+  intact chain it stays sticky.
 - New audit events keep chaining onto the current tail, so the service keeps working and
   the break stays where it is.
 
