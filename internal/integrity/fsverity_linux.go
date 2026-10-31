@@ -18,7 +18,7 @@ type platformFSVerity struct{}
 // Enabled reads the file's inode flags. An ioctl failure (a filesystem
 // without the flag interface) is an error, so the line becomes unknown.
 func (platformFSVerity) Enabled(path string) (bool, error) {
-	f, err := os.Open(path) //nolint:gosec // G304: the running binary
+	f, err := os.Open(path) // #nosec G304 -- the running binary
 	if err != nil {
 		return false, err
 	}

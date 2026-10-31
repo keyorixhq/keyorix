@@ -19,7 +19,7 @@ func defaultExecutable() (string, error) { return os.Executable() }
 const secureBootVar = "sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
 
 func readUnder(root, rel string) ([]byte, error) {
-	return os.ReadFile(filepath.Join(root, filepath.FromSlash(rel))) //nolint:gosec // G304: rel is a constant, root is the injectable fake-tree root
+	return os.ReadFile(filepath.Join(root, filepath.FromSlash(rel))) // #nosec G304 -- rel is a constant, root is the injectable fake-tree root
 }
 
 func unreadable(id, what string, err error) Line {
@@ -160,7 +160,7 @@ func checkManifest(e Env) Line {
 		}
 	}
 	mpath := filepath.Join(dir, manifestName)
-	f, err := os.Open(mpath) //nolint:gosec // G304: next to the running binary, read-only
+	f, err := os.Open(mpath) // #nosec G304 -- next to the running binary, read-only
 	if errors.Is(err, fs.ErrNotExist) {
 		return Line{ID: CheckManifest, State: StateNotChecked, Detail: "no release manifest (" + manifestName + ") next to the binary; nothing to compare, nothing fetched"}
 	}
@@ -189,7 +189,7 @@ func checkManifest(e Env) Line {
 }
 
 func hashFile(path string) (string, error) {
-	f, err := os.Open(path) //nolint:gosec // G304: the running binary
+	f, err := os.Open(path) // #nosec G304 -- the running binary
 	if err != nil {
 		return "", err
 	}
@@ -244,7 +244,7 @@ func keylimeInProc(root string) (bool, error) {
 		if !en.IsDir() || !isDigits(en.Name()) {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(root, "proc", en.Name(), "comm")) //nolint:gosec // G304: pid dir under the injectable root
+		b, err := os.ReadFile(filepath.Join(root, "proc", en.Name(), "comm")) // #nosec G304 -- pid dir under the injectable root
 		if err != nil {
 			continue // a process that exited or is hidden: skip, the scan goes on
 		}
