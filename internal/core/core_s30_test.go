@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // ── scim.go — FindSCIMUser ────────────────────────────────────────────────
@@ -222,7 +223,8 @@ func TestAssignMachineRole_Success(t *testing.T) {
 func TestWithdrawAccessRequest_NotFound(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetAccessRequest", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
+	// A positive no-such-row, as LocalStorage reports it (see storage_read_class.go).
+	ms.On("GetAccessRequest", mock.Anything, uint(99)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	err := c.WithdrawAccessRequest(context.Background(), 99, 1)
 	require.Error(t, err)

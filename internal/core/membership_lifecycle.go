@@ -129,7 +129,7 @@ func (c *KeyorixCore) domainAllowedForUser(ctx context.Context, userID uint) err
 	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("user not found")
+		return classifyReadError(err, "user not found")
 	}
 	if !c.domainAllowed(user.Email) {
 		return fmt.Errorf("email domain is not on the allowlist")
@@ -317,7 +317,7 @@ func initialMembershipStateForMode(mode string, idpResolved bool) string {
 func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membershipID uint, to string, actorID uint, actorIsMachine bool) (*models.ProjectMembership, error) {
 	m, err := c.storage.GetProjectMembership(ctx, membershipID)
 	if err != nil {
-		return nil, fmt.Errorf("membership not found")
+		return nil, classifyReadError(err, "membership not found")
 	}
 	// The caller is authorized within projectID; a membership in another project
 	// must not be reachable through it (cross-project guard).
@@ -334,7 +334,7 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 		var err error
 		m, err = c.storage.GetProjectMembership(ctx, membershipID)
 		if err != nil {
-			return fmt.Errorf("membership not found")
+			return classifyReadError(err, "membership not found")
 		}
 		if m.ProjectID != projectID {
 			return fmt.Errorf("membership not found")
