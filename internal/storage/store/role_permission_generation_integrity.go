@@ -644,17 +644,53 @@ type triggerIntegrityState struct {
 	newer   string
 }
 
+// pinCatalogSearchPathSQL sets, for the rest of the transaction, the
+// session's search_path with pg_catalog taken out of it (and pg_temp put
+// last): pg_catalog is then searched first, implicitly, and every other
+// schema keeps its place, so current_schema() and what the statements after
+// it create or name stay the same. The reading compares deparsed text
+// (pg_get_triggerdef prints an operator unqualified when looking its name up
+// in the search_path finds it), and a search_path that lists a schema before
+// pg_catalog lets an operator the server's role created there deparse like
+// pg_catalog's: the anchor trigger's WHEN (old.key = ...) then reads as
+// installed while it calls that operator (REVIEW-3841-DEEP-3 B2). The
+// search_path is a setting the role can change (ALTER ROLE ... SET, a DSN
+// option), like session_replication_role. The repair runs under it too, so
+// the anchor trigger it re-creates calls pg_catalog's operator. This
+// statement is itself parsed under the session's search_path: every function
+// and operator in it is qualified.
+const pinCatalogSearchPathSQL = `SELECT pg_catalog.set_config('search_path', pg_catalog.array_to_string(pg_catalog.array_append(ARRAY(
+  SELECT pg_catalog.quote_ident(s.n) FROM pg_catalog.unnest(pg_catalog.current_schemas(false)) WITH ORDINALITY AS s(n, i)
+  WHERE s.n OPERATOR(pg_catalog.<>) 'pg_catalog' AND pg_catalog.left(s.n::text, 7) OPERATOR(pg_catalog.<>) 'pg_temp' ORDER BY s.i), 'pg_temp'), ', '), true)`
+
+// pinCatalogSearchPath runs pinCatalogSearchPathSQL in tx.
+func pinCatalogSearchPath(tx *gorm.DB) error {
+	if err := tx.Exec(pinCatalogSearchPathSQL).Error; err != nil {
+		return fmt.Errorf("pin the search_path: %w", err)
+	}
+	return nil
+}
+
 // readTriggerIntegrity goes through the underlying *sql.DB, not GORM: the
 // background job would otherwise run GORM's callback chain concurrently with
 // anything that registers a callback on the shared *gorm.DB (tests count
 // queries that way), a data race inside GORM. Only the repair path, which is
-// rare, uses GORM.
+// rare, uses GORM. It reads in a transaction of its own, under
+// pinCatalogSearchPathSQL; the transaction writes nothing and is rolled back.
 func readTriggerIntegrity(ctx context.Context, db *gorm.DB, target *triggerIntegrityTarget) (triggerIntegrityState, error) {
 	sqlDB, err := db.DB()
 	if err != nil {
 		return triggerIntegrityState{}, err
 	}
-	rs, err := sqlDB.QueryContext(ctx, target.def.sql, target.def.body)
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return triggerIntegrityState{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, pinCatalogSearchPathSQL); err != nil {
+		return triggerIntegrityState{}, fmt.Errorf("pin the search_path: %w", err)
+	}
+	rs, err := tx.QueryContext(ctx, target.def.sql, target.def.body)
 	if err != nil {
 		return triggerIntegrityState{}, err
 	}
@@ -662,17 +698,33 @@ func readTriggerIntegrity(ctx context.Context, db *gorm.DB, target *triggerInteg
 }
 
 // readInstalledTriggerDef is readTriggerIntegrity inside an installer's
-// transaction, on that transaction's connection.
+// transaction, on that transaction's connection. It reads under
+// pinCatalogSearchPathSQL and then gives the transaction its search_path back.
 func readInstalledTriggerDef(tx *gorm.DB, d *pgTriggerDef) (triggerIntegrityState, error) {
 	ctx := tx.Statement.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	rs, err := tx.Statement.ConnPool.QueryContext(ctx, d.sql, d.body)
+	conn := tx.Statement.ConnPool
+	var saved string
+	if err := conn.QueryRowContext(ctx, "SELECT pg_catalog.current_setting('search_path')").Scan(&saved); err != nil {
+		return triggerIntegrityState{}, fmt.Errorf("read the search_path: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, pinCatalogSearchPathSQL); err != nil {
+		return triggerIntegrityState{}, fmt.Errorf("pin the search_path: %w", err)
+	}
+	rs, err := conn.QueryContext(ctx, d.sql, d.body)
 	if err != nil {
 		return triggerIntegrityState{}, err
 	}
-	return scanTriggerIntegrity(rs, d)
+	st, err := scanTriggerIntegrity(rs, d)
+	if err != nil {
+		return triggerIntegrityState{}, err
+	}
+	if _, err := conn.ExecContext(ctx, "SELECT pg_catalog.set_config('search_path', $1, true)", saved); err != nil {
+		return triggerIntegrityState{}, fmt.Errorf("restore the search_path: %w", err)
+	}
+	return st, nil
 }
 
 // scanTriggerIntegrity turns triggerIntegritySQL's rows into a reading of d.
@@ -904,8 +956,14 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 		// when the repair commits. lock_timeout: its DROP TRIGGER takes an
 		// ACCESS EXCLUSIVE lock on the table, and a request queued behind an
 		// open transaction would stall every reader of the table behind it.
+		// The search_path is pinned as for the reading: the repair finds what
+		// it drops with the reading's comparison, and re-creates triggers whose
+		// operators must be pg_catalog's.
 		if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = %d", rolePermGenerationRepairLockTimeout.Milliseconds())).Error; err != nil {
+				return err
+			}
+			if err := pinCatalogSearchPath(tx); err != nil {
 				return err
 			}
 			if err := t.repair(tx, t.def); err != nil {
@@ -979,9 +1037,13 @@ func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, e
 	if st.problem != "" {
 		// lock_timeout: its DROP TRIGGER takes an ACCESS EXCLUSIVE lock on the
 		// table, and a request queued behind an open transaction would stall
-		// every reader of the table behind it.
+		// every reader of the table behind it. The search_path is pinned as
+		// for the reading.
 		if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = %d", rolePermGenerationRepairLockTimeout.Milliseconds())).Error; err != nil {
+				return err
+			}
+			if err := pinCatalogSearchPath(tx); err != nil {
 				return err
 			}
 			return t.repair(tx, t.def)
