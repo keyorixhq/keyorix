@@ -108,11 +108,49 @@ data:
 
         location / { try_files $uri $uri/ /index.html; }
 
-        location /health {
+        # /nginx-health: liveness of THIS container only (the web livenessProbe).
+        # Static, answers 200 whether or not the server Service is up, so a backend
+        # outage never restarts nginx. Mirrors web/nginx.conf (#3460).
+        location = /nginx-health {
           access_log off;
           return 200 "healthy\n";
           {{- include "keyorix.web.securityHeaders" . | nindent 10 }}
           add_header Content-Type text/plain;
+        }
+
+        # /health: proxied to the server Service's own /health (the web
+        # readinessProbe), so the pod is NotReady while the backend is down. Same
+        # upstream and TLS verification as the API location above; short timeouts
+        # so a hung backend fails the probe instead of hanging it.
+        location = /health {
+          access_log off;
+          proxy_connect_timeout 2s;
+          proxy_read_timeout 3s;
+          {{- if .Values.secureBaseline.enabled }}
+          proxy_pass https://{{ include "keyorix.server.fullname" . }}:{{ .Values.server.service.port }}/health;
+          proxy_ssl_verify on;
+          proxy_ssl_verify_depth 1;
+          proxy_ssl_trusted_certificate /etc/keyorix/tls/ca.crt;
+          proxy_ssl_name {{ include "keyorix.server.fullname" . }};
+          proxy_ssl_server_name on;
+          proxy_ssl_protocols TLSv1.2 TLSv1.3;
+          {{- else }}
+          proxy_pass http://{{ include "keyorix.server.fullname" . }}:{{ .Values.server.service.port }}/health;
+          {{- end }}
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_hide_header X-Frame-Options;
+          proxy_hide_header X-Content-Type-Options;
+          proxy_hide_header X-XSS-Protection;
+          proxy_hide_header Referrer-Policy;
+          proxy_hide_header Content-Security-Policy;
+          proxy_hide_header Cross-Origin-Resource-Policy;
+          proxy_hide_header Cross-Origin-Embedder-Policy;
+          proxy_hide_header Cross-Origin-Opener-Policy;
+          proxy_hide_header Strict-Transport-Security;
+          {{- include "keyorix.web.securityHeaders" . | nindent 10 }}
         }
 
         location ~ /\. { deny all; access_log off; log_not_found off; }
