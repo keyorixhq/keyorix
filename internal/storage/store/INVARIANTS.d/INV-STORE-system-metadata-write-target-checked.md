@@ -23,7 +23,11 @@
   `triggerIntegrityReadFailureLimit` failures in a row on it is logged `SECURITY:`, counted
   `reason="tamper"` once per run, and an invalidation is owed until a reading verifies (PR #3841
   review N1: an anchor-named trigger whose WHEN clause referenced `NEW` failed every reading, so
-  nothing was flushed, reported or repaired). The reading, the installers' reading, the write-target
+  nothing was flushed, reported or repaired). A reading that runs out of the tick's time is a
+  failed reading too; only a cancelled tick (shutdown) changes nothing, and the reading gets half of
+  the tick's remaining time so the invalidation keeps the rest (PR #3841 review B1 of bc3739478: the
+  server's role can make the reading slow with a huge WHEN clause on the anchor-named trigger, and
+  every tick that hit its deadline changed nothing). The reading, the installers' reading, the write-target
   repair's reads and the installers' definition reads run under `readCatalog`: search_path
   `pg_catalog, pg_temp`, with the server's schema bound and every table named through
   `catalogRelSQL`, so no operator, function or type outside pg_catalog takes part and the deparsed
@@ -61,5 +65,9 @@
   `TestTriggerIntegrity_CatalogReadsIgnoreExactMatchOperators_Postgres` and
   `TestSecretNodeCacheEpochIntegrity_CatalogReadsIgnoreExactMatchOperators_Postgres` (class guard: a
   raising operator for every cross-type pair of catalog types pg_catalog has no exact operator for;
-  red on the PR's c9506de59 head by behaviour); `TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode`
+  red on the PR's c9506de59 head by behaviour),
+  `TestRolePermGenerationIntegrity_ReadingPastTickDeadlineFailsClosed_Postgres` and
+  `TestSecretNodeCacheEpochIntegrity_ReadingPastTickDeadlineFailsClosed_Postgres` (red on the PR's
+  bc3739478 head by behaviour), `TestRolePermGenerationIntegrity_CancelledTickChangesNothing_Postgres`;
+  `TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode`
   (default CI); `TestFenceGuard_MatchesTheStore` (internal/solewriter, default CI).
