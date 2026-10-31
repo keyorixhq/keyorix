@@ -106,7 +106,7 @@ func FuzzDecodePATScopes(f *testing.F) {
 func FuzzDecodePATCIDRs(f *testing.F) {
 	seeds := []string{
 		"",                                // empty -> no restriction (nil)
-		"   ",                             // whitespace only -> nil
+		"   ",                             // whitespace only -> corrupted sentinel
 		`["10.0.0.0/8"]`,                  // single CIDR
 		`["10.0.0.0/8","192.168.0.0/16"]`, // multiple CIDRs
 		`["192.168.1.1/32"]`,              // host route (v4)
@@ -132,7 +132,7 @@ func FuzzDecodePATCIDRs(f *testing.F) {
 			got = DecodePATCIDRs(raw)
 		})
 
-		if strings.TrimSpace(raw) == "" {
+		if raw == "" {
 			if got != nil {
 				t.Fatalf("DecodePATCIDRs(%q): empty column must decode to nil (no restriction), got %#v", raw, got)
 			}

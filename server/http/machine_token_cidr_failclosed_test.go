@@ -1,7 +1,7 @@
 package http
 
 // machine_token_cidr_failclosed_test.go — #3396 end to end: a machine credential whose
-// stored allowed_cidrs is non-empty but names no CIDR (`null`, `[]`, a blank entry) is
+// stored allowed_cidrs is non-empty but names no CIDR (whitespace, `null`, `[]`, a blank entry) is
 // refused at the auth middleware from every network. IssueMachineToken stores "" for
 // "no restriction", so such a column is a corrupted or hand-edited row; before the fix
 // machineRestrictionFrom read it as "no restriction" and the IP pin was dropped. The
@@ -18,7 +18,7 @@ import (
 
 func TestMachineToken_StoredCIDRsNamingNothing_RefusedAtMiddleware(t *testing.T) {
 	cgBackends(t, func(t *testing.T, backend string) {
-		for _, raw := range []string{"null", "[]", `[""]`, `["  "]`} {
+		for _, raw := range []string{"  ", "null", "[]", `[""]`, `["  "]`} {
 			t.Run(raw, func(t *testing.T) {
 				w := newSVWorld(t, backend, 2)
 				sec, _ := w.newSecret(t, nil)

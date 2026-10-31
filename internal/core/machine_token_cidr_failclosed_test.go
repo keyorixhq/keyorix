@@ -3,7 +3,8 @@ package core
 // machine_token_cidr_failclosed_test.go — #3396: a machine credential's stored
 // allowed_cidrs decodes through rules.DecodePATCIDRs, like a PAT's. An empty column
 // (IssueMachineToken's encoding of "no restriction") is unrestricted; a non-empty
-// column that names no CIDR fails closed with the sentinel no source IP matches.
+// column that names no CIDR, a whitespace-only one included, fails closed with the
+// sentinel no source IP matches.
 // End to end at the middleware: server/http
 // TestMachineToken_StoredCIDRsNamingNothing_RefusedAtMiddleware.
 
@@ -18,7 +19,7 @@ import (
 )
 
 func TestMachineRestrictionFrom_ColumnNamingNoCIDRFailsClosed(t *testing.T) {
-	for _, raw := range []string{"null", "[]", " null ", "[ ]", "\t[]\n", `[null]`, `[""]`, `["  "]`, `["10.0.0.0/8", ""]`, `not json`} {
+	for _, raw := range []string{"  ", "\n", "null", "[]", " null ", "[ ]", "\t[]\n", `[null]`, `[""]`, `["  "]`, `["10.0.0.0/8", ""]`, `not json`} {
 		t.Run(raw, func(t *testing.T) {
 			r := machineRestrictionFrom(&models.MachineIdentityCredential{AllowedCIDRs: raw})
 			require.NotNil(t, r, "a non-empty column must never read as unrestricted")
@@ -31,9 +32,7 @@ func TestMachineRestrictionFrom_ColumnNamingNoCIDRFailsClosed(t *testing.T) {
 }
 
 func TestMachineRestrictionFrom_EmptyColumnAndRealAllowlistUnchanged(t *testing.T) {
-	for _, raw := range []string{"", "  ", "\n"} {
-		require.Nil(t, machineRestrictionFrom(&models.MachineIdentityCredential{AllowedCIDRs: raw}), "%q", raw)
-	}
+	require.Nil(t, machineRestrictionFrom(&models.MachineIdentityCredential{AllowedCIDRs: ""}))
 	// Whatever IssueMachineToken stores round-trips to the same allowlist.
 	enc, err := encodePATCIDRs([]string{"10.0.0.0/8", " 192.0.2.4 "})
 	require.NoError(t, err)

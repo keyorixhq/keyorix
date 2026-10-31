@@ -64,3 +64,18 @@ func TestPATCodec_RoundTripUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodePATCIDRs_WhitespaceOnlyColumnFailsClosed: only the exact "" the encoder
+// writes is "no restriction". A whitespace-only column is never written by
+// EncodePATCIDRs, so it is the same corrupted or hand-edited row as `null` and must
+// block every source IP, not drop the pin (REVIEW-3840-DEEP-1).
+func TestDecodePATCIDRs_WhitespaceOnlyColumnFailsClosed(t *testing.T) {
+	if got := DecodePATCIDRs(""); got != nil {
+		t.Fatalf("DecodePATCIDRs(\"\") = %#v, want nil (no restriction)", got)
+	}
+	for _, raw := range []string{" ", "  ", "\n", "\t", " \r\n "} {
+		if got := DecodePATCIDRs(raw); !slices.Equal(got, PATCIDRCorrupted) {
+			t.Errorf("DecodePATCIDRs(%q) = %#v, want the PATCIDRCorrupted sentinel (block every source IP)", raw, got)
+		}
+	}
+}
