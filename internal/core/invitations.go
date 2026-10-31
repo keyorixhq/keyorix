@@ -153,7 +153,7 @@ func (c *KeyorixCore) buildProjectInvite(ctx context.Context, projectID uint, em
 	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
 		return ctx, nil, err
 	}
-	now := c.now()
+	now := c.now().UTC()
 	expires := now.Add(invitationTTL)
 	return ctx, &models.ProjectInvitation{
 		ProjectID:                  projectID,
@@ -469,7 +469,7 @@ func (c *KeyorixCore) buildGlobalInvite(ctx context.Context, email, systemRole s
 		assignJSON = string(b)
 	}
 
-	now := c.now()
+	now := c.now().UTC()
 	expires := now.Add(invitationTTL)
 	inv = &models.ProjectInvitation{
 		ProjectID:                  0, // global
@@ -836,7 +836,7 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 			return nil, fmt.Errorf("you already have a pending access request for this project")
 		}
 	}
-	now := c.now()
+	now := c.now().UTC()
 	expires := now.Add(accessRequestTTL)
 	req := &models.AccessRequest{
 		ProjectID:     projectID,
