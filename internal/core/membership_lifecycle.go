@@ -165,6 +165,9 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	}
 	inviteMemberRole, err := c.storage.GetRoleByName(ctx, role)
 	if err != nil {
+		if !isPositiveNotFound(err) {
+			return nil, classifyReadError(err, "") // a read FAULT is a retry answer, not "unknown role"
+		}
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
 	// #3546: refuse at invite time what the activation grant would refuse (an
@@ -183,7 +186,8 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	// that silently resurrects on a later RestoreProject (the restore-into-deleted-parent
 	// class). It also covers the per-assignment grants applied at invite-accept.
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
-		return nil, fmt.Errorf("project %d not found or deleted", projectID)
+		// A read FAULT is a retry answer, not "project not found or deleted".
+		return nil, classifyReadError(err, fmt.Sprintf("project %d not found or deleted", projectID))
 	}
 	// Escalation-by-proxy guard: onboarding a member requires the inviter to already
 	// hold every permission the role bundles (parallel to the access-request

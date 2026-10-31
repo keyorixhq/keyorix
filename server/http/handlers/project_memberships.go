@@ -99,7 +99,7 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	const idpResolvedNotAcceptedFromClient = false
 	m, err := h.coreService.InviteMember(r.Context(), uint(id), body.UserID, body.Role, actor.UserID, machineID(r), idpResolvedNotAcceptedFromClient)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		if sendRoleScopeError(w, err) {
