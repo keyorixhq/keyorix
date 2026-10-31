@@ -6,11 +6,14 @@
   fixed message "authorization temporarily unavailable, please retry"
   (`authorizeLookupUnavailable`), and over gRPC with `codes.Unavailable` and the same fixed
   message (`authorizeRefusal`), not 403 / `PermissionDenied`: a client retries 503 and does not
-  retry a denial. It holds at every place an `AuthorizePrincipal` / `AuthorizeSecret*` /
-  `HoldsPermissionInAnyScope` error becomes a refusal (`finishScopedPermissionRequest`,
-  `RequirePermissionInAnyScope`, the global-scope probe of `handleScopeResolutionError`, the
-  secret fetch of the per-secret gates, and the gRPC `authorizeScoped`, `authorizeScopedTarget`,
-  `authorizeSecretScoped`, `authorizeShareScoped`, `CreateSecret`, `ListSecrets`). The handler
+  retry a denial. It holds at the middleware gates and the gRPC sites listed here
+  (`finishScopedPermissionRequest`, `RequirePermissionInAnyScope`, the global-scope probe of
+  `handleScopeResolutionError`, the secret fetch of the per-secret gates, and the gRPC
+  `authorizeScoped`, `authorizeScopedTarget`, `authorizeSecretScoped`, `authorizeShareScoped`,
+  `CreateSecret`, `ListSecrets`). It does NOT yet hold for REST routes that check the
+  permission inside the handler (`POST /api/v1/secrets`, `GET /api/v1/secrets`, secret copy,
+  folder create, dynamic secrets, and the `AuthorizedAtGlobalScope` callers): those still
+  answer 403 on an outage, tracked in a follow-up issue. The handler
   behind the gate is never invoked on a fault; nothing is cached; a value read's denial note
   records `internal_error` (outcome=failed), not `forbidden`, so the outage is not counted as a
   denial of the caller. `(allowed=false, err=nil)` stays 403 / `PermissionDenied` with the same
