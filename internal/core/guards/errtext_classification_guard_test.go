@@ -49,6 +49,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -146,11 +147,8 @@ func scanErrTextClassification(fset *token.FileSet, f *ast.File, file string) []
 				if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "strings" {
 					return true
 				}
-				for _, a := range s.Args {
-					if isText(a) {
-						out = append(out, errTextHit{File: file, Func: fn.Name.Name, Call: "strings." + sel.Sel.Name, Line: fset.Position(s.Pos()).Line})
-						break
-					}
+				if slices.ContainsFunc(s.Args, isText) {
+					out = append(out, errTextHit{File: file, Func: fn.Name.Name, Call: "strings." + sel.Sel.Name, Line: fset.Position(s.Pos()).Line})
 				}
 			}
 			return true
