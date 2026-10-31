@@ -29,14 +29,17 @@ const testAdminActorID = uint(1)
 // clock, and a fake credential engine in place of a real Postgres target. Seeds
 // testAdminActorID with a global "admin" role grant so CreateDynamicSecretConfig's
 // admin-authority check (#162) passes for the tests that use it.
-// backdateLeaseExpiry moves only a lease's expires_at (a test fixture; production
-// has no unconditional expiry write). UTC, as DynamicSecretLease.BeforeSave would
-// store it: a raw Update bypasses that hook.
+// backdateLeaseExpiry sets a lease's expires_at directly on the test database (a
+// fixture: production has no unconditional expiry write, and the storage layer no
+// longer has a full-row lease writer). Save, so DynamicSecretLease.BeforeSave
+// normalises the value to UTC exactly as a production write would; nothing races
+// this single-goroutine fixture.
 func backdateLeaseExpiry(t *testing.T, db *gorm.DB, leaseID string, at time.Time) {
 	t.Helper()
-	res := db.Model(&models.DynamicSecretLease{}).Where("lease_id = ?", leaseID).Update("expires_at", at.UTC())
-	require.NoError(t, res.Error)
-	require.EqualValues(t, 1, res.RowsAffected)
+	var l models.DynamicSecretLease
+	require.NoError(t, db.Where("lease_id = ?", leaseID).First(&l).Error)
+	l.ExpiresAt = at
+	require.NoError(t, db.Save(&l).Error)
 }
 
 func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamictest.FakeEngine, time.Time) {
