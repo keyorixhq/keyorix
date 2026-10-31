@@ -32,9 +32,8 @@ func TestInactiveSinceSemantics(t *testing.T) {
 
 			mk := func(username string, created time.Time, lastLogin *time.Time) {
 				t.Helper()
-				u, err := ls.CreateUser(ctx, &models.User{Username: username, UsernameFolded: username, Email: username + "@x.io", EmailFolded: username + "@x.io"})
+				u, err := ls.CreateUser(ctx, &models.User{Username: username, UsernameFolded: username, Email: username + "@x.io", EmailFolded: username + "@x.io", CreatedAt: created})
 				require.NoError(t, err)
-				require.NoError(t, ls.db.Model(&models.User{}).Where("id = ?", u.ID).UpdateColumn("created_at", created).Error)
 				if lastLogin != nil {
 					require.NoError(t, ls.UpdateLastLogin(ctx, u.ID, *lastLogin))
 				}
