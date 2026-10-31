@@ -342,13 +342,13 @@ func newRealK8sMinter(cfg k8sConfig) (*realK8sMinter, error) {
 func validateAPIServerHost(host string) error {
 	u, err := url.Parse(host)
 	if err != nil {
-		return fmt.Errorf("kubernetes: invalid api_server %q: %w", host, err)
+		return fmt.Errorf("kubernetes: invalid api_server %q: %w", netutil.RedactURLHost(host), netutil.RedactErrorURLs(err))
 	}
 	if u.Scheme != "https" {
-		return fmt.Errorf("kubernetes: api_server %q must use https", host)
+		return fmt.Errorf("kubernetes: api_server %q must use https", netutil.RedactURLHost(host))
 	}
 	if u.Host == "" {
-		return fmt.Errorf("kubernetes: api_server %q is missing a host", host)
+		return fmt.Errorf("kubernetes: api_server %q is missing a host", netutil.RedactURLHost(host))
 	}
 	return nil
 }
