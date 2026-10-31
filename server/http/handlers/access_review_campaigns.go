@@ -35,6 +35,9 @@ func campaignStatusForError(msg string) int {
 // raw error from a lower layer (storage, etc.), so it is logged server-side
 // and replaced with a generic client-safe message (backlog #116).
 func sendCampaignError(w http.ResponseWriter, context string, err error) {
+	if sendStorageUnavailable(w, err) {
+		return
+	}
 	msg := err.Error()
 	status := campaignStatusForError(msg)
 	if status == http.StatusInternalServerError {
