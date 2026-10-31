@@ -50,12 +50,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // clientTimeUTCExceptions: "file.go:Func:Type.Field" -> why the write is safe or tracked. Filled
-// by registerClientTimeUTCException from init() in client_time_utc_exceptions_test.go.
+// by registerClientTimeUTCException from init() in a client_time_utc_exceptions_test.go (one row
+// each; the file is absent while the table is empty, as since SQLITE-UTC-NOWFUNC-1 item 3).
 var clientTimeUTCExceptions = map[string]string{}
 
 func registerClientTimeUTCException(key, reason string) {
@@ -63,6 +66,17 @@ func registerClientTimeUTCException(key, reason string) {
 		panic("duplicate client-time-UTC exception " + key)
 	}
 	clientTimeUTCExceptions[key] = reason
+}
+
+// A duplicate row is a programming error that must not silently overwrite a reason.
+func TestRegisterClientTimeUTCException_RejectsADuplicateKey(t *testing.T) {
+	const key = "auth.go:Probe:T.F"
+	registerClientTimeUTCException(key, "first")
+	t.Cleanup(func() { delete(clientTimeUTCExceptions, key) })
+	require.PanicsWithValue(t, "duplicate client-time-UTC exception "+key, func() {
+		registerClientTimeUTCException(key, "second")
+	})
+	require.Equal(t, "first", clientTimeUTCExceptions[key])
 }
 
 // hookInventory maps a models type to the set of fields its BeforeSave assigns.
