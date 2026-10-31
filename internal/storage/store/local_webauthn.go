@@ -88,7 +88,14 @@ func (ls *LocalStorage) DisableWebAuthnCredential(ctx context.Context, id uint) 
 // SELECT ... FOR UPDATE on the row in the same transaction (which is why #2700
 // classes that site SAFE), so this exists to remove the full-row writer from the
 // model rather than to close a race at this call site.
+//
+// UTC-TOUCH-1: this Updates(map) write bypasses model hooks (and GORM's NowFunc),
+// so it normalises lastUsedAt to UTC itself, like TouchPersonalAccessToken: core
+// passes its clock's time, and on SQLite a non-UTC time is stored as text with the
+// caller's offset that does not order against UTC bounds (and, for a fixed zone
+// without a database name, does not scan back).
 func (ls *LocalStorage) SetWebAuthnCredentialCounterState(ctx context.Context, id uint, blob []byte, lastUsedAt time.Time) (bool, error) {
+	lastUsedAt = lastUsedAt.UTC()
 	res := ls.db.WithContext(ctx).Model(&models.WebAuthnCredential{}).Where(sqlWhereID, id).
 		Updates(map[string]any{"credential_blob": blob, "last_used_at": lastUsedAt.UTC()})
 	if res.Error != nil {
