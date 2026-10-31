@@ -675,6 +675,7 @@ var configValidators = []func(*Config) error{
 	validateWebAuthnSection,
 	validateSecuritySection,
 	validateCryptoInventorySection,
+	validateNotificationsSection,
 }
 
 // Save saves the configuration to a YAML file. Mirrors Load's path handling:
