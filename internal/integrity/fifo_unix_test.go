@@ -48,6 +48,40 @@ func TestFIFOManifestDoesNotHang(t *testing.T) {
 	}
 }
 
+// A FIFO named comm under an injected proc root must be skipped, not waited on.
+func TestFIFOProcCommDoesNotHang(t *testing.T) {
+	root := t.TempDir()
+	fifo := filepath.Join(root, "proc", "123", "comm")
+	if err := os.MkdirAll(filepath.Dir(fifo), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(fifo, os.O_RDWR|syscall.O_NONBLOCK, 0); err == nil {
+			_ = f.Close()
+		}
+	})
+	type res struct {
+		on  bool
+		err error
+	}
+	done := make(chan res, 1)
+	go func() {
+		on, err := keylimeInProc(root)
+		done <- res{on, err}
+	}()
+	select {
+	case r := <-done:
+		if r.on || r.err != nil {
+			t.Fatalf("a FIFO comm must be skipped: on=%v err=%v", r.on, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("keylimeInProc blocked on the FIFO %s", fifo)
+	}
+}
+
 // The same holds for the /sys and /proc style reads under the injectable root.
 func TestFIFOUnderRootDoesNotHang(t *testing.T) {
 	root := t.TempDir()

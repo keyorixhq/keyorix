@@ -253,9 +253,9 @@ func keylimeInProc(root string) (bool, error) {
 		if !en.IsDir() || !isDigits(en.Name()) {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(root, "proc", en.Name(), "comm")) // #nosec G304 -- pid dir under the injectable root
+		b, err := secretenv.ReadRegularFile("process name", filepath.Join(root, "proc", en.Name(), "comm"))
 		if err != nil {
-			continue // a process that exited or is hidden: skip, the scan goes on
+			continue // a process that exited or is hidden, or a non-regular comm: skip, the scan goes on
 		}
 		if strings.TrimSpace(string(b)) == "keylime_agent" {
 			return true, nil
