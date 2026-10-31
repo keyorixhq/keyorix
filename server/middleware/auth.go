@@ -918,6 +918,10 @@ func handleScopedSecretPermissionRequest(next http.Handler, w http.ResponseWrite
 	}
 	secret, err := cs.Storage().GetSecret(r.Context(), secretID)
 	if err != nil {
+		// A fetch that failed because storage is down is an outage, not "no such secret".
+		if authorizeLookupUnavailable(w, r, err) {
+			return
+		}
 		handleScopeResolutionError(w, r, cs, userCtx, permission, errTargetNotFound, defaultDenyMessage)
 		return
 	}
@@ -1022,6 +1026,9 @@ func handleScopedSecretRefPermissionRequest(next http.Handler, w http.ResponseWr
 	}
 	secret, err := cs.ResolveSecretRef(r.Context(), r.URL.Query().Get("ref"))
 	if err != nil {
+		if authorizeLookupUnavailable(w, r, err) {
+			return
+		}
 		resolveErr := errTargetNotFound
 		if errors.Is(err, core.ErrSecretRefInvalid) {
 			resolveErr = errInvalidTarget
@@ -1117,11 +1124,22 @@ func AuthorizedAtGlobalScope(ctx context.Context, cs *core.KeyorixCore, userCtx 
 // resource exists (avoids existence enumeration by unprivileged users). Any
 // other error is treated as an unparseable target (400).
 func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core.KeyorixCore, userCtx *UserContext, permission string, err error, denyMessage string) {
+	// A resolver that failed because storage is down says nothing about the target
+	// (INV-MW-authorize-lookup-error-is-503): retry, not 400/403/404.
+	if authorizeLookupUnavailable(w, r, err) {
+		return
+	}
 	if errors.Is(err, errTargetNotFound) {
 		// The same note whichever response follows (404 for a global holder, 403
 		// otherwise): the audit row records the truth, the response does not.
 		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedNotFound)
-		if AuthorizedAtGlobalScope(r.Context(), cs, userCtx, permission) {
+		// The global-scope probe is an authorize lookup too: if IT hits the outage the
+		// answer is 503, not the 403 that would pass for "you hold nothing".
+		held, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+		if aerr != nil && authorizeLookupUnavailable(w, r, aerr) {
+			return
+		}
+		if aerr == nil && held {
 			notFoundResponse(w, "Resource not found")
 		} else {
 			forbiddenResponse(w, denyMessage)
@@ -1131,10 +1149,37 @@ func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core
 	badRequestResponse(w, "Invalid target")
 }
 
+// authorizeLookupUnavailableMessage is the fixed 503 text: no storage error detail
+// reaches the client.
+const authorizeLookupUnavailableMessage = "authorization temporarily unavailable, please retry"
+
+// authorizeLookupUnavailable answers 503 + Retry-After and returns true when err is
+// a transient storage failure of an authorization lookup (core.IsAuthorizeTransient).
+// The request is refused, never served. It is audited as a failed read
+// (SecretReadDeniedInternalError, outcome=failed), not as a "forbidden" denial: the
+// caller was not judged. Nothing is cached. Any other error returns false and the
+// caller keeps its fail-closed denial (INV-MW-authorize-lookup-error-is-503).
+func authorizeLookupUnavailable(w http.ResponseWriter, r *http.Request, err error) bool {
+	if err == nil || !core.IsAuthorizeTransient(r.Context(), err) {
+		return false
+	}
+	core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedInternalError)
+	serviceUnavailableResponse(w, authorizeLookupUnavailableMessage)
+	return true
+}
+
 // finishScopedPermissionRequest applies the authorize result and, on success,
 // the per-project MFA policy (ADR-037), before serving next. Shared by
 // RequireScopedPermission and RequireScopedSecretPermission.
 func finishScopedPermissionRequest(next http.Handler, w http.ResponseWriter, r *http.Request, cs *core.KeyorixCore, scope core.Scope, allowed bool, err error, denyMessage string) {
+	if err != nil {
+		// A storage outage is not a verdict (INV-MW-authorize-lookup-error-is-503):
+		// 503 + Retry-After, handler not run. Any other error stays a logged 403.
+		if authorizeLookupUnavailable(w, r, err) {
+			return
+		}
+		log.Printf("WARNING: authorization lookup failed, denying: permission gate error=%q", err.Error())
+	}
 	if err != nil || !allowed {
 		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedForbidden)
 		forbiddenResponse(w, denyMessage)
@@ -1176,6 +1221,9 @@ func RequirePermissionInAnyScope(permission string, opts ...ScopedGateOption) fu
 				return
 			}
 			allowed, err := cs.HoldsPermissionInAnyScope(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission)
+			if authorizeLookupUnavailable(w, r, err) {
+				return
+			}
 			if err != nil || !allowed {
 				forbiddenResponse(w, cfg.denyMessage)
 				return

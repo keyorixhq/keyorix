@@ -8,6 +8,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -117,9 +118,32 @@ func authorizeScoped(ctx context.Context, cs *core.KeyorixCore, actor *intercept
 	// machine roles with NO admin bypass. This is what makes machine tokens work
 	// over gRPC (ADR-030) with the same primitive HTTP uses.
 	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
-		return status.Error(codes.PermissionDenied, "insufficient permissions")
+		return authorizeRefusal(ctx, err, "insufficient permissions")
 	}
 	return enforceProjectMFA(ctx, cs, actor, scope.ProjectID)
+}
+
+// authorizeUnavailableMessage is the fixed Unavailable text of a transient failure of
+// an authorization lookup: the credential-lookup mapping's style, no error detail.
+const authorizeUnavailableMessage = "authorization temporarily unavailable, please retry"
+
+// authorizeRefusal is the status for an authorization lookup that did not allow:
+// codes.Unavailable when err is a transient storage failure
+// (core.IsAuthorizeTransient: the client should retry), otherwise
+// codes.PermissionDenied with deniedMsg, exactly as before. err == nil is a plain
+// denial; any other err stays fail-closed PermissionDenied and is logged. A value
+// read's denial note records the outage as a failed read, not a "forbidden" denial
+// (INV-MW-authorize-lookup-error-is-503). Nothing is cached.
+func authorizeRefusal(ctx context.Context, err error, deniedMsg string) error {
+	if err == nil {
+		return status.Error(codes.PermissionDenied, deniedMsg)
+	}
+	if core.IsAuthorizeTransient(ctx, err) {
+		core.NoteSecretReadDenial(ctx, core.SecretReadDeniedInternalError)
+		return status.Error(codes.Unavailable, authorizeUnavailableMessage)
+	}
+	log.Printf("WARNING: authorization lookup failed, denying: error=%q", err.Error())
+	return status.Error(codes.PermissionDenied, deniedMsg)
 }
 
 // authorizeScopedTarget is the gRPC analogue of HTTP's handleScopeResolutionError
@@ -137,13 +161,19 @@ func authorizeScoped(ctx context.Context, cs *core.KeyorixCore, actor *intercept
 // errTargetNotFound branch on the HTTP side.
 func authorizeScopedTarget(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, perm string, resolveErr error, scope core.Scope, notFoundMsg string) error {
 	if resolveErr != nil {
-		if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, core.Scope{}); err == nil && allowed {
+		// The resource fetch itself failed because storage is down: an outage, not
+		// "no such target" (the secret path passes the real fetch error).
+		if core.IsAuthorizeTransient(ctx, resolveErr) {
+			return authorizeRefusal(ctx, resolveErr, "insufficient permissions")
+		}
+		allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, core.Scope{})
+		if err == nil && allowed {
 			return status.Error(codes.NotFound, notFoundMsg)
 		}
-		return status.Error(codes.PermissionDenied, "insufficient permissions")
+		return authorizeRefusal(ctx, err, "insufficient permissions")
 	}
 	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
-		return status.Error(codes.PermissionDenied, "insufficient permissions")
+		return authorizeRefusal(ctx, err, "insufficient permissions")
 	}
 	return enforceProjectMFA(ctx, cs, actor, scope.ProjectID)
 }
