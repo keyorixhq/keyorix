@@ -257,6 +257,10 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		// evidence for a grant they have no authority over. Mirrors
 		// revokeReviewShare's identical guard (#99).
 		secret, err := c.storage.GetSecret(ctx, d.SecretID)
+		if err != nil && !isPositiveNotFound(err) {
+			// A storage fault is not "the review is stale": re-syncing would not help.
+			return classifyReadError(err, "the share being attested could not be read")
+		}
 		if err != nil || secret == nil || secret.ProjectID != projectID {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
 				"the share being attested no longer exists — the review is stale, re-sync and try again")
@@ -278,6 +282,9 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest ownership")
 		}
 		secret, err := c.storage.GetSecret(ctx, d.SecretID)
+		if err != nil && !isPositiveNotFound(err) {
+			return classifyReadError(err, "the secret being attested could not be read")
+		}
 		if err != nil || secret == nil || secret.ProjectID != projectID {
 			// #G51: same cross-tenant guard as the share branch above — a
 			// secret in a DIFFERENT project must read as "not found" here,
