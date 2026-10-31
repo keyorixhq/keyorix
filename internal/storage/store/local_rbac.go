@@ -187,11 +187,39 @@ func (ls *LocalStorage) GetRoleByName(ctx context.Context, name string) (*models
 	return &role, nil
 }
 
+// UpdateRole writes the two columns a role update may change, description and
+// assignable_scope, to the row with role.ID, and returns the stored row.
+//
+// STORE-STALE-WRITE-1: this used to be a full-row Save. Save is an upsert: when
+// the UPDATE matched no row because a concurrent DeleteRole had committed after
+// the caller read the role (core UpdateRole reads it in its own transaction,
+// another replica's delete does not wait for that read), GORM fell back to an
+// INSERT and re-created the deleted custom role under the same id with the
+// stale name and description. The write is now column-scoped and matched on
+// the id, so a deleted role stays deleted: zero rows affected is
+// storage.ErrRoleNotFound and the caller's transaction rolls back. Name,
+// NameFolded and BypassesPermissionChecks are never written here (names are
+// immutable, #1494; the bypass flag has its own setter).
 func (ls *LocalStorage) UpdateRole(ctx context.Context, role *models.Role) (*models.Role, error) {
-	if err := ls.db.WithContext(ctx).Save(role).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	db := ls.db.WithContext(ctx)
+	res := db.Model(&models.Role{}).Where("id = ?", role.ID).Updates(map[string]any{
+		"description":      role.Description,
+		"assignable_scope": role.AssignableScope,
+	})
+	if res.Error != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
-	return role, nil
+	if res.RowsAffected == 0 {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), storage.ErrRoleNotFound)
+	}
+	var stored models.Role
+	if err := db.First(&stored, role.ID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), storage.ErrRoleNotFound)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &stored, nil
 }
 
 // DeleteRole hard-deletes a role and, in the SAME transaction, every row in
