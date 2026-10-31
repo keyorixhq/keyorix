@@ -166,11 +166,11 @@ func (h *CatalogHandler) ResolveSecretAccessRequest(w http.ResponseWriter, r *ht
 		case strings.Contains(msg, errOnlyPending), strings.Contains(msg, "no longer pending"),
 			strings.Contains(msg, "has expired"), strings.Contains(msg, "no longer exists"):
 			status = http.StatusConflict
-		// A requester approving their own request, or a caller lacking admin
-		// authority at the request's project, is a business rule about who may
-		// act, not a state conflict.
-		case strings.Contains(msg, "cannot approve their own"), strings.Contains(msg, "admin authority is required"),
-			strings.Contains(msg, "administrator"):
+		// A requester approving their own request is a business rule about who may
+		// act, not a state conflict. A caller lacking admin authority at the request's
+		// project never reaches here: core answers it "access request not found"
+		// (loadSecretAccessRequestForResolver, AUTHZ-ORACLE-1), so it is a 404 above.
+		case strings.Contains(msg, "cannot approve their own"):
 			status = http.StatusForbidden
 		case strings.Contains(msg, "not a secret-scoped"):
 			status = http.StatusBadRequest

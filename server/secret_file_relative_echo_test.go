@@ -66,7 +66,7 @@ func writeSentinelFile(t *testing.T, dir, content string, mode os.FileMode) {
 var secretLookupFuncs = map[string]int{
 	"Lookup":            0, // secretenv
 	"LookupChecked":     0, // secretenv
-	"LookupSecretEnv":   0, // internal/config: Lookup answered from the Load snapshot (server callers use it, #3830)
+	"LookupSecretEnv":   0, // internal/config (the boot-snapshot lookup server code uses, #3830)
 	"resolveSecret":     0, // internal/config
 	"ResolvePassphrase": 1, // internal/crypto
 	"FileVars":          0, // secretenv (cmd/keyorix-k8s-sync, PassphraseSource.Describe)
@@ -80,6 +80,7 @@ var dynamicSecretNameSites = map[string]string{
 	"internal/config/config.go":               "SecretEnvVars, SSO providers, auto_rotation dsn_env, connect vault token_env, key_provider env_var/shamir_share_env (secretEnvNames)",
 	"internal/config/configured_secrets.go":   "secretEnvNames",
 	"internal/config/secret_snapshot.go":      "secretEnvNames (snapshotSecrets, SecretFilePermissionProblems)",
+	"internal/config/secret_lookup.go":        "LookupSecretEnv: the name its server callers pass (the bootstrap token, connect vault token_env)",
 	"internal/config/config_auto_rotation.go": "auto_rotation backend dsn_env",
 	"internal/config/config_sso.go":           "SSO provider client secret",
 	"server/wire_backend_rotation.go":         "connect vault token_env (default VAULT_TOKEN)",

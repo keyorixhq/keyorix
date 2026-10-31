@@ -76,6 +76,14 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	value, err := c.GetSecretValueWithPermissionCheck(ctx, sourceID, actorID)
 	if err != nil {
 		refuse(ClassifySecretReadDenial(err), source)
+		// Only the ordinary read refusal (checkSecretPermission) is folded into
+		// notFound. A restricted-classification gate refusal comes after that
+		// permission was granted, so it is no existence oracle, and its reason
+		// (missing restricted-read permission, approval or step-up) is what the
+		// reader must act on: returned as is, 403 by kind (#3804).
+		if errors.Is(err, ErrClassificationGateDenied) {
+			return nil, err
+		}
 		if errors.Is(err, ErrPermissionDenied) {
 			return nil, notFound
 		}

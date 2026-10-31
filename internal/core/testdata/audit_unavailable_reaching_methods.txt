@@ -3,6 +3,7 @@ AddProjectMember
 AddUserToGroup
 AddUserToGroupGlobal
 ApproveAccessRequestWithExpiry
+ApproveMFAReset
 ApproveRiskException
 ApproveSecretAccessRequest
 AssignGroupRoleWithExpiry
@@ -51,6 +52,7 @@ InviteToProject
 InviteToProjectWithLink
 IssueMachineToken
 LiftLegalHold
+LogCryptoInventoryRead
 MigrateUserToMachine
 OpenAccessReviewCampaign
 PatchSCIMGroup
@@ -63,6 +65,7 @@ ReconcileRBACPermissions
 ReconcileUserBaselineRoles
 ReissueOneTimePassword
 ReplaceSCIMGroup
+RequestMFAReset
 RequestProjectAccess
 RequestSecretAccess
 RequirePasswordReset

@@ -95,6 +95,10 @@ type UserContext struct {
 	// which must not confine non-interactive automation.
 	MFAEnabled  bool `json:"-"`
 	SessionAuth bool `json:"-"`
+	// MFAEnrolmentOwed is core.MFAEnrolmentOwed of the account: an administrator
+	// MFA reset left it owing a new second factor (#3799), so EnforceAccountSetup
+	// confines an interactive session to enrolment even without require_mfa.
+	MFAEnrolmentOwed bool `json:"-"`
 	// SetupOnly is the authenticating session's models.Session.SetupOnly (#3024):
 	// a session that may only finish account setup, never become a full session.
 	// Read on the slow path with SessionID and cached with the identity (it never
@@ -1268,7 +1272,7 @@ func handleAccountSetupCheck(next http.Handler, w http.ResponseWriter, r *http.R
 		next.ServeHTTP(w, r)
 		return
 	}
-	pending := core.PendingAccountSetupSteps(userCtx.Restricted, userCtx.MFAEnabled, userCtx.SessionAuth, requireMFA)
+	pending := core.PendingAccountSetupSteps(userCtx.Restricted, userCtx.MFAEnabled, userCtx.SessionAuth, requireMFA, userCtx.MFAEnrolmentOwed)
 	// An impersonation session is never a setup session and cannot be refreshed;
 	// it keeps the plain 403 confinement below.
 	if userCtx.SessionAuth && userCtx.ImpersonatedBy == nil &&
@@ -1808,17 +1812,18 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		return nil, err
 	}
 	return &UserContext{
-		UserID:         user.ID,
-		Username:       user.Username,
-		Email:          user.Email,
-		Roles:          roleNames,
-		ActorType:      core.ActorTypeUser,
-		AccountState:   core.NormalizeAccountState(user.AccountState),
-		Restricted:     core.AccountRestricted(user.AccountState),
-		MFAEnabled:     user.MFAEnabled || user.WebAuthnEnabled,
-		SessionAuth:    viaSession,
-		PATRestriction: restriction,
-		patID:          patID,
+		UserID:           user.ID,
+		Username:         user.Username,
+		Email:            user.Email,
+		Roles:            roleNames,
+		ActorType:        core.ActorTypeUser,
+		AccountState:     core.NormalizeAccountState(user.AccountState),
+		Restricted:       core.AccountRestricted(user.AccountState),
+		MFAEnabled:       user.MFAEnabled || user.WebAuthnEnabled,
+		MFAEnrolmentOwed: core.MFAEnrolmentOwed(user),
+		SessionAuth:      viaSession,
+		PATRestriction:   restriction,
+		patID:            patID,
 	}, nil
 }
 

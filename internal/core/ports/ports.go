@@ -74,8 +74,11 @@ func RefHasDotSegment(ref string) bool {
 // path-segment boundary rather than a bare substring match: ref must equal p
 // exactly, or extend it starting with '/'. A type alias target of
 // internal/connect.RefWithinPrefix (ADR-109 step 4) — see that function's
-// doc comment for the full rationale. An empty prefix p matches nothing (use
-// a separate empty-prefix guard to mean "allow all").
+// doc comment for the full rationale. An empty prefix p is NOT a safe "match
+// nothing": it matches only the empty ref and any ref that starts with '/'
+// (ref[0] is then the segment boundary). Callers must handle p == "" themselves
+// before calling (prefixAllowed skips it; core.refMatches treats it as
+// connector-wide).
 func RefWithinPrefix(p, ref string) bool {
 	if ref == p {
 		return true

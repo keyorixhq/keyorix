@@ -504,7 +504,7 @@ const (
 // enforceGRPCAccessPolicy, which refuses it as before.
 func enforceGRPCAccountSetup(user *models.User, requireMFA, viaSession, setupOnly, impersonated bool) error {
 	pending := core.PendingAccountSetupSteps(core.AccountRestricted(user.AccountState),
-		user.MFAEnabled || user.WebAuthnEnabled, viaSession, requireMFA)
+		user.MFAEnabled || user.WebAuthnEnabled, viaSession, requireMFA, core.MFAEnrolmentOwed(user))
 	switch {
 	case setupOnly && len(pending) == 0:
 		return status.Error(codes.Unauthenticated, grpcSetupCompleteMsg)
@@ -525,7 +525,9 @@ func enforceGRPCAccessPolicy(ctx context.Context, user *models.User, restriction
 	if core.AccountRestricted(user.AccountState) {
 		return status.Errorf(codes.PermissionDenied, "password change required before access")
 	}
-	if requireMFA && viaSession && !(user.MFAEnabled || user.WebAuthnEnabled) {
+	// #3799: an enrolment an administrator MFA reset left owed is required even
+	// where require_mfa is off or in its upgrade grace period.
+	if (requireMFA || core.MFAEnrolmentOwed(user)) && viaSession && !(user.MFAEnabled || user.WebAuthnEnabled) {
 		return status.Errorf(codes.PermissionDenied, "multi-factor authentication enrolment required")
 	}
 	return nil
