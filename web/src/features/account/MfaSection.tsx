@@ -16,6 +16,7 @@ import { useMfaRecoveryStatus, useEnrollMfa, useActivateMfa, useDisableMfa, useR
 import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
 import { useAuthStore } from '../../store/authStore';
 import { userOwesMfaEnrolment } from '../auth/setup';
+import { QrCode } from './QrCode';
 
 // LOW_CODES_THRESHOLD is when we nudge the user to regenerate recovery codes.
 const LOW_CODES_THRESHOLD = 3;
@@ -162,8 +163,8 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
                 <form onSubmit={submit} className="space-y-4">
                     {error && <Alert type="error" message={error} />}
                     <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                        Add this key to your authenticator app (Google Authenticator, 1Password, …), then enter the
-                        6-digit code it shows.
+                        Scan the QR code with your authenticator app (Google Authenticator, 1Password, …), or enter the
+                        setup key by hand, then enter the 6-digit code it shows.
                     </p>
                     {enroll.isPending && !secret ? (
                         <div className="flex justify-center py-6">
@@ -171,6 +172,11 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
                         </div>
                     ) : (
                         <>
+                            {uri && /^otpauth:\/\//i.test(uri) && (
+                                <div className="flex justify-center">
+                                    <QrCode value={uri} label="QR code for your authenticator app" />
+                                </div>
+                            )}
                             <div>
                                 <p
                                     className="block text-sm font-medium mb-1"

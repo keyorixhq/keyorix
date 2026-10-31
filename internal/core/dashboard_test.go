@@ -234,6 +234,30 @@ func TestGetDashboardStats_DegradedOnInactiveUsersQueryError(t *testing.T) {
 	assert.True(t, containsSubstring(stats.DegradedReasons, "inactive_users"), "expected an inactive_users entry, got %v", stats.DegradedReasons)
 }
 
+// #3740: users created moments ago that have never logged in are not "inactive for 30 days".
+// The dashboard asks the store with InactiveSpareNewAccounts, and a fresh install counts zero.
+func TestGetDashboardStats_FreshNeverLoggedInUsersAreNotInactive(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	auditorID := seedUserWithRole(t, st, "auditor4", "system_auditor", storage.Scope{})
+	var sawFilter *storage.UserFilter
+	c.storage = hooked(st, &storeHooks{
+		ListUsers: func(next storage.Storage, ctx context.Context, f *storage.UserFilter) ([]*models.User, int64, error) {
+			if f != nil && f.InactiveSince != nil {
+				sawFilter = f
+			}
+			return next.ListUsers(ctx, f)
+		},
+	})
+
+	stats, err := c.GetDashboardStats(context.Background(), auditorID, "auditor4", auditorID)
+	require.NoError(t, err)
+
+	require.NotNil(t, sawFilter, "the dashboard must query inactive users")
+	assert.True(t, sawFilter.InactiveSpareNewAccounts)
+	assert.Zero(t, stats.InactiveUsers, "users created just now and never logged in are not inactive")
+}
+
 // #394: getExpiringSecrets paged through ListSecrets and silently discarded
 // whatever it had accumulated so far on a page-load error — this proves the
 // truncation is now surfaced via Degraded even for a baseline caller without
