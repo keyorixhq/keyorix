@@ -3,8 +3,21 @@
   `AcceptAuditLoss` after `PlanAuditLossAcceptance` proved a loss at exactly the named ids:
   a gap whose first surviving row recomputes and whose prev_hash names a row that is gone
   (not the row before, not an inserted one), or a tail truncation whose certified head is
-  missing and whose count fell. It refuses a modified row, the pre-#1452 encoding, a key
-  mismatch, an unauthenticated checkpoint, high-water mark or retention anchor, an untrusted
+  missing and whose count fell. It refuses a modified row where signed evidence shows one
+  (#3802):
+  - a resume row that does not recompute;
+  - a break with no id missing between the last good row and the resume row;
+  - a `Before` signed past the gap's last good row that counts every surviving row
+    (measured loss 0);
+  - any surviving row whose hash differs from what an authenticated pin certified. The pins
+    are every `audit_checkpoints` row that authenticates under the current key and some seal
+    prefix, the high-water mark, the retention anchor, the state's pin, last tail check and
+    rolling cycle, the witness, earlier seal records, and a verified anchor
+    (`auditLossCheckPins`).
+
+  Surviving rows before a break that no pin covers are named in the plan and recorded in the
+  seal's `unpinned` spans, never silently accepted. It also refuses the pre-#1452 encoding, a
+  key mismatch, an unauthenticated checkpoint, high-water mark or retention anchor, an untrusted
   state, a discontinuity of another kind and an untrusted earlier seal. The record
   (`audit_seals`) is MACed with the checkpoint key under its own domain, hash-linked (`seq`,
   `prev`), and named by one in-chain `system.audit_loss_accepted` event. A sealed chain is
@@ -53,7 +66,9 @@
   `_ResealKeepsHigherWitness`, `_RefusesMissingHighWater`,
   `_RefusesUnsafeOperatorText`, `_WitnessAboveDatabaseCountsInPlan`,
   `_ApplyRefusesUnnamedHigherWitness`, `_WitnessUnderRolledBackSealRefused`,
-  `_ResumeAfterKeyChange`, `_ResumeAfterTwoKeyChanges`, `_ResumeAfterKeyChangeRefusesUnaccounted`),
+  `_ResumeAfterKeyChange`, `_ResumeAfterTwoKeyChanges`, `_ResumeAfterKeyChangeRefusesUnaccounted`,
+  `_PrefixRewriteBeforeLossRefused`, `_RewrittenRowNoIDMissingRefused`, `_RewriteOverIDHoleRefused`,
+  `_GenuineDeletionPinnedPrefixSeals`, `_UnpinnedPrefixRecorded`),
   `TestSealDifferential_*`
   (`internal/auditverify`), `TestPerformRecoverAdmin_NeverSealsALoss`,
   `TestAcceptLoss_RequiresConfirmThenSeals`, `scripts/drills/accept-loss.sh`. Not covered: a
@@ -68,4 +83,6 @@
   `export-checkpoint` anchor (`--anchor`; one bound to a seal the database no longer holds does
   not authenticate) or the operator, warned by the resume plan, tells them apart
   (docs/operator/audit-chain-break-runbook.md §8). Rows written after the last checkpoint were
-  never certified and are not detected by anything.
+  never certified and are not detected by anything. A rewrite of rows before a gap that no pin
+  covers (including one whose older checkpoints were deleted with it: only the latest is
+  guarded by the high-water mark) is recorded as unpinned, not refused.

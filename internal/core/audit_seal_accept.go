@@ -112,6 +112,10 @@ type AuditLossPlan struct {
 	// witness that is present is not counted (it is replaced all the same).
 	Witness     *AuditSealCount
 	WitnessNote string
+	// Unpinned are the surviving rows before each break that no signed
+	// artifact pins: a rewrite of them before this acceptance cannot be
+	// excluded (#3802). The seal records them.
+	Unpinned []AuditSealSpan
 	// Resume: an earlier acceptance stopped before it finished; this run
 	// completes it and writes no new record.
 	Resume bool
@@ -148,6 +152,9 @@ func (p *AuditLossPlan) Describe() []string {
 	}
 	if p.WitnessNote != "" {
 		out = append(out, "  host witness file: "+p.WitnessNote)
+	}
+	for _, s := range p.Unpinned {
+		out = append(out, fmt.Sprintf("  unauthenticated: audit events #%d through #%d are pinned by no signed checkpoint, mark, anchor or state; a rewrite of them before this acceptance cannot be excluded (the seal records it)", s.FromID, s.ThroughID))
 	}
 	if a := p.Anchor; a != nil {
 		if a.Verified {
@@ -204,7 +211,7 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 			return nil, err
 		}
 		return &AuditLossPlan{Seq: last.Seq, Gaps: last.Gaps, Truncation: last.Truncation, Before: last.Before, After: last.After,
-			LostEvents: last.LostEvents, Anchor: last.Anchor, Accepted: auditLossResumeAccepted(last, f.state), Resume: true, seal: last}, nil
+			LostEvents: last.LostEvents, Anchor: last.Anchor, Accepted: auditLossResumeAccepted(last, f.state), Unpinned: last.Unpinned, Resume: true, seal: last}, nil
 	}
 	if len(req.BrokenIDs) == 0 {
 		return nil, auditLossRefused("name the id where the walk breaks (--first-broken-id)")
@@ -274,14 +281,24 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 		if err != nil {
 			return nil, err
 		}
-		if lost := before.Events - (through.ChainedEvents + purged); through.Valid && lost > 0 {
+		lost := before.Events - (through.ChainedEvents + purged)
+		switch {
+		case through.Valid && lost > 0:
 			plan.LostEvents = lost
+		case through.Valid && slices.ContainsFunc(gaps, func(g AuditSealGap) bool { return before.HeadID > g.LastGoodID }):
+			// Signed while the rows the gap names existed, so it counted
+			// them: a measured loss of 0 is a rewritten row (#3802).
+			return nil, auditLossRefused("%s certifies %d events through #%d, signed after the rows before the gap, and counts every row still there (%d): nothing was lost, so the break is a rewritten row; investigate",
+				before.Source, before.Events, before.HeadID, through.ChainedEvents+purged)
 		}
+	}
+	if plan.Unpinned, err = c.auditLossCheckPins(ctx, f, plan); err != nil {
+		return nil, err
 	}
 	plan.Accepted = auditLossAccepted(f.state, gaps, plan.Truncation)
 	plan.seal = &auditSeal{V: 1, Seq: plan.Seq, At: c.now().UTC(), Operator: strings.TrimSpace(req.Operator), OSUser: req.OSUser,
 		Reason: strings.TrimSpace(req.Reason), Evidence: strings.ToLower(req.Evidence), Gaps: gaps, Truncation: plan.Truncation,
-		Before: plan.Before, After: plan.After, LostEvents: plan.LostEvents, Anchor: plan.Anchor, Accepted: plan.Accepted}
+		Before: plan.Before, After: plan.After, LostEvents: plan.LostEvents, Anchor: plan.Anchor, Accepted: plan.Accepted, Unpinned: plan.Unpinned}
 	return plan, nil
 }
 
@@ -663,6 +680,12 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 		}
 		if !pre.Valid {
 			return nil, nil, auditLossRefused("the chain before audit event #%d does not verify (%s)", id, pre.Reason)
+		}
+		if pre.HeadID+1 == id {
+			// The walk reads in id order: with no id between them, nothing
+			// was deleted, so the row before (it still recomputes, so its
+			// hash was recomputed too) was rewritten (#3802).
+			return nil, nil, auditLossRefused("audit event #%d's prev_hash does not link to #%d, the row right before it, and no id is missing between them: a rewritten row, not a lost one; investigate", id, pre.HeadID)
 		}
 		if pre.HeadID > 1 {
 			// The chained row before pre's head (the walk reads in id order).

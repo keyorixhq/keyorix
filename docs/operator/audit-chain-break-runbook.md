@@ -251,8 +251,24 @@ after the break is not notarised: decide soon.
    signed verification state. Checkpoints resume for the rows written from then on. The chain
    reads **sealed** from then on, never valid again. Only for rows that are **gone**: a gap (the walk
    breaks at the first row after the lost ones) or a tail truncation that a signed checkpoint
-   proves. It refuses a modified row, the pre-#1452 encoding (4a), a key mismatch (4c), an
-   unauthenticated store, an untrusted verification state and an altered earlier seal.
+   proves. It refuses the pre-#1452 encoding (4a), a key mismatch (4c), an unauthenticated
+   store, an untrusted verification state and an altered earlier seal. It also refuses a
+   modified row, as far as signed evidence can show one:
+   - a resume row that does not recompute;
+   - a break with no id missing (the row before it was rewritten);
+   - a certification signed while the rows before the gap existed that still counts every
+     row (nothing was lost);
+   - any row whose hash differs from what a signed checkpoint (every one in
+     `audit_checkpoints`, not only the latest), the high-water mark, the retention anchor,
+     the signed verification state, the host witness, an earlier seal or `--anchor`
+     certified for it.
+
+   The entry hash is unkeyed, so a writer who rewrites rows and recomputes their hashes is
+   caught only where something signed pinned them. The plan lists the surviving rows before
+   each gap that nothing signed pins (`unauthenticated: audit events #a through #b ...`). The
+   seal records them (`unpinned`). Compare those rows with your backup or an off-host anchor
+   before you confirm. An older checkpoint deleted along with the rewrite cannot be told apart
+   from one never written: those rows then read as unauthenticated, not as refused.
 
    With the server stopped (every replica), after the evidence in section 6:
 
