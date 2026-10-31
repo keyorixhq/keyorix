@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 )
 
 // TestSecretNodeCacheEpochIntegrity_RepairCommitsWhenTheInvalidationCannotLockARow_Postgres
@@ -51,12 +53,11 @@ func TestSecretNodeCacheEpochIntegrity_RepairCommitsWhenTheInvalidationCannotLoc
 // once for that reading, not on every tick.
 func TestSecretNodeCacheEpochIntegrity_NonOriginSessionInvalidatesOncePerReading_Postgres(t *testing.T) {
 	w := newEpochIntegrityWorld(t)
+	pgpriv.RequireReplicationRolePrivilege(t, w.db)
 	sqlDB, err := w.db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1) // the check's reads and writes all run on the one session set below
-	if err := w.db.Exec("SET session_replication_role = replica").Error; err != nil {
-		t.Skipf("pg-gated: this role may not SET session_replication_role (needs a superuser or GRANT SET): %v", err)
-	}
+	require.NoError(t, w.db.Exec("SET session_replication_role = replica").Error)
 	epoch := nodeCacheEpoch(t, w.db, w.created.ID)
 	flushed, err := w.c.check(context.Background())
 	require.ErrorContains(t, err, "session_replication_role")
