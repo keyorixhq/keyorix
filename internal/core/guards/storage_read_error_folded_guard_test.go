@@ -578,7 +578,7 @@ func TestNoStorageReadErrorFoldedIntoNotFound(t *testing.T) {
 	for _, m := range msgs {
 		g.Errorf("%s: a storage fault (outage, timeout, scan error) then reads as \"already gone\" and the operator does not retry. "+
 			"Classify it with classifyReadError / credentialLookupError (a positive not-found keeps the verdict, anything else is "+
-			"ErrStorageReadUnavailable), or add a storage_read_error_folded_exception_<name>_test.go calling "+
+			"ErrStorageReadUnavailable; in server/middleware, core.ReadFault -> errTargetReadFault), or add a storage_read_error_folded_exception_<name>_test.go calling "+
 			"registerFoldedReadException with the reason the fold is safe", m)
 	}
 	for key, why := range foldedReadExceptions {
