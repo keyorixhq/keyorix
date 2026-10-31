@@ -514,8 +514,11 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 		query = query.Where("created_at > ?", *filter.CreatedAfter)
 	}
 	if filter.InactiveSince != nil {
-		// G81 (User.LastLoginAt): normalize internally — see GetAuditLogs.
-		query = query.Where("last_login_at IS NULL OR last_login_at < ?", filter.InactiveSince.UTC())
+		// G81 (User.LastLoginAt, also covers CreatedAt): normalize internally — see
+		// GetAuditLogs. A user who never logged in is judged by when the account was
+		// created (#3740): one created a minute ago has not been inactive for 30 days.
+		// Same rule as ListInactiveUsers (the suspend sweep).
+		query = query.Where("COALESCE(last_login_at, created_at) < ?", filter.InactiveSince.UTC())
 	}
 
 	var total int64
