@@ -420,7 +420,7 @@ const OperationalSignalsSection: React.FC<OperationalSignalsSectionProps> = ({
                 <SignalCard
                     label="Inactive Users"
                     value={stats?.inactiveUsers ?? 0}
-                    hint="no login in 30 days"
+                    hint="not logged in for 30+ days"
                     severity={(stats?.inactiveUsers ?? 0) === 0 ? 'neutral' : 'warn'}
                     onClick={() => navigate(ROUTES.ADMIN_USERS + '?filter=inactive')}
                     notVisible={!can.admin}
