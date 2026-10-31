@@ -119,7 +119,7 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 		if err != nil && !isPositiveNotFound(err) {
 			// A storage fault is not "secret not found": report it distinctly so the
 			// caller retries instead of concluding the secret is gone.
-			log.Printf("bulk rename: secret %d skipped, storage read failed: %v", rn.ID, err)
+			log.Printf("bulk rename: secret %d skipped, storage read failed: %s", rn.ID, StorageReadFaultDetail(err))
 			skip(rn.ID, "", newName, StorageReadUnavailableMessage)
 			continue
 		}
