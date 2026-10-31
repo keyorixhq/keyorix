@@ -198,6 +198,13 @@ var ErrInvalidGroupRequest = errors.New("invalid group request")
 // 400; match it with errors.Is, not the phrase (ERRSTRING-CLASS-1).
 var ErrShareExpiryNotInFuture = errors.New("share expiry must be in the future")
 
+// ErrInvalidSecretACLRequest is matched (errors.Is) by core's refusals of a malformed
+// secret-ACL request (GrantSecretACL, RevokeSecretACL): a missing actor, secret, user or
+// ACL id, an empty permission set, or a permission outside the valid set. The refusal
+// text is unchanged. Transports answer InvalidArgument; a storage or driver error that
+// merely contains "invalid" or "required" is not one (ERRSTRING-CLASS-1).
+var ErrInvalidSecretACLRequest = errors.New("invalid secret ACL request")
+
 // ErrDuplicateNotificationChannelName is returned (wrapped) by CreateNotificationChannel
 // when the insert collides with the unique index on notification_channels.name (#2779).
 var ErrDuplicateNotificationChannelName = errors.New("a notification channel with this name already exists")

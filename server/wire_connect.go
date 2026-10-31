@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -14,11 +15,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// isNotFoundStorageErr reports whether err is a "not found"-substring error, the
-// convention every LocalStorage Get* method in this codebase uses (see
-// local_secrets.go's GetProject).
-func isNotFoundStorageErr(err error) bool {
-	return strings.Contains(strings.ToLower(err.Error()), "not found")
+// isConnectorBindingNotFound reports whether err is the typed "this connector has no
+// binding row yet" result of GetConnectorProjectBinding. Matched with errors.Is, never
+// by the words "not found": any other storage failure (a lost connection, a replica
+// error) must not be taken for a first boot, which re-pins the connector's project by
+// name (ERRSTRING-CLASS-1).
+func isConnectorBindingNotFound(err error) bool {
+	return errors.Is(err, corestorage.ErrConnectorBindingNotFound)
 }
 
 // resolveConnectorOwnership resolves each connector's tenant-scoping data
@@ -55,7 +58,7 @@ func resolveConnectorOwnership(ctx context.Context, st corestorage.Storage, conn
 		// before this function is ever reached).
 		binding, err := st.GetConnectorProjectBinding(ctx, cn.Name)
 		switch {
-		case err != nil && isNotFoundStorageErr(err):
+		case err != nil && isConnectorBindingNotFound(err):
 			// First boot for this connector: resolve name -> ID, persist.
 			project, perr := st.GetProjectByName(ctx, cn.Project)
 			if perr != nil {

@@ -121,8 +121,9 @@ func TestMapUserError_Duplicate(t *testing.T) {
 }
 
 func TestMapUserError_AdministratorCanGrant(t *testing.T) {
-	err := mapUserError(errors.New("cannot grant this role: you do not hold permission \"system.write\" yourself"))
+	err := mapUserError(fmt.Errorf("cannot grant this role: you do not hold permission %q yourself: %w", "system.write", core.ErrPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.NotContains(t, status.Convert(err).Message(), "system.write", "the permission name must not reach the client")
 }
 
 func TestMapUserError_Validation(t *testing.T) {

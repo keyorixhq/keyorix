@@ -79,7 +79,8 @@ func TestMapUserError_ClassifiesBySentinel(t *testing.T) {
 		{"empty identity name", fmt.Errorf("validation: %w", identity.ErrEmpty), codes.InvalidArgument},
 		// Not yet typed: the core/users.go validation wording and the roles.assign ceiling.
 		{"untyped validation", errors.New("validation failed: email is required"), codes.InvalidArgument},
-		{"untyped role ceiling", errors.New("cannot grant this role: you do not hold permission \"roles.assign\" yourself"), codes.PermissionDenied},
+		{"role ceiling refusal", fmt.Errorf("cannot grant this role: %w", core.ErrPermissionDenied), codes.PermissionDenied},
+		{"text only: role ceiling phrase", errors.New("cannot grant this role: you do not hold permission \"roles.assign\" yourself"), codes.Internal},
 		{"text only: not found", errors.New("record not found"), codes.Internal},
 		{"text only: already exists", errors.New("file already exists"), codes.Internal},
 		{"text only: duplicate", errors.New("duplicate key value violates unique constraint \"idx_x\""), codes.Internal},
@@ -107,9 +108,9 @@ func TestMapSecretACLError_ClassifiesBySentinel(t *testing.T) {
 		{"missing grantee", fmt.Errorf("grant: %w", storage.ErrUserNotFound), codes.NotFound},
 		{"missing secret", fmt.Errorf("grant: %w", storage.ErrSecretNotFound), codes.NotFound},
 		{"authz refusal", fmt.Errorf("grant: %w", core.ErrPermissionDenied), codes.PermissionDenied},
-		// Not yet typed: GrantSecretACL's own validation.
-		{"untyped invalid", errors.New("invalid permission set"), codes.InvalidArgument},
-		{"untyped required", errors.New("user_id is required"), codes.InvalidArgument},
+		{"invalid request", fmt.Errorf("validation: %w: invalid ACL permission", storage.ErrInvalidSecretACLRequest), codes.InvalidArgument},
+		{"text only: invalid", errors.New("pq: invalid input syntax for type bigint"), codes.Internal},
+		{"text only: required", errors.New("pq: null value in column \"user_id\" violates not-null constraint (value required)"), codes.Internal},
 		{"text only: not found", errors.New("ACL entry not found"), codes.Internal},
 		{"text only: not authorized", errors.New("user not authorized to manage ACLs"), codes.Internal},
 	})

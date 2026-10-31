@@ -408,11 +408,10 @@ func mapUserError(err error) error {
 	case errors.Is(err, core.ErrUserAlreadyExists), errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail),
 		errors.Is(err, corestorage.ErrDuplicateUsername):
 		return status.Error(codes.AlreadyExists, "a user with that username or email already exists")
-	// Not yet typed: core's roles.assign ceiling refusals (internal/core/authz.go,
-	// three fmt.Errorf sites) carry no sentinel. Match their fixed leading phrase
-	// only; type them (a permissionSentinel) and delete this case.
-	case strings.Contains(err.Error(), "cannot grant this role"):
-		return status.Error(codes.PermissionDenied, "insufficient privileges to assign this role") // GRPC-003: was err.Error() — leaked internal role name
+	// ERRSTRING-CLASS-1: core's roles.assign ceiling refusals (internal/core/authz.go)
+	// are typed (permissionDeniedf), as is every other authorization refusal.
+	case errors.Is(err, core.ErrPermissionDenied):
+		return status.Error(codes.PermissionDenied, "insufficient privileges for this operation") // GRPC-003: was err.Error() — leaked internal role name
 	case errors.Is(err, core.ErrInvalidInput), errors.Is(err, identity.ErrEmpty):
 		return status.Error(codes.InvalidArgument, "invalid request parameters") // GRPC-003: was err.Error() — leaked password policy thresholds
 	// Not yet typed: core/users.go builds its field validation as

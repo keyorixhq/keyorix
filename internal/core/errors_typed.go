@@ -22,6 +22,10 @@ func (e *typedRefusal) Unwrap() []error { return []error{e.sentinel, e.err} }
 // refuseAs tags err as a refusal that matches sentinel. err must be non-nil.
 func refuseAs(sentinel, err error) error { return &typedRefusal{sentinel: sentinel, err: err} }
 
+// invalidACLRequest types a malformed secret-ACL request (storage.ErrInvalidSecretACLRequest)
+// without changing its text.
+func invalidACLRequest(err error) error { return refuseAs(storage.ErrInvalidSecretACLRequest, err) }
+
 // shareExpiryNotInFuture is the refusal of a time-bound share whose expiry is not after
 // now (storage.ErrShareExpiryNotInFuture); the three share paths return the same text.
 func shareExpiryNotInFuture() error {

@@ -5,9 +5,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
 // Valid rotation state values.
@@ -43,7 +45,7 @@ type RotationStateInfo struct {
 func (c *KeyorixCore) GetRotationState(ctx context.Context, secretID uint) (*RotationStateInfo, error) {
 	policy, err := c.storage.GetRotationPolicyBySecret(ctx, secretID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, storage.ErrRotationPolicyNotFound) {
 			// No active policy — idle is the correct answer.
 			return &RotationStateInfo{
 				SecretID: secretID,
@@ -76,7 +78,7 @@ func (c *KeyorixCore) SetRotationState(ctx context.Context, policyID uint, state
 		return fmt.Errorf("invalid rotation state %q: must be one of idle, pending, rotating, succeeded, failed", state)
 	}
 	if err := c.storage.UpdateRotationState(ctx, policyID, state, errMsg); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, storage.ErrRotationPolicyNotFound) {
 			return fmt.Errorf("SetRotationState: rotation policy %d not found", policyID)
 		}
 		return fmt.Errorf("SetRotationState: %w", err)
