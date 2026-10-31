@@ -12,8 +12,10 @@
 #             database, so a TCP forwarder (tools/tcpproxy.go) sits between the server and
 #             PostgreSQL and is taken down (open connections reset, new ones refused) and up again --
 #             what a PostgreSQL restart looks like from the server. During the outage requests
-#             must fail (never hang, never report success), the server must not crash; after it
-#             the SAME server process serves again and nothing acknowledged is lost.
+#             must fail (never hang, never report success) and the server must not panic. The
+#             presence advisory lock dies with its connection and the server then shuts itself
+#             down gracefully (INV-STORAGE-session-advisory-lock-loss); once the database is back
+#             the operator restarts it and it serves and accepts writes again.
 #             (A real `docker restart postgres` variant: pending the e2e VM.)
 #   diskfull  The data directory fills up. A real full filesystem cannot be made without a
 #             privileged mount, so the server runs under `ulimit -f` just above the SQLite file
@@ -138,7 +140,7 @@ scenario_kill9() {
 
 # ---------------------------------------------------------------------------
 scenario_pgdown() {
-    [ "$DRILL_BACKEND" = "postgres" ] || { echo "==> pgdown: skipped (needs DRILL_BACKEND=postgres)"; return 0; }
+    [ "$DRILL_BACKEND" = "postgres" ] || { drill_skip sqlite "pgdown: needs a PostgreSQL server to take away (DRILL_BACKEND=postgres)"; return 0; }
     step "pgdown: provision directly, then route the server through a TCP forwarder"
     local I=pg P PP
     P="$(drill_port 32)"
@@ -202,7 +204,7 @@ scenario_pgdown() {
 
 # ---------------------------------------------------------------------------
 scenario_diskfull() {
-    [ "$DRILL_BACKEND" = "sqlite" ] || { echo "==> diskfull: skipped (SQLite data directory; needs DRILL_BACKEND=sqlite)"; return 0; }
+    [ "$DRILL_BACKEND" = "sqlite" ] || { drill_skip postgres "diskfull: fills the SQLite data directory; a PostgreSQL data directory is not ours to fill"; return 0; }
     step "diskfull: provision and seed"
     local I=df P
     P="$(drill_port 34)"
@@ -267,7 +269,7 @@ scenario_diskfull() {
             || fail "$reads_ok values were handed out while the disk was full but only $((audited_after - audited_before)) reads were audited"
         ok "no value was disclosed without an audit row"
     else
-        echo "    (sqlite3 not installed: skipped the audit-row count)"
+        drill_skip sqlite "diskfull: sqlite3 is not installed, so the audit-row count is not checked"
     fi
 
     step "diskfull: space is back"

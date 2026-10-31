@@ -43,6 +43,17 @@ fail() {
 step() { echo "==> $*"; }
 ok() { echo "    ok: $*"; }
 
+# drill_skip <backend> <reason>: a leg this run does not cover. Always the same grep-able line;
+# the drill carries on (a skipped leg is not a failure, a failed one calls fail and exits 1).
+drill_skip() { echo "SKIP $1: $2"; }
+
+# drill_skip_all <backend> <reason>: the whole drill has nothing to run on this backend/host.
+# Prints the SKIP line and exits 0 (call it before drill_begin installs its trap).
+drill_skip_all() {
+    drill_skip "$1" "$2"
+    exit 0
+}
+
 rand_hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 
 drill_cleanup() {
@@ -62,6 +73,15 @@ drill_cleanup() {
 # drill_begin <name>: make the work area, set the per-run secrets, build binaries.
 drill_begin() {
     local name="$1"
+    case "$DRILL_BACKEND" in
+    sqlite) ;;
+    postgres)
+        [ -n "${DRILL_PG_DSN_FILE:-}${DRILL_PG_DSN_FILE2:-}" ] \
+            || drill_skip_all postgres "DRILL_PG_DSN_FILE is not set (no EMPTY PostgreSQL database given to $name)"
+        [ -z "${DRILL_PG_DSN_FILE:-}" ] || [ -r "$DRILL_PG_DSN_FILE" ] || fail "DRILL_PG_DSN_FILE=$DRILL_PG_DSN_FILE is not a readable file"
+        ;;
+    *) fail "DRILL_BACKEND=$DRILL_BACKEND is not sqlite or postgres" ;;
+    esac
     command -v curl >/dev/null || fail "curl is required"
     command -v jq >/dev/null || fail "jq is required"
     mkdir -p "$DRILL_ROOT"

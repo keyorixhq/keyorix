@@ -179,7 +179,7 @@ offline 4
 
 step "6. witness above the database (finding 2)"
 if [ "$DRILL_BACKEND" = "postgres" ]; then
-    ok "skipped: PostgreSQL installs have no host witness file"
+    drill_skip postgres "step 6 (witness above the database): PostgreSQL installs have no host witness file"
 else
     W="$d/.audit-highwater-witness"
     HW0="$(sqlite_meta_hex audit_checkpoint_highwater)"
