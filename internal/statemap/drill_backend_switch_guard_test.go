@@ -22,7 +22,12 @@ import (
 //     (the explicit, printed skip).
 //
 // What it does NOT prove: that the PostgreSQL branch is right (the drills run on Postgres for that),
-// nor that a SQLite-only command (sqlite3, ulimit -f) outside any switch is covered.
+// nor that a SQLite-only command (sqlite3, ulimit -f) outside any switch is covered. The switch rule
+// is per file, not per switch: one PostgreSQL branch anywhere in a script satisfies every SQLite
+// switch in it. So the switch rule would not have caught the AUDIT-SEAL-TAILS-3 gap above:
+// accept-loss.sh already had PostgreSQL branches in db_exec/db_query and failed on Postgres only for
+// want of a psql client; on main this guard went red on its hand-written "skipped" line and the
+// missing README row, not on a switch.
 
 var (
 	drillSQLiteSwitch = regexp.MustCompile(`DRILL_BACKEND"?\s*(=|==|!=)\s*"?sqlite"?|^\s*"?sqlite"?\)`)

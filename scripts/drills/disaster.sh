@@ -165,10 +165,23 @@ scenario_pgdown() {
     # connection and the server then shuts down gracefully (fail closed: an admin command must not run
     # beside a server that no longer holds the lock). Until it has gone, a read may answer 503 (a valid
     # credential is never told 401/403 because of an outage); never a success, never a hang.
-    local t0 i code="" gone=""
+    local t0 tw i rc code="" gone=""
     t0="$(date +%s)"
+    # A write during the outage must be refused (an HTTP error or a refused connection, either is
+    # fine) within a bound, and must not appear after the database returns (checked below).
+    (umask 077 && printf 'during-outage' >"$d/val.outage")
+    if cli "$I" "$P" secret create --name during-outage --from-file ./val.outage --project 1 --environment 1 >/dev/null 2>&1; then
+        fail "a secret create reported success while the database was unreachable"
+    fi
+    tw="$(($(date +%s) - t0))"
+    [ "$tw" -lt 35 ] || fail "a write hung for ${tw}s during the outage"
+    ok "write refused in ${tw}s"
     for i in $(seq 1 40); do
-        code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' --cacert "$d/certs/server.crt" -H @"$hdr" "https://127.0.0.1:$P/api/v1/secrets/1?include_value=true" || true)"
+        # curl exit 28 = its own -m timeout: the request hung (a stopped server refuses the
+        # connection at once: exit 7, code 000)
+        rc=0
+        code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' --cacert "$d/certs/server.crt" -H @"$hdr" "https://127.0.0.1:$P/api/v1/secrets/1?include_value=true")" || rc=$?
+        [ "$rc" -ne 28 ] || fail "a secret read hung for 10s during the outage (curl timed out)"
         case "$code" in
         2*) fail "a secret read returned success while the database was unreachable" ;;
         000 | 503) ;;
@@ -181,7 +194,7 @@ scenario_pgdown() {
     [ -n "$gone" ] || fail "the server neither stopped nor recovered within 40s of the database going away"
     grep -q 'server-presence lock was lost' "$d/server.log" || { tail -20 "$d/server.log" >&2; fail "the server stopped without reporting the lost presence lock"; }
     grep -qiE 'panic|fatal error' "$d/server.log" && fail "the server panicked during the outage"
-    ok "server stopped itself (lost presence lock), no panic, no read answered with success"
+    ok "server stopped itself (lost presence lock), no panic, no read answered with success, nothing hung"
     rm -f "$d/server.pid"
 
     step "pgdown: database comes back, the operator restarts the server"
@@ -195,7 +208,8 @@ scenario_pgdown() {
         || fail "write failed after recovery"
     names_after="$(list_names "$I" "$P")" || fail "could not list secrets after recovery"
     grep -qx 'after-outage' <<<"$names_after" || fail "the write made after recovery is not listed"
-    ok "writes work again"
+    grep -qx 'during-outage' <<<"$names_after" && fail "the write refused during the outage exists anyway"
+    ok "writes work again; the refused write left nothing behind"
     verify_seed "$I" "$P"
     srv_stop "$I"
     verify_audit "$I"
