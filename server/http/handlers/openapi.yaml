@@ -6845,7 +6845,7 @@ paths:
         Signs a checkpoint of the current verified chain head for on-box truncation
         detection. Requires system.write (above the audit group's audit.read) and
         server-side encryption (the signing key is KEK-derived). Use to re-baseline
-        immediately after a KEK-provider migration.
+        immediately after a KEK rotation (rotate-kek) or KEK-provider migration.
       operationId: writeAuditCheckpoint
       security: [{bearerAuth: []}]
       responses:
@@ -7581,7 +7581,8 @@ paths:
         KEK-derived signing key and compares it to the detached signature — proving an
         archived pack was produced by this deployment and is unmodified. The pack is
         base64-encoded in data_b64 so arbitrary JSON can ride in the envelope. A
-        signature made under a superseded key version (post KEK-provider migration) is reported
+        signature made under a superseded key version (after a KEK rotation or KEK-provider
+        migration) is reported
         as unverifiable, distinct from a tamper mismatch. Requires audit.read (not the
         universal system_viewer baseline).
       operationId: verifyComplianceEvidence

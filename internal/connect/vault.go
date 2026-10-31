@@ -303,7 +303,7 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, vaultMaxResponseBytes))
-		return "", fmt.Errorf("vault: %s returned HTTP %d for %q", c.address, resp.StatusCode, ref)
+		return "", fmt.Errorf("vault: %s returned HTTP %d for %q", netutil.RedactURLHost(c.address), resp.StatusCode, ref)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, vaultMaxResponseBytes))
 	if err != nil {
