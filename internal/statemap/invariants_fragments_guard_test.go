@@ -47,7 +47,11 @@
 //	    Enforcing it repo-wide would need those reworded first, in files that
 //	    many open PRs touch;
 //	(f) an optional `<!-- section: <heading> -->` line in a fragment names a
-//	    `## ` heading that exists in the sibling INVARIANTS.md.
+//	    `## ` heading that exists in the sibling INVARIANTS.md;
+//	(g) every package with an INVARIANTS.d/ directory is listed in the
+//	    docs/INVARIANTS.md index table, i.e. the index links that package's
+//	    INVARIANTS.md. Only the row's presence is checked; the table's
+//	    arithmetic is internal/docsdrift's job.
 //
 // What it does NOT check: that a named guard test exists or passes (that is
 // scripts/check-closures.sh's / check-adr-conformance.sh's job for ledgered
@@ -156,6 +160,8 @@ func checkInvariantDocs(fsys fs.FS) (violations, legacyDups []string, err error)
 		}
 	}
 
+	indexRaw, indexErr := fs.ReadFile(fsys, invariantsIndexPath)
+
 	dirs := make([]string, 0, len(pkgFiles))
 	for d := range pkgFiles {
 		dirs = append(dirs, d)
@@ -208,6 +214,9 @@ func checkInvariantDocs(fsys fs.FS) (violations, legacyDups []string, err error)
 
 		if !fragDirs[dir] {
 			continue
+		}
+		if indexErr == nil && !strings.Contains(string(indexRaw), "(../"+file+")") {
+			add("%s: %s has INVARIANTS.d/ fragments but %s has no row linking it — add a package row (see \"Maintaining this index\" there)", file, dir, invariantsIndexPath)
 		}
 		fdir := path.Join(dir, "INVARIANTS.d")
 		entries, err := fs.ReadDir(fsys, fdir)
@@ -347,9 +356,12 @@ func TestInvariantDocs_RealRepo(t *testing.T) {
 const fixturePkg = "# pkg invariants\n\nFormat: `INV-PKG-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.\n\n" +
 	"## Section A\n\n- **INV-PKG-01** Rule one. Why: x. Guard:\n  `TestOne`.\n- **INV-PKG-02** Rule two. UNGUARDED (#1).\n"
 
+const fixtureIndex = "# index\n\n| Package | File | Invariants | Guarded | UNGUARDED |\n|---|---|---|---|---|\n" +
+	"| `pkg` | [pkg/INVARIANTS.md](../pkg/INVARIANTS.md) | 3 | 2 | 1 |\n"
+
 func fixtureFS(extra map[string]string) fstest.MapFS {
 	m := fstest.MapFS{
-		"docs/INVARIANTS.md": {Data: []byte("# index\n\n| Package |\n")},
+		"docs/INVARIANTS.md": {Data: []byte(fixtureIndex)},
 		"pkg/INVARIANTS.md":  {Data: []byte(fixturePkg)},
 		"pkg/INVARIANTS.d/INV-PKG-mfa-purpose-binding.md": {Data: []byte(
 			"- **INV-PKG-mfa-purpose-binding** Rule. Why: y. Guard: `TestX`.\n<!-- section: Section A -->\n")},
@@ -429,8 +441,14 @@ func TestInvariantDocs_Fixtures(t *testing.T) {
 			"pkg/INVARIANTS.md": strings.Replace(fixturePkg, "Format:", "Shape:", 1)},
 			want: "the package prefix cannot be derived"},
 		{name: "index defines an invariant", extra: map[string]string{
-			"docs/INVARIANTS.md": "# index\n- **INV-PKG-09** R. Guard: `T`.\n"},
+			"docs/INVARIANTS.md": fixtureIndex + "- **INV-PKG-09** R. Guard: `T`.\n"},
 			want: "the index must not define invariants"},
+		{name: "package with fragments missing from the index", extra: map[string]string{
+			"docs/INVARIANTS.md": "# index\n\n| Package |\n"},
+			want: "pkg/INVARIANTS.md: pkg has INVARIANTS.d/ fragments but docs/INVARIANTS.md has no row linking it"},
+		{name: "green: legacy-only package need not be in the index", extra: map[string]string{
+			"pkg/INVARIANTS.d/INV-PKG-mfa-purpose-binding.md": "",
+			"docs/INVARIANTS.md":                              "# index\n\n| Package |\n"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
