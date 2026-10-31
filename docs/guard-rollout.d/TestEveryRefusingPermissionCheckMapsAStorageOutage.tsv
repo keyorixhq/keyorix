@@ -1,0 +1,1 @@
+TestEveryRefusingPermissionCheckMapsAStorageOutage	server/http/handlers	#3857	new go/ast guard over server/http/handlers (and its family subdirs) and server/grpc/services (AUTHZ-OUTAGE-HANDLERS-1), report-only until its first green nightly on main
