@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -155,10 +156,13 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 		err = c.DeleteSecretWithPermissionCheck(ctx, id, actorID)
 	}
 	if err != nil {
+		// The client gets one fixed class, never err.Error(): on a storage failure
+		// that is driver text naming tables and columns (STORAGE-ERR-CLASS-3).
+		log.Printf("bulk delete: secret %d not deleted: %s", id, StorageReadFaultDetail(err))
 		result.Failed = append(result.Failed, BulkOpError{
 			SecretID: id,
 			Name:     secretName,
-			Error:    err.Error(),
+			Error:    bulkDeleteFailureMessage(ctx, err),
 		})
 		return
 	}
@@ -185,4 +189,20 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	c.LogSecretDeletedWithProject(auditCtx, actorID, id, secretProjectID, deletedBy, secretName, ip, ua)
 
 	result.Deleted = append(result.Deleted, id)
+}
+
+// bulkDeleteFailureMessage classifies a failed per-item delete into the fixed text
+// reported in BulkDeleteResult.Failed: a permission refusal, a positive not-found (the
+// secret went away after it was read), a storage outage (retry), or anything else.
+func bulkDeleteFailureMessage(ctx context.Context, err error) string {
+	switch {
+	case errors.Is(err, ErrPermissionDenied):
+		return "permission denied"
+	case isPositiveNotFound(err):
+		return "secret not found"
+	case IsStorageReadUnavailable(err) || IsAuthorizeTransient(ctx, err):
+		return StorageReadUnavailableMessage
+	default:
+		return "internal error"
+	}
 }
