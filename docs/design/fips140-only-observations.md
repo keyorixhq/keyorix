@@ -74,6 +74,14 @@ initialising i18n.
    authenticated. Proposed: treat a key under `auditverify.MinKEKLen` as a usage
    error.
 
+Follow-up (FIPS-TAILS-2): items 3, 4 and 5 are fixed as proposed (a refusal
+with an error naming the 14-byte minimum, or the 32-byte KEK size, instead of a
+panic). For item 1 only the smaller step is done: under fips140=only TOTP
+enrolment, activation and verification are refused with
+`core.ErrTOTPUnavailableInFIPSMode` (HTTP 503) before any code is checked; the
+product decision is still open. Item 2 is unchanged. The table above was not
+re-run and still shows what was observed at that commit.
+
 The boot self-test (`encryption.BootFIPSSelfTest`,
 INV-ENCRYPTION-fips140-boot-self-test) covers the AEAD and KEK-derived-key paths
 only. It passes under fips140=only, and a server with no TOTP users boots and
