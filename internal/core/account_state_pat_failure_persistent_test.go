@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -78,7 +79,19 @@ func TestRequirePasswordReset_PATListingPersistentFailure_IsReported(t *testing.
 		require.NoError(t, rw.db.First(&after, id).Error)
 		assert.Equal(t, AccountPasswordResetRequired, after.AccountState)
 		assert.Equal(t, int64(1), rw.auditCount(t, EventSessionRevocationFailed))
-		assert.Contains(t, rw.logs.String(), "list personal access tokens")
 		assert.Contains(t, rw.evictedUsers, id, "every auth-cache entry of the user must be evicted when the PAT list is unavailable")
+
+		// AUTHZ-ORACLE-TAILS-1 item 4: the text names the personal access tokens, not the
+		// sessions (the PAT listing used to join the session listing's error).
+		wantLog := fmt.Sprintf("could not list the personal access tokens of user %d", id)
+		assert.Contains(t, rw.logs.String(), wantLog)
+		assert.Contains(t, rw.logs.String(), "injected: PAT listing unavailable", "the cause is logged")
+		assert.NotContains(t, rw.logs.String(), "could not list the sessions", "the session listing did not fail")
+
+		var ev models.AuditEvent
+		require.NoError(t, rw.db.Where("event_type = ?", EventSessionRevocationFailed).First(&ev).Error)
+		assert.Contains(t, ev.Description, wantLog+" to evict them from the auth cache")
+		assert.Contains(t, ev.Description, "injected: PAT listing unavailable")
+		assert.NotContains(t, ev.Description, "could not list the sessions", "the audit row must not blame the sessions")
 	})
 }

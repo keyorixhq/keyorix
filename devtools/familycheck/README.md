@@ -34,8 +34,9 @@ Later lines with the same marker are never read. Consequences:
   template, a copied bot comment): the quoted occurrence becomes the first line
   and shadows the real one.
 - The reason shown in the report is the text after the marker on that line, with
-  a leading `—` or `-` removed. The prefix strip is case-sensitive, so a marker
-  typed in another case still matches but keeps its own text in the reason.
+  a leading `—` or `-` removed. The marker is matched and removed case-insensitively,
+  and located in the original body (not a lower-cased copy), so non-ASCII text
+  before the marker does not shift the line.
 
 "In scope" is deliberately narrow (see the 2026-09-05 report's own instruction
 not to let this become noise): a family is in scope if its ID is in

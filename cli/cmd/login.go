@@ -3,7 +3,9 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -61,6 +63,24 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A bad password source (unreadable KEYORIX_PASSWORD_FILE, ...) is reported first; nothing
+	// is prompted for yet.
+	password, havePassword, err := lookupLoginPassword(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Resolve and check TLS trust (CA file, certificate) before asking for anything: a
+	// trust problem is the operator's to fix, and it should not cost them a typed password.
+	ctx := context.Background()
+	client, err := newAPIClient(serverURL, "")
+	if err != nil {
+		return fmt.Errorf("build client for %s: %w", serverURL, err)
+	}
+	if _, err := client.HealthCheckWithResponse(ctx); err != nil {
+		return fmt.Errorf("contact %s: %w%s", serverURL, err, tlsTrustHint(err))
+	}
+
 	username := loginUsername
 	if username == "" {
 		u, err := promptLine("Username: ")
@@ -70,15 +90,10 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		username = u
 	}
 
-	password, err := resolveLoginPassword(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx := context.Background()
-	client, err := newAPIClient(serverURL, "")
-	if err != nil {
-		return fmt.Errorf("build client for %s: %w", serverURL, err)
+	if !havePassword {
+		if password, err = promptLoginPassword(); err != nil {
+			return err
+		}
 	}
 
 	loginResp, err := client.AuthLoginWithResponse(ctx, apiclient.AuthLoginJSONRequestBody{
@@ -370,6 +385,14 @@ func resolveLoginServerURL() (string, error) {
 		serverURL = os.Getenv("KEYORIX_SERVER")
 	}
 	if serverURL == "" {
+		// The server URL logout keeps, so a re-login needs no --server.
+		if store, err := resolveCredStore(); err == nil {
+			if creds, err := store.Load(); err == nil {
+				serverURL = creds.ServerURL
+			}
+		}
+	}
+	if serverURL == "" {
 		serverURL = offerOldServerURLMigration()
 	}
 	if serverURL == "" {
@@ -379,21 +402,43 @@ func resolveLoginServerURL() (string, error) {
 	return serverURL, nil
 }
 
+// tlsTrustHint says how to fix a certificate-verification failure; it is empty for any other
+// connection error.
+func tlsTrustHint(err error) string {
+	var unknownAuthority x509.UnknownAuthorityError
+	var invalid x509.CertificateInvalidError
+	var hostname x509.HostnameError
+	if !errors.As(err, &unknownAuthority) && !errors.As(err, &invalid) && !errors.As(err, &hostname) &&
+		!strings.Contains(err.Error(), "certificate") {
+		return ""
+	}
+	return "\nThe server's TLS certificate is not trusted. If it is signed by a private or self-signed CA, " +
+		"run `keyorix config set ca_file <path-to-ca.pem>` (or pass --ca-file) and retry."
+}
+
+// lookupLoginPassword reads the password from the non-interactive sources only (the --password
+// flag, KEYORIX_PASSWORD / KEYORIX_PASSWORD_FILE, the non-argv non-TTY path for scripts), so a
+// bad password source is reported before anything else happens. found is false when none is set.
+func lookupLoginPassword(cmd *cobra.Command) (password string, found bool, err error) {
+	if loginPassword != "" {
+		warnInsecureFlag(cmd, "password", "omit it to be prompted instead.")
+		return loginPassword, true, nil
+	}
+	return lookupSecretEnv("KEYORIX_PASSWORD")
+}
+
 // resolveLoginPassword resolves the password: the (insecure, warned) --password flag, else
 // KEYORIX_PASSWORD / KEYORIX_PASSWORD_FILE, else an interactive no-echo prompt. CLI-LOGIN-001: --password previously carried no
 // warnInsecureFlag call, unlike every sibling command with a password-bearing flag
 // (systeminit.go's --admin-password, user.go's --password).
 func resolveLoginPassword(cmd *cobra.Command) (string, error) {
-	if loginPassword != "" {
-		warnInsecureFlag(cmd, "password", "omit it to be prompted instead.")
-		return loginPassword, nil
+	if p, found, err := lookupLoginPassword(cmd); err != nil || found {
+		return p, err
 	}
-	// KEYORIX_PASSWORD / KEYORIX_PASSWORD_FILE: the non-argv, non-TTY path for scripts.
-	if p, found, err := lookupSecretEnv("KEYORIX_PASSWORD"); err != nil {
-		return "", err
-	} else if found {
-		return p, nil
-	}
+	return promptLoginPassword()
+}
+
+func promptLoginPassword() (string, error) {
 	p, err := promptPassword("Password: ")
 	if err != nil {
 		return "", fmt.Errorf("read password: %w (no password given and no terminal to prompt on: set KEYORIX_PASSWORD_FILE to a 0600 file holding it, or pipe it on stdin)", err)

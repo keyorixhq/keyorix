@@ -24,7 +24,34 @@ Every deviation line carries a category and an origin, `[category/origin]`:
   server resolves an absent key to. Reported all the same; the fix is to set the
   hardened value explicitly.
 
-Both origins count toward the exit code. The output also has a **WARN** section
+Both origins count toward the exit code. Two findings under the
+`break-glass-review` category come from the break-glass review requirement
+(ADR-112 §3):
+
+- **Unreviewed activations.** Every break-glass activation older than
+  `break_glass.review_window` (default 72h) that nobody has reviewed. The line
+  lists each activation id, project and activation time, never its
+  justification. A degraded activation (activated while the audit log refused
+  writes) is listed whatever its age. Reported whether or not
+  `break_glass.enabled` is set, because turning the feature off does not review
+  what was activated. *Remediation:* have a second administrator review each
+  activation.
+- **Independent review impossible.** The install has exactly one administrator.
+  Self-review is refused, so that administrator cannot have their own
+  activations reviewed, and no second administrator exists to provide
+  independent review. It is reported even when every activation has been
+  reviewed. Skipped while `break_glass.enabled` is false, since nothing can
+  then be activated.
+  *Remediation:* add a second administrator.
+
+If the activation query fails, the report says the check was **not evaluated**
+(a deviation), never a clean pass.
+
+The report also prints, as an informational line, whether each listener that
+terminates TLS runs the default TLS mode (1.2 floor) or `tls_mode: strict`
+(TLS 1.3 only). Neither is a deviation.
+
+The output also has a **WARN** section
 for findings that are not deviations from the baseline: they are printed, and
 never change the exit code. Currently one finding is reported there:
 
@@ -281,6 +308,13 @@ option there, but it does not bundle the key-material files.
 - **`--output` must not already exist** — each backup is a distinct,
   timestamped artifact by construction, not something a schedule can
   accidentally overwrite.
+- **A database upgraded in place from v0.95.x is refused until the new server
+  has started once** (both backends): until then a notification channel's
+  webhook URL is only in the plaintext legacy column, and the backup would
+  silently drop it, so `admin backup` fails with "start the server once to
+  finish the upgrade migrations, then back up" and leaves no archive
+  (`server/admin/backup_legacy_url_guard.go`;
+  [`../operator/upgrade-rollback.md`](../operator/upgrade-rollback.md) §3).
 - **Restore key files as a whole set, never one at a time** — `admin restore`
   installs every key file from one archive and records a new key-set manifest;
   a single file copied in from another backup is refused at the next start

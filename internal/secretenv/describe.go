@@ -28,12 +28,17 @@ const RelativePathNotShown = "a relative path, not shown: it may be the secret i
 //	DescribeFile("secret file", "/run/secrets/db")              -> secret file "/run/secrets/db"
 //
 // The cli module (cli/cmd/secretfile.go describeSecretFile) and
-// server/entrypoint.sh (_rs_describe) carry copies; TestDescribeFileCopiesAgree
-// and the relative-sentinel tests hold them to the same text.
+// server/entrypoint.sh (_rs_describe) carry copies; cli's
+// TestDescribeSecretFile_MatchesSecretenv and server's
+// TestEntrypointDescribeMatchesSecretenv hold them to the same text.
 //
 // Guards: TestSecretFileEnvReadsGoThroughSecretenv (no *_FILE value is read
-// outside this package except to compare it with "") and
-// TestRelativeFileValueNeverEchoed (every *_FILE variable, every failure mode).
+// outside this package except to compare it with "") and server's
+// TestRelativeFileValueNeverEchoed_InProcess, TestRelativeFileValueNeverEchoed_ServerBinary
+// and TestRelativeFileValueNeverEchoed_Entrypoint (every *_FILE variable, every
+// failure mode); cli's TestLookupSecretEnv_RelativeFileValueNeverEchoed for its copy.
+// TestCitedTestsExist fails when a test named in this package's comments does
+// not exist.
 func DescribeFile(label, path string) string {
 	sep := " "
 	if isEnvName(label) {

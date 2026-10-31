@@ -1,0 +1,2 @@
+### Testing
+- **secretenv: a comment can no longer cite a test that does not exist.** `TestCitedTestsExist` fails when a comment in `internal/secretenv` names a Test function defined nowhere in the repository. It found `describe.go` naming a non-existent `TestDescribeFileCopiesAgree` as the guard for the cli and entrypoint copies of the path formatter; the comments now name the real tests. `TestRefusalPathsCloseTheDescriptor` pins that each refusal after a secret file is opened (directory, FIFO, too open, empty, oversized, snapshot) closes the descriptor.

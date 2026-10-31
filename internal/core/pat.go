@@ -92,7 +92,7 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 		EnvironmentScope: environmentScope,
 		AllowedCIDRs:     cidrsJSON,
 		ExpiresAt:        expiresAt,
-		CreatedAt:        c.now(),
+		CreatedAt:        c.now().UTC(),
 	}
 	// AUDIT-TX-2: the token and its pat.created row commit in ONE transaction,
 	// so a credential is never minted unaudited.
