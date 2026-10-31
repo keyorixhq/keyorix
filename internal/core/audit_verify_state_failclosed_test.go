@@ -114,6 +114,26 @@ func fcTick(t *testing.T, e *fcEnv, c *KeyorixCore) {
 	}
 }
 
+// awaitOwnFullJob returns once the full job THIS core started (id, from
+// startFullJobWhenFree) has finished and saved its result. It does not poll
+// against a wall-clock window: the job walks the whole chain with several
+// queries per event, so on Postgres under -race and CPU contention it takes
+// longer than waitAuditJob's 10 s while still being healthy (#3715: the intact
+// chain of _RowDeleted is walked in full; the truncated chains of the sibling
+// cases are not). StartAuditFullVerification takes auditVerifyJobMu for the
+// goroutine, which releases it only after the result is saved, so acquiring
+// the mutex is the completion signal. A job that never ends is a hang, and the
+// go test timeout is the detector for that.
+func awaitOwnFullJob(t *testing.T, c *KeyorixCore, id string) *AuditVerifyJobStatus {
+	t.Helper()
+	c.auditVerifyJobMu.Lock()
+	c.auditVerifyJobMu.Unlock() //nolint:staticcheck // SA2001: the empty critical section is the wait
+	j, err := c.AuditFullVerificationJob(context.Background(), id)
+	require.NoError(t, err)
+	require.NotEqual(t, AuditVerifyJobRunning, j.State, "the job goroutine released its mutex, so its result is saved")
+	return j
+}
+
 // assertDiscontinuity: both status views read broken with the distinct reason
 // naming kind, and the in-chain record exists.
 func assertDiscontinuity(t *testing.T, e *fcEnv, c *KeyorixCore, kind string) {
@@ -137,7 +157,7 @@ func assertDiscontinuitySticky(t *testing.T, e *fcEnv, c *KeyorixCore, kind stri
 		fcTick(t, e, c)
 	}
 	id := startFullJobWhenFree(t, c)
-	waitAuditJob(t, c, id)
+	awaitOwnFullJob(t, c, id)
 	assertDiscontinuity(t, e, c, kind)
 	c2 := e.restart()
 	fcTick(t, e, c2)
