@@ -544,7 +544,7 @@ func requireGlobalAdminToReinstateAdminRolesOn(ctx context.Context, st storage.S
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
 	if !isAdmin {
-		return fmt.Errorf("only an administrator can restore a %s holding an administrative role grant", objectDesc)
+		return permissionDeniedf("only an administrator can restore a %s holding an administrative role grant", objectDesc)
 	}
 	return nil
 }
@@ -1041,7 +1041,7 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, ac
 	if ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, "roles.assign", scope, actorIsMachine, isSelfMachineGrant, selfMachineID); aerr != nil {
 		return fmt.Errorf("failed to resolve actor authority: %w", aerr)
 	} else if !ok {
-		return fmt.Errorf("cannot grant this role: you do not hold permission %q yourself", "roles.assign")
+		return permissionDeniedf("cannot grant this role: you do not hold permission %q yourself", "roles.assign")
 	}
 
 	return c.requireGranterHoldsRolePermissionsNoBaseline(ctx, actorID, roleID, scope, actorIsMachine)
@@ -1080,7 +1080,7 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissionsNoBaseline(ctx context.C
 			return fmt.Errorf("failed to resolve role: %w", rerr)
 		}
 		if isAdminRoleName(role.Name) || roleIsAdminTier(perms) {
-			return fmt.Errorf("cannot grant this role: an admin-tier role cannot be granted through a /system relay credential")
+			return permissionDeniedf("cannot grant this role: an admin-tier role cannot be granted through a /system relay credential")
 		}
 	}
 	for _, p := range perms {
@@ -1089,7 +1089,7 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissionsNoBaseline(ctx context.C
 			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
 		}
 		if !ok {
-			return fmt.Errorf("cannot grant this role: you do not hold permission %q yourself", p.Name)
+			return permissionDeniedf("cannot grant this role: you do not hold permission %q yourself", p.Name)
 		}
 	}
 	return nil

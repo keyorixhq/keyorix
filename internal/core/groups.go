@@ -28,7 +28,7 @@ const (
 // authenticated principal, e.g. a local CLI invocation).
 func (c *KeyorixCore) CreateGroup(ctx context.Context, actorID uint, req *CreateGroupRequest) (*models.Group, error) {
 	if err := c.validateCreateGroupRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, invalidGroupRequest(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	// #1642: fold once here — group names are identity (a human reads them to
 	// decide who's a member), so "Support Team"/"support team" and NFC/NFD
@@ -36,7 +36,7 @@ func (c *KeyorixCore) CreateGroup(ctx context.Context, actorID uint, req *Create
 	// groups.
 	foldedName, ferr := identity.NewFoldedName(req.Name)
 	if ferr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		return nil, invalidGroupRequest(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr))
 	}
 	group := &models.Group{Name: req.Name, NameFolded: foldedName.Folded(), Description: req.Description}
 	// AUDIT-TX-3: the group and its group.created row commit together or not at all.
@@ -58,7 +58,7 @@ func (c *KeyorixCore) CreateGroup(ctx context.Context, actorID uint, req *Create
 // GetGroup retrieves a group by ID.
 func (c *KeyorixCore) GetGroup(ctx context.Context, id uint) (*models.Group, error) {
 	if id == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+		return nil, invalidGroupRequest(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required"))
 	}
 	group, err := c.storage.GetGroup(ctx, id)
 	if err != nil {
@@ -70,7 +70,7 @@ func (c *KeyorixCore) GetGroup(ctx context.Context, id uint) (*models.Group, err
 // UpdateGroup updates an existing group. See CreateGroup for actorID semantics.
 func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *UpdateGroupRequest) (*models.Group, error) {
 	if err := c.validateUpdateGroupRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, invalidGroupRequest(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	group, err := c.storage.GetGroup(ctx, req.ID)
 	if err != nil {
@@ -86,7 +86,7 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 	if req.Name != "" {
 		foldedName, ferr := identity.NewFoldedName(req.Name)
 		if ferr != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+			return nil, invalidGroupRequest(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr))
 		}
 		folded := foldedName.Folded()
 		namePtr, foldedPtr = &req.Name, &folded
@@ -183,7 +183,7 @@ func (c *KeyorixCore) deleteGroupGuarded(ctx context.Context, id uint, audit fun
 // deleting a group cascades to remove every role grant it holds, at every scope.
 func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+		return invalidGroupRequest(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required"))
 	}
 	_, err := c.deleteGroupGuarded(ctx, id, func(tgt auditTarget, group *models.Group) {
 		c.writeAuditEventFullOn(ctx, tgt, EventGroupDeleted, actorPtr(actorID), nil, nil, "",
@@ -205,7 +205,7 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 // revocation) could restore it and get their admin access back.
 func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) (*models.Group, error) {
 	if id == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+		return nil, invalidGroupRequest(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required"))
 	}
 	// #2455: GetGroupRoles, the ceiling check, and the restore write all run
 	// under sodGrantLockKey("group", id) -- the same key AssignRoleToGroup/
@@ -370,7 +370,7 @@ func (c *KeyorixCore) domainAllowedForGroupJoin(ctx context.Context, userID, gro
 
 func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsMachine bool, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
-		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
+		return invalidGroupRequest(fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil)))
 	}
 	// #PM-006: a group membership confers every role the group holds at the
 	// matching scope (see this function's doc comment above), which is exactly
@@ -446,7 +446,7 @@ func (c *KeyorixCore) AddUserToGroupGlobal(ctx context.Context, actorID uint, ac
 // holder (see guardLastProjectAdminGroupMembership).
 func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
-		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
+		return invalidGroupRequest(fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil)))
 	}
 	// SESSION-AT #2352: guard+write serialized via withGroupProjectAdminGuardLocks
 	// (global key + every project key this group holds roles.assign at) — an
@@ -496,7 +496,7 @@ func (c *KeyorixCore) RemoveUserFromGroupGlobal(ctx context.Context, actorID, us
 // GetGroupMembers returns all users that belong to a group.
 func (c *KeyorixCore) GetGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error) {
 	if groupID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+		return nil, invalidGroupRequest(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required"))
 	}
 	members, err := c.storage.ListGroupMembers(ctx, groupID)
 	if err != nil {
@@ -506,6 +506,19 @@ func (c *KeyorixCore) GetGroupMembers(ctx context.Context, groupID uint) ([]*mod
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
+
+// invalidGroupRequestError renders exactly as the wrapped error and matches
+// storage.ErrInvalidGroupRequest in addition to everything the wrapped error
+// matches (the markPermissionDenied pattern), so transports classify a malformed
+// group request by errors.Is and the refusal text stays as it was.
+type invalidGroupRequestError struct{ err error }
+
+func (e *invalidGroupRequestError) Error() string { return e.err.Error() }
+func (e *invalidGroupRequestError) Unwrap() []error {
+	return []error{storage.ErrInvalidGroupRequest, e.err}
+}
+
+func invalidGroupRequest(err error) error { return &invalidGroupRequestError{err: err} }
 
 func (c *KeyorixCore) validateCreateGroupRequest(req *CreateGroupRequest) error {
 	if req.Name == "" {

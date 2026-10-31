@@ -182,6 +182,15 @@ var ErrDuplicateProjectName = errors.New("a project with this name already exist
 // constraint").
 var ErrDuplicateGroupName = errors.New("a group with this name already exists")
 
+// ErrInvalidGroupRequest is matched (errors.Is) by the refusals core's group
+// operations (CreateGroup, GetGroup, UpdateGroup, DeleteGroup, RestoreGroup, the
+// membership calls and GetGroupMembers) return for a malformed request: a missing
+// group or user id, an empty or over-long name or description. The refusal text is
+// unchanged. Transports map it to InvalidArgument / 400; classify with errors.Is,
+// never by matching the words "invalid" or "required" in err.Error(), which an
+// untyped storage or driver error can contain too (ERRSTRING-CLASS-1).
+var ErrInvalidGroupRequest = errors.New("invalid group request")
+
 // ErrDuplicateNotificationChannelName is returned (wrapped) by CreateNotificationChannel
 // when the insert collides with the unique index on notification_channels.name (#2779).
 var ErrDuplicateNotificationChannelName = errors.New("a notification channel with this name already exists")
