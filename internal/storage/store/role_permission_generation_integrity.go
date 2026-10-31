@@ -93,6 +93,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -907,11 +908,13 @@ const triggerIntegrityReadFailureLimit = 2
 // re-verified and invalidated before it becomes the baseline. A target with
 // invalidateFrom (checkRepairFirst) runs no invalidation here: its batches
 // are complete only behind a verified trigger, so the owed one runs from the
-// first row once the reading works. A cancelled tick changes nothing.
+// first row once the reading works. A cancelled tick (shutdown) changes
+// nothing; a reading that ran out of time is a failed reading like any other,
+// since the server's role can make the reading slow.
 func (c *triggerIntegrityChecker) readFailed(ctx context.Context, err error) (bool, error) {
 	t := c.target
 	err = fmt.Errorf("read the %s triggers: %w", t.what, err)
-	if ctx.Err() != nil {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		return false, err
 	}
 	c.readFailures++
@@ -950,6 +953,18 @@ func (c *triggerIntegrityChecker) newerDefinitionLog(st triggerIntegrityState) {
 	c.logf("%s triggers: a newer release's definition was installed (%q; this release writes v%d; catalog row versions %s, were %s), as during a rolling upgrade to it. Leaving it in place and invalidating every replica's %s once; if no such upgrade is under way, treat it as tampering.", c.target.what, st.newer, c.target.def.version, st.version, c.baseline, c.target.cache)
 }
 
+// readTickIntegrity is a tick's reading. It gets half of the tick's remaining
+// time, so a reading that runs out of it (readFailed) leaves the other half
+// for the invalidation.
+func (c *triggerIntegrityChecker) readTickIntegrity(ctx context.Context) (triggerIntegrityState, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Until(deadline)/2)
+		defer cancel()
+	}
+	return readTriggerIntegrity(ctx, c.ls.db, c.target)
+}
+
 // integrityKey identifies a reading, problem included.
 func integrityKey(st triggerIntegrityState) string { return st.problem + "\x00" + st.version }
 
@@ -961,7 +976,7 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 	if t.invalidateFrom != nil {
 		return c.checkRepairFirst(ctx)
 	}
-	st, err := readTriggerIntegrity(ctx, c.ls.db, t)
+	st, err := c.readTickIntegrity(ctx)
 	if err != nil {
 		return c.readFailed(ctx, err)
 	}
@@ -1058,7 +1073,7 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 //     every tick but invalidated once, not again on every tick.
 func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, error) {
 	t := c.target
-	st, err := readTriggerIntegrity(ctx, c.ls.db, t)
+	st, err := c.readTickIntegrity(ctx)
 	if err != nil {
 		return c.readFailed(ctx, err)
 	}
