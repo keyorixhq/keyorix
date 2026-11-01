@@ -180,7 +180,6 @@ github.com/keyorixhq/keyorix/pkg/licenseverify
 github.com/keyorixhq/keyorix/internal/crypto/awskms
 github.com/keyorixhq/keyorix/internal/utils/safeconv
 github.com/keyorixhq/keyorix/internal/config
-github.com/keyorixhq/keyorix/server/tools
 github.com/keyorixhq/keyorix/internal/notifychan
 github.com/keyorixhq/keyorix/internal/audit/siem
 github.com/keyorixhq/keyorix/internal/mcp
