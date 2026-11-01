@@ -297,12 +297,12 @@ behind a TLS-terminating load balancer").
 ### gRPC keepalive and connection limits (`server.grpc.keepalive`)
 
 Durations are Go duration strings (`"15m"`); an unset or unparseable value takes the
-default. Only the gRPC server reads this block. The same eight keys parse under
-`server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
+default. Only the gRPC server reads this block. **Deprecated, never read:** the same
+eight keys under `server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
 `server.http.keepalive.min_time`, `server.http.keepalive.permit_without_stream`,
 `server.http.keepalive.max_connection_age`, `server.http.keepalive.max_connection_age_grace`,
 `server.http.keepalive.max_connection_idle` and `server.http.keepalive.handshake_timeout`)
-but have no effect there.
+change nothing and print a start-up warning. Remove the block; it is deleted after one minor release.
 
 | Key | Default | Meaning |
 |---|---|---|
