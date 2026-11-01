@@ -1278,10 +1278,10 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 		}
 	}
 	if filter.CreatedAfter != nil {
-		query = query.Where("secret_nodes.created_at > ?", *filter.CreatedAfter)
+		query = query.Where("secret_nodes.created_at > ?", filter.CreatedAfter.UTC())
 	}
 	if filter.CreatedBefore != nil {
-		query = query.Where("secret_nodes.created_at < ?", *filter.CreatedBefore)
+		query = query.Where("secret_nodes.created_at < ?", filter.CreatedBefore.UTC())
 	}
 	if filter.IsSecret != nil {
 		query = query.Where("secret_nodes.is_secret = ?", *filter.IsSecret)

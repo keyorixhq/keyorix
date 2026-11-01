@@ -28,6 +28,7 @@ import (
 // transaction it is simply a one-statement transaction. Like the other Purge* steps it
 // returns 0 with the error on failure.
 func (ls *LocalStorage) purgeDeletedBefore(ctx context.Context, model any, before time.Time) (int64, error) {
+	before = before.UTC() // deleted_at is UTC text on SQLite; a host-zone bound mis-orders (#3914)
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Unscoped().
@@ -65,6 +66,7 @@ func (ls *LocalStorage) purgeDeletedBefore(ctx context.Context, model any, befor
 // keyed on id — not just the ID list — so a user a restore raced out from under the
 // purge is left alone.
 func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
+	before = before.UTC() // deleted_at is UTC text on SQLite; a host-zone bound mis-orders (#3914)
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint
@@ -153,6 +155,7 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 // id — not just the ID list — so a project a restore raced out from under the purge is
 // left alone.
 func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error) {
+	before = before.UTC() // deleted_at is UTC text on SQLite; a host-zone bound mis-orders (#3914)
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint
@@ -515,6 +518,7 @@ func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, bef
 // -- see local_retention_test.go's
 // TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate.
 func (ls *LocalStorage) pluckExpiredActiveBreakGlassIDs(ctx context.Context, before time.Time) ([]uint, error) {
+	before = before.UTC() // expires_at is UTC text on SQLite; a host-zone bound mis-orders (#3914)
 	var ids []uint
 	if err := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
 		Where("state = ? AND expires_at IS NOT NULL AND expires_at < ?", breakGlassActiveState, before).
