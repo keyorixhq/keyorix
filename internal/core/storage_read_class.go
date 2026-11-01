@@ -117,3 +117,28 @@ func StorageReadFaultDetail(err error) string {
 	}
 	return err.Error()
 }
+
+// SecretReadVerdictFault is for a caller that answers one uniform denial for every
+// failure of an authorization-checked secret read (GetSecretWithPermissionCheck,
+// #G14: not found, cross-project and "not allowed" are one answer). It returns nil when
+// err is a VERDICT on the secret or the caller (a positive not-found, a permission
+// refusal, a secret-state or schedule refusal), and an ErrStorageReadUnavailable
+// otherwise: the secondary reads (membership, shares, ACL, schedule) failed, which
+// says nothing about the secret, so the caller must answer retry, not "not found".
+func SecretReadVerdictFault(err error) error {
+	if err == nil || isPositiveNotFound(err) {
+		return nil
+	}
+	if errors.Is(err, ErrPermissionDenied) || errors.Is(err, ErrAccessOutsideSchedule) {
+		return nil
+	}
+	for sentinel := range SecretReadRefusalFamily() {
+		if errors.Is(err, sentinel) {
+			return nil
+		}
+	}
+	if IsStorageReadUnavailable(err) {
+		return err
+	}
+	return &storageReadFault{cause: err}
+}
