@@ -4,10 +4,12 @@ package store
 // SetWebAuthnCredentialCounterState (and so AdvanceWebAuthnCredentialCounter)
 // writes last_used_at through Updates(map[string]any{...}), which runs no
 // BeforeSave hook and no NowFunc: the column holds whatever zone the time it is
-// handed carries. Core passes its clock's time. On SQLite a non-UTC time is stored
-// as text that neither scans back into a *time.Time nor orders against UTC
-// bounds, so the passkey would then fail every lookup. #3881 made the writer
-// normalise with .UTC(), like the Touch* writers (touch_last_used_utc_test.go);
+// handed carries. Core passes its clock's time. On SQLite a named-zone time is
+// stored as text that keeps its offset ("2026-11-01T10:25:34.176348+05:30",
+// observed before #3881). The row still scans back, but in that zone (EDT, IST)
+// rather than UTC, and as text its offset form does not order lexically against
+// "...Z" UTC text in a range comparison. #3881 made the writer normalise with
+// .UTC(), like the Touch* writers (touch_last_used_utc_test.go);
 // main's TestWebAuthnCounterLastUsedStoredAsUTC covers it only through core's
 // persistUpdatedCredential. This test pins both storage entry points directly,
 // on SQLite and Postgres. It is a guard, not a fix proof: it passes on main.
@@ -15,12 +17,16 @@ package store
 // The writer only reads the location carried by the time it is handed, so the
 // host zones are modelled with time.LoadLocation: no test assigns time.Local
 // (it is a process-wide global; see no_time_local_assignment_guard_test.go).
+// time/tzdata is embedded so the zones always load and the guard never skips on
+// a runner image without a zone database.
 
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/require"
 
@@ -32,9 +38,7 @@ func TestWebAuthnLastUsedAtStoresUTC(t *testing.T) {
 	for _, backend := range principalPermBackends(t) {
 		for _, zoneName := range []string{"America/New_York", "Asia/Kolkata"} {
 			zone, err := time.LoadLocation(zoneName)
-			if err != nil {
-				t.Skipf("zone database has no %s: %v", zoneName, err)
-			}
+			require.NoError(t, err, "load %s from the embedded zone database", zoneName)
 			for _, writer := range []string{"SetWebAuthnCredentialCounterState", "AdvanceWebAuthnCredentialCounter"} {
 				t.Run(backend+"/"+zoneName+"/"+writer, func(t *testing.T) {
 					ls, _ := newPrincipalPermStorage(t, backend)
@@ -73,8 +77,8 @@ func TestWebAuthnLastUsedAtStoresUTC(t *testing.T) {
 					}
 					var val sql.NullString
 					require.NoError(t, ls.db.Raw("SELECT last_used_at FROM web_authn_credentials WHERE id = ?", got.ID).Row().Scan(&val))
+					require.True(t, strings.HasSuffix(val.String, "Z"), "last_used_at must be stored as UTC text, got %q (%s)", val.String, zoneName)
 					require.Equal(t, "UTC", got.LastUsedAt.Location().String(), "last_used_at must scan back as UTC")
-					require.NotContains(t, val.String, usedAt.Format("-0700"), "last_used_at stored with the %s offset: %s", zoneName, val.String)
 				})
 			}
 		}
