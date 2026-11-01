@@ -340,7 +340,7 @@ func TestCreateSecret_BrokenDB(t *testing.T) {
 // local_secrets.go:454 — UpdateSecret
 // ---------------------------------------------------------------------------
 
-func TestUpdateSecret_HappyPath(t *testing.T) {
+func TestTransitionSecretStatus_HappyPath(t *testing.T) {
 	ls := newS18Store(t, &models.SecretNode{})
 	ctx := context.Background()
 
@@ -355,13 +355,15 @@ func TestUpdateSecret_HappyPath(t *testing.T) {
 	require.NoError(t, ls.db.Create(s).Error)
 
 	s.Status = "inactive"
-	updated, err := ls.UpdateSecret(ctx, s)
+	matched, err := ls.TransitionSecretStatus(ctx, s, "active")
 	require.NoError(t, err)
-	require.NotNil(t, updated)
+	require.True(t, matched)
+	var updated models.SecretNode
+	require.NoError(t, ls.db.First(&updated, s.ID).Error)
 	assert.Equal(t, "inactive", updated.Status)
 }
 
-func TestUpdateSecret_BrokenDB(t *testing.T) {
+func TestTransitionSecretStatus_BrokenDB(t *testing.T) {
 	ls := newS18Store(t, &models.SecretNode{})
 	ctx := context.Background()
 
@@ -377,7 +379,7 @@ func TestUpdateSecret_BrokenDB(t *testing.T) {
 	closeS18DB(t, ls)
 
 	s.Status = "inactive"
-	_, err := ls.UpdateSecret(ctx, s)
+	_, err := ls.TransitionSecretStatus(ctx, s, "active")
 	require.Error(t, err)
 }
 

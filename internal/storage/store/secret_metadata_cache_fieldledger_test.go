@@ -366,8 +366,9 @@ func TestSecretNodeCacheEpoch_FieldStaysReadOnlyToGORM(t *testing.T) {
 	require.NoError(t, err)
 	row.CacheEpoch = 1
 	row.Description = "updated"
-	_, err = ls.UpdateSecret(ctx, row)
-	require.NoError(t, err)
+	// The subject is the model tag, not a storage method: no storage writer takes a
+	// whole struct any more (UpdateSecret is gone), so drive GORM's Save directly.
+	require.NoError(t, ls.db.WithContext(ctx).Save(row).Error)
 	require.Equal(t, int64(1), readCacheEpoch(t, ls, created.ID),
 		"Save() must not write CacheEpoch; the trigger alone advances it (0 -> 1), so a stale struct cannot roll the stamp backwards")
 

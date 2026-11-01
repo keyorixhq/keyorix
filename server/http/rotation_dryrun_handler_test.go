@@ -154,10 +154,12 @@ func TestRotationDryRun_ValidPolicy(t *testing.T) {
 	// production use but would require a full role-setup fixture just for this test).
 	secret, err := env.c.GetSecret(ctx, id)
 	require.NoError(t, err)
+	fromBackend := secret.RotationBackend
 	secret.RotationBackend = "pg"
 	secret.RotationRef = "myrole"
-	_, err = env.c.Storage().UpdateSecret(ctx, secret)
+	matched, err := env.c.Storage().UpdateSecretRotationConfig(ctx, secret, fromBackend)
 	require.NoError(t, err)
+	require.True(t, matched)
 
 	// Create an active rotation policy for the project.
 	_, err = env.c.CreateRotationPolicy(ctx, 0, &core.CreateRotationPolicyRequest{
