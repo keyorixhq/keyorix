@@ -455,7 +455,7 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEn
 		// text, and a row soft-deleted before the UTC upgrade on a non-UTC host still holds
 		// host-zone text whose wall clock orders it wrongly against the cascade stamp. The
 		// candidates are selected by id and the rows then updated by id.
-		envIDs, err := cascadeChildIDs(tx, sqlSelectProjectEnvDeletedAt, id, cascadeTS)
+		envIDs, err := cascadeChildIDs(tx, cascadeEnvQuery, id, cascadeTS)
 		if err != nil {
 			return fmt.Errorf("failed to restore project environments: %w", err)
 		}
@@ -468,7 +468,7 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEn
 			restoredEnvironments += int(envResult.RowsAffected)
 		}
 
-		secretIDs, err := cascadeChildIDs(tx, sqlSelectProjectSecretDeletedAt, id, cascadeTS)
+		secretIDs, err := cascadeChildIDs(tx, cascadeSecretQuery, id, cascadeTS)
 		if err != nil {
 			return fmt.Errorf("failed to restore project secrets: %w", err)
 		}
@@ -505,25 +505,54 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEn
 // bound-variable limit for a project with a very large secret count.
 const cascadeRestoreChunk = 500
 
-// The candidate scans of RestoreProject: CAST ... AS TEXT hands the stored value back as the
-// string both dialects hold (SQLite's own text, Postgres' timestamptz rendering), whatever
-// zone it was written in, so the Go side parses it with parseDBTimestamp.
+// The candidate scans of RestoreProject: CAST ... AS TEXT hands SQLite's stored text back
+// whatever zone it was written in, so the Go side parses it with parseDBTimestamp. Postgres
+// does not take this path: its CAST renders in the session's DateStyle ("01/11/2026 ..." under
+// 'SQL, DMY'), which no layout can read reliably, so cascadeChildIDs scans the timestamptz
+// as a time.Time there instead (the *PG constants).
 const (
-	sqlSelectProjectEnvDeletedAt    = "SELECT id, CAST(deleted_at AS TEXT) AS deleted_at FROM environments WHERE project_id = ? AND deleted_at IS NOT NULL"
-	sqlSelectProjectSecretDeletedAt = "SELECT id, CAST(deleted_at AS TEXT) AS deleted_at FROM secret_nodes WHERE project_id = ? AND deleted_at IS NOT NULL" // #nosec G101 -- SQL query string, not a hardcoded credential
+	sqlSelectProjectEnvDeletedAt      = "SELECT id, CAST(deleted_at AS TEXT) AS deleted_at FROM environments WHERE project_id = ? AND deleted_at IS NOT NULL"
+	sqlSelectProjectSecretDeletedAt   = "SELECT id, CAST(deleted_at AS TEXT) AS deleted_at FROM secret_nodes WHERE project_id = ? AND deleted_at IS NOT NULL" // #nosec G101 -- SQL query string, not a hardcoded credential
+	sqlSelectProjectEnvDeletedAtPG    = "SELECT id, deleted_at FROM environments WHERE project_id = ? AND deleted_at IS NOT NULL"
+	sqlSelectProjectSecretDeletedAtPG = "SELECT id, deleted_at FROM secret_nodes WHERE project_id = ? AND deleted_at IS NOT NULL" // #nosec G101 -- SQL query string, not a hardcoded credential
+)
+
+// cascadeChildQuery is one child table's candidate scan, per dialect.
+type cascadeChildQuery struct{ sqlite, postgres string }
+
+var (
+	cascadeEnvQuery    = cascadeChildQuery{sqlSelectProjectEnvDeletedAt, sqlSelectProjectEnvDeletedAtPG}
+	cascadeSecretQuery = cascadeChildQuery{sqlSelectProjectSecretDeletedAt, sqlSelectProjectSecretDeletedAtPG}
 )
 
 // cascadeChildIDs returns the ids of the project's soft-deleted rows (selected by query, one of
-// the sqlSelectProject*DeletedAt constants) whose deleted_at INSTANT is at or after cascadeTS.
-// The stored text may be a pre-upgrade host-zone value ("... +09:00", "... +0900 JST") or the
-// current UTC text; both parse to the instant they denote. A value that parses as neither is
-// left deleted, never resurrected, and logged.
-func cascadeChildIDs(tx *gorm.DB, query string, projectID uint, cascadeTS time.Time) ([]uint, error) {
+// the cascade*Query pairs) whose deleted_at INSTANT is at or after cascadeTS.
+// On SQLite the stored text may be a pre-upgrade host-zone value ("... +09:00", "... +0900 JST")
+// or the current UTC text; both parse to the instant they denote. A value that parses as neither
+// is left deleted, never resurrected, and logged. On Postgres deleted_at is a timestamptz,
+// scanned as the instant itself, independent of DateStyle.
+func cascadeChildIDs(tx *gorm.DB, query cascadeChildQuery, projectID uint, cascadeTS time.Time) ([]uint, error) {
+	if tx.Dialector.Name() == "postgres" {
+		var rows []struct {
+			ID        uint
+			DeletedAt time.Time
+		}
+		if err := tx.Raw(query.postgres, projectID).Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		var ids []uint
+		for _, r := range rows {
+			if !r.DeletedAt.Before(cascadeTS) {
+				ids = append(ids, r.ID)
+			}
+		}
+		return ids, nil
+	}
 	var rows []struct {
 		ID        uint
 		DeletedAt string
 	}
-	if err := tx.Raw(query, projectID).Scan(&rows).Error; err != nil {
+	if err := tx.Raw(query.sqlite, projectID).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	var ids []uint
