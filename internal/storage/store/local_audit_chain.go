@@ -1050,6 +1050,9 @@ func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage
 			break
 		}
 	}
+	if broke, err := ls.auditRowsOutsideWalk(ctx, seg, lastID, walked, result); err != nil || broke {
+		return result, err
+	}
 
 	// Record the verified head so an external monitor can anchor on it and detect
 	// tail-truncation / re-seed (which a self-consistent shorter chain otherwise
@@ -1057,6 +1060,35 @@ func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage
 	result.HeadHash = prevHash
 	result.HeadID = headID
 	return result, nil
+}
+
+// auditRowsOutsideWalk checks that the walk visited every row in its range
+// (#3808). The keyset walk (id > lastID) never visits an id 0 row, a NULL id,
+// or a second row under an id a batch ended on (a schema edited to drop the
+// primary key). SQLite's INTEGER PRIMARY KEY and PostgreSQL's bigserial both
+// accept an explicit id 0, so such a row would sit in the table unverified.
+// One COUNT per walk, not per batch: from the chain start every row with an id
+// up to lastID or a NULL id, for a pinned segment the rows after its seed up
+// to lastID. The offline verifier makes the same check
+// (INV-AUDITVERIFY-every-row-walked).
+func (ls *LocalStorage) auditRowsOutsideWalk(ctx context.Context, seg storage.AuditChainSegment, lastID uint, walked int, result *storage.AuditChainVerification) (broke bool, err error) {
+	q := ls.db.WithContext(ctx).Model(&models.AuditEvent{})
+	if seg.AfterID > 0 {
+		q = q.Where("id > ? AND id <= ?", seg.AfterID, lastID)
+	} else {
+		q = q.Where("id IS NULL OR id <= ?", lastID)
+	}
+	var held int64
+	if err := q.Count(&held).Error; err != nil {
+		return false, err
+	}
+	if held == int64(walked) {
+		return false, nil
+	}
+	brokenChain(result, lastID, fmt.Sprintf(
+		"audit_events holds %d row(s) in the walked range through #%d (or with a NULL id), but the id-ordered walk visited %d: rows with id 0, a NULL id or a duplicated id are outside the chain (inserted directly, or through an altered schema)",
+		held, lastID, walked))
+	return true, nil
 }
 
 // pinAuditChainSeed checks a segment's seed row before the walk continues past

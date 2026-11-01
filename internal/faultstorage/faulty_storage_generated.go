@@ -4432,6 +4432,23 @@ func (w *FaultyStorage) ListAnomalyAlerts(ctx context.Context, acknowledged *boo
 	return w.real.ListAnomalyAlerts(ctx, acknowledged)
 }
 
+func (w *FaultyStorage) ListAuditCheckpoints(ctx context.Context, afterID uint, limit int) ([]*models.AuditCheckpoint, error) {
+	fire, kind, injected := w.check("ListAuditCheckpoints")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []*models.AuditCheckpoint
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListAuditCheckpoints(ctx, afterID, limit)
+			return rv1, injected
+		}
+	}
+	return w.real.ListAuditCheckpoints(ctx, afterID, limit)
+}
+
 func (w *FaultyStorage) ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error) {
 	fire, kind, injected := w.check("ListBreakGlassActivations")
 	if fire {

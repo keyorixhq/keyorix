@@ -200,6 +200,10 @@ type AuditStore interface {
 	// LatestAuditCheckpoint returns the most recently written checkpoint, or
 	// (nil, nil) when none exists yet.
 	LatestAuditCheckpoint(ctx context.Context) (*models.AuditCheckpoint, error)
+	// ListAuditCheckpoints returns up to limit checkpoints with an id above
+	// afterID, oldest first (a keyset page; empty when none is left). Read-only;
+	// accept-loss checks every signed head against the current rows (#3802).
+	ListAuditCheckpoints(ctx context.Context, afterID uint, limit int) ([]*models.AuditCheckpoint, error)
 	// AuditEntryHashByID returns the entry_hash of the audit row with the given
 	// id; found is false when no such row exists (e.g. it was truncated away).
 	AuditEntryHashByID(ctx context.Context, id uint) (hash string, found bool, err error)

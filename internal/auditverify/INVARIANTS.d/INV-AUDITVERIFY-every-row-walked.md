@@ -5,5 +5,5 @@
   would otherwise sit in the table unverified, with a verdict that depends on `BatchSize`.
   Why: REVIEW-AUDITVERIFY-KEYFILES-1. Guard: `TestReviewAV_RowsOutsideTheWalkAreBroken`,
   `TestReviewAV_Postgres_IDZeroRowIsBroken` (review_adversarial_test.go).
-  **Not covered**: the online `VerifyAuditChain` (internal/storage/store) has the same id-0
-  blind spot (#3808).
+  The online `VerifyAuditChain` (internal/storage/store) makes the same check since #3808
+  (INV-STORE-audit-walk-every-row), and the guard tests assert both verifiers agree.
