@@ -145,7 +145,8 @@ func (ls *LocalStorage) ReconcileExpiredBreakGlassActivation(ctx context.Context
 // reopened: a caller must never be refused a revoke because of what a
 // clock-derived State happens to read. Only 'revoked' (already revoked)
 // excludes a row. Returns storage.ErrBreakGlassNotActive (wrapped) if the row
-// was already revoked, or absent.
+// was already revoked, or absent. revokedAt is stored in UTC: this map update
+// bypasses BreakGlassActivation.BeforeSave (STORE-STALE-TAILS-2).
 func (ls *LocalStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
 		Where("id = ? AND state IN ?", id, []string{breakGlassActiveState, breakGlassExpiredState}).
@@ -153,7 +154,7 @@ func (ls *LocalStorage) RevokeBreakGlassActivation(ctx context.Context, id, revo
 			"state":                          breakGlassRevokedState,
 			"revoked_by":                     revokedBy,
 			"revoked_by_machine_identity_id": revokedByMachineID,
-			"revoked_at":                     revokedAt,
+			"revoked_at":                     revokedAt.UTC(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
@@ -172,13 +173,14 @@ func (ls *LocalStorage) RevokeBreakGlassActivation(ctx context.Context, id, revo
 // distinguishes "already reviewed" from "activation does not exist" the same
 // way the caller must anyway — see ReviewBreakGlass in internal/core, which
 // looks the activation up first). Allowed regardless of the activation's
-// active/expired/revoked state.
+// active/expired/revoked state. reviewedAt is stored in UTC, as BeforeSave
+// would (the map update bypasses it).
 func (ls *LocalStorage) ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
 		Where("id = ? AND reviewed_at IS NULL", id).
 		Updates(map[string]any{
 			"reviewed_by": reviewerID,
-			"reviewed_at": reviewedAt,
+			"reviewed_at": reviewedAt.UTC(),
 			"review_note": note,
 		})
 	if result.Error != nil {

@@ -55,7 +55,7 @@ func (ls *LocalStorage) CountStalePATs(ctx context.Context, threshold time.Time)
 	var count int64
 	err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
 		Where("revoked = ? AND (expires_at IS NULL OR expires_at > ?) AND (last_used_at IS NULL OR last_used_at < ?)",
-			false, time.Now().UTC(), threshold).
+			false, time.Now().UTC(), threshold.UTC()).
 		Count(&count).Error
 	return int(count), err
 }
@@ -94,7 +94,7 @@ func (ls *LocalStorage) CountStaleMachineCredentials(ctx context.Context, thresh
 			ls.db.WithContext(ctx).
 				Table("machine_identity_credentials mic").
 				Select("mic.machine_identity_id").
-				Where("mic.revoked = ? AND mic.last_used_at IS NOT NULL AND mic.last_used_at >= ?", false, threshold),
+				Where("mic.revoked = ? AND mic.last_used_at IS NOT NULL AND mic.last_used_at >= ?", false, threshold.UTC()),
 		).
 		Count(&count).Error
 	return int(count), err

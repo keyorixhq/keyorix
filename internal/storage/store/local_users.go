@@ -285,7 +285,8 @@ func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginA
 
 // SetAccountState persists ONLY account_state (and updated_at) via a direct column
 // update, rather than a full-row Save — see the storage.Storage interface doc comment
-// (#454) for why this narrower primitive exists alongside the generic UpdateUser.
+// (#454) for why a column-scoped write is used instead: a full-row save could
+// revert any concurrent writer's columns.
 func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{"account_state": state, "updated_at": updatedAt})
@@ -316,7 +317,7 @@ func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 // ClaimUserExternalIDIfUnset persists ONLY external_id (plus updated_at), and
 // only onto a live row whose external_id is still unset — see the
 // storage.Storage interface doc for why resolveSSOUser's first-federation write
-// cannot be the generic full-row UpdateUser (#2699).
+// cannot be a full-row save (#2699).
 //
 // GORM adds `deleted_at IS NULL` for this soft-delete model, which is the
 // clause that actually stops the resurrection; `COALESCE(external_id,”) = ”`
@@ -335,8 +336,8 @@ func (ls *LocalStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint,
 // SetPasswordHash persists ONLY password_hash and password_changed_at (plus
 // updated_at, and clears one_time_password_expires_at: a new password supersedes
 // any one-time password) via a direct column update — see the storage.Storage
-// interface doc comment (#484/#454) for why this narrower primitive exists
-// alongside the generic UpdateUser.
+// interface doc comment (#484/#454) for why a column-scoped write is used
+// instead of a full-row save.
 func (ls *LocalStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{

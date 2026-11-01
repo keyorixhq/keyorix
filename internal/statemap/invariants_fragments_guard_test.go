@@ -47,7 +47,17 @@
 //	    Enforcing it repo-wide would need those reworded first, in files that
 //	    many open PRs touch;
 //	(f) an optional `<!-- section: <heading> -->` line in a fragment names a
-//	    `## ` heading that exists in the sibling INVARIANTS.md.
+//	    `## ` heading that exists in the sibling INVARIANTS.md;
+//
+// A further rule, (g), lives in checkInvariantIndexRows and its own test,
+// because it widens this guard and so reports through guardrules.Rollout
+// (docs/guard-rollout-contract.md rule 2) while rules (a)-(f) stay blocking:
+//
+//	(g) every package with an INVARIANTS.d/ directory is linked from
+//	    docs/INVARIANTS.md, i.e. the index contains a link to that package's
+//	    INVARIANTS.md (a link anywhere in the document satisfies it, not only
+//	    one in the table), and the index must be readable when any package has
+//	    fragments. The table's arithmetic is internal/docsdrift's job.
 //
 // What it does NOT check: that a named guard test exists or passes (that is
 // scripts/check-closures.sh's / check-adr-conformance.sh's job for ledgered
@@ -69,6 +79,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 const invariantsIndexPath = "docs/INVARIANTS.md"
@@ -289,6 +301,61 @@ func checkInvariantDocs(fsys fs.FS) (violations, legacyDups []string, err error)
 	return violations, legacyDups, nil
 }
 
+// checkInvariantIndexRows is rule (g): every directory that holds both an
+// INVARIANTS.md and an INVARIANTS.d/ must be linked from docs/INVARIANTS.md.
+// An unreadable index is itself a violation (not a skip) once any package has
+// fragments, so a missing index cannot silently disable the rule.
+func checkInvariantIndexRows(fsys fs.FS) (violations []string, err error) {
+	pkgFiles := map[string]bool{}
+	fragDirs := map[string]bool{}
+	err = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if p != "." && skipDirForInvariants(d.Name()) {
+				return fs.SkipDir
+			}
+			if d.Name() == "INVARIANTS.d" {
+				fragDirs[path.Dir(p)] = true
+			}
+			return nil
+		}
+		if d.Name() == "INVARIANTS.md" {
+			pkgFiles[path.Dir(p)] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Orphan INVARIANTS.d/ and docs/INVARIANTS.d/ are rule (d)'s findings.
+	var dirs []string
+	for dir := range fragDirs {
+		if pkgFiles[dir] && path.Join(dir, "INVARIANTS.md") != invariantsIndexPath {
+			dirs = append(dirs, dir)
+		}
+	}
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	sort.Strings(dirs)
+
+	indexRaw, indexErr := fs.ReadFile(fsys, invariantsIndexPath)
+	if indexErr != nil {
+		return []string{fmt.Sprintf("cannot read %s: %v — rule (g) cannot confirm that %d package(s) with INVARIANTS.d/ fragments are indexed", invariantsIndexPath, indexErr, len(dirs))}, nil
+	}
+	index := string(indexRaw)
+	for _, dir := range dirs {
+		file := path.Join(dir, "INVARIANTS.md")
+		if !strings.Contains(index, "(../"+file+")") {
+			violations = append(violations, fmt.Sprintf("%s: %s has INVARIANTS.d/ fragments but %s has no row linking it — add a package row (see \"Maintaining this index\" there)", file, dir, invariantsIndexPath))
+		}
+	}
+	return violations, nil
+}
+
 // invariantsRepoRoot walks up from the test's working directory to the
 // directory holding both the root module's go.mod and .git.
 func invariantsRepoRoot(t *testing.T) string {
@@ -347,9 +414,12 @@ func TestInvariantDocs_RealRepo(t *testing.T) {
 const fixturePkg = "# pkg invariants\n\nFormat: `INV-PKG-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.\n\n" +
 	"## Section A\n\n- **INV-PKG-01** Rule one. Why: x. Guard:\n  `TestOne`.\n- **INV-PKG-02** Rule two. UNGUARDED (#1).\n"
 
+const fixtureIndex = "# index\n\n| Package | File | Invariants | Guarded | UNGUARDED |\n|---|---|---|---|---|\n" +
+	"| `pkg` | [pkg/INVARIANTS.md](../pkg/INVARIANTS.md) | 3 | 2 | 1 |\n"
+
 func fixtureFS(extra map[string]string) fstest.MapFS {
 	m := fstest.MapFS{
-		"docs/INVARIANTS.md": {Data: []byte("# index\n\n| Package |\n")},
+		"docs/INVARIANTS.md": {Data: []byte(fixtureIndex)},
 		"pkg/INVARIANTS.md":  {Data: []byte(fixturePkg)},
 		"pkg/INVARIANTS.d/INV-PKG-mfa-purpose-binding.md": {Data: []byte(
 			"- **INV-PKG-mfa-purpose-binding** Rule. Why: y. Guard: `TestX`.\n<!-- section: Section A -->\n")},
@@ -429,7 +499,7 @@ func TestInvariantDocs_Fixtures(t *testing.T) {
 			"pkg/INVARIANTS.md": strings.Replace(fixturePkg, "Format:", "Shape:", 1)},
 			want: "the package prefix cannot be derived"},
 		{name: "index defines an invariant", extra: map[string]string{
-			"docs/INVARIANTS.md": "# index\n- **INV-PKG-09** R. Guard: `T`.\n"},
+			"docs/INVARIANTS.md": fixtureIndex + "- **INV-PKG-09** R. Guard: `T`.\n"},
 			want: "the index must not define invariants"},
 	}
 	for _, tc := range cases {
@@ -465,5 +535,61 @@ func TestInvariantDocs_Fixtures(t *testing.T) {
 				t.Fatalf("want a violation containing %q, got %d:\n%s", tc.want, len(v), strings.Join(v, "\n"))
 			}
 		})
+	}
+}
+
+// --- rule (g): the index lists every fragment area ---------------------------
+
+func TestInvariantIndexRows_Fixtures(t *testing.T) {
+	cases := []struct {
+		name  string
+		extra map[string]string
+		want  string // substring of the single expected violation; "" = green
+	}{
+		{name: "green baseline"},
+		{name: "package with fragments missing from the index", extra: map[string]string{
+			"docs/INVARIANTS.md": "# index\n\n| Package |\n"},
+			want: "pkg/INVARIANTS.md: pkg has INVARIANTS.d/ fragments but docs/INVARIANTS.md has no row linking it"},
+		{name: "index missing while a package has fragments", extra: map[string]string{
+			"docs/INVARIANTS.md": ""},
+			want: "cannot read docs/INVARIANTS.md"},
+		{name: "green: legacy-only package need not be in the index", extra: map[string]string{
+			"pkg/INVARIANTS.d/INV-PKG-mfa-purpose-binding.md": "",
+			"docs/INVARIANTS.md":                              "# index\n\n| Package |\n"}},
+		{name: "green: no fragments anywhere, index missing", extra: map[string]string{
+			"pkg/INVARIANTS.d/INV-PKG-mfa-purpose-binding.md": "",
+			"docs/INVARIANTS.md":                              ""}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := checkInvariantIndexRows(fixtureFS(tc.extra))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == "" {
+				if len(v) != 0 {
+					t.Fatalf("want green, got %d violation(s):\n%s", len(v), strings.Join(v, "\n"))
+				}
+				return
+			}
+			if len(v) != 1 || !strings.Contains(v[0], tc.want) {
+				t.Fatalf("want exactly one violation containing %q, got %d:\n%s", tc.want, len(v), strings.Join(v, "\n"))
+			}
+		})
+	}
+}
+
+// TestInvariantDocs_IndexListsEveryFragmentArea is rule (g) on the real tree.
+// It is a widening of the repo-wide TestInvariantDocs_RealRepo guard, so it
+// reports through guardrules.Rollout (docs/guard-rollout-contract.md rule 2)
+// and has its own docs/guard-rollout.d row; rules (a)-(f) stay blocking.
+func TestInvariantDocs_IndexListsEveryFragmentArea(t *testing.T) {
+	g := guardrules.Rollout(t)
+	v, err := checkInvariantIndexRows(os.DirFS(invariantsRepoRoot(t)))
+	if err != nil {
+		g.Fatal(err)
+	}
+	for _, s := range v {
+		g.Error(s)
 	}
 }

@@ -43,6 +43,8 @@ func (ls *LocalStorage) ListAlertEscalationPolicies(ctx context.Context) ([]mode
 	return rows, nil
 }
 
+// UpdateAlertEscalationPolicy writes the editable columns of p. p.UpdatedAt is
+// stored in UTC: the map update runs no NowFunc (STORE-STALE-TAILS-2).
 func (ls *LocalStorage) UpdateAlertEscalationPolicy(ctx context.Context, p *models.AlertEscalationPolicy) error {
 	res := ls.db.WithContext(ctx).Model(p).Updates(map[string]any{
 		"name":                   p.Name,
@@ -50,7 +52,7 @@ func (ls *LocalStorage) UpdateAlertEscalationPolicy(ctx context.Context, p *mode
 		"escalate_after_minutes": p.EscalateAfterMinutes,
 		"channel_ids":            p.ChannelIDs,
 		"enabled":                p.Enabled,
-		"updated_at":             p.UpdatedAt,
+		"updated_at":             p.UpdatedAt.UTC(),
 	})
 	if res.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)

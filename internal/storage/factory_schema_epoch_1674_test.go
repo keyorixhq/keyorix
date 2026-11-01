@@ -73,6 +73,8 @@ func TestCheckSchemaEpoch_1674_ErrorCarriesAllFourDiagnosticElements(t *testing.
 	assert.Contains(t, msg, fmt.Sprintf("schema epoch %d ", currentSchemaEpoch), "error must name this binary's compiled-in epoch")
 	// (3) when the newer epoch was recorded -- an RFC3339 timestamp AND a
 	// relative age ("... ago"), not just a bare number.
+	// The recorded-at timestamp in the error is UTC, so the expected date must be too:
+	// a local-zone date fails near midnight on a non-UTC host.
 	assert.Contains(t, msg, before.UTC().Format("2006-01-02"), "error must name the date the newer epoch was recorded")
 	assert.Contains(t, msg, "ago", "error must state how long ago the newer epoch was recorded")
 	// (4) both plausible causes, in plain language -- a rolling upgrade

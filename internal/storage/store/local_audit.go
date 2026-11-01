@@ -657,7 +657,7 @@ func (ls *LocalStorage) AcknowledgeAnomalyAlert(ctx context.Context, id, actorID
 	res := ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Updates(map[string]any{
 		"acknowledged":    true,
 		"acknowledged_by": actorID,
-		"acknowledged_at": at,
+		"acknowledged_at": at.UTC(),
 	})
 	if res.Error != nil {
 		return res.Error

@@ -117,11 +117,11 @@ var fullRowOverwriteMethods = map[string]bool{
 	// SetWebAuthnCredentialCounterState). Same reasoning, and the
 	// replacements take an id plus scalars or a field struct, never a
 	// caller-built *models.X.
-	"UpdateProject":             true,
-	"UpdateLegalHold":           true,
-	"UpdateDynamicSecretConfig": true,
-	// UpdateDynamicSecretLease was here until STORE-STALE-WRITE-1 deleted it:
-	// no caller was left after #2825 moved renew/revoke onto column-scoped writes.
+	"UpdateProject":   true,
+	"UpdateLegalHold": true,
+	// UpdateDynamicSecretConfig was here until STORE-CLEANUP-1 deleted it, and
+	// UpdateDynamicSecretLease until STORE-STALE-WRITE-1: no caller was left after
+	// #2675/#2698/#2825 moved every write onto column-scoped methods.
 	// UpdateUser (the full-row storage primitive) was here until
 	// STORE-DEAD-PRIMITIVES-1 deleted it: it had no caller left.
 	"SaveAnomalyConfig": true,

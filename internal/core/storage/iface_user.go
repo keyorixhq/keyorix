@@ -41,14 +41,14 @@ type UserStore interface {
 	// login-lockout failed-attempt count) that must not lose updates under concurrency.
 	LockUserForUpdate(ctx context.Context, id uint) (*models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
-	// UpdateUserIfActiveStateMatches persists ONLY the profile columns UpdateUser
+	// UpdateUserIfActiveStateMatches persists ONLY the profile columns core.UpdateUser
 	// applies in memory from a request (username/username_folded, email/
 	// email_folded, display name, the new IsActive value, updated_at) — never the
 	// full row, so it cannot revert a concurrent narrow write to any other column
 	// (SetAccountState, SetPasswordHash, MFA, lockout; #2653/#2654) — via a single
 	// conditional "UPDATE ... WHERE id = ? AND is_active = ?", succeeding only if
 	// the row's CURRENT persisted is_active still equals fromActive (the value
-	// UpdateUser observed via GetUser, i.e. wasActive, before applying any of the
+	// core.UpdateUser observed via GetUser, i.e. wasActive, before applying any of the
 	// request's field changes in memory). Returns whether the write actually
 	// matched a row, mirroring TransitionMachineIdentityState's `WHERE id = ? AND
 	// state = ?` / UpdateProjectInvitation's `WHERE id = ? AND state = 'pending'`
@@ -77,7 +77,8 @@ type UserStore interface {
 	// other field (no updated_at bump). Called on every successful login.
 	UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error
 	// SetAccountState persists ONLY the account_state column (plus updated_at) —
-	// narrower than the generic UpdateUser, and deliberately so (#454): an admin
+	// a column-scoped write, deliberately not a full-row save (#454), which could
+	// revert any concurrent writer's column: an admin
 	// suspend/reactivate (setAccountState) or a SCIM deprovision/reactivate (UpdateSCIMUser,
 	// via the conditional SetAccountStateIfMatches below) is an explicit, security-relevant directive, not passive accounting — the caller must
 	// see a hard error rather than a false "success" that leaves the account state
@@ -100,8 +101,8 @@ type UserStore interface {
 	// COALESCE(external_id,'') = '' AND deleted_at IS NULL". claimed=false (no
 	// error) means someone else federated the account first, or it is gone.
 	//
-	// This is resolveSSOUser's first-federation write (#2699). It used the
-	// generic full-row UpdateUser, whose GORM Save upsert-fallback resurrected
+	// This is resolveSSOUser's first-federation write (#2699). It used a
+	// full-row save (the since-deleted full-row storage user writer), whose GORM Save upsert-fallback resurrected
 	// an account an admin had deleted after resolveSSOUser's unlocked read —
 	// writing back deleted_at=NULL, is_active=true, account_state=active — and
 	// the same window also reverted a concurrent suspension, password change,
@@ -110,8 +111,9 @@ type UserStore interface {
 	// snapshot.
 	ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (claimed bool, err error)
 	// SetPasswordHash persists ONLY the password_hash and password_changed_at columns
-	// (plus updated_at) — narrower than the generic UpdateUser, and deliberately so
-	// (#484, the same rationale as SetAccountState above). A password change
+	// (plus updated_at) — a column-scoped write, deliberately not a full-row save,
+	// which could revert a concurrent lockout, MFA or account-state write (#484, the
+	// same rationale as SetAccountState above). A password change
 	// (applyNewPassword, shared by self-service ChangePassword and the setup-token
 	// consume flow) is exactly the kind of explicit security directive #454 already
 	// treats as needing fail-closed semantics for account_state: a user must never be
