@@ -1,0 +1,1 @@
+TestShareListFetchCallersRefuseAtTheCap	internal/core/guards	#TBD	new go/ast guard over the core family share-list fetch callers (STRANDED-CORE-SEC-1 item 2), report-only until its first green nightly on main
