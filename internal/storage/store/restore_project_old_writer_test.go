@@ -89,6 +89,16 @@ func TestRestoreProjectComparesMonotonicSuffixTextAsInstants(t *testing.T) {
 		{"west-of-UTC monotonic text of the cascade is restored", "2026-11-01 06:00:00 -0700 MST m=+12.5", true},
 		{"UTC-host monotonic text of the cascade is restored", "2026-11-01 13:00:00.5 +0000 UTC m=+0.000000001", true},
 		{"negative monotonic reading parses too", "2026-11-01 14:00:00 +0100 CET m=-3.25", true},
+		// A zone with no letter abbreviation prints a numeric one; the 4-digit forms (Kathmandu,
+		// Tehran, Marquesas...) do not parse with the MST layout element.
+		// 17:45:00.123 +0545 is 12:00:00.123Z, before the cascade.
+		{"numeric-abbreviation zone text before the cascade stays deleted", "2026-11-01 17:45:00.123 +0545 +0545", false},
+		// 18:45 +0545 is 13:00Z, the cascade instant.
+		{"numeric-abbreviation zone monotonic text of the cascade is restored", "2026-11-01 18:45:00 +0545 +0545 m=+1.5", true},
+		// 16:30 +0330 is 13:00Z.
+		{"numeric-abbreviation zone east of UTC is restored", "2026-11-01 16:30:00 +0330 +0330", true},
+		// 02:30 -0930 is 12:00Z, before the cascade.
+		{"numeric-abbreviation zone west of UTC stays deleted", "2026-11-01 02:30:00 -0930 -0930", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()

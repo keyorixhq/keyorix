@@ -18,6 +18,10 @@ var dbTimestampLayouts = []string{
 	// A time.Time written by the driver in its own String() form, which is how a pre-upgrade
 	// host-zone value looks ("2026-11-01 21:00:00 +0900 JST"); the offset decides the instant.
 	"2006-01-02 15:04:05.999999999 -0700 MST",
+	// The same String() form on a host whose zone has no letter abbreviation: Go prints the
+	// offset as the abbreviation, and the 4-digit ones ("+0545 +0545", Asia/Kathmandu) do not
+	// match the MST element.
+	"2006-01-02 15:04:05.999999999 -0700 -0700",
 }
 
 // parseDBTimestamp parses a raw timestamp column value.
