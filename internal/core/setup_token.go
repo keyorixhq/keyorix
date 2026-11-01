@@ -312,13 +312,18 @@ func (c *KeyorixCore) expireSetupToken(ctx context.Context, tok *models.SetupTok
 // ExpireSetupTokenProxy's tests already asserted on -- closing the
 // audit gap must not also turn a previously-tolerated "already gone" ID into
 // a new 500.
+//
+// "Unknown" is a positive not-found (gorm.ErrRecordNotFound, which
+// GetSetupTokenByID wraps with %w), never the error's text; any other read
+// error is ErrStorageReadUnavailable, so a caller answers retry instead of
+// treating a fault as "already gone" (AUTH-ENDPOINT-OUTAGE-1).
 func (c *KeyorixCore) ExpireSetupTokenByID(ctx context.Context, id uint) error {
 	tok, err := c.storage.GetSetupTokenByID(ctx, id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if isPositiveNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		return classifyReadError(err, "setup token not found")
 	}
 	return c.expireSetupToken(ctx, tok)
 }
