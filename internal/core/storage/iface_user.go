@@ -41,14 +41,14 @@ type UserStore interface {
 	// login-lockout failed-attempt count) that must not lose updates under concurrency.
 	LockUserForUpdate(ctx context.Context, id uint) (*models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
-	// UpdateUserIfActiveStateMatches persists ONLY the profile columns UpdateUser
+	// UpdateUserIfActiveStateMatches persists ONLY the profile columns core.UpdateUser
 	// applies in memory from a request (username/username_folded, email/
 	// email_folded, display name, the new IsActive value, updated_at) — never the
 	// full row, so it cannot revert a concurrent narrow write to any other column
 	// (SetAccountState, SetPasswordHash, MFA, lockout; #2653/#2654) — via a single
 	// conditional "UPDATE ... WHERE id = ? AND is_active = ?", succeeding only if
 	// the row's CURRENT persisted is_active still equals fromActive (the value
-	// UpdateUser observed via GetUser, i.e. wasActive, before applying any of the
+	// core.UpdateUser observed via GetUser, i.e. wasActive, before applying any of the
 	// request's field changes in memory). Returns whether the write actually
 	// matched a row, mirroring TransitionMachineIdentityState's `WHERE id = ? AND
 	// state = ?` / UpdateProjectInvitation's `WHERE id = ? AND state = 'pending'`
@@ -102,7 +102,7 @@ type UserStore interface {
 	// error) means someone else federated the account first, or it is gone.
 	//
 	// This is resolveSSOUser's first-federation write (#2699). It used a
-	// full-row save (the since-deleted storage UpdateUser), whose GORM Save upsert-fallback resurrected
+	// full-row save (the since-deleted full-row storage user writer), whose GORM Save upsert-fallback resurrected
 	// an account an admin had deleted after resolveSSOUser's unlocked read —
 	// writing back deleted_at=NULL, is_active=true, account_state=active — and
 	// the same window also reverted a concurrent suspension, password change,
