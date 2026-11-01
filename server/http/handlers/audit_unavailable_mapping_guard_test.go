@@ -54,6 +54,10 @@ var auditUnavailableMappingExempt = map[string]string{
 	// that row through sendAuditUnavailable).
 	"mfa_reset.go:ApproveMFAReset": "maps ErrMutationAuditUnavailable to 503 in sendMFAResetError (a helper the guard does not follow)",
 	"mfa_reset.go:RequestMFAReset": "maps ErrMutationAuditUnavailable to 503 in sendMFAResetError (a helper the guard does not follow)",
+	// MSG-ACCURACY-1 (#3912): the outage is a per-item failure inside a 200 partial-success
+	// body (BulkDeleteSecrets never returns it as an error), reported with
+	// core.MutationAuditUnavailableMessage by bulkDeleteFailureMessage.
+	"secrets_bulk_delete.go:BulkDeleteSecrets": "per-item failure in the 200 partial-success body, with MutationAuditUnavailableMessage",
 }
 
 func readAuditUnavailableReachingMethods(t *testing.T) map[string]bool {

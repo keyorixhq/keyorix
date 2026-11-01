@@ -844,7 +844,10 @@ func TestServiceRotateKEKPassphrase_LockFailure_Error(t *testing.T) {
 
 	err := svc.RotateKEKPassphrase("g80-svc-rotate-kek-lock", "new-passphrase")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stop the running server before rotating")
+	// A read-only key directory is a permission problem, not a live server (MSG-ACCURACY-1).
+	assert.Contains(t, err.Error(), "refusing to rotate KEK")
+	assert.Contains(t, err.Error(), "permission denied")
+	assert.NotContains(t, err.Error(), "stop the running server")
 }
 
 // ─── service_rotation.go: PreviewRotationSweep / UpgradeAuthAAD — tx.Begin ────
