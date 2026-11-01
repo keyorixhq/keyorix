@@ -650,7 +650,14 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
 		if !core.IsAuthorizeTransient(ctx, err) {
-			core.NoteSecretReadDenial(ctx, core.SecretReadDeniedNotFound)
+			// A read FAULT is an outage on a secret that may exist: the audit row
+			// says internal_error for every caller, whatever the answer (as REST's
+			// handleScopeResolutionError notes it). Only a true miss is not_found.
+			reason := core.SecretReadDeniedNotFound
+			if core.ReadFault(err) != nil {
+				reason = core.SecretReadDeniedInternalError
+			}
+			core.NoteSecretReadDenial(ctx, reason)
 		}
 		return authorizeScopedTarget(ctx, cs, actor, perm, err, core.Scope{}, "secret not found")
 	}
