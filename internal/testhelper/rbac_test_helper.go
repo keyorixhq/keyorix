@@ -3,6 +3,7 @@ package testhelper
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -296,6 +297,7 @@ func (h *RBACTestHelper) AssignUserRole(t *testing.T, userID, roleID uint, proje
 		ProjectID: derefScope(projectID),
 	}
 
+	h.ensureLiveProject(t, derefScope(projectID))
 	result := h.DB.Create(userRole)
 	require.NoError(t, result.Error)
 }
@@ -319,8 +321,22 @@ func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, pro
 		ProjectID: derefScope(projectID),
 	}
 
+	h.ensureLiveProject(t, derefScope(projectID))
 	result := h.DB.Create(groupRole)
 	require.NoError(t, result.Error)
+}
+
+// ensureLiveProject creates a live projects row for a scoped grant when none
+// exists: a scoped grant authorizes only while its project row exists
+// (INV-STORE-scoped-grant-needs-live-scope-row). 0 (global) needs no row.
+func (h *RBACTestHelper) ensureLiveProject(t *testing.T, projectID uint) {
+	t.Helper()
+	if projectID == 0 {
+		return
+	}
+	require.NoError(t, h.DB.Where(models.Project{ID: projectID}).
+		Attrs(models.Project{Name: fmt.Sprintf("helper-proj-%d", projectID)}).
+		FirstOrCreate(&models.Project{}).Error)
 }
 
 // derefScope converts a nullable scope pointer to the 0 = global sentinel.

@@ -435,18 +435,18 @@ func (ls *LocalStorage) GetUserRoles(ctx context.Context, userID uint) ([]*model
 // so deletion doesn't work as an access boundary for directly-bound roles at all.
 // The LEFT JOINs (not INNER) are required because project_id/environment_id 0
 // means "global" and has no corresponding row to join against — the "= 0 OR ..."
-// clause short-circuits before the joined columns are consulted in that case; a
-// scoped project_id/environment_id with no matching row at all (the joined column
-// is SQL NULL) is treated as not-deleted, same as every other "unknown" scope ID
-// this query already tolerates.
+// clause short-circuits before the joined columns are consulted in that case. A
+// scoped project_id/environment_id with no matching row at all (purged, or never
+// there: the joined id is SQL NULL) is NOT live, so a purged project's leftover
+// grants authorize nothing (#2795 read side, INV-STORE-scoped-grant-needs-live-scope-row).
 func (ls *LocalStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
 		Joins("LEFT JOIN projects ON projects.id = user_roles.project_id").
 		Joins("LEFT JOIN environments ON environments.id = user_roles.environment_id").
 		Where(sqlWhereURUserID, userID).
-		Where("user_roles.project_id = 0 OR (user_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
-		Where("user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
+		Where("user_roles.project_id = 0 OR (user_roles.project_id = ? AND projects.id IS NOT NULL AND projects.deleted_at IS NULL)", scope.ProjectID).
+		Where("user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.id IS NOT NULL AND environments.deleted_at IS NULL)", scope.EnvironmentID).
 		Where(sqlWhereURNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Distinct().Pluck("user_roles.role_id", &ids).Error
 	if err != nil {
@@ -887,8 +887,8 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 		// Honour project-scoped memberships: global (project_id=0) always applies;
 		// non-zero only when it matches the requested project.
 		Where("user_groups.project_id = 0 OR user_groups.project_id = ?", scope.ProjectID).
-		Where("group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
-		Where("group_roles.environment_id = 0 OR (group_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
+		Where("group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.id IS NOT NULL AND projects.deleted_at IS NULL)", scope.ProjectID).
+		Where("group_roles.environment_id = 0 OR (group_roles.environment_id = ? AND environments.id IS NOT NULL AND environments.deleted_at IS NULL)", scope.EnvironmentID).
 		Where(sqlWhereGRNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Distinct().Pluck("group_roles.role_id", &ids).Error
 	if err != nil {

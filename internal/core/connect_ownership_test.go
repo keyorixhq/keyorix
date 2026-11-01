@@ -328,5 +328,6 @@ func TestConnectReadableConnectorNames_PlatformVisibleWithPlatformUse(t *testing
 func seedRoleForUserAtProject(t *testing.T, db *gorm.DB, userID, roleID uint, name string, projectID uint) {
 	t.Helper()
 	require.NoError(t, db.Create(&models.Role{ID: roleID, Name: name, BypassesPermissionChecks: isAdminRoleName(name)}).Error)
+	seedLiveScopeProjects(t, db, projectID)
 	require.NoError(t, db.Create(&models.UserRole{UserID: userID, RoleID: roleID, ProjectID: projectID}).Error)
 }

@@ -79,6 +79,7 @@ func TestAssignUserRole_ScopedHolderCannotGrantAtBroaderScope(t *testing.T) {
 	const attacker = uint(9)
 	const target = uint(10)
 	// attacker holds secrets.delete and roles.assign only at project 3, not globally.
+	seedLiveScopeProjects(t, db, 3)
 	require.NoError(t, db.Create(&models.UserRole{UserID: attacker, RoleID: 3, ProjectID: 3}).Error)
 
 	err := c.AssignUserRole(ctx, attacker, target, 2, Scope{}, false) // global grant attempt
@@ -199,6 +200,7 @@ func TestAssignUserRole_EmptyRoleGrantableByRolesAssignHolder(t *testing.T) {
 
 	const holder = uint(9)
 	const target = uint(10)
+	seedLiveScopeProjects(t, db, 3)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 3, ProjectID: 3}).Error)
 
 	require.NoError(t, c.AssignUserRole(ctx, holder, target, 2, Scope{ProjectID: 3}, false))
