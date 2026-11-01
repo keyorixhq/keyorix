@@ -48,6 +48,10 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 		// Missing or expired: the same 404 as before. A storage failure is not
 		// "no such secret".
 		if !isSecretNotFound(err) && !errors.Is(err, core.ErrSecretExpired) {
+			// A read fault is the shared 503 (nothing was copied), not a 500.
+			if sendStorageUnavailable(w, core.ReadFault(err)) {
+				return
+			}
 			log.Printf("Error reading secret %d for copy: %v", id, err) // NOSONAR
 			h.sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 			return
