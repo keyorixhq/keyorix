@@ -1,0 +1,2 @@
+### Documentation
+- **Sharing guides match the web UI.** `docs/SECRET_SHARING_USER_GUIDE.md` and `docs/SECRET_SHARING_WORKFLOWS.md` no longer describe web screens that do not exist (bulk share, group recipient in the Share dialog, a shared-secrets filter, "Leave share", share notifications, the 👥 icon, "Share Secret"); button and field labels now match the UI. `web/scripts/check-sharing-guide-ui-strings.mjs` (`pnpm check:sharing-guide-strings`) lists quoted phrases in the two guides that are missing from `web/src`; it is advisory and not part of CI.
