@@ -1,0 +1,1 @@
+TestDocsCitedRepoPathsExist	internal/docsdrift	#TBD	new guard (DOCS-PATHREF-1): backticked repo paths in operator-facing docs must exist; report-only until its first green nightly on main
