@@ -81,8 +81,12 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # failed with "Connection refused" for that reason, pre-existing and
 # independent of the non-root change below (reproduced against the original
 # root-running image too).
+# /nginx-health (static), not /health: /health proxies to the backend (#3460), and
+# the image on its own, or under an orchestrator that runs its own backend check,
+# must report only whether nginx itself is up. docker-compose.yml overrides this
+# with /health so the stack's web service reflects the backend.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ["sh", "-c", "wget -q --spider http://127.0.0.1/health || exit 1"]
+  CMD ["sh", "-c", "wget -q --spider http://127.0.0.1/nginx-health || exit 1"]
 
 # Run as nginx:alpine's own built-in non-root user (uid 101) rather than root.
 # The Helm deployment (deploy/helm/keyorix/templates/web-deployment.yaml)
