@@ -42,6 +42,9 @@ func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) 
 	shares, err := h.coreService.ListSecretSharesWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
 		log.Printf("Error listing secret shares: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		switch {
 		case strings.Contains(err.Error(), errNotFound):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
@@ -434,6 +437,9 @@ func (h *ShareHandler) RemoveSelfFromShare(w http.ResponseWriter, r *http.Reques
 
 	if err := h.coreService.RemoveSelfFromShare(r.Context(), uint(id), userCtx.UserID); err != nil {
 		log.Printf("Error removing self from share: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", "Share not found", http.StatusNotFound, nil)
 		} else {

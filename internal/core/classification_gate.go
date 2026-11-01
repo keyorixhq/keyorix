@@ -253,6 +253,10 @@ func (c *KeyorixCore) RequestSecretAccess(ctx context.Context, secretID, userID 
 	}
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
+		// A read FAULT is a retry answer, not "secret not found" (STORAGE-ERR-CLASS-4).
+		if !isPositiveNotFound(err) {
+			return nil, classifyReadError(err, "")
+		}
 		return nil, fmt.Errorf("secret %d not found: %w", secretID, err)
 	}
 	// #G82's sibling gap for this request shape: without this, any authenticated

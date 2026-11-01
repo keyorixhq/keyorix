@@ -12,6 +12,7 @@ auth.go
 auth_bootstrap.go
 auth_budget.go
 auth_storage_unavailable.go
+authorize_fault_recorder.go
 authorize_transient.go
 authz.go
 authz_secret_batch.go
