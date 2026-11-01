@@ -57,7 +57,7 @@ import (
 
 // storeTimeBindExceptions: "file.go:Func:column" -> why the bind is safe. Filled by
 // registerStoreTimeBindException from init() in store_time_bind_utc_exception_<slug>_test.go (one
-// row per file; there is none while the table is empty).
+// row per file). A row for a bind that is fixed fails the guard as stale, so it cannot outlive it.
 var storeTimeBindExceptions = map[string]string{}
 
 func registerStoreTimeBindException(key, reason string) {
