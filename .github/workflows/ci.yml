@@ -2723,7 +2723,7 @@ jobs:
       - name: Create kind cluster
         id: kind1
         continue-on-error: true
-        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           cluster_name: kx-ci-boot-smoke
       - name: Create kind cluster (back off, clean up after attempt 1)
@@ -2735,7 +2735,7 @@ jobs:
         id: kind2
         if: steps.kind1.outcome == 'failure'
         continue-on-error: true
-        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           cluster_name: kx-ci-boot-smoke
       - name: Create kind cluster (back off, clean up after attempt 2)
@@ -2745,7 +2745,7 @@ jobs:
           kind delete cluster --name kx-ci-boot-smoke || true
       - name: Create kind cluster (attempt 3)
         if: steps.kind1.outcome == 'failure' && steps.kind2.outcome == 'failure'
-        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           cluster_name: kx-ci-boot-smoke
 
