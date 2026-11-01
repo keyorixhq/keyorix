@@ -41,6 +41,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -91,6 +92,13 @@ func OpenWithConfig(tb testing.TB, prefix string, cfg *gorm.Config) *gorm.DB {
 // returns the dialector; the pool cap and the cleanup are identical.
 func OpenWithDialector(tb testing.TB, prefix string, open func(dsn string) gorm.Dialector, cfg *gorm.Config) *gorm.DB {
 	tb.Helper()
+	// Production opens with NowFunc returning UTC (internal/storage/factory.go gormConfig):
+	// GORM stamps created_at / updated_at / deleted_at through it after every BeforeSave
+	// hook, so without it a test under a non-UTC TZ models the old host-zone behaviour
+	// (#3914). A caller that sets its own NowFunc keeps it.
+	if cfg.NowFunc == nil {
+		cfg.NowFunc = func() time.Time { return time.Now().UTC() }
+	}
 	db, err := gorm.Open(open(DSN(prefix)), cfg)
 	if err != nil {
 		tb.Fatalf("sqlitetest: open in-memory sqlite: %v", err)
