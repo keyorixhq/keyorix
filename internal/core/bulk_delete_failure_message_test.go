@@ -26,6 +26,8 @@ func TestBulkDeleteFailureMessage_FixedClasses(t *testing.T) {
 		{"gorm not-found", fmt.Errorf("%s: %w", leak, gorm.ErrRecordNotFound), "secret not found"},
 		{"classified read fault", classifyReadError(errors.New(leak), "secret not found"), StorageReadUnavailableMessage},
 		{"transient driver error", fmt.Errorf("%s: %w", leak, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}), StorageReadUnavailableMessage},
+		{"secret audit outage", fmt.Errorf("%w: %v", ErrSecretMutationAuditUnavailable, leak), MutationAuditUnavailableMessage},
+		{"mutation audit outage", fmt.Errorf("%w: %v", ErrMutationAuditUnavailable, leak), MutationAuditUnavailableMessage},
 		{"anything else", errors.New(leak), "internal error"},
 	}
 	for _, tc := range cases {
