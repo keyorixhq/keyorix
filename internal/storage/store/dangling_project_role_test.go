@@ -13,6 +13,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -199,4 +200,14 @@ func (w prefetchWorld) permByName() *models.Permission {
 	var p models.Permission
 	require.NoError(w.t, w.ls.db.Where("name = ?", w.perm).First(&p).Error)
 	return &p
+}
+
+// seedLiveProjects creates a live projects row for each id, for fixtures that
+// grant at a bare project id: since #2795 a scoped grant with no projects row
+// does not authorize.
+func seedLiveProjects(t *testing.T, ls *LocalStorage, ids ...uint) {
+	t.Helper()
+	for _, id := range ids {
+		require.NoError(t, ls.db.Create(&models.Project{ID: id, Name: fmt.Sprintf("live-project-%d", id)}).Error)
+	}
 }

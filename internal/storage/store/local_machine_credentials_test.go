@@ -99,6 +99,7 @@ func TestOIDCBindingResolution(t *testing.T) {
 
 func TestMachineRoleGrantScopeResolution(t *testing.T) {
 	ls := newMachineCredTestStore(t)
+	seedLiveProjects(t, ls, 2, 3) // a scoped grant needs a live projects row (#2795)
 	ctx := context.Background()
 	const machineID = uint(1)
 
@@ -132,6 +133,7 @@ func TestMachineRoleGrantScopeResolution(t *testing.T) {
 // guard for machines (cf. the user-RBAC scope-boundary tests).
 func TestMachineRoleGrantScopeResolution_EnvCrossLeak(t *testing.T) {
 	ls := newMachineCredTestStore(t)
+	seedLiveProjects(t, ls, 2, 3) // a scoped grant needs a live projects row (#2795)
 	ctx := context.Background()
 	const machineID = uint(1)
 
