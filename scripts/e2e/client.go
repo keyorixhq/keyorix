@@ -106,6 +106,7 @@ func (c *client) call(method, routeKey, path string, body interface{}) envelope 
 
 	var env envelope
 	env.StatusCode = resp.StatusCode
+	env.Body = respBytes
 	if len(respBytes) > 0 {
 		if jerr := json.Unmarshal(respBytes, &env); jerr != nil {
 			// Not every route returns the {"success","data"} envelope (e.g.
@@ -139,7 +140,7 @@ func (c *client) callExpect(method, routeKey, path string, body interface{}, wan
 		}
 	}
 	c.t.Errorf("%s %s (%s): expected status in %v, got %d: %s",
-		method, routeKey, path, want, env.StatusCode, string(env.Raw))
+		method, routeKey, path, want, env.StatusCode, string(env.Body))
 	return env
 }
 
@@ -204,6 +205,9 @@ type envelope struct {
 	Data       json.RawMessage `json:"data"`
 	Message    string          `json:"message"`
 	Raw        []byte          `json:"-"`
+	// Body is the response body verbatim, set whether or not it parsed as the envelope: the
+	// SCIM routes answer RFC 7644 resources, not {"success","data"}.
+	Body []byte `json:"-"`
 }
 
 // unmarshalData decodes env.Data into v, failing the test with a readable

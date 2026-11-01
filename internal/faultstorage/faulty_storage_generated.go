@@ -7759,23 +7759,6 @@ func (w *FaultyStorage) UpdateRotationState(ctx context.Context, policyID uint, 
 	return w.real.UpdateRotationState(ctx, policyID, state, errMsg)
 }
 
-func (w *FaultyStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
-	fire, kind, injected := w.check("UpdateSecret")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			var zero1 *models.SecretNode
-			return zero1, injected
-		case KindEffectThenError:
-			rv1, _ := w.real.UpdateSecret(ctx, secret)
-			return rv1, injected
-		}
-	}
-	return w.real.UpdateSecret(ctx, secret)
-}
-
 func (w *FaultyStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
 	fire, kind, injected := w.check("UpdateSecretFields")
 	if fire {

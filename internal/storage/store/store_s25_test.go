@@ -279,7 +279,7 @@ func TestMarkSetupTokenConsumed_S25_BrokenDB(t *testing.T) {
 
 func TestCountSetupTokensSince_S25_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
-	_, err := ls.CountSetupTokensSince(context.Background(), "invite", "a@b.com", time.Now())
+	_, err := ls.CountSetupTokensSince(context.Background(), "invite", "a@b.com", time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -520,7 +520,7 @@ func TestListDynamicSecretLeases_S25_BrokenDB(t *testing.T) {
 
 func TestListExpiredActiveLeases_S25_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
-	_, err := ls.ListExpiredActiveLeases(context.Background(), time.Now())
+	_, err := ls.ListExpiredActiveLeases(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -536,7 +536,7 @@ func TestListProjectMemberships_S25_BrokenDB(t *testing.T) {
 
 func TestListStaleInvitedMemberships_S25_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
-	_, err := ls.ListStaleInvitedMemberships(context.Background(), time.Now())
+	_, err := ls.ListStaleInvitedMemberships(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 

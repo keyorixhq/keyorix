@@ -3933,14 +3933,14 @@ func TestCloseAccessReviewCampaign_HappyPath(t *testing.T) {
 }
 
 func TestCampaignStatusForError_Cases(t *testing.T) {
-	assert.Equal(t, http.StatusNotFound, campaignStatusForError("record not found"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("still pending items"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("already closed"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("campaign is closed"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("ownership cannot be revoked"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("value must be"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("required field"))
-	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError("some unexpected storage error"))
+	assert.Equal(t, http.StatusNotFound, campaignStatusForError(fmt.Errorf("get campaign: %w", core.ErrAccessReviewNotFound)))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("still pending items")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("already closed")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("campaign is closed")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("ownership cannot be revoked")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("value must be")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("required field")))
+	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError(errors.New("some unexpected storage error")))
 }
 
 // ── break_glass.go: ActivateBreakGlass + RevokeBreakGlass ────────────────────

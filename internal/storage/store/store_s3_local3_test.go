@@ -124,9 +124,12 @@ func TestSecret_GetByNameUpdateCertNotAfter(t *testing.T) {
 	_, err = ls.GetSecretByName(ctx, "nope", p.ID, e.ID)
 	require.Error(t, err)
 
-	// UpdateSecret.
-	sn.Description = "updated"
-	updated, err := ls.UpdateSecret(ctx, sn)
+	// UpdateSecretFields.
+	desc := "updated"
+	matched, err := ls.UpdateSecretFields(ctx, sn.ID, coreStorage.SecretFieldUpdate{Description: &desc})
+	require.NoError(t, err)
+	require.True(t, matched)
+	updated, err := ls.GetSecret(ctx, sn.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "updated", updated.Description)
 
@@ -291,7 +294,7 @@ func TestSecret_CountExpiringAndLiveName(t *testing.T) {
 	}).Error)
 
 	// Count expiring before 2h from now → 2.
-	cutoff := time.Now().Add(2 * time.Hour)
+	cutoff := time.Now().UTC().Add(2 * time.Hour)
 	counts, err := ls.CountExpiringSecretsByProject(ctx, []uint{p.ID}, cutoff)
 	require.NoError(t, err)
 	assert.Equal(t, 2, counts[p.ID])

@@ -157,7 +157,11 @@ func (c *KeyorixCore) planReviewRoleRevoke(ctx context.Context, actorID, project
 	switch d.PrincipalType {
 	case "group":
 		if _, err := c.storage.GetGroup(ctx, d.PrincipalID); err != nil {
-			return nil, fmt.Errorf("group not found: %w", err)
+			if isPositiveNotFound(err) {
+				return nil, &accessReviewNotFoundError{err: fmt.Errorf("group not found: %w", err)}
+			}
+			// A read FAULT is a retry answer, not "the group is gone".
+			return nil, &storageReadFault{cause: err}
 		}
 		return &reviewRevokeApply{
 			guarded: func(ctx context.Context, write func(ctx context.Context, fence txFence) error) error {
@@ -170,7 +174,10 @@ func (c *KeyorixCore) planReviewRoleRevoke(ctx context.Context, actorID, project
 	case "machine":
 		m, err := c.machineInProject(ctx, scope.ProjectID, d.PrincipalID)
 		if err != nil {
-			return nil, err
+			if IsStorageReadUnavailable(err) {
+				return nil, err
+			}
+			return nil, &accessReviewNotFoundError{err: err} // absent or in another project
 		}
 		return &reviewRevokeApply{
 			guarded: func(ctx context.Context, write func(ctx context.Context, fence txFence) error) error {
@@ -216,10 +223,10 @@ func runUnguarded(ctx context.Context, write func(ctx context.Context, fence txF
 func (c *KeyorixCore) revokeReviewShareOn(ctx context.Context, st storage.Storage, projectID uint, d AccessReviewDecision) error {
 	secret, err := st.GetSecret(ctx, d.SecretID)
 	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		return accessReviewReadError(err)
 	}
 	if secret.ProjectID != projectID {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil), "secret does not belong to this project")
+		return accessReviewNotFound("secret does not belong to this project")
 	}
 	isGroup := d.Source == "group_share"
 	shares, err := st.ListSharesBySecret(ctx, d.SecretID, c.shareEffectiveNow())
@@ -234,7 +241,7 @@ func (c *KeyorixCore) revokeReviewShareOn(ctx context.Context, st storage.Storag
 			return nil
 		}
 	}
-	return fmt.Errorf("%s: no matching share to revoke", i18n.T("ErrorNotFound", nil))
+	return accessReviewNotFound("no matching share to revoke")
 }
 
 // decideReviewItemRevokeAtomically claims the item, removes the grant and writes

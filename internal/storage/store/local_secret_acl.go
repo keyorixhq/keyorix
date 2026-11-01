@@ -23,6 +23,8 @@ import (
 // CWE-284 ACL cascade before the grant existed, and the grant then committed on the
 // deleted secret and reactivated on RestoreSecret (INV-STORE-21).
 func (ls *LocalStorage) CreateOrUpdateSecretACL(ctx context.Context, acl *models.SecretACL) error {
+	// UTC: the model has no BeforeSave hook, so a caller-set time would be stored in its own zone.
+	acl.CreatedAt, acl.UpdatedAt = acl.CreatedAt.UTC(), acl.UpdatedAt.UTC()
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.
 			Clauses(clause.OnConflict{
