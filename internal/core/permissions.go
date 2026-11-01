@@ -242,6 +242,7 @@ func (c *KeyorixCore) checkSecretPermission(ctx context.Context, secretID, userI
 			// legitimately ungranted here.
 			log.Printf("CheckSecretPermission: RBAC fallback authorization check failed (actor_type=%s principal_id=%d permission=%s project_id=%d environment_id=%d): %v",
 				actorType, userID, rbacPerm, scope.ProjectID, scope.EnvironmentID, aerr)
+			noteAuthorizeLookupFault(ctx, aerr)
 		} else if ok {
 			return &PermissionContext{
 				SecretID:   secretID,

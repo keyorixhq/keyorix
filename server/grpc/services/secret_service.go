@@ -303,7 +303,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 	// the per-user owner/sharing check (and its user-id requirement) does not
 	// apply to them (W1 — see GetSecret). The secret.updated row, with its
 	// before/after diff, commits with the update, as on the HTTP path.
-	mctx := secretMutationAuditContext(ctx, user)
+	mctx, lookupFaults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(ctx, user))
 	var secret *models.SecretNode
 	if user.ActorKind() == core.ActorTypeMachine {
 		secret, err = s.core.UpdateSecret(mctx, updateReq)
@@ -311,7 +311,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 		secret, err = s.core.UpdateSecretWithPermissionCheck(mctx, updateReq)
 	}
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretMutationError(ctx, lookupFaults, err)
 	}
 	return secretNodeToProto(secret), nil
 }
@@ -332,14 +332,14 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 	// the per-user owner/sharing check (and its user-id requirement) does not
 	// apply to them (W1 — see GetSecret). The secret.deleted row commits with the
 	// delete, as on the HTTP path.
-	mctx := secretMutationAuditContext(ctx, user)
+	mctx, lookupFaults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(ctx, user))
 	if user.ActorKind() == core.ActorTypeMachine {
 		err = s.core.DeleteSecret(mctx, uint(req.GetId()))
 	} else {
 		err = s.core.DeleteSecretWithPermissionCheck(mctx, uint(req.GetId()), user.UserID)
 	}
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretMutationError(ctx, lookupFaults, err)
 	}
 	// The delete is done; a failed read-back of the purge date leaves it unset rather
 	// than failing a completed delete (same stance as the HTTP handler's header).
@@ -715,6 +715,20 @@ func grpcReadRefusal(err error) core.SecretReadDenialReason {
 
 // SecretReadRefusalDomain is the ErrorInfo.Domain of a secret-read refusal.
 const SecretReadRefusalDomain = "keyorix.secrets"
+
+// mapSecretMutationError is mapSecretError for the update and delete RPCs, which
+// authorize inside core: a permission refusal that core reached because a TRANSIENT
+// storage failure stopped the permission lookup is Unavailable (retry), not
+// PermissionDenied (STORAGE-ERR-CLASS-4, INV-MW-authorize-lookup-error-is-503). A
+// verdict, and any non-transient lookup error, stays the fail-closed denial.
+func mapSecretMutationError(ctx context.Context, faults *core.AuthorizeFaultRecorder, err error) error {
+	if errors.Is(err, core.ErrPermissionDenied) {
+		if ferr := faults.Err(); ferr != nil {
+			return authorizeRefusal(ctx, ferr, "access denied to this secret")
+		}
+	}
+	return mapSecretError(err)
+}
 
 // mapSecretError translates core errors into gRPC status codes.
 func mapSecretError(err error) error {
