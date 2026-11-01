@@ -1,0 +1,3 @@
+### Internal
+- **Removed code nothing calls** (found by deadcode and knip, each confirmed by grep): `KeySetState.IsManifestMissing` (internal/keyfiles), the web UI's unused `isRbacEvent` copy, barrel re-exports no file imports, the `sharingApi.selfRemove` client method (no page used it; the endpoint and `keyorix share self-remove` are unchanged) and two unrouted `ROUTES` entries. No behaviour change.
+- **Removed `server/tools`**, the dev-only `go run tools/test_runner.go` wrapper around `go test` that nothing called (its own tests were permanently skipped), with its TESTING_GUIDE sections, its CI leg pin and review-coverage row. Also dropped five SonarCloud ignore rules for files that no longer exist.

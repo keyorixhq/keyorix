@@ -79,9 +79,6 @@ This guide covers comprehensive testing for the Keyorix HTTP and gRPC server imp
 # Navigate to server directory
 cd server
 
-# Run all tests
-go run tools/test_runner.go all
-
 # Run specific test suite
 go test ./http/handlers -v
 go test ./grpc/services -v
@@ -89,24 +86,6 @@ go test ./middleware -v
 
 # Run integration tests
 go test ./http -v
-```
-
-### Using the Test Runner
-
-The test runner provides a comprehensive testing interface:
-
-```bash
-# Run all test suites
-go run tools/test_runner.go all
-
-# Run performance benchmarks
-go run tools/test_runner.go bench
-
-# Generate coverage report
-go run tools/test_runner.go coverage
-
-# Show help
-go run tools/test_runner.go help
 ```
 
 ### Manual Test Commands
@@ -302,10 +281,8 @@ server/
 ├── grpc/
 │   └── services/
 │       └── secret_service_test.go # gRPC service tests
-├── middleware/
-│   └── auth_test.go             # Authentication middleware tests
-└── tools/
-    └── test_runner.go           # Comprehensive test runner
+└── middleware/
+    └── auth_test.go             # Authentication middleware tests
 ```
 
 ### Test Naming Convention
@@ -433,40 +410,12 @@ go tool pprof mem.prof
 ### Running Benchmarks
 
 ```bash
-# Run all benchmarks
-go run tools/test_runner.go bench
-
 # Run specific benchmarks
 go test -bench=BenchmarkSecretHandler ./http/handlers
 go test -bench=BenchmarkAuthentication ./middleware
 
 # With memory profiling
 go test -bench=. -benchmem ./...
-```
-
-## 🎯 Continuous Integration
-
-### GitHub Actions Integration
-
-```yaml
-name: Test Suite
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
-        with:
-          go-version: '1.19'
-      - name: Run Tests
-        run: |
-          cd server
-          go run tools/test_runner.go all
-      - name: Generate Coverage
-        run: |
-          cd server  
-          go run tools/test_runner.go coverage
 ```
 
 ## 📝 Writing New Tests
@@ -516,7 +465,6 @@ func TestNewFeature(t *testing.T) {
 The HTTP and gRPC server implementation includes comprehensive testing covering:
 
 ✅ **Complete Test Coverage**: Unit, integration, performance, and security tests  
-✅ **Automated Test Runner**: Easy-to-use test execution and reporting  
 ✅ **Performance Benchmarks**: Ensuring optimal server performance  
 ✅ **Security Validation**: Authentication, authorization, and input validation  
 ✅ **CI/CD Ready**: Structured for continuous integration pipelines  
