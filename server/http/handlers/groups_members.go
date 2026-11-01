@@ -96,7 +96,8 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("Error adding group member: %v", err)
 		switch {
-		case errors.Is(err, corestorage.ErrGroupNotFound) || corestorage.IsUserNotFound(err):
+		case errors.Is(err, corestorage.ErrGroupNotFound) || corestorage.IsUserNotFound(err),
+			errors.Is(err, core.ErrMembershipTargetNotFound): // the domain-allowlist gate's user read
 			sendError(w, "NotFound", "User or group not found", http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "cannot grant this role"):
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
