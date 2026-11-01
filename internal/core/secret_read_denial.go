@@ -71,6 +71,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -399,6 +400,9 @@ type secretReadDenialDiff struct {
 // writeSecretReadDenialRow builds and writes one secret.read Success=false row.
 // Best-effort: a failure is logged, never returned.
 func (c *KeyorixCore) writeSecretReadDenialRow(row denialRow) {
+	// Its own recover, not only recordSecretReadDenial's: a panic writing the
+	// summary row must not drop the first-denial row written after it.
+	defer besteffort.RunRecover("audit.writeSecretReadDenialRow")()
 	d := row.denial
 	f := false
 	subjectID, projectID := d.subjectID, d.projectID

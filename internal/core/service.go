@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/logging"
@@ -681,6 +682,9 @@ func (c *KeyorixCore) HasLicensedFeature(f string) bool {
 // AuditLicenseState records the current license state as an audit event. The server calls
 // it once at startup so the evaluated entitlement (and any degrade reason) is on the record.
 func (c *KeyorixCore) AuditLicenseState(ctx context.Context) {
+	// Builds its event before emitAudit's recover: a panic here is logged and
+	// counted, never escapes (INV-CORE-audit-writer-recovers-own-build).
+	defer besteffort.RunRecover("audit.AuditLicenseState")()
 	st := c.LicenseStatus()
 	desc := "License evaluated at startup: " + string(st.State)
 	if st.Reason != "" {
