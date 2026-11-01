@@ -12,6 +12,9 @@ var dbTimestampLayouts = []string{
 	"2006-01-02 15:04:05.999999999Z07",
 	"2006-01-02T15:04:05.999999999",
 	"2006-01-02 15:04:05.999999999",
+	// A time.Time written by the driver in its own String() form, which is how a pre-upgrade
+	// host-zone value looks ("2026-11-01 21:00:00 +0900 JST"); the offset decides the instant.
+	"2006-01-02 15:04:05.999999999 -0700 MST",
 }
 
 // parseDBTimestamp parses a raw timestamp column value.
