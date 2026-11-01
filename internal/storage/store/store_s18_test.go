@@ -337,7 +337,7 @@ func TestCreateSecret_BrokenDB(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// local_secrets.go:454 — UpdateSecret
+// local_secrets.go:887 — TransitionSecretStatus
 // ---------------------------------------------------------------------------
 
 func TestTransitionSecretStatus_HappyPath(t *testing.T) {
