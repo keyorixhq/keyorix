@@ -10,13 +10,18 @@ Format: `INV-WEB-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 
 ## API layer convention
 
-- **INV-WEB-01** Exactly two HTTP client instances exist in `web/src`: `services/client.ts`'s
+- **INV-WEB-01** Exactly two HTTP client instances serve the app: `services/client.ts`'s
   `apiClient` (general) and `services/auth.ts`'s `authApi` (separate, to avoid a circular
-  import `auth.ts → client.ts → authStore.ts → auth.ts`) — no raw `fetch(`,
-  `axios.get|post|put|delete|patch(`, or `XMLHttpRequest` exists anywhere else (confirmed by
-  repo-wide grep; the only other `fetch(` hits are React Query `refetch()` calls). UNGUARDED
-  mechanically (#issue: no `eslint.config.mjs` rule — e.g. `no-restricted-syntax` banning raw
-  `fetch`/`axios` outside these two files — enforces this; it holds today by inspection only).
+  import `auth.ts → client.ts → authStore.ts → auth.ts`). The one documented exception is
+  `services/setup.ts` (ADR-028 single-use setup-token flow: deliberately unauthenticated, no
+  session cookie). Nothing else may use raw `fetch(`, `XMLHttpRequest`/`WebSocket`/`EventSource`,
+  `navigator.sendBeacon`, or an axios default import (the only route to `axios.create|get|post|...`).
+  Guard: `eslint.config.mjs`'s `no-restricted-syntax` / `no-restricted-imports` override for
+  `src/**` (allowlist: those three files; tests exempt because they mock axios and fake XHR), run
+  by `pnpm lint`; `__tests__/structure/eslintGuards.test.ts` lints source strings with ESLint's
+  Node API and is red on each banned shape, green on `refetch()` and the allowlisted files.
+  **Not covered**: an HTTP library other than axios (needs a `package.json` change a reviewer
+  sees); reaching `fetch` through indirection such as `window['fet' + 'ch']`.
 
 ## CSRF — well guarded
 
@@ -32,11 +37,15 @@ Format: `INV-WEB-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   automatically — `web/src` never reads or stores the credential's value. `localStorage`
   (`utils/index.ts`'s `storage` wrapper, `main.tsx`) holds only UI preferences and expiry
   bookkeeping (`tokenExpiresAt`, `absoluteExpiresAt`), never the credential. Why: explicit
-  doc comments in `services/client.ts` (lines ~41-45) and `utils/auth.ts`. UNGUARDED for the
-  specific NEGATIVE invariant (#issue: no test scans `localStorage` keys for a JWT-shaped
-  value / asserts "no raw session token ever reaches localStorage" — today's protection is
-  architectural, via `persistAuthData` never being handed the credential, not a positive
-  assertion that would catch a future regression).
+  doc comments in `services/client.ts` (lines ~41-45) and `utils/auth.ts`; the real backend DOES
+  return the token in the login/refresh JSON body, so safety rests on every path choosing not to
+  persist it. Guard: `store/__tests__/sessionTokenNeverPersisted.test.ts` drives login → refresh →
+  checkAuth and `completeSetup` through the real `authStore` → `authService` → `authApi` (only the XHR
+  transport is faked), records every `localStorage`/`sessionStorage` write (including later-removed
+  ones) and fails on the literal token or any JWT-shaped key/value; its self-check proves the scanner
+  fires on a planted token. **Not covered**: IndexedDB, Cache Storage; long opaque hex/base64 tokens
+  that are not JWT-shaped and not the fixture token; storage written by code paths the test does
+  not exercise.
 
 ## CSV writer (formula-injection, CWE-1236)
 
@@ -74,22 +83,28 @@ quotes CSV-special characters...'`). See `internal/core/INVARIANTS.md` INV-CORE-
 
 ## Anti-enumeration — holds by omission, not by a guard
 
-- **INV-WEB-06** The frontend does not currently leak a resource's existence via differential
-  rendering of "doesn't exist" vs. "exists but forbidden" — confirmed by grep: zero frontend
-  code branches on `status === 404` specifically anywhere in `web/src`; generic error handling
-  (`handleApiError`/`apiErrorMessage`) treats non-2xx uniformly except for a few explicit
-  401/403/429/5xx branches aimed at session/permission UX (none of which are per-resource
-  existence distinctions). This holds because no code path TRIES to distinguish 404 from 403
-  at all, not because of a deliberate guard. UNGUARDED (#issue: no test asserts this invariant
-  — if a future PR adds a 404-specific UI branch for some resource, nothing catches it reopening
-  an existence oracle that the backend's ADR-096 403-for-both convention was built to close).
+- **INV-WEB-06** The frontend does not leak a resource's existence via differential
+  rendering of "doesn't exist" vs. "exists but forbidden". No frontend code branches on
+  `status === 404` specifically; generic error handling (`handleApiError`/`apiErrorMessage`)
+  treats non-2xx uniformly except for explicit 401/403/429/5xx branches aimed at
+  session/permission UX (none a per-resource existence distinction). Guard:
+  `__tests__/structure/noNotFoundBranching.test.ts` parses every non-test `.ts/.tsx` file with the
+  TypeScript compiler API and fails on `=== == !== !=` comparisons with `404`/`'404'`, `case 404`,
+  `HttpStatusCode.NotFound`, and an object key `404`, against a reasoned allowlist (one entry
+  today: `OIDCFederationSection.tsx`, a feature-deployed probe, not a per-resource lookup),
+  with calibration cases red per spelling and green for 403/4xx-range; and
+  `pages/__tests__/notFoundVsForbiddenRendering.test.tsx` renders real per-resource pages and
+  asserts 403 and 404 look identical. **Not covered**: range checks that include 404, computed
+  status values, and branches on the response body's `error` string.
 
-## Structural completeness — none found
+## Structural completeness
 
-- **INV-WEB-07** No structural/completeness test exists in `web/src` analogous to the Go
-  backend's AST sweeps (e.g. nothing asserts "every service file uses `apiClient`" or "every
-  mutating page attaches CSRF" as a repo-wide check rather than a per-file unit test).
-  `__tests__/App.test.tsx`, `constants.test.ts`, `test/infrastructure.test.ts` are component/
-  unit/smoke tests, not sweeps. UNGUARDED as a class (#issue: the lowest-effort version would be
-  an ESLint custom rule or a small Node script walking `web/src/services` and `web/src/pages`
-  rather than a hand-maintained convention).
+- **INV-WEB-07** Repo-wide structural sweeps, not per-file unit tests, hold the service layer's
+  shape. Guard: `__tests__/structure/servicesUseApiClient.test.ts` walks `web/src/services`
+  (AST): every service file except `client.ts`/`auth.ts` imports `apiClient` or `authApi`, builds no
+  client of its own (`axios.create`, `new Axios`, axios default import), and sends every
+  state-changing call (`.post/.put/.patch/.delete/.request`) through one of the two instances, so the
+  CSRF attach of INV-WEB-02 applies; `setup.ts` is exempt with its ADR-028 reason. Calibration cases are
+  red per violation shape. Also `__tests__/structure/routeReachability.test.ts` (App.tsx routes vs.
+  Sidebar NAV). **Not covered**: pages/features (no client there by INV-WEB-01's lint rule); runtime
+  CSRF attach (INV-WEB-02's tests).
