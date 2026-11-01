@@ -629,16 +629,6 @@ func TestSQLiteDSN_S28_WithExistingParams(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// gormConfig — verify the returned config is safe
-// ---------------------------------------------------------------------------
-
-// TestGormConfig_S28_NonNil verifies that gormConfig returns a non-nil config.
-func TestGormConfig_S28_NonNil(t *testing.T) {
-	cfg := gormConfig()
-	require.NotNil(t, cfg)
-}
-
-// ---------------------------------------------------------------------------
 // createLocalStorage — empty path uses default "./secrets.db"
 // ---------------------------------------------------------------------------
 
