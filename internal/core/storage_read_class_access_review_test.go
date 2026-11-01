@@ -117,6 +117,21 @@ func TestStorageReadClass_AccessReviewDecide(t *testing.T) {
 				}), 1)
 				assert.True(t, pending(it.ID), "the revoke was never applied")
 
+				// The write runs inside a transaction the double cannot fault, so the
+				// transaction body is driven directly with the faulty storage as its handle.
+				d := AccessReviewDecision{Source: "direct_share", PrincipalType: "user", PrincipalID: member.ID, SecretID: secret.ID}
+				assert.GreaterOrEqual(t, sweepCoreFault(t, faulty, "GetSecret", func() error {
+					return c.revokeReviewShareOn(ctx, faulty, p.ID, d)
+				}), 1)
+				assert.GreaterOrEqual(t, sweepCoreFault(t, faulty, "ListSharesBySecret", func() error {
+					return c.revokeReviewShareOn(ctx, faulty, p.ID, d)
+				}), 1)
+				errNoShare := c.revokeReviewShareOn(ctx, faulty, p.ID, d)
+				assert.ErrorIs(t, errNoShare, ErrAccessReviewNotFound, "no matching share")
+				errGone := c.revokeReviewShareOn(ctx, faulty, p.ID, AccessReviewDecision{Source: "direct_share", PrincipalID: member.ID, SecretID: 9_999_999})
+				assert.ErrorIs(t, errGone, ErrAccessReviewNotFound)
+				assert.False(t, IsStorageReadUnavailable(errGone))
+
 				gone := newItem(models.AccessReviewItem{PrincipalType: "user", PrincipalID: member.ID, Source: "direct_share", SecretID: 9_999_999})
 				err := c.DecideAccessReviewItem(ctx, reviewer.ID, p.ID, camp.ID, gone.ID, "revoke", "x")
 				require.Error(t, err)

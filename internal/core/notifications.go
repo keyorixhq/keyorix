@@ -519,7 +519,7 @@ func (c *KeyorixCore) MarkNotificationRead(ctx context.Context, id, userID uint)
 	scope, ok := patNotificationScope(ctx)
 	if !ok {
 		// The storage layer's own wording for "no such (id, user) row".
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return corestorage.NotFound(corestorage.ErrNotificationNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return c.storage.MarkScopedNotificationRead(ctx, id, userID, scope)
 }

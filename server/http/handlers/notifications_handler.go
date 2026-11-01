@@ -6,13 +6,14 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -99,7 +100,7 @@ func (h *NotificationHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.MarkNotificationRead(r.Context(), id, u.UserID); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, corestorage.ErrNotificationNotFound) {
 			sendError(w, "NotFound", "Notification not found", http.StatusNotFound, nil)
 			return
 		}

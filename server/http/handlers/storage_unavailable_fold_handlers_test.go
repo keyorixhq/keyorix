@@ -8,6 +8,7 @@ package handlers
 // 503 mapping); a true not-found keeps its status.
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -224,4 +225,190 @@ func TestFoldHandlers_Item2_AccessReviewCampaigns(t *testing.T) {
 			assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		})
 	}
+}
+
+// foldDriverFault is a storage fault whose driver text contains the words "not found":
+// a text matcher would read it as a missing target.
+var foldDriverFault = errors.New("driver: relation lookup failed, row not found in replica")
+
+func (fw *foldWorld) armFault(method string, nth int, err error) {
+	fw.faulty.Arm(&faultstorage.FaultSpec{Method: method, NthCall: nth, Kind: faultstorage.KindError, Err: err})
+}
+
+// requireNot404Fault asserts a fault answered neither 404 nor 2xx (the verdict for an
+// absent target) and, when want503, that it is the storage_unavailable answer.
+func requireNot404Fault(t *testing.T, w *httptest.ResponseRecorder, want503 bool, what string) {
+	t.Helper()
+	assert.NotEqual(t, http.StatusNotFound, w.Code, "%s: a storage fault answered \"not found\": %s", what, w.Body.String())
+	assert.GreaterOrEqual(t, w.Code, 500, "%s: %s", what, w.Body.String())
+	if want503 {
+		requireFold503(t, w, what)
+	}
+	assert.NotContains(t, w.Body.String(), "driver:", what+": the driver cause must not reach the client")
+}
+
+// item 3: handler text-match families converted to errors.Is on a typed error.
+func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
+	fw := newFoldWorld(t)
+	ctx := t.Context()
+	cat := NewCatalogHandler(fw.cs)
+	p, s := fw.secret(t, "fold3")
+
+	t.Run("notifications MarkRead", func(t *testing.T) {
+		h := NewNotificationHandler(fw.cs)
+		n := &models.Notification{UserID: fw.admin.ID, Title: "t", Message: "m"}
+		require.NoError(t, fw.db.Create(n).Error)
+		call := func(id uint) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			h.MarkRead(w, suReq(http.MethodPost, "", map[string]string{"id": suID(id)}))
+			return w
+		}
+		fw.armFault("MarkNotificationRead", 1, foldDriverFault)
+		requireNot404Fault(t, call(n.ID), false, "MarkNotificationRead fault")
+		require.True(t, fw.faulty.Fired())
+		fw.faulty.Arm(nil)
+		assert.Equal(t, http.StatusNotFound, call(9_999_999).Code, "a true not-found stays 404")
+		assert.Equal(t, http.StatusOK, call(n.ID).Code)
+	})
+
+	t.Run("secret ACL revoke", func(t *testing.T) {
+		h, err := NewSecretHandler(fw.cs)
+		require.NoError(t, err)
+		call := func(aclID string) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			h.RevokeSecretACL(w, suReq(http.MethodDelete, "", map[string]string{"id": suID(s.ID), "aclId": aclID}))
+			return w
+		}
+		fw.armFault("ListSecretACLs", 1, foldDriverFault)
+		requireNot404Fault(t, call("1"), false, "ListSecretACLs fault")
+		require.True(t, fw.faulty.Fired())
+		fw.faulty.Arm(nil)
+		assert.Equal(t, http.StatusNotFound, call("9999999").Code, "a true not-found stays 404")
+	})
+
+	t.Run("risk exception approve", func(t *testing.T) {
+		h := NewDashboardHandler(fw.cs)
+		call := func(id string) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			h.ApproveRiskException(w, suReq(http.MethodPost, "", map[string]string{"id": id}))
+			return w
+		}
+		fw.armFault("GetRiskException", 1, foldDriverFault)
+		requireNot404Fault(t, call("1"), false, "GetRiskException fault")
+		require.True(t, fw.faulty.Fired())
+		fw.faulty.Arm(nil)
+		assert.Equal(t, http.StatusNotFound, call("9999999").Code, "a true not-found stays 404")
+	})
+
+	t.Run("group members", func(t *testing.T) {
+		h, err := NewGroupHandler(fw.cs)
+		require.NoError(t, err)
+		g, err := fw.local.CreateGroup(ctx, &models.Group{Name: "fold3-grp", NameFolded: "fold3-grp"})
+		require.NoError(t, err)
+		list := func(id string) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			h.GetGroupMembers(w, suReq(http.MethodGet, "", map[string]string{"id": id}))
+			return w
+		}
+		fw.armFault("ListGroupMembers", 1, foldDriverFault)
+		requireNot404Fault(t, list(suID(g.ID)), false, "ListGroupMembers fault")
+		require.True(t, fw.faulty.Fired())
+		fw.faulty.Arm(nil)
+		assert.Equal(t, http.StatusNotFound, list("9999999").Code, "a true not-found stays 404")
+		assert.Equal(t, http.StatusOK, list(suID(g.ID)).Code)
+
+		add := func(groupID string) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			h.AddGroupMember(w, suReq(http.MethodPost, `{"user_id":`+suID(fw.admin.ID)+`}`, map[string]string{"id": groupID}))
+			return w
+		}
+		fw.armFault("AddUserToGroup", 1, foldDriverFault)
+		requireNot404Fault(t, add(suID(g.ID)), false, "AddUserToGroup fault")
+		require.True(t, fw.faulty.Fired())
+		fw.faulty.Arm(nil)
+		assert.Equal(t, http.StatusNotFound, add("9999999").Code, "a true not-found stays 404")
+	})
+
+	t.Run("access review revoke and attest", func(t *testing.T) {
+		// revoke: the group branch reads through c.storage (the share branch reads inside a
+		// transaction the double cannot fault; its classification is unit-tested in core).
+		g, err := fw.local.CreateGroup(ctx, &models.Group{Name: "fold3-rev", NameFolded: "fold3-rev"})
+		require.NoError(t, err)
+		revoke := func(groupID string) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			cat.RevokeProjectAccessReview(w, suReq(http.MethodPost,
+				`{"source":"role","principal_type":"group","principal_id":`+groupID+`,"role_id":1}`, map[string]string{"id": suID(p.ID)}))
+			return w
+		}
+		fw.armFault("GetGroup", 1, foldDriverFault)
+		w := revoke(suID(g.ID))
+		require.True(t, fw.faulty.Fired())
+		requireFold503(t, w, "revoke GetGroup fault")
+		fw.faulty.Arm(nil)
+		assert.Equal(t, http.StatusNotFound, revoke("9999999").Code, "a true not-found stays 404")
+
+		other, err := fw.local.CreateUser(ctx, &models.User{
+			Username: "fold3-other", UsernameFolded: "fold3-other", Email: "fold3-other@example.com", EmailFolded: "fold3-other@example.com",
+			IsActive: true, AccountState: "active",
+		})
+		require.NoError(t, err)
+		attest := func(secretID string) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			cat.AttestProjectAccessReview(w, suReq(http.MethodPost,
+				`{"source":"direct_share","principal_type":"user","principal_id":`+suID(other.ID)+`,"secret_id":`+secretID+`}`, map[string]string{"id": suID(p.ID)}))
+			return w
+		}
+		fw.armFault("GetSecret", 1, foldDriverFault)
+		w = attest(suID(s.ID))
+		require.True(t, fw.faulty.Fired())
+		requireFold503(t, w, "attest GetSecret fault")
+		fw.faulty.Arm(nil)
+		assert.Equal(t, http.StatusNotFound, attest("9999999").Code, "a true not-found stays 404")
+	})
+
+	t.Run("create folder", func(t *testing.T) {
+		h := NewFolderHandler(fw.cs)
+		var env models.Environment
+		require.NoError(t, fw.db.First(&env, "project_id = ?", p.ID).Error)
+		call := func(parent uint) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			h.CreateFolder(w, suReq(http.MethodPost, `{"name":"f","project_id":`+suID(p.ID)+`,"environment_id":`+suID(env.ID)+`,"parent_id":`+suID(parent)+`}`, nil))
+			return w
+		}
+		fired := 0
+		for nth := 1; nth <= 6; nth++ {
+			fw.armFault("GetSecret", nth, foldDriverFault)
+			w := call(s.ID)
+			if !fw.faulty.Fired() {
+				break
+			}
+			assert.NotEqual(t, http.StatusNotFound, w.Code, "GetSecret fault #%d answered not-found: %s", nth, w.Body.String())
+			if w.Code == http.StatusServiceUnavailable {
+				requireFold503(t, w, "GetSecret fault")
+				fired++
+			}
+		}
+		fw.faulty.Arm(nil)
+		assert.GreaterOrEqual(t, fired, 1, "the parent-folder read is classified")
+		w := call(9_999_999)
+		assert.Equal(t, http.StatusNotFound, w.Code, "a true not-found stays 404: %s", w.Body.String())
+		assert.Contains(t, w.Body.String(), "Parent folder not found")
+	})
+
+	t.Run("transition membership", func(t *testing.T) {
+		m := &models.ProjectMembership{ProjectID: p.ID, UserID: fw.admin.ID, Role: "viewer", State: core.MembershipInvited, InvitedAt: time.Now()}
+		require.NoError(t, fw.db.Create(m).Error)
+		call := func(id uint) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			cat.TransitionMembership(w, suReq(http.MethodPut, `{"action":"revoke"}`, map[string]string{"id": suID(p.ID), "membershipId": suID(id)}))
+			return w
+		}
+		fw.armFault("GetProjectMembership", 1, foldDriverFault)
+		requireFold503(t, call(m.ID), "GetProjectMembership fault")
+		require.True(t, fw.faulty.Fired())
+		fw.faulty.Arm(nil)
+		w := call(9_999_999)
+		assert.Equal(t, http.StatusNotFound, w.Code, "a true not-found stays 404: %s", w.Body.String())
+		assert.Equal(t, http.StatusOK, call(m.ID).Code)
+	})
 }
