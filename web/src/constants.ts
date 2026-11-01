@@ -34,7 +34,6 @@ export const API_ENDPOINTS = {
         GET: (id: number) => `/api/v1/shares/${id}`,
         UPDATE: (id: number) => `/api/v1/shares/${id}`,
         DELETE: (id: number) => `/api/v1/shares/${id}`,
-        SELF_REMOVE: (id: number) => `/api/v1/shares/${id}/self-remove`,
         // Project-scoped recipient search for the Share dialog (SHARE-2).
         RECIPIENTS: (projectId: number) => `/api/v1/projects/${projectId}/share-recipients`,
     },
@@ -77,8 +76,6 @@ export const ROUTES = {
     PROJECT_SETTINGS: (id: number) => `/projects/${id}/settings`,
     // Other
     SHARING: '/sharing',
-    SHARED_WITH_ME: '/sharing/with-me',
-    SHARED_BY_ME: '/sharing/by-me',
     PROFILE: '/profile',
     SETTINGS: '/settings',
     SECURITY: '/security',
