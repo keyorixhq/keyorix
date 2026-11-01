@@ -135,7 +135,7 @@ func AuthStatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) e
 	// fails fast instead of racing a concurrent migrate-provider/rotate.
 	if err := authEnc.AcquireSharedKeyLock(); err != nil {
 		authEnc.Shutdown()
-		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+		return withLockContentionHint(err, "a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry")
 	}
 	defer authEnc.Shutdown()
 	status := authEnc.GetAuthEncryptionStatus()
@@ -193,7 +193,7 @@ func EnableAuthEncryptionWithConfig(cfg *config.Config, force bool, passSrc cryp
 	// fails fast instead of racing a concurrent migrate-provider/rotate.
 	if err := authEnc.AcquireSharedKeyLock(); err != nil {
 		authEnc.Shutdown()
-		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+		return withLockContentionHint(err, "a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry")
 	}
 	defer authEnc.Shutdown()
 	if alreadyEnabled {
@@ -379,7 +379,7 @@ func ValidateAuthEncryptionWithConfig(cfg *config.Config, verbose bool, passSrc 
 	// fails fast instead of racing a concurrent migrate-provider/rotate.
 	if err := authEnc.AcquireSharedKeyLock(); err != nil {
 		authEnc.Shutdown()
-		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+		return withLockContentionHint(err, "a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry")
 	}
 	defer authEnc.Shutdown()
 
@@ -443,7 +443,7 @@ func ValidatePasswordResetTokens(db *gorm.DB, authEnc *encryption.AuthEncryption
 func openAuthKeyWriter(cfg *config.Config, db *gorm.DB, passphrase, what string) (*encryption.AuthEncryption, error) {
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
 	if err := authEnc.AcquireExclusiveKeyLock(); err != nil {
-		return nil, fmt.Errorf("refusing to %s: %w — stop the running server before running it", what, err)
+		return nil, fmt.Errorf("refusing to %s: %w", what, withLockContentionHint(err, "stop the running server before running it"))
 	}
 	if err := authEnc.RecoverInterruptedRotation(); err != nil {
 		authEnc.Shutdown()

@@ -542,7 +542,7 @@ func MigrateProviderCleanupWithConfig(cfg *config.Config, baseDir string, dryRun
 	}
 	lockSvc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 	if err := lockSvc.AcquireExclusiveKeyLock(); err != nil {
-		return fmt.Errorf("refusing to clean up migrate-backup files: %w — a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry", err)
+		return fmt.Errorf("refusing to clean up migrate-backup files: %w", withLockContentionHint(err, "a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry"))
 	}
 	defer lockSvc.Shutdown()
 	matches, err := FindMigrateBackups(baseDir, cfg.Storage.Encryption.DEKPath)
