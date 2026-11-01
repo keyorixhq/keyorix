@@ -187,8 +187,9 @@ func (ls *LocalStorage) GetRoleByName(ctx context.Context, name string) (*models
 	return &role, nil
 }
 
-// UpdateRole writes the two columns a role update may change, description and
-// assignable_scope, to the row with role.ID, and returns the stored row.
+// UpdateRole writes the columns a role update may change, description and
+// (unless kept, below) assignable_scope, to the row with role.ID, and returns
+// the stored row.
 //
 // STORE-STALE-WRITE-1: this used to be a full-row Save. Save is an upsert: when
 // the UPDATE matched no row because a concurrent DeleteRole had committed after
@@ -200,12 +201,19 @@ func (ls *LocalStorage) GetRoleByName(ctx context.Context, name string) (*models
 // storage.ErrRoleNotFound and the caller's transaction rolls back. Name,
 // NameFolded and BypassesPermissionChecks are never written here (names are
 // immutable, #1494; the bypass flag has its own setter).
+//
+// An empty role.AssignableScope means "keep the stored scope": the column is
+// left out of the UPDATE, so a narrowing another replica committed after the
+// caller read the role survives (#3909). Writing back the value the caller read
+// instead would undo it under READ COMMITTED, with no lock to stop it. "" is
+// never a valid scope to store (models.IsValidRoleAssignableScope).
 func (ls *LocalStorage) UpdateRole(ctx context.Context, role *models.Role) (*models.Role, error) {
 	db := ls.db.WithContext(ctx)
-	res := db.Model(&models.Role{}).Where("id = ?", role.ID).Updates(map[string]any{
-		"description":      role.Description,
-		"assignable_scope": role.AssignableScope,
-	})
+	cols := map[string]any{"description": role.Description}
+	if role.AssignableScope != "" {
+		cols["assignable_scope"] = role.AssignableScope
+	}
+	res := db.Model(&models.Role{}).Where("id = ?", role.ID).Updates(cols)
 	if res.Error != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
