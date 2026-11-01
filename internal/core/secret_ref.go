@@ -47,7 +47,16 @@ func (c *KeyorixCore) ResolveSecretRef(ctx context.Context, ref string) (*models
 	}
 
 	secret, err := c.storage.GetSecretByName(ctx, secretName, projectID, envID)
-	if err != nil || secret == nil {
+	if err != nil {
+		// Only a positive "no such row" is a not-found. A read fault is returned
+		// unchanged so transports answer retry (503 / Unavailable) instead of
+		// telling the caller the secret does not exist (STORAGE-ERR-CLASS-4).
+		if isPositiveNotFound(err) {
+			return nil, ErrSecretRefNotFound
+		}
+		return nil, err
+	}
+	if secret == nil {
 		return nil, ErrSecretRefNotFound
 	}
 	return secret, nil
