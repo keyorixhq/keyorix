@@ -45,12 +45,16 @@ func (h *CatalogHandler) CreateSecretAccessRequest(w http.ResponseWriter, r *htt
 		return
 	}
 	if _, err := h.coreService.GetSecretWithPermissionCheck(r.Context(), body.SecretID, actor.UserID); err != nil {
+		// A storage read fault says nothing about the secret: retry, not 404.
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
 		return
 	}
 	req, err := h.coreService.RequestSecretAccess(r.Context(), body.SecretID, actor.UserID, body.Reason)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		msg := err.Error()
@@ -106,6 +110,9 @@ func (h *CatalogHandler) GetSecretAccessRequest(w http.ResponseWriter, r *http.R
 	}
 	req, err := h.coreService.GetSecretAccessRequest(r.Context(), reqID, actor.UserID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		sendError(w, "NotFound", "Access request not found", http.StatusNotFound, nil)
 		return
 	}
