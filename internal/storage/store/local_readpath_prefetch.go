@@ -99,7 +99,7 @@ func readPathPrefetchPartsFor(triggerExpr, genExpr string, wantScheduleVersion b
 		"  LEFT JOIN projects ON projects.id = machine_identity_roles.project_id\n" +
 		"  LEFT JOIN environments ON environments.id = machine_identity_roles.environment_id\n" +
 		"  WHERE machine_identity_roles.machine_identity_id = ?\n" +
-		"   AND (machine_identity_roles.project_id = 0 OR (machine_identity_roles.project_id = ? AND projects.deleted_at IS NULL))\n" +
+		"   AND (machine_identity_roles.project_id = 0 OR (machine_identity_roles.project_id = ? AND projects.id IS NOT NULL AND projects.deleted_at IS NULL))\n" +
 		"   AND (machine_identity_roles.environment_id = 0 OR (machine_identity_roles.environment_id = ? AND environments.deleted_at IS NULL))\n" +
 		") ids ON 1 = 1\n" +
 		"LEFT JOIN system_metadata gen ON gen.key = ?"

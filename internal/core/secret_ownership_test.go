@@ -52,6 +52,7 @@ func newOwnershipFixture(t *testing.T) (*KeyorixCore, uint) {
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}))
+	seedLiveProjects(t, db, 1) // scoped grants need live projects rows (#2795)
 	for _, u := range []models.User{
 		{ID: 1, Username: "owner", Email: "o@test.com"},
 		{ID: 2, Username: "alice", Email: "a@test.com"},

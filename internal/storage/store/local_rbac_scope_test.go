@@ -42,6 +42,7 @@ func sc(project, env uint) storage.Scope {
 
 func TestGetUserRoleIDsAt_ScopeBoundary(t *testing.T) {
 	ls := newRBACScopeTestStore(t)
+	seedLiveProjects(t, ls, 5, 6, 7) // a scoped grant needs a live projects row (#2795)
 	ctx := context.Background()
 	// user 1 grants: role 10 global, 20 project-5, 30 project-5/env-9, 40 project-6.
 	grants := []models.UserRole{
@@ -179,6 +180,7 @@ func TestGetUserRoleIDsExact_NoGlobalMatching(t *testing.T) {
 
 func TestGetUserGroupRoleIDsAt_ScopeBoundary(t *testing.T) {
 	ls := newRBACScopeTestStore(t)
+	seedLiveProjects(t, ls, 5, 6, 7) // a scoped grant needs a live projects row (#2795)
 	ctx := context.Background()
 	// user 1 ∈ group 100; group 100 grants role 50 project-5/env-9, role 60 global.
 	// A live (non-deleted) group is required — the authz query excludes deleted groups.

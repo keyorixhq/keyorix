@@ -335,6 +335,7 @@ func TestMachineIdentityCredential_CountByClassification(t *testing.T) {
 func TestMachineIdentityRoles(t *testing.T) {
 	ctx := context.Background()
 	ls := newMachCredStore(t)
+	seedLiveProjects(t, ls, 1) // a scoped grant needs a live projects row (#2795)
 
 	// Create role.
 	role := &models.Role{Name: "reader", Description: "read-only"}
@@ -693,6 +694,7 @@ func TestRBAC_RolesAndPermissions(t *testing.T) {
 func TestRBAC_UserRoles(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACStore(t)
+	seedLiveProjects(t, ls, 1) // a scoped grant needs a live projects row (#2795)
 
 	// Create role.
 	editorName, err := identity.NewFoldedName("editor")

@@ -1,0 +1,5 @@
+### Security
+- **A role grant whose project row is missing no longer authorizes (#2795).** The role readers joined `projects` with a `LEFT JOIN` and treated a scoped grant as live when `projects.deleted_at IS NULL`; with no projects row at all that test is also true, so a `user_roles`, `group_roles` or `machine_identity_roles` row left behind after a project was hard-deleted or purged still granted. Every reader (`GetUserRoleIDsAt`, `GetUserGroupRoleIDsAt`, `GetMachineRoleIDsAt`, the combined principal-permission statement, the batch authoriser's `ListUserRoleGrants` and the machine read-path prefetch) now also requires `projects.id IS NOT NULL`, on SQLite and PostgreSQL. Global grants (project 0) are unchanged. Guarded by `TestEveryProjectsJoinRequiresTheRow`, which fails on a new `JOIN projects` in store code without the row test.
+
+### Testing
+- **The machine credential lookup's GORM fallback is now tested (#3464).** `TestCredentialLookup_GORMFallbackAnswersAsTheRawPath` forces both fallback branches (a transaction-scoped store and a failed prepare), proves the fallback query ran and compares its answer with the raw path on SQLite and PostgreSQL.

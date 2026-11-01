@@ -1,0 +1,1 @@
+TestEveryProjectsJoinRequiresTheRow	internal/storage/store	#3935	new guard (READPATH-DANGLING-ROLE-1): every JOIN projects in store code must require the joined row (projects.id IS NOT NULL); report-only until its first green nightly on main
