@@ -50,11 +50,10 @@ func TestTransferOwnership_UnauthorizedActorGetsIdenticalRefusal(t *testing.T) {
 			for label, newOwner := range tc.targets {
 				c, id := newOwnershipFixture(t)
 				if tc.orphan {
-					s, err := c.storage.GetSecret(ctx, id)
+					orphan := uint(0)
+					matched, err := c.storage.UpdateSecretFields(ctx, id, coreStorage.SecretFieldUpdate{OwnerID: &orphan})
 					require.NoError(t, err)
-					s.OwnerID = 0
-					_, err = c.storage.UpdateSecret(ctx, s)
-					require.NoError(t, err)
+					require.True(t, matched)
 				}
 				_, err := c.TransferSecretOwnership(ctx, id, newOwner, 2, ActorTypeUser)
 				require.Error(t, err, label)

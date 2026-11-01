@@ -807,43 +807,10 @@ func (ls *LocalStorage) ClearProjectSecretOwnership(ctx context.Context, userID,
 // WRITE of it. Both had to be fixed, and neither fixes the other.
 var secretNodeSQLOwnedColumns = []string{"read_count"}
 
-// UpdateSecret updates an existing secret.
-//
-// read_count is omitted deliberately — see secretNodeSQLOwnedColumns. A caller
-// that genuinely needs to change the counter must go through the dedicated
-// conditional path, not through a full-struct save.
-// UpdateSecret is the full-row Save that UpdateSecretFields replaces — see the
-// storage.Storage interface doc for why exactly one caller still reaches it and
-// which open PR removes that caller (#2695 / #2668).
-func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
-	if err := ls.db.WithContext(ctx).Omit(secretNodeSQLOwnedColumns...).Save(secret).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	// Save() wrote every other column but left read_count alone, so the struct we
-	// hand back still carries the caller's stale value. Re-read it rather than
-	// returning a row that disagrees with the database about a security counter.
-	//
-	// The error is deliberately swallowed, and that is safe rather than merely
-	// convenient: the write above has already COMMITTED, so returning an error
-	// here would tell the caller its update failed when it did not. What a failed
-	// re-read costs is a stale ReadCount on the returned struct and nothing more
-	// — enforcement never consults this field (TryIncrementSecretNodeReadCount
-	// evaluates `read_count < max_reads` inside the UPDATE itself, against the
-	// stored value), and the Omit above means the stale number can never be
-	// written back. So the failure mode is a cosmetically stale number in one
-	// response, not a refunded read.
-	var fresh models.SecretNode
-	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
-		Select("read_count").Where(sqlWhereID, secret.ID).Take(&fresh).Error; err == nil {
-		secret.ReadCount = fresh.ReadCount
-	}
-	return secret, nil
-}
-
 // UpdateSecretFields persists ONLY the fields f names, onto a LIVE secret row:
 // "UPDATE secret_nodes SET <named columns> WHERE id = ? AND deleted_at IS NULL".
 // See the storage.Storage interface doc and SecretFieldUpdate's own comment for
-// why the full-row UpdateSecret this replaced (a bare GORM Save) was unsafe for
+// why the full-row Save this replaced (a bare GORM Save) was unsafe for
 // every one of its callers (#2695).
 //
 // `expiration` is normalised to UTC here because this raw UPDATE bypasses

@@ -459,8 +459,8 @@ func TestGetSecretsByIDs_Empty(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-// UpdateSecret — success path.
-func TestUpdateSecret_Success(t *testing.T) {
+// UpdateSecretFields — success path.
+func TestUpdateSecretFields_Success(t *testing.T) {
 	ls := newSecretsStore(t)
 	ctx := context.Background()
 
@@ -469,8 +469,11 @@ func TestUpdateSecret_Success(t *testing.T) {
 	s, err := ls.CreateSecret(ctx, &models.SecretNode{ProjectID: p.ID, EnvironmentID: e.ID, Name: "K", IsSecret: true})
 	require.NoError(t, err)
 
-	s.Name = "K2"
-	updated, err := ls.UpdateSecret(ctx, s)
+	name := "K2"
+	matched, err := ls.UpdateSecretFields(ctx, s.ID, storage.SecretFieldUpdate{Name: &name})
+	require.NoError(t, err)
+	require.True(t, matched)
+	updated, err := ls.GetSecret(ctx, s.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "K2", updated.Name)
 }

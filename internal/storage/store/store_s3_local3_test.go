@@ -124,9 +124,12 @@ func TestSecret_GetByNameUpdateCertNotAfter(t *testing.T) {
 	_, err = ls.GetSecretByName(ctx, "nope", p.ID, e.ID)
 	require.Error(t, err)
 
-	// UpdateSecret.
-	sn.Description = "updated"
-	updated, err := ls.UpdateSecret(ctx, sn)
+	// UpdateSecretFields.
+	desc := "updated"
+	matched, err := ls.UpdateSecretFields(ctx, sn.ID, coreStorage.SecretFieldUpdate{Description: &desc})
+	require.NoError(t, err)
+	require.True(t, matched)
+	updated, err := ls.GetSecret(ctx, sn.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "updated", updated.Description)
 
