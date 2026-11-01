@@ -31,7 +31,7 @@ func TestDeleteExpiredBreakGlassBefore_KeepsUnsettledDegraded(t *testing.T) {
 	owed := &models.PendingAuditEvent{EventType: "break_glass.activated", Event: "{}", BreakGlassActivationID: degraded.ID}
 	require.NoError(t, ls.db.Create(owed).Error)
 
-	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now())
+	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), n, "only the normal, reviewed, old activation is purged")
 	var left []models.BreakGlassActivation
@@ -62,7 +62,7 @@ func TestDeleteExpiredBreakGlassBefore_KeepsUnsettledDegraded(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, unsettled)
 
-	n, err = ls.DeleteExpiredBreakGlassBefore(ctx, time.Now())
+	n, err = ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), n)
 

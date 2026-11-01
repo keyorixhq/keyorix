@@ -92,7 +92,7 @@ func TestPurgeDeletedEnvironmentsBefore_S27b_HappyPath(t *testing.T) {
 	// Live environment — must not be purged.
 	require.NoError(t, ls.db.Create(&models.Environment{Name: "live-env", ProjectID: 1}).Error)
 
-	n, err := ls.PurgeDeletedEnvironmentsBefore(ctx, time.Now())
+	n, err := ls.PurgeDeletedEnvironmentsBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
@@ -111,7 +111,7 @@ func TestPurgeDeletedUsersBefore_S27b_ZeroUsersNoOp(t *testing.T) {
 	// Only a live user — no soft-deleted ones.
 	require.NoError(t, ls.db.Create(&models.User{Username: "live-user"}).Error)
 
-	n, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().Add(-time.Hour))
+	n, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC().Add(-time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n)
 }
@@ -134,7 +134,7 @@ func TestPurgeDeletedUsersBefore_S27b_PurgesUser(t *testing.T) {
 	require.NoError(t, ls.db.Delete(u).Error)
 	require.NoError(t, ls.db.Unscoped().Model(u).Update("deleted_at", past).Error)
 
-	n, err := ls.PurgeDeletedUsersBefore(ctx, time.Now())
+	n, err := ls.PurgeDeletedUsersBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 
@@ -152,7 +152,7 @@ func TestPurgeDeletedUsersBefore_S27b_PurgesUser(t *testing.T) {
 // no projects are eligible.
 func TestPurgeDeletedProjectsBefore_S27b_ZeroProjects(t *testing.T) {
 	ls := newS27bStore(t, &models.Project{}, &models.UserRole{}, &models.GroupRole{}, &models.MachineIdentityRole{})
-	n, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now().Add(-time.Hour))
+	n, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now().UTC().Add(-time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n)
 }
@@ -172,7 +172,7 @@ func TestPurgeDeletedProjectsBefore_S27b_PurgesProject(t *testing.T) {
 	require.NoError(t, ls.db.Delete(p).Error)
 	require.NoError(t, ls.db.Unscoped().Model(p).Update("deleted_at", past).Error)
 
-	n, err := ls.PurgeDeletedProjectsBefore(ctx, time.Now())
+	n, err := ls.PurgeDeletedProjectsBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 
@@ -213,7 +213,7 @@ func TestDeleteAnomalyAlertsBefore_S27b_AckBranchOnly(t *testing.T) {
 		DetectedAt: past, Acknowledged: false,
 	}).Error)
 
-	n, err := ls.DeleteAnomalyAlertsBefore(ctx, time.Now(), time.Time{})
+	n, err := ls.DeleteAnomalyAlertsBefore(ctx, time.Now().UTC(), time.Time{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
@@ -231,7 +231,7 @@ func TestDeleteAnomalyAlertsBefore_S27b_UnackCeilingBranchOnly(t *testing.T) {
 		DetectedAt: past, Acknowledged: false,
 	}).Error)
 
-	n, err := ls.DeleteAnomalyAlertsBefore(ctx, time.Time{}, time.Now())
+	n, err := ls.DeleteAnomalyAlertsBefore(ctx, time.Time{}, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
