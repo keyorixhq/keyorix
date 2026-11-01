@@ -188,6 +188,12 @@ var hostZoneWriters = []hostZoneWriter{
 		require.True(w.t, ok)
 		return "projects", "updated_at", id
 	}},
+	{"AcknowledgeAnomalyAlert", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+		a := &models.AnomalyAlert{SecretName: w.name("secret"), AlertType: "off_hours", Severity: "low", DetectedAt: at.UTC()}
+		require.NoError(w.t, w.ls.db.Create(a).Error)
+		require.NoError(w.t, w.ls.AcknowledgeAnomalyAlert(ctx, a.ID, w.user(), at))
+		return "anomaly_alerts", "acknowledged_at", a.ID
+	}},
 }
 
 func seedSecret(w ppWorld) *models.SecretNode {
@@ -232,7 +238,7 @@ func TestHookBypassTimeWriters_StoreUTCOnNonUTCHost(t *testing.T) {
 				require.NoError(t, ls.db.AutoMigrate(&models.ShareRecord{}, &models.SecretNode{},
 					&models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.BreakGlassActivation{},
 					&models.SchedulerLockLease{}, &models.AlertEscalationPolicy{}, &models.SecretTemplate{},
-					&models.RotationPolicy{}, &models.SetupToken{}, &models.Session{}))
+					&models.RotationPolicy{}, &models.SetupToken{}, &models.Session{}, &models.AnomalyAlert{}))
 				ctx := context.Background()
 
 				before := time.Now().Add(-time.Second)
