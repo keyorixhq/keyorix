@@ -134,13 +134,6 @@ func (ls *LocalStorage) ReconcileExpiredBreakGlassActivation(ctx context.Context
 	return nil
 }
 
-func (ls *LocalStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error {
-	if err := ls.db.WithContext(ctx).Save(a).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return nil
-}
-
 // RevokeBreakGlassActivation conditionally transitions activation id from
 // active-OR-expired to revoked in a single UPDATE — not a read-then-write — so
 // a concurrent revoke of the same activation cannot silently overwrite this

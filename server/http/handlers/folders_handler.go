@@ -8,6 +8,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -201,6 +202,11 @@ func (h *FolderHandler) DeleteFolder(w http.ResponseWriter, r *http.Request) {
 	// Verify the node is actually a folder before deleting.
 	node, err := h.coreService.GetSecret(r.Context(), uint(id))
 	if err != nil {
+		// A read FAULT is 503, not "Folder not found"; a missing or expired node keeps
+		// the 404 (core.ReadFault is nil for a true not-found).
+		if !errors.Is(err, core.ErrSecretExpired) && sendStorageUnavailable(w, core.ReadFault(err)) {
+			return
+		}
 		h.sendError(w, "NotFound", "Folder not found", http.StatusNotFound, nil)
 		return
 	}

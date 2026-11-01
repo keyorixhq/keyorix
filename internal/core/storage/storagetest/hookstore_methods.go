@@ -163,7 +163,6 @@ type StoreHooks struct {
 	UpdateLoginLockoutState                   func(next storage.Storage, ctx context.Context, id uint, attempts int, lastFailedAt *time.Time, lockedUntil *time.Time, lockoutCount int) error
 	UpdateRotationPolicyFields                func(next storage.Storage, ctx context.Context, id uint, f storage.RotationPolicyFieldUpdate, updatedAt time.Time) (bool, error)
 	UpdateSecretFields                        func(next storage.Storage, ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error)
-	UpdateUser                                func(next storage.Storage, ctx context.Context, user *models.User) (*models.User, error)
 	VerifyAuditChain                          func(next storage.Storage, ctx context.Context, anchor *storage.AuditChainAnchor) (*storage.AuditChainVerification, error)
 	VerifyAuditChainSegment                   func(next storage.Storage, ctx context.Context, seg storage.AuditChainSegment) (*storage.AuditChainVerification, error)
 	WithNamedLock                             func(next storage.Storage, ctx context.Context, lockKey string, fn func(ctx context.Context) error) error

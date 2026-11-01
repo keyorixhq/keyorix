@@ -208,7 +208,12 @@ func deleteProjectCascade(tx *gorm.DB, id uint, softDeleteDays int) error {
 	// carry a different, earlier deleted_at). GORM auto-scopes Update on a soft-delete
 	// model to deleted_at IS NULL, so already-deleted children are left untouched and
 	// keep their original timestamp.
-	deletedAt := time.Now()
+	//
+	// UTC, like GORM's NowFunc that stamps an independent DeleteSecret /
+	// DeleteEnvironment: SQLite compares deleted_at as text, so a host-zone value
+	// here sorted before a UTC stamp of an earlier moment west of UTC, and
+	// RestoreProject's ">= cascadeTS" resurrected that row (REVIEW-3868-DEEP-2 F1).
+	deletedAt := time.Now().UTC()
 	// Row-lock the project FIRST, unscoped (#2656 INV-STORE-21, #2723/#2724):
 	// see lockProjectRowForCascade.
 	if err := lockProjectRowForCascade(tx, id); err != nil {

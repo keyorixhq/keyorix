@@ -429,6 +429,10 @@ func scanFileForBypassesG1619(fset *token.FileSet, file *ast.File, hooked map[st
 // #1840 for why. The ordinal only ever appears where one function raw-writes
 // the same field more than once.
 var beforeSaveBypassAllowlistG1619 = map[string]string{
+	"internal/core/project_delete_machine_suspend_test.go::psDeleteRestore::MachineIdentity.UpdatedAt#1": "MachineIdentity.UpdatedAt — (SQLITE-UTC-NOWFUNC-1 made " +
+		"UpdatedAt a hooked column) the fixture models an older binary that moves updated_at without knowing the cascade marker " +
+		"columns; `time.Now().UTC().Add(time.Second)` is already canonical, so BeforeSave's normalization would be a no-op, and a " +
+		"raw UpdateColumns is used because the point is a write that does not touch the marker columns.",
 	"server/http/grpc_rest_secret_read_guard_parity_test.go::TestSecretReadGuards_DenyIdenticallyOverGRPCAndREST::SecretNode.Expiration#1": "SecretNode.Expiration — same \"simulate a not-yet-swept expiry\" fixture technique as " +
 		"local_sharing_test.go: `past := time.Now().UTC().Add(-time.Hour)`, already canonical, so BeforeSave would be a no-op; commented in place.",
 	"internal/storage/store/local_sharing_test.go::TestListShares_ExcludeExpiredIncludeActive::ShareRecord.ExpiresAt#1": "ShareRecord.ExpiresAt — #1619's original known case, fixed pre-#1619 in #1606: `past` is " +

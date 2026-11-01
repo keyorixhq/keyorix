@@ -20,6 +20,12 @@
 //     classifyReadError, credentialLookupError, isPositiveNotFound, errors.Is, errors.As or an
 //     Is*NotFound predicate, and the Errorf does not wrap err with %w.
 //
+// STORAGE-ERR-CLASS-3 widened it to the REST scope resolvers: it also reads server/middleware/auth.go
+// (keys "middleware/auth.go:Func"), where the core service is the receiver `cs` (cs.Storage().X
+// and cs.X pass-through getters) and the not-found verdict is the sentinel errTargetNotFound,
+// returned or handed to handleScopeResolutionError anywhere in the if body. There the classifier
+// is core.ReadFault (a fault becomes errTargetReadFault).
+//
 // What it does NOT catch:
 //   - data flow: "the last assignment before the if, in source order" stands in for it, so an
 //     error carried through a variable, a struct field or a closure is invisible, and a branchy
@@ -27,13 +33,17 @@
 //   - the verdict built elsewhere (`return notFound` where notFound is a variable built earlier,
 //     as WithdrawAccessRequest does: its constant is looked at only when it is an Errorf in the
 //     if body);
-//   - folds in `switch`/`else` arms and in the server layers (srcpath.CoreFamilyGoFiles only);
+//   - folds in `switch`/`else` arms, and in the server layers other than server/middleware/auth.go
+//     (other middleware files, server/http handlers, gRPC services);
+//   - a middleware fold whose body ALSO classifies something else with errors.Is (e.g.
+//     RequireScopedSecretRefPermission's errors.Is(err, core.ErrSecretRefInvalid)): any errors.Is
+//     counts as classifying;
 //   - reads through an unrecognised receiver name, a stored func value or an interface helper;
 //   - a body that classifies in an unrecognised way (it is then a false negative of the
 //     classifier list, not of the rule: add the helper's name to classifierCalls).
 //
-// Report-only on its first day (docs/guard-rollout.d/TestNoStorageReadErrorFoldedIntoNotFound.tsv,
-// docs/guard-rollout-contract.md).
+// Report-only on its first day, and again for the server/middleware widening
+// (docs/guard-rollout.d/TestNoStorageReadErrorFoldedIntoNotFound.tsv, docs/guard-rollout-contract.md).
 
 package guards
 
@@ -53,6 +63,21 @@ import (
 )
 
 var foldedReadPrefixes = append(append([]string{}, storageReadPrefixes...), "Lock")
+
+// foldedReadCoreReceivers: receivers that are the core service in the server layers, whose
+// pass-through getters (GetDynamicSecretConfig, GetDynamicSecretLease) return the raw storage
+// error. Only the fold scanner uses them.
+var foldedReadCoreReceivers = map[string]bool{"cs": true}
+
+// notFoundSentinels: package-level not-found verdicts that are an identifier, not an Errorf.
+var notFoundSentinels = map[string]bool{"errTargetNotFound": true}
+
+// foldedReadMiddlewareDir / foldedReadMiddlewareFiles: the server-layer files the scan also
+// reads (the REST scope resolvers and the per-secret gates live in auth.go). A missing file
+// fails the parse, so a move cannot leave the widening silently empty.
+const foldedReadMiddlewareDir = "server/middleware"
+
+var foldedReadMiddlewareFiles = []string{"auth.go"}
 
 // classifierCalls: calls whose presence in the condition or the body means the error is
 // classified (a positive not-found is told from a fault) before the verdict is chosen.
@@ -85,7 +110,10 @@ func isStorageReadCall(e ast.Expr) (string, bool) {
 		return "", false
 	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || !looksLikeStorage(sel.X) {
+	if !ok {
+		return "", false
+	}
+	if id, isIdent := sel.X.(*ast.Ident); !looksLikeStorage(sel.X) && (!isIdent || !foldedReadCoreReceivers[id.Name]) {
 		return "", false
 	}
 	for _, p := range foldedReadPrefixes {
@@ -197,6 +225,19 @@ func containsClassifier(n ast.Node) bool {
 	return found
 }
 
+// mentionsNotFoundSentinel reports whether body uses a notFoundSentinels identifier (returned,
+// passed to a call or assigned): the verdict "no such target" chosen without classifying err.
+func mentionsNotFoundSentinel(body ast.Node) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && notFoundSentinels[id.Name] {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
 // scanFoldedReads returns every recognised fold in f (file name file).
 func scanFoldedReads(fset *token.FileSet, f *ast.File, file string) []foldedRead {
 	var out []foldedRead
@@ -218,6 +259,10 @@ func scanFoldedReads(fset *token.FileSet, f *ast.File, file string) []foldedRead
 				return
 			}
 			if classified {
+				return
+			}
+			if mentionsNotFoundSentinel(ifs.Body) {
+				out = append(out, foldedRead{File: file, Func: fn.Name.Name, Callee: callee, Line: fset.Position(ifs.Pos()).Line})
 				return
 			}
 			ast.Inspect(ifs.Body, func(n ast.Node) bool {
@@ -315,6 +360,46 @@ func (c *K) attest() error {
 			t.Errorf("%s: want exactly one fold hit, got %+v", name, got)
 		}
 	}
+	// The REST scope resolvers and the per-secret gate as they were before STORAGE-ERR-CLASS-3.
+	middlewareRed := map[string]string{
+		"resolver returns errTargetNotFound": `package middleware
+func ScopeFromRotationPolicyParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		policy, err := cs.Storage().GetRotationPolicy(r.Context(), id)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{ProjectID: derefUint(policy.ProjectID)}, nil
+	}
+}`,
+		"core pass-through getter": `package middleware
+func ScopeFromDynamicSecretConfigParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		cfg, err := cs.GetDynamicSecretConfig(r.Context(), id)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{ProjectID: cfg.ProjectID}, nil
+	}
+}`,
+		"gate hands errTargetNotFound on": `package middleware
+func handleScopedSecretPermissionRequest(w http.ResponseWriter, r *http.Request) {
+	secret, err := cs.Storage().GetSecret(r.Context(), secretID)
+	if err != nil {
+		if authorizeLookupUnavailable(w, r, err) {
+			return
+		}
+		handleScopeResolutionError(w, r, cs, userCtx, permission, errTargetNotFound, defaultDenyMessage)
+		return
+	}
+	_ = secret
+}`,
+	}
+	for name, src := range middlewareRed {
+		if got := scanFoldedReadsInSource(t, "auth.go", src); len(got) != 1 {
+			t.Errorf("middleware %s: want exactly one fold hit, got %+v", name, got)
+		}
+	}
 
 	green := map[string]string{
 		// The fixed machineInProject: the helper classifies, the mismatch is its own branch.
@@ -404,6 +489,50 @@ func (c *K) get() error {
 			t.Errorf("%s: want no hit, got %+v", name, got)
 		}
 	}
+	middlewareGreen := map[string]string{
+		// ScopeFromDynamicSecretLeaseParam since STORAGE-ERR-CLASS-2.
+		"resolver classifies with core.ReadFault": `package middleware
+func ScopeFromDynamicSecretLeaseParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		lease, err := cs.GetDynamicSecretLease(r.Context(), leaseID)
+		if err != nil {
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{ProjectID: lease.ProjectID}, nil
+	}
+}`,
+		"gate classifies before handing the verdict on": `package middleware
+func handleScopedSecretPermissionRequest(w http.ResponseWriter, r *http.Request) {
+	secret, err := cs.Storage().GetSecret(r.Context(), secretID)
+	if err != nil {
+		resolveErr := errTargetNotFound
+		if fault := core.ReadFault(err); fault != nil {
+			resolveErr = fmt.Errorf("%w: %w", errTargetReadFault, fault)
+		}
+		handleScopeResolutionError(w, r, cs, userCtx, permission, resolveErr, defaultDenyMessage)
+		return
+	}
+	_ = secret
+}`,
+		"unparseable target is not a read": `package middleware
+func ScopeFromEnvParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		id, err := scopePathUint(r, param)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{EnvironmentID: id}, nil
+	}
+}`,
+	}
+	for name, src := range middlewareGreen {
+		if got := scanFoldedReadsInSource(t, "auth.go", src); len(got) != 0 {
+			t.Errorf("middleware %s: want no hit, got %+v", name, got)
+		}
+	}
 }
 
 func TestNoStorageReadErrorFoldedIntoNotFound(t *testing.T) {
@@ -424,6 +553,17 @@ func TestNoStorageReadErrorFoldedIntoNotFound(t *testing.T) {
 	if files < 50 {
 		t.Fatalf("scanned only %d core-family files; the source walk has stopped matching", files)
 	}
+	// The REST scope resolvers (STORAGE-ERR-CLASS-3), named file by file: a directory listing
+	// here would be an ad-hoc core-dir walk (TestNoAdHocCoreDirListing).
+	for _, rel := range foldedReadMiddlewareFiles {
+		path := filepath.Join(srcpath.RepoRoot(), filepath.FromSlash(foldedReadMiddlewareDir), rel)
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		hits = append(hits, scanFoldedReads(fset, f, "middleware/"+rel)...)
+	}
 
 	used := map[string]bool{}
 	var msgs []string
@@ -438,7 +578,7 @@ func TestNoStorageReadErrorFoldedIntoNotFound(t *testing.T) {
 	for _, m := range msgs {
 		g.Errorf("%s: a storage fault (outage, timeout, scan error) then reads as \"already gone\" and the operator does not retry. "+
 			"Classify it with classifyReadError / credentialLookupError (a positive not-found keeps the verdict, anything else is "+
-			"ErrStorageReadUnavailable), or add a storage_read_error_folded_exception_<name>_test.go calling "+
+			"ErrStorageReadUnavailable; in server/middleware, core.ReadFault -> errTargetReadFault), or add a storage_read_error_folded_exception_<name>_test.go calling "+
 			"registerFoldedReadException with the reason the fold is safe", m)
 	}
 	for key, why := range foldedReadExceptions {
