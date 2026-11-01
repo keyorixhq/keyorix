@@ -41,7 +41,7 @@ periodically and the output copied to write-once media (write-once/read-
 many optical media, a WORM-mode USB stick, an object-lock bucket) held
 OUTSIDE this host -- an anchor genuinely held externally is the one check
 that constrains a host admin who holds both this database and its
-checkpoint signing key (design-b4-offline-audit-verify.md §2).
+checkpoint signing key.
 
 This does not create or sign a new checkpoint: it exports the most recent
 one the audit-checkpoint scheduler already wrote. If none has been written
