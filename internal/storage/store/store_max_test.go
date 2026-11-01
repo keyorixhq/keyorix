@@ -38,7 +38,9 @@ import (
 
 func newMaxStore(t *testing.T, tag string, ms ...any) *LocalStorage {
 	t.Helper()
-	db := sqlitetest.OpenWithDialector(t, "storemax_", sqlite.Open, &gorm.Config{})
+	// UTC NowFunc like the production factory (internal/storage/factory.go), so a
+	// soft delete stamps deleted_at in UTC and a UTC cutoff compares against it.
+	db := sqlitetest.OpenWithDialector(t, "storemax_", sqlite.Open, &gorm.Config{NowFunc: func() time.Time { return time.Now().UTC() }})
 	if len(ms) > 0 {
 		require.NoError(t, db.AutoMigrate(ms...))
 	}
@@ -256,7 +258,7 @@ func TestCreateUserWithRoleGrants_DuplicateEmailError(t *testing.T) {
 // ListUsersInStateBefore — empty result.
 func TestListUsersInStateBefore_Empty(t *testing.T) {
 	ls := newUserStoreMax(t)
-	users, err := ls.ListUsersInStateBefore(context.Background(), "pending", time.Now())
+	users, err := ls.ListUsersInStateBefore(context.Background(), "pending", time.Now().UTC())
 	require.NoError(t, err)
 	assert.Empty(t, users)
 }
@@ -1011,7 +1013,7 @@ func newPurgeStore(t *testing.T) *LocalStorage {
 // PurgeDeletedUsersBefore — nothing to purge.
 func TestPurgeDeletedUsersBefore_NothingToPurgeMax(t *testing.T) {
 	ls := newPurgeStore(t)
-	n, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	n, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
@@ -1025,7 +1027,7 @@ func TestPurgeDeletedUsersBefore_DeletesUsers(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ls.DeleteUser(ctx, u.ID))
 
-	n, err := ls.PurgeDeletedUsersBefore(ctx, time.Now().Add(time.Hour))
+	n, err := ls.PurgeDeletedUsersBefore(ctx, time.Now().UTC().Add(time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
@@ -1033,7 +1035,7 @@ func TestPurgeDeletedUsersBefore_DeletesUsers(t *testing.T) {
 // PurgeDeletedProjectsBefore — nothing to purge.
 func TestPurgeDeletedProjectsBefore_NothingToPurge(t *testing.T) {
 	ls := newPurgeStore(t)
-	n, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now())
+	n, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
@@ -1047,7 +1049,7 @@ func TestPurgeDeletedProjectsBefore_DeletesProjects(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ls.DeleteProject(ctx, p.ID))
 
-	n, err := ls.PurgeDeletedProjectsBefore(ctx, time.Now().Add(time.Hour))
+	n, err := ls.PurgeDeletedProjectsBefore(ctx, time.Now().UTC().Add(time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
@@ -1055,7 +1057,7 @@ func TestPurgeDeletedProjectsBefore_DeletesProjects(t *testing.T) {
 // PurgeDeletedSecretsBefore — nothing to purge.
 func TestPurgeDeletedSecretsBefore_NothingToPurge(t *testing.T) {
 	ls := newPurgeStore(t)
-	n, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now())
+	n, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
@@ -1071,7 +1073,7 @@ func TestPurgeDeletedSecretsBefore_DeletesSecrets(t *testing.T) {
 	_, _ = ls.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: s.ID, VersionNumber: 1, EncryptedValue: []byte("enc")})
 	require.NoError(t, ls.DeleteSecret(ctx, s.ID))
 
-	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now().Add(time.Hour))
+	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now().UTC().Add(time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 }
@@ -1079,7 +1081,7 @@ func TestPurgeDeletedSecretsBefore_DeletesSecrets(t *testing.T) {
 // DeleteAnomalyAlertsBefore — zero rows.
 func TestDeleteAnomalyAlertsBefore_NoAlerts(t *testing.T) {
 	ls := newPurgeStore(t)
-	n, err := ls.DeleteAnomalyAlertsBefore(context.Background(), time.Now(), time.Now())
+	n, err := ls.DeleteAnomalyAlertsBefore(context.Background(), time.Now().UTC(), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
@@ -1087,7 +1089,7 @@ func TestDeleteAnomalyAlertsBefore_NoAlerts(t *testing.T) {
 // DeleteClosedAccessReviewsBefore — zero rows.
 func TestDeleteClosedAccessReviewsBefore_NoRows(t *testing.T) {
 	ls := newPurgeStore(t)
-	n1, n2, err := ls.DeleteClosedAccessReviewsBefore(context.Background(), time.Now())
+	n1, n2, err := ls.DeleteClosedAccessReviewsBefore(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Zero(t, n1)
 	assert.Zero(t, n2)
@@ -1096,7 +1098,7 @@ func TestDeleteClosedAccessReviewsBefore_NoRows(t *testing.T) {
 // DeleteExpiredBreakGlassBefore — zero rows.
 func TestDeleteExpiredBreakGlassBefore_NoRows(t *testing.T) {
 	ls := newPurgeStore(t)
-	n, err := ls.DeleteExpiredBreakGlassBefore(context.Background(), time.Now())
+	n, err := ls.DeleteExpiredBreakGlassBefore(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
@@ -1104,7 +1106,7 @@ func TestDeleteExpiredBreakGlassBefore_NoRows(t *testing.T) {
 // DeleteResolvedAccessRequestsBefore — zero rows.
 func TestDeleteResolvedAccessRequestsBefore_NoRows(t *testing.T) {
 	ls := newPurgeStore(t)
-	n1, n2, err := ls.DeleteResolvedAccessRequestsBefore(context.Background(), time.Now())
+	n1, n2, err := ls.DeleteResolvedAccessRequestsBefore(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Zero(t, n1)
 	assert.Zero(t, n2)
@@ -1374,7 +1376,7 @@ func TestGetUserRoleIDsExact_Empty(t *testing.T) {
 // DeleteExpiredRoleGrants — no grants → empty slice.
 func TestDeleteExpiredRoleGrants_None(t *testing.T) {
 	ls := newRBACStoreMax(t)
-	grants, err := ls.DeleteExpiredRoleGrants(context.Background(), time.Now())
+	grants, err := ls.DeleteExpiredRoleGrants(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Empty(t, grants)
 }

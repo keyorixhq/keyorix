@@ -32,5 +32,5 @@ func (ls *LocalStorage) SetSystemMetadata(ctx context.Context, key, value string
 	return ls.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
-	}).Create(&models.SystemMetadata{Key: key, Value: value, UpdatedAt: time.Now()}).Error
+	}).Create(&models.SystemMetadata{Key: key, Value: value, UpdatedAt: time.Now().UTC()}).Error
 }

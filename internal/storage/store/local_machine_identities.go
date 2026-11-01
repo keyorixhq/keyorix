@@ -54,7 +54,13 @@ func (ls *LocalStorage) LockMachineIdentityForUpdate(ctx context.Context, id uin
 // UpdateProjectInvitation's `WHERE id = ? AND state = ?` + `Select("*")` shape
 // exactly, so every field the caller mutated on m (State, UpdatedAt, RevokedAt,
 // ...) is persisted in the same statement, not just a hardcoded column subset.
+//
+// The times are written in UTC (UTC-STORE-WRITERS-1): MachineIdentity.BeforeSave
+// runs on the empty Model, not on the struct passed to Updates, so the caller's
+// host-zone clock would otherwise be stored with its offset on SQLite.
 func (ls *LocalStorage) TransitionMachineIdentityState(ctx context.Context, m *models.MachineIdentity, fromState string) (bool, error) {
+	m.CreatedAt, m.UpdatedAt = m.CreatedAt.UTC(), m.UpdatedAt.UTC()
+	m.LastSeenAt, m.RevokedAt, m.CascadeSuspendedAt = utcPtr(m.LastSeenAt), utcPtr(m.RevokedAt), utcPtr(m.CascadeSuspendedAt)
 	res := ls.db.WithContext(ctx).Model(&models.MachineIdentity{}).
 		Where("id = ? AND state = ?", m.ID, fromState).
 		Select("*").
