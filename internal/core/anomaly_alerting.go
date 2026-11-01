@@ -8,8 +8,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"slices"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -24,12 +26,26 @@ const EventAnomalyDetected = "security.anomaly_detected" // #nosec G101 -- audit
 // activity).
 const EventAnomalyAcknowledged = "security.anomaly_acknowledged" // #nosec G101 -- audit event type, not a credential
 
+// ErrAnomalyAlertNotFound is returned by AcknowledgeAnomalyAlert when no alert has the
+// given id. Match with errors.Is; any other error is a storage fault
+// (ErrStorageReadUnavailable).
+var ErrAnomalyAlertNotFound = errors.New("anomaly alert not found")
+
 // AcknowledgeAnomalyAlert marks an anomaly alert acknowledged and records who did it on
 // the audit trail. actorID is the operator performing the dismissal. The acknowledge is
 // gated at the transport by a write-level permission (it mutates a detection record).
 func (c *KeyorixCore) AcknowledgeAnomalyAlert(ctx context.Context, actorID, alertID uint) error {
+	// Look the alert up first: the storage write reports a missing row only as text,
+	// and a text match would read a write FAULT as "no such alert" (ERR-FOLD-HANDLERS-1).
+	alerts, err := c.storage.ListAnomalyAlerts(ctx, nil)
+	if err != nil {
+		return &storageReadFault{cause: err}
+	}
+	if !slices.ContainsFunc(alerts, func(a models.AnomalyAlert) bool { return a.ID == alertID }) {
+		return ErrAnomalyAlertNotFound
+	}
 	if err := c.storage.AcknowledgeAnomalyAlert(ctx, alertID, actorID, c.now()); err != nil {
-		return err
+		return fmt.Errorf("failed to acknowledge anomaly alert: %w", err)
 	}
 	var aid *uint
 	if actorID != 0 {

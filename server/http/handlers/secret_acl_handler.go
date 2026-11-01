@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -66,7 +67,7 @@ func (h *SecretHandler) ListSecretACLs(w http.ResponseWriter, r *http.Request) {
 	}
 	acls, err := h.coreService.ListSecretACLs(r.Context(), uint(secretID))
 	if err != nil {
-		status := aclErrorStatus(err.Error())
+		status := aclErrorStatus(err)
 		msg := err.Error()
 		if status == http.StatusInternalServerError {
 			log.Printf("Error listing ACLs for secret %d: %v", secretID, err)
@@ -110,7 +111,7 @@ func (h *SecretHandler) GrantSecretACL(w http.ResponseWriter, r *http.Request) {
 		if sendAuditUnavailable(w, err) {
 			return
 		}
-		status := aclErrorStatus(err.Error())
+		status := aclErrorStatus(err)
 		msg := err.Error()
 		if status == http.StatusInternalServerError {
 			log.Printf("Error granting ACL for secret %d: %v", secretID, err)
@@ -140,7 +141,7 @@ func (h *SecretHandler) RevokeSecretACL(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.coreService.RevokeSecretACL(r.Context(), userCtx.UserID, uint(secretID), uint(aclID)); err != nil {
-		status := aclErrorStatus(err.Error())
+		status := aclErrorStatus(err)
 		msg := err.Error()
 		if status == http.StatusInternalServerError {
 			log.Printf("Error revoking ACL %d for secret %d: %v", aclID, secretID, err)
@@ -164,10 +165,15 @@ func (h *SecretHandler) RevokeSecretACL(w http.ResponseWriter, r *http.Request) 
 // misreporting a client-correctable 400-class request as an internal server error.
 // Matching the shared "Validation error" prefix directly covers the whole class
 // instead of enumerating every message body.
-func aclErrorStatus(msg string) int {
-	switch {
-	case strings.Contains(msg, "not found"):
+func aclErrorStatus(err error) int {
+	// A missing ACL row or secret/folder node is matched by sentinel (core returns both
+	// typed), never by the word "not found": a storage fault whose driver text says so
+	// must not read as a missing target.
+	if corestorage.IsSecretACLNotFound(err) || corestorage.IsSecretNotFound(err) {
 		return http.StatusNotFound
+	}
+	msg := err.Error()
+	switch {
 	case strings.Contains(msg, "Validation error"), strings.Contains(msg, "invalid"), strings.Contains(msg, "required"), strings.Contains(msg, "permission"):
 		return http.StatusBadRequest
 	case strings.Contains(msg, "not authorized"):

@@ -420,7 +420,8 @@ func (c *KeyorixCore) GetSecretAccessRequest(ctx context.Context, requestID, act
 	notFound := fmt.Errorf("access request not found")
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return nil, notFound
+		// A read FAULT is a retry answer, not "no such request" (ERR-FOLD-HANDLERS-1).
+		return nil, classifyReadError(err, notFound.Error())
 	}
 	if req.SecretID == nil {
 		return nil, notFound
@@ -432,7 +433,12 @@ func (c *KeyorixCore) GetSecretAccessRequest(ctx context.Context, requestID, act
 		return req, nil
 	}
 	if err := c.requireAccessRequestAuthorityAt(ctx, actorID, req.ProjectID); err != nil {
-		return nil, notFound
+		if errors.Is(err, errAdminAuthorityRequired) {
+			return nil, notFound
+		}
+		// Resolving the caller's authority FAILED: not a refusal (same as
+		// loadSecretAccessRequestForResolver). Still fails closed, nothing is returned.
+		return nil, &storageReadFault{cause: err}
 	}
 	return req, nil
 }
