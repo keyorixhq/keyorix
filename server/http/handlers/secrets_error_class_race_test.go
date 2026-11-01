@@ -45,17 +45,8 @@ func softDeleteSecretBeforeUpdate(t *testing.T, db *gorm.DB, secretID uint) {
 	t.Cleanup(func() { _ = db.Callback().Update().Remove(name) })
 }
 
-// Restoring a secret that is not deleted (a double click, or two operators) is
-// 404 in every locale, as the OpenAPI document says; never a 500.
-func TestSecretRestore_LiveSecretIs404InEveryLocale(t *testing.T) {
-	for _, lang := range errorClassLocales {
-		t.Run(lang, func(t *testing.T) {
-			h, _, fx := newSecretsHandlerWithDB(t, lang)
-			w := secretsDo(h.RestoreSecret, http.MethodPost, "", fx.id(), secretsAdminID)
-			assert.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
-		})
-	}
-}
+// Restoring a secret that is not deleted is 409, see
+// TestSecretRestore_LiveSecretIs409WithFixedMessage (secrets_restore_conflict_test.go).
 
 // Restoring a secret that never existed is 404 too.
 func TestSecretRestore_MissingSecretIs404InEveryLocale(t *testing.T) {
