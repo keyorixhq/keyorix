@@ -107,14 +107,6 @@ var knownUncoveredUserPaths = map[string]string{
 	"POST /api/v1/auth/end-impersonation":            "see coverage.go skipList -- impersonation start/end mutates session state, exercised by dedicated impersonation tests, not folded into this driver's shared session",
 	"POST /auth/saml/{provider}/acs":                 "see coverage.go skipList -- requires a real external SAML IdP to produce a valid assertion",
 	"POST /system/init":                              "see coverage.go skipList -- the bootstrap call itself, made directly by harness.StartServer before any client exists (this route IS exercised, just not through a scanned call site)",
-	"POST /scim/v2/Users":                            "SCIM provisioning surface -- see coverage.go skipList, same out-of-band-SCIMToken reasoning",
-	"PATCH /scim/v2/Users/{id}":                      "see coverage.go skipList -- SCIM provisioning surface",
-	"DELETE /scim/v2/Users/{id}":                     "see coverage.go skipList -- SCIM provisioning surface",
-	"POST /scim/v2/Groups":                           "see coverage.go skipList -- SCIM provisioning surface",
-	"PATCH /scim/v2/Groups/{id}":                     "see coverage.go skipList -- SCIM provisioning surface",
-	"PUT /scim/v2/Groups/{id}":                       "see coverage.go skipList -- SCIM provisioning surface",
-	"DELETE /scim/v2/Groups/{id}":                    "see coverage.go skipList -- SCIM provisioning surface",
-	"PUT /scim/v2/Users/{id}":                        "see coverage.go skipList -- SCIM provisioning surface",
 }
 
 // mutatingMethods is deliberately exhaustive over HTTP verbs that write --
