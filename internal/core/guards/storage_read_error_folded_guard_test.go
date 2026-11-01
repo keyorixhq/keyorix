@@ -43,8 +43,9 @@
 //     classifier list, not of the rule: add the helper's name to classifierCalls).
 //
 // STORAGE-ERR-CLASS-4 added the identifier ErrSecretRefNotFound to the not-found sentinels, so
-// the fold ResolveSecretRef had (internal/core/secret_ref.go) is recognised. The other folds that
-// change fixed (GetSecretAccessRequest's `return nil, notFound` variable, the handler pre-checks in
+// a fold of the shape ResolveSecretRef had before ERR-FOLD-HANDLERS-1 (#3903) fixed it
+// (internal/core/secret_ref.go) is recognised; the widening found stageRenderRef
+// (secret_render.go). The other folds STORAGE-ERR-CLASS-4 fixed (the handler pre-checks in
 // server/http/handlers, the gRPC authorizeScopedTarget callers) are outside what it can see.
 //
 // Report-only on its first day, and again for the server/middleware widening
