@@ -186,10 +186,10 @@ func (c *KeyorixCore) ListAccessReviewCampaigns(ctx context.Context, projectID u
 func (c *KeyorixCore) loadScopedCampaign(ctx context.Context, projectID, campaignID uint) (*models.AccessReviewCampaign, error) {
 	campaign, err := c.storage.GetAccessReviewCampaign(ctx, campaignID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		return nil, accessReviewReadError(err)
 	}
 	if campaign.ProjectID != projectID {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return nil, accessReviewNotFound("")
 	}
 	return campaign, nil
 }
@@ -335,10 +335,10 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	defer c.accessReviewDecisionMu.Unlock()
 	item, err := c.storage.GetAccessReviewItem(ctx, itemID)
 	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		return accessReviewReadError(err)
 	}
 	if item.CampaignID != campaignID {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return accessReviewNotFound("")
 	}
 	// Decide once: an already-attested/revoked item must not be flipped. A revoke
 	// removes the real grant, so re-deciding it (revoke→attest) would record

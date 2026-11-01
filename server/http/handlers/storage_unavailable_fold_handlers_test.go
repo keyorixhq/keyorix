@@ -190,3 +190,38 @@ func TestFoldHandlers_Item1_SecretAccessRequestsAndAnomalyAck(t *testing.T) {
 		assert.Equal(t, http.StatusOK, code)
 	})
 }
+
+// item 2: access-review campaigns (JSON and CSV export).
+func TestFoldHandlers_Item2_AccessReviewCampaigns(t *testing.T) {
+	fw := newFoldWorld(t)
+	cat := NewCatalogHandler(fw.cs)
+	p := &models.Project{Name: "fold2-proj"}
+	require.NoError(t, fw.db.Create(p).Error)
+	camp := &models.AccessReviewCampaign{ProjectID: p.ID, Name: "q", State: core.CampaignStateOpen, CreatedBy: fw.admin.ID}
+	require.NoError(t, fw.db.Create(camp).Error)
+	params := func(campaignID uint) map[string]string {
+		return map[string]string{"id": suID(p.ID), "campaignId": suID(campaignID)}
+	}
+	handlers := map[string]http.HandlerFunc{
+		"GetAccessReviewCampaign":       cat.GetAccessReviewCampaign,
+		"ExportAccessReviewCampaignCSV": cat.ExportAccessReviewCampaignCSV,
+	}
+	for name, h := range handlers {
+		t.Run(name, func(t *testing.T) {
+			fw.faulty.Arm(&faultstorage.FaultSpec{Method: "GetAccessReviewCampaign", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
+			w := httptest.NewRecorder()
+			h(w, suReq(http.MethodGet, "", params(camp.ID)))
+			require.True(t, fw.faulty.Fired())
+			requireFold503(t, w, name)
+			fw.faulty.Arm(nil)
+
+			w = httptest.NewRecorder()
+			h(w, suReq(http.MethodGet, "", params(9_999_999)))
+			assert.Equal(t, http.StatusNotFound, w.Code, "a true not-found stays 404: %s", w.Body.String())
+			assert.Empty(t, w.Header().Get("Retry-After"))
+			w = httptest.NewRecorder()
+			h(w, suReq(http.MethodGet, "", params(camp.ID)))
+			assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		})
+	}
+}

@@ -57,6 +57,7 @@ func isPositiveNotFound(err error) bool {
 		storage.IsRoleNotFound(err) ||
 		storage.IsProjectNotFound(err) ||
 		storage.IsEnvironmentNotFound(err) ||
+		errors.Is(err, storage.ErrGroupNotFound) ||
 		errors.Is(err, storage.ErrMachineCredentialNotFound) ||
 		errors.Is(err, storage.ErrOIDCBindingNotFound)
 }
