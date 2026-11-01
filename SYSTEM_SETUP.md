@@ -44,7 +44,6 @@ The `keyorix-server admin init` command creates all necessary files and director
 ```
 📁 Project Structure After Init:
 ├── keyorix.yaml          # Main configuration (0600)
-├── keyorix_template.yaml # Template file (0644)
 ├── keys/
 │   ├── kek.salt          # KEK derivation salt (0600)
 │   └── dek.key           # Wrapped Data Encryption Key (0600)
@@ -303,7 +302,7 @@ After successful system initialization:
 ## 📚 Additional Resources
 
 - **Encryption Guide**: `internal/encryption/README.md`
-- **Configuration Reference**: `keyorix_template.yaml`
+- **Configuration Reference**: `docs/CONFIGURATION.md`
 - **Migrating from the old CLI**: [`docs/cli-migration.md`](docs/cli-migration.md)
 
 ## 🆘 Support
