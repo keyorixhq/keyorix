@@ -136,7 +136,7 @@ func TestSetDynamicSecretConfigEnabled_HappyPathAndNoop(t *testing.T) {
 // the conditional write is reported like an illegal transition" case exactly,
 // just for DynamicSecretConfig.Disabled instead of MachineIdentity.State.
 // SetDynamicSecretConfigEnabled used to read the config, then persist the
-// FULL mutated row via a plain unconditional UpdateDynamicSecretConfig — a
+// FULL mutated row via a plain unconditional full-row Save — a
 // TOCTOU window in which a racing caller (or an unrelated concurrent edit)
 // landing between the read and the write could be silently clobbered. This
 // drives MockStorage to hand back a stale pre-race read (Disabled=false) and

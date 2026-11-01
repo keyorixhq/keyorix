@@ -194,15 +194,16 @@ func reshareOntoLiveRow(tx *gorm.DB, existing, share *models.ShareRecord) (*mode
 // applyShareRequest writes share's permission and expiry onto the live row
 // existing.ID, and reports whether a live row matched. ExpiresAt is the caller's
 // value verbatim (nil = permanent), so a re-share can tighten or clear an expiry,
-// as UpdateShareRecord can. A map update bypasses ShareRecord.BeforeSave, so the
-// expiry is normalised to UTC here (G81). existing is updated only on a match.
+// as UpdateShareRecord can. A map update bypasses ShareRecord.BeforeSave and
+// GORM's NowFunc, so the expiry and updated_at are normalised to UTC here (G81,
+// STORE-STALE-TAILS-2). existing is updated only on a match.
 func applyShareRequest(tx *gorm.DB, existing, share *models.ShareRecord) (bool, error) {
 	var expiresAt *time.Time
 	if share.ExpiresAt != nil {
 		u := share.ExpiresAt.UTC()
 		expiresAt = &u
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	res := tx.Model(&models.ShareRecord{}).
 		Where("id = ? AND deleted_at IS NULL", existing.ID).
 		Updates(map[string]any{
@@ -298,7 +299,7 @@ func (ls *LocalStorage) UpdateShareRecord(ctx context.Context, share *models.Sha
 		u := share.ExpiresAt.UTC()
 		existing.ExpiresAt = &u
 	}
-	existing.UpdatedAt = time.Now()
+	existing.UpdatedAt = time.Now().UTC() // same: the map update skips NowFunc
 	res := ls.db.WithContext(ctx).Model(&models.ShareRecord{}).
 		Where(sqlWhereID, existing.ID).
 		Updates(map[string]any{

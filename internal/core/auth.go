@@ -376,7 +376,9 @@ func (c *KeyorixCore) newSessionRow(userID uint, userAgent, ip string, setupOnly
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session family id: %w", err)
 	}
-	now := c.now()
+	// UTC: LastSeenAt and the ceiling below are written as given (no BeforeSave covers them),
+	// and TouchSession later orders its UTC stamp against this one as text.
+	now := c.now().UTC()
 	expiresAt := now.Add(c.accessTTL())
 	session := &models.Session{
 		UserID:       userID,
@@ -405,7 +407,7 @@ func (c *KeyorixCore) newSessionRow(userID uint, userAgent, ip string, setupOnly
 // capSetupSession clamps a setup-only session's access window and absolute
 // ceiling to SetupSessionTTL from now, never lengthening an earlier ceiling.
 func capSetupSession(session *models.Session, now time.Time) {
-	ceiling := now.Add(SetupSessionTTL)
+	ceiling := now.Add(SetupSessionTTL).UTC()
 	if session.AbsoluteExpiresAt == nil || session.AbsoluteExpiresAt.After(ceiling) {
 		session.AbsoluteExpiresAt = &ceiling
 	}
@@ -504,7 +506,7 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		}
 		return nil, fmt.Errorf("session not found or expired")
 	}
-	now := c.now()
+	now := c.now().UTC() // also stamps the replacement's LastSeenAt and the rotation time
 	if old.RotatedAt != nil {
 		// The token maps to a session that was already rotated away by an earlier,
 		// successful refresh — a reuse of a stale refresh token.

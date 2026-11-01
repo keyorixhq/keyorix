@@ -36,14 +36,14 @@ func TestDynamicSecretWrites_AreColumnScoped(t *testing.T) {
 // depend on anyone remembering to update a per-function guard.
 //
 // #2698 could not DELETE the two full-row primitives the way #2696 and #2697
-// deleted theirs when this test was first written: `UpdateDynamicSecretConfig`
+// deleted theirs when this test was first written: the full-row config writer
 // had one production caller, CreateDynamicSecretConfig's encrypted-DSN write,
 // a #2651 call site. #2675 has since landed SetDynamicSecretConfigAdminDSN and
-// moved that write off UpdateDynamicSecretConfig, so the allowance below is now
-// empty — both full-row methods are production-callerless and can be deleted
-// in a follow-up. STORE-STALE-WRITE-1 deleted UpdateDynamicSecretLease (storage
-// interface, LocalStorage, mock, faultstorage); the sweep keeps its name so a
-// reintroduced method of that name with a caller is still red.
+// moved that write off it, so the allowance below is empty. STORE-STALE-WRITE-1
+// deleted UpdateDynamicSecretLease and STORE-CLEANUP-1 deleted
+// UpdateDynamicSecretConfig (storage interface, LocalStorage, mock,
+// faultstorage); the sweep keeps both names so a reintroduced method of either
+// name with a caller is still red.
 //
 // So the property is enforced by derivation instead of by removal, which is the
 // stronger form anyway: a sweep over every non-test file under internal/core and

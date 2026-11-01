@@ -21,7 +21,8 @@
         "analyze": "npx vite-bundle-analyzer",
         "generate:api-types": "openapi-typescript ../server/http/handlers/openapi.yaml -o src/types/api-generated.ts",
         "check:api-types-fresh": "node scripts/check-api-types-fresh.mjs",
-        "check:api-contract": "node scripts/check-api-contract.mjs"
+        "check:api-contract": "node scripts/check-api-contract.mjs",
+        "check:sharing-guide-strings": "node scripts/check-sharing-guide-ui-strings.mjs"
     },
     "dependencies": {
         "@heroicons/react": "^2.2.0",

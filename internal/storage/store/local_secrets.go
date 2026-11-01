@@ -177,7 +177,7 @@ func (ls *LocalStorage) UpdateProjectFields(ctx context.Context, id uint, name, 
 	cols := map[string]any{
 		"name":        name,
 		"description": description,
-		"updated_at":  updatedAt,
+		"updated_at":  updatedAt.UTC(), // a map update runs no NowFunc
 	}
 	if requireMFA != nil {
 		cols["require_mfa"] = *requireMFA
@@ -869,8 +869,9 @@ func (ls *LocalStorage) UpdateSecretFields(ctx context.Context, id uint, f stora
 	if f.Metadata != nil {
 		cols["metadata"] = *f.Metadata
 	}
+	// Times are stored in UTC: a map update runs no BeforeSave hook or NowFunc.
 	if f.UpdatedAt != nil {
-		cols["updated_at"] = *f.UpdatedAt
+		cols["updated_at"] = f.UpdatedAt.UTC()
 	}
 	// The four nullable columns carry an explicit Set* flag, so "write NULL" is a
 	// deliberate act rather than indistinguishable from "leave this alone".
@@ -889,7 +890,7 @@ func (ls *LocalStorage) UpdateSecretFields(ctx context.Context, id uint, f stora
 		cols["max_reads"] = f.MaxReads
 	}
 	if f.SetLastRotatedAt {
-		cols["last_rotated_at"] = f.LastRotatedAt
+		cols["last_rotated_at"] = utcPtr(f.LastRotatedAt)
 	}
 	if len(cols) == 0 {
 		// A caller that asked for nothing has a bug; it must not read the result
@@ -957,7 +958,7 @@ func (ls *LocalStorage) UpdateSecretRotationConfig(ctx context.Context, secret *
 			"rotation_charset": secret.RotationCharset,
 			"rotation_backend": secret.RotationBackend,
 			"rotation_ref":     secret.RotationRef,
-			"updated_at":       secret.UpdatedAt,
+			"updated_at":       secret.UpdatedAt.UTC(), // a map update runs no NowFunc
 		})
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
@@ -966,10 +967,11 @@ func (ls *LocalStorage) UpdateSecretRotationConfig(ctx context.Context, secret *
 }
 
 // SetSecretCertNotAfter caches a certificate-typed secret's parsed leaf expiry — a
-// targeted single-column update that touches nothing else (ADR-056).
+// targeted single-column update that touches nothing else (ADR-056). Stored in
+// UTC: Update(col, v) bypasses hooks.
 func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint, notAfter *time.Time) error {
 	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
-		Where(sqlWhereID, secretID).Update("cert_not_after", notAfter).Error; err != nil {
+		Where(sqlWhereID, secretID).Update("cert_not_after", utcPtr(notAfter)).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil

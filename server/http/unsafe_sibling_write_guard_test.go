@@ -41,18 +41,19 @@ import (
 // exists to provide — see docs/adr-090-stale-fork-proxy-deletion.md for the
 // full citation (commit or issue) behind each pair.
 var unsafeSiblingPairs = map[string]string{
-	"UpdateMachineIdentity":     "TransitionMachineIdentityState",
-	"UpdateProjectMembership":   "TransitionProjectMembershipState",
-	"CreateSecretDependency":    "CreateSecretDependencyExclusive",
-	"UpdateSecret":              "TransitionSecretStatus",
-	"UpdateDynamicSecretConfig": "TransitionDynamicSecretConfigDisabled",
-	"UpdateRiskException":       "RevokeRiskExceptionIfNotRevoked/ApproveRiskExceptionIfPending",
-	"UpdateWebAuthnCredential":  "AdvanceWebAuthnCredentialCounter",
-	"DeleteProject":             "DeleteProjectIfEmpty",
-	"RemoveRole":                "RemoveGlobalAdminRoleGuarded",
+	"UpdateMachineIdentity":    "TransitionMachineIdentityState",
+	"UpdateProjectMembership":  "TransitionProjectMembershipState",
+	"CreateSecretDependency":   "CreateSecretDependencyExclusive",
+	"UpdateSecret":             "TransitionSecretStatus",
+	"UpdateRiskException":      "RevokeRiskExceptionIfNotRevoked/ApproveRiskExceptionIfPending",
+	"UpdateWebAuthnCredential": "AdvanceWebAuthnCredentialCounter",
+	"DeleteProject":            "DeleteProjectIfEmpty",
+	"RemoveRole":               "RemoveGlobalAdminRoleGuarded",
 	// UpdateUser and UpdateBreakGlassActivation were pairs here (to
 	// UpdateUserIfActiveStateMatches / RevokeBreakGlassActivation) until
-	// STORE-DEAD-PRIMITIVES-1 deleted the two caller-free full-row primitives.
+	// STORE-DEAD-PRIMITIVES-1 deleted the two caller-free full-row primitives;
+	// UpdateDynamicSecretConfig (to TransitionDynamicSecretConfigDisabled) went the
+	// same way in STORE-CLEANUP-1.
 }
 
 // unsafeSiblingAllowlist is the exhaustive, reasoned inventory of every
