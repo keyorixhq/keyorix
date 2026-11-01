@@ -939,12 +939,14 @@ func TestDynamicSecretConfig_GetListUpdate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, list3)
 
-	// Update.
-	c.BackendType = "mysql"
-	require.NoError(t, ls.UpdateDynamicSecretConfig(ctx, c))
+	// Update (column-scoped: classification only, conditional on the value read).
+	matched, err := ls.SetDynamicSecretConfigClassification(ctx, c.ID, c.Classification, "restricted", time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
 	got2, err := ls.GetDynamicSecretConfig(ctx, c.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "mysql", got2.BackendType)
+	assert.Equal(t, "restricted", got2.Classification)
+	assert.Equal(t, c.BackendType, got2.BackendType, "a column-scoped write leaves the rest of the row alone")
 }
 
 // TestTransitionDynamicSecretConfigDisabled_ClosesRace proves the
@@ -1001,8 +1003,8 @@ func TestTransitionDynamicSecretConfigDisabled_ClosesRace(t *testing.T) {
 
 // TestTransitionDynamicSecretConfigDisabled_DoesNotClobberConcurrentDSNRotation
 // is #G42: the guard only checks `disabled`, so a concurrent DSN rotation
-// (UpdateDynamicSecretConfig, an unconditional Save that never touches
-// `disabled`) still matches this WHERE clause. The toggle itself must
+// (formerly an unconditional full-row Save, now SetDynamicSecretConfigAdminDSN,
+// neither of which touches `disabled`) still matches this WHERE clause. The toggle itself must
 // succeed, but must not revert the rotation using its own stale copy of
 // AdminDSNEnc.
 func TestTransitionDynamicSecretConfigDisabled_DoesNotClobberConcurrentDSNRotation(t *testing.T) {
@@ -1020,11 +1022,8 @@ func TestTransitionDynamicSecretConfigDisabled_DoesNotClobberConcurrentDSNRotati
 	toggle := *cfg
 	toggle.Disabled = true
 
-	// A concurrent DSN rotation commits FIRST, via the plain (non-conditional)
-	// update path — this is what a real rotation job uses.
-	rotated := *cfg
-	rotated.AdminDSNEnc = []byte("new-dsn")
-	require.NoError(t, ls.UpdateDynamicSecretConfig(ctx, &rotated))
+	// A concurrent DSN rotation commits FIRST, via the column-scoped DSN writer.
+	require.NoError(t, ls.SetDynamicSecretConfigAdminDSN(ctx, cfg.ID, []byte("new-dsn"), nil))
 
 	// The disable toggle still legitimately matches (disabled was still false
 	// when this call's WHERE clause evaluated) — it must succeed, but must NOT
@@ -1115,8 +1114,9 @@ func TestDynamicSecretLease_CRUD(t *testing.T) {
 	assert.Len(t, list, 1)
 
 	// Update.
-	lease.Status = "revoked"
-	require.NoError(t, ls.UpdateDynamicSecretLease(ctx, lease))
+	matched, err := ls.RecordDynamicSecretLeaseRevocation(ctx, lease.LeaseID, "revoked", "test", "", nil)
+	require.NoError(t, err)
+	require.True(t, matched)
 	got2, err := ls.GetDynamicSecretLease(ctx, "lease-001")
 	require.NoError(t, err)
 	assert.Equal(t, "revoked", got2.Status)

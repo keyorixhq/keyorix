@@ -185,6 +185,7 @@ func TestReserveRecoveryKeyOutputFile_RefusesToOverwrite(t *testing.T) {
 // --- hybrid (post-quantum) recipients and the classical-recipient warning ---
 
 func TestParseRecoveryKeyRecipient_HybridRoundTrip(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture's age.GenerateHybridIdentity (X25519 half) does not return under fips140=only (observed: 10-minute timeout). Production age recipients are refused there: open item 2 in docs/design/fips140-only-observations.md, shown by TestParseRecoveryKeyRecipient_AgeString failing")
 	id, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatalf("generate hybrid identity: %v", err)
@@ -207,6 +208,7 @@ func TestParseRecoveryKeyRecipient_HybridRoundTrip(t *testing.T) {
 }
 
 func TestParseRecoveryKeyRecipient_MalformedHybridRefused(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture's age.GenerateHybridIdentity (X25519 half) does not return under fips140=only (observed: 10-minute timeout). Production age recipients are refused there: open item 2 in docs/design/fips140-only-observations.md, shown by TestParseRecoveryKeyRecipient_AgeString failing")
 	id, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatalf("generate hybrid identity: %v", err)
@@ -229,6 +231,7 @@ func TestParseRecoveryKeyRecipient_MalformedHybridRefused(t *testing.T) {
 }
 
 func TestWarnIfClassicalRecoveryKeyRecipient(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture's age.GenerateHybridIdentity (X25519 half) does not return under fips140=only (observed: 10-minute timeout). Production age recipients are refused there: open item 2 in docs/design/fips140-only-observations.md, shown by TestParseRecoveryKeyRecipient_AgeString failing")
 	hybrid, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatalf("generate hybrid identity: %v", err)

@@ -243,7 +243,6 @@ func TestUpdateUser_Reactivate_UsesConditionalPath(t *testing.T) {
 	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, IsActive: &active})
 	require.NoError(t, err)
 	assert.True(t, u.IsActive)
-	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 }
 
 // TestUpdateUser_RedundantSameValueAssertion_UsesConditionalPath verifies that
@@ -268,7 +267,6 @@ func TestUpdateUser_RedundantSameValueAssertion_UsesConditionalPath(t *testing.T
 	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, IsActive: &active})
 	require.NoError(t, err)
 	assert.True(t, u.IsActive)
-	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 }
 
 // TestUpdateUser_Reactivate_LostRace_ReturnsConflictError proves the
@@ -352,7 +350,6 @@ func TestUpdateUser_PlainFieldUpdate_UsesActiveStateConditionalPath(t *testing.T
 	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, DisplayName: "Alice Renamed"})
 	require.NoError(t, err)
 	assert.Equal(t, "Alice Renamed", u.DisplayName)
-	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 }
 
 // TestUpdateUser_PlainFieldUpdate_LostRace_ReturnsConflictError verifies that
@@ -682,7 +679,7 @@ func TestAdvanceAuditHighWater_DoesNotLowerMark(t *testing.T) {
 	c.bumpWatermark(100)
 	// Build a valid high-water value for 100 events so GetSystemMetadata returns it.
 	bigCP := &models.AuditCheckpoint{ChainedEvents: 100, HeadID: 0, HeadHash: "", KeyVersion: "v1"}
-	bigVal := auditHighWaterValue(bigCP, c.signCheckpoint(bigCP))
+	bigVal := auditHighWaterValue(bigCP, mustSignCheckpoint(t, c, bigCP))
 	ms.On("GetSystemMetadata", mock.Anything, auditHighWaterKey).Return(bigVal, true, nil)
 	// Trying to advance to 3 events (lower) must be a no-op write.
 	cp := &models.AuditCheckpoint{ChainedEvents: 3, HeadID: 1, HeadHash: "xyz", KeyVersion: "v1"}
@@ -957,7 +954,7 @@ func TestCheckpointSignatureValid_Roundtrip(t *testing.T) {
 	c.SetAuditCheckpointKey([]byte("testkeywithenoughbytes1234567890"), "v1")
 	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	cp := &models.AuditCheckpoint{ChainedEvents: 5, HeadID: 1, HeadHash: "hash1", KeyVersion: "v1"}
-	cp.Signature = c.signCheckpoint(cp)
+	cp.Signature = mustSignCheckpoint(t, c, cp)
 	assert.True(t, c.checkpointSignatureValid(cp))
 }
 
@@ -968,7 +965,7 @@ func TestCheckpointSignatureValid_TamperedData(t *testing.T) {
 	c.SetAuditCheckpointKey([]byte("testkeywithenoughbytes1234567890"), "v1")
 	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	cp := &models.AuditCheckpoint{ChainedEvents: 5, HeadID: 1, HeadHash: "hash1", KeyVersion: "v1"}
-	cp.Signature = c.signCheckpoint(cp)
+	cp.Signature = mustSignCheckpoint(t, c, cp)
 	// Tamper with data after signing.
 	cp.ChainedEvents = 4
 	assert.False(t, c.checkpointSignatureValid(cp))

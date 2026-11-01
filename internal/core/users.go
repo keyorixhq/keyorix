@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -150,6 +151,12 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
+	// The setup flow hands in a server-clock expiry in the host zone.
+	var otpExpiresAt *time.Time
+	if req.OneTimePasswordExpiresAt != nil {
+		u := req.OneTimePasswordExpiresAt.UTC()
+		otpExpiresAt = &u
+	}
 	user := &models.User{
 		Username:          req.Username,
 		UsernameFolded:    foldedUsername.Folded(),
@@ -163,7 +170,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 		CreatedAt:         now,
 		UpdatedAt:         now,
 
-		OneTimePasswordExpiresAt: req.OneTimePasswordExpiresAt,
+		OneTimePasswordExpiresAt: otpExpiresAt,
 	}
 	return user, string(hash), nil
 }
@@ -289,6 +296,11 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 		if errors.Is(err, storage.ErrDuplicateEmail) {
 			return nil, fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
 		}
+		// The same race on the username (GetUserByUsername pre-check vs the partial
+		// unique index on users.username_folded).
+		if errors.Is(err, storage.ErrDuplicateUsername) {
+			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
@@ -354,7 +366,8 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	}
 	sr, err := c.storage.GetRoleByName(ctx, sysRole)
 	if err != nil {
-		return nil, fmt.Errorf("%s: unknown role %q (system)", i18n.T("ErrorValidation", nil), sysRole)
+		// A read FAULT is a retry answer, not "unknown role".
+		return nil, classifyReadError(err, fmt.Sprintf("%s: unknown role %q (system)", i18n.T("ErrorValidation", nil), sysRole))
 	}
 	// #3546: the system role lands at the global scope, so a project-tier role
 	// there would apply in every project. Project roles go in assignments.
@@ -417,6 +430,9 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 			if errors.Is(err, storage.ErrDuplicateEmail) {
 				return fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
 			}
+			if errors.Is(err, storage.ErrDuplicateUsername) {
+				return fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
+			}
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 		c.logUserCreatedOn(ctx, tgt, actorID, created.ID, created.Username)
@@ -458,11 +474,11 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 		return storage.RoleGrant{}, fmt.Errorf("%s: each project assignment needs a project_id and a role", i18n.T("ErrorValidation", nil))
 	}
 	if _, err := c.storage.GetProject(ctx, a.ProjectID); err != nil {
-		return storage.RoleGrant{}, fmt.Errorf("%s: unknown project %d", i18n.T("ErrorValidation", nil), a.ProjectID)
+		return storage.RoleGrant{}, classifyReadError(err, fmt.Sprintf("%s: unknown project %d", i18n.T("ErrorValidation", nil), a.ProjectID))
 	}
 	r, err := c.storage.GetRoleByName(ctx, a.Role)
 	if err != nil {
-		return storage.RoleGrant{}, fmt.Errorf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role)
+		return storage.RoleGrant{}, classifyReadError(err, fmt.Sprintf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role))
 	}
 	// #3546: an install-wide role never lands at one project, the same check
 	// AssignUserRole and the InviteGlobal assignments apply.
@@ -513,7 +529,7 @@ func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID ui
 	roleIDs := make([]uint, 0, len(grants))
 	for _, g := range grants {
 		if _, err := c.storage.GetRole(ctx, g.RoleID); err != nil {
-			return fmt.Errorf("%s: unknown role id %d", i18n.T("ErrorValidation", nil), g.RoleID)
+			return classifyReadError(err, fmt.Sprintf("%s: unknown role id %d", i18n.T("ErrorValidation", nil), g.RoleID))
 		}
 		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, g.RoleID, Scope{ProjectID: g.Scope.ProjectID, EnvironmentID: g.Scope.EnvironmentID}, actorIsMachine); err != nil {
 			return err
@@ -800,6 +816,15 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	if err != nil {
 		if errors.Is(err, ErrUserActiveStateConflict) {
 			return nil, err
+		}
+		// The GetUserByUsername/GetUserByEmail pre-checks above are check-then-act reads:
+		// a concurrent rename to the same name reaches the partial unique index, and the
+		// loser answers what the winner's sequential check would (AlreadyExists / 409).
+		if errors.Is(err, storage.ErrDuplicateUsername) {
+			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
+		}
+		if errors.Is(err, storage.ErrDuplicateEmail) {
+			return nil, fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

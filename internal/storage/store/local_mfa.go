@@ -146,6 +146,10 @@ func (ls *LocalStorage) DeleteMFARecoveryCodes(ctx context.Context, userID uint)
 // ConsumeMFARecoveryCode marks a matching unused code used; returns true if one
 // was consumed. The conditional UPDATE is atomic (no read-then-write race).
 func (ls *LocalStorage) ConsumeMFARecoveryCode(ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error) {
+	// Update(col) runs no BeforeSave hook and no NowFunc, and core passes its
+	// host-zone clock: normalise here, as ConsumeMFAChallenge does, so SQLite
+	// stores UTC text on a non-UTC host (AUTH-ENDPOINT-OUTAGE-1).
+	now = now.UTC()
 	res := ls.db.WithContext(ctx).Model(&models.MFARecoveryCode{}).
 		Where("user_id = ? AND code_hash = ? AND used_at IS NULL", userID, codeHash).
 		Update("used_at", now)

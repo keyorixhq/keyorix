@@ -36,6 +36,7 @@ later checks have not run yet.
 
 Contents: [Configuration](#configuration) · [TLS](#tls) ·
 [Database and storage](#database-and-storage) · [Keys and secret files](#keys-and-secret-files) ·
+[Key files and DEK](#key-files-and-dek) ·
 [Upgrade, schema epoch and rollback](#upgrade-schema-epoch-and-rollback) ·
 [Security posture](#security-posture) · [HA and multiple replicas](#ha-and-multiple-replicas) ·
 [Admin commands](#admin-commands) · [What this page does not cover](#what-this-page-does-not-cover)
@@ -53,7 +54,7 @@ Real output:
 
 ```
 Failed to load configuration: failed to unmarshal config: yaml: unmarshal errors:
-  line 18: unknown key "webauthn" under security (check its spelling and section in docs/CONFIGURATION.md)
+  line 189: unknown key "webauthn" under security (check its spelling and section in docs/CONFIGURATION.md)
 ```
 
 **Match:** `failed to unmarshal config`, `check its spelling and section in docs/CONFIGURATION.md`
@@ -191,6 +192,24 @@ fix is to correct the value. **In place:** yes.
 | `keyorix has no SAML assertion-replay cache` | a provider sets `insecure_allow_idp_initiated_saml` (or `allow_idp_initiated`); IdP-initiated SAML is not supported, remove the key |
 | `refusing cross-host redirect to` | OIDC discovery was redirected to another host (a scheme downgrade is refused the same way); configure the issuer URL that serves its own discovery document |
 
+### Webhook signing secret too short under `GODEBUG=fips140=only`
+
+Real output (`GODEBUG=fips140=only`, `notifications.webhook.signing_secret` of 12 bytes):
+
+```
+Configuration is invalid: notifications.webhook.signing_secret (or KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET) is 12 bytes; under GODEBUG=fips140=only it must be at least 14 bytes (112 bits)
+```
+
+**Match:** `under GODEBUG=fips140=only it must be at least`
+
+**Cause.** Go's FIPS 140-only mode refuses an HMAC key shorter than 112 bits, and the
+webhook channel signs every payload with HMAC-SHA256 under this secret, so no signed
+delivery could be sent. Only checked when the process runs with `GODEBUG=fips140=only` and
+the webhook channel is enabled; outside that mode any length is accepted, as before.
+**Fix.** Set a signing secret of at least 14 bytes (a random 32-byte value is better) in
+`KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET` and the same value on the receiver, then restart.
+**In place:** yes.
+
 ### Two sources for one secret
 
 Real output (a master passphrase given both as a variable and a file):
@@ -204,6 +223,24 @@ Configuration is invalid: secret source misconfigured: both KEYORIX_MASTER_PASSW
 **Cause.** A secret is available as `KEYORIX_<NAME>` and `KEYORIX_<NAME>_FILE`; both are set (an
 empty-but-set variable counts). **Fix.** Unset one. **In place:** yes. See
 [SELF_HOSTING.md](../SELF_HOSTING.md#3-configuration-env-and-secrets).
+
+### Secret-name policy pattern does not compile
+
+Real output (`secret_name_policy.enabled: true` with `pattern: "^(prod|dev"`, SQLite):
+
+```
+Invalid secret_name_policy: invalid secret name pattern: error parsing regexp: missing closing ): `^(?:^(prod|dev)$`
+```
+
+**Match:** `Invalid secret_name_policy`, `invalid secret name pattern`
+
+**Cause.** `secret_name_policy.pattern` is not a valid RE2 regular expression. The value is not
+checked while the file is read, so this is the one configuration refusal that comes **after**
+the start-up lines (storage opened, encryption initialised) instead of as `Configuration is
+invalid:`; nothing has been served yet. The pattern in the message is the one the server
+compiled, wrapped as `^(?:...)$`. **Fix.** Correct the pattern (RE2 syntax: no look-ahead or
+back-references), or set `secret_name_policy.enabled: false`, and restart. **In place:** yes.
+[CONFIGURATION.md](../CONFIGURATION.md).
 
 ---
 
@@ -470,9 +507,16 @@ interrupted before it replaced the DEK: start with the **previous** passphrase, 
 `keys/dek.key` in the config `admin init` writes), or the DEK or the salt
 (`storage.encryption.salt_path`, `keys/kek.salt`) is damaged or from a different install, or
 a `rotate-kek` / `migrate-provider` left the DEK wrapped under a KEK the configuration does
-not produce yet (the extra lines above). The message names the source the
+not produce yet (the extra lines above). **Key-file state:** start-up checks the key set
+*before* it tries the passphrase, so a missing or mixed file is refused earlier with
+`key file consistency: ...` (see [Key file set incomplete or mixed](#key-file-set-incomplete-or-mixed--from-code))
+or with the file-permission audit ([A key file is missing on a later start](#a-key-file-is-missing-on-a-later-start)),
+not with this message. Reaching this one means `keys/dek.key` and `keys/kek.salt` are both present and
+consistent with `keyset.manifest.json` (or the manifest is absent): the passphrase, or a
+leftover of an interrupted key operation, is the remaining suspect. The message names the source the
 passphrase was read from (`--passphrase-fd N`, `--passphrase-file "<path>"`,
-`--passphrase-stdin`, `KEYORIX_MASTER_PASSWORD_FILE="<path>"` or `KEYORIX_MASTER_PASSWORD`):
+`--passphrase-stdin`, `KEYORIX_MASTER_PASSWORD_FILE="<path>"` or `KEYORIX_MASTER_PASSWORD`; a
+relative path is not printed, the message says `a relative path, not shown: it may be the secret itself`):
 check that it is the one you meant, since a leftover variable in the environment is easy to miss. **Fix.** If the
 message has a leftover line, follow it (full procedure:
 [key-rotation-runbook.md](key-rotation-runbook.md#interrupted-rotate-kek-or-migrate-provider)) and keep
@@ -484,11 +528,13 @@ delete the key files to "start fresh": a new key cannot open existing data.
 
 ### Key file readable by others (explicit `enable_file_permission_check`)
 
-Real output (`dek.enc` at mode 644, `security.enable_file_permission_check: true` set):
+Real output (`keys/dek.key` at mode 644, `security.enable_file_permission_check: true` set;
+the config `admin init` writes also has `auto_fix_file_permissions: true`, which resets a wrong
+mode at every start, so the block was made with it set to `false`):
 
 ```
-[WARN] File <datadir>/dek.enc has mode 644 but expected 600
-startup validation: file permission validation failed: permissions or ownership audit found unresolved issues: File <datadir>/dek.enc has mode 644 but expected 600 -- fix each file named (chmod to the expected mode, chown to the server's user), restore a missing one from backup, or set security.auto_fix_file_permissions: true to fix modes and owners at start
+[WARN] File keys/dek.key has mode 644 but expected 600
+startup validation: file permission validation failed: permissions or ownership audit found unresolved issues: File keys/dek.key has mode 644 but expected 600 -- fix each file named (chmod to the expected mode, chown to the server's user), restore a missing one from backup, or set security.auto_fix_file_permissions: true to fix modes and owners at start
 ```
 
 **Match:** `permissions or ownership audit found unresolved issues`
@@ -504,16 +550,17 @@ yes: permissions only. See the [hardening guide](../security/hardening-guide.md)
 
 ### A key file is missing on a later start
 
-From code (`salt.bin` deleted, database and `dek.enc` present): the same refusal as
-above, naming the file:
+Real output (`keys/kek.salt` deleted, the database and `keys/dek.key` present,
+`security.enable_file_permission_check: true`): the same refusal as above, naming the file:
 
 ```
-startup validation: file permission validation failed: permissions or ownership audit found unresolved issues: cannot open <datadir>/salt.bin (no such file or directory) -- fix each file named ...
+[WARN] Cannot open file keys/kek.salt: open keys/kek.salt: no such file or directory
+startup validation: file permission validation failed: permissions or ownership audit found unresolved issues: cannot open keys/kek.salt (no such file or directory) -- fix each file named (chmod to the expected mode, chown to the server's user), restore a missing one from backup, or set security.auto_fix_file_permissions: true to fix modes and owners at start
 ```
 
 **Match:** `permissions or ownership audit found unresolved issues`
 
-**Cause.** The database exists, so this is not a first boot, but `salt.bin` (or `dek.enc`)
+**Cause.** The database exists, so this is not a first boot, but `keys/kek.salt` (or `keys/dek.key`)
 is gone: an unmounted key volume, a restore that missed a file, or a deletion.
 **Fix.** Restore **both** key files from the same backup, or mount the right volume. Do not
 start with the files missing: with the check off, the server would generate a *new*
@@ -526,7 +573,7 @@ Real output (`security.enable_file_permission_check: true` written before the fi
 no key file and no database yet):
 
 ```
-startup validation: file permission validation failed: no key material exists (<datadir>/salt.bin, <datadir>/dek.enc) and there is no local database: security.enable_file_permission_check is set explicitly, and an explicit setting never treats missing key material as a first boot, because a key volume that failed to mount looks the same and starting would generate new keys over encrypted data. On a brand-new install, remove security.enable_file_permission_check from the config for the first start (the default runs the same checks and generates the keys), then set it again; on an existing install, mount or restore the key files (all of them, from one backup)
+startup validation: file permission validation failed: no key material exists (keys/kek.salt, keys/dek.key) and there is no local database: security.enable_file_permission_check is set explicitly, and an explicit setting never treats missing key material as a first boot, because a key volume that failed to mount looks the same and starting would generate new keys over encrypted data. On a brand-new install, remove security.enable_file_permission_check from the config for the first start (the default runs the same checks and generates the keys), then set it again; on an existing install, mount or restore the key files (all of them, from one backup)
 ```
 
 **Match:** `no key material exists`, `an explicit setting never treats missing key material as a first boot`
@@ -609,7 +656,13 @@ key file security: key material is readable beyond its owner: <path> (mode 644) 
 key file security: key material is owned by an account the server does not trust: <path> (owned by uid 1000; the server runs as uid 1001 and trusts only that uid and root, because the owner can replace the file) — refusing to start (...)
 ```
 
-**Match:** `key material is readable beyond its owner`, `key material is owned by an account the server does not trust`
+**Match:** `key material is readable beyond its owner`, `key material is owned by an account the server does not trust`, `refusing to start (chmod 600 and chown the files to the server's user`
+
+Not reproduced natively. On SQLite, with `auto_fix_file_permissions: false` and a `0644`
+`keys/dek.key` or `certs/server.key`, the earlier `permissions or ownership audit found
+unresolved issues` refusal ([above](#key-file-readable-by-others-explicit-enable_file_permission_check))
+stopped the start before this check ran, with or without `enable_file_permission_check` set.
+A wrong owner needs a second account to `chown` to. The wording is read from the source.
 
 **Cause.** This is the always-on second check of the wrapped DEK, the KEK salt and the TLS
 private keys. The first form: group or other can read the file. The second (#3410): the
@@ -638,8 +691,11 @@ upgrade grace period, with the check off or with the override, both forms only w
 Real output (`KEYORIX_MASTER_PASSWORD_FILE=<datadir>/mp` at mode 644):
 
 ```
-secret file security: KEYORIX_MASTER_PASSWORD_FILE: secret file "<datadir>/mp": mode 0644 is too open (accessible to other users) -- refusing to trust it; chmod 0600/0400, or mount it from the orchestrator owned by root with a group the process belongs to (fsGroup / group_add) and mode 0440 (key material: security.insecure_allow_unsafe_file_permissions does not apply to it; the server refuses it wherever it reads it, so fix the file) -- refused until the file is fixed
+secret file security: KEYORIX_MASTER_PASSWORD_FILE="<datadir>/mp": mode 0644 is too open (accessible to other users) -- refusing to trust it; chmod 0600/0400, or mount it from the orchestrator owned by root with a group the process belongs to (fsGroup / group_add) and mode 0440 (key material: security.insecure_allow_unsafe_file_permissions does not apply to it; the server refuses it wherever it reads it, so fix the file) -- refused until the file is fixed
 ```
+
+When the variable holds a relative path, the message does not print it (it may be the secret
+itself): `KEYORIX_MASTER_PASSWORD_FILE (a relative path, not shown: it may be the secret itself): mode 0644 is too open ...`.
 
 For a file that is not key material (database password, bootstrap token ...) the end reads
 `-- refused until the file is fixed (for the files that are not key
@@ -699,9 +755,173 @@ starts as before and logs every fallback decrypt. **In place:** yes.
 | `is group- or world-readable (mode` | `--passphrase-file` is not `0600` |
 | `(the user the server runs as) or to root` | `--passphrase-file`, or the KEK file of `key_provider: file`, is owned by an account other than the server's user and root (#3410: that account could replace it); the message names the owner uid. `chown` it. No override |
 | `refusing to trust it as key material` | the KEK file of `key_provider: file` is not `0600`/`0400`; `chmod` it. No override |
+| `owner cannot be determined -- refusing to trust it` | the owner check could not read who owns the file (the file's status carries no unix owner), so it fails closed, as for a foreign owner; no override. Not run: a regular file on Linux or macOS always reports its owner, so the message is not reachable from the native binary here; it is read from the source. If you meet it, the file is on a filesystem that does not report owners: move it to a local one |
 | `secret-value encryption did not engage` | encryption is configured but did not start; the server refuses to store secrets in plaintext. Check the key provider settings and earlier log lines |
 | `refusing to start rather than leave a webhook credential unencrypted at rest` | the start-up pass that encrypts stored notification URLs failed; fix the database error shown first (permissions, disk) and restart |
 | `DEK-rotation crash recovery failed` | an interrupted `admin encryption rotate` could not be completed on start; do **not** delete files; see [j6](j6-key-rotation.md) |
+
+---
+
+## Key files and DEK
+
+Refusals about generating, replacing or moving key material: the wrapped DEK, the KEK salt
+and the key set a Secret carries. The refusals about the *state* of existing key files
+(permissions, owner, missing or mixed files) are in [Keys and secret files](#keys-and-secret-files).
+All of them stop before any key file is written or replaced.
+
+Key paths in the blocks below are relative because the commands ran with the data directory
+as the working directory (`dek_path: "keys/dek.key"`, the value `admin init` writes). The
+PostgreSQL blocks come from a database created for the run (`storage.type: postgres`).
+
+### No wrapped DEK, but the database already holds encrypted data
+
+Real output (PostgreSQL, `storage.encryption.key_dir_lock: database`, `keys/` emptied after a
+first start had recorded the DEK epoch):
+
+```
+failed to initialize core service: failed to initialize encryption: no wrapped DEK at "keys/dek.key", but the database already records a DEK epoch (another replica generated the deployment's DEK): refusing to generate a new DEK. With storage.encryption.key_dir_lock: database every replica must read the same key files (one shared volume, or the same mounted Secret); copy the key set from a running replica or restore it from backup (docs/multi-replica-keys.md)
+```
+
+The same refusal when the database holds secret values but no recorded epoch (real output;
+the epoch row was deleted and one `secret_versions` row inserted for the run):
+
+```
+failed to initialize core service: failed to initialize encryption: no wrapped DEK at "keys/dek.key", but the database already holds encrypted secret versions: refusing to generate a new DEK. With storage.encryption.key_dir_lock: database every replica must read the same key files (one shared volume, or the same mounted Secret); copy the key set from a running replica or restore it from backup (docs/multi-replica-keys.md)
+```
+
+**Match:** `but the database already records a DEK epoch`, `but the database already holds encrypted secret versions`
+
+**Cause.** With `key_dir_lock: database` the replicas of one deployment share one DEK, and each
+must read the same key files. This replica found no wrapped DEK at `dek_path` (a per-pod volume
+that is empty, a Secret that did not mount, a wrong path) while the database already holds data
+under a DEK. Generating a new one here would split the deployment into replicas writing under
+two keys, so the server stops instead. The check runs only when the file is missing, under the
+key-initialisation lock, so two replicas starting at once on empty directories cannot both pass.
+**Fix.** Give this replica the deployment's key set: mount the shared volume or the same Secret,
+copy the files from a running replica, or restore them from your key backup (all files, from
+one backup). Do **not** remove the database rows or point `dek_path` at a new directory to "make
+it start". **In place:** no. [multi-replica-keys.md](../multi-replica-keys.md#design-storageencryptionkey_dir_lock-database),
+[SELF_HOSTING.md](../SELF_HOSTING.md), [drill-backup-restore.md](drill-backup-restore.md).
+
+### Key-initialisation lock lost — from code
+
+```
+the key-initialisation lock was lost while this replica was generating or recovering the key files, so another replica may have written them at the same time; refusing to start with keys that may not match the key directory -- restart to load the files now on disk (docs/multi-replica-keys.md)
+```
+
+**Match:** `the key-initialisation lock was lost while this replica was generating or recovering the key files`
+
+Not run: it needs the PostgreSQL connection that holds the lock to die while the key files are
+being written, which the native run cannot arrange on demand. Wording is exact; the line after
+the message (a parenthesised detail on why the lock was lost) is not shown.
+
+**Cause.** The advisory lock that keeps replicas from generating or recovering the key files at
+the same time was lost (the database connection dropped, or the database restarted) in the middle
+of that work, so another replica may have written the same files. **Fix.** Restart the server: it
+reads the files now on disk instead of trusting what it just wrote. If it then refuses with a
+mixed or incomplete key set, follow [Key file set incomplete or mixed](#key-file-set-incomplete-or-mixed--from-code).
+**In place:** yes, a restart; **no** if the next start names a key-set problem.
+[multi-replica-keys.md](../multi-replica-keys.md).
+
+### DEK rotation refused under `--force`
+
+Real output (PostgreSQL, a server running on the database, `admin encryption rotate --force --confirm`):
+
+```
+WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
+Error: refusing to rotate the DEK: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342), and --force cannot override it for a DEK rotation on PostgreSQL: a replica on another host that is still running would commit rows under the old DEK after the sweep, and they become undecryptable once the old DEK is gone. Stop every server that uses this database (every replica, on every host), then retry without --force; a lock left by a dead connection is released when PostgreSQL closes it (emergency SQL: SELECT pid, granted, mode FROM pg_locks WHERE locktype = 'advisory' AND objid = 872342; then, only for a connection that is not a live replica, SELECT pg_terminate_backend(<pid>))
+```
+
+With `storage.encryption.key_dir_lock: database` the command stops one step earlier, at the lock
+itself, with a message that ends the same way (real output):
+
+```
+Error: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342), and --force cannot override it with storage.encryption.key_dir_lock: database: running replicas hold no key-directory lock, so this lock is what keeps admin commands away from them. Stop every replica first (scale to 0); a lock left by a dead connection is released when PostgreSQL closes it (emergency SQL: SELECT pid, granted, mode FROM pg_locks WHERE locktype = 'advisory' AND objid = 872342; then, only for a connection that is not a live replica, SELECT pg_terminate_backend(<pid>))
+```
+
+**Match:** `and --force cannot override it for a DEK rotation on PostgreSQL`, `and --force cannot override it with storage.encryption.key_dir_lock: database`
+
+**Cause.** A server (or another admin command) holds this database's presence lock, and
+`--force` got the command past it. The key-directory lock (`dek.lock`) only protects one host's
+key directory, so a replica on another host would keep committing rows under the old DEK, and
+those rows become unreadable once the old DEK is gone. A dry run is not refused; every
+other `admin` command still accepts `--force` as described in
+[An admin command while the server is running](#an-admin-command-while-the-server-is-running).
+**Fix.** Stop every server that uses this database, on every host, and run the rotation again
+**without** `--force`. If the lock is held by a connection whose server is gone, the emergency
+SQL in the message names the session; terminate only a session that is not a live replica.
+**In place:** stop first (every replica). [key-rotation-runbook.md](key-rotation-runbook.md),
+[multi-replica-keys.md](../multi-replica-keys.md#rotation-in-secret-mode).
+
+### `migrate-provider cleanup` while the key directory is in use
+
+Real output (PostgreSQL, a server running on the database, `admin encryption migrate-provider cleanup --confirm --force`;
+without `--force` the command stops earlier at the database lock, see the previous entry):
+
+```
+WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
+Error: refusing to clean up migrate-backup files: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable — a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry
+```
+
+**Match:** `refusing to clean up migrate-backup files`
+
+**Cause.** `cleanup` deletes the `<dek_path>.migrate-backup.*` files, and a `migrate-provider`
+that is still running (or was killed and not yet recovered) may need one to restore the DEK. It
+takes the key-directory lock exclusively, and a live server holds it. `--force` only goes past
+the database lock, never this one. **Fix.** Stop the server (or wait for the other command),
+then run it again; run it with `--dry-run` first to see what it would delete. Delete the
+backups only once the server has started with the new provider. **In place:** stop first.
+[key-rotation-runbook.md](key-rotation-runbook.md#interrupted-rotate-kek-or-migrate-provider).
+
+### `key-secret`: where the key material may go
+
+`admin encryption key-secret generate` and `export` write a Kubernetes Secret manifest that
+holds the wrapped DEK and the KEK salt. They refuse any destination where that manifest would
+end up in a log or over another key set, and `unpack` refuses a directory that is not empty.
+
+Real output (`--out -` with `KUBERNETES_SERVICE_HOST` set, as it is inside any pod):
+
+```
+Error: --out -: refusing to write key material to stdout inside a Kubernetes pod, where stdout is collected as the pod log; write it to a file (--out <path>) on a volume you control
+```
+
+Real output (`--out -` with `JOURNAL_STREAM` set, as it is for a systemd service whose output goes to the journal):
+
+```
+Error: --out -: refusing to write key material to stdout under systemd, where stdout goes to the journal; use --out <path>
+```
+
+Real output (`--out` naming a file that exists, here from running `generate` twice with the same path):
+
+```
+Error: --out keys-secret.yaml already exists: refusing to overwrite it (it may hold the only copy of a key set)
+```
+
+Real output (`unpack --in keys-secret.yaml --dir keys` into the live key directory):
+
+```
+Error: --dir keys is not empty: refusing to write a key set over another one (an interrupted rotation's workspace holds the only copy of its new DEK)
+```
+
+From code (not run: a terminal as stdout needs a pseudo-terminal, which the capture
+environment could not open):
+
+```
+Error: --out -: refusing to print key material to a terminal; pipe it (… --out - | kubectl create -f -) or use --out <path>
+```
+
+**Match:** `refusing to write key material to stdout inside a Kubernetes pod`, `refusing to write key material to stdout under systemd`, `refusing to print key material to a terminal`, `already exists: refusing to overwrite it (it may hold the only copy of a key set)`, `is not empty: refusing to write a key set over another one`
+
+**Cause.** `--out -` writes the manifest to stdout, which is safe only when stdout is a pipe you
+control: a terminal keeps it in scrollback, the container runtime collects a pod's stdout as the
+pod log, and journald records a service's. `--out <path>` never replaces a file, because the
+file may be the only copy of a key set; `unpack` never writes over a directory that already
+holds files, because the workspace of an interrupted rotation holds the only copy of its new DEK.
+**Fix.** Write to a new file (`--out keyorix-keys-1.yaml`, created `0600`), or pipe stdout
+(`... --out - | kubectl create -f -`, from a shell that is not inside a pod or a service). Pick
+a new path rather than deleting an old file you have not checked; unpack into an empty or new
+directory. **In place:** yes: nothing was written.
+[multi-replica-keys.md](../multi-replica-keys.md#first-install-who-creates-the-first-key).
 
 ---
 
@@ -709,11 +929,13 @@ starts as before and logs every fallback decrypt. **In place:** yes.
 
 ### Database newer than this binary (no compatibility floor)
 
-Real output, captured at schema epoch 9 (schema epoch edited to 999 to stand in for a newer release):
+Real output, re-captured on 2026-10-30 at schema epoch 9 (`currentSchemaEpoch` in
+`internal/storage/factory_schema_epoch.go`; `schema_epoch` edited to 999 and the floor row
+deleted, to stand in for a newer release):
 
 ```
 storage: opening existing SQLite database at <datadir>/keyorix.db (configured: "<datadir>/keyorix.db")
-failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database schema epoch 999 is newer than this binary's schema epoch 9 (recorded at 2026-10-29T10:49:28+01:00, 37s ago) -- this database was migrated by a newer version of Keyorix. Two things produce this, and this process cannot tell them apart on its own: (a) a rolling upgrade in progress -- ... (b) this binary was downgraded against a schema a newer version already migrated -- if so, upgrade this binary to match, or restore a backup taken before the newer version ran. No minimum compatible schema epoch is recorded, so nothing declares this schema safe for an older binary. Refusing to start is the safe default in both cases (ADR-097, ADR-101)
+failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database schema epoch 999 is newer than this binary's schema epoch 9 (recorded at 2026-10-30T18:28:16+01:00, 20m48s ago) -- this database was migrated by a newer version of Keyorix. Two things produce this, and this process cannot tell them apart on its own: (a) a rolling upgrade in progress -- ... (b) this binary was downgraded against a schema a newer version already migrated -- if so, upgrade this binary to match, or restore a backup taken before the newer version ran. No minimum compatible schema epoch is recorded, so nothing declares this schema safe for an older binary. Refusing to start is the safe default in both cases (ADR-097, ADR-101)
 ```
 
 **Match:** `is newer than this binary's schema epoch`, `checked before migrating; nothing was migrated`
@@ -727,10 +949,10 @@ schema. **In place:** no. [UPGRADING.md §7 Rollback](../UPGRADING.md#7-rollback
 
 ### Database declares a compatibility floor above this binary
 
-Real output, captured at schema epoch 9 (floor edited to 999):
+Real output, re-captured on 2026-10-30 at schema epoch 9 (floor edited to 999):
 
 ```
-failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database declares a minimum compatible schema epoch of 999 (database schema epoch 9), above this binary's schema epoch 9 (floor recorded at 2026-10-29T09:50:10Z, 1s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 999 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
+failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database declares a minimum compatible schema epoch of 999 (database schema epoch 9), above this binary's schema epoch 9 (floor recorded at 2026-10-30T17:49:10Z, 4s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 999 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
 ```
 
 **Match:** `database declares a minimum compatible schema epoch of`
@@ -746,7 +968,7 @@ recorded floor from 2 to 3. v0.96.x words the prefix differently (`failed to mig
 database:`):
 
 ```
-failed to initialize core service: failed to initialize storage: failed to migrate database: database declares a minimum compatible schema epoch of 3 (database schema epoch 9), above this binary's schema epoch 2 (floor recorded at 2026-10-29T10:50:31+01:00, 0s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 3 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
+failed to initialize core service: failed to initialize storage: failed to migrate database: database declares a minimum compatible schema epoch of 3 (database schema epoch 9), above this binary's schema epoch 2 (floor recorded at 2026-10-30T18:53:27+01:00, 0s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 3 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
 ```
 
 Floor 3 is why: v0.96.x misreads the v2 audit retention anchor and never writes the suspend
@@ -779,10 +1001,10 @@ Error: backup archive's schema epoch <n> is newer than this binary's schema epoc
 
 ### Restore: older than this host's own history (rollback protection)
 
-Real output (restoring a backup taken before the last two audit events, over the running data directory):
+Real output (restoring a backup taken before two `admin encryption rotate` runs, which each add audit events, over the same data directory with `--overwrite-existing`; backups taken later add only the backup tool's own bookkeeping events, which do not count as "behind"):
 
 ```
-Error: refusing to restore: this backup's audit trail (9 event(s)) is 2 event(s) BEHIND this host's own last known state (12 event(s)) -- restoring it would silently un-revoke any user/credential access revoked since this backup was taken. Pass --allow-rollback if this is a genuine disaster-recovery restore of an intentionally older backup
+Error: refusing to restore: this backup's audit trail (15 event(s)) is 2 event(s) BEHIND this host's own last known state (18 event(s)) -- restoring it would silently un-revoke any user/credential access revoked since this backup was taken. Pass --allow-rollback if this is a genuine disaster-recovery restore of an intentionally older backup
 ```
 
 **Match:** `refusing to restore: this backup's audit trail`
@@ -829,6 +1051,26 @@ storage.database.insecure_audit_skip_reads: true is refused while the compliance
 
 The list of compliance profiles is empty in this release, so the refusal cannot occur yet.
 Listed so it is not a surprise when the first profile ships.
+
+### FIPS 140-only boot self-test failed — from code
+
+```
+Refusing to start: fips140 self-test failed on <path>: <cause>
+```
+
+**Match:** `fips140 self-test failed on`
+
+**Cause.** With `GODEBUG=fips140=only`, the server first runs each encryption path it uses
+once with a throwaway key: DEK wrap/unwrap, secret encrypt/decrypt, PBKDF2 KEK derivation,
+and the evidence-signing, audit-checkpoint and backup-manifest keys with an HMAC under each.
+`<path>` names the one that failed and `<cause>` says why; a refusal by the Go FIPS module
+reads `panic: crypto/...: ... is not allowed in FIPS 140-only mode`. This runs before any
+key file is read, so nothing on disk was touched. Outside that mode the self-test does not
+run, and the log says `fips140 enforced: no (self-test not run)`.
+**Fix.** Not a configuration problem: this build cannot run that path in FIPS 140-only
+mode. Run without `GODEBUG=fips140=only`, or use a build where the line logged at start is
+`fips140 enforced: yes, self-test passed (N paths)`, and report the message as a bug.
+**In place:** yes (nothing was started).
 
 ### Weak SCIM token
 
@@ -1004,6 +1246,13 @@ Real output (server running on the same SQLite database, `admin backup`):
 
 ```
 Error: on SQLite, admin backup needs the database to itself -- stop the server first (a live backup without downtime needs Postgres): a Keyorix server (or another admin command) appears to be using this database (another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe.
+Run admin commands with the server stopped: stop the server (for example 'systemctl stop keyorix'), run this command again, then start the server.
+```
+
+Inside a container (Compose) the last lines name the Compose sequence instead (from code, not
+run here: the capture host is not a container):
+
+```
 With Docker Compose, run admin commands in a throwaway container while the server is stopped:
   docker compose stop backend
   docker compose run --rm backend ./keyorix-server admin <command>
@@ -1079,15 +1328,162 @@ target. **In place:** no. [drill-backup-restore.md](drill-backup-restore.md).
 | `already exists -- refusing to overwrite` | the `--output` file of `admin recovery-key rotate` already exists; choose another path or remove the old file deliberately |
 | `could not be checked because the config file failed to load` | `admin verify-audit` without `--anchor` could not read the config to see whether `audit.offline_anchor_path` is set, so it will not silently verify without it; pass `--anchor` or fix the config load error shown after it |
 
+### Interrupted restore: recovery refuses
+
+`admin restore --recover` finishes or undoes a restore that stopped between staging and
+completion (see [Interrupted restore](#interrupted-restore--from-code) and
+[restore-failure-modes.md](restore-failure-modes.md), which owns the procedure). It checks
+the journal before it renames anything, and refuses when it cannot vouch for what the journal
+says. Each refusal changes nothing, keeps the journal, and so keeps the server refusing to
+start.
+
+How the blocks below were made: a restore cannot be stopped at that step from the command
+line, so the journal was written by hand (JSON, in the format `internal/restorejournal`
+reads) beside a staged copy of `keys/dek.key` on a SQLite install, and then altered one way
+per block. The text is printed by the real `keyorix-server admin restore --recover`;
+the state it reacts to is a reproduction of what a killed restore leaves, not a killed
+restore. Absolute paths are shown as `<datadir>`.
+
+A staged file whose content is not what the restore staged (real output; the staged copy
+overwritten with other bytes):
+
+```
+Found the journal of an interrupted restore (sqlite backend, started 20261030T184100): <datadir>/.keyorix-restore-journal.json
+Error: staged file "<datadir>/keys/dek.key.restoring-abc123" does not have the content the restore staged for "<datadir>/keys/dek.key" (SHA-256 bbc9c50e35b796df9a30bc9734819e2386ba83321a887f9d0c48e59dec3ba185, journal records b9ff44ba74f02a231f9a0e8a30f33b9fb2a3d3d225db1e48f935e2c1b8759a4e): recovery refuses to install it -- recovery refuses to roll forward and changed nothing; the journal <datadir>/.keyorix-restore-journal.json is kept and the server keeps refusing to start. See docs/operator/restore-failure-modes.md ("Recovery refuses")
+```
+
+A staged file that is gone while the live file is not the restored one reads
+`staged file "..." is missing and "..." is not the restored file (a crash lost the staged copy before it was installed): recovery refuses to install it -- ...` (from code, same ending).
+
+A journal that names a file which is not one of this config's key files or database (real
+output; the entry's `path` changed to `certs/server.key`):
+
+```
+Found the journal of an interrupted restore (sqlite backend, started 20261030T184100): <datadir>/.keyorix-restore-journal.json
+Error: restore journal names "<datadir>/certs/server.key", which is not one of this config's key files or database (relative paths resolve against the working directory: run --recover from the directory the restore ran in) -- recovery refuses to act on it; inspect the journal
+```
+
+A journal that does not parse (real output; the file cut off after the opening of `entries`):
+
+```
+Error: restore journal "<datadir>/.keyorix-restore-journal.json" does not parse: unexpected end of JSON input -- recovery refuses to guess; inspect the file
+```
+
+An install that fails after the data is committed, here because a key file already exists
+beside a journal written for a restore without `--overwrite-existing` (real output):
+
+```
+Found the journal of an interrupted restore (sqlite backend, started 20261030T184100): <datadir>/.keyorix-restore-journal.json
+Error: install "<datadir>/keys/dek.key": "<datadir>/keys/dek.key" was created concurrently during restore and is not empty -- refusing to overwrite it -- the restored data is committed but not every key file is installed; the journal <datadir>/.keyorix-restore-journal.json is kept and the server refuses to start until `keyorix-server admin restore --recover` completes the restore
+```
+
+**Match:** `recovery refuses to roll forward and changed nothing`, `recovery refuses to install it`, `recovery refuses to act on it`, `recovery refuses to guess`, `the restored data is committed but not every key file is installed`, `was created concurrently during restore and is not empty -- refusing to overwrite it`
+
+The same family, not run (each needs a failure or a race that the command line cannot
+produce on demand):
+
+| Match | What it means |
+|---|---|
+| `the restore is complete, but its journal could not be removed` | the restore finished and only deleting the journal failed (the error in parentheses says why). The server refuses to start while the journal exists; run `keyorix-server admin restore --recover`, which finishes the remaining steps (it writes the restore's audit events a second time, see [restore-failure-modes.md](restore-failure-modes.md#the-order)) and removes it |
+| `the restored data is committed, but encrypting the notification channel URLs it carried failed` | an older archive carried plaintext notification-channel URLs and encrypting them failed (the error in parentheses says why). The journal is kept so `--recover` runs that step again; fix the cause, then run `--recover` |
+| `was created concurrently during restore -- refusing to overwrite it` | a file appeared at a key-file path between the check and the install (the empty-file form of the message above); nothing was overwritten. Find what created it, then run `--recover` or restore again |
+| `still has a non-empty WAL after closing` | committed pages of the staged SQLite database still sit in its `-wal` file, which the install does not carry over, so the restore stops before installing it; the live database and key files were not touched. Re-run the restore |
+
+**Cause.** The journal lists the files a restore had staged and the content hash of each.
+Recovery refuses to rename a staged file over a live key file when the staged file is gone or
+changed (a directory entry lost to power loss, a hand-edited file, a planted one), when the
+journal points outside this config's key files and database, or when it cannot be read at all:
+rolling forward would pair the restored data with key files from another point in time, which
+makes secrets unreadable or encrypts new ones under the wrong key, and recovery never guesses.
+An install that fails after the data was committed (a file in the way, a read-only directory,
+a full disk) stops with the journal kept so the same command can be run again.
+**Fix.** Stop every server on this data. Read the named file and the journal; do **not** delete
+the journal and start the server on the files as they are. For an unvouched staged file, keep
+the journal and every `*.restoring-*` and `*.pre-restore-*` file for inspection (move them out
+of the data directory), then restore the archive again with `--overwrite-existing`. For an
+install failure, remove its cause and run `admin restore --recover` again with the same config
+and working directory. **In place:** no, stop first.
+[restore-failure-modes.md](restore-failure-modes.md#recovery-refuses-a-staged-file-it-cannot-vouch-for),
+[`--recover`](restore-failure-modes.md#admin-restore---recover),
+[where the journal is](restore-failure-modes.md#where-the-journal-is-and-who-checks-it).
+
+### Restore: backup older than an accepted audit loss
+
+Real output (an `admin backup` taken before the loss, then `admin restore --input old.kxb
+--overwrite-existing`; the host's witness file was written by hand to the layout an accepted
+loss leaves, one seal, because running a real `admin audit accept-loss` needs a broken chain):
+
+```
+Error: refusing to restore: this backup was taken before audit loss acceptance #1 recorded on this host (the archive's audit trail is under 0 seal(s), this host's under 1) -- restoring it would bring back the state that acceptance replaced and un-revoke access revoked since. Pass --allow-rollback if this is a genuine disaster-recovery restore of an intentionally older backup
+```
+
+**Match:** `this backup was taken before audit loss acceptance`
+
+**Cause.** `admin audit accept-loss` seals a chain break and the host remembers the number of
+seals it has accepted. An archive written under fewer seals predates that acceptance: restoring
+it would bring back the state the acceptance replaced, including access revoked since, so it is
+refused like the older-than-this-host case above. It is refused whatever the event counts say,
+because an accepted loss lowers the count. **Fix.** Restore a backup taken after the
+acceptance. For a real disaster recovery onto this host, `--allow-rollback` records the
+override in the audit trail; re-check who has access afterwards. **In place:** no.
+[audit-chain-break-runbook.md](audit-chain-break-runbook.md#7-containment-and-the-re-anchor-question),
+[drill-backup-restore.md](drill-backup-restore.md).
+
+### Restore: manifest high-water value does not parse — from code
+
+```
+backup archive's manifest carries an audit high-water value that does not parse -- the manifest may be corrupted or tampered with; restore refuses rather than treat this as if the archive had no recorded history
+```
+
+**Match:** `carries an audit high-water value that does not parse`
+
+Not run: the archive's manifest is signed, so an altered value normally fails the signature
+check first; this message was not reached with a real archive.
+**Cause.** The rollback-protection value in the archive manifest is present but unreadable.
+**Fix.** Use another copy of the archive or an earlier backup; do not edit the manifest. The
+restore stopped before it wrote anything. **In place:** yes (nothing was changed).
+[drill-backup-restore.md](drill-backup-restore.md).
+
+### `accept-loss` while a server or another admin command runs
+
+Real output (a server running on the SQLite database, `admin audit accept-loss --force ...`):
+
+```
+WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
+Error: accept-loss runs only under the exclusive database lock (stop the server and every other admin command); --force is refused: another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock
+```
+
+**Match:** `accept-loss runs only under the exclusive database lock`
+
+**Cause.** Sealing an audit loss writes the seal record, an audit event, a new checkpoint and
+the high-water mark, which must not race another writer. Unlike other admin commands,
+`accept-loss` does not let `--force` past the lock; the WARNING line above is the shared lock
+step, and the refusal follows it. **Fix.** Stop the server and every other admin command on this database
+(every replica, on every host), then run it again without `--force`. It prints what it would
+accept and writes nothing without `--confirm`. **In place:** stop first.
+[audit-chain-break-runbook.md](audit-chain-break-runbook.md#7-containment-and-the-re-anchor-question).
+
 ### Rotation commands — from code
 
 | Match | What it means |
 |---|---|
 | `Re-run with --confirm` | rotation changes keys/rewraps data and is not run without `--confirm` (dry-run first for the DEK) |
 | `stop the running server before rotating` | the key lock is held; stop the server |
+| `stop the running server before running it` | the key lock is held (`rotate`, `upgrade-aad`, `rotate-kek`, `migrate-provider` and the authentication-data commands print `refusing to <command>:` first); stop the server or wait for the other key command |
 | `must run on the server host` | the config says `storage.type: remote`; run on the server's host |
 
-**In place:** stop first. [j6-key-rotation.md](j6-key-rotation.md).
+Real output of the `stop the running server before running it` row (SQLite, a server running
+on the data directory, `admin encryption rotate --confirm --force`; `--force` only gets past
+the first lock, the WARNING line, never the key lock):
+
+```
+WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
+⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
+Error: refusing to rotate: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable — stop the running server before running it
+```
+
+**In place:** stop first. [j6-key-rotation.md](j6-key-rotation.md). With several replicas on PostgreSQL,
+[DEK rotation refused under `--force`](#dek-rotation-refused-under---force).
 
 ---
 

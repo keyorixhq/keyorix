@@ -61,7 +61,7 @@ func TestDecrypt_PinnedEnvelopeWithWrongMACRefused(t *testing.T) {
 	fk := &fakeKeys{currentVersion: "v1"}
 	c := newTestClient(fk, "")
 
-	wrapped, err := json.Marshal(fakeWrapped{Version: "v1", Plaintext: []byte("kek")})
+	wrapped, err := json.Marshal(fakeWrapped{Version: "v1", Plaintext: []byte(testKEK32)})
 	require.NoError(t, err)
 	body, err := json.Marshal(envelope{Version: "v1", Ciphertext: wrapped, MAC: []byte{0x00}})
 	require.NoError(t, err)

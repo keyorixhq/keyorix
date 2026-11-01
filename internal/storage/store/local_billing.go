@@ -149,7 +149,7 @@ func (ls *LocalStorage) distinctUsersByProject(ctx context.Context, projectIDs [
 		Table("audit_events").
 		Select("project_id, COUNT(DISTINCT user_id) AS count").
 		Where("project_id IN ? AND actor_type = ? AND event_time >= ? AND event_time < ?",
-			projectIDs, "user", from, to).
+			projectIDs, "user", from.UTC(), to.UTC()).
 		Group("project_id").
 		Scan(&rows).Error; err != nil {
 		return nil, err

@@ -254,8 +254,9 @@ func (c *KeyorixCore) RequirePasswordReset(ctx context.Context, adminID, userID 
 // FOR UPDATE) does the same across replicas — the identical pattern recordFailedLogin
 // uses for the login-lockout counter (see login_lockout.go).
 //
-// #454: persists via SetAccountState, not the generic UpdateUser — an admin
-// suspend/reactivate is an explicit security directive, so a backend that cannot
+// #454: persists via SetAccountState, which writes only account_state (plus
+// updated_at), never a full-row save that could revert a concurrent writer's
+// columns — an admin suspend/reactivate is an explicit security directive, so a backend that cannot
 // actually persist account_state must fail this call outright rather than silently
 // succeed while the account stays unchanged. See SetAccountState's doc comment on
 // storage.Storage.
@@ -493,7 +494,27 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 			// (#r125-H2). We evict here without revoking; revoking follows for blocked
 			// states below. For a transition TOWARD active, this is what lets the clear
 			// sweep below reach a stale negative PAT entry too, not just session ones.
-			if pats, _ := tx.ListPersonalAccessTokensByUser(ctx, userID); len(pats) > 0 {
+			// Same savepoint + retry + report as the session listing (AUTHZ-ORACLE-1):
+			// the error used to be discarded, so a failed listing evicted no PAT entry
+			// and reported nothing; now it is carried in ev.PATListErr (its own wording,
+			// apart from the session listing) and the post-commit step evicts every
+			// cache entry of the user, logs and audits.
+			var (
+				pats []*models.PersonalAccessToken
+				perr error
+			)
+			for range 2 {
+				if perr = tx.WithTransaction(ctx, func(sp storage.Storage) error {
+					var lerr error
+					pats, lerr = sp.ListPersonalAccessTokensByUser(ctx, userID)
+					return lerr
+				}); perr == nil {
+					break
+				}
+			}
+			if perr != nil {
+				ev.PATListErr = perr
+			} else {
 				ev.Hashes = append(ev.Hashes, activePATHashes(pats)...)
 			}
 		}
@@ -508,19 +529,40 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 		// evict here too. Revoked PAT hashes are folded into sessionHashes so they're
 		// evicted from the auth cache alongside the session hashes after commit.
 		if AccountLoginBlocked(userID, state) {
-			// Best-effort, each in its own savepoint: on PostgreSQL a failed statement
-			// aborts the whole transaction, so an ignored error here would roll the state
-			// change back at commit instead of leaving it applied.
-			_ = tx.WithTransaction(ctx, func(sp storage.Storage) error {
-				return sp.DeleteSessionsForUserExcept(ctx, userID, 0)
-			})
-			_ = tx.WithTransaction(ctx, func(sp storage.Storage) error {
-				hashes, herr := sp.RevokeAllPersonalAccessTokensForUser(ctx, userID)
-				if herr == nil {
-					ev.Hashes = append(ev.Hashes, hashes...)
+			// Each in its own savepoint: on PostgreSQL a failed statement aborts the
+			// whole transaction, so a failure here would roll the state change back at
+			// commit instead of leaving it applied (a narrowing decision is never
+			// blocked). Each is retried once; a failure that persists used to be
+			// discarded, leaving the PATs live in storage (usable again the moment the
+			// account is reactivated) with nothing logged or audited. It is now carried
+			// out in ev.RevokeErr: the post-commit step evicts every cache entry of the
+			// user, logs a SECURITY line and audits EventSessionRevocationFailed.
+			var derr, rerr error
+			for range 2 {
+				if derr = tx.WithTransaction(ctx, func(sp storage.Storage) error {
+					return sp.DeleteSessionsForUserExcept(ctx, userID, 0)
+				}); derr == nil {
+					break
 				}
-				return herr
-			})
+			}
+			if derr != nil {
+				ev.RevokeErr = errors.Join(ev.RevokeErr, fmt.Errorf("delete sessions: %w", derr))
+			}
+			var revoked []string
+			for range 2 {
+				if rerr = tx.WithTransaction(ctx, func(sp storage.Storage) error {
+					var herr error
+					revoked, herr = sp.RevokeAllPersonalAccessTokensForUser(ctx, userID)
+					return herr
+				}); rerr == nil {
+					break
+				}
+			}
+			if rerr != nil {
+				ev.RevokeErr = errors.Join(ev.RevokeErr, fmt.Errorf("revoke personal access tokens: %w", rerr))
+			} else {
+				ev.Hashes = append(ev.Hashes, revoked...)
+			}
 		}
 	}
 	return ev, nil

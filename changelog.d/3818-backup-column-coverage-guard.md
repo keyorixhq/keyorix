@@ -1,0 +1,2 @@
+### Added
+- **A guard test fails when a migration adds a column the backup silently ignores.** `TestEveryBackedUpColumnIsMappedOrAllowlisted` (`server/admin`) compares the columns of every backed-up table, on a fresh SQLite and PostgreSQL schema and on the schema a v0.95.3 binary left behind, with the columns the backup writer maps; each unmapped column needs its own allowlist file (`backup_unmapped_column_<table>_<column>_test.go`) with a reason. Report-only until its first green nightly on main (`docs/guard-rollout.d/`).

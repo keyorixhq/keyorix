@@ -215,21 +215,26 @@ func anyFileMatchesSecurityCategory(repoRoot string, touched []member) bool {
 	return false
 }
 
-// hasMarker reports whether body contains a case-insensitive line starting
-// with marker that also mentions id or name (so a marker for a DIFFERENT
-// family doesn't accidentally suppress this one).
+// hasMarker reports whether the FIRST case-insensitive occurrence of marker
+// in body (anywhere in a line, not only at its start) has, on the rest of that
+// same line, the family's id or interface name. Only that first occurrence is
+// looked at: a later marker line that names this family is ignored when an
+// earlier one names another (see README.md, "Markers"). The family-name
+// requirement stops a marker for a DIFFERENT family suppressing this one.
 func hasMarker(body, marker, id, name string) bool {
 	ok, _ := dismissalReason(body, marker, id, name)
 	return ok
 }
 
 func dismissalReason(body, marker, id, name string) (bool, string) {
-	lower := strings.ToLower(body)
-	markerLower := strings.ToLower(marker)
-	idx := strings.Index(lower, markerLower)
-	if idx < 0 {
+	// Search the original body: lower-casing it first can change byte offsets
+	// (a non-ASCII letter whose lower case has another UTF-8 length), which
+	// would shift idx into the middle of the wrong line.
+	loc := regexp.MustCompile("(?i)" + regexp.QuoteMeta(marker)).FindStringIndex(body)
+	if loc == nil {
 		return false, ""
 	}
+	idx := loc[0]
 	// Take the rest of that line as the reason/scope; require it also names
 	// this family (by id or interface name) so one marker can't blanket-
 	// dismiss every family in a PR that touches several.
@@ -242,7 +247,7 @@ func dismissalReason(body, marker, id, name string) (bool, string) {
 	if !strings.Contains(lowerLine, strings.ToLower(id)) && !strings.Contains(lowerLine, strings.ToLower(name)) {
 		return false, ""
 	}
-	reason := strings.TrimSpace(strings.TrimPrefix(line, marker))
+	reason := strings.TrimSpace(line[loc[1]-idx:])
 	reason = strings.TrimPrefix(strings.TrimSpace(reason), "—")
 	reason = strings.TrimPrefix(strings.TrimSpace(reason), "-")
 	return true, strings.TrimSpace(reason)

@@ -5,6 +5,11 @@ production deployments exist; see the Severity correction below for why no secur
 advisory is warranted). This is the durable record of how the bug class was closed,
 referenced from the wire-DTO code comment (`internal/storage/store/remote_secrets.go`).
 
+> **Status (STORE-UPDATESECRET-RETIRE-1):** `storage.Storage.UpdateSecret` no longer
+> exists. #2695 moved every caller below onto the column-scoped `UpdateSecretFields`
+> (or `UpdateSecretRotationConfig`), and the method itself was then deleted. The
+> sections below describe the Phase 0 state and are kept as the historical record.
+
 ## The bug
 
 `storage.Storage.UpdateSecret` is implemented by both `LocalStorage` (a full GORM

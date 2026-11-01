@@ -101,7 +101,7 @@ func (ls *LocalStorage) UpdateNotification(ctx context.Context, n *models.Notifi
 	}
 	if res.RowsAffected == 0 {
 		// No row for this (id, user) — not found or not the caller's.
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrNotificationNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }
@@ -125,7 +125,7 @@ func (ls *LocalStorage) MarkNotificationRead(ctx context.Context, id, userID uin
 	}
 	if res.RowsAffected == 0 {
 		// No row for this (id, user) — not found or not the caller's.
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrNotificationNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }
@@ -179,7 +179,7 @@ func (ls *LocalStorage) MarkScopedNotificationRead(ctx context.Context, id, user
 	}
 	if res.RowsAffected == 0 {
 		// No row for this (id, user) inside scope — the same answer as not found.
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrNotificationNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }

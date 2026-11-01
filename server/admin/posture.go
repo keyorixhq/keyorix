@@ -10,6 +10,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/solewriter"
 	"github.com/keyorixhq/keyorix/internal/startup"
@@ -117,9 +118,6 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 			return err
 		}
 		fileGraceKnown = true
-		// TODO(#2461): add collectBreakGlassReviewPosture here -- see its
-		// comment below for the two findings Andrei decided on and why they
-		// cannot be implemented until that PR's API lands.
 		inGrace, err := collectRequireMFAPosture(ctx, cfg, store, report)
 		if err != nil {
 			return err
@@ -127,14 +125,25 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 		if err := collectSSOOnlyAdminPosture(ctx, coreService, report); err != nil {
 			return err
 		}
-		return collectAdminMFAPosture(ctx, inGrace, coreService, report)
+		if err := collectAdminMFAPosture(ctx, inGrace, coreService, report); err != nil {
+			return err
+		}
+		collectBreakGlassReviewPosture(ctx, cfg, coreService, report)
+		return nil
 	})
 	if dbErr != nil {
-		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the admin-MFA check and the enable_file_permission_check grace-period check were NOT evaluated: %v", dbErr))
+		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the require-MFA, SSO-only, admin-MFA and break-glass review checks and the enable_file_permission_check grace-period check were NOT evaluated: %v", dbErr))
 	}
 	collectInsecureSettingsPosture(cfg, explicit, report)
 	collectStartupValidationStatePosture(cfg, fileGraceKnown, fileEnforcedSince, report)
 	collectAuditDurabilityPosture(cfg, report)
+	collectIntegrityPosture(cfg, report)
+	report.info(encryption.FIPS140ModeLine())
+	if err := encryption.RunFIPSSelfTest(); err != nil {
+		report.deviate("fips140", err.Error()) // the server refuses to start in this state
+	} else {
+		report.info(encryption.FIPSSelfTestPostureLine())
+	}
 
 	printPostureReport(report)
 
@@ -474,13 +483,11 @@ func collectTLSPosture(cfg *config.Config, report *postureReport) {
 		if !inst.Enabled {
 			return
 		}
-		// TODO(FIX-4): report inst.TLSMode here (informational only -- ADR-112's
-		// recorded decision keeps TLS 1.2 compliant, so neither mode is a
-		// deviation by itself). The field arrived on main with the tls_mode:
-		// strict PR, which is NOT in this PR's base chain
-		// (#2446 -> #2454 -> #2462), so referencing it here would not compile.
-		// Re-add in one line once this stack is rebased onto a main that has it.
 		if inst.TLS.Enabled {
+			// Informational only: ADR-112 keeps TLS 1.2 compliant, so neither mode
+			// is a deviation. Reported only while this listener terminates TLS
+			// itself -- tls_mode has no effect on a cleartext listener.
+			report.info(tlsModeLine(name, inst.TLSMode))
 			return
 		}
 		if cfg.Security.RequireTransportTLS {
@@ -491,6 +498,16 @@ func collectTLSPosture(cfg *config.Config, report *postureReport) {
 	}
 	check("HTTP", cfg.Server.HTTP)
 	check("gRPC", cfg.Server.GRPC)
+}
+
+// tlsModeLine words the informational tls_mode line for one TLS-terminating
+// listener. mode is server.http/grpc.tls_mode, already validated by config
+// Validate(): empty (the default) or config.TLSModeStrict.
+func tlsModeLine(name, mode string) string {
+	if mode == config.TLSModeStrict {
+		return fmt.Sprintf("%s listener TLS mode: strict (TLS 1.3 only)", name)
+	}
+	return fmt.Sprintf("%s listener TLS mode: default (TLS 1.2 floor, forward-secret AEAD suites; ADR-112 keeps this compliant, set tls_mode: strict for TLS 1.3 only)", name)
 }
 
 // collectDatabaseTLSPosture reports how the PostgreSQL connection is
@@ -691,42 +708,61 @@ func requireMFAGraceWindow(ctx context.Context, store corestorage.Storage) (stri
 	return fmt.Sprintf("ends at %s (%d day(s) left)", deadline.UTC().Format(time.RFC3339), days), nil
 }
 
-// collectBreakGlassReviewPosture is the two findings Andrei decided on #2461:
-// an unreviewed break-glass activation past its review window is a FAILING
-// finding, and a single-admin deployment reports "independent review
-// impossible" as a finding of its own.
+// collectBreakGlassReviewPosture is the two findings Andrei decided on #2461,
+// both under the "break-glass-review" category:
 //
-// Both are TODOs rather than code, because #2461 is still OPEN and its API is
-// not on main or anywhere in this PR's base chain
-// (#2446 -> #2454 -> #2462): core.ListUnreviewedBreakGlassActivations,
-// BreakGlassConfig.GetReviewWindow and the review endpoint all arrive with it.
-// An earlier revision of this branch was stacked on #2461 and had the first
-// finding implemented; that stack is gone now that this PR sits on #2462, and
-// reimplementing the API here would fork it.
+//  1. Every activation older than break_glass.review_window that nobody has
+//     reviewed is a deviation, listing each activation id, project and
+//     activation time (never the justification or any credential). A degraded
+//     activation (BREAKGLASS-OWED-1) is listed whatever its age, because the
+//     storage query does so. This runs whether or not break_glass.enabled is
+//     set: switching the feature off does not review what was activated while
+//     it was on.
+//  2. "independent review impossible" when the install has exactly ONE
+//     admin-tier holder. A SEPARATE finding, not a detail of the first: core
+//     refuses self-review (ErrBreakGlassSelfReview), so the only administrator
+//     cannot have their own activations reviewed, and no second administrator
+//     exists to provide independent review. It fires even when every
+//     activation HAS been reviewed -- otherwise the install with the weakest
+//     possible review process is the one that looks compliant.
+//     Like collectTLSPosture's skip of a disabled listener, it is skipped when
+//     break_glass.enabled is false: nothing can be activated, so there is
+//     nothing to review and a default single-admin install is not flagged for a
+//     feature it never turned on.
 //
-// TODO(#2461): when #2461 merges, restore both findings:
-//
-//  1. report.deviate("break-glass-review", ...) for every activation older
-//     than cfg.BreakGlass.GetReviewWindow() with no review, listing each
-//     activation id, project and activation time. The implementation is in
-//     this branch's history (the commit before the rebase onto #2462) and was
-//     working; it needs no redesign, only the API back.
-//  2. report.deviate("break-glass-review", "independent review impossible")
-//     when the install has exactly ONE admin-tier holder. This one is a
-//     SEPARATE finding, not a detail of the first: with a single admin, every
-//     activation is reviewed by the person who activated it, so a clean
-//     review record carries no independent assurance at all. It must fire even
-//     when every activation HAS been reviewed -- otherwise the install with
-//     the weakest possible review process is the one that looks compliant.
-//     collectAdminMFAPosture already resolves the admin-tier holder set, so
-//     the count is available without new storage work; it is left out here
-//     only because "independent review impossible" is meaningless to report
-//     before the review requirement it refers to exists.
-//
-// Deliberately not approximated in the meantime. A finding that said
-// "break-glass review status unknown" would be a third thing to maintain and
-// would read, in a report whose entire purpose is a trustworthy yes/no, as if
-// the check existed.
+// A query that fails is a deviation of its own saying the check was NOT
+// evaluated, the way the database collector reports it, never a silent pass.
+// It does not abort the collectors after it.
+func collectBreakGlassReviewPosture(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore, report *postureReport) {
+	window := cfg.BreakGlass.GetReviewWindow()
+	unreviewed, err := coreService.ListUnreviewedBreakGlassActivations(ctx, window)
+	if err != nil {
+		report.deviate("break-glass-review", fmt.Sprintf("posture check could not list unreviewed break-glass activations, so the break-glass review check was NOT evaluated: %v", err))
+	} else if len(unreviewed) > 0 {
+		items := make([]string, 0, len(unreviewed))
+		for _, a := range unreviewed {
+			degraded := ""
+			if a.Degraded {
+				degraded = ", degraded"
+			}
+			items = append(items, fmt.Sprintf("#%d (project %d, activated %s%s)", a.ID, a.ProjectID, a.CreatedAt.UTC().Format(time.RFC3339), degraded))
+		}
+		report.deviate("break-glass-review", fmt.Sprintf("%d break-glass activation(s) unreviewed past the %s review window (break_glass.review_window) or degraded (review due at once): %s. A second administrator must review each",
+			len(unreviewed), window, strings.Join(items, ", ")))
+	}
+
+	if !cfg.BreakGlass.Enabled {
+		return
+	}
+	admins, err := coreService.ListGlobalAdminHolders(ctx)
+	if err != nil {
+		report.deviate("break-glass-review", fmt.Sprintf("posture check could not list administrators, so the independent-review check was NOT evaluated: %v", err))
+		return
+	}
+	if len(admins) == 1 {
+		report.deviate("break-glass-review", fmt.Sprintf("independent review impossible: the install has exactly one administrator (%s), who cannot have their own break-glass activations reviewed (self-review is refused), and no second administrator exists to provide independent review. Add a second administrator", admins[0].Username))
+	}
+}
 
 func printPostureReport(report *postureReport) {
 	fmt.Println("ADR-112 Secure Baseline Posture")

@@ -3,7 +3,6 @@
 // Targets (DB-error paths not previously covered):
 //   - local_auth.go:230          CreatePersonalAccessToken
 //   - local_auth.go:326          CreateSetupToken
-//   - local_break_glass.go:62    UpdateBreakGlassActivation
 //   - local_legal_hold.go:60     UpdateLegalHold
 //   - local_memberships.go:56    UpdateProjectMembership
 //   - local_notifications.go:133 MarkAllNotificationsRead
@@ -127,49 +126,6 @@ func TestCreateSetupToken_BrokenDB(t *testing.T) {
 		State:     "active",
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
-	require.Error(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// local_break_glass.go:62 — UpdateBreakGlassActivation
-// ---------------------------------------------------------------------------
-
-func TestUpdateBreakGlassActivation_HappyPath(t *testing.T) {
-	ls := newS18Store(t, &models.BreakGlassActivation{})
-	ctx := context.Background()
-
-	a := &models.BreakGlassActivation{
-		ProjectID:     1,
-		UserID:        2,
-		RoleID:        3,
-		RoleName:      "emergency",
-		Justification: "incident",
-		State:         "active",
-	}
-	require.NoError(t, ls.db.Create(a).Error)
-
-	a.State = "expired"
-	err := ls.UpdateBreakGlassActivation(ctx, a)
-	require.NoError(t, err)
-}
-
-func TestUpdateBreakGlassActivation_BrokenDB(t *testing.T) {
-	ls := newS18Store(t, &models.BreakGlassActivation{})
-	ctx := context.Background()
-
-	a := &models.BreakGlassActivation{
-		ProjectID:     1,
-		UserID:        2,
-		RoleID:        3,
-		RoleName:      "emergency",
-		Justification: "incident",
-		State:         "active",
-	}
-	require.NoError(t, ls.db.Create(a).Error)
-	closeS18DB(t, ls)
-
-	a.State = "expired"
-	err := ls.UpdateBreakGlassActivation(ctx, a)
 	require.Error(t, err)
 }
 
@@ -381,10 +337,10 @@ func TestCreateSecret_BrokenDB(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// local_secrets.go:454 — UpdateSecret
+// local_secrets.go:887 — TransitionSecretStatus
 // ---------------------------------------------------------------------------
 
-func TestUpdateSecret_HappyPath(t *testing.T) {
+func TestTransitionSecretStatus_HappyPath(t *testing.T) {
 	ls := newS18Store(t, &models.SecretNode{})
 	ctx := context.Background()
 
@@ -399,13 +355,15 @@ func TestUpdateSecret_HappyPath(t *testing.T) {
 	require.NoError(t, ls.db.Create(s).Error)
 
 	s.Status = "inactive"
-	updated, err := ls.UpdateSecret(ctx, s)
+	matched, err := ls.TransitionSecretStatus(ctx, s, "active")
 	require.NoError(t, err)
-	require.NotNil(t, updated)
+	require.True(t, matched)
+	var updated models.SecretNode
+	require.NoError(t, ls.db.First(&updated, s.ID).Error)
 	assert.Equal(t, "inactive", updated.Status)
 }
 
-func TestUpdateSecret_BrokenDB(t *testing.T) {
+func TestTransitionSecretStatus_BrokenDB(t *testing.T) {
 	ls := newS18Store(t, &models.SecretNode{})
 	ctx := context.Background()
 
@@ -421,7 +379,7 @@ func TestUpdateSecret_BrokenDB(t *testing.T) {
 	closeS18DB(t, ls)
 
 	s.Status = "inactive"
-	_, err := ls.UpdateSecret(ctx, s)
+	_, err := ls.TransitionSecretStatus(ctx, s, "active")
 	require.Error(t, err)
 }
 

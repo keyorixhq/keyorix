@@ -257,9 +257,12 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 	// neutral: all of it commits here, never blocked by the audit log. One that adds
 	// is a widening: this transaction applies only its removals (a mixed update,
 	// MERGE-FIX-3482K, ask 3482-mixed-update-role-share (a)), or nothing at all.
-	// "" means keep the stored scope: decided once here and resolved against the
-	// row read in EACH transaction below (commit 1, its owed rerun, commit 2), so
-	// a narrowing committed in between is kept, never rewritten from a stale read.
+	// "" means keep the stored scope: role.AssignableScope stays "" all the way to
+	// storage.UpdateRole, which then leaves the column out of its UPDATE. The
+	// scope read below only classifies the update; it is never written back, so a
+	// narrowing another replica commits after that read (plain GetRole, no row
+	// lock, READ COMMITTED) is kept (#3909). Copying the read scope into the
+	// UPDATE, as this did before, undid it.
 	keepScope := role.AssignableScope == ""
 	var narrowed, rest bool
 	if err := c.withOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
@@ -273,15 +276,16 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 		if err != nil {
 			return err
 		}
+		want := role.AssignableScope
 		if keepScope {
-			role.AssignableScope = stored.AssignableScope
+			want = stored.AssignableScope
 		}
-		if role.AssignableScope != stored.AssignableScope {
-			scopeChange = fmt.Sprintf(" (assignable_scope %s -> %s)", stored.AssignableScope, role.AssignableScope)
+		if want != stored.AssignableScope {
+			scopeChange = fmt.Sprintf(" (assignable_scope %s -> %s)", stored.AssignableScope, want)
 		}
 		// A scope change that lets the role be granted somewhere it could not be
 		// before is a widening, like an added permission: fail closed (commit 2).
-		if len(add) > 0 || assignableScopeWidens(stored.AssignableScope, role.AssignableScope) {
+		if len(add) > 0 || assignableScopeWidens(stored.AssignableScope, want) {
 			rest = true
 			for _, id := range remove {
 				if err := tx.RemovePermissionFromRole(ctx, role.ID, id); err != nil {
@@ -311,13 +315,8 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 		if err != nil {
 			return err
 		}
-		if keepScope {
-			stored, err := tx.GetRole(ctx, role.ID)
-			if err != nil {
-				return err
-			}
-			role.AssignableScope = stored.AssignableScope
-		}
+		// keepScope: role.AssignableScope is "", so the UPDATE leaves the stored
+		// scope alone, including a narrowing committed since commit 1.
 		if updated, finalPermissions, err = c.updateRoleTx(ctx, tx, role, remove, add); err != nil {
 			return err
 		}

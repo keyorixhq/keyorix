@@ -1,6 +1,6 @@
 // password_local_test.go — regression coverage for #484: applyNewPassword (shared by
 // self-service ChangePassword and the setup-token consume flow) must persist via the
-// narrow SetPasswordHash/SetAccountState primitives, not the generic UpdateUser.
+// narrow SetPasswordHash/SetAccountState primitives (column-scoped writes), not a full-row save.
 // Originally paired with a RemoteStorage hard-fail case (RemoteStorage could never
 // carry password_hash over the wire); that half was deleted in ADR-108 Phase 6
 // step 14b-2 along with RemoteStorage itself. This is what's left: proof the

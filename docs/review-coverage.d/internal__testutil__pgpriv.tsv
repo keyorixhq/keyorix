@@ -1,0 +1,1 @@
+internal/testutil/pgpriv	none	-	PR #3859 (TESTS-PG-PRIV-1): test-only helper that probes whether the Postgres test role may set session_replication_role so privilege-dependent tests can skip instead of failing; imported only by *_test.go files	test-helper

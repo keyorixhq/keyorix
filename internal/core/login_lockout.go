@@ -148,8 +148,9 @@ func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) 
 			u.LoginLockedUntil = &until
 			u.FailedLoginAttempts = 0 // window counter resets; the lock now gates
 		}
-		// Persist via the narrow UpdateLoginLockoutState, not the generic UpdateUser —
-		// this is the sole write path for the four lockout-accounting columns.
+		// Persist via the narrow UpdateLoginLockoutState, which writes only the four
+		// lockout-accounting columns (never a full-row save that could revert a
+		// concurrent password, MFA or account-state write) — the sole write path for them.
 		if err := tx.UpdateLoginLockoutState(ctx, uid, u.FailedLoginAttempts, u.LastFailedLoginAt, u.LoginLockedUntil, u.LoginLockoutCount); err != nil {
 			return err
 		}
@@ -431,8 +432,8 @@ func (c *KeyorixCore) RecordPostVerdictLoginFailure(ctx context.Context, user *m
 
 // clearLoginFailures resets the lockout state after a successful authentication.
 // It writes only when there is something to clear, so the happy path adds no extra
-// write on every login. Persists via the narrow UpdateLoginLockoutState, not the
-// generic UpdateUser.
+// write on every login. Persists via the narrow UpdateLoginLockoutState, which
+// writes only the four lockout-accounting columns, not a full-row save.
 //
 // Panic-safe (#3556). Every caller runs it AFTER the authentication's effect
 // committed: LoginCompletion.Succeeded after the session insert and the
@@ -443,8 +444,11 @@ func (c *KeyorixCore) RecordPostVerdictLoginFailure(ctx context.Context, user *m
 // nevertheless held, unaudited, and a 500 a wrong credential never gets. A clear
 // that does not happen leaves the counter where the credential check found it,
 // the strict side. Recovering here rather than at each call site keeps every
-// future caller covered.
+// future caller covered. The top-level defer covers the whole body (the budget
+// fallback clear too), which is what makes the best-effort call-site guard
+// treat this function as self-recovering, so its callers need no allow rows.
 func (c *KeyorixCore) clearLoginFailures(ctx context.Context, user *models.User) {
+	defer besteffort.RunRecover("login.clearLoginFailures")()
 	c.budgetFallbackClear(c.accountBudget(), accountBudgetKey(user.ID))
 	if user.FailedLoginAttempts == 0 && user.LoginLockedUntil == nil && user.LoginLockoutCount == 0 {
 		return
@@ -471,7 +475,7 @@ func (c *KeyorixCore) clearLoginFailures(ctx context.Context, user *models.User)
 //
 // #484: persists via the same narrow UpdateLoginLockoutState primitive #454 already
 // established for the automatic clear paths (clearLoginFailures, reached via
-// LoginCompletion.Succeeded) — not the generic UpdateUser. UnlockUser clears the
+// LoginCompletion.Succeeded) — not a full-row save. UnlockUser clears the
 // exact same four columns those callers do, just admin-triggered instead of triggered
 // by a successful login.
 // S1 sweep decision (CLI-split inventory #2012): deliberately NOT ceiling-gated

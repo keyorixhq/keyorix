@@ -56,6 +56,17 @@ func (r *g80LimitedThenFailingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// withNewSvcWiped wipes svc and runs fn, so every Encrypt/EncryptWithAAD/
+// EncryptChunked on svc inside fn fails with ErrDEKWiped. It reaches the
+// "failed to (re-)encrypt ..." branches of the sweep and Service that used to
+// be reached through a failing rand.Reader: the GCM nonce no longer comes from
+// rand.Reader (FIPS-GCM-NONCE-1), so that no longer fails encryption.
+func withNewSvcWiped(t *testing.T, svc *EncryptionService, fn func()) {
+	t.Helper()
+	svc.WipeDEK()
+	fn()
+}
+
 // withRandFailingAfter swaps crypto/rand.Reader so the first n bytes read succeed
 // normally and every byte after that fails, then restores the original reader.
 func withRandFailingAfter(t *testing.T, n int, fn func()) {

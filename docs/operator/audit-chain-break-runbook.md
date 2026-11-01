@@ -47,11 +47,22 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
   (`docs/design-audit-key-transition.md`), so an honest key change does not produce one.
   `key transition` means the transition record is missing, forged or for another epoch, and
   `other key epoch` means a key change that did not carry the state over (an older binary).
-  A `before a recorded break` discontinuity also appears when a replica running a version
-  from before this check saves the state during a rolling upgrade (it drops the fields that
-  place the row against the chain): stop older replicas before upgrading. A binary rollback
-  to such a version (upgrade-rollback.md §4A) followed by a re-upgrade has the same effect.
-  There is no command to accept a discontinuity yet (`docs/design-audit-reseal-options.md`).
+  A replica running a version from before this check that saves the state during a rolling
+  upgrade, or after a binary rollback (upgrade-rollback.md §4A) and re-upgrade, drops the
+  fields that place the row against the chain. That row is restarted (`not_proven`, a
+  `system.audit_verification_state_rejected` event, "re-signed by an older server version")
+  and the next passing full verification re-places it (#3708). It is still a `before a
+  recorded break` discontinuity when a break, a discontinuity or a newer checkpoint was
+  recorded after the older replica's save, when the older replica's own load rejected the
+  row (deleted, put back or garbled: its save would launder that), when the row it re-signed
+  still carried a rejection no full verification had cleared (fail closed), or when the newest
+  `system.audit_verification_state_initialized` event names no state generation (written by
+  a server from before #3708; the next save appends one that does). While an accepted loss
+  or a key transition exists, an older replica's save is a `seal` / `key transition`
+  discontinuity (it drops those fields), so stop older replicas before upgrading such a
+  deployment. `admin audit
+  accept-loss` accepts a discontinuity only together with a proven loss of rows; over an
+  intact chain it stays sticky.
 - New audit events keep chaining onto the current tail, so the service keeps working and
   the break stays where it is.
 
@@ -277,6 +288,16 @@ after the break is not notarised: decide soon.
      started that acceptance yourself: a resume of a seal you did not just run is a rollback of
      the database until proven otherwise (section 8).
    - `--reason` and `--operator` are stored in the audit chain. Put no secrets in them.
+   - On SQLite the plan also reads the host's `.audit-highwater-witness`. A witness that
+     authenticates under the current seals counts in "certified before the loss" (it is the one
+     certification outside the database, so it still counts rows after an in-database rollback
+     of the metadata), and the plan prints a `host witness file: ... confirming LOWERS it` line
+     when the acceptance will lower it. If its certified head is gone, name that id as well (the
+     plan refuses until you do, so the seal records the tail loss). The apply re-reads the
+     witness before it writes anything and refuses if it now certifies more than the plan named.
+     A witness signed under a seal list the database does not hold (more seals, or another list
+     of the same length) is refused as a rollback of the database, seal record included
+     (section 8).
 
    Afterwards:
 
@@ -287,22 +308,41 @@ after the break is not notarised: decide soon.
    | Deleted, altered, moved or replayed seal record, removed seal event, rows removed or put back around the gap | BROKEN, on both verifiers (except a rollback that reads as an unfinished acceptance, section 8) |
 
    Then write and export a fresh anchor (above) and keep it with the evidence. A `rotate-kek` or
-   `migrate-provider` carries the seal over. A restore of an archive taken before the seal
+   `migrate-provider` carries the seal over; if the seal record cannot be trusted when the key
+   change completes, completion stops and signs nothing (key-rotation-runbook.md §5). A restore of an archive taken before the seal
    is refused as a rollback unless `--allow-rollback` is given. `admin recover-admin` never seals:
    it records a break in its event and leaves the decision to this command.
 
 ## 8. Gaps in the product today
 
-- A resume can hide a rollback. Someone with write access to the database and a copy from
-  before an acceptance (the evidence copy in section 6, or any backup) can cut rows certified
-  after a completed seal and put the copy's high-water mark and verification state back. Inside
-  the database that reads exactly like an acceptance that stopped part way, and `accept-loss`
-  offers to complete it. On SQLite the command reads the host's `.audit-highwater-witness` and
-  refuses when it certifies rows that are gone (or when the witness exists but is damaged). On
-  PostgreSQL there is no witness and nothing inside the database tells the two apart. Treat a
-  resume of a seal you did not just run (check the "recorded ... by ..." line of the plan) as a
-  rollback until proven otherwise: compare the trail with an external anchor (`export-checkpoint`)
-  taken after the seal before you confirm.
+- **Whole-trail rollback.** Someone with write access to the database and an older copy of it
+  (the evidence copy in section 6, or any backup) can put back every audit row, the seal record,
+  the checkpoints, the high-water mark and the verification state as they were at an earlier
+  point. Everything inside the database then agrees with itself. What `accept-loss` can and
+  cannot tell:
+
+  | Rolled back to | SQLite, witness file untouched | PostgreSQL, or SQLite with the witness rolled back too |
+  |---|---|---|
+  | Part way through a completed acceptance (record and event kept, later rows cut) | Detected if any row certified after the seal is gone: the witness, signed under the seal, certifies it and the resume is refused. Rows written after the last checkpoint were never certified and are not detected | Not detected: it reads as an acceptance that stopped part way and the plan offers to resume it |
+  | Before a completed acceptance (record and event gone) | Detected: the witness is signed under a seal list the database no longer holds and the plan is refused as a rollback | Not detected: it reads as a fresh, unsealed loss, and a new acceptance would record it again |
+  | Before the last checkpoint, no acceptance involved | Not raised by the running server, which does not read the witness (only `admin restore` and `accept-loss` do). `accept-loss` counts the witness, so naming its missing head as a truncation measures and records the cut rows | Not detected |
+
+  The witness only helps while it is intact: an absent witness is treated as none (it cannot be
+  told apart from an install that never wrote one), and a host snapshot that restores the data
+  directory restores the witness with it. Against a rollback that includes the witness, or on
+  PostgreSQL, the only defence is evidence held off the host: an `export-checkpoint` file
+  written after the seal (section 7). Pass it with `--anchor`; an anchor exported under a seal
+  the database no longer holds does not authenticate and the command refuses. Treat a resume of
+  a seal you did not just run (check the "recorded ... by ..." line of the plan) as a rollback
+  until proven otherwise, and compare the trail with such an anchor before you confirm.
+- An acceptance left unfinished and then a `rotate-kek` or `migrate-provider`: the key change
+  does not complete while the seal is pending (nothing is signed against an untrusted seal
+  list). Re-run `accept-loss` with the new key: the key change's record, signed by both keys,
+  names the checkpoint and high-water mark the acceptance had not rewritten yet, so the resume
+  completes over them, and the next server start completes the key change (#3814). The resume
+  still refuses a checkpoint, mark or witness that the record does not name and that does not
+  authenticate under the current key (for example one changed after the key change was
+  prepared). Finishing the acceptance before a key change remains the simpler order.
 - A verification state discontinuity with an intact chain (a deleted or garbled state row, a
   key epoch problem) cannot be accepted: `accept-loss` seals only lost rows (section 7, option 3),
   and those discontinuities stay sticky.

@@ -17,9 +17,11 @@
 package encryptionops
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
@@ -96,6 +98,17 @@ func missingKeysError(cfg *config.Config, baseDir string) error {
 		dekPath, cfg.Storage.Encryption.DEKPath, baseDir)
 }
 
+// withLockContentionHint appends hint to err only when the lock is held by another process
+// (flock refused with EWOULDBLOCK). A missing key directory, permission denied and any other
+// failure to open the lock file are returned as they are: telling the operator to stop a
+// server that is not running sends them the wrong way.
+func withLockContentionHint(err error, hint string) error {
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return fmt.Errorf("%w — %s", err, hint)
+	}
+	return err
+}
+
 // InitLocalKeyOpService constructs and initializes the encryption.Service for
 // a short-lived, LOCAL key-management operation that does not change the DEK
 // or its wrapping — status/validate/fix-perms/rotate --dry-run/init — and has
@@ -116,7 +129,7 @@ func InitLocalKeyOpService(cfg *config.Config, baseDir, passphrase string, creat
 			return nil, err
 		}
 		if err := service.AcquireExclusiveKeyLock(); err != nil {
-			return nil, fmt.Errorf("%w — a live server or an in-progress key operation is using this key directory; stop it or wait for it to finish, then retry", err)
+			return nil, withLockContentionHint(err, "a live server or an in-progress key operation is using this key directory; stop it or wait for it to finish, then retry")
 		}
 	} else if err := requireExistingKeys(cfg, service, baseDir); err != nil {
 		return nil, err
@@ -127,7 +140,7 @@ func InitLocalKeyOpService(cfg *config.Config, baseDir, passphrase string, creat
 	}
 	if err := service.AcquireSharedKeyLock(); err != nil {
 		service.Shutdown()
-		return nil, fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+		return nil, withLockContentionHint(err, "a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry")
 	}
 	return service, nil
 }

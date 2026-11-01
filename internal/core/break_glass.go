@@ -556,11 +556,14 @@ func (c *KeyorixCore) grantBreakGlassTx(
 // the degraded path tgt captures the rows as owed instead of appending them.
 func (c *KeyorixCore) auditBreakGlassActivationOn(ctx context.Context, tgt auditTarget, a *models.BreakGlassActivation, scope storage.Scope) {
 	c.LogRoleAssignedOn(ctx, tgt, a.UserID, a.UserID, a.RoleID, scope)
-	desc := fmt.Sprintf("break-glass: user %d self-granted %q until %s — %s",
-		a.UserID, a.RoleName, a.ExpiresAt.UTC().Format(time.RFC3339), a.Justification)
+	// Named like role.assigned: `user 2 ("dana")`, falling back to `user 2` when the
+	// name cannot be read (auditRef never fails; #3741).
+	who := c.auditRef(ctx, tgt.st, auditKindUser, a.UserID)
+	desc := fmt.Sprintf("break-glass: %s self-granted %q until %s — %s",
+		who, a.RoleName, a.ExpiresAt.UTC().Format(time.RFC3339), a.Justification)
 	if a.Degraded {
-		desc = fmt.Sprintf("break-glass (DEGRADED: the audit log refused this row at activation; activation %d, short expiry, review mandatory): user %d self-granted %q until %s — %s",
-			a.ID, a.UserID, a.RoleName, a.ExpiresAt.UTC().Format(time.RFC3339), a.Justification)
+		desc = fmt.Sprintf("break-glass (DEGRADED: the audit log refused this row at activation; activation %d, short expiry, review mandatory): %s self-granted %q until %s — %s",
+			a.ID, who, a.RoleName, a.ExpiresAt.UTC().Format(time.RFC3339), a.Justification)
 	}
 	c.auditProjectScopedOn(ctx, tgt, EventBreakGlassActivated, a.UserID, a.ProjectID, desc)
 }
@@ -970,7 +973,7 @@ func (c *KeyorixCore) LogBreakGlassRevoked(ctx context.Context, actorID, project
 
 func (c *KeyorixCore) logBreakGlassRevokedOn(ctx context.Context, tgt auditTarget, actorID, projectID, activationID, userID, roleID uint, roleName string) {
 	c.auditProjectScopedOn(ctx, tgt, EventBreakGlassRevoked, actorID, projectID,
-		fmt.Sprintf("break-glass: revoked activation %d (user %d, role %q) early", activationID, userID, roleName))
+		fmt.Sprintf("break-glass: revoked activation %d (%s, role %q) early", activationID, c.auditRef(ctx, tgt.st, auditKindUser, userID), roleName))
 }
 
 // ReviewBreakGlass records a post-activation review (ADR-112 §3, break-glass

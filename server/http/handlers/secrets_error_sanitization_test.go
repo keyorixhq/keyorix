@@ -202,17 +202,21 @@ func TestCopySecret_StorageErrorSanitizedInResponseButLogged(t *testing.T) {
 }
 
 func TestCopyEnvironmentSecrets_StorageErrorSanitizedInResponseButLogged(t *testing.T) {
-	handler, coreService, _, _ := secretErrSanitizationFixture(t)
+	handler, coreService, _, db := secretErrSanitizationFixture(t)
 
 	logs := captureLog(t)
 
-	// A source environment that doesn't exist forces core.CopyEnvironmentSecrets'
-	// GetEnvironment lookup to fail. That failure is wrapped as "Validation
-	// error: <record not found>" — capital-V "Validation" doesn't match the
-	// handler's lowercase "validation" substring check, and there is no
-	// "not found" branch in this handler at all, so it falls to the
-	// default/else branch that must sanitize.
-	_, _, rawErr := coreService.CopyEnvironmentSecrets(context.Background(), 1, 999, 11, "alice", 1, "", "")
+	// A real storage failure in core.CopyEnvironmentSecrets that is NOT a classified
+	// environment-lookup fault: the secret listing of the source environment (the
+	// secret_nodes table is gone). It is wrapped as "Retrieval failed: <driver
+	// error>", matches none of the handler's 400 substrings, and so falls to the
+	// default/else branch that must sanitize. (This used to drive the branch with a
+	// missing source environment, then with a failed environment lookup; a missing
+	// environment answers the same 400 as one in another project since
+	// AUTHZ-ORACLE-1, and a failed lookup is now a 503 storage_unavailable
+	// (STORAGE-ERR-CLASS-2), so neither reaches the storage-error branch.)
+	require.NoError(t, db.Migrator().DropTable(&models.SecretNode{}))
+	_, _, rawErr := coreService.CopyEnvironmentSecrets(context.Background(), 1, 10, 11, "alice", 1, "", "")
 	require.Error(t, rawErr)
 	require.NotContains(t, rawErr.Error(), "must ")
 	require.NotContains(t, rawErr.Error(), "required")
@@ -220,8 +224,8 @@ func TestCopyEnvironmentSecrets_StorageErrorSanitizedInResponseButLogged(t *test
 	require.NotContains(t, rawErr.Error(), "validation")
 
 	body := `{"target_environment_id":11}`
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/environments/999/copy-secrets", bytes.NewBufferString(body)))
-	req = withChiParams(req, map[string]string{"id": "1", "envId": "999"})
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/environments/10/copy-secrets", bytes.NewBufferString(body)))
+	req = withChiParams(req, map[string]string{"id": "1", "envId": "10"})
 	w := httptest.NewRecorder()
 	handler.CopyEnvironmentSecrets(w, req)
 

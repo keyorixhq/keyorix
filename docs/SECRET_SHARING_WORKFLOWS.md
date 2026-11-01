@@ -40,11 +40,11 @@ Every CLI command below was checked against the real `keyorix` command tree
 ```
 1. DBA navigates to "Production DB Password" secret
 2. Clicks "Share" button
-3. Enters developer username: "john.developer"
-4. Selects "Read" permission
-5. Clicks "Share Secret"
-6. Developer receives notification
-7. After debugging, DBA revokes access
+3. Types "john.developer" in the Recipient field and picks him from the suggestions
+4. Selects "Read Only" permission
+5. Clicks "Share"
+6. After debugging, DBA opens "Sharing" in the sidebar and revokes the share
+   (trash icon, "Revoke access")
 ```
 
 #### Via CLI

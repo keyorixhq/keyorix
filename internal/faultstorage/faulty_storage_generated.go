@@ -7562,54 +7562,6 @@ func (w *FaultyStorage) UpdateAuditCheckpointAnchor(ctx context.Context, id uint
 	return w.real.UpdateAuditCheckpointAnchor(ctx, id, token, anchoredAt, provider)
 }
 
-func (w *FaultyStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error {
-	fire, kind, injected := w.check("UpdateBreakGlassActivation")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			return injected
-		case KindEffectThenError:
-			_ = w.real.UpdateBreakGlassActivation(ctx, a)
-			return injected
-		}
-	}
-	return w.real.UpdateBreakGlassActivation(ctx, a)
-}
-
-func (w *FaultyStorage) UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error {
-	fire, kind, injected := w.check("UpdateDynamicSecretConfig")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			return injected
-		case KindEffectThenError:
-			_ = w.real.UpdateDynamicSecretConfig(ctx, c)
-			return injected
-		}
-	}
-	return w.real.UpdateDynamicSecretConfig(ctx, c)
-}
-
-func (w *FaultyStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error {
-	fire, kind, injected := w.check("UpdateDynamicSecretLease")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			return injected
-		case KindEffectThenError:
-			_ = w.real.UpdateDynamicSecretLease(ctx, l)
-			return injected
-		}
-	}
-	return w.real.UpdateDynamicSecretLease(ctx, l)
-}
-
 func (w *FaultyStorage) UpdateGroupFields(ctx context.Context, id uint, name *string, nameFolded *string, description *string, updatedAt time.Time) (bool, error) {
 	fire, kind, injected := w.check("UpdateGroupFields")
 	if fire {
@@ -7807,23 +7759,6 @@ func (w *FaultyStorage) UpdateRotationState(ctx context.Context, policyID uint, 
 	return w.real.UpdateRotationState(ctx, policyID, state, errMsg)
 }
 
-func (w *FaultyStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
-	fire, kind, injected := w.check("UpdateSecret")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			var zero1 *models.SecretNode
-			return zero1, injected
-		case KindEffectThenError:
-			rv1, _ := w.real.UpdateSecret(ctx, secret)
-			return rv1, injected
-		}
-	}
-	return w.real.UpdateSecret(ctx, secret)
-}
-
 func (w *FaultyStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
 	fire, kind, injected := w.check("UpdateSecretFields")
 	if fire {
@@ -7890,23 +7825,6 @@ func (w *FaultyStorage) UpdateShareRecord(ctx context.Context, share *models.Sha
 		}
 	}
 	return w.real.UpdateShareRecord(ctx, share)
-}
-
-func (w *FaultyStorage) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
-	fire, kind, injected := w.check("UpdateUser")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			var zero1 *models.User
-			return zero1, injected
-		case KindEffectThenError:
-			rv1, _ := w.real.UpdateUser(ctx, user)
-			return rv1, injected
-		}
-	}
-	return w.real.UpdateUser(ctx, user)
 }
 
 func (w *FaultyStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user *models.User, fromActive bool) (bool, error) {

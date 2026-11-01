@@ -186,14 +186,15 @@ func (c *KeyorixCore) BeginSSO(ctx context.Context, providerName, returnTo strin
 	// depth on top of the confidential-client secret and the single-use state row —
 	// the OAuth 2.1 / OIDC baseline (F1, adversarial-review 2026-09-14).
 	verifier := oauth2.GenerateVerifier()
+	now := c.now().UTC()
 	if err := c.storage.CreateSSOLoginState(ctx, &models.SSOLoginState{
 		State:        state,
 		Nonce:        nonce,
 		Provider:     providerName,
 		ReturnTo:     sanitizeReturnTo(returnTo),
 		CodeVerifier: verifier,
-		ExpiresAt:    c.now().Add(ssoStateTTL),
-		CreatedAt:    c.now(),
+		ExpiresAt:    now.Add(ssoStateTTL),
+		CreatedAt:    now,
 	}); err != nil {
 		return "", err
 	}
@@ -368,13 +369,14 @@ func (c *KeyorixCore) BeginSAML(ctx context.Context, name, returnTo string) (str
 	}
 	// Reuse the SSO login-state row: State is the RelayState lookup key, Nonce carries
 	// the AuthnRequest ID (matched against InResponseTo at the ACS).
+	now := c.now().UTC()
 	if err := c.storage.CreateSSOLoginState(ctx, &models.SSOLoginState{
 		State:     relayState,
 		Nonce:     requestID,
 		Provider:  name,
 		ReturnTo:  sanitizeReturnTo(returnTo),
-		ExpiresAt: c.now().Add(ssoStateTTL),
-		CreatedAt: c.now(),
+		ExpiresAt: now.Add(ssoStateTTL),
+		CreatedAt: now,
 	}); err != nil {
 		return "", err
 	}
@@ -803,6 +805,10 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		// constraint-violation message.
 		if errors.Is(err, storage.ErrDuplicateEmail) {
 			return nil, fmt.Errorf("a user with this email already exists")
+		}
+		// Same race on the derived username (deriveSCIMUsername vs the username index).
+		if errors.Is(err, storage.ErrDuplicateUsername) {
+			return nil, fmt.Errorf("a user with this username already exists")
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

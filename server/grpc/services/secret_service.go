@@ -52,7 +52,7 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	// project. Mirrors the HTTP CreateSecret handler (scope from the body).
 	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
 	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), permSecretsWrite, scope); err != nil || !allowed {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create secrets in this project")
+		return nil, authorizeRefusal(ctx, err, "insufficient permissions to create secrets in this project")
 	}
 	if err := enforceProjectMFA(ctx, s.core, user, scope.ProjectID); err != nil {
 		return nil, err
@@ -303,7 +303,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 	// the per-user owner/sharing check (and its user-id requirement) does not
 	// apply to them (W1 — see GetSecret). The secret.updated row, with its
 	// before/after diff, commits with the update, as on the HTTP path.
-	mctx := secretMutationAuditContext(ctx, user)
+	mctx, lookupFaults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(ctx, user))
 	var secret *models.SecretNode
 	if user.ActorKind() == core.ActorTypeMachine {
 		secret, err = s.core.UpdateSecret(mctx, updateReq)
@@ -311,7 +311,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 		secret, err = s.core.UpdateSecretWithPermissionCheck(mctx, updateReq)
 	}
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretMutationError(ctx, lookupFaults, err)
 	}
 	return secretNodeToProto(secret), nil
 }
@@ -332,14 +332,14 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 	// the per-user owner/sharing check (and its user-id requirement) does not
 	// apply to them (W1 — see GetSecret). The secret.deleted row commits with the
 	// delete, as on the HTTP path.
-	mctx := secretMutationAuditContext(ctx, user)
+	mctx, lookupFaults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(ctx, user))
 	if user.ActorKind() == core.ActorTypeMachine {
 		err = s.core.DeleteSecret(mctx, uint(req.GetId()))
 	} else {
 		err = s.core.DeleteSecretWithPermissionCheck(mctx, uint(req.GetId()), user.UserID)
 	}
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretMutationError(ctx, lookupFaults, err)
 	}
 	// The delete is done; a failed read-back of the purge date leaves it unset rather
 	// than failing a completed delete (same stance as the HTTP handler's header).
@@ -389,7 +389,7 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecrets
 	// filters the results to what the caller may actually see.
 	listScope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
 	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), permSecretsRead, listScope); err != nil || !allowed {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list secrets")
+		return nil, authorizeRefusal(ctx, err, "insufficient permissions to list secrets")
 	}
 	if err := enforceProjectMFA(ctx, s.core, user, listScope.ProjectID); err != nil {
 		return nil, err
@@ -649,7 +649,16 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 	// denial note on ctx (GetSecretValue, #3273); they never change the answer.
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
-		core.NoteSecretReadDenial(ctx, core.SecretReadDeniedNotFound)
+		if !core.IsAuthorizeTransient(ctx, err) {
+			// A read FAULT is an outage on a secret that may exist: the audit row
+			// says internal_error for every caller, whatever the answer (as REST's
+			// handleScopeResolutionError notes it). Only a true miss is not_found.
+			reason := core.SecretReadDeniedNotFound
+			if core.ReadFault(err) != nil {
+				reason = core.SecretReadDeniedInternalError
+			}
+			core.NoteSecretReadDenial(ctx, reason)
+		}
 		return authorizeScopedTarget(ctx, cs, actor, perm, err, core.Scope{}, "secret not found")
 	}
 	core.NoteSecretReadSubject(ctx, secret)
@@ -658,9 +667,12 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 		core.NoteSecretReadDenial(ctx, core.SecretReadDeniedForbidden)
 		return status.Error(codes.PermissionDenied, core.ShareActionNotElevatedMessage)
 	}
+	if aerr != nil && core.IsAuthorizeTransient(ctx, aerr) {
+		return authorizeRefusal(ctx, aerr, "insufficient permissions")
+	}
 	if aerr != nil || !decision.Allowed {
 		core.NoteSecretReadDenial(ctx, core.SecretReadDeniedForbidden)
-		return status.Error(codes.PermissionDenied, "insufficient permissions")
+		return authorizeRefusal(ctx, aerr, "insufficient permissions")
 	}
 	if err := enforceProjectMFA(ctx, cs, actor, secret.ProjectID); err != nil {
 		core.NoteSecretReadDenial(ctx, core.SecretReadDeniedMFARequired)
@@ -710,6 +722,20 @@ func grpcReadRefusal(err error) core.SecretReadDenialReason {
 
 // SecretReadRefusalDomain is the ErrorInfo.Domain of a secret-read refusal.
 const SecretReadRefusalDomain = "keyorix.secrets"
+
+// mapSecretMutationError is mapSecretError for the update and delete RPCs, which
+// authorize inside core: a permission refusal that core reached because a TRANSIENT
+// storage failure stopped the permission lookup is Unavailable (retry), not
+// PermissionDenied (STORAGE-ERR-CLASS-4, INV-MW-authorize-lookup-error-is-503). A
+// verdict, and any non-transient lookup error, stays the fail-closed denial.
+func mapSecretMutationError(ctx context.Context, faults *core.AuthorizeFaultRecorder, err error) error {
+	if errors.Is(err, core.ErrPermissionDenied) {
+		if ferr := faults.Err(); ferr != nil {
+			return authorizeRefusal(ctx, ferr, "access denied to this secret")
+		}
+	}
+	return mapSecretError(err)
+}
 
 // mapSecretError translates core errors into gRPC status codes.
 func mapSecretError(err error) error {

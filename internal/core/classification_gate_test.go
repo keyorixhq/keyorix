@@ -173,17 +173,27 @@ func TestApproveSecretAccessRequest_Guards(t *testing.T) {
 	req, err := c.RequestSecretAccess(ctx, secretID, requesterID, "")
 	require.NoError(t, err)
 
-	// Maker != checker.
+	// A caller without admin authority at the request's project, the requester
+	// included, gets the "access request not found" a missing ID gets: authority is
+	// checked before anything about the request is reported (AUTHZ-ORACLE-1; this
+	// used to answer "cannot approve their own" / "only an administrator ...").
 	_, err = c.ApproveSecretAccessRequest(ctx, req.ID, requesterID)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot approve their own")
+	assert.Equal(t, "access request not found", err.Error())
 
-	// A non-admin approver is refused.
 	nonAdmin, err := st.CreateUser(ctx, foldedTestUser(t, "nonadmin", "nonadmin@example.com"))
 	require.NoError(t, err)
 	_, err = c.ApproveSecretAccessRequest(ctx, req.ID, nonAdmin.ID)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "administrator")
+	assert.Equal(t, "access request not found", err.Error())
+
+	// Maker != checker still holds for a requester who IS an admin there.
+	adminRole, err := st.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, requesterID, adminRole.ID, storage.Scope{ProjectID: projectID}))
+	_, err = c.ApproveSecretAccessRequest(ctx, req.ID, requesterID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot approve their own")
 
 	// A project/role (SecretID nil) request is refused by this function.
 	roleReq, err := c.RequestProjectAccess(ctx, projectID, requesterID, "viewer", "")
@@ -588,12 +598,13 @@ func TestRejectSecretAccessRequest_Guards(t *testing.T) {
 	req, err := c.RequestSecretAccess(ctx, secretID, requesterID, "")
 	require.NoError(t, err)
 
-	// A non-admin rejecter is refused.
+	// A non-admin rejecter is refused with the missing-ID answer (AUTHZ-ORACLE-1;
+	// this used to answer "only an administrator ...").
 	nonAdmin, err := st.CreateUser(ctx, &models.User{Username: "nonadmin-reject", Email: "nonadmin-reject@example.com", IsActive: true})
 	require.NoError(t, err)
 	_, err = c.RejectSecretAccessRequest(ctx, req.ID, nonAdmin.ID, 0, "no")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "administrator")
+	assert.Equal(t, "access request not found", err.Error())
 
 	// A project/role (SecretID nil) request is refused by this function.
 	roleReq, err := c.RequestProjectAccess(ctx, projectID, requesterID, "viewer", "")

@@ -27,9 +27,40 @@ import (
 // sessionEvictions is what a revocation path captured before its write: the user's
 // session-token hashes, or the error (ListErr) that stopped it from listing them even
 // after the retry. A caller may fold other hashes it did get (PATs) into Hashes.
+// PATListErr is the same for the personal-access-token listing a caller folds in
+// (setAccountStateInTx); it is kept apart from ListErr so the log and audit text name
+// the PATs, not the sessions (AUTHZ-ORACLE-TAILS-1).
+// RevokeErr is set by setAccountStateInTx when the in-transaction session delete or
+// PAT revocation still failed after its retry (AUTHZ-ORACLE-1): the state change
+// committed, but those credentials are still valid in storage.
 type sessionEvictions struct {
-	Hashes  []string
-	ListErr error
+	Hashes     []string
+	ListErr    error
+	PATListErr error
+	RevokeErr  error
+}
+
+// listFailed reports whether any listing that feeds the eviction failed.
+func (ev sessionEvictions) listFailed() bool {
+	return ev.ListErr != nil || ev.PATListErr != nil
+}
+
+// listFailure is one failed listing, named for the log and audit text.
+type listFailure struct {
+	what string
+	err  error
+}
+
+// listFailures returns the failed listings, sessions first.
+func (ev sessionEvictions) listFailures() []listFailure {
+	var out []listFailure
+	if ev.ListErr != nil {
+		out = append(out, listFailure{what: "sessions", err: ev.ListErr})
+	}
+	if ev.PATListErr != nil {
+		out = append(out, listFailure{what: "personal access tokens", err: ev.PATListErr})
+	}
+	return out
 }
 
 // sessionEvictMode picks the auth-cache primitive for a successful listing and decides
@@ -115,14 +146,23 @@ func (c *KeyorixCore) evictSessions(userID uint, ev sessionEvictions, mode sessi
 	} else {
 		c.clearCachedTokens(ev.Hashes...)
 	}
-	if ev.ListErr == nil {
+	if ev.RevokeErr != nil {
+		swept := c.evictUserTokenCache(userID)
+		log.Printf("SECURITY: %s: could not revoke the sessions/personal access tokens of user %d (%v) -- they remain valid in storage and the account-state check is the only thing refusing them; per-user auth-cache eviction ran: %t (best-effort, primary operation already succeeded)", reason, userID, ev.RevokeErr, swept)
+		if !ev.listFailed() {
+			return
+		}
+	}
+	if !ev.listFailed() {
 		return
 	}
 	swept := c.evictUserTokenCache(userID)
-	if swept {
-		log.Printf("SECURITY: %s: could not list the sessions of user %d (%v) -- evicted every auth-cache entry of the user instead (best-effort, primary operation already succeeded)", reason, userID, ev.ListErr)
-	} else {
-		log.Printf("SECURITY: %s: could not list the sessions of user %d (%v) and no per-user auth-cache eviction is available -- a revoked session may keep authenticating for up to the auth-cache TTL (best-effort, primary operation already succeeded)", reason, userID, ev.ListErr)
+	for _, f := range ev.listFailures() {
+		if swept {
+			log.Printf("SECURITY: %s: could not list the %s of user %d (%v) -- evicted every auth-cache entry of the user instead (best-effort, primary operation already succeeded)", reason, f.what, userID, f.err)
+		} else {
+			log.Printf("SECURITY: %s: could not list the %s of user %d (%v) and no per-user auth-cache eviction is available -- a revoked credential may keep authenticating for up to the auth-cache TTL (best-effort, primary operation already succeeded)", reason, f.what, userID, f.err)
+		}
 	}
 }
 
@@ -147,11 +187,17 @@ func (c *KeyorixCore) evictUserTokenCache(userID uint) (ok bool) {
 // best-effort like deleteSessionsForUserAndEvict's own audit write (it never fails the
 // caller). A widening change (evictClearWidening) is not audited: nothing was revoked.
 func (c *KeyorixCore) auditSessionListFailure(ctx context.Context, userID uint, ev sessionEvictions, mode sessionEvictMode, reason string) {
-	if ev.ListErr == nil || mode == evictClearWidening {
+	if ev.RevokeErr != nil {
+		c.writeAuditEventFailedFull(ctx, EventSessionRevocationFailed, &userID, nil, nil, "",
+			fmt.Sprintf("%s: could not revoke the sessions/personal access tokens of user %d (%v) -- they remain valid in storage and would authenticate again if the account were reactivated; revoke them manually", reason, userID, ev.RevokeErr))
+	}
+	if !ev.listFailed() || mode == evictClearWidening {
 		return
 	}
-	c.writeAuditEventFailedFull(ctx, EventSessionRevocationFailed, &userID, nil, nil, "",
-		fmt.Sprintf("%s: could not list the sessions of user %d to evict them from the auth cache (%v) -- the user's cache entries were evicted wholesale where possible; a session may otherwise keep authenticating for up to the auth-cache TTL, review manually", reason, userID, ev.ListErr))
+	for _, f := range ev.listFailures() {
+		c.writeAuditEventFailedFull(ctx, EventSessionRevocationFailed, &userID, nil, nil, "",
+			fmt.Sprintf("%s: could not list the %s of user %d to evict them from the auth cache (%v) -- the user's cache entries were evicted wholesale where possible; a credential may otherwise keep authenticating for up to the auth-cache TTL, review manually", reason, f.what, userID, f.err))
+	}
 }
 
 // evictSessionsAndAudit is evictSessions followed by auditSessionListFailure, for callers

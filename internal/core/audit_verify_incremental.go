@@ -625,7 +625,11 @@ func (c *KeyorixCore) writeIncrementalCheckpointLocked(ctx context.Context, st *
 		HeadHash:      v.HeadHash,
 		KeyVersion:    c.auditCkptKeyVersion,
 	}
-	newCP.Signature = c.signCheckpoint(newCP)
+	sig, err := c.signCheckpoint(newCP)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", ErrAuditCheckpointRefused, err)
+	}
+	newCP.Signature = sig
 	if err := c.storage.CreateAuditCheckpoint(ctx, newCP); err != nil {
 		return nil, nil, fmt.Errorf("failed to write audit checkpoint: %w", err)
 	}

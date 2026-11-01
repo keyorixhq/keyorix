@@ -116,6 +116,18 @@ Check after the upgrade:
 - A second start (`docker compose restart backend`) changes nothing in the schema. The
   migrations run on every start and are idempotent.
 
+**Backing up with the new binary before its first start (installs coming from v0.95.x).**
+Until the new server has started once, each notification channel's webhook URL still sits
+in a plaintext legacy column; the server's first start is what encrypts it, and
+`admin migrate` upgrades the schema without doing that. `admin backup` refuses in that
+window (`start the server once to finish the upgrade migrations, then back up`) instead of
+writing an archive that has lost the URLs, and leaves no archive behind. Start the
+server once and wait until it is healthy (stop it again before a SQLite backup, as in §2),
+then back up. Checked on v0.95.3 with
+`scripts/release-qa/backup_inplace_upgrade_check.sh <work-dir> v0.95.3 [<pg-source-dsn> <pg-target-dsn>]`:
+`admin migrate`, refused backup, first start, backup, restore into a fresh target; the
+channel URL and per-table row counts match, on SQLite and on PostgreSQL.
+
 ## 4. Rollback
 
 Pick the path by what you need to keep.

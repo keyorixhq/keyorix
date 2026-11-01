@@ -3,7 +3,7 @@
 // point in time with an HMAC the application holds the key for; re-verifying the
 // live chain against the latest checkpoint detects on-box tail-truncation or a
 // genesis re-seed that an unanchored re-walk cannot. The signing/verification of
-// the HMAC lives in the core layer (which holds the DEK-derived key); this file
+// the HMAC lives in the core layer (which holds the KEK-derived key); this file
 // only persists and reads checkpoint rows.
 package store
 

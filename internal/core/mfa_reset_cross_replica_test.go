@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,89 +55,191 @@ func (c *crossReplicaClock) step() time.Time {
 	return c.t
 }
 
-func runMFAResetCrossReplicaApproval(t *testing.T, open func() *gorm.DB, migrate bool) {
+// mfaResetWorld is a bootstrapped install shared by the cross-replica tests:
+// global admins admin (A), admin-b, admin-c and the non-admin target, each with
+// TOTP, over a database every replica opens its own connection pool to.
+type mfaResetWorld struct {
+	t       *testing.T
+	clock   *crossReplicaClock
+	enc     *encryption.Service
+	open    func() *gorm.DB
+	setup   *KeyorixCore
+	secrets map[uint]string
+
+	admin, adminB, adminC, target *models.User
+}
+
+func newMFAResetWorld(t *testing.T, open func() *gorm.DB, migrate bool) *mfaResetWorld {
 	t.Helper()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))
 	ctx := context.Background()
-	clock := &crossReplicaClock{t: time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)}
-	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
-	require.NoError(t, enc.Initialize("test-passphrase"))
-
-	newReplica := func(db *gorm.DB) (*KeyorixCore, *store.LocalStorage) {
-		st := store.NewLocalStorage(db)
-		c := NewKeyorixCore(st)
-		c.SetAuthEncryptor(enc)
-		c.now = clock.now
-		return c, st
+	w := &mfaResetWorld{
+		t: t, open: open, secrets: map[uint]string{},
+		clock: &crossReplicaClock{t: time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)},
 	}
+	w.enc = encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
+	require.NoError(t, w.enc.Initialize("test-passphrase"))
 
 	setupDB := open()
 	if migrate {
 		require.NoError(t, kxstorage.MigrateExisting(setupDB))
 	}
-	setup, setupSt := newReplica(setupDB)
-	setup.SetBootstrapToken("test-bootstrap-token")
-	_, err := setup.BootstrapSystem(ctx, &BootstrapRequest{
+	setupSt := store.NewLocalStorage(setupDB)
+	w.setup = w.replicaOver(setupSt)
+	w.setup.SetBootstrapToken("test-bootstrap-token")
+	_, err := w.setup.BootstrapSystem(ctx, &BootstrapRequest{
 		Username: "admin", Email: "admin@example.com", Password: "BootstrapPass123!", DisplayName: "Admin",
 		Token: "test-bootstrap-token",
 	})
 	require.NoError(t, err)
 
-	admin, err := setupSt.GetUserByUsername(ctx, "admin")
+	w.admin, err = setupSt.GetUserByUsername(ctx, "admin")
 	require.NoError(t, err)
-	roleIDs, err := setupSt.GetUserRoleIDsAt(ctx, admin.ID, storage.Scope{})
+	roleIDs, err := setupSt.GetUserRoleIDsAt(ctx, w.admin.ID, storage.Scope{})
 	require.NoError(t, err)
 	require.NotEmpty(t, roleIDs)
 
-	secrets := map[uint]string{}
 	enrol := func(uid uint, password string) {
-		_, secret, err := setup.BeginMFAEnrollment(ctx, uid)
+		_, secret, err := w.setup.BeginMFAEnrollment(ctx, uid)
 		require.NoError(t, err)
-		secrets[uid] = secret
-		code, err := totp.GenerateCode(secret, clock.step())
-		require.NoError(t, err)
-		_, err = setup.ActivateMFA(ctx, uid, code, password, "")
+		w.secrets[uid] = secret
+		_, err = w.setup.ActivateMFA(ctx, uid, w.code(uid, w.clock.step()), password, "")
 		require.NoError(t, err)
 	}
 	mk := func(name string, isAdmin bool) *models.User {
-		u, err := setup.CreateUser(ctx, &CreateUserRequest{Username: name, Email: name + "@example.com", DisplayName: name, Password: mfaResetUserPassword})
+		u, err := w.setup.CreateUser(ctx, &CreateUserRequest{Username: name, Email: name + "@example.com", DisplayName: name, Password: mfaResetUserPassword})
 		require.NoError(t, err)
 		if isAdmin {
 			require.NoError(t, setupSt.AssignRole(ctx, u.ID, roleIDs[0], storage.Scope{}))
 		}
 		return u
 	}
-	adminB := mk("admin-b", true)
-	adminC := mk("admin-c", true)
-	target := mk("target", false)
-	enrol(admin.ID, "BootstrapPass123!")
-	for _, u := range []*models.User{adminB, adminC, target} {
+	w.adminB = mk("admin-b", true)
+	w.adminC = mk("admin-c", true)
+	w.target = mk("target", false)
+	enrol(w.admin.ID, "BootstrapPass123!")
+	for _, u := range []*models.User{w.adminB, w.adminC, w.target} {
 		enrol(u.ID, mfaResetUserPassword)
 	}
+	return w
+}
+
+func (w *mfaResetWorld) replicaOver(st storage.Storage) *KeyorixCore {
+	c := NewKeyorixCore(st)
+	c.SetAuthEncryptor(w.enc)
+	c.now = w.clock.now
+	return c
+}
+
+// replica is a new replica on its own connection pool; wrap (optional) wraps its
+// storage, given the replica's own LocalStorage.
+func (w *mfaResetWorld) replica(wrap func(base storage.Storage) storage.Storage) *KeyorixCore {
+	var st storage.Storage = store.NewLocalStorage(w.open())
+	if wrap != nil {
+		st = wrap(st)
+	}
+	return w.replicaOver(st)
+}
+
+func (w *mfaResetWorld) code(uid uint, at time.Time) string {
+	w.t.Helper()
+	code, err := totp.GenerateCode(w.secrets[uid], at)
+	require.NoError(w.t, err)
+	return code
+}
+
+// mfaResetBarrier holds the first of two parties until the second arrives or
+// wait elapses. together reports whether both were inside it at once.
+type mfaResetBarrier struct {
+	mu       sync.Mutex
+	arrived  int
+	both     chan struct{}
+	wait     time.Duration
+	together bool
+}
+
+func newMFAResetBarrier(wait time.Duration) *mfaResetBarrier {
+	return &mfaResetBarrier{both: make(chan struct{}), wait: wait}
+}
+
+func (b *mfaResetBarrier) arrive() {
+	b.mu.Lock()
+	b.arrived++
+	n := b.arrived
+	if n == 2 {
+		close(b.both)
+	}
+	b.mu.Unlock()
+	if n != 1 {
+		return
+	}
+	select {
+	case <-b.both:
+		b.mu.Lock()
+		b.together = true
+		b.mu.Unlock()
+	case <-time.After(b.wait):
+	}
+}
+
+func (b *mfaResetBarrier) state() (arrived int, together bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.arrived, b.together
+}
+
+func runMFAResetCrossReplicaApproval(t *testing.T, open func() *gorm.DB, migrate bool) {
+	t.Helper()
+	ctx := context.Background()
+	w := newMFAResetWorld(t, open, migrate)
+	vSt := store.NewLocalStorage(open())
 
 	// Admin A (the bootstrap admin) opens the request; B and C will race to approve.
-	codeA, err := totp.GenerateCode(secrets[admin.ID], clock.step())
-	require.NoError(t, err)
-	req, err := setup.RequestMFAReset(ctx, admin.ID, false, MFAResetRequestInput{
-		User: "target", Reason: "lost phone", VerifiedBy: "video", Evidence: "call with T.", Code: codeA,
+	req, err := w.setup.RequestMFAReset(ctx, w.admin.ID, false, MFAResetRequestInput{
+		User: "target", Reason: "lost phone", VerifiedBy: "video", Evidence: "call with T.", Code: w.code(w.admin.ID, w.clock.step()),
 	})
 	require.NoError(t, err)
 
+	// #3801 (c): both approvers are held after the pre-transaction status read
+	// until both have made it, so both see the request pending and neither can be
+	// refused before its transaction; only DecideMFAResetRequestIfPending, inside
+	// it, can choose the winner. Each replica records what its decision returned.
+	readBarrier := newMFAResetBarrier(30 * time.Second)
+	var decided [2]atomic.Int32 // 0: not called, 1: matched, 2: not matched
+	wrapRacer := func(i int) func(storage.Storage) storage.Storage {
+		return func(base storage.Storage) storage.Storage {
+			return hooked(base, &storeHooks{
+				WrapTx: true,
+				GetMFAResetRequest: func(next storage.Storage, ctx context.Context, id uint) (*models.MFAResetRequest, error) {
+					r, err := next.GetMFAResetRequest(ctx, id)
+					if next == base && id == req.ID {
+						readBarrier.arrive()
+					}
+					return r, err
+				},
+				DecideMFAResetRequestIfPending: func(next storage.Storage, ctx context.Context, id uint, status string, by uint, now time.Time) (bool, error) {
+					matched, err := next.DecideMFAResetRequestIfPending(ctx, id, status, by, now)
+					if err == nil && id == req.ID {
+						decided[i].Store(map[bool]int32{true: 1, false: 2}[matched])
+					}
+					return matched, err
+				},
+			})
+		}
+	}
+
 	// Two replicas, each with its own connection; one fresh code per approver for the
 	// same instant.
-	coreB, _ := newReplica(open())
-	coreC, _ := newReplica(open())
 	racers := []struct {
 		core *KeyorixCore
 		id   uint
 		code string
-	}{{coreB, adminB.ID, ""}, {coreC, adminC.ID, ""}}
-	at := clock.step()
+	}{{w.replica(wrapRacer(0)), w.adminB.ID, ""}, {w.replica(wrapRacer(1)), w.adminC.ID, ""}}
+	at := w.clock.step()
 	for i := range racers {
-		racers[i].code, err = totp.GenerateCode(secrets[racers[i].id], at)
-		require.NoError(t, err)
+		racers[i].code = w.code(racers[i].id, at)
 	}
 
 	var wg sync.WaitGroup
@@ -152,6 +255,10 @@ func runMFAResetCrossReplicaApproval(t *testing.T, open func() *gorm.DB, migrate
 	close(start)
 	wg.Wait()
 
+	arrived, together := readBarrier.state()
+	require.Equal(t, 2, arrived, "both approvers must make the pre-transaction status read")
+	require.True(t, together, "the approvers were not both past the pre-transaction read at once: the race was not forced")
+
 	winner := -1
 	for i := range racers {
 		if errs[i] == nil {
@@ -162,25 +269,26 @@ func runMFAResetCrossReplicaApproval(t *testing.T, open func() *gorm.DB, migrate
 	require.NotEqual(t, -1, winner, "no approval won: %v / %v", errs[0], errs[1])
 	loser := 1 - winner
 	require.ErrorIs(t, errs[loser], ErrMFAResetRequestDecided, "the loser must get the typed already-decided error")
+	assert.EqualValues(t, 1, decided[winner].Load(), "the winner's conditional transition must have matched")
+	assert.EqualValues(t, 2, decided[loser].Load(),
+		"the loser's refusal must come from DecideMFAResetRequestIfPending inside its transaction, not from a pre-transaction read")
 	require.NotNil(t, approvals[winner])
 	assert.Nil(t, approvals[loser], "the loser was handed a one-time password")
 
 	// Verify from a fresh connection that shares nothing with the racers.
-	vSt := store.NewLocalStorage(open())
-
-	decided, err := vSt.GetMFAResetRequest(ctx, req.ID)
+	decidedReq, err := vSt.GetMFAResetRequest(ctx, req.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.MFAResetStatusApproved, decided.Status)
-	assert.Equal(t, racers[winner].id, decided.DecidedBy, "the recorded approver is not the winner")
+	assert.Equal(t, models.MFAResetStatusApproved, decidedReq.Status)
+	assert.Equal(t, racers[winner].id, decidedReq.DecidedBy, "the recorded approver is not the winner")
 
 	eff := approvals[winner].Effect
 	assert.True(t, eff.TOTPCleared)
-	sec, err := vSt.GetMFASecret(ctx, target.ID)
+	sec, err := vSt.GetMFASecret(ctx, w.target.ID)
 	assert.True(t, err != nil || sec == nil, "TOTP secret survived the reset")
-	n, err := vSt.CountUnusedMFARecoveryCodes(ctx, target.ID)
+	n, err := vSt.CountUnusedMFARecoveryCodes(ctx, w.target.ID)
 	require.NoError(t, err)
 	assert.Zero(t, n, "recovery codes survived the reset")
-	u, err := vSt.GetUser(ctx, target.ID)
+	u, err := vSt.GetUser(ctx, w.target.ID)
 	require.NoError(t, err)
 	assert.False(t, u.MFAEnabled)
 	assert.True(t, u.MFAEnrolmentRequired)
@@ -196,6 +304,126 @@ func runMFAResetCrossReplicaApproval(t *testing.T, open func() *gorm.DB, migrate
 		require.NoError(t, err)
 		assert.Len(t, logs, want, "audit rows of %s", event)
 	}
+}
+
+// #3801 (a): two admins request a reset of the same target at once, each on its
+// own replica. Both pass the pre-transaction "already pending" read (held at a
+// barrier on the requester's code check until both have), and inside the create
+// transaction each is held again at a barrier right before the in-transaction
+// pending read. Only tx.LockUserForUpdate on the target's row (mfa_reset.go,
+// RequestMFAReset) stands between them: with it, the second transaction cannot
+// reach that read until the first committed, so the in-transaction barrier never
+// holds both at once and the second request sees the first and is refused.
+// Postgres only: SQLite's BEGIN IMMEDIATE serializes the whole transaction, so the
+// row lock is not what decides there.
+func TestMFAReset_ConcurrentRequestsForSameTarget_CrossReplicaPostgres_RowLockDecides(t *testing.T) {
+	res := runMFAResetConcurrentRequests(t, false)
+	require.Equal(t, 2, res.inTxArrived, "both create transactions must reach the in-transaction pending read")
+	assert.False(t, res.inTxTogether,
+		"both create transactions were inside, before the pending read, at once: nothing serialized them on the target's row")
+	for _, err := range res.errs {
+		if err != nil {
+			require.ErrorIs(t, err, ErrMFAResetAlreadyPending)
+		}
+	}
+	require.Equal(t, 1, res.succeeded, "exactly one of two concurrent requests for one target may succeed: %v", res.errs)
+	assert.Equal(t, 1, res.pending, "two requests for one target are pending")
+}
+
+// Calibration of the test above (red without the lock, no production edit): the
+// same choreography with the target's row lock taken away by the test hook (the
+// in-transaction LockUserForUpdate of the target answers with a plain read). Both
+// transactions are then held at the in-transaction barrier together, both read no
+// pending request and both insert, so the assertions above would fail. This is
+// what shows the lock, not the barrier timing, decides the test.
+func TestMFAReset_ConcurrentRequestsForSameTarget_CrossReplicaPostgres_Calibration_NoLockTwoPending(t *testing.T) {
+	res := runMFAResetConcurrentRequests(t, true)
+	assert.True(t, res.inTxTogether, "without the row lock both transactions reach the pending read at once")
+	assert.Equal(t, 2, res.succeeded, "without the row lock both requests succeed: %v", res.errs)
+	assert.Equal(t, 2, res.pending, "without the row lock two requests for one target are pending")
+}
+
+type mfaResetConcurrentRequestsResult struct {
+	inTxArrived  int
+	inTxTogether bool
+	errs         []error
+	succeeded    int
+	pending      int
+}
+
+func runMFAResetConcurrentRequests(t *testing.T, dropTargetLock bool) mfaResetConcurrentRequestsResult {
+	t.Helper()
+	base := pgTestDSN(t)
+	dsn := pgMigratedDatabaseDSN(t, base)
+	open := func() *gorm.DB { return pgOpen(t, dsn) }
+	ctx := context.Background()
+	w := newMFAResetWorld(t, open, false)
+
+	codeBarrier := newMFAResetBarrier(30 * time.Second)
+	inTxBarrier := newMFAResetBarrier(3 * time.Second)
+	wrap := func(base storage.Storage) storage.Storage {
+		hooks := &storeHooks{
+			WrapTx: true,
+			MarkTOTPStepUsed: func(next storage.Storage, ctx context.Context, userID uint, step int64) (bool, error) {
+				if next == base {
+					codeBarrier.arrive()
+				}
+				return next.MarkTOTPStepUsed(ctx, userID, step)
+			},
+			ListMFAResetRequests: func(next storage.Storage, ctx context.Context, pendingOnly bool) ([]*models.MFAResetRequest, error) {
+				if next != base {
+					inTxBarrier.arrive()
+				}
+				return next.ListMFAResetRequests(ctx, pendingOnly)
+			},
+		}
+		if dropTargetLock {
+			hooks.LockUserForUpdate = func(next storage.Storage, ctx context.Context, id uint) (*models.User, error) {
+				if next != base && id == w.target.ID {
+					return next.GetUser(ctx, id)
+				}
+				return next.LockUserForUpdate(ctx, id)
+			}
+		}
+		return hooked(base, hooks)
+	}
+	requesters := []struct {
+		core *KeyorixCore
+		id   uint
+		code string
+	}{{w.replica(wrap), w.admin.ID, ""}, {w.replica(wrap), w.adminC.ID, ""}}
+	at := w.clock.step()
+	for i := range requesters {
+		requesters[i].code = w.code(requesters[i].id, at)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	res := mfaResetConcurrentRequestsResult{errs: make([]error, len(requesters))}
+	for i := range requesters {
+		wg.Go(func() {
+			<-start
+			_, res.errs[i] = requesters[i].core.RequestMFAReset(ctx, requesters[i].id, false, MFAResetRequestInput{
+				User: "target", Reason: "lost phone", VerifiedBy: "ticket", Code: requesters[i].code,
+			})
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	arrived, together := codeBarrier.state()
+	require.Equal(t, 2, arrived)
+	require.True(t, together, "both requests must pass the pre-transaction pending read before either transaction starts")
+	res.inTxArrived, res.inTxTogether = inTxBarrier.state()
+	for _, err := range res.errs {
+		if err == nil {
+			res.succeeded++
+		}
+	}
+	pending, err := store.NewLocalStorage(open()).ListMFAResetRequests(ctx, true)
+	require.NoError(t, err)
+	res.pending = len(pending)
+	return res
 }
 
 func TestMFAReset_TwoAdminsApproveAtOnce_CrossReplicaPostgres_ExactlyOneWins(t *testing.T) {

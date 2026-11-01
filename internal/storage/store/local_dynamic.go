@@ -68,16 +68,13 @@ func (ls *LocalStorage) ListDynamicSecretConfigs(ctx context.Context, projectID,
 	return cs, nil
 }
 
-func (ls *LocalStorage) UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error {
-	return ls.db.WithContext(ctx).Save(c).Error
-}
-
 // SetDynamicSecretConfigAdminDSN writes only the encrypted admin DSN columns and
 // updated_at (#2651): a targeted UPDATE, so a concurrent writer's columns
 // (DeleteProject's #369 disabled=true above all) are never overwritten.
+// updated_at is UTC: a map update runs no NowFunc (STORE-STALE-TAILS-2).
 func (ls *LocalStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error {
 	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).Where("id = ?", id).
-		Updates(map[string]any{"admin_dsn_enc": enc, "admin_dsn_meta": meta, "updated_at": time.Now()})
+		Updates(map[string]any{"admin_dsn_enc": enc, "admin_dsn_meta": meta, "updated_at": time.Now().UTC()})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -90,15 +87,16 @@ func (ls *LocalStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id u
 // SetDynamicSecretConfigClassification persists ONLY the classification column
 // (plus updated_at), conditional on the row's current classification still being
 // fromClassification — see the storage.Storage interface doc for why
-// ClassifyDynamicSecretConfig cannot use the full-row UpdateDynamicSecretConfig
-// (#2698: its Save wrote `disabled=false` back over the incident kill switch).
+// ClassifyDynamicSecretConfig cannot use a full-row Save
+// (#2698: it wrote `disabled=false` back over the incident kill switch).
 //
 // COALESCE so a NULL column (a row written before Classification existed) is
-// matched by fromClassification "", the value GORM reads it back as.
+// matched by fromClassification "", the value GORM reads it back as. updatedAt
+// is normalised to UTC (the caller passes its host-zone clock).
 func (ls *LocalStorage) SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification, toClassification string, updatedAt time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).
 		Where("id = ? AND COALESCE(classification, '') = ?", id, fromClassification).
-		Updates(map[string]any{"classification": toClassification, "updated_at": updatedAt})
+		Updates(map[string]any{"classification": toClassification, "updated_at": updatedAt.UTC()})
 	if res.Error != nil {
 		return false, res.Error
 	}
@@ -138,6 +136,8 @@ func (ls *LocalStorage) ExtendDynamicSecretLeaseExpiry(ctx context.Context, leas
 // concurrent renewal's extension (harmless on a dead credential, but it is the
 // same lost-update shape, and leaving one full-row writer alive is how the class
 // comes back — #2698).
+//
+// revoked_at is normalised to UTC: this map update bypasses BeforeSave.
 func (ls *LocalStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID, status, revokeReason, revokeError string, revokedAt *time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretLease{}).
 		Where("lease_id = ?", leaseID).
@@ -145,7 +145,7 @@ func (ls *LocalStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, 
 			"status":        status,
 			"revoke_reason": revokeReason,
 			"revoke_error":  revokeError,
-			"revoked_at":    revokedAt,
+			"revoked_at":    utcPtr(revokedAt),
 		})
 	if res.Error != nil {
 		return false, res.Error
@@ -156,14 +156,14 @@ func (ls *LocalStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, 
 // TransitionDynamicSecretConfigDisabled persists c's full row via a conditional
 // UPDATE gated on the row's CURRENT disabled value still being fromDisabled (see
 // the interface doc in internal/core/storage/interface.go for why this exists
-// alongside — not instead of — GetDynamicSecretConfig/UpdateDynamicSecretConfig).
+// alongside — not instead of — GetDynamicSecretConfig and a full-row Save).
 // Mirrors TransitionMachineIdentityState's `WHERE id = ? AND state = ?` +
 // `Select("*")` shape exactly, so every field the caller mutated on c (Disabled,
 // UpdatedAt, ...) is persisted in the same statement, not just a hardcoded
 // column subset.
 func (ls *LocalStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
 	// #G42: the guard only checks `disabled`, so a concurrent DSN rotation or
-	// classification change (UpdateDynamicSecretConfig, an unconditional Save
+	// classification change (formerly an unconditional full-row Save
 	// that doesn't touch `disabled`) still matches this WHERE clause. A
 	// Select("*") here would silently revert that concurrent edit back to
 	// this call's stale copy even though the enable/disable toggle itself is
@@ -233,10 +233,6 @@ func (ls *LocalStorage) ListDynamicSecretLeases(ctx context.Context, configID ui
 		return nil, err
 	}
 	return ls2, nil
-}
-
-func (ls *LocalStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error {
-	return ls.db.WithContext(ctx).Save(l).Error
 }
 
 // CountActiveLeases returns the number of leases for a config that still hold a live

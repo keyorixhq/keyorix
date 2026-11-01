@@ -57,6 +57,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -250,11 +251,33 @@ type faultVariant struct {
 	fault *faultstorage.FaultSpec
 }
 
-func faultVariants(method string) []faultVariant {
+// faultVariants returns the no-fault/error/panic variants for one storage
+// method. It fails the test when *FaultyStorage has no such method: Arm does not
+// check names, so a spec naming a deleted or renamed primitive would never fire
+// and turn the error/panic variants into silent no-fault runs (the update pass
+// targeted the removed full-row UpdateSecret for that reason). Each pass also
+// checks after the request that an armed fault really fired
+// (assertArmedFaultFired), which catches the subtler case of a method that
+// exists but that the route no longer reaches.
+func faultVariants(t *testing.T, method string) []faultVariant {
+	t.Helper()
+	if _, ok := reflect.TypeFor[*faultstorage.FaultyStorage]().MethodByName(method); !ok {
+		t.Fatalf("faultVariants(%q): FaultyStorage has no such method, so the error/panic variants would inject nothing", method)
+	}
 	return []faultVariant{
 		{"no-fault", nil},
 		{"error", &faultstorage.FaultSpec{Method: method, NthCall: 1, Kind: faultstorage.KindError, Err: errFuzzInjected}},
 		{"panic", &faultstorage.FaultSpec{Method: method, NthCall: 1, Kind: faultstorage.KindPanic, Err: errFuzzInjected}},
+	}
+}
+
+// assertArmedFaultFired fails when tc armed a fault that the operation never
+// reached: the variant would otherwise pass as an unfaulted run and the leak
+// channels would go unchecked under a storage fault.
+func assertArmedFaultFired(t *testing.T, w *faultWorld, tc faultVariant) {
+	t.Helper()
+	if tc.fault != nil && !w.faulty.Fired() {
+		t.Fatalf("%s fault on %s was armed but never fired: the operation no longer calls that storage method, so this variant is vacuous", tc.name, tc.fault.Method)
 	}
 }
 
@@ -296,7 +319,7 @@ func TestFreshCanarySecretLifecycleUnderFault(t *testing.T) {
 	logBuf := redirectLog(t)
 
 	t.Run("create", func(t *testing.T) {
-		for _, tc := range faultVariants("CreateSecret") {
+		for _, tc := range faultVariants(t, "CreateSecret") {
 			t.Run(tc.name, func(t *testing.T) {
 				ctx := context.Background()
 				w := newFaultWorld(t, nil)
@@ -316,13 +339,14 @@ func TestFreshCanarySecretLifecycleUnderFault(t *testing.T) {
 					return httpResult(st, body), nil
 				})
 				drainAllBackgroundGoroutines()
+				assertArmedFaultFired(t, w, tc)
 				assertNoFreshCanaryLeak(t, "fresh-canary create/"+tc.name, w, logBuf, logOffset, beforeMaxID, result, canaryVal)
 			})
 		}
 	})
 
 	t.Run("update", func(t *testing.T) {
-		for _, tc := range faultVariants("UpdateSecret") {
+		for _, tc := range faultVariants(t, "UpdateSecretFields") {
 			t.Run(tc.name, func(t *testing.T) {
 				ctx := context.Background()
 				w := newFaultWorld(t, nil)
@@ -346,13 +370,14 @@ func TestFreshCanarySecretLifecycleUnderFault(t *testing.T) {
 					return httpResult(st, body), nil
 				})
 				drainAllBackgroundGoroutines()
+				assertArmedFaultFired(t, w, tc)
 				assertNoFreshCanaryLeak(t, "fresh-canary update/"+tc.name, w, logBuf, logOffset, beforeMaxID, result, setupVal, updateVal)
 			})
 		}
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		for _, tc := range faultVariants("DeleteSecret") {
+		for _, tc := range faultVariants(t, "DeleteSecret") {
 			t.Run(tc.name, func(t *testing.T) {
 				ctx := context.Background()
 				w := newFaultWorld(t, nil)
@@ -375,6 +400,7 @@ func TestFreshCanarySecretLifecycleUnderFault(t *testing.T) {
 					return httpResult(st, body), nil
 				})
 				drainAllBackgroundGoroutines()
+				assertArmedFaultFired(t, w, tc)
 				assertNoFreshCanaryLeak(t, "fresh-canary delete/"+tc.name, w, logBuf, logOffset, beforeMaxID, result, setupVal)
 			})
 		}

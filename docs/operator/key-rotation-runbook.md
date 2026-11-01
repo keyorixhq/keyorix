@@ -62,7 +62,8 @@ does. That matters for the audit chain: section 5.
 6. Run on the server host. With `storage.type: remote` the rotation commands refuse ("must run on
    the server host").
 7. **Rotate with the same version as the servers, never an older admin binary or image.**
-   Check `keyorix-server admin version` against the running servers' version. An admin binary
+   Never rotate with an N-1 admin binary: [UPGRADING.md, "The key-set manifest"](../UPGRADING.md#6za-the-key-set-manifest-first-start-adopts-your-key-files-2900)
+   states the same rule for every key operation. Check `keyorix-server admin version` against the running servers' version. An admin binary
    that predates part of the rotation does that part wrong without knowing it: a v0.96.x
    `admin encryption rotate` against a database a v0.97 server has used re-encrypts every row
    but leaves the DEK epoch naming the old DEK, so replicas with the new key set refuse to start
@@ -184,13 +185,30 @@ passphrase with the current binary, then rotate forward again with it.
 
 A seal (an accepted audit loss, `admin audit accept-loss`) is carried over like the other signed
 artifacts: the chain still reads `sealed` after the rotation, online and with the new key offline.
+If the seal record cannot be trusted when the transition completes (replaced, garbled or forged
+after the rotation was prepared, or an acceptance left unfinished), completion stops with
+`the audit seal record cannot be trusted ... not completed` and signs nothing: no high-water
+mark or checkpoint is re-signed against a seal list it cannot authenticate. The key change itself
+stands. Treat the seal record as tampered with
+([audit-chain-break-runbook.md](audit-chain-break-runbook.md) §7 and §8) and investigate. The
+server retries the completion at every start and finishes it once the seals authenticate again.
+Finish an unfinished acceptance (re-run `admin audit accept-loss`) before a key change when you
+can. If the key change came first, re-run `accept-loss` with the new key: the transition record
+names the checkpoint and high-water mark the acceptance had not rewritten yet, signed under the
+previous key, so the resume completes; the next server start then completes the key change
+(audit-chain-break-runbook.md §8, #3814).
 
 ## 6. Rollback
 
-There is no command that reverses a DEK rotation. The two ways back are **roll forward**
-(finish the rotation, or get the new key set to where it is needed) and **restore the
-pre-rotation archive** (below). Roll forward whenever you can: a restore loses every write made
-since the archive was taken.
+There is no command that reverses a DEK rotation: no `admin encryption` subcommand and no flag of
+`rotate` puts the old DEK back. The two ways out are **roll forward** (finish the rotation, get the
+new key set to where it is needed, or run `keyorix-server admin encryption rotate --config ./keyorix.yaml --confirm`
+again to move to a fresh DEK) and **restore the pre-rotation archive**
+(`keyorix-server admin restore --input <archive> --overwrite-existing --config ./keyorix.yaml`,
+with `--allow-rollback` when the restore refuses an archive that is behind the host's audit
+trail; the full procedure is below). Roll forward whenever you can: a restore loses every write
+made since the archive was taken. Whichever you choose, do not rotate with an N-1 admin binary
+(preflight step 7; [UPGRADING.md](../UPGRADING.md#6za-the-key-set-manifest-first-start-adopts-your-key-files-2900)).
 
 ### 6.1 A DEK rotation that failed midway
 

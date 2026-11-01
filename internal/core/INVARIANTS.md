@@ -218,9 +218,12 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `purge_test.go:TestPurgeExpiredSoftDeletes_CountsAndAudits`, `_NoAuditWhenNothingPurged`.
 - **INV-CORE-29** Each soft-deleted entity (users/projects/environments/secrets) is purged
   independently on its own `deleted_at`; no cascade logic lives in the purge job itself. Why:
-  ADR-032 "Decision". UNGUARDED (#issue: the four `Purge*Before` mock expectations in
-  `purge_test.go` imply but don't directly assert non-cascading independence — add a direct
-  test or a structural check).
+  ADR-032 "Decision". Guard: `purge_independence_test.go`
+  (`TestPurgeExpiredSoftDeletes_EntitiesPurgedIndependently`, `_EachEntityTypePurgedAlone`,
+  #2497) — runs `PurgeExpiredSoftDeletes` against real `LocalStorage` (SQLite) and asserts from
+  the table rows, in both directions, that an expired parent's live or in-window children
+  survive and expired children of a live or in-window parent are purged. The mock-based
+  `purge_test.go` only implies this.
 - **INV-CORE-30** `SecretNode.DeletedAt` soft-delete is respected by every raw/Table/Joins
   query touching `secret_nodes` — GORM auto-scopes model-based queries but not raw SQL. Why:
   ADR-033 (names six specific call sites). Guard:
@@ -288,10 +291,10 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   subpackages). Red proof is a permanent test: `TestBestEffortCallSites_MutationKillsRecoverWrapper`
   breaks one recover wrapper in a copy and requires the guard to report the callers;
   `TestBestEffortCallSites_ScannerFixture` plants each violation form. Complements GUARD-1
-  (`guards/besteffort_guard_test.go`, which keys on discards after a write, not on the callee). Open
-  finding: three MFA handlers (`requireReauth`, `VerifyMFAStepUp`, `FinishWebAuthnReauth`) call
-  `clearLoginFailures` bare after the grant committed, where `sso.go` wraps it in `besteffort.Run`;
-  allowlisted with a reason and reported to the coordinator (FIX-3277 owns the handlers).
+  (`guards/besteffort_guard_test.go`, which keys on discards after a write, not on the callee).
+  `clearLoginFailures` recovers its own panic (a top-level `besteffort.RunRecover` defer), so
+  `requireReauth`, `VerifyMFAStepUp` and `FinishWebAuthnReauth` call it bare with no allow row
+  (#3712); the mutation test deletes that defer and requires the three callers to be reported.
 
 ## Atomicity / transactions
 
@@ -416,10 +419,17 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated);
   share revoke (#2648, the revoke side): `guards/share_revoke_column_scoped_guard_test.go:TestRevokeShare_IsColumnScoped`
   — `RevokeShare`, `RemoveSelfFromShare`, `DeleteShareRecord` and `DeleteExpiredShareRecords` stay
-  conditional soft deletes and never persist a pre-read share. **Open, not guarded**:
-  `createShareRecordTx` (`internal/storage/store/local_sharing.go`) still `Save`s an existing share
-  on the re-share path and in its unique-violation fallback, the same resurrection primitive on the
-  create side; owned by SHARE-CAS-1;
+  conditional soft deletes and never persist a pre-read share;
+  share re-share/create race (#2801/#2802, fixed by LEASE-SHARE-RACE-1): `createShareRecordTx`'s
+  re-share path and its unique-violation fallback both write through ONE helper
+  (`reshareOntoLiveRow` -> `applyShareRequest`: permission, expires_at, updated_at, WHERE id AND
+  deleted_at IS NULL) that re-runs the lookup once on a miss and otherwise fails closed with
+  `ErrShareNotFound`, never creating a fresh row:
+  `guards/share_create_column_scoped_guard_test.go:TestCreateShareRecord_IsColumnScoped` +
+  `internal/storage/store/local_sharing_create_race_test.go` (SQLite, and Postgres with a second
+  connection when `KEYORIX_TEST_PG_DSN` is set). Not covered: on SQLite the race cannot occur
+  (writers serialize), so the SQLite run lands the revoke in the same transaction and proves the
+  write's behaviour, not the interleaving;
   secret auto-rotate config (#2650, fixed):
   `guards/secret_autorotate_column_scoped_guard_test.go:TestSetSecretAutoRotate_IsColumnScoped` +
   `TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres` (pg-gated); secret

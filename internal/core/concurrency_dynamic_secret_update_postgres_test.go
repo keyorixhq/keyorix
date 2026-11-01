@@ -1,7 +1,8 @@
 // concurrency_dynamic_secret_update_postgres_test.go — #2698.
 //
-// LocalStorage.UpdateDynamicSecretConfig and UpdateDynamicSecretLease were
-// bare GORM Save(...) calls on a struct the caller had read earlier, unlocked.
+// LocalStorage.UpdateDynamicSecretConfig and UpdateDynamicSecretLease (both since
+// deleted) were bare GORM Save(...) calls on a struct the caller had read earlier,
+// unlocked.
 // Save writes every column, so each one reverted whatever a narrower concurrent
 // writer had changed in between. Two subtests, one per consequence:
 //

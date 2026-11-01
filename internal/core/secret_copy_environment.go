@@ -12,6 +12,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 const copyEnvPageSize = 500
@@ -32,16 +33,16 @@ func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sou
 
 	// Both environments must belong to the authorized project — so the project-scoped
 	// write gate the caller passed actually covers this copy (no cross-project bypass).
-	srcEnv, err := c.storage.GetEnvironment(ctx, sourceEnvID)
+	// A missing environment and one in another project get the SAME refusal
+	// (AUTHZ-ORACLE-1): the caller is authorized for projectID only, so telling the
+	// two apart revealed which environment IDs exist in other projects.
+	srcEnv, err := c.projectEnvironment(ctx, projectID, sourceEnvID)
 	if err != nil {
-		return 0, 0, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return 0, 0, err
 	}
-	tgtEnv, err := c.storage.GetEnvironment(ctx, targetEnvID)
+	tgtEnv, err := c.projectEnvironment(ctx, projectID, targetEnvID)
 	if err != nil {
-		return 0, 0, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
-	}
-	if srcEnv.ProjectID != projectID || tgtEnv.ProjectID != projectID {
-		return 0, 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "both environments must belong to the given project")
+		return 0, 0, err
 	}
 
 	// Page through the source environment's secrets.
@@ -73,4 +74,19 @@ func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sou
 		fmt.Sprintf("environment %d (%s) secrets copied into %d (%s): %d copied, %d skipped",
 			sourceEnvID, srcEnv.Name, targetEnvID, tgtEnv.Name, copied, skipped))
 	return copied, skipped, nil
+}
+
+// projectEnvironment loads envID for CopyEnvironmentSecrets and refuses, with one
+// message for both cases, an environment that does not exist or is not in
+// projectID. Any other storage failure is returned as such.
+func (c *KeyorixCore) projectEnvironment(ctx context.Context, projectID, envID uint) (*models.Environment, error) {
+	env, err := c.storage.GetEnvironment(ctx, envID)
+	if err != nil && !isEnvironmentNotFoundErr(err) {
+		// A read FAULT is a retry answer, not a validation verdict on the request.
+		return nil, classifyReadError(err, "")
+	}
+	if err != nil || env.ProjectID != projectID {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "both environments must belong to the given project")
+	}
+	return env, nil
 }

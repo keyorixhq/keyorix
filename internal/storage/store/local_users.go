@@ -56,6 +56,18 @@ func isDuplicateEmailViolation(err error) bool {
 		strings.Contains(msg, "users.email_folded") // SQLite column name
 }
 
+// isDuplicateUsernameViolation is isDuplicateEmailViolation for the partial users
+// username index (uniq_users_username_folded_active, #1642): the Postgres constraint
+// name, or the column SQLite names instead.
+func isDuplicateUsernameViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "uniq_users_username_folded_active") || // Postgres constraint name
+		strings.Contains(msg, "users.username_folded") // SQLite column name
+}
+
 // --- Users ---
 
 // CreateUser ignores the optional plaintextPassword variadic (#499): user
@@ -72,6 +84,11 @@ func (ls *LocalStorage) CreateUser(ctx context.Context, user *models.User, _ ...
 			// instead of a raw constraint-violation message.
 			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
 		}
+		if isDuplicateUsernameViolation(err) {
+			// Same race on the username index: a concurrent create of the identical
+			// (folded) username committed first.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateUsername, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return user, nil
@@ -85,6 +102,9 @@ func (ls *LocalStorage) CreateUserWithRoleGrants(ctx context.Context, user *mode
 		if err := tx.Create(user).Error; err != nil {
 			if isDuplicateEmailViolation(err) {
 				return fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
+			}
+			if isDuplicateUsernameViolation(err) {
+				return fmt.Errorf("%w: %v", storage.ErrDuplicateUsername, err)
 			}
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
@@ -197,21 +217,6 @@ func (ls *LocalStorage) GetUserByExternalID(ctx context.Context, externalID stri
 	return &user, nil
 }
 
-func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
-	if err := ls.db.WithContext(ctx).Save(user).Error; err != nil {
-		if isDuplicateEmailViolation(err) {
-			// The partial unique index uniq_users_email_folded_active (#117) caught a concurrent
-			// duplicate: another update (e.g. a racing UpdateSCIMUser, #120/#218) already
-			// committed the identical (case-insensitive) email to a different user before
-			// this write landed. Translate to the sentinel so callers surface a clean
-			// "email already in use" error instead of a raw constraint-violation message.
-			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
-		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return user, nil
-}
-
 // UpdateUserIfActiveStateMatches persists the profile columns of user via a
 // conditional UPDATE gated on the row's CURRENT is_active still being
 // fromActive (closing the IsActive TOCTOU race described in the storage.Storage
@@ -258,6 +263,10 @@ func (ls *LocalStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user
 			// different user before this write landed.
 			return false, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, res.Error)
 		}
+		if isDuplicateUsernameViolation(res.Error) {
+			// Username twin of the email translation above.
+			return false, fmt.Errorf("%w: %v", storage.ErrDuplicateUsername, res.Error)
+		}
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
 	return res.RowsAffected == 1, nil
@@ -276,7 +285,8 @@ func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginA
 
 // SetAccountState persists ONLY account_state (and updated_at) via a direct column
 // update, rather than a full-row Save — see the storage.Storage interface doc comment
-// (#454) for why this narrower primitive exists alongside the generic UpdateUser.
+// (#454) for why a column-scoped write is used instead: a full-row save could
+// revert any concurrent writer's columns.
 func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{"account_state": state, "updated_at": updatedAt})
@@ -307,7 +317,7 @@ func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 // ClaimUserExternalIDIfUnset persists ONLY external_id (plus updated_at), and
 // only onto a live row whose external_id is still unset — see the
 // storage.Storage interface doc for why resolveSSOUser's first-federation write
-// cannot be the generic full-row UpdateUser (#2699).
+// cannot be a full-row save (#2699).
 //
 // GORM adds `deleted_at IS NULL` for this soft-delete model, which is the
 // clause that actually stops the resurrection; `COALESCE(external_id,”) = ”`
@@ -326,8 +336,8 @@ func (ls *LocalStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint,
 // SetPasswordHash persists ONLY password_hash and password_changed_at (plus
 // updated_at, and clears one_time_password_expires_at: a new password supersedes
 // any one-time password) via a direct column update — see the storage.Storage
-// interface doc comment (#484/#454) for why this narrower primitive exists
-// alongside the generic UpdateUser.
+// interface doc comment (#484/#454) for why a column-scoped write is used
+// instead of a full-row save.
 func (ls *LocalStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{
@@ -481,7 +491,7 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 		query = query.Where("is_active = ?", *filter.IsActive)
 	}
 	if filter.CreatedAfter != nil {
-		query = query.Where("created_at > ?", *filter.CreatedAfter)
+		query = query.Where("created_at > ?", filter.CreatedAfter.UTC())
 	}
 	if filter.InactiveSince != nil {
 		// G81 (User.LastLoginAt): normalize internally — see GetAuditLogs.

@@ -76,6 +76,14 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	value, err := c.GetSecretValueWithPermissionCheck(ctx, sourceID, actorID)
 	if err != nil {
 		refuse(ClassifySecretReadDenial(err), source)
+		// Only the ordinary read refusal (checkSecretPermission) is folded into
+		// notFound. A restricted-classification gate refusal comes after that
+		// permission was granted, so it is no existence oracle, and its reason
+		// (missing restricted-read permission, approval or step-up) is what the
+		// reader must act on: returned as is, 403 by kind (#3804).
+		if errors.Is(err, ErrClassificationGateDenied) {
+			return nil, err
+		}
 		if errors.Is(err, ErrPermissionDenied) {
 			return nil, notFound
 		}
@@ -83,18 +91,17 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	}
 
 	// Same-project guard: the target environment must live in the source's project,
-	// so a copy can never move a value across a project boundary. The caller has
-	// already proven read access to source above, so this reveals nothing new.
+	// so a copy can never move a value across a project boundary. A target that does
+	// not exist and one in another project get the SAME refusal (AUTHZ-ORACLE-1):
+	// the caller is authorized for the source's project only, so "environment N not
+	// found" vs "must be in the same project" told them which environment IDs exist
+	// in projects they cannot see.
 	targetEnv, err := c.storage.GetEnvironment(ctx, targetEnvID)
-	if err != nil {
-		if isEnvironmentNotFoundErr(err) {
-			return nil, storage.Typed(ErrSecretTargetInvalid,
-				fmt.Sprintf("%s: environment %d not found", i18n.T("ErrorValidation", nil), targetEnvID), err)
-		}
+	if err != nil && !isEnvironmentNotFoundErr(err) {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
-	if targetEnv.ProjectID != source.ProjectID {
-		return nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "target environment must be in the same project as the source")
+	if err != nil || targetEnv.ProjectID != source.ProjectID {
+		return nil, errSecretTargetInvalidf("%s: target environment %d is not an environment of the source's project", i18n.T("ErrorValidation", nil), targetEnvID)
 	}
 	// SESSION-PERF #2403 follow-up (item 3): fail closed, matching this function's
 	// own stated reason for auditing the source read at all — a copy whose audit

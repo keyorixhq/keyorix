@@ -98,20 +98,18 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 	if err != nil {
 		return nil, secretLookupError(err)
 	}
-	if secret.OwnerID == newOwnerID {
-		return nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "secret is already owned by that user")
-	}
-	if _, err := c.storage.GetUser(ctx, newOwnerID); err != nil {
-		return nil, newOwnerLookupError(newOwnerID, err)
-	}
 
 	scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
 
-	// Authorize the ACTOR. The live current owner may hand it off; otherwise this is
+	// Authorize the ACTOR before anything about newOwnerID is looked at
+	// (OWNERSHIP-ORACLE-1): checking "already the owner" or GetUser(newOwnerID)
+	// first told a caller with no right to this secret whether a user ID exists
+	// and who owns the secret. An unauthorized actor gets the same refusal for
+	// every newOwnerID. The live current owner may hand it off; otherwise this is
 	// the recovery path, gated on roles.assign (see doc comment above).
 	if !secretOwnedBy(secret.OwnerID, actorID) {
 		if !c.currentOwnerGone(ctx, secret.OwnerID) {
-			return nil, errSecretNotOwnerf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil))
+			return nil, markPermissionDenied(errSecretNotOwnerf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil)))
 		}
 		if ok, aerr := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, scope); aerr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), aerr)
@@ -119,6 +117,13 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 			return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
 				"recovering an orphaned or departed-owner secret requires roles.assign at this scope")
 		}
+	}
+
+	if secret.OwnerID == newOwnerID {
+		return nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "secret is already owned by that user")
+	}
+	if _, err := c.storage.GetUser(ctx, newOwnerID); err != nil {
+		return nil, newOwnerLookupError(newOwnerID, err)
 	}
 
 	// The NEW owner must already hold write-tier (or manage-tier) access to the

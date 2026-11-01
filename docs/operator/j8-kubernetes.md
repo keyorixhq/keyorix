@@ -98,7 +98,7 @@ The passwords stay in the `keyorix-auth` Secret, so the upgrade passes none:
 ```bash
 helm upgrade keyorix ./deploy/helm/keyorix \
   --set auth.existingSecret=keyorix-auth \
-  --set web.replicaCount=2
+  --set web.replicas=2
 ```
 
 Read the chart README's "Upgrading: egress NetworkPolicy" section and

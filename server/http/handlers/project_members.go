@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -105,12 +106,15 @@ func (h *CatalogHandler) RevokeProjectAccessReview(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := h.coreService.RevokeAccessReviewGrant(r.Context(), actorID, projectID, decision); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "required") || strings.Contains(msg, "unknown access-review source") || strings.Contains(msg, "ownership cannot be revoked"):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, "no matching share") || strings.Contains(msg, "not found"):
+		case errors.Is(err, core.ErrAccessReviewNotFound):
 			status = http.StatusNotFound
 		default:
 			log.Printf("Error revoking access-review grant for project %d: %v", projectID, err)
@@ -131,12 +135,15 @@ func (h *CatalogHandler) AttestProjectAccessReview(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := h.coreService.AttestAccessReviewGrant(r.Context(), actorID, projectID, decision); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, "no longer exists") || strings.Contains(msg, "not found"):
+		case errors.Is(err, core.ErrAccessReviewNotFound):
 			status = http.StatusNotFound
 		default:
 			log.Printf("Error attesting access-review grant for project %d: %v", projectID, err)

@@ -1,0 +1,2 @@
+### Documentation
+- **`devtools/familycheck/README.md` documents the first-marker-line rule.** Only the first `family-check: intentional` (or `new-member-verified`) line in a PR body is read, and it must name the family; a second family confirmed on its own line is ignored, and for `new-member-verified` that keeps the check failing. Put every family name on one marker line. The README gives one example of each outcome, taken from real runs of the tool.

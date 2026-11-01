@@ -318,8 +318,8 @@ func TestAuditSeal_CheckpointBoundToSeal(t *testing.T) {
 		cp, err := c.storage.LatestAuditCheckpoint(ctx)
 		require.NoError(t, err)
 		assert.True(t, c.checkpointSignatureValid(cp))
-		assert.NotEqual(t, cp.Signature, c.signCheckpointUnder(cp, auditSealBinding{}), "not valid in the v1 form")
-		assert.NotEqual(t, cp.Signature, c.signCheckpointUnder(cp, auditSealBinding{N: 1, Digest: strings.Repeat("0", 64)}), "not valid under another seal")
+		assert.NotEqual(t, cp.Signature, mustSignCheckpointUnder(t, c, cp, auditSealBinding{}), "not valid in the v1 form")
+		assert.NotEqual(t, cp.Signature, mustSignCheckpointUnder(t, c, cp, auditSealBinding{N: 1, Digest: strings.Repeat("0", 64)}), "not valid under another seal")
 		hw, ok, err := c.storage.GetSystemMetadata(ctx, auditHighWaterKey)
 		require.NoError(t, err)
 		require.True(t, ok)
@@ -406,7 +406,7 @@ func TestAuditSeal_AnchorBinding(t *testing.T) {
 		early.HeadID, early.ChainedEvents = 2, 2
 		early.HeadHash, _, err = e.c.storage.AuditEntryHashByID(ctx, 2)
 		require.NoError(t, err)
-		early.Signature = e.c.signCheckpointUnder(&models.AuditCheckpoint{ChainedEvents: 2, HeadID: 2, HeadHash: early.HeadHash, KeyVersion: early.KeyVersion}, auditSealBinding{})
+		early.Signature = mustSignCheckpointUnder(t, e.c, &models.AuditCheckpoint{ChainedEvents: 2, HeadID: 2, HeadHash: early.HeadHash, KeyVersion: early.KeyVersion}, auditSealBinding{})
 		req := sealReq(resume)
 		req.Anchor = &early
 		sealRefused(t, e.c, req, "does not cover the lost range")

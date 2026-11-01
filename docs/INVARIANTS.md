@@ -14,44 +14,45 @@ silently removing it.
 
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
-| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 40 | 35 | 5 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 29 | 6 |
-| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 21 | 17 | 4 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 28 | 7 |
-| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 22 | 18 | 4 |
-| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 27 | 24 | 3 |
-| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 28 | 25 | 3 |
-| `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 15 | 12 | 3 |
-| `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 22 | 20 | 2 |
-| `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 19 | 19 | 0 |
-| `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 13 | 9 | 4 |
-| `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 8 | 8 | 0 |
-| `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 13 | 10 | 3 |
-| `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 7 | 2 | 5 |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 135 | 134 | 1 |
+| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 43 | 40 | 3 |
+| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 69 | 69 | 0 |
+| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 40 | 40 | 0 |
+| `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 20 | 20 | 0 |
+| `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 33 | 33 | 0 |
+| `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 40 | 39 | 1 |
+| `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 20 | 20 | 0 |
+| `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 9 | 9 | 0 |
+| `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 19 | 19 | 0 |
+| `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 11 | 7 | 4 |
 | `internal/solewriter` | [internal/solewriter/INVARIANTS.md](../internal/solewriter/INVARIANTS.md) | 16 | 16 | 0 |
-| `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 8 | 1 |
+| `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 7 | 2 |
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 2 | 2 | 0 |
-| **Total** | | **248** | **211** | **37** |
+| `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
+| **Total** | | **472** | **461** | **11** |
 
 ## Highest-priority UNGUARDED gaps
 
-A few UNGUARDED items are flagged as materially more important than the rest — worth reading
-even if you skip everything else:
+One UNGUARDED item is flagged as materially more important than the rest, and one guarded
+item has a known CI gap. Re-checked 2026-10-30 against `origin/main`.
 
-- **`cli/cmd/run.go`'s reserved-environment-variable filter has zero test coverage**
-  (`cli/INVARIANTS.md` INV-CLI-11) — this is the fix for the exact bug class (#1816, a secret
-  named `LD_PRELOAD` getting code-exec) the CLI-server split (ADR-108) was rebuilt to prevent.
 - **ADR-103's Postgres RLS tenancy layer is a ratified design with zero implementation and
-  zero tests** (`internal/storage/INVARIANTS.md` INV-STORAGE-31/32) — confirmed by direct grep,
-  no `ROW LEVEL SECURITY`/`app.current_tenant` reference anywhere in `internal/storage`.
-- **No structural completeness guard exists for "every key-shaped byte slice gets
-  `wipeBytes`"** in `internal/encryption` (INV-ENCRYPTION-25) — a point-fix after live fuzz
-  findings. The sibling gap in `internal/core` (INV-CORE-34, "every best-effort post-commit call
-  recovers a panic") now has `besteffort_callsite_guard_test.go`.
-- **`web/src/types` drift check covers only the schema'd wire types, and does not run on
-  an `openapi.yaml`-only PR** (`web/src/INVARIANTS.md` INV-WEB-05) — guarded by
-  `openapiDrift.test.ts`, but `web-ci.yml` is path-filtered to `web/**`.
+  zero tests** (`internal/storage/INVARIANTS.md` INV-STORAGE-31/32) — confirmed by direct grep:
+  `rg -i 'ROW LEVEL SECURITY|app\.current_tenant|keyorix_migrator' internal/storage` matches only
+  `internal/storage/INVARIANTS.md` itself, no code or test.
+- **`web/src/types` drift check does not run on an `openapi.yaml`-only PR** (INV-WEB-05,
+  `web/src/INVARIANTS.md`). The guard exists (`openapiDrift.test.ts` and its calibration
+  `openapiDrift.engine.test.ts`), but `web-ci.yml` is path-filtered to `web/**`. The fix is
+  adding `server/http/handlers/openapi.yaml` to that workflow's `paths` (a `.github/**` change,
+  not done here).
+
+No longer gaps, each guard re-run on 2026-10-30 and green: INV-CLI-11 (reserved
+environment-variable filter in `cli/cmd/run.go`, `cli/cmd/run_env_filter_test.go`) and
+INV-ENCRYPTION-25 (`TestWipeBytesSweep_EveryKeyLocalIsWipedOnEveryReturn`, the `wipeBytes`
+completeness sweep). The sibling `internal/core` gap (INV-CORE-34) has
+`besteffort_callsite_guard_test.go`.
 
 ## Ledger gaps (informational, not filed as issues)
 
@@ -63,9 +64,17 @@ but no ledger entry).
 
 ## Maintaining this index
 
-- Package-count and guarded/unguarded totals above are a snapshot as of this writing
-  (2026-10-03). They will drift as invariants are added, closed, or re-guarded — re-derive by
-  counting `- **INV-<PKG>-NN` bullets per file, and per bullet whether its own text contains
+- The table is written by hand; no generator exists. `TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp`
+  (`internal/docsdrift`) fails on a package listed twice, on a row whose Invariants is not
+  Guarded + UNGUARDED, on a Total that is not the column sums, and on any line of this table
+  that matches neither the package-row nor the Total pattern (it would otherwise be left out
+  of the sums). It does not check a row against its package's files or that the linked file
+  exists. When two PRs both change a row, keep ONE row with the current counts.
+- Package-count and guarded/unguarded totals above are a snapshot (re-counted 2026-10-30,
+  including `INVARIANTS.d/` fragments, which are one invariant per file). They drift as
+  invariants are added, closed, or re-guarded — re-derive by
+  counting `- **INV-<PKG>-NN` bullets per file plus the `INVARIANTS.d/` fragments, and per
+  bullet or fragment whether its own text contains
   `UNGUARDED`. **Do not `grep -c UNGUARDED` the whole file** — every file's own intro line
   ("Format: `INV-<PKG>-NN ... UNGUARDED (#issue)`") contains the literal word and will inflate
   a naive count by one per file (this is exactly what happened on the first draft of this

@@ -1,0 +1,2 @@
+### Testing
+- **Six stale UNGUARDED invariants now name the guards that already close them.** INV-CLI-03 and INV-CLI-06 (`cli/internal/depguard`, `cli/internal/clientguard`), INV-GRPC-05 and INV-GRPC-07 (`server/grpc/proto_reserved_fields_test.go`, `auth_interceptor_completeness_test.go`), INV-MW-06 (`cache_hit_fresh_allowlist_test.go`) and INV-CORE-29 (`purge_independence_test.go`) were each guarded on main already; the invariant text and the `docs/INVARIANTS.md` counts now say so. No new tests.

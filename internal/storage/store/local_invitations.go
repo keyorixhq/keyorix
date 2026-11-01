@@ -54,7 +54,13 @@ func (ls *LocalStorage) GetProjectInvitation(ctx context.Context, id uint) (*mod
 // on the row's CURRENT persisted state still being pending closes that: whichever
 // write lands first wins (RowsAffected==1); the loser's UPDATE matches zero rows
 // and is told so via the bool, instead of silently overwriting the winner.
+//
+// The times are written in UTC (UTC-STORE-WRITERS-1): ProjectInvitation has no
+// BeforeSave hook, and this struct update would store core's host-zone clock with
+// its offset as SQLite text, which does not order against the UTC values elsewhere.
 func (ls *LocalStorage) UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (bool, error) {
+	inv.CreatedAt = inv.CreatedAt.UTC()
+	inv.ExpiresAt, inv.AcceptedAt, inv.RevokedAt = utcPtr(inv.ExpiresAt), utcPtr(inv.AcceptedAt), utcPtr(inv.RevokedAt)
 	res := ls.db.WithContext(ctx).Model(&models.ProjectInvitation{}).
 		Where("id = ? AND state = ?", inv.ID, invitationStatePending).
 		Select("*").
@@ -117,7 +123,13 @@ func (ls *LocalStorage) GetAccessRequest(ctx context.Context, id uint) (*models.
 // first wins (RowsAffected==1); the loser's UPDATE matches zero rows and is told
 // so via the bool, so it can react (e.g. revoke the grant it just made) instead of
 // silently overwriting the winner.
+//
+// The times are written in UTC (UTC-STORE-WRITERS-1). AccessRequest.BeforeSave
+// normalises ResolvedAt, but it runs on the empty Model, not on the struct passed to
+// Updates, so it never reached this write.
 func (ls *LocalStorage) UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) (bool, error) {
+	req.CreatedAt = req.CreatedAt.UTC()
+	req.ExpiresAt, req.ResolvedAt = utcPtr(req.ExpiresAt), utcPtr(req.ResolvedAt)
 	res := ls.db.WithContext(ctx).Model(&models.AccessRequest{}).
 		Where("id = ? AND state = ?", req.ID, accessRequestStatePending).
 		Select("*").

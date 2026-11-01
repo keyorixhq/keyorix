@@ -7,6 +7,9 @@
   inherits a clear-copies marker from an earlier suspension, even from a pre-#3215 replica
   in a rolling upgrade that writes only status. Why: #3362. Guard:
   `internal/storage/factory_rolling_upgrade_triggers_postgres_test.go:TestSecretSuspendMarker_ClearedByOldBinaryResume_Postgres`
+  (pg-gated), through this binary's own suspend and read with v0.96.3's exact
+  `TransitionSecretStatus` statement in between
+  `internal/storage/factory_rolling_upgrade_suspend_read_postgres_test.go:TestSecretSuspendMarker_OldBinaryResumeThenPlainSuspend_NewReadNoClear_Postgres`
   (pg-gated), end to end against v0.96.1 `scripts/e2e/mixed_version_test.go:TestMixedVersion_RollingUpgrade_Postgres`
   (e2e tag). ENABLE ALWAYS is re-asserted by every migration, so a trigger left ordinary by
   `pg_restore --disable-triggers`, replica-only or disabled is repaired at the next boot

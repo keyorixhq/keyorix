@@ -232,7 +232,30 @@ func TestRunAdminValidatePosture_AdminWithoutMFAIsADeviationAndNonZeroExit(t *te
 		if err != nil {
 			return err
 		}
-		return store.AssignRole(ctx, user.ID, role.ID, corestorage.Scope{})
+		// What makes a role admin-tier is the ADR-084 flag, not its name
+		// (ListGlobalAdminHolders resolves holders through it). Without it this
+		// user is no admin holder and the admin-MFA finding below cannot fire.
+		if err := store.SetRoleBypassesPermissionChecks(ctx, role.ID, true); err != nil {
+			return err
+		}
+		if err := store.AssignRole(ctx, user.ID, role.ID, corestorage.Scope{}); err != nil {
+			return err
+		}
+
+		// The exit code alone proves nothing here: the baseline fixture always
+		// carries shipped-default deviations, so assert the admin-MFA finding
+		// itself, and that no break-glass finding is present to stand in for it.
+		report := &postureReport{}
+		coreService := core.NewKeyorixCore(store)
+		if err := collectAdminMFAPosture(ctx, false, coreService, report); err != nil {
+			return err
+		}
+		collectBreakGlassReviewPosture(ctx, cfg, coreService, report)
+		require.Len(t, report.deviations, 1, "only the admin-MFA finding may fire: %+v", report.deviations)
+		assert.Equal(t, "admin-mfa", report.deviations[0].category)
+		assert.Equal(t, "1 admin(s) without MFA or a passkey enrolled: root (root@x.io)", report.deviations[0].detail)
+		assert.Empty(t, breakGlassFindings(report))
+		return nil
 	})
 	require.NoError(t, err)
 
@@ -474,12 +497,10 @@ func TestCollectTLSPosture_TLSEnabledDisabledListenerSkipped(t *testing.T) {
 	collectTLSPosture(cfg, report)
 
 	assert.Empty(t, report.deviations)
-	// Nothing at all: a disabled listener contributes nothing, and an enabled
-	// listener WITH TLS has nothing to report either. (The tls_mode
-	// informational line this used to expect is behind a TODO(FIX-4) in
-	// collectTLSPosture -- the field is not in this PR's base chain. Restore
-	// the Len(informational, 1) assertion with it.)
-	assert.Empty(t, report.informational, "an enabled+TLS listener and a disabled listener both contribute nothing")
+	// A disabled listener contributes nothing; the enabled listener WITH TLS
+	// contributes only its informational tls_mode line.
+	require.Len(t, report.informational, 1)
+	assert.Contains(t, report.informational[0], "gRPC listener TLS mode")
 }
 
 // TestCollectAuditDurabilityPosture_DefaultPostgresIsNotADeviation: ADR-112

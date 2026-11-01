@@ -663,6 +663,10 @@ deleted; raise `cadence_days` (up to 366) for a longer look-back.
   reads columns by position is unaffected; one that rejects extra columns is not).
   Campaigns opened before the upgrade say `all_history`: their `last_used_at` was
   computed over the whole log and stays as recorded.
+- Dormant role grants (compliance posture, `dormant-access` control, digest) now use
+  the same `cadence_days` as their threshold instead of a fixed 90 days (#3459). With
+  the default cadence nothing changes. A shorter cadence flags more grants dormant, a
+  longer one fewer; no stored data changes.
 - The `dormant-access` control and the digest now say "no use in the last 90 days"; the
   dormant-grant count itself is unchanged (it was always judged against 90 days).
 - The campaigns table gets one column, `activity_window_days`, added automatically at
@@ -744,10 +748,21 @@ hygiene reports work in days. Details: [`specs/last-used-coalescing.md`](specs/l
 
 The recover-admin alert (`admin.recover_admin` use is always notified to your
 notification channels) now remembers how far through the audit table it has looked,
-instead of re-reading the whole table every 10 minutes. On an install that has no
-such mark yet, which is every install the first time it runs this version, the first
-pass has nothing to resume from and **reads the audit table from its first row to
-its last, once**. On a large audit table this takes a while.
+instead of re-reading the whole table every 10 minutes. Where the first pass starts
+depends on whether the install already has a stored mark (the system metadata key
+`recover_admin_alert_last_notified_id`):
+
+- **An install with no stored mark** (it never notified a recover-admin use, or it is
+  new) has nothing to resume from, so the first pass **reads the audit table from its
+  first row to its last, once**, in windows. On a large audit table this takes a while.
+  The same happens if the stored value is not a valid integer: it is treated as no mark.
+- **An install with a stored mark** resumes from it. The previous version moved that
+  mark only when it found an `admin.recover_admin` event, so on an install that had
+  notified before, the mark is the id of its last notified event: the first pass reads
+  only the rows after that id (up to the end of the table, in the same windows), not the
+  whole table, and does not notify those earlier events again.
+
+Either way, once the pass has finished the mark is the highest audit id examined.
 
 What bounds it, from the code (`internal/core/recover_admin_alert.go`):
 

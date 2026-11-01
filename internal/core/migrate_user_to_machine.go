@@ -43,6 +43,9 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 
 	user, err := c.storage.GetUserByUsername(ctx, username)
 	if err != nil {
+		if fault := ReadFault(err); fault != nil {
+			return nil, fault
+		}
 		return nil, fmt.Errorf("user %q not found: %w", username, err)
 	}
 

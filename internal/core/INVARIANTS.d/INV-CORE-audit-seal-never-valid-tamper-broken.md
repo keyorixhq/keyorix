@@ -25,11 +25,24 @@
   binding is refused, and the re-seal never lowers a witness signed under the current seals. It skips only its own
   half-written artifacts (a checkpoint or mark signed under the seals before it): one that
   authenticates under neither, or a mark missing although the seal recorded a certification,
-  is refused, not read as "no certification". It refuses ids other than the seal's own, and
+  is refused, not read as "no certification". After a key change (#3814) an artifact still
+  signed under the previous key counts, or is skipped, only when the active key transition
+  record, MACed by both keys, names its exact digest with the binding the prepare (holding
+  the old key) authenticated it under (`auditKeyTransitionSealing`, `audit_seal_key_change.go`;
+  the naming is tied to the newest seal's number and digest and followed through a chain of
+  key changes); a witness counts that way only when it mirrors a mark so named under the seal.
+  Nothing the record does not name is accepted on the new key's behalf, and the record names
+  nothing that authenticated under no seal binding. It refuses ids other than the seal's own, and
   keeps any discontinuity or failure the state carries in its accepted list; its plan names
   when, by whom and why the seal was recorded. A first acceptance refuses a missing mark beside
   a signed checkpoint, and an operator name or reason with a control or format character, a
-  line or paragraph separator, or over its length limit.
+  line or paragraph separator, or over its length limit. A first acceptance counts the host
+  witness in `Before` when it authenticates under the seals before it, prints it in the plan
+  with the fact that confirming lowers it, refuses a damaged witness and one that authenticates
+  under a seal list the database does not hold (a rollback of the seal record), and refuses a
+  `Before` whose head is gone unless that head is named as the truncation. Before writing the
+  record, and again in the re-seal, the witness is lowered only from the seals before the
+  newest one and only as far as the record's `Before` names (`auditWitnessLowerProblem`).
   Why: AUDIT-ACCEPT-LOSS-1, constraints 1-8 of docs/design/recovery-options.md §2. Guard:
   `TestAuditSeal_*` (`internal/core`, SQLite and PostgreSQL; `_CrashAtEveryStepResumes`,
   `_DeletedSealKeepsStatePin`,
@@ -38,10 +51,21 @@
   `_ResumeRefusesUnaccountedArtifacts`, `_ResumeRefusesRollbackBelowWitness`,
   `_ResumeRefusesUnreadableWitness`, `_CrashAtEveryStepResumesWithWitness`,
   `_ResealKeepsHigherWitness`, `_RefusesMissingHighWater`,
-  `_RefusesUnsafeOperatorText`), `TestSealDifferential_*`
+  `_RefusesUnsafeOperatorText`, `_WitnessAboveDatabaseCountsInPlan`,
+  `_ApplyRefusesUnnamedHigherWitness`, `_WitnessUnderRolledBackSealRefused`,
+  `_ResumeAfterKeyChange`, `_ResumeAfterTwoKeyChanges`, `_ResumeAfterKeyChangeRefusesUnaccounted`),
+  `TestSealDifferential_*`
   (`internal/auditverify`), `TestPerformRecoverAdmin_NeverSealsALoss`,
   `TestAcceptLoss_RequiresConfirmThenSeals`, `scripts/drills/accept-loss.sh`. Not covered: a
   verification state discontinuity with an intact chain cannot be accepted (it stays
-  sticky), a holder of the checkpoint key can seal anything this command would accept, and on
-  PostgreSQL (no witness) a rollback of every row to a pre-acceptance copy reads like an
-  unfinished acceptance; only the operator, warned by the resume plan, can tell them apart.
+  sticky), and a holder of the checkpoint key can seal anything this command would accept. A
+  whole-trail rollback (every row, the seal record, checkpoints, mark and state put back to an
+  earlier copy) is caught only by evidence the copy does not contain: on SQLite the intact host
+  witness refuses a resume over cut certified rows and a new acceptance after the seal record
+  was rolled away; on PostgreSQL, or when the witness was rolled back or deleted with the
+  database (an absent witness reads as none), a rollback to part way through an acceptance reads
+  as an unfinished acceptance and one to before it as a fresh loss. Only an off-host
+  `export-checkpoint` anchor (`--anchor`; one bound to a seal the database no longer holds does
+  not authenticate) or the operator, warned by the resume plan, tells them apart
+  (docs/operator/audit-chain-break-runbook.md §8). Rows written after the last checkpoint were
+  never certified and are not detected by anything.

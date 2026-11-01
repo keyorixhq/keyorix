@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -284,6 +285,61 @@ func mfaResetRequester(ctx context.Context, st storage.Storage, id uint, lock bo
 	return u, nil
 }
 
+// refuseMFAResetApproverChanged re-checks, on the approver's locked row read
+// through st, what requireMFAResetActor checked before the transaction: an
+// active, not login-blocked global admin with a second factor. An approver
+// demoted or suspended after that check gets the actor refusals, never a reset.
+func refuseMFAResetApproverChanged(ctx context.Context, st storage.Storage, approver *models.User) error {
+	if !approver.IsActive || AccountLoginBlocked(approver.ID, approver.AccountState) {
+		return ErrMFAResetAdminRequired
+	}
+	role, err := isGlobalAdminRoleNameOn(ctx, st, approver.ID)
+	if err != nil {
+		return fmt.Errorf("check approver's admin role: %w", err)
+	}
+	if role == "" {
+		return ErrMFAResetAdminRequired
+	}
+	if !userHasSecondFactor(approver) {
+		return ErrMFAResetActorNeedsMFA
+	}
+	return nil
+}
+
+// lockMFAResetApprovalRows row-locks the requester, the approver and the target
+// through tx in ascending user-ID order (one fixed order for every approval, so
+// two concurrent approvals never wait on each other in a cycle) and returns the
+// locked rows by ID. A requester or approver who no longer exists is
+// ErrMFAResetRequesterChanged / ErrMFAResetAdminRequired.
+func lockMFAResetApprovalRows(ctx context.Context, tx storage.Storage, requesterID, approverID, targetID uint) (map[uint]*models.User, error) {
+	ids := []uint{requesterID, approverID, targetID}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	rows := make(map[uint]*models.User, len(ids))
+	for _, id := range ids {
+		var (
+			u   *models.User
+			err error
+		)
+		switch id {
+		case requesterID:
+			u, err = mfaResetRequester(ctx, tx, id, true)
+		case approverID:
+			u, err = tx.LockUserForUpdate(ctx, id)
+			if storage.IsUserNotFound(err) {
+				err = ErrMFAResetAdminRequired
+			}
+		default:
+			u, err = tx.LockUserForUpdate(ctx, id)
+		}
+		if err != nil {
+			return nil, err
+		}
+		rows[id] = u
+	}
+	return rows, nil
+}
+
 func evidenceSuffix(e string) string {
 	if e == "" {
 		return ""
@@ -386,20 +442,22 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 			if !matched {
 				return ErrMFAResetRequestDecided
 			}
-			// Every rule read before the transaction holds again on the row locks
-			// (requester first, then target): a suspension, demotion, IdP link or
-			// promotion that committed in between refuses the approval.
-			lockedRequester, qerr := mfaResetRequester(ctx, tx, req.RequestedBy, true)
-			if qerr != nil {
-				return qerr
-			}
-			if qerr := refuseMFAResetRequesterChanged(ctx, tx, lockedRequester); qerr != nil {
-				return qerr
-			}
-			locked, lerr := tx.LockUserForUpdate(ctx, req.TargetUserID)
+			// Every rule read before the transaction holds again on the row locks of
+			// the requester, the approver and the target, taken in ascending user-ID
+			// order (two admins approving each other's requests cannot deadlock): a
+			// suspension, demotion, IdP link or promotion of any of the three that
+			// committed in between refuses the approval. Revocation wins.
+			rows, lerr := lockMFAResetApprovalRows(ctx, tx, req.RequestedBy, actorID, req.TargetUserID)
 			if lerr != nil {
 				return lerr
 			}
+			if qerr := refuseMFAResetRequesterChanged(ctx, tx, rows[req.RequestedBy]); qerr != nil {
+				return qerr
+			}
+			if aerr := refuseMFAResetApproverChanged(ctx, tx, rows[actorID]); aerr != nil {
+				return aerr
+			}
+			locked := rows[req.TargetUserID]
 			if verr := validateMFAResetTarget(locked); verr != nil {
 				return verr
 			}

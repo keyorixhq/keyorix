@@ -173,7 +173,7 @@ func TestDeleteExpiredBreakGlassBefore_SkipsActive(t *testing.T) {
 	// Still active despite being old — must never be purged.
 	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{ID: 3, State: "active", CreatedAt: old}).Error)
 
-	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().AddDate(0, 0, -90))
+	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().UTC().AddDate(0, 0, -90))
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), n, "expired + revoked purged, active kept")
 
@@ -201,7 +201,7 @@ func TestDeleteExpiredBreakGlassBefore_SkipsUnreviewed(t *testing.T) {
 		ID: 11, State: "revoked", CreatedAt: old, ReviewedAt: &old,
 	}).Error, "reviewed -- ordinary retention applies")
 
-	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().AddDate(0, 0, -90))
+	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().UTC().AddDate(0, 0, -90))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n, "only the reviewed row is purged")
 
@@ -232,7 +232,7 @@ func TestDeleteExpiredBreakGlassBefore_ReclaimsUnreconciledExpired(t *testing.T)
 	old := time.Now().AddDate(0, 0, -120)
 	longExpired := old.Add(time.Hour) // TTL lapsed shortly after creation, well before the cutoff below
 	stillLive := time.Now().AddDate(1, 0, 0)
-	cutoff := time.Now().AddDate(0, 0, -90)
+	cutoff := time.Now().UTC().AddDate(0, 0, -90)
 
 	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
 		ID: 4, State: "active", CreatedAt: old, ExpiresAt: &longExpired, ReviewedAt: &old,
@@ -278,7 +278,7 @@ func TestDeleteExpiredBreakGlassBefore_ReconciledRowStillRevocable(t *testing.T)
 	ctx := context.Background()
 	old := time.Now().AddDate(0, 0, -120)
 	longExpired := old.Add(time.Hour)
-	cutoff := time.Now().AddDate(0, 0, -90)
+	cutoff := time.Now().UTC().AddDate(0, 0, -90)
 
 	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
 		ID: 6, State: "active", CreatedAt: old, ExpiresAt: &longExpired,
@@ -315,7 +315,7 @@ func TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate(t *
 	ctx := context.Background()
 	old := time.Now().AddDate(0, 0, -120)
 	longExpired := old.Add(time.Hour)
-	cutoff := time.Now().AddDate(0, 0, -90)
+	cutoff := time.Now().UTC().AddDate(0, 0, -90)
 
 	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
 		ID: 7, State: "active", CreatedAt: old, ExpiresAt: &longExpired,

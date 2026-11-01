@@ -42,6 +42,9 @@ func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) 
 	shares, err := h.coreService.ListSecretSharesWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
 		log.Printf("Error listing secret shares: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		switch {
 		case strings.Contains(err.Error(), errNotFound):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
@@ -94,7 +97,8 @@ func (h *ShareHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 // (core.ListOwnedShareViews). Same filters, paging and response shape as ListShares.
 // The route gate (RequirePermissionInAnyScope) refuses a caller with no secrets.read
 // anywhere; core refuses machine identities. Both refusals carry
-// core.OwnedShareListDeniedMessage. Like ListShares, a read: no audit event.
+// core.OwnedShareListDeniedMessage. Like ListShares, a read: at most one
+// share_access_elevated row per call, when a share made a listed name readable (#3456).
 func (h *ShareHandler) ListOwnedShares(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -433,6 +437,9 @@ func (h *ShareHandler) RemoveSelfFromShare(w http.ResponseWriter, r *http.Reques
 
 	if err := h.coreService.RemoveSelfFromShare(r.Context(), uint(id), userCtx.UserID); err != nil {
 		log.Printf("Error removing self from share: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", "Share not found", http.StatusNotFound, nil)
 		} else {

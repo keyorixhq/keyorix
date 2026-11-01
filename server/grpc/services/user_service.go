@@ -379,6 +379,10 @@ func mapUserError(err error) error {
 	if aerr, ok := auditUnavailableStatus(err); ok {
 		return aerr
 	}
+	// STORAGE-ERR-CLASS-2: a failed parent read (role, project) is retryable, not InvalidArgument.
+	if serr, ok := storageUnavailableStatus(err); ok {
+		return serr
+	}
 	// S1 (CLI-split inventory #2012): checked via errors.Is, not the substring
 	// switch below, so the specific permission name requireEqualOrGreaterAdminAuthority
 	// wraps into the error text never reaches this function's substring matching
@@ -405,7 +409,8 @@ func mapUserError(err error) error {
 	case errors.Is(err, corestorage.ErrUserNotFound), errors.Is(err, corestorage.ErrRoleNotFound),
 		errors.Is(err, corestorage.ErrGroupNotFound), errors.Is(err, corestorage.ErrProjectNotFound):
 		return status.Error(codes.NotFound, "user not found")
-	case errors.Is(err, core.ErrUserAlreadyExists), errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail):
+	case errors.Is(err, core.ErrUserAlreadyExists), errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail),
+		errors.Is(err, corestorage.ErrDuplicateUsername):
 		return status.Error(codes.AlreadyExists, "a user with that username or email already exists")
 	// Not yet typed: core's roles.assign ceiling refusals (internal/core/authz.go,
 	// three fmt.Errorf sites) carry no sentinel. Match their fixed leading phrase

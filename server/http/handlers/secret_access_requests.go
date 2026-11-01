@@ -13,6 +13,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/core"
 )
 
 // CreateSecretAccessRequest handles POST /api/v1/secret-access-requests
@@ -45,12 +47,17 @@ func (h *CatalogHandler) CreateSecretAccessRequest(w http.ResponseWriter, r *htt
 		return
 	}
 	if _, err := h.coreService.GetSecretWithPermissionCheck(r.Context(), body.SecretID, actor.UserID); err != nil {
+		// Only a VERDICT (not found, refused, outside schedule, ...) is the uniform 404:
+		// a failed secondary read (membership, shares, ACL, schedule) is a retry answer.
+		if sendStorageUnavailable(w, core.SecretReadVerdictFault(err)) {
+			return
+		}
 		sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
 		return
 	}
 	req, err := h.coreService.RequestSecretAccess(r.Context(), body.SecretID, actor.UserID, body.Reason)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		msg := err.Error()
@@ -106,6 +113,9 @@ func (h *CatalogHandler) GetSecretAccessRequest(w http.ResponseWriter, r *http.R
 	}
 	req, err := h.coreService.GetSecretAccessRequest(r.Context(), reqID, actor.UserID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		sendError(w, "NotFound", "Access request not found", http.StatusNotFound, nil)
 		return
 	}
@@ -155,7 +165,7 @@ func (h *CatalogHandler) ResolveSecretAccessRequest(w http.ResponseWriter, r *ht
 		return
 	}
 	if resolveErr != nil {
-		if sendAuditUnavailable(w, resolveErr) {
+		if sendAuditUnavailable(w, resolveErr) || sendStorageUnavailable(w, resolveErr) {
 			return
 		}
 		status := http.StatusInternalServerError
@@ -166,11 +176,11 @@ func (h *CatalogHandler) ResolveSecretAccessRequest(w http.ResponseWriter, r *ht
 		case strings.Contains(msg, errOnlyPending), strings.Contains(msg, "no longer pending"),
 			strings.Contains(msg, "has expired"), strings.Contains(msg, "no longer exists"):
 			status = http.StatusConflict
-		// A requester approving their own request, or a caller lacking admin
-		// authority at the request's project, is a business rule about who may
-		// act, not a state conflict.
-		case strings.Contains(msg, "cannot approve their own"), strings.Contains(msg, "admin authority is required"),
-			strings.Contains(msg, "administrator"):
+		// A requester approving their own request is a business rule about who may
+		// act, not a state conflict. A caller lacking admin authority at the request's
+		// project never reaches here: core answers it "access request not found"
+		// (loadSecretAccessRequestForResolver, AUTHZ-ORACLE-1), so it is a 404 above.
+		case strings.Contains(msg, "cannot approve their own"):
 			status = http.StatusForbidden
 		case strings.Contains(msg, "not a secret-scoped"):
 			status = http.StatusBadRequest
@@ -200,6 +210,9 @@ func (h *CatalogHandler) WithdrawSecretAccessRequest(w http.ResponseWriter, r *h
 		return
 	}
 	if err := h.coreService.WithdrawAccessRequest(r.Context(), reqID, actor.UserID); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {

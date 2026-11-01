@@ -1,0 +1,130 @@
+{
+  "note": "Produced by the cipher.NewGCM (caller-supplied nonce) code path on main 8387d64ed, before ENCRYPTION-HARDEN-1 item 3. Test keys only.",
+  "dek_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "kek_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+  "service": [
+    {
+      "name": "no-aad",
+      "plaintext_hex": "6c6567616379207365637265742076616c7565",
+      "encrypted_data": {
+        "data": "W5qBeYtYKTunPsEb+ujJ+zr1sYi+dmNHnL5n4j150NULKLg=",
+        "metadata": {
+          "algorithm": "AES-256-GCM",
+          "key_version": "v1",
+          "encrypted_at": "2026-10-30T20:23:11.954606Z",
+          "nonce": "UKDmJt1NIpLdl8+d"
+        }
+      }
+    },
+    {
+      "name": "no-aad-empty",
+      "plaintext_hex": "",
+      "encrypted_data": {
+        "data": "lInqnutr/6YwKySk92t/HQ==",
+        "metadata": {
+          "algorithm": "AES-256-GCM",
+          "key_version": "v1",
+          "encrypted_at": "2026-10-30T20:23:11.954748Z",
+          "nonce": "DYO8oB+JWPHr4WTy"
+        }
+      }
+    },
+    {
+      "name": "aad-v2",
+      "aad_hex": "34323a373a33",
+      "plaintext_hex": "6c6567616379207365637265742076616c7565207769746820616164",
+      "encrypted_data": {
+        "data": "UW0QwgEF4mLFz/TM8Rol8AMN7c1nn+T6uJQKkNTGgRZNoK/TWjOJG1zBFp8=",
+        "metadata": {
+          "algorithm": "AES-256-GCM",
+          "key_version": "v1",
+          "encrypted_at": "2026-10-30T20:23:11.954749Z",
+          "nonce": "5pLVT6gZyvprod1K",
+          "aad_version": "v2"
+        }
+      }
+    },
+    {
+      "name": "aad-empty-plaintext",
+      "aad_hex": "313a313a31",
+      "plaintext_hex": "",
+      "encrypted_data": {
+        "data": "Rl/k4kgybk8NVu5ImW99eg==",
+        "metadata": {
+          "algorithm": "AES-256-GCM",
+          "key_version": "v1",
+          "encrypted_at": "2026-10-30T20:23:11.954751Z",
+          "nonce": "ZioaDOEAZhIHWIFt",
+          "aad_version": "v2"
+        }
+      }
+    }
+  ],
+  "chunked": {
+    "plaintext_hex": "303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a2d6368756e6b65642d6c6567616379",
+    "chunk_size": 16,
+    "chunks": [
+      {
+        "data": "GPzwfatANFiBq+DclbAGNLKzpJ28OxoPsp+r7rSHRZ8=",
+        "metadata": {
+          "algorithm": "AES-256-GCM",
+          "key_version": "v1",
+          "encrypted_at": "2026-10-30T20:23:11.954752Z",
+          "nonce": "1K6gabw88WMp51mL",
+          "total_chunks": 4,
+          "chunk_stream_id": "94a0122bf4a2bbc27caf90392003c028",
+          "aad_version": "v2"
+        }
+      },
+      {
+        "data": "gi9jFY++uFm04gniyqkq4L4CUD8btBKnMZYhKIHgBa8=",
+        "metadata": {
+          "algorithm": "AES-256-GCM",
+          "key_version": "v1",
+          "encrypted_at": "2026-10-30T20:23:11.954753Z",
+          "nonce": "odrUNq0z0LuhTTrf",
+          "chunk_index": 1,
+          "total_chunks": 4,
+          "chunk_stream_id": "94a0122bf4a2bbc27caf90392003c028",
+          "aad_version": "v2"
+        }
+      },
+      {
+        "data": "amJ/9My5jxiferzurq/dpFZiqXL/LQY/lXdR6GNnNr4=",
+        "metadata": {
+          "algorithm": "AES-256-GCM",
+          "key_version": "v1",
+          "encrypted_at": "2026-10-30T20:23:11.954753Z",
+          "nonce": "KMG7PZD3pONVj+mH",
+          "chunk_index": 2,
+          "total_chunks": 4,
+          "chunk_stream_id": "94a0122bf4a2bbc27caf90392003c028",
+          "aad_version": "v2"
+        }
+      },
+      {
+        "data": "0WBoU07y388Y8m4hMuQQ06OJKg==",
+        "metadata": {
+          "algorithm": "AES-256-GCM",
+          "key_version": "v1",
+          "encrypted_at": "2026-10-30T20:23:11.954754Z",
+          "nonce": "Ol8u003aIbsOnhoD",
+          "chunk_index": 3,
+          "total_chunks": 4,
+          "chunk_stream_id": "94a0122bf4a2bbc27caf90392003c028",
+          "aad_version": "v2"
+        }
+      }
+    ]
+  },
+  "wrapped_keys": [
+    {
+      "plain_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "wrapped_hex": "3d91da5152c8ae4372d8248ad9e8569801e78299822012d769448ea7ec819153032c92f22f6a27db8dcba736aafad970544b1ea078692e8d83d89c7f"
+    },
+    {
+      "plain_hex": "73686f7274",
+      "wrapped_hex": "31fae07e97d84892dd9d6b6e57a703bea67ba81e361c48354732075ce56ed6bb69"
+    }
+  ]
+}
