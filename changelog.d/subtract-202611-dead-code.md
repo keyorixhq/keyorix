@@ -1,0 +1,2 @@
+### Internal
+- **Removed code nothing calls** (found by deadcode and knip, each confirmed by grep): `KeySetState.IsManifestMissing` (internal/keyfiles), the web UI's unused `isRbacEvent` copy, barrel re-exports no file imports, the `sharingApi.selfRemove` client method (no page used it; the endpoint and `keyorix share self-remove` are unchanged) and two unrouted `ROUTES` entries. No behaviour change.
