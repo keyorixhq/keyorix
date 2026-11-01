@@ -1,0 +1,3 @@
+# Documented invocations that do not resolve against the command trees on purpose
+# (doc_cli_commands_test.go). One `file<TAB>invocation<TAB>reason` per line; the invocation is
+# the snippet text exactly as the test reports it. An entry that matches nothing is an error.

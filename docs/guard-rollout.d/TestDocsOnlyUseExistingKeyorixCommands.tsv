@@ -1,0 +1,1 @@
+TestDocsOnlyUseExistingKeyorixCommands	internal/docsdrift	#TBD	new guard (DOCS-PATHREF-1): keyorix and keyorix-server admin commands quoted in QUICK_START, SELF_HOSTING and docs/operator must exist; report-only until its first green nightly on main

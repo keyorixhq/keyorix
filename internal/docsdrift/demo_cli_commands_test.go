@@ -102,7 +102,8 @@ func parseCLIReference(md string) cliFlagTable {
 // demoInvocation is one `keyorix <path> --flags` occurrence.
 type demoInvocation struct {
 	Line  int
-	Path  string // longest documented command path; "" when none resolved
+	Path  string   // longest documented command path; "" when none resolved
+	Words []string // every subcommand-shaped word after the binary, resolved or not
 	Flags []string
 	Text  string
 }
@@ -123,12 +124,19 @@ func binaryToken(s string) string {
 // invocationsIn returns the keyorix invocations of one file's text. known resolves a
 // candidate path to documented-or-not.
 func invocationsIn(text string, known func(path string) bool) []demoInvocation {
+	return invocationsOf(text, func(tok string) bool { return keyorixBinaryWords[tok] }, known)
+}
+
+// invocationsOf is invocationsIn for any binary: isBin says whether a token (quotes and
+// backticks stripped, a leading `$` kept) is the binary. DOCS-PATHREF-1 reuses it for
+// `keyorix-server` in the operator docs.
+func invocationsOf(text string, isBin func(tok string) bool, known func(path string) bool) []demoInvocation {
 	text = strings.ReplaceAll(text, "\\\n", " ")
 	var out []demoInvocation
 	for i, line := range strings.Split(text, "\n") {
 		toks := strings.Fields(line)
 		for j := range toks {
-			if !keyorixBinaryWords[binaryToken(toks[j])] {
+			if !isBin(binaryToken(toks[j])) {
 				continue
 			}
 			var words []string
@@ -146,14 +154,14 @@ func invocationsIn(text string, known func(path string) bool) []demoInvocation {
 			var flags []string
 			for ; k < len(toks); k++ {
 				t := toks[k]
-				if t == "|" || t == ";" || t == "&&" || t == "||" || keyorixBinaryWords[binaryToken(t)] {
+				if t == "|" || t == ";" || t == "&&" || t == "||" || isBin(binaryToken(t)) {
 					break
 				}
 				if m := flagTokenRe.FindStringSubmatch(cleanToken(t)); m != nil {
 					flags = append(flags, m[1])
 				}
 			}
-			out = append(out, demoInvocation{Line: i + 1, Path: path, Flags: flags, Text: strings.TrimSpace(line)})
+			out = append(out, demoInvocation{Line: i + 1, Path: path, Words: words, Flags: flags, Text: strings.TrimSpace(line)})
 		}
 	}
 	return out
