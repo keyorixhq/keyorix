@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // ── service.go — setters and simple accessors ─────────────────────────────────
@@ -376,7 +377,7 @@ func TestRestoreSecret_StorageError(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	// GetSecretIncludingDeleted is called before RestoreSecret to obtain name+projectID.
-	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5, ProjectID: 1}, nil)
+	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(softDeletedSecretNode(5, 1), nil)
 	ms.On("RestoreSecret", mock.Anything, uint(5)).Return(errors.New("not found"))
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
@@ -388,7 +389,7 @@ func TestRestoreSecret_Success(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	// GetSecretIncludingDeleted is called before RestoreSecret to obtain name+projectID.
-	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5, ProjectID: 1}, nil)
+	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(softDeletedSecretNode(5, 1), nil)
 	ms.On("RestoreSecret", mock.Anything, uint(5)).Return(nil)
 	// The secret.restored row is appended inside the restore's transaction.
 	ms.On("LogAuditEventWithAccessLog", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -1157,4 +1158,10 @@ func TestDeprovisionSCIMGroup_Success(t *testing.T) {
 	c := NewKeyorixCore(ms)
 	require.NoError(t, c.DeprovisionSCIMGroup(context.Background(), 1, 10))
 	ms.AssertCalled(t, "DeleteGroup", mock.Anything, uint(10))
+}
+
+// softDeletedSecretNode is a soft-deleted secret row: RestoreSecret refuses a live
+// one with ErrSecretNotDeleted before touching storage (#3737).
+func softDeletedSecretNode(id, projectID uint) *models.SecretNode {
+	return &models.SecretNode{ID: id, ProjectID: projectID, DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}}
 }

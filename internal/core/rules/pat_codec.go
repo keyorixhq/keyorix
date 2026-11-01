@@ -134,11 +134,13 @@ func EncodePATCIDRs(cidrs []string) (string, error) { // NOSONAR -- cognitive co
 // column is repaired or the token is re-issued.
 var PATCIDRCorrupted = []string{"<corrupted>"}
 
-// DecodePATCIDRs parses a stored CIDR allowlist back into a slice. An empty column
-// yields nil (no restriction). A non-empty column that fails JSON parsing returns a
-// sentinel that blocks ALL source IPs rather than failing OPEN to global network access.
+// DecodePATCIDRs parses a stored CIDR allowlist back into a slice. Only the exact empty
+// column EncodePATCIDRs writes yields nil (no restriction); a whitespace-only column is
+// never written, so it is corrupted like any other. A non-empty column that fails JSON
+// parsing returns a sentinel that blocks ALL source IPs rather than failing OPEN to
+// global network access.
 func DecodePATCIDRs(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
+	if raw == "" {
 		return nil
 	}
 	var out []string

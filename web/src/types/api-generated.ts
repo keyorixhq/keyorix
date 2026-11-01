@@ -2592,7 +2592,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a soft-deleted secret
-         * @description Clears the deletion, returning the secret to the live list. Find restorable secrets with GET /projects/{id}/secrets/deleted.
+         * @description Clears the deletion, returning the secret to the live list. Find restorable secrets with GET /projects/{id}/secrets/deleted. A secret that is not deleted answers 409 ("secret N is not deleted; nothing to restore"); an unknown id answers 404.
          */
         post: operations["restoreSecret"];
         delete?: never;
