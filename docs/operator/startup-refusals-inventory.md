@@ -50,7 +50,7 @@ Not searched (so not in the list):
   `check-admin-password`, `generate-secrets`, `posture` were read only for `--force` and
   lock behaviour).
 - The `keyorix` CLI (`cli/`, out of scope for this item) and the Helm chart / entrypoint
-  scripts (`deploy/helm`, `deploy/docker`; container-only refusals are marked
+  scripts (`deploy/helm`, `server/entrypoint.sh`, `server/Dockerfile`; container-only refusals are marked
   "pending e2e VM" in the report).
 - The 70-odd per-table `failed to migrate <table> table` errors in
   `internal/storage/factory.go` (lines ~2038-2835) are one family, see "Database".

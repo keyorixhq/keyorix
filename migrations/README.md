@@ -15,9 +15,10 @@ originally bootstrapped from migrations `001`–`003` (before AutoMigrate existe
 who want to trace, by hand, how the schema evolved from that point. They are:
 
 - **Not invoked by anything in this repo.** No CI workflow, Dockerfile, `Makefile`
-  target, or Go code path executes these files. `internal/cli/migrate/migrate.go` is
-  an unrelated one-off data-migration CLI (`migrate user-to-machine`, ADR-023) — it
-  does not read `migrations/*.sql`.
+  target, or Go code path executes these files. The one-off
+  user-to-machine data migration (ADR-023) is `keyorix machine migrate-from-user`
+  (`cli/cmd/machine.go`), an API client unrelated to these files — it does not read
+  `migrations/*.sql`.
 - **Executable only via a standalone script the operator must run manually**:
   `scripts/run_migrations.sh` shells out to the external `golang-migrate` CLI (not a
   project dependency — `go.mod` has no migration-runner library; the operator must
