@@ -14,7 +14,6 @@ func init() {
 		"mfa.go:DisableMFA",
 		"mfa.go:RegenerateMFARecoveryCodes",
 		"mfa.go:MFARecoveryCodesRemaining",
-		"mfa_stepup.go:VerifyMFAStepUp",
 		"webauthn.go:FinishWebAuthnRegistration",
 		"webauthn.go:DeleteWebAuthnCredential",
 		"webauthn.go:FinishWebAuthnReauth",

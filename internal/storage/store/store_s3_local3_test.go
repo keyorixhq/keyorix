@@ -124,9 +124,12 @@ func TestSecret_GetByNameUpdateCertNotAfter(t *testing.T) {
 	_, err = ls.GetSecretByName(ctx, "nope", p.ID, e.ID)
 	require.Error(t, err)
 
-	// UpdateSecret.
-	sn.Description = "updated"
-	updated, err := ls.UpdateSecret(ctx, sn)
+	// UpdateSecretFields.
+	desc := "updated"
+	matched, err := ls.UpdateSecretFields(ctx, sn.ID, coreStorage.SecretFieldUpdate{Description: &desc})
+	require.NoError(t, err)
+	require.True(t, matched)
+	updated, err := ls.GetSecret(ctx, sn.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "updated", updated.Description)
 
@@ -291,7 +294,7 @@ func TestSecret_CountExpiringAndLiveName(t *testing.T) {
 	}).Error)
 
 	// Count expiring before 2h from now → 2.
-	cutoff := time.Now().Add(2 * time.Hour)
+	cutoff := time.Now().UTC().Add(2 * time.Hour)
 	counts, err := ls.CountExpiringSecretsByProject(ctx, []uint{p.ID}, cutoff)
 	require.NoError(t, err)
 	assert.Equal(t, 2, counts[p.ID])
@@ -1047,8 +1050,8 @@ func TestStats_SaveAndGetPreviousSnapshot(t *testing.T) {
 	oldSnap := &models.StatsSnapshot{
 		UserID:       userID,
 		TotalSecrets: 50,
-		CreatedAt:    time.Now().Add(-25 * time.Hour),
-		SnapshotDate: time.Now().Add(-25 * time.Hour),
+		CreatedAt:    time.Now().UTC().Add(-25 * time.Hour),
+		SnapshotDate: time.Now().UTC().Add(-25 * time.Hour),
 	}
 	require.NoError(t, ls.SaveStatsSnapshot(ctx, oldSnap))
 
@@ -1056,8 +1059,8 @@ func TestStats_SaveAndGetPreviousSnapshot(t *testing.T) {
 	recentSnap := &models.StatsSnapshot{
 		UserID:       userID,
 		TotalSecrets: 55,
-		CreatedAt:    time.Now().Add(-5 * time.Hour),
-		SnapshotDate: time.Now().Add(-5 * time.Hour),
+		CreatedAt:    time.Now().UTC().Add(-5 * time.Hour),
+		SnapshotDate: time.Now().UTC().Add(-5 * time.Hour),
 	}
 	require.NoError(t, ls.SaveStatsSnapshot(ctx, recentSnap))
 

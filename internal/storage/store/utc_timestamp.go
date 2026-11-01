@@ -24,6 +24,18 @@ func parseDBTimestamp(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// utcPtr returns t in UTC, nil for nil. For the nullable time columns written
+// through Updates(map) / Update(col, v), which run no BeforeSave hook and no
+// NowFunc: on SQLite a non-UTC time is stored as text with the caller's offset
+// that does not order against the UTC values everything else writes.
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+	return &u
+}
+
 // utcRFC3339 renders a raw timestamp column value as UTC RFC 3339 so an API
 // payload never mixes "+02:00" and "Z" (#2951). Display only: the stored text is
 // untouched. An empty or unparseable value is returned as-is.

@@ -8,27 +8,12 @@ package middleware
 
 import (
 	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/keyorixhq/keyorix/internal/core"
 )
 
-func srfServeRef(t *testing.T, w *srfWorld, user uint, ref string) *httptest.ResponseRecorder {
-	t.Helper()
-	called := false
-	rec := httptest.NewRecorder()
-	req := makeRequest(t, http.MethodGet, "/secrets/value?ref="+url.QueryEscape(ref), nil,
-		&UserContext{UserID: user, ActorType: core.ActorTypeUser}, w.cs)
-	RequireScopedSecretRefPermission("secrets.read")(okNext(&called)).ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		assert.False(t, called, "the handler behind the gate ran on a %d", rec.Code)
-	}
-	return rec
-}
+// srfServeRef is shared with scope_resolver_ref_read_fault_test.go.
 
 func TestSecretRefReadFault_GlobalHolderGets503(t *testing.T) {
 	w := newSRFWorld(t)

@@ -31,12 +31,14 @@ import (
 var corePgContentionSchemaCounter int64
 
 // pgTestDSN returns the KEYORIX_TEST_PG_DSN base DSN, skipping the test (not
-// failing it) when unset.
+// failing it) when unset. The skip message names the calling test and the missing
+// variable: the helper serves every Postgres-backed test in the package, not only
+// the HA-lock contention ones.
 func pgTestDSN(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
 	if dsn == "" {
-		t.Skip("KEYORIX_TEST_PG_DSN not set — skipping Postgres HA-lock contention test")
+		t.Skipf("%s needs PostgreSQL: environment variable KEYORIX_TEST_PG_DSN is not set", t.Name())
 	}
 	return dsn
 }

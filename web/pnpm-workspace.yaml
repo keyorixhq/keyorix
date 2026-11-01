@@ -15,3 +15,6 @@ overrides:
   brace-expansion@>=5.0.0 <5.0.7: ^5.0.8
   # source-map-js <1.2.2: GHSA-68fv-2mgg-jv7q. Pulled by postcss (vite, tailwind).
   source-map-js@<1.2.2: 1.2.2
+  # follow-redirects 1.16.0-1.16.1: GHSA-mrwp-f3q8-3g9p (custom credentials can
+  # follow redirects). axios pulls it transitively.
+  follow-redirects@>=1.16.0 <1.16.2: ^1.16.2

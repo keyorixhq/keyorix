@@ -186,10 +186,10 @@ func (c *KeyorixCore) ListAccessReviewCampaigns(ctx context.Context, projectID u
 func (c *KeyorixCore) loadScopedCampaign(ctx context.Context, projectID, campaignID uint) (*models.AccessReviewCampaign, error) {
 	campaign, err := c.storage.GetAccessReviewCampaign(ctx, campaignID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		return nil, accessReviewReadError(err)
 	}
 	if campaign.ProjectID != projectID {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return nil, accessReviewNotFound("")
 	}
 	return campaign, nil
 }
@@ -335,10 +335,10 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	defer c.accessReviewDecisionMu.Unlock()
 	item, err := c.storage.GetAccessReviewItem(ctx, itemID)
 	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		return accessReviewReadError(err)
 	}
 	if item.CampaignID != campaignID {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return accessReviewNotFound("")
 	}
 	// Decide once: an already-attested/revoked item must not be flipped. A revoke
 	// removes the real grant, so re-deciding it (revoke→attest) would record
@@ -350,14 +350,12 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 		return err
 	}
 	// ARC-001: a machine identity provisioned by the actor must not be self-certified
-	// by its creator. Fail closed on lookup error (can't prove independence → deny).
+	// by its creator. Fail closed on a lookup fault (can't prove independence → deny);
+	// a machine that no longer exists is refused not-found by the attest/revoke checks
+	// below, as one in another project is (checkMachineReviewerIndependence).
 	if item.PrincipalType == "machine" {
-		machine, err := c.storage.GetMachineIdentity(ctx, item.PrincipalID)
-		if err != nil {
-			return fmt.Errorf("loading machine identity: %w", err)
-		}
-		if machine.CreatedBy == actorID {
-			return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
+		if err := c.checkMachineReviewerIndependence(ctx, actorID, item.PrincipalID); err != nil {
+			return err
 		}
 	}
 	targetDecision, err := targetDecisionForAction(action)
@@ -431,11 +429,15 @@ func (c *KeyorixCore) userInGroup(ctx context.Context, userID, groupID uint) boo
 }
 
 // checkMachineIndependence verifies the actor did not provision the machine identity
-// behind a pending review item. Fails closed on lookup error (AUD-010).
+// behind a pending review item. Fails closed on lookup error (AUD-010): a machine
+// that no longer exists is a typed not-found, a lookup fault is ErrStorageReadUnavailable.
 func (c *KeyorixCore) checkMachineIndependence(ctx context.Context, actorID uint, principalID uint) error {
 	machine, err := c.storage.GetMachineIdentity(ctx, principalID)
 	if err != nil {
-		return fmt.Errorf("loading machine identity for independence check: %w", err)
+		if isPositiveNotFound(err) {
+			return accessReviewNotFound("machine identity not found")
+		}
+		return &storageReadFault{cause: err}
 	}
 	if machine.CreatedBy == actorID {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a machine identity you provisioned is still pending; an independent reviewer must decide it first")

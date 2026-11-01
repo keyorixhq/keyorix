@@ -13,6 +13,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/core"
 )
 
 // CreateSecretAccessRequest handles POST /api/v1/secret-access-requests
@@ -45,8 +47,9 @@ func (h *CatalogHandler) CreateSecretAccessRequest(w http.ResponseWriter, r *htt
 		return
 	}
 	if _, err := h.coreService.GetSecretWithPermissionCheck(r.Context(), body.SecretID, actor.UserID); err != nil {
-		// A storage read fault says nothing about the secret: retry, not 404.
-		if sendStorageUnavailable(w, err) {
+		// Only a VERDICT (not found, refused, outside schedule, ...) is the uniform 404:
+		// a failed secondary read (membership, shares, ACL, schedule) is a retry answer.
+		if sendStorageUnavailable(w, core.SecretReadVerdictFault(err)) {
 			return
 		}
 		sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)

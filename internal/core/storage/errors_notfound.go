@@ -24,6 +24,7 @@ var (
 	ErrPermissionNotFound          = errors.New("permission not found")
 	ErrAlertEscalationNotFound     = errors.New("alert escalation policy not found")
 	ErrRotationPolicyNotFound      = errors.New("rotation policy not found")
+	ErrNotificationNotFound        = errors.New("notification not found")
 
 	// ErrSecretDependencyNotFound: GetSecretDependency / DeleteSecretDependency
 	// matched no secret_dependencies row.

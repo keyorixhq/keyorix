@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
 )
@@ -113,10 +114,14 @@ func (h *FolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request) {
 		errType := "InternalError"
 		respMsg := "Failed to create folder"
 		switch {
-		case strings.Contains(msg, "not found"):
+		case corestorage.IsSecretNotFound(err):
 			status = http.StatusNotFound
 			errType = "NotFound"
 			respMsg = "Parent folder not found"
+		case errors.Is(err, core.ErrSecretTargetInvalid):
+			status = http.StatusNotFound
+			errType = "NotFound"
+			respMsg = "Environment not found"
 		case strings.Contains(msg, "validation") ||
 			strings.Contains(msg, "not a folder") ||
 			strings.Contains(msg, "does not belong to the same project"):

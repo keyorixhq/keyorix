@@ -129,7 +129,7 @@ func (c *KeyorixCore) domainAllowedForUser(ctx context.Context, userID uint) err
 	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return classifyReadError(err, "user not found")
+		return membershipReadError(err, "user not found")
 	}
 	if !c.domainAllowed(user.Email) {
 		return fmt.Errorf("email domain is not on the allowlist")
@@ -187,7 +187,7 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	// class). It also covers the per-assignment grants applied at invite-accept.
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
 		// A read FAULT is a retry answer, not "project not found or deleted".
-		return nil, classifyReadError(err, fmt.Sprintf("project %d not found or deleted", projectID))
+		return nil, membershipReadError(err, fmt.Sprintf("project %d not found or deleted", projectID))
 	}
 	// Escalation-by-proxy guard: onboarding a member requires the inviter to already
 	// hold every permission the role bundles (parallel to the access-request
@@ -321,12 +321,12 @@ func initialMembershipStateForMode(mode string, idpResolved bool) string {
 func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membershipID uint, to string, actorID uint, actorIsMachine bool) (*models.ProjectMembership, error) {
 	m, err := c.storage.GetProjectMembership(ctx, membershipID)
 	if err != nil {
-		return nil, classifyReadError(err, "membership not found")
+		return nil, membershipReadError(err, "membership not found")
 	}
 	// The caller is authorized within projectID; a membership in another project
 	// must not be reachable through it (cross-project guard).
 	if m.ProjectID != projectID {
-		return nil, fmt.Errorf("membership not found")
+		return nil, errMembershipNotFound("membership not found")
 	}
 	// #2657: re-read under membershipLockKey (project and user are immutable,
 	// so the unlocked read above names the right key) and run the state CAS
@@ -338,10 +338,10 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 		var err error
 		m, err = c.storage.GetProjectMembership(ctx, membershipID)
 		if err != nil {
-			return classifyReadError(err, "membership not found")
+			return membershipReadError(err, "membership not found")
 		}
 		if m.ProjectID != projectID {
-			return fmt.Errorf("membership not found")
+			return errMembershipNotFound("membership not found")
 		}
 		if !canTransition(m.State, to) {
 			return fmt.Errorf("cannot transition membership from %s to %s", m.State, to)

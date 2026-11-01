@@ -117,7 +117,7 @@ func (ls *LocalStorage) RotateSession(ctx context.Context, oldID uint, newSessio
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&models.Session{}).
 			Where("id = ? AND rotated_at IS NULL", oldID).
-			Update("rotated_at", now)
+			Update("rotated_at", now.UTC()) // Update(col, v) runs no hook or NowFunc
 		if res.Error != nil {
 			return res.Error
 		}
@@ -522,10 +522,11 @@ func (ls *LocalStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose,
 // MarkSetupTokenConsumed transitions active → consumed only if still active. The
 // state guard in the WHERE clause makes consumption single-use even under a
 // concurrent replay: the second caller matches zero rows and gets false.
+// consumedAt is stored in UTC: the map update runs no hook or NowFunc.
 func (ls *LocalStorage) MarkSetupTokenConsumed(ctx context.Context, id uint, consumedAt time.Time) (bool, error) {
 	result := ls.db.WithContext(ctx).Model(&models.SetupToken{}).
 		Where("id = ? AND state = ?", id, "active").
-		Updates(map[string]any{"state": "consumed", "consumed_at": consumedAt})
+		Updates(map[string]any{"state": "consumed", "consumed_at": consumedAt.UTC()})
 	if result.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}

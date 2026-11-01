@@ -38,6 +38,7 @@ last_admin_fence.go
 last_used_coalescer.go
 login_lockout.go
 membership_lifecycle.go
+membership_not_found.go
 migrate_user_to_machine.go
 named_lock_fence.go
 notifications.go

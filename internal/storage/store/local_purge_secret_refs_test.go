@@ -99,7 +99,7 @@ func TestPurgeDeletedSecretsBefore_RemovesEveryClassifiedReference(t *testing.T)
 	require.NoError(t, db.Create(&models.SecretVersionComment{VersionID: goneVer.ID, SecretID: 0, UserID: 1, Comment: "v-only"}).Error)
 
 	require.NoError(t, db.Exec("UPDATE secret_nodes SET deleted_at = ? WHERE id = ?", time.Now().Add(-48*time.Hour), gone.ID).Error)
-	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now())
+	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, n)
 
@@ -169,7 +169,7 @@ func TestPurgeDeletedSecretsBefore_CascadeFailureRollsBackThePurge(t *testing.T)
 	require.NoError(t, db.Exec("UPDATE secret_nodes SET deleted_at = ? WHERE id = ?", time.Now().Add(-48*time.Hour), s.ID).Error)
 	require.NoError(t, db.Migrator().DropTable("notifications"))
 
-	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 	require.EqualValues(t, 1, countPurgeRefRows(t, db, "secret_nodes", "id = ?", s.ID))
 	require.EqualValues(t, 1, countPurgeRefRows(t, db, "secret_versions", "secret_node_id = ?", s.ID))

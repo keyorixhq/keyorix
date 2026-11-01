@@ -125,10 +125,10 @@ func (c *KeyorixCore) EnforceSecretActionPermission(ctx context.Context, secretI
 // secret is nil.
 func (c *KeyorixCore) checkSecretPermission(ctx context.Context, secretID, userID uint, requiredPermission PermissionLevel, action SecretAction) (*PermissionContext, *models.SecretNode, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	if secretID == 0 {
-		return nil, nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
 	if userID == 0 {
-		return nil, nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 
 	secret, err := c.storage.GetSecret(ctx, secretID)

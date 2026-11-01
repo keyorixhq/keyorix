@@ -1024,10 +1024,11 @@ func (c *KeyorixCore) CreateFolder(
 	if parentID != nil {
 		parent, err := c.storage.GetSecret(ctx, *parentID)
 		if err != nil {
-			if fault := ReadFault(err); fault != nil {
-				return nil, fault
+			if !isPositiveNotFound(err) {
+				// A read FAULT is a retry answer, not "no such parent folder".
+				return nil, classifyReadError(err, "")
 			}
-			return nil, fmt.Errorf("parent folder %d not found: %w", *parentID, err)
+			return nil, fmt.Errorf("parent folder %d not found: %w: %w", *parentID, storage.ErrSecretNotFound, err)
 		}
 		if parent.IsSecret {
 			return nil, fmt.Errorf("%s: parent node %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *parentID)
