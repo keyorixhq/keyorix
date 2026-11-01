@@ -26,7 +26,10 @@ import (
 func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code string) error {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("user not found")
+		// Pre-verdict: no code has been evaluated, and the account is the caller's
+		// own. A read fault is a retryable ErrStorageReadUnavailable (503), never
+		// the "user not found" verdict (#3873, AUTH-ENDPOINT-OUTAGE-1).
+		return classifyReadError(err, "user not found")
 	}
 	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 		return fmt.Errorf("account is not active")

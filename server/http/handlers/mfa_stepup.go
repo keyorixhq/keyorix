@@ -46,6 +46,12 @@ func (h *AuthHandler) MFAStepUp(w http.ResponseWriter, r *http.Request) {
 		if writeTOTPUnavailable(w, err) {
 			return
 		}
+		// The caller's own account read failed before any code was evaluated
+		// (#3873): retry, not a verdict. settleCredentialCheck already handed
+		// the slot back (pre-verdict).
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if errors.Is(err, core.ErrMFAVerificationUnavailable) {
 			// FIX-1 (#2548 sibling) + #2740 review: no code was evaluated, so
 			// "retry" leaks nothing. See errMFAVerificationUnavailable (mfa.go).
