@@ -67,7 +67,7 @@ flowchart LR
   "ADR-062 itself is recorded as 'Accepted (design), implementation
   phased' — the license (Phase 2a/2b/2c) and bundle-verify mechanisms
   above are confirmed present in code (`internal/license`,
-  `internal/cli/bundle`); this document does not claim every phase named
+  `pkg/bundleverify`); this document does not claim every phase named
   in that ADR's original design is complete, only what is independently
   verified to exist." This threat model inherits that same caveat rather
   than overstating completeness.

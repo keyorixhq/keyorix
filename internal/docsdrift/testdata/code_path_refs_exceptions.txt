@@ -1,0 +1,6 @@
+# Repo paths that documents cite on purpose although they are absent from a clean checkout
+# (code_path_refs_test.go). One `path<TAB>reason` per line, path exactly as the test
+# normalises it (no ./, :line or #anchor). An entry no scanned document needs is an error.
+docs/security-closures.tsv	generated and gitignored (scripts/gen-security-closures-tsv.sh builds it from docs/security-closures.d/); absent from a clean checkout by design
+docs/security/cra-reporting-process.md	draft in open PR #3572; docs/VERSIONING.md says it is not linked until it merges. Remove this row and link it when #3572 merges
+docs/upgrading.d/<PR-or-slug>.md	docs/CONFLICT-HOTSPOTS.md proposes this directory; it is a proposal that deliberately does not exist yet. Remove this row if the proposal is adopted (the directory then exists) or dropped
