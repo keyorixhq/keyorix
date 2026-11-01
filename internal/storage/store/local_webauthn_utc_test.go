@@ -1,13 +1,16 @@
 package store
 
-// UTC-TOUCH-1 item 3. SetWebAuthnCredentialCounterState (and so
-// AdvanceWebAuthnCredentialCounter) writes last_used_at through
-// Updates(map[string]any{...}), which runs no BeforeSave hook and no NowFunc: the
-// column holds whatever zone the caller's time carries. Core passes its clock's
-// time. On SQLite a non-UTC time is stored as text that neither scans back into
-// a *time.Time nor orders against UTC bounds, so the passkey would then fail
-// every lookup. The writer normalises, like the Touch* writers
-// (touch_last_used_utc_test.go).
+// UTC-TOUCH-1: storage-level regression guard for the UTC-WRITES-1 fix (#3881).
+// SetWebAuthnCredentialCounterState (and so AdvanceWebAuthnCredentialCounter)
+// writes last_used_at through Updates(map[string]any{...}), which runs no
+// BeforeSave hook and no NowFunc: the column holds whatever zone the time it is
+// handed carries. Core passes its clock's time. On SQLite a non-UTC time is stored
+// as text that neither scans back into a *time.Time nor orders against UTC
+// bounds, so the passkey would then fail every lookup. #3881 made the writer
+// normalise with .UTC(), like the Touch* writers (touch_last_used_utc_test.go);
+// main's TestWebAuthnCounterLastUsedStoredAsUTC covers it only through core's
+// persistUpdatedCredential. This test pins both storage entry points directly,
+// on SQLite and Postgres. It is a guard, not a fix proof: it passes on main.
 //
 // The writer only reads the location carried by the time it is handed, so the
 // host zones are modelled with time.LoadLocation: no test assigns time.Local
