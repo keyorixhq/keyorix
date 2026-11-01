@@ -8,6 +8,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,19 +30,25 @@ func TestFreshBootMigratesScopedRoles(t *testing.T) {
 
 	ctx := context.Background()
 
+	// A scoped grant authorizes only on a live projects row (#2795).
+	p1, err := st.CreateProject(ctx, &models.Project{Name: "boot-p1"})
+	require.NoError(t, err)
+	p2, err := st.CreateProject(ctx, &models.Project{Name: "boot-p2"})
+	require.NoError(t, err)
+
 	// Same user, same role, two different project scopes must both persist.
-	require.NoError(t, st.AssignRole(ctx, 1, 1, corestorage.Scope{ProjectID: 1}))
-	require.NoError(t, st.AssignRole(ctx, 1, 1, corestorage.Scope{ProjectID: 2}))
+	require.NoError(t, st.AssignRole(ctx, 1, 1, corestorage.Scope{ProjectID: p1.ID}))
+	require.NoError(t, st.AssignRole(ctx, 1, 1, corestorage.Scope{ProjectID: p2.ID}))
 
 	// Re-assigning at an existing scope is rejected (idempotency guard).
-	assert.Error(t, st.AssignRole(ctx, 1, 1, corestorage.Scope{ProjectID: 1}))
+	assert.Error(t, st.AssignRole(ctx, 1, 1, corestorage.Scope{ProjectID: p1.ID}))
 
-	idsP1, err := st.GetUserRoleIDsExact(ctx, 1, corestorage.Scope{ProjectID: 1})
+	idsP1, err := st.GetUserRoleIDsExact(ctx, 1, corestorage.Scope{ProjectID: p1.ID})
 	require.NoError(t, err)
 	assert.Equal(t, []uint{1}, idsP1)
 
 	// A global-scope query matches both project assignments (project sentinel).
-	idsAt, err := st.GetUserRoleIDsAt(ctx, 1, corestorage.Scope{ProjectID: 1})
+	idsAt, err := st.GetUserRoleIDsAt(ctx, 1, corestorage.Scope{ProjectID: p1.ID})
 	require.NoError(t, err)
 	assert.Equal(t, []uint{1}, idsAt)
 }

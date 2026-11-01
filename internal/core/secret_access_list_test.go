@@ -47,6 +47,7 @@ func TestListSecretAccessors(t *testing.T) {
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
 		&models.RolePermission{}, &models.SecretACL{},
 	))
+	seedLiveProjects(t, db, 1, 2) // scoped grants need live projects rows (#2795)
 	// Role 1 grants membership and no secret permission, so shares decide each level
 	// below. Like the built-in project roles it lets its holder read the project's
 	// members, which the report needs to list role-holders.
@@ -133,6 +134,7 @@ func TestListSecretAccessors_StrongestGrantWins(t *testing.T) {
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
 		&models.RolePermission{}, &models.SecretACL{},
 	))
+	seedLiveProjects(t, db, 1, 2) // scoped grants need live projects rows (#2795)
 	// Role 1 grants membership and no secret permission, so shares decide each level
 	// below. Like the built-in project roles it lets its holder read the project's
 	// members, which the report needs to list role-holders.
@@ -202,6 +204,7 @@ func TestListSecretAccessors_DegradedOnGroupMembersError(t *testing.T) {
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
 		&models.RolePermission{}, &models.SecretACL{},
 	))
+	seedLiveProjects(t, db, 1, 2) // scoped grants need live projects rows (#2795)
 	// Role 1 grants membership and no secret permission, so shares decide each level
 	// below. Like the built-in project roles it lets its holder read the project's
 	// members, which the report needs to list role-holders.
@@ -270,6 +273,7 @@ func TestListSecretAccessors_EffectiveIsMaxOfRoleAndShare(t *testing.T) {
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
 		&models.RolePermission{}, &models.SecretACL{},
 	))
+	seedLiveProjects(t, db, 1, 2) // scoped grants need live projects rows (#2795)
 	readPerm := &models.Permission{Name: "secrets.read"}
 	require.NoError(t, db.Create(readPerm).Error)
 	// Like the built-in project roles, the viewer can read the project's members.
@@ -338,6 +342,7 @@ func TestListSecretAccessors_RosterNeedsUsersRead(t *testing.T) {
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
 		&models.RolePermission{}, &models.SecretACL{},
 	))
+	seedLiveProjects(t, db, 1, 2) // scoped grants need live projects rows (#2795)
 	readPerm := &models.Permission{Name: "secrets.read"}
 	usersPerm := &models.Permission{Name: "users.read"}
 	require.NoError(t, db.Create(readPerm).Error)
@@ -412,6 +417,7 @@ func accessListFixture(t *testing.T) (*gorm.DB, *KeyorixCore, time.Time) {
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
 		&models.RolePermission{}, &models.SecretACL{},
 	))
+	seedLiveProjects(t, db, 1, 2) // scoped grants need live projects rows (#2795)
 	perms := map[string]uint{}
 	for _, name := range []string{"secrets.read", "users.read", "secrets.manage"} {
 		p := &models.Permission{Name: name}

@@ -3,6 +3,7 @@ package testhelper
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -296,6 +298,7 @@ func (h *RBACTestHelper) AssignUserRole(t *testing.T, userID, roleID uint, proje
 		ProjectID: derefScope(projectID),
 	}
 
+	h.ensureLiveProject(t, userRole.ProjectID)
 	result := h.DB.Create(userRole)
 	require.NoError(t, result.Error)
 }
@@ -319,8 +322,20 @@ func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, pro
 		ProjectID: derefScope(projectID),
 	}
 
+	h.ensureLiveProject(t, groupRole.ProjectID)
 	result := h.DB.Create(groupRole)
 	require.NoError(t, result.Error)
+}
+
+// ensureLiveProject creates a live projects row for a scoped grant's project id
+// when none exists: since #2795 a scoped grant whose project has no row does not
+// authorize. 0 (global) needs no row.
+func (h *RBACTestHelper) ensureLiveProject(t *testing.T, projectID uint) {
+	if projectID == 0 {
+		return
+	}
+	require.NoError(t, h.DB.Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&models.Project{ID: projectID, Name: fmt.Sprintf("project-%d", projectID)}).Error)
 }
 
 // derefScope converts a nullable scope pointer to the 0 = global sentinel.
