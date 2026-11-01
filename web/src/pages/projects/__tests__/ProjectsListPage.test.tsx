@@ -30,6 +30,12 @@ const hookState = vi.hoisted(() => ({
     restoreVariables: undefined as number | undefined,
 }));
 
+const canState = vi.hoisted(() => ({ writeSecrets: true, deleteSecrets: true }));
+
+vi.mock('../../../features/auth/useCan', () => ({
+    useCan: () => ({ ...canState }),
+}));
+
 vi.mock('react-router', async () => {
     const actual = await vi.importActual<typeof import('react-router')>('react-router');
     return { ...actual, useNavigate: () => navigateMock };
@@ -67,6 +73,8 @@ const makeProject = (overrides: Record<string, unknown> = {}) => ({
 beforeEach(() => {
     window.history.pushState({}, '', '/');
     vi.clearAllMocks();
+    canState.writeSecrets = true;
+    canState.deleteSecrets = true;
     hookState.projects = [];
     hookState.isLoading = false;
     hookState.isError = false;
@@ -532,5 +540,33 @@ describe('ProjectsListPage XSS regression (WEB track backlog item 3)', () => {
         hookState.projects = [makeProject({ id: 1, name: 'proj', description: payload })];
         const { container } = render(<ProjectsListPage />);
         assertPayloadRenderedSafely(payload, container);
+    });
+});
+
+describe('ProjectsListPage permission gating', () => {
+    it('hides New Project, edit and delete for a read-only session', () => {
+        canState.writeSecrets = false;
+        canState.deleteSecrets = false;
+        hookState.projects = [makeProject({ name: 'alpha' })];
+        render(<ProjectsListPage />);
+        expect(screen.getByText('alpha')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /new project/i })).not.toBeInTheDocument();
+        expect(screen.queryByTitle('Edit project')).not.toBeInTheDocument();
+        expect(screen.queryByTitle('Delete project')).not.toBeInTheDocument();
+    });
+
+    it('shows New Project, edit and delete for a session that holds the permissions', () => {
+        hookState.projects = [makeProject({ name: 'alpha' })];
+        render(<ProjectsListPage />);
+        expect(screen.getByRole('button', { name: /new project/i })).toBeInTheDocument();
+        expect(screen.getByTitle('Edit project')).toBeInTheDocument();
+        expect(screen.getByTitle('Delete project')).toBeInTheDocument();
+    });
+
+    it('hides the empty-state Create Project button for a read-only session', () => {
+        canState.writeSecrets = false;
+        render(<ProjectsListPage />);
+        expect(screen.getByText('No projects yet')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /create project/i })).not.toBeInTheDocument();
     });
 });

@@ -345,7 +345,9 @@ func (c *KeyorixCore) fetchAdminDashboardStats(ctx context.Context, stats *Dashb
 		stats.degrade("refused_secret_reads_24h", auditErr)
 	}
 	inactiveCutoff := thirtyDaysAgo
-	_, inactiveUsers, auditErr = c.storage.ListUsers(ctx, &storage.UserFilter{InactiveSince: &inactiveCutoff, Page: 1, PageSize: 1})
+	// #3740: a user who has never logged in is dormant only once the account is older than
+	// the window; a fresh install's just-created admin must not read as "no login in 30 days".
+	_, inactiveUsers, auditErr = c.storage.ListUsers(ctx, &storage.UserFilter{InactiveSince: &inactiveCutoff, InactiveSpareNewAccounts: true, Page: 1, PageSize: 1})
 	if auditErr != nil {
 		stats.degrade("inactive_users", auditErr)
 	}
