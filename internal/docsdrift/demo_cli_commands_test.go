@@ -104,6 +104,7 @@ type demoInvocation struct {
 	Line  int
 	Path  string   // longest documented command path; "" when none resolved
 	Words []string // every subcommand-shaped word after the binary, resolved or not
+	Prev  string   // the token before the binary on its line; "" when it starts the line
 	Flags []string
 	Text  string
 }
@@ -161,7 +162,11 @@ func invocationsOf(text string, isBin func(tok string) bool, known func(path str
 					flags = append(flags, m[1])
 				}
 			}
-			out = append(out, demoInvocation{Line: i + 1, Path: path, Words: words, Flags: flags, Text: strings.TrimSpace(line)})
+			prev := ""
+			if j > 0 {
+				prev = toks[j-1]
+			}
+			out = append(out, demoInvocation{Line: i + 1, Path: path, Words: words, Prev: prev, Flags: flags, Text: strings.TrimSpace(line)})
 		}
 	}
 	return out

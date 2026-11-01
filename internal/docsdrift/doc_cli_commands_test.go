@@ -2,7 +2,9 @@ package docsdrift
 
 import (
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -28,8 +30,11 @@ import (
 // spans outside fences, and lines of fenced blocks tagged bash, sh, shell, zsh or
 // console (a line starting `#` is a comment and is skipped). Recognised invocation
 // forms: `keyorix`, `$KX`, `${KX}`, `$KEYORIX_BIN`, `${KEYORIX_BIN}` (keyorixBinaryWords)
-// and `keyorix-server admin`, followed by lowercase words, ending at the first flag,
-// placeholder, pipe, `;` or `&&`.
+// and `keyorix-server admin`, also behind a directory (`./bin/keyorix`), followed by
+// lowercase words, ending at the first flag, placeholder, pipe, `;` or `&&`. The binary
+// must be in command position: first on its line or snippet, or right after `|`, `&&`,
+// `||`, `;`, `sudo`/`exec`/`time`/`nohup`, or `NAME=value` assignments. That skips
+// `pg_dump -U keyorix keyorix`, `for c in keyorix ...` and `helm install keyorix ...`.
 //
 // It fails when the first word after `keyorix` is not a top-level command, when the
 // words after `keyorix-server admin` do not start a known admin command, and when a
@@ -112,6 +117,28 @@ func docCommandSnippets(doc string) (snips []string, lines []int) {
 	return snips, lines
 }
 
+var envAssignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// atCommandPosition reports whether a token that follows prev starts a shell command.
+func atCommandPosition(prev string) bool {
+	switch prev {
+	case "", "|", "&&", "||", ";", "sudo", "exec", "time", "nohup", "then", "do":
+		return true
+	}
+	return envAssignRe.MatchString(prev)
+}
+
+// docBinary returns the matcher for a binary name that may be written behind a
+// directory (`./bin/keyorix`). A `$VAR` stays as the demo resolver treats it.
+func docBinary(name string, extra map[string]bool) func(string) bool {
+	return func(tok string) bool {
+		if extra[tok] || tok == name {
+			return true
+		}
+		return strings.Contains(tok, "/") && !strings.HasPrefix(tok, "$") && path.Base(tok) == name
+	}
+}
+
 // unresolvedCommand reports why an invocation does not resolve against tree, or "".
 // tree is the CLI tree for `keyorix`, the admin tree for `keyorix-server`.
 func unresolvedCommand(inv demoInvocation, tree cmdTree, server bool) string {
@@ -152,8 +179,8 @@ func TestDocsOnlyUseExistingKeyorixCommands(t *testing.T) {
 	}
 	sort.Strings(files)
 
-	isCLI := func(tok string) bool { return keyorixBinaryWords[tok] }
-	isServer := func(tok string) bool { return tok == "keyorix-server" }
+	isCLI := docBinary("keyorix", keyorixBinaryWords)
+	isServer := docBinary("keyorix-server", nil)
 	checked := 0
 	for _, rel := range files {
 		doc := readDoc(t, rel)
@@ -167,7 +194,7 @@ func TestDocsOnlyUseExistingKeyorixCommands(t *testing.T) {
 			}{{isCLI, cli, false, "keyorix"}, {isServer, admin, true, "keyorix-server"}} {
 				known := func(p string) bool { _, ok := side.tree[p]; return ok }
 				for _, inv := range invocationsOf(s, side.bin, known) {
-					if len(inv.Words) == 0 || (side.server && inv.Words[0] != "admin") {
+					if len(inv.Words) == 0 || !atCommandPosition(inv.Prev) || (side.server && inv.Words[0] != "admin") {
 						continue
 					}
 					checked++
@@ -218,8 +245,8 @@ func TestDocCommandResolution(t *testing.T) {
 	admin := cmdTree{"admin": true, "admin audit": true, "admin audit verify-audit": false, "admin version": false}
 	cliKnown := func(p string) bool { _, ok := cli[p]; return ok }
 	adminKnown := func(p string) bool { _, ok := admin[p]; return ok }
-	isCLI := func(tok string) bool { return keyorixBinaryWords[tok] }
-	isServer := func(tok string) bool { return tok == "keyorix-server" }
+	isCLI := docBinary("keyorix", keyorixBinaryWords)
+	isServer := docBinary("keyorix-server", nil)
 
 	for _, c := range []struct {
 		text   string
@@ -238,18 +265,34 @@ func TestDocCommandResolution(t *testing.T) {
 		{"keyorix-server admin nosuch", true, "no subcommand `nosuch`"},
 		{"keyorix-server --config x.yaml", true, ""},
 		{"keyorix-server admin", true, ""},
+		{"./bin/keyorix secret nosuch", false, "no subcommand `nosuch`"},
+		{"/usr/local/bin/keyorix-server admin audit gone", true, "no subcommand `gone`"},
+		{"FOO=1 keyorix nosuch", false, "no command `nosuch`"},
+		{"docker compose exec postgres pg_dump -U keyorix keyorix | gzip", false, "SKIP"},
+		{"for c in keyorix keyorix-k8s-sync; do", false, "SKIP"},
+		{"helm upgrade --install keyorix deploy/helm/keyorix", false, "SKIP"},
+		{"echo hi | keyorix nosuch", false, "no command `nosuch`"},
 	} {
 		tree, bin, known := cli, isCLI, cliKnown
 		if c.server {
 			tree, bin, known = admin, isServer, adminKnown
 		}
-		invs := invocationsOf(c.text, bin, known)
-		if len(invs) != 1 {
-			t.Fatalf("%q: want 1 invocation, got %+v", c.text, invs)
+		var got []string
+		for _, inv := range invocationsOf(c.text, bin, known) {
+			if !atCommandPosition(inv.Prev) {
+				continue
+			}
+			if why := unresolvedCommand(inv, tree, c.server); why != "" {
+				got = append(got, why)
+			}
 		}
-		got := unresolvedCommand(invs[0], tree, c.server)
-		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
-			t.Errorf("%q: got %q, want it to contain %q", c.text, got, c.want)
+		switch {
+		case c.want == "" || c.want == "SKIP":
+			if len(got) != 0 {
+				t.Errorf("%q: must resolve or be skipped, got %q", c.text, got)
+			}
+		case len(got) != 1 || !strings.Contains(got[0], c.want):
+			t.Errorf("%q: got %q, want exactly one failure containing %q", c.text, got, c.want)
 		}
 	}
 }
