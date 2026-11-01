@@ -130,7 +130,7 @@ func SecretReadVerdictFault(err error) error {
 	if err == nil || isPositiveNotFound(err) {
 		return nil
 	}
-	if errors.Is(err, ErrPermissionDenied) || errors.Is(err, ErrAccessOutsideSchedule) {
+	if errors.Is(err, ErrPermissionDenied) || errors.Is(err, ErrAccessOutsideSchedule) || errors.Is(err, ErrSecretInvalidInput) {
 		return nil
 	}
 	for sentinel := range SecretReadRefusalFamily() {

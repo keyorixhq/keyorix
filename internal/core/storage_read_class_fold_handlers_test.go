@@ -237,6 +237,11 @@ func TestFoldHandlers_SecretReadVerdictFault(t *testing.T) {
 			assert.NoError(t, SecretReadVerdictFault(nil))
 			assert.NoError(t, SecretReadVerdictFault(fmt.Errorf("x: %w", ErrPermissionDenied)))
 			assert.NoError(t, SecretReadVerdictFault(ErrAccessOutsideSchedule))
+
+			// A principal with no user id (a machine) is refused by validation: a verdict.
+			_, err = c.GetSecretWithPermissionCheck(ctx, s.ID, 0)
+			require.Error(t, err)
+			assert.NoError(t, SecretReadVerdictFault(err), "validation refusal is a verdict: %v", err)
 		})
 	}
 }
