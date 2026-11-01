@@ -123,7 +123,10 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
-	now := c.now()
+	// UTC: Session.BeforeSave normalises only ExpiresAt, so LastSeenAt and
+	// ImpersonationStartedAt would otherwise be stored as host-zone text, which
+	// TouchSession's UTC cutoff then orders after itself east of UTC (#3914).
+	now := c.now().UTC()
 	expiresAt := now.Add(impersonationSessionTTL)
 	session := &models.Session{
 		UserID:                 target.ID,

@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // dbTimestampLayouts are the text forms a timestamp column can come back in when
 // scanned into a string by a raw query: SQLite (modernc) returns RFC 3339 or the
@@ -12,10 +15,25 @@ var dbTimestampLayouts = []string{
 	"2006-01-02 15:04:05.999999999Z07",
 	"2006-01-02T15:04:05.999999999",
 	"2006-01-02 15:04:05.999999999",
+	// A time.Time written by the driver in its own String() form, which is how a pre-upgrade
+	// host-zone value looks ("2026-11-01 21:00:00 +0900 JST"); the offset decides the instant.
+	"2006-01-02 15:04:05.999999999 -0700 MST",
+	// The same String() form on a host whose zone has no letter abbreviation: Go prints the
+	// offset as the abbreviation, and the 4-digit ones ("+0545 +0545", Asia/Kathmandu) do not
+	// match the MST element.
+	"2006-01-02 15:04:05.999999999 -0700 -0700",
 }
 
 // parseDBTimestamp parses a raw timestamp column value.
+//
+// A time.Time that still carried a monotonic clock reading (a bare time.Now(), as the pre-UTC
+// writers bound it) was stored by modernc as its String() form, which ends in " m=±<seconds>":
+// "2026-11-01 13:37:30.058117 +0100 CET m=+0.014210209". The suffix is dropped before parsing,
+// as modernc's own reader does; it is process-relative and says nothing about the instant.
 func parseDBTimestamp(s string) (time.Time, bool) {
+	if before, _, found := strings.Cut(s, " m="); found {
+		s = before
+	}
 	for _, layout := range dbTimestampLayouts {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t, true

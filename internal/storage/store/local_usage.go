@@ -48,7 +48,7 @@ func (ls *LocalStorage) GetProjectUsageStats(ctx context.Context, projectIDs []u
 	rq := ls.db.WithContext(ctx).
 		Table("audit_events").
 		Select("project_id, COUNT(*) AS reads, COUNT(DISTINCT COALESCE(user_id, 0)) AS readers").
-		Where("event_type = ? AND (success = ? OR success IS NULL) AND event_time >= ?", "secret.read", true, since).
+		Where("event_type = ? AND (success = ? OR success IS NULL) AND event_time >= ?", "secret.read", true, since.UTC()).
 		Where("project_id IS NOT NULL")
 	if !allProjects {
 		rq = rq.Where("project_id IN ?", projectIDs)

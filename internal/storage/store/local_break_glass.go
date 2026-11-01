@@ -199,6 +199,9 @@ func (ls *LocalStorage) ReviewBreakGlassActivation(ctx context.Context, id, revi
 // A degraded activation (BREAKGLASS-OWED-1) is listed whatever its age: its
 // review is mandatory from the moment it exists, with no grace window.
 func (ls *LocalStorage) ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error) {
+	// created_at is UTC text on SQLite and the callers pass c.now().Add(-window) in the
+	// host zone, which SQLite would compare by wall clock (#3914).
+	cutoff = cutoff.UTC()
 	var rows []*models.BreakGlassActivation
 	err := ls.db.WithContext(ctx).
 		Where("reviewed_at IS NULL AND (created_at <= ? OR degraded = ?)", cutoff, true).
