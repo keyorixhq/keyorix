@@ -8,6 +8,7 @@
 //	migratecheck table-sums  --config keyorix.yaml [--audit-max-id N] [--strict]
 //	migratecheck meta        --config keyorix.yaml --key schema_epoch
 //	migratecheck rows        --config keyorix.yaml --key <table> [--audit-max-id N]   (the canonical rows, for diffing)
+//	migratecheck count       --config keyorix.yaml --key <table>   (row count; fails if the table does not exist)
 //	migratecheck epoch                      (this binary's schema epoch)
 //	migratecheck audit-tail  --config keyorix.yaml --after N   (event_type of audit rows with id > N)
 //	migratecheck reset-pg    --config keyorix.yaml   (DROP SCHEMA public CASCADE + recreate: the
@@ -35,10 +36,12 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math/bits"
 	"os"
 	"sort"
 	"strconv"
@@ -89,7 +92,7 @@ func main() {
 	ageDays := fs.Int("age-days", 0, "seed-audit: age of the events in days")
 	tag := fs.String("tag", "seed", "seed-audit: description tag")
 	restamp := fs.Int("restamp-head", 0, "seed-audit: re-date the first K existing audit rows to just before the seeded ones and re-chain")
-	key := fs.String("key", "", "meta: system_metadata key to print")
+	key := fs.String("key", "", "meta: system_metadata key to print; rows/count: table name")
 	after := fs.Uint("after", 0, "audit-tail: print audit rows with id > N")
 	fs.BoolVar(&strict, "strict", false, "table-sums/rows: also compare the values a restore deliberately does not carry over")
 	auditMax := fs.Uint("audit-max-id", 0, "table-sums: only audit_events with id <= N (0 = all)")
@@ -118,6 +121,17 @@ func main() {
 		for _, l := range tableRows(gdb, *key, *auditMax) {
 			fmt.Println(strings.ReplaceAll(l, "\x1f", " | "))
 		}
+	case "count":
+		gdb, err := storage.OpenGormDB(cfg)
+		if err != nil {
+			fatalf("open db: %v", err)
+		}
+		var n int64
+		// *key is a table name from the harness, never request content
+		if err := gdb.Table(*key).Count(&n).Error; err != nil {
+			fatalf("count %s: %v", *key, err)
+		}
+		fmt.Println(n)
 	case "audit-tail":
 		gdb, err := storage.OpenGormDB(cfg)
 		if err != nil {
@@ -256,6 +270,15 @@ func restampHead(cfg *config.Config, k int, to time.Time) {
 
 // tableRows returns every row of table t rendered canonically, sorted.
 func tableRows(gdb *gorm.DB, t string, auditMax uint) []string {
+	var lines []string
+	walkRows(gdb, t, auditMax, func(l string) { lines = append(lines, l) })
+	sort.Strings(lines)
+	return lines
+}
+
+// walkRows calls fn with each row of table t rendered canonically, one row at a
+// time (unordered): memory stays flat however large the table is.
+func walkRows(gdb *gorm.DB, t string, auditMax uint, fn func(line string)) {
 	q := "SELECT * FROM " + t
 	if t == "audit_events" && auditMax > 0 {
 		q += " WHERE id <= " + strconv.FormatUint(uint64(auditMax), 10)
@@ -283,7 +306,6 @@ func tableRows(gdb *gorm.DB, t string, auditMax uint) []string {
 			}
 		}
 	}
-	var lines []string
 	for rows.Next() {
 		vals := make([]any, len(cols))
 		ptrs := make([]any, len(cols))
@@ -305,14 +327,12 @@ func tableRows(gdb *gorm.DB, t string, auditMax uint) []string {
 			sb.WriteString(canon(vals[i]))
 			sb.WriteByte('\x1f')
 		}
-		lines = append(lines, sb.String())
+		fn(sb.String())
 	}
 	if err := rows.Err(); err != nil {
 		fatalf("rows %s: %v", t, err)
 	}
 	_ = rows.Close()
-	sort.Strings(lines)
-	return lines
 }
 
 type tableSum struct {
@@ -337,13 +357,25 @@ func tableSums(cfg *config.Config, auditMax uint) {
 	sort.Strings(names)
 	enc := json.NewEncoder(os.Stdout)
 	for _, t := range names {
-		lines := tableRows(gdb, t, auditMax)
-		h := sha256.New()
-		for _, l := range lines {
-			h.Write([]byte(l))
-			h.Write([]byte{'\n'})
+		// order-independent: the sum modulo 2^256 of every row's SHA-256, so the
+		// table is hashed row by row without holding it (or sorting it) in memory.
+		var acc [4]uint64
+		count := 0
+		walkRows(gdb, t, auditMax, func(l string) {
+			d := sha256.Sum256([]byte(l))
+			var carry uint64
+			for i := 0; i < 4; i++ {
+				w := binary.BigEndian.Uint64(d[i*8:])
+				sum, c1 := bits.Add64(acc[i], w, carry)
+				acc[i], carry = sum, c1
+			}
+			count++
+		})
+		var out [32]byte
+		for i := 0; i < 4; i++ {
+			binary.BigEndian.PutUint64(out[i*8:], acc[i])
 		}
-		_ = enc.Encode(tableSum{Table: t, Count: len(lines), SHA256: hex.EncodeToString(h.Sum(nil))})
+		_ = enc.Encode(tableSum{Table: t, Count: count, SHA256: hex.EncodeToString(out[:])})
 	}
 	var maxID int64
 	if err := gdb.Raw("SELECT COALESCE(MAX(id), 0) FROM audit_events").Scan(&maxID).Error; err != nil {
