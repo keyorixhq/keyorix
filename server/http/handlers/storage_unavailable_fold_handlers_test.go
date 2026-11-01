@@ -227,9 +227,9 @@ func TestFoldHandlers_Item2_AccessReviewCampaigns(t *testing.T) {
 	}
 }
 
-// foldDriverFault is a storage fault whose driver text contains the words "not found":
+// errFoldDriver is a storage fault whose driver text contains the words "not found":
 // a text matcher would read it as a missing target.
-var foldDriverFault = errors.New("driver: relation lookup failed, row not found in replica")
+var errFoldDriver = errors.New("driver: relation lookup failed, row not found in replica")
 
 func (fw *foldWorld) armFault(method string, nth int, err error) {
 	fw.faulty.Arm(&faultstorage.FaultSpec{Method: method, NthCall: nth, Kind: faultstorage.KindError, Err: err})
@@ -263,7 +263,7 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 			h.MarkRead(w, suReq(http.MethodPost, "", map[string]string{"id": suID(id)}))
 			return w
 		}
-		fw.armFault("MarkNotificationRead", 1, foldDriverFault)
+		fw.armFault("MarkNotificationRead", 1, errFoldDriver)
 		requireNot404Fault(t, call(n.ID), false, "MarkNotificationRead fault")
 		require.True(t, fw.faulty.Fired())
 		fw.faulty.Arm(nil)
@@ -279,7 +279,7 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 			h.RevokeSecretACL(w, suReq(http.MethodDelete, "", map[string]string{"id": suID(s.ID), "aclId": aclID}))
 			return w
 		}
-		fw.armFault("ListSecretACLs", 1, foldDriverFault)
+		fw.armFault("ListSecretACLs", 1, errFoldDriver)
 		requireNot404Fault(t, call("1"), false, "ListSecretACLs fault")
 		require.True(t, fw.faulty.Fired())
 		fw.faulty.Arm(nil)
@@ -293,7 +293,7 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 			h.ApproveRiskException(w, suReq(http.MethodPost, "", map[string]string{"id": id}))
 			return w
 		}
-		fw.armFault("GetRiskException", 1, foldDriverFault)
+		fw.armFault("GetRiskException", 1, errFoldDriver)
 		requireNot404Fault(t, call("1"), false, "GetRiskException fault")
 		require.True(t, fw.faulty.Fired())
 		fw.faulty.Arm(nil)
@@ -310,7 +310,7 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 			h.GetGroupMembers(w, suReq(http.MethodGet, "", map[string]string{"id": id}))
 			return w
 		}
-		fw.armFault("ListGroupMembers", 1, foldDriverFault)
+		fw.armFault("ListGroupMembers", 1, errFoldDriver)
 		requireNot404Fault(t, list(suID(g.ID)), false, "ListGroupMembers fault")
 		require.True(t, fw.faulty.Fired())
 		fw.faulty.Arm(nil)
@@ -322,7 +322,7 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 			h.AddGroupMember(w, suReq(http.MethodPost, `{"user_id":`+suID(fw.admin.ID)+`}`, map[string]string{"id": groupID}))
 			return w
 		}
-		fw.armFault("AddUserToGroup", 1, foldDriverFault)
+		fw.armFault("AddUserToGroup", 1, errFoldDriver)
 		requireNot404Fault(t, add(suID(g.ID)), false, "AddUserToGroup fault")
 		require.True(t, fw.faulty.Fired())
 		fw.faulty.Arm(nil)
@@ -340,7 +340,7 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 				`{"source":"role","principal_type":"group","principal_id":`+groupID+`,"role_id":1}`, map[string]string{"id": suID(p.ID)}))
 			return w
 		}
-		fw.armFault("GetGroup", 1, foldDriverFault)
+		fw.armFault("GetGroup", 1, errFoldDriver)
 		w := revoke(suID(g.ID))
 		require.True(t, fw.faulty.Fired())
 		requireFold503(t, w, "revoke GetGroup fault")
@@ -358,7 +358,7 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 				`{"source":"direct_share","principal_type":"user","principal_id":`+suID(other.ID)+`,"secret_id":`+secretID+`}`, map[string]string{"id": suID(p.ID)}))
 			return w
 		}
-		fw.armFault("GetSecret", 1, foldDriverFault)
+		fw.armFault("GetSecret", 1, errFoldDriver)
 		w = attest(suID(s.ID))
 		require.True(t, fw.faulty.Fired())
 		requireFold503(t, w, "attest GetSecret fault")
@@ -377,7 +377,7 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 		}
 		fired := 0
 		for nth := 1; nth <= 6; nth++ {
-			fw.armFault("GetSecret", nth, foldDriverFault)
+			fw.armFault("GetSecret", nth, errFoldDriver)
 			w := call(s.ID)
 			if !fw.faulty.Fired() {
 				break
@@ -403,7 +403,7 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 			cat.TransitionMembership(w, suReq(http.MethodPut, `{"action":"revoke"}`, map[string]string{"id": suID(p.ID), "membershipId": suID(id)}))
 			return w
 		}
-		fw.armFault("GetProjectMembership", 1, foldDriverFault)
+		fw.armFault("GetProjectMembership", 1, errFoldDriver)
 		requireFold503(t, call(m.ID), "GetProjectMembership fault")
 		require.True(t, fw.faulty.Fired())
 		fw.faulty.Arm(nil)
