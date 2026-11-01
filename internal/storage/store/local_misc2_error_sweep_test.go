@@ -44,7 +44,7 @@ func TestDeleteAlertEscalationPolicy_DBError(t *testing.T) {
 func TestListUnacknowledgedAnomalyAlertsBefore_DBError(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.ListUnacknowledgedAnomalyAlertsBefore(context.Background(), time.Now())
+	_, err := ls.ListUnacknowledgedAnomalyAlertsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 

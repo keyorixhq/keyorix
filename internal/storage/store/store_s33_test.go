@@ -52,7 +52,7 @@ func TestAssignRoleToGroupWithExpiry_DBError_S33(t *testing.T) {
 func TestDeleteExpiredRoleGrants_DBError_S33(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.DeleteExpiredRoleGrants(context.Background(), time.Now())
+	_, err := ls.DeleteExpiredRoleGrants(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 

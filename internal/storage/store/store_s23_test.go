@@ -345,7 +345,7 @@ func TestCountStaleMachineIdentitiesByProject_S23_EmptyProjectIDs(t *testing.T) 
 	ls := newS23Store(t, &models.MachineIdentity{})
 	ctx := context.Background()
 
-	counts, err := ls.CountStaleMachineIdentitiesByProject(ctx, []uint{}, time.Now())
+	counts, err := ls.CountStaleMachineIdentitiesByProject(ctx, []uint{}, time.Now().UTC())
 	require.NoError(t, err)
 	assert.NotNil(t, counts)
 	assert.Empty(t, counts, "empty project IDs slice must return an empty map, not nil")
