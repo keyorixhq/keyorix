@@ -412,3 +412,25 @@ func TestFoldHandlers_Item3_TextMatchFamilies(t *testing.T) {
 		assert.Equal(t, http.StatusOK, call(m.ID).Code)
 	})
 }
+
+// item 5: secrets_copy.go answers a source read fault with 503, not 500.
+func TestFoldHandlers_Item5_CopySecretSourceReadFault(t *testing.T) {
+	fw := newFoldWorld(t)
+	h, err := NewSecretHandler(fw.cs)
+	require.NoError(t, err)
+	p, s := fw.secret(t, "fold5")
+	var env models.Environment
+	require.NoError(t, fw.db.First(&env, "project_id = ?", p.ID).Error)
+	dst := &models.Environment{ProjectID: p.ID, Name: "fold5-dst"}
+	require.NoError(t, fw.db.Create(dst).Error)
+	call := func(id uint) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.CopySecret(w, suReq(http.MethodPost, `{"environment_id":`+suID(dst.ID)+`}`, map[string]string{"id": suID(id)}))
+		return w
+	}
+	fw.armFault("GetSecret", 1, assert.AnError)
+	requireFold503(t, call(s.ID), "source GetSecret fault")
+	require.True(t, fw.faulty.Fired())
+	fw.faulty.Arm(nil)
+	assert.Equal(t, http.StatusNotFound, call(9_999_999).Code, "a true not-found stays 404")
+}
