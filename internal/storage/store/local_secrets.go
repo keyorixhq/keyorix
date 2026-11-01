@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"slices"
 	"strings"
 	"time"
@@ -527,10 +526,12 @@ var (
 
 // cascadeChildIDs returns the ids of the project's soft-deleted rows (selected by query, one of
 // the cascade*Query pairs) whose deleted_at INSTANT is at or after cascadeTS.
-// On SQLite the stored text may be a pre-upgrade host-zone value ("... +09:00", "... +0900 JST")
-// or the current UTC text; both parse to the instant they denote. A value that parses as neither
-// is left deleted, never resurrected, and logged. On Postgres deleted_at is a timestamptz,
-// scanned as the instant itself, independent of DateStyle.
+// On SQLite the stored text may be a pre-upgrade host-zone value ("... +09:00", "... +0900 JST",
+// "... +0100 CET m=+0.0142" from a bare time.Now()) or the current UTC text; each parses to the
+// instant it denotes. A value that parses as none of them fails the whole restore (the caller's
+// transaction rolls back): a silently partial restore would bring the project back while the
+// child stays in the bin and is later purged on its frozen purge_at. On Postgres deleted_at is a
+// timestamptz, scanned as the instant itself, independent of DateStyle.
 func cascadeChildIDs(tx *gorm.DB, query cascadeChildQuery, projectID uint, cascadeTS time.Time) ([]uint, error) {
 	if tx.Dialector.Name() == "postgres" {
 		var rows []struct {
@@ -559,8 +560,7 @@ func cascadeChildIDs(tx *gorm.DB, query cascadeChildQuery, projectID uint, casca
 	for _, r := range rows {
 		deletedAt, ok := parseDBTimestamp(r.DeletedAt)
 		if !ok {
-			log.Printf("WARN: RestoreProject: project %d row %d has an unparseable deleted_at %q; leaving it deleted", projectID, r.ID, r.DeletedAt)
-			continue
+			return nil, fmt.Errorf("project %d row %d has an unparseable deleted_at %q; nothing was restored", projectID, r.ID, r.DeletedAt)
 		}
 		if !deletedAt.Before(cascadeTS) {
 			ids = append(ids, r.ID)
