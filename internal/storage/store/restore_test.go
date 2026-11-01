@@ -94,7 +94,7 @@ func TestRestoreProject_DoesNotResurrectIndependentlyDeletedSecret(t *testing.T)
 	// "retired" is deliberately soft-deleted earlier (stamp an hour-old deleted_at so
 	// it is unambiguously before the project-delete cascade timestamp).
 	require.NoError(t, ls.db.Unscoped().Model(&models.SecretNode{}).
-		Where("id = ?", retired.ID).Update("deleted_at", time.Now().Add(-time.Hour)).Error)
+		Where("id = ?", retired.ID).Update("deleted_at", time.Now().UTC().Add(-time.Hour)).Error)
 
 	// Delete then restore the whole project.
 	require.NoError(t, ls.DeleteProject(ctx, proj.ID))

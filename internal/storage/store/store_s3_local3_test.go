@@ -1047,8 +1047,8 @@ func TestStats_SaveAndGetPreviousSnapshot(t *testing.T) {
 	oldSnap := &models.StatsSnapshot{
 		UserID:       userID,
 		TotalSecrets: 50,
-		CreatedAt:    time.Now().Add(-25 * time.Hour),
-		SnapshotDate: time.Now().Add(-25 * time.Hour),
+		CreatedAt:    time.Now().UTC().Add(-25 * time.Hour),
+		SnapshotDate: time.Now().UTC().Add(-25 * time.Hour),
 	}
 	require.NoError(t, ls.SaveStatsSnapshot(ctx, oldSnap))
 
@@ -1056,8 +1056,8 @@ func TestStats_SaveAndGetPreviousSnapshot(t *testing.T) {
 	recentSnap := &models.StatsSnapshot{
 		UserID:       userID,
 		TotalSecrets: 55,
-		CreatedAt:    time.Now().Add(-5 * time.Hour),
-		SnapshotDate: time.Now().Add(-5 * time.Hour),
+		CreatedAt:    time.Now().UTC().Add(-5 * time.Hour),
+		SnapshotDate: time.Now().UTC().Add(-5 * time.Hour),
 	}
 	require.NoError(t, ls.SaveStatsSnapshot(ctx, recentSnap))
 
