@@ -838,6 +838,18 @@ func logAuditEmitFailure(ctx context.Context, event *models.AuditEvent, err erro
 // truncation) — factored out (SESSION-PERF, #2403 follow-up, item 3) so the two
 // can't drift on this.
 func prepareAuditEventForEmit(ctx context.Context, event *models.AuditEvent) {
+	// FIX-3088: an emitter that leaves EventTime unset must not write a
+	// 0001-01-01 row. The zero instant has a seconds-resolution local-mean-time
+	// offset on a non-UTC host, which is how a backup/restore round trip broke
+	// audit row 1, and it puts the row at the start of every time-ordered view.
+	// Defaulted here, before the storage write hashes it, in the same form the
+	// chain stores and hashes (UTC, microseconds; see
+	// store.normalizeAuditEventForHash), so the hash computed now is the one
+	// verify-audit recomputes from the stored row. A time the emitter did set
+	// is left exactly as it is.
+	if event.EventTime.IsZero() {
+		event.EventTime = time.Now().UTC().Truncate(time.Microsecond)
+	}
 	if event.ActorType == ActorTypeMachine {
 		if event.MachineIdentityID == nil {
 			if machineID, ok := machineActorFromContext(ctx); ok {
