@@ -1,0 +1,1 @@
+TestEveryStoreTimeBindIsUTC	internal/core/guards	#TBD	new guard (TZ-RESIDUE-1): store readers must bind time arguments as UTC; report-only until its first green nightly on main
