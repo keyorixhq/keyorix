@@ -75,9 +75,10 @@ func (ls *LocalStorage) UpdateDynamicSecretConfig(ctx context.Context, c *models
 // SetDynamicSecretConfigAdminDSN writes only the encrypted admin DSN columns and
 // updated_at (#2651): a targeted UPDATE, so a concurrent writer's columns
 // (DeleteProject's #369 disabled=true above all) are never overwritten.
+// updated_at is UTC: a map update runs no NowFunc (STORE-STALE-TAILS-2).
 func (ls *LocalStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error {
 	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).Where("id = ?", id).
-		Updates(map[string]any{"admin_dsn_enc": enc, "admin_dsn_meta": meta, "updated_at": time.Now()})
+		Updates(map[string]any{"admin_dsn_enc": enc, "admin_dsn_meta": meta, "updated_at": time.Now().UTC()})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -94,11 +95,12 @@ func (ls *LocalStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id u
 // (#2698: its Save wrote `disabled=false` back over the incident kill switch).
 //
 // COALESCE so a NULL column (a row written before Classification existed) is
-// matched by fromClassification "", the value GORM reads it back as.
+// matched by fromClassification "", the value GORM reads it back as. updatedAt
+// is normalised to UTC (the caller passes its host-zone clock).
 func (ls *LocalStorage) SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification, toClassification string, updatedAt time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).
 		Where("id = ? AND COALESCE(classification, '') = ?", id, fromClassification).
-		Updates(map[string]any{"classification": toClassification, "updated_at": updatedAt})
+		Updates(map[string]any{"classification": toClassification, "updated_at": updatedAt.UTC()})
 	if res.Error != nil {
 		return false, res.Error
 	}
@@ -138,6 +140,8 @@ func (ls *LocalStorage) ExtendDynamicSecretLeaseExpiry(ctx context.Context, leas
 // concurrent renewal's extension (harmless on a dead credential, but it is the
 // same lost-update shape, and leaving one full-row writer alive is how the class
 // comes back — #2698).
+//
+// revoked_at is normalised to UTC: this map update bypasses BeforeSave.
 func (ls *LocalStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID, status, revokeReason, revokeError string, revokedAt *time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretLease{}).
 		Where("lease_id = ?", leaseID).
@@ -145,7 +149,7 @@ func (ls *LocalStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, 
 			"status":        status,
 			"revoke_reason": revokeReason,
 			"revoke_error":  revokeError,
-			"revoked_at":    revokedAt,
+			"revoked_at":    utcPtr(revokedAt),
 		})
 	if res.Error != nil {
 		return false, res.Error
