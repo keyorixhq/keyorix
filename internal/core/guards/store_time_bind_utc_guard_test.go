@@ -11,7 +11,9 @@
 // What it recognises (the enumeration, stated so a reviewer can check it):
 //   - a call `<x>.Where|Or|Not|Having|Raw|Joins|Exec(query, args...)` in a non-test file of
 //     internal/storage/store whose first argument resolves to a string: a literal, a package-level
-//     string const of the package, or a `+` concatenation of those;
+//     string const of the package, a function-local variable the function assigns exactly once
+//     from one of those (`eligible := "closed_at < ?"`, also when the call sits in a closure of
+//     that function), or a `+` concatenation of those;
 //   - in that string, a comparison `<column> <|<=|>|>= ?` or `<column> BETWEEN ? AND ?` where the
 //     last dotted segment of <column> names a time column (ends in _at, _time, _date, or is
 //     expiration / expires);
@@ -21,9 +23,11 @@
 //     one (`cutoff = cutoff.UTC()`, `now := time.Now().UTC()`).
 //
 // What it does NOT catch:
-//   - a placeholder whose argument it cannot map: a spread `args...` or a query built with a
-//     non-constant string; these are counted and logged, never silently dropped;
-//   - equality (`created_at = ?`), structs/maps as conditions, and GORM's own `Update("col", t)`
+//   - a placeholder whose argument it cannot map (a spread `args...`): logged as UNMAPPED;
+//   - a query string it cannot resolve: a parameter, a local assigned more than once (a dialect
+//     switch, `q += ...`), a call (`fmt.Sprintf`, a builder), a field. Logged as UNRESOLVED
+//     with its file, line and function, never silently dropped, but not checked;
+//   - equality (`created_at = ?`), structs/maps as conditions (not logged), and GORM's own `Update("col", t)`
 //     writes (the writers are covered by the UTC-WRITES guards);
 //   - a helper that returns a UTC value other than the ones in storeUTCPreservingHelpers: it is a
 //     hit until an exception row says why it is safe. rbacEffectiveNow is listed because it returns
@@ -186,6 +190,84 @@ func packageStringConsts(files []*ast.File) map[string]string {
 	return consts
 }
 
+// functionQueryStrings returns consts extended with fn's function-local string variables that fn
+// (closures included) assigns exactly once, from a string constString resolves with the rest of
+// the map. Every other name fn declares or assigns, parameters included, is removed so that it
+// cannot resolve to a package const of the same name.
+func functionQueryStrings(fn *ast.FuncDecl, consts map[string]string) map[string]string {
+	assigned := map[string]int{}
+	rhs := map[string]ast.Expr{}
+	note := func(name *ast.Ident, value ast.Expr) {
+		assigned[name.Name]++
+		rhs[name.Name] = value
+	}
+	for _, fl := range fn.Type.Params.List {
+		for _, name := range fl.Names {
+			note(name, nil)
+		}
+	}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			for i, lhs := range x.Lhs {
+				id, ok := lhs.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				var value ast.Expr
+				if (x.Tok == token.DEFINE || x.Tok == token.ASSIGN) && len(x.Lhs) == len(x.Rhs) {
+					value = x.Rhs[i]
+				}
+				note(id, value)
+			}
+		case *ast.ValueSpec:
+			for i, name := range x.Names {
+				var value ast.Expr
+				if len(x.Names) == len(x.Values) {
+					value = x.Values[i]
+				}
+				note(name, value)
+			}
+		case *ast.FuncLit:
+			for _, fl := range x.Type.Params.List {
+				for _, name := range fl.Names {
+					note(name, nil)
+				}
+			}
+		}
+		return true
+	})
+	out := make(map[string]string, len(consts))
+	for k, v := range consts {
+		if assigned[k] == 0 {
+			out[k] = v
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for name, value := range rhs {
+			if _, done := out[name]; done || assigned[name] != 1 || value == nil {
+				continue
+			}
+			if s, ok := constString(value, out); ok {
+				out[name] = s
+				changed = true
+			}
+		}
+	}
+	return out
+}
+
+// isConditionValue reports whether e is a struct or map condition (`&models.X{...}`, `map[...]...{}`)
+// or a callback, not a query string: those are not checked and not logged.
+func isConditionValue(e ast.Expr) bool {
+	switch stripExpr(e).(type) {
+	case *ast.CompositeLit, *ast.FuncLit:
+		return true
+	}
+	return false
+}
+
 // storeUTCPreservingHelpers return their (first) argument or an earlier argument of an earlier
 // call, so the result is UTC exactly when the argument is.
 var storeUTCPreservingHelpers = map[string]bool{"rbacEffectiveNow": true}
@@ -278,13 +360,19 @@ func preservingHelperArg(e ast.Expr) (ast.Expr, bool) {
 	return call.Args[0], true
 }
 
-func scanStoreTimeBinds(fset *token.FileSet, f *ast.File, file string, consts map[string]string) []storeTimeBind {
-	var out []storeTimeBind
+// storeUnresolvedQuery is a query call whose query string the scanner could not resolve.
+type storeUnresolvedQuery struct {
+	File, Func string
+	Line       int
+}
+
+func scanStoreTimeBinds(fset *token.FileSet, f *ast.File, file string, consts map[string]string) (out []storeTimeBind, unresolved []storeUnresolvedQuery) {
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
 			continue
 		}
+		strs := functionQueryStrings(fn, consts)
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok || len(call.Args) == 0 {
@@ -294,8 +382,11 @@ func scanStoreTimeBinds(fset *token.FileSet, f *ast.File, file string, consts ma
 			if !ok || !storeTimeQueryMethods[sel.Sel.Name] {
 				return true
 			}
-			query, ok := constString(call.Args[0], consts)
+			query, ok := constString(call.Args[0], strs)
 			if !ok {
+				if !isConditionValue(call.Args[0]) {
+					unresolved = append(unresolved, storeUnresolvedQuery{File: file, Func: fn.Name.Name, Line: fset.Position(call.Pos()).Line})
+				}
 				return true
 			}
 			cols, idxs := timeComparisons(query)
@@ -312,10 +403,16 @@ func scanStoreTimeBinds(fset *token.FileSet, f *ast.File, file string, consts ma
 			return true
 		})
 	}
-	return out
+	return out, unresolved
 }
 
 func scanStoreTimeBindsInSource(t testing.TB, src string) []storeTimeBind {
+	t.Helper()
+	binds, _ := scanStoreSource(t, src)
+	return binds
+}
+
+func scanStoreSource(t testing.TB, src string) ([]storeTimeBind, []storeUnresolvedQuery) {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "calibration_input", src, 0) // a synthetic name; not a file
@@ -377,6 +474,31 @@ func TestStoreTimeBindScanner_Calibration(t *testing.T) {
 	if len(got) != 1 || got[0].Mapped {
 		t.Errorf("spread: want one unmapped bind, got %+v", got)
 	}
+
+	// A query string it cannot resolve must be reported as unresolved, not skipped; a struct or
+	// map condition is not a query string and is not reported.
+	for name, c := range map[string]struct {
+		src        string
+		unresolved int
+	}{
+		"param query":     {"package s\nfunc f(q string, t time.Time) {\n\tdb.Where(q, t)\n}", 1},
+		"assigned twice":  {"package s\nfunc f(pg bool, t time.Time) {\n\tq := \"closed_at < ?\"\n\tif pg {\n\t\tq = \"closed_at <= ?\"\n\t}\n\tdb.Where(q, t)\n}", 1},
+		"appended":        {"package s\nfunc f(t time.Time) {\n\tq := \"state = ?\"\n\tq += \" AND closed_at < ?\"\n\tdb.Where(q, \"closed\", t)\n}", 1},
+		"sprintf":         {"package s\nfunc f(col string, t time.Time) {\n\tdb.Where(fmt.Sprintf(\"%s < ?\", col), t)\n}", 1},
+		"struct cond":     {"package s\nfunc f() {\n\tdb.Where(&M{ID: 1})\n}", 0},
+		"map cond":        {"package s\nfunc f() {\n\tdb.Where(map[string]any{\"id\": 1})\n}", 0},
+		"resolved local":  {"package s\nfunc f(t time.Time) {\n\tq := \"closed_at < ?\"\n\tdb.Where(q, t.UTC())\n}", 0},
+		"literal query":   {"package s\nfunc f(t time.Time) {\n\tdb.Where(\"closed_at < ?\", t.UTC())\n}", 0},
+		"const + unknown": {"package s\nconst live = \"deleted_at IS NOT NULL\"\nfunc f(extra string) {\n\tdb.Where(live + extra)\n}", 1},
+	} {
+		binds, unres := scanStoreSource(t, c.src)
+		if len(unres) != c.unresolved {
+			t.Errorf("%s: want %d unresolved queries, got %+v", name, c.unresolved, unres)
+		}
+		if c.unresolved > 0 && len(binds) != 0 {
+			t.Errorf("%s: an unresolved query must yield no bind, got %+v", name, binds)
+		}
+	}
 }
 
 func storeSourceFiles(t testing.TB) (paths []string) {
@@ -411,8 +533,11 @@ func TestEveryStoreTimeBindIsUTC(t *testing.T) {
 	consts := packageStringConsts(files)
 
 	var all, hits, unmapped []storeTimeBind
+	var unresolved []storeUnresolvedQuery
 	for i, f := range files {
-		for _, b := range scanStoreTimeBinds(fset, f, names[i], consts) {
+		binds, unres := scanStoreTimeBinds(fset, f, names[i], consts)
+		unresolved = append(unresolved, unres...)
+		for _, b := range binds {
 			all = append(all, b)
 			switch {
 			case !b.Mapped:
@@ -430,6 +555,10 @@ func TestEveryStoreTimeBindIsUTC(t *testing.T) {
 	for _, b := range unmapped {
 		t.Logf("UNMAPPED (not checked): %s:%d in %s binds %s through a spread or an unmappable argument", b.File, b.Line, b.Func, b.Column)
 	}
+	for _, q := range unresolved {
+		t.Logf("UNRESOLVED (not checked): %s:%d in %s passes a query string the scanner cannot resolve", q.File, q.Line, q.Func)
+	}
+	t.Logf("%d time comparisons checked, %d unmapped, %d unresolved query strings", len(all)-len(unmapped), len(unmapped), len(unresolved))
 
 	used := map[string]bool{}
 	var msgs []string
