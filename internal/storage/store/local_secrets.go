@@ -510,7 +510,7 @@ const cascadeRestoreChunk = 500
 // zone it was written in, so the Go side parses it with parseDBTimestamp.
 const (
 	sqlSelectProjectEnvDeletedAt    = "SELECT id, CAST(deleted_at AS TEXT) AS deleted_at FROM environments WHERE project_id = ? AND deleted_at IS NOT NULL"
-	sqlSelectProjectSecretDeletedAt = "SELECT id, CAST(deleted_at AS TEXT) AS deleted_at FROM secret_nodes WHERE project_id = ? AND deleted_at IS NOT NULL"
+	sqlSelectProjectSecretDeletedAt = "SELECT id, CAST(deleted_at AS TEXT) AS deleted_at FROM secret_nodes WHERE project_id = ? AND deleted_at IS NOT NULL" // #nosec G101 -- SQL query string, not a hardcoded credential
 )
 
 // cascadeChildIDs returns the ids of the project's soft-deleted rows (selected by query, one of
