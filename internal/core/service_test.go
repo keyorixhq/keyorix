@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestKeyorixCore_CreateSecret(t *testing.T) {
@@ -161,7 +162,8 @@ func TestKeyorixCore_GetSecret(t *testing.T) {
 		secretID := uint(999)
 
 		// Mock storage call
-		mockStorage.On("GetSecret", ctx, secretID).Return(nil, assert.AnError)
+		// A positive not-found; any other storage error is a read fault (STORAGE-ERR-CLASS-4).
+		mockStorage.On("GetSecret", ctx, secretID).Return(nil, gorm.ErrRecordNotFound)
 
 		// Execute
 		result, err := core.GetSecret(ctx, secretID)

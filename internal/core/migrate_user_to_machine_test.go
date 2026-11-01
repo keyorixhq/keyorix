@@ -2,10 +2,11 @@ package core
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -125,7 +126,7 @@ func TestMigrateUserToMachine(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)
 		ctx := context.Background()
-		store.On("GetUserByUsername", ctx, "ghost").Return((*models.User)(nil), errors.New("not found"))
+		store.On("GetUserByUsername", ctx, "ghost").Return((*models.User)(nil), fmt.Errorf("not found: %w", storage.ErrUserNotFound))
 
 		_, err := c.MigrateUserToMachine(ctx, "ghost", 1, "", "", 9, 0, true)
 		require.Error(t, err)

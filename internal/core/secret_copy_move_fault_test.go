@@ -66,7 +66,8 @@ func TestCopySecret_SourceReadFaultIsNotNotFoundAndWritesNoRefusalRow(t *testing
 	require.Error(t, err)
 	assert.Nil(t, copied)
 	assert.False(t, storage.IsSecretNotFound(err), "a storage failure must not read as \"no such secret\": %v", err)
-	assert.Contains(t, err.Error(), "injected: GetSecret")
+	assert.True(t, IsStorageReadUnavailable(err), "a storage failure is the retry class: %v", err)
+	assert.Contains(t, StorageReadFaultDetail(err), "injected: GetSecret", "the cause stays reachable for the server log")
 
 	var after int64
 	require.NoError(t, db.Model(&models.AuditEvent{}).Where("secret_node_id = ?", src.ID).Count(&after).Error)

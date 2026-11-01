@@ -104,6 +104,9 @@ func (h *FolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request) {
 
 	folder, err := h.coreService.CreateFolder(r.Context(), userCtx.UserID, reqBody.Name, reqBody.ProjectID, reqBody.EnvironmentID, reqBody.ParentID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating folder: %v", err)
 		msg := err.Error()
 		status := http.StatusInternalServerError
