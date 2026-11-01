@@ -95,15 +95,33 @@ func (c *KeyorixCore) enforceAccessReviewReviewerControls(ctx context.Context, a
 	}
 	// ARC-001: a machine identity provisioned by the actor must not be
 	// self-certified by its creator — mirrors DecideAccessReviewItem's
-	// identical inline check. Fails closed on a lookup error.
+	// identical inline check. Fails closed on a lookup fault.
 	if d.Source == "role" && principalType == "machine" {
-		machine, err := c.storage.GetMachineIdentity(ctx, d.PrincipalID)
-		if err != nil {
-			return fmt.Errorf("loading machine identity: %w", err)
+		return c.checkMachineReviewerIndependence(ctx, actorID, d.PrincipalID)
+	}
+	return nil
+}
+
+// checkMachineReviewerIndependence is the ARC-001 check for a machine principal
+// named by an attest/revoke decision. A storage FAULT on the lookup refuses
+// (ErrStorageReadUnavailable: independence cannot be proven). A machine that
+// positively does not exist has no creator to self-certify, so this check has
+// nothing to refuse and the decision goes on to the project-scoped check that
+// every caller runs next (machineInProject on revoke,
+// verifyAccessReviewGrantExists on attest), which refuses it with the SAME
+// not-found it gives a machine in another project. Refusing it here instead,
+// with a different answer, made the status code an existence oracle for
+// machine ids outside the caller's project (REVIEW-3903-DEEP-2 finding 1).
+func (c *KeyorixCore) checkMachineReviewerIndependence(ctx context.Context, actorID, machineID uint) error {
+	machine, err := c.storage.GetMachineIdentity(ctx, machineID)
+	if err != nil {
+		if isPositiveNotFound(err) {
+			return nil
 		}
-		if machine.CreatedBy == actorID {
-			return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
-		}
+		return &storageReadFault{cause: err}
+	}
+	if machine.CreatedBy == actorID {
+		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
 	}
 	return nil
 }

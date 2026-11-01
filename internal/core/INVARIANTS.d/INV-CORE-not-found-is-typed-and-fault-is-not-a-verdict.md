@@ -8,6 +8,8 @@
   idle / "no such secret" on ref reads, secret access requests, anomaly acknowledge, access-review
   decide and revoke, folder create and membership transitions (ERR-FOLD-HANDLERS-1). Guard:
   `storage_read_class_fold_handlers_test.go`, `storage_read_class_access_review_test.go`, handler
-  `TestFoldHandlers_*`, middleware `TestScopeResolverRefReadFault`, and the existing
+  `TestFoldHandlers_*`, handler `TestAccessReviewMachinePrincipal_AbsentAnswersLikeCrossProject`
+  (an absent machine id answers revoke/attest/decide exactly like one in another project, so the
+  ARC-001 lookup is no existence oracle), middleware `TestScopeResolverRefReadFault`, and the existing
   `TestNoStorageReadErrorFoldedIntoNotFound`. Not covered: handlers still outside this family that
   match message text for other verdicts (`errtext` exceptions list, #3864).
