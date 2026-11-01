@@ -219,6 +219,31 @@ func (c *KeyorixCore) notifyChecked(ctx context.Context, userID uint, nType, tit
 // recorded as one "notification.failed" audit event in the request's project.
 // The audit write recovers its own panic (writeAuditEventDiffOn, #2561).
 func (c *KeyorixCore) runPostCommitNotification(ctx context.Context, step string, actorID uint, req *models.AccessRequest, notifyFn func() error) {
+	c.runPostCommitNotificationFor(ctx, step, actorID, postCommitSubject{
+		what:      fmt.Sprintf("access request %d", req.ID),
+		projectID: req.ProjectID,
+	}, notifyFn)
+}
+
+// postCommitSubject names what a post-commit notification was about, for the log
+// line and the notification.failed audit row. projectID and secretID are 0 when the
+// subject has no such scope; the audit row then carries no project / secret.
+type postCommitSubject struct {
+	what      string // e.g. "access request 7", "share of secret 3 with user 9"
+	projectID uint
+	secretID  uint
+}
+
+// runPostCommitNotificationFor is runPostCommitNotification for any committed
+// change (CORE-ORACLE-DRAIN-1): the secret share / revoke notifiers run under it
+// too, so a failed notification of a committed share is recorded exactly like a
+// failed notification of a committed access-request transition
+// (INV-CORE-access-request-notify-never-fails-committed-transition), instead of
+// only being logged or swallowed. A panic or returned error in notifyFn is
+// recovered, logged at SECURITY level and written as one "notification.failed"
+// audit event; nothing is returned, so the committed change is never reported as
+// failed.
+func (c *KeyorixCore) runPostCommitNotificationFor(ctx context.Context, step string, actorID uint, subject postCommitSubject, notifyFn func() error) {
 	var failure error
 	func() {
 		defer func() {
@@ -231,10 +256,20 @@ func (c *KeyorixCore) runPostCommitNotification(ctx context.Context, step string
 	if failure == nil {
 		return
 	}
-	log.Printf("SECURITY: WARN: %s: notification for access request %d (project %d, actor %d) failed after the transition committed; the transition stands: %v",
-		step, req.ID, req.ProjectID, actorID, failure)
-	c.auditProjectScopedFailed(ctx, auditNotificationFailed, actorID, req.ProjectID,
-		fmt.Sprintf("%s: notification for access request %d was not delivered: %v", step, req.ID, failure))
+	log.Printf("SECURITY: WARN: %s: notification for %s (project %d, actor %d) failed after the change committed; the change stands: %v",
+		step, subject.what, subject.projectID, actorID, failure)
+	aid := actorID
+	var pid, sid *uint
+	if subject.projectID != 0 {
+		p := subject.projectID
+		pid = &p
+	}
+	if subject.secretID != 0 {
+		s := subject.secretID
+		sid = &s
+	}
+	c.writeAuditEventFailedFull(ctx, auditNotificationFailed, &aid, sid, pid, "",
+		fmt.Sprintf("%s: notification for %s was not delivered: %v", step, subject.what, failure))
 }
 
 // upgradeReminder overwrites Title/Message/Severity on an existing unread
@@ -350,39 +385,58 @@ func (c *KeyorixCore) notifyAccessResolved(ctx context.Context, req *models.Acce
 		&pid, link, models.NotificationSeverityNone)
 }
 
+// secretShareSubject describes a share (or its revocation) for the notification.failed
+// audit row; what names the recipient so the row says who was not told.
+func secretShareSubject(secret *models.SecretNode, what string) postCommitSubject {
+	return postCommitSubject{what: what, projectID: secret.ProjectID, secretID: secret.ID}
+}
+
+// secretShareProjectID is the notification's project scope: nil for a secret that
+// belongs to no project.
+func secretShareProjectID(secret *models.SecretNode) *uint {
+	if secret.ProjectID == 0 {
+		return nil
+	}
+	p := secret.ProjectID
+	return &p
+}
+
 // notifySecretShared tells a recipient a secret was shared with them directly. Self-
-// shares are skipped. Best-effort — failure never blocks the share.
+// shares are skipped. The share committed before this runs, so it runs under
+// runPostCommitNotificationFor: a failure or panic never fails the share, and is
+// recorded as a notification.failed audit event rather than only logged.
 func (c *KeyorixCore) notifySecretShared(ctx context.Context, secret *models.SecretNode, recipientID, sharedBy uint, permission string) {
-	defer recoverPostCommitNotifyPanic(NotificationSecretShared, recipientID)
 	if secret == nil || recipientID == 0 || recipientID == sharedBy {
 		return
 	}
-	// The share committed before this runs: a panic here must not turn it into
-	// an error response (#3350, the #3092 pattern).
-	defer recoverPostCommitNotifyPanic(NotificationSecretShared, recipientID)
-	var pid *uint
-	if secret.ProjectID != 0 {
-		p := secret.ProjectID
-		pid = &p
-	}
-	c.notify(ctx, recipientID, NotificationSecretShared,
-		"Secret shared with you",
-		fmt.Sprintf("You were granted %s access to secret %q.", permission, secret.Name),
-		pid, fmt.Sprintf("/secrets/%d", secret.ID))
+	c.runPostCommitNotificationFor(ctx, "secret_share.notify", sharedBy,
+		secretShareSubject(secret, fmt.Sprintf("share of secret %d with user %d", secret.ID, recipientID)),
+		func() error {
+			return c.notifyChecked(ctx, recipientID, NotificationSecretShared,
+				"Secret shared with you",
+				fmt.Sprintf("You were granted %s access to secret %q.", permission, secret.Name),
+				secretShareProjectID(secret), fmt.Sprintf("/secrets/%d", secret.ID), models.NotificationSeverityNone)
+		})
 }
 
 // notifyGroupSecretShared fans the "shared with you" notification out to every member
-// of a group a secret was shared with (excluding the sharer). Best-effort — a member
-// lookup failure just means no fan-out.
+// of a group a secret was shared with (excluding the sharer). A failed or panicking
+// member lookup is recorded as a notification.failed event (nobody is notified); each
+// member is then notified, and recorded if it fails, on its own.
 func (c *KeyorixCore) notifyGroupSecretShared(ctx context.Context, secret *models.SecretNode, groupID, sharedBy uint, permission string) {
-	defer recoverPostCommitNotifyPanic(NotificationSecretShared, groupID)
 	if secret == nil {
 		return
 	}
-	members, err := c.storage.ListGroupMembers(ctx, groupID)
-	if err != nil {
-		return
-	}
+	var members []*models.User
+	c.runPostCommitNotificationFor(ctx, "secret_share.group_notify", sharedBy,
+		secretShareSubject(secret, fmt.Sprintf("share of secret %d with group %d", secret.ID, groupID)),
+		func() error {
+			var err error
+			if members, err = c.storage.ListGroupMembers(ctx, groupID); err != nil {
+				return fmt.Errorf("list members of group %d: %w", groupID, err)
+			}
+			return nil
+		})
 	for _, m := range members {
 		c.notifySecretShared(ctx, secret, m.ID, sharedBy, permission)
 	}
@@ -390,37 +444,38 @@ func (c *KeyorixCore) notifyGroupSecretShared(ctx context.Context, secret *model
 
 // notifySecretShareRevoked tells a recipient their access to a secret was revoked.
 // Direct shares only (a group share has no single user); skips the actor revoking
-// their own share. Best-effort.
+// their own share. Runs under runPostCommitNotificationFor like notifySecretShared.
 func (c *KeyorixCore) notifySecretShareRevoked(ctx context.Context, secret *models.SecretNode, recipientID, revokedBy uint) {
-	defer recoverPostCommitNotifyPanic(NotificationSecretShareRevoked, recipientID)
 	if secret == nil || recipientID == 0 || recipientID == revokedBy {
 		return
 	}
-	// The revoke committed before this runs: a panic here must not turn it
-	// into an error response (#3350, the #3092 pattern).
-	defer recoverPostCommitNotifyPanic(NotificationSecretShareRevoked, recipientID)
-	var pid *uint
-	if secret.ProjectID != 0 {
-		p := secret.ProjectID
-		pid = &p
-	}
-	c.notify(ctx, recipientID, NotificationSecretShareRevoked,
-		"Secret access revoked",
-		fmt.Sprintf("Your access to secret %q was revoked.", secret.Name),
-		pid, fmt.Sprintf("/secrets/%d", secret.ID))
+	c.runPostCommitNotificationFor(ctx, "secret_share.revoke_notify", revokedBy,
+		secretShareSubject(secret, fmt.Sprintf("revocation of the share of secret %d from user %d", secret.ID, recipientID)),
+		func() error {
+			return c.notifyChecked(ctx, recipientID, NotificationSecretShareRevoked,
+				"Secret access revoked",
+				fmt.Sprintf("Your access to secret %q was revoked.", secret.Name),
+				secretShareProjectID(secret), fmt.Sprintf("/secrets/%d", secret.ID), models.NotificationSeverityNone)
+		})
 }
 
 // notifyGroupSecretShareRevoked fans the revoke notification out to every member of a
-// group whose share was revoked (excluding the actor). Best-effort.
+// group whose share was revoked (excluding the actor), recording failures like
+// notifyGroupSecretShared.
 func (c *KeyorixCore) notifyGroupSecretShareRevoked(ctx context.Context, secret *models.SecretNode, groupID, revokedBy uint) {
-	defer recoverPostCommitNotifyPanic(NotificationSecretShareRevoked, groupID)
 	if secret == nil {
 		return
 	}
-	members, err := c.storage.ListGroupMembers(ctx, groupID)
-	if err != nil {
-		return
-	}
+	var members []*models.User
+	c.runPostCommitNotificationFor(ctx, "secret_share.group_revoke_notify", revokedBy,
+		secretShareSubject(secret, fmt.Sprintf("revocation of the share of secret %d from group %d", secret.ID, groupID)),
+		func() error {
+			var err error
+			if members, err = c.storage.ListGroupMembers(ctx, groupID); err != nil {
+				return fmt.Errorf("list members of group %d: %w", groupID, err)
+			}
+			return nil
+		})
 	for _, m := range members {
 		c.notifySecretShareRevoked(ctx, secret, m.ID, revokedBy)
 	}
