@@ -44,6 +44,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,10 +91,10 @@ func scanProjectsJoins(t *testing.T, filename string, src []byte) ([]projectsJoi
 		if !ok || lit.Kind != token.STRING || !projectsJoinRe.MatchString(lit.Value) {
 			return true
 		}
-		for i := len(stack) - 1; i >= 0; i-- {
-			switch stack[i].(type) {
+		for _, anc := range slices.Backward(stack) {
+			switch anc.(type) {
 			case *ast.ExprStmt, *ast.AssignStmt, *ast.ReturnStmt, *ast.DeclStmt, *ast.ValueSpec:
-				units[stack[i]] = true
+				units[anc] = true
 				return true
 			}
 		}
