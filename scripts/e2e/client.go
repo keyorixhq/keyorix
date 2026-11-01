@@ -140,7 +140,7 @@ func (c *client) callExpect(method, routeKey, path string, body interface{}, wan
 		}
 	}
 	c.t.Errorf("%s %s (%s): expected status in %v, got %d: %s",
-		method, routeKey, path, want, env.StatusCode, string(env.Raw))
+		method, routeKey, path, want, env.StatusCode, string(env.Body))
 	return env
 }
 
