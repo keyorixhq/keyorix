@@ -68,7 +68,7 @@ func registerStoreTimeBindException(key, reason string) {
 }
 
 func TestRegisterStoreTimeBindException_RejectsADuplicateKey(t *testing.T) {
-	const key = "local_probe.go:Probe:created_at"
+	const key = "local_probe:Probe:created_at" // a synthetic key; not a file name
 	registerStoreTimeBindException(key, "first")
 	t.Cleanup(func() { delete(storeTimeBindExceptions, key) })
 	defer func() {
@@ -318,11 +318,11 @@ func scanStoreTimeBinds(fset *token.FileSet, f *ast.File, file string, consts ma
 func scanStoreTimeBindsInSource(t testing.TB, src string) []storeTimeBind {
 	t.Helper()
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "calibration_input.go", src, 0)
+	f, err := parser.ParseFile(fset, "calibration_input", src, 0) // a synthetic name; not a file
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	return scanStoreTimeBinds(fset, f, "calibration_input.go", packageStringConsts([]*ast.File{f}))
+	return scanStoreTimeBinds(fset, f, "calibration_input", packageStringConsts([]*ast.File{f}))
 }
 
 // The planted shapes. Each unsafe one must be found and each safe one must not be: "a guard nobody

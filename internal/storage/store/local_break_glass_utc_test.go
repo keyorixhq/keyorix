@@ -38,12 +38,11 @@ func TestListUnreviewedBreakGlassActivationsBeforeBindsCutoffAsUTC(t *testing.T)
 		t.Run(tc.zone+"/"+tc.comment, func(t *testing.T) {
 			ls := newBreakGlassStore(t)
 			ctx := context.Background()
+			// Created with the CreatedAt wanted, so the write goes through the model's BeforeSave.
 			row, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
-				ProjectID: 1, UserID: 10, RoleID: 3, RoleName: "editor", State: "active",
+				ProjectID: 1, UserID: 10, RoleID: 3, RoleName: "editor", State: "active", CreatedAt: createdAt,
 			})
 			require.NoError(t, err)
-			require.NoError(t, ls.db.Model(&models.BreakGlassActivation{}).Where("id = ?", row.ID).
-				Update("created_at", createdAt).Error)
 
 			rows, err := ls.ListUnreviewedBreakGlassActivationsBefore(ctx, tc.cutoff.In(zone))
 			require.NoError(t, err)
