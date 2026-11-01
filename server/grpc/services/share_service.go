@@ -113,6 +113,11 @@ func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *pb.ListUserS
 
 	shares, err := s.core.ListSharesByUser(ctx, user.UserID)
 	if err != nil {
+		if errors.Is(err, core.ErrShareListOverCap) {
+			// The HTTP list answers this 422 ShareListOverCap; a typed code here
+			// too, so a client can tell "refused, too many" from a server fault.
+			return nil, status.Error(codes.FailedPrecondition, "share list is over the per-request cap; revoke or narrow shares first")
+		}
 		return nil, status.Error(codes.Internal, "failed to list user shares")
 	}
 	// #G17: ShareRecord only carries SecretID, so resolve each share's owning

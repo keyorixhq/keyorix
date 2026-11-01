@@ -261,3 +261,20 @@ func TestShareService_ListSecretShares_NonOwnerDenied(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
+
+// REVIEW-3018: a share list core refuses as possibly truncated (a storage fetch
+// at its row cap) answers a typed FailedPrecondition, the gRPC counterpart of
+// HTTP's 422 ShareListOverCap, not Internal and never a shortened list.
+func TestShareService_ListUserShares_OverCapIsFailedPrecondition(t *testing.T) {
+	r := newShareTestRig(t)
+	const atCap = 10000 // maxShareViewBatchSize, and the storage list cap
+	shares := make([]*models.ShareRecord, atCap)
+	for i := range shares {
+		shares[i] = &models.ShareRecord{SecretID: uint(r.secretID), OwnerID: 1, RecipientID: 2, Permission: "read"}
+	}
+	require.NoError(t, r.db.CreateInBatches(shares, 500).Error)
+
+	resp, err := r.svc.ListUserShares(ownerCtx(), &pb.ListUserSharesRequest{})
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "over-cap must be a typed refusal, not Internal: %v", err)
+}

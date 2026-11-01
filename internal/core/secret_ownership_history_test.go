@@ -192,6 +192,7 @@ func newOwnershipHistoryFixture(t *testing.T) (*KeyorixCore, uint) {
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "writer"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 	st := store.NewLocalStorage(db)
 	c := &KeyorixCore{storage: st, now: time.Now}

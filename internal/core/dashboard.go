@@ -167,10 +167,15 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		stats.degrade("total_secrets", errUnexactReadableSecretCount)
 	}
 
+	// A share fetch at the storage row cap may be cut off, so its count is a floor:
+	// degraded like total_secrets above, never shown as a count (REVIEW-3018).
 	outgoing, err := c.storage.ListSharesByOwner(ctx, userID, c.shareEffectiveNow())
 	sharedSecrets := 0
 	if err == nil {
 		sharedSecrets, err = c.countSharesVisibleToPAT(ctx, outgoing)
+	}
+	if err == nil && shareFetchMayBeTruncated(outgoing) {
+		err = ErrShareListOverCap
 	}
 	if err != nil {
 		stats.degrade("shared_secrets", err)
@@ -180,6 +185,9 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	sharedWithMe := 0
 	if err == nil {
 		sharedWithMe, err = c.countSharesVisibleToPAT(ctx, incoming)
+	}
+	if err == nil && shareFetchMayBeTruncated(incoming) {
+		err = ErrShareListOverCap
 	}
 	if err != nil {
 		stats.degrade("shared_with_me", err)

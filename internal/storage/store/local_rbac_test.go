@@ -43,6 +43,7 @@ func TestAssignRoleWithExpiry_BlocksDuplicateOfLiveGrant(t *testing.T) {
 // not fail with "already assigned" against the stale, un-reaped row.
 func TestAssignRoleWithExpiry_ReactivatesAfterNaturalExpiry(t *testing.T) {
 	ls := newRBACScopeTestStore(t)
+	seedLiveProjects(t, ls.db, 5)
 	ctx := context.Background()
 
 	past := time.Now().Add(-time.Hour)
@@ -62,6 +63,7 @@ func TestAssignRoleWithExpiry_ReactivatesAfterNaturalExpiry(t *testing.T) {
 // time-bound grant (e.g. AssignRoleWithExpiry) at the same key expired.
 func TestAssignRole_SucceedsAfterPriorTimeBoundGrantExpired(t *testing.T) {
 	ls := newRBACScopeTestStore(t)
+	seedLiveProjects(t, ls.db, 5)
 	ctx := context.Background()
 
 	past := time.Now().Add(-time.Hour)
@@ -116,6 +118,7 @@ func TestAssignRoleToGroupWithExpiry_BlocksDuplicateOfLiveGrant(t *testing.T) {
 // stale, un-reaped row.
 func TestAssignRoleToGroupWithExpiry_ReactivatesAfterNaturalExpiry(t *testing.T) {
 	ls := newRBACScopeTestStore(t)
+	seedLiveProjects(t, ls.db, 5)
 	ctx := context.Background()
 	require.NoError(t, ls.db.Create(&models.Group{ID: 202, Name: "g202"}).Error)
 	require.NoError(t, ls.db.Create(&models.UserGroup{UserID: 1, GroupID: 202}).Error)
@@ -144,6 +147,7 @@ func TestAssignRoleToGroupWithExpiry_ReactivatesAfterNaturalExpiry(t *testing.T)
 // expired.
 func TestAssignRoleToGroup_SucceedsAfterPriorTimeBoundGrantExpired(t *testing.T) {
 	ls := newRBACScopeTestStore(t)
+	seedLiveProjects(t, ls.db, 5)
 	ctx := context.Background()
 	require.NoError(t, ls.db.Create(&models.Group{ID: 203, Name: "g203"}).Error)
 	require.NoError(t, ls.db.Create(&models.UserGroup{UserID: 1, GroupID: 203}).Error)

@@ -475,10 +475,17 @@ func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID
 // records in batches.
 const listBatchSize = 2000
 
+// getSharedSecretsWithSharingInfo lists the secrets shared with userID. A share
+// fetch at the storage row cap is refused (ErrShareListOverCap), never listed: the
+// cut-off shares would be missing from the list, and from the permissions it
+// attaches to secrets, with nothing telling the caller (REVIEW-3018).
 func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userID uint, _ *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
 	shares, err := c.storage.ListSharesByUser(ctx, userID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if shareFetchMayBeTruncated(shares) {
+		return nil, ErrShareListOverCap
 	}
 
 	// Secrets and their owners' names for every share in two batched lookups

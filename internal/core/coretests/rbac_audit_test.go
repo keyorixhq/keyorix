@@ -50,6 +50,12 @@ func seedRolesAssignGrant(t *testing.T, db *gorm.DB, actorID, permissionID, role
 	require.NoError(t, db.Create(&models.Permission{ID: permissionID, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: roleID, Name: "seeded-roles-assign-holder"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: roleID, PermissionID: permissionID}).Error)
+	// A scoped grant authorizes only while its project row exists
+	// (INV-STORE-scoped-grant-needs-live-scope-row); keep one a fixture already made.
+	if scope.ProjectID != 0 {
+		require.NoError(t, db.Where(models.Project{ID: scope.ProjectID}).
+			Attrs(models.Project{Name: "seeded-scope-project"}).FirstOrCreate(&models.Project{}).Error)
+	}
 	require.NoError(t, db.Create(&models.UserRole{UserID: actorID, RoleID: roleID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID}).Error)
 }
 

@@ -2,12 +2,14 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +30,13 @@ func TestFreshBootMigratesScopedRoles(t *testing.T) {
 	require.NoError(t, err, "fresh-DB AutoMigrate must succeed with the scoped role models")
 
 	ctx := context.Background()
+
+	// A scoped grant authorizes only while its project row exists
+	// (INV-STORE-scoped-grant-needs-live-scope-row).
+	for _, id := range []uint{1, 2} {
+		_, err := st.CreateProject(ctx, &models.Project{ID: id, Name: fmt.Sprintf("boot-proj-%d", id)})
+		require.NoError(t, err)
+	}
 
 	// Same user, same role, two different project scopes must both persist.
 	require.NoError(t, st.AssignRole(ctx, 1, 1, corestorage.Scope{ProjectID: 1}))

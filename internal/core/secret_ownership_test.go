@@ -72,9 +72,14 @@ func newOwnershipFixture(t *testing.T) (*KeyorixCore, uint) {
 	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "assigner"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 3}).Error)
 
+	seedLiveScopeProjects(t, db, 1)
+
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error) // alice: writer
+	seedLiveScopeProjects(t, db, 1)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 2, ProjectID: 1}).Error) // bob: writer
+	seedLiveScopeProjects(t, db, 1)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 3, ProjectID: 1}).Error) // bob: assigner
+	seedLiveScopeProjects(t, db, 1)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 1, ProjectID: 1}).Error) // dave: reader only
 
 	st := store.NewLocalStorage(db)

@@ -54,6 +54,7 @@ func TestSearchShareRecipients_UserLookupErrorFailsTheSearch(t *testing.T) {
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "writer"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "member-no-perms"}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 2, ProjectID: 1}).Error)

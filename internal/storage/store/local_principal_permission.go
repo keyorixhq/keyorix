@@ -59,8 +59,8 @@ FROM (
   LEFT JOIN projects ON projects.id = user_roles.project_id
   LEFT JOIN environments ON environments.id = user_roles.environment_id
   WHERE user_roles.user_id = ?
-   AND (user_roles.project_id = 0 OR (user_roles.project_id = ? AND projects.deleted_at IS NULL))
-   AND (user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.deleted_at IS NULL))
+   AND (user_roles.project_id = 0 OR (user_roles.project_id = ? AND projects.id IS NOT NULL AND projects.deleted_at IS NULL))
+   AND (user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.id IS NOT NULL AND environments.deleted_at IS NULL))
    AND (user_roles.expires_at IS NULL OR user_roles.expires_at > ?)
  UNION
  SELECT group_roles.role_id AS role_id FROM group_roles
@@ -70,8 +70,8 @@ FROM (
   LEFT JOIN environments ON environments.id = group_roles.environment_id
   WHERE user_groups.user_id = ?
    AND (user_groups.project_id = 0 OR user_groups.project_id = ?)
-   AND (group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.deleted_at IS NULL))
-   AND (group_roles.environment_id = 0 OR (group_roles.environment_id = ? AND environments.deleted_at IS NULL))
+   AND (group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.id IS NOT NULL AND projects.deleted_at IS NULL))
+   AND (group_roles.environment_id = 0 OR (group_roles.environment_id = ? AND environments.id IS NOT NULL AND environments.deleted_at IS NULL))
    AND (group_roles.expires_at IS NULL OR group_roles.expires_at > ?)
 ) ids
 LEFT JOIN roles r ON r.id = ids.role_id
@@ -87,8 +87,8 @@ FROM (
   LEFT JOIN projects ON projects.id = machine_identity_roles.project_id
   LEFT JOIN environments ON environments.id = machine_identity_roles.environment_id
   WHERE machine_identity_roles.machine_identity_id = ?
-   AND (machine_identity_roles.project_id = 0 OR (machine_identity_roles.project_id = ? AND projects.deleted_at IS NULL))
-   AND (machine_identity_roles.environment_id = 0 OR (machine_identity_roles.environment_id = ? AND environments.deleted_at IS NULL))
+   AND (machine_identity_roles.project_id = 0 OR (machine_identity_roles.project_id = ? AND projects.id IS NOT NULL AND projects.deleted_at IS NULL))
+   AND (machine_identity_roles.environment_id = 0 OR (machine_identity_roles.environment_id = ? AND environments.id IS NOT NULL AND environments.deleted_at IS NULL))
 ) ids
 LEFT JOIN system_metadata gen ON gen.key = ?`
 }
