@@ -42,6 +42,11 @@
 //   - a body that classifies in an unrecognised way (it is then a false negative of the
 //     classifier list, not of the rule: add the helper's name to classifierCalls).
 //
+// STORAGE-ERR-CLASS-4 added the identifier ErrSecretRefNotFound to the not-found sentinels, so
+// the fold ResolveSecretRef had (internal/core/secret_ref.go) is recognised. The other folds that
+// change fixed (GetSecretAccessRequest's `return nil, notFound` variable, the handler pre-checks in
+// server/http/handlers, the gRPC authorizeScopedTarget callers) are outside what it can see.
+//
 // Report-only on its first day, and again for the server/middleware widening
 // (docs/guard-rollout.d/TestNoStorageReadErrorFoldedIntoNotFound.tsv, docs/guard-rollout-contract.md).
 
@@ -70,7 +75,8 @@ var foldedReadPrefixes = append(append([]string{}, storageReadPrefixes...), "Loc
 var foldedReadCoreReceivers = map[string]bool{"cs": true}
 
 // notFoundSentinels: package-level not-found verdicts that are an identifier, not an Errorf.
-var notFoundSentinels = map[string]bool{"errTargetNotFound": true}
+// ErrSecretRefNotFound is core.ResolveSecretRef's verdict (STORAGE-ERR-CLASS-4).
+var notFoundSentinels = map[string]bool{"errTargetNotFound": true, "ErrSecretRefNotFound": true}
 
 // foldedReadMiddlewareDir / foldedReadMiddlewareFiles: the server-layer files the scan also
 // reads (the REST scope resolvers and the per-secret gates live in auth.go). A missing file
@@ -345,6 +351,14 @@ func (c *K) transitionInTx(tx S) error {
 	_ = m
 	return nil
 }`,
+		"ResolveSecretRef folds GetSecretByName into ErrSecretRefNotFound": `package core
+func (c *K) ResolveSecretRef(ctx context.Context, ref string) (*M, error) {
+	secret, err := c.storage.GetSecretByName(ctx, name, projectID, envID)
+	if err != nil || secret == nil {
+		return nil, ErrSecretRefNotFound
+	}
+	return secret, nil
+}`,
 		"if-init read with i18n verdict": `package core
 func (c *K) attest() error {
 	if s, err := c.storage.GetSecret(ctx, id); err != nil {
@@ -426,6 +440,18 @@ func (c *K) verify() error {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil), "stale")
 	}
 	return nil
+}`,
+		// ResolveSecretRef since STORAGE-ERR-CLASS-4.
+		"ResolveSecretRef classifies with isPositiveNotFound": `package core
+func (c *K) ResolveSecretRef(ctx context.Context, ref string) (*M, error) {
+	secret, err := c.storage.GetSecretByName(ctx, name, projectID, envID)
+	if err != nil {
+		if isPositiveNotFound(err) {
+			return nil, ErrSecretRefNotFound
+		}
+		return nil, err
+	}
+	return secret, nil
 }`,
 		"errors.Is classification": `package core
 func (c *K) get() error {
