@@ -90,8 +90,12 @@ var (
 	iwaAssign         = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	iwaWrappers       = []string{"sudo", "nohup", "time", "exec", "env", "xargs"}
 	iwaSeparators     = []string{"|", "||", "&&", ";", "&"}
-	// iwaRedirect matches a redirection that carries its own target: >&2, 2>&1.
-	iwaRedirect   = regexp.MustCompile(`^[0-9]*>&[0-9-]*$`)
+	// iwaRedirect matches a redirection word of the >& family: >&2 and 2>&1 carry
+	// their target, a bare >& takes the next word as its file. iwaWords keeps a
+	// digit run before > attached, so 2>&1 is one word.
+	iwaRedirect = regexp.MustCompile(`^[0-9]*>&[0-9-]*$`)
+	// iwaRedirectOp matches a redirection whose target is the next word.
+	iwaRedirectOp = regexp.MustCompile(`^[0-9]*(>|>>|<)$`)
 	iwaInlineSpan = regexp.MustCompile("`([^`\n]+)`")
 )
 
@@ -115,9 +119,11 @@ func iwaParse(doc string) (lines []iwaLine, prompt string) {
 		quoted := strings.HasPrefix(trim, ">")
 		// Inside a fence the fence decides: a leading > in a fence opened outside a
 		// blockquote is shell text (`>&2 cat x`), not a blockquote marker, so it
-		// stays an assistant line and keeps its >.
+		// stays an assistant line and keeps its >. In a fence opened in a blockquote a
+		// line without > ends the blockquote, so it is not a HUMAN line (fail closed);
+		// a closing ``` without > still closes the fence.
 		if inFence {
-			quoted = fenceQuoted
+			quoted = fenceQuoted && quoted
 		}
 		body := trim
 		if quoted {
@@ -213,6 +219,14 @@ func iwaWords(line string) []string {
 			flush()
 			return words
 		case strings.IndexByte(";|&<>()", c) >= 0:
+			// A digit run right before > or < is the descriptor of the redirection
+			// (2>&1, 2>/dev/null): keep it attached, not a command word.
+			fd := ""
+			if (c == '>' || c == '<') && has && strings.Trim(cur.String(), "0123456789") == "" {
+				fd = cur.String()
+				cur.Reset()
+				has = false
+			}
 			flush()
 			op := string(c)
 			if c == '>' && i+1 < len(line) && line[i+1] == '&' {
@@ -221,7 +235,7 @@ func iwaWords(line string) []string {
 				for j < len(line) && (line[j] >= '0' && line[j] <= '9' || line[j] == '-') {
 					j++
 				}
-				words = append(words, line[i:j])
+				words = append(words, fd+line[i:j])
 				i = j - 1
 				continue
 			}
@@ -229,7 +243,7 @@ func iwaWords(line string) []string {
 				op += string(c)
 				i++
 			}
-			words = append(words, op)
+			words = append(words, fd+op)
 		default:
 			cur.WriteByte(c)
 			has = true
@@ -290,8 +304,8 @@ func iwaCommandWord(cmd []string) int {
 	for i := 0; i < len(cmd); i++ {
 		w := cmd[i]
 		// a leading redirection (`>&2 printenv`, `> file cat x`) is not the command
-		if w == ">" || w == ">>" || w == "<" {
-			i++ // its target
+		if iwaRedirectOp.MatchString(w) || (strings.HasSuffix(w, ">&") && iwaRedirect.MatchString(w)) {
+			i++ // its target: `> file`, `2>/dev/null`, `>& file`
 			continue
 		}
 		if iwaRedirect.MatchString(w) {
@@ -469,6 +483,12 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		">&2 printenv",
 		"> /dev/stderr cat secrets/master_password",
 		">&2 ./bin/keyorix mfa enroll",
+		// a digit-prefixed or bare >& redirection is not the command word
+		"2>&1 printenv",
+		"2>/dev/null printenv",
+		"2>/dev/null docker inspect backend",
+		"2>/dev/null keyorix whoami",
+		">& /dev/stderr printenv",
 	}
 	for _, line := range bad {
 		doc := strings.Replace(good, "rm -f secrets/bootstrap_token\n", "rm -f secrets/bootstrap_token\n"+line+"\n", 1)
@@ -485,6 +505,23 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		if (len(f) != 0) != want {
 			t.Errorf("human line %q: findings %+v, want reported=%v", line, f, want)
 		}
+	}
+	// A line without a leading > inside a blockquoted fence ends the blockquote: it
+	// is not part of the HUMAN STEP, so it is an assistant line. Forgetting the > on
+	// one line must not exempt it.
+	for _, line := range bad {
+		if strings.HasPrefix(line, ">") {
+			continue // a leading > is a blockquote marker inside a quoted fence
+		}
+		doc := strings.Replace(good, "> ./bin/keyorix mfa enroll\n", "> ./bin/keyorix mfa enroll\n"+line+"\n", 1)
+		if f := iwaFind(iwaParse(doc)); len(f) == 0 {
+			t.Errorf("planted line without > in a quoted fence not reported: %s", line)
+		}
+	}
+	// A closing ``` without > still closes a quoted fence.
+	closeNoQuote := strings.Replace(good, "> (umask 077; cat > secrets/db_password)\n> ```\n", "> (umask 077; cat > secrets/db_password)\n```\n", 1)
+	if f := iwaFind(iwaParse(closeNoQuote)); len(f) != 0 {
+		t.Errorf("a closing ``` without > must close the quoted fence: %+v", f)
 	}
 	// A fence is read as shell whatever its info string says, except ```text (the
 	// prompt): a zsh, Bash or shell-session fence must not hide a read.
