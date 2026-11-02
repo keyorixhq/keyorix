@@ -35,10 +35,10 @@ Served at: server `GET /metrics` (unauthenticated; keep inside your perimeter)
 | `keyorix_notify_deliveries_total` | counter | `channel`, `outcome` | Notification deliveries by channel and terminal outcome (delivered\|failed\|dropped). |
 | `keyorix_notify_delivery_retries_total` | counter | `channel` | Notification deliveries retried after a transient failure, by channel. |
 | `keyorix_rate_limit_rejections_total` | counter | `limiter` | Requests refused by a rate limiter (HTTP 429 / gRPC ResourceExhausted), by limiter (principal\|token_auth_failure\|grpc_principal\|grpc_token_auth_failure). |
-| `keyorix_role_permission_generation_tamper_total` | counter | - | Times the role-permission generation triggers were found changed (replaced function, re-created or re-enabled trigger) and every replica's permission cache was invalidated. |
+| `keyorix_role_permission_generation_tamper_total` | counter | `reason` | Times the role-permission generation triggers or the system_metadata row they write were found changed and every replica's permission cache was invalidated. reason: tamper (changed outside a release; restored) or newer_definition (a newer release's definition during a rolling upgrade; left in place). |
 | `keyorix_scheduler_run_duration_seconds` | histogram | `scheduler` | Duration of scheduler ticks that actually ran (success or failure), by scheduler name. |
 | `keyorix_scheduler_runs_total` | counter | `scheduler`, `outcome` | Background scheduler ticks, by scheduler name and outcome (success\|failure\|skipped). |
-| `keyorix_secret_node_cache_epoch_tamper_total` | counter | - | Times the secret_nodes cache-epoch trigger was found changed (replaced function, re-created or re-enabled trigger) and every replica's secret metadata cache was invalidated. |
+| `keyorix_secret_node_cache_epoch_tamper_total` | counter | `reason` | Times the secret_nodes cache-epoch trigger was found changed and every replica's secret metadata cache was invalidated. reason: tamper (changed outside a release; restored) or newer_definition (a newer release's definition during a rolling upgrade; left in place). |
 | `keyorix_siem_forward_retries_total` | counter | - | SIEM audit-event forwards retried after a transient failure. |
 | `keyorix_siem_forwards_total` | counter | `outcome` | SIEM audit-event forwards by terminal outcome (delivered\|failed\|dropped\|spool_corrupt). |
 | `keyorix_single_writer_enabled` | gauge | - | 1 when storage.database.single_writer is on for this process, else 0. |

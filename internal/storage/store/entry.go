@@ -307,6 +307,10 @@ type LocalStorage struct {
 	// check (StartTriggerIntegrityCheck), cancelled and
 	// awaited by Close. nil when none was started.
 	rolePermIntegrity *backgroundJob
+	// singleWriter is storage.database.single_writer (SetSingleWriter): only
+	// then does StartTriggerIntegrityCheck allow the fence's triggers on
+	// system_metadata.
+	singleWriter bool
 }
 
 // backgroundJob is a goroutine Close cancels and waits for.
