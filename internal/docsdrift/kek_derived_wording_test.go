@@ -66,9 +66,6 @@ var wordingExemptions = map[string]string{
 	// Generated from cli/cmd/compliance.go:354-355 (TestCLIReferenceIsFresh); the
 	// CLI lane fixes the source and regenerates. Remove when that lands.
 	"docs/cli-reference.md": "generated from cli/cmd/compliance.go; the CLI lane regenerates it",
-	// A startup comment outside LEAK-WORDING-TAILS-1's file list. Remove when it
-	// says KEK (the key is encSvc.AuditCheckpointKey(), KEK-derived).
-	"server/wire_encryption.go": "comment at line ~26 still says DEK; outside the lane's file list",
 }
 
 // wordingFindings returns one message per unit that calls a checkpoint or
