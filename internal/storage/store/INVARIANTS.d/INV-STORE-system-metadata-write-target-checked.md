@@ -27,7 +27,11 @@
   failed reading too; only a cancelled tick (shutdown) changes nothing, and the reading gets half of
   the tick's remaining time so the invalidation keeps the rest (PR #3841 review B1 of bc3739478: the
   server's role can make the reading slow with a huge WHEN clause on the anchor-named trigger, and
-  every tick that hit its deadline changed nothing). The reading, the installers' reading, the write-target
+  every tick that hit its deadline changed nothing). The invalidation before a repair writes through
+  `system_metadata`, so it fires what the repair is about to drop: it gets half of the tick's
+  remaining time, enforced by the server with `statement_timeout` (`preRepairInvalidate`), so the
+  repair keeps the rest (PR #3841 review N1 of bc3739478: a planted object that made that write slow
+  used up every tick, and the state was reported but never repaired). The reading, the installers' reading, the write-target
   repair's reads and the installers' definition reads run under `readCatalog`: search_path
   `pg_catalog, pg_temp`, with the server's schema bound and every table named through
   `catalogRelSQL`, so no operator, function or type outside pg_catalog takes part and the deparsed
@@ -45,7 +49,9 @@
   TTL, so a direct-SQL revocation kept authorizing from warm caches. Residual risk, stated: a
   `system_metadata` that is not a plain table is reported every tick but not repaired; a release
   that needs its own trigger, rule or policy on `system_metadata` must first ship a check that
-  allows it; a superuser below SQL is not detected; SQLite is not checked. Guard: (pg-gated)
+  allows it; a planted trigger function that traps the cancellation (`query_canceled`) outlasts
+  that `statement_timeout`, and is then reported every tick but not repaired; a superuser below SQL
+  is not detected; SQLite is not checked. Guard: (pg-gated)
   `TestRolePermGenerationIntegrity_SystemMetadataBeforeUpdateTriggerIsRemovedAndFlushed_Postgres`,
   `_SystemMetadataRuleIsRemovedAndFlushed_Postgres`,
   `_SystemMetadataForcedRowSecurityIsTurnedOffAndFlushed_Postgres`,
@@ -68,6 +74,8 @@
   red on the PR's c9506de59 head by behaviour),
   `TestRolePermGenerationIntegrity_ReadingPastTickDeadlineFailsClosed_Postgres` and
   `TestSecretNodeCacheEpochIntegrity_ReadingPastTickDeadlineFailsClosed_Postgres` (red on the PR's
-  bc3739478 head by behaviour), `TestRolePermGenerationIntegrity_CancelledTickChangesNothing_Postgres`;
+  bc3739478 head by behaviour), `TestRolePermGenerationIntegrity_CancelledTickChangesNothing_Postgres`,
+  `TestRolePermGenerationIntegrity_SlowPlantedTriggerDoesNotStarveTheRepair_Postgres` (red on the
+  PR's cec5615b4 head by behaviour);
   `TestRolePermGenerationTarget_FenceAllowedOnlyInSingleWriterMode`
   (default CI); `TestFenceGuard_MatchesTheStore` (internal/solewriter, default CI).

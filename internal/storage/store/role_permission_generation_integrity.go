@@ -965,6 +965,32 @@ func (c *triggerIntegrityChecker) readTickIntegrity(ctx context.Context) (trigge
 	return readTriggerIntegrity(ctx, c.ls.db, c.target)
 }
 
+// preRepairInvalidate is check's invalidation before a repair. It writes
+// through system_metadata, so it fires what the repair is about to drop, and
+// a planted object there can make it slow: it gets half of the tick's
+// remaining time, so the repair keeps the other half (REVIEW-3841-DEEP-2 N1).
+// The server enforces the budget (statement_timeout ends the statement and
+// releases its locks before the repair's DROP TRIGGER queues for them); a
+// cancelled context only drops the connection while the statement runs on.
+func (c *triggerIntegrityChecker) preRepairInvalidate(ctx context.Context) error {
+	var budget time.Duration
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = time.Until(deadline) / 2
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
+	}
+	return c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if budget > 0 {
+			// 0 would turn the timeout off.
+			if err := tx.Exec(fmt.Sprintf("SET LOCAL statement_timeout = %d", max(budget.Milliseconds(), 1))).Error; err != nil {
+				return err
+			}
+		}
+		return c.target.invalidate(ctx, tx)
+	})
+}
+
 // integrityKey identifies a reading, problem included.
 func integrityKey(st triggerIntegrityState) string { return st.problem + "\x00" + st.version }
 
@@ -1004,18 +1030,24 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 	// The invalidation commits on its own first: it never waits on, or rolls
 	// back with, a repair that cannot finish.
 	flushed := true
-	if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return t.invalidate(ctx, tx)
-	}); err != nil {
+	var ierr error
+	if st.problem != "" {
+		ierr = c.preRepairInvalidate(ctx)
+	} else {
+		ierr = c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return t.invalidate(ctx, tx)
+		})
+	}
+	if ierr != nil {
 		if st.problem == "" {
 			// pending stays set and the baseline is left alone: the next tick
 			// invalidates again, never adopts the current reading.
-			return false, fmt.Errorf("invalidate the %s: %w", t.cache, err)
+			return false, fmt.Errorf("invalidate the %s: %w", t.cache, ierr)
 		}
 		// What the repair restores can be what made this fail (a rule or
 		// forced row level security on system_metadata): repair anyway, and
 		// the repair's own invalidation is the one that counts.
-		c.logf("%s: the invalidation before the repair failed (%v); the repair invalidates again", t.what, err)
+		c.logf("%s: the invalidation before the repair failed (%v); the repair invalidates again", t.what, ierr)
 		flushed = false
 	}
 	if st.problem != "" {
