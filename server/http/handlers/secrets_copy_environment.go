@@ -47,6 +47,9 @@ func (h *SecretHandler) CopyEnvironmentSecrets(w http.ResponseWriter, r *http.Re
 
 	copied, skipped, err := h.coreService.CopyEnvironmentSecrets(r.Context(), uint(projectID), uint(sourceEnvID), reqBody.TargetEnvironmentID, userCtx.Username, userCtx.UserID, clientIP(r), r.Header.Get("User-Agent"))
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		if strings.Contains(msg, "must ") || strings.Contains(msg, "required") || strings.Contains(msg, "belong") || strings.Contains(msg, "validation") {

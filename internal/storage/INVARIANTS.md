@@ -160,7 +160,7 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
 - **INV-STORAGE-22** Opening a missing SQLite path should refuse rather than silently create an
   empty DB. Why: ADR-095 "Task 3". Built as the OPT-IN `database.require_existing_path`
   (#2504): `createLocalStorage` resolves the configured path through `localStorageDBFile` and
-  refuses when the file is absent, naming `keyorix system init --database` as the deliberate way
+  refuses when the file is absent, naming `keyorix-server admin init` as the deliberate way
   to create one. In-memory DSNs are exempt by construction (no file to pre-exist); the Postgres
   backend is out of scope. Guard: `factory_local_storage_missing_path_log_test.go`
   (`TestCreateLocalStorage_RequireExistingPath_RefusesMissing` — asserts the EFFECT, that a
@@ -171,7 +171,7 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   `docker-compose.yml`) creates the file before the server starts, so defaulting it on would
   break every containerized first boot. Flipping the default is the deliberate sign-off ADR-095
   Task 3 asks for and is NOT settled here — it needs first boot to run
-  `keyorix system init --database` (or equivalent) first.
+  `keyorix-server admin init` (or equivalent) first.
 - **INV-STORAGE-23** Two processes migrating the same SQLite file are serialized by SQLite
   itself: `withMigrationLock` runs the whole migration inside one `BEGIN EXCLUSIVE` transaction
   on a dedicated connection (`withSQLiteInDBMigrationLock`), so it holds however each process

@@ -28,6 +28,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 )
 
 var swSchemaSeq atomic.Int64
@@ -212,24 +213,6 @@ func TestFence_RefusesEveryForeignWriteWhileHolderLives(t *testing.T) {
 	require.NoError(t, w.foreign.Exec("INSERT INTO system_metadata (key, value, updated_at) VALUES ('sw-unrelated', 'x', now())").Error,
 		"system_metadata rows other than the generation are not fenced")
 
-	err = w.foreign.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
-			return err
-		}
-		return tx.Exec("UPDATE machine_identity_credentials SET revoked = true WHERE id = ?", w.credID).Error
-	})
-	var super bool
-	require.NoError(t, w.foreign.Raw("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").Scan(&super).Error)
-	if super {
-		requireFenced(t, err, "replica-role session")
-	} else {
-		// Setting session_replication_role needs a superuser (or a SET grant
-		// on the parameter): this role cannot reach replica mode at all.
-		require.ErrorContains(t, err, `permission denied to set parameter "session_replication_role"`)
-		t.Log("replica-role case: the test role is not a superuser, so the fence under replica mode is pending a superuser Postgres (CI's service role is one)")
-	}
-	require.False(t, w.revoked(), "the replica-role write must not have been applied")
-
 	// A session on another search_path writing schema-qualified names meets
 	// the same fence (the holder is looked up for the TABLE's schema).
 	other := w0open(t, os.Getenv("KEYORIX_TEST_PG_DSN"))
@@ -251,6 +234,24 @@ func TestFence_RefusesEveryForeignWriteWhileHolderLives(t *testing.T) {
 	require.Greater(t, w.epoch(w.foreign), e0)
 	require.Eventually(t, func() bool { return g.Epoch() > e0 }, 2*time.Second, 20*time.Millisecond, "the poller must see the new epoch")
 	_ = ctx
+}
+
+// TestFence_RefusesReplicaRoleSessionWhileHolderLives: the fence also holds
+// for a writer in session_replication_role = replica (what pg_restore and
+// logical replication run with). Needs a role allowed to set that parameter.
+func TestFence_RefusesReplicaRoleSessionWhileHolderLives(t *testing.T) {
+	w := newSWWorld(t)
+	pgpriv.RequireReplicationRolePrivilege(t, w.foreign)
+	w.start(Options{})
+
+	err := w.foreign.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
+			return err
+		}
+		return tx.Exec("UPDATE machine_identity_credentials SET revoked = true WHERE id = ?", w.credID).Error
+	})
+	requireFenced(t, err, "replica-role session")
+	require.False(t, w.revoked(), "the replica-role write must not have been applied")
 }
 
 // TestFence_OpenWithoutALiveHolder: a stopped (or crashed) server never

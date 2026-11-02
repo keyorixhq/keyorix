@@ -192,6 +192,24 @@ fix is to correct the value. **In place:** yes.
 | `keyorix has no SAML assertion-replay cache` | a provider sets `insecure_allow_idp_initiated_saml` (or `allow_idp_initiated`); IdP-initiated SAML is not supported, remove the key |
 | `refusing cross-host redirect to` | OIDC discovery was redirected to another host (a scheme downgrade is refused the same way); configure the issuer URL that serves its own discovery document |
 
+### Webhook signing secret too short under `GODEBUG=fips140=only`
+
+Real output (`GODEBUG=fips140=only`, `notifications.webhook.signing_secret` of 12 bytes):
+
+```
+Configuration is invalid: notifications.webhook.signing_secret (or KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET) is 12 bytes; under GODEBUG=fips140=only it must be at least 14 bytes (112 bits)
+```
+
+**Match:** `under GODEBUG=fips140=only it must be at least`
+
+**Cause.** Go's FIPS 140-only mode refuses an HMAC key shorter than 112 bits, and the
+webhook channel signs every payload with HMAC-SHA256 under this secret, so no signed
+delivery could be sent. Only checked when the process runs with `GODEBUG=fips140=only` and
+the webhook channel is enabled; outside that mode any length is accepted, as before.
+**Fix.** Set a signing secret of at least 14 bytes (a random 32-byte value is better) in
+`KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET` and the same value on the receiver, then restart.
+**In place:** yes.
+
 ### Two sources for one secret
 
 Real output (a master passphrase given both as a variable and a file):
@@ -489,7 +507,13 @@ interrupted before it replaced the DEK: start with the **previous** passphrase, 
 `keys/dek.key` in the config `admin init` writes), or the DEK or the salt
 (`storage.encryption.salt_path`, `keys/kek.salt`) is damaged or from a different install, or
 a `rotate-kek` / `migrate-provider` left the DEK wrapped under a KEK the configuration does
-not produce yet (the extra lines above). The message names the source the
+not produce yet (the extra lines above). **Key-file state:** start-up checks the key set
+*before* it tries the passphrase, so a missing or mixed file is refused earlier with
+`key file consistency: ...` (see [Key file set incomplete or mixed](#key-file-set-incomplete-or-mixed--from-code))
+or with the file-permission audit ([A key file is missing on a later start](#a-key-file-is-missing-on-a-later-start)),
+not with this message. Reaching this one means `keys/dek.key` and `keys/kek.salt` are both present and
+consistent with `keyset.manifest.json` (or the manifest is absent): the passphrase, or a
+leftover of an interrupted key operation, is the remaining suspect. The message names the source the
 passphrase was read from (`--passphrase-fd N`, `--passphrase-file "<path>"`,
 `--passphrase-stdin`, `KEYORIX_MASTER_PASSWORD_FILE="<path>"` or `KEYORIX_MASTER_PASSWORD`; a
 relative path is not printed, the message says `a relative path, not shown: it may be the secret itself`):
@@ -1027,6 +1051,26 @@ storage.database.insecure_audit_skip_reads: true is refused while the compliance
 
 The list of compliance profiles is empty in this release, so the refusal cannot occur yet.
 Listed so it is not a surprise when the first profile ships.
+
+### FIPS 140-only boot self-test failed — from code
+
+```
+Refusing to start: fips140 self-test failed on <path>: <cause>
+```
+
+**Match:** `fips140 self-test failed on`
+
+**Cause.** With `GODEBUG=fips140=only`, the server first runs each encryption path it uses
+once with a throwaway key: DEK wrap/unwrap, secret encrypt/decrypt, PBKDF2 KEK derivation,
+and the evidence-signing, audit-checkpoint and backup-manifest keys with an HMAC under each.
+`<path>` names the one that failed and `<cause>` says why; a refusal by the Go FIPS module
+reads `panic: crypto/...: ... is not allowed in FIPS 140-only mode`. This runs before any
+key file is read, so nothing on disk was touched. Outside that mode the self-test does not
+run, and the log says `fips140 enforced: no (self-test not run)`.
+**Fix.** Not a configuration problem: this build cannot run that path in FIPS 140-only
+mode. Run without `GODEBUG=fips140=only`, or use a build where the line logged at start is
+`fips140 enforced: yes, self-test passed (N paths)`, and report the message as a bug.
+**In place:** yes (nothing was started).
 
 ### Weak SCIM token
 

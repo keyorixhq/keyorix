@@ -209,16 +209,10 @@ func (s *DynamicSecretGRPCService) ListLeases(ctx context.Context, req *pb.ListL
 func (s *DynamicSecretGRPCService) loadLeaseScoped(ctx context.Context, user *interceptors.UserContext, leaseID, perm string) (*models.DynamicSecretLease, error) {
 	lease, err := s.core.GetDynamicSecretLease(ctx, leaseID)
 	if err != nil {
-		aerr := authorizeScopedTarget(ctx, s.core, user, perm, err, core.Scope{}, "lease not found")
-		// A storage fault is not "lease not found": the credential may still be live, so
-		// a caller who holds perm globally (the only ones authorizeScopedTarget answers
-		// NotFound) is told to retry. Everyone else keeps the uniform PermissionDenied,
-		// which the lease scope being unknown makes the only answer that is not an
-		// existence oracle.
-		if serr, ok := storageUnavailableStatus(core.ReadFault(err)); ok && status.Code(aerr) == codes.NotFound {
-			return nil, serr
-		}
-		return nil, aerr
+		// A storage fault is not "lease not found": authorizeScopedTarget tells a
+		// global holder to retry (Unavailable) and keeps everyone else's uniform
+		// PermissionDenied.
+		return nil, authorizeScopedTarget(ctx, s.core, user, perm, err, core.Scope{}, "lease not found")
 	}
 	scope := core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}
 	if err := authorizeScopedTarget(ctx, s.core, user, perm, nil, scope, ""); err != nil {

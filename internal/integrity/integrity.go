@@ -31,6 +31,10 @@ type State string
 const (
 	// StateOK: the source was read and shows the protective state.
 	StateOK State = "ok"
+	// StateOKQualified: the source was read and looks protective, but a caveat
+	// (Line.Qualifier) means the claim is not established. It renders as
+	// "ok (<qualifier>)" and is NOT StateOK, so a tier rung never counts it.
+	StateOKQualified State = "ok (qualified)"
 	// StateDegraded: the source was read and shows the protection is absent.
 	StateDegraded State = "degraded"
 	// StateUnknown: the source could not be read or understood. Never "ok".
@@ -57,11 +61,18 @@ type Line struct {
 	ID     string
 	State  State
 	Detail string
+	// Qualifier is the caveat shown for StateOKQualified, e.g.
+	// "signature not verified".
+	Qualifier string
 }
 
 // String renders the line. The label is part of the line, not a footnote.
 func (l Line) String() string {
-	return fmt.Sprintf("integrity/%s: %s — %s [%s; see %s]", l.ID, l.State, l.Detail, Label, DocsPath)
+	state := string(l.State)
+	if l.State == StateOKQualified {
+		state = "ok (" + l.Qualifier + ")"
+	}
+	return fmt.Sprintf("integrity/%s: %s — %s [%s; see %s]", l.ID, state, l.Detail, Label, DocsPath)
 }
 
 // TPMState is what the TPM key provider's configuration exposes. It is read,
@@ -73,6 +84,10 @@ type TPMState struct {
 	BlobPresent bool
 	// BlobErr: the blob could not be examined (anything but not-exist).
 	BlobErr error
+	// WeakerFallback is the type of the first configured key_provider fallback
+	// that is weaker than a TPM (empty when there is none). With one, the KEK is
+	// also recoverable without the TPM, so the seal is not the only way in.
+	WeakerFallback string
 }
 
 // FSVerity reports whether fs-verity is enabled on a file. It is an interface

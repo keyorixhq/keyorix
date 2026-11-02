@@ -24,7 +24,7 @@ const apiSmokeNoMFAReason = "route-coverage walk uses one plain-password admin s
 // explicitly skipped-with-reason, and verify the audit hash chain at the end.
 func TestAPISmoke_SQLite(t *testing.T) {
 	serverBin, cliBin := harness.BuildBinaries(t)
-	backend := harness.DBBackend{Name: "sqlite", NoMFAReason: apiSmokeNoMFAReason} // storage block: admin init's own default (configs/keyorix.yaml.tpl)
+	backend := harness.DBBackend{Name: "sqlite", NoMFAReason: apiSmokeNoMFAReason, EnableSCIM: true} // storage block: admin init's own default (configs/keyorix.yaml.tpl)
 	runAPISmoke(t, serverBin, cliBin, backend)
 }
 
@@ -37,6 +37,13 @@ func TestAPISmoke_Postgres(t *testing.T) {
 	if dsn == "" {
 		t.Skip("KEYORIX_TEST_PG_DSN not set -- skipping the PostgreSQL leg (see docker command in scripts/e2e's package doc / docs/TESTING_GUIDE.md)")
 	}
+	serverBin, cliBin := harness.BuildBinaries(t)
+	runAPISmoke(t, serverBin, cliBin, postgresSmokeBackend(dsn))
+}
+
+// postgresSmokeBackend is the PostgreSQL DBBackend every smoke leg shares, built from the
+// KEYORIX_TEST_PG_DSN libpq DSN.
+func postgresSmokeBackend(dsn string) harness.DBBackend {
 	// Password precedence: KEYORIX_TEST_PG_PASSWORD, then the DSN's own
 	// password= field (what CI's e2e-nightly sets), then the local docker
 	// default. The DSN fallback matters: without it the nightly job sent
@@ -49,8 +56,7 @@ func TestAPISmoke_Postgres(t *testing.T) {
 	if dbPassword == "" {
 		dbPassword = "keyorix-e2e-smoke"
 	}
-	serverBin, cliBin := harness.BuildBinaries(t)
-	backend := harness.DBBackend{
+	return harness.DBBackend{
 		Name: "postgres",
 		// Field-by-field form (configs/dev.yaml's own shape) rather than a
 		// bare dsn: line, so KEYORIX_DB_PASSWORD stays out of the config
@@ -59,11 +65,11 @@ func TestAPISmoke_Postgres(t *testing.T) {
 		ConfigExtra: fmt.Sprintf("storage:\n  type: postgres\n  database:\n%s\n  encryption:\n    enabled: true\n    dek_path: keys/dek.key\n    salt_path: keys/kek.salt\n", pgDatabaseYAML(dsn)),
 		ExtraEnv:    []string{"KEYORIX_DB_PASSWORD=" + dbPassword},
 		NoMFAReason: apiSmokeNoMFAReason,
+		EnableSCIM:  true,
 		VerifyAuditFlag: func(_ string) []string {
 			return []string{"--pg-dsn", dsn}
 		},
 	}
-	runAPISmoke(t, serverBin, cliBin, backend)
 }
 
 // pgDatabaseYAML renders the storage.database.* block from a libpq-style DSN
@@ -131,6 +137,7 @@ func runAPISmokeAgainstServer(t *testing.T, srv *harness.Server, cliBin string, 
 	ctx := &smokeCtx{
 		t: t, c: c, cli: cliBin, cliEnv: srv.CLIEnv(),
 		adminUsername: adminUsername, adminPassword: adminPassword,
+		scimToken: srv.SCIMToken,
 	}
 
 	groupAuthProfile(ctx)
@@ -158,6 +165,7 @@ func runAPISmokeAgainstServer(t *testing.T, srv *harness.Server, cliBin string, 
 	groupRiskExceptions(ctx)
 	groupLegalHold(ctx)
 	groupInvitations(ctx)
+	groupSCIM(ctx)
 	groupAdminAndSystem(ctx)
 
 	// POST /auth/refresh and /auth/logout run last, deliberately outside any
@@ -209,6 +217,10 @@ type smokeCtx struct {
 	// hardcoded literal so it works against either.
 	adminUsername string
 	adminPassword string
+
+	// scimToken is the SCIM bearer token the server under test was started with
+	// (harness.Server.SCIMToken), for groupSCIM. A live credential: header only.
+	scimToken string
 
 	adminUserID   uint
 	projectID     uint

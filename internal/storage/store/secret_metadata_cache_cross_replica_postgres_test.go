@@ -25,6 +25,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
@@ -100,10 +101,10 @@ func TestCrossReplica_SecretMetadataCache_UpdateVisibleOnNextRead(t *testing.T) 
 	require.Equal(t, "", beforeB.Description)
 
 	// Replica A commits a write.
-	before.Description = "set by replica A"
-	before.UpdatedAt = time.Now()
-	_, err = replicaA.UpdateSecret(ctx, before)
+	desc, now := "set by replica A", time.Now()
+	matched, err := replicaA.UpdateSecretFields(ctx, before.ID, storage.SecretFieldUpdate{Description: &desc, UpdatedAt: &now})
 	require.NoError(t, err)
+	require.True(t, matched)
 
 	// Replica B's VERY NEXT read must see it — not after any delay, not
 	// after any explicit cross-process invalidation call (there is none;

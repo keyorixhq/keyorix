@@ -135,7 +135,7 @@ func TestAssignGroupRole_CreateFails(t *testing.T) {
 func TestDeleteExpiredRoleGrants_GroupRowsFindFails(t *testing.T) {
 	t.Parallel()
 	ls := newPartialSecretsDB(t, &models.UserRole{})
-	_, err := ls.DeleteExpiredRoleGrants(context.Background(), time.Now())
+	_, err := ls.DeleteExpiredRoleGrants(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -149,7 +149,7 @@ func TestDeleteExpiredRoleGrants_UserRoleDeleteFails(t *testing.T) {
 	// Both Finds (userRows non-empty, groupRows empty) succeed first.
 	dropTableAfterQueries(t, ls.db, 2, "user_roles")
 
-	_, err := ls.DeleteExpiredRoleGrants(ctx, time.Now())
+	_, err := ls.DeleteExpiredRoleGrants(ctx, time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -164,6 +164,6 @@ func TestDeleteExpiredRoleGrants_GroupRoleDeleteFails(t *testing.T) {
 	// skipped-when-empty UserRole delete never runs; only GroupRole delete does.
 	dropTableAfterQueries(t, ls.db, 2, "group_roles")
 
-	_, err := ls.DeleteExpiredRoleGrants(ctx, time.Now())
+	_, err := ls.DeleteExpiredRoleGrants(ctx, time.Now().UTC())
 	require.Error(t, err)
 }

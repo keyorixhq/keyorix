@@ -49,7 +49,8 @@ func (ls *LocalStorage) SaveStatsSnapshot(ctx context.Context, snapshot *models.
 // The 20-hour window ensures "yesterday's" snapshot is returned without clock-drift issues.
 func (ls *LocalStorage) GetPreviousStatsSnapshot(ctx context.Context, userID uint) (*models.StatsSnapshot, error) {
 	var snapshot models.StatsSnapshot
-	cutoff := time.Now().Add(-20 * time.Hour)
+	// UTC like created_at, which GORM's NowFunc stamps (SQLite compares the text).
+	cutoff := time.Now().UTC().Add(-20 * time.Hour)
 	err := ls.db.WithContext(ctx).
 		Where("user_id = ? AND created_at < ?", userID, cutoff).
 		Order("created_at DESC").

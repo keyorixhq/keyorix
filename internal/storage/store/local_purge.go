@@ -18,14 +18,32 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// purgeDeletedBefore runs its single DELETE inside gorm's Transaction so that, when
+// the caller is already inside a transaction (core.PurgeExpiredSoftDeletes runs all
+// four purge steps in one, for the legal-hold check), the statement is a SAVEPOINT.
+// A bare statement would, on PostgreSQL, abort the caller's whole transaction when it
+// fails: every later step then fails with "current transaction is aborted" and the
+// COMMIT becomes a ROLLBACK, losing the steps that had succeeded. With the savepoint a
+// failed delete rolls back to it and the outer transaction stays usable. Outside a
+// transaction it is simply a one-statement transaction. Like the other Purge* steps it
+// returns 0 with the error on failure.
 func (ls *LocalStorage) purgeDeletedBefore(ctx context.Context, model any, before time.Time) (int64, error) {
-	result := ls.db.WithContext(ctx).Unscoped().
-		Where(sqlWhereDeletedBefore, before).
-		Delete(model)
-	if result.Error != nil {
-		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	before = before.UTC() // deleted_at is UTC text on SQLite; a host-zone bound mis-orders (#3914)
+	var purged int64
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Unscoped().
+			Where(sqlWhereDeletedBefore, before).
+			Delete(model)
+		if result.Error != nil {
+			return result.Error
+		}
+		purged = result.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	return result.RowsAffected, nil
+	return purged, nil
 }
 
 // PurgeDeletedUsersBefore hard-deletes soft-deleted users past the retention window,
@@ -48,6 +66,7 @@ func (ls *LocalStorage) purgeDeletedBefore(ctx context.Context, model any, befor
 // keyed on id — not just the ID list — so a user a restore raced out from under the
 // purge is left alone.
 func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
+	before = before.UTC() // deleted_at is UTC text on SQLite; a host-zone bound mis-orders (#3914)
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint
@@ -136,6 +155,7 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 // id — not just the ID list — so a project a restore raced out from under the purge is
 // left alone.
 func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error) {
+	before = before.UTC() // deleted_at is UTC text on SQLite; a host-zone bound mis-orders (#3914)
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint
@@ -189,7 +209,8 @@ func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before t
 // issues a single DELETE ... WHERE deleted_at IS NOT NULL AND deleted_at < before
 // statement — there is no separate SELECT and no stale ID list for a concurrent restore
 // to race against, so the predicate is necessarily evaluated against live row state at
-// delete time already.
+// delete time already. That statement runs in its own (nested: savepoint) transaction
+// like every other Purge* step, so its failure cannot abort a caller's transaction.
 func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error) {
 	return ls.purgeDeletedBefore(ctx, &models.Environment{}, before)
 }
@@ -497,6 +518,7 @@ func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, bef
 // -- see local_retention_test.go's
 // TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate.
 func (ls *LocalStorage) pluckExpiredActiveBreakGlassIDs(ctx context.Context, before time.Time) ([]uint, error) {
+	before = before.UTC() // expires_at is UTC text on SQLite; a host-zone bound mis-orders (#3914)
 	var ids []uint
 	if err := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
 		Where("state = ? AND expires_at IS NOT NULL AND expires_at < ?", breakGlassActiveState, before).

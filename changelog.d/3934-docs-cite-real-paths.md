@@ -1,0 +1,3 @@
+### Documentation
+- **Docs no longer cite files and commands that do not exist.** `migrations/README.md` pointed at the deleted `internal/cli/migrate/migrate.go` (the user-to-machine migration is `keyorix machine migrate-from-user`); two other pages named `deploy/docker` and `internal/cli/bundle`. New report-only guards `TestDocsCitedRepoPathsExist` (backticked repo paths) and `TestDocsOnlyUseExistingKeyorixCommands` (`keyorix` / `keyorix-server admin` commands in QUICK_START, SELF_HOSTING and `docs/operator/`) keep them true.
+- **First login after `mfa activate`.** The 60-second quick start and the pilot install guide now say an authenticator code works once, so the next `keyorix login` needs the app's next code (QUICK_START already did).

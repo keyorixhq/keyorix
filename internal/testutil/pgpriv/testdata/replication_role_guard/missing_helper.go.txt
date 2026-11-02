@@ -1,0 +1,9 @@
+package fixture
+
+import "testing"
+
+// Red fixture: two statements that set the role, no RequireReplicationRolePrivilege call.
+func TestSetsTheRole(t *testing.T) {
+	_ = db.Exec("SET LOCAL session_replication_role = replica")
+	_ = db.Exec("ALTER DATABASE x SET session_replication_role = replica")
+}

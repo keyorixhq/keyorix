@@ -351,7 +351,7 @@ func TestDeleteExpiredShareRecords_S29_NoneExpired(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	removed, err := ls.DeleteExpiredShareRecords(ctx, time.Now())
+	removed, err := ls.DeleteExpiredShareRecords(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Empty(t, removed)
 }
@@ -369,7 +369,7 @@ func TestDeleteExpiredShareRecords_S29_RemovesExpired(t *testing.T) {
 		IsGroup: false, Permission: "read", ExpiresAt: &past,
 	}).Error)
 
-	removed, err := ls.DeleteExpiredShareRecords(ctx, time.Now())
+	removed, err := ls.DeleteExpiredShareRecords(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Len(t, removed, 1)
 }

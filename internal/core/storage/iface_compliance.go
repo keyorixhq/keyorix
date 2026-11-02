@@ -68,7 +68,6 @@ type ComplianceStore interface {
 	CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error)
 	GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error)
 	ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error)
-	UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error
 	// ReconcileExpiredBreakGlassActivation transitions userID's own TTL-lapsed
 	// 'active' row in projectID to 'expired' (watermark-clamped), if one
 	// exists. The one place a TTL-lapse transition is ever persisted -- called

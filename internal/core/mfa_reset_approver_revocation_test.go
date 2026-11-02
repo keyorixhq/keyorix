@@ -30,7 +30,7 @@ func TestMFAReset_ApproverChangedInsideApproval_Refused(t *testing.T) {
 				return err
 			}
 			u.IsActive = false
-			_, err = tx.UpdateUser(context.Background(), u)
+			_, err = tx.UpdateUserIfActiveStateMatches(context.Background(), u, true)
 			return err
 		}, ErrMFAResetAdminRequired},
 		{"lost the admin role", func(f *mfaResetFixture, role uint, tx storage.Storage) error {

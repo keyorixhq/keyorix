@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/integrity"
 )
 
@@ -48,5 +49,25 @@ func integrityEnv(cfg *config.Config) integrity.Env {
 			tpm.BlobErr = err
 		}
 	}
+	if tpm.Configured {
+		tpm.WeakerFallback = weakerFallback(kp.Fallbacks)
+	}
 	return integrity.Env{TPM: tpm}
+}
+
+// weakerFallback names the first fallback whose provider tier is below a TPM's.
+// An empty type is the password provider (buildSingleProvider); an unrecognised
+// type sorts weakest, so it counts as weaker (fail closed).
+func weakerFallback(fallbacks []config.KeyProviderConfig) string {
+	hw := crypto.ProviderTierOf("tpm")
+	for _, fb := range fallbacks {
+		typ := fb.Type
+		if typ == "" {
+			typ = "password"
+		}
+		if crypto.ProviderTierOf(typ) < hw {
+			return typ
+		}
+	}
+	return ""
 }

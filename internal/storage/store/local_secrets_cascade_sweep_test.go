@@ -275,6 +275,14 @@ func TestRestoreProject_FinalProjectUpdateFails(t *testing.T) {
 	t.Parallel()
 	ls := newPartialSecretsDB(t, &models.Project{}, &models.Environment{}, &models.SecretNode{})
 	id := newSoftDeletedProject(t, ls, "restore-proj-fail")
+	// RestoreProject updates only the children the cascade deleted (it selects them first),
+	// so seed one of each for the two UPDATEs below to run.
+	env := &models.Environment{Name: "prod", ProjectID: id}
+	require.NoError(t, ls.db.Create(env).Error)
+	sec := &models.SecretNode{ProjectID: id, EnvironmentID: env.ID, Name: "s", IsSecret: true, Type: "text", Status: "active"}
+	require.NoError(t, ls.db.Create(sec).Error)
+	require.NoError(t, ls.db.Exec("UPDATE environments SET deleted_at = ? WHERE id = ?", time.Now().UTC(), env.ID).Error)
+	require.NoError(t, ls.db.Exec("UPDATE secret_nodes SET deleted_at = ? WHERE id = ?", time.Now().UTC(), sec.ID).Error)
 
 	// envResult(1), secResult(2) succeed; drop `projects` before the final update(3).
 	dropTableAfterUpdates(t, ls.db, 2, "projects")

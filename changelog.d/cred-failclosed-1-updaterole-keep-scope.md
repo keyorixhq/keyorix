@@ -1,0 +1,2 @@
+### Security
+- **A role description edit can no longer undo a concurrent scope narrowing (#3909).** On PostgreSQL with more than one replica, `PUT /api/v1/roles/{id}` (and gRPC `UpdateRole`) without an `assignable_scope` wrote back the scope it had read, so a narrowing (for example `any` to `project`) committed by another administrator in between was reverted and the role could again be granted at the wider scope. The keep-scope update now leaves the column untouched. SQLite installs were not affected.

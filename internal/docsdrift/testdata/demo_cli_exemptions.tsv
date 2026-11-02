@@ -1,0 +1,6 @@
+# Exemptions for TestDemoScriptsOnlyUseDocumentedKeyorixCommands.
+# One row per exemption, tab-separated: file, command path, flag, reason.
+# The reason is mandatory. A row that matches no demo line fails the test, so remove it
+# when the line goes away. Prefer fixing the demo or docs/cli-reference.md.
+#
+# demo/example/run.sh	secret list	--legacy-flag	why the flag is real although the reference does not list it

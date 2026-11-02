@@ -51,6 +51,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/packages"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -177,9 +178,13 @@ func TestNoFullStructWriteOfASecretNodeCarriesReadCount(t *testing.T) {
 	// is exactly the failure mode CLAUDE.md calls out — if a refactor moved both
 	// writers out of this package, or the type match silently stopped resolving,
 	// the loop above would report zero violations and look green.
-	require.GreaterOrEqual(t, checked, 2,
-		"expected at least the two known full-struct SecretNode writers (UpdateSecret, TransitionSecretStatus); "+
-			"finding fewer means this guard is no longer looking at anything")
+	//
+	// The floor was 2 while the full-row UpdateSecret existed; deleting that writer
+	// (STORE-UPDATESECRET-RETIRE-1) leaves TransitionSecretStatus as the one known
+	// full-struct SecretNode writer, so the floor is 1 — still non-vacuous.
+	require.GreaterOrEqual(t, checked, 1,
+		"expected at least the known full-struct SecretNode writer (TransitionSecretStatus); "+
+			"finding none means this guard is no longer looking at anything")
 
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -201,10 +206,10 @@ func TestSecretNodeSQLOwnedColumns_AreRealColumnsOwnedByAConditionalWriter(t *te
 	}
 }
 
-// TestUpdateSecret_DoesNotRefundReadsAgainstMaxReads is the behavioural half:
-// the exact interleaving from secretNodeSQLOwnedColumns' doc comment. Red before
-// the Omit (read_count 1, cap re-opened), green after.
-func TestUpdateSecret_DoesNotRefundReadsAgainstMaxReads(t *testing.T) {
+// TestUpdateSecretFields_DoesNotRefundReadsAgainstMaxReads is the behavioural
+// half: the exact interleaving from secretNodeSQLOwnedColumns' doc comment, run
+// through the column-scoped writer that replaced the full-row UpdateSecret.
+func TestUpdateSecretFields_DoesNotRefundReadsAgainstMaxReads(t *testing.T) {
 	ctx := context.Background()
 	ls := newReadCountTestStorage(t)
 	secret := seedReadCountSecret(t, ls, 2)
@@ -224,30 +229,26 @@ func TestUpdateSecret_DoesNotRefundReadsAgainstMaxReads(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, exhausted, "the cap must be exhausted before the edit")
 
-	// The editor now saves an unrelated metadata change from its stale struct.
-	loaded.Description = "an unrelated metadata edit"
-	_, err = ls.UpdateSecret(ctx, loaded)
+	// The editor now saves an unrelated metadata change. UpdateSecretFields names
+	// only the columns it writes, so the editor's stale read_count (0) has no way
+	// into the UPDATE.
+	desc := "an unrelated metadata edit"
+	matched, err := ls.UpdateSecretFields(ctx, loaded.ID, storage.SecretFieldUpdate{Description: &desc})
 	require.NoError(t, err)
+	require.True(t, matched)
 
 	// The cap must still be exhausted. Before the fix this granted a third read:
 	// Save() re-sent read_count = 0.
 	refunded, err := ls.TryIncrementSecretNodeReadCount(ctx, secret.ID, 2)
 	require.NoError(t, err)
 	require.False(t, refunded,
-		"an unrelated UpdateSecret refunded a read against MaxReads (#2843): the full-struct "+
-			"Save() re-sent the editor's stale read_count")
+		"an unrelated UpdateSecretFields refunded a read against MaxReads (#2843)")
 
-	// And the edit itself must have landed — the Omit must not have widened into
-	// "this write does nothing".
+	// And the edit itself must have landed.
 	after, err := ls.GetSecret(ctx, secret.ID)
 	require.NoError(t, err)
 	require.Equal(t, "an unrelated metadata edit", after.Description)
 	require.Equal(t, 2, after.ReadCount, "the database's counter must stand")
-
-	// The returned struct must agree with the database about the counter, so a
-	// caller that saves it again does not reintroduce the stale value one layer up.
-	require.Equal(t, 2, loaded.ReadCount,
-		"UpdateSecret returned a struct whose read_count disagrees with the row it just wrote")
 }
 
 // TestTransitionSecretStatus_DoesNotRefundReadsAgainstMaxReads is the same

@@ -245,6 +245,9 @@ type Options struct {
 // Verify re-walks db's audit hash chain and reports whether it is intact,
 // per the trust model in docs/design-b4-offline-audit-verify.md.
 func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
+	if err := checkCheckpointKeyLens(opts); err != nil {
+		return nil, err
+	}
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize

@@ -119,8 +119,11 @@ func TestTracker_EveryEpochMoveIsAWriteTheTrackerSaw(t *testing.T) {
 		return st.SetSecretAccessSchedule(ctx, &models.SecretAccessSchedule{SecretNodeID: secret.ID, AllowedDays: "*", StartHour: 0, EndHour: 24, Timezone: "UTC"})
 	})
 	step("update secret", false, func() error {
-		secret.Description = "changed"
-		_, err := st.UpdateSecret(ctx, secret)
+		desc := "changed"
+		matched, err := st.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{Description: &desc})
+		if err == nil && !matched {
+			err = fmt.Errorf("secret %d not matched", secret.ID)
+		}
 		return err
 	})
 	step("remove permission from role", false, func() error { return st.RemovePermissionFromRole(ctx, role.ID, perm.ID) })
