@@ -4,8 +4,10 @@ Instructions for AI agents (coding assistants, local models) working with Keyori
 
 ## Installing Keyorix
 
-Follow [INSTALL-WITH-AI.md](INSTALL-WITH-AI.md) step by step. For an air-gapped host
-or when you can only run a script, use
+Follow [INSTALL-WITH-AI.md](INSTALL-WITH-AI.md) step by step: the single binary
+(SQLite or PostgreSQL) or the Docker Compose stack. For an air-gapped host or when you
+can only run a script, use its
+[offline checklist](INSTALL-WITH-AI.md#without-an-assistant-offline-checklist) and
 [docs/install/offline-install.sh](docs/install/offline-install.sh).
 
 ## Handling secrets (always)
