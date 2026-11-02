@@ -243,7 +243,6 @@ func TestUpdateUser_Reactivate_UsesConditionalPath(t *testing.T) {
 	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, IsActive: &active})
 	require.NoError(t, err)
 	assert.True(t, u.IsActive)
-	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 }
 
 // TestUpdateUser_RedundantSameValueAssertion_UsesConditionalPath verifies that
@@ -268,7 +267,6 @@ func TestUpdateUser_RedundantSameValueAssertion_UsesConditionalPath(t *testing.T
 	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, IsActive: &active})
 	require.NoError(t, err)
 	assert.True(t, u.IsActive)
-	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 }
 
 // TestUpdateUser_Reactivate_LostRace_ReturnsConflictError proves the
@@ -352,7 +350,6 @@ func TestUpdateUser_PlainFieldUpdate_UsesActiveStateConditionalPath(t *testing.T
 	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, DisplayName: "Alice Renamed"})
 	require.NoError(t, err)
 	assert.Equal(t, "Alice Renamed", u.DisplayName)
-	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 }
 
 // TestUpdateUser_PlainFieldUpdate_LostRace_ReturnsConflictError verifies that

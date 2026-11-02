@@ -176,7 +176,7 @@ func psDeleteRestore(t *testing.T, backend string) {
 	// the marker stays, updated_at moves.
 	for _, st := range []string{MachineActive, MachineSuspended} {
 		require.NoError(t, db.Model(&models.MachineIdentity{}).Where("id = ?", cases["oldBinary"].m.ID).
-			UpdateColumns(map[string]any{"state": st, "updated_at": time.Now().Add(time.Second)}).Error)
+			UpdateColumns(map[string]any{"state": st, "updated_at": time.Now().UTC().Add(time.Second)}).Error)
 	}
 
 	// Restoring a different project re-activates nothing of this one's.

@@ -255,7 +255,7 @@ func TestDeleteExpiredRoleGrants_S27_NoneExpired(t *testing.T) {
 	ctx := context.Background()
 	// Assign a permanent (non-expiring) grant.
 	require.NoError(t, ls.db.Create(&models.UserRole{UserID: 1, RoleID: 10, ProjectID: 0, EnvironmentID: 0}).Error)
-	removed, err := ls.DeleteExpiredRoleGrants(ctx, time.Now())
+	removed, err := ls.DeleteExpiredRoleGrants(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Len(t, removed, 0, "no expired grants")
 }
@@ -272,7 +272,7 @@ func TestDeleteExpiredRoleGrants_S27_RemovesExpiredGrants(t *testing.T) {
 	// expired group grant
 	require.NoError(t, ls.db.Create(&models.GroupRole{GroupID: 3, RoleID: 30, ExpiresAt: &past}).Error)
 
-	removed, err := ls.DeleteExpiredRoleGrants(ctx, time.Now())
+	removed, err := ls.DeleteExpiredRoleGrants(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	// should have removed expired user + expired group
 	assert.Len(t, removed, 2)
@@ -395,14 +395,14 @@ func TestLockMachineIdentityForUpdate_S27_NotFound(t *testing.T) {
 
 func TestCountStaleMachineIdentitiesByProject_S27_EmptyProjectIDsReturnEmpty(t *testing.T) {
 	ls := newS27Store(t, &models.MachineIdentity{})
-	counts, err := ls.CountStaleMachineIdentitiesByProject(context.Background(), nil, time.Now())
+	counts, err := ls.CountStaleMachineIdentitiesByProject(context.Background(), nil, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Empty(t, counts)
 }
 
 func TestCountStaleMachineIdentitiesByProject_S27_BrokenDB(t *testing.T) {
 	ls := brokenS27Store(t)
-	_, err := ls.CountStaleMachineIdentitiesByProject(context.Background(), []uint{1, 2}, time.Now())
+	_, err := ls.CountStaleMachineIdentitiesByProject(context.Background(), []uint{1, 2}, time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -648,7 +648,7 @@ func TestDeleteClosedAccessReviewsBefore_S27_HappyPath(t *testing.T) {
 	item := &models.AccessReviewItem{CampaignID: campaign.ID}
 	require.NoError(t, ls.db.Create(item).Error)
 
-	campaigns, items, err := ls.DeleteClosedAccessReviewsBefore(ctx, time.Now())
+	campaigns, items, err := ls.DeleteClosedAccessReviewsBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), campaigns)
 	assert.Equal(t, int64(1), items)
@@ -660,7 +660,7 @@ func TestDeleteClosedAccessReviewsBefore_S27_NoneMatch(t *testing.T) {
 	// Open campaign (closed_at IS NULL) — should not be purged.
 	require.NoError(t, ls.db.Create(&models.AccessReviewCampaign{State: "open"}).Error)
 
-	campaigns, items, err := ls.DeleteClosedAccessReviewsBefore(ctx, time.Now())
+	campaigns, items, err := ls.DeleteClosedAccessReviewsBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Zero(t, campaigns)
 	assert.Zero(t, items)
@@ -688,7 +688,7 @@ func TestDeleteExpiredBreakGlassBefore_S27_HappyPath(t *testing.T) {
 	}
 	require.NoError(t, ls.db.Create(active).Error)
 
-	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().Add(-time.Hour))
+	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().UTC().Add(-time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n, "only non-active old activation should be deleted")
 }
@@ -706,7 +706,7 @@ func TestDeleteResolvedAccessRequestsBefore_S27_HappyPath(t *testing.T) {
 	approval := &models.AccessRequestApproval{RequestID: req.ID, ApproverID: 3}
 	require.NoError(t, ls.db.Create(approval).Error)
 
-	requests, approvals, err := ls.DeleteResolvedAccessRequestsBefore(ctx, time.Now())
+	requests, approvals, err := ls.DeleteResolvedAccessRequestsBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), requests)
 	assert.Equal(t, int64(1), approvals)
@@ -718,7 +718,7 @@ func TestDeleteResolvedAccessRequestsBefore_S27_NoneMatch(t *testing.T) {
 	// Pending (resolved_at IS NULL) — must NOT be touched.
 	require.NoError(t, ls.db.Create(&models.AccessRequest{ProjectID: 5, UserID: 1}).Error)
 
-	requests, approvals, err := ls.DeleteResolvedAccessRequestsBefore(ctx, time.Now())
+	requests, approvals, err := ls.DeleteResolvedAccessRequestsBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Zero(t, requests)
 	assert.Zero(t, approvals)

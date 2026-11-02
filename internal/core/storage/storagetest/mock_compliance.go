@@ -86,11 +86,6 @@ func (m *MockStorage) ListBreakGlassActivations(ctx context.Context, projectID u
 	return args.Get(0).([]*models.BreakGlassActivation), args.Error(1)
 }
 
-func (m *MockStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error {
-	args := m.Called(ctx, a)
-	return args.Error(0)
-}
-
 func (m *MockStorage) ReconcileExpiredBreakGlassActivation(ctx context.Context, projectID, userID uint) error {
 	args := m.Called(ctx, projectID, userID)
 	return args.Error(0)

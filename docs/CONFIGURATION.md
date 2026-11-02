@@ -297,12 +297,12 @@ behind a TLS-terminating load balancer").
 ### gRPC keepalive and connection limits (`server.grpc.keepalive`)
 
 Durations are Go duration strings (`"15m"`); an unset or unparseable value takes the
-default. Only the gRPC server reads this block. The same eight keys parse under
-`server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
+default. Only the gRPC server reads this block. **Deprecated, never read:** the same
+eight keys under `server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
 `server.http.keepalive.min_time`, `server.http.keepalive.permit_without_stream`,
 `server.http.keepalive.max_connection_age`, `server.http.keepalive.max_connection_age_grace`,
 `server.http.keepalive.max_connection_idle` and `server.http.keepalive.handshake_timeout`)
-but have no effect there.
+change nothing and print a start-up warning. Remove the block; it is deleted after one minor release.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -542,7 +542,9 @@ paste them as they are. Things to know:
 `KEYORIX_TEST_PG_DSN`, the connection the Postgres-gated tests use, accepts both
 forms too. The tests create their own throwaway databases on that server by
 swapping the database name, keeping the other settings as written (including
-`sslmode` and a percent-encoded password).
+`sslmode` and a percent-encoded password). The tests that set
+`session_replication_role` need a superuser role (or `GRANT SET ON PARAMETER`); on any other role they skip, unless `CI=true` or
+`KEYORIX_REQUIRE_PG_SUPERUSER=1` is set, which makes the missing privilege a failure.
 
 ### PostgreSQL connection fields (without a `dsn`)
 

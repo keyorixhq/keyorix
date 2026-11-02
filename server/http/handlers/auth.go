@@ -623,8 +623,19 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A machine principal (UserID 0) has no user row: the same 404 it always got,
+	// without a read that core would refuse as a validation error.
+	if userCtx.UserID == 0 {
+		sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		return
+	}
 	user, err := h.coreService.GetUser(r.Context(), userCtx.UserID)
 	if err != nil {
+		// A read fault is not "your account does not exist": answer retry, and
+		// keep 404 for a row that is positively gone (AUTH-ENDPOINT-OUTAGE-1).
+		if sendStorageUnavailable(w, core.ReadFault(err)) {
+			return
+		}
 		sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
 		return
 	}
@@ -749,6 +760,9 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	user, err := h.coreService.UpdateOwnProfile(r.Context(), userCtx.UserID, body.DisplayName, body.Email, body.CurrentPassword)
 	h.settleCredentialCheck(r, att, userCtx, "email_change", err)
 	if err != nil {
+		if writeTOTPUnavailable(w, err) {
+			return
+		}
 		if errors.Is(err, core.ErrIncorrectCurrentPassword) {
 			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
 			return
@@ -982,6 +996,9 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.RevokeOwnSession(r.Context(), userCtx.UserID, uint(id)); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		sendError(w, "NotFound", "Session not found", http.StatusNotFound, nil)
 		return
 	}

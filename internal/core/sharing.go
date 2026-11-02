@@ -406,6 +406,9 @@ func (c *KeyorixCore) RemoveSelfFromShare(ctx context.Context, secretID, userID 
 	}
 
 	if _, err = c.storage.GetSecret(ctx, secretID); err != nil {
+		if fault := ReadFault(err); fault != nil {
+			return fault
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 

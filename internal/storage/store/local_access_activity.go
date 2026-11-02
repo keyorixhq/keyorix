@@ -102,7 +102,7 @@ func lastActivityQuery(db *gorm.DB, projectID uint, eventTypes []string, since t
 		// lookback. Next to project_id = ? this is a range on the existing
 		// idx_audit_events_project_event_time, so the rows read are the window's, not
 		// the table's. event_time is always stored in UTC (AuditEvent.BeforeSave).
-		Where("event_time >= ?", storage.ClampActivitySince(time.Now(), since)).
+		Where("event_time >= ?", storage.ClampActivitySince(time.Now(), since).UTC()).
 		Where("event_type IN ?", eventTypes).
 		// A refused attempt (success=false, e.g. a refused secret.read, #3273) is
 		// not use of the grant; NULL is a legacy row that predates the column.

@@ -54,6 +54,29 @@ rc=0
 { [ "$a1" = 111111 ] && [ "$b1" = 222222 ] && [ "$a2" = 333333 ]; } || rc=1
 check "totp_fresh A,B,A never replays A's code (got $a1 $b1 $a2)" "$rc"
 
+# --- 4. skip and failure contract (DRILLS-PG-1) -----------------------------------------------
+# A skipped leg prints "SKIP <backend>: <reason>" and the drill goes on; a Postgres drill given no
+# database skips as a whole with exit 0; a failure exits non-zero; an unknown backend fails.
+rc=0
+out="$(drill_skip postgres "no witness file")" || rc=1
+[ "$out" = "SKIP postgres: no witness file" ] || rc=1
+check "drill_skip prints 'SKIP postgres: <reason>' (got: $out)" "$rc"
+
+rc=0
+out="$( (DRILL_BACKEND=postgres DRILL_PG_DSN_FILE="" drill_begin selftest-skip) 2>&1)" || rc=$?
+case "$out" in SKIP\ postgres:\ *) ;; *) rc=1 ;; esac
+check "postgres without DRILL_PG_DSN_FILE: 'SKIP postgres: ...' and exit 0 (exit $rc)" "$rc"
+
+rc=0
+(DRILL_BACKEND=mysql drill_begin selftest-badbackend) >/dev/null 2>&1 || rc=$?
+ok_rc=0; [ "$rc" -ne 0 ] || ok_rc=1
+check "an unknown DRILL_BACKEND exits non-zero (exit $rc)" "$ok_rc"
+
+rc=0
+(fail "selftest failure") >/dev/null 2>&1 || rc=$?
+ok_rc=0; [ "$rc" -ne 0 ] || ok_rc=1
+check "fail exits non-zero (exit $rc)" "$ok_rc"
+
 # --- 3. no echo|printf ... | grep -q in the drill scripts --------------------------------------
 rc=0
 hits="$(grep -nE '\|[[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "$HERE"/*.sh | grep -v 'selftest.sh' || true)"

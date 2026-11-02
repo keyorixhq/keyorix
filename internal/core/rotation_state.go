@@ -45,7 +45,9 @@ type RotationStateInfo struct {
 func (c *KeyorixCore) GetRotationState(ctx context.Context, secretID uint) (*RotationStateInfo, error) {
 	policy, err := c.storage.GetRotationPolicyBySecret(ctx, secretID)
 	if err != nil {
-		if errors.Is(err, storage.ErrRotationPolicyNotFound) {
+		// Typed, never by message text: a read fault whose driver text happens to
+		// say "not found" must not read as "no policy" (ERR-FOLD-HANDLERS-1).
+		if errors.Is(err, storage.ErrRotationPolicyNotFound) || storage.IsSecretNotFound(err) {
 			// No active policy — idle is the correct answer.
 			return &RotationStateInfo{
 				SecretID: secretID,

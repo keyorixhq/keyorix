@@ -874,7 +874,8 @@ func (c *KeyorixCore) CreateEnvironment(ctx context.Context, projectID uint, nam
 		return nil, err
 	}
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
-		return nil, fmt.Errorf("%s: project not found", i18n.T("ErrorNotFound", nil))
+		// A read FAULT is a retry answer, not "project not found".
+		return nil, classifyReadError(err, fmt.Sprintf("%s: project not found", i18n.T("ErrorNotFound", nil)))
 	}
 	// #2710: the GetProject above is an unlocked read outside any transaction, so
 	// DeleteProject's cascade can commit in the window between it and the insert.

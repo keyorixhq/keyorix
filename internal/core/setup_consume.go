@@ -382,7 +382,14 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	}
 	inv, err := c.storage.GetProjectInvitation(ctx, *tok.InvitationID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: invitation not found", i18n.T("ErrorNotFound", nil))
+		// Only a positive "no such row" is a verdict on the invitation. A read fault
+		// is post-verdict (the token was valid) and typed as a storage fault, so the
+		// handler audits it setup_token.consume_error, not as a dead link
+		// (AUTH-ENDPOINT-OUTAGE-1). The client answer is the same either way.
+		if isPositiveNotFound(err) {
+			return nil, fmt.Errorf("%s: invitation not found", i18n.T("ErrorNotFound", nil))
+		}
+		return nil, fmt.Errorf("%w: %w", ErrSetupPostVerdict, classifyReadError(err, "invitation not found"))
 	}
 	// Lazy-expire an overdue invite, then require it still be pending. Best-effort:
 	// if a concurrent revoke/accept already resolved this invitation, that
@@ -406,7 +413,7 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		return nil, fmt.Errorf("%s: an account already exists for this email; ask an admin to add you to the project directly", i18n.T("ErrorValidation", nil))
 	}
 	if eerr != nil && !isUserNotFound(eerr) {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), eerr)
+		return nil, fmt.Errorf("%w: %w", ErrSetupPostVerdict, classifyReadError(eerr, "account lookup failed"))
 	}
 
 	// Lazily create the account with the chosen password (active — they just set it).

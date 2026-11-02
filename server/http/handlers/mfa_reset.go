@@ -51,6 +51,9 @@ func sendMFAResetError(w http.ResponseWriter, op string, err error) {
 			return
 		}
 	}
+	if writeTOTPUnavailable(w, err) {
+		return
+	}
 	if errors.Is(err, core.ErrReauthRejected) || errors.Is(err, core.ErrMFAVerificationStorageFailure) {
 		// The same answer as every other re-auth endpoint: never which step failed.
 		sendError(w, "Error", reauthFaultMessage(err), http.StatusBadRequest, nil)

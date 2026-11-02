@@ -371,6 +371,10 @@ func (h *DynamicSecretHandler) loadConfig(w http.ResponseWriter, r *http.Request
 	}
 	cfg, err := h.coreService.GetDynamicSecretConfig(r.Context(), uint(id))
 	if err != nil {
+		// A read FAULT is 503, not "Config not found" (as loadLease below).
+		if sendStorageUnavailable(w, core.ReadFault(err)) {
+			return nil, false
+		}
 		sendError(w, "NotFound", "Config not found", http.StatusNotFound, nil)
 		return nil, false
 	}

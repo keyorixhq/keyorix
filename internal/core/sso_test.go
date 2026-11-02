@@ -222,7 +222,7 @@ func TestResolveSSOUser(t *testing.T) {
 		assert.Equal(t, uint(9), u.ID)
 		assert.Equal(t, "sso:okta:okta|123", u.ExternalID, "the re-read row, not the pre-claim snapshot, is what comes back")
 		store.AssertCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("unverified email does NOT match an existing account (no takeover)", func(t *testing.T) {
@@ -283,7 +283,7 @@ func TestResolveSSOUser(t *testing.T) {
 		require.NotNil(t, u)
 		assert.Equal(t, uint(9), u.ID)
 		store.AssertCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 		store.AssertNotCalled(t, "GetUserByExternalID", mock.Anything, mock.Anything)
 	})
 
@@ -381,7 +381,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		require.NotNil(t, created)
 		assert.Equal(t, "sso:okta:evil|999", created.ExternalID, "fresh account bound to the asserting provider+subject, not the victim")
 		store.AssertNotCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything) // victim not claimed/reused
-		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("reuses an existing user instead of duplicating", func(t *testing.T) {

@@ -51,14 +51,6 @@ func (m *MockStorage) GetUserByEmail(ctx context.Context, email string) (*models
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockStorage) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
-	args := m.Called(ctx, user)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.User), args.Error(1)
-}
-
 func (m *MockStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user *models.User, fromActive bool) (bool, error) {
 	args := m.Called(ctx, user, fromActive)
 	return args.Bool(0), args.Error(1)

@@ -381,7 +381,7 @@ func TestCreateSecretDependencyExclusive_Cov_MultipleEdgesInProject(t *testing.T
 // path when the users table does not exist.
 func TestPurgeDeletedUsersBefore_Cov_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
-	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 

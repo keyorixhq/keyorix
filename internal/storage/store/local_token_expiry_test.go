@@ -105,7 +105,7 @@ func TestListExpiringPATs_IncludesAlreadyExpired(t *testing.T) {
 func TestListExpiringPATs_EmptyWhenNone(t *testing.T) {
 	ls := newTokenExpiryStore(t)
 	ctx := context.Background()
-	cutoff := time.Now().Add(7 * 24 * time.Hour)
+	cutoff := time.Now().UTC().Add(7 * 24 * time.Hour)
 
 	pats, err := ls.ListExpiringPATs(ctx, cutoff)
 	require.NoError(t, err)
@@ -196,7 +196,7 @@ func TestListExpiringMachineCredentials_IncludesAlreadyExpired(t *testing.T) {
 func TestListExpiringMachineCredentials_EmptyWhenNone(t *testing.T) {
 	ls := newTokenExpiryStore(t)
 	ctx := context.Background()
-	cutoff := time.Now().Add(7 * 24 * time.Hour)
+	cutoff := time.Now().UTC().Add(7 * 24 * time.Hour)
 
 	creds, err := ls.ListExpiringMachineCredentials(ctx, cutoff)
 	require.NoError(t, err)
