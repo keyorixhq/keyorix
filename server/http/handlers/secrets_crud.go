@@ -563,6 +563,8 @@ func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 		msg := err.Error()
 		if isSecretNotFound(err) {
 			status = http.StatusNotFound
+		} else if errors.Is(err, core.ErrSecretNotDeleted) {
+			status = http.StatusConflict
 		} else {
 			log.Printf("Error restoring secret %d: %v", id, err)
 			msg = clientSafe(err)

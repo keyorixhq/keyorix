@@ -4161,6 +4161,7 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
   /api/v1/projects/{id}/secrets/deleted:
     get:
       tags: [Secrets]
@@ -6672,7 +6673,7 @@ paths:
       operationId: searchAuditLogs
       security: [{bearerAuth: []}]
       parameters:
-        - {name: actor, in: query, schema: {type: string}, description: Partial username match on the acting principal.}
+        - {name: actor, in: query, schema: {type: string}, description: "Case-insensitive partial match on the acting principal's name: a user's username (deleted users do not match) or a machine identity's name. A term that is part of the word \"system\" also matches system-originated events."}
         - {name: user_id, in: query, schema: {type: integer}, description: Exact numeric user ID.}
         - {name: project_id, in: query, schema: {type: integer}, description: Exact project ID.}
         - {name: action, in: query, schema: {type: string}, description: "Exact event_type (e.g. secret.read)."}
@@ -9082,6 +9083,7 @@ components:
       properties:
         id: {type: integer, format: uint32}
         user_id: {type: integer, format: uint32}
+        username: {type: string, description: "Username of the activating user (never an email); omitted when the user cannot be read, e.g. deleted"}
         role_name: {type: string}
         justification: {type: string}
         state: {type: string, enum: [active, expired, revoked]}
