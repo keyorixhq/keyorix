@@ -1,0 +1,2 @@
+### Testing
+- **Storage-level guard for UTC passkey `last_used_at`, and the default core clock pinned as monotonic.** `TestWebAuthnLastUsedAtStoresUTC` checks that both WebAuthn counter writers store UTC for New York and Kolkata times on SQLite and Postgres (a regression guard for the #3881 fix). Two INV-CORE-09 tests check that `NewKeyorixCore`'s default clock keeps Go's monotonic reading, so the impersonation-ceiling cache TTL is not wall-clock only (UTC-TOUCH-1).

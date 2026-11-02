@@ -44,7 +44,6 @@ var unsafeSiblingPairs = map[string]string{
 	"UpdateMachineIdentity":    "TransitionMachineIdentityState",
 	"UpdateProjectMembership":  "TransitionProjectMembershipState",
 	"CreateSecretDependency":   "CreateSecretDependencyExclusive",
-	"UpdateSecret":             "TransitionSecretStatus",
 	"UpdateRiskException":      "RevokeRiskExceptionIfNotRevoked/ApproveRiskExceptionIfPending",
 	"UpdateWebAuthnCredential": "AdvanceWebAuthnCredentialCounter",
 	"DeleteProject":            "DeleteProjectIfEmpty",
@@ -53,7 +52,8 @@ var unsafeSiblingPairs = map[string]string{
 	// UpdateUserIfActiveStateMatches / RevokeBreakGlassActivation) until
 	// STORE-DEAD-PRIMITIVES-1 deleted the two caller-free full-row primitives;
 	// UpdateDynamicSecretConfig (to TransitionDynamicSecretConfigDisabled) went the
-	// same way in STORE-CLEANUP-1.
+	// same way in STORE-CLEANUP-1, and UpdateSecret (to TransitionSecretStatus) in
+	// STORE-UPDATESECRET-RETIRE-1.
 }
 
 // unsafeSiblingAllowlist is the exhaustive, reasoned inventory of every

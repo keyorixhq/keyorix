@@ -162,6 +162,9 @@ func ClassifySecretReadDenial(err error) SecretReadDenialReason {
 		return SecretReadDeniedMaxReadsExhausted
 	case errors.Is(err, ErrSecretRefNotFound):
 		return SecretReadDeniedNotFound
+	case IsStorageReadUnavailable(err):
+		// A read fault is a failed read, not a verdict on the secret.
+		return SecretReadDeniedInternalError
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
@@ -170,7 +173,7 @@ func ClassifySecretReadDenial(err error) SecretReadDenialReason {
 	case strings.Contains(msg, "permission denied"), strings.Contains(msg, "insufficient permissions"),
 		strings.Contains(msg, "access denied"), strings.Contains(msg, "not authorized"):
 		return SecretReadDeniedForbidden
-	case strings.Contains(msg, "not found"):
+	case isPositiveNotFound(err):
 		return SecretReadDeniedNotFound
 	default:
 		return SecretReadDeniedInternalError

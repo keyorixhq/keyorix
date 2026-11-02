@@ -8,7 +8,7 @@
 //	  UpdateProjectFields    — DB error
 //	  GetSecretsByIDs        — DB error
 //	  GetSecretByName        — DB error
-//	  UpdateSecret           — DB error
+//	  UpdateSecretFields     — DB error
 //	  DeleteSecret           — share-delete DB error path
 //	  GetSecretIncludingDeleted — not-found
 //	  RequireLiveProject     — DB error
@@ -32,6 +32,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
@@ -121,9 +122,10 @@ func TestLocalStorage_S28_GetSecretByName_DBError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestLocalStorage_S28_UpdateSecret_DBError(t *testing.T) {
+func TestLocalStorage_S28_UpdateSecretFields_DBError(t *testing.T) {
 	ls := brokenS28Store(t)
-	_, err := ls.UpdateSecret(context.Background(), &models.SecretNode{ID: 1})
+	desc := "d"
+	_, err := ls.UpdateSecretFields(context.Background(), 1, storage.SecretFieldUpdate{Description: &desc})
 	require.Error(t, err)
 }
 

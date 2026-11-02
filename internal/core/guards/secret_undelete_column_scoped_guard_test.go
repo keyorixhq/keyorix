@@ -66,8 +66,12 @@ func TestRestoreSecret_IsColumnScoped(t *testing.T) {
 //
 // What it does not see: a call through a method value or a helper taking a
 // storage.Storage and calling it under another name, a storage reached under a
-// receiver named `c` that is not the core, and callers outside the three roots
-// (cli/ has no storage access).
+// receiver named `c` that is not the core, a server/ call whose receiver is a
+// storage handle not reached through `Storage()` (a `.storage` field, `tx`,
+// `ls`; the deleted TestUpdateSecret_HasNoProductionCallerBeyond2668 matched
+// those, this sweep does not), and callers outside the three roots (cli/ has no
+// storage access). Since the interface method is gone the compiler rejects every
+// caller; this sweep only matters if an UpdateSecret storage method is re-added.
 func TestUpdateSecretFullRowSave_HasNoProductionCaller(t *testing.T) {
 	root, err := filepath.Abs("../../..")
 	require.NoError(t, err)
@@ -123,8 +127,9 @@ func TestUpdateSecretFullRowSave_HasNoProductionCaller(t *testing.T) {
 
 	sort.Strings(found)
 	for _, f := range found {
-		t.Errorf("%s: LocalStorage.UpdateSecret is a full-row GORM Save of a pre-read snapshot. Against a secret "+
-			"soft-deleted in the meantime its UPDATE matches 0 rows and the upsert fallback writes deleted_at = NULL "+
+		t.Errorf("%s: calls a storage method named UpdateSecret, which was deleted (STORE-UPDATESECRET-RETIRE-1) "+
+			"because it was a full-row GORM Save of a pre-read snapshot; a re-added one would reopen the defect. Against a secret "+
+			"soft-deleted in the meantime such an UPDATE matches 0 rows and the upsert fallback writes deleted_at = NULL "+
 			"(#2650: a deleted secret live again, no secret.restored event, no parent-liveness check). Use "+
 			"UpdateSecretFields (named columns, conditional on the live row) or a purpose-built method like "+
 			"UpdateSecretRotationConfig.", f)

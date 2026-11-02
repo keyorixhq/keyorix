@@ -160,7 +160,7 @@ func TestPurgeDeletedProjectsAndEnvironments(t *testing.T) {
 	ls := newPurgeTestStore(t)
 	ctx := context.Background()
 	old := time.Now().AddDate(0, 0, -40)
-	cutoff := time.Now().AddDate(0, 0, -30)
+	cutoff := time.Now().UTC().AddDate(0, 0, -30)
 
 	require.NoError(t, ls.db.Create(&models.Project{ID: 1, Name: "p"}).Error)
 	require.NoError(t, ls.db.Unscoped().Model(&models.Project{}).Where("id = ?", 1).Update("deleted_at", old).Error)
@@ -185,7 +185,7 @@ func TestPurgeDeletedProjectsBefore_CascadesRoleGrants(t *testing.T) {
 	ls := newPurgeTestStore(t)
 	ctx := context.Background()
 	old := time.Now().AddDate(0, 0, -40)
-	cutoff := time.Now().AddDate(0, 0, -30)
+	cutoff := time.Now().UTC().AddDate(0, 0, -30)
 
 	require.NoError(t, ls.db.Create(&models.Project{ID: 1, Name: "doomed"}).Error)
 	require.NoError(t, ls.db.Unscoped().Model(&models.Project{}).Where("id = ?", 1).Update("deleted_at", old).Error)
@@ -212,7 +212,7 @@ func TestPurgeDeletedProjectsBefore_CascadesRoleGrants(t *testing.T) {
 func TestPurgeDeletedUsersBefore_NothingToPurge(t *testing.T) {
 	ls := newPurgeTestStore(t)
 	require.NoError(t, ls.db.Create(&models.User{ID: 1, Username: "live", Email: "l@x"}).Error)
-	n, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	n, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n, "a live (non-deleted) user is never purged")
 }

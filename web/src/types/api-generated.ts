@@ -6148,6 +6148,8 @@ export interface components {
             id?: number;
             /** Format: uint32 */
             user_id?: number;
+            /** @description Username of the activating user (never an email); omitted when the user cannot be read, e.g. deleted */
+            username?: string;
             role_name?: string;
             justification?: string;
             /** @enum {string} */
@@ -10935,6 +10937,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     listDeletedSecrets: {
@@ -13889,7 +13892,7 @@ export interface operations {
     searchAuditLogs: {
         parameters: {
             query?: {
-                /** @description Partial username match on the acting principal. */
+                /** @description Case-insensitive partial match on the acting principal's name: a user's username (deleted users do not match) or a machine identity's name. A term that is part of the word "system" also matches system-originated events. */
                 actor?: string;
                 /** @description Exact numeric user ID. */
                 user_id?: number;

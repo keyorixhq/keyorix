@@ -19,10 +19,6 @@ func init() {
 		nth              int
 		kind             faultstorage.FaultKind
 	}{
-		{"grpc_keyorix_v1_secretservice_deletesecret_resolveuserpermissionat_2_effect_then_error", "GRPC keyorix.v1.SecretService.DeleteSecret", "ResolveUserPermissionAt", 2, faultstorage.KindEffectThenError},
-		{"grpc_keyorix_v1_secretservice_deletesecret_resolveuserpermissionat_2_error", "GRPC keyorix.v1.SecretService.DeleteSecret", "ResolveUserPermissionAt", 2, faultstorage.KindError},
-		{"grpc_keyorix_v1_secretservice_updatesecret_resolveuserpermissionat_2_effect_then_error", "GRPC keyorix.v1.SecretService.UpdateSecret", "ResolveUserPermissionAt", 2, faultstorage.KindEffectThenError},
-		{"grpc_keyorix_v1_secretservice_updatesecret_resolveuserpermissionat_2_error", "GRPC keyorix.v1.SecretService.UpdateSecret", "ResolveUserPermissionAt", 2, faultstorage.KindError},
 		{"rest_delete_api_v1_secrets_id_resolveuserpermissionat_2_effect_then_error", "REST DELETE /api/v1/secrets/{id}", "ResolveUserPermissionAt", 2, faultstorage.KindEffectThenError},
 		{"rest_delete_api_v1_secrets_id_resolveuserpermissionat_2_error", "REST DELETE /api/v1/secrets/{id}", "ResolveUserPermissionAt", 2, faultstorage.KindError},
 		{"rest_patch_api_v1_secrets_id_description_resolveuserpermissionat_2_effect_then_error", "REST PATCH /api/v1/secrets/{id}/description", "ResolveUserPermissionAt", 2, faultstorage.KindEffectThenError},
