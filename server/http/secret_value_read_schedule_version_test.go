@@ -692,6 +692,22 @@ func TestValueReadScheduleVersion_ConcurrentVersionWrites(t *testing.T) {
 					}
 				})
 			}
+			// Wait for a reader to actually get scheduled and complete at least
+			// one read before the writer starts. Without this, a fast backend
+			// (sqlite, a handful of in-process rotations) can let the writer
+			// loop below finish -- and close(stop) -- before any of the 4
+			// reader goroutines ever gets its first time slice, especially
+			// under the lower GOMAXPROCS CI runners use: readsDone.Load() is
+			// then 0 by construction (no reader ever ran), not because of a
+			// real race outcome. This barrier makes "readers are actually
+			// running concurrently with writes" a guaranteed precondition
+			// instead of a scheduler coin flip; the readers keep running
+			// through the whole rotation loop below, so the thing under test
+			// (reads racing writes; never a value that was never written) is
+			// unchanged.
+			require.Eventually(t, func() bool { return readsDone.Load() > 0 }, 5*time.Second, time.Millisecond,
+				"no concurrent read completed before the writer started -- reader goroutines never got scheduled")
+
 			// One writer: concurrent rotations of one secret are serialized by
 			// RotateSecret itself; what matters here is reads racing writes.
 			for i := 2; i <= rotations+1; i++ {
