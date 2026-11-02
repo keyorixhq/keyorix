@@ -1027,7 +1027,7 @@ keyorix compliance rotation\-by\-backend
 .SS keyorix compliance verify
 Verify an exported evidence pack against its detached signature
 .PP
-Verify the authenticity of an archived evidence pack. Reads the pack file and its signature (default <file>.sig) and asks the server to recompute the HMAC with its DEK\-derived signing key \(em proving the pack was produced by this deployment and has not been modified. Requires server\-side encryption (the signing key is DEK\-derived).
+Verify the authenticity of an archived evidence pack. Reads the pack file and its signature (default <file>.sig) and asks the server to recompute the HMAC with its KEK\-derived signing key \(em proving the pack was produced by this deployment and has not been modified. Requires server\-side encryption (the signing key is KEK\-derived). A DEK rotation does not affect verification; a pack signed before a KEK change is reported as unverifiable (superseded key version), not as tampered.
 .PP
 Usage: \fBkeyorix compliance verify [flags]\fR
 .PP

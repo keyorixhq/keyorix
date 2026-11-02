@@ -61,7 +61,9 @@ with `KEYORIX_BOOTSTRAP_TOKEN_FILE=./secrets/bootstrap_token` exported in your s
 from the file and prompts for the admin password; neither goes on the command line).
 `docker compose ps` shows `web` as `healthy`: its healthcheck probes
 `127.0.0.1` (busybox resolves `localhost` to IPv6 first and nginx listens on IPv4
-only).
+only). `GET /health` on the web port is proxied to the backend's `/health`, so `web`
+(and a load balancer probing that port) turns unhealthy when the backend is down;
+`GET /nginx-health` is a static answer for the web container alone.
 
 **Using the CLI against the stack.** The backend's port is not published; the
 CLI talks to it through the web container's proxy:
@@ -706,7 +708,10 @@ docker compose --profile tls up -d
 Caddy automatically provisions and renews a publicly-trusted certificate
 (Let's Encrypt / ZeroSSL). Issued certs persist on the `caddy_data` volume so
 restarts don't re-request them. For a `localhost` value Caddy uses its internal
-CA (browsers warn unless you trust Caddy's root). To use the CLI against it,
+CA (browsers warn unless you trust Caddy's root). Here Caddy, not the backend,
+presents the certificate (the backend's own `tls.cert_file` is not involved), so the
+CLI's `ca_file` must name Caddy's root, not a backend certificate (which side verifies
+what: [CONFIGURATION.md](CONFIGURATION.md), TLS section). To use the CLI against it,
 export that root and point the CLI at it:
 `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`
 then `keyorix --ca-file $PWD/caddy-root.crt login --server https://localhost ...`, or
