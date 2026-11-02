@@ -84,15 +84,14 @@ key-material file (internal/keyfiles.Registry -- the same enumeration
 without the keys is unreadable ciphertext, the keys without the database
 are useless.
 
-The archive's per-table manifest is signed (HMAC-SHA256, KEK-derived key,
-design-b3-backup-v2.md §5) so tampering is caught by 'admin restore' before
-any byte reaches the target -- not only by a post-hoc 'admin verify-audit'.
+The archive's per-table manifest is signed (HMAC-SHA256, KEK-derived key) so
+tampering is caught by 'admin restore' before any byte reaches the target -- not only by a post-hoc 'admin verify-audit'.
 
 On SQLite, consistency is guaranteed by the same exclusive database lock
 every admin command takes: no server (or other admin command) can be
 writing while this runs -- so on SQLite, STOP THE SERVER FIRST; a backup
 beside a live SQLite server is refused. On Postgres, backup instead reads
-through a single REPEATABLE READ snapshot transaction by default (design §4)
+through a single REPEATABLE READ snapshot transaction by default
 and works beside a LIVE server (e.g. 'docker compose exec backend ...'): the
 key files are read while holding the key-rotation read lock, so no key
 rotation can change them or re-encrypt rows until every read is done, and
@@ -115,7 +114,7 @@ func init() {
 	backupCmd.Flags().BoolVar(&backupExclusive, "exclusive", false,
 		"Postgres only: hold this database's exclusive advisory lock for the whole backup, on top of the default "+
 			"REPEATABLE READ snapshot -- v1's stronger (but HA-availability-costing) guarantee, for e.g. a maintenance-"+
-			"window backup before a major upgrade (design §4). No effect on SQLite, which already always holds this lock.")
+			"window backup before a major upgrade. No effect on SQLite, which already always holds this lock.")
 	registerPassphraseFlags(backupCmd, &backupPassphraseSource)
 	rootCmd.AddCommand(backupCmd)
 }
@@ -271,7 +270,7 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := preflightBackupFreeSpace(cfg); err != nil {
-		return fmt.Errorf("preflight free-space check (design §7.4): %w", err)
+		return fmt.Errorf("preflight free-space check: %w", err)
 	}
 
 	// readKeyFilesForBackup runs INSIDE unwrapManifestKey's onLocked callback
@@ -438,7 +437,7 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 
 	if len(manifest.DanglingReferences) > 0 {
 		fmt.Printf("WARNING: this backup's source database has %d pre-existing dangling reference(s) "+
-			"(design §3.4) -- see the archive's MANIFEST.json for details. This backup itself succeeded; "+
+			"-- see the archive's MANIFEST.json for details. This backup itself succeeded; "+
 			"a restore from it will refuse to load until these are fixed at the source.\n", len(manifest.DanglingReferences))
 	}
 

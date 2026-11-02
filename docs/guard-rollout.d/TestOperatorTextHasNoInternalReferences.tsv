@@ -1,0 +1,1 @@
+TestOperatorTextHasNoInternalReferences	server/admin	#3932	new wording guard (ADMIN-WORDING-1); two literals owned by open PRs (restore.go preflight message, audit_accept_loss.go) stay red until those merge, report-only until then
