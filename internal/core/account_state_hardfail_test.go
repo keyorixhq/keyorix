@@ -79,7 +79,7 @@ func TestUpdateSCIMUser_HardFailsWhenBackendCannotPersistDeprovision(t *testing.
 
 	// Since SetAccountState is attempted (and fails) BEFORE the generic wire-field
 	// write, nothing should have been partially applied either.
-	store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestUpdateSCIMUser_NoStateChange_DoesNotConsultSetAccountState confirms the #454

@@ -26,42 +26,42 @@ func newPurgeUsersFixture(t *testing.T, extraModels ...any) *LocalStorage {
 func TestPurgeDeletedUsersBefore_UserRoleDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeUsersFixture(t)
-	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
 func TestPurgeDeletedUsersBefore_UserGroupDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeUsersFixture(t, &models.UserRole{})
-	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
 func TestPurgeDeletedUsersBefore_ShareRecordDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeUsersFixture(t, &models.UserRole{}, &models.UserGroup{})
-	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
 func TestPurgeDeletedUsersBefore_PersonalAccessTokenDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeUsersFixture(t, &models.UserRole{}, &models.UserGroup{}, &models.ShareRecord{})
-	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
 func TestPurgeDeletedUsersBefore_SecretACLDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeUsersFixture(t, &models.UserRole{}, &models.UserGroup{}, &models.ShareRecord{}, &models.PersonalAccessToken{})
-	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
 func TestPurgeDeletedUsersBefore_SessionDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeUsersFixture(t, &models.UserRole{}, &models.UserGroup{}, &models.ShareRecord{}, &models.PersonalAccessToken{}, &models.SecretACL{})
-	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -74,7 +74,7 @@ func TestPurgeDeletedUsersBefore_FinalUserDeleteFails(t *testing.T) {
 	// UserGroup, ShareRecord, PersonalAccessToken, SecretACL, Session.
 	dropTableAfterDeletes(t, ls.db, 6, "users")
 
-	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -90,21 +90,21 @@ func newPurgeProjectsFixture(t *testing.T, extraModels ...any) *LocalStorage {
 func TestPurgeDeletedProjectsBefore_UserRoleDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeProjectsFixture(t)
-	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
 func TestPurgeDeletedProjectsBefore_GroupRoleDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeProjectsFixture(t, &models.UserRole{})
-	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
 func TestPurgeDeletedProjectsBefore_MachineIdentityRoleDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeProjectsFixture(t, &models.UserRole{}, &models.GroupRole{})
-	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -115,7 +115,7 @@ func TestPurgeDeletedProjectsBefore_FinalProjectDeleteFails(t *testing.T) {
 	// 3 delete-family statements precede the final Project delete.
 	dropTableAfterDeletes(t, ls.db, 3, "projects")
 
-	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -133,21 +133,21 @@ func TestPurgeDeletedSecretsBefore_SecretVersionDeleteFails(t *testing.T) {
 	// Every cascade table exists, so the cascade succeeds and the failure is the
 	// secret_versions delete the test is named for, not a missing cascade table.
 	ls := newPurgeSecretsFixture(t, secretPurgeCascadeModels()...)
-	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now().UTC())
 	require.ErrorContains(t, err, "secret_versions")
 }
 
 func TestPurgeDeletedSecretsBefore_SecretDependencyDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeSecretsFixture(t, append([]any{&models.SecretVersion{}}, secretPurgeCascadeModels()...)...)
-	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
 func TestPurgeDeletedSecretsBefore_SecretACLDeleteFails(t *testing.T) {
 	t.Parallel()
 	ls := newPurgeSecretsFixture(t, append([]any{&models.SecretVersion{}, &models.SecretDependency{}}, secretPurgeCascadeModels()...)...)
-	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -159,7 +159,7 @@ func TestPurgeDeletedSecretsBefore_FinalSecretNodeDeleteFails(t *testing.T) {
 	// final SecretNode delete.
 	dropTableAfterDeletes(t, ls.db, SecretPurgeStatementCount()+3, "secret_nodes")
 
-	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -175,7 +175,7 @@ func TestDeleteClosedAccessReviewsBefore_CampaignDeleteFails(t *testing.T) {
 	// campaign delete.
 	dropTableAfterDeletes(t, ls.db, 1, "access_review_campaigns")
 
-	_, _, err := ls.DeleteClosedAccessReviewsBefore(ctx, time.Now())
+	_, _, err := ls.DeleteClosedAccessReviewsBefore(ctx, time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -191,7 +191,7 @@ func TestDeleteResolvedAccessRequestsBefore_RequestDeleteFails(t *testing.T) {
 	// request delete.
 	dropTableAfterDeletes(t, ls.db, 1, "access_requests")
 
-	_, _, err := ls.DeleteResolvedAccessRequestsBefore(ctx, time.Now())
+	_, _, err := ls.DeleteResolvedAccessRequestsBefore(ctx, time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -207,7 +207,7 @@ func TestDeleteExpiredBreakGlassBefore_ReconcileUpdateFails(t *testing.T) {
 	// non-empty); drop the table right after so the reconcile Update fails.
 	dropTableAfterQueries(t, ls.db, 1, "break_glass_activations")
 
-	_, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now())
+	_, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -221,6 +221,6 @@ func TestDeleteExpiredBreakGlassBefore_FinalDeleteFails(t *testing.T) {
 	// Delete fails instead.
 	dropTableAfterQueries(t, ls.db, 1, "break_glass_activations")
 
-	_, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now())
+	_, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().UTC())
 	require.Error(t, err)
 }

@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -32,7 +34,7 @@ func (h *GroupHandler) GetGroupMembers(w http.ResponseWriter, r *http.Request) {
 	members, err := h.coreService.GetGroupMembers(r.Context(), uint(id))
 	if err != nil {
 		log.Printf("Error listing group members: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, corestorage.ErrGroupNotFound) {
 			sendError(w, "NotFound", "Group not found", http.StatusNotFound, nil)
 			return
 		}
@@ -94,7 +96,8 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("Error adding group member: %v", err)
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case errors.Is(err, corestorage.ErrGroupNotFound) || corestorage.IsUserNotFound(err),
+			errors.Is(err, core.ErrMembershipTargetNotFound): // the domain-allowlist gate's user read
 			sendError(w, "NotFound", "User or group not found", http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "cannot grant this role"):
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)

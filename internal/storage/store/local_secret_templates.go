@@ -58,6 +58,7 @@ func (ls *LocalStorage) ListSecretTemplates(ctx context.Context) ([]*models.Secr
 // re-INSERTED a concurrently hard-deleted template with its old id (#2700).
 // SecretTemplate has no DeletedAt, so RowsAffected is the whole guarantee here:
 // an Updates against a missing row matches nothing, where Save would upsert.
+// updatedAt is stored in UTC: the map update runs no NowFunc.
 func (ls *LocalStorage) UpdateSecretTemplateFields(ctx context.Context, id uint, f storage.SecretTemplateFieldUpdate, updatedAt time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.SecretTemplate{}).Where(sqlWhereID, id).
 		Updates(map[string]any{
@@ -67,7 +68,7 @@ func (ls *LocalStorage) UpdateSecretTemplateFields(ctx context.Context, id uint,
 			"default_tags":           f.DefaultTags,
 			"description_pattern":    f.DescriptionPattern,
 			"rotation_hint_days":     f.RotationHintDays,
-			"updated_at":             updatedAt,
+			"updated_at":             updatedAt.UTC(),
 		})
 	if res.Error != nil {
 		return false, res.Error

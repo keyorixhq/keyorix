@@ -183,8 +183,9 @@ func TestLegacyStoredUsernameFailingRule_KeepsWorking(t *testing.T) {
 	folded, err := identity.NewFoldedName(legacy)
 	require.NoError(t, err)
 	u.Username, u.UsernameFolded = legacy, folded.Folded()
-	_, err = st.UpdateUser(ctx, u)
+	matched, err := st.UpdateUserIfActiveStateMatches(ctx, u, u.IsActive)
 	require.NoError(t, err)
+	require.True(t, matched)
 
 	byName, err := c.storage.GetUserByUsername(ctx, legacy)
 	require.NoError(t, err, "lookup")

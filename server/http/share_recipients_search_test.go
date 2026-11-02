@@ -82,8 +82,9 @@ func newRecipientFixture(t *testing.T) *recipientFixture {
 	ivan, err := c.Storage().GetUser(ctx, ids["ivan"])
 	require.NoError(t, err)
 	ivan.IsActive = false
-	_, err = c.Storage().UpdateUser(ctx, ivan)
+	matched, err := c.Storage().UpdateUserIfActiveStateMatches(ctx, ivan, true)
 	require.NoError(t, err)
+	require.True(t, matched)
 
 	// Outside P: a member of the other project, and nobody's member at all.
 	frank := mk("frank", "Frank Payments")

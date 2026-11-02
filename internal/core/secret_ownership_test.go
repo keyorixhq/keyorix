@@ -138,11 +138,10 @@ func TestTransferSecretOwnership(t *testing.T) {
 		c, id := newOwnershipFixture(t)
 		// Simulate the routine ADR-023/030 orphaned state directly (OwnerID==0),
 		// not merely a deleted account.
-		secret, err := c.storage.GetSecret(ctx, id)
+		orphan := uint(0)
+		matched, err := c.storage.UpdateSecretFields(ctx, id, coreStorage.SecretFieldUpdate{OwnerID: &orphan})
 		require.NoError(t, err)
-		secret.OwnerID = 0
-		_, err = c.storage.UpdateSecret(ctx, secret)
-		require.NoError(t, err)
+		require.True(t, matched)
 
 		// Actor 2 (alice) holds secrets.write but NOT roles.assign, and targets a
 		// valid write-tier new owner (3, bob) — even so, the recovery path itself
@@ -162,11 +161,10 @@ func TestTransferSecretOwnership(t *testing.T) {
 
 	t.Run("recovery succeeds for a roles.assign-holding actor even with a read-only target rejected", func(t *testing.T) {
 		c, id := newOwnershipFixture(t)
-		secret, err := c.storage.GetSecret(ctx, id)
+		orphan := uint(0)
+		matched, err := c.storage.UpdateSecretFields(ctx, id, coreStorage.SecretFieldUpdate{OwnerID: &orphan})
 		require.NoError(t, err)
-		secret.OwnerID = 0
-		_, err = c.storage.UpdateSecret(ctx, secret)
-		require.NoError(t, err)
+		require.True(t, matched)
 
 		// Actor 3 (bob) holds roles.assign, but targets user 5 (dave, read-only) —
 		// the actor-side gate passing must not waive the new-owner ceiling.

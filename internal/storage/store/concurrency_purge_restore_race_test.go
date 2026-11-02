@@ -85,7 +85,7 @@ func TestConcurrency_PurgeDeletedSecretsBefore_RestoreWinsRace(t *testing.T) {
 		},
 	))
 
-	purgedCount, purgeErr := ls.PurgeDeletedSecretsBefore(ctx, time.Now().AddDate(0, 0, -30))
+	purgedCount, purgeErr := ls.PurgeDeletedSecretsBefore(ctx, time.Now().UTC().AddDate(0, 0, -30))
 	require.NoError(t, purgeErr)
 	assert.True(t, fired, "the callback must have fired — otherwise this test isn't exercising the race window at all")
 	assert.Equal(t, int64(0), purgedCount, "the concurrently-restored secret must be excluded from the purge count")
@@ -142,7 +142,7 @@ func TestConcurrency_PurgeDeletedUsersBefore_RestoreWinsRace(t *testing.T) {
 		},
 	))
 
-	purgedCount, purgeErr := ls.PurgeDeletedUsersBefore(ctx, time.Now().AddDate(0, 0, -30))
+	purgedCount, purgeErr := ls.PurgeDeletedUsersBefore(ctx, time.Now().UTC().AddDate(0, 0, -30))
 	require.NoError(t, purgeErr)
 	assert.True(t, fired, "the callback must have fired — otherwise this test isn't exercising the race window at all")
 	assert.Equal(t, int64(0), purgedCount, "the concurrently-restored user must be excluded from the purge count")
@@ -197,7 +197,7 @@ func TestConcurrency_PurgeDeletedProjectsBefore_RestoreWinsRace(t *testing.T) {
 		},
 	))
 
-	purgedCount, purgeErr := ls.PurgeDeletedProjectsBefore(ctx, time.Now().AddDate(0, 0, -30))
+	purgedCount, purgeErr := ls.PurgeDeletedProjectsBefore(ctx, time.Now().UTC().AddDate(0, 0, -30))
 	require.NoError(t, purgeErr)
 	assert.True(t, fired, "the callback must have fired — otherwise this test isn't exercising the race window at all")
 	assert.Equal(t, int64(0), purgedCount, "the concurrently-restored project must be excluded from the purge count")

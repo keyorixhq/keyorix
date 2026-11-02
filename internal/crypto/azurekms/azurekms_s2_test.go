@@ -126,9 +126,8 @@ func TestDecrypt_UnwrapKeyError_IsPrefixed(t *testing.T) {
 // TestDecrypt_UnwrapKeyError_PinnedEnvelope exercises the UnwrapKey error path
 // for a version-pinned (magic-prefix) envelope blob.
 func TestDecrypt_UnwrapKeyError_PinnedEnvelope(t *testing.T) {
-	skipUnderFIPS140Only(t, "the fixture wraps a short stand-in KEK ('kek'/'old-kek'); the envelope MAC keys HMAC-SHA256 with the unwrapped KEK, under the 112-bit minimum. Production KEKs are 32 bytes (see the FIPS observations note for the unvalidated-length case)")
 	// Produce a valid envelope blob first.
-	blob, err := encodeEnvelope("v1", []byte("ciphertext"), []byte("plaintext"))
+	blob, err := encodeEnvelope("v1", []byte("ciphertext"), []byte(testKEK32))
 	require.NoError(t, err)
 
 	c := &client{

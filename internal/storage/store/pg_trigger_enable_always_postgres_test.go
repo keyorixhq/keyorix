@@ -18,13 +18,13 @@
 package store
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 )
 
 type pgTriggerInstaller struct {
@@ -129,6 +129,9 @@ func TestSecretSuspendMarkerTrigger_NextBootRepairsTrigger_Postgres(t *testing.T
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			db := pgOpen(t, pgIsolatedSchemaDSN(t, base))
+			if tc.replicaWrite {
+				pgpriv.RequireReplicationRolePrivilege(t, db)
+			}
 			require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
 			require.NoError(t, EnsureSecretSuspendMarkerTrigger(db))
 			require.NoError(t, db.Exec("ALTER TABLE secret_nodes "+tc.alter+" "+SecretSuspendMarkerTrigger).Error)
@@ -136,18 +139,14 @@ func TestSecretSuspendMarkerTrigger_NextBootRepairsTrigger_Postgres(t *testing.T
 
 			require.NoError(t, db.Exec(`INSERT INTO secret_nodes (name, project_id, environment_id, status, suspend_clear_synced_copies)
 VALUES ('rc2-marker', 1, 1, 'suspended', true)`).Error)
-			err := db.Transaction(func(tx *gorm.DB) error {
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 				if tc.replicaWrite {
 					if err := tx.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
 						return err
 					}
 				}
 				return tx.Exec("UPDATE secret_nodes SET status = 'active' WHERE name = 'rc2-marker'").Error
-			})
-			if tc.replicaWrite && err != nil && strings.Contains(err.Error(), "SQLSTATE 42501") {
-				t.Skipf("this test role may not set session_replication_role (needs superuser or GRANT SET): %v", err)
-			}
-			require.NoError(t, err)
+			}))
 			var marker bool
 			require.NoError(t, db.Raw("SELECT suspend_clear_synced_copies FROM secret_nodes WHERE name = 'rc2-marker'").Scan(&marker).Error)
 			require.False(t, marker, "an old binary's resume left the marker set on an active secret (#3362 reopened)")

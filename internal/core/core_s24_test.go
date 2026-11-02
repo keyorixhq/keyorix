@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // ── service.go — setters and simple accessors ─────────────────────────────────
@@ -388,7 +389,8 @@ func TestRestoreSecret_Success(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	// GetSecretIncludingDeleted is called before RestoreSecret to obtain name+projectID.
-	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5, ProjectID: 1}, nil)
+	// A restorable row is soft-deleted (a live one is a 409, ErrSecretNotDeleted).
+	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5, ProjectID: 1, DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}}, nil)
 	ms.On("RestoreSecret", mock.Anything, uint(5)).Return(nil)
 	// The secret.restored row is appended inside the restore's transaction.
 	ms.On("LogAuditEventWithAccessLog", mock.Anything, mock.Anything, mock.Anything).Return(nil)

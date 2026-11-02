@@ -1,0 +1,2 @@
+### Internal
+- **Code comments say the audit-checkpoint and evidence signing keys are KEK-derived, not DEK-derived.** Comment-only: `internal/core/service.go`, `internal/notary/notary.go`, `internal/storage/models/models.go`, `internal/storage/store/local_audit_checkpoint.go`, `server/scheduler_audit_checkpoint.go`, `server/wire_encryption.go` and a test comment in `internal/encryption/audit_checkpoint_key_test.go`. No behaviour change. (The checkpoint refusal text fix shipped separately in #3882.)

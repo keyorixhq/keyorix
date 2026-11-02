@@ -387,6 +387,7 @@ var nonHandlerJSONWriters = map[string]string{
 	"server/middleware/auth.go:unauthorizedResponse":             "401 envelope",
 	"server/middleware/auth.go:tooManyRequestsResponse":          "429 envelope",
 	"server/middleware/auth.go:serviceUnavailableResponse":       "503 envelope",
+	"server/middleware/auth.go:storageUnavailableResponse":       "503 storage_unavailable envelope: error/message/code literals",
 	"server/middleware/auth.go:forbiddenResponse":                "403 envelope",
 	"server/middleware/auth.go:projectMFARequiredResponse":       "403 ProjectMFARequired envelope",
 	"server/middleware/auth.go:notFoundResponse":                 "404 envelope",

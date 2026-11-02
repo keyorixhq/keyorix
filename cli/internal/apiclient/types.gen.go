@@ -407,6 +407,9 @@ type BreakGlassActivation struct {
 	RoleName      *string                    `json:"role_name,omitempty"`
 	State         *BreakGlassActivationState `json:"state,omitempty"`
 	UserId        *uint32                    `json:"user_id,omitempty"`
+
+	// Username Username of the activating user (never an email); omitted when the user cannot be read, e.g. deleted
+	Username *string `json:"username,omitempty"`
 }
 
 // BreakGlassActivationState defines model for BreakGlassActivation.State.
@@ -1568,7 +1571,7 @@ type ListRBACAuditLogsParams struct {
 
 // SearchAuditLogsParams defines parameters for SearchAuditLogs.
 type SearchAuditLogsParams struct {
-	// Actor Partial username match on the acting principal.
+	// Actor Case-insensitive partial match on the acting principal's name: a user's username (deleted users do not match) or a machine identity's name. A term that is part of the word "system" also matches system-originated events.
 	Actor *string `form:"actor,omitempty" json:"actor,omitempty"`
 
 	// UserId Exact numeric user ID.

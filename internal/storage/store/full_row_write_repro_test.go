@@ -7,20 +7,14 @@
 //   - #2696 (ClassifyMachineToken un-revoking a concurrently revoked token) is FIXED
 //     (column-scoped, conditional SetMachineIdentityCredentialClassification), so its
 //     repro runs as a regression test.
-//   - #2695 (UpdateSecret's Save resurrecting a concurrently deleted secret): every
-//     caller now persists through a column-scoped write, so the race is fixed in
-//     production, but the full-row primitive itself still resurrects and still exists.
-//     docs/full-row-write-exempt.tsv carries a FIXED-NO-CALLER row for UpdateSecret (it
-//     was UNSAFE-OPEN until the callers moved). The repro is tied to that row rather
-//     than to a bare t.Skip: while the row exists the test asserts the primitive STILL
-//     reproduces (so the row cannot silently go stale), and once the row is deleted the
-//     test asserts the bug is gone. There is no state in which the fix lands and this
-//     stays skipped.
+//   - #2695 (the former UpdateSecret's Save resurrecting a concurrently deleted
+//     secret): every caller persists through a column-scoped write, and the full-row
+//     primitive itself has since been deleted, so the repro runs as a regression test
+//     against UpdateSecretFields.
 package store
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -103,55 +97,4 @@ func TestFullRowRepro_UpdateSecretFieldsKeepsConcurrentDeleteAndSuspend(t *testi
 	require.NoError(t, err)
 	require.Equal(t, "suspended", got.Status, "a suspension by another replica was reverted by a stale field update (#2695)")
 	require.Equal(t, desc, got.Description)
-}
-
-// updateSecretOpenRowPresent reports whether the ledger still lists UpdateSecret as a
-// known-unsafe primitive: UNSAFE-OPEN (a live caller can lose an update) or
-// FIXED-NO-CALLER (no production caller is left, the primitive itself is unchanged).
-func updateSecretOpenRowPresent(t *testing.T) bool {
-	t.Helper()
-	for _, r := range loadFullRowExempt(t) {
-		if strings.HasSuffix(r.File, "local_secrets.go") && r.Func == "(*LocalStorage).UpdateSecret" && r.Model == "SecretNode" {
-			return strings.HasPrefix(r.Reason, "UNSAFE-OPEN") || strings.HasPrefix(r.Reason, "FIXED-NO-CALLER")
-		}
-	}
-	return false
-}
-
-// secretResurrectedByStaleUpdate plays #2695: replica A reads, replica B deletes,
-// replica A's UpdateSecret writes its stale row. It reports whether the secret is
-// readable afterwards (i.e. was resurrected).
-func secretResurrectedByStaleUpdate(t *testing.T) bool {
-	t.Helper()
-	ctx := context.Background()
-	ls := newFullRowReproStore(t)
-	sec, err := ls.CreateSecret(ctx, &models.SecretNode{Name: "db-password", ProjectID: 1, EnvironmentID: 1, Type: "password", Status: "active"})
-	require.NoError(t, err)
-
-	stale, err := ls.GetSecret(ctx, sec.ID) // replica A: the operation's read
-	require.NoError(t, err)
-	require.NoError(t, ls.DeleteSecret(ctx, sec.ID)) // replica B: DeleteSecret commits
-
-	stale.Description = "edited on replica A" // replica A: its stale whole-row write
-	_, err = ls.UpdateSecret(ctx, stale)
-	require.NoError(t, err)
-
-	_, err = ls.GetSecret(ctx, sec.ID)
-	return err == nil
-}
-
-// A secret deleted between an UpdateSecret caller's read and its write
-// (ClassifySecret, SetSecretDescription, MoveSecret, RotateSecret, ...) must stay
-// deleted. GORM Save's UPDATE ... WHERE deleted_at IS NULL matches 0 rows and falls
-// back to INSERT ... ON CONFLICT DO UPDATE SET deleted_at=NULL (#2695, #2689).
-func TestFullRowRepro_UpdateSecretResurrectsConcurrentlyDeletedSecret(t *testing.T) {
-	resurrected := secretResurrectedByStaleUpdate(t)
-	if updateSecretOpenRowPresent(t) {
-		require.Truef(t, resurrected,
-			"the ledger lists UpdateSecret as UNSAFE-OPEN/FIXED-NO-CALLER (#2689/#2695) but the stale write no longer resurrects the secret: "+
-				"the primitive is safe now — delete its row from docs/full-row-write-exempt.tsv so this test asserts the fix")
-		t.Log("#2695/#2689: the full-row UpdateSecret primitive still resurrects a concurrently deleted secret (reproduced; tied to the ledger row); no production caller remains")
-		return
-	}
-	require.False(t, resurrected, "a secret deleted by another replica was resurrected by a stale UpdateSecret (#2695)")
 }

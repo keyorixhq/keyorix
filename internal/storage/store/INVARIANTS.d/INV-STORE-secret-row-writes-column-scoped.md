@@ -16,8 +16,8 @@
   `ClearProjectSecretOwnership`'s offboarding. Note `UpdateSecretFields` normalises
   `expiration` to UTC itself, because a raw `Updates` bypasses `SecretNode.BeforeSave`
   (G81, see INV-STORE-19). Guard: `internal/core`
-  `TestUpdateSecret_HasNoProductionCallerBeyond2668` (derived repo sweep, fails both on
-  a new caller and on a stale allowance), `TestUpdateSecretWrites_AreColumnScoped`
+  `TestUpdateSecretFullRowSave_HasNoProductionCaller` (derived repo sweep; fails on
+  a caller by name, the method itself is deleted), `TestUpdateSecretWrites_AreColumnScoped`
   (structural, all eight call sites), `TestUpdateSecretRequest_FieldSetsMatch` (the two
   request-field readers cannot drift apart), and
   `TestCTAReview_{ClassifySecret_vs_DeleteSecret,BulkRenameSecrets_vs_SuspendSecret,SetSecretDescription_vs_ClearOwnership}_CrossReplicaPostgres`

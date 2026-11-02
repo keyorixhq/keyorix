@@ -1,0 +1,13 @@
+package fixture
+
+import (
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
+)
+
+// Green fixture: same statement, gated by the helper.
+func TestSetsTheRole(t *testing.T) {
+	pgpriv.RequireReplicationRolePrivilege(t, db)
+	_ = db.Exec("SET LOCAL session_replication_role = replica")
+}

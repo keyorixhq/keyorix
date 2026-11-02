@@ -84,6 +84,9 @@ var deprecatedSettingAliases = []deprecatedSettingAlias{
 var ignoredSettingPaths = []string{
 	"secrets.chunking",
 	"secrets.limits.max_secrets_per_user",
+	// SUBTRACT-202611: only server.grpc.keepalive is read (server/grpc/server.go);
+	// the HTTP twin exists because both listeners share ServerInstanceConfig.
+	"server.http.keepalive",
 }
 
 // DeprecatedSettingAliasPaths returns every (old, new) dotted-path pair Load

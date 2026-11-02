@@ -98,7 +98,7 @@ func TestRestoreOperationsAudit(t *testing.T) {
 		// "retired" was deliberately soft-deleted well before the project — an
 		// operator's own remediation, independent of any project-level action.
 		require.NoError(t, db.Unscoped().Model(&models.SecretNode{}).
-			Where("id = ?", retired.ID).Update("deleted_at", time.Now().Add(-time.Hour)).Error)
+			Where("id = ?", retired.ID).Update("deleted_at", time.Now().UTC().Add(-time.Hour)).Error)
 
 		require.NoError(t, c.storage.DeleteProject(ctx, p.ID))
 		require.NoError(t, c.RestoreProject(ctx, 42, p.ID))

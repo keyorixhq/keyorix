@@ -91,7 +91,7 @@ func TestListHygieneTrendSnapshots_NonPositiveDaysDefaultsTo30(t *testing.T) {
 
 func TestCountStalePATs_EmptyDB(t *testing.T) {
 	ls := newHygieneCountsStore(t)
-	n, err := ls.CountStalePATs(context.Background(), time.Now().Add(-30*24*time.Hour))
+	n, err := ls.CountStalePATs(context.Background(), time.Now().UTC().Add(-30*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 }
@@ -106,7 +106,7 @@ func TestCountStalePATs_CountsNeverUsed(t *testing.T) {
 	}
 	require.NoError(t, ls.db.WithContext(ctx).Create(pat).Error)
 
-	n, err := ls.CountStalePATs(ctx, time.Now().Add(-30*24*time.Hour))
+	n, err := ls.CountStalePATs(ctx, time.Now().UTC().Add(-30*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 }
@@ -120,7 +120,7 @@ func TestCountStalePATs_SkipsRevoked(t *testing.T) {
 	}
 	require.NoError(t, ls.db.WithContext(ctx).Create(revoked).Error)
 
-	n, err := ls.CountStalePATs(ctx, time.Now().Add(-30*24*time.Hour))
+	n, err := ls.CountStalePATs(ctx, time.Now().UTC().Add(-30*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "revoked PATs must not be counted as stale")
 }
@@ -135,7 +135,7 @@ func TestCountStalePATs_SkipsRecentlyUsed(t *testing.T) {
 	}
 	require.NoError(t, ls.db.WithContext(ctx).Create(pat).Error)
 
-	n, err := ls.CountStalePATs(ctx, time.Now().Add(-30*24*time.Hour))
+	n, err := ls.CountStalePATs(ctx, time.Now().UTC().Add(-30*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "recently-used PATs must not be counted as stale")
 }
@@ -198,7 +198,7 @@ func TestCountExpiredPATs_SkipsFuture(t *testing.T) {
 
 func TestCountStaleMachineCredentials_EmptyDB(t *testing.T) {
 	ls := newHygieneCountsStore(t)
-	n, err := ls.CountStaleMachineCredentials(context.Background(), time.Now().Add(-30*24*time.Hour))
+	n, err := ls.CountStaleMachineCredentials(context.Background(), time.Now().UTC().Add(-30*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 }
@@ -210,7 +210,7 @@ func TestCountStaleMachineCredentials_ActiveWithNoCredentials(t *testing.T) {
 	m := &models.MachineIdentity{Name: "no-creds", State: "active"}
 	require.NoError(t, ls.db.WithContext(ctx).Create(m).Error)
 
-	n, err := ls.CountStaleMachineCredentials(ctx, time.Now().Add(-30*24*time.Hour))
+	n, err := ls.CountStaleMachineCredentials(ctx, time.Now().UTC().Add(-30*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "machine with no credentials should be counted as stale")
 }
@@ -222,7 +222,7 @@ func TestCountStaleMachineCredentials_SkipsRevoked(t *testing.T) {
 	m := &models.MachineIdentity{Name: "revoked-machine", State: "revoked"}
 	require.NoError(t, ls.db.WithContext(ctx).Create(m).Error)
 
-	n, err := ls.CountStaleMachineCredentials(ctx, time.Now().Add(-30*24*time.Hour))
+	n, err := ls.CountStaleMachineCredentials(ctx, time.Now().UTC().Add(-30*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "non-active machines must not be counted")
 }
@@ -241,7 +241,7 @@ func TestCountStaleMachineCredentials_NotStaleWhenRecentlyUsed(t *testing.T) {
 	}
 	require.NoError(t, ls.db.WithContext(ctx).Create(cred).Error)
 
-	n, err := ls.CountStaleMachineCredentials(ctx, time.Now().Add(-30*24*time.Hour))
+	n, err := ls.CountStaleMachineCredentials(ctx, time.Now().UTC().Add(-30*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "machine with recently-used credential must not be stale")
 }
