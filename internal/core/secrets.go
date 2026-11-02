@@ -954,6 +954,10 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 					return err
 				}
 			}
+			// Restored concurrently since the read above: the same conflict.
+			if cur, err := tx.GetSecretIncludingDeleted(ctx, id); err == nil && !cur.DeletedAt.Valid {
+				return errSecretNotDeleted(id)
+			}
 			if err := tx.RestoreSecret(ctx, id); err != nil {
 				return err
 			}
@@ -966,6 +970,9 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 	// takes no lock then, and key 0 names no real environment), so no path reaches
 	// the transaction without the lock already held.
 	err = c.storage.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(secret.EnvironmentID), restore)
+	if errors.Is(err, ErrSecretNotDeleted) {
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

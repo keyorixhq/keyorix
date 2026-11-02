@@ -132,8 +132,10 @@ func TestMachineRestrictionFrom(t *testing.T) {
 		assert.Equal(t, []string{"<corrupted>"}, r.AllowedCIDRs)
 	})
 
-	t.Run("JSON empty array returns nil", func(t *testing.T) {
+	t.Run("JSON empty array returns corrupted sentinel (fail-closed, #3396)", func(t *testing.T) {
 		cred := &models.MachineIdentityCredential{AllowedCIDRs: `[]`}
-		assert.Nil(t, machineRestrictionFrom(cred))
+		r := machineRestrictionFrom(cred)
+		require.NotNil(t, r)
+		assert.Equal(t, []string{"<corrupted>"}, r.AllowedCIDRs)
 	})
 }
