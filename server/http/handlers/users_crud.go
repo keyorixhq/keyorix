@@ -187,7 +187,7 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		created, err = h.coreService.CreateUserAudited(r.Context(), req, userCtx.UserID)
 	}
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		log.Printf("Error creating user: %v", err)

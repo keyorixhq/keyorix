@@ -91,7 +91,7 @@ func TestAnomalyQueries_UseTheirIndexes(t *testing.T) {
 	}))
 	_, err = ls.ListSecretAccessLogs(ctx, 1, time.Now().Add(-time.Hour))
 	require.NoError(t, err)
-	_, err = ls.ListSecretIDsAccessedSince(ctx, time.Now().Add(-24*time.Hour))
+	_, err = ls.ListSecretIDsAccessedSince(ctx, time.Now().UTC().Add(-24*time.Hour))
 	require.NoError(t, err)
 
 	cases := []struct {

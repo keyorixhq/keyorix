@@ -319,6 +319,9 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		switch {
 		case strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required"):
 			status = http.StatusBadRequest

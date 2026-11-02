@@ -11,9 +11,13 @@
   must be added to `fipsSelfTestPaths`. Why: FIPS-TAILS-1 item 3. Guard:
   `internal/encryption/fips_selftest_test.go` (`TestRunFIPSSelfTest_PassesUnderFIPS140Only`
   runs a child under fips140=only; `TestRunFIPSSelfTestPaths_FailingPathIsNamed`;
-  `TestBootFIPSSelfTest_FailingPathRefusesBoot`), `server/admin/posture_fips_selftest_test.go`,
+  `TestBootFIPSSelfTest_FailingPathRefusesBoot`;
+  `TestBootFIPSSelfTest_EnforcedStubbedFailureNamesThePath` drives the refusal in default
+  mode through the `fipsSelfTestEnforced` seam), `server/admin/posture_fips_selftest_test.go`,
   `server/fips_selftest_wiring_test.go` (source check: the call and its `log.Fatalf` sit in
-  `main()` before `runStartupValidation`).
+  `main()` before `runStartupValidation`). The refusal is documented in
+  `docs/operator/startup-refusals.md` (Match `fips140 self-test failed on`, checked by
+  `internal/refusaldocs`).
   **Not covered**: the backup path checks the manifest key derivation and the HMAC-SHA256
   primitive, not `backupfmt.SignManifest` itself (importing backupfmt would pull
   internal/storage into this package). Nothing detects a new path that is missing from the list.

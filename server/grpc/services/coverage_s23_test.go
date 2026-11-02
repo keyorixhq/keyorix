@@ -247,13 +247,8 @@ func TestGetSecretImpact_PermissionDenied_S23(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mapUserError — "must be" branch (not in s17/s22)
+// mapUserError ("must be" is TestMapUserError_MustBe in coverage_s17_test.go)
 // ---------------------------------------------------------------------------
-
-func TestMapUserError_MustBe_S23(t *testing.T) {
-	err := mapUserError(errors.New("password must be at least 8 characters"))
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
 
 func TestMapUserError_Invalid_S23(t *testing.T) {
 	err := mapUserError(errors.New("invalid email address format"))

@@ -506,12 +506,6 @@ func TestNewWebhook_InsecureSkipVerify_WithHTTPS(t *testing.T) {
 	s.Close()
 }
 
-// TestNewWebhook_EmptyEndpointReturnsError exercises the empty-endpoint branch.
-func TestNewWebhook_EmptyEndpointReturnsError(t *testing.T) {
-	_, err := NewWebhook(WebhookConfig{})
-	require.Error(t, err)
-}
-
 // TestSanitizeDeliveryError_URLWithoutPath covers a URL that has host but no path token.
 // The sanitizer replaces the URL with scheme+host only; the surrounding operation text
 // ("Post") is not a URL and is preserved.

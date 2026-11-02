@@ -113,7 +113,7 @@ data[len(data) // 2] ^= 0xFF
 open(sys.argv[2], "wb").write(data)
 PY
 if [ "$DRILL_BACKEND" = "postgres" ]; then
-    [ -n "${DRILL_PG_DSN_FILE3:-}" ] || echo "    (set DRILL_PG_DSN_FILE3 to also run the tamper leg on PostgreSQL; skipped)"
+    [ -n "${DRILL_PG_DSN_FILE3:-}" ] || drill_skip postgres "tamper leg: needs DRILL_PG_DSN_FILE3 (a third EMPTY database)"
 fi
 if [ "$DRILL_BACKEND" = "sqlite" ] || [ -n "${DRILL_PG_DSN_FILE3:-}" ]; then
     fresh_target neg "$(drill_port 13)" "${DRILL_PG_DSN_FILE3:-}"

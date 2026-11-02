@@ -149,7 +149,7 @@ func (ls *LocalStorage) ReactivateMachineIdentitiesForRestoredProject(ctx contex
 			"state":                        machineIdentityStateActive,
 			"cascade_suspended_project_id": 0,
 			"cascade_suspended_at":         nil,
-			"updated_at":                   now,
+			"updated_at":                   now.UTC(), // UpdateColumns runs no hook or NowFunc
 		})
 	if res.Error != nil {
 		return nil, fmt.Errorf("failed to re-activate the project's machine identities: %w", res.Error)

@@ -389,6 +389,7 @@ func TestRestoreSecret_Success(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	// GetSecretIncludingDeleted is called before RestoreSecret to obtain name+projectID.
+	// A restorable row is soft-deleted (a live one is a 409, ErrSecretNotDeleted).
 	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(softDeletedSecretNode(5, 1), nil)
 	ms.On("RestoreSecret", mock.Anything, uint(5)).Return(nil)
 	// The secret.restored row is appended inside the restore's transaction.

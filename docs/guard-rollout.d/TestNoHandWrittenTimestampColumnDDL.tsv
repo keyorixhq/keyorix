@@ -1,1 +1,0 @@
-TestNoHandWrittenTimestampColumnDDL	internal/storage	#3806	new repo-wide guard (UPGRADE-CORRECT-1, #3440), report-only until its first green nightly on main

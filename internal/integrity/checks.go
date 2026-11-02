@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 func defaultExecutable() (string, error) { return os.Executable() }
@@ -19,7 +21,8 @@ func defaultExecutable() (string, error) { return os.Executable() }
 const secureBootVar = "sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
 
 func readUnder(root, rel string) ([]byte, error) {
-	return os.ReadFile(filepath.Join(root, filepath.FromSlash(rel))) // #nosec G304 -- rel is a constant, root is the injectable fake-tree root
+	// FIFO-safe: a FIFO planted at one of these paths is refused, not waited on.
+	return secretenv.ReadRegularFile("integrity source", filepath.Join(root, filepath.FromSlash(rel)))
 }
 
 func unreadable(id, what string, err error) Line {
@@ -137,7 +140,8 @@ func checkFSVerity(e Env) Line {
 
 // manifestName and manifestSigs: the release ships checksums.txt with a
 // cosign signature (RELEASING.md). Only a manifest with a signature file next
-// to it is used; an unsigned checksum list proves nothing about the binary.
+// to it is compared, and even then the result is only "ok (signature not
+// verified)": it never counts toward a tier rung.
 const manifestName = "checksums.txt"
 
 var manifestSigs = []string{"checksums.txt.sig", "checksums.txt.sigstore.json", "checksums.txt.bundle"}
@@ -160,7 +164,7 @@ func checkManifest(e Env) Line {
 		}
 	}
 	mpath := filepath.Join(dir, manifestName)
-	f, err := os.Open(mpath) // #nosec G304 -- next to the running binary, read-only
+	f, err := secretenv.OpenRegularNamed("release manifest", mpath) // a FIFO named checksums.txt is refused, not waited on
 	if errors.Is(err, fs.ErrNotExist) {
 		return Line{ID: CheckManifest, State: StateNotChecked, Detail: "no release manifest (" + manifestName + ") next to the binary; nothing to compare, nothing fetched"}
 	}
@@ -179,7 +183,9 @@ func checkManifest(e Env) Line {
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
 		if len(fields) >= 2 && strings.EqualFold(fields[0], sum) {
-			return Line{ID: CheckManifest, State: StateOK, Detail: fmt.Sprintf("binary SHA-256 matches %q in %s; the signature file %s is present but NOT verified by this check (run scripts/release/verify-release.sh)", strings.TrimPrefix(fields[1], "*"), manifestName, sigFile)}
+			// Never StateOK: the signature file is not verified here, so the match
+			// proves nothing about the binary and must not count toward a tier rung.
+			return Line{ID: CheckManifest, State: StateOKQualified, Qualifier: "signature not verified", Detail: fmt.Sprintf("binary SHA-256 matches %q in %s; the signature file %s is present but NOT verified by this check, so this does not count toward the tier (run scripts/release/verify-release.sh)", strings.TrimPrefix(fields[1], "*"), manifestName, sigFile)}
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -189,7 +195,7 @@ func checkManifest(e Env) Line {
 }
 
 func hashFile(path string) (string, error) {
-	f, err := os.Open(path) // #nosec G304 -- the running binary
+	f, err := secretenv.OpenRegularNamed("running binary", path)
 	if err != nil {
 		return "", err
 	}
@@ -212,6 +218,9 @@ func checkTPM(e Env) Line {
 		return unreadable(CheckTPMSealing, "the TPM-sealed KEK blob", t.BlobErr)
 	case !t.BlobPresent:
 		return Line{ID: CheckTPMSealing, State: StateDegraded, Detail: "key_provider.type is tpm but no sealed KEK blob exists yet"}
+	case t.WeakerFallback != "":
+		// Not StateOK: the rung assumes TPM-only recovery, which a weaker fallback breaks.
+		return Line{ID: CheckTPMSealing, State: StateOKQualified, Qualifier: "weaker fallback configured: " + t.WeakerFallback, Detail: "key_provider.type is tpm and a sealed KEK blob exists, but the " + t.WeakerFallback + " fallback can recover the KEK without the TPM (insecure_allow_weaker_kek_fallback), so this does not count toward the tier. The seal binds the KEK to this TPM chip, not to a verified boot state (no PCR policy)"}
 	default:
 		return Line{ID: CheckTPMSealing, State: StateOK, Detail: "key_provider.type is tpm and a sealed KEK blob exists. The seal binds the KEK to this TPM chip, not to a verified boot state (no PCR policy)"}
 	}
@@ -244,9 +253,9 @@ func keylimeInProc(root string) (bool, error) {
 		if !en.IsDir() || !isDigits(en.Name()) {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(root, "proc", en.Name(), "comm")) // #nosec G304 -- pid dir under the injectable root
+		b, err := secretenv.ReadRegularFile("process name", filepath.Join(root, "proc", en.Name(), "comm"))
 		if err != nil {
-			continue // a process that exited or is hidden: skip, the scan goes on
+			continue // a process that exited or is hidden, or a non-regular comm: skip, the scan goes on
 		}
 		if strings.TrimSpace(string(b)) == "keylime_agent" {
 			return true, nil

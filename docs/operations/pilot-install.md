@@ -138,7 +138,8 @@ keyorix mfa activate
 keyorix change-password
 ```
 
-Save the recovery codes `mfa activate` prints, offline. Keep the `admin_password` file:
+Save the recovery codes `mfa activate` prints, offline. The code you activated with is
+single-use: the next `keyorix login` needs the authenticator app's next code. Keep the `admin_password` file:
 Compose needs it to exist at every `up`, and it is only read at first boot.
 [QUICK_START.md](../../QUICK_START.md#enrol-mfa-required-on-first-login),
 [SELF_HOSTING.md §2](../SELF_HOSTING.md#2-quick-start).

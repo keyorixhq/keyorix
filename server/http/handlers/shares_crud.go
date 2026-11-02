@@ -73,7 +73,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 
 	if shareErr != nil {
 		log.Printf("Error sharing secret: %v", shareErr)
-		if sendAuditUnavailable(w, shareErr) {
+		if sendAuditUnavailable(w, shareErr) || sendStorageUnavailable(w, shareErr) {
 			return
 		}
 		if strings.Contains(shareErr.Error(), errNotFound) {

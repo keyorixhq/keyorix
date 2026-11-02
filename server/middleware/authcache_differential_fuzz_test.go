@@ -49,19 +49,20 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // acdInitialPassword is the victim's password at the start of every fuzz
@@ -90,24 +91,47 @@ type acWorld struct {
 	roleID            uint
 	scope             core.Scope
 	machineIdentityID uint
+	// secretID is the secret the folded-mode check reads, and foldedStmts counts
+	// the folded credential statements the store ran (acCheckFoldedDifferential).
+	secretID    uint
+	foldedStmts *atomic.Int64
 }
 
-func acBuildWorld(f *testing.F) *acWorld {
+func acBuildWorld(f testing.TB) *acWorld {
 	f.Helper()
 	if err := i18n.InitializeForTesting(); err != nil {
 		f.Fatalf("i18n: %v", err)
 	}
 
-	dbPath := filepath.Join(f.TempDir(), "acd.db")
-	db, err := gorm.Open(sqlite.Open(dbPath+"?_foreign_keys=1&_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"), &gorm.Config{Logger: logger.Discard})
+	// The PRODUCTION factory, not a bare NewLocalStorage over AutoMigrate: the
+	// folded credential re-check (credential_read_fold.go) needs the node cache
+	// and the cache_epoch trigger the factory's migrations install, so on the
+	// bare store the fold can never engage and its differential would be vacuous.
+	st, err := appstorage.NewStorageFactory().CreateStorage(&config.Config{
+		Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: sqlitetest.FactoryPath(f, "acd_")}},
+	})
 	if err != nil {
-		f.Fatalf("open sqlite: %v", err)
+		f.Fatalf("create storage: %v", err)
 	}
-	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
-		f.Fatalf("migrate: %v", err)
+	ls, ok := st.(*store.LocalStorage)
+	if !ok {
+		f.Fatalf("factory storage is %T, want *store.LocalStorage", st)
 	}
-	ls := store.NewLocalStorage(db)
-	c := core.NewKeyorixCore(ls)
+	f.Cleanup(func() { _ = ls.Close() })
+	db := ls.DB()
+	var foldedStmts atomic.Int64
+	countFolded := func(d *gorm.DB) {
+		if isFoldedCredentialStatement(d.Statement.SQL.String()) {
+			foldedStmts.Add(1)
+		}
+	}
+	if err := db.Callback().Row().After("gorm:row").Register("acd:folded:row", countFolded); err != nil {
+		f.Fatalf("register row callback: %v", err)
+	}
+	if err := db.Callback().Raw().After("gorm:raw").Register("acd:folded:raw", countFolded); err != nil {
+		f.Fatalf("register raw callback: %v", err)
+	}
+	c := core.NewKeyorixCore(st)
 	c.SetTokenCacheInvalidator(InvalidateTokenCacheByHash)
 	c.SetTokenCacheClearer(ClearTokenCacheIfCached)
 	ctx := context.Background()
@@ -172,6 +196,12 @@ func acBuildWorld(f *testing.F) *acWorld {
 	}
 
 	scope := core.Scope{ProjectID: proj.ID}
+	// The machine holds the same read role as the victim, so its authenticated
+	// requests (and the folded secret read) can succeed: a read that always 403s
+	// never sets a fold mark.
+	if err := c.AssignMachineRole(ctx, mid.ID, role.ID, scope, admin.ID, false); err != nil {
+		f.Fatalf("assign machine role: %v", err)
+	}
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userCtx := GetUserFromContext(r.Context())
 		cs := GetCoreServiceFromContext(r.Context())
@@ -183,6 +213,16 @@ func acBuildWorld(f *testing.F) *acWorld {
 		if aerr != nil || !allowed {
 			w.WriteHeader(http.StatusForbidden)
 			return
+		}
+		// A GET /api/v1/secrets/{id} reads the node the way the handler does
+		// (core.GetSecret on the request's context), which warms this replica's
+		// node cache and takes whatever node answers the credential re-check
+		// parked on the request.
+		if id, isRead := secretReadPathID(r); isRead {
+			if _, gerr := cs.GetSecret(r.Context(), id); gerr != nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusOK)
 	})
@@ -199,7 +239,17 @@ func acBuildWorld(f *testing.F) *acWorld {
 		roleID:            role.ID,
 		scope:             scope,
 		machineIdentityID: mid.ID,
+		secretID:          sec.ID,
+		foldedStmts:       &foldedStmts,
 	}
+}
+
+// isFoldedCredentialStatement reports whether sql is the folded credential
+// re-check: the only statement that reads machine_identity_credentials and
+// secret_nodes together (the plain re-check is a prepared statement that never
+// reaches the GORM callbacks; see server/http/folded_credential_test.go).
+func isFoldedCredentialStatement(sql string) bool {
+	return strings.Contains(sql, "machine_identity_credentials c") && strings.Contains(sql, "secret_nodes n")
 }
 
 // acIterState is the per-fuzz-execution mutable state: which credentials are
@@ -278,7 +328,7 @@ func acNextIP() string {
 func acRunOp(t *testing.T, w *acWorld, st *acIterState, op byte) {
 	t.Helper()
 	ctx := context.Background()
-	switch op % 12 {
+	switch op % 13 {
 	case 0: // login
 		sess, _, err := w.c.Login(ctx, &core.LoginRequest{Username: w.victimUser, Password: st.currentPass})
 		if err == nil && sess != nil {
@@ -345,13 +395,20 @@ func acRunOp(t *testing.T, w *acWorld, st *acIterState, op byte) {
 		}
 	case 11: // #1985 shape: a role-lookup storage error must fail closed
 		acCheckRoleLookupFault(t, w, st)
+	case 12: // PERF-LEVER2 folded mode: cache hit with the credential-read fold vs without
+		acCheckFoldedDifferential(t, w, st)
 	}
 }
 
 // acDoRequest issues one authenticated GET with token as a bearer credential
 // from remoteAddr, returning the response status.
 func acDoRequest(handler http.Handler, token, remoteAddr string) int {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	return acDoRequestPath(handler, "/", token, remoteAddr)
+}
+
+// acDoRequestPath is acDoRequest for an explicit path.
+func acDoRequestPath(handler http.Handler, path, token, remoteAddr string) int {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.RemoteAddr = remoteAddr + ":4242"
 	rec := httptest.NewRecorder()
@@ -397,6 +454,54 @@ func acCheckDifferential(t *testing.T, w *acWorld, token string) {
 	if cachedStatus != freshStatus {
 		t.Fatalf("auth-cache differential: cache-path status=%d, cache-bypassed (DB-truth) status=%d for the same token and request -- the auth cache served a decision storage disagrees with", cachedStatus, freshStatus)
 	}
+}
+
+// acCheckFoldedDifferential is the folded-mode arm of the differential
+// (PERF-LEVER2, credential_read_fold.go): on a machine-token cache hit for
+// GET /api/v1/secrets/{id} the live credential re-check also reads the secret's
+// node in the same statement. The decision must not depend on that: the request
+// served from the cache with the fold, the same request served from the cache
+// with the fold off, and the same request with the cache entry forced out
+// (storage truth) must all get one status, whatever the preceding program did to
+// the machine token (revoke, re-issue) or to the identity's role.
+func acCheckFoldedDifferential(t *testing.T, w *acWorld, st *acIterState) {
+	t.Helper()
+	if st.machineToken != "" {
+		acFoldedDifferential(t, w, st.machineToken)
+	}
+}
+
+// acFoldedDifferential runs the three-way comparison. It returns whether the
+// folded credential statement ran for the first (fold on) request and the agreed
+// status, so a calibration test can prove the fold arm is not vacuous. Each
+// request gets its own source IP: the per-IP invalid-token budget is not what is
+// compared here.
+func acFoldedDifferential(t *testing.T, w *acWorld, token string) (folded bool, status int) {
+	t.Helper()
+	path := fmt.Sprintf("/api/v1/secrets/%d", w.secretID)
+	do := func() int { return acDoRequestPath(w.handler, path, token, acNextIP()) }
+
+	// Two plain requests first: the first fills the token cache (and warms the
+	// node cache), the second is a cache hit whose success marks (machine,
+	// secret), which is what lets the third fold. A revoked token simply answers
+	// 401 throughout and the comparison below still has to hold.
+	do()
+	do()
+	before := w.foldedStmts.Load()
+	foldedStatus := do()
+	folded = w.foldedStmts.Load() > before
+
+	restore := SetCredentialReadFoldForTest(false)
+	plainStatus := do()
+	restore()
+
+	acForceCacheMiss(token)
+	freshStatus := do()
+
+	if foldedStatus != plainStatus || plainStatus != freshStatus {
+		t.Fatalf("auth-cache folded differential: cache hit with the credential-read fold status=%d, cache hit without it status=%d, cache bypassed (DB-truth) status=%d for the same machine token and secret read -- the fold changed a credential decision", foldedStatus, plainStatus, freshStatus)
+	}
+	return folded, freshStatus
 }
 
 // acRoleFaultValidator wraps the real validator but reports
@@ -483,6 +588,12 @@ func FuzzAuthCacheDifferential(f *testing.F) {
 	f.Add([]byte{1, 10, 4, 10})
 	f.Add([]byte{2, 10, 5, 10})
 	f.Add([]byte{0, 11, 10})
+	// Folded mode (op 12): machine token read folded, then revoked / re-issued /
+	// role-toggled / identity-affecting ops between folded reads.
+	f.Add([]byte{2, 12})
+	f.Add([]byte{2, 12, 5, 12})
+	f.Add([]byte{2, 12, 5, 2, 12})
+	f.Add([]byte{2, 12, 7, 12, 7, 12})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
 		if len(program) == 0 {
@@ -494,4 +605,33 @@ func FuzzAuthCacheDifferential(f *testing.F) {
 			acRunOp(t, w, st, program[i])
 		}
 	})
+}
+
+// TestAuthCacheDifferential_FoldedArmEngagesTheFold calibrates op 12 in both
+// directions, so the folded arm is not a comparison of two plain reads: a live
+// machine token reads the secret with the folded credential statement and gets
+// 200; with the fold off the same read runs no folded statement; and once the
+// token is revoked the folded arm agrees with storage on 401.
+func TestAuthCacheDifferential_FoldedArmEngagesTheFold(t *testing.T) {
+	w := acBuildWorld(t)
+	st := w.resetIteration(t)
+	acRunOp(t, w, st, 2) // issue a machine token
+
+	folded, status := acFoldedDifferential(t, w, st.machineToken)
+	if !folded || status != http.StatusOK {
+		t.Fatalf("live machine token: folded=%v status=%d, want the folded statement to run and 200", folded, status)
+	}
+
+	restore := SetCredentialReadFoldForTest(false)
+	folded, status = acFoldedDifferential(t, w, st.machineToken)
+	restore()
+	if folded || status != http.StatusOK {
+		t.Fatalf("fold off: folded=%v status=%d, want no folded statement and 200", folded, status)
+	}
+
+	acRunOp(t, w, st, 5) // revoke it
+	folded, status = acFoldedDifferential(t, w, st.machineToken)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("revoked machine token: folded=%v status=%d, want 401 from every arm", folded, status)
+	}
 }

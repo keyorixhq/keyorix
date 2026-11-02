@@ -16,6 +16,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -213,7 +214,10 @@ func TestValidateRoleGrantAuthority_UnknownRoleID(t *testing.T) {
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), Scope{}).Return([]uint{}, nil)
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{100}).Return(false, nil)
 	ms.On("RoleSetHasPermission", mock.Anything, []uint{100}, "users.write").Return(true, nil)
-	ms.On("GetRole", mock.Anything, uint(999)).Return(nil, errors.New("record not found"))
+	// A missing role as real storage reports it (a wrapped typed sentinel), not an
+	// untyped error: an untyped error is a read fault and answers "retry"
+	// (STORAGE-ERR-CLASS-2).
+	ms.On("GetRole", mock.Anything, uint(999)).Return(nil, fmt.Errorf("role not found: %w", storage.ErrRoleNotFound))
 
 	c := NewKeyorixCore(ms)
 	grants := []storage.RoleGrant{{RoleID: 999, Scope: storage.Scope{ProjectID: 2}}}
