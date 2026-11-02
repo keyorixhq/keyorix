@@ -4389,7 +4389,7 @@ export interface paths {
         put?: never;
         /**
          * Write a signed audit-chain checkpoint on demand (ADR-029)
-         * @description Signs a checkpoint of the current verified chain head for on-box truncation detection. Requires system.write (above the audit group's audit.read) and server-side encryption (the signing key is KEK-derived). Use to re-baseline immediately after a KEK change (a DEK rotation does not change the key).
+         * @description Signs a checkpoint of the current verified chain head for on-box truncation detection. Requires system.write (above the audit group's audit.read) and server-side encryption (the signing key is KEK-derived). A DEK rotation does not change the key, and rotate-kek or a KEK-provider migration carries the audit verification state over and writes a fresh checkpoint itself (docs/operator/key-rotation-runbook.md section 5).
          */
         post: operations["writeAuditCheckpoint"];
         delete?: never;
