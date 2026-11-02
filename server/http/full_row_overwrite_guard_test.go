@@ -117,23 +117,21 @@ var fullRowOverwriteMethods = map[string]bool{
 	// SetWebAuthnCredentialCounterState). Same reasoning, and the
 	// replacements take an id plus scalars or a field struct, never a
 	// caller-built *models.X.
-	"UpdateProject":             true,
-	"UpdateLegalHold":           true,
-	"UpdateDynamicSecretConfig": true,
-	// UpdateDynamicSecretLease was here until STORE-STALE-WRITE-1 deleted it:
-	// no caller was left after #2825 moved renew/revoke onto column-scoped writes.
+	"UpdateProject":   true,
+	"UpdateLegalHold": true,
+	// UpdateDynamicSecretConfig was here until STORE-CLEANUP-1 deleted it, and
+	// UpdateDynamicSecretLease until STORE-STALE-WRITE-1: no caller was left after
+	// #2675/#2698/#2825 moved every write onto column-scoped methods.
 	// UpdateUser (the full-row storage primitive) was here until
 	// STORE-DEAD-PRIMITIVES-1 deleted it: it had no caller left.
 	"SaveAnomalyConfig": true,
 	// UpdateSecret was here until #2695 replaced it with UpdateSecretFields (a
 	// per-field-pointer conditional UPDATE); TransitionSecretStatus was in the
 	// Select("*") group above until the same PR whitelisted it to Status and
-	// UpdatedAt. Neither is a full-row writer any more. UpdateSecret still exists
-	// for ONE caller that open PR #2668 converts (see
-	// TestUpdateSecret_HasNoProductionCallerBeyond2668), but no caller-facing
-	// handler reaches it, which is all this guard scans — and the replacement
-	// takes an id plus a field struct, not a caller-built *models.SecretNode,
-	// so there is no unfetched-struct shape here to catch.
+	// UpdatedAt. Neither is a full-row writer any more. STORE-UPDATESECRET-RETIRE-1
+	// then deleted UpdateSecret itself; the replacement takes an id plus a field
+	// struct, not a caller-built *models.SecretNode, so there is no
+	// unfetched-struct shape here to catch.
 }
 
 // fullRowOverwriteAllowlist is the exhaustive, reasoned inventory of every

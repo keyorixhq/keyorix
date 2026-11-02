@@ -165,6 +165,9 @@ var seedIntent = map[string]struct{ op, method string }{
 	"31fd1db68a395324": {"REST POST /auth/mfa/verify", "GetMFASecret"},
 	"bdbfad52d4cc7bae": {"REST PUT /api/v1/roles/{id}", "RemovePermissionFromRole"},
 	"fc345daad612100a": {"REST POST /api/v1/secrets/", "CreateSecret"},
+	// STORE-UPDATESECRET-RETIRE-1: UpdateSecret (the full-row writer) was deleted;
+	// the PUT op's secret write is UpdateSecretFields now.
+	"e114805b46ad75ba": {"REST PUT /api/v1/secrets/{id}", "UpdateSecretFields"},
 }
 
 const fuzzCorpusDir = "testdata/fuzz/FuzzStorageFaultOperations"

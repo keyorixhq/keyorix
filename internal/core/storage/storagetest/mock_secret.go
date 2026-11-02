@@ -112,14 +112,6 @@ func (m *MockStorage) GetSecretByName(ctx context.Context, name string, projectI
 	return args.Get(0).(*models.SecretNode), args.Error(1)
 }
 
-func (m *MockStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
-	args := m.Called(ctx, secret)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.SecretNode), args.Error(1)
-}
-
 func (m *MockStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
 	args := m.Called(ctx, id, f)
 	return args.Bool(0), args.Error(1)

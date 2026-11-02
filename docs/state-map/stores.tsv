@@ -137,7 +137,7 @@ scripts/ci/shadowprobe/main.go (os.OpenFile)	file_write	scripts/ci/shadowprobe	1
 scripts/ci/shadowprobe/main.go (os.WriteFile)	file_write	scripts/ci/shadowprobe	2
 scripts/demo/oidcissuer/main.go (os.WriteFile)	file_write	scripts/demo/oidcissuer	1
 scripts/e2e/harness/harness.go (os.Create)	file_write	scripts/e2e/harness	1
-scripts/e2e/harness/harness.go (os.WriteFile)	file_write	scripts/e2e/harness	3
+scripts/e2e/harness/harness.go (os.WriteFile)	file_write	scripts/e2e/harness	4
 scripts/fuzzing/autofuzzgen/main.go (os.WriteFile)	file_write	scripts/fuzzing/autofuzzgen	2
 scripts/fuzzing/reencode-seeds.go (os.WriteFile)	file_write	scripts/fuzzing	1
 scripts/metrics/cfgkeys/main.go (os.WriteFile)	file_write	scripts/metrics/cfgkeys	1

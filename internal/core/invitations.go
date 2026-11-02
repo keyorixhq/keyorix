@@ -814,6 +814,9 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 	// soft-deleted (#371). Otherwise a request can sit pending against a project an admin
 	// believes is gone, waiting to be approved (and go live) whenever it's restored.
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
+		if fault := ReadFault(err); fault != nil {
+			return nil, fault
+		}
 		return nil, fmt.Errorf("project %d not found: %w", projectID, err)
 	}
 	// #G82: refuse a second pending PROJECT-ROLE request for the SAME (user,

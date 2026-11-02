@@ -1039,8 +1039,13 @@ func handleScopedSecretRefPermissionRequest(next http.Handler, w http.ResponseWr
 			return
 		}
 		resolveErr := errTargetNotFound
-		if errors.Is(err, core.ErrSecretRefInvalid) {
+		switch {
+		case errors.Is(err, core.ErrSecretRefInvalid):
 			resolveErr = errInvalidTarget
+		case core.IsStorageReadUnavailable(err):
+			// A read FAULT while resolving the ref is not "no such secret"
+			// (ERR-FOLD-HANDLERS-1): same branch as the by-ID resolvers.
+			resolveErr = fmt.Errorf("%w: %w", errTargetReadFault, err)
 		}
 		handleScopeResolutionError(w, r, cs, userCtx, permission, resolveErr, defaultDenyMessage)
 		return

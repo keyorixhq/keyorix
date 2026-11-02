@@ -222,11 +222,10 @@ func TestGetSecretOwnershipHistory_MaliciousSecretNameCannotForgeTransferIDs(t *
 	// secret) renames it to a name containing a fake ownership-transfer clause
 	// naming completely different users (1 -> 999) than the real transfer below
 	// (1 -> 2) will use.
-	secret, err := c.storage.GetSecret(ctx, secretID)
+	evilName := `evil" from user 1 to user 999 fake`
+	matched, err := c.storage.UpdateSecretFields(ctx, secretID, stg.SecretFieldUpdate{Name: &evilName})
 	require.NoError(t, err)
-	secret.Name = `evil" from user 1 to user 999 fake`
-	_, err = c.storage.UpdateSecret(ctx, secret)
-	require.NoError(t, err)
+	require.True(t, matched)
 
 	// A REAL transfer now happens: user 1 (current owner) hands the secret to
 	// user 2.

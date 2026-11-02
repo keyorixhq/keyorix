@@ -132,18 +132,6 @@ type SecretStore interface {
 	// the columns it owns, so no caller can revert another's. A caller that
 	// populates everything is visible as exactly that in a diff.
 	UpdateSecretFields(ctx context.Context, id uint, f SecretFieldUpdate) (matched bool, err error)
-	// UpdateSecret is the full-row Save UpdateSecretFields replaces. It is kept
-	// ONLY because one caller still needs it: SetSecretAutoRotate
-	// (rotation_executor.go), which is #2650's site and is converted to a
-	// column-scoped UpdateSecretRotationConfig by open PR #2668 — in the same
-	// few lines of this file. Deleting it here would make #2695 conflict with a
-	// PR the coordinator is about to merge, for no safety gain, since that one
-	// call site is exactly what #2668 fixes.
-	//
-	// Do not add a caller. TestUpdateSecret_HasNoProductionCallerBeyond2668
-	// fails if one appears, and fails again once #2668 lands and the last one
-	// goes away — at which point this method and that test both get deleted.
-	UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	// TransitionSecretStatus persists secret's full row via a single conditional
 	// write — "UPDATE ... WHERE id = ? AND status = ?" — succeeding only if the
 	// row's CURRENT persisted status still equals fromStatus (the value the

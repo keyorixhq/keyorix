@@ -168,6 +168,14 @@ func authorizeScopedTarget(ctx context.Context, cs *core.KeyorixCore, actor *int
 		}
 		allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, core.Scope{})
 		if err == nil && allowed {
+			// A read FAULT is not "no such target": the target may exist and nothing
+			// was done, so a caller who holds perm globally (the only ones answered
+			// NotFound) is told to retry. Everyone else keeps the uniform
+			// PermissionDenied below, so a fault adds no existence signal for them
+			// (STORAGE-ERR-CLASS-4; mirrors handleScopeResolutionError).
+			if serr, ok := storageUnavailableStatus(core.ReadFault(resolveErr)); ok {
+				return serr
+			}
 			return status.Error(codes.NotFound, notFoundMsg)
 		}
 		return authorizeRefusal(ctx, err, "insufficient permissions")

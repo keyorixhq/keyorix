@@ -16,9 +16,6 @@ import { resolveAuditIds, toNameMap } from './auditNames';
 // projects come from the lists every viewer already has; an id missing from them reads
 // "secret #3" (deleted, or not visible to this viewer).
 
-const RBAC_EVENT_PREFIXES = ['role.', 'group.', 'permission.'];
-export const isRbacEvent = (eventType: string): boolean => RBAC_EVENT_PREFIXES.some((p) => eventType.startsWith(p));
-
 export function useAuditNames(): (eventType: string, description: string) => string {
     const { isAdmin } = useAuth();
     const { data: roles } = useQuery({

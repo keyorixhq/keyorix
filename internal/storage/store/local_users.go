@@ -491,7 +491,7 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 		query = query.Where("is_active = ?", *filter.IsActive)
 	}
 	if filter.CreatedAfter != nil {
-		query = query.Where("created_at > ?", *filter.CreatedAfter)
+		query = query.Where("created_at > ?", filter.CreatedAfter.UTC())
 	}
 	if filter.InactiveSince != nil {
 		// G81 (User.LastLoginAt): normalize internally — see GetAuditLogs.

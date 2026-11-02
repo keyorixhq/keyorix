@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -104,8 +105,12 @@ func (h *DashboardHandler) ApproveRiskException(w http.ResponseWriter, r *http.R
 			status = http.StatusConflict
 		case strings.Contains(msg, "cannot approve") || strings.Contains(msg, "already approved"):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, "not found"):
+		case errors.Is(err, corestorage.ErrRiskExceptionNotFound):
 			status = http.StatusNotFound
+		default:
+			// Anything else is a raw lower-layer error (storage): log it, send the safe text.
+			log.Printf("Error approving risk exception %d: %v", id, err)
+			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)
 		return

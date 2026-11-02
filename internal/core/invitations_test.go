@@ -399,7 +399,7 @@ func TestRequestProjectAccess_RejectsUnknownProject(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
-	store.On("GetProject", ctx, uint(404)).Return(nil, fmt.Errorf("project not found"))
+	store.On("GetProject", ctx, uint(404)).Return(nil, fmt.Errorf("project not found: %w", storage.ErrProjectNotFound))
 
 	_, err := c.RequestProjectAccess(ctx, 404, 2, "", "please")
 	require.Error(t, err)

@@ -36,16 +36,27 @@ func (c *KeyorixCore) PurgeExpiredSoftDeletes(ctx context.Context, before time.T
 	// where PlaceLegalHold could commit in between (irreversible spoliation,
 	// ISO A.5.34). SQLite's single-writer model means this transaction holds an
 	// exclusive write lock for its whole duration, so a concurrent
-	// PlaceLegalHold's INSERT cannot land partway through. Each Purge*Before
-	// call already manages its own internal atomicity (a nested
-	// transaction/savepoint), so a single entity's failure doesn't abort the
-	// others — matching the pre-existing "continue past individual errors,
-	// report the first" partial-success design.
+	// PlaceLegalHold's INSERT cannot land partway through.
+	//
+	// Partial success: every Purge*Before step runs in its OWN nested
+	// transaction (a SAVEPOINT inside this one), so a step that fails rolls back
+	// to its savepoint and leaves this transaction usable. That matters on
+	// PostgreSQL, where a bare failed statement aborts the whole transaction: the
+	// later steps would fail too and the COMMIT would become a ROLLBACK, losing the
+	// steps that had succeeded. The steps are independent, so a failure is
+	// recorded (the first error is returned) and the remaining steps still run.
+	// A failed step contributes 0 to the result (record zeroes it even if a
+	// storage implementation returned a count with its error); the result and the
+	// data.purged audit row are built only after this transaction committed, so
+	// they count only rows that are really gone.
 	res := &PurgeResult{}
 	var firstErr error
 	record := func(n int64, err error) int64 {
-		if err != nil && firstErr == nil {
-			firstErr = err
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			return 0
 		}
 		return n
 	}
