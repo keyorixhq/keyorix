@@ -66,7 +66,7 @@ func loadCommandTrees(t testing.TB, root string) (cli, admin cmdTree) {
 		t.Fatal(err)
 	}
 	cli, admin = cmdTree{}, cmdTree{}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}

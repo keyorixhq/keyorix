@@ -171,7 +171,7 @@ func pathRefsIn(doc string) []pathRef {
 	var out []pathRef
 	for i, line := range lines {
 		for _, m := range inlineCodeRe.FindAllStringSubmatch(line, -1) {
-			for _, word := range strings.Fields(m[1]) {
+			for word := range strings.FieldsSeq(m[1]) {
 				if p := normalizePathRef(word); p != "" {
 					out = append(out, pathRef{Line: nums[i], Raw: word, Path: p})
 				}
@@ -184,7 +184,7 @@ func pathRefsIn(doc string) []pathRef {
 // pathExists resolves a normalised path (possibly with a glob or <placeholder>) under root.
 func pathExists(root, p string) bool {
 	if m := braceRe.FindStringSubmatchIndex(p); m != nil {
-		for _, alt := range strings.Split(p[m[2]:m[3]], ",") {
+		for alt := range strings.SplitSeq(p[m[2]:m[3]], ",") {
 			if !pathExists(root, p[:m[0]]+alt+p[m[1]:]) {
 				return false
 			}
