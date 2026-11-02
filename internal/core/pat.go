@@ -15,6 +15,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -92,7 +93,7 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 		EnvironmentScope: environmentScope,
 		AllowedCIDRs:     cidrsJSON,
 		ExpiresAt:        expiresAt,
-		CreatedAt:        c.now(),
+		CreatedAt:        c.now().UTC(),
 	}
 	// AUDIT-TX-2: the token and its pat.created row commit in ONE transaction,
 	// so a credential is never minted unaudited.
@@ -130,9 +131,14 @@ func (c *KeyorixCore) RevokeOwnPAT(ctx context.Context, userID, tokenID uint) (t
 	if userID == 0 || tokenID == 0 {
 		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user and token IDs are required")
 	}
+	notFound := fmt.Sprintf("%s: token not found", i18n.T("ErrorNotFound", nil))
 	pat, err := c.storage.GetPersonalAccessTokenByID(ctx, tokenID)
-	if err != nil || pat.UserID != userID {
-		return "", fmt.Errorf("%s: token not found", i18n.T("ErrorNotFound", nil))
+	if err != nil {
+		// A read FAULT is a retry answer, not proof the token is gone.
+		return "", classifyReadError(err, notFound)
+	}
+	if pat.UserID != userID {
+		return "", errors.New(notFound)
 	}
 	// AUDIT-TX-3: a revocation: never blocked or delayed by the audit log. Its row is
 	// owed from this transaction, and appended only after the token is evicted from

@@ -18,13 +18,9 @@ import (
 // through their transaction handle) -> DeleteShareRecord -> its LocalStorage body;
 // DeleteExpiredShareRecords (the sweep that also revokes) in storage.
 //
-// What this does NOT cover, and is reported to the coordinator because the
-// issue names it: createShareRecordTx still persists an existing share with GORM
-// Save in two places (the re-share path and the unique-violation fallback in
-// internal/storage/store/local_sharing.go). That is the same resurrection
-// primitive on the CREATE side, and a guard for it would be red on main. It is
-// owned by SHARE-CAS-1 (share create/update/revoke concurrency), so it is
-// recorded, not fixed or allowlisted, here.
+// The CREATE side (createShareRecordTx's re-share path and unique-violation
+// fallback, which used to Save the pre-read row) is guarded separately by
+// TestCreateShareRecord_IsColumnScoped (#2801/#2802).
 func TestRevokeShare_IsColumnScoped(t *testing.T) {
 	const store = "../../storage/store/local_sharing.go"
 	assertConditionalSoftDelete(t, store, "DeleteShareRecord")

@@ -218,6 +218,9 @@ func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request
 	}
 	prov, err := h.coreService.ResendInvitationLink(r.Context(), projectID, uint(invID), actor.UserID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {
@@ -255,6 +258,9 @@ func (h *CatalogHandler) RevokeInvitation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.coreService.RevokeInvitation(r.Context(), projectID, uint(invID), actor.UserID); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -313,6 +319,9 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		switch {
 		case strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
@@ -393,7 +402,7 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if resolveErr != nil {
-		if sendAuditUnavailable(w, resolveErr) {
+		if sendAuditUnavailable(w, resolveErr) || sendStorageUnavailable(w, resolveErr) {
 			return
 		}
 		if sendRoleScopeError(w, resolveErr) {
@@ -441,6 +450,9 @@ func (h *CatalogHandler) WithdrawAccessRequest(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := h.coreService.WithdrawAccessRequest(r.Context(), uint(reqID), actor.UserID); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {

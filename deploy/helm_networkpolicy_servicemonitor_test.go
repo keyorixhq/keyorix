@@ -1,5 +1,8 @@
 package deploy
 
+// Guard rule: a rendered-chart assertion must fail when the thing it inspects is absent
+// (nil document, empty list): require presence or a non-zero count first, never `if x != nil { assert }`.
+
 import (
 	"os/exec"
 	"strings"
@@ -126,12 +129,49 @@ func TestHelmNetworkPolicy_ExternalDatabaseAndKMSEgress(t *testing.T) {
 
 	// Bundled Postgres: databaseTo is ignored (the in-chart rule already covers it).
 	docs := helmTemplateDocs(t, chart, "networkPolicy.egress.databaseTo[0].ipBlock.cidr=10.20.0.0/24")
-	for _, r := range npSlice(npNested(npFindNamed(docs, "NetworkPolicy", "kx-keyorix-server"), "spec", "egress")) {
+	srv := npFindNamed(docs, "NetworkPolicy", "kx-keyorix-server")
+	if srv == nil {
+		t.Fatal("no server NetworkPolicy")
+	}
+	dests, ipBlockRules := egressIPBlockRules(srv)
+	if dests == 0 {
+		t.Fatal("no egress destination rendered: the ipBlock check would pass vacuously")
+	}
+	for _, r := range ipBlockRules {
+		t.Errorf("bundled Postgres must not get a databaseTo ipBlock rule: %v", r)
+	}
+}
+
+// egressIPBlockRules returns how many egress `to` destinations np has and the rules among
+// them that carry an ipBlock. Callers must treat a zero count as "nothing was checked".
+func egressIPBlockRules(np map[string]any) (dests int, ipBlockRules []any) {
+	for _, r := range npSlice(npNested(np, "spec", "egress")) {
 		for _, to := range npSlice(r.(map[string]any)["to"]) {
+			dests++
 			if npNested(to.(map[string]any), "ipBlock") != nil {
-				t.Errorf("bundled Postgres must not get a databaseTo ipBlock rule: %v", r)
+				ipBlockRules = append(ipBlockRules, r)
 			}
 		}
+	}
+	return dests, ipBlockRules
+}
+
+// With the egress restriction off the server policy has no egress rules at all, which is
+// exactly the render on which the bundled-Postgres ipBlock check above would pass without
+// inspecting anything: it must see zero destinations (and so fail loudly), not pass.
+func TestHelmNetworkPolicy_IPBlockCheckSeesEmptyEgress(t *testing.T) {
+	requireHelm(t)
+	docs := helmTemplateDocs(t, chartWithValues(t, ""), "networkPolicy.egress.enabled=false", "networkPolicy.egress.databaseTo[0].ipBlock.cidr=10.20.0.0/24")
+	srv := npFindNamed(docs, "NetworkPolicy", "kx-keyorix-server")
+	if srv == nil {
+		t.Fatal("no server NetworkPolicy")
+	}
+	if dests, _ := egressIPBlockRules(srv); dests != 0 {
+		t.Errorf("egress restriction off: want no egress destinations, got %d", dests)
+	}
+	docs = helmTemplateDocs(t, chartWithValues(t, ""))
+	if dests, _ := egressIPBlockRules(npFindNamed(docs, "NetworkPolicy", "kx-keyorix-server")); dests == 0 {
+		t.Error("default render: the in-chart Postgres egress rule must give the check something to inspect")
 	}
 }
 

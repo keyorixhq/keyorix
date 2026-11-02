@@ -4,10 +4,13 @@
 // Re-wraps the DEK under a KEK from a different provider (ADR-041) so an existing
 // install can move between KEK providers — most importantly password/file/env → a
 // cloud KMS — without re-encrypting any data. Only the DEK's wrapping changes; the
-// operation is fast and takes no database lock. After re-wrapping it verifies the
-// target provider unwraps the DEK (round-tripping a probe value through a fresh
-// service) and keeps a timestamped backup of the previous wrapped DEK, restoring it
-// if verification fails.
+// operation is fast and rewrites no data rows. It does hold the exclusive
+// key-directory lock (dek.lock) from start to finish (openKeyWriter), so it
+// refuses to run beside a live server or another key writer; `migrate-provider
+// cleanup` holds the same lock for its whole run, --dry-run included. After
+// re-wrapping it verifies the target provider unwraps the DEK (round-tripping a
+// probe value through a fresh service) and keeps a timestamped backup of the
+// previous wrapped DEK, restoring it if verification fails.
 package encryptionops
 
 import (

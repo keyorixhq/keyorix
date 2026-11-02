@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	gowebauthn "github.com/go-webauthn/webauthn/webauthn"
 )
@@ -113,7 +114,9 @@ func TestDeleteOIDCBinding_BindingNotFound_s34(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 1}, nil)
-	ms.On("GetOIDCBindingByID", mock.Anything, uint(5)).Return(nil, errors.New("not found"))
+	// A positive no-such-row, as LocalStorage reports it. A bare errors.New("not found")
+	// is not what real storage returns and is now (correctly) classified as a fault.
+	ms.On("GetOIDCBindingByID", mock.Anything, uint(5)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	err := c.DeleteOIDCBinding(context.Background(), 1, 1, 5, 0)
 	require.Error(t, err)

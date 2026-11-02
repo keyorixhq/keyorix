@@ -39,8 +39,9 @@ type AuditFilter struct {
 	// (docs/specs/audit-request-id.md §5); the column is unindexed, so pair it
 	// with a time window.
 	RequestID *string
-	// ActorUsername filters events by a partial match on the actor's username
-	// (resolved via a LEFT JOIN on the users table). Nil = no username filter.
+	// ActorUsername filters events by a partial match on the actor's name: a
+	// user's username or a machine identity's name (#3736), resolved by subqueries
+	// on users and machine_identities. Nil = no actor-name filter.
 	ActorUsername *string
 	// ResourceType filters events by the resource type embedded in the event_type
 	// (the prefix before the first dot, e.g. "secret" from "secret.read").

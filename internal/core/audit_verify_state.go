@@ -35,8 +35,13 @@
 // carries some failure still predates a break when any other failure event
 // lies above its audit head.
 // A row without an audit head (signed by an older binary) cannot be placed
-// against the chain: once that marker or a discontinuity exists it can only be
-// an older row put back, and is a discontinuity too (auditVerifyStateUnplaced).
+// against the chain: once that marker or a discontinuity exists it is an older
+// row put back, and a discontinuity too (auditVerifyStateUnplaced), unless the
+// marker names the generation that placed the state and the row was saved after
+// it, at the current checkpoint trail, below no recorded break, without a
+// rejection an older replica recorded after it: that is an older replica's
+// re-sign during a rolling upgrade (#3708), which a full verification re-places
+// instead.
 package core
 
 import (
@@ -284,6 +289,12 @@ type auditVerifyEvidence struct {
 	failureGen                                          uint64
 	failureOther                                        uint
 	maxFailureGen                                       uint64
+	// markerGen is the state generation the newest marker names
+	// (auditVerifyMarkerText; 0 = none, a marker from before #3708).
+	// failureUnnamed is the newest failure event naming no generation (an
+	// older binary's text).
+	markerGen      uint64
+	failureUnnamed uint
 	// seal is the newest system.audit_loss_accepted event; sealNamed maps the
 	// seal record digest each such event names to its id (audit_seal.go).
 	seal      uint
@@ -317,6 +328,32 @@ func (ev *auditVerifyEvidence) noteFailure(id uint, gen uint64) {
 		ev.failureOther = max(ev.failureOther, id)
 	}
 	ev.maxFailureGen = max(ev.maxFailureGen, gen)
+	if gen == 0 {
+		ev.failureUnnamed = max(ev.failureUnnamed, id)
+	}
+}
+
+// auditVerifyMarkerText is the description of the marker a save of generation
+// gen appends. Naming the generation places that save in the chain, so the load
+// can tell a row an older replica re-signed after it from an older row put back
+// (auditVerifyStateUnplaced).
+func auditVerifyMarkerText(gen uint64) string {
+	return fmt.Sprintf("audit verification state in use (state generation %d): a missing verification state row is reported as a discontinuity from now on", gen)
+}
+
+var auditVerifyMarkerGenRE = regexp.MustCompile(`^audit verification state in use \(state generation ([1-9][0-9]{0,17})\): `)
+
+// auditVerifyMarkerGen is the generation a marker's description names, or 0.
+func auditVerifyMarkerGen(description string) uint64 {
+	m := auditVerifyMarkerGenRE.FindStringSubmatch(description)
+	if m == nil {
+		return 0
+	}
+	gen, err := strconv.ParseUint(m[1], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return gen
 }
 
 // foreignFailure is the newest failure event id that state generation own did
@@ -392,7 +429,9 @@ func (c *KeyorixCore) scanAuditVerifyEvidence(ctx context.Context) (auditVerifyE
 		for _, e := range evs {
 			switch e.EventType {
 			case auditVerifyStateMarkerEvent:
-				idx.ev.marker = max(idx.ev.marker, e.ID)
+				if e.ID >= idx.ev.marker {
+					idx.ev.marker, idx.ev.markerGen = e.ID, auditVerifyMarkerGen(e.Description)
+				}
 			case auditChainVerificationFailedEvent:
 				idx.ev.noteFailure(e.ID, auditFailureEventGen(e.Description))
 			case auditVerifyStateDiscontinuityEvent:
@@ -588,12 +627,21 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 			return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak,
 				fmt.Sprintf("the persisted verification state was saved at audit event #%d without the discontinuity recorded at audit event #%d (an older row put back to erase it)", s.AuditHead, ev.discontinuity)), "", nil
 		}
-	} else if why := auditVerifyStateUnplaced(ev); why != "" {
-		return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak, why), "", nil
+	}
+	restarted := func(reason string) (*auditVerifyState, string, error) {
+		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Discontinuity: s.Discontinuity, Job: s.Job, KeyEpoch: s.KeyEpoch, Seals: s.Seals, Accepted: s.Accepted}, reason, nil
+	}
+	if !s.Placed {
+		latch, resaved := auditVerifyStateUnplaced(s, ev, cur, seen)
+		switch {
+		case latch != "":
+			return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak, latch), "", nil
+		case resaved != "":
+			return restarted(resaved)
+		}
 	}
 	untrusted := func(why string) (*auditVerifyState, string, error) {
-		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Discontinuity: s.Discontinuity, Job: s.Job, KeyEpoch: s.KeyEpoch, Seals: s.Seals, Accepted: s.Accepted},
-			"the persisted verification state " + why + " (a replayed or rolled-back row) and was ignored", nil
+		return restarted("the persisted verification state " + why + " (a replayed or rolled-back row) and was ignored")
 	}
 	if s.Gen < seen {
 		return untrusted(fmt.Sprintf("is generation %d, older than generation %d this server already read", s.Gen, seen))
@@ -628,20 +676,64 @@ func auditVerifyStateSealProblem(s *auditVerifyState, seals *auditSealSet, ev au
 }
 
 // auditVerifyStateUnplaced judges an authentic row without Placed, which this
-// binary never writes. Only the binary from before AUDIT-VERIFY-STATE-1 signs
-// such rows, and it never appends the in-chain marker or a discontinuity: once
-// either exists, a row saved by this binary has been placed, so an unplaced row
-// is an older row put back, or an older replica's re-sign that dropped a
-// discontinuity (a mixed-version rolling upgrade). Both erase evidence, so both
-// are a discontinuity. Without either event (an honest upgrade, the first load
-// after it) the row is continued; the replay checks still apply. A failure
-// event alone cannot place it: the older binary appends those too.
-func auditVerifyStateUnplaced(ev auditVerifyEvidence) string {
-	if id := max(ev.marker, ev.discontinuity); id > 0 {
-		return fmt.Sprintf("the persisted verification state carries no audit head (signed by, or re-signed by, a server version from before audit event #%d recorded that the current state format is in use): an older row put back, or an older replica that dropped its fields", id)
+// binary never writes. Only a binary from before AUDIT-VERIFY-STATE-1 signs such
+// rows, and it never appends the in-chain marker or a discontinuity. Without
+// either event (an honest upgrade, the first load after it) the row is
+// continued: both results are empty and the replay checks apply.
+//
+// Once either exists, a row this binary saved has been placed, so an unplaced
+// row is an older row put back, or an older replica's re-sign of a placed row
+// during a mixed-version rolling upgrade (#3708: it keeps the generation, pin,
+// failure and job, drops the placement and a discontinuity, and saves under a
+// higher generation). It is the re-sign (resaved: a not_proven restart that
+// keeps the row's failure; a full verification that starts after it re-places
+// the state) only when all of these hold, and a discontinuity (latch) otherwise:
+//   - no discontinuity event exists (the older replica drops the row's alarm);
+//   - the newest marker names a generation and the row's is higher: it was saved
+//     after this binary placed the state, while every row from before the
+//     upgrade has a lower one (a save continues the generation it loaded);
+//   - no failure event names a higher generation (a break recorded after the
+//     row) and, when the row carries no failure, no failure event without a
+//     generation (an older binary's) lies above the marker;
+//   - the row is not older than the signed checkpoint trail or a generation
+//     this process read (a replay; every checkpoint write saves the state, so
+//     an older replica's re-sign is at the current trail until the next save);
+//   - the row carries no rejection, other than this binary's own restart of a
+//     re-sign (auditVerifyResavedRE), whatever its generation. An older
+//     replica that rejects the row it loads (deleted, put back below a
+//     generation it read, older than the trail, garbled) starts over at the
+//     next generation and the current trail, so its save passes every check
+//     above: only the rejection it records, which its later saves keep until
+//     a full verification it starts after it completes, tells it apart
+//     (REVIEW-3854-DEEP-1). Its generation does not: an older replica started
+//     before the upgrade read a generation below the marker's, stamps its
+//     rejection below it too, and its next save is above it
+//     (REVIEW-3854-DEEP-2). Fail-closed cost: a replay this binary rejected,
+//     or a rejection a placed row still carries from before the marker, also
+//     latches once an older replica re-signs the row.
+//
+// A failure event alone cannot place a row: the older binary appends those too.
+func auditVerifyStateUnplaced(s *auditVerifyState, ev auditVerifyEvidence, cur auditVerifyBinding, seen uint64) (latch, resaved string) {
+	id := max(ev.marker, ev.discontinuity)
+	if id == 0 {
+		return "", ""
 	}
-	return ""
+	switch {
+	case ev.discontinuity > 0, ev.markerGen == 0, s.Gen <= ev.markerGen,
+		ev.maxFailureGen > s.Gen,
+		s.Failure == nil && ev.failureUnnamed > ev.marker,
+		s.Gen < seen, s.Bind.CheckpointID < cur.CheckpointID, s.Bind.HighWater < cur.HighWater,
+		s.Rejected != nil && !auditVerifyResavedRE.MatchString(s.Rejected.Reason):
+		return fmt.Sprintf("the persisted verification state carries no audit head (signed by, or re-signed by, a server version from before audit event #%d recorded that the current state format is in use): an older row put back, or an older replica that dropped its fields", id), ""
+	}
+	return "", fmt.Sprintf(auditVerifyResavedText, s.Gen, ev.markerGen)
 }
+
+// auditVerifyResavedText is the reason this binary restarts an older replica's
+// re-sign with; no older binary records a rejection in this form.
+const auditVerifyResavedText = "the persisted verification state (generation %d) was re-signed by an older server version after generation %d placed it against the chain (a mixed-version rolling upgrade) and was restarted: a full verification re-places it"
+
+var auditVerifyResavedRE = regexp.MustCompile(`^the persisted verification state \(generation [1-9][0-9]{0,19}\) was re-signed by an older server version after generation [1-9][0-9]{0,19} placed it against the chain \(a mixed-version rolling upgrade\) and was restarted: `)
 
 // auditCheckpointTrailUnauthenticated describes a latest checkpoint or
 // high-water mark that exists but fails its signature under the current key
@@ -898,10 +990,11 @@ func (c *KeyorixCore) updateAuditVerifyState(ctx context.Context, fn func(st *au
 }
 
 // auditVerifyMarkerMissing reports whether the chain lacks a live marker: none
-// was seen, or the newest one is gone (a retention purge took it).
+// was seen, the newest one names no generation (written before #3708), or it
+// is gone (a retention purge took it).
 func (c *KeyorixCore) auditVerifyMarkerMissing(ctx context.Context) (bool, error) {
 	ev, err := c.scanAuditVerifyEvidence(ctx)
-	if err != nil || ev.marker == 0 {
+	if err != nil || ev.marker == 0 || ev.markerGen == 0 {
 		return err == nil, err
 	}
 	_, found, err := c.storage.AuditEntryHashByID(ctx, ev.marker)
@@ -921,7 +1014,7 @@ func (c *KeyorixCore) reportAuditVerifyStateEvents(ctx context.Context, st *audi
 	}
 	if st != nil && st.needMarker {
 		c.writeAuditEventFull(ctx, auditVerifyStateMarkerEvent, nil, nil, nil, "",
-			"audit verification state in use: a missing verification state row is reported as a discontinuity from now on")
+			auditVerifyMarkerText(st.Gen))
 	}
 	if rejected != nil {
 		c.writeAuditEventFailedFull(ctx, "system.audit_verification_state_rejected", nil, nil, nil, "",

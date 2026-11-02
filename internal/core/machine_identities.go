@@ -206,7 +206,9 @@ func (c *KeyorixCore) ListStaleMachineIdentities(ctx context.Context, projectID 
 func (c *KeyorixCore) transitionMachineInTx(ctx context.Context, tx storage.Storage, projectID, id uint, to string, now time.Time) (*models.MachineIdentity, error) {
 	m, err := tx.LockMachineIdentityForUpdate(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("machine identity not found")
+		// A fault on the lock read is ErrStorageReadUnavailable, not "not found":
+		// the revoke/suspend was never applied and must be retried.
+		return nil, classifyReadError(err, "machine identity not found")
 	}
 	if m.ProjectID != projectID {
 		// Cross-project guard: report as "not found" (not a permission error) to

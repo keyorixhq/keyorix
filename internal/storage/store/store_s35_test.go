@@ -79,7 +79,7 @@ func TestUpdateLoginLockoutState_DBError_S35(t *testing.T) {
 func TestListUsersInStateBefore_DBError_S35(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.ListUsersInStateBefore(context.Background(), "active", time.Now())
+	_, err := ls.ListUsersInStateBefore(context.Background(), "active", time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -229,7 +229,7 @@ func TestListSharesByGroup_DBError_S35(t *testing.T) {
 func TestDeleteExpiredShareRecords_DBError_S35(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.DeleteExpiredShareRecords(context.Background(), time.Now())
+	_, err := ls.DeleteExpiredShareRecords(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -292,7 +292,7 @@ func TestPurgeDeletedEnvironmentsBefore_DBError_S35(t *testing.T) {
 	// Exercises purgeDeletedBefore's result.Error branch.
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.PurgeDeletedEnvironmentsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedEnvironmentsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -309,7 +309,7 @@ func TestDeleteAnomalyAlertsBefore_DBError_S35(t *testing.T) {
 func TestDeleteExpiredBreakGlassBefore_DBError_S35(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.DeleteExpiredBreakGlassBefore(context.Background(), time.Now())
+	_, err := ls.DeleteExpiredBreakGlassBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -317,7 +317,7 @@ func TestDeleteClosedAccessReviewsBefore_DBError_S35(t *testing.T) {
 	// Broken DB → Pluck inside transaction fails → outer error path covered.
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, _, err := ls.DeleteClosedAccessReviewsBefore(context.Background(), time.Now())
+	_, _, err := ls.DeleteClosedAccessReviewsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
@@ -325,6 +325,6 @@ func TestDeleteResolvedAccessRequestsBefore_DBError_S35(t *testing.T) {
 	// Broken DB → Pluck inside transaction fails → outer error path covered.
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, _, err := ls.DeleteResolvedAccessRequestsBefore(context.Background(), time.Now())
+	_, _, err := ls.DeleteResolvedAccessRequestsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }

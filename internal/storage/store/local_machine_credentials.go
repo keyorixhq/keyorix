@@ -168,18 +168,15 @@ func (ls *LocalStorage) RevokeMachineIdentityCredential(ctx context.Context, pro
 	return nil
 }
 
-// #1507: this UpdateColumn write bypasses model hooks, so last_used_at is
-// whatever Location usedAt itself carries (currently always c.now(), via
-// TouchMachineTokenLastUsed) — CountStaleMachineCredentials
-// (local_hygiene_counts.go), reachable today from GetHygieneTrends/
-// RecordHygieneTrendPoint (server/http/handlers/hygiene_trends.go), already
-// range-queries this same column with a bound derived from the SAME k.now()
-// accessor. Safe only as long as both stay on that one source. If either
-// side ever switches to a differently-sourced time (e.g. a raw
-// time.Now().UTC()), normalize explicitly at this call site (there is no
-// BeforeSave hook that can reach an UpdateColumn write) before trusting the
-// comparison.
+// #1507: this UpdateColumn write bypasses model hooks (and GORM's NowFunc), so
+// it normalises usedAt, and the cutoff it compares against, to UTC itself
+// (SQLITE-UTC-NOWFUNC-1). Core passes c.now() (host zone, via
+// TouchMachineTokenLastUsed); on SQLite a non-UTC time is stored as text that
+// neither scans back (the credential then fails every lookup) nor orders
+// against the bound CountStaleMachineCredentials (local_hygiene_counts.go)
+// compares it with, which that function also normalises to UTC.
 func (ls *LocalStorage) TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
+	usedAt = usedAt.UTC()
 	cutoff := usedAt.Add(-staleness)
 	return ls.db.WithContext(ctx).Model(&models.MachineIdentityCredential{}).
 		Where("id = ? AND (last_used_at IS NULL OR last_used_at < ?)", id, cutoff).

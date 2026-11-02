@@ -137,6 +137,7 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 	collectInsecureSettingsPosture(cfg, explicit, report)
 	collectStartupValidationStatePosture(cfg, fileGraceKnown, fileEnforcedSince, report)
 	collectAuditDurabilityPosture(cfg, report)
+	collectIntegrityPosture(cfg, report)
 	report.info(encryption.FIPS140ModeLine())
 	if err := encryption.RunFIPSSelfTest(); err != nil {
 		report.deviate("fips140", err.Error()) // the server refuses to start in this state

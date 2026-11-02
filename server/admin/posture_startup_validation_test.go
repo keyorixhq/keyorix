@@ -14,6 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/integrity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -110,6 +111,16 @@ func TestRunAdminValidatePosture_StartupValidationGolden(t *testing.T) {
 	skipUnderFIPS140Only(t, "the goldens record the default-mode FIPS lines ('Go FIPS 140-3 mode: off', 'fips140 enforced: no ...'); the enforced lines are checked by TestRunAdminValidatePosture_FIPSSelfTestLine")
 	wd, err := os.Getwd() // writePostureFixture chdirs away; resolve testdata first
 	require.NoError(t, err)
+	// The integrity lines read the host; record them as a non-Linux host with no
+	// release manifest so the goldens are identical on every machine.
+	orig := integrityEnvFor
+	t.Cleanup(func() { integrityEnvFor = orig })
+	integrityEnvFor = func(cfg *config.Config) integrity.Env {
+		env := integrityEnv(cfg)
+		env.GOOS = "darwin"
+		env.Executable = func() (string, error) { return filepath.Join(t.TempDir(), "keyorix-server"), nil }
+		return env
+	}
 	for _, tc := range []struct {
 		golden string
 		key    string // "" leaves the key absent

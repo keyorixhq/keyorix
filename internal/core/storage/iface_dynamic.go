@@ -15,20 +15,19 @@ type DynamicStore interface {
 	CreateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error)
 	GetDynamicSecretConfig(ctx context.Context, id uint) (*models.DynamicSecretConfig, error)
 	ListDynamicSecretConfigs(ctx context.Context, projectID, environmentID uint) ([]*models.DynamicSecretConfig, error)
-	UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error
 	// SetDynamicSecretConfigAdminDSN writes ONLY a config's encrypted admin DSN
 	// (admin_dsn_enc, admin_dsn_meta) and updated_at, never the rest of the row
-	// (#2651). CreateDynamicSecretConfig's second write used UpdateDynamicSecretConfig
-	// (a full-row Save) and wrote disabled=false back over a concurrent DeleteProject's
-	// #369 disable. Returns an error when no row matched.
+	// (#2651). CreateDynamicSecretConfig's second write used a full-row Save (the
+	// since-deleted UpdateDynamicSecretConfig) and wrote disabled=false back over a
+	// concurrent DeleteProject's #369 disable. Returns an error when no row matched.
 	SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error
 	// SetDynamicSecretConfigClassification persists ONLY the classification
 	// column (plus updated_at), and only if the row's CURRENT classification is
 	// still fromClassification (the value the caller read). matched=false (no
 	// error) means another classifier moved it; the caller must fail closed.
 	//
-	// ClassifyDynamicSecretConfig used the full-row UpdateDynamicSecretConfig
-	// (a bare Save) and therefore wrote `disabled=false` back over a concurrent
+	// ClassifyDynamicSecretConfig used a full-row Save (the since-deleted
+	// UpdateDynamicSecretConfig) and therefore wrote `disabled=false` back over a concurrent
 	// SetDynamicSecretConfigEnabled(false) — the incident kill switch, which
 	// also revokes the config's live leases — so IssueLease could mint real
 	// database credentials again, with an audit trail reading "config_disabled"
@@ -48,7 +47,7 @@ type DynamicStore interface {
 	//
 	// This exists for the same reason TransitionMachineIdentityState does: the
 	// now-deleted RemoteStorage's WithTransaction was a no-op passthrough, so a
-	// plain GetDynamicSecretConfig-then-UpdateDynamicSecretConfig sequence — the
+	// plain GetDynamicSecretConfig-then-full-row-Save sequence — the
 	// shape SetDynamicSecretConfigEnabled used before this fix — had no atomicity
 	// at all against it: two racing callers (e.g. one admin enabling while another
 	// is mid-disable, or an unrelated concurrent edit landing between the read and
@@ -72,7 +71,6 @@ type DynamicStore interface {
 	// lease's earlier revoke attempt failed on the target, so the credential is
 	// still live) — used to enforce the config's MaxActiveLeases ceiling.
 	CountActiveLeases(ctx context.Context, configID uint) (int64, error)
-	UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error
 	// ExtendDynamicSecretLeaseExpiry persists ONLY expires_at, and only for a
 	// lease whose status is STILL "active": "UPDATE ... SET expires_at WHERE
 	// lease_id = ? AND status = 'active'". matched=false (no error) means the

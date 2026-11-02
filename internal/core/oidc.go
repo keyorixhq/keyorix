@@ -132,7 +132,10 @@ func (c *KeyorixCore) DeleteOIDCBinding(ctx context.Context, projectID, machineI
 		return err
 	}
 	b, err := c.storage.GetOIDCBindingByID(ctx, bindingID)
-	if err != nil || b.MachineIdentityID != machineID {
+	if err != nil {
+		return classifyReadError(err, "binding not found")
+	}
+	if b.MachineIdentityID != machineID {
 		return fmt.Errorf("binding not found")
 	}
 	if err := c.storage.DeleteOIDCBinding(ctx, bindingID); err != nil {

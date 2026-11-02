@@ -13,6 +13,7 @@ package notifychan
 import (
 	"bytes"
 	"context"
+	"crypto/fips140"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
@@ -165,6 +166,9 @@ func (s *WebhookSink) send(ctx context.Context, ev core.NotificationEvent) (retr
 		req.Header.Set("Authorization", "Bearer "+s.cfg.Token)
 	}
 	if s.cfg.SigningSecret != "" {
+		if err := checkSigningSecretLen(s.cfg.SigningSecret); err != nil {
+			return false, err // permanent: retrying cannot lengthen the secret
+		}
 		mac := hmac.New(sha256.New, []byte(s.cfg.SigningSecret))
 		mac.Write(body)
 		req.Header.Set("X-Keyorix-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
@@ -190,4 +194,25 @@ func (s *WebhookSink) Close() {
 		return
 	}
 	s.d.close()
+}
+
+// minSigningSecretLen is the shortest HMAC key, in bytes (112 bits), that Go's
+// FIPS 140-only mode accepts; crypto/hmac panics on a shorter one there. It
+// equals config.MinWebhookSigningSecretLen (TestMinSigningSecretLen_MatchesConfig).
+const minSigningSecretLen = 14
+
+// signingFIPSEnforced is fips140.Enforced, a variable so default-mode tests can
+// drive the refusal.
+var signingFIPSEnforced = fips140.Enforced
+
+// checkSigningSecretLen refuses, under GODEBUG=fips140=only, a signing secret
+// shorter than minSigningSecretLen, as an error instead of the crypto/hmac panic
+// (which would take down the delivery worker). Config validation rejects such a
+// secret at boot already; this is the second line of defence. Outside that mode
+// it accepts every secret, as before.
+func checkSigningSecretLen(secret string) error {
+	if signingFIPSEnforced() && len(secret) < minSigningSecretLen {
+		return fmt.Errorf("webhook signing secret is %d bytes; FIPS 140-only mode needs at least %d: not signing or sending the notification", len(secret), minSigningSecretLen)
+	}
+	return nil
 }

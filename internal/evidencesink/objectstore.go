@@ -36,6 +36,8 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // s3PutAPI is the slice of the S3 client the sink uses — an interface seam so the
@@ -86,15 +88,15 @@ func validateObjectStoreEndpoint(raw string) (*url.URL, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("evidencesink: invalid object-store endpoint %q: %w", raw, err)
+		return nil, fmt.Errorf("evidencesink: invalid object-store endpoint %q: %w", netutil.RedactURLHost(raw), netutil.RedactErrorURLs(err))
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
 	default:
-		return nil, fmt.Errorf("evidencesink: object-store endpoint %q must use http or https", raw)
+		return nil, fmt.Errorf("evidencesink: object-store endpoint %q must use http or https", netutil.RedactURLHost(raw))
 	}
 	if u.Hostname() == "" {
-		return nil, fmt.Errorf("evidencesink: object-store endpoint %q has no host", raw)
+		return nil, fmt.Errorf("evidencesink: object-store endpoint %q has no host", netutil.RedactURLHost(raw))
 	}
 	return u, nil
 }

@@ -663,6 +663,10 @@ deleted; raise `cadence_days` (up to 366) for a longer look-back.
   reads columns by position is unaffected; one that rejects extra columns is not).
   Campaigns opened before the upgrade say `all_history`: their `last_used_at` was
   computed over the whole log and stays as recorded.
+- Dormant role grants (compliance posture, `dormant-access` control, digest) now use
+  the same `cadence_days` as their threshold instead of a fixed 90 days (#3459). With
+  the default cadence nothing changes. A shorter cadence flags more grants dormant, a
+  longer one fewer; no stored data changes.
 - The `dormant-access` control and the digest now say "no use in the last 90 days"; the
   dormant-grant count itself is unchanged (it was always judged against 90 days).
 - The campaigns table gets one column, `activity_window_days`, added automatically at

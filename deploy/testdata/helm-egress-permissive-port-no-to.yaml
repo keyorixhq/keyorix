@@ -1,0 +1,9 @@
+# Deliberately bad values: a default egress rule for TCP/5432 with no `to`, which allows
+# every destination. Used only by helm_external_db_egress_default_test.go to prove the
+# default-egress check goes red; it is never an install input.
+networkPolicy:
+  egress:
+    extraRules:
+      - ports:
+          - protocol: TCP
+            port: 5432

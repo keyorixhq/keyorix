@@ -185,6 +185,11 @@ func (c *KeyorixCore) CreateRiskException(ctx context.Context, actorID uint, act
 	if _, ok := validExceptionCategories[category]; !ok {
 		return nil, fmt.Errorf("category must be one of sod|mfa|rotation|dormant_access|classification|other")
 	}
+	// SQLITE-TIME-TAILS-1: expiresAt carries the client's own offset (REST parses RFC3339
+	// as sent) and RiskException has no BeforeSave hook; on SQLite a non-UTC fixed zone is
+	// stored as text that neither scans back as a time nor orders against the UTC "now"
+	// bound, so store the instant in UTC.
+	expiresAt = expiresAt.UTC()
 	if !expiresAt.After(c.now()) {
 		return nil, fmt.Errorf("expires_at must be in the future (exceptions are time-bound)")
 	}

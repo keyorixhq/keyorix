@@ -220,6 +220,9 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 			if reserved {
 				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
 			}
+			if writeTOTPUnavailable(w, err) {
+				return
+			}
 			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
 			return
 		}
@@ -322,6 +325,9 @@ var mfaSafeMessages = map[string]bool{
 // secret: %w") or a bare storage-layer error — is logged server-side and
 // replaced with clientSafe()'s generic message before it reaches the client.
 func (h *AuthHandler) writeMFAErr(w http.ResponseWriter, err error) {
+	if writeTOTPUnavailable(w, err) {
+		return
+	}
 	msg := err.Error()
 	if !mfaSafeMessages[msg] {
 		log.Printf("MFA error: %v", err)

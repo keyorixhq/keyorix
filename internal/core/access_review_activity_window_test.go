@@ -52,17 +52,17 @@ func TestGenerateProjectAccessReview_LooksBackOverTheReviewPeriod(t *testing.T) 
 	}
 }
 
-// Dormancy is judged against the 90-day threshold, so the posture lookups look back
-// exactly that far, whatever the review cadence: older activity cannot change the
+// Dormancy is judged against the review cadence (#3459; default 90, at most 366), so
+// the posture lookups look back exactly that far: older activity cannot change the
 // verdict.
 func TestCountDormantRoleGrants_LooksBackOverTheDormancyThreshold(t *testing.T) {
 	now := time.Date(2026, 10, 17, 9, 30, 0, 0, time.UTC)
-	for _, cadence := range []int{0, 30, 180, 5000} {
+	for cadence, days := range map[int]int{0: 90, 30: 30, 180: 180, 5000: storage.ActivityLookbackMaxDays} {
 		const proj = uint(3)
 		ctx := context.Background()
 		ms := &MockStorage{}
 		ms.On("ListProjectRoleAssignments", ctx, proj).Return([]storage.RoleAssignment{}, nil)
-		want := now.AddDate(0, 0, -dormantThresholdDays)
+		want := now.AddDate(0, 0, -days)
 		for _, m := range []string{
 			"LastUserSecretReadActivity", "LastUserSecretWriteActivity",
 			"LastUserRoleManagementActivity", "LastUserSecretDeletionActivity",
@@ -77,6 +77,6 @@ func TestCountDormantRoleGrants_LooksBackOverTheDormancyThreshold(t *testing.T) 
 		cp := &CompliancePosture{}
 		assert.Zero(t, c.countDormantRoleGrants(ctx, proj, cp, map[uint][]*models.Permission{}, map[uint]bool{}))
 		assert.False(t, cp.Degraded, "cadence %d: %v", cadence, cp.DegradedReasons)
-		ms.AssertExpectations(t) // each lookup called once, with the 90-day window start
+		ms.AssertExpectations(t) // each lookup called once, with the cadence window start
 	}
 }

@@ -32,6 +32,11 @@ func NewDynamicSecretService(coreService *core.KeyorixCore) *DynamicSecretGRPCSe
 }
 
 func mapDynamicError(err error) error {
+	// STORAGE-ERR-CLASS-1: a lease/config read fault is Unavailable with the stable
+	// storage_unavailable reason, not the backend-failure bucket below.
+	if serr, ok := storageUnavailableStatus(err); ok {
+		return serr
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "not found"):
@@ -204,6 +209,9 @@ func (s *DynamicSecretGRPCService) ListLeases(ctx context.Context, req *pb.ListL
 func (s *DynamicSecretGRPCService) loadLeaseScoped(ctx context.Context, user *interceptors.UserContext, leaseID, perm string) (*models.DynamicSecretLease, error) {
 	lease, err := s.core.GetDynamicSecretLease(ctx, leaseID)
 	if err != nil {
+		// A storage fault is not "lease not found": authorizeScopedTarget tells a
+		// global holder to retry (Unavailable) and keeps everyone else's uniform
+		// PermissionDenied.
 		return nil, authorizeScopedTarget(ctx, s.core, user, perm, err, core.Scope{}, "lease not found")
 	}
 	scope := core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}

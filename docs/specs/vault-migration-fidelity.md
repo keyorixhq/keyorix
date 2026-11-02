@@ -26,10 +26,10 @@ vault-migration-testbed/` is the mechanism that checks it.
 ## Scope: what this spec covers
 
 HashiCorp Vault and OpenBao (wire-compatible) as the **source**, Keyorix as the **target**,
-migrated via the documented path: `keyorix-migrate vault` (`docs/migrate-from-vault.md`) or
-`keyorix secret import --source vault` (`docs/MIGRATION.md`) — both share the same
-`vaultsource`/`plan` packages under the hood, so one fidelity contract covers both entry
-points. "Migration fidelity" here means: everything the tool **claims** to move, moves
+migrated via the documented path: `keyorix-migrate vault` (`docs/migrate-from-vault.md`).
+The thin `keyorix` CLI no longer has a live-source import (ADR-108); its file-mode
+`keyorix secret import` (`docs/MIGRATION.md`) is a different entry point and out of scope here.
+"Migration fidelity" here means: everything the tool **claims** to move, moves
 correctly; everything it does **not** move is documented as such, not silently dropped.
 
 ## Fidelity dimensions and their survival status

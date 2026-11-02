@@ -96,7 +96,6 @@ examples/
 ### Encryption
 - AES-256-GCM encryption implementation
 - Key management (KEK/DEK)
-- Chunked encryption for large secrets
 - Database integration with GORM
 - Encryption status and validation
 
@@ -109,10 +108,9 @@ examples/
 ## Real-World Usage Patterns
 
 ### Development Workflow
-1. **Initialize**: `keyorix system init --interactive`
-2. **Validate**: `keyorix system validate`
+1. **Initialize**: `keyorix-server admin init` on the host, then `keyorix system init` against the running server
+2. **Validate**: `keyorix-server admin validate`
 3. **Use**: Start storing and retrieving secrets
-4. **Monitor**: Regular `keyorix system audit`
 
 ### Production Deployment
 1. **Secure Setup**: Enable all security features
@@ -121,30 +119,22 @@ examples/
 4. **Monitoring**: Regular validation and auditing
 
 ### Maintenance Tasks
-1. **Key Rotation**: `keyorix encryption rotate`
-2. **Permission Audits**: `keyorix system audit`
-3. **System Validation**: `keyorix system validate`
-4. **Backup Procedures**: Secure key and database backups
+1. **Key Rotation**: `keyorix-server admin encryption rotate`
+2. **System Validation** (config, file permissions, keys, database): `keyorix-server admin validate`
+3. **Backup Procedures**: Secure key and database backups
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Permission Errors**:
+1. **Permission Errors or Missing Files**:
    ```bash
-   keyorix system audit
-   keyorix system validate --fix
+   keyorix-server admin validate
    ```
 
-2. **Missing Files**:
+2. **Encryption Issues**:
    ```bash
-   keyorix system init --force
-   ```
-
-3. **Encryption Issues**:
-   ```bash
-   keyorix encryption validate
-   keyorix encryption init
+   keyorix-server admin encryption validate
    ```
 
 ### Debug Mode
@@ -159,8 +149,7 @@ go run examples/system_init/main.go
 
 - **System Setup Guide**: `../SYSTEM_SETUP.md`
 - **Encryption Documentation**: `../internal/encryption/README.md`
-- **System Commands**: `../internal/cli/system/README.md`
-- **Configuration Reference**: `../keyorix_template.yaml`
+- **Configuration Reference**: `../docs/CONFIGURATION.md`
 
 ## Contributing
 
@@ -175,7 +164,6 @@ When adding new examples:
 
 If you encounter issues with the examples:
 1. Check the individual example README files
-2. Run `keyorix system validate` for system issues
-3. Run `keyorix encryption validate` for encryption issues
+2. Run `keyorix-server admin validate` for system issues (it also checks file permissions)
+3. Run `keyorix-server admin encryption validate` for encryption issues
 4. Review the main documentation files
-5. Check file permissions with `keyorix system audit`

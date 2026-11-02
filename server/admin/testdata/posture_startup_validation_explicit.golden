@@ -7,5 +7,13 @@ ADR-112 Secure Baseline Posture
 
 Informational (not counted toward the exit code):
   - storage.database.audit_durability: strict (committed and synced to disk before every disclosure; no audit entry is lost to any crash or power loss)
+  - integrity/secure-boot: not applicable — efivars is a Linux mechanism; this host is not Linux [advisory (self-reported); see docs/security/integrity-posture.md]
+  - integrity/kernel-lockdown: not applicable — kernel lockdown is a Linux mechanism; this host is not Linux [advisory (self-reported); see docs/security/integrity-posture.md]
+  - integrity/ima: not applicable — IMA is a Linux mechanism; this host is not Linux [advisory (self-reported); see docs/security/integrity-posture.md]
+  - integrity/fs-verity: not applicable — fs-verity is a Linux mechanism; this host is not Linux [advisory (self-reported); see docs/security/integrity-posture.md]
+  - integrity/release-manifest: not checked — no release manifest (checksums.txt) next to the binary; nothing to compare, nothing fetched [advisory (self-reported); see docs/security/integrity-posture.md]
+  - integrity/tpm-sealing: degraded — the KEK is not sealed to a TPM (key_provider.type is not tpm) [advisory (self-reported); see docs/security/integrity-posture.md]
+  - integrity/keylime-agent: not applicable — the Keylime agent check is a Linux mechanism; this host is not Linux [advisory (self-reported); see docs/security/integrity-posture.md]
+  - integrity/tier: 0 of 6 (detected, informational — never affects /health, startup or any exit code; next rung not reached: Secure Boot enabled (secure-boot not applicable)) [advisory (self-reported); see docs/security/integrity-posture.md]
   - Go FIPS 140-3 mode: off
   - fips140 enforced: no (self-test not run)

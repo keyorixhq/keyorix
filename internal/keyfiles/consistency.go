@@ -9,7 +9,6 @@
 package keyfiles
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -283,12 +282,6 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 func VerifyKeySetConsistency(enc *config.EncryptionConfig, baseDir string) error {
 	_, err := InspectKeySet(enc, baseDir)
 	return err
-}
-
-// IsManifestMissing reports whether st found no manifest at all (as opposed
-// to an unparseable one).
-func (st *KeySetState) IsManifestMissing() bool {
-	return st != nil && errors.Is(st.ManifestErr, ErrManifestMissing)
 }
 
 // classifyIntent decides what the staged operation left behind. Each file the

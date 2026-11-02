@@ -8,6 +8,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -99,7 +101,7 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	const idpResolvedNotAcceptedFromClient = false
 	m, err := h.coreService.InviteMember(r.Context(), uint(id), body.UserID, body.Role, actor.UserID, machineID(r), idpResolvedNotAcceptedFromClient)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		if sendRoleScopeError(w, err) {
@@ -164,7 +166,7 @@ func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Req
 	}
 	m, err := h.coreService.TransitionMembership(ctx, uint(projectID), uint(membershipID), to, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		if sendRoleScopeError(w, err) {
@@ -173,7 +175,8 @@ func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Req
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case errors.Is(err, core.ErrMembershipTargetNotFound), corestorage.IsUserNotFound(err),
+			corestorage.IsProjectNotFound(err), corestorage.IsRoleNotFound(err):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "cannot transition"):
 			status = http.StatusConflict

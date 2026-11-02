@@ -297,12 +297,12 @@ behind a TLS-terminating load balancer").
 ### gRPC keepalive and connection limits (`server.grpc.keepalive`)
 
 Durations are Go duration strings (`"15m"`); an unset or unparseable value takes the
-default. Only the gRPC server reads this block. The same eight keys parse under
-`server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
+default. Only the gRPC server reads this block. **Deprecated, never read:** the same
+eight keys under `server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
 `server.http.keepalive.min_time`, `server.http.keepalive.permit_without_stream`,
 `server.http.keepalive.max_connection_age`, `server.http.keepalive.max_connection_age_grace`,
 `server.http.keepalive.max_connection_idle` and `server.http.keepalive.handshake_timeout`)
-but have no effect there.
+change nothing and print a start-up warning. Remove the block; it is deleted after one minor release.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -542,7 +542,9 @@ paste them as they are. Things to know:
 `KEYORIX_TEST_PG_DSN`, the connection the Postgres-gated tests use, accepts both
 forms too. The tests create their own throwaway databases on that server by
 swapping the database name, keeping the other settings as written (including
-`sslmode` and a percent-encoded password).
+`sslmode` and a percent-encoded password). The tests that set
+`session_replication_role` need a superuser role (or `GRANT SET ON PARAMETER`); on any other role they skip, unless `CI=true` or
+`KEYORIX_REQUIRE_PG_SUPERUSER=1` is set, which makes the missing privilege a failure.
 
 ### PostgreSQL connection fields (without a `dsn`)
 
@@ -1646,8 +1648,10 @@ overdue signal is visible to auditors even before you enable `auto_open`.
 `cadence_days` is also the **look-back of the "last used" column** in the access review
 and in a campaign's items: a user with no secret activity in the last `cadence_days`
 days (at most 366) shows no last use, meaning "none within the review period", not
-"never". It applies whether or not the scheduler is enabled. See
-[recertification-activity-window.md](recertification-activity-window.md).
+"never". It applies whether or not the scheduler is enabled. It is also the **dormancy
+threshold** of the compliance posture's dormant role grants and the `dormant-access`
+control: a grant whose capability went unused for more than `cadence_days` days is
+dormant. See [recertification-activity-window.md](recertification-activity-window.md).
 
 ```yaml
 recertification:

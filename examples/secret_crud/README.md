@@ -29,8 +29,8 @@ Ensure your Keyorix system is initialized:
 # Initialize the system
 keyorix system init
 
-# Verify setup
-keyorix system validate
+# Verify setup (on the server host)
+keyorix-server admin validate
 ```
 
 ## Features Demonstrated
@@ -114,7 +114,7 @@ keyorix secret list --project 1 --environment 1
 keyorix secret list --search "password" --limit 10
 
 # JSON output
-keyorix secret list --format json
+keyorix secret list --output json
 ```
 
 ### Version Management
@@ -123,7 +123,7 @@ keyorix secret list --format json
 keyorix secret versions --id 123
 
 # JSON format
-keyorix secret versions --id 123 --format json
+keyorix secret versions --id 123 --output json
 ```
 
 ### Delete Secrets

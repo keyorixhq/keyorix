@@ -148,14 +148,20 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 	newPort := harness.FreeTCPPort(t)
 	harness.RewritePort(t, dir, newPort)
 
+	// The upgraded server serves /scim/v2 like the fresh-install legs do: the sweep below walks
+	// every route.json route, SCIM included. The old release's config has no scim block.
+	harness.EnableSCIMConfig(t, dir)
+	scimToken := harness.NewSCIMToken(t)
+
 	serverEnv := append(append([]string{}, env...),
 		"KEYORIX_BOOTSTRAP_TOKEN="+bootstrapToken, // unused post-bootstrap, harmless to still set
 		"KEYORIX_CONFIG_PATH="+configPath,
+		harness.SCIMTokenEnv+"="+scimToken,
 	)
 	newSrv := &harness.Server{
 		T: t, Dir: dir, ConfigPath: configPath, BaseURL: "http://127.0.0.1:" + newPort,
 		Binary: newBinary, Env: serverEnv, LogPath: filepath.Join(dir, "e2e-upgrade-server.log"),
-		Backend: backend,
+		Backend: backend, SCIMToken: scimToken,
 	}
 	harness.StartBackgroundProcess(t, newSrv, serverEnv)
 	t.Cleanup(newSrv.Close)

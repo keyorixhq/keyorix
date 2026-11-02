@@ -45,8 +45,8 @@ import (
 	"testing"
 	"time"
 
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 

@@ -239,6 +239,9 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := h.coreService.RevokeLease(r.Context(), leaseID, userCtx.UserID, "manual"); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error revoking dynamic-secret lease %q", leaseID))
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
@@ -368,6 +371,10 @@ func (h *DynamicSecretHandler) loadConfig(w http.ResponseWriter, r *http.Request
 	}
 	cfg, err := h.coreService.GetDynamicSecretConfig(r.Context(), uint(id))
 	if err != nil {
+		// A read FAULT is 503, not "Config not found" (as loadLease below).
+		if sendStorageUnavailable(w, core.ReadFault(err)) {
+			return nil, false
+		}
 		sendError(w, "NotFound", "Config not found", http.StatusNotFound, nil)
 		return nil, false
 	}
@@ -381,6 +388,10 @@ func (h *DynamicSecretHandler) loadConfig(w http.ResponseWriter, r *http.Request
 func (h *DynamicSecretHandler) loadLease(w http.ResponseWriter, r *http.Request, leaseID string) (*models.DynamicSecretLease, bool) {
 	lease, err := h.coreService.GetDynamicSecretLease(r.Context(), leaseID)
 	if err != nil {
+		// A storage fault is not "Lease not found": the credential may still be live.
+		if sendStorageUnavailable(w, core.ReadFault(err)) {
+			return nil, false
+		}
 		sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
 		return nil, false
 	}

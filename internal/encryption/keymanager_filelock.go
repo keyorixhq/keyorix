@@ -78,7 +78,7 @@ func (km *KeyManager) acquireExclusiveKeyLock() (*keyFileLock, error) {
 	// baseDir/dekPath (operator/config controlled), not attacker input.
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
-		return nil, fmt.Errorf("open DEK lock file %s: %w", lockPath, err)
+		return nil, wrapLockOpenError(filepath.Dir(lockPath), lockPath, err)
 	}
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
@@ -107,7 +107,7 @@ func (km *KeyManager) tryAcquireSharedKeyLock() (*keyFileLock, error) {
 	// baseDir/dekPath (operator/config controlled), not attacker input.
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
-		return nil, fmt.Errorf("open DEK lock file %s: %w", lockPath, err)
+		return nil, wrapLockOpenError(filepath.Dir(lockPath), lockPath, err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
 		_ = f.Close()

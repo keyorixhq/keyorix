@@ -140,7 +140,7 @@ func noCrossOriginRedirect(req *http.Request, via []*http.Request) error {
 func validateJWKSScheme(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid jwks_uri %q: %w", raw, err)
+		return fmt.Errorf("invalid jwks_uri %q: %w", netutil.RedactURLHost(raw), netutil.RedactErrorURLs(err))
 	}
 	switch u.Scheme {
 	case "https":
@@ -149,9 +149,9 @@ func validateJWKSScheme(raw string) error {
 		if isLoopbackHost(u.Hostname()) {
 			return nil
 		}
-		return fmt.Errorf("jwks_uri %q must use https (http is allowed only for localhost)", raw)
+		return fmt.Errorf("jwks_uri %q must use https (http is allowed only for localhost)", netutil.RedactURLHost(raw))
 	default:
-		return fmt.Errorf("jwks_uri %q must use https", raw)
+		return fmt.Errorf("jwks_uri %q must use https", netutil.RedactURLHost(raw))
 	}
 }
 

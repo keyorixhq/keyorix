@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestValidateReplacementCredential_ZeroID_NoOp(t *testing.T) {
@@ -31,7 +32,8 @@ func TestValidateReplacementCredential_ZeroID_NoOp(t *testing.T) {
 func TestValidateReplacementCredential_NotFound(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetMachineIdentityCredentialByID", mock.Anything, uint(50)).Return(nil, errors.New("not found"))
+	// A positive no-such-row, as LocalStorage reports it (see storage_read_class.go).
+	ms.On("GetMachineIdentityCredentialByID", mock.Anything, uint(50)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	_, err := c.validateReplacementCredential(context.Background(), 1, 50)
 	require.Error(t, err)

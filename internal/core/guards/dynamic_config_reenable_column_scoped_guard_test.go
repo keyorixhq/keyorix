@@ -29,8 +29,9 @@ import (
 //
 // Hops checked: KeyorixCore.CreateDynamicSecretConfig -> tx.SetDynamicSecretConfigAdminDSN
 // -> its LocalStorage body. insertDynamicSecretConfigRow is the INSERT, not an
-// update, and is not walked. That no production code calls the full-row
-// UpdateDynamicSecretConfig at all is TestUpdateDynamicSecretLease_HasNoProductionCaller.
+// update, and is not walked. The full-row UpdateDynamicSecretConfig no longer
+// exists; that nothing reintroduces and calls it is
+// TestUpdateDynamicSecretLease_HasNoProductionCaller.
 func TestCreateDynamicSecretConfig_IsColumnScoped(t *testing.T) {
 	const path = "../../storage/store/local_dynamic.go"
 	assertColumnScopedStorageWrite(t, path, "SetDynamicSecretConfigAdminDSN")

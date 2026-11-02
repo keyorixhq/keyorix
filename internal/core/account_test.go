@@ -49,7 +49,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "incorrect")
 		assert.Equal(t, "alice@old.com", existing.Email, "email must not change on a rejected request")
-		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("rejects an email change with an incorrect current password", func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "incorrect")
 		assert.Equal(t, "alice@old.com", existing.Email)
-		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("display-name-only change needs no password", func(t *testing.T) {

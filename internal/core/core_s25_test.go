@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // ── rbac.go ──────────────────────────────────────────────────────────────────
@@ -423,7 +424,8 @@ func TestDeleteOIDCBinding_BindingNotFound(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineIdentity", mock.Anything, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1}, nil)
-	ms.On("GetOIDCBindingByID", mock.Anything, uint(5)).Return(nil, errors.New("not found"))
+	// A positive no-such-row, as LocalStorage reports it (see storage_read_class.go).
+	ms.On("GetOIDCBindingByID", mock.Anything, uint(5)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	err := c.DeleteOIDCBinding(context.Background(), 1, 10, 5, 99)
 	require.Error(t, err)
@@ -492,7 +494,8 @@ func TestListWebAuthnCredentials_ReturnsFromStorage(t *testing.T) {
 func TestResendInvitationLink_NotFound(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetProjectInvitation", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
+	// A positive no-such-row, as LocalStorage reports it (see storage_read_class.go).
+	ms.On("GetProjectInvitation", mock.Anything, uint(99)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	_, err := c.ResendInvitationLink(context.Background(), 1, 99, 1)
 	require.Error(t, err)
@@ -567,7 +570,8 @@ func TestStaleInvitations_SomeStale(t *testing.T) {
 func TestRejectAccessRequest_NotFound(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetAccessRequest", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
+	// A positive no-such-row, as LocalStorage reports it (see storage_read_class.go).
+	ms.On("GetAccessRequest", mock.Anything, uint(99)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	_, err := c.RejectAccessRequest(context.Background(), 1, 99, 1, 0, "no")
 	require.Error(t, err)

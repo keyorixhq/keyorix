@@ -53,6 +53,8 @@ var dirListingAllowlist = map[string]string{
 	"internal/core/guards/core_clusters_guard_test.go:readClusters":                          "CLUSTERS.d/*.txt",
 	"internal/core/guards/core_clusters_guard_test.go:TestEveryCoreFileHasOneCluster":        "R4 is about package core itself, not the family",
 	"internal/core/guards/core_family_walkers_test.go:dirListingSites":                       "lists the test files this guard scans",
+	"internal/core/guards/client_time_utc_guard_test.go:modelHookInventory":                  "lists internal/storage/models (the BeforeSave hooks), not core sources",
+	"internal/core/guards/store_time_bind_utc_guard_test.go:storeSourceFiles":                "lists internal/storage/store (the readers it scans), not core sources",
 	"internal/core/guards/core_family_walkers_test.go:TestCoreWalkersSeeEveryCoreFamilyFile": "the expected side of the coverage check",
 	"internal/core/guards/ledger_fragments_test.go:readLedgerRows":                           "ledger fragment *.tsv files",
 	"internal/core/guards/named_lock_order_static_test.go:namedLockStorageSources": "internal/core/storage and " +

@@ -8,13 +8,13 @@ import (
 	"github.com/keyorixhq/keyorix/cli/internal/credstore"
 )
 
-// TestRunLogout_RevokesServerSideThenDeletesLocalCredentials proves logout does not
+// TestRunLogout_RevokesServerSideThenForgetsLocalSession proves logout does not
 // regress to the old CLI's behavior (docs/cli-split-inventory.md §8 Finding S12: "auth
 // logout" only cleared local config and never told the server). Asserting the local
 // file is gone alone would pass even if the POST /auth/logout call were never made --
 // the httptest server's own hit counter is the only thing that can tell "the server was
 // told" from "the client just forgot locally," per CLAUDE.md's fails-open testing rule.
-func TestRunLogout_RevokesServerSideThenDeletesLocalCredentials(t *testing.T) {
+func TestRunLogout_RevokesServerSideThenForgetsLocalSession(t *testing.T) {
 	var logoutCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/auth/logout" && r.Method == http.MethodPost {
@@ -49,15 +49,15 @@ func TestRunLogout_RevokesServerSideThenDeletesLocalCredentials(t *testing.T) {
 	if logoutCalls != 1 {
 		t.Fatalf("server-side POST /auth/logout was called %d times, want 1", logoutCalls)
 	}
-	if _, err := store.Load(); err == nil {
-		t.Fatal("local credentials still present after logout, want them deleted")
+	if creds, err := store.Load(); err != nil || creds.Token != "" {
+		t.Fatalf("local session still present after logout: creds=%+v err=%v", creds, err)
 	}
 }
 
-// TestRunLogout_StillDeletesLocalCredentialsWhenServerUnreachable is the fail-open half
+// TestRunLogout_StillForgetsLocalSessionWhenServerUnreachable is the fail-open half
 // of the DO instruction ("if the server call fails, still delete locally and say so"):
 // an unreachable server must not leave a stale, still-usable credential on disk.
-func TestRunLogout_StillDeletesLocalCredentialsWhenServerUnreachable(t *testing.T) {
+func TestRunLogout_StillForgetsLocalSessionWhenServerUnreachable(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", "")
@@ -77,8 +77,8 @@ func TestRunLogout_StillDeletesLocalCredentialsWhenServerUnreachable(t *testing.
 		t.Fatalf("runLogout: %v", err)
 	}
 
-	if _, err := store.Load(); err == nil {
-		t.Fatal("local credentials still present after logout against an unreachable server, want them deleted")
+	if creds, err := store.Load(); err != nil || creds.Token != "" {
+		t.Fatalf("local session still present after logout against an unreachable server: creds=%+v err=%v", creds, err)
 	}
 }
 

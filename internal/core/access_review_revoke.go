@@ -95,15 +95,33 @@ func (c *KeyorixCore) enforceAccessReviewReviewerControls(ctx context.Context, a
 	}
 	// ARC-001: a machine identity provisioned by the actor must not be
 	// self-certified by its creator — mirrors DecideAccessReviewItem's
-	// identical inline check. Fails closed on a lookup error.
+	// identical inline check. Fails closed on a lookup fault.
 	if d.Source == "role" && principalType == "machine" {
-		machine, err := c.storage.GetMachineIdentity(ctx, d.PrincipalID)
-		if err != nil {
-			return fmt.Errorf("loading machine identity: %w", err)
+		return c.checkMachineReviewerIndependence(ctx, actorID, d.PrincipalID)
+	}
+	return nil
+}
+
+// checkMachineReviewerIndependence is the ARC-001 check for a machine principal
+// named by an attest/revoke decision. A storage FAULT on the lookup refuses
+// (ErrStorageReadUnavailable: independence cannot be proven). A machine that
+// positively does not exist has no creator to self-certify, so this check has
+// nothing to refuse and the decision goes on to the project-scoped check that
+// every caller runs next (machineInProject on revoke,
+// verifyAccessReviewGrantExists on attest), which refuses it with the SAME
+// not-found it gives a machine in another project. Refusing it here instead,
+// with a different answer, made the status code an existence oracle for
+// machine ids outside the caller's project (REVIEW-3903-DEEP-2 finding 1).
+func (c *KeyorixCore) checkMachineReviewerIndependence(ctx context.Context, actorID, machineID uint) error {
+	machine, err := c.storage.GetMachineIdentity(ctx, machineID)
+	if err != nil {
+		if isPositiveNotFound(err) {
+			return nil
 		}
-		if machine.CreatedBy == actorID {
-			return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
-		}
+		return &storageReadFault{cause: err}
+	}
+	if machine.CreatedBy == actorID {
+		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
 	}
 	return nil
 }
@@ -230,8 +248,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 					return nil
 				}
 			}
-			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
-				"the role grant being attested no longer exists — the review is stale, re-sync and try again")
+			return accessReviewNotFound("the role grant being attested no longer exists — the review is stale, re-sync and try again")
 		}
 		assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 		if err != nil {
@@ -244,8 +261,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 				return nil
 			}
 		}
-		return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
-			"the role grant being attested no longer exists — the review is stale, re-sync and try again")
+		return accessReviewNotFound("the role grant being attested no longer exists — the review is stale, re-sync and try again")
 	case "direct_share", "group_share":
 		if d.PrincipalID == 0 || d.SecretID == 0 {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest a share")
@@ -257,9 +273,12 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		// evidence for a grant they have no authority over. Mirrors
 		// revokeReviewShare's identical guard (#99).
 		secret, err := c.storage.GetSecret(ctx, d.SecretID)
+		if err != nil && !isPositiveNotFound(err) {
+			// A storage fault is not "the review is stale": re-syncing would not help.
+			return classifyReadError(err, "the share being attested could not be read")
+		}
 		if err != nil || secret == nil || secret.ProjectID != projectID {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
-				"the share being attested no longer exists — the review is stale, re-sync and try again")
+			return accessReviewNotFound("the share being attested no longer exists — the review is stale, re-sync and try again")
 		}
 		isGroup := d.Source == "group_share"
 		shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID, c.shareEffectiveNow())
@@ -271,23 +290,23 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 				return nil
 			}
 		}
-		return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
-			"the share being attested no longer exists — the review is stale, re-sync and try again")
+		return accessReviewNotFound("the share being attested no longer exists — the review is stale, re-sync and try again")
 	case "owner":
 		if d.PrincipalID == 0 || d.SecretID == 0 {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest ownership")
 		}
 		secret, err := c.storage.GetSecret(ctx, d.SecretID)
+		if err != nil && !isPositiveNotFound(err) {
+			return classifyReadError(err, "the secret being attested could not be read")
+		}
 		if err != nil || secret == nil || secret.ProjectID != projectID {
 			// #G51: same cross-tenant guard as the share branch above — a
 			// secret in a DIFFERENT project must read as "not found" here,
 			// not leak whether it exists or who owns it.
-			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
-				"the secret being attested no longer exists — the review is stale, re-sync and try again")
+			return accessReviewNotFound("the secret being attested no longer exists — the review is stale, re-sync and try again")
 		}
 		if secret.OwnerID != d.PrincipalID {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
-				"the ownership grant being attested no longer exists — the review is stale, re-sync and try again")
+			return accessReviewNotFound("the ownership grant being attested no longer exists — the review is stale, re-sync and try again")
 		}
 		return nil
 	default:
