@@ -40,10 +40,9 @@ func TestMFAReset_PreTxRefusal_LeavesDeniedRow(t *testing.T) {
 			require.NoError(t, f.st.AssignRole(context.Background(), f.target.ID, f.adminRoleID(t), storage.Scope{}))
 		}, ErrMFAResetGlobalAdmin},
 		{"target linked to an IdP", func(t *testing.T, f *mfaResetFixture) {
-			u := f.reload(t, f.target.ID)
-			u.ExternalID = "okta|target"
-			_, err := f.st.UpdateUser(context.Background(), u)
+			claimed, err := f.st.ClaimUserExternalIDIfUnset(context.Background(), f.target.ID, "okta|target", time.Now())
 			require.NoError(t, err)
+			require.True(t, claimed)
 		}, ErrMFAResetExternalIdentity},
 		{"approver lost the second factor", func(t *testing.T, f *mfaResetFixture) {
 			require.NoError(t, f.st.SetUserMFAEnabled(context.Background(), f.b.ID, false))
