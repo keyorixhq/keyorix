@@ -2,23 +2,25 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/keyorixhq/keyorix/cli/internal/credstore"
 	"github.com/spf13/cobra"
 )
 
 var logoutCmd = &cobra.Command{
 	Use:   "logout",
-	Short: "Revoke the stored session and forget it locally",
-	Long: `Sign out: the server revokes the stored session token first, then the local
-credentials file is deleted, even when the server cannot be reached or already rejects
-the token, so no stale credential stays on disk.
+	Short: "Revoke the stored session and forget it locally (keeps server URL and ca_file)",
+	Long: `Sign out: the server revokes the stored session token first, then the token is
+removed from the local credentials file, even when the server cannot be reached or already
+rejects the token, so no stale credential stays on disk.
 
-The credentials file also holds the server URL and the ca_file setting
-(keyorix config set ca_file), so both are forgotten too: against a server with a private
-or self-signed certificate, run "keyorix config set ca_file <path>" again (or pass
---ca-file) before the next "keyorix login".`,
+Your settings stay: the server URL and the ca_file setting (keyorix config set ca_file) are
+kept, so the next "keyorix login" works against a server with a private or self-signed
+certificate without repeating them. To forget them too, run "keyorix config unset ca_file"
+or delete the credentials file.`,
 	RunE: runLogout,
 }
 
@@ -30,7 +32,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 
 	serverURL, token, err := resolveServerAndToken(store)
 	if err != nil {
-		// Nothing stored, nothing to revoke or delete -- but not an error: logging out
+		// Nothing stored, nothing to revoke or forget -- but not an error: logging out
 		// of a session that doesn't exist locally is a no-op, not a failure.
 		fmt.Println("Not logged in.")
 		return nil
@@ -46,13 +48,17 @@ func runLogout(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := store.Clear(); err != nil {
-		return fmt.Errorf("delete local credentials: %w", err)
+	if err := store.ForgetSession(); errors.Is(err, credstore.ErrSettingsDropped) {
+		// The token is gone (the whole file was removed); only the settings were lost.
+		fmt.Fprintln(os.Stderr, "Warning:", err)
+		fmt.Fprintln(os.Stderr, `Run "keyorix login --server <url>" (and "keyorix config set ca_file <path>" if you use one) next time.`)
+	} else if err != nil {
+		return fmt.Errorf("forget local session: %w", err)
 	}
 
 	if revokeErr != nil {
 		fmt.Fprintln(os.Stderr, "Warning: could not revoke the session server-side:", revokeErr)
-		fmt.Fprintln(os.Stderr, "The local credentials were deleted anyway; the server-side token may still be valid until it expires or is revoked separately.")
+		fmt.Fprintln(os.Stderr, "The local session was forgotten anyway; the server-side token may still be valid until it expires or is revoked separately.")
 		return nil
 	}
 

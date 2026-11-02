@@ -1,0 +1,2 @@
+### Testing
+- **Two regression pins and a familycheck doc note (TEST-HYGIENE-4).** `TestCaptureLogBuf_ConcurrentLoggerWritesAndReads` (`server/http/handlers`) pins the capture-log buffer against concurrent writes and reads under `-race`. `TestInvalidateUserTokenCache_UserBothImpersonationTargetAndImpersonator` (`server/middleware`) pins cache eviction for a user who is both an impersonation target and an impersonator. `devtools/familycheck/README.md` now says that only the first marker line of each kind is read.

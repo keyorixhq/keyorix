@@ -6,7 +6,6 @@ package handlers
 
 import (
 	"encoding/csv"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -37,8 +36,7 @@ func (h *CatalogHandler) ExportAccessReviewCampaignCSV(w http.ResponseWriter, r 
 
 	detail, err := h.coreService.GetAccessReviewCampaign(r.Context(), uint(projectID), uint(campaignID))
 	if err != nil {
-		log.Printf("ExportAccessReviewCampaignCSV: error: %v", err)
-		sendError(w, "Error", clientSafe(err), campaignStatusForError(err.Error()), nil)
+		sendCampaignError(w, "exporting access-review campaign", err)
 		return
 	}
 

@@ -32,14 +32,17 @@ internal/core/guards/check_then_act_lock_guard_test.go	docs/check-then-act-lock-
 internal/core/guards/ledger_fragments_test.go	!README.md	fixtures in t.TempDir() only; "README.md" is a fixture name
 internal/core/upgrading_scim_sso_check_query_test.go	docs/UPGRADING.md	the SCIM/SSO check query in UPGRADING.md
 internal/docsdrift/env_and_secrets_test.go	**/*.md,**/*.go,**/*.sh,**/*.yml,**/*.yaml,**/*.tpl,**/*.conf,**/*.txt,**/*.toml,**/Dockerfile*,**/Makefile	documented env vars and secret flags against every source kind envVarSourceFile accepts
+internal/docsdrift/helm_docs_set_keys_test.go	README.md,deploy/helm/keyorix/README.md,docs/**/*.md,deploy/helm/keyorix/values.yaml,!**	documented `--set` chart keys (README.md, the chart README, every .md under docs/) against deploy/helm/keyorix/values.yaml; nothing else is walked
 internal/docsdrift/links_test.go	**/*.md	relative links in every Markdown file
 internal/docsdrift/install_with_ai_test.go	INSTALL-WITH-AI.md	the assistant-run lines and the prompt block of INSTALL-WITH-AI.md (secret-blind rules)
 internal/docsdrift/upgrading_sections_test.go	docs/**/*.md,changelog.d/**/*.md,SECURITY.md,README.md,!**	UPGRADING.md section numbers, and references to them in every .md under docs/ and changelog.d/ plus SECURITY.md and README.md; nothing else is walked
 internal/docsdrift/versioning_deprecations_test.go	docs/VERSIONING.md	deprecated config aliases (Go source) against the VERSIONING.md deprecations table
+internal/docsdrift/demo_cli_commands_test.go	demo/**/*.sh,demo/**/*.md,docs/cli-reference.md,internal/docsdrift/testdata/demo_cli_exemptions.tsv,!**	keyorix commands and flags in demo/**/*.sh and demo/**/*.md against docs/cli-reference.md, plus its exemption table; nothing else is walked
 internal/metricsdoc/metricsdoc_test.go	docs/operations/metrics.md,operator/**/*.go	metrics doc against metric registrations, operator/ included
 internal/metricsdoc/observability_assets_test.go	deploy/observability/**	alerts, dashboard and runbook
 internal/refusaldocs/refusaldocs_test.go	docs/operator/startup-refusals.md,!operator/**	startup-refusals doc against server/ and internal/ sources only
 internal/statemap/completeness_test.go	docs/state-map/**	state-map entrypoints/stores/class-overrides TSVs
+internal/statemap/drill_backend_switch_guard_test.go	scripts/drills/**/*.md,scripts/drills/**/*.sh	reads the drill scripts and README to check each backend switch has a Postgres branch and the README coverage table
 internal/statemap/generated_drift_guard_test.go	docs/state-map/**	generated state-map files
 internal/statemap/invariants_fragments_guard_test.go	**/INVARIANTS.md,**/INVARIANTS.d/**,!**	every INVARIANTS.md, INVARIANTS.d fragment and docs/INVARIANTS.md
 internal/statemap/statemap_test.go	!cli/**/*.md,!internal/**/*.md	"cli"/"internal" name Go packages here; no Markdown is read
@@ -99,8 +102,10 @@ internal/storage/store/secret_nodes_soft_delete_sweep_test.go	operator/**/*.go	r
 internal/storage/store/secret_version_cache_epoch_guard_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
 internal/testutil/sqlitetest/shared_cache_literal_guard_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
 internal/secretenv/describe_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files; skips no module
+internal/secretenv/cited_tests_guard_test.go	operator/**/*_test.go,!operator/**	repo-root walk over _test.go files (all modules) for Test func declarations; reads no other operator/ file
 internal/guardrules/calendar_guard_test.go	operator/**/*.go,docs/guard-rollout.d/*.tsv	repo-root walk over _test.go files (all modules); also reads every docs/guard-rollout.d row
 internal/testutil/sqlitetest/factory_path_guard_test.go	operator/**/*.go	repo-root walk over .go files; skips no module
+internal/testutil/sqlitetest/driver_import_guard_test.go	operator/**/*.go,!scripts/**/*.tsv	repo-root walk over _test.go files; skips no module; reads only its own allowlist tsv, not scripts/ ones
 operator/api/v1alpha1/keyorixsecret_types_test.go	operator/config/crd/bases/*.yaml	generated CRD against the Go types (the operator job runs it too)
 #
 # --- reviewed: does not read operator/ (subtree walk, or skips it / nested modules) --
@@ -109,6 +114,7 @@ cli/internal/regularfile/guard_test.go	!operator/**	walks the cli module only
 internal/config/audit_durability_reachability_test.go	!operator/**,!**/*.yaml	skips cli/ and operator/; reads .go only
 internal/config/insecure_settings_messages_guard_test.go	!operator/**	walks internal/, server/, cli/
 internal/config/keyless_mode_reachability_test.go	!operator/**	skips cli/ and operator/
+internal/config/live_secret_lookup_guard_test.go	operator/**/*.go	walks the repository root for non-test .go files (operator/ included; skips web/ and internal/config, internal/secretenv)
 internal/core/guards/actor_kind_literal_completeness_test.go	!operator/**	walks internal/core and server/
 internal/core/guards/csv_writer_completeness_test.go	!operator/**	skips operator/
 internal/core/guards/dynamic_secret_column_scoped_guard_test.go	!operator/**	walks internal/core, internal/storage/store, server/
@@ -125,6 +131,7 @@ internal/storage/explicit_columns_guard_test.go	!operator/**	walks internal/ and
 internal/storage/store/audit_write_context_completeness_test.go	!operator/**	skips operator/
 internal/storage/store/pg_trigger_registry_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/testutil/pgdsn/shared_database_lock_guard_test.go	!operator/**	walks internal/ and server/
+internal/testutil/pgpriv/replication_role_guard_test.go	!operator/**,!scripts/**/*.txt	repo-root walk reading only *_test.go files; skips nested modules (go.mod) and testdata
 internal/testutil/srcpath/runtime_caller_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/urlleakguard/urlleakguard_test.go	!operator/**	skips nested modules (go.mod)
 server/httpguards/grant_primitive_gate_table_test.go	!operator/**	skipSecretACLDir skips nested modules

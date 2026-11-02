@@ -190,7 +190,7 @@ func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Req
 
 	m, err := h.coreService.MigrateUserToMachine(r.Context(), body.Username, id, body.IdentityType, body.Name, actor.UserID, machineID(r), !body.KeepUser)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		status := http.StatusInternalServerError
@@ -239,7 +239,7 @@ func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *htt
 	}
 	m, err := h.coreService.TransitionMachineIdentity(r.Context(), projectID, uint(machineID), to, actor.UserID)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		status := http.StatusInternalServerError
@@ -310,7 +310,7 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		ReplaceCredentialID: body.ReplaceCredentialID,
 	})
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		// A rotation revokes the old credential first (never blocked by the audit log);
@@ -374,6 +374,9 @@ func (h *CatalogHandler) ListMachineTokens(w http.ResponseWriter, r *http.Reques
 	}
 	creds, err := h.coreService.ListMachineTokens(r.Context(), projectID, uint(machineID))
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error listing machine tokens for machine %d in project %d: %v", machineID, projectID, err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
@@ -417,6 +420,9 @@ func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Reque
 	}
 	tokenHash, err := h.coreService.RevokeMachineToken(r.Context(), uint(projectID), uint(machineID), uint(tokenID), actor.UserID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		if strings.Contains(msg, errNotFound) {
@@ -449,7 +455,7 @@ func (h *CatalogHandler) ClassifyMachineIdentity(w http.ResponseWriter, r *http.
 	}
 	m, err := h.coreService.ClassifyMachineIdentity(r.Context(), projectID, machineID, body.Classification, actor.UserID)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		status := http.StatusBadRequest
@@ -491,7 +497,7 @@ func (h *CatalogHandler) ClassifyMachineToken(w http.ResponseWriter, r *http.Req
 	}
 	cred, err := h.coreService.ClassifyMachineToken(r.Context(), projectID, machineID, uint(tokenID), body.Classification, actor.UserID)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		status := http.StatusBadRequest
@@ -598,7 +604,7 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 		err = h.coreService.RemoveMachineRole(r.Context(), uint(machineID), roleID, scope, actor.UserID)
 	}
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		if sendRoleScopeError(w, err) {
@@ -638,6 +644,9 @@ func (h *CatalogHandler) ListMachineRoles(w http.ResponseWriter, r *http.Request
 	}
 	roles, err := h.coreService.ListMachineRoles(r.Context(), projectID, machineID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		msg := err.Error()
 		if strings.Contains(msg, errNotFound) {
 			sendError(w, "NotFound", clientSafe(err), http.StatusNotFound, nil)
@@ -674,6 +683,9 @@ func (h *CatalogHandler) CreateOIDCBinding(w http.ResponseWriter, r *http.Reques
 	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
 	b, err := h.coreService.CreateOIDCBinding(auditCtx, projectID, machineID, body.Issuer, body.Subject, actor.UserID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -703,6 +715,9 @@ func (h *CatalogHandler) ListOIDCBindings(w http.ResponseWriter, r *http.Request
 	}
 	bindings, err := h.coreService.ListOIDCBindings(r.Context(), projectID, machineID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		if strings.Contains(msg, errNotFound) {
@@ -733,6 +748,9 @@ func (h *CatalogHandler) DeleteOIDCBinding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := h.coreService.DeleteOIDCBinding(r.Context(), projectID, machineID, uint(bindingID), actor.UserID); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		if strings.Contains(msg, errNotFound) {

@@ -12,6 +12,8 @@ auth.go
 auth_bootstrap.go
 auth_budget.go
 auth_storage_unavailable.go
+authorize_fault_recorder.go
+authorize_transient.go
 authz.go
 authz_secret_batch.go
 bcrypt_cost.go
@@ -36,6 +38,7 @@ last_admin_fence.go
 last_used_coalescer.go
 login_lockout.go
 membership_lifecycle.go
+membership_not_found.go
 migrate_user_to_machine.go
 named_lock_fence.go
 notifications.go
@@ -71,6 +74,7 @@ session_undelivered.go
 setup_consume.go
 setup_delivery.go
 setup_token.go
+storage_read_class.go
 user_baseline_role_reconcile.go
 users.go
 users_types.go

@@ -82,6 +82,16 @@ Takes the same database lock as restore, reads the journal, then:
 - **No journal:** `No interrupted restore found`, exit 0, after removing any orphaned
   `*.restoring-*` files of a run killed before its journal was written.
 
+**After a PostgreSQL restore killed during the load, restore again with
+`--overwrite-existing`.** The restore runs the migrations first, as their own committed
+step, and loads the archive in a separate transaction after them. A kill in the load
+(for example the process killed for lack of memory) therefore leaves the schema in the
+database even though no row was committed. `--recover` rolls the data back and removes
+the journal, but the database now has tables, and a new `admin restore` into it is refused
+(`target Postgres database already has N table(s)`) unless you pass `--overwrite-existing`.
+Note that `--overwrite-existing` empties the target's tables, so any rows that were there
+before the first attempt are replaced too.
+
 A journal that does not parse is reported, not ignored. Inspect it: it is plain JSON
 listing each `path`, its `staged` replacement and the replacement's `sha256`.
 

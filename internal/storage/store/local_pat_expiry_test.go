@@ -95,7 +95,7 @@ func TestLocalStorage_BulkRevokeExpiredPATsByUser_NoneExpired_ReturnsNil(t *test
 	db := newPatExpiryLocalDB(t)
 	ls := store.NewLocalStorage(db)
 
-	hashes, err := ls.BulkRevokeExpiredPATsByUser(context.Background(), 20, time.Now())
+	hashes, err := ls.BulkRevokeExpiredPATsByUser(context.Background(), 20, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Nil(t, hashes)
 }
@@ -129,7 +129,7 @@ func TestLocalStorage_ListExpiredPATsByUser_CancelledContext_ReturnsError(t *tes
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := ls.ListExpiredPATsByUser(ctx, 5, time.Now())
+	_, err := ls.ListExpiredPATsByUser(ctx, 5, time.Now().UTC())
 	require.Error(t, err)
 }
 

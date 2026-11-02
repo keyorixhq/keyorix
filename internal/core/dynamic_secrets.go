@@ -756,7 +756,9 @@ func (c *KeyorixCore) cleanupOrphanedRole(ctx context.Context, cfg *models.Dynam
 func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID uint, reason string) error {
 	lease, err := c.storage.GetDynamicSecretLease(ctx, leaseID)
 	if err != nil {
-		return fmt.Errorf("lease not found")
+		// A fault is ErrStorageReadUnavailable, never "lease not found": the
+		// underlying credential may still be live and the revoke must be retried.
+		return classifyReadError(err, "lease not found")
 	}
 	// Admit revoke_failed too: a prior revoke whose target drop failed left the underlying
 	// credential LIVE, so it must remain retryable (manually or via the sweep). Only an
@@ -766,7 +768,7 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	}
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
 	if err != nil {
-		return fmt.Errorf("config not found")
+		return classifyReadError(err, "config not found")
 	}
 	engine, err := c.dynamicEngine(cfg.BackendType)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -556,25 +558,25 @@ func TestRevokeSecretACL_StorageError_G50(t *testing.T) {
 
 // TestAclErrorStatus_Forbidden verifies the 403 branch of aclErrorStatus.
 func TestAclErrorStatus_Forbidden(t *testing.T) {
-	code := aclErrorStatus("not authorized to perform this action")
+	code := aclErrorStatus(errors.New("not authorized to perform this action"))
 	assert.Equal(t, http.StatusForbidden, code)
 }
 
 // TestAclErrorStatus_NotFound verifies the 404 branch of aclErrorStatus.
 func TestAclErrorStatus_NotFound(t *testing.T) {
-	code := aclErrorStatus("record not found")
+	code := aclErrorStatus(corestorage.NotFound(corestorage.ErrSecretACLNotFound, "record not found", nil))
 	assert.Equal(t, http.StatusNotFound, code)
 }
 
 // TestAclErrorStatus_BadRequest verifies the 400 branch of aclErrorStatus.
 func TestAclErrorStatus_BadRequest(t *testing.T) {
-	code := aclErrorStatus("invalid permission value provided")
+	code := aclErrorStatus(errors.New("invalid permission value provided"))
 	assert.Equal(t, http.StatusBadRequest, code)
 }
 
 // TestAclErrorStatus_InternalServerError verifies the 500 default branch of aclErrorStatus.
 func TestAclErrorStatus_InternalServerError(t *testing.T) {
-	code := aclErrorStatus("database connection failed")
+	code := aclErrorStatus(errors.New("database connection failed"))
 	assert.Equal(t, http.StatusInternalServerError, code)
 }
 
@@ -583,7 +585,7 @@ func TestAclErrorStatus_InternalServerError(t *testing.T) {
 // neither "invalid", "required", nor "permission" — maps to 400, not the 500
 // default (handlers-secret-acl-handler-001).
 func TestAclErrorStatus_ValidationErrorPrefix(t *testing.T) {
-	code := aclErrorStatus("Validation error: user 42 is not a member of this secret's project")
+	code := aclErrorStatus(errors.New("Validation error: user 42 is not a member of this secret's project"))
 	assert.Equal(t, http.StatusBadRequest, code)
 }
 

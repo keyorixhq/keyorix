@@ -32,7 +32,10 @@ type StoreHooks struct {
 	ConsumeMFARecoveryCode                    func(next storage.Storage, ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error)
 	ConsumeWebAuthnSession                    func(next storage.Storage, ctx context.Context, tokenHash string, now time.Time) (*models.WebAuthnSession, error)
 	CountPendingAuditEvents                   func(next storage.Storage, ctx context.Context) (int64, error)
+	DecideMFAResetRequestIfPending            func(next storage.Storage, ctx context.Context, id uint, status string, decidedBy uint, now time.Time) (bool, error)
 	DeleteEnvironment                         func(next storage.Storage, ctx context.Context, id uint) error
+	GetMFAResetRequest                        func(next storage.Storage, ctx context.Context, id uint) (*models.MFAResetRequest, error)
+	ListMFAResetRequests                      func(next storage.Storage, ctx context.Context, pendingOnly bool) ([]*models.MFAResetRequest, error)
 	OldestPendingAuditEventAt                 func(next storage.Storage, ctx context.Context) (time.Time, bool, error)
 	CountRecentLoginAttempts                  func(next storage.Storage, ctx context.Context, ip string, since time.Time) (int64, error)
 	CountWebAuthnCredentials                  func(next storage.Storage, ctx context.Context, userID uint) (int64, error)
@@ -160,7 +163,6 @@ type StoreHooks struct {
 	UpdateLoginLockoutState                   func(next storage.Storage, ctx context.Context, id uint, attempts int, lastFailedAt *time.Time, lockedUntil *time.Time, lockoutCount int) error
 	UpdateRotationPolicyFields                func(next storage.Storage, ctx context.Context, id uint, f storage.RotationPolicyFieldUpdate, updatedAt time.Time) (bool, error)
 	UpdateSecretFields                        func(next storage.Storage, ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error)
-	UpdateUser                                func(next storage.Storage, ctx context.Context, user *models.User) (*models.User, error)
 	VerifyAuditChain                          func(next storage.Storage, ctx context.Context, anchor *storage.AuditChainAnchor) (*storage.AuditChainVerification, error)
 	VerifyAuditChainSegment                   func(next storage.Storage, ctx context.Context, seg storage.AuditChainSegment) (*storage.AuditChainVerification, error)
 	WithNamedLock                             func(next storage.Storage, ctx context.Context, lockKey string, fn func(ctx context.Context) error) error

@@ -30,5 +30,13 @@ func init() {
 			"token cheaper than a wrong one, observable as when the per-IP 429s start (#2880). The read writes " +
 			"nothing: the session is untouched and the only diff is the kept LoginAttempt row, which is the " +
 			"rate-limit enforcement, not a partial commit.",
+		// #3873 (AUTH-ENDPOINT-OUTAGE-1): GetUser is a pure read, so its
+		// effect-then-error answers this same 401 and leaves this same state (only the
+		// kept LoginAttempt slot); oracles (d) and (h) consult this row for it, as
+		// #3091/#3106 decided for the WebAuthn identity reads.
+		pureReadEffectThenError: true,
+		lookupVerdictEffectThenError: "post-verdict owner read on a token that already matched a live session: " +
+			"answered like a dead token (FIX-3065, #2880), so the refresh response never confirms the token; " +
+			"the slot is kept either way",
 	})
 }

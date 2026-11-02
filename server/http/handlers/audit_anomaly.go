@@ -4,6 +4,8 @@
 package handlers
 
 import (
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -62,7 +64,15 @@ func AcknowledgeAnomalyAlert(w http.ResponseWriter, r *http.Request) {
 	// Routed through the core (not the bare detector) so the dismissal is audited with
 	// the acting operator and a missing alert id is reported as not-found, not a silent ok.
 	if err := coreService.AcknowledgeAnomalyAlert(r.Context(), actorID, uint(id)); err != nil {
-		sendError(w, "NotFound", "Anomaly alert not found", http.StatusNotFound, nil)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, core.ErrAnomalyAlertNotFound) {
+			sendError(w, "NotFound", "Anomaly alert not found", http.StatusNotFound, nil)
+			return
+		}
+		log.Printf("Error acknowledging anomaly alert %d: %v", id, err)
+		sendError(w, "InternalError", "Failed to acknowledge anomaly alert", http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]any{"acknowledged": true}, "")

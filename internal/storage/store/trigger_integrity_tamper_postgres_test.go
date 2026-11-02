@@ -20,6 +20,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 )
 
 func TestRolePermGenerationIntegrity_DisabledTriggerReenabledByBootIsFlushed_Postgres(t *testing.T) {
@@ -86,12 +88,11 @@ func TestRolePermGenerationIntegrity_DroppedFunctionIsRestoredByTheTick_Postgres
 // the periodic check must not report such a session as clean either.
 func TestRolePermGenerationIntegrity_NonOriginSessionIsRejected_Postgres(t *testing.T) {
 	w, c := rpgIntegrityWorld(t)
+	pgpriv.RequireReplicationRolePrivilege(t, w.writer.db)
 	sqlDB, err := w.writer.db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1) // the check's reads and writes all run on the one session set below
-	if err := w.writer.db.Exec("SET session_replication_role = replica").Error; err != nil {
-		t.Skipf("pg-gated: this role may not SET session_replication_role (needs a superuser or GRANT SET): %v", err)
-	}
+	require.NoError(t, w.writer.db.Exec("SET session_replication_role = replica").Error)
 	reset := func() { require.NoError(t, w.writer.db.Exec("RESET session_replication_role").Error) }
 	before := testutil.ToFloat64(rolePermGenerationTamperTotal)
 	flushed, err := c.check(context.Background())

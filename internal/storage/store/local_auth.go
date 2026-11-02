@@ -117,7 +117,7 @@ func (ls *LocalStorage) RotateSession(ctx context.Context, oldID uint, newSessio
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&models.Session{}).
 			Where("id = ? AND rotated_at IS NULL", oldID).
-			Update("rotated_at", now)
+			Update("rotated_at", now.UTC()) // Update(col, v) runs no hook or NowFunc
 		if res.Error != nil {
 			return res.Error
 		}
@@ -261,14 +261,14 @@ func (ls *LocalStorage) ListSessionTokenHashesForUser(ctx context.Context, userI
 // TouchSession bumps last_seen_at only if the stored value is older than staleness
 // (or NULL), keeping the auth hot path from writing on every request.
 //
-// #1507: this UpdateColumn write bypasses model hooks too, but unlike
-// PersonalAccessToken.LastUsedAt/MachineIdentityCredential.LastUsedAt there is
-// no separate consumer to diverge from — the WHERE bound and the SET value
-// below both come from this function's own seenAt parameter, in the same
-// call. If a future range query on last_seen_at is ever added elsewhere
-// (there is none today — verified repo-wide), it would need the same
-// call-site normalization the other two #1507 fields document.
+// #1507: this UpdateColumn write bypasses model hooks (and GORM's NowFunc), so
+// it normalises seenAt, and the cutoff it compares against, to UTC itself
+// (SQLITE-UTC-NOWFUNC-1), like TouchPersonalAccessToken and
+// TouchMachineIdentityCredential: the last-used coalescer passes its clock's
+// time in the host zone, and on SQLite a non-UTC time is stored as text that
+// does not scan back (the session then fails every read).
 func (ls *LocalStorage) TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error {
+	seenAt = seenAt.UTC()
 	cutoff := seenAt.Add(-staleness)
 	return ls.db.WithContext(ctx).Model(&models.Session{}).
 		Where("id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)", id, cutoff).
@@ -411,15 +411,13 @@ func (ls *LocalStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context
 // TouchPersonalAccessToken bumps last_used_at only when older than staleness (or NULL),
 // keeping the auth hot path from writing on every request (mirrors TouchSession).
 //
-// #1507: this UpdateColumn write bypasses model hooks, so last_used_at is
-// whatever Location usedAt itself carries (currently always c.now(), the same
-// accessor CountStalePATs (local_hygiene_counts.go) uses to derive its own
-// range-query bound) — safe ONLY as long as every last_used_at reader keeps
-// using that same source. If a future range query on this column is added
-// anywhere using a differently-sourced time (e.g. a raw time.Now().UTC()),
-// normalize explicitly at this call site (there is no BeforeSave hook that
-// can reach an UpdateColumn write) before trusting the comparison.
+// #1507: this UpdateColumn write bypasses model hooks (and GORM's NowFunc), so
+// it normalises usedAt, and the cutoff it compares against, to UTC itself
+// (SQLITE-UTC-NOWFUNC-1): core passes c.now() in the host zone, and on SQLite a
+// non-UTC time is stored as text that neither scans back nor orders against a
+// UTC bound (the touched token then fails every read).
 func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
+	usedAt = usedAt.UTC()
 	cutoff := usedAt.Add(-staleness)
 	return ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
 		Where("id = ? AND (last_used_at IS NULL OR last_used_at < ?)", id, cutoff).
@@ -524,10 +522,11 @@ func (ls *LocalStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose,
 // MarkSetupTokenConsumed transitions active → consumed only if still active. The
 // state guard in the WHERE clause makes consumption single-use even under a
 // concurrent replay: the second caller matches zero rows and gets false.
+// consumedAt is stored in UTC: the map update runs no hook or NowFunc.
 func (ls *LocalStorage) MarkSetupTokenConsumed(ctx context.Context, id uint, consumedAt time.Time) (bool, error) {
 	result := ls.db.WithContext(ctx).Model(&models.SetupToken{}).
 		Where("id = ? AND state = ?", id, "active").
-		Updates(map[string]any{"state": "consumed", "consumed_at": consumedAt})
+		Updates(map[string]any{"state": "consumed", "consumed_at": consumedAt.UTC()})
 	if result.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}

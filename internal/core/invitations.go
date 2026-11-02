@@ -153,7 +153,7 @@ func (c *KeyorixCore) buildProjectInvite(ctx context.Context, projectID uint, em
 	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
 		return ctx, nil, err
 	}
-	now := c.now()
+	now := c.now().UTC()
 	expires := now.Add(invitationTTL)
 	return ctx, &models.ProjectInvitation{
 		ProjectID:                  projectID,
@@ -469,7 +469,7 @@ func (c *KeyorixCore) buildGlobalInvite(ctx context.Context, email, systemRole s
 		assignJSON = string(b)
 	}
 
-	now := c.now()
+	now := c.now().UTC()
 	expires := now.Add(invitationTTL)
 	inv = &models.ProjectInvitation{
 		ProjectID:                  0, // global
@@ -699,7 +699,7 @@ func (c *KeyorixCore) revokeAssignmentGrants(ctx context.Context, inv *models.Pr
 func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, projectID, invitationID, actorID uint) (*ProvisionSetupResult, error) {
 	inv, err := c.storage.GetProjectInvitation(ctx, invitationID)
 	if err != nil {
-		return nil, fmt.Errorf("invitation not found")
+		return nil, classifyReadError(err, "invitation not found")
 	}
 	// The caller is authorized within projectID; an invitation in another project
 	// must not be resendable through it (cross-project guard).
@@ -750,7 +750,7 @@ func (c *KeyorixCore) ListProjectInvitations(ctx context.Context, projectID uint
 func (c *KeyorixCore) RevokeInvitation(ctx context.Context, projectID, invitationID, actorID uint) error {
 	inv, err := c.storage.GetProjectInvitation(ctx, invitationID)
 	if err != nil {
-		return fmt.Errorf("invitation not found")
+		return classifyReadError(err, "invitation not found")
 	}
 	if inv.ProjectID != projectID {
 		return fmt.Errorf("invitation not found")
@@ -814,6 +814,9 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 	// soft-deleted (#371). Otherwise a request can sit pending against a project an admin
 	// believes is gone, waiting to be approved (and go live) whenever it's restored.
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
+		if fault := ReadFault(err); fault != nil {
+			return nil, fault
+		}
 		return nil, fmt.Errorf("project %d not found: %w", projectID, err)
 	}
 	// #G82: refuse a second pending PROJECT-ROLE request for the SAME (user,
@@ -836,7 +839,7 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 			return nil, fmt.Errorf("you already have a pending access request for this project")
 		}
 	}
-	now := c.now()
+	now := c.now().UTC()
 	expires := now.Add(accessRequestTTL)
 	req := &models.AccessRequest{
 		ProjectID:     projectID,
@@ -990,7 +993,7 @@ func dualControlLockKey(requestID uint) string {
 func (c *KeyorixCore) approveAccessRequestWithExpiryLocked(ctx context.Context, projectID, requestID, approverID, approverMachineID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return nil, fmt.Errorf("access request not found")
+		return nil, classifyReadError(err, "access request not found")
 	}
 	// The approver is authorized within projectID; a request belonging to another
 	// project must not be approvable through it, or the role grant would land in a
@@ -1009,7 +1012,8 @@ func (c *KeyorixCore) approveAccessRequestWithExpiryLocked(ctx context.Context, 
 	// approval still makes sense. GetProject's default soft-delete scope makes this check
 	// double as the soft-delete check.
 	if _, err := c.storage.GetProject(ctx, req.ProjectID); err != nil {
-		return nil, fmt.Errorf("cannot approve: project %d no longer exists", req.ProjectID)
+		// A read FAULT is a retry answer, not "the project is gone".
+		return nil, classifyReadError(err, fmt.Sprintf("cannot approve: project %d no longer exists", req.ProjectID))
 	}
 	// Enforce the request's own TTL here, not only on the list path. GetAccessRequest
 	// returns the stored record verbatim, so a request whose expiry has passed is still
@@ -1053,6 +1057,9 @@ func (c *KeyorixCore) approveAccessRequestWithExpiryLocked(ctx context.Context, 
 	}
 	roleModel, err := c.storage.GetRoleByName(ctx, role)
 	if err != nil {
+		if !isPositiveNotFound(err) {
+			return nil, classifyReadError(err, "") // a read FAULT is a retry answer, not "unknown role"
+		}
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
 	// Privilege ceiling: an approver may not grant a role unless they themselves
@@ -1285,7 +1292,7 @@ func (c *KeyorixCore) notifyApprovalProgress(ctx context.Context, req *models.Ac
 func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, projectID, requestID, approverID, approverMachineID uint, reason string) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return nil, fmt.Errorf("access request not found")
+		return nil, classifyReadError(err, "access request not found")
 	}
 	if req.ProjectID != projectID {
 		return nil, fmt.Errorf("access request not found")
@@ -1337,7 +1344,7 @@ func (c *KeyorixCore) WithdrawAccessRequest(ctx context.Context, requestID, user
 	notFound := fmt.Errorf("access request not found")
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return notFound
+		return classifyReadError(err, notFound.Error())
 	}
 	if req.UserID != userID {
 		return notFound

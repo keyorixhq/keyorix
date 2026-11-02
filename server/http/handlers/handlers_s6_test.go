@@ -6,12 +6,14 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -792,14 +794,14 @@ func TestCloseAccessReviewCampaign_Unauthorized_S6(t *testing.T) {
 
 // TestCampaignStatusForError covers all branches of the switch.
 func TestCampaignStatusForError_S6(t *testing.T) {
-	assert.Equal(t, http.StatusNotFound, campaignStatusForError("not found"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("required field missing"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("still pending items"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("already closed"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("campaign is closed"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("ownership cannot be revoked"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("must be unique"))
-	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError("unexpected db error"))
+	assert.Equal(t, http.StatusNotFound, campaignStatusForError(core.ErrAccessReviewNotFound))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("required field missing")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("still pending items")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("already closed")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("campaign is closed")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("ownership cannot be revoked")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("must be unique")))
+	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError(errors.New("unexpected db error")))
 }
 
 // ── ExportAccessReviewCampaignCSV — remaining branches ───────────────────────

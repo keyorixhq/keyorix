@@ -26,7 +26,10 @@ import (
 func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code string) error {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("user not found")
+		// Pre-verdict: no code has been evaluated, and the account is the caller's
+		// own. A read fault is a retryable ErrStorageReadUnavailable (503), never
+		// the "user not found" verdict (#3873, AUTH-ENDPOINT-OUTAGE-1).
+		return classifyReadError(err, "user not found")
 	}
 	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 		return fmt.Errorf("account is not active")
@@ -47,6 +50,12 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 	// checked. verifyMFAStepUpCode used to collapse both cases into a single
 	// bool, which is exactly the bug #2548 fixed for the login path but never
 	// reached here — this is that same sibling, found during the FIX-1 sweep.
+	if isTOTPShaped(code) && totpFIPSEnforced() {
+		// Pre-verdict, like a storage fault before any code was looked at:
+		// not counted, the handler hands the slot back.
+		c.auditTOTPUnavailable(ctx, userID, "stepup")
+		return totpUnavailablePreVerdict()
+	}
 	verified, storageErr := c.verifyMFAStepUpCode(ctx, userID, code)
 	if !verified {
 		if storageErr != nil {

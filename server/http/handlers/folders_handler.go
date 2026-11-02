@@ -8,6 +8,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
 )
@@ -103,16 +105,23 @@ func (h *FolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request) {
 
 	folder, err := h.coreService.CreateFolder(r.Context(), userCtx.UserID, reqBody.Name, reqBody.ProjectID, reqBody.EnvironmentID, reqBody.ParentID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating folder: %v", err)
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		errType := "InternalError"
 		respMsg := "Failed to create folder"
 		switch {
-		case strings.Contains(msg, "not found"):
+		case corestorage.IsSecretNotFound(err):
 			status = http.StatusNotFound
 			errType = "NotFound"
 			respMsg = "Parent folder not found"
+		case errors.Is(err, core.ErrSecretTargetInvalid):
+			status = http.StatusNotFound
+			errType = "NotFound"
+			respMsg = "Environment not found"
 		case strings.Contains(msg, "validation") ||
 			strings.Contains(msg, "not a folder") ||
 			strings.Contains(msg, "does not belong to the same project"):
@@ -201,6 +210,11 @@ func (h *FolderHandler) DeleteFolder(w http.ResponseWriter, r *http.Request) {
 	// Verify the node is actually a folder before deleting.
 	node, err := h.coreService.GetSecret(r.Context(), uint(id))
 	if err != nil {
+		// A read FAULT is 503, not "Folder not found"; a missing or expired node keeps
+		// the 404 (core.ReadFault is nil for a true not-found).
+		if !errors.Is(err, core.ErrSecretExpired) && sendStorageUnavailable(w, core.ReadFault(err)) {
+			return
+		}
 		h.sendError(w, "NotFound", "Folder not found", http.StatusNotFound, nil)
 		return
 	}

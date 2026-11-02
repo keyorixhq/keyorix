@@ -54,6 +54,10 @@ func (h *SecretHandler) sendRenderTemplateError(w http.ResponseWriter, r *http.R
 	if h.sendSecretReadRefusal(w, err) {
 		return
 	}
+	// A storage read fault says nothing about the referenced secret: retry, not 404.
+	if sendStorageUnavailable(w, err) {
+		return
+	}
 	switch {
 	// core.ErrSecretRefNotFound covers both "no such secret" and "exists but no
 	// read access" — must be checked before the generic "not found" / "permission"

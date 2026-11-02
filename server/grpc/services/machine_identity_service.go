@@ -34,6 +34,11 @@ func mapMachineError(err error) error {
 	if aerr, ok := auditUnavailableStatus(err); ok {
 		return aerr
 	}
+	// STORAGE-ERR-CLASS-1: a storage read fault is retryable (Unavailable), not
+	// NotFound: the revoke / suspend / unbind was never applied.
+	if serr, ok := storageUnavailableStatus(err); ok {
+		return serr
+	}
 	// MACH-001: a privilege-ceiling denial (requireMachinePrivilegeCeiling) is a
 	// deliberate, terminal authorization refusal, not an internal error. Check the
 	// typed sentinel via errors.Is BEFORE the substring switch below — the message

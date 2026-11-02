@@ -1,0 +1,1 @@
+STORAGE-ERR-CLASS-4-2	./server/http/handlers	TestRequestSecretAccess_ReadFaultIsNotNotFound	default-ci	pending-merge	-	core.RequestSecretAccess answers a storage fault on its own GetSecret read with the storage-unavailable class (503 + Retry-After via CreateSecretAccessRequest), not "secret not found"; a secret that does not exist stays a not-found

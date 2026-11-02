@@ -167,16 +167,6 @@ describe('sharingApi.delete', () => {
     });
 });
 
-// ── sharingApi.selfRemove ──────────────────────────────────────────────────────
-
-describe('sharingApi.selfRemove', () => {
-    it('posts to the self-remove endpoint', async () => {
-        mock.post.mockResolvedValueOnce({});
-        await sharingApi.selfRemove(1);
-        expect(mock.post).toHaveBeenCalledWith('/api/v1/shares/1/self-remove');
-    });
-});
-
 // SHARE-3: the Sharing Management page lists GET /shares for a caller with global
 // secrets.read and falls back to the owner-scoped GET /shares/owned when that route's
 // permission gate refuses them. The profile cannot tell the two apart (its

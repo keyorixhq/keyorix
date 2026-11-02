@@ -95,6 +95,10 @@ type UserContext struct {
 	// which must not confine non-interactive automation.
 	MFAEnabled  bool `json:"-"`
 	SessionAuth bool `json:"-"`
+	// MFAEnrolmentOwed is core.MFAEnrolmentOwed of the account: an administrator
+	// MFA reset left it owing a new second factor (#3799), so EnforceAccountSetup
+	// confines an interactive session to enrolment even without require_mfa.
+	MFAEnrolmentOwed bool `json:"-"`
 	// SetupOnly is the authenticating session's models.Session.SetupOnly (#3024):
 	// a session that may only finish account setup, never become a full session.
 	// Read on the slow path with SessionID and cached with the identity (it never
@@ -779,6 +783,10 @@ func extractRequestToken(r *http.Request) (string, error) {
 var (
 	errInvalidTarget  = errors.New("invalid target")
 	errTargetNotFound = errors.New("target not found")
+	// errTargetReadFault: the resolver's read of the target FAILED (as opposed to
+	// finding no such row). It wraps core.ErrStorageReadUnavailable and says nothing
+	// about whether the target exists (STORAGE-ERR-CLASS-2).
+	errTargetReadFault = errors.New("target read failed")
 )
 
 // ScopeResolver derives the project/environment a request acts on. It may load
@@ -914,7 +922,16 @@ func handleScopedSecretPermissionRequest(next http.Handler, w http.ResponseWrite
 	}
 	secret, err := cs.Storage().GetSecret(r.Context(), secretID)
 	if err != nil {
-		handleScopeResolutionError(w, r, cs, userCtx, permission, errTargetNotFound, defaultDenyMessage)
+		// A fetch that failed because storage is down is an outage, not "no such secret".
+		if authorizeLookupUnavailable(w, r, err) {
+			return
+		}
+		// A non-transient read FAULT is not "no such secret" either (STORAGE-ERR-CLASS-3).
+		resolveErr := errTargetNotFound
+		if fault := core.ReadFault(err); fault != nil {
+			resolveErr = fmt.Errorf("%w: %w", errTargetReadFault, fault)
+		}
+		handleScopeResolutionError(w, r, cs, userCtx, permission, resolveErr, defaultDenyMessage)
 		return
 	}
 	core.NoteSecretReadSubject(r.Context(), secret)
@@ -1018,9 +1035,17 @@ func handleScopedSecretRefPermissionRequest(next http.Handler, w http.ResponseWr
 	}
 	secret, err := cs.ResolveSecretRef(r.Context(), r.URL.Query().Get("ref"))
 	if err != nil {
+		if authorizeLookupUnavailable(w, r, err) {
+			return
+		}
 		resolveErr := errTargetNotFound
-		if errors.Is(err, core.ErrSecretRefInvalid) {
+		switch {
+		case errors.Is(err, core.ErrSecretRefInvalid):
 			resolveErr = errInvalidTarget
+		case core.IsStorageReadUnavailable(err):
+			// A read FAULT while resolving the ref is not "no such secret"
+			// (ERR-FOLD-HANDLERS-1): same branch as the by-ID resolvers.
+			resolveErr = fmt.Errorf("%w: %w", errTargetReadFault, err)
 		}
 		handleScopeResolutionError(w, r, cs, userCtx, permission, resolveErr, defaultDenyMessage)
 		return
@@ -1113,11 +1138,39 @@ func AuthorizedAtGlobalScope(ctx context.Context, cs *core.KeyorixCore, userCtx 
 // resource exists (avoids existence enumeration by unprivileged users). Any
 // other error is treated as an unparseable target (400).
 func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core.KeyorixCore, userCtx *UserContext, permission string, err error, denyMessage string) {
+	// A resolver that failed because storage is down says nothing about the target
+	// (INV-MW-authorize-lookup-error-is-503): retry, not 400/403/404.
+	if authorizeLookupUnavailable(w, r, err) {
+		return
+	}
+	if errors.Is(err, errTargetReadFault) {
+		// The target read failed, so the target's existence is unknown to everyone.
+		// A caller who holds the permission globally is told to retry (503); anyone
+		// else keeps the 403 they get for an absent target, so a fault adds no
+		// existence signal for them. The audit row records the truth either way.
+		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedInternalError)
+		held, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+		if aerr != nil && authorizeLookupUnavailable(w, r, aerr) {
+			return
+		}
+		if aerr == nil && held {
+			storageUnavailableResponse(w, err)
+		} else {
+			forbiddenResponse(w, denyMessage)
+		}
+		return
+	}
 	if errors.Is(err, errTargetNotFound) {
 		// The same note whichever response follows (404 for a global holder, 403
 		// otherwise): the audit row records the truth, the response does not.
 		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedNotFound)
-		if AuthorizedAtGlobalScope(r.Context(), cs, userCtx, permission) {
+		// The global-scope probe is an authorize lookup too: if IT hits the outage the
+		// answer is 503, not the 403 that would pass for "you hold nothing".
+		held, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+		if aerr != nil && authorizeLookupUnavailable(w, r, aerr) {
+			return
+		}
+		if aerr == nil && held {
 			notFoundResponse(w, "Resource not found")
 		} else {
 			forbiddenResponse(w, denyMessage)
@@ -1127,10 +1180,37 @@ func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core
 	badRequestResponse(w, "Invalid target")
 }
 
+// authorizeLookupUnavailableMessage is the fixed 503 text: no storage error detail
+// reaches the client.
+const authorizeLookupUnavailableMessage = "authorization temporarily unavailable, please retry"
+
+// authorizeLookupUnavailable answers 503 + Retry-After and returns true when err is
+// a transient storage failure of an authorization lookup (core.IsAuthorizeTransient).
+// The request is refused, never served. It is audited as a failed read
+// (SecretReadDeniedInternalError, outcome=failed), not as a "forbidden" denial: the
+// caller was not judged. Nothing is cached. Any other error returns false and the
+// caller keeps its fail-closed denial (INV-MW-authorize-lookup-error-is-503).
+func authorizeLookupUnavailable(w http.ResponseWriter, r *http.Request, err error) bool {
+	if err == nil || !core.IsAuthorizeTransient(r.Context(), err) {
+		return false
+	}
+	core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedInternalError)
+	serviceUnavailableResponse(w, authorizeLookupUnavailableMessage)
+	return true
+}
+
 // finishScopedPermissionRequest applies the authorize result and, on success,
 // the per-project MFA policy (ADR-037), before serving next. Shared by
 // RequireScopedPermission and RequireScopedSecretPermission.
 func finishScopedPermissionRequest(next http.Handler, w http.ResponseWriter, r *http.Request, cs *core.KeyorixCore, scope core.Scope, allowed bool, err error, denyMessage string) {
+	if err != nil {
+		// A storage outage is not a verdict (INV-MW-authorize-lookup-error-is-503):
+		// 503 + Retry-After, handler not run. Any other error stays a logged 403.
+		if authorizeLookupUnavailable(w, r, err) {
+			return
+		}
+		log.Printf("WARNING: authorization lookup failed, denying: permission gate error=%q", err.Error())
+	}
 	if err != nil || !allowed {
 		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedForbidden)
 		forbiddenResponse(w, denyMessage)
@@ -1172,6 +1252,9 @@ func RequirePermissionInAnyScope(permission string, opts ...ScopedGateOption) fu
 				return
 			}
 			allowed, err := cs.HoldsPermissionInAnyScope(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission)
+			if authorizeLookupUnavailable(w, r, err) {
+				return
+			}
 			if err != nil || !allowed {
 				forbiddenResponse(w, cfg.denyMessage)
 				return
@@ -1268,7 +1351,7 @@ func handleAccountSetupCheck(next http.Handler, w http.ResponseWriter, r *http.R
 		next.ServeHTTP(w, r)
 		return
 	}
-	pending := core.PendingAccountSetupSteps(userCtx.Restricted, userCtx.MFAEnabled, userCtx.SessionAuth, requireMFA)
+	pending := core.PendingAccountSetupSteps(userCtx.Restricted, userCtx.MFAEnabled, userCtx.SessionAuth, requireMFA, userCtx.MFAEnrolmentOwed)
 	// An impersonation session is never a setup session and cannot be refreshed;
 	// it keeps the plain 403 confinement below.
 	if userCtx.SessionAuth && userCtx.ImpersonatedBy == nil &&
@@ -1356,6 +1439,10 @@ func ScopeFromEnvParam(param string) ScopeResolver {
 		}
 		env, err := cs.Storage().GetEnvironment(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such environment" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: env.ProjectID, EnvironmentID: id}, nil
@@ -1373,6 +1460,10 @@ func ScopeFromSecretParam(param string) ScopeResolver {
 		}
 		secret, err := cs.Storage().GetSecret(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such secret" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
@@ -1390,6 +1481,10 @@ func ScopeFromDeletedSecretParam(param string) ScopeResolver {
 		}
 		secret, err := cs.Storage().GetSecretIncludingDeleted(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such secret" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
@@ -1406,10 +1501,17 @@ func ScopeFromShareParam(param string) ScopeResolver {
 		}
 		share, err := cs.Storage().GetShareRecord(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such share" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		secret, err := cs.Storage().GetSecret(r.Context(), share.SecretID)
 		if err != nil {
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
@@ -1426,6 +1528,10 @@ func ScopeFromRotationPolicyParam(param string) ScopeResolver {
 		}
 		policy, err := cs.Storage().GetRotationPolicy(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such rotation policy" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{
@@ -1453,6 +1559,10 @@ func ScopeFromDynamicSecretConfigParam(param string) ScopeResolver {
 		}
 		cfg, err := cs.GetDynamicSecretConfig(r.Context(), id)
 		if err != nil {
+			// A read FAULT is not "no such config" (STORAGE-ERR-CLASS-3).
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID}, nil
@@ -1472,6 +1582,10 @@ func ScopeFromDynamicSecretLeaseParam(param string) ScopeResolver {
 		}
 		lease, err := cs.GetDynamicSecretLease(r.Context(), leaseID)
 		if err != nil {
+			// A read FAULT is not "no such lease": the credential may still be live.
+			if fault := core.ReadFault(err); fault != nil {
+				return core.Scope{}, fmt.Errorf("%w: %w", errTargetReadFault, fault)
+			}
 			return core.Scope{}, errTargetNotFound
 		}
 		return core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}, nil
@@ -1808,17 +1922,18 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		return nil, err
 	}
 	return &UserContext{
-		UserID:         user.ID,
-		Username:       user.Username,
-		Email:          user.Email,
-		Roles:          roleNames,
-		ActorType:      core.ActorTypeUser,
-		AccountState:   core.NormalizeAccountState(user.AccountState),
-		Restricted:     core.AccountRestricted(user.AccountState),
-		MFAEnabled:     user.MFAEnabled || user.WebAuthnEnabled,
-		SessionAuth:    viaSession,
-		PATRestriction: restriction,
-		patID:          patID,
+		UserID:           user.ID,
+		Username:         user.Username,
+		Email:            user.Email,
+		Roles:            roleNames,
+		ActorType:        core.ActorTypeUser,
+		AccountState:     core.NormalizeAccountState(user.AccountState),
+		Restricted:       core.AccountRestricted(user.AccountState),
+		MFAEnabled:       user.MFAEnabled || user.WebAuthnEnabled,
+		MFAEnrolmentOwed: core.MFAEnrolmentOwed(user),
+		SessionAuth:      viaSession,
+		PATRestriction:   restriction,
+		patID:            patID,
 	}, nil
 }
 
@@ -1865,6 +1980,19 @@ func tooManyRequestsResponse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": "RateLimited", "message": message, "code": http.StatusTooManyRequests,
+	})
+}
+
+// storageUnavailableResponse is the middleware twin of the handlers package's
+// sendStorageUnavailable (same code, text and Retry-After): the answer to a request
+// whose storage READ failed. The wrapped cause goes to the server log, never the body.
+func storageUnavailableResponse(w http.ResponseWriter, err error) {
+	log.Printf("operation refused, storage read failed (HTTP 503): %s", core.StorageReadFaultDetail(err))
+	w.Header().Set(hdrContentType, mimeJSON)
+	w.Header().Set("Retry-After", "5")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": "storage_unavailable", "message": core.StorageReadUnavailableMessage, "code": http.StatusServiceUnavailable,
 	})
 }
 

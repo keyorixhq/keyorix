@@ -156,8 +156,8 @@ var ErrDuplicateActiveMembership = errors.New("an active membership already exis
 // constraint-violation message.
 var ErrDuplicateEmail = errors.New("a user with this email already exists")
 
-// ErrDuplicateUsername is returned (wrapped) by CreateUser/CreateUserWithRoleGrants when
-// the insert collides with the partial unique index on users.username_folded (live rows
+// ErrDuplicateUsername is returned (wrapped) by CreateUser/CreateUserWithRoleGrants/
+// UpdateUser/UpdateUserIfActiveStateMatches when the write collides with the partial unique index on users.username_folded (live rows
 // only, uniq_users_username_folded_active, #1642). Core's GetUserByUsername pre-check is a
 // check-then-act read, so two concurrent creates of the same username can both pass it;
 // the loser's insert fails here and callers answer "already exists" (gRPC AlreadyExists,

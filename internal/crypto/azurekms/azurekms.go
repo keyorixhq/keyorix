@@ -301,6 +301,16 @@ func (c *client) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 	// nil) — only enforce the check when a MAC is actually present, so those
 	// already-encrypted-and-stored DEKs keep decrypting exactly as before.
 	if pinned && len(env.MAC) > 0 {
+		// The MAC is keyed with the unwrap result, so its length is checked
+		// first: a result that is not a KEK is refused here with the provider's
+		// wrong-length error, and a short one never reaches HMAC (Go's FIPS
+		// 140-only mode panics on an HMAC key under 112 bits). Every KEK is
+		// KEKSize bytes, and the provider refuses any other length anyway.
+		if len(res.Result) != keyorixcrypto.KEKSize {
+			n := len(res.Result)
+			clear(res.Result)
+			return nil, fmt.Errorf("azure-kms key provider: KEK must be %d bytes, got %d", keyorixcrypto.KEKSize, n)
+		}
 		if !hmac.Equal(versionMAC(res.Result, env.Version), env.MAC) {
 			return nil, fmt.Errorf("azure-kms: version-pinned envelope failed integrity check: Version does not match the recovered key material — the envelope may have been tampered with")
 		}

@@ -149,7 +149,7 @@ func TestAuditActorKindWhere_AgreesWithAuditActorKind_Postgres(t *testing.T) {
 // machine row. A username term matches case-insensitively on every backend.
 func testActorSearchFindsSystemRows(t *testing.T, ls *LocalStorage) {
 	ctx := context.Background()
-	require.NoError(t, ls.db.AutoMigrate(&models.User{}))
+	require.NoError(t, ls.db.AutoMigrate(&models.User{}, &models.MachineIdentity{}))
 	now := time.Now().UTC()
 
 	alice := &models.User{Username: "Alice", Email: "a@example.com"}

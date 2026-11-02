@@ -65,7 +65,9 @@ import (
 // shape), so this is unchanged, not newly risky, on SQLite.
 func (ls *LocalStorage) TryAcquireSchedulerLock(ctx context.Context, key int64, holder string, ttl time.Duration) (bool, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	now := time.Now()
-	expiresAt := now.Add(ttl)
+	// UTC at the source: both writes below (the Create and the reclaim Updates)
+	// bypass model hooks and NowFunc (#1507, STORE-STALE-TAILS-2).
+	expiresAt := now.Add(ttl).UTC()
 	acquired := false
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Clauses(clause.OnConflict{DoNothing: true}).
@@ -95,14 +97,10 @@ func (ls *LocalStorage) TryAcquireSchedulerLock(ctx context.Context, key int64, 
 		}
 		// #1507: this raw-map Updates (like the Create above) bypasses model
 		// hooks entirely, so expires_at carries whatever Location expiresAt
-		// itself has (currently always local time.Now().Add(ttl), line 66-67).
-		// No SQL range query reads this column today (the only read is
-		// TryAcquireSchedulerLock's own Where("key = ?") equality Take above,
-		// compared in Go via .After() — Location-independent). If a future
-		// "clean up stale leases" sweep ever adds a SQL WHERE expires_at < ?
-		// query, normalize explicitly at BOTH write sites (the Create above and
-		// this Updates) before trusting that comparison — a hook can't reach
-		// either one.
+		// itself has; expiresAt is normalised to UTC where it is computed, which
+		// covers both write sites. No SQL range query reads this column today
+		// (the only read is the Where("key = ?") Take above, compared in Go via
+		// .After(), Location-independent).
 		if updErr := tx.Model(&models.SchedulerLockLease{}).Where("key = ?", key).
 			Updates(map[string]any{"holder": holder, "expires_at": expiresAt}).Error; updErr != nil {
 			return updErr

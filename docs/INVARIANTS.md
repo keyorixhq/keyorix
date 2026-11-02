@@ -30,26 +30,29 @@ silently removing it.
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
-| **Total** | | **471** | **460** | **11** |
+| `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
+| **Total** | | **472** | **461** | **11** |
 
 ## Highest-priority UNGUARDED gaps
 
-A few UNGUARDED items are flagged as materially more important than the rest — worth reading
-even if you skip everything else:
+One UNGUARDED item is flagged as materially more important than the rest, and one guarded
+item has a known CI gap. Re-checked 2026-10-30 against `origin/main`.
 
-- **`cli/cmd/run.go`'s reserved-environment-variable filter has zero test coverage**
-  (`cli/INVARIANTS.md` INV-CLI-11) — this is the fix for the exact bug class (#1816, a secret
-  named `LD_PRELOAD` getting code-exec) the CLI-server split (ADR-108) was rebuilt to prevent.
 - **ADR-103's Postgres RLS tenancy layer is a ratified design with zero implementation and
-  zero tests** (`internal/storage/INVARIANTS.md` INV-STORAGE-31/32) — confirmed by direct grep,
-  no `ROW LEVEL SECURITY`/`app.current_tenant` reference anywhere in `internal/storage`.
-- **No structural completeness guard exists for "every key-shaped byte slice gets
-  `wipeBytes`"** in `internal/encryption` (INV-ENCRYPTION-25) — a point-fix after live fuzz
-  findings. The sibling gap in `internal/core` (INV-CORE-34, "every best-effort post-commit call
-  recovers a panic") now has `besteffort_callsite_guard_test.go`.
-- **`web/src/types` drift check covers only the schema'd wire types, and does not run on
-  an `openapi.yaml`-only PR** (`web/src/INVARIANTS.md` INV-WEB-05) — guarded by
-  `openapiDrift.test.ts`, but `web-ci.yml` is path-filtered to `web/**`.
+  zero tests** (`internal/storage/INVARIANTS.md` INV-STORAGE-31/32) — confirmed by direct grep:
+  `rg -i 'ROW LEVEL SECURITY|app\.current_tenant|keyorix_migrator' internal/storage` matches only
+  `internal/storage/INVARIANTS.md` itself, no code or test.
+- **`web/src/types` drift check does not run on an `openapi.yaml`-only PR** (INV-WEB-05,
+  `web/src/INVARIANTS.md`). The guard exists (`openapiDrift.test.ts` and its calibration
+  `openapiDrift.engine.test.ts`), but `web-ci.yml` is path-filtered to `web/**`. The fix is
+  adding `server/http/handlers/openapi.yaml` to that workflow's `paths` (a `.github/**` change,
+  not done here).
+
+No longer gaps, each guard re-run on 2026-10-30 and green: INV-CLI-11 (reserved
+environment-variable filter in `cli/cmd/run.go`, `cli/cmd/run_env_filter_test.go`) and
+INV-ENCRYPTION-25 (`TestWipeBytesSweep_EveryKeyLocalIsWipedOnEveryReturn`, the `wipeBytes`
+completeness sweep). The sibling `internal/core` gap (INV-CORE-34) has
+`besteffort_callsite_guard_test.go`.
 
 ## Ledger gaps (informational, not filed as issues)
 
@@ -63,8 +66,10 @@ but no ledger entry).
 
 - The table is written by hand; no generator exists. `TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp`
   (`internal/docsdrift`) fails on a package listed twice, on a row whose Invariants is not
-  Guarded + UNGUARDED, and on a Total that is not the column sums. It does not check a row
-  against its package's files. When two PRs both change a row, keep ONE row with the current counts.
+  Guarded + UNGUARDED, on a Total that is not the column sums, and on any line of this table
+  that matches neither the package-row nor the Total pattern (it would otherwise be left out
+  of the sums). It does not check a row against its package's files or that the linked file
+  exists. When two PRs both change a row, keep ONE row with the current counts.
 - Package-count and guarded/unguarded totals above are a snapshot (re-counted 2026-10-30,
   including `INVARIANTS.d/` fragments, which are one invariant per file). They drift as
   invariants are added, closed, or re-guarded — re-derive by

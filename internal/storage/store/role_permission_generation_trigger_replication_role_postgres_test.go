@@ -25,6 +25,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 )
 
 // rpgPostgresWorld is newRPGWorld on Postgres, skipped without a DSN.
@@ -80,6 +82,7 @@ func TestRolePermissionGeneration_ReplicaOnlyTriggerIsNotTrusted_Postgres(t *tes
 func TestRolePermissionGeneration_OrdinaryTriggerSkippedByReplicaWriter_Postgres(t *testing.T) {
 	w := rpgPostgresWorld(t)
 	db := w.writer.db
+	pgpriv.RequireReplicationRolePrivilege(t, db)
 	require.True(t, w.decide(t, w.perm.Name), "warm")
 	require.True(t, w.decide(t, w.perm.Name), "warm, from the cache")
 
@@ -115,6 +118,7 @@ func TestRolePermissionGeneration_OrdinaryTriggerSkippedByReplicaWriter_Postgres
 func TestRolePermissionGeneration_ProofFailsClosedInReplicaSession_Postgres(t *testing.T) {
 	w := rpgPostgresWorld(t)
 	db := w.writer.db
+	pgpriv.RequireReplicationRolePrivilege(t, db)
 	require.True(t, RolePermissionsGenerationTriggersPresent(db))
 
 	sqlDB, err := db.DB()

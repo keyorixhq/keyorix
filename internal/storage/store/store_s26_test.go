@@ -569,13 +569,13 @@ func TestGetSecretIncludingDeleted_S26_NotFound(t *testing.T) {
 
 func TestPurgeDeletedProjectsBefore_S26_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
-	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 
 func TestPurgeDeletedSecretsBefore_S26_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
-	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now())
+	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now().UTC())
 	require.Error(t, err)
 }
 

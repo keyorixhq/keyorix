@@ -137,9 +137,9 @@ type bestEffortCallAllowEntry struct {
 // registerBestEffortCallAllow. This literal is empty on purpose.
 var bestEffortCallAllowlist = map[string]bestEffortCallAllowEntry{}
 
-var bestEffortCallAllowReg = mapRegistry[bestEffortCallAllowEntry]{table: bestEffortCallAllowlist, label: "bestEffortCallAllowlist"}
+var bestEffortCallAllowReg = mapRegistry[bestEffortCallAllowEntry]{table: bestEffortCallAllowlist, label: "bestEffortCallAllowlist"} //nolint:unused // empty since #3712; the next row is a new file
 
-func registerBestEffortCallAllow(key string, e bestEffortCallAllowEntry) {
+func registerBestEffortCallAllow(key string, e bestEffortCallAllowEntry) { //nolint:unused // see bestEffortCallAllowlist
 	bestEffortCallAllowReg.add(key, e)
 }
 
@@ -730,8 +730,17 @@ func TestBestEffortCallSites_MutationKillsRecoverWrapper(t *testing.T) {
 		{
 			name:       "unwrap a besteffort.Run call site",
 			file:       "sso.go",
-			anchor:     `besteffort.Run(ctx, "sso.CompleteSSO.clearLoginFailures", func() error { c.clearLoginFailures(ctx, user); return nil })`,
-			replace:    "c.clearLoginFailures(ctx, user)",
+			anchor:     `besteffort.Run(ctx, "sso.CompleteSSO.RecordLogin", func() error { return c.RecordLogin(ctx, user.ID) })`,
+			replace:    "_ = c.RecordLogin(ctx, user.ID)",
+			wantCallee: "RecordLogin",
+		},
+		{
+			// clearLoginFailures' own top-level defer is what lets requireReauth,
+			// VerifyMFAStepUp and FinishWebAuthnReauth call it bare (#3712).
+			name:       "delete clearLoginFailures' top-level recover",
+			file:       "login_lockout.go",
+			anchor:     "\tdefer besteffort.RunRecover(\"login.clearLoginFailures\")()\n",
+			replace:    "",
 			wantCallee: "clearLoginFailures",
 		},
 	}

@@ -15,7 +15,8 @@ func TestLoad_IgnoredSecretsKeysWarnButLoad(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.yaml")
 	require.NoError(t, os.WriteFile(p, []byte(
-		"secrets:\n  chunking:\n    enabled: true\n    max_chunk_size_kb: 64\n  limits:\n    max_secrets_per_user: 1000\n",
+		"secrets:\n  chunking:\n    enabled: true\n    max_chunk_size_kb: 64\n  limits:\n    max_secrets_per_user: 1000\n"+
+			"server:\n  http:\n    keepalive:\n      time: 1m\n  grpc:\n    keepalive:\n      time: 1m\n",
 	), 0600))
 
 	cfg, err := Load(p)
@@ -23,6 +24,8 @@ func TestLoad_IgnoredSecretsKeysWarnButLoad(t *testing.T) {
 	joined := strings.Join(cfg.DeprecatedSettingWarnings, "\n")
 	require.Contains(t, joined, `"secrets.chunking" is deprecated and ignored`)
 	require.Contains(t, joined, `"secrets.limits.max_secrets_per_user" is deprecated and ignored`)
+	require.Contains(t, joined, `"server.http.keepalive" is deprecated and ignored`)
+	require.NotContains(t, joined, "server.grpc.keepalive")
 }
 
 func TestLoad_NoIgnoredKeysNoWarning(t *testing.T) {

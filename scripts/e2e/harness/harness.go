@@ -163,6 +163,48 @@ type DBBackend struct {
 	// for a journey that genuinely tests a non-MFA configuration, with a one-line
 	// reason; it is logged and listed in the PR that touches it.
 	NoMFAReason string
+	// EnableSCIM turns on /scim/v2 for this server (scim.enabled: true in the config) with a
+	// freshly generated bearer token, returned to the caller as Server.SCIMToken. SCIM has no
+	// token-issuance command or API: the token is an operator-supplied static value read from
+	// KEYORIX_SCIM_TOKEN, so the harness plays the operator. The token reaches the server only
+	// through its environment (never the config file, argv or a log line).
+	EnableSCIM bool
+}
+
+// SCIMTokenEnv is the environment variable the server reads its SCIM bearer token from.
+const SCIMTokenEnv = "KEYORIX_SCIM_TOKEN" // #nosec G101 -- variable name, not a credential
+
+// NewSCIMToken returns a fresh SCIM bearer token: 32 random bytes as hex (64 characters), which
+// clears the server's boot-time strength checks (length floor, distinct bytes, placeholders).
+func NewSCIMToken(t *testing.T) string {
+	t.Helper()
+	buf := make([]byte, 32)
+	if _, err := crand.Read(buf); err != nil {
+		t.Fatalf("generate SCIM token: %v", err)
+	}
+	return hex.EncodeToString(buf)
+}
+
+// EnableSCIMConfig appends `scim: enabled: true` to the keyorix.yaml in dir. The token is not
+// written: the caller adds SCIMTokenEnv to the server's environment.
+func EnableSCIMConfig(t *testing.T, dir string) {
+	t.Helper()
+	path := filepath.Join(dir, "keyorix.yaml")
+	raw, err := os.ReadFile(path) // #nosec G304 -- fixed test-tmpdir path
+	if err != nil {
+		t.Fatalf("read config before enabling SCIM: %v", err)
+	}
+	text := string(raw)
+	if strings.Contains(text, "\nscim:") || strings.HasPrefix(text, "scim:") {
+		t.Fatalf("generated config already has a scim: block (did configs/keyorix.yaml.tpl change?):\n%s", text)
+	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	text += "\nscim:\n  enabled: true\n"
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil { // #nosec G703 -- dir is always t.TempDir(), never attacker input
+		t.Fatalf("enable SCIM in config: %v", err)
+	}
 }
 
 // Server is a running keyorix-server subprocess plus everything the caller
@@ -177,6 +219,10 @@ type Server struct {
 	Env        []string
 	LogPath    string
 	Backend    DBBackend
+	// SCIMToken is the SCIM bearer token this server was started with, or "" when SCIM is off
+	// (DBBackend.EnableSCIM). It is a live credential for this test server only: pass it in an
+	// Authorization header, never in argv, a log line or a failure message.
+	SCIMToken string
 
 	// PreNonceBinary marks Binary as a release older than /health's
 	// instance_nonce echo (KEYORIX_E2E_INSTANCE_NONCE), e.g. the upgrade
@@ -296,6 +342,11 @@ func StartServer(t *testing.T, binary string, backend DBBackend) *Server {
 	env := append(BaseServerEnv(dir),
 		"KEYORIX_MASTER_PASSWORD=e2e-smoke-master-password-"+backend.Name)
 	env = append(env, backend.ExtraEnv...)
+	var scimToken string
+	if backend.EnableSCIM {
+		scimToken = NewSCIMToken(t)
+		env = append(env, SCIMTokenEnv+"="+scimToken)
+	}
 
 	configPath := "./keyorix.yaml"
 
@@ -354,6 +405,10 @@ func StartServer(t *testing.T, binary string, backend DBBackend) *Server {
 		}
 	}
 
+	if backend.EnableSCIM {
+		EnableSCIMConfig(t, dir)
+	}
+
 	run("encryption", "init", "--config", configPath)
 	run("migrate", "--config", configPath)
 
@@ -370,6 +425,7 @@ func StartServer(t *testing.T, binary string, backend DBBackend) *Server {
 	s := BootAndBootstrap(t, binary, dir, env, configPath, port, bootstrapToken,
 		"smoketestadmin", "smoketestadmin@example.invalid", BootstrapAdminPassword)
 	s.Backend = backend
+	s.SCIMToken = scimToken
 	return s
 }
 

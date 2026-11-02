@@ -56,10 +56,3 @@ func (hs *HookStore) UpdateLoginLockoutState(ctx context.Context, id uint, attem
 	}
 	return hs.Storage.UpdateLoginLockoutState(ctx, id, attempts, lastFailedAt, lockedUntil, lockoutCount)
 }
-
-func (hs *HookStore) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
-	if hk := hs.h.UpdateUser; hk != nil {
-		return hk(hs.Storage, ctx, user)
-	}
-	return hs.Storage.UpdateUser(ctx, user)
-}

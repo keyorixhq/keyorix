@@ -67,6 +67,8 @@ func classifySCIMError(err error) scimErrorClass {
 		return scimErrorClass{status: http.StatusConflict, scimType: scimTypeUniqueness, detail: core.ErrSCIMUserExists.Error()}
 	case errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail):
 		return scimErrorClass{status: http.StatusConflict, scimType: scimTypeUniqueness, detail: core.ErrEmailInUse.Error()}
+	case errors.Is(err, corestorage.ErrDuplicateUsername):
+		return scimErrorClass{status: http.StatusConflict, scimType: scimTypeUniqueness, detail: core.ErrSCIMUserExists.Error()}
 	case errors.Is(err, core.ErrLastAdminDeactivation):
 		return scimErrorClass{status: http.StatusConflict, detail: core.ErrLastAdminDeactivation.Error()}
 	case errors.Is(err, core.ErrInvalidInput):

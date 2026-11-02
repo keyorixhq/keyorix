@@ -1,0 +1,9 @@
+# Deliberately bad values: a default egress rule with no `ports`, which allows every port
+# (including TCP/5432) to the named destination. Used only by
+# helm_external_db_egress_default_test.go to prove the default-egress check goes red.
+networkPolicy:
+  egress:
+    extraRules:
+      - to:
+          - ipBlock:
+              cidr: 10.20.0.0/24

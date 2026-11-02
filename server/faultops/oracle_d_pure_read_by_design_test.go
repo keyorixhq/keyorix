@@ -58,7 +58,10 @@ import (
 // review; the per-row check still drives every tuple that relies on it.
 // GetUserRoles, the sibling identity read, joined with the same decision
 // (#3106, Andrei 2026-10-12: same as #3091).
+// GetUser is one primary-key SELECT (LocalStorage.GetUser, local_users.go); it joined
+// for the /auth/refresh owner read (AUTH-ENDPOINT-OUTAGE-1, #3873), same decision as #3091.
 var pureReadMethods = map[string]bool{
+	"GetUser":            true,
 	"GetUserPermissions": true,
 	"GetUserRoles":       true,
 }
@@ -198,7 +201,8 @@ func provingTestExists(cite string) error {
 		return fmt.Errorf("provingTest %q is not <dir>/<TestName>", cite)
 	}
 	dir, name := cite[:i], cite[i+1:]
-	if j := strings.Index(name, "/"); j >= 0 {
+	// A citation may continue with a subtest path or with prose after a space.
+	if j := strings.IndexAny(name, "/ "); j >= 0 {
 		name = name[:j]
 	}
 	files, err := filepath.Glob(filepath.Join("..", "..", dir, "*_test.go"))

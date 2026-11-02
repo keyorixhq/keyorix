@@ -76,7 +76,11 @@ type auditKeyTransition struct {
 	// Seals is the digest of the audit_seals row (audit_seal.go), named only
 	// when it authenticated under the old key; completion re-signs it first.
 	Seals string `json:"seals,omitempty"`
-	Prev  string `json:"prev"`
+	// Sealing names the latest checkpoint and high-water mark with the seal
+	// binding each authenticated under at prepare, so an accept-loss stopped
+	// part way can be resumed on the new key (audit_seal_key_change.go, #3814).
+	Sealing *auditKeyTransitionSealing `json:"sealing,omitempty"`
+	Prev    string                     `json:"prev"`
 	// Reset names the damage of the previous record list this one replaced.
 	Reset string `json:"reset,omitempty"`
 
@@ -427,6 +431,13 @@ func (c *KeyorixCore) buildAuditKeyTransition(ctx context.Context, recs []*audit
 	}
 	if cp != nil && c.checkpointSignatureValid(cp) {
 		rec.CheckpointID, rec.Checkpoint = cp.ID, auditCheckpointDigest(cp)
+	}
+	var prior *auditKeyTransition
+	if n := len(recs); n > 0 && recs[n-1].NewKID == c.auditCkptKeyVersion && c.auditKeyTransitionNewMACValid(recs[n-1]) {
+		prior = recs[n-1]
+	}
+	if rec.Sealing, err = c.auditKeyTransitionSealingFor(ctx, prior); err != nil {
+		return nil, err
 	}
 	return rec, nil
 }

@@ -14,18 +14,27 @@
 #   6. (SQLite, AUDIT-SEAL-TAILS-1 finding 2) the database metadata is rolled back below the host
 #      witness and more rows are lost: the plan counts and names the witness, refuses until its
 #      missing head is named, and the confirmed acceptance lowers it only as the plan said;
-#   7. (AUDIT-SEAL-TAILS-1 finding 1) the seal record is garbled and rotate-kek runs again: the
+#   7. (#3814, AUDIT-SEAL-TAILS-2) an acceptance left unfinished after its seal record (the
+#      database and witness put back to what a crash after that write leaves), then rotate-kek:
+#      the audit transition waits for the pending seal, the accept-loss re-run on the new key
+#      resumes and completes it, and the next server start completes the key change; SEALED;
+#   8. (AUDIT-SEAL-TAILS-1 finding 1) the seal record is garbled and rotate-kek runs again: the
 #      key change completes but the audit transition stops with "cannot be trusted" and signs
 #      no high-water mark or checkpoint.
 #
 # Usage: [DRILL_BACKEND=postgres DRILL_PG_DSN_FILE=a.txt] [DRILL_SERVER_BIN=... DRILL_CLI_BIN=...] \
 #        scripts/drills/accept-loss.sh
-# Postgres needs psql on PATH (to delete the audit row the way an attacker or a botched cleanup would).
+# Postgres deletes the audit row the way an attacker or a botched cleanup would, with psql when it is on
+# PATH and otherwise with the go-run stand-in tools/pgsql.go.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 drill_begin accept-loss
+if [ "$DRILL_BACKEND" = "postgres" ] && ! command -v psql >/dev/null; then
+    step "no psql on PATH: building the tools/pgsql.go stand-in"
+    (cd "$DRILL_REPO_ROOT/scripts/drills/tools" && go build -o "$DRILL_DIR/bin/pgsql" pgsql.go) || fail "cannot build pgsql helper"
+fi
 I=inst
 P="$(drill_port 31)"
 d="$DRILL_DIR/$I"
@@ -33,16 +42,30 @@ d="$DRILL_DIR/$I"
 # db_exec <sql>: run SQL against the instance database behind keyorix's back.
 db_exec() {
     if [ "$DRILL_BACKEND" = "postgres" ]; then
-        PGPASSWORD="$PG_PASS" psql "postgres://$PG_USER@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable" -v ON_ERROR_STOP=1 -q -c "$1"
+        pg_sql exec "$1"
     else
         sqlite3 "$d/keyorix.db" "$1"
+    fi
+}
+
+# pg_sql <exec|query> <sql>: psql when installed, else tools/pgsql.go (hosts without a psql client).
+pg_sql() {
+    local url="postgres://$PG_USER@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable"
+    if command -v psql >/dev/null; then
+        if [ "$1" = exec ]; then
+            PGPASSWORD="$PG_PASS" psql "$url" -v ON_ERROR_STOP=1 -q -c "$2"
+        else
+            PGPASSWORD="$PG_PASS" psql "$url" -v ON_ERROR_STOP=1 -At -c "$2"
+        fi
+    else
+        PGPASSWORD="$PG_PASS" "$DRILL_DIR/bin/pgsql" "$1" "$url" "$2"
     fi
 }
 
 # db_query <sql>: one value from the instance database (no headers).
 db_query() {
     if [ "$DRILL_BACKEND" = "postgres" ]; then
-        PGPASSWORD="$PG_PASS" psql "postgres://$PG_USER@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable" -v ON_ERROR_STOP=1 -At -c "$1"
+        pg_sql query "$1"
     else
         sqlite3 "$d/keyorix.db" "$1"
     fi
@@ -156,7 +179,7 @@ offline 4
 
 step "6. witness above the database (finding 2)"
 if [ "$DRILL_BACKEND" = "postgres" ]; then
-    ok "skipped: PostgreSQL installs have no host witness file"
+    drill_skip postgres "step 6 (witness above the database): PostgreSQL installs have no host witness file"
 else
     W="$d/.audit-highwater-witness"
     HW0="$(sqlite_meta_hex audit_checkpoint_highwater)"
@@ -202,7 +225,71 @@ else
     offline 4
 fi
 
-step "7. garbled seal record during rotate-kek (finding 1)"
+step "7. an unfinished acceptance, then rotate-kek, then the resume on the new key (#3814)"
+srv_start "$I" "$P"
+for _ in 1 2 3 4 5 6; do login_admin "$I" "$P"; done
+cli "$I" "$P" audit checkpoint >/dev/null || fail "audit checkpoint failed"
+srv_stop "$I"
+SEQ=$(($(db_query "SELECT COUNT(*) FROM audit_events WHERE event_type = 'system.audit_loss_accepted'") + 1))
+GAP3="$(db_query "SELECT MAX(id) FROM audit_events")"
+GAP3=$((GAP3 - 3))
+db_exec "DELETE FROM audit_events WHERE id = $GAP3" >/dev/null
+offline 1
+# What a crash right after the seal record leaves: the record, and everything else as before.
+EV0="$(db_query "SELECT MAX(id) FROM audit_events")"
+CP0="$(db_query "SELECT MAX(id) FROM audit_checkpoints")"
+db_exec "CREATE TABLE drill_meta_snap AS SELECT * FROM system_metadata WHERE \"key\" IN ('audit_checkpoint_highwater', 'audit_verification_state')" >/dev/null
+W="$d/.audit-highwater-witness"
+[ -f "$W" ] && cp -p "$W" "$DRILL_DIR/witness.snap"
+common3=(--operator drill-oncall --reason "DRILL-3: row $GAP3 deleted" --evidence-sha256 "$EVIDENCE")
+inst_admin "$I" audit accept-loss --first-broken-id $((GAP3 + 1)) "${common3[@]}" --confirm \
+    >"$DRILL_DIR/al3.log" 2>&1 || { cat "$DRILL_DIR/al3.log" >&2; fail "accept-loss --confirm (seal #$SEQ) failed"; }
+grep -q "Accepted: seal #$SEQ" "$DRILL_DIR/al3.log" || { cat "$DRILL_DIR/al3.log" >&2; fail "accept-loss did not report seal #$SEQ"; }
+[ "$(db_query "SELECT COUNT(*) FROM audit_events WHERE id > $EV0")" = 1 ] || fail "accept-loss appended more than its one event"
+[ "$(db_query "SELECT event_type FROM audit_events WHERE id > $EV0")" = system.audit_loss_accepted ] || fail "the row accept-loss appended is not its event"
+db_exec "DELETE FROM audit_events WHERE id > $EV0" >/dev/null
+db_exec "DELETE FROM audit_checkpoints WHERE id > $CP0" >/dev/null
+db_exec "UPDATE system_metadata SET value = (SELECT s.value FROM drill_meta_snap s WHERE s.\"key\" = system_metadata.\"key\") WHERE \"key\" IN ('audit_checkpoint_highwater', 'audit_verification_state')" >/dev/null
+db_exec "DROP TABLE drill_meta_snap" >/dev/null
+[ -f "$DRILL_DIR/witness.snap" ] && cp -p "$DRILL_DIR/witness.snap" "$W"
+if inst_admin "$I" audit accept-loss "${common3[@]}" >"$DRILL_DIR/al3-unfinished.log" 2>&1; then
+    fail "accept-loss wrote without --confirm"
+fi
+grep -q "Seal #$SEQ was recorded but its acceptance did not finish" "$DRILL_DIR/al3-unfinished.log" \
+    || { cat "$DRILL_DIR/al3-unfinished.log" >&2; fail "the put-back database does not read as an unfinished acceptance"; }
+ok "seal #$SEQ recorded, acceptance unfinished"
+NEW_PW3="drill-rotated3-$(rand_hex 16)"
+out="$(env KEYORIX_NEW_MASTER_PASSWORD="$NEW_PW3" bash -c 'cd "$1" && shift && exec "$@"' _ "$d" \
+    env KEYORIX_CONFIG_PATH=./keyorix.yaml ${PG_PASS:+KEYORIX_DB_PASSWORD="$PG_PASS"} \
+    "$DRILL_SERVER_BIN" admin encryption rotate-kek --confirm --config ./keyorix.yaml 2>&1)" \
+    || { echo "$out" >&2; fail "rotate-kek failed"; }
+grep -q 'KEK rotation complete' <<<"$out" || { echo "$out" >&2; fail "rotate-kek did not report completion"; }
+grep -q 'not carried over yet: .*not completed' <<<"$out" || { echo "$out" >&2; fail "the audit transition did not wait for the pending seal"; }
+ok "key change complete, audit transition waits for seal #$SEQ"
+export KEYORIX_MASTER_PASSWORD="$NEW_PW3"
+rm -f "$d/ckpt.key"
+inst_admin "$I" audit export-checkpoint-key --output ./ckpt.key >/dev/null || fail "export-checkpoint-key (new key) failed"
+offline 1
+inst_admin "$I" audit accept-loss "${common3[@]}" --confirm >"$DRILL_DIR/al3-resume.log" 2>&1 \
+    || { cat "$DRILL_DIR/al3-resume.log" >&2; fail "the accept-loss re-run on the new key failed (#3814)"; }
+grep -q "this run completes it" "$DRILL_DIR/al3-resume.log" || { cat "$DRILL_DIR/al3-resume.log" >&2; fail "the re-run did not resume seal #$SEQ"; }
+grep -q "Accepted: seal #$SEQ" "$DRILL_DIR/al3-resume.log" || { cat "$DRILL_DIR/al3-resume.log" >&2; fail "the re-run did not complete seal #$SEQ"; }
+ok "resumed on the new key: $(grep -m1 'Accepted:' "$DRILL_DIR/al3-resume.log")"
+if [ -f "$W" ]; then
+    [ "$(file_hex "$W")" = "$(sqlite_meta_hex audit_checkpoint_highwater)" ] || fail "the witness is not the new high-water mark"
+    ok "the witness is the new high-water mark"
+fi
+L0="$(wc -l <"$d/server.log")"
+srv_start "$I" "$P"
+login_admin "$I" "$P"
+wait_status sealed 60
+srv_stop "$I"
+out="$(tail -n +$((L0 + 1)) "$d/server.log")"
+grep -q 'audit key transition to key version .* completed' <<<"$out" || fail "the server start did not complete the key transition"
+ok "server start completed the key transition"
+offline 4
+
+step "8. garbled seal record during rotate-kek (finding 1)"
 db_exec "UPDATE system_metadata SET value = 'garbage' WHERE \"key\" = 'audit_seals'" >/dev/null
 HW1="$(meta audit_checkpoint_highwater)"
 CPN="$(db_query "SELECT COUNT(*) FROM audit_checkpoints")"
