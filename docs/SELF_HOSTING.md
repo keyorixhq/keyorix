@@ -61,7 +61,9 @@ with `KEYORIX_BOOTSTRAP_TOKEN_FILE=./secrets/bootstrap_token` exported in your s
 from the file and prompts for the admin password; neither goes on the command line).
 `docker compose ps` shows `web` as `healthy`: its healthcheck probes
 `127.0.0.1` (busybox resolves `localhost` to IPv6 first and nginx listens on IPv4
-only).
+only). `GET /health` on the web port is proxied to the backend's `/health`, so `web`
+(and a load balancer probing that port) turns unhealthy when the backend is down;
+`GET /nginx-health` is a static answer for the web container alone.
 
 **Using the CLI against the stack.** The backend's port is not published; the
 CLI talks to it through the web container's proxy:
