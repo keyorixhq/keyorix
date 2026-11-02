@@ -706,7 +706,10 @@ docker compose --profile tls up -d
 Caddy automatically provisions and renews a publicly-trusted certificate
 (Let's Encrypt / ZeroSSL). Issued certs persist on the `caddy_data` volume so
 restarts don't re-request them. For a `localhost` value Caddy uses its internal
-CA (browsers warn unless you trust Caddy's root). To use the CLI against it,
+CA (browsers warn unless you trust Caddy's root). Here Caddy, not the backend,
+presents the certificate (the backend's own `tls.cert_file` is not involved), so the
+CLI's `ca_file` must name Caddy's root, not a backend certificate (which side verifies
+what: [CONFIGURATION.md](CONFIGURATION.md), TLS section). To use the CLI against it,
 export that root and point the CLI at it:
 `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`
 then `keyorix --ca-file $PWD/caddy-root.crt login --server https://localhost ...`, or

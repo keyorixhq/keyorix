@@ -225,6 +225,19 @@ Browsers will warn on the self-signed cert (expected) — use a CA-issued one, o
 bundled Caddy `tls` profile ([SELF_HOSTING.md](SELF_HOSTING.md) §7), for anything
 beyond local testing.
 
+**Which side verifies what.** `tls.cert_file` (with `key_file`) is the certificate the
+*server presents*; the server does not verify anything with it. The *client* decides
+whether to trust it: the CLI's `ca_file` (`--ca-file`, `KEYORIX_CA_FILE`, or
+`keyorix config set ca_file <path>`) names the PEM file of the CA, or for a self-signed
+certificate the certificate itself, that the CLI trusts for the server's certificate
+instead of the system roots. Naming it narrows trust to that file (`curl --cacert`
+semantics), and the server's certificate must still carry the host name you connect to
+as a SAN. So for a self-signed `cert_file` (such as the one `keyorix-server admin init`
+generates), copy that same `cert.pem` to the client and set `ca_file` to it; with a
+CA-issued certificate, `ca_file` is needed only when that CA is not in the system store.
+Neither is the database CA: `storage.database.ssl_root_cert` (see "PostgreSQL TLS" below)
+is what the *server* trusts when it connects to PostgreSQL.
+
 **`tls_mode: strict`** (ADR-112 §3) switches a listener from the default TLS
 posture (1.2 floor, restricted to forward-secret AEAD cipher suites — see
 `tls.allowed_ciphers` above) to TLS 1.3 only, with no fallback to 1.2. The
