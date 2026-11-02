@@ -135,8 +135,4 @@ export const sharingApi = {
     async delete(id: number): Promise<void> {
         await apiClient.delete(API_ENDPOINTS.SHARING.DELETE(id));
     },
-
-    async selfRemove(id: number): Promise<void> {
-        await apiClient.post(API_ENDPOINTS.SHARING.SELF_REMOVE(id));
-    },
 };

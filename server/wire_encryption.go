@@ -23,9 +23,10 @@ func wireSecretEncryption(cw *coreWiring) error {
 		// Wire the same initialised service for reversibly-encrypted auth secrets (the
 		// TOTP MFA secret, which cannot be hashed).
 		coreService.SetAuthEncryptor(encSvc)
-		// Derive the audit-checkpoint signing key from the KEK (ADR-029) so signed
-		// checkpoints — and on-box truncation detection — are available. Unavailable
-		// when encryption is off (no DEK).
+		// Derive the audit-checkpoint signing key from the KEK (ADR-029; KEK-derived so
+		// a DEK rotation does not change it) so signed checkpoints — and on-box
+		// truncation detection — are available. Unavailable when encryption is off
+		// (no KEK).
 		if key, keyVer, ok := encSvc.AuditCheckpointKey(); ok {
 			coreService.SetAuditCheckpointKey(key, keyVer)
 			// Finish carrying the audit verification state over after a key change

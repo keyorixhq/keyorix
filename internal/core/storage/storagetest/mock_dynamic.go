@@ -25,9 +25,6 @@ func (m *MockStorage) GetDynamicSecretConfig(ctx context.Context, id uint) (*mod
 func (m *MockStorage) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
 	return nil, nil
 }
-func (m *MockStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) error {
-	return nil
-}
 func (m *MockStorage) SetDynamicSecretConfigAdminDSN(_ context.Context, _ uint, _, _ []byte) error {
 	return nil
 }

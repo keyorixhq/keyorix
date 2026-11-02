@@ -190,7 +190,7 @@ func TestUpdateSCIMUser_FailsClosedOnTransientEmailLookupError(t *testing.T) {
 		"this is a lookup failure, not a collision — the error must say so, not misreport a collision")
 
 	// The write must never have been attempted.
-	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestUpdateSCIMUser_ProceedsWhenEmailGenuinelyUnused confirms the #336 fix didn't turn
@@ -233,7 +233,7 @@ func TestGuardLastAdminDeactivation_FailsClosedOnIsGlobalAdminError(t *testing.T
 		no := false
 		_, err := c.UpdateSCIMUser(ctx, 9, 1, nil, nil, &no)
 		require.Error(t, err, "an IsGlobalAdmin lookup failure must refuse the deactivation, not silently permit it")
-		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("DeprovisionSCIMUser", func(t *testing.T) {
@@ -246,7 +246,7 @@ func TestGuardLastAdminDeactivation_FailsClosedOnIsGlobalAdminError(t *testing.T
 
 		err := c.DeprovisionSCIMUser(ctx, 9, 1)
 		require.Error(t, err, "an IsGlobalAdmin lookup failure must refuse the deprovision, not silently permit it")
-		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 		ms.AssertNotCalled(t, "WithTransaction", mock.Anything, mock.Anything)
 	})
 }
@@ -275,10 +275,10 @@ func TestLocalStorage_UpdateUser_DuplicateEmailWrapsSentinel(t *testing.T) {
 	require.NoError(t, err)
 	u2.Email = "alice@x.io" // collides with user 1
 	u2.EmailFolded = "alice@x.io"
-	_, err = ls.UpdateUser(ctx, u2)
+	_, err = ls.UpdateUserIfActiveStateMatches(ctx, u2, u2.IsActive)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, corestorage.ErrDuplicateEmail),
-		"a DB-level email collision on UpdateUser must be wrapped in the ErrDuplicateEmail sentinel")
+		"a DB-level email collision on UpdateUserIfActiveStateMatches must be wrapped in the ErrDuplicateEmail sentinel")
 }
 
 // --- #167: SCIM group membership mutations must refuse non-SCIM-managed targets ---

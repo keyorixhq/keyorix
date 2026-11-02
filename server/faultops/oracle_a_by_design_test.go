@@ -149,6 +149,13 @@ type oracleAByDesignError struct {
 	// exactly the state its error leaves. Checked per run and per row, see
 	// oracle_d_pure_read_by_design_test.go. Optional.
 	pureReadEffectThenError bool
+	// lookupVerdictEffectThenError (AUTH-ENDPOINT-OUTAGE-1, #3873) lets oracle (h)
+	// consult this KindError row for an effect-then-error fault on the same (op,
+	// method, nth): the method is a pure read (pureReadMethods), so the twin
+	// answers exactly what the reviewed error kind answers. The value is the
+	// reason the verdict-shaped answer is the decided one. Checked per row in
+	// lookup_verdict_pure_read_twin_test.go. Optional; oracle (h) only.
+	lookupVerdictEffectThenError string
 	// designComment names where in PRODUCTION code the intent is stated, so a
 	// reader can check the claim at its source rather than trusting this row.
 	// Required.

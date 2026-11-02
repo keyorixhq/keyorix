@@ -1,0 +1,1 @@
+AUTH-ENDPOINT-OUTAGE-1-PROFILE-READ-FAULT	./server/http/handlers	TestProfile_GetUserReadFaultIs503NotFound404	default-ci	pending-merge	-	GET /auth/profile: a GetUser storage read fault on the caller's own account answers 503 + Retry-After (storage_unavailable), not 404 'User not found'; a positively deleted row and a machine principal (UserID 0) keep 404

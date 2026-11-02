@@ -320,7 +320,7 @@ func TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch(t *testing.T)
 	require.NotNil(t, created)
 	assert.Equal(t, "sso:corp:corp|evil", created.ExternalID, "fresh account bound to the asserting subject")
 	store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything, "an unverified email must never even be looked up")
-	store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything, "the victim account must never be claimed")
+	store.AssertNotCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything) // the victim account must never be claimed
 }
 
 // TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount is the positive

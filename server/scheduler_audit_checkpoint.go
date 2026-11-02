@@ -21,7 +21,7 @@ const schedLockAuditCkpt int64 = 0x4B455953_41434B50 // "KEYSACKP"
 // detectable. This is the trail's FORGERY-RESISTANCE layer: the per-row hash chain
 // is unkeyed, so a database-write attacker could otherwise edit/delete/reorder rows
 // and recompute a self-consistent chain undetected. It is therefore enabled BY
-// DEFAULT whenever a signing key is available (the key is DEK-derived → encryption
+// DEFAULT whenever a signing key is available (the key is KEK-derived → encryption
 // must be configured). HA-gated so one replica writes per tick.
 func startAuditCheckpointScheduler(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) {
 	switch {

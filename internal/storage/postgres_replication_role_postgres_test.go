@@ -8,6 +8,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 )
 
 // TestCreateStorage_Postgres_RefusesNonOriginReplicationRole (#3361): the
@@ -24,6 +25,7 @@ func TestCreateStorage_Postgres_RefusesNonOriginReplicationRole(t *testing.T) {
 	defer i18n.ResetForTesting()
 
 	base := pgTestDSN(t)
+	pgpriv.RequireReplicationRolePrivilege(t, pgRawOpen(t, base))
 	cases := []struct {
 		name  string
 		setup func(t *testing.T, dsn, dbName string) string // returns the DSN the server uses

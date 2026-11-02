@@ -81,7 +81,7 @@ func TestPurgeDeletedSecretsBefore(t *testing.T) {
 	require.NoError(t, ls.db.Unscoped().Model(&models.SecretNode{}).Where("name = ?", "old").Update("deleted_at", time.Now().AddDate(0, 0, -40)).Error)
 	require.NoError(t, ls.db.Unscoped().Model(&models.SecretNode{}).Where("name = ?", "recent").Update("deleted_at", time.Now().AddDate(0, 0, -5)).Error)
 
-	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now().AddDate(0, 0, -30))
+	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now().UTC().AddDate(0, 0, -30))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n, "only the 40-day-old soft-deleted secret is purged")
 
@@ -103,7 +103,7 @@ func TestPurgeDeletedSecretsBefore_CascadesDependencyEdges(t *testing.T) {
 	// Soft-delete db-password 40 days ago; it is past a 30-day retention cutoff.
 	require.NoError(t, ls.db.Unscoped().Model(&models.SecretNode{}).Where("id = ?", 1).Update("deleted_at", time.Now().AddDate(0, 0, -40)).Error)
 
-	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now().AddDate(0, 0, -30))
+	n, err := ls.PurgeDeletedSecretsBefore(ctx, time.Now().UTC().AddDate(0, 0, -30))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 

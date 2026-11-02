@@ -9,9 +9,9 @@ package guards
 //
 // STORAGE-ERR-CLASS-2 classified catalog.go, classification_gate.go, users.go,
 // secret_copy_environment.go, invitations.go and membership_lifecycle.go. The rows left:
-// machine_token.go and dynamic_secrets.go belong to ERR-CLASS-LEFTOVERS-1;
-// setup_consume.go:completeInvitationAccept is on the setup-link path (CompleteSetup),
-// whose handler FIX-3277 owns and keeps non-oracle, so its 503 mapping lands there.
+// machine_token.go and dynamic_secrets.go belong to ERR-CLASS-LEFTOVERS-1.
+// AUTH-ENDPOINT-OUTAGE-1 classified setup_consume.go:completeInvitationAccept (a read
+// fault is ErrSetupPostVerdict + ErrStorageReadUnavailable).
 
 func init() {
 	const why = "grant/create/renew path: the fold refuses the operation (fail closed), nothing is applied; classify as a fault in a follow-up"
@@ -21,7 +21,6 @@ func init() {
 		"dynamic_secrets.go:CreateDynamicSecretConfig",
 		"dynamic_secrets.go:IssueLease",
 		"machine_token.go:requireEnvironmentInProject",
-		"setup_consume.go:completeInvitationAccept",
 	} {
 		registerFoldedReadException(key, why)
 	}

@@ -118,6 +118,18 @@ keyorix --version          # → the new version
 helm show chart oci://ghcr.io/keyorixhq/charts/keyorix --version 0.3.0
 ```
 
+Then verify the published artifacts (checksums, cosign signatures, SLSA provenance, SBOMs,
+image digests, chart signatures) with the release verifier:
+
+```sh
+scripts/release/verify-release.sh v0.3.0
+```
+
+It must exit 0. Exit 1 is a failed check; exit 2 means a check was skipped (a missing tool,
+`--offline`), which is not a pass unless you read each SKIP and accept it. Options and the
+offline procedure: `scripts/release/verify-release.sh --help` and
+`docs/operator/verifying-releases.md`.
+
 ## Versioning
 
 Semantic Versioning. New user-facing features → minor; fixes → patch; breaking

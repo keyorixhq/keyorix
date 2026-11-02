@@ -14,5 +14,5 @@
   told the lease did not exist while the revoke or renew was never applied (STORAGE-ERR-CLASS-2).
   Guard: `TestDynamicSecretLeaseRoutes_ReadFaultIs503ForGlobalHolders` (server/http, real router;
   covers both the non-transient and the transient case).
-  **Not covered**: the other scope resolvers (config, share, rotation policy, secret, ...), which
-  still fold a read fault into `errTargetNotFound`.
+  The other scope resolvers follow the same rule since STORAGE-ERR-CLASS-3
+  (INV-MW-scope-resolver-read-fault-is-503-for-global-holders).

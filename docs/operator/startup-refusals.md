@@ -507,7 +507,13 @@ interrupted before it replaced the DEK: start with the **previous** passphrase, 
 `keys/dek.key` in the config `admin init` writes), or the DEK or the salt
 (`storage.encryption.salt_path`, `keys/kek.salt`) is damaged or from a different install, or
 a `rotate-kek` / `migrate-provider` left the DEK wrapped under a KEK the configuration does
-not produce yet (the extra lines above). The message names the source the
+not produce yet (the extra lines above). **Key-file state:** start-up checks the key set
+*before* it tries the passphrase, so a missing or mixed file is refused earlier with
+`key file consistency: ...` (see [Key file set incomplete or mixed](#key-file-set-incomplete-or-mixed--from-code))
+or with the file-permission audit ([A key file is missing on a later start](#a-key-file-is-missing-on-a-later-start)),
+not with this message. Reaching this one means `keys/dek.key` and `keys/kek.salt` are both present and
+consistent with `keyset.manifest.json` (or the manifest is absent): the passphrase, or a
+leftover of an interrupted key operation, is the remaining suspect. The message names the source the
 passphrase was read from (`--passphrase-fd N`, `--passphrase-file "<path>"`,
 `--passphrase-stdin`, `KEYORIX_MASTER_PASSWORD_FILE="<path>"` or `KEYORIX_MASTER_PASSWORD`; a
 relative path is not printed, the message says `a relative path, not shown: it may be the secret itself`):

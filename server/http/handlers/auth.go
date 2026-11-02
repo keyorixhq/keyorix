@@ -623,8 +623,19 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A machine principal (UserID 0) has no user row: the same 404 it always got,
+	// without a read that core would refuse as a validation error.
+	if userCtx.UserID == 0 {
+		sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		return
+	}
 	user, err := h.coreService.GetUser(r.Context(), userCtx.UserID)
 	if err != nil {
+		// A read fault is not "your account does not exist": answer retry, and
+		// keep 404 for a row that is positively gone (AUTH-ENDPOINT-OUTAGE-1).
+		if sendStorageUnavailable(w, core.ReadFault(err)) {
+			return
+		}
 		sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
 		return
 	}

@@ -195,7 +195,7 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	}, 7)
 	require.NoError(t, err)
 	assert.Equal(t, AccountPendingFirstLogin, user.AccountState, "account is confined until the link is consumed")
-	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 	require.NotNil(t, prov)
 	assert.True(t, strings.HasPrefix(prov.LinkForAdmin, testBaseURL+"/auth/setup/"+setupPrefix))
 }
@@ -287,7 +287,7 @@ func TestCreateUserWithOneTimePassword(t *testing.T) {
 	}, 7)
 	require.NoError(t, err)
 	assert.Equal(t, AccountPasswordResetRequired, user.AccountState, "account must change the credential on first login")
-	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
 	require.NotNil(t, otp)
 	assert.Equal(t, "dana@acme.io", otp.Email)
 	// The returned OTP satisfies the default policy and is exactly what was hashed and
