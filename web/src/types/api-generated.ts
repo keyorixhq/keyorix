@@ -15183,7 +15183,7 @@ export interface operations {
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             422: components["responses"]["Error"];
-            503: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     approveMFAReset: {
@@ -15222,7 +15222,7 @@ export interface operations {
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             422: components["responses"]["Error"];
-            503: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     cancelMFAReset: {
