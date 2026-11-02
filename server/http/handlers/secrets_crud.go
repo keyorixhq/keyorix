@@ -564,11 +564,14 @@ func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 	if err := h.coreService.RestoreSecret(secretMutationAuditContext(r, userCtx), userCtx.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if isSecretNotFound(err) {
-			status = http.StatusNotFound
-		} else if errors.Is(err, core.ErrSecretNotDeleted) {
+		switch {
+		case errors.Is(err, core.ErrSecretNotDeleted):
+			// #3737: a live secret is a state conflict, not a storage failure.
 			status = http.StatusConflict
-		} else {
+			msg = fmt.Sprintf("secret %d is not deleted; nothing to restore", id)
+		case isSecretNotFound(err):
+			status = http.StatusNotFound
+		default:
 			log.Printf("Error restoring secret %d: %v", id, err)
 			msg = clientSafe(err)
 		}

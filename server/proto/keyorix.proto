@@ -151,7 +151,7 @@ service AuditService {
   rpc VerifyAuditChain(google.protobuf.Empty) returns (VerifyAuditChainResponse);
 
   // Write a signed checkpoint of the verified audit-chain head on demand (ADR-029).
-  // Requires encryption (the signing key is DEK-derived) and a chain that verifies.
+  // Requires encryption (the signing key is KEK-derived) and a chain that verifies.
   rpc WriteAuditCheckpoint(google.protobuf.Empty) returns (WriteAuditCheckpointResponse);
 
   // Report the audit trail's retention coverage (total events, oldest/newest, and

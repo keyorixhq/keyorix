@@ -79,7 +79,10 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	if err != nil {
 		if !storage.IsUserNotFound(err) {
 			// A storage failure is not "no such user": the handler maps this to 5xx,
-			// not a 404 the admin would read as a wrong id.
+			// not a 404 the admin would read as a wrong id. Audited like every other
+			// refusal (#3786); emitAudit is best effort, so it never blocks the refusal.
+			c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
+				fmt.Sprintf("%s attempted to impersonate user %d, but the target lookup failed", admin.Username, targetID))
 			return nil, nil, fmt.Errorf("target user lookup failed: %w", err)
 		}
 		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,

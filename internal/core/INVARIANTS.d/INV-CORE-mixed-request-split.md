@@ -33,7 +33,11 @@
   not_applied, retry_safe true}), SCIM 503 (RFC 7644 error schema plus the
   `urn:keyorix:params:scim:api:messages:2.0:PartialMutation` extension) or gRPC Unavailable
   (`google.rpc.ErrorInfo` reason `MutationPartiallyApplied`, domain `keyorix.audit`). A retry of
-  the same request is safe: commit 1 is idempotent. The one retry that cannot complete by itself
+  the same request is safe: commit 1 is idempotent. An actor replacing their OWN role set is
+  judged on the set commit 1 leaves, before commit 1 (`requireSelfGrantCeilingAfterRemovals`,
+  #3684): refused up front, nothing changes; a ceiling refusal that still reaches commit 2 (the
+  actor's authority revoked between the commits) answers retry_safe false
+  (`PartialMutationError.RetryRefused`). The one retry that cannot complete by itself
   is MFA-on + rename by an actor without a second factor: the new requirement gates the actor
   (`ProjectMFARequired`) and the refused retry changes nothing. If BOTH the owed record and the
   append of commit 1's row fail, the narrowing still applies and the row is queued after the commit
@@ -48,6 +52,9 @@
   x success / audit outage + backfill + retry / commit-2 append error, effect-then-error, panic /
   crash after commit 1 / owed record refused / record AND append refused, SQLite and PostgreSQL;
   every case reads the database), `TestMixedRequestSplit_RetryAfterPartialIsIdempotent`,
+  `TestReplaceUserRoleSet_SelfReplacementLosingRolesAssign_RefusedUpFront`,
+  `TestReplaceUserRoleSet_CeilingLostBetweenCommits_NotRetrySafe` (SQLite and PostgreSQL),
+  `server/http` `TestUpdateUserRolesHTTP_SelfReplacementLosingRolesAssign_ChangesNothing`,
   `TestSecurityMutationAudit_UpdateRole_ByDirection` / `_UpdateSharePermission_ByDirection`
   (pure narrowing owed, pure widening fail closed, mixed partial);
   `server/faultops` `TestOwedAuditSplit_SweepEverySplitOp` (the same sites over the real HTTP,
