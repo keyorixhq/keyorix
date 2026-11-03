@@ -25,7 +25,8 @@ import (
 //     redirection are not reads.
 //   - print: an assistant line does not run a command that prints a secret by
 //     design: `mfa enroll`, `mfa activate`, `recovery-key rotate` without
-//     `--recipient`, `printenv`, a bare `env`, `set -x`, `docker inspect`, and
+//     `--recipient`, `printenv`, `env` with no command after it (`env`,
+//     `sudo env`, `env | sort`), `set -x`, `docker inspect`, and
 //     `printenv` / a trailing `env` / `set -x` run through docker or podman exec|run.
 //     A password= or URL userinfo password inside a connection string is refused.
 //   - value: no line (assistant or human) assigns a plain KEYORIX_* secret
@@ -299,7 +300,11 @@ func iwaCommands(words []string) [][]string {
 }
 
 // iwaCommandWord returns the index of the word that is the command: the first one
-// that is not an assignment, a wrapper or a wrapper's option.
+// that is not an assignment, a wrapper or a wrapper's option, or -1 when there is
+// none (`< file` alone). `env` followed only by assignments and redirections
+// (`env`, `sudo env`, `env X=1 >&2`) is the command itself; an option after it
+// (`env -u X`) is read as a command, so env stays a wrapper there. A leading redirection and its target are
+// skipped here; iwaFind still reads an input redirection's target.
 func iwaCommandWord(cmd []string) int {
 	for i := 0; i < len(cmd); i++ {
 		w := cmd[i]
@@ -310,6 +315,9 @@ func iwaCommandWord(cmd []string) int {
 		}
 		if iwaRedirect.MatchString(w) {
 			continue
+		}
+		if w == "env" && iwaCommandWord(cmd[i+1:]) < 0 {
+			return i
 		}
 		if iwaAssign.MatchString(w) || slices.Contains(iwaWrappers, w) || (i > 0 && slices.Contains(iwaWrappers, cmd[i-1]) && strings.HasPrefix(w, "-")) {
 			continue
@@ -333,10 +341,7 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 				}
 			}
 			ci := iwaCommandWord(cmd)
-			if ci < 0 {
-				continue
-			}
-			for j := ci; l.Fenced && j < len(cmd); j++ {
+			for j := ci; ci >= 0 && l.Fenced && j < len(cmd); j++ {
 				b := path.Base(cmd[j])
 				if b != "keyorix" && b != "keyorix-server" {
 					continue
@@ -353,15 +358,20 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 			if l.Human {
 				continue
 			}
-			name := path.Base(cmd[ci])
-			reader := ""
-			for _, w := range cmd[ci:] {
-				if slices.Contains(iwaReaders, path.Base(w)) {
-					reader = path.Base(w)
-					break
+			name, reader := "", ""
+			if ci >= 0 {
+				name = path.Base(cmd[ci])
+				for _, w := range cmd[ci:] {
+					if slices.Contains(iwaReaders, path.Base(w)) {
+						reader = path.Base(w)
+						break
+					}
 				}
 			}
-			for j := ci; j < len(cmd); j++ {
+			// From the first word, not from ci: iwaCommandWord skips a leading
+			// redirection and its target, but `< secrets/x cat` and $(< secrets/x)
+			// still read the file.
+			for j := range cmd {
 				w := cmd[j]
 				// NAME=path is a pass-through only as a *_FILE variable; dd's
 				// if=secrets/x is a read.
@@ -376,6 +386,9 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 					add(l, "assistant line reads the secret file %s with %s", w, reader)
 				}
 			}
+			if ci < 0 {
+				continue
+			}
 			joined := " " + strings.Join(cmd, " ") + " "
 			switch {
 			case !l.Fenced: // a code span in prose names a command, it does not run it
@@ -385,7 +398,7 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 				add(l, "assistant line runs %q, which prints a TOTP secret or recovery codes: make it a HUMAN STEP", strings.TrimSpace(joined))
 			case strings.Contains(joined, " recovery-key rotate ") && !strings.Contains(joined, " --recipient"):
 				add(l, "assistant line runs recovery-key rotate without --recipient, which prints the key: make it a HUMAN STEP")
-			case name == "printenv" || (name == "env" && ci == len(cmd)-1) || (name == "set" && strings.Contains(joined, " -x ")) ||
+			case name == "printenv" || name == "env" || (name == "set" && strings.Contains(joined, " -x ")) ||
 				(name == "docker" && slices.Contains(cmd, "inspect")) ||
 				// the same commands run inside a container: docker compose exec|run SERVICE printenv
 				((name == "docker" || name == "podman") && (slices.Contains(cmd, "printenv") || cmd[len(cmd)-1] == "env" || strings.Contains(joined, " set -x "))):
@@ -489,6 +502,16 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		"2>/dev/null docker inspect backend",
 		"2>/dev/null keyorix whoami",
 		">& /dev/stderr printenv",
+		// a leading input redirection is skipped as the command word but is still a
+		// read, also when no command follows it (bash's $(< file))
+		"X=$(< secrets/master_password)",
+		"export X=\"$(<secrets/admin_password)\"",
+		"< secrets/master_password cat",
+		"<secrets/admin_password tr -d x",
+		// env with no command after it prints the environment
+		"env",
+		"sudo env",
+		"env | sort",
 	}
 	for _, line := range bad {
 		doc := strings.Replace(good, "rm -f secrets/bootstrap_token\n", "rm -f secrets/bootstrap_token\n"+line+"\n", 1)
