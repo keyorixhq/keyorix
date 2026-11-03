@@ -35,13 +35,13 @@ var configDocs = []string{
 }
 
 // commandDocs are the documents whose `keyorix-server` lines and KEYORIX_*
-// variables are checked: configDocs plus docs/operator/*.md and the air-gap
-// runbook.
+// variables are checked: configDocs plus docs/operator/*.md, the air-gap
+// runbook and the assistant install procedure.
 func commandDocs(t testing.TB) []string {
 	t.Helper()
 	root := repoRoot(t)
 	out := append([]string{}, configDocs...)
-	out = append(out, "docs/AIRGAP_RUNBOOK.md")
+	out = append(out, "docs/AIRGAP_RUNBOOK.md", "INSTALL-WITH-AI.md")
 	matches, err := filepath.Glob(filepath.Join(root, "docs", "operator", "*.md"))
 	if err != nil {
 		t.Fatal(err)

@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -221,11 +220,12 @@ func groupMemberToProto(u *models.User) *pb.GroupMember {
 // never forwarded — only safe static messages reach the caller to prevent
 // internal detail leakage.
 //
-// Not-found, already-exists and last-administrator are classified by sentinel
-// (errors.Is), never by matching err.Error(): the text depends on the locale and on
-// whichever layer wrapped it, and a raw "record not found" from some other row is not
-// a missing group (AUDIT-503-MAP-1). Every core path a group RPC reaches returns a
-// typed error for these three; an untyped one is Internal until it is typed.
+// Every class is chosen by sentinel (errors.Is), never by matching err.Error(): the
+// text depends on the locale and on whichever layer wrapped it, a raw "record not
+// found" from some other row is not a missing group (AUDIT-503-MAP-1), and a
+// Postgres "permission denied for table groups" is a database-role fault, not an
+// authorization refusal (ERRSTRING-CLASS-1). An untyped error is Internal until it
+// is typed; a transient authorization-storage fault is Unavailable (retryable).
 func groupError(err error) error {
 	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
 	if aerr, ok := auditUnavailableStatus(err); ok {
@@ -240,13 +240,12 @@ func groupError(err error) error {
 		return status.Error(codes.AlreadyExists, "group name already in use")
 	case errors.Is(err, core.ErrLastAdminGroupGuard), errors.Is(err, storage.ErrWouldStrandLastAdmin):
 		return status.Error(codes.FailedPrecondition, "cannot remove the last administrator")
-	}
-	msg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(msg, "required") || strings.Contains(msg, "invalid") || strings.Contains(msg, "exceeds"):
+	case errors.Is(err, storage.ErrInvalidGroupRequest):
 		return status.Error(codes.InvalidArgument, "invalid group request")
-	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied") || strings.Contains(msg, "administrator can grant"):
+	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "access denied")
+	case core.IsAuthTransient(err):
+		return status.Error(codes.Unavailable, "group operation temporarily unavailable; retry")
 	default:
 		return status.Error(codes.Internal, "group operation failed")
 	}
