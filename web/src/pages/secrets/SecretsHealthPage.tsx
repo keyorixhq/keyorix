@@ -321,7 +321,7 @@ const AccessCardContent: React.FC<AccessCardContentProps> = ({ access, isDark, o
             <StatRow label="Secret reads (last 30d)" value={access.reads30d} dot="neutral" />
             <StatRow label="Failed logins (24h)" value={access.failedAuth24h} dot={failedAuthDot} />
             <StatRow
-                label="Inactive users (no login 30d)"
+                label="Inactive users (not logged in 30+ days)"
                 value={access.inactiveUsers}
                 dot={access.inactiveUsers === 0 ? 'green' : 'amber'}
             />

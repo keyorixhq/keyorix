@@ -12,17 +12,12 @@ type UserFilter struct {
 	IsActive     *bool
 	CreatedAfter *time.Time
 	// InactiveSince, when set, returns only users who have not logged in since the
-	// given time — i.e. last_login_at IS NULL OR last_login_at < InactiveSince.
-	InactiveSince *time.Time
-	// InactiveSpareNewAccounts narrows InactiveSince (it is ignored without it): a user who
-	// has never logged in counts as inactive only once created_at is older than
-	// InactiveSince, so an account created a minute ago is not reported as dormant. A user
-	// with a last_login_at before InactiveSince still counts. Default false keeps the
-	// original meaning for the user list filters; the dashboard tile sets it.
-	InactiveSpareNewAccounts bool
-	IncludeDeleted           bool // when true, also return soft-deleted users
-	Page                     int
-	PageSize                 int
+	// given time — i.e. COALESCE(last_login_at, created_at) < InactiveSince (a user who
+	// never logged in is judged by when the account was created).
+	InactiveSince  *time.Time
+	IncludeDeleted bool // when true, also return soft-deleted users
+	Page           int
+	PageSize       int
 	// Offset, when > 0, sets the row offset directly (overriding the Page-derived
 	// offset). Used for SCIM startIndex paging, where the window is an arbitrary 1-based
 	// item offset that need not align to a Page boundary.
