@@ -132,6 +132,11 @@ var secretNodeCacheEpochInvalidateBatch = 5000
 // warning while a newer release's definition stays installed.
 var rolePermGenerationNewerDefinitionRewarn = time.Hour
 
+// triggerDefNewerAcceptBound is how long a checker leaves a newer release's
+// definition in place (pgTriggerDef.newerThan), counted from the first
+// reading of it with no reading of this release's own definition since.
+var triggerDefNewerAcceptBound = 24 * time.Hour
+
 // The reason label of both counters: tamper (changed outside any release:
 // restored, flushed) or newer_definition (a newer release's definition, read
 // during a rolling upgrade: flushed, not restored).
@@ -889,6 +894,10 @@ type triggerIntegrityChecker struct {
 	// newerWarned is when the checker last warned that a newer release's
 	// definition is installed.
 	newerWarned time.Time
+	// newerSince is when the checker first read a newer release's definition
+	// with no reading of this release's own since (boundNewer); zero when
+	// none.
+	newerSince time.Time
 	// readFailures counts the ticks in a row whose reading failed
 	// (readFailed).
 	readFailures int
@@ -953,6 +962,20 @@ func (c *triggerIntegrityChecker) newerDefinitionLog(st triggerIntegrityState) {
 	c.logf("%s triggers: a newer release's definition was installed (%q; this release writes v%d; catalog row versions %s, were %s), as during a rolling upgrade to it. Leaving it in place and invalidating every replica's %s once; if no such upgrade is under way, treat it as tampering.", c.target.what, st.newer, c.target.def.version, st.version, c.baseline, c.target.cache)
 }
 
+// boundNewer keeps the clock of triggerDefNewerAcceptBound: it starts at the
+// first reading of a newer release's definition and stops only at a reading
+// of this release's own (clean, no newer definition).
+func (c *triggerIntegrityChecker) boundNewer(st *triggerIntegrityState) {
+	switch {
+	case st.newer == "":
+		if st.problem == "" {
+			c.newerSince = time.Time{}
+		}
+	case c.newerSince.IsZero():
+		c.newerSince = time.Now()
+	}
+}
+
 // readTickIntegrity is a tick's reading. It gets half of the tick's remaining
 // time, so a reading that runs out of it (readFailed) leaves the other half
 // for the invalidation.
@@ -1007,6 +1030,7 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 		return c.readFailed(ctx, err)
 	}
 	c.readFailures = 0
+	c.boundNewer(&st)
 	switch {
 	case st.problem != "":
 		c.logf("SECURITY: %s triggers cannot be trusted: %s. Restoring them and invalidating every replica's %s; find who has DDL on this schema or changed the server role's database settings.", t.what, st.problem, t.cache)
@@ -1110,6 +1134,7 @@ func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, e
 		return c.readFailed(ctx, err)
 	}
 	c.readFailures = 0
+	c.boundNewer(&st)
 	switch {
 	case st.problem != "":
 		c.logf("SECURITY: %s triggers cannot be trusted: %s. Restoring them and invalidating every replica's %s; find who has DDL on this schema or changed the server role's database settings.", t.what, st.problem, t.cache)
