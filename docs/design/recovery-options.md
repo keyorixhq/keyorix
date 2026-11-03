@@ -19,7 +19,7 @@ what a malicious insider could do with it.
 | 2 | No command re-seals a genuine chain break, so the sticky alarm never clears | **True.** The sticky `failure` clears only when a full verification that started after it passes, and a real break never passes. The design-b2 §4 "chain restart" was not built; `LogAuditEvent` always chains onto the current tail. Nothing named seal, break record or segment restart exists. | `internal/core/audit_verify_state.go:102`, `server/admin/recover_admin_logic.go:194-209`, spec `audit-incremental-verification.md` §3 |
 | 3 | The only reverse for a DEK rotation is an archive restore | **True.** After the sweep commits, the old DEK is wiped and no copy is kept. The sweep decrypts with the old DEK and encrypts with the new one, but never decrypts the new ciphertext before commit. | `internal/encryption/keymanager_rotation.go:31,147`, `internal/encryption/sweep.go:184-192` |
 | 4 | rotate-kek makes older checkpoints read BROKEN offline until a fresh one is written | **True, but the scope is wider than stated.** `RotateKEKWithConfig` re-wraps the DEK and prints fingerprints but writes no checkpoint, high-water mark, retention anchor or verification state. Offline, `verify-audit` checks only the **latest** checkpoint and the high-water mark, under **one** supplied key, and reports a signature failure as BROKEN. Online, the retention anchor signed under the old key is ignored as "superseded" (`audit_retention_anchor.go:239`). On an install that has had a retention purge, the online walk then needs genesis and reports a break. That is RECOVERY-DESIGN-1's F2; the code path is unchanged on main but was not re-run for this doc. | `internal/encryptionops/kek.go:55-98`, `internal/auditverify/verify.go:404-480`, `internal/core/audit_retention_anchor.go:239` |
-| (backlog 4) | CONFIGURATION.md calls the checkpoint key DEK-derived | **False now.** Fixed by `77fd78cd7`. | `docs/CONFIGURATION.md` |
+| (backlog 4) | CONFIGURATION.md named the wrong key as the source of the checkpoint key (it is KEK-derived) | **False now.** Fixed by `77fd78cd7`. | `docs/CONFIGURATION.md` |
 
 Three changes since the gaps were listed matter here:
 
@@ -199,6 +199,34 @@ Decide among AUDIT-VERIFY-STATE-1's options **using the eight constraints above 
 list**. RECOVERY-DESIGN-1's "signed break record plus a linked segment genesis" meets all eight. Do
 not start the seal before §4's key-transition work, or build them in the same series with §4
 first.
+
+### Addendum (2026-11-03, Andrei, ask `seal-unpinned-field-adr`): the seal record's `unpinned` field
+
+AUDIT-SEAL-TAILS-3 (#3852) extends `PlanAuditLossAcceptance` with a fourth rule beyond constraint 4
+above: a surviving row that no authenticated pin covers (no checkpoint, high-water mark, retention
+anchor, verification-state pin, host witness, earlier seal record or verified `--anchor` names it)
+is not refused — an install with only one checkpoint must still be able to seal a genuine loss.
+Those spans are printed in the plan as `unauthenticated: audit events #a through #b ...` and
+recorded in the seal record itself as a new, optional field: `unpinned: [{from_id, through_id}]`
+(`omitempty`), record version unchanged (`v: 1`).
+
+**Decision: accepted**, as a backward-compatible addition to the format in constraint 4, not a new
+ADR. The alternative — refusing any acceptance whose surviving range is not fully pinned — blocks
+legitimate recovery on exactly the single-checkpoint, air-gapped installs this product targets, and
+the eight constraints above already let a plan proceed on operator-supplied evidence and partial
+authentication; this is a narrower case of the same tradeoff.
+
+Backward compatibility holds under the same reasoning as constraints 5 and 6: the MAC and the
+digest are over the stored payload bytes, not a reconstructed struct, so a binary that has never
+heard of `unpinned` (core, or the independent `internal/auditverify` offline decoder) still reads,
+verifies and digests an existing record unchanged whether or not the field is present.
+
+**Not closed by this decision** (tracked separately, not a blocker on #3852): an actor who can also
+delete the *older* checkpoint rows turns what would otherwise be a refused rewrite into an unpinned
+span instead, since only the latest checkpoint is guarded by the high-water mark today. Documented
+in `docs/operator/audit-chain-break-runbook.md` and `INV-CORE-audit-seal-never-valid-tamper-broken`.
+Closing it needs a checkpoint chain (each checkpoint embedding the hash of the previous one) — its
+own ADR-gated change, scoped separately after #3852 merges.
 
 ---
 

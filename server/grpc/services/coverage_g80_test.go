@@ -16,6 +16,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/dynamic/dynamictest"
 	"github.com/keyorixhq/keyorix/internal/encryption"
@@ -290,23 +291,22 @@ func TestEnforceProjectMFAForProjects_SkipsZeroAndDuplicateIDs(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestMapSecretACLError_WrappedStorageError_DoesNotLeakRawText proves the
-// concrete leak scenario mapSecretACLError's "invalid"/"required" branch is
-// exposed to: secret_acl.go wraps CreateOrUpdateSecretACL/DeleteSecretACL's
-// raw storage error with "%s: %w" (ErrorStorageFailed/ErrorRetrievalFailed
-// prefix), and a real SQL/driver error can coincidentally contain "invalid"
-// or "required" as a substring (e.g. Postgres' "invalid input syntax for
-// type integer", or a NOT NULL constraint mentioning a "required" column) —
-// which would classify as InvalidArgument and, before this fix, echo the
-// raw driver text straight to the gRPC client. Asserting only the status
-// code (as the sibling classification table test does) can't catch this —
-// only checking the message content can.
+// concrete scenario mapSecretACLError used to be exposed to: secret_acl.go
+// wraps CreateOrUpdateSecretACL/DeleteSecretACL's raw storage error with "%s: %w"
+// (ErrorStorageFailed/ErrorRetrievalFailed prefix), and a real SQL/driver error
+// can coincidentally contain "invalid" or "required" as a substring (e.g.
+// Postgres' "invalid input syntax for type integer", or a NOT NULL constraint
+// mentioning a "required" column). A text match classified it InvalidArgument
+// (ERRSTRING-CLASS-1: it is a server fault, Internal, now that only
+// storage.ErrInvalidSecretACLRequest means a malformed request). The message
+// must also never echo the raw driver text to the gRPC client.
 func TestMapSecretACLError_WrappedStorageError_DoesNotLeakRawText(t *testing.T) {
 	rawDriverErr := errors.New(`pq: invalid input syntax for type integer: "abc"`)
 	wrapped := fmt.Errorf("%s: %w", "Storage operation failed", rawDriverErr)
 
 	got := mapSecretACLError(wrapped)
 	require.Error(t, got)
-	assert.Equal(t, codes.InvalidArgument, status.Code(got))
+	assert.Equal(t, codes.Internal, status.Code(got))
 	assert.NotContains(t, status.Convert(got).Message(), "pq:", "raw driver error text must not reach the client")
 	assert.NotContains(t, status.Convert(got).Message(), "abc", "the caller-irrelevant driver detail must not reach the client")
 }
@@ -317,16 +317,17 @@ func TestMapSecretACLError_WrappedStorageError_DoesNotLeakRawText(t *testing.T) 
 func TestMapSecretACLError_Classification(t *testing.T) {
 	cases := []struct {
 		name string
-		msg  string
+		err  error
 		want codes.Code
 	}{
-		{"invalid", "invalid permission set", codes.InvalidArgument},
-		{"required", "user_id is required", codes.InvalidArgument},
-		{"default", "storage exploded", codes.Internal},
+		{"invalid", fmt.Errorf("invalid permission set: %w", storage.ErrInvalidSecretACLRequest), codes.InvalidArgument},
+		{"required", fmt.Errorf("user_id is required: %w", storage.ErrInvalidSecretACLRequest), codes.InvalidArgument},
+		{"untyped invalid text", errors.New("invalid permission set"), codes.Internal},
+		{"default", errors.New("storage exploded"), codes.Internal},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := mapSecretACLError(errors.New(c.msg))
+			got := mapSecretACLError(c.err)
 			assert.Equal(t, c.want, status.Code(got))
 		})
 	}

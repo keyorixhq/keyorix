@@ -198,6 +198,7 @@ func TestAuthorizeTwoTierScopes(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const projA, projB = uint(10), uint(20)
+	seedLiveProjects(t, st.DB(), projA, projB) // scoped grants need live projects rows (#2795)
 
 	sysAdmin := seedUserWithRole(t, st, "sysadmin", "system_admin", storage.Scope{})
 	projAdminA := seedUserWithRole(t, st, "padmin", "project_admin", storage.Scope{ProjectID: projA})

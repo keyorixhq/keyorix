@@ -68,8 +68,10 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	// Authorize against the target project/environment from the body — the
 	// create route carries no path scope for the middleware to resolve.
 	scope := core.Scope{ProjectID: reqBody.ProjectID, EnvironmentID: reqBody.EnvironmentID}
-	if allowed, err := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope); err != nil || !allowed {
+	allowed, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope)
+	if refuseUnlessAuthorized(w, r, allowed, aerr, func() {
 		h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+	}) {
 		return
 	}
 	// Per-project MFA policy (ADR-037): create carries no path scope for the
@@ -292,9 +294,10 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 			secret, err = h.coreService.GetSecret(r.Context(), uint(id))
 			if err == nil {
 				allowed, aerr := h.coreService.AuthorizeSecretPrincipalForSecret(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), secret, permSecretsRead)
-				if aerr != nil || !allowed {
+				if refuseUnlessAuthorized(w, r, allowed, aerr, func() {
 					log.Printf("SECURITY: GetSecret machine branch: path secret %d not authorized for principal %d after resolved-secret mismatch", id, userCtx.PrincipalID())
 					h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
+				}) {
 					return
 				}
 			}
@@ -561,11 +564,14 @@ func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 	if err := h.coreService.RestoreSecret(secretMutationAuditContext(r, userCtx), userCtx.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if isSecretNotFound(err) {
-			status = http.StatusNotFound
-		} else if errors.Is(err, core.ErrSecretNotDeleted) {
+		switch {
+		case errors.Is(err, core.ErrSecretNotDeleted):
+			// #3737: a live secret is a state conflict, not a storage failure.
 			status = http.StatusConflict
-		} else {
+			msg = fmt.Sprintf("secret %d is not deleted; nothing to restore", id)
+		case isSecretNotFound(err):
+			status = http.StatusNotFound
+		default:
 			log.Printf("Error restoring secret %d: %v", id, err)
 			msg = clientSafe(err)
 		}

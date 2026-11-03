@@ -33,7 +33,9 @@ internal/core/guards/ledger_fragments_test.go	!README.md	fixtures in t.TempDir()
 internal/core/upgrading_scim_sso_check_query_test.go	docs/UPGRADING.md	the SCIM/SSO check query in UPGRADING.md
 internal/docsdrift/env_and_secrets_test.go	**/*.md,**/*.go,**/*.sh,**/*.yml,**/*.yaml,**/*.tpl,**/*.conf,**/*.txt,**/*.toml,**/Dockerfile*,**/Makefile	documented env vars and secret flags against every source kind envVarSourceFile accepts
 internal/docsdrift/helm_docs_set_keys_test.go	README.md,deploy/helm/keyorix/README.md,docs/**/*.md,deploy/helm/keyorix/values.yaml,!**	documented `--set` chart keys (README.md, the chart README, every .md under docs/) against deploy/helm/keyorix/values.yaml; nothing else is walked
+internal/docsdrift/kek_derived_wording_test.go	**/*.go,docs/**/*.md,server/proto/keyorix.proto,server/http/handlers/openapi.yaml,!**	#3862: DEK-wording scan of non-test Go (main module only; cli/ and operator/ are skipped as separate modules), docs/ Markdown except ADRs, the proto and openapi.yaml; other Markdown is not read
 internal/docsdrift/links_test.go	**/*.md	relative links in every Markdown file
+internal/docsdrift/install_with_ai_test.go	INSTALL-WITH-AI.md	the assistant-run lines and the prompt block of INSTALL-WITH-AI.md (secret-blind rules)
 internal/docsdrift/upgrading_sections_test.go	docs/**/*.md,changelog.d/**/*.md,SECURITY.md,README.md,!**	UPGRADING.md section numbers, and references to them in every .md under docs/ and changelog.d/ plus SECURITY.md and README.md; nothing else is walked
 internal/docsdrift/versioning_deprecations_test.go	docs/VERSIONING.md	deprecated config aliases (Go source) against the VERSIONING.md deprecations table
 internal/docsdrift/code_path_refs_test.go	README.md,QUICK_START.md,RELEASING.md,migrations/README.md,docs/**/*.md,internal/docsdrift/testdata/code_path_refs_exceptions.txt,!**	repo paths cited in backticks by README.md, QUICK_START.md, SELF_HOSTING.md, RELEASING.md, migrations/README.md and every non-historical .md under docs/, checked for existence, plus its exceptions file; the cited targets are only stat'ed, so changing one never edits what the test reads
@@ -50,7 +52,7 @@ internal/storage/store/child_parent_liveness_registry_test.go	docs/child-parent-
 internal/storage/store/full_row_write_guard_test.go	docs/full-row-write-exempt.tsv,!operator/**	exemption ledger; walks internal/storage/store and internal/core only
 internal/storage/migrate_timestamp_guard_test.go	!operator/**	walks only non-test Go files under internal/storage (#3440); its input globs are the default Go-job selection
 internal/threatmodelcheck/evidence_test.go	**/*.go,**/*.md,**/*.tsv,**/*.yaml,**/*.yml,**/*.sh,**/*.sql,**/*.proto,**/*.json,**/*.toml	threat-model evidence: every cited path (pathExts) must exist, every cited test must exist in a *_test.go
-server/admin/docs_commands_test.go	QUICK_START.md,docs/CONFIGURATION.md,docs/SELF_HOSTING.md,docs/AIRGAP_RUNBOOK.md,docs/operator/*.md,!operator/**,!docs/**	documented server admin commands; "operator" names docs/operator only
+server/admin/docs_commands_test.go	QUICK_START.md,INSTALL-WITH-AI.md,docs/CONFIGURATION.md,docs/SELF_HOSTING.md,docs/AIRGAP_RUNBOOK.md,docs/operator/*.md,!operator/**,!docs/**	documented server admin commands; "operator" names docs/operator only
 server/admin/docs_container_admin_test.go	QUICK_START.md,README.md,docs/SELF_HOSTING.md,docs/UPGRADING.md	container admin commands in the docs
 server/admin/quickstart_commands_test.go	QUICK_START.md,INSTALL-WITH-AI.md,docs/install/offline-install.sh,!server/**/*.md	quick-start commands; server/entrypoint.sh is read, server/ Markdown is not
 server/faultops/consume_first_oracle_test.go	docs/atomicity-exempt.tsv	atomicity exemption ledger
@@ -65,6 +67,7 @@ deploy/hsts_nginx_behaviour_test.go	web/nginx.conf,web/nginx-hsts.conf,web/keyor
 server/http/suspend_audit_refusal_message_drift_test.go	web/src/features/secrets/__tests__/SuspendAuditRefusal.test.tsx,web/src/features/secrets/__tests__/SuspendSecretModal.test.tsx,cli/cmd/suspend_audit_refusal_test.go	the refusal text quoted by the web and CLI tests
 server/middleware/nginx_conf_header_scope_test.go	web/nginx.conf	nginx header scoping
 server/middleware/nginx_conf_security_test.go	web/nginx.conf,web/nginx-hsts.conf	nginx security headers
+internal/config/web_nginx_health_guard_test.go	web/Dockerfile,web/nginx.conf	the web image Dockerfile HEALTHCHECK and the nginx /health location
 server/webui/dockerfile_embed_test.go	server/Dockerfile,.dockerignore,!web/**	Dockerfile and .dockerignore; "web" strings are expected .dockerignore entries
 #
 # --- scripts/, .github/ and other go_unaffected paths ------------------------------
@@ -142,6 +145,7 @@ server/secret_file_relative_echo_test.go	!**	Go walk skips nested modules; also 
 migrate/internal/accessplan/smt_model_export_test.go	docs/formal/smt/cases/**/*.json	RD-SMT-FIX-1 (#3658): TestSMTModels_MatchAccessplanOnRealPolicies reads the SMT case input/model JSON under docs/formal/smt/cases
 configs/template_keys_read_test.go	configs/dev.yaml,configs/test.yaml,!operator/**,!web/**,!demo/**,!**/*.yaml	reads configs/dev.yaml and test.yaml and every non-test .go file of the root module; skips operator/, web/ and cli/, so other yaml and operator Go are not read
 internal/config/lock_loss_metrics_test.go	!operator/**/*.go	walks internal/ and server/ only; operator/ Go is not read
+internal/core/guards/errtext_classification_guard_test.go	!operator/**/*.go	scans the core family's non-test .go files and everything under server/; operator/ Go is not walked
 internal/core/guards/named_source_files_guard_test.go	!operator/**/*.go	reads _test.go files under internal/core and its family dirs; operator/ is not walked
 internal/core/guards/secret_ownership_guard_test.go	!internal/core/**/*.md	reads only the core family's non-test .go files; the Markdown under internal/core is not read
 internal/core/guards/test_only_packages_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files for imports of test-only packages; operator/ included

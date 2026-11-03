@@ -1,9 +1,12 @@
 package services
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
@@ -27,18 +30,22 @@ func TestClientSafe(t *testing.T) {
 	assert.Empty(t, clientSafe(nil))
 }
 
-// TestIsSafeConnectError covers all the known-safe marker strings and an unknown one.
+// TestIsSafeConnectError covers every safe core sentinel (also when wrapped), an
+// unknown error, and an untyped error that only carries a safe phrase
+// (ERRSTRING-CLASS-1: classified by errors.Is, never by the text).
 func TestIsSafeConnectError(t *testing.T) {
-	safe := []string{
-		"keyorix connect is not enabled",
-		"unknown connector: vault",
-		"a role is required for a connect ref-grant",
-		"is not permitted for your roles on connector",
+	safe := []error{
+		core.ErrConnectDisabled,
+		fmt.Errorf("%w %q", core.ErrConnectUnknownConnector, "vault"),
+		core.ErrConnectRoleRequired,
+		fmt.Errorf("%w %q", core.ErrConnectRefGrantAgainstPlatformConnector, "aws"),
+		fmt.Errorf("ref %q %w %q", "x", core.ErrConnectRefNotPermitted, "aws"),
 	}
-	for _, s := range safe {
-		assert.Truef(t, isSafeConnectError(s), "expected %q to be safe", s)
+	for _, e := range safe {
+		assert.Truef(t, isSafeConnectError(e), "expected %q to be safe", e)
 	}
-	assert.False(t, isSafeConnectError("raw storage error with dsn"), "unexpected marker must not be safe")
+	assert.False(t, isSafeConnectError(errors.New("raw storage error with dsn")), "unexpected error must not be safe")
+	assert.False(t, isSafeConnectError(errors.New("unknown connector: vault")), "a phrase alone must not be safe")
 }
 
 // TestNormalizePage covers boundary conditions.

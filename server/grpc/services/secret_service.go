@@ -594,15 +594,12 @@ func mapSecretACLError(err error) error {
 	case errors.Is(err, storage.ErrSecretACLNotFound), errors.Is(err, storage.ErrSecretNotFound),
 		errors.Is(err, storage.ErrUserNotFound):
 		return status.Error(codes.NotFound, "ACL or secret not found")
-	// "invalid"/"required" don't only match GrantSecretACL's own validation
-	// messages (invalid permission, missing IDs) -- CreateOrUpdateSecretACL's
-	// storage-layer failure is also routed through this classifier
-	// (secret_acl.go's "%w"-wrapped ErrorStorageFailed/ErrorRetrievalFailed
-	// paths), and a raw SQL/driver error can coincidentally contain either
-	// word. Fixed message, not msg, so a driver error never reaches the
-	// client verbatim (matches mapUserError's GRPC-003 remediation).
-	// Not yet typed: GrantSecretACL's own validation (secret_acl.go) has no sentinel.
-	case strings.Contains(strings.ToLower(err.Error()), "invalid"), strings.Contains(strings.ToLower(err.Error()), "required"):
+	// ERRSTRING-CLASS-1: GrantSecretACL's own validation is typed
+	// (storage.ErrInvalidSecretACLRequest). A raw SQL/driver error from the
+	// storage-layer paths that also reach this classifier can contain "invalid" or
+	// "required" and is a server fault. Fixed message, so a driver error never
+	// reaches the client verbatim (matches mapUserError's GRPC-003 remediation).
+	case errors.Is(err, storage.ErrInvalidSecretACLRequest):
 		return status.Error(codes.InvalidArgument, "invalid ACL request")
 	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "not authorized to manage this secret's ACLs")

@@ -44,7 +44,7 @@ var recoverAdminCmd = &cobra.Command{
 	Long: `recover-admin restores an existing admin account that is deactivated, has a
 lost password, has lost MFA, or is login-locked -- all four cases go through
 the identical reset. Requires BOTH host access (running this command) AND
-the local recovery key (docs/design-b2-recover-admin.md §2) -- knowing the
+the local recovery key -- knowing the
 key alone, or holding the host alone, is not enough.
 
 --recovery-key must be exactly "-": the key is always read from stdin, never
@@ -90,7 +90,7 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 		// just the first" posture.
 		fmt.Fprintln(os.Stderr, "WARNING: keyless mode is enabled (security.recover_admin.insecure_keyless_admin_recovery) -- "+
 			"proceeding on HOST ACCESS ALONE, no recovery key required or checked. This collapses host access "+
-			"and admin access into one trust boundary; see docs/design-b2-recover-admin.md §1/§5.")
+			"and admin access into one trust boundary.")
 		if recoverAdminKey != "" && recoverAdminKey != "-" {
 			return fmt.Errorf(`--recovery-key must be exactly "-", or omitted entirely in keyless mode`)
 		}

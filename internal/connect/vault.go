@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // vaultMaxResponseBytes caps the read body (a KV secret is small); guards a hostile/
@@ -108,12 +110,12 @@ func sanitizeVaultRef(ref string) (string, error) {
 func (c *VaultConnector) CheckTokenTTL(ctx context.Context) (ttlSeconds int, renewable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.address+"/v1/auth/token/lookup-self", nil)
 	if err != nil {
-		return 0, false, err
+		return 0, false, fmt.Errorf("vault: new token lookup request: %w", netutil.RedactErrorURLs(err))
 	}
 	req.Header.Set("X-Vault-Token", c.token)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return 0, false, fmt.Errorf("vault: token TTL lookup failed: %w", err)
+		return 0, false, fmt.Errorf("vault: token TTL lookup failed: %w", netutil.RedactErrorURLs(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, vaultMaxResponseBytes))
@@ -141,13 +143,13 @@ func (c *VaultConnector) CheckTokenTTL(ctx context.Context) (ttlSeconds int, ren
 func validateConnectorURL(address string) error {
 	u, err := url.Parse(address)
 	if err != nil {
-		return fmt.Errorf("vault: invalid connector address %q: %w", address, err)
+		return fmt.Errorf("vault: invalid connector address %q: %w", netutil.RedactURLHost(address), netutil.RedactErrorURLs(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("vault: connector address %q must use http or https", address)
+		return fmt.Errorf("vault: connector address %q must use http or https", netutil.RedactURLHost(address))
 	}
 	if u.Host == "" {
-		return fmt.Errorf("vault: connector address %q is missing a host", address)
+		return fmt.Errorf("vault: connector address %q is missing a host", netutil.RedactURLHost(address))
 	}
 	return nil
 }
@@ -183,13 +185,13 @@ func (c *VaultConnector) resolveKVMountVersion(ctx context.Context, safeRef stri
 	reqURL := c.address + "/v1/sys/internal/ui/mounts/" + safeRef
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return 0, fmt.Errorf("vault: new mount-info request: %w", err)
+		return 0, fmt.Errorf("vault: new mount-info request: %w", netutil.RedactErrorURLs(err))
 	}
 	req.Header.Set("X-Vault-Token", c.token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("vault: mount-info lookup failed: %w", err)
+		return 0, fmt.Errorf("vault: mount-info lookup failed: %w", netutil.RedactErrorURLs(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -290,18 +292,18 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 	// codeql[go/keyorix-ssrf-unvalidated-outbound-request]
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("vault: new request: %w", err)
+		return "", fmt.Errorf("vault: new request: %w", netutil.RedactErrorURLs(err))
 	}
 	req.Header.Set("X-Vault-Token", c.token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("vault: get %q: %w", ref, err)
+		return "", fmt.Errorf("vault: get %q: %w", ref, netutil.RedactErrorURLs(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, vaultMaxResponseBytes))
-		return "", fmt.Errorf("vault: %s returned HTTP %d for %q", c.address, resp.StatusCode, ref)
+		return "", fmt.Errorf("vault: %s returned HTTP %d for %q", netutil.RedactURLHost(c.address), resp.StatusCode, ref)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, vaultMaxResponseBytes))
 	if err != nil {

@@ -63,8 +63,12 @@ drill does) and it serves and accepts writes again, nothing acknowledged is lost
 chain verifies. Alert on a stopped server and on a rise in `503`, not on `401`. The
 permission lookup behind an authenticated request answers the same way where a middleware
 gate performs it (and over gRPC, `Unavailable`): a retryable `503`, not a `403` that no
-client retries. Routes that check the permission inside the REST handler (for example
-secret create) still answer `403` until a follow-up change.
+client retries. So do the routes that check the permission inside the REST handler: secret
+create and list (`POST` / `GET /api/v1/secrets`), secret copy, folder create and the
+dynamic-secrets routes. A few other in-handler checks (project MFA-requirement change,
+invitations with a role, rotation-policy create) and the global-scope checks on the render
+and system routes still answer `403` during an outage until a follow-up change; those
+requests are refused either way, only the status differs.
 
 ## diskfull: the data directory fills up
 
