@@ -155,7 +155,7 @@ func diagnoseEncryption(cfg *config.Config) error {
 
 	svc := encryption.NewService(&cfg.Storage.Encryption, ".")
 	if err := svc.AcquireExclusiveKeyLock(); err != nil {
-		return fmt.Errorf("failed to acquire the encryption key lock (another process — a live server, or a concurrent rotation — is using it): %w", err)
+		return fmt.Errorf("failed to acquire the encryption key lock: %w", encryption.WithLockContentionHint(err, "another process (a live server, or a concurrent rotation) is using this key directory"))
 	}
 	defer svc.Shutdown()
 
