@@ -43,6 +43,7 @@ func TestSearchShareRecipients_UserLookupErrorFailsTheSearch(t *testing.T) {
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.UserRole{}, &models.Role{},
 		&models.Permission{}, &models.RolePermission{}, &models.User{}, &models.Project{}, &models.Environment{},
 	))
+	seedLiveProjects(t, db, 1) // scoped grants need live projects rows (#2795)
 	for _, u := range []models.User{
 		{ID: 1, Username: "sharer", Email: "s@t", IsActive: true},
 		{ID: 2, Username: "alice", Email: "a@t", IsActive: true},

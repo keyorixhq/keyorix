@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -304,10 +303,7 @@ func mapShareError(err error) error {
 		return status.Error(codes.NotFound, "share or secret not found")
 	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "not authorized for this share")
-	// Not yet typed: core/sharing.go and core/group_sharing.go return the expiry
-	// refusal as fmt.Errorf("%s: share expiry must be in the future", i18n ErrorValidation)
-	// at three sites. Exact phrase only; wrap a sentinel there and delete this case.
-	case strings.Contains(err.Error(), "share expiry must be in the future"):
+	case errors.Is(err, storage.ErrShareExpiryNotInFuture):
 		// Matches REST's 400 ValidationError for the identical core error
 		// (shares_crud.go) — otherwise this fell into the default Internal bucket,
 		// a transport-dependent error-class divergence for a plain validation
