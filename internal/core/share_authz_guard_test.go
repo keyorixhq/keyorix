@@ -42,6 +42,7 @@ func shareTermRig(t *testing.T) (*KeyorixCore, *gorm.DB, uint) {
 		&models.UserRole{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SecretACL{},
 		&models.AuditEvent{}, &models.User{}, &models.Project{}, &models.Environment{},
 	))
+	seedLiveProjects(t, db, 1) // scoped grants need live projects rows (#2795)
 	require.NoError(t, db.Create(&models.Role{ID: 50, Name: "member-no-perms"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 50, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "s", IsSecret: true, ProjectID: 1, EnvironmentID: 1, OwnerID: 9}).Error)

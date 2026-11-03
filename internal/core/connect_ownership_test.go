@@ -329,4 +329,7 @@ func seedRoleForUserAtProject(t *testing.T, db *gorm.DB, userID, roleID uint, na
 	t.Helper()
 	require.NoError(t, db.Create(&models.Role{ID: roleID, Name: name, BypassesPermissionChecks: isAdminRoleName(name)}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: userID, RoleID: roleID, ProjectID: projectID}).Error)
+	if projectID != 0 {
+		seedLiveProjects(t, db, projectID) // a scoped grant needs a live projects row (#2795)
+	}
 }

@@ -58,7 +58,7 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 
 	// A time-bound share must expire in the future (see ShareSecret).
 	if req.ExpiresAt != nil && !req.ExpiresAt.After(c.now()) {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "share expiry must be in the future")
+		return nil, shareExpiryNotInFuture()
 	}
 
 	// Create share record

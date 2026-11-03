@@ -35,6 +35,7 @@ func resetAcceptLossFlags(t *testing.T) {
 	reset := func() {
 		acceptLossBrokenIDs, acceptLossOperator, acceptLossReason, acceptLossEvidence = nil, "", "", ""
 		acceptLossAnchorFile, acceptLossAnchorSHA256, acceptLossConfirm = "", "", false
+		acceptLossResumeSeal = ""
 	}
 	reset()
 	t.Cleanup(reset)
