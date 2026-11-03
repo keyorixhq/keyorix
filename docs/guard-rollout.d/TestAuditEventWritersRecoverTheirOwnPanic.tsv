@@ -1,0 +1,1 @@
+TestAuditEventWritersRecoverTheirOwnPanic	internal/core/guards	#3905	new go/ast guard over the core family AuditEvent builders (STRANDED-CORE-SEC-1 item 3), report-only until its first green nightly on main

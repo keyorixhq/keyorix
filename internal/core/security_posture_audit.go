@@ -19,6 +19,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -48,6 +49,9 @@ type securityPostureSettingChange struct {
 // a non-default value" is exactly the kind of thing an operator reviewing
 // the audit trail needs to see.
 func (c *KeyorixCore) logSecurityPostureSettingChanged(ctx context.Context, change securityPostureSettingChange) {
+	// Builds its event before emitAudit's recover: a panic here is logged and
+	// counted, never escapes (INV-CORE-audit-writer-recovers-own-build).
+	defer besteffort.RunRecover("audit.logSecurityPostureSettingChanged")()
 	// The change was recorded, so the event succeeded: same convention as
 	// AuditLicenseState. false would file every posture change under "failed
 	// operations" in any success-filtered view of the trail.
@@ -71,6 +75,9 @@ const EventSecurityPostureBaselineRecorded = "security.posture_baseline_recorded
 
 // logSecurityPostureBaseline records the first start's complete settings snapshot.
 func (c *KeyorixCore) logSecurityPostureBaseline(ctx context.Context, snapshot map[string]string) {
+	// Builds its event before emitAudit's recover: a panic here is logged and
+	// counted, never escapes (INV-CORE-audit-writer-recovers-own-build).
+	defer besteffort.RunRecover("audit.logSecurityPostureBaseline")()
 	ok := true
 	diff, _ := json.Marshal(snapshot)
 	c.emitAudit(ctx, &models.AuditEvent{

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -35,16 +36,29 @@ func TestStartSchedulers_MFAStepUpGrantPrune_RemovesExpiredRow(t *testing.T) {
 	coreService := mustInitCoreService(t, cfg)
 	ctx := context.Background()
 
+	// CreateMFAStepUpGrant re-checks that its owner is a live user
+	// (requireLiveCredentialOwner, AUTH-AUDIT-2), so each grant needs a real one.
+	owner := func(name string) uint {
+		u, err := coreService.CreateUser(ctx, &core.CreateUserRequest{
+			Username: name, Email: name + "@example.com", DisplayName: name, Password: "UserPass123!xyz-long-enough",
+		})
+		if err != nil {
+			t.Fatalf("seed grant owner %s: %v", name, err)
+		}
+		return u.ID
+	}
+	expiredOwner, liveOwner := owner("grant-expired"), owner("grant-live")
+
 	now := time.Now().UTC()
 	if err := coreService.Storage().CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
-		UserID:    1,
+		UserID:    expiredOwner,
 		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
 		ExpiresAt: now.Add(-400 * 24 * time.Hour), // long expired, past any sane retention
 	}); err != nil {
 		t.Fatalf("seed long-expired grant: %v", err)
 	}
 	if err := coreService.Storage().CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
-		UserID:    2,
+		UserID:    liveOwner,
 		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
 		ExpiresAt: now.Add(time.Hour), // not expired at all
 	}); err != nil {
@@ -78,7 +92,7 @@ func TestStartSchedulers_MFAStepUpGrantPrune_RemovesExpiredRow(t *testing.T) {
 	}
 
 	// The unexpired grant must never have been touched.
-	active, err := coreService.HasActiveMFAStepUp(ctx, 2, models.MFAStepUpPurposeRestrictedSecretRead)
+	active, err := coreService.HasActiveMFAStepUp(ctx, liveOwner, models.MFAStepUpPurposeRestrictedSecretRead)
 	if err != nil {
 		t.Fatalf("HasActiveMFAStepUp: %v", err)
 	}

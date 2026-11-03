@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -70,6 +71,9 @@ func (r RetentionResult) Total() int64 {
 // records the configured windows every time they're applied, mirroring
 // AuditLicenseState's startup-audit pattern.
 func (c *KeyorixCore) SetRetentionPolicy(ctx context.Context, p RetentionPolicy) {
+	// Builds its event before emitAudit's recover: a panic here is logged and
+	// counted, never escapes (INV-CORE-audit-writer-recovers-own-build).
+	defer besteffort.RunRecover("audit.SetRetentionPolicy")()
 	c.retentionPolicy = p
 	ok := true
 	c.emitAudit(ctx, &models.AuditEvent{

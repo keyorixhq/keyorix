@@ -24,6 +24,7 @@ func TestAuthorizeSecretAction_ReusesOnlyTheSameSecretsResolution(t *testing.T) 
 	require.NoError(t, db.Create(&models.Permission{ID: 70, Name: permSecretsRead, Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 51, Name: "reader-p7"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 51, PermissionID: 70}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 7, Name: "p7"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 51, ProjectID: 7}).Error)
 	seedLiveProjects(t, db, 7) // scoped grants need live projects rows (#2795)
 	other := &models.SecretNode{ID: 2, Name: "other", IsSecret: true, ProjectID: 7, EnvironmentID: 70, OwnerID: 9}

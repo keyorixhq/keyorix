@@ -425,7 +425,17 @@ func buildAuditEventOutcome(ctx context.Context, eventType string, userID *uint,
 // project context — added for ADR-082 branch 3, whose Connect deny-path events
 // need both Success=false and a populated ProjectID (the connector's owning
 // project), which no prior helper supported simultaneously.
+//
+// Recovers its own panic, like writeAuditEventDiffOn (#2561) and emitAudit: it
+// builds the event (sanitizeAuditText, actorTypeFromContext,
+// impersonatorFromContext) before emitAudit's recover begins, and its callers
+// are deny-path audits and post-commit best-effort steps
+// (session_undelivered.go) whose answer is already decided. A panic here is
+// logged and counted (keyorix_best_effort_failures_total, step
+// audit.writeAuditEventFailed) and the caller's answer stands
+// (INVARIANT-GUARDS-1 observation 4).
 func (c *KeyorixCore) writeAuditEventFailed(ctx context.Context, eventType string, userID *uint, projectID *uint, ip string, description string) {
+	defer besteffort.RunRecover("audit.writeAuditEventFailed")()
 	f := false
 	event := &models.AuditEvent{
 		EventType:   eventType,

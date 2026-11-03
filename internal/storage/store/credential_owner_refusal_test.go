@@ -7,7 +7,7 @@ package store
 // side deterministically, with no concurrency: once a sweep's state change has
 // committed — the owner suspended, deprovisioned, deactivated or soft-deleted —
 // every credential insert (CreatePersonalAccessToken, CreateSession,
-// RotateSession) must refuse and leave NO row behind. That is the
+// RotateSession, CreateMFAStepUpGrant) must refuse and leave NO row behind. That is the
 // requireLiveCredentialOwner re-check on its own; on SQLite, where BEGIN
 // IMMEDIATE serializes the insert transaction against the sweep, it is the only
 // thing standing between "sweep committed before the insert transaction began"
@@ -77,6 +77,12 @@ func TestCredentialInsertRefusedForUnusableOwner(t *testing.T) {
 			_, err := ls.CreateSession(ctx, &models.Session{UserID: id, SessionToken: fmt.Sprintf("s-%d", id)})
 			return func() int64 { return countRows(t, ls.db, &models.Session{}, "user_id = ?", id) }, err
 		}},
+		{"CreateMFAStepUpGrant", func(t *testing.T, ls *LocalStorage, id uint) (func() int64, error) {
+			err := ls.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+				UserID: id, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: time.Now().Add(time.Minute),
+			})
+			return func() int64 { return countRows(t, ls.db, &models.MFAStepUpGrant{}, "user_id = ?", id) }, err
+		}},
 		{"RotateSession", func(t *testing.T, ls *LocalStorage, id uint) (func() int64, error) {
 			// The session being rotated was minted while its owner was live:
 			// insert it directly so the owner's current state does not matter.
@@ -121,7 +127,7 @@ func freshCredentialStore(t *testing.T) *LocalStorage {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.PersonalAccessToken{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.PersonalAccessToken{}, &models.MFAStepUpGrant{}))
 	seedCredentialOwners(t, db)
 	return NewLocalStorage(db)
 }

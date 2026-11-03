@@ -15,8 +15,24 @@ import (
 	"gorm.io/gorm"
 )
 
+// CreateMFAStepUpGrant inserts grant and, in the same transaction, re-checks
+// that its owner is still live (requireLiveCredentialOwner), rolling back if
+// not. A step-up grant is a credential in the #2701 sense: VerifyMFAStepUp
+// checks the account before its code check, and a suspend/deactivate/delete
+// committing between that check and this insert used to leave a live grant
+// behind (AUTH-AUDIT-2). The sweeps purge grants only after their own commit
+// (purgeStepUpGrants), so a grant inserted after that purge was never swept.
+// Write-then-check under lockLiveParent closes both orderings: either the
+// sweep's row lock comes first and this re-check sees the blocked owner, or
+// this transaction's FOR SHARE comes first and the sweep (and its post-commit
+// purge) runs after this grant has committed.
 func (ls *LocalStorage) CreateMFAStepUpGrant(ctx context.Context, grant *models.MFAStepUpGrant) error {
-	return ls.db.WithContext(ctx).Create(grant).Error
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(grant).Error; err != nil {
+			return err
+		}
+		return requireLiveCredentialOwner(tx, grant.UserID)
+	})
 }
 
 func (ls *LocalStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint, purpose models.MFAStepUpPurpose, now time.Time) (*models.MFAStepUpGrant, error) {

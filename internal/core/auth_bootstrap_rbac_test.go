@@ -89,6 +89,7 @@ func seedUserWithRole(t *testing.T, st *store.LocalStorage, username, roleName s
 	require.NoError(t, err)
 	role, err := st.GetRoleByName(ctx, roleName)
 	require.NoErrorf(t, err, "role %s must be seeded", roleName)
+	seedLiveScopeProjects(t, st.DB(), scope.ProjectID)
 	require.NoError(t, st.AssignRole(ctx, u.ID, role.ID, scope))
 	return u.ID
 }
