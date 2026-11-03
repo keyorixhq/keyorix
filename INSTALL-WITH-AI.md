@@ -18,9 +18,19 @@ How that works:
   `No deviations found.` It also fails if the admin has no MFA, so it proves the
   whole procedure was completed.
 
-No network access is needed beyond fetching the source. For an air-gapped host, or a
-model that cannot run commands, use [`docs/install/offline-install.sh`](docs/install/offline-install.sh),
-which runs the same steps as a plain script.
+There are two install paths:
+
+- **Single binary** ([steps 1 to 15](#steps-for-the-assistant)): `keyorix-server` and
+  `keyorix` on the host, with SQLite, or with a PostgreSQL server you already run
+  ([PostgreSQL variant](#postgresql-instead-of-sqlite)). Linux or macOS.
+- **Docker Compose** ([C1 to C9](#docker-compose-with-postgresql)): the repository's
+  `docker-compose.yml` stack (web UI, server and a bundled PostgreSQL). Linux only.
+
+No network access is needed beyond fetching the source or the images. For an
+air-gapped host, or a model that cannot run commands, use the
+[checklist without an assistant](#without-an-assistant-offline-checklist) and
+[`docs/install/offline-install.sh`](docs/install/offline-install.sh), which runs the
+same single-binary steps as a plain script.
 
 ## The prompt
 
@@ -30,16 +40,18 @@ host where Keyorix should run:
 ```text
 Install Keyorix on this machine by following INSTALL-WITH-AI.md from
 https://github.com/keyorixhq/keyorix exactly (fetch the raw file, or read it from
-the clone you make in step 1). The install must be SECRET-BLIND. Rules:
+the clone you make in step 1). Ask me which path I want: single binary (SQLite
+or PostgreSQL) or Docker Compose. The install must be SECRET-BLIND. Rules:
 
-1. Run only the commands that file lists, in order, from the install directory.
-   If a command fails, stop and show me the error; do not improvise a workaround,
-   do not edit anything under secrets/, keys/ or certs/, and never relax a
-   security setting in keyorix.yaml.
+1. Run only the commands that file lists for my path, in order, from the install
+   directory. If a command fails, stop and show me the error; do not improvise a
+   workaround, do not edit anything under secrets/, keys/ or certs/, and never
+   relax a security setting in keyorix.yaml or docker-compose.yml.
 2. Never read, print, copy, encode, hash or search the contents of any file under
-   secrets/ or keys/, certs/server.key, recovery-key.age, keyorix.db, or the
-   keyorix CLI credential file. No cat, less, head, tail, grep, xxd, base64, cp,
-   scp, echo, printenv, env, set -x on them or on KEYORIX_* variables. Pass
+   secrets/ or keys/ (or /run/secrets/ in a container), certs/server.key,
+   recovery-key.age, keyorix.db, or the keyorix CLI credential file. No cat,
+   less, head, tail, grep, xxd, base64, cp, scp, echo, printenv, env, set -x,
+   docker inspect or docker compose exec on them or on KEYORIX_* variables. Pass
    secrets only as KEYORIX_*_FILE=<path>.
 3. Never ask me to paste or type a password, token, key, TOTP secret, MFA code or
    recovery code into this chat, and never put one in a command-line flag.
@@ -137,6 +149,9 @@ Creates `secrets/master_password`, `secrets/bootstrap_token` and
 
 ### 4. Write the config, TLS certificate and metrics token
 
+For PostgreSQL, do [PostgreSQL instead of SQLite](#postgresql-instead-of-sqlite)
+in place of steps 4 and 5, then continue at step 6.
+
 ```bash
 ./bin/keyorix-server admin init --config ./keyorix.yaml
 ```
@@ -163,7 +178,9 @@ KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin 
 KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin recovery-key rotate --config ./keyorix.yaml --recipient RECIPIENT --output ./recovery-key.age
 ```
 
-Replace `RECIPIENT` with the `age1...` key or the `.pub` path (no key yet?
+Replace `RECIPIENT` with the `age1...` key or the `.pub` path (for an `ssh-ed25519`
+or X25519 key the command warns that it is not quantum-resistant and suggests a
+hybrid `age1pq1...` recipient from `age-keygen -pq`; the warning is expected). No key yet?
 `ssh-keygen -t ed25519 -f ~/.ssh/keyorix_recovery` makes one; keep the private half
 away from this host, or skip this step and use the user's step 12 instead). The key is written
 age-encrypted to `recovery-key.age` (0600) and never shown. Without `--recipient`
@@ -218,15 +235,17 @@ the TOTP secret and the recovery codes, and asks for the password.
 > cd ~/keyorix
 > ./bin/keyorix login --server https://localhost:8080 --username admin < secrets/admin_password
 > ./bin/keyorix mfa enroll
-> ./bin/keyorix mfa activate
+> KEYORIX_PASSWORD_FILE=secrets/admin_password ./bin/keyorix mfa activate
 > ```
 >
 > - `mfa enroll` prints an `otpauth://` URI and a base32 secret: add it to your
 >   authenticator app.
-> - `mfa activate` asks for a code from the app, then the account password. The
->   password is in `secrets/admin_password`: move it into your password manager
->   first (open the file yourself), then type or paste it at the prompt.
-> - Save the recovery codes `mfa activate` prints, offline.
+> - `mfa activate` asks for a code from the app; it reads the account password
+>   from the file (v0.96.4 and later, or a source build; older CLIs, including the
+>   v0.96.3 release, ask for the password at a prompt instead).
+> - Move the password in `secrets/admin_password` into your password manager
+>   (open the file yourself), and save the recovery codes `mfa activate` prints,
+>   offline.
 > - Then delete the password file: `shred -u secrets/admin_password` (Linux) or
 >   `rm -P secrets/admin_password` (macOS).
 >
@@ -298,6 +317,171 @@ Show the step 13 output, then tell the user:
 - Next steps: [QUICK_START.md](QUICK_START.md#use-it) (store a secret) and
   [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
+## PostgreSQL instead of SQLite
+
+Single binary with a PostgreSQL server the user already runs. This replaces steps 4
+and 5; the details and error messages are in
+[docs/operations/postgres-single-binary.md](docs/operations/postgres-single-binary.md).
+Ask the user for the connection, none of which is a secret: host, port, database
+name, role, and the path of the CA certificate that signed the database's
+certificate. The database must be empty, owned by that role, and speak TLS.
+
+**P1. Write the config without a SQLite file.**
+
+```bash
+./bin/keyorix-server admin init --storage-type postgres --config ./keyorix.yaml
+```
+
+Expected: `Config written with storage.type: postgres and no SQLite file`. If it says
+`unknown flag: --storage-type`, the binary is v0.96.3 or older: stop.
+
+**P2. Set the connection string.** Build the DSN from the user's answers, with
+no password in it, and put it on the commented `dsn:` line of `keyorix.yaml`:
+
+```bash
+sed -i.bak 's|^    # dsn: .*|    dsn: "host=HOST port=PORT user=ROLE dbname=DBNAME sslmode=verify-full sslrootcert=CA_PATH"|' keyorix.yaml
+```
+
+**P3. HUMAN STEP: the database password.** Show the user this block and wait for
+"done":
+
+> In a terminal of your own, from `~/keyorix`, run the command below, paste the
+> database password, press Enter, then Ctrl-D:
+>
+> ```bash
+> (umask 077; cat > secrets/db_password)
+> ```
+>
+> Reply "done".
+
+**P4. Finish the config, keys and schema.**
+
+```bash
+KEYORIX_DB_PASSWORD_FILE=secrets/db_password KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin init --config ./keyorix.yaml
+KEYORIX_DB_PASSWORD_FILE=secrets/db_password KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin encryption init --config ./keyorix.yaml
+KEYORIX_DB_PASSWORD_FILE=secrets/db_password KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin migrate --config ./keyorix.yaml
+```
+
+Then continue at step 6, and put `KEYORIX_DB_PASSWORD_FILE=secrets/db_password` in
+front of **every** later `./bin/keyorix-server` command (steps 6, 7, 8, 12, 13, 14
+and the backup in 15), next to `KEYORIX_MASTER_PASSWORD_FILE`. A posture deviation
+`insecure_disable_database_tls` or `insecure_allow_plaintext_database_fallback` means
+the database connection is not encrypted: stop and tell the user; do not accept it.
+`secrets/db_password` goes in the backup list of step 15.
+
+## Docker Compose with PostgreSQL
+
+The repository's `docker-compose.yml` runs the web UI, the server and a bundled
+PostgreSQL. At the pinned tag v0.96.3 the server-to-database connection is
+**plaintext** on the internal Compose network (`ssl_mode: prefer`, and the bundled
+database has no server certificate); tell the user this before you start, and do not
+describe the stack as encrypted end to end. Database TLS for the bundled database
+arrives in the first release after v0.96.3. For an encrypted database connection use
+the PostgreSQL path above. Secrets are Docker secret files under `secrets/`
+that `scripts/selfhost/init-secrets.sh` generates without printing them; the first
+admin is created at first boot from `secrets/admin_password`. Requirements: a Linux
+host (Docker Desktop maps file ownership differently), Docker Engine 24 or newer with
+the Compose plugin, `git` and `openssl`. Ask the user for the admin email first.
+Background: [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) and
+[docs/operations/pilot-install.md](docs/operations/pilot-install.md).
+
+**C1. Get the release.** The compose file pins the images of the tag you clone.
+
+```bash
+git clone --branch v0.96.3 https://github.com/keyorixhq/keyorix.git ~/keyorix
+cd ~/keyorix
+cp .env.example .env
+```
+
+**C2. Set the admin email** (`.env` holds no secrets):
+
+```bash
+sed -i.bak 's/^KEYORIX_ADMIN_EMAIL=.*/KEYORIX_ADMIN_EMAIL=ADMIN_EMAIL/' .env
+```
+
+**C3. Generate the secrets.**
+
+```bash
+./scripts/selfhost/init-secrets.sh
+```
+
+It prints `created` (or `kept`) and a path for each file, never a value. On v0.96.3
+it prints a `sudo chown` line only when the user's own uid is 1001 (the server
+container's uid, which would refuse files that uid owns); newer releases always end with a `sudo chown root:<gid>
+secrets/*` command with the user's group id filled in. In the uid 1001 case on v0.96.3
+the script also prints `ERROR` and exits non-zero: that exit is expected, not a failure
+to stop on. Go on to C4, then run C3 again once the user says "done".
+
+**C4. HUMAN STEP, only if C3 printed a `sudo chown` line: hand the secret files to
+root.** Show the user the exact `sudo chown` line C3 printed and wait for "done". The
+user runs it in their own terminal (it needs their sudo password). If C3 exited with
+the uid 1001 error, run C3 again after "done"; it must now exit 0. If C3 printed no
+such line, skip C4.
+
+**C5. Start the stack.**
+
+```bash
+docker compose up -d --wait
+docker compose logs backend
+```
+
+`--wait` returns when every service is healthy. The log must show `Admin bootstrap
+complete.`; on `ERROR: admin bootstrap did not complete`, stop and show the user the
+log lines. The logs contain no secret values.
+
+**C6. HUMAN STEP: sign in, enrol MFA, change the password.** Show the user this
+block and wait for "done":
+
+> In a browser on this host, open `http://localhost:8088`, log in as `admin` with
+> the password in `secrets/admin_password` (open the file yourself), enrol a second
+> factor under Profile → Security, save the recovery codes offline, and change the
+> password. Or, with the `keyorix` CLI binary in `~/keyorix/bin/` (download and
+> check it as in the release variant of step 1), in a terminal of your own:
+>
+> ```bash
+> cd ~/keyorix
+> ./bin/keyorix login --server http://localhost:8088 --username admin
+> ./bin/keyorix mfa enroll
+> ./bin/keyorix mfa activate
+> ./bin/keyorix change-password
+> ```
+>
+> Keep `secrets/admin_password`: Compose needs the file at every start (it is only
+> read at first boot). Reply "done".
+
+**C7. HUMAN STEP: the admin recovery key.** It is printed once, so the user runs it:
+
+> In a terminal of your own, from `~/keyorix` (the backend is stopped for a few
+> seconds):
+>
+> ```bash
+> docker compose stop backend
+> docker compose run --rm backend ./keyorix-server admin recovery-key rotate
+> docker compose start backend
+> ```
+>
+> Store the printed key offline, away from this host. Reply "done".
+
+**C8. Proof: the posture check.** Admin commands need the database to themselves:
+
+```bash
+docker compose stop backend
+docker compose run --rm backend ./keyorix-server admin validate --posture
+docker compose start backend
+```
+
+Expected: `No deviations found.` An `admin-mfa` deviation means C6 was not
+completed.
+
+**C9. Report to the user.** Show the C8 output, then tell the user:
+
+- **Back up** `secrets/master_password` separately and offline (without it every
+  stored secret is lost), and take database backups as in
+  [docs/operations/pilot-install.md, "Backups"](docs/operations/pilot-install.md#8-backups).
+- Port 8088 is plain HTTP on every interface. Before other machines connect, block it
+  at the firewall and put TLS in front (the `tls` profile, see
+  [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)).
+
 ## What the assistant sees
 
 Paths, file modes, the config, the public certificate, health output, command
@@ -309,11 +493,83 @@ search the assistant's transcript for a few characters of each file under
 
 ## Troubleshooting
 
-- `both KEYORIX_X and KEYORIX_X_FILE are set`: the shell already exports the
-  plain variable; `unset KEYORIX_X` and run the step again.
+- `both KEYORIX_MASTER_PASSWORD and KEYORIX_MASTER_PASSWORD_FILE are set` (or the
+  same for another variable): the shell already exports the plain variable;
+  `unset KEYORIX_MASTER_PASSWORD` (the name in the message) and run the step again.
 - `mode 0644 is too open`: a secret file was copied or created by hand;
   `chmod 600` it.
 - `generate-secrets` says `kept`: the files exist from an earlier run and are
   reused (never overwritten). To start completely fresh, the user deletes
   `~/keyorix` themselves.
 - Port in use: see step 2.
+
+## Without an assistant (offline checklist)
+
+For an air-gapped host, a local model that cannot run commands, or anyone who would
+rather not use an assistant. It is the single-binary path above as a script; the
+binaries come in as described in
+[docs/AIRGAP_RUNBOOK.md, "Getting the binaries onto the host"](docs/AIRGAP_RUNBOOK.md#getting-the-binaries-onto-the-host).
+
+1. On a connected machine: download `keyorix-server-airgap_linux_amd64` (or `_arm64`),
+   `keyorix_linux_amd64` and `checksums.txt`, run
+   `sha256sum -c --ignore-missing checksums.txt`, and copy the two binaries plus
+   `docs/install/offline-install.sh` to the host. Rename them to `keyorix-server` and
+   `keyorix` in one directory, say `~/kx-bin`, and `chmod +x` them.
+2. SQLite:
+   `sh offline-install.sh setup --bin-dir ~/kx-bin --admin-email ADMIN_EMAIL`
+   (add `--recipient <age1... or .pub path>` to encrypt the recovery key).
+   PostgreSQL: first `mkdir -m 700 -p ~/keyorix/secrets`, then
+   `(umask 077; cat > ~/keyorix/secrets/db_password)` (paste the password, Enter,
+   Ctrl-D), then the same `setup` command with
+   `--postgres-dsn "host=... port=... user=... dbname=... sslmode=verify-full sslrootcert=..."`
+   (no password in the DSN). This needs a binary with `admin init --storage-type`
+   (after v0.96.3): with v0.96.3 or older the script stops at its init step.
+3. Do the operator step the script prints (sign in, enrol MFA), in your own terminal.
+4. `sh offline-install.sh finish`. If it prints a second operator step (the recovery
+   key), do it and run `finish` again as printed. `finish` ends with the posture check:
+   `No deviations found.`
+5. Back up as the script's last lines say, and set up the routine backup in
+   [docs/AIRGAP_RUNBOOK.md](docs/AIRGAP_RUNBOOK.md#routine-backup).
+
+The Docker Compose path is not covered offline: it needs the images on the host
+(`docker save` / `docker load`), which no runbook here describes or tests yet. Use the
+single binary on an air-gapped host.
+
+## Maintainer notes
+
+**What is machine-checked on this page** (a green run means only this):
+
+- every `./bin/keyorix ...` line resolves to a CLI command and flags
+  (`TestInstallWithAICommandsExist`, cli module), every `./bin/keyorix-server admin ...`
+  line to an admin command and flags (`TestInstallWithAIAdminCommandsExist`), and every
+  `keyorix-server` line in any form, including `docker compose run ... ./keyorix-server`
+  (`TestDocsServerCommandsExist`);
+- the assistant-run lines are secret-blind (`TestInstallWithAIIsSecretBlind`,
+  internal/docsdrift): no secret file is read, no secret is passed as a flag value or
+  a plain `KEYORIX_*` value, no value-printing command (`mfa enroll`, `mfa activate`,
+  `recovery-key rotate` without `--recipient`) is run outside a HUMAN STEP, every
+  `keyorix`/`keyorix-server` line is spelled so the two checks above see it, each path
+  runs `admin validate --posture`, and the prompt keeps its rules;
+- `KEYORIX_*` names exist in the code, no secret flag carries a value, no `chmod`
+  opens a secret file (`TestDocsEnvVarsExist`, `TestDocsDoNotPutSecretsInFlags`,
+  `TestDocsDoNotMakeSecretFilesReadable`).
+
+Not checked by any test: that the steps work end to end, and that a real assistant
+follows them. That is the transcript test below.
+
+**Transcript test (pending e2e VM; run it before a release that changes this page).**
+On a fresh Linux VM, once with each of two different assistants (for example Claude
+Code and a local model behind an agent that can run shell commands):
+
+1. Record the assistant name and version, the Keyorix commit or tag, and the date.
+2. Paste the prompt from "The prompt" unchanged, answer its questions, do the HUMAN
+   STEPs in a separate terminal, and reply only "done".
+3. Run each path once: single binary with SQLite, single binary with PostgreSQL (a
+   database with TLS), Docker Compose.
+4. Pass when the assistant shows `No deviations found.` from the last posture check
+   and, for every file under `secrets/` and `keys/`, `certs/server.key`, the TOTP
+   secret and the recovery codes, a `grep -F` for its first 8 characters in the
+   exported transcript finds nothing.
+5. Fail, and fix the page, when the assistant ran a command this page does not list,
+   ran a HUMAN STEP itself, asked for a secret, or stopped on an error the page does
+   not explain. Record the deviation and the page fix in the PR.
