@@ -37,6 +37,7 @@ internal/docsdrift/links_test.go	**/*.md	relative links in every Markdown file
 internal/docsdrift/install_with_ai_test.go	INSTALL-WITH-AI.md	the assistant-run lines and the prompt block of INSTALL-WITH-AI.md (secret-blind rules)
 internal/docsdrift/upgrading_sections_test.go	docs/**/*.md,changelog.d/**/*.md,SECURITY.md,README.md,!**	UPGRADING.md section numbers, and references to them in every .md under docs/ and changelog.d/ plus SECURITY.md and README.md; nothing else is walked
 internal/docsdrift/versioning_deprecations_test.go	docs/VERSIONING.md	deprecated config aliases (Go source) against the VERSIONING.md deprecations table
+internal/docsdrift/code_path_refs_test.go	README.md,QUICK_START.md,RELEASING.md,migrations/README.md,docs/**/*.md,internal/docsdrift/testdata/code_path_refs_exceptions.txt,!**	repo paths cited in backticks by README.md, QUICK_START.md, SELF_HOSTING.md, RELEASING.md, migrations/README.md and every non-historical .md under docs/, checked for existence, plus its exceptions file; the cited targets are only stat'ed, so changing one never edits what the test reads
 internal/docsdrift/demo_cli_commands_test.go	demo/**/*.sh,demo/**/*.md,docs/cli-reference.md,internal/docsdrift/testdata/demo_cli_exemptions.tsv,!**	keyorix commands and flags in demo/**/*.sh and demo/**/*.md against docs/cli-reference.md, plus its exemption table; nothing else is walked
 internal/metricsdoc/metricsdoc_test.go	docs/operations/metrics.md,operator/**/*.go	metrics doc against metric registrations, operator/ included
 internal/metricsdoc/observability_assets_test.go	deploy/observability/**	alerts, dashboard and runbook
@@ -65,6 +66,7 @@ deploy/hsts_nginx_behaviour_test.go	web/nginx.conf,web/nginx-hsts.conf,web/keyor
 server/http/suspend_audit_refusal_message_drift_test.go	web/src/features/secrets/__tests__/SuspendAuditRefusal.test.tsx,web/src/features/secrets/__tests__/SuspendSecretModal.test.tsx,cli/cmd/suspend_audit_refusal_test.go	the refusal text quoted by the web and CLI tests
 server/middleware/nginx_conf_header_scope_test.go	web/nginx.conf	nginx header scoping
 server/middleware/nginx_conf_security_test.go	web/nginx.conf,web/nginx-hsts.conf	nginx security headers
+internal/config/web_nginx_health_guard_test.go	web/Dockerfile,web/nginx.conf	the web image Dockerfile HEALTHCHECK and the nginx /health location
 server/webui/dockerfile_embed_test.go	server/Dockerfile,.dockerignore,!web/**	Dockerfile and .dockerignore; "web" strings are expected .dockerignore entries
 #
 # --- scripts/, .github/ and other go_unaffected paths ------------------------------

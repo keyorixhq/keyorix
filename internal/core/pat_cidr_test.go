@@ -71,9 +71,10 @@ func TestPATRestrictionFrom_IncludesCIDRs(t *testing.T) {
 // in r124 missed its CIDR sibling).
 func TestDecodePATCIDRs_CorruptionFailsClosed(t *testing.T) {
 	t.Parallel()
-	// A parseable empty column yields nil (no restriction — expected).
+	// Only the exact empty column yields nil (no restriction — expected). The
+	// encoder never writes whitespace, so a whitespace-only column is corrupted.
 	assert.Nil(t, DecodePATCIDRs(""))
-	assert.Nil(t, DecodePATCIDRs("   "))
+	assert.Equal(t, patCIDRCorrupted, DecodePATCIDRs("   "))
 
 	// A valid JSON array parses normally.
 	got := DecodePATCIDRs(`["10.0.0.0/8"]`)

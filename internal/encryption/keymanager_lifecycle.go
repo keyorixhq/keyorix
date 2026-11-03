@@ -155,9 +155,11 @@ type KEKTooShortError = auditverify.KEKTooShortError
 // domain-separated outputs of the same KEK, so the fingerprint reveals nothing
 // about the key itself). Both are pure, deterministic functions of the KEK alone,
 // so they are stable across a DEK rotation (same KEK) and only change when the KEK
-// itself does (KEK-provider migration). A KEK shorter than MinKEKLen is refused
-// with a *KEKTooShortError before any derivation, identically in every FIPS
-// mode: under GODEBUG=fips140=only crypto/hkdf would otherwise panic on it.
+// itself does (rotate-kek or a KEK-provider migration); the audit-checkpoint key
+// derived by deriveAuditCheckpointKey changes with it. A KEK shorter than
+// MinKEKLen is refused with a *KEKTooShortError before any derivation,
+// identically in every FIPS mode: under GODEBUG=fips140=only crypto/hkdf would
+// otherwise panic on it.
 func deriveEvidenceSignKey(kek []byte) (key []byte, keyID string, err error) {
 	if err := auditverify.CheckKEKLen("evidence-signing key", kek); err != nil {
 		return nil, "", err

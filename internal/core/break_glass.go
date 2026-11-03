@@ -778,6 +778,26 @@ func (c *KeyorixCore) ListBreakGlassActivationsForCaller(ctx context.Context, ac
 	return own, BreakGlassListScopeOwn, nil
 }
 
+// BreakGlassUsernames maps each activating user's ID in rows to their username, for
+// the list response's additive `username` field (#3741). It reads names through
+// the same lookup as the audit descriptions (auditObjectName), so a user that is
+// deleted or unreadable is simply absent from the map (the caller renders the
+// bare ID) and the list never fails on it. Usernames only, never an email.
+func (c *KeyorixCore) BreakGlassUsernames(ctx context.Context, rows []*models.BreakGlassActivation) map[uint]string { // nosemgrep: keyorix-unbounded-bulk-slice-param -- rows is the project's stored activation list from ListBreakGlassActivationsForCaller (a storage query result, not a client-supplied array); the per-item lookup runs over the deduped user-id set
+	names := make(map[uint]string)
+	seen := make(map[uint]bool)
+	for _, a := range rows {
+		if a == nil || a.UserID == 0 || seen[a.UserID] {
+			continue
+		}
+		seen[a.UserID] = true
+		if n := c.auditObjectName(ctx, c.storage, auditKindUser, a.UserID); n != "" {
+			names[a.UserID] = n
+		}
+	}
+	return names
+}
+
 // redactBreakGlassForOwnView is the single place the own view (scope "own", a
 // caller without roles.read) loses the admin-side fields (FIX-3184, Andrei
 // 2026-10-13): the reviewer's note and identity, and who revoked it (user or

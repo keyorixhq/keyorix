@@ -139,6 +139,10 @@ describe('MfaSection enrolment flow', () => {
             'href',
             'otpauth://totp/test'
         );
+        // #3738: the URI is also drawn as a QR code (client-side SVG), the text key stays as fallback.
+        const qr = screen.getByTestId('qr-code');
+        expect(qr.tagName.toLowerCase()).toBe('svg');
+        expect(qr.querySelector('path')?.getAttribute('d')).toBeTruthy();
 
         fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
         fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'hunter2' } });
@@ -179,6 +183,7 @@ describe('MfaSection enrolment flow', () => {
 
         expect(screen.getByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
         expect(screen.queryByRole('link', { name: /open in authenticator app/i })).not.toBeInTheDocument();
+        expect(screen.queryByTestId('qr-code')).not.toBeInTheDocument();
     });
 
     it('shows a fallback error when verification is rejected with no detail, and omits the auth link when uri is empty', () => {
