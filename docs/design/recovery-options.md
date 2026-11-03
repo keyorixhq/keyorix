@@ -200,6 +200,34 @@ list**. RECOVERY-DESIGN-1's "signed break record plus a linked segment genesis" 
 not start the seal before §4's key-transition work, or build them in the same series with §4
 first.
 
+### Addendum (2026-11-03, Andrei, ask `seal-unpinned-field-adr`): the seal record's `unpinned` field
+
+AUDIT-SEAL-TAILS-3 (#3852) extends `PlanAuditLossAcceptance` with a fourth rule beyond constraint 4
+above: a surviving row that no authenticated pin covers (no checkpoint, high-water mark, retention
+anchor, verification-state pin, host witness, earlier seal record or verified `--anchor` names it)
+is not refused — an install with only one checkpoint must still be able to seal a genuine loss.
+Those spans are printed in the plan as `unauthenticated: audit events #a through #b ...` and
+recorded in the seal record itself as a new, optional field: `unpinned: [{from_id, through_id}]`
+(`omitempty`), record version unchanged (`v: 1`).
+
+**Decision: accepted**, as a backward-compatible addition to the format in constraint 4, not a new
+ADR. The alternative — refusing any acceptance whose surviving range is not fully pinned — blocks
+legitimate recovery on exactly the single-checkpoint, air-gapped installs this product targets, and
+the eight constraints above already let a plan proceed on operator-supplied evidence and partial
+authentication; this is a narrower case of the same tradeoff.
+
+Backward compatibility holds under the same reasoning as constraints 5 and 6: the MAC and the
+digest are over the stored payload bytes, not a reconstructed struct, so a binary that has never
+heard of `unpinned` (core, or the independent `internal/auditverify` offline decoder) still reads,
+verifies and digests an existing record unchanged whether or not the field is present.
+
+**Not closed by this decision** (tracked separately, not a blocker on #3852): an actor who can also
+delete the *older* checkpoint rows turns what would otherwise be a refused rewrite into an unpinned
+span instead, since only the latest checkpoint is guarded by the high-water mark today. Documented
+in `docs/operator/audit-chain-break-runbook.md` and `INV-CORE-audit-seal-never-valid-tamper-broken`.
+Closing it needs a checkpoint chain (each checkpoint embedding the hash of the previous one) — its
+own ADR-gated change, scoped separately after #3852 merges.
+
 ---
 
 ## 3. Reversing a DEK rotation
