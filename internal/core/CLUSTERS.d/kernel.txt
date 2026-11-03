@@ -12,6 +12,7 @@ auth.go
 auth_bootstrap.go
 auth_budget.go
 auth_storage_unavailable.go
+authorize_fault_recorder.go
 authorize_transient.go
 authz.go
 authz_secret_batch.go
@@ -27,6 +28,7 @@ errors.go
 errors_permission.go
 errors_rbac.go
 errors_secret.go
+errors_typed.go
 gate_read_decision.go
 hash.go
 identity.go

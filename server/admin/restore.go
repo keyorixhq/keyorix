@@ -76,8 +76,8 @@ var restoreCmd = &cobra.Command{
 'admin migrate' does -- so an old backup restored under a newer binary ends
 up ready to start, not merely restored to its old schema.
 
-The archive's manifest is signature-verified (HMAC-SHA256, KEK-derived key,
-design-b3-backup-v2.md §5) BEFORE any byte reaches the real target -- an
+The archive's manifest is signature-verified (HMAC-SHA256, KEK-derived key)
+BEFORE any byte reaches the real target -- an
 authenticity check a plain checksum cannot provide, since anyone who can
 edit the archive can recompute a checksum to match. Restore also runs
 'admin verify-audit' automatically against the restored database once
@@ -107,7 +107,7 @@ SAME config (same key-material paths) the backup was taken from. With
 place, so an unrecoverable mistake during the restore still has a way back;
 on PostgreSQL the target's tables are emptied inside the load transaction.
 
-Rollback protection (design-b3-backup-v2.md §6): restoring an OLDER backup
+Rollback protection: restoring an OLDER backup
 than this host has already progressed past can silently resurrect access an
 admin has since revoked (a suspended account, a deleted machine credential,
 a rotated role grant) -- the restored database simply doesn't know the
@@ -286,19 +286,20 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	if err != nil {
 		return fmt.Errorf("stat %q: %w", restoreInput, err)
 	}
-	// Staging needs roughly the uncompressed archive size again on top of
-	// what's already on disk (the compressed archive itself); 4x the
-	// compressed size is a deliberately generous, simple estimate (design
-	// §7.4 doesn't mandate a precise compression-ratio calculation).
-	if err := backupfmt.CheckFreeSpace(restoreInput, saturatingQuadruple(archiveInfo.Size())); err != nil {
-		return fmt.Errorf("preflight free-space check (design §7.4): %w", err)
-	}
-
 	stagingDir, err := os.MkdirTemp("", "keyorix-admin-restore-*")
 	if err != nil {
 		return fmt.Errorf("create staging directory: %w", err)
 	}
 	defer os.RemoveAll(stagingDir) //nolint:errcheck
+	// Staging needs roughly the uncompressed archive size again on top of
+	// what's already on disk (the compressed archive itself); 4x the
+	// compressed size is a deliberately generous, simple estimate (design
+	// §7.4 doesn't mandate a precise compression-ratio calculation). Checked
+	// where the staging directory actually is ($TMPDIR, often a different and
+	// smaller filesystem than the archive's), since that is what fills up.
+	if err := backupfmt.CheckFreeSpace(stagingDir, saturatingQuadruple(archiveInfo.Size())); err != nil {
+		return fmt.Errorf("preflight free-space check for the staging directory %s (set TMPDIR to a larger filesystem) (design §7.4): %w", stagingDir, err)
+	}
 
 	archiveFile, err := secretenv.OpenRegularNamed("backup archive", restoreInput) // operator-supplied input path; a FIFO is refused, not waited on
 	if err != nil {
@@ -341,7 +342,7 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 
 	if !backupfmt.VerifyManifestSignature(manifest, manifestKey) {
 		return fmt.Errorf("backup archive's manifest signature is invalid -- the archive may be corrupted or " +
-			"tampered with; restore refuses (design §5)")
+			"tampered with; restore refuses")
 	}
 
 	// Rollback protection (§6.3) -- BEFORE any write to the real target,
@@ -530,7 +531,7 @@ func loadPostgresRestore(cfg *config.Config, manifest backupfmt.Manifest, stagin
 	}
 	defer closeGormDB(targetDB)
 
-	fmt.Println("Loading data into the restored database in one transaction (design §3.4)...")
+	fmt.Println("Loading data into the restored database in one transaction...")
 	loadErr := targetDB.Transaction(func(tx *gorm.DB) error {
 		if restoreOverwriteExisting {
 			if err := clearPostgresRestoreTarget(tx); err != nil {
@@ -593,7 +594,7 @@ func buildStagedSQLiteRestore(cfg *config.Config, stagedDB string, manifest back
 	if err != nil {
 		return fmt.Errorf("open freshly-migrated staged database: %w", err)
 	}
-	fmt.Println("Loading data into the staged database (design §3.4)...")
+	fmt.Println("Loading data into the staged database...")
 	loadErr := targetDB.Transaction(func(tx *gorm.DB) error {
 		if err := backupfmt.LoadArchive(tx, manifest, stagingDir); err != nil {
 			return err
@@ -774,8 +775,7 @@ func runAdminRestoreV1(cfg *config.Config) error {
 	// runAdminRestore's outer gate admits Postgres configs too (H4).
 	if isPostgresStorage(cfg) {
 		return fmt.Errorf("this archive uses the deprecated v1 (physical, SQLite-only) backup format, which never " +
-			"supported a Postgres target -- restore it into a SQLite-backed config, or take a fresh v2 backup " +
-			"(design §3.6 decision 3)")
+			"supported a Postgres target -- restore it into a SQLite-backed config, or take a fresh v2 backup")
 	}
 	manifest, dbBytes, keyBlobs, err := readBackupArchive(restoreInput, restoreMaxEntryBytes, restoreMaxTotalBytes)
 	if err != nil {

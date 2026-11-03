@@ -187,8 +187,9 @@ func (ls *LocalStorage) GetRoleByName(ctx context.Context, name string) (*models
 	return &role, nil
 }
 
-// UpdateRole writes the two columns a role update may change, description and
-// assignable_scope, to the row with role.ID, and returns the stored row.
+// UpdateRole writes the columns a role update may change, description and
+// (unless kept, below) assignable_scope, to the row with role.ID, and returns
+// the stored row.
 //
 // STORE-STALE-WRITE-1: this used to be a full-row Save. Save is an upsert: when
 // the UPDATE matched no row because a concurrent DeleteRole had committed after
@@ -200,12 +201,19 @@ func (ls *LocalStorage) GetRoleByName(ctx context.Context, name string) (*models
 // storage.ErrRoleNotFound and the caller's transaction rolls back. Name,
 // NameFolded and BypassesPermissionChecks are never written here (names are
 // immutable, #1494; the bypass flag has its own setter).
+//
+// An empty role.AssignableScope means "keep the stored scope": the column is
+// left out of the UPDATE, so a narrowing another replica committed after the
+// caller read the role survives (#3909). Writing back the value the caller read
+// instead would undo it under READ COMMITTED, with no lock to stop it. "" is
+// never a valid scope to store (models.IsValidRoleAssignableScope).
 func (ls *LocalStorage) UpdateRole(ctx context.Context, role *models.Role) (*models.Role, error) {
 	db := ls.db.WithContext(ctx)
-	res := db.Model(&models.Role{}).Where("id = ?", role.ID).Updates(map[string]any{
-		"description":      role.Description,
-		"assignable_scope": role.AssignableScope,
-	})
+	cols := map[string]any{"description": role.Description}
+	if role.AssignableScope != "" {
+		cols["assignable_scope"] = role.AssignableScope
+	}
+	res := db.Model(&models.Role{}).Where("id = ?", role.ID).Updates(cols)
 	if res.Error != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
@@ -436,16 +444,18 @@ func (ls *LocalStorage) GetUserRoles(ctx context.Context, userID uint) ([]*model
 // The LEFT JOINs (not INNER) are required because project_id/environment_id 0
 // means "global" and has no corresponding row to join against — the "= 0 OR ..."
 // clause short-circuits before the joined columns are consulted in that case; a
-// scoped project_id/environment_id with no matching row at all (the joined column
-// is SQL NULL) is treated as not-deleted, same as every other "unknown" scope ID
-// this query already tolerates.
+// scoped project_id with no projects row at all (a project hard-deleted or purged
+// while the grant row survived) does NOT authorize: projects.id IS NOT NULL is
+// required next to deleted_at IS NULL, since a missing row also reads deleted_at
+// as NULL (#2795, READPATH-DANGLING-ROLE-1). A scoped environment_id with no row
+// is still read as not-deleted.
 func (ls *LocalStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
 		Joins("LEFT JOIN projects ON projects.id = user_roles.project_id").
 		Joins("LEFT JOIN environments ON environments.id = user_roles.environment_id").
 		Where(sqlWhereURUserID, userID).
-		Where("user_roles.project_id = 0 OR (user_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
+		Where("user_roles.project_id = 0 OR (user_roles.project_id = ? AND projects.id IS NOT NULL AND projects.deleted_at IS NULL)", scope.ProjectID).
 		Where("user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
 		Where(sqlWhereURNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Distinct().Pluck("user_roles.role_id", &ids).Error
@@ -887,7 +897,7 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 		// Honour project-scoped memberships: global (project_id=0) always applies;
 		// non-zero only when it matches the requested project.
 		Where("user_groups.project_id = 0 OR user_groups.project_id = ?", scope.ProjectID).
-		Where("group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
+		Where("group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.id IS NOT NULL AND projects.deleted_at IS NULL)", scope.ProjectID).
 		Where("group_roles.environment_id = 0 OR (group_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
 		Where(sqlWhereGRNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Distinct().Pluck("group_roles.role_id", &ids).Error

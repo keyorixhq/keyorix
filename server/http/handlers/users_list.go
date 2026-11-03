@@ -68,7 +68,8 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) { // NOS
 	if d := r.URL.Query().Get("include_deleted"); d == "true" || d == "1" {
 		filter.IncludeDeleted = true
 	}
-	// ?filter=inactive — users with no login in the last 30 days (incl. never).
+	// ?filter=inactive — users whose last login (or, if they never logged in, whose
+	// account creation) is more than 30 days ago (#3740).
 	if r.URL.Query().Get("filter") == "inactive" {
 		cutoff := time.Now().UTC().Add(-inactiveUserWindow)
 		filter.InactiveSince = &cutoff

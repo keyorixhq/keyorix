@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -448,27 +449,43 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEn
 		// Restore only the children whose deleted_at is at or after the cascade timestamp
 		// (those removed by this DeleteProject); earlier, independently-retired rows are
 		// strictly before it and stay deleted.
-		envResult := tx.Unscoped().Model(&models.Environment{}).
-			Where("project_id = ? AND deleted_at >= ?", id, cascadeTS).Update("deleted_at", nil)
-		if envResult.Error != nil {
-			return fmt.Errorf("failed to restore project environments: %w", envResult.Error)
+		//
+		// The comparison is made in Go, on instants (#3913): SQLite compares deleted_at as
+		// text, and a row soft-deleted before the UTC upgrade on a non-UTC host still holds
+		// host-zone text whose wall clock orders it wrongly against the cascade stamp. The
+		// candidates are selected by id and the rows then updated by id.
+		envIDs, err := cascadeChildIDs(tx, cascadeEnvQuery, id, cascadeTS)
+		if err != nil {
+			return fmt.Errorf("failed to restore project environments: %w", err)
 		}
-		restoredEnvironments = int(envResult.RowsAffected)
+		for chunk := range slices.Chunk(envIDs, cascadeRestoreChunk) {
+			envResult := tx.Unscoped().Model(&models.Environment{}).
+				Where("id IN ?", chunk).Update("deleted_at", nil)
+			if envResult.Error != nil {
+				return fmt.Errorf("failed to restore project environments: %w", envResult.Error)
+			}
+			restoredEnvironments += int(envResult.RowsAffected)
+		}
 
-		// The frozen purge date goes first, while deleted_at still selects these rows. It is
-		// its own statement rather than a map-form Updates alongside deleted_at so the
-		// un-delete below keeps the exact .Update("deleted_at", nil) shape that
-		// TestChildParentLiveness's site scanner recognises (a map-form update would
-		// silently hide this site from that guard).
-		if err := tx.Exec("UPDATE secret_nodes SET purge_at = NULL WHERE secret_nodes.project_id = ? AND secret_nodes.deleted_at >= ?", id, cascadeTS).Error; err != nil {
-			return fmt.Errorf("failed to restore project secrets: clearing purge dates: %w", err)
+		secretIDs, err := cascadeChildIDs(tx, cascadeSecretQuery, id, cascadeTS)
+		if err != nil {
+			return fmt.Errorf("failed to restore project secrets: %w", err)
 		}
-		secResult := tx.Unscoped().Model(&models.SecretNode{}).
-			Where("project_id = ? AND deleted_at >= ?", id, cascadeTS).Update("deleted_at", nil)
-		if secResult.Error != nil {
-			return fmt.Errorf("failed to restore project secrets: %w", secResult.Error)
+		for chunk := range slices.Chunk(secretIDs, cascadeRestoreChunk) {
+			// The frozen purge date goes first. It is its own statement rather than a
+			// map-form Updates alongside deleted_at so the un-delete below keeps the exact
+			// .Update("deleted_at", nil) shape that TestChildParentLiveness's site scanner
+			// recognises (a map-form update would silently hide this site from that guard).
+			if err := tx.Exec("UPDATE secret_nodes SET purge_at = NULL WHERE secret_nodes.id IN ? AND secret_nodes.deleted_at IS NOT NULL", chunk).Error; err != nil {
+				return fmt.Errorf("failed to restore project secrets: clearing purge dates: %w", err)
+			}
+			secResult := tx.Unscoped().Model(&models.SecretNode{}).
+				Where("id IN ?", chunk).Update("deleted_at", nil)
+			if secResult.Error != nil {
+				return fmt.Errorf("failed to restore project secrets: %w", secResult.Error)
+			}
+			restoredSecrets += int(secResult.RowsAffected)
 		}
-		restoredSecrets = int(secResult.RowsAffected)
 
 		// Clear the project last.
 		if err := tx.Unscoped().Model(&models.Project{}).
@@ -481,6 +498,75 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEn
 		return 0, 0, txErr
 	}
 	return restoredEnvironments, restoredSecrets, nil
+}
+
+// cascadeRestoreChunk bounds the ids bound into one RestoreProject UPDATE, well under SQLite's
+// bound-variable limit for a project with a very large secret count.
+const cascadeRestoreChunk = 500
+
+// The candidate scans of RestoreProject: CAST ... AS TEXT hands SQLite's stored text back
+// whatever zone it was written in, so the Go side parses it with parseDBTimestamp. Postgres
+// does not take this path: its CAST renders in the session's DateStyle ("01/11/2026 ..." under
+// 'SQL, DMY'), which no layout can read reliably, so cascadeChildIDs scans the timestamptz
+// as a time.Time there instead (the *PG constants).
+const (
+	sqlSelectProjectEnvDeletedAt      = "SELECT id, CAST(deleted_at AS TEXT) AS deleted_at FROM environments WHERE project_id = ? AND deleted_at IS NOT NULL"
+	sqlSelectProjectSecretDeletedAt   = "SELECT id, CAST(deleted_at AS TEXT) AS deleted_at FROM secret_nodes WHERE project_id = ? AND deleted_at IS NOT NULL" // #nosec G101 -- SQL query string, not a hardcoded credential
+	sqlSelectProjectEnvDeletedAtPG    = "SELECT id, deleted_at FROM environments WHERE project_id = ? AND deleted_at IS NOT NULL"
+	sqlSelectProjectSecretDeletedAtPG = "SELECT id, deleted_at FROM secret_nodes WHERE project_id = ? AND deleted_at IS NOT NULL" // #nosec G101 -- SQL query string, not a hardcoded credential
+)
+
+// cascadeChildQuery is one child table's candidate scan, per dialect.
+type cascadeChildQuery struct{ sqlite, postgres string }
+
+var (
+	cascadeEnvQuery    = cascadeChildQuery{sqlSelectProjectEnvDeletedAt, sqlSelectProjectEnvDeletedAtPG}
+	cascadeSecretQuery = cascadeChildQuery{sqlSelectProjectSecretDeletedAt, sqlSelectProjectSecretDeletedAtPG}
+)
+
+// cascadeChildIDs returns the ids of the project's soft-deleted rows (selected by query, one of
+// the cascade*Query pairs) whose deleted_at INSTANT is at or after cascadeTS.
+// On SQLite the stored text may be a pre-upgrade host-zone value ("... +09:00", "... +0900 JST",
+// "... +0100 CET m=+0.0142" from a bare time.Now()) or the current UTC text; each parses to the
+// instant it denotes. A value that parses as none of them fails the whole restore (the caller's
+// transaction rolls back): a silently partial restore would bring the project back while the
+// child stays in the bin and is later purged on its frozen purge_at. On Postgres deleted_at is a
+// timestamptz, scanned as the instant itself, independent of DateStyle.
+func cascadeChildIDs(tx *gorm.DB, query cascadeChildQuery, projectID uint, cascadeTS time.Time) ([]uint, error) {
+	if tx.Dialector.Name() == "postgres" {
+		var rows []struct {
+			ID        uint
+			DeletedAt time.Time
+		}
+		if err := tx.Raw(query.postgres, projectID).Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		var ids []uint
+		for _, r := range rows {
+			if !r.DeletedAt.Before(cascadeTS) {
+				ids = append(ids, r.ID)
+			}
+		}
+		return ids, nil
+	}
+	var rows []struct {
+		ID        uint
+		DeletedAt string
+	}
+	if err := tx.Raw(query.sqlite, projectID).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	var ids []uint
+	for _, r := range rows {
+		deletedAt, ok := parseDBTimestamp(r.DeletedAt)
+		if !ok {
+			return nil, fmt.Errorf("project %d row %d has an unparseable deleted_at %q; nothing was restored", projectID, r.ID, r.DeletedAt)
+		}
+		if !deletedAt.Before(cascadeTS) {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids, nil
 }
 
 func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
@@ -1221,10 +1307,10 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 		}
 	}
 	if filter.CreatedAfter != nil {
-		query = query.Where("secret_nodes.created_at > ?", *filter.CreatedAfter)
+		query = query.Where("secret_nodes.created_at > ?", filter.CreatedAfter.UTC())
 	}
 	if filter.CreatedBefore != nil {
-		query = query.Where("secret_nodes.created_at < ?", *filter.CreatedBefore)
+		query = query.Where("secret_nodes.created_at < ?", filter.CreatedBefore.UTC())
 	}
 	if filter.IsSecret != nil {
 		query = query.Where("secret_nodes.is_secret = ?", *filter.IsSecret)

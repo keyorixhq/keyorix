@@ -46,6 +46,8 @@ git clone https://github.com/keyorixhq/keyorix
 cd keyorix && make install
 ```
 
+To install a server with an AI assistant, without the assistant seeing a secret, follow [INSTALL-WITH-AI.md](INSTALL-WITH-AI.md).
+
 ---
 
 ## Quick Start

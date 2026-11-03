@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -138,5 +139,40 @@ func TestAssertOpenAPIResponse_UnmatchedRequestFailsLoudly(t *testing.T) {
 	if !failed {
 		t.Fatal("expected AssertOpenAPIResponse to fail loudly on an unmatched request path, " +
 			"but the test did not fail -- an unmatched request must never be silently skipped")
+	}
+}
+
+// TestValidateAgainstRouter_SchemaErrorDoesNotEchoResponseValue pins the
+// secret-redaction option (responseValidationOptions). Enforced operations
+// return live tokens in their body, and a schema mismatch error ends up in
+// t.Fatalf and so in CI logs. kin-openapi's default error text embeds the
+// offending value; with the option it must not. Dropping `Options` from the
+// ResponseValidationInput in validateAgainstRouter makes this test fail.
+func TestValidateAgainstRouter_SchemaErrorDoesNotEchoResponseValue(t *testing.T) {
+	loader := openapi3.NewLoader()
+	doc, err := loader.LoadFromData([]byte(dualContentSpec))
+	if err != nil {
+		t.Fatalf("loading synthetic spec: %v", err)
+	}
+	r, err := gorillamux.NewRouter(doc)
+	if err != nil {
+		t.Fatalf("building router: %v", err)
+	}
+
+	const sentinel = "SENTINEL-live-token-0xC0FFEE"
+
+	req := httptest.NewRequest(http.MethodGet, "/dual", nil)
+	w := httptest.NewRecorder()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	// count must be an integer; the string value violates the schema.
+	_, _ = w.Write([]byte(`{"count": "` + sentinel + `"}`))
+
+	_, err = validateAgainstRouter(r, req, w)
+	if err == nil {
+		t.Fatal("expected a schema violation for a string count, got nil error")
+	}
+	if strings.Contains(err.Error(), sentinel) {
+		t.Fatalf("schema error echoes the response value (would leak a live token into CI logs): %v", err)
 	}
 }

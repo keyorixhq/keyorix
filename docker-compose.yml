@@ -216,9 +216,12 @@ services:
     cap_add: [NET_BIND_SERVICE]
     security_opt:
       - no-new-privileges:true
-    # web/Dockerfile already bakes an image-level HEALTHCHECK (wget against
-    # /health — nginx:alpine has no curl), which Compose inherits without this
-    # block; declared explicitly so it shows up the same way postgres' does.
+    # web/Dockerfile bakes an image-level HEALTHCHECK against the static
+    # /nginx-health (nginx:alpine has no curl); this block overrides it with
+    # /health, which web/nginx.conf proxies to the backend's /health, so `web`
+    # turns unhealthy when the backend is down (#3460). A load balancer in front
+    # of the stack should probe /health for the same reason, /nginx-health only
+    # to ask whether the web container itself is running.
     # 127.0.0.1, not localhost: busybox resolves localhost to ::1 first and nginx
     # listens on IPv4 only, so "localhost" was permanently unhealthy (#3026).
     healthcheck:

@@ -20,6 +20,10 @@
 #      deleted secrets behave as before, verify-audit is VALID (also against the
 #      off-host checkpoint anchor taken before the move: no new genesis), the
 #      retention anchor is byte-identical, the schema epoch is the binary's;
+#   4b. the other direction, PostgreSQL -> SQLite: `admin backup` of the migrated PostgreSQL instance and
+#      `admin restore` into an EMPTY SQLite config, with the same assertions as 2.-4. (tables equal,
+#      chain VALID and anchored to the pre-migration checkpoint, retention anchor, keys, users, roles,
+#      shares, MFA, break-glass history, dynamic secrets);
 #   5. failure and rollback: `kill -9` an `admin restore` midway: no key file is
 #      installed and no row committed, a re-run is refused until `admin restore
 #      --recover` rolls it back, then --overwrite-existing or a recreated empty
@@ -293,10 +297,12 @@ ok "the SQLite source file is byte-identical before and after the restore"
 # compare_to_source <inst>: every table of <inst> (PostgreSQL) equals the SQLite source's state
 # at the moment before the backup. Audit events: only those up to the source's newest id (the
 # target appends its own admin.restore_* events after them).
-compare_to_source() {
-    local inst="$1" mismatch
-    mc "$inst" table-sums --audit-max-id "$SRC_AUDIT_MAX" >"$DRILL_DIR/$inst.sums" || fail "table-sums on $inst"
-    mismatch="$(jq -n -r --slurpfile s "$DRILL_DIR/src.sums" --slurpfile d "$DRILL_DIR/$inst.sums" '
+compare_to_source() { compare_sums "$DRILL_DIR/src.sums" "$SRC_AUDIT_MAX" "$1"; }
+# compare_sums <sums-file> <audit-max-id> <inst>: every table of <inst> equals the sums in the file.
+compare_sums() {
+    local want="$1" amax="$2" inst="$3" mismatch
+    mc "$inst" table-sums --audit-max-id "$amax" >"$DRILL_DIR/$inst.sums" || fail "table-sums on $inst"
+    mismatch="$(jq -n -r --slurpfile s "$want" --slurpfile d "$DRILL_DIR/$inst.sums" '
         ($s | map(select(.table != "__audit_max_id") | {(.table): .}) | add) as $S
       | ($d | map(select(.table != "__audit_max_id") | {(.table): .}) | add) as $D
       | $S | keys[]
@@ -337,45 +343,107 @@ ok "schema_epoch $DST_EPOCH on both sides and in the binary"
 # ============================================================================
 # 4. the migrated instance works: logins, MFA, decryption, tokens, states
 # ============================================================================
-step "boot the server on PostgreSQL with the migrated data"
-srv_start "$DST" "$PDST"
-export DRILL_SEED_DIR="$SRC" DRILL_MFA_FROM="$SRC"
-verify_seed "$DST" "$PDST"
-out="$(cli "$DST" "$PDST" secret get --id 4 --show-value)" || fail "secret 4 get"
-echo "$out" | grep -qF "$(cat "$DRILL_DIR/$SRC/expect.secret4")" || fail "secret 4 does not decrypt to its latest version"
-[ "$(cli "$DST" "$PDST" secret versions --id 4 | grep -cE '^[[:space:]]*[0-9]+[[:space:]]')" -ge 2 ] || fail "secret 4 lost a version"
-ok "secret 4 decrypts, 2 versions"
-if cli "$DST" "$PDST" secret get --id 6 --show-value >/dev/null 2>&1; then fail "suspended secret 6 is readable after the migration"; fi
-ok "suspended secret 6 still refuses value reads"
-if cli "$DST" "$PDST" secret get --id 5 --show-value >/dev/null 2>&1; then fail "soft-deleted secret 5 is readable after the migration"; fi
-cli "$DST" "$PDST" secret trash --project 1 | grep -q 'pay-old-cert' || fail "soft-deleted secret 5 is not in the trash after the migration"
-ok "soft-deleted secret 5 is unreadable and still in the trash"
-[ "$(http_code "$DST" "$PDST" /api/v1/secrets/1 "$DRILL_DIR/$SRC/bearer.revoked.hdr")" = "401" ] \
-    || fail "the REVOKED machine token still authenticates on PostgreSQL"
-ok "revoked machine token still rejected (401); the live one works (verify_seed)"
+# verify_migrated <inst> <port> <label>: the migrated instance works -- logins, MFA, decryption, tokens,
+# states, history, dynamic secrets -- and its chain still verifies after the server ran on it. Used for
+# the SQLite -> PostgreSQL target and for the PostgreSQL -> SQLite target.
+verify_migrated() {
+    local inst="$1" port="$2" label="$3" out
+    step "boot the server on $label with the migrated data"
+    srv_start "$inst" "$port"
+    export DRILL_SEED_DIR="$SRC" DRILL_MFA_FROM="$SRC"
+    verify_seed "$inst" "$port"
+    out="$(cli "$inst" "$port" secret get --id 4 --show-value)" || fail "secret 4 get"
+    echo "$out" | grep -qF "$(cat "$DRILL_DIR/$SRC/expect.secret4")" || fail "secret 4 does not decrypt to its latest version"
+    [ "$(cli "$inst" "$port" secret versions --id 4 | grep -cE '^[[:space:]]*[0-9]+[[:space:]]')" -ge 2 ] || fail "secret 4 lost a version"
+    ok "secret 4 decrypts, 2 versions"
+    if cli "$inst" "$port" secret get --id 6 --show-value >/dev/null 2>&1; then fail "suspended secret 6 is readable after the migration"; fi
+    ok "suspended secret 6 still refuses value reads"
+    if cli "$inst" "$port" secret get --id 5 --show-value >/dev/null 2>&1; then fail "soft-deleted secret 5 is readable after the migration"; fi
+    cli "$inst" "$port" secret trash --project 1 | grep -q 'pay-old-cert' || fail "soft-deleted secret 5 is not in the trash after the migration"
+    ok "soft-deleted secret 5 is unreadable and still in the trash"
+    [ "$(http_code "$inst" "$port" /api/v1/secrets/1 "$DRILL_DIR/$SRC/bearer.revoked.hdr")" = "401" ] \
+        || fail "the REVOKED machine token still authenticates on $label"
+    ok "revoked machine token still rejected (401); the live one works (verify_seed)"
 
-CAROL_INST="$DST"
-CAROL_PORT="$PDST"
-KEYORIX_MFA_CODE="$(totp_fresh "$(cat "$DRILL_DIR/$SRC/mfa.carol.secret")")" carol_cli login --server "https://127.0.0.1:$PDST" --username carol >/dev/null \
-    || fail "second user's password + TOTP login failed on PostgreSQL"
-ok "second MFA user logs in with password + TOTP"
-out="$(carol_cli break-glass list --project-id 1)" || fail "break-glass list as carol"
-echo "$out" | grep -q 'drill: second incident' || fail "carol's break-glass history is gone"
-out="$(cli "$DST" "$PDST" break-glass list --project-id 1)" || fail "break-glass list as admin"
-[ "$(echo "$out" | grep -c 'drill:')" = "2" ] || { echo "$out" >&2; fail "break-glass history is not 2 activations"; }
-ok "break-glass history: 2 activations (one revoked) visible to admin"
-out="$(cli "$DST" "$PDST" group members platform-team)" || fail "group members"
-if ! { echo "$out" | grep -q alice && echo "$out" | grep -q carol; }; then
-    echo "$out" >&2
-    fail "group membership lost"
-fi
-ok "group platform-team keeps both members"
-cli "$DST" "$PDST" dynamic-secret list --project-id 1 | grep -q drill-pg || fail "dynamic-secret config lost"
-out="$(cli "$DST" "$PDST" dynamic-secret issue 1 --ttl 60)" || { echo "$out" >&2; fail "dynamic-secret issue on the migrated config failed (admin DSN no longer decrypts?)"; }
-ok "dynamic-secret config issues a credential (its encrypted admin DSN decrypts with the migrated keys)"
-srv_stop "$DST"
-verify_audit "$DST" --checkpoint-key-file ./checkpoint.key
-ok "after the server ran on PostgreSQL the chain still verifies"
+    CAROL_INST="$inst"
+    CAROL_PORT="$port"
+    KEYORIX_MFA_CODE="$(totp_fresh "$(cat "$DRILL_DIR/$SRC/mfa.carol.secret")")" carol_cli login --server "https://127.0.0.1:$port" --username carol >/dev/null \
+        || fail "second user's password + TOTP login failed on $label"
+    ok "second MFA user logs in with password + TOTP"
+    out="$(carol_cli break-glass list --project-id 1)" || fail "break-glass list as carol"
+    echo "$out" | grep -q 'drill: second incident' || fail "carol's break-glass history is gone"
+    out="$(cli "$inst" "$port" break-glass list --project-id 1)" || fail "break-glass list as admin"
+    [ "$(echo "$out" | grep -c 'drill:')" = "2" ] || { echo "$out" >&2; fail "break-glass history is not 2 activations"; }
+    ok "break-glass history: 2 activations (one revoked) visible to admin"
+    out="$(cli "$inst" "$port" group members platform-team)" || fail "group members"
+    if ! { echo "$out" | grep -q alice && echo "$out" | grep -q carol; }; then
+        echo "$out" >&2
+        fail "group membership lost"
+    fi
+    ok "group platform-team keeps both members"
+    cli "$inst" "$port" dynamic-secret list --project-id 1 | grep -q drill-pg || fail "dynamic-secret config lost"
+    out="$(cli "$inst" "$port" dynamic-secret issue 1 --ttl 60)" || { echo "$out" >&2; fail "dynamic-secret issue on the migrated config failed (admin DSN no longer decrypts?)"; }
+    ok "dynamic-secret config issues a credential (its encrypted admin DSN decrypts with the migrated keys)"
+    srv_stop "$inst"
+    verify_audit "$inst" --checkpoint-key-file ./checkpoint.key
+    ok "after the server ran on $label the chain still verifies"
+}
+
+verify_migrated "$DST" "$PDST" PostgreSQL
+
+# ============================================================================
+# 4b. the other direction: PostgreSQL -> SQLite
+# ============================================================================
+# The same two commands the other way: `admin backup` of the PostgreSQL instance (the migrated one,
+# after the server ran on it), `admin restore` into a config that points at an EMPTY SQLite file.
+# Same continuity assertions as the SQLite -> PostgreSQL leg.
+BACK=back
+PBACK="$(drill_port 23)"
+step "PostgreSQL -> SQLite: state to be moved (row counts + checksums of the PostgreSQL instance)"
+on_pg "$MIGRATE_PG_DSN_FILE"
+mc "$DST" table-sums >"$DRILL_DIR/pg.sums" || fail "table-sums on PostgreSQL"
+PG_AUDIT_MAX="$(jq -r 'select(.table=="__audit_max_id") | .count' "$DRILL_DIR/pg.sums")"
+PG_ROWS="$(jq -s 'map(select(.table!="__audit_max_id") | .count) | add' "$DRILL_DIR/pg.sums")"
+ok "PostgreSQL: $PG_ROWS rows, newest audit id $PG_AUDIT_MAX"
+PG_RETENTION_ANCHOR="$(mc "$DST" meta --key audit_retention_anchor)" || fail "no audit_retention_anchor on PostgreSQL"
+
+step "admin backup of the PostgreSQL instance (server stopped)"
+inst_admin "$DST" backup --output ./backup-pg.tar.gz >"$DRILL_DIR/backup-pg.log" 2>&1 \
+    || { cat "$DRILL_DIR/backup-pg.log" >&2; fail "admin backup of PostgreSQL failed"; }
+cp "$DRILL_DIR/$DST/backup-pg.tar.gz" "$EXT/backup-pg.tar.gz"
+ok "archive $(wc -c <"$EXT/backup-pg.tar.gz" | tr -d ' ') bytes"
+
+step "admin restore into an EMPTY SQLite database (same command, only the config's database differs)"
+mkdir -p "$DRILL_DIR/$BACK/home"
+sed -E "s/port: \"$PSRC\"/port: \"$PBACK\"/" "$DRILL_DIR/$SRC/keyorix.yaml" >"$DRILL_DIR/$BACK/keyorix.yaml"
+grep -q 'type: sqlite' "$DRILL_DIR/$BACK/keyorix.yaml" || fail "the SQLite target config is not a SQLite config"
+cp -R "$DRILL_DIR/$SRC/certs" "$DRILL_DIR/$BACK/certs"
+cp -R "$DRILL_DIR/$SRC/secrets" "$DRILL_DIR/$BACK/secrets"
+on_sqlite
+inst_admin "$BACK" restore --input "$EXT/backup-pg.tar.gz" >"$DRILL_DIR/restore-back.log" 2>&1 \
+    || { cat "$DRILL_DIR/restore-back.log" >&2; fail "admin restore of the PostgreSQL archive into SQLite failed"; }
+grep -q 'VALID' "$DRILL_DIR/restore-back.log" || { cat "$DRILL_DIR/restore-back.log" >&2; fail "restore output does not show verify-audit VALID"; }
+ok "restore's own verify-audit said VALID"
+
+step "per-table row counts + checksums: PostgreSQL instance vs SQLite target"
+compare_sums "$DRILL_DIR/pg.sums" "$PG_AUDIT_MAX" "$BACK"
+ok "all $(jq -s 'map(select(.table!="__audit_max_id")) | length' "$DRILL_DIR/pg.sums") tables equal (counts + checksums), $PG_ROWS rows"
+mc "$BACK" audit-tail --after "$PG_AUDIT_MAX" | cut -f2 | grep -qx 'admin.restore_completed' || fail "no admin.restore_completed bridge event on the SQLite target"
+
+step "audit chain: VALID, anchor-checked against the checkpoint exported before the FIRST move, retention anchor and keys preserved"
+cp "$EXT/checkpoint-export.json" "$EXT/checkpoint.key" "$DRILL_DIR/$BACK/"
+verify_audit "$BACK" --checkpoint-key-file ./checkpoint.key
+out="$(inst_admin "$BACK" verify-audit --json --anchor ./checkpoint-export.json --checkpoint-key-file ./checkpoint.key 2>&1)" \
+    || { echo "$out" >&2; fail "verify-audit with the pre-migration anchor failed after the round trip"; }
+echo "$out" | jq -e '.verdict == "VALID" and .external_anchor.authenticated == true' >/dev/null \
+    || { echo "$out" >&2; fail "the chain does not verify against the checkpoint exported from the original SQLite instance"; }
+ok "VALID against the checkpoint exported before SQLite -> PostgreSQL: no new genesis after the round trip"
+[ "$(mc "$BACK" meta --key audit_retention_anchor)" = "$PG_RETENTION_ANCHOR" ] || fail "retention anchor changed in the move back"
+ok "retention anchor byte-identical"
+[ "$(mc "$BACK" meta --key schema_epoch)" = "$BIN_EPOCH" ] || fail "schema epoch on the SQLite target is not the binary's"
+ok "schema_epoch $BIN_EPOCH"
+verify_migrated "$BACK" "$PBACK" SQLite
+ok "users, roles, shares, keys, MFA, break-glass history and dynamic secrets all survived the round trip"
 
 # ============================================================================
 # 5. failure and rollback

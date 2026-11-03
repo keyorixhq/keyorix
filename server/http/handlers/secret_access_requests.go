@@ -57,7 +57,7 @@ func (h *CatalogHandler) CreateSecretAccessRequest(w http.ResponseWriter, r *htt
 	}
 	req, err := h.coreService.RequestSecretAccess(r.Context(), body.SecretID, actor.UserID, body.Reason)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		msg := err.Error()

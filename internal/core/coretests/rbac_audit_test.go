@@ -144,6 +144,7 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 		&models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
 		&models.Project{}, &models.Environment{}, &models.UserGroup{}, &models.User{},
 	))
+	require.NoError(t, db.Create(&models.Project{ID: 3, Name: "p3"}).Error) // a scoped grant needs a live projects row (#2795)
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))

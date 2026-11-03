@@ -318,16 +318,24 @@ func TestListUsers_InactiveSinceFilter(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "grace", UsernameFolded: "grace", Email: "grace@example.com", EmailFolded: "grace@example.com"})
+	_, err := ls.CreateUser(ctx, &models.User{Username: "grace", UsernameFolded: "grace", Email: "grace@example.com", EmailFolded: "grace@example.com"})
 	require.NoError(t, err)
 
-	// InactiveSince: never logged in (LastLoginAt = nil) → returned.
+	// InactiveSince: never logged in but created just now (#3740) → not returned.
+	// The full matrix (old never-logged-in, stale login, fresh login) is
+	// TestInactiveSinceSemantics.
 	inactiveSince := time.Now().Add(-30 * 24 * time.Hour)
 	users, total, err := ls.ListUsers(ctx, &storage.UserFilter{InactiveSince: &inactiveSince, Page: 1, PageSize: 20})
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, total, int64(1))
-	_ = u
-	_ = users
+	assert.Zero(t, total, "a user created now has not been inactive for 30 days")
+	assert.Empty(t, users)
+
+	// Once the account itself is older than the cutoff it is returned.
+	_, err = ls.CreateUser(ctx, &models.User{Username: "heidi", UsernameFolded: "heidi", Email: "heidi@example.com", EmailFolded: "heidi@example.com", CreatedAt: time.Now().Add(-40 * 24 * time.Hour)})
+	require.NoError(t, err)
+	_, total, err = ls.ListUsers(ctx, &storage.UserFilter{InactiveSince: &inactiveSince, Page: 1, PageSize: 20})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
 }
 
 func TestListUsers_OffsetParam(t *testing.T) {

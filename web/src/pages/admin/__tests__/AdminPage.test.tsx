@@ -1131,6 +1131,11 @@ describe('AdminPage — inactive filter banner', () => {
         render(<AdminPage />);
 
         expect(screen.getByText(/showing inactive users only/i)).toBeInTheDocument();
+        // #3740: same wording as the dashboard tile; a never-logged-in account only counts once 30+ days old.
+        const banner = screen.getByText(/showing inactive users only/i);
+        expect(banner).toHaveTextContent(/not logged in for 30\+ days/i);
+        expect(banner).toHaveTextContent(/never logged in counts once it is 30\+ days old/i);
+        expect(banner).not.toHaveTextContent(/includes accounts that have never logged in/i);
         fireEvent.click(screen.getByRole('button', { name: /view login history/i }));
         expect(navigateMock).toHaveBeenCalledWith(expect.stringContaining('filter=logins'));
 

@@ -228,6 +228,16 @@ func TestDifferential_TamperMatrix(t *testing.T) {
 			wantBroken: true,
 		},
 		{
+			// #3808: the keyset walk (id > ?) from 0 never visits id 0; both
+			// verifiers count every row up to the last one walked.
+			name: "forged row inserted with id 0",
+			tamper: func(f *diffFixture) {
+				f.exec(`INSERT INTO audit_events (id, event_type, description, event_time, actor_type, prev_hash, entry_hash, ip_address, diff, impersonation)
+					VALUES (0, 'secret.read', 'forged', ?, 'user', 'x', 'y', '', '', false)`, time.Now().UTC())
+			},
+			wantBroken: true,
+		},
+		{
 			name: "truncated tail",
 			tamper: func(f *diffFixture) {
 				f.exec("DELETE FROM audit_events WHERE id > 5")

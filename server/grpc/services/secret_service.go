@@ -303,7 +303,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 	// the per-user owner/sharing check (and its user-id requirement) does not
 	// apply to them (W1 — see GetSecret). The secret.updated row, with its
 	// before/after diff, commits with the update, as on the HTTP path.
-	mctx := secretMutationAuditContext(ctx, user)
+	mctx, lookupFaults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(ctx, user))
 	var secret *models.SecretNode
 	if user.ActorKind() == core.ActorTypeMachine {
 		secret, err = s.core.UpdateSecret(mctx, updateReq)
@@ -311,7 +311,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 		secret, err = s.core.UpdateSecretWithPermissionCheck(mctx, updateReq)
 	}
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretMutationError(ctx, lookupFaults, err)
 	}
 	return secretNodeToProto(secret), nil
 }
@@ -332,14 +332,14 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 	// the per-user owner/sharing check (and its user-id requirement) does not
 	// apply to them (W1 — see GetSecret). The secret.deleted row commits with the
 	// delete, as on the HTTP path.
-	mctx := secretMutationAuditContext(ctx, user)
+	mctx, lookupFaults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(ctx, user))
 	if user.ActorKind() == core.ActorTypeMachine {
 		err = s.core.DeleteSecret(mctx, uint(req.GetId()))
 	} else {
 		err = s.core.DeleteSecretWithPermissionCheck(mctx, uint(req.GetId()), user.UserID)
 	}
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretMutationError(ctx, lookupFaults, err)
 	}
 	// The delete is done; a failed read-back of the purge date leaves it unset rather
 	// than failing a completed delete (same stance as the HTTP handler's header).
@@ -594,15 +594,12 @@ func mapSecretACLError(err error) error {
 	case errors.Is(err, storage.ErrSecretACLNotFound), errors.Is(err, storage.ErrSecretNotFound),
 		errors.Is(err, storage.ErrUserNotFound):
 		return status.Error(codes.NotFound, "ACL or secret not found")
-	// "invalid"/"required" don't only match GrantSecretACL's own validation
-	// messages (invalid permission, missing IDs) -- CreateOrUpdateSecretACL's
-	// storage-layer failure is also routed through this classifier
-	// (secret_acl.go's "%w"-wrapped ErrorStorageFailed/ErrorRetrievalFailed
-	// paths), and a raw SQL/driver error can coincidentally contain either
-	// word. Fixed message, not msg, so a driver error never reaches the
-	// client verbatim (matches mapUserError's GRPC-003 remediation).
-	// Not yet typed: GrantSecretACL's own validation (secret_acl.go) has no sentinel.
-	case strings.Contains(strings.ToLower(err.Error()), "invalid"), strings.Contains(strings.ToLower(err.Error()), "required"):
+	// ERRSTRING-CLASS-1: GrantSecretACL's own validation is typed
+	// (storage.ErrInvalidSecretACLRequest). A raw SQL/driver error from the
+	// storage-layer paths that also reach this classifier can contain "invalid" or
+	// "required" and is a server fault. Fixed message, so a driver error never
+	// reaches the client verbatim (matches mapUserError's GRPC-003 remediation).
+	case errors.Is(err, storage.ErrInvalidSecretACLRequest):
 		return status.Error(codes.InvalidArgument, "invalid ACL request")
 	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "not authorized to manage this secret's ACLs")
@@ -650,7 +647,14 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
 		if !core.IsAuthorizeTransient(ctx, err) {
-			core.NoteSecretReadDenial(ctx, core.SecretReadDeniedNotFound)
+			// A read FAULT is an outage on a secret that may exist: the audit row
+			// says internal_error for every caller, whatever the answer (as REST's
+			// handleScopeResolutionError notes it). Only a true miss is not_found.
+			reason := core.SecretReadDeniedNotFound
+			if core.ReadFault(err) != nil {
+				reason = core.SecretReadDeniedInternalError
+			}
+			core.NoteSecretReadDenial(ctx, reason)
 		}
 		return authorizeScopedTarget(ctx, cs, actor, perm, err, core.Scope{}, "secret not found")
 	}
@@ -715,6 +719,20 @@ func grpcReadRefusal(err error) core.SecretReadDenialReason {
 
 // SecretReadRefusalDomain is the ErrorInfo.Domain of a secret-read refusal.
 const SecretReadRefusalDomain = "keyorix.secrets"
+
+// mapSecretMutationError is mapSecretError for the update and delete RPCs, which
+// authorize inside core: a permission refusal that core reached because a TRANSIENT
+// storage failure stopped the permission lookup is Unavailable (retry), not
+// PermissionDenied (STORAGE-ERR-CLASS-4, INV-MW-authorize-lookup-error-is-503). A
+// verdict, and any non-transient lookup error, stays the fail-closed denial.
+func mapSecretMutationError(ctx context.Context, faults *core.AuthorizeFaultRecorder, err error) error {
+	if errors.Is(err, core.ErrPermissionDenied) {
+		if ferr := faults.Err(); ferr != nil {
+			return authorizeRefusal(ctx, ferr, "access denied to this secret")
+		}
+	}
+	return mapSecretError(err)
+}
 
 // mapSecretError translates core errors into gRPC status codes.
 func mapSecretError(err error) error {

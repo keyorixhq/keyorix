@@ -126,7 +126,7 @@ func ShamirSplitWithConfig(shares, threshold int, outDir string) error {
 	fmt.Println()
 	fmt.Println("KEK integrity commitment (safe to store/print in the clear — reveals nothing")
 	fmt.Println("about the KEK; verified against the RECONSTRUCTED key at unseal time so a")
-	fmt.Println("forged/wrong share is rejected rather than silently accepted, #429):")
+	fmt.Println("forged/wrong share is rejected rather than silently accepted):")
 	fmt.Printf("  shamir_commitment: %s\n", commitment)
 	if outDir != "" {
 		commitPath := filepath.Join(outDir, "commitment.hex")

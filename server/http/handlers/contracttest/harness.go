@@ -12,19 +12,24 @@ import (
 	"github.com/getkin/kin-openapi/routers"
 )
 
-func init() {
-	// Several enforced operations return live secrets in their body
-	// (authLogin/authRefresh's tokens, authGetSetupToken's setup token, and
-	// -- as pending operations like createPAT/issueMachineToken graduate to
-	// enforced -- PATs and machine tokens too). Without this,
-	// *openapi3.SchemaError's Error() method (kin-openapi's default) embeds
-	// the actual offending value into its message, which AssertOpenAPIResponse
-	// below then hands to t.Fatalf -- so a schema mismatch on one of those
-	// operations would leak a real, live token verbatim into `go test`
-	// output and, from there, CI logs. Disabling schema error details drops
-	// the value dump but keeps the field path and reason, which is still
-	// enough to debug the mismatch.
-	openapi3.SchemaErrorDetailsDisabled = true
+// responseValidationOptions drops the offending value from schema errors.
+//
+// Several enforced operations return live secrets in their body
+// (authLogin/authRefresh's tokens, authGetSetupToken's setup token, and
+// -- as pending operations like createPAT/issueMachineToken graduate to
+// enforced -- PATs and machine tokens too). Without this,
+// *openapi3.SchemaError's Error() method (kin-openapi's default) embeds
+// the actual offending value into its message, which AssertOpenAPIResponse
+// below then hands to t.Fatalf -- so a schema mismatch on one of those
+// operations would leak a real, live token verbatim into `go test`
+// output and, from there, CI logs. Disabling schema error details drops
+// the value dump but keeps the field path and reason, which is still
+// enough to debug the mismatch.
+//
+// kin-openapi v0.152 replaced the package-level
+// openapi3.SchemaErrorDetailsDisabled switch with this per-validation option.
+var responseValidationOptions = &openapi3filter.Options{
+	SchemaValidationOptions: []openapi3.SchemaValidationOption{openapi3.DisableSchemaErrorDetails()},
 }
 
 var (
@@ -91,8 +96,9 @@ func validateAgainstRouter(router routers.Router, req *http.Request, w *httptest
 			PathParams: pathParams,
 			Route:      route,
 		},
-		Status: w.Code,
-		Header: w.Header().Clone(),
+		Status:  w.Code,
+		Header:  w.Header().Clone(),
+		Options: responseValidationOptions,
 	}
 	respInput.SetBodyBytes(w.Body.Bytes())
 

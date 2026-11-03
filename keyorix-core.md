@@ -9,12 +9,11 @@ use SaaS and won't maintain Vault.
 
 | Path | Purpose |
 |---|---|
-| `cmd/` | Entry points — `keyorix` CLI and `keyorix-server` |
-| `internal/cli/` | CLI command tree (cobra) |
-| `internal/client/` | HTTP client for CLI→server calls |
+| `cli/` | `keyorix` CLI (own Go module, cobra, REST-only client of the server) |
+| `server/` | `keyorix-server` entry point (`server/main.go`) and `keyorix-server admin` |
+| `cmd/` | Auxiliary binaries: `keyorix-mcp`, `keyorix-k8s-sync`, `statemapgen`, `validate-translations` |
 | `internal/config/` | Config loading (env + YAML) |
 | `internal/core/` | Domain services — users, secrets, projects, encryption |
-| `internal/di/` | Wire-based dependency injection |
 | `internal/encryption/` | AES-256-GCM envelope encryption, KEK rotation |
 | `internal/i18n/` | Localisation (EN/ES/FR/DE/RU) |
 | `internal/securefiles/` | Encrypted local credential store |

@@ -152,7 +152,7 @@ func TestAuditSeal_CrashAtEveryStepResumesWithWitness(t *testing.T) {
 				fcTick(t, e, withWitness(e.restart(), w)) // a server ran before the operator re-ran the command
 
 				c := withWitness(e.restart(), w)
-				again, err := c.PlanAuditLossAcceptance(ctx, sealReq())
+				again, err := sealResumePlan(t, c, sealReq())
 				require.NoError(t, err, "a re-run resumes")
 				require.True(t, again.Resume)
 				desc := strings.Join(again.Describe(), "\n")
@@ -192,7 +192,7 @@ func TestAuditSeal_ResealKeepsHigherWitness(t *testing.T) {
 		witness := readWitnessFile(t, w)
 		require.NoError(t, e.db.Exec("DELETE FROM audit_events WHERE id >= ?", cp.HeadID-2).Error)
 
-		_, _, err = withWitness(e.restart(), w).resealAuditCheckpoint(ctx)
+		_, _, err = withWitness(e.restart(), w).resealAuditCheckpoint(ctx, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "witness")
 		assert.Equal(t, witness, readWitnessFile(t, w), "the witness is not lowered")
