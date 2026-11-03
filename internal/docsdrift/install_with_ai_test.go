@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/config"
 )
 
 // INSTALL-WITH-AI-1 item 3: INSTALL-WITH-AI.md is followed literally by an AI
@@ -30,7 +32,9 @@ import (
 //     `printenv` / a trailing `env` / `set -x` run through docker or podman exec|run.
 //     A password= or URL userinfo password inside a connection string is refused.
 //   - value: no line (assistant or human) assigns a plain KEYORIX_* secret
-//     variable (KEYORIX_ADMIN_PASSWORD=..., only the *_FILE form is allowed).
+//     variable (KEYORIX_ADMIN_PASSWORD=..., only the *_FILE form is allowed): every
+//     name in config.SecretEnvVars, and any KEYORIX_* name ending in PASSWORD,
+//     PASSPHRASE, TOKEN or SECRET.
 //     Secret flags with a value are TestDocsDoNotPutSecretsInFlags' job (this
 //     page is in commandDocs) and cli's TestDocsShowNoLiteralSecretOnCommandLine.
 //   - spelling: in fenced shell lines, the CLI is run as ./bin/keyorix and the
@@ -106,6 +110,17 @@ var (
 	iwaInputOp    = regexp.MustCompile(`^[0-9]*<<?$`)
 	iwaInlineSpan = regexp.MustCompile("`([^`\n]+)`")
 )
+
+// iwaIsPlainSecretVar reports whether name (the part of a word before its =) is a
+// secret variable in its plain form: a name in config.SecretEnvVars, or one the
+// suffix rule matches (operator-named ones such as KEYORIX_SSO_<P>_CLIENT_SECRET).
+// The *_FILE form is the allowed one.
+func iwaIsPlainSecretVar(name string) bool {
+	if strings.Contains(name, "_FILE") {
+		return false
+	}
+	return slices.Contains(config.SecretEnvVars, name) || iwaPlainSecretVar.MatchString(name+"=")
+}
 
 // iwaLine is one command line of the page.
 type iwaLine struct {
@@ -343,8 +358,8 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 	for _, l := range lines {
 		for _, cmd := range iwaCommands(iwaWords(l.Text)) {
 			for _, w := range cmd {
-				if iwaPlainSecretVar.MatchString(w) && !strings.Contains(strings.SplitN(w, "=", 2)[0], "_FILE") {
-					add(l, "a plain secret variable %s puts the value on the command line; use the *_FILE form", strings.SplitN(w, "=", 2)[0]+"=")
+				if name, _, ok := strings.Cut(w, "="); ok && iwaIsPlainSecretVar(name) {
+					add(l, "a plain secret variable %s puts the value on the command line; use the *_FILE form", name+"=")
 				}
 			}
 			ci := iwaCommandWord(cmd)
@@ -484,6 +499,10 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		"export X=\"`cat secrets/bootstrap_token`\"",
 		"sha256sum certs/server.key",
 		"KEYORIX_ADMIN_PASSWORD=hunter2 ./bin/keyorix system init",
+		// secrets whose name has no PASSWORD/PASSPHRASE/TOKEN/SECRET suffix but are in
+		// config.SecretEnvVars
+		"KEYORIX_API_KEY=hunter2 ./bin/keyorix secret list",
+		"export KEYORIX_NOTIFY_SLACK_WEBHOOK=https://x",
 		"./bin/keyorix mfa enroll",
 		"./bin/keyorix-server admin recovery-key rotate --config ./keyorix.yaml",
 		"printenv",
@@ -543,7 +562,8 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 	for _, line := range bad {
 		doc := strings.Replace(good, "> ./bin/keyorix mfa enroll\n", "> ./bin/keyorix mfa enroll\n> "+line+"\n", 1)
 		f := iwaFind(iwaParse(doc))
-		want := strings.HasPrefix(line, "KEYORIX_ADMIN_PASSWORD=") || strings.HasPrefix(line, "keyorix ") || strings.HasSuffix(line, " keyorix whoami")
+		want := strings.HasPrefix(line, "KEYORIX_ADMIN_PASSWORD=") || strings.HasPrefix(line, "KEYORIX_API_KEY=") ||
+			strings.HasPrefix(line, "export KEYORIX_NOTIFY_SLACK_WEBHOOK=") || strings.HasPrefix(line, "keyorix ") || strings.HasSuffix(line, " keyorix whoami")
 		if (len(f) != 0) != want {
 			t.Errorf("human line %q: findings %+v, want reported=%v", line, f, want)
 		}
