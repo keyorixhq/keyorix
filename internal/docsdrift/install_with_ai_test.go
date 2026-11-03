@@ -50,9 +50,13 @@ import (
 //
 // What it does not check: prose that is not in a code span, fences that use ~~~
 // instead of backticks, 4-space indented code blocks, the keyorix CLI credential file (~/.config/keyorix/credentials.json,
-// not in iwaSecretPath), whether a reader not in iwaReaders can read a file, and
-// whether the steps work (the transcript test in the page's maintainer notes,
-// pending the e2e VM).
+// not in iwaSecretPath), whether a reader not in iwaReaders can read a file
+// (an input redirection, also 0< 3< and <>, is a read whatever the command),
+// shell globs (`cat secre*/master*`) and variable indirection (`F=secrets/x` and
+// `cat "$F"` on separate lines), which a word-level match cannot see, the
+// environment-printing builtins `set`, `export`, `export -p`, `declare -p`,
+// `command printenv` and `builtin set`, and whether the steps work (the
+// transcript test in the page's maintainer notes, pending the e2e VM).
 
 const iwaDoc = "INSTALL-WITH-AI.md"
 
@@ -97,6 +101,9 @@ var (
 	iwaRedirect = regexp.MustCompile(`^[0-9]*>&[0-9-]*$`)
 	// iwaRedirectOp matches a redirection whose target is the next word.
 	iwaRedirectOp = regexp.MustCompile(`^[0-9]*(>|>>|<)$`)
+	// iwaInputOp matches an input redirection operator, with or without a
+	// descriptor: <, <<, 0<, 3<.
+	iwaInputOp    = regexp.MustCompile(`^[0-9]*<<?$`)
 	iwaInlineSpan = regexp.MustCompile("`([^`\n]+)`")
 )
 
@@ -378,9 +385,13 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 				if (iwaAssign.MatchString(w) && strings.HasSuffix(strings.SplitN(w, "=", 2)[0], "_FILE")) || !iwaSecretPath.MatchString(w) {
 					continue
 				}
-				switch prev := cmd[max(j-1, 0)]; {
-				case prev == ">" || prev == ">>":
-				case prev == "<" || prev == "<<":
+				prev := cmd[max(j-1, 0)]
+				// <> (read-write) arrives as "<" then ">": the word before the ">" is the
+				// input half.
+				readWrite := prev == ">" && j >= 2 && iwaInputOp.MatchString(cmd[j-2])
+				switch {
+				case (prev == ">" && !readWrite) || prev == ">>":
+				case readWrite || iwaInputOp.MatchString(prev):
 					add(l, "assistant line reads the secret file %s by input redirection", w)
 				case reader != "" && name != "rm" && name != "chmod" && name != "chown":
 					add(l, "assistant line reads the secret file %s with %s", w, reader)
@@ -508,6 +519,14 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		"export X=\"$(<secrets/admin_password)\"",
 		"< secrets/master_password cat",
 		"<secrets/admin_password tr -d x",
+		// a digit-prefixed input redirection (0<, 3<) or <> is a read too, also with
+		// a command that is not in iwaReaders (read, mapfile, exec)
+		"read -r X 0< secrets/master_password",
+		"read -r X 0<secrets/master_password",
+		"mapfile -t A 0< secrets/admin_password",
+		"while read -r l; do :; done 0< secrets/master_password",
+		"exec 3< secrets/master_password",
+		"exec 3<> secrets/master_password",
 		// env with no command after it prints the environment
 		"env",
 		"sudo env",
