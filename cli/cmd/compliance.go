@@ -351,8 +351,10 @@ var complianceVerifyCmd = &cobra.Command{
 	Short: "Verify an exported evidence pack against its detached signature",
 	Long: `Verify the authenticity of an archived evidence pack. Reads the pack file and
 its signature (default <file>.sig) and asks the server to recompute the HMAC with its
-DEK-derived signing key — proving the pack was produced by this deployment and has
-not been modified. Requires server-side encryption (the signing key is DEK-derived).`,
+KEK-derived signing key — proving the pack was produced by this deployment and has
+not been modified. Requires server-side encryption (the signing key is KEK-derived).
+A DEK rotation does not affect verification; a pack signed before a KEK change is
+reported as unverifiable (superseded key version), not as tampered.`,
 	SilenceUsage: true,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if complianceVerifyFile == "" {

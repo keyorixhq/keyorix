@@ -76,6 +76,8 @@ rm -P first.txt
 ```
 
 The `secret get` command prints `my first secret`. That is the first secret read.
+An authenticator code works once: if you run `keyorix login` again straight after
+`mfa activate`, it needs the app's next code, not the one you just activated with.
 `keyorix status` is the connection check; for host-side checks stop the server and run
 `./keyorix-server admin diagnose`.
 

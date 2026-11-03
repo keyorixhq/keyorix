@@ -342,13 +342,13 @@ func newRealK8sMinter(cfg k8sConfig) (*realK8sMinter, error) {
 func validateAPIServerHost(host string) error {
 	u, err := url.Parse(host)
 	if err != nil {
-		return fmt.Errorf("kubernetes: invalid api_server %q: %w", host, err)
+		return fmt.Errorf("kubernetes: invalid api_server %q: %w", netutil.RedactURLHost(host), netutil.RedactErrorURLs(err))
 	}
 	if u.Scheme != "https" {
-		return fmt.Errorf("kubernetes: api_server %q must use https", host)
+		return fmt.Errorf("kubernetes: api_server %q must use https", netutil.RedactURLHost(host))
 	}
 	if u.Host == "" {
-		return fmt.Errorf("kubernetes: api_server %q is missing a host", host)
+		return fmt.Errorf("kubernetes: api_server %q is missing a host", netutil.RedactURLHost(host))
 	}
 	return nil
 }
@@ -406,7 +406,7 @@ func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount
 		m.host, pathSegment(namespace), pathSegment(serviceAccount))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw)) // #nosec G107 -- host is operator-configured/in-cluster
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("build request: %w", err)
+		return "", time.Time{}, fmt.Errorf("build request: %w", netutil.RedactErrorURLs(err))
 	}
 	req.Header.Set("Authorization", bearerPrefix+m.token)
 	req.Header.Set("Content-Type", mimeJSON)
@@ -414,7 +414,7 @@ func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount
 
 	resp, err := m.hc.Do(req)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("request failed: %w", err)
+		return "", time.Time{}, fmt.Errorf("request failed: %w", netutil.RedactErrorURLs(err))
 	}
 	defer drainAndClose(resp)
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
@@ -467,7 +467,7 @@ func (m *realK8sMinter) createBoundSecret(ctx context.Context, namespace, name s
 	url := fmt.Sprintf("%s/api/v1/namespaces/%s/secrets", m.host, pathSegment(namespace))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw)) // #nosec G107 -- host is operator-configured/in-cluster
 	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
+		return "", fmt.Errorf("build request: %w", netutil.RedactErrorURLs(err))
 	}
 	req.Header.Set("Authorization", bearerPrefix+m.token)
 	req.Header.Set("Content-Type", mimeJSON)
@@ -475,7 +475,7 @@ func (m *realK8sMinter) createBoundSecret(ctx context.Context, namespace, name s
 
 	resp, err := m.hc.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
+		return "", fmt.Errorf("request failed: %w", netutil.RedactErrorURLs(err))
 	}
 	defer drainAndClose(resp)
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
@@ -506,14 +506,14 @@ func (m *realK8sMinter) deleteBoundSecret(ctx context.Context, namespace, name s
 	url := fmt.Sprintf("%s/api/v1/namespaces/%s/secrets/%s", m.host, pathSegment(namespace), pathSegment(name))
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil) // #nosec G107 -- host is operator-configured/in-cluster
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return fmt.Errorf("build request: %w", netutil.RedactErrorURLs(err))
 	}
 	req.Header.Set("Authorization", bearerPrefix+m.token)
 	req.Header.Set("Accept", mimeJSON)
 
 	resp, err := m.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return fmt.Errorf("request failed: %w", netutil.RedactErrorURLs(err))
 	}
 	defer drainAndClose(resp)
 	if resp.StatusCode == http.StatusNotFound {

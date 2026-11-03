@@ -2592,7 +2592,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a soft-deleted secret
-         * @description Clears the deletion, returning the secret to the live list. Find restorable secrets with GET /projects/{id}/secrets/deleted.
+         * @description Clears the deletion, returning the secret to the live list. Find restorable secrets with GET /projects/{id}/secrets/deleted. A secret that is not deleted answers 409 ("secret N is not deleted; nothing to restore"); an unknown id answers 404.
          */
         post: operations["restoreSecret"];
         delete?: never;
@@ -4389,7 +4389,7 @@ export interface paths {
         put?: never;
         /**
          * Write a signed audit-chain checkpoint on demand (ADR-029)
-         * @description Signs a checkpoint of the current verified chain head for on-box truncation detection. Requires system.write (above the audit group's audit.read) and server-side encryption (the signing key is DEK-derived). Use to re-baseline immediately after a DEK rotation.
+         * @description Signs a checkpoint of the current verified chain head for on-box truncation detection. Requires system.write (above the audit group's audit.read) and server-side encryption (the signing key is KEK-derived). A DEK rotation does not change the key, and rotate-kek or a KEK-provider migration carries the audit verification state over and writes a fresh checkpoint itself (docs/operator/key-rotation-runbook.md section 5).
          */
         post: operations["writeAuditCheckpoint"];
         delete?: never;
@@ -4994,7 +4994,7 @@ export interface paths {
         put?: never;
         /**
          * Verify an exported evidence pack against its signature
-         * @description Recomputes the HMAC over the supplied evidence-pack bytes with the server's DEK-derived signing key and compares it to the detached signature — proving an archived pack was produced by this deployment and is unmodified. The pack is base64-encoded in data_b64 so arbitrary JSON can ride in the envelope. A signature made under a superseded DEK version (post key-rotation) is reported as unverifiable, distinct from a tamper mismatch. Requires audit.read (not the universal system_viewer baseline).
+         * @description Recomputes the HMAC over the supplied evidence-pack bytes with the server's KEK-derived signing key and compares it to the detached signature — proving an archived pack was produced by this deployment and is unmodified. The pack is base64-encoded in data_b64 so arbitrary JSON can ride in the envelope. A DEK rotation does not affect verification. A signature made under a key version superseded by a KEK change (rotate-kek or a KEK-provider migration) is reported as unverifiable (valid=false, with key_version and current_version and a reason), distinct from a tamper mismatch. Requires audit.read (not the universal system_viewer baseline).
          */
         post: operations["verifyComplianceEvidence"];
         delete?: never;
@@ -6148,6 +6148,8 @@ export interface components {
             id?: number;
             /** Format: uint32 */
             user_id?: number;
+            /** @description Username of the activating user (never an email); omitted when the user cannot be read, e.g. deleted */
+            username?: string;
             role_name?: string;
             justification?: string;
             /** @enum {string} */
@@ -10935,6 +10937,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     listDeletedSecrets: {
@@ -13889,7 +13892,7 @@ export interface operations {
     searchAuditLogs: {
         parameters: {
             query?: {
-                /** @description Partial username match on the acting principal. */
+                /** @description Case-insensitive partial match on the acting principal's name: a user's username (deleted users do not match) or a machine identity's name. A term that is part of the word "system" also matches system-originated events. */
                 actor?: string;
                 /** @description Exact numeric user ID. */
                 user_id?: number;
@@ -15180,7 +15183,7 @@ export interface operations {
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             422: components["responses"]["Error"];
-            503: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     approveMFAReset: {
@@ -15219,7 +15222,7 @@ export interface operations {
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             422: components["responses"]["Error"];
-            503: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     cancelMFAReset: {

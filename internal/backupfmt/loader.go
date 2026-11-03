@@ -55,7 +55,7 @@ func checkSchemaDelta(modelName string, currentColumns []string, archived TableE
 		}
 		return fmt.Errorf("table %q (archive, model %s) has column %q, which this binary's current schema neither has "+
 			"nor lists as a known, deliberately-removed column -- refusing rather than silently drop or "+
-			"misinterpret what may be a renamed or type-changed column (design §3.5)", archived.Name, modelName, col)
+			"misinterpret what may be a renamed or type-changed column", archived.Name, modelName, col)
 	}
 	return nil
 }
@@ -296,8 +296,7 @@ func LoadArchive(db *gorm.DB, manifest Manifest, stagingDir string) error {
 	for _, te := range manifest.Tables {
 		if !usedArchiveTables[te.Name] {
 			return fmt.Errorf("archive contains table %q, which this binary's current model registry does not "+
-				"define -- refusing rather than silently drop an entire table's worth of data (design §3.5, "+
-				"extended from columns to whole tables)", te.Name)
+				"define -- refusing rather than silently drop an entire table's worth of data", te.Name)
 		}
 	}
 
@@ -307,8 +306,8 @@ func LoadArchive(db *gorm.DB, manifest Manifest, stagingDir string) error {
 	}
 	if len(dangling) > 0 {
 		return fmt.Errorf("restore refuses: %d dangling reference(s) found in the loaded data (first: table %q "+
-			"column %q row %d references missing %s.id=%d) -- design §3.4's mandatory post-load check, no "+
-			"override flag", len(dangling), dangling[0].Table, dangling[0].Column, dangling[0].RowID, dangling[0].RefTable, dangling[0].MissingID)
+			"column %q row %d references missing %s.id=%d) -- this post-load check is mandatory, "+
+			"there is no override flag", len(dangling), dangling[0].Table, dangling[0].Column, dangling[0].RowID, dangling[0].RefTable, dangling[0].MissingID)
 	}
 	return nil
 }
