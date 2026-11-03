@@ -14,6 +14,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -41,9 +44,60 @@ func sealDeleteRow(t *testing.T, e *fcEnv, c *KeyorixCore, id uint) uint {
 	return *v.FirstBrokenID
 }
 
+// sealWriteState is everything an acceptance writes, to show a refused one
+// wrote nothing.
+func sealWriteState(t *testing.T, c *KeyorixCore) []string {
+	t.Helper()
+	ctx := context.Background()
+	var out []string
+	for _, k := range []string{auditSealsKey, auditHighWaterKey, auditVerifyStateKey} {
+		v, ok, err := c.storage.GetSystemMetadata(ctx, k)
+		require.NoError(t, err)
+		out = append(out, fmt.Sprintf("%s=%v:%s", k, ok, v))
+	}
+	cp, err := c.storage.LatestAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	if cp != nil {
+		out = append(out, fmt.Sprintf("checkpoint=%d", cp.ID))
+	}
+	evs, _, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{PageSize: 1, Count: storage.AuditCountNone})
+	require.NoError(t, err)
+	if len(evs) > 0 {
+		out = append(out, fmt.Sprintf("head=%d", evs[0].ID))
+	}
+	if p := c.auditHighWaterWitnessPath; p != "" {
+		data, _ := os.ReadFile(p) // #nosec G304 -- test witness path
+		out = append(out, "witness="+string(data))
+	}
+	return out
+}
+
+// sealResumePlan plans an acceptance the way the operator must complete an
+// unfinished one (#3803): a resume plan made without --resume-seal writes
+// nothing when applied, even though it was planned; the same request naming
+// the digest the plan printed is the plan returned. A plan that is not a
+// resume is returned as is.
+func sealResumePlan(t *testing.T, c *KeyorixCore, req AuditLossRequest) (*AuditLossPlan, error) {
+	t.Helper()
+	ctx := context.Background()
+	plan, err := c.PlanAuditLossAcceptance(ctx, req)
+	if err != nil || !plan.Resume || req.ResumeSeal != "" {
+		return plan, err
+	}
+	require.Len(t, plan.ResumeDigest, 64)
+	assert.Contains(t, strings.Join(plan.Describe(), "\n"), "--resume-seal "+plan.ResumeDigest)
+	before := sealWriteState(t, c)
+	_, err = c.AcceptAuditLoss(ctx, plan)
+	require.ErrorIs(t, err, ErrAuditLossRefused, "a resume without --resume-seal must write nothing")
+	assert.Contains(t, err.Error(), "--resume-seal "+plan.ResumeDigest)
+	require.Equal(t, before, sealWriteState(t, c), "a resume refused for want of --resume-seal wrote something")
+	req.ResumeSeal = plan.ResumeDigest
+	return c.PlanAuditLossAcceptance(ctx, req)
+}
+
 func sealAccept(t *testing.T, c *KeyorixCore, req AuditLossRequest) *AuditLossResult {
 	t.Helper()
-	plan, err := c.PlanAuditLossAcceptance(context.Background(), req)
+	plan, err := sealResumePlan(t, c, req)
 	require.NoError(t, err)
 	res, err := c.AcceptAuditLoss(context.Background(), plan)
 	require.NoError(t, err)
@@ -346,7 +400,7 @@ func TestAuditSeal_IncompleteAcceptanceResumed(t *testing.T) {
 
 		c := e.restart()
 		assertBroken(t, e, c)
-		again, err := c.PlanAuditLossAcceptance(ctx, sealReq())
+		again, err := sealResumePlan(t, c, sealReq())
 		require.NoError(t, err)
 		assert.True(t, again.Resume)
 		_, err = c.AcceptAuditLoss(ctx, again)
@@ -504,7 +558,7 @@ func TestAuditSeal_CrashAtEveryStepResumes(t *testing.T) {
 				require.NoError(t, err, "a re-run resumes")
 				assert.True(t, again.Resume)
 				c2 := e.restart()
-				again, err = c2.PlanAuditLossAcceptance(ctx, sealReq())
+				again, err = sealResumePlan(t, c2, sealReq())
 				require.NoError(t, err)
 				_, err = c2.AcceptAuditLoss(ctx, again)
 				require.NoError(t, err)
@@ -583,7 +637,7 @@ func TestAuditSeal_ResumeRefusesOtherIDs(t *testing.T) {
 		require.NoError(t, err, "the recorded ids complete it")
 		assert.True(t, again.Resume)
 		c := e.restart()
-		again, err = c.PlanAuditLossAcceptance(ctx, sealReq())
+		again, err = sealResumePlan(t, c, sealReq())
 		require.NoError(t, err)
 		_, err = c.AcceptAuditLoss(ctx, again)
 		require.NoError(t, err)

@@ -235,7 +235,7 @@ func TestGetDashboardStats_DegradedOnInactiveUsersQueryError(t *testing.T) {
 }
 
 // #3740: users created moments ago that have never logged in are not "inactive for 30 days".
-// The dashboard asks the store with InactiveSpareNewAccounts, and a fresh install counts zero.
+// InactiveSince is now universal (COALESCE(last_login_at, created_at)), so a fresh install counts zero.
 func TestGetDashboardStats_FreshNeverLoggedInUsersAreNotInactive(t *testing.T) {
 	t.Parallel()
 	c, st := newBootstrappedCore(t)
@@ -254,7 +254,6 @@ func TestGetDashboardStats_FreshNeverLoggedInUsersAreNotInactive(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, sawFilter, "the dashboard must query inactive users")
-	assert.True(t, sawFilter.InactiveSpareNewAccounts)
 	assert.Zero(t, stats.InactiveUsers, "users created just now and never logged in are not inactive")
 }
 

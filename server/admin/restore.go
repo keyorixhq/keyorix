@@ -286,19 +286,20 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	if err != nil {
 		return fmt.Errorf("stat %q: %w", restoreInput, err)
 	}
-	// Staging needs roughly the uncompressed archive size again on top of
-	// what's already on disk (the compressed archive itself); 4x the
-	// compressed size is a deliberately generous, simple estimate (design
-	// §7.4 doesn't mandate a precise compression-ratio calculation).
-	if err := backupfmt.CheckFreeSpace(restoreInput, saturatingQuadruple(archiveInfo.Size())); err != nil {
-		return fmt.Errorf("preflight free-space check (design §7.4): %w", err)
-	}
-
 	stagingDir, err := os.MkdirTemp("", "keyorix-admin-restore-*")
 	if err != nil {
 		return fmt.Errorf("create staging directory: %w", err)
 	}
 	defer os.RemoveAll(stagingDir) //nolint:errcheck
+	// Staging needs roughly the uncompressed archive size again on top of
+	// what's already on disk (the compressed archive itself); 4x the
+	// compressed size is a deliberately generous, simple estimate (design
+	// §7.4 doesn't mandate a precise compression-ratio calculation). Checked
+	// where the staging directory actually is ($TMPDIR, often a different and
+	// smaller filesystem than the archive's), since that is what fills up.
+	if err := backupfmt.CheckFreeSpace(stagingDir, saturatingQuadruple(archiveInfo.Size())); err != nil {
+		return fmt.Errorf("preflight free-space check for the staging directory %s (set TMPDIR to a larger filesystem) (design §7.4): %w", stagingDir, err)
+	}
 
 	archiveFile, err := secretenv.OpenRegularNamed("backup archive", restoreInput) // operator-supplied input path; a FIFO is refused, not waited on
 	if err != nil {

@@ -321,7 +321,7 @@ describe('SecretsHealthPage', () => {
         expect(screen.getByText('Secret reads (last 30d)')).toBeInTheDocument();
         expect(screen.getByText('340')).toBeInTheDocument();
         expect(screen.getByText('Failed logins (24h)')).toBeInTheDocument();
-        expect(screen.getByText('Inactive users (no login 30d)')).toBeInTheDocument();
+        expect(screen.getByText('Inactive users (not logged in 30+ days)')).toBeInTheDocument();
     });
 
     it('shows a brute-force warning button when failed auth attempts are high, and navigates on click', () => {
@@ -342,7 +342,7 @@ describe('SecretsHealthPage', () => {
     it('shows an amber dot for inactive users when there are any', () => {
         mockUseSecretsHealth.mockReturnValue(makeHealth({ access: { ...baseHealth.access, inactiveUsers: 3 } }));
         render(<SecretsHealthPage />);
-        const inactiveRow = screen.getByText('Inactive users (no login 30d)').closest('div')!;
+        const inactiveRow = screen.getByText('Inactive users (not logged in 30+ days)').closest('div')!;
         const dot = inactiveRow.querySelector('div')!;
         expect(dot).toHaveStyle({ backgroundColor: '#f59e0b' });
     });
