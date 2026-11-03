@@ -166,7 +166,8 @@ The rule, as each checker and installer applies it (`pgTriggerDef.newerThan`):
    increments the tamper counter under `reason="newer_definition"`, invalidates every replica's
    cache once (it cannot verify that body), takes the reading as its baseline and repeats the
    warning hourly. Neither the check nor the installer re-installs over it; the installer only
-   turns a non-`ENABLE ALWAYS` trigger back to `ENABLE ALWAYS`.
+   turns a non-`ENABLE ALWAYS` trigger back to `ENABLE ALWAYS`. This holds for at most
+   `triggerDefNewerAcceptBound` (24 h) on a running checker; see "The acceptance bound" below.
 3. Anything else is tampering, as before (`reason="tamper"`, restored, flushed): no marker, a
    malformed marker, an equal or older version that is not exactly this release's definition, a
    version more than one ahead, or a digest that does not match the catalog (a newer body edited
@@ -178,13 +179,34 @@ tamper of v(N+1) is restored by the N+1 replicas to their own definition. An N r
 it first restores v(N), which the N+1 replicas then upgrade again: one alarm on each side, not a
 loop.
 
-Residual, stated: the digest is not a signature. The owner who can replace the function can also
-write a self-consistent marker one version ahead over a body of their choice. Replicas at N leave
-it in place (warning hourly, the `newer_definition` series moving) until a release at N+1, which
-compares exactly, restores its own. The skew bound keeps a forged marker from outranking every
-future release, and the warning says to treat it as tampering outside an upgrade. Alert on
+The acceptance bound (ask `3841-forged-marker-acceptance-bound`, option a). The digest is not a
+signature. The owner who can replace the function can also write a self-consistent marker one
+version ahead over a body of their choice, for example one that bumps nothing. Without a bound,
+replicas at N would leave it in place until a release at N+1, which compares exactly, restores its
+own. That could be months, and on main the #3631 check restores a replaced body within one tick.
+So each checker starts a clock (`triggerIntegrityChecker.newerSince`, `boundNewer`) at its first
+reading of a newer definition. The clock stops only at a reading of this release's own definition
+(clean, with no newer marker) or at a repair that restored it. A reading with another problem, a
+failed reading, or a second newer definition replacing the first does not restart it, so rotating
+forged bodies does not extend the window. Once `triggerDefNewerAcceptBound` (24 h) has passed,
+the reading is a problem like any other: the checker logs `SECURITY:` ("... a forged version
+marker"), counts `reason="tamper"` and invalidates. The repair transaction first removes the
+expired marker (`expireNewerTriggerDef`), so the installer's `leaveNewerTriggerDef` reads no newer
+definition and restores this release's, marker included. A newer definition read after that
+restore gets the whole bound again. So a genuine rolling upgrade that outlasts the bound costs one
+restore per older replica per bound, which the N+1 replicas undo at their next tick, not a
+ping-pong every tick. The operational rule: finish a rolling upgrade that changes a definition
+within 24 h.
+
+Residual, stated: within the bound, a forged marker one version ahead is left in place (a warning
+hourly, the `newer_definition` series moving). The clock is per process and in memory: the server's
+role could rewrite any clock kept in the database. A replica that restarts starts its clock again,
+and its boot installer leaves a newer definition in place. So the bound holds for a replica that
+runs for 24 h, and every running replica counts on its own. The skew bound keeps a forged marker
+from outranking every future release, and the warning says to treat it as tampering outside an
+upgrade. Alert on
 `increase(keyorix_role_permission_generation_tamper_total{reason="newer_definition"}[1h]) > 0`
-outside a deploy window. Two operational rules follow: a rolling upgrade must not skip a
+outside a deploy window. Two more operational rules follow: a rolling upgrade must not skip a
 definition version (one that does behaves as before markers, a ping-pong for the window), and a
 release may change the body, the settings and the shape of the existing triggers but not the set
 of trigger names a target checks (that needs a new function name).
@@ -199,10 +221,13 @@ from the server's role. The same catalog statement now also reads `system_metada
 (`systemMetadataWriteTargetSQL`) and requires a plain table without inheritance children, no
 non-internal trigger except the retention-anchor trigger exactly as its installer creates it
 (BEFORE UPDATE FOR EACH ROW, its function, and its `WHEN (key = 'audit_retention_anchor')`
-clause, which keeps that function off the generation row whatever its body says) and the
-`single_writer` fence's AFTER triggers (`trg_ksw_*`, executing `internal/solewriter`'s guard
-function with exactly its body; store keeps a copy because it cannot import that package, and
-`TestFenceGuard_MatchesTheStore` fails on drift), no rule, and `relrowsecurity` and
+clause, which keeps that function off the generation row whatever its body says) and, only on a
+server configured with `storage.database.single_writer` (`LocalStorage.SetSingleWriter`), the
+fence's AFTER triggers (`trg_ksw_*`, executing `internal/solewriter`'s guard function with exactly
+its body; store keeps a copy because it cannot import that package, and
+`TestFenceGuard_MatchesTheStore` fails on drift). What the guard calls is checked by the fence's
+own census, which runs only in that mode, so without it a fence-named trigger is foreign and the
+repair drops it. Also required: no rule, and `relrowsecurity` and
 `relforcerowsecurity` false. The `xmin` of the table's `pg_class` row and of
 each trigger and rule row joins the fingerprint, so an object added and removed between two ticks
 still shows. On a violation the repair drops the foreign triggers and rules (re-creating the
@@ -211,9 +236,27 @@ transaction, then bumps. A rule makes PostgreSQL refuse the `INSERT ... ON CONFL
 starts with, so the check's first invalidation fails there; the check then still repairs, and
 the repair's own bump is the one that counts. A table that is not a plain table is reported every
 tick and left to an operator. A future release that needs its own trigger, rule or policy on
-`system_metadata` must first ship a release whose check allows it. Turning `single_writer` on or
-off adds or removes the fence's triggers, which reads as one catalog change: one `SECURITY:` line
-and one flush per replica, no repair.
+`system_metadata` must first ship a release whose check allows it. Turning `single_writer` on
+adds the fence's triggers, which a server in that mode reads as one catalog change: one `SECURITY:`
+line and one flush per replica, no repair. A server without `single_writer` that finds fence
+triggers left on the table reports them as foreign and drops them.
+
+#### Reading and repair hardening
+
+- Catalog reads (`readCatalog`, `readCatalogConn`) run in a transaction with only `pg_catalog` on
+  the `search_path`, and every table is named with the server's schema bound explicitly, so an
+  operator or function the server's role creates cannot answer for them. The repair pins the
+  `search_path` with `pg_catalog` first and `pg_temp` last (`pinCatalogSearchPath`), so the
+  triggers it re-creates call `pg_catalog`'s operators.
+- A reading that fails fails closed (`readFailed`). The role-permission target invalidates on
+  every failed tick. From `triggerIntegrityReadFailureLimit` (2) failures in a row, the failure is
+  logged `SECURITY:`, counted as tamper once per run of failures, and an invalidation is owed until
+  a reading verifies. A reading that runs out of time is a failed reading too. Only a cancelled
+  tick (shutdown) changes nothing.
+- Two half-tick budgets. The reading gets half of the tick's remaining time, so an invalidation
+  can still follow a reading the server's role made slow. The invalidation before a repair gets
+  half of what remains, enforced by the server with `SET LOCAL statement_timeout`, so the repair
+  keeps the rest under its own `lock_timeout`.
 
 ### C. Periodic content digest of `role_permissions` and `permissions`
 

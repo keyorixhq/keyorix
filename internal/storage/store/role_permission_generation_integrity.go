@@ -59,7 +59,8 @@
 // ahead, is invalidated once and warned about under its own counter label, and
 // left in place by the check and the installers, so a rolling upgrade that
 // changes a definition does not have both releases re-installing their own
-// every tick. The rule and its residual are at triggerDefMaxNewerSkew.
+// every tick; a checker restores its own once triggerDefNewerAcceptBound has
+// passed. The rule and its residual are at triggerDefMaxNewerSkew.
 //
 // A false alarm (a catalog rewrite this file does not foresee, such as a
 // pg_upgrade or a replica of a release from before the markers rewriting the
@@ -134,7 +135,10 @@ var rolePermGenerationNewerDefinitionRewarn = time.Hour
 
 // triggerDefNewerAcceptBound is how long a checker leaves a newer release's
 // definition in place (pgTriggerDef.newerThan), counted from the first
-// reading of it with no reading of this release's own definition since.
+// reading of it with no reading of this release's own definition since. A
+// rolling upgrade is over well within it; a definition still newer after it is
+// a forged marker (triggerDefMaxNewerSkew): it is reported as SECURITY,
+// counted as tamper and restored (3841-forged-marker-acceptance-bound).
 var triggerDefNewerAcceptBound = 24 * time.Hour
 
 // The reason label of both counters: tamper (changed outside any release:
@@ -227,8 +231,10 @@ type triggerSpec struct{ table, trigger string }
 // also write a self-consistent marker one version ahead. Older replicas then
 // leave that definition alone (they warn, and the newer_definition counter
 // moves), until a release at that version, which compares exactly, restores
-// its own. The skew bound keeps a forged marker from outranking every future
-// release.
+// its own, or until triggerDefNewerAcceptBound has passed on a running
+// checker, which then reports it as tampering and restores its own
+// (triggerIntegrityChecker.boundNewer). The skew bound keeps a forged marker
+// from outranking every future release.
 const triggerDefMaxNewerSkew = 1
 
 var triggerDefMarkerRE = regexp.MustCompile(`^keyorix-trigger-def ([a-z_][a-z0-9_]*) v(0|[1-9][0-9]{0,8}) sha256:([0-9a-f]{64})$`)
@@ -550,6 +556,9 @@ func newPGTriggerDef(d *pgTriggerDef, triggerDefOK, funcOK, writeTargetSQL strin
 // lock: when the installed definition is a newer release's, it only turns
 // back to ENABLE ALWAYS a trigger that is not (that state is no part of any
 // definition), logs, and reports true, and the installer installs nothing.
+// A checker's repair of a newer definition left in place for
+// triggerDefNewerAcceptBound removes its marker first (expireNewerTriggerDef),
+// so this reads no newer definition and the installer restores its own.
 func leaveNewerTriggerDef(tx *gorm.DB, d *pgTriggerDef, what string) (bool, error) {
 	st, err := readInstalledTriggerDef(tx, d)
 	if err != nil {
@@ -574,6 +583,18 @@ func leaveNewerTriggerDef(tx *gorm.DB, d *pgTriggerDef, what string) (bool, erro
 		}
 	}
 	return true, nil
+}
+
+// expireNewerTriggerDef removes the version marker of a newer release's
+// definition that a checker has left in place for triggerDefNewerAcceptBound,
+// inside the repair's transaction before the installer runs: the installer's
+// leaveNewerTriggerDef then reads no newer definition, and the installer
+// restores this release's, marker included.
+func expireNewerTriggerDef(tx *gorm.DB, d *pgTriggerDef) error {
+	if err := tx.Exec("COMMENT ON FUNCTION " + d.funcName + "() IS NULL").Error; err != nil {
+		return fmt.Errorf("failed to remove the expired %s() version marker: %w", d.funcName, err)
+	}
+	return nil
 }
 
 // ensureTriggerDefMarker writes d's version marker as its function's comment
@@ -658,6 +679,9 @@ type triggerIntegrityState struct {
 	problem string
 	version string
 	newer   string
+	// expired is a newer release's marker the checker no longer leaves in
+	// place (boundNewer); problem then says so, and newer is "".
+	expired string
 }
 
 // pinCatalogSearchPathSQL sets, for the rest of the transaction, the
@@ -953,18 +977,22 @@ func (c *triggerIntegrityChecker) warnNewer(st triggerIntegrityState) {
 		return
 	}
 	c.newerWarned = time.Now()
-	c.logf("%s triggers: a newer release's definition is installed (%q; this release writes v%d), as during a rolling upgrade to it. This replica leaves it in place and cannot verify it; if no such upgrade is under way, treat it as tampering.", c.target.what, st.newer, c.target.def.version)
+	c.logf("%s triggers: a newer release's definition is installed (%q; this release writes v%d), as during a rolling upgrade to it. This replica leaves it in place and cannot verify it; it restores its own %s after first reading it. If no such upgrade is under way, treat it as tampering.", c.target.what, st.newer, c.target.def.version, triggerDefNewerAcceptBound)
 }
 
 // newerDefinitionLog is the line for a newly read newer definition.
 func (c *triggerIntegrityChecker) newerDefinitionLog(st triggerIntegrityState) {
 	c.newerWarned = time.Now()
-	c.logf("%s triggers: a newer release's definition was installed (%q; this release writes v%d; catalog row versions %s, were %s), as during a rolling upgrade to it. Leaving it in place and invalidating every replica's %s once; if no such upgrade is under way, treat it as tampering.", c.target.what, st.newer, c.target.def.version, st.version, c.baseline, c.target.cache)
+	c.logf("%s triggers: a newer release's definition was installed (%q; this release writes v%d; catalog row versions %s, were %s), as during a rolling upgrade to it. Leaving it in place for at most %s and invalidating every replica's %s once; if no such upgrade is under way, treat it as tampering.", c.target.what, st.newer, c.target.def.version, st.version, c.baseline, triggerDefNewerAcceptBound, c.target.cache)
 }
 
-// boundNewer keeps the clock of triggerDefNewerAcceptBound: it starts at the
-// first reading of a newer release's definition and stops only at a reading
-// of this release's own (clean, no newer definition).
+// boundNewer applies triggerDefNewerAcceptBound to a reading. The clock
+// starts at the first reading of a newer release's definition and stops only
+// at a reading of this release's own (clean, no newer definition) or at a
+// repair that restored it: a reading with another problem, a failed reading
+// or a second newer definition replacing the first does not restart it. Once
+// the bound has passed the newer definition is a problem (st.expired), which
+// check and checkRepairFirst report as SECURITY, count as tamper and repair.
 func (c *triggerIntegrityChecker) boundNewer(st *triggerIntegrityState) {
 	switch {
 	case st.newer == "":
@@ -973,7 +1001,23 @@ func (c *triggerIntegrityChecker) boundNewer(st *triggerIntegrityState) {
 		}
 	case c.newerSince.IsZero():
 		c.newerSince = time.Now()
+	case time.Since(c.newerSince) >= triggerDefNewerAcceptBound:
+		why := fmt.Sprintf("%s() has carried a newer release's definition (%q) for more than %s, longer than a rolling upgrade takes: a forged version marker", c.target.def.funcName, st.newer, triggerDefNewerAcceptBound)
+		st.problem = strings.Join(slices.DeleteFunc([]string{st.problem, why}, func(s string) bool { return s == "" }), "; ")
+		st.expired, st.newer = st.newer, ""
 	}
+}
+
+// repairDef is the repair of a checker's target inside tx: an expired newer
+// definition's marker is removed first (expireNewerTriggerDef), so the
+// installer does not leave that definition in place.
+func (c *triggerIntegrityChecker) repairDef(tx *gorm.DB, st triggerIntegrityState) error {
+	if st.expired != "" {
+		if err := expireNewerTriggerDef(tx, c.target.def); err != nil {
+			return err
+		}
+	}
+	return c.target.repair(tx, c.target.def)
 }
 
 // readTickIntegrity is a tick's reading. It gets half of the tick's remaining
@@ -1090,7 +1134,7 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 			if err := pinCatalogSearchPath(tx); err != nil {
 				return err
 			}
-			if err := t.repair(tx, t.def); err != nil {
+			if err := c.repairDef(tx, st); err != nil {
 				return err
 			}
 			return t.invalidate(ctx, tx)
@@ -1110,6 +1154,9 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 	}
 	c.baseline = after.version
 	c.pending = false
+	if after.newer == "" {
+		c.newerSince = time.Time{} // this release's own again
+	}
 	return flushed, nil
 }
 
@@ -1171,7 +1218,7 @@ func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, e
 			if err := pinCatalogSearchPath(tx); err != nil {
 				return err
 			}
-			return t.repair(tx, t.def)
+			return c.repairDef(tx, st)
 		}); err != nil {
 			// The trigger may have been wrong while earlier batches ran: the
 			// invalidation starts again once a repair commits.
@@ -1184,6 +1231,9 @@ func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, e
 		}
 		if st.problem == "" {
 			c.round = "" // the repair rewrote the definition: from the first row
+			if st.newer == "" {
+				c.newerSince = time.Time{} // this release's own again
+			}
 		}
 	}
 	if key := integrityKey(st); key != c.round {
