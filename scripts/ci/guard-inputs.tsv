@@ -33,6 +33,7 @@ internal/core/guards/ledger_fragments_test.go	!README.md	fixtures in t.TempDir()
 internal/core/upgrading_scim_sso_check_query_test.go	docs/UPGRADING.md	the SCIM/SSO check query in UPGRADING.md
 internal/docsdrift/env_and_secrets_test.go	**/*.md,**/*.go,**/*.sh,**/*.yml,**/*.yaml,**/*.tpl,**/*.conf,**/*.txt,**/*.toml,**/Dockerfile*,**/Makefile	documented env vars and secret flags against every source kind envVarSourceFile accepts
 internal/docsdrift/helm_docs_set_keys_test.go	README.md,deploy/helm/keyorix/README.md,docs/**/*.md,deploy/helm/keyorix/values.yaml,!**	documented `--set` chart keys (README.md, the chart README, every .md under docs/) against deploy/helm/keyorix/values.yaml; nothing else is walked
+internal/docsdrift/kek_derived_wording_test.go	**/*.go,docs/**/*.md,server/proto/keyorix.proto,server/http/handlers/openapi.yaml,!**	#3862: DEK-wording scan of non-test Go (main module only; cli/ and operator/ are skipped as separate modules), docs/ Markdown except ADRs, the proto and openapi.yaml; other Markdown is not read
 internal/docsdrift/links_test.go	**/*.md	relative links in every Markdown file
 internal/docsdrift/upgrading_sections_test.go	docs/**/*.md,changelog.d/**/*.md,SECURITY.md,README.md,!**	UPGRADING.md section numbers, and references to them in every .md under docs/ and changelog.d/ plus SECURITY.md and README.md; nothing else is walked
 internal/docsdrift/versioning_deprecations_test.go	docs/VERSIONING.md	deprecated config aliases (Go source) against the VERSIONING.md deprecations table
