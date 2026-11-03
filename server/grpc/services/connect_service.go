@@ -62,7 +62,7 @@ func (s *ConnectGRPCService) ReadSecret(ctx context.Context, req *pb.ReadFederat
 	if err != nil {
 		msg := err.Error()
 		code := codes.FailedPrecondition
-		if !isSafeConnectError(msg) {
+		if !isSafeConnectError(err) {
 			log.Printf("Error reading federated secret via connector %q: %v", req.GetConnector(), err)
 			msg = clientSafe(err)
 			code = codes.Internal
@@ -119,7 +119,7 @@ func (s *ConnectGRPCService) CreateRefGrant(ctx context.Context, req *pb.CreateC
 	if err != nil {
 		msg := err.Error()
 		code := codes.InvalidArgument
-		if !isSafeConnectError(msg) {
+		if !isSafeConnectError(err) {
 			log.Printf("Error creating connect ref-grant: %v", err)
 			msg = clientSafe(err)
 			code = codes.Internal
