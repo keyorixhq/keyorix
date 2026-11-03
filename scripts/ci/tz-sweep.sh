@@ -9,7 +9,7 @@
 # Usage:
 #   scripts/ci/tz-sweep.sh                       # default zones x default packages
 #   TZ_SWEEP_ZONES="Asia/Kolkata" scripts/ci/tz-sweep.sh
-#   TZ_SWEEP_PKGS="./internal/audit" scripts/ci/tz-sweep.sh
+#   TZ_SWEEP_PKGS="./internal/audit/..." scripts/ci/tz-sweep.sh
 #   scripts/ci/tz-sweep.sh -run 'TestStats'      # extra args go to go test
 #
 # Zones: +05:30 (half-hour offset, ahead of UTC) and UTC-7/-8 (behind UTC, where the
@@ -32,6 +32,41 @@ for f in ${GOFLAGS:-}; do [ "$f" = "-trimpath" ] || flags="$flags $f"; done
 export GOFLAGS="${flags# }"
 
 mkdir -p .scratch
+
+# Fail closed on a zone Go cannot load: Go silently falls back to UTC for an
+# unknown or unloadable TZ (a typo, or a host without /usr/share/zoneinfo), which
+# would make every pair below run under UTC and report a false all-pass. The probe
+# uses Go's own loader, the same one the test binaries use, and does not import
+# time/tzdata, so a host without zoneinfo is caught too.
+probe=.scratch/tz-sweep-probe.go
+cat >"$probe" <<'EOF'
+package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+)
+
+func main() {
+	z := os.Getenv("TZ")
+	if _, err := time.LoadLocation(z); err != nil {
+		fmt.Fprintf(os.Stderr, "cannot load zone %q: %v\n", z, err)
+		os.Exit(1)
+	}
+	if got := time.Local.String(); got != z {
+		fmt.Fprintf(os.Stderr, "zone %q resolved to %q (Go fell back to UTC)\n", z, got)
+		os.Exit(1)
+	}
+}
+EOF
+for z in $zones; do
+  if ! TZ="$z" go run "$probe"; then
+    echo "tz-sweep: invalid or unloadable zone '$z' in TZ_SWEEP_ZONES; refusing to run (it would silently use UTC)" >&2
+    exit 2
+  fi
+done
+
 failed=()
 for z in $zones; do
   for p in $pkgs; do
