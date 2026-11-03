@@ -125,7 +125,8 @@ func refuseUnlessFresh(gdb *gorm.DB) {
 		{"secret access logs", &models.SecretAccessLog{}},
 	} {
 		var n int64
-		if err := gdb.Model(t.model).Count(&n).Error; err != nil {
+		// Unscoped: a soft-deleted row still means the database is not fresh.
+		if err := gdb.Unscoped().Model(t.model).Count(&n).Error; err != nil {
 			fatalf("count %s: %v", t.what, err)
 		}
 		if n > 0 {

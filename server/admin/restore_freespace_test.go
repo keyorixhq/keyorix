@@ -73,6 +73,9 @@ func TestRestore_FreeSpaceCheckedWhereItStages(t *testing.T) {
 	require.Contains(t, err.Error(), "free-space check for the staging directory")
 	require.Contains(t, err.Error(), filepath.Join(stagingRoot, "keyorix-admin-restore-"))
 	require.Contains(t, err.Error(), "set TMPDIR")
+	// The wrapper above names stagingDir whatever path was measured; only
+	// CheckFreeSpace's own error quotes the path it actually checked.
+	require.Contains(t, err.Error(), "not enough free space at \""+filepath.Join(stagingRoot, "keyorix-admin-restore-"))
 
 	left, err := os.ReadDir(stagingRoot)
 	require.NoError(t, err)
