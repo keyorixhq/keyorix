@@ -17,7 +17,12 @@
 // accepts rows written by the server (the check script runs verify-audit on the
 // seeded source before it measures anything).
 //
-// Re-running appends: names carry the run's tag so they stay unique.
+// It only fills a freshly initialised database and refuses everything else
+// (refuseUnlessFresh): any project, user, secret, version, share or access-log
+// row, or any audit event other than the offline bootstrap commands' own
+// (admin init / encryption init / migrate). The chain it extends is therefore
+// never real history, and a second run on the same database is refused. There
+// is no default --config: the target is always named.
 package main
 
 import (
@@ -51,7 +56,7 @@ func main() {
 		fatalf("usage: scalegen seed --config <file> [--audit N] [--secrets N] [--versions V] [--access-logs N] [--users N] [--shares N] [--projects N]")
 	}
 	fs := flag.NewFlagSet("seed", flag.ExitOnError)
-	cfgPath := fs.String("config", "keyorix.yaml", "config file")
+	cfgPath := fs.String("config", "", "config file of the freshly initialised target (required)")
 	audit := fs.Int("audit", 0, "audit events to append (chained)")
 	secrets := fs.Int("secrets", 0, "secret nodes")
 	versions := fs.Int("versions", 3, "versions per secret")
@@ -61,6 +66,9 @@ func main() {
 	projects := fs.Int("projects", 10, "projects (each with one environment)")
 	valueBytes := fs.Int("value-bytes", 256, "size of each version's ciphertext")
 	_ = fs.Parse(os.Args[2:])
+	if *cfgPath == "" {
+		fatalf("--config is required (the config of a freshly initialised instance)")
+	}
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
@@ -76,6 +84,7 @@ func main() {
 	if err != nil {
 		fatalf("open db: %v", err)
 	}
+	refuseUnlessFresh(gdb)
 	tag := fmt.Sprintf("%x", time.Now().UnixNano()&0xffffffff)
 	start := time.Now()
 	progress := func(what string, done, total int) {
@@ -92,6 +101,44 @@ func main() {
 	seedAudit(gdb, *audit, projectIDs, userIDs, nodeIDs, tag, progress)
 	fmt.Printf("scalegen: seeded projects=%d users=%d secrets=%d versions/secret=%d shares=%d access_logs=%d audit=%d in %s\n",
 		len(projectIDs), len(userIDs), len(nodeIDs), *versions, *shares, *accessLogs, *audit, time.Since(start).Round(time.Second))
+}
+
+// bootstrapAuditEvents are the audit events a fresh instance carries before the
+// server first starts: the offline commands that create it (scale-lib.sh's
+// inst_new runs exactly these).
+var bootstrapAuditEvents = []string{"admin.init", "admin.encryption.init", "admin.migrate"}
+
+// refuseUnlessFresh exits non-zero unless the database is a freshly initialised
+// one, so the generated rows and the audit chain they extend are never mixed
+// into real data (same rule as scripts/release-qa/scalegen, which refuses any
+// secret version).
+func refuseUnlessFresh(gdb *gorm.DB) {
+	for _, t := range []struct {
+		what  string
+		model any
+	}{
+		{"projects", &models.Project{}},
+		{"users", &models.User{}},
+		{"secret nodes", &models.SecretNode{}},
+		{"secret versions", &models.SecretVersion{}},
+		{"shares", &models.ShareRecord{}},
+		{"secret access logs", &models.SecretAccessLog{}},
+	} {
+		var n int64
+		if err := gdb.Model(t.model).Count(&n).Error; err != nil {
+			fatalf("count %s: %v", t.what, err)
+		}
+		if n > 0 {
+			fatalf("target already has %d %s; scalegen only fills a freshly initialised database", n, t.what)
+		}
+	}
+	var n int64
+	if err := gdb.Model(&models.AuditEvent{}).Where("event_type NOT IN ?", bootstrapAuditEvents).Count(&n).Error; err != nil {
+		fatalf("count audit events: %v", err)
+	}
+	if n > 0 {
+		fatalf("target already has %d audit events beyond admin init/encryption init/migrate; scalegen only fills a freshly initialised database", n)
+	}
 }
 
 func batches(n int, fn func(from, to int) error) {
