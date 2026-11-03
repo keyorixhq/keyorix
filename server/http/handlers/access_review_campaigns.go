@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -12,14 +13,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // campaignStatusForError maps a core error to an HTTP status (shared shape).
-func campaignStatusForError(msg string) int {
-	switch {
-	case strings.Contains(msg, "not found"):
+func campaignStatusForError(err error) int {
+	// A missing target is matched by sentinel, never by message text: the text is the
+	// translated i18n "ErrorNotFound", and a storage fault must not read as one.
+	if errors.Is(err, core.ErrAccessReviewNotFound) {
 		return http.StatusNotFound
+	}
+	msg := err.Error()
+	switch {
 	case strings.Contains(msg, "required") || strings.Contains(msg, "must be") ||
 		strings.Contains(msg, "still pending") || strings.Contains(msg, "already closed") ||
 		strings.Contains(msg, "campaign is closed") || strings.Contains(msg, "ownership cannot be revoked"):
@@ -35,8 +41,11 @@ func campaignStatusForError(msg string) int {
 // raw error from a lower layer (storage, etc.), so it is logged server-side
 // and replaced with a generic client-safe message (backlog #116).
 func sendCampaignError(w http.ResponseWriter, context string, err error) {
+	if sendStorageUnavailable(w, err) {
+		return
+	}
 	msg := err.Error()
-	status := campaignStatusForError(msg)
+	status := campaignStatusForError(err)
 	if status == http.StatusInternalServerError {
 		log.Printf("Error %s: %v", context, err)
 		msg = clientSafe(err)

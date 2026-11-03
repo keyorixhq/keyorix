@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -167,8 +168,18 @@ func withMigrationLockPooled(db *gorm.DB, isPostgres, xactLock bool, dbPath stri
 // SQLSTATE 0A000, "cached plan must not change result type") or silently scans a
 // shape it never saw. Named columns make an added column invisible to N-1
 // (INV-STORE-explicit-column-reads).
+//
+// NowFunc returns UTC because GORM stamps created_at / updated_at through it
+// after every BeforeSave hook has run, so no hook can normalise them. The
+// default (time.Now, host zone) stored "... +1400 OT m=+0.45" on SQLite for a
+// host with a fixed non-UTC zone, which no reader could scan back
+// (SQLITE-UTC-NOWFUNC-1).
 func gormConfig() *gorm.Config {
-	return &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), QueryFields: true}
+	return &gorm.Config{
+		Logger:      logger.Default.LogMode(logger.Silent),
+		QueryFields: true,
+		NowFunc:     func() time.Time { return time.Now().UTC() },
+	}
 }
 
 // StorageFactory creates storage instances based on configuration

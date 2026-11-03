@@ -23,6 +23,7 @@ import (
 )
 
 func TestCompleteSAML_TraversalLimit(t *testing.T) {
+	skipUnderFIPS140Only(t, "samltest's IdP fixture builds its POST-binding response with SHA-1, which crypto/sha1 refuses; the SP code under test is unaffected (an IdP signing with SHA-1 is refused under fips140=only, as intended)")
 	const idpEntityID = "https://idp.example/entity"
 	const acsURL = "https://keyorix.internal/auth/saml/corp/acs"
 	// goxmldsig's default NSContext budget; internal/saml pins it

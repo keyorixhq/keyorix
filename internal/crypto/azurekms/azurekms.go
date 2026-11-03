@@ -153,10 +153,10 @@ var azureKeyVaultHostSuffixes = []string{
 func validateKeyVaultHost(vaultOrigin string) error {
 	u, err := url.Parse(vaultOrigin)
 	if err != nil {
-		return fmt.Errorf("azure-kms: invalid vault URL %q: %w", vaultOrigin, err)
+		return fmt.Errorf("azure-kms: invalid vault URL %q: %w", netutil.RedactURLHost(vaultOrigin), netutil.RedactErrorURLs(err))
 	}
 	if u.Scheme != "https" {
-		return fmt.Errorf("azure-kms: vault URL %q must use https", vaultOrigin)
+		return fmt.Errorf("azure-kms: vault URL %q must use https", netutil.RedactURLHost(vaultOrigin))
 	}
 	host := strings.ToLower(u.Hostname())
 	for _, suffix := range azureKeyVaultHostSuffixes {
@@ -221,10 +221,10 @@ func New(_ context.Context, keyID string) (keyorixcrypto.KMSClient, error) {
 func parseKeyID(keyID string) (vaultURL, name, version string, err error) {
 	u, err := url.Parse(keyID)
 	if err != nil {
-		return "", "", "", fmt.Errorf("azure-kms: invalid kms_key_id %q: %w", keyID, err)
+		return "", "", "", fmt.Errorf("azure-kms: invalid kms_key_id %q: %w", netutil.RedactURLHost(keyID), netutil.RedactErrorURLs(err))
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return "", "", "", fmt.Errorf("azure-kms: kms_key_id must be a key identifier URL (https://{vault}.vault.azure.net/keys/{name}[/{version}]), got %q", keyID)
+		return "", "", "", fmt.Errorf("azure-kms: kms_key_id must be a key identifier URL (https://{vault}.vault.azure.net/keys/{name}[/{version}]), got %q", netutil.RedactURLHost(keyID))
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] != "keys" || parts[1] == "" {
@@ -301,6 +301,16 @@ func (c *client) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 	// nil) — only enforce the check when a MAC is actually present, so those
 	// already-encrypted-and-stored DEKs keep decrypting exactly as before.
 	if pinned && len(env.MAC) > 0 {
+		// The MAC is keyed with the unwrap result, so its length is checked
+		// first: a result that is not a KEK is refused here with the provider's
+		// wrong-length error, and a short one never reaches HMAC (Go's FIPS
+		// 140-only mode panics on an HMAC key under 112 bits). Every KEK is
+		// KEKSize bytes, and the provider refuses any other length anyway.
+		if len(res.Result) != keyorixcrypto.KEKSize {
+			n := len(res.Result)
+			clear(res.Result)
+			return nil, fmt.Errorf("azure-kms key provider: KEK must be %d bytes, got %d", keyorixcrypto.KEKSize, n)
+		}
 		if !hmac.Equal(versionMAC(res.Result, env.Version), env.MAC) {
 			return nil, fmt.Errorf("azure-kms: version-pinned envelope failed integrity check: Version does not match the recovered key material — the envelope may have been tampered with")
 		}

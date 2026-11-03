@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,8 +51,9 @@ func TestMFAReset_RequesterNoLongerActive_ApprovalRefused(t *testing.T) {
 		req := f.request(t)
 		u := f.reload(t, f.a.ID)
 		u.IsActive = false
-		_, err := f.st.UpdateUser(context.Background(), u)
+		matched, err := f.st.UpdateUserIfActiveStateMatches(context.Background(), u, true)
 		require.NoError(t, err)
+		require.True(t, matched)
 		require.False(t, f.reload(t, f.a.ID).IsActive)
 		f.assertApprovalRefused(t, req, ErrMFAResetRequesterChanged)
 	})
@@ -107,12 +109,7 @@ func TestMFAReset_TargetChangedInsideApproval_Refused(t *testing.T) {
 			return tx.SetAccountState(context.Background(), f.target.ID, AccountSuspended, f.now)
 		}, ErrMFAResetAccountBlocked},
 		{"linked to an identity provider", func(f *mfaResetFixture, _ uint, tx storage.Storage) error {
-			u, err := tx.GetUser(context.Background(), f.target.ID)
-			if err != nil {
-				return err
-			}
-			u.ExternalID = "okta|target"
-			_, err = tx.UpdateUser(context.Background(), u)
+			_, err := tx.ClaimUserExternalIDIfUnset(context.Background(), f.target.ID, "okta|target", f.now)
 			return err
 		}, ErrMFAResetExternalIdentity},
 	} {
@@ -180,10 +177,9 @@ func TestMFAReset_RequestRefusesExternalOrBlockedTarget(t *testing.T) {
 	ctx := context.Background()
 	t.Run("linked to an identity provider", func(t *testing.T) {
 		f := newMFAResetFixture(t)
-		u := f.reload(t, f.target.ID)
-		u.ExternalID = "okta|target"
-		_, err := f.st.UpdateUser(ctx, u)
+		claimed, err := f.st.ClaimUserExternalIDIfUnset(ctx, f.target.ID, "okta|target", time.Now())
 		require.NoError(t, err)
+		require.True(t, claimed)
 		_, err = f.c.RequestMFAReset(ctx, f.a.ID, false, MFAResetRequestInput{User: "target", Reason: "x", VerifiedBy: "ticket", Code: f.code(t, f.a.ID)})
 		require.ErrorIs(t, err, ErrMFAResetExternalIdentity)
 		assert.Zero(t, f.auditCount(t, EventMFAResetRequested))

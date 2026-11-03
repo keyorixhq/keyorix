@@ -119,7 +119,7 @@ existing release or `existingSecret` keeps working on upgrade.
 | `externalDatabase.sslRootCert` | `""` | CA for the database's certificate (`storage.database.ssl_root_cert`): `system` (OS CA store, for a publicly issued certificate) or the path of a PEM file you mount into the server pod yourself. With `externalDatabase.sslMode: verify-full`/`verify-ca` either this or `externalDatabase.caSecret.name` is **required**: without one `helm template`/`install` fails (and the server would refuse to start). A path with `sslMode` `disable`, `allow` or `prefer` (and `system` with `disable`) fails the render too: the driver would never check the certificate against it. Not together with `caSecret`. Walk-through: [docs/operator/postgres-tls.md](../../../docs/operator/postgres-tls.md). |
 | `externalDatabase.caSecret.name` | `""` | A Secret (release namespace) holding the database CA's PEM. The chart mounts it read-only, mode 0440, at `/app/db-ca/ca.crt` in the server pod and renders that path as `ssl_root_cert`. The server reads the CA once, when it opens its database pool: after rotating the Secret, restart the server (`kubectl rollout restart`). Needs `externalDatabase.sslMode` `verify-full` (recommended), `verify-ca` or `require`. Example: `kubectl create secret generic pg-ca --from-file=ca.crt=./pg-ca.pem` then `--set externalDatabase.sslMode=verify-full --set externalDatabase.caSecret.name=pg-ca`. |
 | `externalDatabase.caSecret.key` | `ca.crt` | The key in that Secret holding the PEM. |
-| `auditDurability` | `""` | Server `storage.database.audit_durability`: `strict` (an audit entry's commit waits for the disk sync) or `standard` (it does not). Empty leaves it unset, so the backend default applies. Any other value fails `helm template`/`install` (`values.schema.json`). |
+| `auditDurability` | `""` | Server `storage.database.audit_durability`: `strict` (an audit entry's commit waits for the disk sync) or `standard` (it does not). Empty leaves it unset, so the backend default applies (`standard` on PostgreSQL, which this chart always uses). Set `strict` on edge/PostgreSQL where audit loss is unacceptable (a power loss or PostgreSQL crash can otherwise lose the last few hundred ms of audit entries; [docs/PERFORMANCE.md](../../../docs/PERFORMANCE.md#audit-durability)). Any other value fails `helm template`/`install` (`values.schema.json`). |
 | `externalDatabase.pooler` | `""` | Connection pooler in front of the external database (`storage.database.pooler`): `""` (none), `pgbouncer-session` or `pgbouncer-transaction`. Point `externalDatabase.host`/`port` at PgBouncer. Transaction mode also needs PgBouncer settings: see [docs/postgresql-poolers.md](../../../docs/postgresql-poolers.md). |
 | `secureBaseline.enabled` | `true` | ADR-112 secure baseline: server TLS (Helm-generated certificate, verified by the web pod), rate limiting, `/metrics` token, bundled Postgres over TLS, runtime files 0600. `admin validate --posture` then reports zero deviations. On by default since v0.96.0. **Needs a server image newer than v0.95.3**: with an older `image.tag`, set it to `false`. See below. |
 
@@ -240,6 +240,11 @@ replace each `CHANGE-ME`.
   database backups (another store, other access) and the master password in a
   third place: you need all three to recover, and none opens a secret alone.
 - **TLS:** terminate at the ingress (`ingress.tls` + cert-manager annotations).
+- **Web pod probes:** liveness is `/nginx-health`, a static answer from the
+  web nginx alone, so a backend outage never restarts the pod. Readiness is
+  `/health`, proxied to the server Service's `/health`: the web pod is Ready
+  only while the backend answers, and leaves the Service endpoints (no restart)
+  while it is down.
 - **Secure baseline (`secureBaseline.enabled=true`):** Helm generates a
   `<fullname>-secure-baseline` Secret (e.g. `kx-keyorix-secure-baseline`) on first install, kept across upgrades:
   the server's self-signed certificate for its Service names, the `/metrics`

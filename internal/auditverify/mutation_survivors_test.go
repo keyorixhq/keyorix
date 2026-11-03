@@ -384,6 +384,7 @@ func TestVerify_BrokenWalkStillReportsTheCheckpoint(t *testing.T) {
 // A retention anchor "signed" with the empty key must never authenticate a gap
 // when the caller supplied no key.
 func TestVerify_NoKeyNeverAuthenticatesARetentionAnchor(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture signs with a 1-byte or nil HMAC key, under crypto/hmac's 112-bit minimum; production keys are 32-byte KEK-derived keys")
 	rows := survivorRows(4)
 	remaining := rows[1:] // ids 2..4: row 2's prev_hash is no longer the genesis
 	db, path := survivorDB(t, remaining...)
@@ -485,6 +486,7 @@ func TestVerify_CheckpointAnchorTokenMustVerifyAgainstTSARoots(t *testing.T) {
 }
 
 func TestVerify_ExternalAnchorAuthentication(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture signs with a 1-byte or nil HMAC key, under crypto/hmac's 112-bit minimum; production keys are 32-byte KEK-derived keys")
 	rows := survivorRows(3)
 	bundle := func(key []byte, token []byte) *ExternalAnchorBundle {
 		cp := survivorCheckpoint(rows, key)

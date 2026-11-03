@@ -66,7 +66,7 @@ func TestAzureKMS_EncryptPinsVersionAndSurvivesRotation(t *testing.T) {
 	fk := &fakeKeys{currentVersion: "v1"}
 	c := newTestClient(fk, "") // unversioned kms_key_id — the documented default usage
 
-	ct, err := c.Encrypt(context.Background(), []byte("kek-material"))
+	ct, err := c.Encrypt(context.Background(), []byte(testKEK32))
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestAzureKMS_EncryptPinsVersionAndSurvivesRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decrypt must target the pinned version (v1), survived rotation to v2: %v", err)
 	}
-	if string(pt) != "kek-material" {
+	if string(pt) != testKEK32 {
 		t.Fatalf("round-trip got %q", pt)
 	}
 }
@@ -154,7 +154,7 @@ func TestAzureKMS_LegacyExplicitlyVersionedBlobStillDecrypts(t *testing.T) {
 func TestAzureKMS_EncryptDecryptRoundTrip(t *testing.T) {
 	fk := &fakeKeys{currentVersion: "v1"}
 	c := newTestClient(fk, "")
-	ct, err := c.Encrypt(context.Background(), []byte("hello"))
+	ct, err := c.Encrypt(context.Background(), []byte(testKEK32))
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestAzureKMS_EncryptDecryptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
-	if string(pt) != "hello" {
+	if string(pt) != testKEK32 {
 		t.Fatalf("got %q", pt)
 	}
 }
@@ -293,7 +293,7 @@ func (f fakePermissiveKeys) UnwrapKey(_ context.Context, _ string, _ string, _ a
 // ciphertext it travels with, so tampering it independently is detected
 // rather than silently trusted as key-selection metadata.
 func TestAzureKMS_DecryptRefusesTamperedVersion(t *testing.T) {
-	secret := []byte("real-secret-kek-material")
+	secret := []byte(testKEK32)
 	blob, err := encodeEnvelope("v1", []byte("original-ciphertext"), secret)
 	require.NoError(t, err)
 

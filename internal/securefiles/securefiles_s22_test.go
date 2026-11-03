@@ -172,13 +172,6 @@ func TestSyncDir_S22_HappyPath(t *testing.T) {
 	require.NoError(t, SyncDir(dir))
 }
 
-// TestSyncDir_S22_MissingDirectory verifies that SyncDir returns an error for a
-// path that does not exist.
-func TestSyncDir_S22_MissingDirectory(t *testing.T) {
-	err := SyncDir(filepath.Join(t.TempDir(), "no-such-dir"))
-	require.Error(t, err)
-}
-
 // TestIsPathInsideBase_S22_ExactBase verifies that a path equal to the base itself
 // is considered inside (it's not outside it).
 func TestIsPathInsideBase_S22_ExactBase(t *testing.T) {

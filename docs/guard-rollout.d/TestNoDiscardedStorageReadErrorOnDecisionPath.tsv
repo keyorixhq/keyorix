@@ -1,1 +1,0 @@
-TestNoDiscardedStorageReadErrorOnDecisionPath	internal/core/guards	#3826	new repo-wide guard (ERRLOSS-TAILS-1), report-only until its first green nightly on main

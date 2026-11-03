@@ -42,7 +42,7 @@ Exit codes:
 - [`keyorix legal-hold`](#keyorix-legal-hold) — Deployment-wide legal hold — block purges to preserve records (A.5.34)
 - [`keyorix license`](#keyorix-license) — Offline license: install and check status
 - [`keyorix login`](#keyorix-login) — Authenticate to a Keyorix server and store the resulting token
-- [`keyorix logout`](#keyorix-logout) — Revoke the stored session and forget it locally
+- [`keyorix logout`](#keyorix-logout) — Revoke the stored session and forget it locally (keeps server URL and ca_file)
 - [`keyorix machine`](#keyorix-machine) — Manage machine identities
 - [`keyorix mfa`](#keyorix-mfa) — Manage MFA (multi-factor authentication)
 - [`keyorix notification`](#keyorix-notification) — Manage notifications and notification channels
@@ -1173,8 +1173,10 @@ Verify an exported evidence pack against its detached signature
 
 Verify the authenticity of an archived evidence pack. Reads the pack file and
 its signature (default \<file\>.sig) and asks the server to recompute the HMAC with its
-DEK-derived signing key — proving the pack was produced by this deployment and has
-not been modified. Requires server-side encryption (the signing key is DEK-derived).
+KEK-derived signing key — proving the pack was produced by this deployment and has
+not been modified. Requires server-side encryption (the signing key is KEK-derived).
+A DEK rotation does not affect verification; a pack signed before a KEK change is
+reported as unverifiable (superseded key version), not as tampered.
 
 **Usage:** `keyorix compliance verify [flags]`
 
@@ -2058,16 +2060,16 @@ keyorix login --server https://keyorix.example.com --username alice
 
 ## `keyorix logout`
 
-Revoke the stored session and forget it locally
+Revoke the stored session and forget it locally (keeps server URL and ca_file)
 
-Sign out: the server revokes the stored session token first, then the local
-credentials file is deleted, even when the server cannot be reached or already rejects
-the token, so no stale credential stays on disk.
+Sign out: the server revokes the stored session token first, then the token is
+removed from the local credentials file, even when the server cannot be reached or already
+rejects the token, so no stale credential stays on disk.
 
-The credentials file also holds the server URL and the ca_file setting
-(keyorix config set ca_file), so both are forgotten too: against a server with a private
-or self-signed certificate, run "keyorix config set ca_file \<path\>" again (or pass
---ca-file) before the next "keyorix login".
+Your settings stay: the server URL and the ca_file setting (keyorix config set ca_file) are
+kept, so the next "keyorix login" works against a server with a private or self-signed
+certificate without repeating them. To forget them too, run "keyorix config unset ca_file"
+or delete the credentials file.
 
 **Usage:** `keyorix logout`
 

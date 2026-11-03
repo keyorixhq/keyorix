@@ -1,9 +1,9 @@
 // Package notary anchors a message to an external authority that returns an
 // independent, signed proof the message existed at a point in time — so a proof
 // the running server cannot forge or backdate. Keyorix uses it to anchor audit
-// checkpoints (ADR-029): the on-box checkpoint is HMAC-signed with a DEK-derived
+// checkpoints (ADR-029): the on-box checkpoint is HMAC-signed with a KEK-derived
 // key, which detects truncation/rewrite by a database actor, but an attacker who
-// also holds the DEK could forge it. An external RFC 3161 timestamp over the same
+// also holds the KEK could forge it. An external RFC 3161 timestamp over the same
 // checkpoint binds it to a third party's clock and signing key, which that
 // attacker does not control — strengthening the tamper-evidence story for ISO
 // 27001 / SOC 2 / eIDAS.

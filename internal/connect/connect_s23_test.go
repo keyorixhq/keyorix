@@ -79,11 +79,11 @@ func TestPrefixAllowed_S23_RefShorterThanAllPrefix(t *testing.T) {
 
 // ── connect.go: refWithinPrefix edge cases ──────────────────────────────────
 
-// TestRefWithinPrefix_S23_EmptyPrefixNeverMatches verifies that an empty prefix
-// string ("") never satisfies refWithinPrefix for a non-empty ref. This is the
-// internal helper; the allowlist loop already skips p=="" entries, but the
-// function itself must also be sound.
-func TestRefWithinPrefix_S23_EmptyPrefixNeverMatches(t *testing.T) {
+// TestRefWithinPrefix_S23_EmptyPrefixBoundary verifies that an empty prefix
+// string ("") does not satisfy refWithinPrefix for a ref that does not start
+// with '/', that it does for a '/'-led ref, and that the allowlist loop's
+// p=="" skip keeps such an entry from ever allowing anything.
+func TestRefWithinPrefix_S23_EmptyPrefixBoundary(t *testing.T) {
 	// ref == p when both are "": returns true (trivial exact match).
 	assert.True(t, refWithinPrefix("", ""))
 	// non-empty ref never equals empty prefix, and HasPrefix("anything", "") is
@@ -91,6 +91,14 @@ func TestRefWithinPrefix_S23_EmptyPrefixNeverMatches(t *testing.T) {
 	// which is not '/', so the function must return false.
 	assert.False(t, refWithinPrefix("", "db/prod"),
 		"a non-empty ref must not be considered within an empty prefix")
+	// A "/"-led ref DOES match the empty prefix: ref[0] == '/' passes the
+	// segment-boundary check. This pins the real behaviour (the doc comment used
+	// to claim "matches nothing"); safety rests on every caller handling p == ""
+	// first (prefixAllowed skips it, so an empty allowlist entry never allows a
+	// ref).
+	assert.True(t, refWithinPrefix("", "/db/prod"))
+	assert.False(t, prefixAllowed([]string{""}, "/db/prod"),
+		"an empty allowlist entry must never allow a ref, even a '/'-led one")
 }
 
 // TestRefWithinPrefix_S23_TrailingSlashPrefixExactMatch verifies that a ref that

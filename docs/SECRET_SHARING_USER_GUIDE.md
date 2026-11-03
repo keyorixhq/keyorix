@@ -29,7 +29,7 @@ Secret sharing in Keyorix allows you to securely collaborate by giving other use
   member of the secret's project (they hold a role in that project). A global
   role, such as the bootstrap `admin`, does not make anyone a member of a
   project: give yourself a project role first (for example `project_admin`).
-- **Users with Write ("Read & Write") Permission**: Can read the secret, update its value and
+- **Users with Write ("Read + update value/metadata, rotate") Permission**: Can read the secret, update its value and
   metadata (description, tags, type), and rotate it. Nothing else: see the next section.
 - **Users with Read Permission**: Can view shared secrets but cannot modify them
 
@@ -69,6 +69,12 @@ permission on the shared secret is the **higher** of the two:
   failed request writes no such event, and neither does an action the
   recipient's role already allowed. Share create, update and revoke events
   name the share ID too.
+- Opening the share list (`GET /api/v1/shares`, `GET /api/v1/shares/owned`)
+  names each secret you can read. When some of those names are readable only
+  because of a share, the list call writes ONE `share_access_elevated` event
+  with action `shares.list`: how many secrets, and the secret and share IDs
+  (the first 50; `truncated` says when there are more). It does not write one
+  event per secret on the page.
 
 `keyorix secret access --id N` (and the API's `GET /secrets/{id}/access`) shows
 each user's **effective** level on the secret, the grant that gives it, and every
@@ -107,10 +113,14 @@ including role-derived access (see above).
 ### Accessing the Sharing Interface
 
 #### Web Interface
-1. Navigate to your secrets list
-2. Click on the secret you want to share
-3. Look for the "Share" button or tab
-4. Shared secrets will show a sharing indicator (👥 icon)
+1. Open **Secrets** in the sidebar
+2. Click the share icon (tooltip "Share") on the secret's row, or open the secret
+   and click **Share**. Both appear only if your project role lets you write secrets.
+3. The **Sharing** column of the list shows a share icon with "N shares" (or
+   "Shared with you" on your own list) for shared secrets, and "Private" for
+   the rest
+4. **Sharing** in the sidebar opens the Sharing Management page, where you
+   review, edit and revoke the shares you created
 
 #### CLI Interface
 All sharing commands are under `keyorix share` (`create`, `list`, `update`, `revoke`,
@@ -126,14 +136,17 @@ See the [API Documentation](SECRET_SHARING_API.md) for programmatic access.
 
 #### Via Web Interface
 1. **Select Secret**: Navigate to the secret you want to share
-2. **Click Share**: Click the "Share" button
-3. **Choose Recipient**: Type a name, username or email and pick from the
-   suggestions. The suggestions are the active members of the secret's project,
+2. **Click Share**: Click the "Share" button (or the share icon on the list row)
+3. **Choose Recipient**: Type a name or username in the "Recipient" field and
+   pick from the suggestions. The suggestions are the active members of the secret's project,
    because a share can only go to a project member. A project-only admin sees them
    too; no global role is needed. If you have no role in the project that allows
    sharing, the dialog says so instead of listing anyone.
-4. **Set Permission**: Choose "Read" or "Write" permission
-5. **Confirm**: Click "Share Secret" to complete
+4. **Set Permission**: Choose "Read Only" or "Read + update value/metadata, rotate"
+   (the `write` share described above)
+5. **Set Expiry** (optional): "Access expires" defaults to "Never (permanent)";
+   1 hour, 24 hours, 7 days and 30 days are also offered
+6. **Confirm**: Click "Share" to complete
 
 #### Via API
 ```bash
@@ -175,11 +188,9 @@ curl -X POST "https://api.keyorix.com/api/v1/secrets/123/share" \
 
 ### Sharing Multiple Secrets
 
-#### Bulk Sharing (Web Interface)
-1. Select multiple secrets using checkboxes
-2. Click "Bulk Actions" → "Share Selected"
-3. Choose recipients and permissions
-4. Confirm the bulk share operation
+The web UI shares one secret at a time: with several secrets selected, its
+**Share** button is disabled ("Share each secret individually — bulk sharing is
+not supported"). Use the CLI or the API to share several secrets.
 
 ## Managing Permissions
 
@@ -227,11 +238,10 @@ Groups allow you to share secrets with multiple users at once. When you share wi
 ### Sharing with Groups
 
 #### Via Web Interface
-1. Click "Share" on your secret
-2. Select "Group" as recipient type
-3. Choose the group from the dropdown
-4. Set the permission level
-5. Confirm the share
+The Share dialog searches users only; it has no group option. Share with a
+group through the CLI (`keyorix share create --is-group`) or the API. Group
+shares then appear in the Sharing Management page, where "Groups" filters
+the list.
 
 #### Via API
 ```bash
@@ -267,9 +277,9 @@ When group membership changes:
 
 #### Web Interface
 - Shared secrets appear in your main secrets list
-- Look for the sharing indicator (👥 icon)
-- Use the "Shared with me" filter to see only shared secrets
-- Owner information is displayed for each shared secret
+- Look for the share icon and "Shared with you" in the **Sharing** column
+- The list has no filter for shared secrets
+- The owner is shown under the modified date ("by <owner>")
 
 ### Working with Shared Secrets
 
@@ -299,21 +309,17 @@ keyorix secret update --id 123 --expires "2027-01-01T00:00:00Z"
 
 When viewing a shared secret, you'll see:
 - **Owner Information**: Who owns the secret
-- **Your Permission Level**: What you can do with the secret
-- **Share Date**: When it was shared with you
 - **Last Modified**: When the secret was last updated
 - **Version History**: All versions (if you have read access)
+- **Who can access**: each user's effective level and the grant behind it (see
+  `keyorix secret access` above)
 
 ## Self-Management
 
 ### Removing Yourself from Shares
 
-Sometimes you may want to remove yourself from a shared secret:
-
-#### Via Web Interface
-1. Navigate to the shared secret
-2. Click "Remove Access" or "Leave Share"
-3. Confirm the action
+Sometimes you may want to remove yourself from a shared secret. The web UI has
+no action for this; use the CLI (`keyorix share self-remove`) or the API:
 
 #### Via API
 ```bash
@@ -321,20 +327,15 @@ curl -X DELETE "https://api.keyorix.com/api/v1/secrets/123/self-share" \
   -H "Authorization: Bearer your-token"
 ```
 
-### Managing Your Shared Secrets View
+### The Sharing Management Page
 
-#### Organizing Shared Secrets
-- **Filter by Owner**: See secrets from specific users
-- **Filter by Permission**: Show only read or write access secrets
-- **Sort by Date**: Order by when secrets were shared with you
-- **Search**: Find specific shared secrets by name or content
-
-#### Notifications
-Configure notifications for:
-- New secrets shared with you
-- Permission changes on shared secrets
-- Secrets being unshared from you
-- Updates to shared secrets you're watching
+**Sharing** in the sidebar lists the shares you created ("Shares you created"):
+- Search recipients or creators
+- Filter by recipient type (All Types, Users, Groups) and permission
+- Edit a share's permission and expiry (pencil icon) or revoke it (trash icon,
+  "Revoke access"). Only the secret's owner can; for everyone else both icons
+  are disabled with the hint "Only the secret's owner can change or revoke its shares".
+- **Select** switches on checkboxes, then **Revoke** removes the selected shares
 
 ## Security Best Practices
 
@@ -461,7 +462,7 @@ A: Read permission allows viewing the secret and its metadata. Write permission 
 A: No, sharing permissions cannot be delegated. Only the original owner can manage sharing.
 
 **Q: How do I know what permission level I have for a shared secret?**
-A: Your permission level is displayed in the secret details and in the shared secrets list.
+A: Open the secret: the "Who can access" panel lists each user's effective level (global admins are not listed). From the CLI, run `keyorix secret access --id N`.
 
 ### Security Questions
 

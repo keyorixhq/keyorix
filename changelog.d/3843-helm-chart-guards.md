@@ -1,0 +1,3 @@
+### Added
+
+- Helm chart: README and `values.yaml` now say to set `auditDurability: strict` on edge/PostgreSQL where audit loss is unacceptable. New tests pin the chart render matrix (1 and 2 replicas, bundled and external database, NetworkPolicy, Ingress, secure baseline, existing auth Secret; kubeconform-valid, no credential in a ConfigMap, fail-closed refusals) and the current behaviour that an external database is denied egress by the default NetworkPolicy until `networkPolicy.egress.databaseTo` or `extraRules` names it. A docs guard fails when a doc tells users to `--set` a chart key that is not in `values.yaml`; it caught `web.replicaCount` (the key is `web.replicas`) in the Kubernetes guide.

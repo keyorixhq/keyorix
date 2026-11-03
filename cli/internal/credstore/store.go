@@ -17,7 +17,7 @@ package credstore
 // a second file -- the same "one storage mechanism only" decision PR 0 made for credentials.
 type Credentials struct {
 	ServerURL     string `yaml:"server_url"`
-	Token         string `yaml:"token"`
+	Token         string `yaml:"token,omitempty"`
 	ActiveProject string `yaml:"active_project,omitempty"`
 	// CAFile is the PEM CA/certificate file the CLI trusts for ServerURL's TLS certificate
 	// (SECURE-DEFAULT-1: `keyorix-server admin init` generates a self-signed one). Set by
@@ -38,4 +38,7 @@ type Store interface {
 	Load() (Credentials, error)
 	// Clear removes any stored credentials. Clearing when none exist is not an error.
 	Clear() error
+	// ForgetSession removes the session (token, active project) but keeps the operator's
+	// settings (server URL, ca_file). Nothing stored is not an error.
+	ForgetSession() error
 }

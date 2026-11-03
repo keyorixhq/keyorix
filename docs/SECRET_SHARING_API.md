@@ -82,7 +82,11 @@ comments, share, restore, `/shares/{id}`, project-level bulk routes) answers
 you update its value and metadata or rotate it. ..." where the gate consulted
 the share. A share never grants delete, `secrets.manage` or re-sharing.
 Each elevated action is audited as `share_access_elevated` once it succeeds
-(action, secret, share id, actor); refusals and failures write nothing. See the
+(action, secret, share id, actor); refusals and failures write nothing. A share
+list call (`GET /api/v1/shares`, `/shares/owned`) whose secret names are readable
+only through shares writes one `share_access_elevated` row for the call (action
+`shares.list`, `count`, up to 50 `elevations` of `secret_id`/`share_id`,
+`truncated`), not one row per secret. See the
 [user guide](SECRET_SHARING_USER_GUIDE.md#how-a-share-combines-with-a-project-role).
 
 **Transferring a shared secret.** `POST /api/v1/secrets/{id}/transfer-ownership`

@@ -1,0 +1,11 @@
+# Deliberately bad values: the one shape the original check caught (TCP/5432 with a `to`).
+# Kept so the broadened check is proven to still flag it.
+networkPolicy:
+  egress:
+    extraRules:
+      - to:
+          - ipBlock:
+              cidr: 10.20.0.5/32
+        ports:
+          - protocol: TCP
+            port: 5432

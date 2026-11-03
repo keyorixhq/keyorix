@@ -7,7 +7,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/rotation"
-	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // resolveVaultToken returns the Vault connector token from the env var named by
@@ -16,7 +15,7 @@ func resolveVaultToken(tokenEnv string) (string, error) {
 	if tokenEnv == "" {
 		tokenEnv = "VAULT_TOKEN"
 	}
-	v, _, err := secretenv.Lookup(tokenEnv)
+	v, _, err := config.LookupSecretEnv(tokenEnv)
 	return v, err
 }
 

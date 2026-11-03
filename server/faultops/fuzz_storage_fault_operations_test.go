@@ -659,7 +659,7 @@ func runOneFuzzIterationReporting(t *testing.T, rep fuzzVerdict, data []byte, re
 	}
 
 	w.faulty.Arm(&faultstorage.FaultSpec{
-		Method: decoded.methodName, NthCall: decoded.nthCall, Kind: decoded.kind, Err: errFuzzInjected,
+		Method: decoded.methodName, NthCall: decoded.nthCall, Kind: decoded.kind, Err: injectedErrorFor(decoded.methodName),
 	})
 
 	var result opResult
@@ -1177,6 +1177,11 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 	// Oracle (g), MFA-RESET-TESTS-1: no cleared factor beside a live old credential.
 	// See mfa_reset_oracle_test.go.
 	checkMFAResetNeverClearedWithLiveCredential(t, label, in)
+	// Oracle (h), #3457: a fault on a credential or permission lookup is never
+	// answered with a verdict (401/403). See lookup_verdict_status_oracle_test.go.
+	// Deferred so it runs after every other oracle, early returns included: it is
+	// independent of them, and their findings keep coming first.
+	defer checkLookupVerdictStatus(t, label, in)
 
 	report := func(oracle string, diff []string, format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)

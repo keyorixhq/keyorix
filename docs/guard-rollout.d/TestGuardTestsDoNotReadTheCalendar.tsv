@@ -1,1 +1,0 @@
-TestGuardTestsDoNotReadTheCalendar	internal/guardrules	#3701	new repo-wide guard (GUARD-CONTRACT-1), report-only until its first green nightly on main

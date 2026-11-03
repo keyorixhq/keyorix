@@ -20,6 +20,9 @@ func init() {
 		// effect-then-error ends in this same state; oracle (d) may consult this
 		// row for it (oracle_d_pure_read_by_design_test.go).
 		pureReadEffectThenError: true,
+		// #3873 (AUTH-ENDPOINT-OUTAGE-1): the same pure-read twin, for oracle (h).
+		lookupVerdictEffectThenError: "post-verdict identity read after the assertion verified: refused like a " +
+			"failed login (ErrLoginPostVerdict, #2880/#2841), slot kept and auth.login_error audited",
 		designComment: "internal/core/webauthn.go FinishWebAuthnLoginPending: an identity-read failure after the " +
 			"assertion verified is denied via denyAfterCredentialMatched (ErrLoginPostVerdict wrapping " +
 			"ErrLoginIdentityUnavailable, never ErrWebAuthnLoginNotEvaluated); server/http/handlers/webauthn.go " +

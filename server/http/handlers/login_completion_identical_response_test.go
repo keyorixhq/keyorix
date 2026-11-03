@@ -38,6 +38,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -45,6 +46,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
@@ -112,7 +114,7 @@ func newWebAuthnCompletionEnvOver(t *testing.T, wrap func(corestorage.Storage) c
 	// sqlitetest.Open gives a NAMED in-memory DB (a bare ":memory:" gives every
 	// pooled connection its own empty database: "no such table: sessions") with
 	// the pool capped to one connection.
-	db := sqlitetest.Open(t, "kxwacompletion")
+	db := sqlitetest.OpenWithDialector(t, "kxwacompletion", sqlite.Open, &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{},
 		&models.MFAChallenge{}, &models.WebAuthnCredential{}, &models.WebAuthnSession{}, &models.Notification{},
 		&models.LoginAttempt{}, &models.MFAStepupToken{}, &models.MFAStepUpGrant{},
@@ -364,7 +366,7 @@ func observeSetupHTTP(t *testing.T, _ *gorm.DB, w *httptest.ResponseRecorder) ht
 func newSetupConsumeCompletionEnv(t *testing.T) (*AuthHandler, *faultstorage.FaultyStorage, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.Initialize(&config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}))
-	db := sqlitetest.Open(t, "kxsetupconsume")
+	db := sqlitetest.OpenWithDialector(t, "kxsetupconsume", sqlite.Open, &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Session{}, &models.AuditEvent{}, &models.SetupToken{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},

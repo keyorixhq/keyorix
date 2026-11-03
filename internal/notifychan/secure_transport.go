@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // validateEndpoint rejects a non-https notification endpoint — which would send the
@@ -29,21 +31,23 @@ import (
 func validateEndpoint(raw string, allowPrivateNetwork, allowInsecureTransport bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("notifychan: invalid endpoint %q: %w", raw, err)
+		// url.Parse returns a *url.Error that quotes the full raw URL; a Slack/Teams
+		// webhook URL is itself the bearer credential, so keep only scheme+host and the cause.
+		return fmt.Errorf("notifychan: invalid endpoint %q: %w", netutil.RedactURLHost(raw), netutil.RedactErrorURLs(err))
 	}
 	switch u.Scheme {
 	case "https":
 		// scheme OK; fall through to the destination-IP check
 	case "http":
 		if !allowInsecureTransport && !isLoopbackHost(u.Hostname()) {
-			return fmt.Errorf("notifychan: endpoint %q must use https (set notifications.webhook.insecure_allow_plaintext_notify_transport only for a trusted internal or loopback target)", raw)
+			return fmt.Errorf("notifychan: endpoint %q must use https (set notifications.webhook.insecure_allow_plaintext_notify_transport only for a trusted internal or loopback target)", netutil.RedactURLHost(raw))
 		}
 	default:
-		return fmt.Errorf("notifychan: endpoint %q must use https", raw)
+		return fmt.Errorf("notifychan: endpoint %q must use https", netutil.RedactURLHost(raw))
 	}
 	if !allowPrivateNetwork {
 		if err := refuseDisallowedHost(u.Hostname()); err != nil {
-			return fmt.Errorf("notifychan: endpoint %q %w", raw, err)
+			return fmt.Errorf("notifychan: endpoint %q %w", netutil.RedactURLHost(raw), err)
 		}
 	}
 	return nil
@@ -79,7 +83,7 @@ func refuseDisallowedHost(host string) error {
 	}
 	addrs, err := lookupIPAddr(host)
 	if err != nil {
-		return fmt.Errorf("could not resolve hostname to verify it is not private/internal: %w", err)
+		return fmt.Errorf("could not resolve hostname to verify it is not private/internal: %w", netutil.RedactErrorURLs(err))
 	}
 	for _, a := range addrs {
 		if isDisallowedIP(a.IP) {

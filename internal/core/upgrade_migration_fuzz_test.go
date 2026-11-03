@@ -51,7 +51,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
-	"gorm.io/driver/sqlite"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )

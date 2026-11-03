@@ -232,12 +232,17 @@ func TestClassifySecretReadDenial(t *testing.T) {
 	cases := map[string]SecretReadDenialReason{
 		"secret \"x\" is restricted: a recent MFA verification is required": SecretReadDeniedClassificationGate,
 		"permission denied: insufficient permissions":                       SecretReadDeniedForbidden,
-		"Secret not found: record not found":                                SecretReadDeniedNotFound,
 		"decrypt: cipher: message authentication failed":                    SecretReadDeniedInternalError,
+		// Text alone is no longer a not-found verdict (ERR-FOLD-HANDLERS-1).
+		"Secret not found: record not found": SecretReadDeniedInternalError,
 	}
 	for msg, want := range cases {
 		assert.Equal(t, want, ClassifySecretReadDenial(errors.New(msg)), msg)
 	}
+	assert.Equal(t, SecretReadDeniedNotFound, ClassifySecretReadDenial(fmt.Errorf("Secret not found: %w", gorm.ErrRecordNotFound)))
+	assert.Equal(t, SecretReadDeniedNotFound, ClassifySecretReadDenial(fmt.Errorf("x: %w", storage.ErrSecretNotFound)))
+	assert.Equal(t, SecretReadDeniedInternalError, ClassifySecretReadDenial(classifyReadError(assert.AnError, "secret not found")),
+		"a read fault is a failed read")
 	assert.Equal(t, SecretReadDeniedNotFound, ClassifySecretReadDenial(ErrSecretRefNotFound))
 	assert.Len(t, SecretReadDenialReasons(), 9)
 }

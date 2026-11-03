@@ -1,0 +1,2 @@
+### Testing
+- **The split role-change ops are swept with a plain storage fault at the grant.** `TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal` (`server/faultops`) fails `AssignRole` itself, through the real HTTP stack, on `SetUserRoles`, `SetProjectMemberRole` and the membership activation, and reads the database: a project's only administrator keeps the administrator role, a narrowing that stands is answered with the partial-mutation 503 naming both halves, and a membership whose grant failed is put back to its previous state. No behaviour change.

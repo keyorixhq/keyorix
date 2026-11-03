@@ -412,6 +412,10 @@ func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNod
 	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
+		// A read FAULT is a retry answer, not "secret not found" (STORAGE-ERR-CLASS-4).
+		if fault := ReadFault(err); fault != nil {
+			return nil, fault
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 	return unexpiredSecret(secret)
@@ -920,6 +924,13 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 		}
 		return fmt.Errorf("%s: reading secret %d before restoring it: %w", i18n.T("ErrorStorageFailed", nil), id, cmp.Or(errors.Unwrap(err), err))
 	}
+	// A live secret has nothing to restore: say so (409) instead of letting the
+	// storage restore match no row and answer a storage-flavoured "not found".
+	// The route's scoped secrets.write gate has already run against this secret's
+	// own scope, so only an authorized caller can learn that it is live.
+	if !secret.DeletedAt.Valid {
+		return errSecretNotDeleted(id)
+	}
 	// RESTORE-SECRET-AUDIT-TX: the restore and its secret.restored row commit in ONE
 	// transaction, the append last (secret_mutation_audit.go), so a failed append
 	// rolls the restore back. The storage restore takes the environment's named lock
@@ -943,6 +954,10 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 					return err
 				}
 			}
+			// Restored concurrently since the read above: the same conflict.
+			if cur, err := tx.GetSecretIncludingDeleted(ctx, id); err == nil && !cur.DeletedAt.Valid {
+				return errSecretNotDeleted(id)
+			}
 			if err := tx.RestoreSecret(ctx, id); err != nil {
 				return err
 			}
@@ -955,6 +970,9 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 	// takes no lock then, and key 0 names no real environment), so no path reaches
 	// the transaction without the lock already held.
 	err = c.storage.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(secret.EnvironmentID), restore)
+	if errors.Is(err, ErrSecretNotDeleted) {
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -1020,7 +1038,11 @@ func (c *KeyorixCore) CreateFolder(
 	if parentID != nil {
 		parent, err := c.storage.GetSecret(ctx, *parentID)
 		if err != nil {
-			return nil, fmt.Errorf("parent folder %d not found: %w", *parentID, err)
+			if !isPositiveNotFound(err) {
+				// A read FAULT is a retry answer, not "no such parent folder".
+				return nil, classifyReadError(err, "")
+			}
+			return nil, fmt.Errorf("parent folder %d not found: %w: %w", *parentID, storage.ErrSecretNotFound, err)
 		}
 		if parent.IsSecret {
 			return nil, fmt.Errorf("%s: parent node %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *parentID)

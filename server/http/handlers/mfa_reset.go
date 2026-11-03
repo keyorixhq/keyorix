@@ -17,8 +17,12 @@ import (
 )
 
 // sendMFAResetError maps a core refusal to its status and fixed text; anything
-// unclassified is a 500 with a generic message (the cause is logged).
+// unclassified is a 500 with a generic message (the cause is logged). An audit-log
+// outage gets the shared answer of every audited mutation (sendAuditUnavailable).
 func sendMFAResetError(w http.ResponseWriter, op string, err error) {
+	if sendAuditUnavailable(w, err) {
+		return
+	}
 	type mapping struct {
 		target error
 		status int
@@ -44,12 +48,14 @@ func sendMFAResetError(w http.ResponseWriter, op string, err error) {
 		{core.ErrMFAResetRequestDecided, http.StatusConflict, "Conflict", core.MFAResetRequestDecidedMessage},
 		{core.ErrMFAResetRequestExpired, http.StatusConflict, "Conflict", core.MFAResetRequestExpiredMessage},
 		{core.ErrMFAResetRequesterChanged, http.StatusConflict, "Conflict", core.MFAResetRequesterChangedMessage},
-		{core.ErrMutationAuditUnavailable, http.StatusServiceUnavailable, "AuditUnavailable", core.ErrMutationAuditUnavailable.Error()},
 	} {
 		if errors.Is(err, m.target) {
 			sendError(w, m.code, m.msg, m.status, nil)
 			return
 		}
+	}
+	if writeTOTPUnavailable(w, err) {
+		return
 	}
 	if errors.Is(err, core.ErrReauthRejected) || errors.Is(err, core.ErrMFAVerificationStorageFailure) {
 		// The same answer as every other re-auth endpoint: never which step failed.

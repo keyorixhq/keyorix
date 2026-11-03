@@ -1,0 +1,2 @@
+### Fixed
+- **`keyorix-server admin encryption init` no longer blames a live server for a missing key directory (#3742).** The "a live server or an in-progress key operation is using this key directory" hint is now added only when another process really holds the key lock. A missing key directory says `key directory <path> does not exist: run `keyorix-server admin init` (or create it with mode 0700)`; permission denied reports the permission error alone.

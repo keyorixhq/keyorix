@@ -58,6 +58,7 @@ func (ls *LocalStorage) ListRotationPolicies(ctx context.Context, projectID *uin
 // GORM adds `deleted_at IS NULL` for this soft-delete model, which is the clause
 // that stops the resurrection. The rotation_state/last_rotation_error/
 // last_state_at columns are deliberately absent: UpdateRotationState owns them.
+// updatedAt is stored in UTC: the map update runs no NowFunc.
 func (ls *LocalStorage) UpdateRotationPolicyFields(ctx context.Context, id uint, f storage.RotationPolicyFieldUpdate, updatedAt time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.RotationPolicy{}).Where(sqlWhereID, id).
 		Updates(map[string]any{
@@ -67,7 +68,7 @@ func (ls *LocalStorage) UpdateRotationPolicyFields(ctx context.Context, id uint,
 			"alert_days_before": f.AlertDaysBefore,
 			"notify_on_breach":  f.NotifyOnBreach,
 			"is_active":         f.IsActive,
-			"updated_at":        updatedAt,
+			"updated_at":        updatedAt.UTC(),
 		})
 	if res.Error != nil {
 		return false, res.Error
@@ -124,7 +125,7 @@ func (ls *LocalStorage) UpdateRotationState(ctx context.Context, policyID uint, 
 		return fmt.Errorf("UpdateRotationState: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("rotation policy not found")
+		return storage.NotFound(storage.ErrRotationPolicyNotFound, storage.ErrRotationPolicyNotFound.Error(), nil)
 	}
 	return nil
 }

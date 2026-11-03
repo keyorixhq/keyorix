@@ -225,6 +225,19 @@ Browsers will warn on the self-signed cert (expected) — use a CA-issued one, o
 bundled Caddy `tls` profile ([SELF_HOSTING.md](SELF_HOSTING.md) §7), for anything
 beyond local testing.
 
+**Which side verifies what.** `tls.cert_file` (with `key_file`) is the certificate the
+*server presents*; the server does not verify anything with it. The *client* decides
+whether to trust it: the CLI's `ca_file` (`--ca-file`, `KEYORIX_CA_FILE`, or
+`keyorix config set ca_file <path>`) names the PEM file of the CA, or for a self-signed
+certificate the certificate itself, that the CLI trusts for the server's certificate
+instead of the system roots. Naming it narrows trust to that file (`curl --cacert`
+semantics), and the server's certificate must still carry the host name you connect to
+as a SAN. So for a self-signed `cert_file` (such as the one `keyorix-server admin init`
+generates), copy that same `cert.pem` to the client and set `ca_file` to it; with a
+CA-issued certificate, `ca_file` is needed only when that CA is not in the system store.
+Neither is the database CA: `storage.database.ssl_root_cert` (see "PostgreSQL TLS" below)
+is what the *server* trusts when it connects to PostgreSQL.
+
 **`tls_mode: strict`** (ADR-112 §3) switches a listener from the default TLS
 posture (1.2 floor, restricted to forward-secret AEAD cipher suites — see
 `tls.allowed_ciphers` above) to TLS 1.3 only, with no fallback to 1.2. The
@@ -297,12 +310,12 @@ behind a TLS-terminating load balancer").
 ### gRPC keepalive and connection limits (`server.grpc.keepalive`)
 
 Durations are Go duration strings (`"15m"`); an unset or unparseable value takes the
-default. Only the gRPC server reads this block. The same eight keys parse under
-`server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
+default. Only the gRPC server reads this block. **Deprecated, never read:** the same
+eight keys under `server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
 `server.http.keepalive.min_time`, `server.http.keepalive.permit_without_stream`,
 `server.http.keepalive.max_connection_age`, `server.http.keepalive.max_connection_age_grace`,
 `server.http.keepalive.max_connection_idle` and `server.http.keepalive.handshake_timeout`)
-but have no effect there.
+change nothing and print a start-up warning. Remove the block; it is deleted after one minor release.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -542,7 +555,9 @@ paste them as they are. Things to know:
 `KEYORIX_TEST_PG_DSN`, the connection the Postgres-gated tests use, accepts both
 forms too. The tests create their own throwaway databases on that server by
 swapping the database name, keeping the other settings as written (including
-`sslmode` and a percent-encoded password).
+`sslmode` and a percent-encoded password). The tests that set
+`session_replication_role` need a superuser role (or `GRANT SET ON PARAMETER`); on any other role they skip, unless `CI=true` or
+`KEYORIX_REQUIRE_PG_SUPERUSER=1` is set, which makes the missing privilege a failure.
 
 ### PostgreSQL connection fields (without a `dsn`)
 
@@ -1646,8 +1661,10 @@ overdue signal is visible to auditors even before you enable `auto_open`.
 `cadence_days` is also the **look-back of the "last used" column** in the access review
 and in a campaign's items: a user with no secret activity in the last `cadence_days`
 days (at most 366) shows no last use, meaning "none within the review period", not
-"never". It applies whether or not the scheduler is enabled. See
-[recertification-activity-window.md](recertification-activity-window.md).
+"never". It applies whether or not the scheduler is enabled. It is also the **dormancy
+threshold** of the compliance posture's dormant role grants and the `dormant-access`
+control: a grant whose capability went unused for more than `cadence_days` days is
+dormant. See [recertification-activity-window.md](recertification-activity-window.md).
 
 ```yaml
 recertification:

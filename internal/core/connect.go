@@ -457,6 +457,14 @@ func (c *KeyorixCore) CreateConnectRefGrant(ctx context.Context, actorID, roleID
 	if roleID == 0 {
 		return nil, ErrConnectRoleRequired
 	}
+	// SQLITE-TIME-TAILS-1: expiresAt comes from the client with its own offset (REST
+	// decodes RFC3339 as sent). ConnectRefGrant has no BeforeSave hook, and on SQLite a
+	// non-UTC fixed zone is stored as text that neither scans back as a time nor orders
+	// against the UTC "now" bound, so store the instant in UTC.
+	if expiresAt != nil {
+		u := expiresAt.UTC()
+		expiresAt = &u
+	}
 	g, err := c.storage.CreateConnectRefGrant(ctx, &models.ConnectRefGrant{
 		RoleID:    roleID,
 		Connector: connectorName,

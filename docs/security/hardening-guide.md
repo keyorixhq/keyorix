@@ -308,6 +308,13 @@ option there, but it does not bundle the key-material files.
 - **`--output` must not already exist** — each backup is a distinct,
   timestamped artifact by construction, not something a schedule can
   accidentally overwrite.
+- **A database upgraded in place from v0.95.x is refused until the new server
+  has started once** (both backends): until then a notification channel's
+  webhook URL is only in the plaintext legacy column, and the backup would
+  silently drop it, so `admin backup` fails with "start the server once to
+  finish the upgrade migrations, then back up" and leaves no archive
+  (`server/admin/backup_legacy_url_guard.go`;
+  [`../operator/upgrade-rollback.md`](../operator/upgrade-rollback.md) §3).
 - **Restore key files as a whole set, never one at a time** — `admin restore`
   installs every key file from one archive and records a new key-set manifest;
   a single file copied in from another backup is refused at the next start

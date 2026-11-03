@@ -1,0 +1,1 @@
+TestInvariantDocs_IndexListsEveryFragmentArea	internal/statemap	#3893	rule (g) widens the repo-wide INVARIANTS doc guard (docs/INVARIANTS.md must link every INVARIANTS.d area), report-only until its first green nightly on main

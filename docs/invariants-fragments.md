@@ -39,7 +39,8 @@ file name), git reports an add/add conflict instead of silently keeping both.
 - **ID:** `INV-<PKG>-<kebab-slug>`, e.g. `INV-CORE-mfa-purpose-binding`. `<PKG>` is the prefix
   declared on the package file's own `Format:` line (`INV-CORE`, `INV-STORAGE`, `INV-STORE`,
   `INV-ENCRYPTION`, `INV-AUDITVERIFY`, `INV-MW`, `INV-HTTP`, `INV-GRPC`, `INV-GRPCSVC`,
-  `INV-CLI`, `INV-WEB`). The slug is lowercase letters/digits separated by `-`, starting with a
+  `INV-CLI`, `INV-WEB`, `INV-ADMIN`, `INV-SW`, `INV-PQWRAP`, `INV-FAULTSTORAGE`,
+  `INV-SERVERGUARD`, `INV-SECRETENV`). The slug is lowercase letters/digits separated by `-`, starting with a
   letter. Name it for what is protected, not for the PR or the date. Legacy numeric IDs
   (`INV-CORE-07`) remain valid — in `INVARIANTS.md`, and in fragments produced by migrating
   them — but **new** invariants should use a slug.
@@ -80,6 +81,7 @@ index, plus every `INVARIANTS.d/`:
 | States `Guard:` or `UNGUARDED` | slug-ID fragments only |
 | `<!-- section: X -->` names an existing `## X` heading | fragments |
 | The index defines no invariants and has no `INVARIANTS.d/` | `docs/INVARIANTS.md` |
+| Every package with an `INVARIANTS.d/` has a row in the index (its `INVARIANTS.md` is linked) | `docs/INVARIANTS.md` |
 
 Every rejection path has a fixture case in `TestInvariantDocs_Fixtures` (an `fstest.MapFS`),
 and `TestInvariantDocs_RealRepo` runs the same checker over the real tree.
@@ -107,7 +109,9 @@ issue number is real or open, or the hand-maintained count table in `docs/INVARI
 
 ## Adding an invariant
 
-Create `<pkg>/INVARIANTS.d/INV-<PKG>-<slug>.md` as above. Do not append a bullet to
+Create `<pkg>/INVARIANTS.d/INV-<PKG>-<slug>.md` as above. For a package's first fragment, also
+add its row to the table in `docs/INVARIANTS.md` (the index is hand-written; the guard fails
+without the row). Do not append a bullet to
 `INVARIANTS.md` and do not take "the next number". Run
 `go test ./internal/statemap/ -run InvariantDocs`.
 

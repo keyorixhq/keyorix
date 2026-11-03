@@ -7,8 +7,8 @@ import (
 	"log"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -31,7 +31,7 @@ func generatedBootstrapTokenHint(masked string) string {
 // or an unreadable/empty file, is an error -- never a silent fall-through to a
 // generated token.
 func resolveBootstrapToken() (string, error) {
-	v, found, err := secretenv.Lookup("KEYORIX_BOOTSTRAP_TOKEN")
+	v, found, err := config.LookupSecretEnv("KEYORIX_BOOTSTRAP_TOKEN")
 	if err != nil {
 		return "", err
 	}

@@ -75,7 +75,7 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 func validateKeyorixClientURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
-		return fmt.Errorf("invalid KEYORIX_URL %q", raw)
+		return fmt.Errorf("invalid KEYORIX_URL %q", netutil.RedactURLHost(raw))
 	}
 	switch u.Scheme {
 	case "https":
@@ -88,9 +88,9 @@ func validateKeyorixClientURL(raw string) error {
 		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 			return nil
 		}
-		return fmt.Errorf("KEYORIX_URL %q must use https (http is allowed only for localhost): the bearer token and every secret value read through it would otherwise travel in plaintext", raw)
+		return fmt.Errorf("KEYORIX_URL %q must use https (http is allowed only for localhost): the bearer token and every secret value read through it would otherwise travel in plaintext", netutil.RedactURLHost(raw))
 	default:
-		return fmt.Errorf("KEYORIX_URL %q must use https", raw)
+		return fmt.Errorf("KEYORIX_URL %q must use https", netutil.RedactURLHost(raw))
 	}
 }
 

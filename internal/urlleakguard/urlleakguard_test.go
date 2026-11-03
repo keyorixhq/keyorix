@@ -15,6 +15,10 @@ package urlleakguard
 //     whole name or as a suffix of a camel-case name: cfg.Endpoint,
 //     c.WebhookURL, req.URL, dsn, rawURL, endpointURL), including as an operand
 //     of a string concatenation.
+//   - PARSED PARAMETER: the first string parameter of a function whose body
+//     passes it to url.Parse or url.ParseRequestURI is sensitive inside that
+//     function whatever it is named (raw, target, hook): the name rule misses
+//     those. A shadowing redeclaration of the name is not tracked.
 //   - VERBS: for a Printf-style call with a literal format string, only an
 //     argument that lands on %v, %+v, %#v, %s or %q is a hit (%w, %d, %t, %p
 //     are not). slog and Print/Println take values with no verb, and a non-
@@ -99,10 +103,10 @@ func sensitiveName(name string) bool {
 // sensitiveExpr returns the offending name when e is an identifier or
 // selector with a sensitive name, or a concatenation containing one. Calls are
 // never inspected: wrapping in a call is the sanctioned shape.
-func sensitiveExpr(e ast.Expr) (string, bool) {
+func sensitiveExpr(e ast.Expr, extra map[string]bool) (string, bool) {
 	switch v := ast.Unparen(e).(type) {
 	case *ast.Ident:
-		if sensitiveName(v.Name) {
+		if sensitiveName(v.Name) || extra[v.Name] {
 			return v.Name, true
 		}
 	case *ast.SelectorExpr:
@@ -111,10 +115,10 @@ func sensitiveExpr(e ast.Expr) (string, bool) {
 		}
 	case *ast.BinaryExpr:
 		if v.Op == token.ADD {
-			if n, ok := sensitiveExpr(v.X); ok {
+			if n, ok := sensitiveExpr(v.X, extra); ok {
 				return n, true
 			}
-			return sensitiveExpr(v.Y)
+			return sensitiveExpr(v.Y, extra)
 		}
 	}
 	return "", false
@@ -201,10 +205,69 @@ var plainStyle = map[string]map[string]bool{
 	},
 }
 
+// urlParseParam returns the name of the first string parameter of fd when fd's
+// body passes it to url.Parse or url.ParseRequestURI, else "". Such a parameter
+// holds a URL whatever it is called (raw, target, hook), so it is sensitive
+// inside that function even though sensitiveName would miss it. A shadowing
+// redeclaration of the name inside the body is not tracked.
+func urlParseParam(fd *ast.FuncDecl) string {
+	if fd.Body == nil || fd.Type.Params == nil {
+		return ""
+	}
+	param := ""
+	for _, f := range fd.Type.Params.List {
+		if id, ok := f.Type.(*ast.Ident); ok && id.Name == "string" && len(f.Names) > 0 && f.Names[0].Name != "_" {
+			param = f.Names[0].Name
+			break
+		}
+	}
+	if param == "" {
+		return ""
+	}
+	parsed := false
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || (sel.Sel.Name != "Parse" && sel.Sel.Name != "ParseRequestURI") {
+			return true
+		}
+		if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "url" {
+			return true
+		}
+		if arg, ok := ast.Unparen(call.Args[0]).(*ast.Ident); ok && arg.Name == param {
+			parsed = true
+		}
+		return true
+	})
+	if !parsed {
+		return ""
+	}
+	return param
+}
+
 // findLeaks scans one parsed file.
 func findLeaks(fset *token.FileSet, file *ast.File, path string) []leakHit {
 	var hits []leakHit
-	ast.Inspect(file, func(n ast.Node) bool {
+	for _, decl := range file.Decls {
+		var extra map[string]bool
+		if fd, ok := decl.(*ast.FuncDecl); ok {
+			if p := urlParseParam(fd); p != "" {
+				extra = map[string]bool{p: true}
+			}
+		}
+		hits = append(hits, scanDecl(fset, decl, path, extra)...)
+	}
+	return hits
+}
+
+// scanDecl scans one top-level declaration; extra names the identifiers that
+// are sensitive inside it besides those sensitiveName matches.
+func scanDecl(fset *token.FileSet, decl ast.Decl, path string, extra map[string]bool) []leakHit {
+	var hits []leakHit
+	ast.Inspect(decl, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -235,7 +298,7 @@ func findLeaks(fset *token.FileSet, file *ast.File, path string) []leakHit {
 				}
 			}
 			for i, arg := range operands {
-				what, bad := sensitiveExpr(arg)
+				what, bad := sensitiveExpr(arg, extra)
 				if !bad {
 					continue
 				}
@@ -246,7 +309,7 @@ func findLeaks(fset *token.FileSet, file *ast.File, path string) []leakHit {
 			}
 		case plainStyle[pkg.Name][sel.Sel.Name]:
 			for _, arg := range call.Args {
-				if what, bad := sensitiveExpr(arg); bad {
+				if what, bad := sensitiveExpr(arg, extra); bad {
 					add(arg, what)
 				}
 			}

@@ -1,1 +1,0 @@
-TestAirgapServedMarkupNamesNoExternalHost	server/http	#3769	new repo-wide guard (AIRGAP-WEBUI-1), report-only until its first green nightly on main

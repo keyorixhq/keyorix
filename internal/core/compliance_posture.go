@@ -19,13 +19,16 @@ import (
 	"github.com/keyorixhq/keyorix/pkg/trust"
 )
 
-// dormantThreshold is how long without a secret access marks a standing grant
-// dormant in the posture roll-up.
-const dormantThreshold = dormantThresholdDays * 24 * time.Hour
-
-// dormantThresholdDays is dormantThreshold in days (the look-back of the dormant-grant
-// lookups, and the figure the compliance surfaces quote).
-const dormantThresholdDays = 90
+// dormantThresholdDays is how many days without use of what a standing grant
+// confers mark it dormant in the posture roll-up: the recertification cadence
+// (recertification.cadence_days, default DefaultRecertificationCadenceDays = 90),
+// bounded like every activity look-back (storage.ActivityLookbackDays, at most 366).
+// It is also the look-back of the dormant-grant lookups and the figure the compliance
+// surfaces quote. It used to be a fixed 90 whatever the cadence (#3459), so a
+// 30-day review cycle still called a grant unused for 60 days "in use".
+func (c *KeyorixCore) dormantThresholdDays() int {
+	return storage.ActivityLookbackDays(c.recertCadence())
+}
 
 // AuditIntegrityPosture summarises the tamper-evident audit trail (ADR-029).
 type AuditIntegrityPosture struct {
@@ -53,6 +56,19 @@ type AccessGovernancePosture struct {
 	ProjectsOverdue          int `json:"projects_overdue"`    // overdue for recertification (A.5.18 cadence)
 	DormantRoleGrants        int `json:"dormant_role_grants"` // per-grant: no/old activity at the specific capability the grant confers (#258/#487)
 	SoDViolations            int `json:"sod_violations"`      // principals holding a forbidden permission pair (A.5.3)
+	// dormantDays is the window DormantRoleGrants was judged against
+	// (dormantThresholdDays), for the surfaces that quote it. Unexported: the wire
+	// shape is unchanged.
+	dormantDays int
+}
+
+// DormantWindowDays is the window DormantRoleGrants was counted over, or the default
+// cadence for a posture not built by GetCompliancePosture.
+func (a AccessGovernancePosture) DormantWindowDays() int {
+	if a.dormantDays > 0 {
+		return a.dormantDays
+	}
+	return DefaultRecertificationCadenceDays
 }
 
 // RotationPosture summarises secret-rotation hygiene (ISO A.5.15 / NIS2).
@@ -843,6 +859,7 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 	p.AccessGovernance.Projects = len(snap.projects)
 	p.AccessRequests.RequiredApprovals = c.requiredApprovals()
 	recertCutoff := c.now().AddDate(0, 0, -c.recertCadence())
+	p.AccessGovernance.dormantDays = c.dormantThresholdDays()
 	// CP-005: hoist the role-permissions cache across all per-project iterations so
 	// GetRolePermissions is called at most once per role, not once per project per role.
 	sharedPermsByRole := map[uint][]*models.Permission{}
@@ -1055,8 +1072,9 @@ func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint
 	// Look back exactly as far as the dormancy threshold the result is judged against
 	// below (cutoff): activity older than that cannot change the verdict, so reading it
 	// would only cost. "Dormant" therefore means no use within the last
-	// dormantThresholdDays days.
-	since := storage.ActivityLookbackSince(c.now(), dormantThresholdDays)
+	// dormantThresholdDays() days (the recertification cadence).
+	days := c.dormantThresholdDays()
+	since := storage.ActivityLookbackSince(c.now(), days)
 	readActivity, err := c.storage.LastUserSecretReadActivity(ctx, projectID, since)
 	if err != nil {
 		cp.degrade(fmt.Sprintf("dormant_role_grants:read_activity:project=%d", projectID), err)
@@ -1077,7 +1095,7 @@ func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint
 		cp.degrade(fmt.Sprintf("dormant_role_grants:secrets_deletion_activity:project=%d", projectID), err)
 		return 0
 	}
-	cutoff := c.now().Add(-dormantThreshold)
+	cutoff := c.now().Add(-time.Duration(days) * 24 * time.Hour)
 
 	rolePerms := func(roleID uint) []*models.Permission {
 		if v, ok := permsByRole[roleID]; ok {

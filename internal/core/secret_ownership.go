@@ -109,7 +109,7 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 	// the recovery path, gated on roles.assign (see doc comment above).
 	if !secretOwnedBy(secret.OwnerID, actorID) {
 		if !c.currentOwnerGone(ctx, secret.OwnerID) {
-			return nil, errSecretNotOwnerf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil))
+			return nil, markPermissionDenied(errSecretNotOwnerf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil)))
 		}
 		if ok, aerr := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, scope); aerr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), aerr)

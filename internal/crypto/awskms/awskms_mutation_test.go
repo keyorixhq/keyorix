@@ -43,6 +43,7 @@ func describeKeyServer(t *testing.T, arn string) *httptest.Server {
 // awskms.go:62 and :66 — the happy path of New: a non-empty key id is accepted
 // and the default config loads. The error text distinguishes which guard fired.
 func TestNew_SuccessResolvesKeyThroughEndpoint(t *testing.T) {
+	skipUnderFIPS140Only(t, "the fixture signs with AWS_SECRET_ACCESS_KEY='secret'; SigV4 keys HMAC with 'AWS4'+secret (10 bytes), under the 112-bit minimum. Real AWS secret keys are 40 characters")
 	isolateAWSEnv(t)
 	const arn = "arn:aws:kms:us-east-1:123456789012:key/from-describe-key"
 	t.Setenv("AWS_ENDPOINT_URL", describeKeyServer(t, arn).URL)

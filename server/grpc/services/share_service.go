@@ -266,15 +266,22 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, actor *interceptors.UserContext, shareID uint, perm string) error {
 	share, err := s.core.Storage().GetShareRecord(ctx, shareID)
 	if err != nil {
+		// A fetch that failed because storage is down is an outage, not "no such share".
+		if core.IsAuthorizeTransient(ctx, err) {
+			return authorizeRefusal(ctx, err, "share not found")
+		}
 		return status.Error(codes.NotFound, "share not found")
 	}
 	secret, err := s.core.Storage().GetSecret(ctx, share.SecretID)
 	if err != nil {
+		if core.IsAuthorizeTransient(ctx, err) {
+			return authorizeRefusal(ctx, err, "share not found")
+		}
 		return status.Error(codes.NotFound, "share not found")
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
 	if allowed, err := s.core.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
-		return status.Error(codes.PermissionDenied, "insufficient permissions for this share")
+		return authorizeRefusal(ctx, err, "insufficient permissions for this share")
 	}
 	return enforceProjectMFA(ctx, s.core, actor, scope.ProjectID)
 }

@@ -1,0 +1,11 @@
+package fixture
+
+import "testing"
+
+// Green fixture: mentions of the setting that do not set it for a session.
+// SET session_replication_role = replica (in a comment)
+func TestOnlyMentions(t *testing.T) {
+	_ = db.Exec("RESET session_replication_role")
+	_ = render("postgresql.settings.session_replication_role=replica")
+	_ = db.Exec("ALTER TABLE t DISABLE TRIGGER x")
+}

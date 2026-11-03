@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/hardening"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/logging"
@@ -144,6 +145,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		// cfg.Validate() above already refused an unknown server.log.format, so this is
 		// the logger failing, not the file being invalid (BOOT-REFUSALS-1 item 9).
 		log.Fatalf("Failed to set up logging (server.log.format %q): %v", cfg.Server.Log.EffectiveFormat(), err)
+	}
+
+	// Under GODEBUG=fips140=only, exercise every AEAD / KEK-derived-key path once
+	// with a throwaway key and refuse to start naming the one that fails (no-op otherwise).
+	if err := encryption.BootFIPSSelfTest(); err != nil {
+		log.Fatalf("Refusing to start: %v", err)
 	}
 
 	// ADR-112 opt-out rule (item 2): a deprecated alias (an old key renamed to its

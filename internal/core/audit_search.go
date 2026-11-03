@@ -27,7 +27,9 @@ const (
 // AuditSearchRequest carries all supported filter dimensions for SearchAuditLogs.
 // Zero / nil values mean "no filter" on that dimension.
 type AuditSearchRequest struct {
-	// ActorUsername filters events by a partial match on the actor's username.
+	// ActorUsername filters events by a case-insensitive partial match on the actor
+	// name the ACTOR column shows: a user's username or a machine identity's name
+	// (#3736), and "system" for system rows. The field keeps its historical name.
 	ActorUsername string
 	// UserID filters events by the exact numeric user ID.
 	UserID uint

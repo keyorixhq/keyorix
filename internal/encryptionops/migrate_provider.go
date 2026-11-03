@@ -4,10 +4,13 @@
 // Re-wraps the DEK under a KEK from a different provider (ADR-041) so an existing
 // install can move between KEK providers — most importantly password/file/env → a
 // cloud KMS — without re-encrypting any data. Only the DEK's wrapping changes; the
-// operation is fast and takes no database lock. After re-wrapping it verifies the
-// target provider unwraps the DEK (round-tripping a probe value through a fresh
-// service) and keeps a timestamped backup of the previous wrapped DEK, restoring it
-// if verification fails.
+// operation is fast and rewrites no data rows. It does hold the exclusive
+// key-directory lock (dek.lock) from start to finish (openKeyWriter), so it
+// refuses to run beside a live server or another key writer; `migrate-provider
+// cleanup` holds the same lock for its whole run, --dry-run included. After
+// re-wrapping it verifies the target provider unwraps the DEK (round-tripping a
+// probe value through a fresh service) and keeps a timestamped backup of the
+// previous wrapped DEK, restoring it if verification fails.
 package encryptionops
 
 import (
@@ -92,7 +95,7 @@ func TargetEncryptionConfig(cur *config.EncryptionConfig, opts MigrateOpts) (con
 		// install's pre-#429 split there is nothing to stay compatible with.
 		commitment := strings.TrimSpace(opts.ToShareCommitment)
 		if c, err := hex.DecodeString(commitment); err != nil || len(c) != sha256.Size {
-			return tgt, fmt.Errorf("--to-shamir-commitment is required for --to-type shamir and must be the %d-hex-character value `shamir-split` printed for these shares: without it, a holder of threshold-1 shares can forge a share that sets the KEK (#429)", 2*sha256.Size)
+			return tgt, fmt.Errorf("--to-shamir-commitment is required for --to-type shamir and must be the %d-hex-character value `shamir-split` printed for these shares: without it, a holder of threshold-1 shares can forge a share that sets the KEK", 2*sha256.Size)
 		}
 		kp.ShamirShareFiles = opts.ToShareFiles
 		kp.ShamirShareEnv = opts.ToShareEnv
@@ -494,7 +497,7 @@ func PrintMigrateSummary(tgt config.EncryptionConfig, backupRel string) {
 		} else {
 			fmt.Println("      # shamir_commitment: not set — pass --to-shamir-commitment (the value")
 			fmt.Println("      # printed by `shamir-split` for these shares) for real cryptographic")
-			fmt.Println("      # verification of the reconstructed KEK (#429); without it, unseal falls")
+			fmt.Println("      # verification of the reconstructed KEK; without it, unseal falls")
 			fmt.Println("      # back to a weaker, forgeable check and logs a loud warning at startup.")
 		}
 	case "tpm":
@@ -511,7 +514,7 @@ func PrintMigrateSummary(tgt config.EncryptionConfig, backupRel string) {
 	}
 	fmt.Println()
 	fmt.Println("⚠️  Unlike a `rotate`, this changes the KEK — and with it, the compliance-")
-	fmt.Println("   evidence-pack signing key (#268). Any evidence pack signed BEFORE this")
+	fmt.Println("   evidence-pack signing key. Any evidence pack signed BEFORE this")
 	fmt.Println("   migration will report as \"superseded key version\" (not tampered) under")
 	fmt.Println("   `compliance verify` from now on; a routine `encryption rotate`")
 	fmt.Println("   does NOT have this effect. Run `compliance verify` on any outstanding")

@@ -38,6 +38,8 @@ func (ls *LocalStorage) GetRecoveryKeyRecord(ctx context.Context) (*models.Recov
 // the original generation timestamp, only KeyHash/KeyVersion/RotatedAt.
 func (ls *LocalStorage) SetRecoveryKeyRecord(ctx context.Context, record *models.RecoveryKeyRecord) error {
 	record.ID = recoveryKeySingletonID
+	// UTC: the model has no BeforeSave hook, so the caller's zone would be stored as is.
+	record.CreatedAt, record.RotatedAt = record.CreatedAt.UTC(), utcPtr(record.RotatedAt)
 	return ls.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"key_hash", "key_version", "rotated_at"}),
