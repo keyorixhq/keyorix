@@ -75,7 +75,8 @@ func assertSafeUsername(user string) error {
 	return nil
 }
 
-func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (Credential, string, error) {
+func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (_ Credential, _ string, err error) {
+	defer netutil.ContainDriverPanic("mysql issue", &err)
 	db, err := openMySQL(ctx, adminDSN, e.allowPrivateNetwork)
 	if err != nil {
 		return Credential{}, "", err
@@ -115,7 +116,8 @@ func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 
 // Revoke kills the account's live sessions (best-effort), then drops it. DROP USER
 // removes the account and all its privileges. roleName is the bare username.
-func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) error {
+func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) (err error) {
+	defer netutil.ContainDriverPanic("mysql revoke", &err)
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
