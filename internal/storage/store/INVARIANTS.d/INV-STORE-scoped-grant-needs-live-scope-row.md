@@ -14,6 +14,10 @@
   (every reader above, project row and environment row purged, SQLite and the pg leg, with a
   live-row positive control) and `TestReadPathPrefetch_MissingEnvironmentRowAuthorizesNothing`.
   Consequence for fixtures: a test that grants at project N must create project N
-  (`seedLiveProjects` / `seedLiveEnv`). **Not covered**: a new role reader written with the
-  old predicate is not caught structurally; `IsProjectMember` / `ProjectMembershipsAmong`
-  (membership, not role resolution) do not join `projects`.
+  (`seedLiveProjects` / `seedLiveEnv`). Structural guard for the project half:
+  `projects_join_liveness_guard_test.go` `TestEveryProjectsJoinRequiresTheRow` (#3935,
+  report-only until its first green nightly; it counts `id IS NOT NULL` tests per
+  `JOIN projects` in store code, it does not parse SQL). **Not covered**: the environment
+  half: a new reader joining `environments` with only `deleted_at IS NULL` is not caught
+  structurally; `IsProjectMember` / `ProjectMembershipsAmong` (membership, not role
+  resolution) do not join `projects`.
