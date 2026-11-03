@@ -10,17 +10,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// seedLiveProjects creates a live projects row for each id, and seedLiveEnv a live
-// environments row. A scoped role grant authorizes only when its project (and
-// environment) row exists and is not soft-deleted (INV-STORE-scoped-grant-needs-live-scope-row),
-// so a fixture that grants at project 5 must create project 5.
-func seedLiveProjects(t *testing.T, db *gorm.DB, ids ...uint) {
-	t.Helper()
-	for _, id := range ids {
-		require.NoError(t, db.Create(&models.Project{ID: id, Name: fmt.Sprintf("proj-%d", id)}).Error)
-	}
-}
-
+// seedLiveEnv creates a live environments row (seedLiveProjects, in
+// dangling_project_role_test.go, does the same for projects). A scoped role grant
+// authorizes only when its project and environment rows exist and are not
+// soft-deleted (INV-STORE-scoped-grant-needs-live-scope-row), so a fixture that
+// grants at environment 9 must create environment 9.
 func seedLiveEnv(t *testing.T, db *gorm.DB, envID, projectID uint) {
 	t.Helper()
 	require.NoError(t, db.Create(&models.Environment{ID: envID, ProjectID: projectID, Name: fmt.Sprintf("env-%d", envID)}).Error)

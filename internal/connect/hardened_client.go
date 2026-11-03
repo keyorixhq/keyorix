@@ -306,7 +306,7 @@ func validateConnectorAddressNotLinkLocal(backend, address string) error {
 		return nil // a hostname, not a literal IP -- see doc comment above
 	}
 	if netutil.IsLinkLocal(ip) {
-		return fmt.Errorf("%s: connector address %q is a link-local address (%s); no legitimate backend lives there", backend, address, ip)
+		return fmt.Errorf("%s: connector address %q is a link-local address (%s); no legitimate backend lives there", backend, netutil.RedactURLHost(address), ip)
 	}
 	return nil
 }

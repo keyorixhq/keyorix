@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/require"
@@ -37,11 +38,10 @@ func newCacheTestStorage(t testing.TB) *LocalStorage {
 	return NewLocalStorage(db)
 }
 
-// TestGetSecret_CacheReflectsUpdateSecret covers the most common write path
-// (Save on a full struct) — the one whose Save()-bypasses-hook-SetColumn
-// behavior originally broke this cache's design; see secret_metadata_cache.go's
-// own header for the full story.
-func TestGetSecret_CacheReflectsUpdateSecret(t *testing.T) {
+// TestGetSecret_CacheReflectsUpdateSecretFields covers the most common write
+// path (a column-scoped map UPDATE, which bypasses model hooks); see
+// secret_metadata_cache.go's own header for why that matters to this cache.
+func TestGetSecret_CacheReflectsUpdateSecretFields(t *testing.T) {
 	t.Parallel()
 	ls := newCacheTestStorage(t)
 	ctx := context.Background()
@@ -53,11 +53,10 @@ func TestGetSecret_CacheReflectsUpdateSecret(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "", first.Description)
 
-	// Mutate via UpdateSecret (Save) — the path that silently didn't bump a
-	// hand-added generation column.
-	first.Description = "updated"
-	first.UpdatedAt = time.Now()
-	_, err = ls.UpdateSecret(ctx, first)
+	// Mutate via UpdateSecretFields — the column-scoped path must also
+	// invalidate the cache.
+	desc, now := "updated", time.Now()
+	_, err = ls.UpdateSecretFields(ctx, first.ID, storage.SecretFieldUpdate{Description: &desc, UpdatedAt: &now})
 	require.NoError(t, err)
 
 	second, err := ls.GetSecret(ctx, created.ID)
@@ -156,8 +155,8 @@ func TestGetLatestSecretVersion_CacheReflectsNewVersion(t *testing.T) {
 		if _, err := txStore.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: created.ID, VersionNumber: 2, CreatedAt: time.Now()}); err != nil {
 			return err
 		}
-		created.UpdatedAt = time.Now()
-		_, err := txStore.UpdateSecret(ctx, created)
+		now := time.Now()
+		_, err := txStore.UpdateSecretFields(ctx, created.ID, storage.SecretFieldUpdate{UpdatedAt: &now})
 		return err
 	}))
 
@@ -276,8 +275,8 @@ func TestGetLatestSecretVersion_RotationDuringResolveIsNotCachedStale(t *testing
 				if _, err := txStore.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: created.ID, VersionNumber: 2, CreatedAt: time.Now()}); err != nil {
 					return err
 				}
-				created.UpdatedAt = time.Now()
-				_, err := txStore.UpdateSecret(ctx, created)
+				now := time.Now()
+				_, err := txStore.UpdateSecretFields(ctx, created.ID, storage.SecretFieldUpdate{UpdatedAt: &now})
 				return err
 			}))
 		}

@@ -234,9 +234,11 @@ func (ls *LocalStorage) RemoveMachineRole(ctx context.Context, machineID, roleID
 // The LEFT JOINs (not INNER) are required because project_id/environment_id 0
 // means "global" and has no corresponding row to join against — the "= 0 OR ..."
 // clause short-circuits before the joined columns are consulted in that case. A
-// scoped project_id/environment_id with no matching row at all (purged, or never
-// there: the joined id is SQL NULL) is NOT live, so a purged project's leftover
-// grants authorize nothing (#2795 read side, INV-STORE-scoped-grant-needs-live-scope-row).
+// scoped project_id/environment_id with no matching row at all (hard-deleted,
+// purged, or never there: the joined id is SQL NULL, and so is deleted_at) is NOT
+// live, so <t>.id IS NOT NULL is required next to deleted_at IS NULL and a purged
+// project's leftover grants authorize nothing (#2795, READPATH-DANGLING-ROLE-1,
+// INV-STORE-scoped-grant-needs-live-scope-row).
 func (ls *LocalStorage) GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Model(&models.MachineIdentityRole{}).

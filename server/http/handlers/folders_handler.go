@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
 )
@@ -92,8 +93,10 @@ func (h *FolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request) {
 
 	// Authorize at the project/environment scope from the body.
 	scope := core.Scope{ProjectID: reqBody.ProjectID, EnvironmentID: reqBody.EnvironmentID}
-	if allowed, err := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsWrite, scope); err != nil || !allowed {
+	allowed, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsWrite, scope)
+	if refuseUnlessAuthorized(w, r, allowed, aerr, func() {
 		h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+	}) {
 		return
 	}
 	// Per-project MFA policy (ADR-037).
@@ -104,16 +107,23 @@ func (h *FolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request) {
 
 	folder, err := h.coreService.CreateFolder(r.Context(), userCtx.UserID, reqBody.Name, reqBody.ProjectID, reqBody.EnvironmentID, reqBody.ParentID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating folder: %v", err)
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		errType := "InternalError"
 		respMsg := "Failed to create folder"
 		switch {
-		case strings.Contains(msg, "not found"):
+		case corestorage.IsSecretNotFound(err):
 			status = http.StatusNotFound
 			errType = "NotFound"
 			respMsg = "Parent folder not found"
+		case errors.Is(err, core.ErrSecretTargetInvalid):
+			status = http.StatusNotFound
+			errType = "NotFound"
+			respMsg = "Environment not found"
 		case strings.Contains(msg, "validation") ||
 			strings.Contains(msg, "not a folder") ||
 			strings.Contains(msg, "does not belong to the same project"):

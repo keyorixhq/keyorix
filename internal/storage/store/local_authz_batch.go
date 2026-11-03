@@ -71,7 +71,8 @@ func (ls *LocalStorage) ProjectMembershipsAmong(ctx context.Context, userID uint
 // userRoleGrantsSQL is userPrincipalPermissionSQL's two subqueries with each grant's
 // own project and environment returned instead of compared to one target scope. The
 // liveness tests (LEFT JOIN, the row must exist and have deleted_at IS NULL: a missing
-// row is not live), the expiry tests and the live-group join are verbatim.
+// projects or environments row is not live, #2795), the expiry tests and the
+// live-group join are verbatim.
 const userRoleGrantsSQL = `SELECT 0 AS via_group, user_roles.project_id AS project_id,
  user_roles.environment_id AS environment_id, 0 AS member_project_id,
  user_roles.role_id AS role_id,

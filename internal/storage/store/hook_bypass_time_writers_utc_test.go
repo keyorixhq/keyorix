@@ -39,36 +39,36 @@ const (
 // with at (the caller's clock), and name the row and column it wrote.
 type hostZoneWriter struct {
 	name  string
-	write func(ctx context.Context, w ppWorld, at time.Time) (table, column string, id uint)
+	write func(ctx context.Context, w ppWorld, at time.Time) (table, column string, id any)
 }
 
 var hostZoneWriters = []hostZoneWriter{
-	{"UpdateShareRecord", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, uint) {
+	{"UpdateShareRecord", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, any) {
 		s := seedShare(w)
 		_, err := w.ls.UpdateShareRecord(ctx, &models.ShareRecord{ID: s.ID, SecretID: s.SecretID, OwnerID: s.OwnerID, RecipientID: s.RecipientID, Permission: "write"})
 		require.NoError(w.t, err)
 		return "share_records", "updated_at", s.ID
 	}},
-	{"CreateShareRecord re-share (applyShareRequest)", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, uint) {
+	{"CreateShareRecord re-share (applyShareRequest)", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, any) {
 		s := seedShare(w)
 		matched, err := applyShareRequest(w.ls.db.WithContext(ctx), s, &models.ShareRecord{Permission: "write"})
 		require.NoError(w.t, err)
 		require.True(w.t, matched)
 		return "share_records", "updated_at", s.ID
 	}},
-	{"SetDynamicSecretConfigAdminDSN", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, uint) {
+	{"SetDynamicSecretConfigAdminDSN", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, any) {
 		c := seedDynamicConfig(w)
 		require.NoError(w.t, w.ls.SetDynamicSecretConfigAdminDSN(ctx, c.ID, []byte("enc"), []byte("meta")))
 		return "dynamic_secret_configs", "updated_at", c.ID
 	}},
-	{"SetDynamicSecretConfigClassification", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"SetDynamicSecretConfigClassification", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		c := seedDynamicConfig(w)
 		ok, err := w.ls.SetDynamicSecretConfigClassification(ctx, c.ID, "", "internal", at)
 		require.NoError(w.t, err)
 		require.True(w.t, ok)
 		return "dynamic_secret_configs", "updated_at", c.ID
 	}},
-	{"RecordDynamicSecretLeaseRevocation", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"RecordDynamicSecretLeaseRevocation", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		l := &models.DynamicSecretLease{LeaseID: w.name("lease"), Status: "active", IssuedAt: at.UTC(), ExpiresAt: at.UTC().Add(time.Hour)}
 		require.NoError(w.t, w.ls.db.Create(l).Error)
 		ok, err := w.ls.RecordDynamicSecretLeaseRevocation(ctx, l.LeaseID, "revoked", "manual", "", &at)
@@ -76,24 +76,24 @@ var hostZoneWriters = []hostZoneWriter{
 		require.True(w.t, ok)
 		return "dynamic_secret_leases", "revoked_at", l.ID
 	}},
-	{"RevokeBreakGlassActivation", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"RevokeBreakGlassActivation", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		a := seedBreakGlass(w)
 		require.NoError(w.t, w.ls.RevokeBreakGlassActivation(ctx, a.ID, a.UserID, 0, at))
 		return "break_glass_activations", "revoked_at", a.ID
 	}},
-	{"ReviewBreakGlassActivation", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"ReviewBreakGlassActivation", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		a := seedBreakGlass(w)
 		require.NoError(w.t, w.ls.ReviewBreakGlassActivation(ctx, a.ID, a.UserID, "ok", at))
 		return "break_glass_activations", "reviewed_at", a.ID
 	}},
-	{"TryAcquireSchedulerLock create", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, uint) {
+	{"TryAcquireSchedulerLock create", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, any) {
 		key := ppSeq.Add(1)
 		ok, err := w.ls.TryAcquireSchedulerLock(ctx, key, "holder-a", time.Millisecond)
 		require.NoError(w.t, err)
 		require.True(w.t, ok)
 		return "scheduler_lock_leases", "expires_at", uint(key)
 	}},
-	{"TryAcquireSchedulerLock reclaim", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, uint) {
+	{"TryAcquireSchedulerLock reclaim", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, any) {
 		key := ppSeq.Add(1)
 		require.NoError(w.t, w.ls.db.Create(&models.SchedulerLockLease{Key: key, Holder: "holder-a", ExpiresAt: time.Now().UTC().Add(-time.Hour)}).Error)
 		ok, err := w.ls.TryAcquireSchedulerLock(ctx, key, "holder-b", time.Millisecond)
@@ -101,7 +101,7 @@ var hostZoneWriters = []hostZoneWriter{
 		require.True(w.t, ok)
 		return "scheduler_lock_leases", "expires_at", uint(key)
 	}},
-	{"UpdateAlertEscalationPolicy", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"UpdateAlertEscalationPolicy", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		p := &models.AlertEscalationPolicy{Name: w.name("esc"), MinSeverity: "high", EscalateAfterMinutes: 5}
 		require.NoError(w.t, w.ls.db.Create(p).Error)
 		p.EscalateAfterMinutes = 10
@@ -109,7 +109,7 @@ var hostZoneWriters = []hostZoneWriter{
 		require.NoError(w.t, w.ls.UpdateAlertEscalationPolicy(ctx, p))
 		return "alert_escalation_policies", "updated_at", p.ID
 	}},
-	{"UpdateSecretTemplateFields", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"UpdateSecretTemplateFields", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		tpl := &models.SecretTemplate{Name: w.name("tpl")}
 		require.NoError(w.t, w.ls.db.Create(tpl).Error)
 		ok, err := w.ls.UpdateSecretTemplateFields(ctx, tpl.ID, storage.SecretTemplateFieldUpdate{Name: tpl.Name, Description: "d"}, at)
@@ -117,7 +117,7 @@ var hostZoneWriters = []hostZoneWriter{
 		require.True(w.t, ok)
 		return "secret_templates", "updated_at", tpl.ID
 	}},
-	{"UpdateRotationPolicyFields", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"UpdateRotationPolicyFields", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		p := &models.RotationPolicy{Name: w.name("rp"), Scope: "project", IntervalDays: 30, CreatedBy: "t"}
 		require.NoError(w.t, w.ls.db.Create(p).Error)
 		ok, err := w.ls.UpdateRotationPolicyFields(ctx, p.ID, storage.RotationPolicyFieldUpdate{Name: p.Name, IntervalDays: 60, IsActive: true}, at)
@@ -125,7 +125,7 @@ var hostZoneWriters = []hostZoneWriter{
 		require.True(w.t, ok)
 		return "rotation_policies", "updated_at", p.ID
 	}},
-	{"ReactivateMachineIdentitiesForRestoredProject", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"ReactivateMachineIdentitiesForRestoredProject", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		deletedAt := at.UTC().Add(-time.Minute)
 		p := &models.Project{Name: w.name("pp-project"), DeletedAt: gorm.DeletedAt{Time: deletedAt, Valid: true}}
 		require.NoError(w.t, w.ls.db.Create(p).Error)
@@ -137,7 +137,7 @@ var hostZoneWriters = []hostZoneWriter{
 		require.Len(w.t, got, 1)
 		return "machine_identities", "updated_at", m.ID
 	}},
-	{"MarkSetupTokenConsumed", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"MarkSetupTokenConsumed", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		tok := &models.SetupToken{TokenHash: w.name("setup-hash"), Purpose: "account_setup", State: "active", ExpiresAt: at.UTC().Add(time.Hour)}
 		require.NoError(w.t, w.ls.db.Create(tok).Error)
 		ok, err := w.ls.MarkSetupTokenConsumed(ctx, tok.ID, at)
@@ -145,7 +145,7 @@ var hostZoneWriters = []hostZoneWriter{
 		require.True(w.t, ok)
 		return "setup_tokens", "consumed_at", tok.ID
 	}},
-	{"RotateSession", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"RotateSession", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		userID := w.user()
 		exp := at.UTC().Add(time.Hour)
 		old := &models.Session{UserID: userID, SessionToken: w.name("sess-old"), ExpiresAt: &exp}
@@ -155,40 +155,40 @@ var hostZoneWriters = []hostZoneWriter{
 		require.True(w.t, won)
 		return "sessions", "rotated_at", old.ID
 	}},
-	{"UpdateSecretRotationConfig", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"UpdateSecretRotationConfig", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		s := seedSecret(w)
 		ok, err := w.ls.UpdateSecretRotationConfig(ctx, &models.SecretNode{ID: s.ID, ProjectID: s.ProjectID, AutoRotate: true, RotationLength: 32, UpdatedAt: at}, "")
 		require.NoError(w.t, err)
 		require.True(w.t, ok)
 		return "secret_nodes", "updated_at", s.ID
 	}},
-	{"SetSecretCertNotAfter", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"SetSecretCertNotAfter", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		s := seedSecret(w)
 		require.NoError(w.t, w.ls.SetSecretCertNotAfter(ctx, s.ID, &at))
 		return "secret_nodes", "cert_not_after", s.ID
 	}},
-	{"UpdateSecretFields updated_at", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"UpdateSecretFields updated_at", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		s := seedSecret(w)
 		ok, err := w.ls.UpdateSecretFields(ctx, s.ID, storage.SecretFieldUpdate{UpdatedAt: &at})
 		require.NoError(w.t, err)
 		require.True(w.t, ok)
 		return "secret_nodes", "updated_at", s.ID
 	}},
-	{"UpdateSecretFields last_rotated_at", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"UpdateSecretFields last_rotated_at", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		s := seedSecret(w)
 		ok, err := w.ls.UpdateSecretFields(ctx, s.ID, storage.SecretFieldUpdate{SetLastRotatedAt: true, LastRotatedAt: &at})
 		require.NoError(w.t, err)
 		require.True(w.t, ok)
 		return "secret_nodes", "last_rotated_at", s.ID
 	}},
-	{"UpdateProjectFields", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"UpdateProjectFields", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		id := w.project()
 		ok, err := w.ls.UpdateProjectFields(ctx, id, w.name("pp-project"), "d", nil, at)
 		require.NoError(w.t, err)
 		require.True(w.t, ok)
 		return "projects", "updated_at", id
 	}},
-	{"AcknowledgeAnomalyAlert", func(ctx context.Context, w ppWorld, at time.Time) (string, string, uint) {
+	{"AcknowledgeAnomalyAlert", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
 		a := &models.AnomalyAlert{SecretName: w.name("secret"), AlertType: "off_hours", Severity: "low", DetectedAt: at.UTC()}
 		require.NoError(w.t, w.ls.db.Create(a).Error)
 		require.NoError(w.t, w.ls.AcknowledgeAnomalyAlert(ctx, a.ID, w.user(), at))
@@ -238,15 +238,18 @@ func TestHookBypassTimeWriters_StoreUTCOnNonUTCHost(t *testing.T) {
 				require.NoError(t, ls.db.AutoMigrate(&models.ShareRecord{}, &models.SecretNode{},
 					&models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.BreakGlassActivation{},
 					&models.SchedulerLockLease{}, &models.AlertEscalationPolicy{}, &models.SecretTemplate{},
-					&models.RotationPolicy{}, &models.SetupToken{}, &models.Session{}, &models.AnomalyAlert{}))
+					&models.RotationPolicy{}, &models.SetupToken{}, &models.Session{}, &models.AnomalyAlert{},
+					&models.ProjectInvitation{}, &models.AccessRequest{}, &models.MachineIdentity{},
+					&models.SystemMetadata{}, &models.RecoveryKeyRecord{}, &models.SecretACL{}, &models.PendingAuditEvent{}))
 				ctx := context.Background()
 
-				before := time.Now().Add(-time.Second)
+				skew := hostZoneSkew[wr.name]
+				before := time.Now().Add(skew - time.Second)
 				table, column, id := wr.write(ctx, ppWorld{t: t, ls: ls}, time.Now())
-				after := time.Now().Add(time.Second)
+				after := time.Now().Add(skew + time.Second)
 
 				key := "id"
-				if table == "scheduler_lock_leases" {
+				if table == "scheduler_lock_leases" || table == "system_metadata" {
 					key = "key"
 				}
 				q := "SELECT " + column + " FROM " + table + " WHERE " + key + " = ?"

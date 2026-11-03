@@ -1,6 +1,6 @@
 # Host integrity posture (advisory, self-reported)
 
-`keyorix admin validate --posture` prints a block of `integrity/...` lines that
+`keyorix-server admin validate --posture` prints a block of `integrity/...` lines that
 answer "is this host's boot and binary integrity visible?". Every one of them is
 labelled **advisory (self-reported)**, and so is the tier derived from them.
 

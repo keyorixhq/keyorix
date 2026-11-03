@@ -10,6 +10,7 @@ import {
     ChevronUpIcon,
     ChevronDownIcon,
 } from '@heroicons/react/24/outline';
+import { useCan } from '../../features/auth/useCan';
 import { useProjects, useCreateProject, useDeleteProject, useRestoreProject } from '../../features/projects/api';
 import { ROUTES } from '../../constants';
 import { Modal } from '../../components/ui/Modal';
@@ -169,9 +170,19 @@ interface ProjectRowProps {
     onDeleteRequest: (project: Project) => void;
     onRestore: (project: Project) => void;
     restoring: boolean;
+    canEdit: boolean;
+    canDelete: boolean;
 }
 
-const ProjectRow: React.FC<ProjectRowProps> = ({ project, onEditRequest, onDeleteRequest, onRestore, restoring }) => {
+const ProjectRow: React.FC<ProjectRowProps> = ({
+    project,
+    onEditRequest,
+    onDeleteRequest,
+    onRestore,
+    restoring,
+    canEdit,
+    canDelete,
+}) => {
     const navigate = useNavigate();
     const deleted = project.deleted;
     return (
@@ -257,30 +268,34 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onEditRequest, onDelet
                     </button>
                 ) : (
                     <>
-                        <button
-                            type="button"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onEditRequest(project);
-                            }}
-                            className="p-1.5 rounded-sm transition-colors hover:bg-black/5"
-                            style={{ color: 'var(--text-muted)' }}
-                            title="Edit project"
-                        >
-                            <PencilSquareIcon className="h-4 w-4" />
-                        </button>
-                        <button
-                            type="button"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onDeleteRequest(project);
-                            }}
-                            className="p-1.5 rounded-sm transition-colors hover:bg-red-50"
-                            style={{ color: 'var(--error)' }}
-                            title="Delete project"
-                        >
-                            <TrashIcon className="h-4 w-4" />
-                        </button>
+                        {canEdit && (
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onEditRequest(project);
+                                }}
+                                className="p-1.5 rounded-sm transition-colors hover:bg-black/5"
+                                style={{ color: 'var(--text-muted)' }}
+                                title="Edit project"
+                            >
+                                <PencilSquareIcon className="h-4 w-4" />
+                            </button>
+                        )}
+                        {canDelete && (
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDeleteRequest(project);
+                                }}
+                                className="p-1.5 rounded-sm transition-colors hover:bg-red-50"
+                                style={{ color: 'var(--error)' }}
+                                title="Delete project"
+                            >
+                                <TrashIcon className="h-4 w-4" />
+                            </button>
+                        )}
                     </>
                 )}
             </div>
@@ -291,6 +306,10 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onEditRequest, onDelet
 // ── ProjectsListPage ─────────────────────────────────────────────────────────
 
 export const ProjectsListPage: React.FC = () => {
+    const can = useCan();
+    // Coarse show/hide from the session's permission union (see useCan): the server
+    // gates project create/update on secrets.write and delete on secrets.delete, scoped.
+    const canCreate = can.writeSecrets;
     const [showDeleted, setShowDeleted] = useState(false);
     const { data: projects = [], isLoading, isError, error } = useProjects(showDeleted);
     const [sortKey, setSortKey] = useState<SortKey>('recent');
@@ -360,15 +379,17 @@ export const ProjectsListPage: React.FC = () => {
                         Each project has its own environments and secrets.
                     </p>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => setShowCreate(true)}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium"
-                    style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
-                >
-                    <PlusIcon className="h-4 w-4" />
-                    New Project
-                </button>
+                {canCreate && (
+                    <button
+                        type="button"
+                        onClick={() => setShowCreate(true)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                    >
+                        <PlusIcon className="h-4 w-4" />
+                        New Project
+                    </button>
+                )}
             </div>
 
             {/* Search + show-deleted toggle */}
@@ -494,6 +515,8 @@ export const ProjectsListPage: React.FC = () => {
                                         onDeleteRequest={setProjectToDelete}
                                         onRestore={handleRestore}
                                         restoring={restoreProject.isPending && restoreProject.variables === p.id}
+                                        canEdit={can.writeSecrets}
+                                        canDelete={can.deleteSecrets}
                                     />
                                 ))}
                             </div>
@@ -514,16 +537,20 @@ export const ProjectsListPage: React.FC = () => {
                                         No projects yet
                                     </p>
                                     <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                                        Create your first project to start managing secrets.
+                                        {canCreate
+                                            ? 'Create your first project to start managing secrets.'
+                                            : 'Ask an administrator to create a project or add you to one.'}
                                     </p>
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowCreate(true)}
-                                        className="px-4 py-2 rounded-lg text-sm font-medium"
-                                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
-                                    >
-                                        Create Project
-                                    </button>
+                                    {canCreate && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowCreate(true)}
+                                            className="px-4 py-2 rounded-lg text-sm font-medium"
+                                            style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                                        >
+                                            Create Project
+                                        </button>
+                                    )}
                                 </>
                             )}
                         </div>
@@ -531,7 +558,7 @@ export const ProjectsListPage: React.FC = () => {
                 </>
             )}
 
-            {showCreate && <CreateProjectModal onClose={() => setShowCreate(false)} />}
+            {showCreate && canCreate && <CreateProjectModal onClose={() => setShowCreate(false)} />}
 
             {projectToEdit && <EditProjectModal project={projectToEdit} onClose={() => setProjectToEdit(null)} />}
 

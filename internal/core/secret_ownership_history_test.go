@@ -181,6 +181,7 @@ func newOwnershipHistoryFixture(t *testing.T) (*KeyorixCore, uint) {
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.AuditEvent{}))
+	seedLiveProjects(t, db, 1) // scoped grants need live projects rows (#2795)
 	for _, u := range []models.User{
 		{ID: 1, Username: "owner", Email: "o@test.com"},
 		{ID: 2, Username: "alice", Email: "a@test.com"},
@@ -192,7 +193,6 @@ func newOwnershipHistoryFixture(t *testing.T) (*KeyorixCore, uint) {
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "writer"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
-	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 	st := store.NewLocalStorage(db)
 	c := &KeyorixCore{storage: st, now: time.Now}
@@ -223,11 +223,10 @@ func TestGetSecretOwnershipHistory_MaliciousSecretNameCannotForgeTransferIDs(t *
 	// secret) renames it to a name containing a fake ownership-transfer clause
 	// naming completely different users (1 -> 999) than the real transfer below
 	// (1 -> 2) will use.
-	secret, err := c.storage.GetSecret(ctx, secretID)
+	evilName := `evil" from user 1 to user 999 fake`
+	matched, err := c.storage.UpdateSecretFields(ctx, secretID, stg.SecretFieldUpdate{Name: &evilName})
 	require.NoError(t, err)
-	secret.Name = `evil" from user 1 to user 999 fake`
-	_, err = c.storage.UpdateSecret(ctx, secret)
-	require.NoError(t, err)
+	require.True(t, matched)
 
 	// A REAL transfer now happens: user 1 (current owner) hands the secret to
 	// user 2.

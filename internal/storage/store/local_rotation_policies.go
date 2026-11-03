@@ -125,7 +125,7 @@ func (ls *LocalStorage) UpdateRotationState(ctx context.Context, policyID uint, 
 		return fmt.Errorf("UpdateRotationState: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("rotation policy not found")
+		return storage.NotFound(storage.ErrRotationPolicyNotFound, storage.ErrRotationPolicyNotFound.Error(), nil)
 	}
 	return nil
 }

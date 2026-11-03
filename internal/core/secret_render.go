@@ -188,6 +188,12 @@ func (c *KeyorixCore) stageRenderRef(ctx context.Context, ref string, projectID,
 		envID = timingCanaryID
 	}
 	secret, err := c.storage.GetSecretByName(ctx, secretName, projectID, envID)
+	if err != nil && !isPositiveNotFound(err) {
+		// A read FAULT is storage-wide, not a verdict on this reference, so it adds no
+		// existence signal: retry, not "no such secret" (STORAGE-ERR-CLASS-4).
+		refuse(SecretReadDeniedInternalError, nil)
+		return "", classifyReadError(err, "")
+	}
 	if err != nil || secret == nil {
 		// A reference to a name that doesn't exist. Deliberately the SAME sentinel
 		// (same error, same eventual HTTP status/message) as "exists but you can't

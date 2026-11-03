@@ -109,27 +109,6 @@ var skipList = map[string]string{
 	// own suite) rather than folded into this driver's shared session.
 	"POST /api/v1/auth/end-impersonation": "impersonation start/end is a session-state mutation exercised by server/http/handlers/*impersonation*_test.go; not folded into this driver's single shared admin session",
 
-	// SCIM: provisioning-only surface, authenticated by a SEPARATE
-	// out-of-band SCIM bearer token (customMiddleware.SCIMToken -- see
-	// permission_sweep_test.go's header comment) that this driver's
-	// session-token client cannot present without first minting one through
-	// an admin-only SCIM-token-issuance flow this driver does not yet drive.
-	// Tracked as a real gap, not silently dropped -- SESSION-I's report lists
-	// this as a follow-up.
-	"GET /scim/v2/ServiceProviderConfig": "SCIM provisioning surface, separate SCIMToken auth this driver does not yet mint -- tracked follow-up in the SESSION-I report",
-	"GET /scim/v2/Users":                 "see ServiceProviderConfig above",
-	"POST /scim/v2/Users":                "see ServiceProviderConfig above",
-	"GET /scim/v2/Users/{id}":            "see ServiceProviderConfig above",
-	"PUT /scim/v2/Users/{id}":            "see ServiceProviderConfig above",
-	"PATCH /scim/v2/Users/{id}":          "see ServiceProviderConfig above",
-	"DELETE /scim/v2/Users/{id}":         "see ServiceProviderConfig above",
-	"GET /scim/v2/Groups":                "see ServiceProviderConfig above",
-	"POST /scim/v2/Groups":               "see ServiceProviderConfig above",
-	"GET /scim/v2/Groups/{id}":           "see ServiceProviderConfig above",
-	"PATCH /scim/v2/Groups/{id}":         "see ServiceProviderConfig above",
-	"PUT /scim/v2/Groups/{id}":           "see ServiceProviderConfig above",
-	"DELETE /scim/v2/Groups/{id}":        "see ServiceProviderConfig above",
-
 	// Static/infrastructure routes: no request/response cycle meaningfully
 	// tests a "feature" here (no DB table backs them), and /metrics HANDLE
 	// registers Prometheus's own internal mux, not a chi leaf route this

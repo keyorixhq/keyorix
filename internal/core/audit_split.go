@@ -53,6 +53,10 @@ type PartialMutationError struct {
 	NotApplied string
 	// Err is why commit 2 failed (ErrMutationAuditUnavailable during an audit outage).
 	Err error
+	// RetryRefused: commit 2 was refused on the actor's own authority, which changed
+	// after commit 1 (a concurrent revocation, #3684), so a retry of the same request
+	// is refused too. Details then says retry_safe false.
+	RetryRefused bool
 }
 
 func (e *PartialMutationError) Error() string {
@@ -67,11 +71,14 @@ func (e *PartialMutationError) Unwrap() error { return e.Err }
 
 // ClientMessage is the fixed text the transports send (never Err's text).
 func (e *PartialMutationError) ClientMessage() string {
+	if e.RetryRefused {
+		return fmt.Sprintf("%s was applied; %s was not (you no longer hold the authority to complete the change)", e.Applied, e.NotApplied)
+	}
 	return fmt.Sprintf("%s was applied; %s was not (the change could not be completed, retry the same request)", e.Applied, e.NotApplied)
 }
 
 // Details is the machine-readable body the transports send with it: which half was
-// applied, and that a retry of the same request is safe.
+// applied, and whether a retry of the same request is safe (false only when RetryRefused).
 func (e *PartialMutationError) Details() map[string]any {
 	return map[string]any{
 		"code":               PartialMutationErrorCode,
@@ -79,7 +86,7 @@ func (e *PartialMutationError) Details() map[string]any {
 		"remainder_applied":  false,
 		"applied":            e.Applied,
 		"not_applied":        e.NotApplied,
-		"retry_safe":         true,
+		"retry_safe":         !e.RetryRefused,
 	}
 }
 

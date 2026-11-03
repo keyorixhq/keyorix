@@ -1,0 +1,2 @@
+### Documentation
+- **Recovery-options design doc: recorded the decision on the audit seal's `unpinned` field.** The accept-loss seal record's optional `unpinned` span field (AUDIT-SEAL-TAILS-3, #3852) is accepted as a backward-compatible addition to the existing seal-record format constraints, not a new ADR; the residual gap it does not close (deletion of older checkpoint rows) is noted as tracked separately.

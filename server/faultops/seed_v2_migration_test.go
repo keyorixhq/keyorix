@@ -108,6 +108,8 @@ var documentedRetargets = map[string]string{
 	"31fd1db68a395324": "finding 2026-10-02-FINDING-mfa-login-getmfasecret-...: input=c688c2 -> REST POST /auth/mfa/verify, GetMFASecret#1, error",
 	"bdbfad52d4cc7bae": "finding 2026-09-21-FINDING-role-update-permission-replace-...: F3b, UpdateRole's RemovePermissionFromRole panic (REST PUT /api/v1/roles/{id})",
 	"fc345daad612100a": "#1969 commit message: first-call ambiguous commit in the already-covered CreateSecret op (REST POST /api/v1/secrets/); op inferred, method/nth/kind from the bytes",
+	// STORE-UPDATESECRET-RETIRE-1: the storage method the seed was written for no longer exists.
+	"e114805b46ad75ba": "STORE-UPDATESECRET-RETIRE-1 deleted the full-row UpdateSecret; the PUT op's secret write is UpdateSecretFields (same call position)",
 }
 
 // TestSeedMigration_V2TargetsSameOperationAsLegacyUnderOriginalLists: for every

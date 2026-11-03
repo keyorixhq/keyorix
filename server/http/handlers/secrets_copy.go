@@ -48,6 +48,10 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 		// Missing or expired: the same 404 as before. A storage failure is not
 		// "no such secret".
 		if !isSecretNotFound(err) && !errors.Is(err, core.ErrSecretExpired) {
+			// A read fault is a retry answer (503), not an internal error: the copy was not applied.
+			if sendStorageUnavailable(w, core.ReadFault(err)) {
+				return
+			}
 			log.Printf("Error reading secret %d for copy: %v", id, err) // NOSONAR
 			h.sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 			return
@@ -56,8 +60,10 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := core.Scope{ProjectID: source.ProjectID, EnvironmentID: reqBody.EnvironmentID}
-	if allowed, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope); aerr != nil || !allowed {
+	allowed, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope)
+	if refuseUnlessAuthorized(w, r, allowed, aerr, func() {
 		h.sendError(w, "Forbidden", "Insufficient permissions for the target environment", http.StatusForbidden, nil)
+	}) {
 		return
 	}
 

@@ -31,6 +31,7 @@ func newRBACManagementCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.User{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SoDPolicy{}, &models.Session{},
 	))
+	seedLiveProjects(t, db, 1, 3, 5, 7) // scoped grants need live projects rows (#2795)
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 

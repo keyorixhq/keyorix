@@ -7,6 +7,7 @@ package handlers
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -118,11 +119,11 @@ func TestListAccessReviewCampaigns_HappyPath(t *testing.T) {
 }
 
 func TestCampaignStatusForError(t *testing.T) {
-	assert.Equal(t, http.StatusNotFound, campaignStatusForError("not found"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("required field"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("still pending"))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError("already closed"))
-	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError("unknown error"))
+	assert.Equal(t, http.StatusNotFound, campaignStatusForError(core.ErrAccessReviewNotFound))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("required field")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("still pending")))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("already closed")))
+	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError(errors.New("unknown error")))
 }
 
 // ── audit.go ──────────────────────────────────────────────────────────────────

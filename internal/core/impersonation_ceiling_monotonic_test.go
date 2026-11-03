@@ -129,3 +129,46 @@ func TestCachedImpersonationCeiling_TTLExpiryUsesGenuineElapsedTime(t *testing.T
 	}
 	store.AssertNumberOfCalls(t, "RoleSetHasPermission", 2)
 }
+
+// TestNewKeyorixCore_DefaultClockRetainsMonotonicReading pins the condition
+// INV-CORE-09 rests on: the PRODUCTION default clock, as NewKeyorixCore wires
+// it, must keep Go's monotonic reading. The two tests above set c.now =
+// time.Now themselves, so they stay green even if the constructor's default
+// is changed to something that strips it (e.g. func() time.Time { return
+// time.Now().UTC() }, which #3889 proposed). This one reads the default the
+// server actually runs with.
+func TestNewKeyorixCore_DefaultClockRetainsMonotonicReading(t *testing.T) {
+	t.Parallel()
+	c := NewKeyorixCore(nil)
+	require.Contains(t, c.now().String(), "m=+",
+		"NewKeyorixCore's default clock lost its monotonic reading -- keep it time.Now, never a "+
+			".UTC()/.Round()/.Truncate() wrapper (INV-CORE-09)")
+}
+
+// TestCachedImpersonationCeiling_DefaultClockRetainsMonotonicReading is the
+// same mechanism check as TestCachedImpersonationCeiling_RealClockRetainsMonotonicReading,
+// but through NewKeyorixCore's default clock instead of a test-assigned
+// time.Now: the cache entry written in production must carry a monotonic
+// reading.
+func TestCachedImpersonationCeiling_DefaultClockRetainsMonotonicReading(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := NewKeyorixCore(store)
+	ctx := context.Background()
+	const adminID, targetID = uint(1), uint(2)
+
+	store.On("GetUser", ctx, adminID).Return(&models.User{ID: adminID, Username: "admin", IsActive: true, AccountState: AccountActive}, nil)
+	store.On("GetUserRoleIDsAt", ctx, adminID, Scope{}).Return([]uint{5}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, adminID, Scope{}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{5}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{5}, "users.impersonate").Return(true, nil)
+	store.On("GetUserRoleScopes", ctx, targetID).Return([]Scope{}, nil)
+
+	require.NoError(t, c.ReauthorizeImpersonation(ctx, adminID, targetID))
+
+	v, ok := c.impersonationCeilingCache.Load("1:2")
+	require.True(t, ok, "sanity: the cache must have been populated")
+	entry := v.(ceilingCacheEntry)
+	require.Contains(t, entry.expiresAt.String(), "m=+",
+		"with NewKeyorixCore's default clock, entry.expiresAt lost its monotonic reading (INV-CORE-09)")
+}

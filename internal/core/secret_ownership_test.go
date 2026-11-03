@@ -52,6 +52,7 @@ func newOwnershipFixture(t *testing.T) (*KeyorixCore, uint) {
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}))
+	seedLiveProjects(t, db, 1) // scoped grants need live projects rows (#2795)
 	for _, u := range []models.User{
 		{ID: 1, Username: "owner", Email: "o@test.com"},
 		{ID: 2, Username: "alice", Email: "a@test.com"},
@@ -72,14 +73,9 @@ func newOwnershipFixture(t *testing.T) (*KeyorixCore, uint) {
 	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "assigner"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 3}).Error)
 
-	seedLiveScopeProjects(t, db, 1)
-
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error) // alice: writer
-	seedLiveScopeProjects(t, db, 1)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 2, ProjectID: 1}).Error) // bob: writer
-	seedLiveScopeProjects(t, db, 1)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 3, ProjectID: 1}).Error) // bob: assigner
-	seedLiveScopeProjects(t, db, 1)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 1, ProjectID: 1}).Error) // dave: reader only
 
 	st := store.NewLocalStorage(db)
@@ -143,11 +139,10 @@ func TestTransferSecretOwnership(t *testing.T) {
 		c, id := newOwnershipFixture(t)
 		// Simulate the routine ADR-023/030 orphaned state directly (OwnerID==0),
 		// not merely a deleted account.
-		secret, err := c.storage.GetSecret(ctx, id)
+		orphan := uint(0)
+		matched, err := c.storage.UpdateSecretFields(ctx, id, coreStorage.SecretFieldUpdate{OwnerID: &orphan})
 		require.NoError(t, err)
-		secret.OwnerID = 0
-		_, err = c.storage.UpdateSecret(ctx, secret)
-		require.NoError(t, err)
+		require.True(t, matched)
 
 		// Actor 2 (alice) holds secrets.write but NOT roles.assign, and targets a
 		// valid write-tier new owner (3, bob) — even so, the recovery path itself
@@ -167,11 +162,10 @@ func TestTransferSecretOwnership(t *testing.T) {
 
 	t.Run("recovery succeeds for a roles.assign-holding actor even with a read-only target rejected", func(t *testing.T) {
 		c, id := newOwnershipFixture(t)
-		secret, err := c.storage.GetSecret(ctx, id)
+		orphan := uint(0)
+		matched, err := c.storage.UpdateSecretFields(ctx, id, coreStorage.SecretFieldUpdate{OwnerID: &orphan})
 		require.NoError(t, err)
-		secret.OwnerID = 0
-		_, err = c.storage.UpdateSecret(ctx, secret)
-		require.NoError(t, err)
+		require.True(t, matched)
 
 		// Actor 3 (bob) holds roles.assign, but targets user 5 (dave, read-only) —
 		// the actor-side gate passing must not waive the new-owner ceiling.

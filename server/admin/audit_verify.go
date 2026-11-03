@@ -64,8 +64,7 @@ insertion, or reordering of a row still present in the table. With
 additionally detects tail-truncation and genesis re-seed against the
 certified high-water mark. With --anchor (or, if not passed, audit.
 offline_anchor_path from config -- an offline anchor source: a checkpoint
-export written to write-once media by 'admin audit export-checkpoint', see
-docs/design-b4-offline-audit-verify.md §10 Q5), it cross-checks the live
+export written to write-once media by 'admin audit export-checkpoint'), it cross-checks the live
 chain against a signed checkpoint snapshot held OUTSIDE this host -- catching
 a truncation or re-seed even if the local checkpoint/high-water rows were
 themselves deleted. With --tsa-roots (a PEM bundle of trusted RFC 3161 TSA

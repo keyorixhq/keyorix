@@ -9,7 +9,7 @@
 // those were checked. This file covers:
 //
 //   - documents: docs/CONFIGURATION.md, docs/SELF_HOSTING.md, QUICK_START.md,
-//     docs/AIRGAP_RUNBOOK.md and docs/operator/*.md;
+//     docs/AIRGAP_RUNBOOK.md, INSTALL-WITH-AI.md and docs/operator/*.md;
 //   - places: fenced code lines and backticked inline spans, whatever wrapper
 //     precedes the binary (docker/podman/kubectl exec|run, sudo, env, VAR=value);
 //   - `keyorix-server admin <sub>... [--flag]`: resolved against the real cobra
@@ -49,7 +49,7 @@ import (
 // docsCmdDocs returns the repo-relative documents checked.
 func docsCmdDocs(t *testing.T) []string {
 	t.Helper()
-	docs := []string{"docs/CONFIGURATION.md", "docs/SELF_HOSTING.md", "QUICK_START.md", "docs/AIRGAP_RUNBOOK.md"}
+	docs := []string{"docs/CONFIGURATION.md", "docs/SELF_HOSTING.md", "QUICK_START.md", "docs/AIRGAP_RUNBOOK.md", "INSTALL-WITH-AI.md"}
 	root := adminDocRepoRoot(t)
 	matches, err := filepath.Glob(filepath.Join(root, "docs", "operator", "*.md"))
 	if err != nil {
