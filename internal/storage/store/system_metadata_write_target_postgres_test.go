@@ -11,6 +11,9 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -92,21 +95,82 @@ func TestRolePermGenerationIntegrity_SystemMetadataRuleIsRemovedAndFlushed_Postg
 	require.False(t, w.decide(t, w.perm.Name), "with the rule gone a direct revoke bumps again")
 }
 
-// The policies keep every statement but the generation row's UPDATE working,
-// so the revoke itself succeeds and nothing fails loudly.
-func TestRolePermGenerationIntegrity_SystemMetadataForcedRowSecurityIsTurnedOffAndFlushed_Postgres(t *testing.T) {
-	w, c := smWriteTargetWorld(t)
-	db := w.writer.db
+var smRLSOwnerSeq atomic.Int64
+
+// systemMetadataOwnerSubjectToRLS hands system_metadata to a fresh role that
+// row level security applies to (NOSUPERUSER NOBYPASSRLS) and returns a
+// function that runs fn in one transaction as that role. The route is the
+// server's own role, the table's owner, which is not a superuser
+// (docs/design/trigger-rowdigest.md). A superuser or BYPASSRLS role is never
+// subject to row level security, FORCE included, so a test that tampered and
+// revoked as the role it connects with (CI's Postgres service user is a
+// superuser) could not hide the bump at all and its premise failed there
+// (merge_group run 41729939611). Acting as a dedicated owner makes the premise
+// hold whatever role the test connects as. Needs CREATEROLE or superuser.
+func systemMetadataOwnerSubjectToRLS(t *testing.T, db *gorm.DB) func(fn func(tx *gorm.DB) error) error {
+	t.Helper()
+	role := fmt.Sprintf("kx_sm_rls_%d_%d", os.Getpid(), smRLSOwnerSeq.Add(1))
+	var schema string
+	require.NoError(t, db.Raw("SELECT current_schema()::text").Scan(&schema).Error)
+	// Roles are cluster-wide: drop it even when a step below fails.
+	require.NoError(t, db.Exec("CREATE ROLE "+role+" NOLOGIN NOSUPERUSER NOBYPASSRLS").Error)
+	t.Cleanup(func() {
+		for _, q := range []string{
+			"ALTER TABLE system_metadata OWNER TO CURRENT_USER",
+			"DROP OWNED BY " + role,
+			"DROP ROLE " + role,
+		} {
+			if err := db.Exec(q).Error; err != nil {
+				t.Logf("cleanup %s: %v", q, err)
+			}
+		}
+	})
 	for _, q := range []string{
-		"CREATE POLICY sm_read ON system_metadata FOR SELECT USING (true)",
-		"CREATE POLICY sm_insert ON system_metadata FOR INSERT WITH CHECK (true)",
-		"CREATE POLICY sm_update ON system_metadata FOR UPDATE USING (key <> 'role_permissions_generation')",
-		"ALTER TABLE system_metadata ENABLE ROW LEVEL SECURITY",
-		"ALTER TABLE system_metadata FORCE ROW LEVEL SECURITY",
+		"GRANT " + role + " TO CURRENT_USER",
+		`GRANT USAGE, CREATE ON SCHEMA "` + schema + `" TO ` + role, // CREATE: an owner must hold it
+		"GRANT SELECT, DELETE ON role_permissions TO " + role,
+		"ALTER TABLE system_metadata OWNER TO " + role,
 	} {
 		require.NoError(t, db.Exec(q).Error, q)
 	}
-	revokeDirect(t, db, w)
+	var bypass []bool
+	require.NoError(t, db.Raw("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = ?", role).Scan(&bypass).Error)
+	require.Equal(t, []bool{false}, bypass, "premise: row level security applies to the owner")
+	return func(fn func(tx *gorm.DB) error) error {
+		return db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("SET LOCAL ROLE " + role).Error; err != nil {
+				return err
+			}
+			return fn(tx)
+		})
+	}
+}
+
+// The owner forces row level security on system_metadata, and its policies
+// keep every statement but the generation row's UPDATE working, so its own
+// revoke succeeds and nothing fails loudly.
+func TestRolePermGenerationIntegrity_SystemMetadataForcedRowSecurityIsTurnedOffAndFlushed_Postgres(t *testing.T) {
+	w, c := smWriteTargetWorld(t)
+	db := w.writer.db
+	asOwner := systemMetadataOwnerSubjectToRLS(t, db)
+	require.NoError(t, asOwner(func(tx *gorm.DB) error {
+		for _, q := range []string{
+			"CREATE POLICY sm_read ON system_metadata FOR SELECT USING (true)",
+			"CREATE POLICY sm_insert ON system_metadata FOR INSERT WITH CHECK (true)",
+			"CREATE POLICY sm_update ON system_metadata FOR UPDATE USING (key <> 'role_permissions_generation')",
+			"ALTER TABLE system_metadata ENABLE ROW LEVEL SECURITY",
+			"ALTER TABLE system_metadata FORCE ROW LEVEL SECURITY",
+		} {
+			if err := tx.Exec(q).Error; err != nil {
+				return fmt.Errorf("%s: %w", q, err)
+			}
+		}
+		return nil
+	}))
+	require.NoError(t, asOwner(func(tx *gorm.DB) error {
+		revokeDirect(t, tx, w)
+		return nil
+	}))
 	requireStaleThenFlushed(t, w, c)
 	requireSystemMetadataClean(t, db)
 }
