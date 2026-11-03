@@ -52,6 +52,13 @@ var auditUnavailableMappingExempt = map[string]string{
 	// first (MFA-RESET-TAILS-2); the guard does not follow into that helper.
 	"mfa_reset.go:ApproveMFAReset": "#3858: mapped by sendAuditUnavailable inside sendMFAResetError, a helper the guard does not follow",
 	"mfa_reset.go:RequestMFAReset": "#3858: mapped by sendAuditUnavailable inside sendMFAResetError, a helper the guard does not follow",
+	// MSG-ACCURACY-1 (#3912): core.BulkDeleteSecrets never returns the sentinel as a request
+	// error; bulkDeleteFailureMessage turns it into a per-item entry with
+	// core.MutationAuditUnavailableMessage. This handler passes an untagged r.Context(), so
+	// today DeleteSecret writes no audit row in its transaction and the sentinel cannot
+	// arise here (the post-commit audit is best effort; INV-CORE-secret-mutation-audit-same-tx
+	// "Not covered").
+	"secrets_bulk_delete.go:BulkDeleteSecrets": "never a request error: core reports it per item in the 200 body; this handler's untagged context does not reach it today",
 }
 
 func readAuditUnavailableReachingMethods(t *testing.T) map[string]bool {

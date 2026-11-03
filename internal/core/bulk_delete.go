@@ -193,11 +193,16 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 
 // bulkDeleteFailureMessage classifies a failed per-item delete into the fixed text
 // reported in BulkDeleteResult.Failed: a permission refusal, a positive not-found (the
-// secret went away after it was read), a storage outage (retry), or anything else.
+// secret went away after it was read), an audit-log outage (retry), a storage outage
+// (retry), or anything else.
 func bulkDeleteFailureMessage(ctx context.Context, err error) string {
 	switch {
 	case errors.Is(err, ErrPermissionDenied):
 		return "permission denied"
+	case errors.Is(err, ErrSecretMutationAuditUnavailable), errors.Is(err, ErrMutationAuditUnavailable):
+		// Same sentence REST and the other mutation endpoints send; the delete was rolled
+		// back with its audit row, so the item can be retried.
+		return MutationAuditUnavailableMessage
 	case isPositiveNotFound(err):
 		return "secret not found"
 	case IsStorageReadUnavailable(err) || IsAuthorizeTransient(ctx, err):
