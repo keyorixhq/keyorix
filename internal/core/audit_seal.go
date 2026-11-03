@@ -103,6 +103,12 @@ type AuditSealTruncation struct {
 	SurvivingHeadID   uint   `json:"surviving_head_id"`
 }
 
+// AuditSealSpan is a range of audit event ids, both ends included.
+type AuditSealSpan struct {
+	FromID    uint `json:"from_id"`
+	ThroughID uint `json:"through_id"`
+}
+
 // AuditSealAccepted is one alarm the acceptance cleared, recorded verbatim.
 type AuditSealAccepted struct {
 	What       string     `json:"what"` // walk | checkpoint | discontinuity | failure
@@ -140,6 +146,11 @@ type auditSeal struct {
 	LostEvents int64               `json:"lost_events"`
 	Anchor     *AuditSealAnchor    `json:"anchor,omitempty"`
 	Accepted   []AuditSealAccepted `json:"accepted,omitempty"`
+	// Unpinned are the surviving rows before each gap (or a truncation's
+	// surviving head) that no signed artifact pinned when the loss was
+	// accepted: a rewrite of them before the acceptance cannot be excluded
+	// (#3802). Absent on records written before it was recorded.
+	Unpinned []AuditSealSpan `json:"unpinned,omitempty"`
 
 	payload  []byte
 	kid, mac string
