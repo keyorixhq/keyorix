@@ -1,8 +1,14 @@
 package core
 
-// MSG-ACCURACY-1 item 2 (#3912): an audit-log outage inside DeleteSecret's transaction was
-// reported per item as "internal error". It must say the audit log is unavailable and the
-// item can be retried, delete nothing, and stay fail-closed.
+// MSG-ACCURACY-1 item 2 (#3912): bulkDeleteFailureMessage reported an audit-log outage
+// inside DeleteSecret's transaction as "internal error". Under a context tagged with
+// WithSecretMutationAudit it must say the audit log is unavailable and the item can be
+// retried, delete nothing, and stay fail-closed.
+//
+// This proves the per-item classifier only. The HTTP bulk-delete handler passes an
+// untagged request context, so DeleteSecret writes no audit row in its transaction there
+// and the post-commit audit stays best effort (INV-CORE-secret-mutation-audit-same-tx,
+// "Not covered").
 
 import (
 	"errors"
