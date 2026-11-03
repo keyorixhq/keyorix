@@ -735,8 +735,8 @@ const InactiveFilterBanner: React.FC<InactiveFilterBannerProps> = ({ show, isDar
             }}
         >
             <span className="text-sm font-medium">
-                Showing inactive users only — no login in the last 30 days (includes accounts that have never logged
-                in).
+                Showing inactive users only — not logged in for 30+ days (an account that never logged in counts once it
+                is 30+ days old).
             </span>
             <button
                 type="button"
