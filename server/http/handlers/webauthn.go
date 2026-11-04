@@ -495,6 +495,11 @@ func (h *AuthHandler) writeWebAuthnErr(w http.ResponseWriter, err error) {
 	if writeTOTPUnavailable(w, err) {
 		return
 	}
+	// The caller's own account read failed before any proof was evaluated
+	// (AUTH-LANE-FOLDS-1): retry, not 400 "user not found".
+	if sendStorageUnavailable(w, err) {
+		return
+	}
 	if errors.Is(err, core.ErrWebAuthnDisabled) {
 		sendError(w, "NotImplemented", err.Error(), http.StatusNotImplemented, nil) // nosemgrep: keyorix-raw-error-to-client -- ErrWebAuthnDisabled is a fixed sentinel with a known-safe message, not a raw backend/driver error
 		return
