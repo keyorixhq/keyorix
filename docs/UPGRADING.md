@@ -685,7 +685,9 @@ Details: [recertification-activity-window.md](recertification-activity-window.md
 ## 6q. Compatibility floor 3: v0.96.x cannot run against an upgraded database
 
 This release raises the schema compatibility floor to 3 (ADR-101); its schema epoch
-is 7 (epochs 4 to 7 are additive and leave the floor at 3, see 6o.1 and 6z).
+is 9 (epochs 4 to 9 are additive and leave the floor at 3; see 6o.1 for epoch 5, 6z for
+epoch 7 and "Administrator MFA reset" in section 2 for epoch 8;
+`internal/storage/factory_schema_epoch.go` lists each).
 Once a server of this release has started against a database, a v0.96.x (epoch 2)
 binary refuses to start on it: `database declares a minimum compatible schema
 epoch of 3 (database schema epoch 9)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
@@ -723,6 +725,37 @@ In short:
   a v0.96.x replica ignores that option and suspends without clearing the copies. Repeat
   any such suspend once every replica runs this release.
 
+Trigger definitions on PostgreSQL (rules for any rolling upgrade, #3717). The server
+watches two sets of PostgreSQL triggers (the role-permission generation triggers and the
+`secret_nodes` cache-epoch trigger) and restores them if they change outside a release.
+Each function carries a definition version in its `COMMENT`. Both are at version 1 today,
+so the rules bind a release that changes a definition. SQLite does not have these triggers.
+
+- **Do not skip a trigger-definition version in a rolling upgrade.** A replica leaves a
+  definition that is exactly one version ahead of its own in place (for at most 24 hours
+  per running replica) and treats any other difference as tampering. A jump of two or more
+  versions is read as tampering by the older replicas (`reason="tamper"`, restored,
+  caches flushed), which is how it behaved before version markers existed: the two sides
+  ping-pong for the length of the rollout. Step through each release that changes a
+  definition.
+- **Finish a rolling upgrade that changes a definition within 24 hours.** After that a
+  replica still running the older release stops accepting the newer definition, logs it
+  as a forged marker, restores its own, and the new replicas restore theirs on their next
+  tick.
+- **A release must not change the set of trigger names of a target.** It may change the
+  body, the settings and the shape of the existing triggers; adding or removing a trigger
+  name needs a new function name (see "Definition versions" in
+  [design/trigger-rowdigest.md](design/trigger-rowdigest.md#definition-versions-3717)).
+- **Metrics: `keyorix_role_permission_generation_tamper_total` and
+  `keyorix_secret_node_cache_epoch_tamper_total` carry a `reason` label.** `tamper` is a
+  change outside any release (restored); `newer_definition` is a newer release's
+  definition read during a rolling upgrade (left in place, logged hourly, not a
+  `SECURITY` line). A query or alert on these counters written without the label still
+  matches both series, so it now also counts `newer_definition` during a rollout: select
+  `{reason="tamper"}` for tampering and expect `{reason="newer_definition"}` to move while
+  a rolling upgrade changes a definition (see
+  [operations/metrics.md](operations/metrics.md)).
+
 Releases before v0.96 (v0.93 to v0.95.x) predate both formats too, and are refused as well,
 by their older check: `database schema epoch 9 is newer than this binary's schema epoch 1`.
 `internal/storage/factory_schema_epoch_pre3258_refusal_test.go` pins both refusals with
@@ -758,19 +791,30 @@ The recover-admin alert (`admin.recover_admin` use is always notified to your
 notification channels) now remembers how far through the audit table it has looked,
 instead of re-reading the whole table every 10 minutes. Where the first pass starts
 depends on whether the install already has a stored mark (the system metadata key
-`recover_admin_alert_last_notified_id`):
+`recover_admin_alert_last_notified_id`). The previous version wrote that mark only when
+it found an `admin.recover_admin` event, and set it to the id of the last event it
+notified. So, on the first start of this version:
 
-- **An install with no stored mark** (it never notified a recover-admin use, or it is
-  new) has nothing to resume from, so the first pass **reads the audit table from its
-  first row to its last, once**, in windows. On a large audit table this takes a while.
-  The same happens if the stored value is not a valid integer: it is treated as no mark.
-- **An install with a stored mark** resumes from it. The previous version moved that
-  mark only when it found an `admin.recover_admin` event, so on an install that had
-  notified before, the mark is the id of its last notified event: the first pass reads
-  only the rows after that id (up to the end of the table, in the same windows), not the
-  whole table, and does not notify those earlier events again.
+- **(a) A fresh install** has no mark and a tiny audit table. The first pass starts at
+  id 0 and reads a few rows in one window; on a completely empty table it reads nothing
+  and writes no mark until the first audit row exists. There is no noticeable cost.
+- **(b) An existing install that never notified a recover-admin use** also has no mark,
+  because the previous version never wrote one. Nothing marks how far it had looked, so
+  the first pass **reads the audit table from its first row to its last, once**, in
+  windows (this is the one-time cost described below). The same happens if the stored
+  value is not a valid integer: it is treated as no mark.
+- **(c) An existing install that notified before** has a mark: the id of its last
+  notified event. It resumes from there, not from 0: the first pass reads only the rows
+  after that id, up to the end of the table, in the same windows, and does not notify
+  those earlier events again. How long that takes depends on how many rows were added
+  since that event, which on an install whose last recover-admin use was long ago is
+  most of the table.
 
 Either way, once the pass has finished the mark is the highest audit id examined.
+The three starts are pinned by `TestRunRecoverAdminAlerting_FirstStartAfterUpgrade`
+(`internal/core/recover_admin_alert_first_start_test.go`); the resume cursor and the
+invalid-mark case also by `TestRunRecoverAdminAlerting_ResumesFromHighWaterMark` and
+`TestRunRecoverAdminAlerting_CorruptMarkTreatedAsZero`.
 
 What bounds it, from the code (`internal/core/recover_admin_alert.go`):
 
