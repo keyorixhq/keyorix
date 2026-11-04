@@ -170,7 +170,10 @@ func isSystemMetadataSchemaEpochRow(tableName string, rowPtr reflect.Value) bool
 	return k == schemaEpochMetadataKey || k == schemaMinCompatibleEpochMetadataKey
 }
 
-func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int64, error) {
+func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string, notify func(rows int64, start, finished bool)) (int64, error) {
+	if notify == nil {
+		notify = func(int64, bool, bool) {}
+	}
 	path := filepath.Join(stagingDir, entry.TarName)
 	f, err := os.Open(path) // #nosec G304 -- entry.TarName is this package's own generated name, matched exactly against the manifest by ExtractArchive before staging
 	if err != nil {
@@ -181,6 +184,7 @@ func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int
 	elemType := reflect.TypeOf(model).Elem()
 	batch := reflect.MakeSlice(reflect.SliceOf(elemType), 0, batchSize)
 	var total int64
+	notify(0, true, false)
 
 	flush := func() error {
 		if batch.Len() == 0 {
@@ -190,6 +194,7 @@ func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int
 			return fmt.Errorf("insert batch into %q: %w", entry.Name, err)
 		}
 		batch = reflect.MakeSlice(reflect.SliceOf(elemType), 0, batchSize)
+		notify(total, false, false)
 		return nil
 	}
 
@@ -230,6 +235,7 @@ func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int
 		return total, fmt.Errorf("table %q: read %d rows but the manifest declares %d -- "+
 			"the staged file doesn't match what was verified", entry.Name, total, entry.RowCount)
 	}
+	notify(total, false, true)
 	return total, nil
 }
 
@@ -252,6 +258,11 @@ func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int
 // text, the mandatory check that replaces the deferred-FK-constraint safety
 // net a schema with real FK constraints would have had.
 func LoadArchive(db *gorm.DB, manifest Manifest, stagingDir string) error {
+	return LoadArchiveWithProgress(db, manifest, stagingDir, nil)
+}
+
+// LoadArchiveWithProgress is LoadArchive reporting to progress (nil = none).
+func LoadArchiveWithProgress(db *gorm.DB, manifest Manifest, stagingDir string, progress LoadProgressFunc) error {
 	order, err := RestoreOrder()
 	if err != nil {
 		return fmt.Errorf("derive restore order: %w", err)
@@ -269,6 +280,7 @@ func LoadArchive(db *gorm.DB, manifest Manifest, stagingDir string) error {
 	usedArchiveTables := make(map[string]bool, len(manifest.Tables))
 
 	var loadedModels []any
+	tablesDone := 0
 	for _, name := range order {
 		m := byName[name]
 		s, err := parseSchema(m)
@@ -284,13 +296,21 @@ func LoadArchive(db *gorm.DB, manifest Manifest, stagingDir string) error {
 		if err := checkSchemaDelta(name, s.DBNames, entry); err != nil {
 			return err
 		}
-		if _, err := loadTable(db, m, entry, stagingDir); err != nil {
+		var notify func(rows int64, start, finished bool)
+		if progress != nil {
+			notify = func(rows int64, start, finished bool) {
+				progress(LoadProgress{Table: entry.Name, TableRows: rows, TableTotal: entry.RowCount,
+					TablesDone: tablesDone, TablesTotal: len(manifest.Tables), Start: start, Finished: finished})
+			}
+		}
+		if _, err := loadTable(db, m, entry, stagingDir, notify); err != nil {
 			return fmt.Errorf("load table %q: %w", entry.Name, err)
 		}
 		if err := carryLegacyColumns(db, name, entry, stagingDir); err != nil {
 			return err
 		}
 		loadedModels = append(loadedModels, m)
+		tablesDone++
 	}
 
 	for _, te := range manifest.Tables {
