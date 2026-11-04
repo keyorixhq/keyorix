@@ -688,14 +688,22 @@ func (c *KeyorixCore) auditHighWaterFloor(ctx context.Context, strict bool) (flo
 	if err != nil {
 		return 0, false, false, "", err
 	}
-	return c.auditHighWaterFloorOf(ctx, val, ok, strict)
+	floor, found, tampered, reason, err = c.auditHighWaterStoredFloor(ctx, val, ok, strict)
+	if err != nil {
+		return 0, false, false, "", err
+	}
+	return max(floor, c.watermark()), found, tampered, reason, nil
 }
 
-// auditHighWaterFloorOf is auditHighWaterFloor over a stored value the caller
-// already read (ok false: no row), so a compare-and-set can be made against
-// exactly the value the floor came from (advanceAuditHighWater).
-func (c *KeyorixCore) auditHighWaterFloorOf(ctx context.Context, val string, ok, strict bool) (floor int64, found, tampered bool, reason string, err error) {
-	floor = c.watermark()
+// auditHighWaterStoredFloor is auditHighWaterFloor over a stored value the caller
+// already read (ok false: no row), WITHOUT the in-memory watermark: floor is what
+// that stored mark alone certifies (0 when absent, malformed or not trusted). A
+// compare-and-set is made against exactly the value the floor came from
+// (advanceAuditHighWater), and a lost one decides from this stored floor whether
+// the other holder already certified enough: the in-memory watermark is often
+// already at cp (auditTailCheck and enforceAuditHighWater raise it before the
+// checkpoint write), so it says nothing about what the database holds.
+func (c *KeyorixCore) auditHighWaterStoredFloor(ctx context.Context, val string, ok, strict bool) (floor int64, found, tampered bool, reason string, err error) {
 	if !ok {
 		return floor, false, false, "", nil
 	}
@@ -792,7 +800,8 @@ func describeAuditCount(chained, purged int64, suffix string) string {
 // silent loss (docs/design/pooler-lock-loss.md row 15) a second holder can write a higher
 // mark between this read and this write, and a last-write-wins upsert would then put the
 // lower one back, so a later truncation of the newest events would go unseen. A lost
-// compare-and-set re-reads the floor: when it already reaches cp, the other holder
+// compare-and-set re-reads the stored mark: when it alone (not the in-memory
+// watermark) already reaches cp, the other holder
 // certified at least as much and nothing is written; otherwise it retries once. Losing
 // twice leaves the mark to the next checkpoint write (logged).
 func (c *KeyorixCore) advanceAuditHighWater(ctx context.Context, cp *models.AuditCheckpoint) {
@@ -810,12 +819,16 @@ func (c *KeyorixCore) advanceAuditHighWater(ctx context.Context, cp *models.Audi
 			c.bumpWatermark(cp.ChainedEvents)
 			return
 		}
-		floor, _, _, _, ferr := c.auditHighWaterFloorOf(ctx, old, oldFound, false)
+		stored, _, _, _, ferr := c.auditHighWaterStoredFloor(ctx, old, oldFound, false)
+		floor := max(stored, c.watermark())
 		// Never lower the mark (a legitimate grow only raises it). The first read
 		// should never be above cp — WriteAuditCheckpoint refuses to checkpoint below
-		// the floor — but be defensive. After a lost write an equal floor is the
-		// other holder's mark for the same count: nothing to add.
-		if ferr == nil && (cp.ChainedEvents < floor || (attempt > 0 && cp.ChainedEvents == floor)) {
+		// the floor — but be defensive. After a lost write only the STORED mark
+		// decides: when it reaches cp the other holder certified at least as much and
+		// there is nothing to add; when it is below cp, retry even if the in-memory
+		// watermark already equals cp (it was raised before this write, and skipping
+		// on it would leave the other holder's lower mark in place).
+		if ferr == nil && ((attempt == 0 && cp.ChainedEvents < floor) || (attempt > 0 && cp.ChainedEvents <= stored)) {
 			c.bumpWatermark(floor)
 			return
 		}

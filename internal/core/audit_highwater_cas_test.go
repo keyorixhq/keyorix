@@ -162,3 +162,60 @@ func TestAuditHighWaterCAS_SlowerHolderNeverLowersTheMark(t *testing.T) {
 		})
 	}
 }
+
+// The reverse ordering: the holder with the HIGHER checkpoint is the slower
+// one, so it loses its first compare-and-set to the lower mark and must retry.
+// The production callers raise the in-memory watermark to the checkpoint
+// before writing the mark (auditTailCheck bumps it to t.certified, then
+// writeIncrementalCheckpointLocked writes that count; a read-path
+// enforceAuditHighWater does the same), so the "prebump" case does that first:
+// the retry must decide on the stored mark, not on the watermark that already
+// equals the checkpoint, or the lower mark stays (REVIEW-3955-DEEP-1 C1).
+func TestAuditHighWaterCAS_SlowerHigherHolderStillRaisesTheMark(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		initial int64 // 0: no mark yet
+		prebump bool
+	}{
+		{"absent", 0, false},
+		{"present", 50, false},
+		{"absent/prebump-like-tail-check", 0, true},
+		{"present/prebump-like-tail-check", 50, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hwCASRun(t, func(t *testing.T, p *hwCASPair) {
+				ctx := context.Background()
+				if tc.initial > 0 {
+					p.a.advanceAuditHighWater(ctx, hwCASCheckpoint(tc.initial))
+					require.Equal(t, tc.initial, storedHighWater(t, p.a, p.setup))
+					p.a, p.dbA = p.newReplica()
+					p.b, p.dbB = p.newReplica()
+				}
+				if tc.prebump {
+					p.b.bumpWatermark(200)
+				}
+				reached, release := pauseAfterMetadataRead(t, p.dbB, auditHighWaterKey)
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					p.b.advanceAuditHighWater(ctx, hwCASCheckpoint(200)) // slower holder, higher checkpoint
+				}()
+				select {
+				case <-reached:
+				case <-time.After(30 * time.Second):
+					close(release)
+					t.Fatal("the slower holder never reached its read of the high-water mark")
+				}
+				p.a.advanceAuditHighWater(ctx, hwCASCheckpoint(100)) // faster holder, lower checkpoint
+				require.Equal(t, int64(100), storedHighWater(t, p.a, p.setup))
+				close(release)
+				<-done
+
+				assert.Equal(t, int64(200), storedHighWater(t, p.a, p.setup),
+					"the higher checkpoint must end up as the mark although the lower one was written first")
+				assert.Equal(t, int64(200), p.b.watermark())
+			})
+		})
+	}
+}
