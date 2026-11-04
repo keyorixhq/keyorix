@@ -155,17 +155,6 @@ func lookupVerdictPureReadTwin(in oracleInput) *oracleAByDesignError {
 	return nil
 }
 
-// lookupVerdictOrderDependent are ops whose verdict-shaped answer to a lookup fault
-// is real (#3873) but not reproducible per drive: the first drive in a process
-// answers 401 and later drives of the same (op, method, nth) do not, so a
-// knownOpenTolerances row would read as dead on the staleness guard depending on
-// test order (observed: 9 of 9 end-impersonation rows flip between two consecutive
-// drives). Exempted by op, with the reason, until #3873 fixes the answer.
-// Remove the entry in the PR that closes the end-impersonation case of #3873.
-var lookupVerdictOrderDependent = map[string]string{
-	"REST POST /api/v1/auth/end-impersonation": "#3873: answers 401 to a lookup outage on the first drive only; order-dependent, cannot carry a staleness-checked tolerance row",
-}
-
 // lookupVerdictViolation returns the oracle (h) finding for one run, or "" when
 // the run is fine. in.kind KindEffectThenError is judged like KindError: the
 // lookup returned its error either way.
@@ -173,7 +162,7 @@ func lookupVerdictViolation(in oracleInput) string {
 	if !isLookupFaultMethod(in.method) || !isVerdictShapedAnswer(in.result) {
 		return ""
 	}
-	if verdictAnswerByDesign(in) != nil || lookupVerdictOrderDependent[in.op] != "" {
+	if verdictAnswerByDesign(in) != nil {
 		return ""
 	}
 	return fmt.Sprintf("ORACLE (h) VIOLATION — a storage fault on the lookup %s answered a verdict, not an outage "+

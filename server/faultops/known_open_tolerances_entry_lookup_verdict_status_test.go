@@ -12,7 +12,8 @@ import "github.com/keyorixhq/keyorix/internal/faultstorage"
 // AUTHZ-OUTAGE-TAILS-1 are the expected fixers of the handler rows. AUTH-ENDPOINT-OUTAGE-1
 // closed the auth-endpoint rows: step-up answers 503; the refresh and WebAuthn finish
 // effect-then-error twins are their reviewed KindError rows' (lookupVerdictEffectThenError).
-// end-impersonation stays exempt by op (lookupVerdictOrderDependent).
+// AUTH-LANE-FOLDS-1 closed end-impersonation (its op exemption is gone): a fault on the
+// impersonating admin's re-read or on the ceiling answers 503.
 func init() {
 	for _, r := range []struct {
 		name, op, method string
