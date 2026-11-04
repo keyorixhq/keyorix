@@ -17,9 +17,6 @@ func init() {
 		"webauthn.go:FinishWebAuthnRegistration",
 		"webauthn.go:DeleteWebAuthnCredential",
 		"webauthn.go:FinishWebAuthnReauth",
-		"impersonation.go:StartImpersonation",
-		"impersonation.go:EndImpersonation",
-		"impersonation.go:ReauthorizeImpersonation",
 	} {
 		registerFoldedReadException(key, lane)
 	}
