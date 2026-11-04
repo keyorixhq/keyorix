@@ -40,11 +40,14 @@ func (w *swWorld) serverStorage() storage.Storage {
 }
 
 // settleStartupWrites waits until the tracker's commit count has been still for
-// a quiet window. A new store starts the trigger-integrity check, whose first
-// tick writes a fenced table in the background; sampled mid-test, that write
-// would count as a commit of the transaction under test. Bounded: the check
-// writes only at its first tick (the next is rolePermGenerationIntegrityInterval
-// away), so a count that never settles is reported, not waited out.
+// a quiet window. A new store starts the trigger-integrity check, which runs a
+// read-only catalog transaction on every tick, every
+// rolePermGenerationIntegrityInterval (30s); the tracker conservatively
+// classifies that read as a fenced write and counts its commit. The first tick
+// runs in the background right after the store is built, so sampled mid-test it
+// would count as a commit of the transaction under test. Bounded: the next tick
+// is a full interval away, so a count that never settles is reported, not
+// waited out.
 func (w *swWorld) settleStartupWrites() {
 	w.t.Helper()
 	if w.guard == nil {
