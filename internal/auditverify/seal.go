@@ -49,6 +49,25 @@ type SealCount struct {
 	Source   string `json:"source,omitempty"`
 }
 
+// SealAnchor is the anchor an acceptance named (internal/core.AuditSealAnchor):
+// the SHA-256 of an export-checkpoint file, verified at acceptance when the
+// file was passed (--anchor), recorded only when just its digest was
+// (--anchor-sha256).
+type SealAnchor struct {
+	Digest        string `json:"digest"`
+	Verified      bool   `json:"verified"`
+	ChainedEvents int64  `json:"chained_events,omitempty"`
+	HeadID        uint64 `json:"head_id,omitempty"`
+	HeadHash      string `json:"head_hash,omitempty"`
+}
+
+// SealSpan is a range of audit event ids, both ends included
+// (internal/core.AuditSealSpan).
+type SealSpan struct {
+	FromID    uint64 `json:"from_id"`
+	ThroughID uint64 `json:"through_id"`
+}
+
 // Seal is one parsed, not yet authenticated record.
 type Seal struct {
 	V          int             `json:"v"`
@@ -64,6 +83,10 @@ type Seal struct {
 	Before     *SealCount      `json:"before,omitempty"`
 	After      SealCount       `json:"after"`
 	LostEvents int64           `json:"lost_events"`
+	Anchor     *SealAnchor     `json:"anchor,omitempty"`
+	// Unpinned are the surviving rows before each gap that no signed artifact
+	// pinned when the loss was accepted (#3802); absent on older records.
+	Unpinned []SealSpan `json:"unpinned,omitempty"`
 
 	payload  []byte
 	kid, mac string
@@ -108,6 +131,34 @@ type SealSummary struct {
 	Truncated  bool      `json:"truncated,omitempty"`
 	LostEvents int64     `json:"lost_events"`
 	Digest     string    `json:"digest"`
+	// Anchor is the anchor the acceptance named, checked against --anchor.
+	Anchor *SealAnchorCheck `json:"anchor,omitempty"`
+	// Unpinned are the surviving rows before the loss that nothing signed
+	// pinned at acceptance: a rewrite of them before it cannot be excluded.
+	Unpinned []SealSpan `json:"unpinned,omitempty"`
+}
+
+// Values of SealAnchorCheck.Check.
+const (
+	SealAnchorNotSupplied     = "not_supplied"    // no --anchor was passed
+	SealAnchorDiffers         = "differs"         // --anchor is another file
+	SealAnchorUnauthenticated = "unauthenticated" // the same file, which did not authenticate
+	SealAnchorNotCovering     = "not_covering"    // the same file, certified before the lost rows
+	SealAnchorMatches         = "matches"         // the same file, authenticated, covers the loss
+)
+
+// SealAnchorCheck is a seal's anchor compared with the --anchor of this run:
+// the SHA-256 of the supplied file must equal the recorded digest, and the
+// file must authenticate and certify a head past the last surviving row before
+// a gap (or past a truncation's surviving head), the rule accept-loss applies
+// to --anchor. Only --anchor-sha256 digests were never checked before.
+type SealAnchorCheck struct {
+	Digest string `json:"digest"`
+	// VerifiedAtAcceptance: the file itself was checked when the loss was
+	// accepted; false when only its digest was recorded.
+	VerifiedAtAcceptance bool   `json:"verified_at_acceptance"`
+	Check                string `json:"check"`
+	Detail               string `json:"detail"`
 }
 
 var errSealMalformed = errors.New("the audit_seals record is malformed")
@@ -264,11 +315,53 @@ func sealsCover(recs []*Seal, k int, id uint64) bool {
 	return false
 }
 
-func summarizeSeals(recs []*Seal) []SealSummary {
+func summarizeSeals(recs []*Seal, opts Options, result *Result) []SealSummary {
 	out := make([]SealSummary, len(recs))
 	for i, r := range recs {
 		out[i] = SealSummary{Seq: r.Seq, At: r.At, Operator: r.Operator, Reason: r.Reason, Evidence: r.Evidence,
-			Gaps: r.Gaps, Truncated: r.Truncation != nil, LostEvents: r.LostEvents, Digest: r.Digest()}
+			Gaps: r.Gaps, Truncated: r.Truncation != nil, LostEvents: r.LostEvents, Digest: r.Digest(),
+			Anchor: checkSealAnchor(r, opts, result), Unpinned: r.Unpinned}
 	}
 	return out
+}
+
+// checkSealAnchor compares the anchor a seal names with the --anchor file of
+// this run (nil when the seal names none). It reports; it never changes the
+// verdict: the file is cross-checked against the live chain on its own
+// (crossCheckExternalAnchor), and another file is no evidence against the
+// seal. What is left unchecked is listed in what this run does not prove.
+func checkSealAnchor(r *Seal, opts Options, result *Result) *SealAnchorCheck {
+	if r.Anchor == nil {
+		return nil
+	}
+	c := &SealAnchorCheck{Digest: strings.ToLower(r.Anchor.Digest), VerifiedAtAcceptance: r.Anchor.Verified}
+	b := opts.ExternalAnchor
+	got := strings.ToLower(opts.ExternalAnchorSHA256)
+	switch {
+	case b == nil || got == "":
+		c.Check, c.Detail = SealAnchorNotSupplied, "not checked: pass that file with --anchor"
+	case got != c.Digest:
+		c.Check, c.Detail = SealAnchorDiffers, fmt.Sprintf("DIFFERS from the supplied --anchor (sha256 %s): that is another file", got)
+	case !result.ExternalAnchor.Authenticated:
+		c.Check, c.Detail = SealAnchorUnauthenticated,
+			"matches the supplied --anchor, but the file did not authenticate (pass --checkpoint-key-file, or --tsa-roots for a timestamped file)"
+	case !sealAnchorCovers(r, b.HeadID):
+		c.Check, c.Detail = SealAnchorNotCovering, fmt.Sprintf(
+			"matches the supplied --anchor, but it certifies the chain through #%d only: it was exported before the lost rows existed and does not cover the loss", b.HeadID)
+	default:
+		c.Check, c.Detail = SealAnchorMatches, "matches the supplied --anchor, which authenticates and covers the lost range"
+	}
+	return c
+}
+
+// sealAnchorCovers is accept-loss's coverage rule for --anchor
+// (internal/core.auditLossAnchor): a head past the last surviving row before
+// some gap, or past a truncation's surviving head.
+func sealAnchorCovers(r *Seal, headID uint64) bool {
+	for _, g := range r.Gaps {
+		if headID > g.LastGoodID {
+			return true
+		}
+	}
+	return r.Truncation != nil && headID > r.Truncation.SurvivingHeadID
 }

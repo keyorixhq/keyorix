@@ -83,7 +83,7 @@ database file or dump taken before running this, and the 'verify-audit --json'
 report); compute it first. --anchor binds the acceptance to an 'export-checkpoint'
 file taken after the lost rows existed (it must cover the lost range and is
 authenticated with the checkpoint key); --anchor-sha256 records only the digest of
-one kept elsewhere.
+one kept elsewhere ('verify-audit --anchor <file>' compares the file with it later).
 
 Exit codes: 0 accepted, 1 refused or failed (nothing written unless it says so).`,
 	RunE: runAcceptLoss,
@@ -96,7 +96,7 @@ func init() {
 	f.StringVar(&acceptLossReason, "reason", "", "Why, with the incident or ticket reference (stored in the audit chain, no secrets; required)")
 	f.StringVar(&acceptLossEvidence, "evidence-sha256", "", "SHA-256 (hex) of the evidence kept: the database file or dump, the verify-audit --json report (required)")
 	f.StringVar(&acceptLossAnchorFile, "anchor", "", "An 'export-checkpoint' file taken after the lost rows existed: authenticated, must cover the lost range, measures the loss")
-	f.StringVar(&acceptLossAnchorSHA256, "anchor-sha256", "", "SHA-256 of an anchor file kept elsewhere (recorded only, not checked)")
+	f.StringVar(&acceptLossAnchorSHA256, "anchor-sha256", "", "SHA-256 of an anchor file kept elsewhere (recorded only; verify-audit --anchor <file> checks it later)")
 	f.BoolVar(&acceptLossConfirm, "confirm", false, "Write the seal (without it, only print what would be accepted)")
 	f.StringVar(&acceptLossResumeSeal, "resume-seal", "", "Complete an unfinished acceptance: the record digest its plan prints (required for a resume, even with --confirm)")
 	registerPassphraseFlags(acceptLossCmd, &acceptLossPassphrase)
