@@ -42,6 +42,18 @@ func TestLocalFileOptionsCoverTheDrivers(t *testing.T) {
 			}
 		}
 	})
+	t.Run("mongodb ambient-credential mechanisms", func(t *testing.T) {
+		for _, mech := range []string{"MONGODB-OIDC", "MONGODB-AWS", "GSSAPI"} {
+			uri := "mongodb://u@h/?authMechanism=" + mech
+			cs, err := connstring.Parse(uri)
+			if err != nil || cs.AuthMechanism != mech {
+				t.Fatalf("%s: driver parse: %v %q", mech, err, cs.AuthMechanism)
+			}
+			if dsn.CheckLocalFileOptions("mongodb", uri) == nil {
+				t.Errorf("%s: not refused", mech)
+			}
+		}
+	})
 	t.Run("mysql", func(t *testing.T) {
 		cfg, err := mysql.ParseDSN("u:p@tcp(h:3306)/db?allowAllFiles=true")
 		if err != nil || !cfg.AllowAllFiles {

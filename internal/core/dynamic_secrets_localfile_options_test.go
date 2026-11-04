@@ -20,6 +20,7 @@ func TestDynamicSecrets_CreateConfig_RefusesLocalFileOptions(t *testing.T) {
 	for _, tc := range []struct{ name, backend, dsn, option string }{
 		{"mysql allowAllFiles", "mysql", "root:pw@tcp(db.example.com:3306)/app?allowAllFiles=true", "allowallfiles"},
 		{"mongodb tlsCAFile", "mongodb", "mongodb://u:pw@db.example.com/?tls=true&tlsCAFile=/etc/keyorix/ca.pem", "tlscafile"},
+		{"mongodb oidc ambient token", "mongodb", "mongodb://u@db.example.com/?tls=true&authMechanism=MONGODB-OIDC&authMechanismProperties=ENVIRONMENT:k8s", "authmechanism=mongodb-oidc"},
 		{"postgres sslkey", "postgres", "postgres://u:pw@db.example.com/app?sslmode=require&sslkey=/etc/keyorix/key.pem", "sslkey"},
 		{"postgres passfile kv", "postgres", "host=db.example.com user=u passfile=/root/.pgpass", "passfile"},
 	} {
