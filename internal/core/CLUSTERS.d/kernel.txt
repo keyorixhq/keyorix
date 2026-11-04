@@ -76,6 +76,7 @@ setup_consume.go
 setup_delivery.go
 setup_token.go
 storage_read_class.go
+typed_policy_reads.go
 user_baseline_role_reconcile.go
 users.go
 users_types.go

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -343,8 +344,10 @@ func TestNotifChannel_Delete_Unauthorized(t *testing.T) {
 // ── isValidationError ─────────────────────────────────────────────────────────
 
 func TestIsValidationError_True(t *testing.T) {
-	assert.True(t, isValidationError(errors.New("notification channel name is required")))
-	assert.True(t, isValidationError(errors.New("invalid notification channel type")))
+	// Core types its validation refusals core.ErrInvalidInput; the text is never read.
+	assert.True(t, isValidationError(fmt.Errorf("notification channel name is required: %w", core.ErrInvalidInput)))
+	assert.True(t, isValidationError(fmt.Errorf("invalid notification channel type: %w", core.ErrInvalidInput)))
+	assert.False(t, isValidationError(errors.New("notification channel name is required")), "untyped text is not a verdict")
 }
 
 func TestIsValidationError_False(t *testing.T) {

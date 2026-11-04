@@ -23,10 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-const (
-	channelNotFound        = "not found"
-	channelNotFoundMessage = "Notification channel not found"
-)
+const channelNotFoundMessage = "Notification channel not found"
 
 // NotificationChannelHandler serves the notification-channel CRUD endpoints.
 type NotificationChannelHandler struct {
@@ -150,8 +147,7 @@ func (h *NotificationChannelHandler) Get(w http.ResponseWriter, r *http.Request)
 	}
 	ch, err := h.coreService.GetNotificationChannel(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), channelNotFound) {
-			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
+		if sendChannelReadError(w, err) {
 			return
 		}
 		log.Printf("Error getting notification channel %d: %v", id, err)
@@ -182,8 +178,7 @@ func (h *NotificationChannelHandler) Update(w http.ResponseWriter, r *http.Reque
 		if sendAuditUnavailable(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), channelNotFound) {
-			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
+		if sendChannelReadError(w, err) {
 			return
 		}
 		if isValidationError(err) {
@@ -212,8 +207,7 @@ func (h *NotificationChannelHandler) Delete(w http.ResponseWriter, r *http.Reque
 		if sendAuditUnavailable(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), channelNotFound) {
-			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
+		if sendChannelReadError(w, err) {
 			return
 		}
 		log.Printf("Error deleting notification channel %d: %v", id, err)
@@ -256,8 +250,7 @@ func (h *NotificationChannelHandler) SetRetryPolicy(w http.ResponseWriter, r *ht
 			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 			return
 		}
-		if strings.Contains(err.Error(), channelNotFound) {
-			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
+		if sendChannelReadError(w, err) {
 			return
 		}
 		log.Printf("Error setting retry policy for notification channel %d: %v", id, err)
@@ -280,8 +273,7 @@ func (h *NotificationChannelHandler) GetRetryPolicy(w http.ResponseWriter, r *ht
 	}
 	policy, err := h.coreService.GetNotificationRetryPolicy(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), channelNotFound) {
-			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
+		if sendChannelReadError(w, err) {
 			return
 		}
 		log.Printf("Error getting retry policy for notification channel %d: %v", id, err)
@@ -296,17 +288,29 @@ func (h *NotificationChannelHandler) GetRetryPolicy(w http.ResponseWriter, r *ht
 }
 
 // isRetryPolicyValidationError reports whether the error is a validation error
-// from SetNotificationRetryPolicy (safe to return verbatim to the client).
+// from SetNotificationRetryPolicy (safe to return verbatim to the client). Core types it
+// core.ErrInvalidInput; the text is never read.
 func isRetryPolicyValidationError(err error) bool {
-	return strings.HasPrefix(err.Error(), "invalid notification channel retry policy")
+	return errors.Is(err, core.ErrInvalidInput)
 }
 
 // isValidationError reports whether the error comes from the core validation layer
-// (as opposed to a storage/infrastructure error). Validation messages are
-// short, human-readable strings crafted in validateNotificationChannel; they are
-// safe to send back to the client verbatim.
+// (as opposed to a storage/infrastructure error): core.ErrInvalidInput. Validation
+// messages are short, human-readable strings crafted in validateNotificationChannel; they
+// are safe to send back to the client verbatim.
 func isValidationError(err error) bool {
-	msg := err.Error()
-	return strings.HasPrefix(msg, "notification channel") ||
-		strings.HasPrefix(msg, "invalid notification")
+	return errors.Is(err, core.ErrInvalidInput)
+}
+
+// sendChannelReadError answers a failed read of one channel: 404 only for the typed
+// not-found, 503 for a storage read fault. It reports whether it answered.
+func sendChannelReadError(w http.ResponseWriter, err error) bool {
+	if sendStorageUnavailable(w, err) {
+		return true
+	}
+	if errors.Is(err, storage.ErrNotificationChannelNotFound) {
+		sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
+		return true
+	}
+	return false
 }

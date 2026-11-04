@@ -4,19 +4,17 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-const (
-	escalationNotFound        = "not found"
-	escalationNotFoundMessage = "Alert escalation policy not found"
-)
+const escalationNotFoundMessage = "Alert escalation policy not found"
 
 // AlertEscalationHandler serves the alert escalation policy CRUD endpoints and the
 // run-alert-escalation admin job trigger.
@@ -44,12 +42,23 @@ func policyToAPI(p *models.AlertEscalationPolicy) map[string]any {
 	}
 }
 
-// isEscalationValidationError reports whether err came from core escalation validation.
+// isEscalationValidationError reports whether err came from core escalation validation
+// (core types it core.ErrInvalidInput; the text is never read).
 func isEscalationValidationError(err error) bool {
-	msg := err.Error()
-	return strings.HasPrefix(msg, "alert escalation policy") ||
-		strings.HasPrefix(msg, "invalid min_severity") ||
-		strings.HasPrefix(msg, "escalate_after_minutes")
+	return errors.Is(err, core.ErrInvalidInput)
+}
+
+// sendEscalationReadError answers a failed Get/Update/Delete of one policy: 404 only for
+// the typed not-found, 503 for a storage read fault. It reports whether it answered.
+func sendEscalationReadError(w http.ResponseWriter, err error) bool {
+	if sendStorageUnavailable(w, err) {
+		return true
+	}
+	if errors.Is(err, storage.ErrAlertEscalationNotFound) {
+		sendError(w, "NotFound", escalationNotFoundMessage, http.StatusNotFound, nil)
+		return true
+	}
+	return false
 }
 
 // Create handles POST /api/v1/alert-escalation-policies.
@@ -122,8 +131,7 @@ func (h *AlertEscalationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.coreService.GetAlertEscalationPolicy(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), escalationNotFound) {
-			sendError(w, "NotFound", escalationNotFoundMessage, http.StatusNotFound, nil)
+		if sendEscalationReadError(w, err) {
 			return
 		}
 		log.Printf("Error getting alert escalation policy %d: %v", id, err)
@@ -156,8 +164,7 @@ func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) 
 		if sendAuditUnavailable(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), escalationNotFound) {
-			sendError(w, "NotFound", escalationNotFoundMessage, http.StatusNotFound, nil)
+		if sendEscalationReadError(w, err) {
 			return
 		}
 		if isEscalationValidationError(err) {
@@ -186,8 +193,7 @@ func (h *AlertEscalationHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		if sendAuditUnavailable(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), escalationNotFound) {
-			sendError(w, "NotFound", escalationNotFoundMessage, http.StatusNotFound, nil)
+		if sendEscalationReadError(w, err) {
 			return
 		}
 		log.Printf("Error deleting alert escalation policy %d: %v", id, err)

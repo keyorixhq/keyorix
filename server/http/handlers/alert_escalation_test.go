@@ -39,9 +39,10 @@ func newAlertEscalationHandlerDB(t *testing.T) (*AlertEscalationHandler, *gorm.D
 // ── isEscalationValidationError ───────────────────────────────────────────────
 
 func TestIsEscalationValidationError(t *testing.T) {
-	assert.True(t, isEscalationValidationError(fmt.Errorf("alert escalation policy name is required")))
-	assert.True(t, isEscalationValidationError(fmt.Errorf("invalid min_severity %q", "x")))
-	assert.True(t, isEscalationValidationError(fmt.Errorf("escalate_after_minutes must be positive")))
+	// Core types its validation refusals core.ErrInvalidInput; the text is never read.
+	assert.True(t, isEscalationValidationError(fmt.Errorf("alert escalation policy name is required: %w", core.ErrInvalidInput)))
+	assert.True(t, isEscalationValidationError(fmt.Errorf("invalid min_severity %q: %w", "x", core.ErrInvalidInput)))
+	assert.False(t, isEscalationValidationError(fmt.Errorf("alert escalation policy name is required")), "untyped text is not a verdict")
 	assert.False(t, isEscalationValidationError(fmt.Errorf("record not found")))
 	assert.False(t, isEscalationValidationError(fmt.Errorf("database error")))
 }
@@ -287,11 +288,12 @@ func TestAlertEscalationHandler_List_InternalError(t *testing.T) {
 
 func TestAlertEscalationHandler_Get_InternalError(t *testing.T) {
 	h := newAlertEscalationHandlerClosedDB(t)
-	// ID 1 doesn't exist but DB is closed — any non-"not found" error → 500.
+	// ID 1 doesn't exist but DB is closed — a storage read fault is the 503 retry
+	// answer, not a 404 and not a 500 (STORAGE-ERR-CLASS-5).
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.Get(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // ── Update invalid ID and internal error ──────────────────────────────────────
@@ -311,7 +313,7 @@ func TestAlertEscalationHandler_Update_InternalError(t *testing.T) {
 	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))), "id", "1")
 	w := httptest.NewRecorder()
 	h.Update(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "a closed DB is a storage read fault")
 }
 
 // ── Delete invalid ID and internal error ──────────────────────────────────────
