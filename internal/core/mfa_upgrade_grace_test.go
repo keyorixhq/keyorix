@@ -137,7 +137,7 @@ func TestMFAUpgradeGrace_ActiveUntilFirstAdminEnrolment(t *testing.T) {
 		assert.Equal(t, 29, st.DaysLeft)
 		assert.Equal(t, f.start.Add(30*24*time.Hour), st.EndsAt)
 		assert.False(t, f.c.MFARequired())
-		assert.Empty(t, f.c.PendingSetupStepsFor(false, false, true), "no MFA step during the grace period")
+		assert.Empty(t, f.c.PendingSetupStepsFor(false, false, true, false), "no MFA step during the grace period")
 
 		// A non-admin enrolling does not end it.
 		require.NoError(t, f.db.Model(&models.User{}).Where("id = ?", 2).Update("mfa_enabled", true).Error)
@@ -150,7 +150,7 @@ func TestMFAUpgradeGrace_ActiveUntilFirstAdminEnrolment(t *testing.T) {
 		assert.False(t, f.c.MFAUpgradeGraceActive(), "the first admin with a second factor ends the grace period")
 		assert.True(t, f.c.MFAUpgradeGraceEnded())
 		assert.True(t, f.c.MFARequired())
-		assert.Equal(t, []string{SetupStepEnrollMFA}, f.c.PendingSetupStepsFor(false, false, true),
+		assert.Equal(t, []string{SetupStepEnrollMFA}, f.c.PendingSetupStepsFor(false, false, true, false),
 			"after the grace period a user without a second factor is sent to enrolment")
 		_, found := f.marker(t)
 		assert.True(t, found, "the end writes the enforcement marker, so no later boot grants the grace period")
