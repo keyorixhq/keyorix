@@ -75,8 +75,8 @@ type KeyManager struct {
 	// DEK rotation (RotateDEKWithSweep, ADR-010) re-wraps a brand-new DEK under
 	// the SAME KEK, so this key — and its fingerprint — is completely unaffected
 	// by it, and a previously-signed evidence pack stays verifiable across a DEK
-	// rotation. Only a genuine KEK change (KEK-provider migration, RewrapDEK /
-	// ADR-041 — a far rarer, deliberate operator action) changes it; when that
+	// rotation. Only a genuine KEK change (rotate-kek, KEK-provider migration,
+	// RewrapDEK / ADR-041 — a far rarer, deliberate operator action) changes it; when that
 	// happens VerifyEvidenceSignature correctly reports an older signature as
 	// made under a superseded key version rather than as tampered, same as
 	// before. Never persisted to disk — held only in memory, like currentDEK.
@@ -95,8 +95,8 @@ type KeyManager struct {
 	// checkpoint to fail its signature check and `audit verify` to report the trail
 	// invalid until the next checkpoint write re-baselined it — a real, if
 	// self-healing, false-tamper-alarm window). Only a genuine KEK change
-	// (KEK-provider migration, RewrapDEK / ADR-041 — a far rarer, deliberate
-	// operator action) changes it; when that happens the existing superseded-key
+	// (rotate-kek, KEK-provider migration, RewrapDEK / ADR-041 — a far rarer,
+	// deliberate operator action) changes it; when that happens the existing superseded-key
 	// handling in enforceAuditCheckpoint/writeAuditCheckpointLocked correctly
 	// treats the stale checkpoint as needing re-baselining rather than as tampered,
 	// same as before. Never persisted to disk — held only in memory, like
