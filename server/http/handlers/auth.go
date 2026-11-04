@@ -482,9 +482,15 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, core.ErrSetupNotEvaluated):
 			// #3298: the token lookup failed on storage, so no token was
 			// evaluated: hand the slot back and audit auth.login_error, as
-			// /auth/login does for ErrLoginNotEvaluated.
+			// /auth/login does for ErrLoginNotEvaluated. The lookup runs the
+			// same way for every token, valid or dead, so answering it 503 +
+			// Retry-After confirms nothing (AUTH-LANE-FOLDS-1, Andrei's decision
+			// on ask auth-endpoint-outage-1-setup-consume-503). A fault AFTER
+			// the token was found valid keeps the dead-link 400 below.
 			h.returnLoginSlot(r.Context(), slot)
 			goSafe(func() { h.coreService.LogAuthNotEvaluated(context.Background(), "", ip, err) }) // #nosec G118
+			writeStorageUnavailable(w)
+			return
 		case errors.Is(err, core.ErrSetupPostVerdict):
 			// The token was valid; a storage fault refused the consume and
 			// nothing was written (AUTH-2 item 1). Charged and answered like a
@@ -577,12 +583,21 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, core.ErrRefreshNotEvaluated) {
 			// The session lookup itself failed, so no token was found or judged
-			// (#2880): nothing was guessed, so the slot goes back. The client sees
-			// the same refusal a dead token gets -- a post-verdict fault (the owner
-			// read, RotateSession, the reuse revocation) keeps its slot and gets the
-			// same answer.
+			// (#2880): nothing was guessed, so the slot goes back, and the answer is
+			// 503 + Retry-After, not the dead-token 401 that makes a client drop a
+			// live session during an outage (AUTH-LANE-FOLDS-1).
 			log.Printf("RefreshToken: %v", err)
 			h.returnLoginSlot(r.Context(), slot)
+			writeStorageUnavailable(w)
+			return
+		}
+		// The owner read failed after the token matched (post-verdict): 503 too,
+		// but the slot stays counted (#2880). A refresh token cannot be guessed, so
+		// the different answer confirms nothing of value (Andrei, ask
+		// auth-endpoint-outage-1-refresh-webauthn-postverdict-503). A post-verdict
+		// WRITE fault (RotateSession, the reuse revocation) keeps the 401.
+		if sendStorageUnavailable(w, err) {
+			return
 		}
 		sendError(w, "Unauthorized", "Session not found or expired", http.StatusUnauthorized, nil)
 		return

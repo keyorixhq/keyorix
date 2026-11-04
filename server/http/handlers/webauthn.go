@@ -335,6 +335,17 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 			username := user.Username
 			goSafe(func() { h.coreService.LogAuthError(context.Background(), username, ip, err) }) // #nosec G118
 		}
+		// The identity read (roles, permissions) failed after the assertion
+		// verified: 503 + Retry-After, the slot still counted. An assertion cannot
+		// be guessed, so the different answer confirms nothing of value (Andrei,
+		// ask auth-endpoint-outage-1-refresh-webauthn-postverdict-503). Password
+		// login keeps its wrong-password answer for the same read: a password can be
+		// guessed. The other post-verdict faults keep the 401.
+		if errors.Is(err, core.ErrLoginIdentityUnavailable) {
+			log.Printf("FinishWebAuthnLogin: identity read failed after the assertion verified (HTTP 503): %v", err)
+			writeStorageUnavailable(w)
+			return
+		}
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
 	}

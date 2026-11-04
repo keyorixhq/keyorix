@@ -12,3 +12,12 @@
   deleting a passkey and the passkey re-check answered a failed read of the caller's own
   account with 400 "user not found"; they now answer 503 with `Retry-After` and the code
   `storage_unavailable`, and the attempt does not count against the IP's login budget.
+- **Setup links, session refresh and passkey sign-in answer a database read outage with
+  "retry".** `POST /auth/setup/consume` answers a failed look-up of the link with 503 and
+  `Retry-After` instead of "this setup link could not be completed" (a failure after the link
+  was found valid still gets that answer, so the response never confirms a link).
+  `POST /auth/refresh` answers a failed read of the session or its owner with 503 instead of
+  401, so the web app no longer signs the user out during an outage. `POST
+  /auth/webauthn/login/finish` answers a failed read of the account's roles or permissions
+  after the passkey was accepted with 503 instead of 401; the attempt still counts like a
+  failed one.

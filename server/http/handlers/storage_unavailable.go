@@ -30,7 +30,14 @@ func sendStorageUnavailable(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	log.Printf("operation refused, storage read failed (HTTP 503): %s", core.StorageReadFaultDetail(err))
+	writeStorageUnavailable(w)
+	return true
+}
+
+// writeStorageUnavailable writes sendStorageUnavailable's answer (503, Retry-After,
+// storage_unavailable, the sentinel's fixed text) for a caller that has already
+// established that storage, not the request, refused it.
+func writeStorageUnavailable(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", strconv.Itoa(storageUnavailableRetryAfterSeconds))
 	sendError(w, storageUnavailableCode, core.StorageReadUnavailableMessage, http.StatusServiceUnavailable, nil)
-	return true
 }

@@ -15,6 +15,12 @@
 //	                              reuse-revocation calls, the DeleteSession of a
 //	                              dead session)
 //
+// The answer (AUTH-LANE-FOLDS-1, Andrei's decision on ask
+// auth-endpoint-outage-1-refresh-webauthn-postverdict-503): a READ fault (the
+// session lookup, the owner read) answers 503 + Retry-After storage_unavailable, so
+// a client keeps its session through an outage; a post-verdict WRITE fault answers
+// like a wrong token. The slot rule above is unchanged.
+//
 // The table test derives the calls refresh really makes in three scenarios and
 // fails on a method it has not classified, so a new storage call in
 // RefreshSession cannot slip in unclassified.
@@ -37,15 +43,16 @@ import (
 type refreshClass int
 
 const (
-	refreshPreVerdict  refreshClass = iota // slot must be released
-	refreshPostVerdict                     // slot must stay counted, response unchanged
-	refreshRateLimit                       // the budget's own bookkeeping, not driven here
+	refreshPreVerdict      refreshClass = iota // slot must be released, 503
+	refreshPostVerdict                         // slot must stay counted, response unchanged
+	refreshPostVerdictRead                     // slot must stay counted, 503
+	refreshRateLimit                           // the budget's own bookkeeping, not driven here
 )
 
 // refreshStorageCalls classifies every storage method /auth/refresh can reach.
 var refreshStorageCalls = map[string]refreshClass{
 	"GetSessionAny":                  refreshPreVerdict,
-	"GetUser":                        refreshPostVerdict,
+	"GetUser":                        refreshPostVerdictRead,
 	"RotateSession":                  refreshPostVerdict,
 	"DeleteSession":                  refreshPostVerdict,
 	"ListSessionTokenHashesByFamily": refreshPostVerdict,
@@ -182,9 +189,11 @@ func TestRefresh_StorageFaultSlotPolicy(t *testing.T) {
 
 					switch class {
 					case refreshPreVerdict:
-						require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
-						assert.Equal(t, ctrlBody, w.Body.String(), "pre-verdict fault: same failure shape")
+						assertStorageUnavailable503(t, w)
 						assert.Zero(t, spent, "a storage fault before the token verdict must release the slot, not spend budget")
+					case refreshPostVerdictRead:
+						assertStorageUnavailable503(t, w)
+						assert.EqualValues(t, ctrlSlots, spent, "a storage fault after the token verdict keeps the slot, like a wrong token")
 					case refreshPostVerdict:
 						if w.Code == http.StatusOK {
 							// The write landed despite the reported error and the session is
@@ -211,7 +220,7 @@ func TestRefresh_PreVerdictFaultLeavesTokenUsable(t *testing.T) {
 			e := newLockoutOracleEnv(t)
 			tok := e.loginToken(t)
 			e.fs.Arm(&faultstorage.FaultSpec{Method: m, NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
-			require.Equal(t, http.StatusUnauthorized, e.postRefresh(tok).Code)
+			assertStorageUnavailable503(t, e.postRefresh(tok))
 			require.True(t, e.fs.Fired())
 			e.fs.Arm(nil)
 			require.Equal(t, http.StatusOK, e.postRefresh(tok).Code, "the session was not touched, so the retry must deliver")
@@ -242,11 +251,11 @@ func TestRefresh_RotateSessionFaultKeepsSlotAndMatchesFailureShape(t *testing.T)
 
 // The by-design row's handler proof for the owner read: GetUser runs AFTER
 // GetSessionAny matched a live token and after the reuse/ceiling/impersonation
-// verdicts, so a fault there keeps the slot and answers like a wrong token (a
-// correct credential is never cheaper than a wrong one, #2880). Pinned by
-// server/faultops oracleAByDesignErrors (REST POST /auth/refresh, GetUser#1/error).
-func TestRefresh_GetUserFaultKeepsSlotAndMatchesFailureShape(t *testing.T) {
-	ctrlCode, ctrlBody, ctrlSlots := deadTokenControl(t)
+// verdicts, so a fault there keeps the slot (a correct credential is never cheaper
+// than a wrong one, #2880) and answers 503 + Retry-After (AUTH-LANE-FOLDS-1). Pinned
+// by server/faultops oracleAByDesignErrors (REST POST /auth/refresh, GetUser#1/error).
+func TestRefresh_GetUserFaultKeepsSlotAndIs503(t *testing.T) {
+	_, _, ctrlSlots := deadTokenControl(t)
 
 	e := newLockoutOracleEnv(t)
 	tok := e.loginToken(t)
@@ -256,8 +265,7 @@ func TestRefresh_GetUserFaultKeepsSlotAndMatchesFailureShape(t *testing.T) {
 	require.True(t, e.fs.Fired(), "the GetUser fault must have fired")
 	e.fs.Arm(nil)
 
-	assert.Equal(t, ctrlCode, w.Code)
-	assert.Equal(t, ctrlBody, w.Body.String(), "response must match the non-fault failure shape byte for byte")
+	assertStorageUnavailable503(t, w)
 	assert.EqualValues(t, ctrlSlots, e.slots(t), "an owner-read fault after the token matched keeps the per-IP slot (#2880)")
 	assert.Empty(t, w.Result().Header.Get("Set-Cookie"), "no session cookie may be issued")
 	// Nothing was written to the session: the token is still usable on retry.

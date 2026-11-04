@@ -19,24 +19,22 @@ func init() {
 		tables: []string{"LoginAttempt"},
 		designComment: "internal/core/auth.go RefreshSession: GetUser runs after GetSessionAny found the token, " +
 			"unrotated, inside its ceiling and not impersonated -- the token verdict is already reached -- and its " +
-			"error is \"failed to read account\", not ErrRefreshNotEvaluated (which wraps only the GetSessionAny " +
-			"lookup); server/http/handlers/auth.go RefreshToken returns the per-IP slot only for a DELIVERED " +
-			"session (returnLoginSlot, #2936) and for ErrRefreshNotEvaluated",
-		provingTest: "server/http/handlers/TestRefresh_GetUserFaultKeepsSlotAndMatchesFailureShape " +
-			"(slot kept, response byte-identical to a wrong token's, token still usable); " +
+			"error is ErrStorageReadUnavailable, not ErrRefreshNotEvaluated (which wraps only the GetSessionAny " +
+			"lookup); server/http/handlers/auth.go RefreshToken answers it 503 and returns the per-IP slot only " +
+			"for a DELIVERED session (returnLoginSlot, #2936) and for ErrRefreshNotEvaluated",
+		provingTest: "server/http/handlers/TestRefresh_GetUserFaultKeepsSlotAndIs503 " +
+			"(slot kept, 503 + Retry-After since AUTH-LANE-FOLDS-1, token still usable); " +
 			"server/http/handlers/TestRefresh_StorageFaultSlotPolicy (every storage call refresh makes, classified pre/post verdict)",
-		why: "The token matched a live session and the owner read failed, so the refresh is refused with the same " +
-			"401 a dead token gets and keeps the LoginAttempt slot it reserved. Returning it would make a valid " +
+		why: "The token matched a live session and the owner read failed, so the refresh is refused (503 + " +
+			"Retry-After since AUTH-LANE-FOLDS-1: a refresh token cannot be guessed) and keeps the LoginAttempt " +
+			"slot it reserved. Returning it would make a valid " +
 			"token cheaper than a wrong one, observable as when the per-IP 429s start (#2880). The read writes " +
 			"nothing: the session is untouched and the only diff is the kept LoginAttempt row, which is the " +
 			"rate-limit enforcement, not a partial commit.",
 		// #3873 (AUTH-ENDPOINT-OUTAGE-1): GetUser is a pure read, so its
-		// effect-then-error answers this same 401 and leaves this same state (only the
-		// kept LoginAttempt slot); oracles (d) and (h) consult this row for it, as
-		// #3091/#3106 decided for the WebAuthn identity reads.
+		// effect-then-error leaves this same state (only the kept LoginAttempt slot);
+		// oracle (d) consults this row for it, as #3091/#3106 decided for the
+		// WebAuthn identity reads. Oracle (h) needs no excuse: the fault answers 503.
 		pureReadEffectThenError: true,
-		lookupVerdictEffectThenError: "post-verdict owner read on a token that already matched a live session: " +
-			"answered like a dead token (FIX-3065, #2880), so the refresh response never confirms the token; " +
-			"the slot is kept either way",
 	})
 }
