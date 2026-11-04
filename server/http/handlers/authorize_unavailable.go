@@ -82,8 +82,7 @@ func authorizeLookupRefusal(cause error, msg string) error {
 // error the classifier does not recognise: fail closed).
 func refuseWithAuthorizeError(w http.ResponseWriter, r *http.Request, err error) {
 	forbidden := func() { sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil) }
-	var lookup *authorizeLookupRefusalError
-	if errors.As(err, &lookup) {
+	if lookup, ok := errors.AsType[*authorizeLookupRefusalError](err); ok {
 		refuseUnlessAuthorized(w, r, false, lookup.cause, forbidden)
 		return
 	}
