@@ -21,3 +21,17 @@
   driver cannot even encode and answers with a non-not-found error) is refused
   before the lookup and stays a counted `webauthn.failed` (#2846 review). Guard:
   `server/http/handlers/passwordless_out_of_range_user_handle_test.go`.
+  Decided exceptions to the response rule (Andrei, asks
+  `auth-endpoint-outage-1-setup-consume-503` and
+  `auth-endpoint-outage-1-refresh-webauthn-postverdict-503`, AUTH-LANE-FOLDS-1): the
+  slot and audit rules above still hold, but a storage READ fault answers 503 +
+  Retry-After `storage_unavailable` where the credential cannot be guessed or nothing
+  was evaluated: `ConsumeSetup`'s token lookup (`ErrSetupNotEvaluated`, slot handed
+  back; a fault after the token was found valid keeps the dead-link 400),
+  `RefreshToken`'s session lookup (slot handed back) and owner read (slot kept), and
+  `FinishWebAuthnLogin`'s identity read after the assertion verified
+  (`ErrLoginIdentityUnavailable`, slot and lockout cost kept). `/auth/login` and the
+  passwordless handle lookup keep the byte-identical answer: a username or a password
+  can be guessed. Guard: `TestConsumeSetup_TokenLookupFaultIs503AndSaysNothingAboutTheToken`,
+  `TestRefresh_StorageFaultSlotPolicy`,
+  `TestFinishWebAuthnLogin_CompleteLoginFaultIs503AndCostsLikeAFailedAssertion`.

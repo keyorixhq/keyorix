@@ -133,7 +133,6 @@ func verdictAnswerByDesign(in oracleInput) *oracleAByDesignError {
 	return nil
 }
 
-
 // lookupVerdictViolation returns the oracle (h) finding for one run, or "" when
 // the run is fine. in.kind KindEffectThenError is judged like KindError: the
 // lookup returned its error either way.
