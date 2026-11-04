@@ -447,7 +447,7 @@ func TestWriteAuditCheckpointLocked_ValidChain_NoExistingCP(t *testing.T) {
 	// there is no pin to contradict (auditVerifyStateTruncation proceeds).
 	ms.On("GetSystemMetadata", mock.Anything, auditVerifyStateKey).Return("", false, nil)
 	ms.On("CreateAuditCheckpoint", mock.Anything, mock.AnythingOfType("*models.AuditCheckpoint")).Return(nil)
-	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.AnythingOfType("string")).Return(nil)
+	ms.On("CompareAndSetSystemMetadata", mock.Anything, auditHighWaterKey, "", false, mock.AnythingOfType("string")).Return(true, nil)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
 	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)

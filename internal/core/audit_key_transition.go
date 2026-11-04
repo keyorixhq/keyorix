@@ -617,7 +617,11 @@ func (c *KeyorixCore) resignCarriedHighWater(ctx context.Context, t *auditKeyTra
 	if err != nil {
 		return false, err
 	}
-	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, auditHighWaterValueSealed(hw, bind, sig)); err != nil {
+	// Only over the mark the record names (pooler-lock-loss.md row 15): when
+	// another holder of the lock wrote a mark since, that mark is not the
+	// one to carry over, and it must not be replaced by this older count.
+	swapped, err := c.storage.CompareAndSetSystemMetadata(ctx, auditHighWaterKey, val, true, auditHighWaterValueSealed(hw, bind, sig))
+	if err != nil || !swapped {
 		return false, err
 	}
 	c.bumpWatermark(hw.ChainedEvents)

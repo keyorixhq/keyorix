@@ -684,11 +684,18 @@ func parseAuditHighWaterSealed(val string) (cp *models.AuditCheckpoint, b auditS
 //     the very next VerifyAuditChain call uses strict=true and will flag the
 //     stale/unverifiable mark until that fresh write actually happens.
 func (c *KeyorixCore) auditHighWaterFloor(ctx context.Context, strict bool) (floor int64, found, tampered bool, reason string, err error) {
-	floor = c.watermark()
 	val, ok, err := c.storage.GetSystemMetadata(ctx, auditHighWaterKey)
 	if err != nil {
 		return 0, false, false, "", err
 	}
+	return c.auditHighWaterFloorOf(ctx, val, ok, strict)
+}
+
+// auditHighWaterFloorOf is auditHighWaterFloor over a stored value the caller
+// already read (ok false: no row), so a compare-and-set can be made against
+// exactly the value the floor came from (advanceAuditHighWater).
+func (c *KeyorixCore) auditHighWaterFloorOf(ctx context.Context, val string, ok, strict bool) (floor int64, found, tampered bool, reason string, err error) {
+	floor = c.watermark()
 	if !ok {
 		return floor, false, false, "", nil
 	}
@@ -777,15 +784,18 @@ func describeAuditCount(chained, purged int64, suffix string) string {
 }
 
 // advanceAuditHighWater persists (and bumps the in-memory) high-water mark to cp after a
-// checkpoint write. The mark only ever advances; it is signed with the current key.
+// checkpoint write. The mark only ever advances; it is signed with the current key and
+// seal binding.
+//
+// The write is a compare-and-set against the stored value the floor was read from, not
+// an upsert. WithAuditCheckpointLock is exclusive only while the lock holds: after a
+// silent loss (docs/design/pooler-lock-loss.md row 15) a second holder can write a higher
+// mark between this read and this write, and a last-write-wins upsert would then put the
+// lower one back, so a later truncation of the newest events would go unseen. A lost
+// compare-and-set re-reads the floor: when it already reaches cp, the other holder
+// certified at least as much and nothing is written; otherwise it retries once. Losing
+// twice leaves the mark to the next checkpoint write (logged).
 func (c *KeyorixCore) advanceAuditHighWater(ctx context.Context, cp *models.AuditCheckpoint) {
-	floor, _, _, _, err := c.auditHighWaterFloor(ctx, false)
-	if err == nil && cp.ChainedEvents < floor {
-		// Never lower the mark (a legitimate grow only raises it). Should not happen —
-		// WriteAuditCheckpoint refuses to checkpoint below the floor — but be defensive.
-		c.bumpWatermark(floor)
-		return
-	}
 	bind := c.sealBinding()
 	sig, err := c.signCheckpointUnder(cp, bind)
 	if err != nil {
@@ -793,8 +803,36 @@ func (c *KeyorixCore) advanceAuditHighWater(ctx context.Context, cp *models.Audi
 		return
 	}
 	val := auditHighWaterValueSealed(cp, bind, sig)
-	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, val); err != nil {
-		log.Printf("audit high-water: failed to persist mark at %d events: %v", cp.ChainedEvents, err)
+	for attempt := 0; ; attempt++ {
+		old, oldFound, err := c.storage.GetSystemMetadata(ctx, auditHighWaterKey)
+		if err != nil {
+			log.Printf("audit high-water: failed to read the mark before writing %d events: %v", cp.ChainedEvents, err)
+			c.bumpWatermark(cp.ChainedEvents)
+			return
+		}
+		floor, _, _, _, ferr := c.auditHighWaterFloorOf(ctx, old, oldFound, false)
+		// Never lower the mark (a legitimate grow only raises it). The first read
+		// should never be above cp — WriteAuditCheckpoint refuses to checkpoint below
+		// the floor — but be defensive. After a lost write an equal floor is the
+		// other holder's mark for the same count: nothing to add.
+		if ferr == nil && (cp.ChainedEvents < floor || (attempt > 0 && cp.ChainedEvents == floor)) {
+			c.bumpWatermark(floor)
+			return
+		}
+		swapped, err := c.storage.CompareAndSetSystemMetadata(ctx, auditHighWaterKey, old, oldFound, val)
+		if err != nil {
+			log.Printf("audit high-water: failed to persist mark at %d events: %v", cp.ChainedEvents, err)
+			c.bumpWatermark(cp.ChainedEvents)
+			return
+		}
+		if swapped {
+			break
+		}
+		if attempt > 0 {
+			log.Printf("audit high-water: mark at %d events not written: the stored mark changed twice while it was being written (another holder of the audit-checkpoint lock); the next checkpoint write retries", cp.ChainedEvents)
+			c.bumpWatermark(cp.ChainedEvents)
+			return
+		}
 	}
 	c.bumpWatermark(cp.ChainedEvents)
 
@@ -807,11 +845,13 @@ func (c *KeyorixCore) advanceAuditHighWater(ctx context.Context, cp *models.Audi
 	// degrades this host's own future rollback detection, logged so an
 	// operator can notice.
 	//
-	// Unconditional write, deliberately not "write only if higher": the
-	// guard at the top of this function already refused to reach this point
-	// at all if cp.ChainedEvents were below the current floor, so val is
-	// already guaranteed monotonically non-decreasing by construction —
-	// there is nothing left to compare here. (internal/core cannot import
+	// Written only after the compare-and-set above replaced the very value
+	// the floor came from, deliberately not "write only if higher": val is
+	// at or above that floor, so the database mark it mirrors never went
+	// down, and there is nothing left to compare here. (Two processes on one
+	// host could still finish these file writes in the other order; the
+	// witness is SQLite-only, where no second replica shares the database.)
+	// (internal/core cannot import
 	// internal/auditverify's own WriteWitnessIfHigher for this exact
 	// comparison: auditverify transitively imports internal/notary, which
 	// ADR-109's dependency guard forbids internal/core from depending on —
