@@ -1,0 +1,2 @@
+### Testing
+- **Cross-layer authz operation matrix.** `devtools/authzmatrix` derives, from type-checked SSA (not file or symbol names), every mutating and secret-value-reading operation with its core entry point, REST route and gRPC method, plus whether core itself refuses or leaves authorization to the transport. It is calibrated against the FIX-1 grant guards with a red self-test. Output: `server/authzdiff/MATRIX.md`, with outcome semantics in `server/authzdiff/OUTCOMES.md`. Groundwork for the core/REST/gRPC differential authz harness.
