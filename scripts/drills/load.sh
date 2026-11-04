@@ -103,8 +103,28 @@ load_count() { # <ok|fail>
     cat "$LOADLOG"/*.log | awk -v k="$1" '$3 == k' | wc -l | tr -d ' '
 }
 
+# load_get_secret <id>: `secret get --show-value`, retried while the server's rate limiter answers
+# HTTP 429 (a read-back of thousands of secrets outruns it; a 429 says nothing about the data).
+# Prints the output; exit status is the CLI's. Gives up with status 99 if the 429s never clear.
+load_get_secret() {
+    local out rc i
+    for i in $(seq 1 30); do
+        rc=0
+        out="$(cli "$LOAD_INST" "$LOAD_PORT" secret get --id "$1" --show-value 2>&1 </dev/null)" || rc=$?
+        case "$out" in
+        *"HTTP 429"*) sleep 2 ;;
+        *)
+            printf '%s\n' "$out"
+            return "$rc"
+            ;;
+        esac
+    done
+    printf '%s\n' "$out"
+    return 99
+}
+
 load_check_ledger() {
-    local d="$DRILL_DIR/$LOAD_INST" sid want got bad=0 n
+    local d="$DRILL_DIR/$LOAD_INST" sid want got bad=0 n rc
     # the last acknowledged value of each secret id wins (an update comes after its create)
 # A secret whose update or delete FAILED (not acknowledged, e.g. the server was killed mid-request)
     # may legitimately hold either value, or be gone: it is left out and counted.
@@ -119,13 +139,18 @@ load_check_ledger() {
     while read -r sid want; do
         if [ "$want" = "-" ]; then
             # acknowledged delete: the secret must be gone
-            if cli "$LOAD_INST" "$LOAD_PORT" secret get --id "$sid" --show-value >/dev/null 2>&1 </dev/null; then
+            rc=0
+            load_get_secret "$sid" >/dev/null || rc=$?
+            if [ "$rc" = 0 ]; then
                 echo "    secret $sid: acknowledged as deleted but still readable" >&2
+                bad=$((bad + 1))
+            elif [ "$rc" = 99 ]; then
+                echo "    secret $sid: still rate limited after 60s, cannot tell whether it is gone" >&2
                 bad=$((bad + 1))
             fi
             continue
         fi
-        got="$(cli "$LOAD_INST" "$LOAD_PORT" secret get --id "$sid" --show-value 2>&1 </dev/null || true)"
+        got="$(load_get_secret "$sid" || true)"
         grep -qF "$want" <<<"$got" || { echo "    secret $sid: want $want, got: $(echo "$got" | head -c 120 | tr '\n' ' ')" >&2; bad=$((bad + 1)); }
     done <"$d/ledger.txt"
     [ "$bad" = "0" ] || fail "$bad of $n acknowledged secrets do not read back with their last acknowledged value"
