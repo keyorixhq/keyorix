@@ -252,7 +252,7 @@ func TestGetSecretImpact_PermissionDenied_S23(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMapUserError_Invalid_S23(t *testing.T) {
-	err := mapUserError(errors.New("invalid email address format"))
+	err := mapUserError(fmt.Errorf("%w: invalid email address format", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 

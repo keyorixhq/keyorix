@@ -77,8 +77,8 @@ func TestMapUserError_ClassifiesBySentinel(t *testing.T) {
 		{"duplicate username (storage)", fmt.Errorf("create user: %w", storage.ErrDuplicateUsername), codes.AlreadyExists},
 		{"invalid input", fmt.Errorf("update user: %w", core.ErrInvalidInput), codes.InvalidArgument},
 		{"empty identity name", fmt.Errorf("validation: %w", identity.ErrEmpty), codes.InvalidArgument},
-		// Not yet typed: the core/users.go validation wording and the roles.assign ceiling.
-		{"untyped validation", errors.New("validation failed: email is required"), codes.InvalidArgument},
+		{"field validation", fmt.Errorf("create user: %w", core.ErrValidation), codes.InvalidArgument},
+		{"text only: validation phrase", errors.New("validation failed: email is required"), codes.Internal},
 		{"role ceiling refusal", fmt.Errorf("cannot grant this role: %w", core.ErrPermissionDenied), codes.PermissionDenied},
 		{"text only: role ceiling phrase", errors.New("cannot grant this role: you do not hold permission \"roles.assign\" yourself"), codes.Internal},
 		{"text only: not found", errors.New("record not found"), codes.Internal},
