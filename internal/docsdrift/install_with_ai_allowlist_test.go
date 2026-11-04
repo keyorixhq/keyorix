@@ -45,6 +45,14 @@ func TestInstallWithAIAllowlistRefusesEveryOtherCommand(t *testing.T) {
 		"command cat secrets/master_password",
 		"\\cat secrets/master_password",
 		"find secrets -type f -exec cat {} +",
+		// REVFIX-3951-1: the project binaries are allowlisted, but `keyorix run` runs
+		// any command and a reader after the binary is still a reader.
+		"./bin/keyorix run --env prod --var X=y -- cat secrets/master_password",
+		"./bin/keyorix run --env prod --var X=y -- sh -c 'cat secrets/master_password'",
+		"./bin/keyorix run -- nl secrets/master_password",
+		"./bin/keyorix-server admin migrate cat secrets/master_password",
+		// a command word that merely contains a secret path is not a bare noun in a fence
+		"secrets/../../../bin/cat secrets/master_password",
 	} {
 		if len(iwaOnlyAllowlistFindings(line)) == 0 {
 			t.Errorf("secret read not reported: %s", line)
@@ -67,6 +75,7 @@ func TestInstallWithAIAllowlistKeepsNonReadingCommandsGreen(t *testing.T) {
 		"shred -u secrets/admin_password",
 		"touch secrets/db_password",
 		"KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin migrate",
+		"./bin/keyorix run --env prod -- ls -l secrets/master_password",
 	} {
 		if f := iwaOnlyAllowlistFindings(line); len(f) != 0 {
 			t.Errorf("non-reading line reported: %s: %+v", line, f)
