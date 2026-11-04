@@ -6337,7 +6337,7 @@ export interface components {
                 };
             };
         };
-        /** @description The caller's permission could not be checked because the permission lookup failed (PostgreSQL down, or the request deadline expired). The request was refused and NOTHING was changed or returned: this is not a verdict on the caller, so it is not a 403. The answer is 503 with a `Retry-After` header (seconds), the `error` label `ServiceUnavailable` and the fixed `message` "authorization temporarily unavailable, please retry"; no storage error text reaches the client. Retry unchanged once storage is back. The gRPC twin is `Unavailable` with the same message (INV-MW-authorize-lookup-error-is-503). A failed permission lookup is the only case that carries the `ServiceUnavailable` label. On routes that also read storage for something other than the permission check (template render, secret copy, folder create, dynamic-secret config routes), a storage read failure answers 503 with the label `storage_unavailable` and the fixed message "storage temporarily unavailable, please retry". Both bodies are fixed strings and carry no storage text; both are safe to retry unchanged. */
+        /** @description The service could not answer right now; retry after `Retry-After` seconds. The body is always a fixed string with no storage error text. The causes below are the ones known on these routes; the list, and the `error`/`message` pairs, are NOT exhaustive, so branch on the 503 status and `Retry-After`, not on the label or the text. (1) Permission lookup failed (PostgreSQL down, or the request deadline expired): `error` `ServiceUnavailable`, `message` "authorization temporarily unavailable, please retry". The request was refused and nothing was changed or returned; this is not a verdict on the caller, so it is not a 403. The gRPC twin is `Unavailable` with the same message (INV-MW-authorize-lookup-error-is-503). (2) Credential lookup failed while authenticating the request (any authenticated route): `error` `ServiceUnavailable`, `message` "authentication temporarily unavailable, please retry". Nothing was changed or returned. (3) SQLite write gate timed out (write requests on a SQLite deployment): `error` `ServiceUnavailable`, `message` "The service is temporarily busy. Please retry shortly.". A request may run several write transactions, so this does not promise that nothing was written; retry blindly only an idempotent request. (4) A storage read other than the permission check failed (template render, `GET /api/v1/secrets/{id}`, secret copy, folder create, dynamic-secret config routes): `error` `storage_unavailable`, `message` "storage temporarily unavailable, please retry". */
         AuthorizeUnavailable: {
             headers: {
                 /** @description Seconds to wait before retrying. */
@@ -6349,9 +6349,9 @@ export interface components {
                     success?: boolean;
                     /** @description Always 503. */
                     code?: number;
-                    /** @description `ServiceUnavailable` when the permission lookup failed; `storage_unavailable` when another storage read on the same route failed. */
+                    /** @description A label, for example `ServiceUnavailable` or `storage_unavailable` (see the response description). Not an exhaustive set, and `ServiceUnavailable` does not by itself mean the permission lookup failed. */
                     error?: string;
-                    /** @description Fixed string matching `error`: "authorization temporarily unavailable, please retry" or "storage temporarily unavailable, please retry". */
+                    /** @description A fixed, client-safe sentence with no storage text, for example "authorization temporarily unavailable, please retry" or "storage temporarily unavailable, please retry" (see the response description). Not an exhaustive set. */
                     message?: string;
                 };
             };

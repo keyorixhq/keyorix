@@ -1407,10 +1407,10 @@ type AuthorizeUnavailable struct {
 	// Code Always 503.
 	Code *int `json:"code,omitempty"`
 
-	// Error `ServiceUnavailable` when the permission lookup failed; `storage_unavailable` when another storage read on the same route failed.
+	// Error A label, for example `ServiceUnavailable` or `storage_unavailable` (see the response description). Not an exhaustive set, and `ServiceUnavailable` does not by itself mean the permission lookup failed.
 	Error *string `json:"error,omitempty"`
 
-	// Message Fixed string matching `error`: "authorization temporarily unavailable, please retry" or "storage temporarily unavailable, please retry".
+	// Message A fixed, client-safe sentence with no storage text, for example "authorization temporarily unavailable, please retry" or "storage temporarily unavailable, please retry" (see the response description). Not an exhaustive set.
 	Message *string `json:"message,omitempty"`
 	Success *bool   `json:"success,omitempty"`
 }
