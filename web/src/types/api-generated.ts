@@ -12404,7 +12404,7 @@ export interface operations {
                 email?: string;
                 is_active?: boolean;
                 include_deleted?: boolean;
-                /** @description Set to `inactive` for users with no login in the last 30 days. */
+                /** @description Set to `inactive` for users whose last login is more than 30 days ago; an account that has never logged in counts once it is 30+ days old (judged by creation date). */
                 filter?: "inactive";
             };
             header?: never;

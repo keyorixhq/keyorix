@@ -18,6 +18,11 @@ func (m *MockStorage) SetSystemMetadata(ctx context.Context, key, value string) 
 	return args.Error(0)
 }
 
+func (m *MockStorage) CompareAndSetSystemMetadata(ctx context.Context, key, old string, oldFound bool, value string) (bool, error) {
+	args := m.Called(ctx, key, old, oldFound, value)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) GetRecoveryKeyRecord(ctx context.Context) (*models.RecoveryKeyRecord, bool, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {

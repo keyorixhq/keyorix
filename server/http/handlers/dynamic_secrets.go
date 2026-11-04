@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -54,6 +55,10 @@ func dynamicSecretClientMessage(err error, op string) string {
 	if refused, ok := errors.AsType[*core.DynamicSecretTargetRefusedError](err); ok {
 		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(refused)) // server-side only; the client gets ClientMessage()
 		return refused.ClientMessage()
+	}
+	if forbidden, ok := errors.AsType[*dsn.ForbiddenOptionError](err); ok {
+		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(forbidden))
+		return forbidden.Error() // names only the option the caller wrote
 	}
 	msg := err.Error()
 	if isSafeDynamicSecretError(msg) {
@@ -148,6 +153,9 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		ActorID:           userCtx.PrincipalID(),
 	})
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		msg := dynamicSecretClientMessage(err, "Error creating dynamic-secret config")
 		sendError(w, "Error", msg, http.StatusBadRequest, nil)
 		return
@@ -206,6 +214,9 @@ func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request
 
 	lease, err := h.coreService.IssueLease(r.Context(), cfg.ID, body.TTLSeconds, userCtx.UserID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error issuing dynamic-secret lease for config %d", cfg.ID))
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
@@ -271,6 +282,9 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 	_ = json.NewDecoder(r.Body).Decode(&body) // body optional; default TTL on absence
 	newExpiry, err := h.coreService.RenewLease(r.Context(), leaseID, body.TTLSeconds, userCtx.UserID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error renewing dynamic-secret lease %q", leaseID))
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
@@ -320,6 +334,9 @@ func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Req
 	}
 	updated, err := h.coreService.ClassifyDynamicSecretConfig(r.Context(), userCtx.UserID, cfg.ID, body.Classification)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error classifying dynamic-secret config %d", cfg.ID))
 		sendError(w, "Error", msg, http.StatusBadRequest, nil)
 		return
@@ -350,6 +367,9 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 	}
 	updated, err := h.coreService.SetDynamicSecretConfigEnabled(r.Context(), userCtx.UserID, cfg.ID, body.Enabled)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error setting enabled state for dynamic-secret config %d", cfg.ID))
 		sendError(w, "Error", msg, http.StatusBadRequest, nil)
 		return

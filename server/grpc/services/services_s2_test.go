@@ -15,7 +15,7 @@ import (
 // --- mapDynamicError ---
 
 func TestMapDynamicError_NotFound(t *testing.T) {
-	err := mapDynamicError(errors.New("config not found in database"))
+	err := mapDynamicError(fmt.Errorf("%w: config not found in database", core.ErrDynamicSecretNotFound))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.NotFound {
 		t.Errorf("expected NotFound, got %v", st.Code())
@@ -23,7 +23,7 @@ func TestMapDynamicError_NotFound(t *testing.T) {
 }
 
 func TestMapDynamicError_InvalidArgument_CannotExceed(t *testing.T) {
-	err := mapDynamicError(errors.New("cannot exceed the allowed limit"))
+	err := mapDynamicError(fmt.Errorf("%w: cannot exceed the allowed limit", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -31,7 +31,7 @@ func TestMapDynamicError_InvalidArgument_CannotExceed(t *testing.T) {
 }
 
 func TestMapDynamicError_InvalidArgument_Required(t *testing.T) {
-	err := mapDynamicError(errors.New("name is required"))
+	err := mapDynamicError(fmt.Errorf("%w: name is required", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -39,7 +39,7 @@ func TestMapDynamicError_InvalidArgument_Required(t *testing.T) {
 }
 
 func TestMapDynamicError_InvalidArgument_ClassificationMust(t *testing.T) {
-	err := mapDynamicError(errors.New("classification must be one of: restricted, confidential"))
+	err := mapDynamicError(fmt.Errorf("%w: classification must be one of: restricted, confidential", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -47,7 +47,7 @@ func TestMapDynamicError_InvalidArgument_ClassificationMust(t *testing.T) {
 }
 
 func TestMapDynamicError_PermissionDenied(t *testing.T) {
-	err := mapDynamicError(errors.New("permission denied for this config"))
+	err := mapDynamicError(fmt.Errorf("%w: permission denied for this config", core.ErrPermissionDenied))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())
@@ -55,7 +55,7 @@ func TestMapDynamicError_PermissionDenied(t *testing.T) {
 }
 
 func TestMapDynamicError_Denied(t *testing.T) {
-	err := mapDynamicError(errors.New("access denied by policy"))
+	err := mapDynamicError(fmt.Errorf("%w: access denied by policy", core.ErrPermissionDenied))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())
@@ -73,7 +73,7 @@ func TestMapDynamicError_Default_Unavailable(t *testing.T) {
 // --- mapMachineError ---
 
 func TestMapMachineError_NotFound(t *testing.T) {
-	err := mapMachineError(errors.New("machine identity not found"))
+	err := mapMachineError(fmt.Errorf("%w: machine identity not found", core.ErrMachineIdentityNotFound))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.NotFound {
 		t.Errorf("expected NotFound, got %v", st.Code())
@@ -81,7 +81,7 @@ func TestMapMachineError_NotFound(t *testing.T) {
 }
 
 func TestMapMachineError_CannotTransition(t *testing.T) {
-	err := mapMachineError(errors.New("cannot transition from active to active"))
+	err := mapMachineError(fmt.Errorf("%w: cannot transition from active to active", core.ErrMachineTransitionInvalid))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {
 		t.Errorf("expected FailedPrecondition, got %v", st.Code())
@@ -89,7 +89,7 @@ func TestMapMachineError_CannotTransition(t *testing.T) {
 }
 
 func TestMapMachineError_MustBeActive(t *testing.T) {
-	err := mapMachineError(errors.New("must be active to issue a token"))
+	err := mapMachineError(fmt.Errorf("%w: must be active to issue a token", core.ErrMachineIdentityNotActive))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {
 		t.Errorf("expected FailedPrecondition, got %v", st.Code())
@@ -97,7 +97,7 @@ func TestMapMachineError_MustBeActive(t *testing.T) {
 }
 
 func TestMapMachineError_InvalidArgument(t *testing.T) {
-	err := mapMachineError(errors.New("invalid machine identity name"))
+	err := mapMachineError(fmt.Errorf("%w: invalid machine identity name", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -105,7 +105,7 @@ func TestMapMachineError_InvalidArgument(t *testing.T) {
 }
 
 func TestMapMachineError_ClassificationMust(t *testing.T) {
-	err := mapMachineError(errors.New("classification must be one of: restricted"))
+	err := mapMachineError(fmt.Errorf("%w: classification must be one of: restricted", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -113,7 +113,7 @@ func TestMapMachineError_ClassificationMust(t *testing.T) {
 }
 
 func TestMapMachineError_Required(t *testing.T) {
-	err := mapMachineError(errors.New("name is required"))
+	err := mapMachineError(fmt.Errorf("%w: name is required", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -121,7 +121,7 @@ func TestMapMachineError_Required(t *testing.T) {
 }
 
 func TestMapMachineError_PermissionDenied(t *testing.T) {
-	err := mapMachineError(errors.New("permission denied"))
+	err := mapMachineError(fmt.Errorf("%w: permission denied", core.ErrPermissionDenied))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())
@@ -129,7 +129,7 @@ func TestMapMachineError_PermissionDenied(t *testing.T) {
 }
 
 func TestMapMachineError_Denied(t *testing.T) {
-	err := mapMachineError(errors.New("access denied by RBAC"))
+	err := mapMachineError(fmt.Errorf("%w: access denied by RBAC", core.ErrPermissionDenied))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())

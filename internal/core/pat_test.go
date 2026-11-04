@@ -197,7 +197,7 @@ func TestRevokeOwnPAT(t *testing.T) {
 	})
 }
 
-// TestDecodePATScopes covers the three branches: empty → nil (unrestricted),
+// TestDecodePATScopes covers the three branches: exact empty → nil (unrestricted),
 // valid JSON → parsed list, and corrupted JSON → patScopeCorrupted sentinel
 // (fail-closed, #r124-M).
 func TestDecodePATScopes(t *testing.T) {
@@ -205,8 +205,9 @@ func TestDecodePATScopes(t *testing.T) {
 	t.Run("empty string returns nil (unrestricted)", func(t *testing.T) {
 		assert.Nil(t, DecodePATScopes(""))
 	})
-	t.Run("whitespace-only treated as empty", func(t *testing.T) {
-		assert.Nil(t, DecodePATScopes("   "))
+	t.Run("whitespace-only is corrupted, not unscoped (fail-closed)", func(t *testing.T) {
+		assert.Equal(t, patScopeCorrupted, DecodePATScopes("   "),
+			"EncodePATScopes never writes a whitespace-only column; only the exact empty column is unscoped")
 	})
 	t.Run("valid JSON array returns scopes", func(t *testing.T) {
 		scopes := DecodePATScopes(`["secrets.read","secrets.write"]`)

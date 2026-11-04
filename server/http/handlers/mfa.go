@@ -328,6 +328,11 @@ func (h *AuthHandler) writeMFAErr(w http.ResponseWriter, err error) {
 	if writeTOTPUnavailable(w, err) {
 		return
 	}
+	// The caller's own account read failed before any code or password was
+	// evaluated (AUTH-LANE-FOLDS-1): retry, not 400 "user not found".
+	if sendStorageUnavailable(w, err) {
+		return
+	}
 	msg := err.Error()
 	if !mfaSafeMessages[msg] {
 		log.Printf("MFA error: %v", err)

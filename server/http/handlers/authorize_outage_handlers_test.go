@@ -107,6 +107,43 @@ func outageSites() []outageSite {
 				h.ListConfigs(w, req)
 				return w
 			}},
+		// CORE-HANDLER-TAILS-4 item 2: the three checks the family guard used to exempt.
+		{"UpdateProjectRequireMFA", "ResolveUserPermissionAt", false, "changing a project's MFA requirement requires the roles.assign permission",
+			func(t *testing.T, cs *core.KeyorixCore, fx secretsFixture, uc *middleware.UserContext) *httptest.ResponseRecorder {
+				h := NewCatalogHandler(cs)
+				req := outageCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/",
+					strings.NewReader(`{"name":"outageproj","require_mfa":true}`)), "id", fmt.Sprint(fx.projectID)), uc)
+				w := httptest.NewRecorder()
+				h.UpdateProject(w, req)
+				return w
+			}},
+		{"CreateGlobalInvitationRole", "ResolveUserPermissionAt", false, "You may not invite with a system role you cannot assign",
+			func(t *testing.T, cs *core.KeyorixCore, fx secretsFixture, uc *middleware.UserContext) *httptest.ResponseRecorder {
+				h := NewCatalogHandler(cs)
+				req := outageCtx(httptest.NewRequest(http.MethodPost, "/api/v1/invitations",
+					strings.NewReader(`{"email":"invitee@example.com","role":"system_viewer"}`)), uc)
+				w := httptest.NewRecorder()
+				h.CreateGlobalInvitation(w, req)
+				return w
+			}},
+		{"CreateGlobalInvitationProjectAssignment", "ResolveUserPermissionAt", false, "You may not invite with roles in a project where you cannot assign roles",
+			func(t *testing.T, cs *core.KeyorixCore, fx secretsFixture, uc *middleware.UserContext) *httptest.ResponseRecorder {
+				h := NewCatalogHandler(cs)
+				body := fmt.Sprintf(`{"email":"invitee@example.com","project_assignments":[{"project_id":%d,"role":"project_viewer"}]}`, fx.projectID)
+				req := outageCtx(httptest.NewRequest(http.MethodPost, "/api/v1/invitations", strings.NewReader(body)), uc)
+				w := httptest.NewRecorder()
+				h.CreateGlobalInvitation(w, req)
+				return w
+			}},
+		{"RotationPolicyCreate", "ResolveUserPermissionAt", false, insufficient,
+			func(t *testing.T, cs *core.KeyorixCore, fx secretsFixture, uc *middleware.UserContext) *httptest.ResponseRecorder {
+				h := NewRotationPolicyHandler(cs)
+				body := fmt.Sprintf(`{"name":"outage-policy","scope":"project","project_id":%d,"interval_days":30}`, fx.projectID)
+				req := outageCtx(httptest.NewRequest(http.MethodPost, "/api/v1/rotation-policies", strings.NewReader(body)), uc)
+				w := httptest.NewRecorder()
+				h.Create(w, req)
+				return w
+			}},
 	}
 }
 

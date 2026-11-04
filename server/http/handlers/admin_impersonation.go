@@ -85,6 +85,10 @@ func (h *ImpersonationHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 	session, target, err := h.coreService.StartImpersonation(r.Context(), admin.UserID, body.UserID, clientIP(r))
 	if err != nil {
+		// A faulted admin/target read is 503 + Retry-After, not 404/500 (AUTH-LANE-FOLDS-1).
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		switch {
 		case strings.Contains(err.Error(), "yourself"):
 			sendError(w, "BadRequest", "Cannot impersonate yourself", http.StatusBadRequest, nil)
@@ -144,6 +148,10 @@ func (h *ImpersonationHandler) End(w http.ResponseWriter, r *http.Request) {
 	}
 	adminID, err := h.coreService.EndImpersonation(r.Context(), token)
 	if err != nil {
+		// A faulted session read is 503 + Retry-After: nothing was ended.
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "not an impersonation") {
 			sendError(w, "BadRequest", "Not an impersonation session", http.StatusBadRequest, nil)
 		} else {

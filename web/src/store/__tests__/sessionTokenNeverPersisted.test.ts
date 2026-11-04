@@ -11,10 +11,13 @@
 // So the fixture mirrors that real response shape and the flow runs through the REAL
 // authStore → authService → authApi axios instance; only the XMLHttpRequest transport is
 // faked. Every storage write is recorded — including ones later removed — and each value
-// is scanned for (a) the exact session token, and (b) anything JWT-shaped.
+// is scanned for (a) the exact session token, (b) anything JWT-shaped, and (c) any long
+// opaque hex/base64 run (a non-JWT token format, e.g. a random 256-bit session id), minus a
+// short allow-list of known non-secret ids (UUIDs).
 //
 // Not covered: IndexedDB, Cache Storage, and document.cookie (the browser makes the
-// httpOnly cookie unreadable to JS, so there is nothing for this layer to leak there).
+// httpOnly cookie unreadable to JS, so there is nothing for this layer to leak there); a
+// secret shorter than 32 chars; and storage written by code paths this flow does not run.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '../authStore';
 import type { LoginResponse } from '../../types';
@@ -32,6 +35,25 @@ const REFRESHED_TOKEN = [
     'cm90YXRlZC1zZXNzaW9uLXNpZ25hdHVyZQ',
 ].join('.'); // assembled at runtime: a synthetic JWT-shaped fixture, not a credential
 const JWT_SHAPE = /[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/;
+
+// Long opaque tokens that are not JWT-shaped: 32+ hex chars, or a 32+ char base64/base64url
+// run. The base64 branch must mix letters and digits so a long plain identifier or word is
+// not mistaken for a token.
+const OPAQUE_HEX = /[0-9a-fA-F]{32,}/;
+const OPAQUE_B64 = /[A-Za-z0-9+/_-]{32,}={0,2}/g;
+// Known non-secret ids, removed before the opaque scan. Keep this short and justified:
+// every entry is a hole in the guard.
+const NON_SECRET_IDS: { name: string; re: RegExp }[] = [
+    // Resource ids (users, sessions rows, projects) are UUIDs, public by design.
+    { name: 'uuid', re: /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi },
+];
+
+function looksLikeOpaqueToken(s: string): boolean {
+    let rest = s;
+    for (const { re } of NON_SECRET_IDS) rest = rest.replace(re, '');
+    if (OPAQUE_HEX.test(rest)) return true;
+    return (rest.match(OPAQUE_B64) ?? []).some((run) => /[A-Za-z]/.test(run) && /[0-9]/.test(run));
+}
 
 const future = (mins: number) => new Date(Date.now() + mins * 60_000).toISOString();
 
@@ -152,7 +174,9 @@ function leaks(writes: Write[]): Write[] {
             w.value.includes(SESSION_TOKEN) ||
             w.value.includes(REFRESHED_TOKEN) ||
             JWT_SHAPE.test(w.key) ||
-            JWT_SHAPE.test(w.value)
+            JWT_SHAPE.test(w.value) ||
+            looksLikeOpaqueToken(w.key) ||
+            looksLikeOpaqueToken(w.value)
     );
 }
 
@@ -175,6 +199,27 @@ describe('INV-WEB-03: the session token never reaches localStorage/sessionStorag
         localStorage.setItem('auth-storage', JSON.stringify({ state: { user: { token: SESSION_TOKEN } } }));
         sessionStorage.setItem('x', `Bearer ${REFRESHED_TOKEN}`);
         expect(leaks(writes)).toHaveLength(2);
+    });
+
+    it('opaque-token calibration: flags a planted hex/base64 token, passes the allow-listed ids', () => {
+        // Assembled at runtime: synthetic fixtures, not credentials.
+        const plantedHex = 'a1b2c3d4'.repeat(8); // 64 hex chars
+        const plantedB64 = 'Zm9vYmFyMTIz'.repeat(4); // 48 chars, letters + digits
+        const plantedB64Url = ['Xk9_', 'q2-Lm', '7Pz4', 'Rt8W', 'vN3c', 'Yb6H', 'dE1s', 'Fa5J'].join(''); // 32+ url-safe
+        localStorage.setItem('x-hex', plantedHex);
+        sessionStorage.setItem('x-b64', JSON.stringify({ sid: plantedB64 }));
+        localStorage.setItem('x-b64url', `Bearer ${plantedB64Url}`);
+        localStorage.setItem(plantedHex, 'key-position');
+        expect(leaks(writes)).toHaveLength(4);
+
+        // Known non-secret ids and ordinary bookkeeping must NOT be flagged (green direction).
+        writes.length = 0;
+        localStorage.setItem('user-id', '3f2b8c1e-9a4d-4e7f-b6a1-5c0d2e8f7a91');
+        localStorage.setItem('tokenExpiresAt', '"2026-11-04T10:15:30.000Z"');
+        localStorage.setItem('keyorix-ui', JSON.stringify({ state: { theme: 'dark', sidebarCollapsed: false } }));
+        localStorage.setItem('longIdentifierWithoutAnyDigitsAtAllInIt', 'abcdefghijklmnopqrstuvwxyzabcdefgh');
+        expect(writes).toHaveLength(4);
+        expect(leaks(writes)).toEqual([]);
     });
 
     it('login → refresh → checkAuth persists bookkeeping but never the credential', async () => {

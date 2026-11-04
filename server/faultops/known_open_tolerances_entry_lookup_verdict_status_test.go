@@ -9,10 +9,12 @@ import "github.com/keyorixhq/keyorix/internal/faultstorage"
 // kind) the oracle observed at origin/main @ ad272b323, nothing wider, and cites
 // #3873. The PR that fixes a case deletes its row (TestKnownOpenTolerances_AreLoadBearing
 // reports a row the oracle no longer consults). #3870 (AUTHZ-OUTAGE-HANDLERS-1) and
-// AUTHZ-OUTAGE-TAILS-1 are the expected fixers of the handler rows. AUTH-ENDPOINT-OUTAGE-1
-// closed the auth-endpoint rows: step-up answers 503; the refresh and WebAuthn finish
-// effect-then-error twins are their reviewed KindError rows' (lookupVerdictEffectThenError).
-// end-impersonation stays exempt by op (lookupVerdictOrderDependent).
+// AUTHZ-OUTAGE-TAILS-1 are the expected fixers of the handler rows; CORE-HANDLER-TAILS-4
+// item 2 fixed and removed the POST /api/v1/rotation-policies/ rows. AUTH-ENDPOINT-OUTAGE-1
+// closed the auth-endpoint rows: step-up answers 503; AUTH-LANE-FOLDS-1 made the refresh
+// owner read and the WebAuthn finish identity read answer 503 too (Andrei's decision).
+// AUTH-LANE-FOLDS-1 closed end-impersonation (its op exemption is gone): a fault on the
+// impersonating admin's re-read or on the ceiling answers 503.
 func init() {
 	for _, r := range []struct {
 		name, op, method string
@@ -23,8 +25,6 @@ func init() {
 		{"rest_delete_api_v1_secrets_id_resolveuserpermissionat_2_error", "REST DELETE /api/v1/secrets/{id}", "ResolveUserPermissionAt", 2, faultstorage.KindError},
 		{"rest_patch_api_v1_secrets_id_description_resolveuserpermissionat_2_effect_then_error", "REST PATCH /api/v1/secrets/{id}/description", "ResolveUserPermissionAt", 2, faultstorage.KindEffectThenError},
 		{"rest_patch_api_v1_secrets_id_description_resolveuserpermissionat_2_error", "REST PATCH /api/v1/secrets/{id}/description", "ResolveUserPermissionAt", 2, faultstorage.KindError},
-		{"rest_post_api_v1_rotation_policies_resolveuserpermissionat_1_effect_then_error", "REST POST /api/v1/rotation-policies/", "ResolveUserPermissionAt", 1, faultstorage.KindEffectThenError},
-		{"rest_post_api_v1_rotation_policies_resolveuserpermissionat_1_error", "REST POST /api/v1/rotation-policies/", "ResolveUserPermissionAt", 1, faultstorage.KindError},
 		{"rest_post_api_v1_secrets_id_move_resolveuserpermissionat_2_effect_then_error", "REST POST /api/v1/secrets/{id}/move", "ResolveUserPermissionAt", 2, faultstorage.KindEffectThenError},
 		{"rest_post_api_v1_secrets_id_move_resolveuserpermissionat_2_error", "REST POST /api/v1/secrets/{id}/move", "ResolveUserPermissionAt", 2, faultstorage.KindError},
 		{"rest_put_api_v1_secrets_id_resolveuserpermissionat_2_effect_then_error", "REST PUT /api/v1/secrets/{id}", "ResolveUserPermissionAt", 2, faultstorage.KindEffectThenError},

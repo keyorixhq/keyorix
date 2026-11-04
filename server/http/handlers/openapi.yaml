@@ -5457,7 +5457,7 @@ paths:
         - {name: email, in: query, schema: {type: string}}
         - {name: is_active, in: query, schema: {type: boolean}}
         - {name: include_deleted, in: query, schema: {type: boolean}}
-        - {name: filter, in: query, description: "Set to `inactive` for users with no login in the last 30 days.", schema: {type: string, enum: [inactive]}}
+        - {name: filter, in: query, description: "Set to `inactive` for users whose last login is more than 30 days ago; an account that has never logged in counts once it is 30+ days old (judged by creation date).", schema: {type: string, enum: [inactive]}}
       responses:
         '200':
           description: "Envelope `data` has `users[]` (each with id, username, email, display_name, project_count, active_project_count), `page`, `page_size`, `total`, `total_pages`."

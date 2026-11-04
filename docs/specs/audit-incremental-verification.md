@@ -349,6 +349,14 @@ the last full verification time.
 - **All checkpoint rows deleted:** the write path, like the read path, checks
   the tail from the authenticated high-water mark (pinning its head). It falls
   back to the full walk only when the mark does not authenticate either.
+- **Two holders of the checkpoint lock** (a silent lock loss behind a pooler,
+  `docs/design/pooler-lock-loss.md` row 15): the state row and the high-water
+  mark are written with a compare-and-set on the value read
+  (`CompareAndSetSystemMetadata`), not an upsert. A state save over a row
+  another holder saved since writes nothing; the merge is redone once over
+  the reloaded row (a tick or key-transition save fails and is retried by its
+  next run). So a failure one holder recorded is never dropped by the other's
+  save of an older state, and a lower mark never replaces a higher one.
 
 ## 9. Not covered (stated, not hidden)
 
@@ -365,4 +373,9 @@ the last full verification time.
   is ADR-029's on-box rollback residual (external anchoring closes it).
 - Rows appended after the last checkpoint and then removed from the tail before
   the next tick are not detectable on-box. That is ADR-029's existing residual.
+- The compare-and-set (§8) stops a lost update between two writers; it does not
+  authenticate who writes. A DB-level actor who replaces the row is the replay
+  case above. `admin audit accept-loss` still writes its mark with an upsert:
+  it runs only under the exclusive database lock, with the server stopped, so
+  no second writer exists.
 - gRPC has no full-job RPC yet.

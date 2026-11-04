@@ -61,6 +61,11 @@ type SystemStore interface {
 	GetSystemMetadata(ctx context.Context, key string) (value string, found bool, err error)
 	// SetSystemMetadata upserts a system-metadata key/value (last write wins).
 	SetSystemMetadata(ctx context.Context, key, value string) error
+	// CompareAndSetSystemMetadata writes value for key only if the stored row is
+	// still what the caller read: value old when oldFound, no row when !oldFound.
+	// swapped is false (with a nil error) when another writer changed the row
+	// since; the caller re-reads. One statement, so it holds without any lock.
+	CompareAndSetSystemMetadata(ctx context.Context, key, old string, oldFound bool, value string) (swapped bool, err error)
 	// GetRecoveryKeyRecord returns the local admin recovery key's verifier
 	// record (docs/design-b2-recover-admin.md §2); found is false on an
 	// install that predates this feature or has never generated one.

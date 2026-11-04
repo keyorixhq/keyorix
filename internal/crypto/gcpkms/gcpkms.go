@@ -211,6 +211,9 @@ func (c *client) DecryptReportingFallback(ctx context.Context, ciphertext []byte
 	}
 	plaintext := resp.GetPlaintext()
 	if got := resp.GetPlaintextCrc32C(); got == nil || int64(crc32cSum(plaintext)) != got.GetValue() {
+		// A corrupted checksum field with an intact payload still leaves the
+		// real KEK here; clear it before dropping it.
+		clear(plaintext)
 		return nil, false, fmt.Errorf("gcp-kms: decrypt: plaintext checksum mismatch (possible response corruption)")
 	}
 	if fellBack {

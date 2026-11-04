@@ -204,6 +204,11 @@ func newAuthHandlerForTest(t *testing.T) *AuthHandler {
 		&models.LoginAttempt{}, &models.Permission{}, &models.RolePermission{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.AuditEvent{}, &models.SystemMetadata{},
+		// The setup-token and session tables, so the "invalid token" cases of
+		// ConsumeSetup and RefreshToken reach a real not-found: without them the
+		// lookup is a storage fault (503 since AUTH-LANE-FOLDS-1), not the dead-token
+		// answer those tests are named for.
+		&models.SetupToken{}, &models.Session{},
 	))
 	return NewAuthHandler(core.NewKeyorixCore(store.NewLocalStorage(db)), false)
 }

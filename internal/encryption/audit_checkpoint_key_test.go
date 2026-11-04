@@ -54,7 +54,7 @@ func TestAuditCheckpointKey_UnavailableWhenDisabled(t *testing.T) {
 // RotateDEKWithSweep, even though the DEK itself (and its own key version)
 // changes. This is what makes a checkpoint signed before a DEK rotation still
 // verifiable after one — closing the false-tamper-alarm window the former DEK-derived
-// key (superseded by the KEK-derived key, #502) opened on every rotation.
+// key (retired in favour of the KEK-derived key, #502) opened on every rotation.
 func TestAuditCheckpointKey_StableAcrossDEKRotation(t *testing.T) {
 	db := newTestDB(t)
 	svc, _ := newTestService(t, "test-passphrase")

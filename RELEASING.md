@@ -45,6 +45,13 @@ checks is [docs/releases/RELEASE-CHECKLIST.md](docs/releases/RELEASE-CHECKLIST.m
    Before tagging run `scripts/release/check-docs-version.sh vX.Y.Z` (intentional
    exceptions: `scripts/release/docs-version-exceptions.txt`) and read the install commands
    in README and `QUICK_START.md` once as a new user would.
+   **First release after v0.96.3 (INSTALL-WITH-AI.md, Compose path):** the page's
+   `V=` and `git clone --branch` pins are v0.96.3 and its "Docker Compose with
+   PostgreSQL" section tells the assistant the server-to-database connection is
+   plaintext at that tag. In the release PR re-pin both to the new tag and drop the
+   plaintext-database note (and the "first release after v0.96.3" sentence) once the
+   bundled database has TLS in that release. `TestInstallWithAIPinsAreNotOlderThanLatestRelease`
+   fails when the page pins a version older than the newest `## vX.Y.Z` in `CHANGELOG.md`.
 4. **Release gate (hard step, do not tag around it).** Run
    `scripts/release/check-release-blockers.sh` (needs `gh` with `GITHUB_TOKEN`/`GH_TOKEN` or
    a `gh auth login`; in a sandboxed session run it outside the sandbox or feed `kgh issue

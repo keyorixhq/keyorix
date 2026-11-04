@@ -42,7 +42,9 @@ func newTestWebAuthnRP(t *testing.T) *gowebauthn.WebAuthn {
 func TestFinishWebAuthnRegistration_GetUserFail(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetUser", mock.Anything, uint(5)).Return(nil, errors.New("user not found"))
+	// The store's real not-found shape (a typed sentinel), not untyped text: an
+	// untyped error is classified as a storage fault (AUTH-LANE-FOLDS-1).
+	ms.On("GetUser", mock.Anything, uint(5)).Return(nil, storage.NotFound(storage.ErrUserNotFound, "user not found", nil))
 	c := NewKeyorixCore(ms)
 	c.SetWebAuthn(webauthnrp.Wrap(newTestWebAuthnRP(t)))
 	_, err := c.FinishWebAuthnRegistration(context.Background(), 5, "token", "mykey", "password", nil)
@@ -447,7 +449,7 @@ func TestWriteAuditCheckpointLocked_ValidChain_NoExistingCP(t *testing.T) {
 	// there is no pin to contradict (auditVerifyStateTruncation proceeds).
 	ms.On("GetSystemMetadata", mock.Anything, auditVerifyStateKey).Return("", false, nil)
 	ms.On("CreateAuditCheckpoint", mock.Anything, mock.AnythingOfType("*models.AuditCheckpoint")).Return(nil)
-	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.AnythingOfType("string")).Return(nil)
+	ms.On("CompareAndSetSystemMetadata", mock.Anything, auditHighWaterKey, "", false, mock.AnythingOfType("string")).Return(true, nil)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
 	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)

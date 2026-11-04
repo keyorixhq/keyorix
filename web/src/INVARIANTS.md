@@ -42,10 +42,11 @@ Format: `INV-WEB-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   persist it. Guard: `store/__tests__/sessionTokenNeverPersisted.test.ts` drives login → refresh →
   checkAuth and `completeSetup` through the real `authStore` → `authService` → `authApi` (only the XHR
   transport is faked), records every `localStorage`/`sessionStorage` write (including later-removed
-  ones) and fails on the literal token or any JWT-shaped key/value; its self-check proves the scanner
-  fires on a planted token. **Not covered**: IndexedDB, Cache Storage; long opaque hex/base64 tokens
-  that are not JWT-shaped and not the fixture token; storage written by code paths the test does
-  not exercise.
+  ones) and fails on the literal token, any JWT-shaped key/value, or any 32+ char opaque hex or
+  letters-and-digits base64 run (UUIDs are the only allow-listed id); its self-checks prove the
+  scanner fires on a planted JWT, hex and base64 token and stays quiet on a UUID and ordinary
+  bookkeeping. **Not covered**: IndexedDB, Cache Storage; a secret shorter than 32 chars or a
+  long single-class run with no digit; storage written by code paths the test does not exercise.
 
 ## CSV writer (formula-injection, CWE-1236)
 

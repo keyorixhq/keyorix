@@ -33,8 +33,8 @@ import (
 func FuzzDecodePATScopes(f *testing.F) {
 	seeds := []string{
 		"",                                 // empty column -> unrestricted (nil)
-		"   ",                              // whitespace only -> unrestricted
-		"\t\n",                             // other whitespace
+		"   ",                              // whitespace only -> corrupted sentinel (never written)
+		"\t\n",                             // other whitespace -> corrupted sentinel
 		`["secrets.read"]`,                 // single scope
 		`["secrets.read","secrets.write"]`, // multiple scopes
 		`["secrets.read","audit.read"]`,    // realistic reporting PAT
@@ -61,8 +61,10 @@ func FuzzDecodePATScopes(f *testing.F) {
 			got = DecodePATScopes(raw)
 		})
 
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" {
+		// Only the exact "" EncodePATScopes writes is unrestricted; DecodePATScopes
+		// unmarshals the raw (untrimmed) column, so whitespace-only is a parse
+		// failure and must fail closed (PAT-SCOPE-TAILS-1).
+		if raw == "" {
 			if got != nil {
 				t.Fatalf("DecodePATScopes(%q): empty column must decode to nil (unrestricted), got %#v", raw, got)
 			}
@@ -70,7 +72,7 @@ func FuzzDecodePATScopes(f *testing.F) {
 		}
 
 		var parsed []string
-		if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 			// FAIL-CLOSED invariant (#r124): unparseable non-empty column must NOT
 			// widen the token to unrestricted; it must return a non-empty sentinel.
 			if len(got) == 0 {

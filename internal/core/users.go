@@ -42,7 +42,7 @@ const (
 
 func validateUsernameFormat(username string) error {
 	if len(username) < usernameMinLen || len(username) > usernameMaxLen {
-		return fmt.Errorf("%s: username must be between %d and %d characters", i18n.T("ErrorValidation", nil), usernameMinLen, usernameMaxLen)
+		return validationErrorf("%s: username must be between %d and %d characters", i18n.T("ErrorValidation", nil), usernameMinLen, usernameMaxLen)
 	}
 	return nil
 }
@@ -67,21 +67,21 @@ var usernameCharsetRegex = regexp.MustCompile(`^[a-zA-Z0-9 ._@+-]+$`)
 // to [a-z0-9] first.
 func validateUsernameCharset(username string) error {
 	if !usernameCharsetRegex.MatchString(username) {
-		return fmt.Errorf("%s: username must contain only ASCII letters, digits, spaces, '.', '_', '@', '+' or '-'", i18n.T("ErrorValidation", nil))
+		return validationErrorf("%s: username must contain only ASCII letters, digits, spaces, '.', '_', '@', '+' or '-'", i18n.T("ErrorValidation", nil))
 	}
 	return validateIdentifierWhitespace(username)
 }
 
 func validateEmailFormat(email string) error {
 	if !emailRegex.MatchString(email) {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEmail", nil))
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEmail", nil))
 	}
 	return nil
 }
 
 func validateDisplayNameFormat(displayName string) error {
 	if len(displayName) < displayNameMinLen || len(displayName) > displayNameMaxLen {
-		return fmt.Errorf("%s: display name must be between %d and %d characters", i18n.T("ErrorValidation", nil), displayNameMinLen, displayNameMaxLen)
+		return validationErrorf("%s: display name must be between %d and %d characters", i18n.T("ErrorValidation", nil), displayNameMinLen, displayNameMaxLen)
 	}
 	return nil
 }
@@ -97,7 +97,7 @@ type ProjectAssignment struct {
 // record plus its bcrypt hash. Shared by CreateUser and CreateUserWithAssignments.
 func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserRequest) (*models.User, string, error) {
 	if err := c.validateCreateUserRequest(req); err != nil {
-		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, "", validationErrorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
 	// #1642: fold once here, use everywhere below — the constructor is the
@@ -105,11 +105,11 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	// a comparison or a write, so a raw string can never bypass normalization.
 	foldedUsername, err := identity.NewFoldedName(req.Username)
 	if err != nil {
-		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, "", validationErrorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 	foldedEmail, err := identity.NewFoldedName(req.Email)
 	if err != nil {
-		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, "", validationErrorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
 	displayName := req.DisplayName
@@ -367,7 +367,7 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	sr, err := c.storage.GetRoleByName(ctx, sysRole)
 	if err != nil {
 		// A read FAULT is a retry answer, not "unknown role".
-		return nil, classifyReadError(err, fmt.Sprintf("%s: unknown role %q (system)", i18n.T("ErrorValidation", nil), sysRole))
+		return nil, classifyReadErrorAs(err, ErrValidation, fmt.Sprintf("%s: unknown role %q (system)", i18n.T("ErrorValidation", nil), sysRole))
 	}
 	// #3546: the system role lands at the global scope, so a project-tier role
 	// there would apply in every project. Project roles go in assignments.
@@ -471,14 +471,14 @@ func addRoleGrant(grants *[]storage.RoleGrant, seen map[[2]uint]bool, roleID, pr
 // storage.RoleGrant, enforcing the same authority-ceiling check as InviteGlobal.
 func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint, actorIsMachine bool, a ProjectAssignment) (storage.RoleGrant, error) {
 	if a.ProjectID == 0 || a.Role == "" {
-		return storage.RoleGrant{}, fmt.Errorf("%s: each project assignment needs a project_id and a role", i18n.T("ErrorValidation", nil))
+		return storage.RoleGrant{}, validationErrorf("%s: each project assignment needs a project_id and a role", i18n.T("ErrorValidation", nil))
 	}
 	if _, err := c.storage.GetProject(ctx, a.ProjectID); err != nil {
-		return storage.RoleGrant{}, classifyReadError(err, fmt.Sprintf("%s: unknown project %d", i18n.T("ErrorValidation", nil), a.ProjectID))
+		return storage.RoleGrant{}, classifyReadErrorAs(err, ErrValidation, fmt.Sprintf("%s: unknown project %d", i18n.T("ErrorValidation", nil), a.ProjectID))
 	}
 	r, err := c.storage.GetRoleByName(ctx, a.Role)
 	if err != nil {
-		return storage.RoleGrant{}, classifyReadError(err, fmt.Sprintf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role))
+		return storage.RoleGrant{}, classifyReadErrorAs(err, ErrValidation, fmt.Sprintf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role))
 	}
 	// #3546: an install-wide role never lands at one project, the same check
 	// AssignUserRole and the InviteGlobal assignments apply.
@@ -502,7 +502,7 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 // Phase 6, #2162/#2171). No production caller currently reaches this method.
 func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID uint, actorIsMachine bool, grants []storage.RoleGrant) error {
 	if len(grants) > maxUserCreateAssignments {
-		return fmt.Errorf("%s: grants exceeds the maximum batch size of %d", i18n.T("ErrorValidation", nil), maxUserCreateAssignments)
+		return validationErrorf("%s: grants exceeds the maximum batch size of %d", i18n.T("ErrorValidation", nil), maxUserCreateAssignments)
 	}
 	// Baseline (F6 sweep, 2026-09-22): the loop below only ever calls
 	// requireGranterHoldsRolePermissions for a grant that's actually IN the
@@ -529,7 +529,7 @@ func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID ui
 	roleIDs := make([]uint, 0, len(grants))
 	for _, g := range grants {
 		if _, err := c.storage.GetRole(ctx, g.RoleID); err != nil {
-			return classifyReadError(err, fmt.Sprintf("%s: unknown role id %d", i18n.T("ErrorValidation", nil), g.RoleID))
+			return classifyReadErrorAs(err, ErrValidation, fmt.Sprintf("%s: unknown role id %d", i18n.T("ErrorValidation", nil), g.RoleID))
 		}
 		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, g.RoleID, Scope{ProjectID: g.Scope.ProjectID, EnvironmentID: g.Scope.EnvironmentID}, actorIsMachine); err != nil {
 			return err
@@ -542,7 +542,7 @@ func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID ui
 // GetUser retrieves a user by ID.
 func (c *KeyorixCore) GetUser(ctx context.Context, id uint) (*models.User, error) {
 	if id == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 	user, err := c.storage.GetUser(ctx, id)
 	if err != nil {
@@ -570,7 +570,7 @@ func (c *KeyorixCore) GetUser(ctx context.Context, id uint) (*models.User, error
 // (S1, CLI-split inventory #2012).
 func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*models.User, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	if err := c.validateUpdateUserRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, validationErrorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 	if req.ActorID == req.ID && req.IsActive != nil && !*req.IsActive {
 		return nil, ErrCannotActOnSelf
@@ -589,11 +589,11 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		// the stored username back unchanged (a legacy name this rule would
 		// reject) must still be able to update the other fields.
 		if err := validateUsernameCharset(req.Username); err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+			return nil, validationErrorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 		}
 		foldedUsername, ferr := identity.NewFoldedName(req.Username)
 		if ferr != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+			return nil, validationErrorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
 		}
 		// #1642: a rename that only changes display form/case (folds to the
 		// SAME identity the row already has, e.g. "Bob" -> "bob") must be a
@@ -614,7 +614,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	if req.Email != "" && req.Email != user.Email {
 		foldedEmail, ferr := identity.NewFoldedName(req.Email)
 		if ferr != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+			return nil, validationErrorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
 		}
 		if foldedEmail.Folded() != user.EmailFolded {
 			existing, err := c.storage.GetUserByEmail(ctx, req.Email)
@@ -975,7 +975,7 @@ func (c *KeyorixCore) RevokeUserCredentialsForDeactivation(ctx context.Context, 
 // permission the HTTP router already required.
 func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 	if actorID != id {
 		if err := c.requireAdminRankCeilingForTarget(ctx, actorID, id, "delete"); err != nil {
@@ -1245,7 +1245,7 @@ func (c *KeyorixCore) DeleteSessionsForUserExcept(ctx context.Context, actorType
 // exist independently of the user row's own soft-delete flag.
 func (c *KeyorixCore) RestoreUser(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 	if actorID != id {
 		if err := c.requireAdminRankCeilingForTarget(ctx, actorID, id, "restore"); err != nil {
@@ -1335,7 +1335,7 @@ func (c *KeyorixCore) ListUsers(ctx context.Context, filter *storage.UserFilter)
 // GetUserByEmail retrieves a user by email address.
 func (c *KeyorixCore) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
 	if email == "" {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "email is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "email is required")
 	}
 	user, err := c.storage.GetUserByEmail(ctx, email)
 	if err != nil {
@@ -1348,7 +1348,7 @@ func (c *KeyorixCore) GetUserByEmail(ctx context.Context, email string) (*models
 // /api/v1/users/by-username HTTP route (#505).
 func (c *KeyorixCore) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	if username == "" {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "username is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "username is required")
 	}
 	user, err := c.storage.GetUserByUsername(ctx, username)
 	if err != nil {
@@ -1362,7 +1362,7 @@ func (c *KeyorixCore) GetUserByUsername(ctx context.Context, username string) (*
 // resolution.
 func (c *KeyorixCore) GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error) {
 	if externalID == "" {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "external_id is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "external_id is required")
 	}
 	user, err := c.storage.GetUserByExternalID(ctx, externalID)
 	if err != nil {

@@ -271,7 +271,8 @@ func (c *KeyorixCore) FinishWebAuthnRegistration(ctx context.Context, userID uin
 	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("user not found")
+		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
+		return nil, classifyReadError(err, "user not found")
 	}
 	if err := c.requireReauth(ctx, user, codeOrPassword, "webauthn_register"); err != nil {
 		return nil, err
@@ -358,7 +359,8 @@ func (c *KeyorixCore) ListWebAuthnCredentials(ctx context.Context, userID uint) 
 func (c *KeyorixCore) DeleteWebAuthnCredential(ctx context.Context, userID, id uint, codeOrPassword string) error {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("user not found")
+		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
+		return classifyReadError(err, "user not found")
 	}
 	if err := c.requireReauth(ctx, user, codeOrPassword, "webauthn_delete"); err != nil {
 		return err
@@ -465,7 +467,8 @@ func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, ses
 	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("user not found")
+		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
+		return classifyReadError(err, "user not found")
 	}
 	if c.loginLocked(user) {
 		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")

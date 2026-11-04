@@ -445,6 +445,9 @@ func printVerifyAuditReport(r *auditverify.Result) {
 			if sl.Truncated {
 				fmt.Println("    tail truncation")
 			}
+			for _, u := range sl.Unpinned {
+				fmt.Printf("    unpinned: audit events #%d through #%d were pinned by no signed checkpoint, mark, anchor or state when the loss was accepted; a rewrite of them before the acceptance cannot be excluded\n", u.FromID, u.ThroughID)
+			}
 		}
 	}
 
