@@ -58,7 +58,7 @@ not a proven loss at exactly the ids you name with --first-broken-id:
     is intact, and its prev_hash names a row that is gone (not an inserted row);
   - a truncation: the walk is clean, but the head a signed checkpoint, high-water
     mark or verification state certified is gone (name that head).
-It refuses a modified row, the pre-#1452 encoding (run the chain-encoding
+It refuses a modified row, the old pre-migration encoding (run the chain-encoding
 migration), a key mismatch (follow the key-rotation runbook), an unauthenticated
 store, an untrusted verification state (run a full verification) and an altered
 earlier seal.
