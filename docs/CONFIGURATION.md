@@ -2854,7 +2854,11 @@ mail relay is available). A link-producing mode with an empty `base_url` is a
 misconfiguration — link minting refuses it rather than emitting a relative link.
 
 `mode: log` writes a live, usable setup link to the application log (dev/test only) and
-`smtp.tls: none` sends mail — and any relay credentials — in cleartext. Both are refused
+`smtp.tls: none` sends the message (including the setup link) and the relay username
+unencrypted. The mail library never sends a PLAIN or LOGIN password without TLS, so relay
+authentication is limited to challenge-response mechanisms (CRAM-MD5/SCRAM), and a relay
+that offers only PLAIN or LOGIN fails to authenticate: the send fails, the log names that
+cause, and the admin gets the setup link to relay by hand. Both are refused
 at startup unless the operator explicitly opts in by setting
 `KEYORIX_ALLOW_INSECURE_LOG_DELIVERY=true` (for `mode: log`) or
 `KEYORIX_ALLOW_INSECURE_SMTP=true` (for `smtp.tls: none`), mirroring how other insecure

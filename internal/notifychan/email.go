@@ -16,6 +16,7 @@ package notifychan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -74,7 +75,7 @@ func newEmail(cfg EmailConfig, baseBackoff time.Duration) (*EmailSink, error) {
 	case "", "starttls", "implicit":
 	case "none":
 		if !envflag.Enabled(envflag.AllowInsecureSMTP) {
-			return nil, fmt.Errorf("notifychan: email smtp tls=none sends mail (and any relay credentials) in cleartext; refusing unless the operator explicitly opts in by setting %s=true", envflag.AllowInsecureSMTP)
+			return nil, fmt.Errorf("notifychan: email smtp tls=none sends the message and the relay username unencrypted; the mail library never sends a PLAIN or LOGIN password without TLS, so a relay that offers only PLAIN or LOGIN will fail authentication; refusing unless the operator explicitly opts in by setting %s=true", envflag.AllowInsecureSMTP)
 		}
 		log.Printf("notifychan: WARNING email smtp tls=none is ACTIVE — notification email will be sent over CLEARTEXT SMTP; dev/test only, never use in production")
 	default:
@@ -130,9 +131,26 @@ func (s *EmailSink) send(ctx context.Context, ev core.NotificationEvent) (retrya
 		return false, err // misconfiguration — permanent
 	}
 	if err := client.DialAndSendWithContext(ctx, msg); err != nil {
+		if s.plainLoginOnlyWithoutTLS(err) {
+			return true, fmt.Errorf("%s: %w", emailPlainLoginNoTLSCause, err)
+		}
 		return true, err // SMTP relay / network error — transient
 	}
 	return false, nil
+}
+
+// emailPlainLoginNoTLSCause names why a tls=none send with a username fails at auth
+// discovery: go-mail's SMTPAuthAutoDiscover drops PLAIN and LOGIN on an unencrypted
+// connection (it will not send a password in cleartext), so a relay offering only
+// those has no mechanism left.
+const emailPlainLoginNoTLSCause = "server offers only PLAIN/LOGIN and TLS is disabled (notify email tls=none); use starttls or implicit TLS, or a relay that offers CRAM-MD5/SCRAM"
+
+// plainLoginOnlyWithoutTLS reports whether a send error is go-mail's auth-discovery
+// failure under tls=none with auth configured — the one case the generic error
+// does not explain.
+func (s *EmailSink) plainLoginOnlyWithoutTLS(err error) bool {
+	return strings.EqualFold(s.cfg.TLS, "none") && s.cfg.Username != "" &&
+		errors.Is(err, mail.ErrNoSupportedAuthDiscovered)
 }
 
 // newClient builds a go-mail client from the SMTP settings, selecting the TLS
