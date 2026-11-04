@@ -218,3 +218,39 @@ func TestRunBGList_OwnScopeNeverPrintsReviewNoteOrAdminIdentities(t *testing.T) 
 		}
 	}
 }
+
+// CLI-WORDING-TAILS-1: the USER column shows the activating user's username (the
+// server sends it since #3884) and falls back to the numeric id when it is absent
+// (a deleted user), so a row never has an empty USER cell.
+func TestRunBGList_UserColumnShowsUsernameFallsBackToID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"success":true,"data":{"activations":[`+
+			`{"id":42,"user_id":7,"username":"alice-the-long-named","role_name":"proj-dev","justification":"incident INC-1","state":"active","expires_at":"2026-01-02T00:00:00Z","created_at":"2026-01-01T20:00:00Z"},`+
+			`{"id":43,"user_id":8,"role_name":"proj-dev","justification":"incident INC-2","state":"active","expires_at":"2026-01-02T00:00:00Z","created_at":"2026-01-01T20:00:00Z"},`+
+			`{"id":44,"user_id":9,"username":"","role_name":"proj-dev","justification":"incident INC-3","state":"active","expires_at":"2026-01-02T00:00:00Z","created_at":"2026-01-01T20:00:00Z"}`+
+			`],"count":3}}`)
+	}))
+	defer srv.Close()
+	setBGCreds(t, srv)
+	bgProject = 1
+	defer func() { bgProject = 0 }()
+
+	out := captureStdout(t, func() {
+		if err := runBGList(bgListCmd, nil); err != nil {
+			t.Fatalf("runBGList: %v", err)
+		}
+	})
+	userCol := map[string]string{}
+	for line := range strings.SplitSeq(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) > 2 && (f[0] == "42" || f[0] == "43" || f[0] == "44") {
+			userCol[f[0]] = f[1]
+		}
+	}
+	for id, want := range map[string]string{"42": "alice-the-long-named", "43": "8", "44": "9"} {
+		if userCol[id] != want {
+			t.Errorf("activation %s USER = %q, want %q\noutput:\n%s", id, userCol[id], want, out)
+		}
+	}
+}
