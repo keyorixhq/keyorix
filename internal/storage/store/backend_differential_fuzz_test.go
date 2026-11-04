@@ -669,15 +669,19 @@ func auditChainHead(db *gorm.DB) (string, error) {
 	return event.EntryHash, nil
 }
 
-// diffWipeTables empties every table the differential harness writes, child tables
-// first, and returns the first failure (naming the table) rather than discarding it.
+// diffWipedTables lists every table the differential harness writes, child tables
+// first. diffWipeTables and its test share it so they cannot drift.
+var diffWipedTables = []string{
+	"audit_events", "share_records", "secret_acls", "secret_versions", "secret_nodes",
+	"sessions", "machine_identity_credentials", "machine_identities",
+	"user_groups", "group_roles", "groups",
+	"user_roles", "environments", "users", "projects",
+}
+
+// diffWipeTables empties every table in diffWipedTables and returns the first
+// failure (naming the table) rather than discarding it.
 func diffWipeTables(db *gorm.DB) error {
-	for _, tbl := range []string{
-		"audit_events", "share_records", "secret_acls", "secret_versions", "secret_nodes",
-		"sessions", "machine_identity_credentials", "machine_identities",
-		"user_groups", "group_roles", "groups",
-		"user_roles", "environments", "users", "projects",
-	} {
+	for _, tbl := range diffWipedTables {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			return fmt.Errorf("DELETE FROM %s: %w", tbl, err)
 		}
