@@ -51,6 +51,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -258,6 +259,17 @@ type auditVerifyState struct {
 	// found no live in-chain marker. Neither is persisted.
 	detected   *auditVerifyDiscontinuity
 	needMarker bool
+	// stored is the raw row this state was loaded from: saveAuditVerifyState
+	// writes only over it (a compare-and-set), never over a row another
+	// holder saved since. Not persisted.
+	stored auditVerifyStoredRow
+}
+
+// auditVerifyStoredRow is a raw state row as read: val when found, no row
+// otherwise. read is false for a state not built from a read.
+type auditVerifyStoredRow struct {
+	val         string
+	found, read bool
 }
 
 // claimedThrough is the highest audit event id the row says existed.
@@ -557,6 +569,12 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 	if err != nil {
 		return nil, "", err
 	}
+	// Whatever this load makes of the row, a save of the result replaces only it.
+	defer func() {
+		if st != nil {
+			st.stored = auditVerifyStoredRow{val: val, found: ok, read: true}
+		}
+	}()
 	// Read after the row: ids only grow, so a row saved before this read cannot
 	// look past the head, and an event it predates is already visible.
 	ev, err := c.scanAuditVerifyEvidence(ctx)
@@ -908,12 +926,32 @@ func (c *KeyorixCore) loadAuditVerifyStateForWrite(ctx context.Context) (st *aud
 	return st, rejected, nil
 }
 
+// errAuditVerifyStateConflict: the stored state row changed between the load
+// a save was built from and the save, so the save wrote nothing.
+var errAuditVerifyStateConflict = errors.New("the persisted verification state was saved by another holder of the audit-checkpoint lock since it was loaded; nothing was written")
+
 // saveAuditVerifyState binds, signs and stores st (no-op without a signing
 // key). The caller holds WithAuditCheckpointLock and loaded st with
 // loadAuditVerifyStateForWrite.
+//
+// The store is a compare-and-set against the row st was loaded from
+// (st.stored), not an upsert: the lock is exclusive only while it holds, and
+// after a silent loss (docs/design/pooler-lock-loss.md row 15) another holder
+// may have saved a state carrying a newly recorded failure in between, which
+// a last-write-wins save of st would drop. A lost save returns
+// errAuditVerifyStateConflict; updateAuditVerifyState reloads and re-applies
+// its change once, other writers fail and are retried by their next run. A st
+// not built from a load is compared against the row as it is now.
 func (c *KeyorixCore) saveAuditVerifyState(ctx context.Context, st *auditVerifyState) error {
 	if !c.AuditCheckpointsAvailable() {
 		return nil
+	}
+	if !st.stored.read {
+		val, ok, err := c.storage.GetSystemMetadata(ctx, auditVerifyStateKey)
+		if err != nil {
+			return err
+		}
+		st.stored = auditVerifyStoredRow{val: val, found: ok, read: true}
 	}
 	bind, err := c.currentAuditVerifyBinding(ctx)
 	if err != nil {
@@ -952,9 +990,14 @@ func (c *KeyorixCore) saveAuditVerifyState(ctx context.Context, st *auditVerifyS
 		return err
 	}
 	val := strings.Join([]string{"avs-v1", base64.RawURLEncoding.EncodeToString(payload), c.signAuditVerifyState(payload)}, auditVerifyStateSep)
-	if err := c.storage.SetSystemMetadata(ctx, auditVerifyStateKey, val); err != nil {
+	swapped, err := c.storage.CompareAndSetSystemMetadata(ctx, auditVerifyStateKey, st.stored.val, st.stored.found, val)
+	if err != nil {
 		return err
 	}
+	if !swapped {
+		return errAuditVerifyStateConflict
+	}
+	st.stored = auditVerifyStoredRow{val: val, found: true, read: true}
 	c.bumpAuditVerifyGen(st.Gen)
 	c.observeAuditVerifyState(st)
 	return nil
@@ -965,11 +1008,17 @@ func (c *KeyorixCore) saveAuditVerifyState(ctx context.Context, st *auditVerifyS
 // merge, never for a walk. fn returns whether a failure was newly recorded,
 // in which case a system.audit_chain_verification_failed event is appended
 // after the save (the in-chain record that survives a state rollback).
+//
+// When another holder saved the row between this load and this save (a
+// silent lock loss), the save writes nothing; the section is run once more
+// over the reloaded row, so fn applies its change on top of the other
+// holder's (fn must only modify st and its own captured results). A second
+// loss is returned as an error.
 func (c *KeyorixCore) updateAuditVerifyState(ctx context.Context, fn func(st *auditVerifyState) (newFailure *auditVerifyFailure)) error {
 	var failed *auditVerifyFailure
 	var rejected *auditVerifyRejection
 	var saved *auditVerifyState
-	err := c.storage.WithAuditCheckpointLock(ctx, func(ctx context.Context) error {
+	section := func(ctx context.Context) error {
 		st, rej, err := c.loadAuditVerifyStateForWrite(ctx)
 		if err != nil {
 			return err
@@ -981,7 +1030,11 @@ func (c *KeyorixCore) updateAuditVerifyState(ctx context.Context, fn func(st *au
 		}
 		saved = st
 		return nil
-	})
+	}
+	err := c.storage.WithAuditCheckpointLock(ctx, section)
+	if errors.Is(err, errAuditVerifyStateConflict) {
+		err = c.storage.WithAuditCheckpointLock(ctx, section)
+	}
 	if err != nil {
 		return err
 	}
