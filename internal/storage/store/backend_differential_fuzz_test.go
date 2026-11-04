@@ -152,14 +152,33 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 	// fields, only bare *ID columns — see the diffRoleIDs comment above), so this
 	// order is for clarity, not correctness: no DELETE here can ever fail on a
 	// foreign-key violation.
-	wipe := func(db *gorm.DB) {
-		for _, tbl := range []string{
-			"audit_events", "share_records", "secret_acls", "secret_versions", "secret_nodes",
-			"sessions", "machine_identity_credentials", "machine_identities",
-			"user_groups", "group_roles", "groups",
-			"user_roles", "environments", "users", "projects",
-		} {
-			_ = db.Exec("DELETE FROM " + tbl).Error
+	//
+	// It returns the first error instead of discarding it. The 2026-09-20 divergence
+	// (op=1 operand=48, sqliteOK=true pgOK=false) was the FIRST operation after a wipe,
+	// a CreateUser on tables that should have been empty; a DELETE that fails on one
+	// backend (a dropped connection, a lock timeout on the shared rig database) leaves
+	// the previous iteration's rows behind there, and the next create then hits a
+	// duplicate on that backend only. Ignoring the error turned an infrastructure fault
+	// into a believable "backend divergence".
+	wipe := diffWipeTables
+	// resetBoth wipes both backends, retrying once, so a transient fault does not cost
+	// the iteration. A wipe that still fails is a harness infrastructure fault, not a
+	// divergence: it fails loudly with a distinct prefix (never skips silently, so a
+	// persistently broken backend cannot turn the whole run into a no-op) and names the
+	// backend, so triage does not read it as a storage bug.
+	resetBoth := func(t *testing.T) {
+		t.Helper()
+		for _, b := range []struct {
+			name string
+			db   *gorm.DB
+		}{{"sqlite", sdb}, {"postgres", pdb}} {
+			err := wipe(b.db)
+			if err != nil {
+				err = wipe(b.db)
+			}
+			if err != nil {
+				t.Fatalf("HARNESS INFRASTRUCTURE FAULT (not a backend divergence): could not reset the %s backend: %v", b.name, err)
+			}
 		}
 	}
 
@@ -170,8 +189,7 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 	f.Add([]byte{3, 3, 4, 3, 1, 3, 5, 3, 3, 4}) // create-secret, get-secret, create-user, assign-role
 
 	f.Fuzz(func(t *testing.T, program []byte) {
-		wipe(sdb)
-		wipe(pdb)
+		resetBoth(t)
 		ctx := context.Background()
 
 		// small alphabets so keys collide → unique/dup/case paths are actually hit.
@@ -649,4 +667,20 @@ func auditChainHead(db *gorm.DB) (string, error) {
 		return "", err
 	}
 	return event.EntryHash, nil
+}
+
+// diffWipeTables empties every table the differential harness writes, child tables
+// first, and returns the first failure (naming the table) rather than discarding it.
+func diffWipeTables(db *gorm.DB) error {
+	for _, tbl := range []string{
+		"audit_events", "share_records", "secret_acls", "secret_versions", "secret_nodes",
+		"sessions", "machine_identity_credentials", "machine_identities",
+		"user_groups", "group_roles", "groups",
+		"user_roles", "environments", "users", "projects",
+	} {
+		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
+			return fmt.Errorf("DELETE FROM %s: %w", tbl, err)
+		}
+	}
+	return nil
 }
