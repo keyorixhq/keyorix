@@ -758,19 +758,30 @@ The recover-admin alert (`admin.recover_admin` use is always notified to your
 notification channels) now remembers how far through the audit table it has looked,
 instead of re-reading the whole table every 10 minutes. Where the first pass starts
 depends on whether the install already has a stored mark (the system metadata key
-`recover_admin_alert_last_notified_id`):
+`recover_admin_alert_last_notified_id`). The previous version wrote that mark only when
+it found an `admin.recover_admin` event, and set it to the id of the last event it
+notified. So, on the first start of this version:
 
-- **An install with no stored mark** (it never notified a recover-admin use, or it is
-  new) has nothing to resume from, so the first pass **reads the audit table from its
-  first row to its last, once**, in windows. On a large audit table this takes a while.
-  The same happens if the stored value is not a valid integer: it is treated as no mark.
-- **An install with a stored mark** resumes from it. The previous version moved that
-  mark only when it found an `admin.recover_admin` event, so on an install that had
-  notified before, the mark is the id of its last notified event: the first pass reads
-  only the rows after that id (up to the end of the table, in the same windows), not the
-  whole table, and does not notify those earlier events again.
+- **(a) A fresh install** has no mark and a tiny audit table. The first pass starts at
+  id 0 and reads a few rows in one window; on a completely empty table it reads nothing
+  and writes no mark until the first audit row exists. There is no noticeable cost.
+- **(b) An existing install that never notified a recover-admin use** also has no mark,
+  because the previous version never wrote one. Nothing marks how far it had looked, so
+  the first pass **reads the audit table from its first row to its last, once**, in
+  windows (this is the one-time cost described below). The same happens if the stored
+  value is not a valid integer: it is treated as no mark.
+- **(c) An existing install that notified before** has a mark: the id of its last
+  notified event. It resumes from there, not from 0: the first pass reads only the rows
+  after that id, up to the end of the table, in the same windows, and does not notify
+  those earlier events again. How long that takes depends on how many rows were added
+  since that event, which on an install whose last recover-admin use was long ago is
+  most of the table.
 
 Either way, once the pass has finished the mark is the highest audit id examined.
+The three starts are pinned by `TestRunRecoverAdminAlerting_FirstStartAfterUpgrade`
+(`internal/core/recover_admin_alert_first_start_test.go`); the resume cursor and the
+invalid-mark case also by `TestRunRecoverAdminAlerting_ResumesFromHighWaterMark` and
+`TestRunRecoverAdminAlerting_CorruptMarkTreatedAsZero`.
 
 What bounds it, from the code (`internal/core/recover_admin_alert.go`):
 
