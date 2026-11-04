@@ -57,7 +57,7 @@ import (
 // transportReadDirs: the server layers the transport scan reads, as repo-relative slash paths
 // mapped to the key prefix their hits carry ("handlers/x.go:Func", "services/x.go:Func").
 var transportReadDirs = map[string]string{
-	"server/http/handlers":  "handlers/",
+	"server/http/handlers": "handlers/",
 	"server/grpc/services": "services/",
 }
 
