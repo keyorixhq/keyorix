@@ -3156,6 +3156,7 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/SecretReadRefused'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
 
   /api/v1/secrets:
     get:
@@ -3210,6 +3211,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
     post:
       tags: [Secrets]
       summary: Create a secret
@@ -3249,6 +3251,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
   /api/v1/secrets/{id}:
     get:
       tags: [Secrets]
@@ -3287,6 +3290,7 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/SecretReadRefused'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
     put:
       tags: [Secrets]
       summary: Update a secret
@@ -3789,6 +3793,7 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
   /api/v1/secrets/{id}/dependencies:
     parameters:
       - {name: id, in: path, required: true, schema: {type: integer}}
@@ -4283,6 +4288,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
   /api/v1/folders/{id}:
     delete:
       tags: [Secrets]
@@ -4833,6 +4839,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
     post:
       tags: [DynamicSecrets]
       summary: Create a dynamic-secret config
@@ -4873,6 +4880,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
   /api/v1/dynamic-secrets/configs/{id}:
     get:
       tags: [DynamicSecrets]
@@ -8059,6 +8067,29 @@ components:
               success: {type: boolean}
               code: {type: integer, description: 'Always 503.'}
               error: {type: string, description: 'Always `audit_unavailable`.'}
+              message: {type: string}
+    AuthorizeUnavailable:
+      description: >-
+        The caller's permission could not be checked because the permission lookup
+        failed (PostgreSQL down, or the request deadline expired). The request was
+        refused and NOTHING was changed or returned: this is not a verdict on the
+        caller, so it is not a 403. The answer is 503 with a `Retry-After` header
+        (seconds), the `error` label `ServiceUnavailable` and the fixed `message`
+        "authorization temporarily unavailable, please retry"; no storage error text
+        reaches the client. Retry unchanged once storage is back. The gRPC twin is
+        `Unavailable` with the same message (INV-MW-authorize-lookup-error-is-503).
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: {type: integer}
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: {type: boolean}
+              code: {type: integer, description: 'Always 503.'}
+              error: {type: string, description: 'Always `ServiceUnavailable`.'}
               message: {type: string}
     SecretReadRefused:
       description: >-
