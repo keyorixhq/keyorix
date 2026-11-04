@@ -783,7 +783,10 @@ at once and later ones could already lag by 30 seconds). A server killed
 without a graceful stop loses up to 30 seconds of these stamps. With several
 replicas each writes its own observations and the stored value only moves
 forward. No access decision uses these columns; the stale-credential and
-hygiene reports work in days. Details: [`specs/last-used-coalescing.md`](specs/last-used-coalescing.md).
+hygiene reports work in days. When a flush fails or times out (database
+overload), the next one backs off exponentially, 1 s doubling to a 60 s ceiling
+with jitter, so under sustained database trouble the wait between attempts is
+30 to 60 s, longer than the normal 30 s. Details: [`specs/last-used-coalescing.md`](specs/last-used-coalescing.md).
 
 ## 6j. First start after the upgrade: recover-admin alerting reads the audit history once
 
