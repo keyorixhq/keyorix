@@ -419,7 +419,7 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecrets
 	if err != nil {
 		if errors.Is(err, core.ErrShareListOverCap) {
 			// The HTTP list answers this 422 ShareListOverCap (see ShareGRPCService.ListUserShares).
-			return nil, status.Error(codes.FailedPrecondition, err.Error())
+			return nil, status.Error(codes.FailedPrecondition, "secret list is over the per-request cap; narrow the filter first")
 		}
 		return nil, status.Error(codes.Internal, "failed to list secrets")
 	}
