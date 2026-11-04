@@ -140,6 +140,8 @@ func init() {
 		"Reject the archive if its total decompressed size across all entries exceeds this many bytes")
 	restoreCmd.Flags().BoolVar(&restoreRecover, "recover", false,
 		"Resolve a restore that was interrupted (process killed, power loss) after it started installing: finish it if its data was committed, undo it otherwise")
+	restoreCmd.Flags().BoolVar(&restoreVerbose, "verbose", false,
+		"Print load progress lines (table, rows, elapsed) on stderr even when stderr is not a terminal")
 	registerPassphraseFlags(restoreCmd, &restorePassphraseSource)
 	rootCmd.AddCommand(restoreCmd)
 }
@@ -538,7 +540,7 @@ func loadPostgresRestore(cfg *config.Config, manifest backupfmt.Manifest, stagin
 				return err
 			}
 		}
-		if err := backupfmt.LoadArchive(tx, manifest, stagingDir); err != nil {
+		if err := backupfmt.LoadArchiveWithProgress(tx, manifest, stagingDir, newStderrRestoreProgress().callback()); err != nil {
 			return err
 		}
 		if err := backfillOTPExpiryForOlderArchive(tx, manifest); err != nil {
@@ -596,7 +598,7 @@ func buildStagedSQLiteRestore(cfg *config.Config, stagedDB string, manifest back
 	}
 	fmt.Println("Loading data into the staged database...")
 	loadErr := targetDB.Transaction(func(tx *gorm.DB) error {
-		if err := backupfmt.LoadArchive(tx, manifest, stagingDir); err != nil {
+		if err := backupfmt.LoadArchiveWithProgress(tx, manifest, stagingDir, newStderrRestoreProgress().callback()); err != nil {
 			return err
 		}
 		return backfillOTPExpiryForOlderArchive(tx, manifest)

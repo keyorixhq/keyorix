@@ -44,6 +44,17 @@ journal"). Older releases (v0.96.x and earlier) installed the archive's key file
    written before the journal is removed, so a crash between the two makes `--recover`
    write them a second time: the trail can show the same restore twice, never zero times.
 
+**Progress.** While the data loads (step 2 on SQLite, step 4 on PostgreSQL) restore prints
+a line on stderr at every table boundary and every 10 seconds inside a large table, so a
+restore of millions of rows does not look hung:
+
+```
+restore progress: table=audit_events (7/31) loading rows=1250000/4800000 elapsed=4m10s
+```
+
+The lines carry table names and row counts only. They appear when stderr is a terminal, or
+anywhere with `--verbose`; the summary on stdout is unchanged.
+
 ## What a failure leaves
 
 | Fails or is killed during | Left behind | What to do |
@@ -82,15 +93,50 @@ Takes the same database lock as restore, reads the journal, then:
 - **No journal:** `No interrupted restore found`, exit 0, after removing any orphaned
   `*.restoring-*` files of a run killed before its journal was written.
 
-**After a PostgreSQL restore killed during the load, restore again with
-`--overwrite-existing`.** The restore runs the migrations first, as their own committed
-step, and loads the archive in a separate transaction after them. A kill in the load
-(for example the process killed for lack of memory) therefore leaves the schema in the
-database even though no row was committed. `--recover` rolls the data back and removes
-the journal, but the database now has tables, and a new `admin restore` into it is refused
-(`target Postgres database already has N table(s)`) unless you pass `--overwrite-existing`.
-Note that `--overwrite-existing` empties the target's tables, so any rows that were there
-before the first attempt are replaced too.
+### After a PostgreSQL restore killed during the load
+
+The restore runs the migrations first, as their own committed step, and loads the archive
+in a separate transaction after them. A kill in the load (the process killed for lack of
+memory, `kill -9`, power loss) therefore leaves the schema in the database even though no
+row was committed. `--recover` undoes the restore but does not drop that schema, and a
+plain `admin restore` into a database that has tables is refused. Recovery is two commands,
+in this order:
+
+```sh
+keyorix-server admin restore --recover --config ./keyorix.yaml
+keyorix-server admin restore --input ./backup.tar.gz --overwrite-existing --config ./keyorix.yaml
+```
+
+1. **`--recover`** takes the database lock, reads the journal and refuses it if it names
+   any file that is not this config's own (see "Recovery refuses" below). It then reads the
+   restore's token from `system_metadata`. The token is written by the load transaction
+   itself, so its absence proves nothing was committed: the staged key files are deleted,
+   the journal is removed and it prints `Rolled back: the restore's data was never
+   committed.` If the database cannot be reached it changes nothing and says so. It never
+   touches the schema, so a plain restore is still refused afterwards
+   (`target Postgres database already has N table(s) ... pass --overwrite-existing`).
+   While the journal exists, a plain restore is refused earlier, with the message above.
+2. **`--overwrite-existing`** skips only the "target is not empty" refusals (tables, key
+   files, key-set manifest). Everything else runs as for any restore: archive signature,
+   schema epoch, key-file set and rollback protection, all before anything is written. The
+   load transaction then empties the target's tables, loads the archive, and the key files
+   are installed after it commits; any existing key file is kept as
+   `<path>.pre-restore-<timestamp>`. Success ends with `verify-audit on the restored
+   database: VALID`.
+
+Run `--recover` first: with the journal still present the second command is refused. If
+the kill happened after the load committed, `--recover` rolls forward instead (`Rolled
+forward: ...`) and the second command is not needed. If a plain `admin restore` is accepted
+after `--recover` (the kill came before the migrations), the flag is not needed either.
+
+`--overwrite-existing` empties the target's tables, so rows that were in the database
+before the first attempt are replaced too; restore into a database that held nothing you
+want to keep.
+
+Checked against a real `kill -9` and a `SIGTERM` during the load of a large archive into
+PostgreSQL by `scripts/migrate/scale-kill-check.sh`: the killed load left the journal and
+no rows, `--recover` rolled back, a plain restore was refused naming `--overwrite-existing`,
+and the second command restored every table equal to the source with a valid audit chain.
 
 A journal that does not parse is reported, not ignored. Inspect it: it is plain JSON
 listing each `path`, its `staged` replacement and the replacement's `sha256`.
