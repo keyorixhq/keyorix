@@ -485,13 +485,16 @@ func (c *KeyorixCore) CompleteAuditKeyTransition(ctx context.Context) (bool, err
 		if !c.auditKeyTransitionNewMACValid(t) {
 			return fmt.Errorf("key transition #%d to key version %q fails its new-key signature: not completed", t.Seq, t.NewKID)
 		}
-		stateVal, _, err := c.storage.GetSystemMetadata(ctx, auditVerifyStateKey)
+		stateVal, stateFound, err := c.storage.GetSystemMetadata(ctx, auditVerifyStateKey)
 		if err != nil {
 			return err
 		}
 		st, _, why, err := c.decodeAuditVerifyStateCarried(ctx, stateVal)
 		if err != nil {
 			return err
+		}
+		if st != nil {
+			st.stored = auditVerifyStoredRow{val: stateVal, found: stateFound, read: true}
 		}
 		if t.State != "" && (st == nil || st.KeyEpoch == nil || st.KeyEpoch.Seq != t.Seq) {
 			return fmt.Errorf("key transition #%d: the verification state changed after the transition was prepared (%s): not completed", t.Seq, why)
