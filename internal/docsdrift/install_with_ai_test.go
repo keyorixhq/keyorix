@@ -20,11 +20,12 @@ import (
 //
 //   - read: an assistant line does not read a secret file. A secret path (see
 //     iwaSecretPath) is refused as the input redirection of a command, or as an
-//     argument anywhere in a simple command that also names a reader
-//     (iwaReaders: cat, grep, base64, cp, a hash, an editor, an interpreter, ...),
-//     so `docker compose exec backend cat /run/secrets/x` and `$(cat x)` count.
-//     Passing a path as KEYORIX_*_FILE=, `rm`, `chmod`, `chown` and output
-//     redirection are not reads.
+//     argument of ANY command that is not on the allowlist of non-reading
+//     commands (iwaNonReaders: rm, chmod, chown, chgrp, shred, test, [, [[, ls,
+//     stat, touch, mkdir, ./bin/keyorix, ./bin/keyorix-server), so `docker compose exec backend cat /run/secrets/x`,
+//     `$(cat x)`, `eval "cat x"`, `nl x`, `awk 1 x` and `python -c` all count and
+//     an unknown command fails closed. Passing a path as KEYORIX_*_FILE=, a bare
+//     path in prose and output redirection are not reads.
 //   - print: an assistant line does not run a command that prints a secret by
 //     design: `mfa enroll`, `mfa activate`, `recovery-key rotate` without
 //     `--recipient`, `printenv`, `env` with no command after it (`env`,
@@ -54,7 +55,7 @@ import (
 //
 // What it does not check: prose that is not in a code span, fences that use ~~~
 // instead of backticks, 4-space indented code blocks, the keyorix CLI credential file (~/.config/keyorix/credentials.json,
-// not in iwaSecretPath), whether a reader not in iwaReaders can read a file
+// not in iwaSecretPath), whether an allowlisted command can read a file
 // (an input redirection, also 0< 3< and <>, is a read whatever the command),
 // shell globs (`cat secre*/master*`) and variable indirection (`F=secrets/x` and
 // `cat "$F"` on separate lines), which a word-level match cannot see, the
@@ -83,15 +84,15 @@ var (
 	// directory: secrets, keys and /run/secrets with or without a trailing slash
 	// or a file below them (so `cp -r secrets x` and `tar czf x secrets keys`
 	// count), and the known secret file names.
-	iwaSecretPath = regexp.MustCompile(`(^|[/"'=:])(secrets|keys)(/|$)|/run/secrets(/|$)|server\.key|\.age$|keyorix\.db|(master|admin|db)_password|bootstrap_token|metrics_token`)
-	iwaReaders    = []string{
-		"cat", "tac", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg", "ag", "awk", "sed",
-		"cut", "sort", "uniq", "xxd", "od", "hexdump", "base64", "base32", "strings", "cp", "scp", "rsync",
-		"tar", "zip", "openssl", "gpg", "age", "diff", "cmp", "vi", "vim", "nano", "emacs", "source", ".",
-		"python", "python3", "perl", "ruby", "node", "jq", "yq", "sqlite3", "psql", "echo", "printf",
-		"sha256sum", "sha1sum", "sha512sum", "shasum", "md5sum", "b2sum", "cksum", "curl", "wget", "nc",
-		"dd", "mv", "install", "ln",
-	}
+	iwaSecretPath = regexp.MustCompile(`(^|[/"'=:\s])(secrets|keys)(/|$)|/run/secrets(/|$)|server\.key|\.age$|keyorix\.db|(master|admin|db)_password|bootstrap_token|metrics_token`)
+	// iwaNonReaders is the ALLOWLIST: the only commands that may have a secret path
+	// among their words. None of them opens the file's contents (rm, chmod, chown,
+	// chgrp and shred act on the file, test/[/[[ , ls and stat read metadata, touch
+	// and mkdir create; the project's own binaries write files such as --output and
+	// do not echo one, what they print is the print rules' job). Any other command word, known or not (cat, eval, nl, less,
+	// awk, xxd, base64, python -c, a script of the page's own), is refused. Matched
+	// against the whole command word: `/bin/cat`, `\rm` and `command rm` are not on it.
+	iwaNonReaders = []string{"rm", "chmod", "chown", "chgrp", "shred", "test", "[", "[[", "ls", "stat", "touch", "mkdir", "./bin/keyorix", "./bin/keyorix-server"}
 	// iwaDSNPassword matches a password inside a connection string: a password=
 	// keyword or URL userinfo with a password.
 	iwaDSNPassword    = regexp.MustCompile(`(?i)(^|[\s"'])password\s*=|://[^/\s:@]+:[^/\s@]+@`)
@@ -380,15 +381,11 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 			if l.Human {
 				continue
 			}
-			name, reader := "", ""
+			name, allowed := "", false
 			if ci >= 0 {
 				name = path.Base(cmd[ci])
-				for _, w := range cmd[ci:] {
-					if slices.Contains(iwaReaders, path.Base(w)) {
-						reader = path.Base(w)
-						break
-					}
-				}
+				// a bare path (`secrets/x` in prose) is a noun, not a command that reads it
+				allowed = slices.Contains(iwaNonReaders, cmd[ci]) || iwaSecretPath.MatchString(cmd[ci])
 			}
 			// From the first word, not from ci: iwaCommandWord skips a leading
 			// redirection and its target, but `< secrets/x cat` and $(< secrets/x)
@@ -408,8 +405,8 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 				case (prev == ">" && !readWrite) || prev == ">>":
 				case readWrite || iwaInputOp.MatchString(prev):
 					add(l, "assistant line reads the secret file %s by input redirection", w)
-				case reader != "" && name != "rm" && name != "chmod" && name != "chown":
-					add(l, "assistant line reads the secret file %s with %s", w, reader)
+				case ci >= 0 && !allowed:
+					add(l, "assistant line names the secret file %s in %q, which is not a non-reading command (iwaNonReaders)", w, cmd[ci])
 				}
 			}
 			if ci < 0 {
