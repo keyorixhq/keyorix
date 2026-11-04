@@ -847,6 +847,9 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		} else if errors.Is(err, storage.ErrRoleAlreadyAssigned) {
 			sendError(w, "ConflictError", "Role already assigned to group", http.StatusConflict, nil)
+		} else if errors.Is(err, core.ErrPermissionDenied) {
+			// The grant ceiling (a role the actor cannot grant): a refusal, not a fault.
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to assign role to group", http.StatusInternalServerError, nil)
 		}

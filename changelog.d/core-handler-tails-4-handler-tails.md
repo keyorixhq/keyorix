@@ -1,0 +1,4 @@
+### Fixed
+- **A role grant beyond the actor's ceiling on a group is a 403, not a 500.** `POST /api/v1/groups/{id}/roles` answered the grant-ceiling refusal "Failed to assign role to group" (500); it is now 403 like the user, project-member and group-member paths.
+- **A storage outage during an in-handler permission check is a 503, not a 403.** `PUT /api/v1/projects/{id}` (changing `require_mfa`), `POST /api/v1/invitations` (system role and project assignments), `POST /api/v1/rotation-policies` and `POST /api/v1/users` (with `role` / `project_assignments`) now answer 503 + `Retry-After` when the permission lookup itself fails, so a client retries instead of reading "forbidden". A genuine denial keeps its 403.
+- Verified already fixed on main and now pinned: `PUT /api/v1/users/{id}/roles` ceiling refusal is 403 (#3840) and the SCIM `GET /scim/v2/Groups` member-read error is a 500 SCIM error, not an empty member list (#3775).

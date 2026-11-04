@@ -387,8 +387,10 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	// tier), otherwise a developer could silently disable the project's MFA enforcement.
 	// name/description stay on the secrets.write gate.
 	if body.RequireMFA != nil {
-		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{ProjectID: id}); aerr != nil || !ok {
+		ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{ProjectID: id})
+		if refuseUnlessAuthorized(w, r, ok, aerr, func() {
 			sendError(w, "Forbidden", "changing a project's MFA requirement requires the roles.assign permission", http.StatusForbidden, nil)
+		}) {
 			return
 		}
 	}

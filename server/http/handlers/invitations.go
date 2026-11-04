@@ -136,14 +136,18 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 	// account (their own email) as system_admin and own the install on accept. Require
 	// roles.assign at the relevant scope for the system role and each project assignment.
 	if body.Role != "" {
-		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{}); aerr != nil || !ok {
+		ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{})
+		if refuseUnlessAuthorized(w, r, ok, aerr, func() {
 			sendError(w, "Forbidden", "You may not invite with a system role you cannot assign", http.StatusForbidden, nil)
+		}) {
 			return
 		}
 	}
 	for _, a := range body.ProjectAssignments {
-		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID}); aerr != nil || !ok {
+		ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID})
+		if refuseUnlessAuthorized(w, r, ok, aerr, func() {
 			sendError(w, "Forbidden", "You may not invite with roles in a project where you cannot assign roles", http.StatusForbidden, nil)
+		}) {
 			return
 		}
 	}
