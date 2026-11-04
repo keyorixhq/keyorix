@@ -559,7 +559,7 @@ keyorix audit search --resource-type secret --resource-id 42
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--action` | `string` | — | Filter by exact event type (e.g. secret.read) |
-| `--actor` | `string` | — | Partial match on actor username |
+| `--actor` | `string` | — | Case-insensitive partial match on a user's username or a machine identity's name |
 | `--cursor` | `string` | — | Continue after a previous page (the cursor printed under it) |
 | `--include-total` | — | — | Count every matching event (exact total; slower on a large audit trail) |
 | `--ip` | `string` | — | Filter by originating IP address |
