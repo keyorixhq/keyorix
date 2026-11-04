@@ -17,9 +17,12 @@ import (
 
 // AllowInsecureSMTP gates tls=none for every SMTP-sending channel in this
 // codebase (credential-delivery setup-link mail, ADR-028; the notification
-// email channel). Cleartext SMTP sends the message — and, if the relay
-// requires auth, the relay credentials — over the wire unencrypted, so
-// tls=none refuses to activate unless this is set to a truthy value.
+// email channel). Cleartext SMTP sends the message and the relay username
+// over the wire unencrypted. The mail library (go-mail, auth autodiscovery)
+// never sends a PLAIN or LOGIN password without TLS, so relay auth is limited
+// to challenge-response mechanisms (CRAM-MD5/SCRAM) and a relay that offers
+// only PLAIN or LOGIN fails to authenticate. tls=none refuses to activate
+// unless this is set to a truthy value.
 const AllowInsecureSMTP = "KEYORIX_ALLOW_INSECURE_SMTP"
 
 // Enabled reports whether the named environment variable is set to a truthy
