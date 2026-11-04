@@ -126,6 +126,7 @@ internal/core/guards/secret_read_audit_call_sites_test.go	!operator/**	skips ope
 internal/core/guards/secret_undelete_column_scoped_guard_test.go	!operator/**	walks internal/core, internal/storage/store, server/
 internal/core/guards/update_secret_column_scoped_guard_test.go	!operator/**	walks internal/core, internal/storage/store, server/
 internal/core/secret_nodes_soft_delete_guard_test.go	!operator/**	walks named internal/ roots
+internal/encryption/key_lock_hint_callers_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/encryption/pending_dek_cleanup_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/envflag/envflag_review_test.go	!operator/**	skips nested modules (go.mod)
 internal/secretenv/fileread_guard_test.go	!operator/**	walks guardedDirs (root module only)

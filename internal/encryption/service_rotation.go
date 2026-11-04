@@ -50,7 +50,7 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 	// or never happens. AcquireExclusiveKeyLock is released by the deferred
 	// Shutdown() the CLI already calls after this function returns.
 	if err := s.AcquireExclusiveKeyLock(); err != nil {
-		return nil, fmt.Errorf("refusing to rotate: %w — stop the running server before rotating", err)
+		return nil, fmt.Errorf("refusing to rotate: %w", WithLockContentionHint(err, "stop the running server before rotating"))
 	}
 
 	// Ensure the redo-marker table exists before the sweep transaction writes it (the marker
@@ -352,7 +352,7 @@ func (s *Service) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase st
 	// the CLI caller (rotate-kek) to acquire it first, as defense in depth.
 	// Idempotent — a no-op if this Service (or its caller) already holds it.
 	if err := s.AcquireExclusiveKeyLock(); err != nil {
-		return fmt.Errorf("refusing to rotate KEK: %w — stop the running server before rotating", err)
+		return fmt.Errorf("refusing to rotate KEK: %w", WithLockContentionHint(err, "stop the running server before rotating"))
 	}
 
 	s.mu.Lock()
@@ -387,7 +387,7 @@ func (s *Service) RewrapDEKWithProviderPrepare(newProvider crypto.KeyProvider, p
 	// AcquireExclusiveKeyLock is released by the deferred Shutdown() the CLI
 	// already calls after this function returns.
 	if err := s.AcquireExclusiveKeyLock(); err != nil {
-		return fmt.Errorf("refusing to re-wrap DEK: %w — stop the running server before migrating the KEK provider", err)
+		return fmt.Errorf("refusing to re-wrap DEK: %w", WithLockContentionHint(err, "stop the running server before migrating the KEK provider"))
 	}
 
 	s.mu.Lock()

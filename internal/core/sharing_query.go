@@ -155,10 +155,17 @@ func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, s
 }
 
 // ListSharesByUser lists shares involving the user (received as recipient + outgoing as owner).
+// The gRPC/CLI path. Like ListUserShareViews and the owner-scoped list, it refuses
+// (ErrShareListOverCap) rather than return a list either storage fetch may have
+// truncated: a silently shortened list hides shares from whoever is reviewing or
+// revoking them (REVIEW-3018).
 func (c *KeyorixCore) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
 	received, owned, err := c.sharesReceivedAndOwned(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	if shareFetchMayBeTruncated(received) || shareFetchMayBeTruncated(owned) {
+		return nil, ErrShareListOverCap
 	}
 	return mergeSharesByID(received, owned), nil
 }

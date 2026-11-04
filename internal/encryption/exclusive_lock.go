@@ -110,6 +110,17 @@ func wrapLockOpenError(dir, lockPath string, err error) error {
 	return fmt.Errorf("open DEK lock file: %w", err)
 }
 
+// WithLockContentionHint appends hint to err only when another process really holds the key
+// lock (flock refused with EWOULDBLOCK). A missing key directory (KeyDirMissingError), permission
+// denied and any other failure to open the lock file are returned as they are: telling the
+// operator to stop a server that is not running sends them the wrong way.
+func WithLockContentionHint(err error, hint string) error {
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return fmt.Errorf("%w — %s", err, hint)
+	}
+	return err
+}
+
 // acquireExclusiveKeyLock takes a non-blocking exclusive advisory lock on the key
 // directory. The returned file must be kept open — closing it (or process exit,
 // including a crash) releases the lock automatically, so there is no stale-lock

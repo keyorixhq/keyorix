@@ -15,6 +15,7 @@ AssignUserRole
 AssignUserRoleScoped
 AssignUserRoleWithExpiry
 BulkApproveAccessRequests
+BulkDeleteSecrets
 ClassifyMachineIdentity
 ClassifyMachineToken
 CloseAccessReviewCampaign

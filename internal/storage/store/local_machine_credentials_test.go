@@ -134,6 +134,8 @@ func TestMachineRoleGrantScopeResolution(t *testing.T) {
 func TestMachineRoleGrantScopeResolution_EnvCrossLeak(t *testing.T) {
 	ls := newMachineCredTestStore(t)
 	seedLiveProjects(t, ls, 2, 3) // a scoped grant needs a live projects row (#2795)
+	seedLiveEnv(t, ls.db, 8, 2)
+	seedLiveEnv(t, ls.db, 9, 2)
 	ctx := context.Background()
 	const machineID = uint(1)
 

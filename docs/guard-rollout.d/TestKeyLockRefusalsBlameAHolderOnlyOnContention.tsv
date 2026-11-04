@@ -1,0 +1,1 @@
+TestKeyLockRefusalsBlameAHolderOnlyOnContention	internal/encryption	#3933	new key-lock refusal wording guard (MSG-ACCURACY-1), report-only until its first green nightly on main

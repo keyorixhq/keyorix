@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -290,6 +291,10 @@ func (d *AnomalyDetector) SetBusinessHours(ctx context.Context, tz string, start
 // logged loudly (a missed audit write for a detection-control config change is
 // itself a small gap).
 func (d *AnomalyDetector) auditBusinessHoursConfig(ctx context.Context, tz string, p offHoursPolicy) {
+	// Builds and writes its event with no emitAudit recover around it: a panic
+	// here is logged and counted, and SetBusinessHours' applied change stands
+	// (INV-CORE-audit-writer-recovers-own-build).
+	defer besteffort.RunRecover("audit.auditBusinessHoursConfig")()
 	if d.storage == nil {
 		return
 	}

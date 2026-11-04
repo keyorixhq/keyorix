@@ -154,7 +154,7 @@ func unlockEncryptionService(cfg *config.Config, resolve masterPassphrase) (*enc
 
 	svc := encryption.NewService(&cfg.Storage.Encryption, ".")
 	if err := svc.AcquireExclusiveKeyLock(); err != nil {
-		return nil, fmt.Errorf("failed to acquire the encryption key lock (stop the server first): %w", err)
+		return nil, fmt.Errorf("failed to acquire the encryption key lock: %w", encryption.WithLockContentionHint(err, "stop the server first"))
 	}
 	if err := svc.Initialize(passphrase); err != nil {
 		svc.Shutdown()

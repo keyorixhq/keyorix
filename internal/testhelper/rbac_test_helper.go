@@ -331,6 +331,7 @@ func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, pro
 // when none exists: since #2795 a scoped grant whose project has no row does not
 // authorize. 0 (global) needs no row.
 func (h *RBACTestHelper) ensureLiveProject(t *testing.T, projectID uint) {
+	t.Helper()
 	if projectID == 0 {
 		return
 	}

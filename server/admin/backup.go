@@ -522,7 +522,7 @@ func unwrapManifestKeyWith(cfg *config.Config, baseDir string, resolve masterPas
 
 	svc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 	if err := svc.AcquireExclusiveKeyLock(); err != nil {
-		return nil, fmt.Errorf("failed to acquire the encryption key lock (another process is using it): %w", err)
+		return nil, fmt.Errorf("failed to acquire the encryption key lock: %w", encryption.WithLockContentionHint(err, "another process is using this key directory"))
 	}
 	defer svc.Shutdown()
 

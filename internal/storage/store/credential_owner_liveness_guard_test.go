@@ -18,25 +18,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCredentialInsertsRecheckOwnerLiveness asserts that each of the three
-// credential-row inserts a suspend/deactivate/delete sweep is supposed to cover
-// re-checks its owner inside the SAME transaction, and that the shared re-check
-// actually goes through lockLiveParent.
+// TestCredentialInsertsRecheckOwnerLiveness asserts that each credential-row
+// insert a suspend/deactivate/delete sweep is supposed to cover re-checks its
+// owner inside the SAME transaction, and that the shared re-check actually goes
+// through lockLiveParent.
 //
-// The three are named explicitly, and that list is the guard's own weak point,
+// The inserts are named explicitly, and that list is the guard's own weak point,
 // so here is how it was derived rather than asserted: the sweep paths revoke
-// exactly two tables — personal_access_tokens
-// (RevokeAllPersonalAccessTokensForUser) and sessions
-// (DeleteSessionsForUserExcept) — so the population is every LocalStorage method
-// that INSERTs into one of those two. A grep for `tx.Create(`/`.Create(` against
-// models.PersonalAccessToken and models.Session in this package yields exactly
-// CreatePersonalAccessToken, CreateSession and RotateSession. A fourth insert
-// into either table would not be caught by this test; it would be caught by the
-// pg tests only if someone wrote one, which is why the derivation is written
-// down here instead of left implicit.
+// exactly three tables — personal_access_tokens
+// (RevokeAllPersonalAccessTokensForUser), sessions (DeleteSessionsForUserExcept)
+// and mfa_step_up_grants (DeleteMFAStepUpGrantsFor, via core's post-commit
+// purgeStepUpGrants on every sweep path; AUTH-AUDIT-2 added the third table) —
+// so the population is every LocalStorage method that INSERTs into one of those
+// three. A grep for `tx.Create(`/`.Create(` against models.PersonalAccessToken,
+// models.Session and models.MFAStepUpGrant in this package yields exactly
+// CreatePersonalAccessToken, CreateSession and RotateSession (local_auth.go) and
+// CreateMFAStepUpGrant (local_mfa_stepup_grant.go). A further insert into any of
+// the three would not be caught by this test; it would be caught by the pg tests
+// only if someone wrote one, which is why the derivation is written down here
+// instead of left implicit.
 func TestCredentialInsertsRecheckOwnerLiveness(t *testing.T) {
-	for _, fn := range []string{"CreatePersonalAccessToken", "CreateSession", "RotateSession"} {
-		calls := credGuardCalls(t, "local_auth.go", "LocalStorage", fn)
+	for _, c := range []struct{ file, fn string }{
+		{"local_auth.go", "CreatePersonalAccessToken"},
+		{"local_auth.go", "CreateSession"},
+		{"local_auth.go", "RotateSession"},
+		{"local_mfa_stepup_grant.go", "CreateMFAStepUpGrant"},
+	} {
+		fn := c.fn
+		calls := credGuardCalls(t, c.file, "LocalStorage", fn)
 		require.Contains(t, calls, "Transaction",
 			"%s must do its insert inside a transaction — the owner re-check is only sound if it shares "+
 				"one with the INSERT (#2701)", fn)

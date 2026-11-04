@@ -233,12 +233,12 @@ func (ls *LocalStorage) RemoveMachineRole(ctx context.Context, machineID, roleID
 // so deletion doesn't work as an access boundary for machine principals either.
 // The LEFT JOINs (not INNER) are required because project_id/environment_id 0
 // means "global" and has no corresponding row to join against — the "= 0 OR ..."
-// clause short-circuits before the joined columns are consulted in that case; a
-// scoped project_id with no projects row at all (a project hard-deleted or purged
-// while the grant row survived) does NOT authorize: projects.id IS NOT NULL is
-// required next to deleted_at IS NULL, since a missing row also reads deleted_at
-// as NULL (#2795, READPATH-DANGLING-ROLE-1). A scoped environment_id with no row
-// is still read as not-deleted.
+// clause short-circuits before the joined columns are consulted in that case. A
+// scoped project_id/environment_id with no matching row at all (hard-deleted,
+// purged, or never there: the joined id is SQL NULL, and so is deleted_at) is NOT
+// live, so <t>.id IS NOT NULL is required next to deleted_at IS NULL and a purged
+// project's leftover grants authorize nothing (#2795, READPATH-DANGLING-ROLE-1,
+// INV-STORE-scoped-grant-needs-live-scope-row).
 func (ls *LocalStorage) GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Model(&models.MachineIdentityRole{}).
@@ -246,7 +246,7 @@ func (ls *LocalStorage) GetMachineRoleIDsAt(ctx context.Context, machineID uint,
 		Joins("LEFT JOIN environments ON environments.id = machine_identity_roles.environment_id").
 		Where("machine_identity_roles.machine_identity_id = ?", machineID).
 		Where("machine_identity_roles.project_id = 0 OR (machine_identity_roles.project_id = ? AND projects.id IS NOT NULL AND projects.deleted_at IS NULL)", scope.ProjectID).
-		Where("machine_identity_roles.environment_id = 0 OR (machine_identity_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
+		Where("machine_identity_roles.environment_id = 0 OR (machine_identity_roles.environment_id = ? AND environments.id IS NOT NULL AND environments.deleted_at IS NULL)", scope.EnvironmentID).
 		Distinct().Pluck("machine_identity_roles.role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

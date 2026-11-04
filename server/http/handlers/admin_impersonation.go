@@ -117,6 +117,9 @@ func (h *ImpersonationHandler) Start(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, resp, "Impersonation started")
 }
 
+// errSessionOnlyEndpoint is End's 403 for a bearer that is not an interactive session.
+const errSessionOnlyEndpoint = "This endpoint is only available to an interactive session, not a personal access token"
+
 // End handles POST /api/v1/auth/end-impersonation. On success it restores the
 // admin's stashed session cookie when it's still live, or clears everything
 // (routing to a fresh login) when it's not — e.g. the admin's own session
@@ -131,6 +134,12 @@ func (h *ImpersonationHandler) End(w http.ResponseWriter, r *http.Request) {
 	token := extractBearerToken(r)
 	if token == "" {
 		sendError(w, "BadRequest", "Missing authorization token", http.StatusBadRequest, nil)
+		return
+	}
+	// Same 403 for any other non-session bearer (a personal access token): it names no
+	// session, so EndImpersonation's "session not found" used to surface as a 500.
+	if u := middleware.GetUserFromContext(r.Context()); (u != nil && !u.SessionAuth) || strings.HasPrefix(token, "kx_pat_") {
+		sendError(w, "Forbidden", errSessionOnlyEndpoint, http.StatusForbidden, nil)
 		return
 	}
 	adminID, err := h.coreService.EndImpersonation(r.Context(), token)
