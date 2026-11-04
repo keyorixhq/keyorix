@@ -42,6 +42,7 @@ type swWorld struct {
 	cfg     *config.Config
 	foreign *gorm.DB
 	credID  uint
+	guard   *Guard // set by start; serverStorage waits on its tracker
 }
 
 func newSWWorld(t *testing.T) *swWorld {
@@ -109,6 +110,7 @@ func (w *swWorld) start(opts Options) *Guard {
 	require.NoError(w.t, g.InstallFence(context.Background()))
 	require.NoError(w.t, g.Settle(context.Background()))
 	g.Run(context.Background())
+	w.guard = g
 	return g
 }
 

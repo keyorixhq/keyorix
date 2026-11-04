@@ -35,7 +35,34 @@ func (w *swWorld) serverStorage() storage.Storage {
 	if c, ok := st.(interface{ Close() error }); ok {
 		w.t.Cleanup(func() { _ = c.Close() })
 	}
+	w.settleStartupWrites()
 	return st
+}
+
+// settleStartupWrites waits until the tracker's commit count has been still for
+// a quiet window. A new store starts the trigger-integrity check, whose first
+// tick writes a fenced table in the background; sampled mid-test, that write
+// would count as a commit of the transaction under test. Bounded: the check
+// writes only at its first tick (the next is rolePermGenerationIntegrityInterval
+// away), so a count that never settles is reported, not waited out.
+func (w *swWorld) settleStartupWrites() {
+	w.t.Helper()
+	if w.guard == nil {
+		return
+	}
+	tr := w.guard.Tracker()
+	const quiet = 400 * time.Millisecond
+	deadline := time.Now().Add(15 * time.Second)
+	last, since := tr.commits.Load(), time.Now()
+	for time.Since(since) < quiet {
+		if time.Now().After(deadline) {
+			w.t.Fatal("the tracker's commit count did not settle after the store started")
+		}
+		time.Sleep(20 * time.Millisecond)
+		if c := tr.commits.Load(); c != last || tr.Inflight() != 0 {
+			last, since = c, time.Now()
+		}
+	}
 }
 
 // TestTracker_EveryEpochMoveIsAWriteTheTrackerSaw drives the storage writes
