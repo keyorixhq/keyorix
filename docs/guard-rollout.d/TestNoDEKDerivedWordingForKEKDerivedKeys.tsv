@@ -1,1 +1,1 @@
-TestNoDEKDerivedWordingForKEKDerivedKeys	internal/docsdrift	#3960	wording guard (LEAK-WORDING-TAILS-1, #3862) widened to _test.go comments (GUARD-PROMOTE-2); report-only until its first green nightly on main
+TestNoDEKDerivedWordingForKEKDerivedKeys	internal/docsdrift	#3961	wording guard (LEAK-WORDING-TAILS-1, #3862) widened to _test.go comments (GUARD-PROMOTE-2); report-only until its first green nightly on main
