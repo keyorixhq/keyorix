@@ -2,8 +2,8 @@ package handlers
 
 // authorize_global_probe_outage_test.go -- AUTHZ-OUTAGE-TAILS-1 item 3: the two
 // handler call sites that probed a permission at global scope through
-// middleware.AuthorizedAtGlobalScope, which folds a failed lookup into "not
-// authorized".
+// middleware.AuthorizedAtGlobalScope (now deleted), which folded a failed lookup
+// into "not authorized".
 //
 //   - template render (a referenced secret that does not exist): the probe decides
 //     404 versus 403, a refusal, so a storage outage of the probe is the shared 503
