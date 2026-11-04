@@ -16,14 +16,18 @@ package handlers
 //   - The shape: an if whose condition is a `||` chain holding `<err ident> != nil`
 //     (an identifier containing "err", case-insensitive) and a `!<ident or
 //     selector>` operand.
-//   - A refusal: the if body mentions http.StatusForbidden or codes.PermissionDenied.
+//   - A refusal: the if body mentions http.StatusForbidden or codes.PermissionDenied,
+//     or returns a fresh error (a `return` of a call to fmt.Errorf, errors.New or
+//     permissionDeniedf): a helper whose caller turns the error into a 403
+//     (CORE-HANDLER-TAILS-4 item 3, users_crud.go authorizeUserCreationAssignments).
 //   - Mapped: a call to one of authorizeOutageMappers (core.IsAuthorizeTransient,
-//     authorizeRefusal, refuseUnlessAuthorized) in the same if statement or in an
-//     earlier statement of the same block.
+//     authorizeRefusal, refuseUnlessAuthorized, authorizeLookupRefusal) in the same
+//     if statement or in an earlier statement of the same block. authorizeLookupRefusal
+//     builds the returned error so that it carries the lookup error to the caller.
 //
-// What it does NOT see: a refusal that is returned as an error and turned into a
-// 403 by a caller (users_crud.go authorizeUserCreationAssignments), a lookup whose
-// error is dropped (`allowed, _ :=`), and checks written as `err == nil && ok`
+// What it does NOT see: a refusal returned as an error through any other expression
+// (a variable, a struct literal, a wrapper other than the three calls above), a
+// lookup whose error is dropped (`allowed, _ :=`), and checks written as `err == nil && ok`
 // with the refusal in the else branch (secrets_list.go's human scoped listing,
 // which degrades to the owned/ACL list rather than refusing). The population
 // tripwire only proves the scan finds permission lookups at all.
@@ -45,18 +49,12 @@ var authorizeOutageMappers = map[string]bool{
 	"IsAuthorizeTransient":   true,
 	"authorizeRefusal":       true,
 	"refuseUnlessAuthorized": true,
+	"authorizeLookupRefusal": true,
 }
 
 // authorizeOutageExempt names functions ("file.go:Func") whose raw
 // `err != nil || !allowed` refusal is not yet mapped, each for a stated reason.
-var authorizeOutageExempt = map[string]string{
-	"catalog.go:UpdateProject": "roles.assign check on the MFA-requirement change; catalog.go is outside " +
-		"AUTHZ-OUTAGE-HANDLERS-1's paths (LEFTOVERS)",
-	"invitations.go:CreateGlobalInvitation": "roles.assign checks on invitation roles; invitations.go is outside " +
-		"AUTHZ-OUTAGE-HANDLERS-1's paths (LEFTOVERS)",
-	"rotation_policies_handler.go:Create": "secrets.write check on policy create; rotation_policies_handler.go is outside " +
-		"AUTHZ-OUTAGE-HANDLERS-1's paths (LEFTOVERS)",
-}
+var authorizeOutageExempt = map[string]string{}
 
 func authorizeOutageIsLookupName(name string) bool {
 	return strings.HasPrefix(name, "Authorize") || strings.HasPrefix(name, "HoldsPermission")
@@ -116,17 +114,37 @@ func authorizeOutageShape(cond ast.Expr) bool {
 func authorizeOutageRefuses(body ast.Node) bool {
 	refuses := false
 	ast.Inspect(body, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if pkg, ok := sel.X.(*ast.Ident); ok &&
-			((pkg.Name == "http" && sel.Sel.Name == "StatusForbidden") || (pkg.Name == "codes" && sel.Sel.Name == "PermissionDenied")) {
-			refuses = true
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			if pkg, ok := x.X.(*ast.Ident); ok &&
+				((pkg.Name == "http" && x.Sel.Name == "StatusForbidden") || (pkg.Name == "codes" && x.Sel.Name == "PermissionDenied")) {
+				refuses = true
+			}
+		case *ast.ReturnStmt:
+			for _, res := range x.Results {
+				refuses = refuses || authorizeOutageIsFreshError(res)
+			}
 		}
 		return !refuses
 	})
 	return refuses
+}
+
+// authorizeOutageIsFreshError reports whether e is a call that builds a new error
+// (fmt.Errorf, errors.New, permissionDeniedf): a refusal returned to a caller.
+func authorizeOutageIsFreshError(e ast.Expr) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	switch fn := call.Fun.(type) {
+	case *ast.Ident:
+		return fn.Name == "permissionDeniedf"
+	case *ast.SelectorExpr:
+		pkg, ok := fn.X.(*ast.Ident)
+		return ok && ((pkg.Name == "fmt" && fn.Sel.Name == "Errorf") || (pkg.Name == "errors" && fn.Sel.Name == "New"))
+	}
+	return false
 }
 
 // authorizeOutageViolations returns "file:func" for each unmapped refusing check in
@@ -241,7 +259,8 @@ func TestEveryRefusingPermissionCheckMapsAStorageOutage(t *testing.T) {
 }
 
 // TestAuthorizeOutageGuardCatchesAnUnmappedCheck is the guard's self-test, both
-// directions: the raw refusal is reported; a mapped one, one whose mapper sits in
+// directions: the raw refusal is reported; a mapped one, a refusal returned as an
+// error (reported unless built by authorizeLookupRefusal), one whose mapper sits in
 // an earlier statement, an exempt one, a non-permission `err != nil || !live`, and
 // a lookup with no refusal are not.
 func TestAuthorizeOutageGuardCatchesAnUnmappedCheck(t *testing.T) {
@@ -278,6 +297,14 @@ func (h *H) NotPermission(ctx C) error {
 	if err != nil || !live { return status.Error(codes.PermissionDenied, "x") }
 	return nil
 }
+func (h *H) BadReturned(ctx C) error {
+	if ok, aerr := h.core.AuthorizePrincipal(); aerr != nil || !ok { return fmt.Errorf("you may not assign") }
+	return nil
+}
+func (h *H) GoodReturned(ctx C) error {
+	if ok, aerr := h.core.AuthorizePrincipal(); aerr != nil || !ok { return authorizeLookupRefusal(aerr, "you may not assign") }
+	return nil
+}
 func (h *H) NoRefusal(r R) {
 	if ok, aerr := h.core.AuthorizeSecretPrincipal(); aerr != nil || !ok { d.Degraded = false }
 }
@@ -290,8 +317,8 @@ func (h *H) NoRefusal(r R) {
 	if !used["synthetic.go:Skip"] {
 		t.Fatalf("self-test: the Skip exemption excused a finding but was not recorded as used")
 	}
-	want := []string{"synthetic.go:Bad", "synthetic.go:BadGRPC"}
-	if !slices.Equal(violations, want) || lookups != 7 {
-		t.Fatalf("self-test: violations=%v lookups=%d, want %v and 7 lookups", violations, lookups, want)
+	want := []string{"synthetic.go:Bad", "synthetic.go:BadGRPC", "synthetic.go:BadReturned"}
+	if !slices.Equal(violations, want) || lookups != 9 {
+		t.Fatalf("self-test: violations=%v lookups=%d, want %v and 9 lookups", violations, lookups, want)
 	}
 }

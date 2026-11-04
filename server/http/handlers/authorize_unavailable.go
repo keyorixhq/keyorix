@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 
@@ -51,4 +52,39 @@ func refuseUnlessAuthorized(w http.ResponseWriter, r *http.Request, allowed bool
 		return true
 	}
 	return false
+}
+
+// authorizeLookupRefusalError is a refusal returned as an error by a helper that
+// ran a permission lookup, carrying the lookup's error so the caller can tell a
+// storage outage (503) from a denial (403). Error() is the fixed refusal text, so
+// the storage error never reaches a client.
+type authorizeLookupRefusalError struct {
+	msg   string
+	cause error
+}
+
+func (e *authorizeLookupRefusalError) Error() string { return e.msg }
+func (e *authorizeLookupRefusalError) Unwrap() error { return e.cause }
+
+// authorizeLookupRefusal builds the error for a helper's `err != nil || !allowed`
+// refusal: a plain error when the lookup succeeded and denied (cause == nil),
+// otherwise one that carries the lookup error for refuseWithAuthorizeError.
+func authorizeLookupRefusal(cause error, msg string) error {
+	if cause == nil {
+		return errors.New(msg)
+	}
+	return &authorizeLookupRefusalError{msg: msg, cause: cause}
+}
+
+// refuseWithAuthorizeError writes the answer for an error built by
+// authorizeLookupRefusal: 503 + Retry-After when its lookup failed with a storage
+// outage, otherwise a 403 "Forbidden" carrying err's text (a denial, or a lookup
+// error the classifier does not recognise: fail closed).
+func refuseWithAuthorizeError(w http.ResponseWriter, r *http.Request, err error) {
+	forbidden := func() { sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil) }
+	if lookup, ok := errors.AsType[*authorizeLookupRefusalError](err); ok {
+		refuseUnlessAuthorized(w, r, false, lookup.cause, forbidden)
+		return
+	}
+	forbidden()
 }

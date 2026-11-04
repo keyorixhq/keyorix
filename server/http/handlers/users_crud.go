@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -162,7 +161,7 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 	}
 	if role != "" || len(projAssignments) > 0 {
 		if err := h.authorizeUserCreationAssignments(r.Context(), userCtx, role, projAssignments); err != nil {
-			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+			refuseWithAuthorizeError(w, r, err) // 503 on a lookup outage, 403 on a refusal
 			return
 		}
 	}
@@ -211,15 +210,18 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 	sendCreated(w, userToAPIResponse(created), i18n.T("SuccessUserCreated", nil))
 }
 
+// authorizeUserCreationAssignments returns nil when the actor may assign the system
+// role and every project assignment. A refusal is an authorizeLookupRefusal: it
+// carries the lookup error, so the caller answers an outage 503, not 403.
 func (h *UserHandler) authorizeUserCreationAssignments(ctx context.Context, userCtx *middleware.UserContext, role string, projAssignments []projectAssignmentBody) error {
 	if role != "" {
 		if ok, aerr := h.coreService.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{}); aerr != nil || !ok {
-			return fmt.Errorf("you may not assign a system role")
+			return authorizeLookupRefusal(aerr, "you may not assign a system role")
 		}
 	}
 	for _, a := range projAssignments {
 		if ok, aerr := h.coreService.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID}); aerr != nil || !ok {
-			return fmt.Errorf("you may not assign roles in the target project")
+			return authorizeLookupRefusal(aerr, "you may not assign roles in the target project")
 		}
 	}
 	return nil
