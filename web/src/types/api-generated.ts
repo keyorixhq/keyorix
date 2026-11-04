@@ -6349,11 +6349,8 @@ export interface components {
                     success?: boolean;
                     /** @description Always 503. */
                     code?: number;
-                    /**
-                     * @description `ServiceUnavailable` when the permission lookup failed; `storage_unavailable` when another storage read on the same route failed.
-                     * @enum {string}
-                     */
-                    error?: "ServiceUnavailable" | "storage_unavailable";
+                    /** @description `ServiceUnavailable` when the permission lookup failed; `storage_unavailable` when another storage read on the same route failed. */
+                    error?: string;
                     /** @description Fixed string matching `error`: "authorization temporarily unavailable, please retry" or "storage temporarily unavailable, please retry". */
                     message?: string;
                 };
