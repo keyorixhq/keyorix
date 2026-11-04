@@ -79,3 +79,44 @@ func TestDecodePATCIDRs_WhitespaceOnlyColumnFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodePATScopes_UnscopedByDesignVsWhitespaceCorrupted pins the line between
+// the two "nothing in the column" cases. The legitimate one is the exact empty
+// column: CreateOwnPAT stores EncodePATScopes' "" for "no allowlist" and the
+// ADR-042 migration (createPersonalAccessTokens) adds the column with no default,
+// so a pre-ADR-042 row reads back NULL -> "". Both mean "inherit the owner",
+// by design. A whitespace-only column is never written by EncodePATScopes, so it
+// is a corrupted or hand-edited row like `null`/`[]`, and decoding it as unscoped
+// turned it into an owner-equivalent token (PAT-SCOPE-TAILS-1; the CIDR codec
+// closed the same gap in #3840). It must decode to the deny-everything sentinel.
+func TestDecodePATScopes_UnscopedByDesignVsWhitespaceCorrupted(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"exact_empty_column_is_unscoped_by_design", "", nil},
+		{"whitespace_only_space_fails_closed", " ", PATScopeCorrupted},
+		{"whitespace_only_spaces_fails_closed", "   ", PATScopeCorrupted},
+		{"whitespace_only_newline_fails_closed", "\n", PATScopeCorrupted},
+		{"whitespace_only_tab_fails_closed", "\t", PATScopeCorrupted},
+		{"whitespace_only_mixed_fails_closed", " \r\n ", PATScopeCorrupted},
+		{"literal_null_fails_closed", "null", PATScopeCorrupted},
+		{"literal_empty_array_fails_closed", "[]", PATScopeCorrupted},
+		{"padded_real_allowlist_still_parses", ` ["secrets.read"] `, []string{"secrets.read"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DecodePATScopes(tc.raw)
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("DecodePATScopes(%q) = %#v, want nil (unscoped by design)", tc.raw, got)
+				}
+				return
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("DecodePATScopes(%q) = %#v, want %#v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}

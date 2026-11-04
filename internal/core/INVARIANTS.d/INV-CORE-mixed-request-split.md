@@ -37,7 +37,9 @@
   judged on the set commit 1 leaves, before commit 1 (`requireSelfGrantCeilingAfterRemovals`,
   #3684): refused up front, nothing changes; a ceiling refusal that still reaches commit 2 (the
   actor's authority revoked between the commits) answers retry_safe false
-  (`PartialMutationError.RetryRefused`). The one retry that cannot complete by itself
+  (`PartialMutationError.RetryRefused`); a storage fault while reading the actor's authority there
+  is a fault, not a refusal, and stays retry_safe true
+  (`TestReplaceUserRoleSet_GranterReadFaultInCommit2_IsRetrySafeFault`). The one retry that cannot complete by itself
   is MFA-on + rename by an actor without a second factor: the new requirement gates the actor
   (`ProjectMFARequired`) and the refused retry changes nothing. If BOTH the owed record and the
   append of commit 1's row fail, the narrowing still applies and the row is queued after the commit
