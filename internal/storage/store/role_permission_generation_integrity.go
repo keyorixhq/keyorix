@@ -1294,8 +1294,10 @@ func (ls *LocalStorage) rolePermGenerationTarget() *triggerIntegrityTarget {
 }
 
 // WaitTriggerIntegrityFirstPass blocks until the check StartTriggerIntegrityCheck
-// started has ended its first pass over every target (or was stopped, or ctx
-// ends). It returns at once when no check was started. The first pass runs in
+// started has ended its first pass over every target (or ctx ends). A stopped
+// check still ends its pass (each check fails fast on the cancelled context),
+// so Close releases waiters; nil does not say the pass was clean. It returns
+// at once when no check was started. The first pass runs in
 // the background right after the store is built and commits catalog
 // transactions of its own, so a test that counts commits on this database must
 // wait for it before sampling.
@@ -1341,7 +1343,7 @@ func (ls *LocalStorage) StartTriggerIntegrityCheck(logf func(string, ...any)) {
 		defer job.exit()
 		passed := false
 		defer func() {
-			if !passed { // cancelled before the first pass ended: release waiters
+			if !passed { // exited without ending the first pass (a panic): release waiters
 				close(firstPass)
 			}
 		}()
