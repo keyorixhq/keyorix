@@ -92,7 +92,9 @@ func (c *KeyorixCore) replaceUserRoleSet(ctx context.Context, r roleSetReplace) 
 	ceilingRefused := false
 	err = c.storage.WithNamedLock(ctx, sodGrantLockKey("user", r.userID), func(ctx context.Context) error {
 		if err := c.requireGranterHoldsRoleSet(ctx, r, add); err != nil {
-			ceilingRefused = true
+			// Only the typed refusal: a fault while reading the actor's authority
+			// leaves the retry safe and is reported as a fault.
+			ceilingRefused = errors.Is(err, ErrPermissionDenied)
 			return err
 		}
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
@@ -202,7 +204,7 @@ func (c *KeyorixCore) requireSelfGrantCeilingAfterRemovals(ctx context.Context, 
 			}
 		}
 		if !ok {
-			return fmt.Errorf("cannot grant this role: you do not hold permission %q yourself", p)
+			return permissionDeniedf("cannot grant this role: you do not hold permission %q yourself", p)
 		}
 	}
 	return nil

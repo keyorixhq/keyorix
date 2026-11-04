@@ -241,7 +241,7 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, errDomainNotAllowed):
+		case strings.Contains(msg, errDomainNotAllowed), errors.Is(err, core.ErrPermissionDenied):
 			status = http.StatusForbidden
 		case strings.Contains(msg, "unknown role"):
 			status = http.StatusBadRequest
