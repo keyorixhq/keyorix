@@ -1008,7 +1008,7 @@ only in the server log. gRPC answers `Unavailable` with the same text
 request is safe to repeat after a short pause. Clients should branch on the code
 `audit_unavailable`, not on the message. The mapping is in the handlers of the covered
 operations (group, role, project, user, token, share, machine-identity and the other
-mutation handlers; 28 handler files call it), and the over-the-router test drives it for
+mutation handlers; 27 handler files call it), and the over-the-router test drives it for
 group, role and project create. A mutation handler without the mapping would still
 answer its generic 500, and any other 500 on a call that creates a user, token or grant may
 have committed: before retrying a 500 (not an `audit_unavailable` 503), check that the
