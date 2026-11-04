@@ -685,7 +685,9 @@ Details: [recertification-activity-window.md](recertification-activity-window.md
 ## 6q. Compatibility floor 3: v0.96.x cannot run against an upgraded database
 
 This release raises the schema compatibility floor to 3 (ADR-101); its schema epoch
-is 7 (epochs 4 to 7 are additive and leave the floor at 3, see 6o.1 and 6z).
+is 9 (epochs 4 to 9 are additive and leave the floor at 3; see 6o.1 for epoch 5, 6z for
+epoch 7 and "Administrator MFA reset" in section 2 for epoch 8;
+`internal/storage/factory_schema_epoch.go` lists each).
 Once a server of this release has started against a database, a v0.96.x (epoch 2)
 binary refuses to start on it: `database declares a minimum compatible schema
 epoch of 3 (database schema epoch 9)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
@@ -722,6 +724,37 @@ In short:
 - don't suspend secrets with "also clear synced Kubernetes copies" until it has finished:
   a v0.96.x replica ignores that option and suspends without clearing the copies. Repeat
   any such suspend once every replica runs this release.
+
+Trigger definitions on PostgreSQL (rules for any rolling upgrade, #3717). The server
+watches two sets of PostgreSQL triggers (the role-permission generation triggers and the
+`secret_nodes` cache-epoch trigger) and restores them if they change outside a release.
+Each function carries a definition version in its `COMMENT`. Both are at version 1 today,
+so the rules bind a release that changes a definition. SQLite does not have these triggers.
+
+- **Do not skip a trigger-definition version in a rolling upgrade.** A replica leaves a
+  definition that is exactly one version ahead of its own in place (for at most 24 hours
+  per running replica) and treats any other difference as tampering. A jump of two or more
+  versions is read as tampering by the older replicas (`reason="tamper"`, restored,
+  caches flushed), which is how it behaved before version markers existed: the two sides
+  ping-pong for the length of the rollout. Step through each release that changes a
+  definition.
+- **Finish a rolling upgrade that changes a definition within 24 hours.** After that a
+  replica still running the older release stops accepting the newer definition, logs it
+  as a forged marker, restores its own, and the new replicas restore theirs on their next
+  tick.
+- **A release must not change the set of trigger names of a target.** It may change the
+  body, the settings and the shape of the existing triggers; adding or removing a trigger
+  name needs a new function name (see "Definition versions" in
+  [design/trigger-rowdigest.md](design/trigger-rowdigest.md#definition-versions-3717)).
+- **Metrics: `keyorix_role_permission_generation_tamper_total` and
+  `keyorix_secret_node_cache_epoch_tamper_total` carry a `reason` label.** `tamper` is a
+  change outside any release (restored); `newer_definition` is a newer release's
+  definition read during a rolling upgrade (left in place, logged hourly, not a
+  `SECURITY` line). A query or alert on these counters written without the label still
+  matches both series, so it now also counts `newer_definition` during a rollout: select
+  `{reason="tamper"}` for tampering and expect `{reason="newer_definition"}` to move while
+  a rolling upgrade changes a definition (see
+  [operations/metrics.md](operations/metrics.md)).
 
 Releases before v0.96 (v0.93 to v0.95.x) predate both formats too, and are refused as well,
 by their older check: `database schema epoch 9 is newer than this binary's schema epoch 1`.
