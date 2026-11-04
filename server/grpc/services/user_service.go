@@ -413,6 +413,10 @@ func mapUserError(err error) error {
 	// carry core.ErrValidation.
 	case errors.Is(err, core.ErrValidation):
 		return status.Error(codes.InvalidArgument, "invalid request parameters")
+	// REVFIX-3964-1: CreateUser with deliver_setup_link and no credential_delivery.base_url
+	// (HTTP answers 400 ConfigError for the same sentinel).
+	case errors.Is(err, core.ErrSetupBaseURLRequired):
+		return status.Error(codes.InvalidArgument, "invalid request parameters")
 	default:
 		return status.Error(codes.Internal, "user operation failed")
 	}
