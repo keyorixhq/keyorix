@@ -84,3 +84,47 @@ with a secret or a raw request body:
   any pair where the only difference is `other`.
 - **uncalibrated**: the positive control failed; counted per operation so a
   silently broken operation is visible, never treated as clean.
+
+## Spec notes (Phase 2: what the model encodes, and why)
+
+The model's requirement per operation is the **REST router gate** from
+`scripts/e2e/routes.json`. No per-operation permission is documented in
+OpenAPI. On top of the gate, the model encodes only these **documented** rules:
+
+- **The FIX-1 grant ceiling.** A role-granting op needs every permission of
+  the granted role, at the scope the role will be held. For a group join, that
+  is every role the group holds, each at its own scope.
+- **The share owner rules**: `ErrShareNotOwner` and `ErrShareOwnerNotMember`
+  (`internal/core/share_authz.go`). Only the owner may share, and only while
+  holding a live project-scoped grant. A global role is not membership.
+
+Anything else core or a transport enforces is NOT in the model. If it denies
+where the model allows, that is reported as `O2:over-denial`, not modelled
+away.
+
+Consequences:
+
+- **Oracle 2 vs REST** checks scope resolution, expiry, machine no-bypass,
+  the ceiling and the owner rules, but not which permission the route names.
+  It is fully independent only for core and gRPC.
+- **`group.role.assign` at global scope with a project-tier role** fails the
+  admin positive control: project roles are not assignable globally (role
+  scope rule, 400). Those legs are `uncalibrated` by design: 105 per layer in
+  the sweep. `editor` (arg 3) is assignable globally and is covered.
+
+## Core-leg fidelity
+
+The core leg calls exactly the core method the transport calls for that
+principal kind, with the same arguments a transport would derive. That
+includes, for a machine actor:
+
+- `UserID = 0`;
+- the machine tagged on ctx (`WithActorType`, `WithMachineActor`);
+- `WithSelfMachineGranter`, for the four ops whose transports set it
+  (`opSpec.selfMachineGranter`, with file citations).
+
+Where a transport calls a non-checking core variant for a principal (machine
+actors on secret update/delete/value read), the core leg is `n/a`, not
+`allowed`. A first sweep without `WithSelfMachineGranter` produced 4 false
+`machine.role.assign` disagreements. That is the "mapping bug" class, caught
+and fixed in the harness, not in the product.
