@@ -49,14 +49,7 @@ var authorizeOutageMappers = map[string]bool{
 
 // authorizeOutageExempt names functions ("file.go:Func") whose raw
 // `err != nil || !allowed` refusal is not yet mapped, each for a stated reason.
-var authorizeOutageExempt = map[string]string{
-	"catalog.go:UpdateProject": "roles.assign check on the MFA-requirement change; catalog.go is outside " +
-		"AUTHZ-OUTAGE-HANDLERS-1's paths (LEFTOVERS)",
-	"invitations.go:CreateGlobalInvitation": "roles.assign checks on invitation roles; invitations.go is outside " +
-		"AUTHZ-OUTAGE-HANDLERS-1's paths (LEFTOVERS)",
-	"rotation_policies_handler.go:Create": "secrets.write check on policy create; rotation_policies_handler.go is outside " +
-		"AUTHZ-OUTAGE-HANDLERS-1's paths (LEFTOVERS)",
-}
+var authorizeOutageExempt = map[string]string{}
 
 func authorizeOutageIsLookupName(name string) bool {
 	return strings.HasPrefix(name, "Authorize") || strings.HasPrefix(name, "HoldsPermission")

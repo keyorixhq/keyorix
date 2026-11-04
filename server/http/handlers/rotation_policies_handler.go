@@ -159,8 +159,10 @@ func (h *RotationPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		eid = *reqBody.EnvironmentID
 	}
 	scope := core.Scope{ProjectID: pid, EnvironmentID: eid}
-	if allowed, err := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope); err != nil || !allowed {
+	allowed, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope)
+	if refuseUnlessAuthorized(w, r, allowed, aerr, func() {
 		h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+	}) {
 		return
 	}
 	// Per-project MFA policy (ADR-037), same as the scoped-permission middleware.
