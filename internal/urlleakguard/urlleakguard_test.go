@@ -35,7 +35,9 @@ package urlleakguard
 //     third-party logger or a project helper that logs is invisible to it.
 //   - A value that does not carry such a name (err, a *url.Error wrapped with
 //     %w, a struct printed with %+v that contains a URL field, a variable
-//     named target or addr that holds a URL). Renaming defeats it.
+//     named target or addr that holds a URL). Renaming defeats it. An
+//     addr/address value the same function passes to url.Parse is covered
+//     by the separate ADDR rule (addr_rule_test.go); target is not.
 //   - Reflection, and tests (_test.go files are skipped).
 //   - Separate Go modules inside the tree (cli/, operator/, migrate/,
 //     devtools/): the walk stops at any directory with its own go.mod.
