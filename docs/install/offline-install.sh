@@ -102,8 +102,11 @@ setup)
         die "$bin_dir/keyorix-server has no 'admin generate-secrets': build a newer one"
     [ -e "$dir/keyorix.yaml" ] && die "$dir already has a keyorix.yaml; use 'finish', or a new --dir"
     if [ -n "$pg_dsn" ]; then
-        case "$pg_dsn" in
-            *password* | *://*:*@*) die "--postgres-dsn must not contain the password (password= or user:password@); put it in $dir/secrets/db_password" ;;
+        # Refuse a password in any spelling: libpq keywords are case-insensitive in
+        # practice for operators (Password=, PASSWORD=, pwd=), so compare lower-cased.
+        pg_dsn_lc=$(printf '%s' "$pg_dsn" | tr '[:upper:]' '[:lower:]')
+        case "$pg_dsn_lc" in
+            *password* | *passwd* | *pwd=* | *pwd\ *=* | *://*:*@*) die "--postgres-dsn must not contain the password (password=, pwd= in any case, or user:password@); put it in $dir/secrets/db_password" ;;
             *'|'* | *'&'* | *\\* | *'"'*) die "--postgres-dsn must not contain a | & backslash or double quote" ;;
         esac
         [ -f "$dir/secrets/db_password" ] ||

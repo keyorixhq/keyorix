@@ -745,7 +745,7 @@ var auditSearchCmd = &cobra.Command{
 }
 
 func init() {
-	auditSearchCmd.Flags().StringVar(&auditSearchActor, "actor", "", "Partial match on actor username")
+	auditSearchCmd.Flags().StringVar(&auditSearchActor, "actor", "", "Case-insensitive partial match on a user's username or a machine identity's name")
 	auditSearchCmd.Flags().UintVar(&auditSearchUserID, "user-id", 0, "Filter by exact actor user ID")
 	auditSearchCmd.Flags().UintVar(&auditSearchProjectID, "project-id", 0, "Filter by project ID")
 	auditSearchCmd.Flags().StringVar(&auditSearchAction, "action", "", "Filter by exact event type (e.g. secret.read)")
