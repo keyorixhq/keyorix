@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,21 +25,47 @@ import (
 
 func TestLocalFileOptionsCoverTheDrivers(t *testing.T) {
 	t.Run("mongodb", func(t *testing.T) {
-		for _, key := range []string{
-			"tlsCAFile", "sslCertificateAuthorityFile", "tlsCertificateKeyFile",
-			"sslClientCertificateKeyFile", "tlsCertificateFile", "tlsPrivateKeyFile",
-		} {
-			uri := "mongodb://h/?" + key + "=/nonexistent/f"
-			cs, err := connstring.Parse(uri)
-			if err != nil {
-				t.Fatalf("%s: %v", key, err)
+		// Every ConnString field named *FileSet is the driver recording that a
+		// URI option names a file. Each must have at least one listed key that
+		// sets it, so a driver bump that adds a file option fails here until the
+		// key is added to localFileOptions. A "File" field without a "FileSet"
+		// flag would escape this derivation, so those are rejected outright.
+		keysByField := map[string][]string{
+			"SSLCaFileSet":                   {"tlsCAFile", "sslCertificateAuthorityFile"},
+			"SSLClientCertificateKeyFileSet": {"tlsCertificateKeyFile", "sslClientCertificateKeyFile"},
+			"SSLCertificateFileSet":          {"tlsCertificateFile"},
+			"SSLPrivateKeyFileSet":           {"tlsPrivateKeyFile"},
+		}
+		ct := reflect.TypeFor[connstring.ConnString]()
+		for f := range ct.Fields() {
+			switch {
+			case strings.HasSuffix(f.Name, "FileSet"):
+				if len(keysByField[f.Name]) == 0 {
+					t.Errorf("connstring.ConnString.%s is a new file option with no listed key; add it to localFileOptions and keysByField", f.Name)
+				}
+			case strings.HasSuffix(f.Name, "File"):
+				if _, ok := ct.FieldByName(f.Name + "Set"); !ok {
+					t.Errorf("connstring.ConnString.%s looks like a file option without a Set flag; extend this derivation", f.Name)
+				}
 			}
-			set := cs.SSLCaFileSet || cs.SSLClientCertificateKeyFileSet || cs.SSLCertificateFileSet || cs.SSLPrivateKeyFileSet
-			if !set {
-				t.Fatalf("%s: the driver no longer treats it as a file option; update localFileOptions", key)
+		}
+		for field, keys := range keysByField {
+			if _, ok := ct.FieldByName(field); !ok {
+				t.Errorf("connstring.ConnString.%s is gone; update keysByField", field)
+				continue
 			}
-			if dsn.CheckLocalFileOptions("mongodb", uri) == nil {
-				t.Errorf("%s: file option not refused", key)
+			for _, key := range keys {
+				uri := "mongodb://h/?" + key + "=/nonexistent/f"
+				cs, err := connstring.Parse(uri)
+				if err != nil {
+					t.Fatalf("%s: %v", key, err)
+				}
+				if !reflect.Indirect(reflect.ValueOf(cs)).FieldByName(field).Bool() {
+					t.Fatalf("%s: the driver no longer sets %s; update keysByField and localFileOptions", key, field)
+				}
+				if dsn.CheckLocalFileOptions("mongodb", uri) == nil {
+					t.Errorf("%s: file option not refused", key)
+				}
 			}
 		}
 	})
