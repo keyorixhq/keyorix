@@ -1293,6 +1293,24 @@ func (ls *LocalStorage) rolePermGenerationTarget() *triggerIntegrityTarget {
 	return rolePermGenerationIntegrityTarget
 }
 
+// WaitTriggerIntegrityFirstPass blocks until the check StartTriggerIntegrityCheck
+// started has ended its first pass over every target (or was stopped, or ctx
+// ends). It returns at once when no check was started. The first pass runs in
+// the background right after the store is built and commits catalog
+// transactions of its own, so a test that counts commits on this database must
+// wait for it before sampling.
+func (ls *LocalStorage) WaitTriggerIntegrityFirstPass(ctx context.Context) error {
+	if ls.triggerIntegrityFirstPass == nil {
+		return nil
+	}
+	select {
+	case <-ls.triggerIntegrityFirstPass:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // StartTriggerIntegrityCheck runs the check of every target whose tables
 // exist every rolePermGenerationIntegrityInterval in the background, the
 // first one now. In single_writer mode (SetSingleWriter) the role-permission
@@ -1317,11 +1335,19 @@ func (ls *LocalStorage) StartTriggerIntegrityCheck(logf func(string, ...any)) {
 	}
 	ctx, job := newBackgroundJob()
 	ls.rolePermIntegrity = job
+	firstPass := make(chan struct{})
+	ls.triggerIntegrityFirstPass = firstPass
 	go func() {
 		defer job.exit()
+		passed := false
+		defer func() {
+			if !passed { // cancelled before the first pass ended: release waiters
+				close(firstPass)
+			}
+		}()
 		tick := time.NewTicker(rolePermGenerationIntegrityInterval)
 		defer tick.Stop()
-		for {
+		for first := true; ; first = false {
 			for _, c := range checkers {
 				tctx, tcancel := context.WithTimeout(ctx, rolePermGenerationIntegrityTickTimeout)
 				_, err := c.check(tctx)
@@ -1329,6 +1355,10 @@ func (ls *LocalStorage) StartTriggerIntegrityCheck(logf func(string, ...any)) {
 				if err != nil && ctx.Err() == nil {
 					logf("%s trigger integrity check: %v", c.target.what, err)
 				}
+			}
+			if first {
+				passed = true
+				close(firstPass)
 			}
 			select {
 			case <-ctx.Done():

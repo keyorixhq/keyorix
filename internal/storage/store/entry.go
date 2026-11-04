@@ -307,6 +307,10 @@ type LocalStorage struct {
 	// check (StartTriggerIntegrityCheck), cancelled and
 	// awaited by Close. nil when none was started.
 	rolePermIntegrity *backgroundJob
+	// triggerIntegrityFirstPass is closed when the check's first pass over
+	// every target has ended (WaitTriggerIntegrityFirstPass). nil when no check
+	// was started.
+	triggerIntegrityFirstPass chan struct{}
 	// singleWriter is storage.database.single_writer (SetSingleWriter): only
 	// then does StartTriggerIntegrityCheck allow the fence's triggers on
 	// system_metadata.
