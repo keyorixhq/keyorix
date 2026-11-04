@@ -10,13 +10,20 @@
   (`finishScopedPermissionRequest`, `RequirePermissionInAnyScope`, the global-scope probe of
   `handleScopeResolutionError`, the secret fetch of the per-secret gates, and the gRPC
   `authorizeScoped`, `authorizeScopedTarget`, `authorizeSecretScoped`, `authorizeShareScoped`,
-  `CreateSecret`, `ListSecrets`) and at the REST routes that check the permission inside the
+  `CreateSecret`, `ListSecrets`, and `resolvePermissionIDs`, the bundle-permission check of
+  role `CreateRole`/`UpdateRole`) and at the REST routes that check the permission inside the
   handler, through `refuseUnlessAuthorized` (server/http/handlers, over
   `core.IsAuthorizeTransient`, same 503 / `Retry-After` / fixed message): `POST /api/v1/secrets`
   (`CreateSecret`), `GET /api/v1/secrets` (the machine-principal check in `ListSecrets`), the
   machine fallback check in `GetSecret`, secret copy, folder create, and the dynamic-secrets
-  `authorize`/`denyAuthz` pair. It does NOT yet hold for the `AuthorizedAtGlobalScope` callers
-  (AUTHZ-OUTAGE-TAILS-1), and three further in-handler `roles.assign` / `secrets.write`
+  `authorize`/`denyAuthz` pair, and the global-scope probe of template render
+  (`secrets_render.go`, a missing referenced secret: 404 only when the probe succeeds and
+  holds, otherwise `refuseUnlessAuthorized`). Stated exception: `system.go` `canSystemWrite`
+  only toggles optional admin-only fields of `GET /api/v1/system/info`, so a failed lookup keeps
+  denying those fields (fail closed), still answers 200 and logs a warning; it refuses nothing.
+  The old `middleware.AuthorizedAtGlobalScope` helper, which folded a lookup error into "not
+  authorized", is deleted (AUTHZ-OUTAGE-TAILS-1); a global probe calls `AuthorizePrincipal`
+  and handles the error. Three further in-handler `roles.assign` / `secrets.write`
   checks still answer 403 on an outage (`catalog.go` `UpdateProject`, `invitations.go`
   `CreateGlobalInvitation`, `rotation_policies_handler.go` `Create`); they are named, with
   the reason, in `authorizeOutageExempt` and tracked in a follow-up issue. The human-principal
@@ -35,7 +42,9 @@
   `_NonTransientErrorStaysForbidden`, `_RestrictedPATStays403WithoutStorage`,
   `_NotCountedAsForbiddenDenial`; internal/faultstorage on `ResolveUserPermissionAt` /
   `ResolveMachinePermissionAt` / `GetSecret`, red before), gRPC
-  `server/grpc/services/authorize_lookup_unavailable_test.go`, the classifier table
+  `server/grpc/services/authorize_lookup_unavailable_test.go` and
+  `role_authorize_lookup_unavailable_test.go`, the global probes
+  `server/http/handlers/authorize_global_probe_outage_test.go`, the classifier table
   `internal/core/authorize_transient_test.go`, the handler sites
   `server/http/handlers/authorize_outage_handlers_test.go`
   (`TestHandlerPermissionLookupOutageIs503`, `TestHandlerPermissionDenialStays403`,
