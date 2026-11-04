@@ -345,7 +345,9 @@ const ActivationsTable: React.FC<{
         void qc.invalidateQueries({ queryKey: BREAK_GLASS_KEYS.all });
     }, [activations, now, qc]);
 
-    const who = (a: BreakGlassActivation) => names.get(a.userId) ?? `User #${a.userId}`;
+    // The member directory's name first; for someone it does not list (left the project), the
+    // username the server sent with the activation; the id only when neither exists.
+    const who = (a: BreakGlassActivation) => names.get(a.userId) ?? a.username ?? `User #${a.userId}`;
 
     const confirmRevoke = () => {
         if (!target) return;

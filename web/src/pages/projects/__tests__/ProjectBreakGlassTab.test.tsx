@@ -358,6 +358,46 @@ describe('ProjectBreakGlassTab — admin view', () => {
         expect(screen.getAllByRole('button', { name: 'Revoke' })).toHaveLength(1);
     });
 
+    it('names a user the member directory does not know by the username the server sent, else by id', async () => {
+        listMock.mockResolvedValue(
+            project([
+                // Left the project (not in the directory) but the activation carries the username.
+                activation({ id: 3, userId: 99, username: 'carol', state: 'expired', expiresAt: inMinutes(-60) }),
+                // Deleted user: the server omits the username, so the id is all there is.
+                activation({ id: 4, userId: 98, state: 'expired', expiresAt: inMinutes(-60) }),
+                // The directory still wins for a current member (display name).
+                activation({ id: 1, userId: 7, username: 'alice' }),
+            ])
+        );
+        renderTab();
+        expect(await screen.findByRole('heading', { name: 'All activations on this project' })).toBeInTheDocument();
+        expect(within(screen.getByTestId('bg-row-3')).getByText('carol')).toBeInTheDocument();
+        expect(within(screen.getByTestId('bg-row-3')).queryByText('User #99')).not.toBeInTheDocument();
+        expect(within(screen.getByTestId('bg-row-4')).getByText('User #98')).toBeInTheDocument();
+        expect(within(screen.getByTestId('bg-row-1')).getByText('Alice A')).toBeInTheDocument();
+    });
+
+    it('wires the wire-format username through the service', async () => {
+        const { breakGlassApi } =
+            await vi.importActual<typeof import('../../../services/breakGlass')>('../../../services/breakGlass');
+        const { apiClient } = await import('../../../services/client');
+        const get = vi.spyOn(apiClient, 'get').mockResolvedValue({
+            data: {
+                data: {
+                    scope: 'project',
+                    activations: [
+                        { id: 1, user_id: 7, username: 'alice', role_name: 'r', state: 'active' },
+                        { id: 2, user_id: 8, role_name: 'r', state: 'active' },
+                    ],
+                },
+            },
+        });
+        const list = await breakGlassApi.list(5);
+        expect(list.activations.map((a) => a.username)).toEqual(['alice', undefined]);
+        expect(list.activations.map((a) => a.userId)).toEqual([7, 8]);
+        get.mockRestore();
+    });
+
     it('revokes only after the confirm dialog, then re-reads the list', async () => {
         listMock.mockResolvedValue(project([activation({ id: 1, userId: 7 })]));
         revokeMock.mockResolvedValue(undefined);
