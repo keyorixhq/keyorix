@@ -23,6 +23,7 @@ func TestDynamicSecrets_CreateConfig_RefusesLocalFileOptions(t *testing.T) {
 		{"mongodb oidc ambient token", "mongodb", "mongodb://u@db.example.com/?tls=true&authMechanism=MONGODB-OIDC&authMechanismProperties=ENVIRONMENT:k8s", "authmechanism=mongodb-oidc"},
 		{"postgres sslkey", "postgres", "postgres://u:pw@db.example.com/app?sslmode=require&sslkey=/etc/keyorix/key.pem", "sslkey"},
 		{"postgres passfile kv", "postgres", "host=db.example.com user=u passfile=/root/.pgpass", "passfile"},
+		{"postgres sslrootcert after vertical tab", "postgres", "host=db.example.com user=u password=p dbname=d\vsslrootcert=/etc/passwd sslmode=verify-full", "sslrootcert"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
