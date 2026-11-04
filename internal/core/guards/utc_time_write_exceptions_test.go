@@ -7,12 +7,12 @@ func init() {
 	// The model has a BeforeSave hook that normalises the field, and the value is saved through it.
 	registerTimeWriteException("auth.go:capSetupSession:ExpiresAt",
 		"models.Session.BeforeSave normalises ExpiresAt; the value is a copy of the ceiling that capSetupSession just made UTC")
-	registerTimeWriteException("secrets.go:applyUpdateSecretFields:Expiration",
-		"models.SecretNode.BeforeSave normalises Expiration when UpdateSecret saves the node")
-	registerTimeWriteException("sharing.go:UpdateSharePermission:ExpiresAt",
-		"models.ShareRecord.BeforeSave normalises ExpiresAt when UpdateShareRecord saves the copy")
 
 	// The column is written elsewhere and made UTC there; this line only mirrors it in memory.
+	registerTimeWriteException("secrets.go:applyUpdateSecretFields:Expiration",
+		"in-memory only; the column is written by UpdateSecretFields, which does f.Expiration.UTC() (local_secrets.go)")
+	registerTimeWriteException("sharing.go:UpdateSharePermission:ExpiresAt",
+		"UpdateShareRecord writes a map (no hook) after share.ExpiresAt.UTC() (local_sharing.go)")
 	registerTimeWriteException("secrets.go:secretFieldUpdateFromRequest:Expiration",
 		"builds a storage.SecretFieldUpdate; LocalStorage.UpdateSecretFields does f.Expiration.UTC() before the column write (local_secrets.go)")
 	registerTimeWriteException("secret_extend_expiring.go:ExtendExpiringSecrets:Expiration",
