@@ -18,6 +18,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -62,7 +63,7 @@ func newSMTPDelivery(cfg SMTPSettings) (*SMTPDelivery, error) {
 	case "", smtpTLSStartTLS, smtpTLSImplicit:
 	case smtpTLSNone:
 		if !envflag.Enabled(EnvAllowInsecureSMTP) {
-			return nil, fmt.Errorf("delivery: smtp.tls=none sends mail (and any relay credentials) in cleartext; refusing unless the operator explicitly opts in by setting %s=true", EnvAllowInsecureSMTP)
+			return nil, fmt.Errorf("delivery: smtp.tls=none sends the message (including the setup link) and the relay username unencrypted; the mail library never sends a PLAIN or LOGIN password without TLS, so a relay that offers only PLAIN or LOGIN will fail authentication; refusing unless the operator explicitly opts in by setting %s=true", EnvAllowInsecureSMTP)
 		}
 		log.Printf("delivery: WARNING smtp.tls=none is ACTIVE — setup-link email will be sent over CLEARTEXT SMTP; dev/test only, never use in production")
 	default:
@@ -99,10 +100,28 @@ func (d *SMTPDelivery) DeliverSetupLink(ctx context.Context, req SetupLinkReques
 	}
 
 	if err := client.DialAndSendWithContext(ctx, msg); err != nil {
+		if d.plainLoginOnlyWithoutTLS(err) {
+			log.Printf("delivery: smtp send to %s failed, degrading to manual relay: %s: %v", req.RecipientEmail, smtpPlainLoginNoTLSCause, err)
+			return DeliveryResult{Channel: ChannelSMTP, Delivered: false, LinkForAdmin: req.Link}, nil
+		}
 		log.Printf("delivery: smtp send to %s failed, degrading to manual relay: %v", req.RecipientEmail, err)
 		return DeliveryResult{Channel: ChannelSMTP, Delivered: false, LinkForAdmin: req.Link}, nil
 	}
 	return DeliveryResult{Channel: ChannelSMTP, Delivered: true}, nil
+}
+
+// smtpPlainLoginNoTLSCause names why a tls=none send with a username fails at auth
+// discovery: go-mail's SMTPAuthAutoDiscover drops PLAIN and LOGIN on an unencrypted
+// connection (it will not send a password in cleartext), so a relay offering only
+// those has no mechanism left.
+const smtpPlainLoginNoTLSCause = "server offers only PLAIN/LOGIN and TLS is disabled (smtp.tls=none); use starttls or implicit TLS, or a relay that offers CRAM-MD5/SCRAM"
+
+// plainLoginOnlyWithoutTLS reports whether a send error is go-mail's auth-discovery
+// failure under tls=none with auth configured — the one case the generic error
+// does not explain.
+func (d *SMTPDelivery) plainLoginOnlyWithoutTLS(err error) bool {
+	return strings.EqualFold(d.cfg.TLS, smtpTLSNone) && d.cfg.Username != "" &&
+		errors.Is(err, mail.ErrNoSupportedAuthDiscovered)
 }
 
 // newClient builds a go-mail client from the SMTP settings, selecting the TLS policy
