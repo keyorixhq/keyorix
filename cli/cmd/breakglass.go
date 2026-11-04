@@ -7,6 +7,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -189,12 +190,31 @@ func runBGList(_ *cobra.Command, _ []string) error {
 			roleW = n
 		}
 	}
-	fmt.Printf("%-5s %-8s %-9s %-*s %-20s %s\n", "ID", "USER", "STATE", roleW, "ROLE", "EXPIRES (UTC)", "JUSTIFICATION")
-	for _, a := range activations {
-		fmt.Printf("%-5d %-8d %-9s %-*s %-20s %s\n", derefUint32(a.Id), derefUint32(a.UserId),
+	// USER is the username the server sends (#3884), or the numeric id when it is
+	// absent (a deleted user). It is as wide as the longest value, like ROLE.
+	users := make([]string, len(activations))
+	userW := len("USER")
+	for i, a := range activations {
+		users[i] = bgUserLabel(a)
+		if n := len(users[i]); n > userW {
+			userW = n
+		}
+	}
+	fmt.Printf("%-5s %-*s %-9s %-*s %-20s %s\n", "ID", userW, "USER", "STATE", roleW, "ROLE", "EXPIRES (UTC)", "JUSTIFICATION")
+	for i, a := range activations {
+		fmt.Printf("%-5d %-*s %-9s %-*s %-20s %s\n", derefUint32(a.Id), userW, users[i],
 			derefStr((*string)(a.State)), roleW, cliout.SanitizeForTerminal(derefStr(a.RoleName)), shortTime(derefStr(a.ExpiresAt)), derefStr(a.Justification))
 	}
 	return nil
+}
+
+// bgUserLabel is the activating user as shown in the list: the username (sanitised,
+// it comes from the server) or the numeric user id when the username is empty.
+func bgUserLabel(a apiclient.BreakGlassActivation) string {
+	if name := cliout.SanitizeForTerminal(derefStr(a.Username)); name != "" {
+		return name
+	}
+	return strconv.FormatUint(uint64(derefUint32(a.UserId)), 10)
 }
 
 func runBGRevoke(_ *cobra.Command, _ []string) error {
