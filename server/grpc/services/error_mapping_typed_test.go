@@ -87,6 +87,35 @@ func TestMapUserError_ClassifiesBySentinel(t *testing.T) {
 	})
 }
 
+func TestMapMachineError_ClassifiesBySentinel(t *testing.T) {
+	runTypedMapCases(t, mapMachineError, []typedMapCase{
+		{"missing machine", fmt.Errorf("get: %w", core.ErrMachineIdentityNotFound), codes.NotFound},
+		{"illegal transition", fmt.Errorf("revoke: %w", core.ErrMachineTransitionInvalid), codes.FailedPrecondition},
+		{"not active", fmt.Errorf("issue: %w", core.ErrMachineIdentityNotActive), codes.FailedPrecondition},
+		{"validation", fmt.Errorf("create: %w", core.ErrValidation), codes.InvalidArgument},
+		{"authz refusal", fmt.Errorf("issue: %w", core.ErrPermissionDenied), codes.PermissionDenied},
+		{"storage fault is not a not-found", core.ReadFault(errors.New("driver: connection reset by peer")), codes.Unavailable},
+		{"text only: not found", errors.New("machine identity not found"), codes.Internal},
+		{"text only: transition", errors.New("cannot transition machine identity from revoked to active"), codes.Internal},
+		{"text only: must be active", errors.New("cannot issue a token for a suspended machine identity (must be active)"), codes.Internal},
+		{"text only: invalid", errors.New("pq: invalid input syntax for type bigint"), codes.Internal},
+		{"text only: permission", errors.New("pq: permission denied for table machine_identities"), codes.Internal},
+	})
+}
+
+func TestMapDynamicError_ClassifiesBySentinel(t *testing.T) {
+	runTypedMapCases(t, mapDynamicError, []typedMapCase{
+		{"missing config or lease", fmt.Errorf("revoke: %w", core.ErrDynamicSecretNotFound), codes.NotFound},
+		{"validation", fmt.Errorf("create: %w", core.ErrValidation), codes.InvalidArgument},
+		{"authz refusal", fmt.Errorf("issue: %w", core.ErrPermissionDenied), codes.PermissionDenied},
+		{"storage fault is not a not-found", core.ReadFault(errors.New("driver: connection reset by peer")), codes.Unavailable},
+		// A backend or driver message is a backend failure whatever words it uses.
+		{"text only: not found", errors.New("pq: relation \"leases\" not found"), codes.Unavailable},
+		{"text only: required", errors.New("backend: password is required"), codes.Unavailable},
+		{"text only: permission", errors.New("pq: permission denied for table users"), codes.Unavailable},
+	})
+}
+
 func TestMapShareError_ClassifiesBySentinel(t *testing.T) {
 	runTypedMapCases(t, mapShareError, []typedMapCase{
 		{"missing share", fmt.Errorf("revoke: %w", storage.ErrShareNotFound), codes.NotFound},

@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -49,17 +48,17 @@ func mapMachineError(err error) error {
 	if errors.Is(err, core.ErrMachinePrivilegeCeilingDenied) {
 		return status.Error(codes.PermissionDenied, "access denied")
 	}
-	msg := err.Error()
+	// ERR-CLASS-LEFTOVERS-1: classified by sentinel (errors.Is), never by err.Error() text.
 	switch {
-	case strings.Contains(msg, "not found"):
+	case errors.Is(err, core.ErrMachineIdentityNotFound):
 		return status.Error(codes.NotFound, "machine identity or token not found")
-	case strings.Contains(msg, "cannot transition"):
+	case errors.Is(err, core.ErrMachineTransitionInvalid):
 		return status.Error(codes.FailedPrecondition, "invalid state transition") // GRPC-004: was msg — leaked internal state names
-	case strings.Contains(msg, "must be active"):
+	case errors.Is(err, core.ErrMachineIdentityNotActive):
 		return status.Error(codes.FailedPrecondition, "machine identity is not active") // GRPC-004: was msg — leaked current state
-	case strings.Contains(msg, "invalid") || strings.Contains(msg, "classification must be") || strings.Contains(msg, "required"):
+	case errors.Is(err, core.ErrValidation):
 		return status.Error(codes.InvalidArgument, "invalid request") // GRPC-004: was msg — leaked classification enum values
-	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied"):
+	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "access denied")
 	default:
 		return status.Error(codes.Internal, "machine identity operation failed")
