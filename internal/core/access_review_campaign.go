@@ -173,13 +173,13 @@ func (c *KeyorixCore) ListAccessReviewCampaigns(ctx context.Context, projectID u
 	}
 	campaigns, err := c.storage.ListAccessReviewCampaigns(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, accessReviewReadFailure(err)
 	}
 	out := make([]*CampaignWithProgress, 0, len(campaigns))
 	for _, camp := range campaigns {
 		items, err := c.storage.ListAccessReviewItems(ctx, camp.ID)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			return nil, accessReviewReadFailure(err)
 		}
 		out = append(out, &CampaignWithProgress{Campaign: camp, Progress: tallyProgress(items)})
 	}
@@ -209,7 +209,7 @@ func (c *KeyorixCore) GetAccessReviewCampaign(ctx context.Context, projectID, ca
 	}
 	items, err := c.storage.ListAccessReviewItems(ctx, campaignID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, accessReviewReadFailure(err)
 	}
 	return &CampaignDetail{Campaign: campaign, Items: items, Progress: tallyProgress(items)}, nil
 }
@@ -230,8 +230,14 @@ func (c *KeyorixCore) checkReviewerIndependence(ctx context.Context, actorID uin
 	if principalType == "user" && principalID == actorID {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
 	}
-	if principalType == "group" && c.userInGroup(ctx, actorID, principalID) {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
+	if principalType == "group" {
+		member, err := c.userInGroup(ctx, actorID, principalID)
+		if err != nil {
+			return err
+		}
+		if member {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
+		}
 	}
 	return nil
 }
@@ -419,19 +425,21 @@ func requireHumanReviewer(actorID uint) error {
 }
 
 // userInGroup reports whether userID is a member of groupID. It fails CLOSED — a
-// lookup error returns true — because it backs the recertification independence check:
-// if we can't prove the reviewer is NOT in the group, we must not let them certify it.
-func (c *KeyorixCore) userInGroup(ctx context.Context, userID, groupID uint) bool {
+// lookup error is returned, never read as "not a member" — because it backs the
+// recertification independence check: if we can't prove the reviewer is NOT in the group,
+// we must not let them certify it. The error is the storage-unavailable class, so the
+// refusal answers 503 and not the 400 "you belong to that group" it used to read as.
+func (c *KeyorixCore) userInGroup(ctx context.Context, userID, groupID uint) (bool, error) {
 	groups, err := c.storage.GetUserGroups(ctx, userID)
 	if err != nil {
-		return true
+		return false, accessReviewReadFailure(err)
 	}
 	for _, g := range groups {
 		if g.ID == groupID {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // checkMachineIndependence verifies the actor did not provision the machine identity
@@ -461,8 +469,14 @@ func (c *KeyorixCore) checkForceCloseIndependence(ctx context.Context, actorID u
 		if it.PrincipalType == "user" && it.PrincipalID == actorID {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while your own access item is still pending; an independent reviewer must decide it first")
 		}
-		if it.PrincipalType == "group" && c.userInGroup(ctx, actorID, it.PrincipalID) {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a group you belong to is still pending; an independent reviewer must decide it first")
+		if it.PrincipalType == "group" {
+			member, err := c.userInGroup(ctx, actorID, it.PrincipalID)
+			if err != nil {
+				return err
+			}
+			if member {
+				return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a group you belong to is still pending; an independent reviewer must decide it first")
+			}
 		}
 		if it.PrincipalType == "machine" {
 			if err := c.checkMachineIndependence(ctx, actorID, it.PrincipalID); err != nil {
@@ -486,7 +500,7 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, ac
 	}
 	items, err := c.storage.ListAccessReviewItems(ctx, campaignID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, accessReviewReadFailure(err)
 	}
 	progress := tallyProgress(items)
 	if progress.Pending > 0 && !force {
