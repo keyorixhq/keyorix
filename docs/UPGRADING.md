@@ -675,8 +675,8 @@ deleted; raise `cadence_days` (up to 366) for a longer look-back.
   the same `cadence_days` as their threshold instead of a fixed 90 days (#3459). With
   the default cadence nothing changes. A shorter cadence flags more grants dormant, a
   longer one fewer; no stored data changes.
-- The `dormant-access` control and the digest now say "no use in the last 90 days"; the
-  dormant-grant count itself is unchanged (it was always judged against 90 days).
+- The `dormant-access` control and the digest say "no use in the last N days", where N is
+  that same window (`cadence_days`, 90 by default); they used to say a fixed "90 days".
 - The campaigns table gets one column, `activity_window_days`, added automatically at
   start-up (nothing to run); a rollback to the previous binary ignores it.
 
