@@ -44,7 +44,9 @@ func mapDynamicError(err error) error {
 	case errors.Is(err, core.ErrDynamicSecretNotFound):
 		return status.Error(codes.NotFound, "config or lease not found")
 	case errors.Is(err, core.ErrValidation):
-		return status.Error(codes.InvalidArgument, err.Error())
+		// Fixed string, as in mapUserError/mapMachineError (GRPC-004): the wrapped text can
+		// carry submitted values or enum lists, so it is not echoed to the client.
+		return status.Error(codes.InvalidArgument, "invalid request parameters")
 	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "access denied")
 	default:
