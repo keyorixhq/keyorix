@@ -17917,6 +17917,7 @@ type ListDynamicSecretConfigsResponse struct {
 	JSON403 *Error
 	JSON503 *AuthorizeUnavailable
 }
+type ListDynamicSecretConfigs503Error string
 
 // Status returns HTTPResponse.Status
 func (r ListDynamicSecretConfigsResponse) Status() string {
@@ -17947,6 +17948,7 @@ type CreateDynamicSecretConfigResponse struct {
 	JSON403 *Error
 	JSON503 *AuthorizeUnavailable
 }
+type CreateDynamicSecretConfig503Error string
 
 // Status returns HTTPResponse.Status
 func (r CreateDynamicSecretConfigResponse) Status() string {
@@ -18241,6 +18243,7 @@ type CreateFolderResponse struct {
 	JSON403 *Error
 	JSON503 *AuthorizeUnavailable
 }
+type CreateFolder503Error string
 
 // Status returns HTTPResponse.Status
 func (r CreateFolderResponse) Status() string {
@@ -20409,6 +20412,7 @@ type RenderSecretTemplateResponse struct {
 	JSON409 *SecretReadRefused
 	JSON503 *AuthorizeUnavailable
 }
+type RenderSecretTemplate503Error string
 
 // Status returns HTTPResponse.Status
 func (r RenderSecretTemplateResponse) Status() string {
@@ -21215,6 +21219,7 @@ type ListSecretsResponse struct {
 	JSON403 *Error
 	JSON503 *AuthorizeUnavailable
 }
+type ListSecrets503Error string
 
 // Status returns HTTPResponse.Status
 func (r ListSecretsResponse) Status() string {
@@ -21244,6 +21249,7 @@ type CreateSecretResponse struct {
 	JSON403 *Error
 	JSON503 *AuthorizeUnavailable
 }
+type CreateSecret503Error string
 
 // Status returns HTTPResponse.Status
 func (r CreateSecretResponse) Status() string {
@@ -21439,6 +21445,7 @@ type GetSecretResponse struct {
 	JSON409 *SecretReadRefused
 	JSON503 *AuthorizeUnavailable
 }
+type GetSecret503Error string
 
 // Status returns HTTPResponse.Status
 func (r GetSecretResponse) Status() string {
@@ -21801,6 +21808,7 @@ type CopySecretResponse struct {
 	JSON404 *Error
 	JSON503 *AuthorizeUnavailable
 }
+type CopySecret503Error string
 
 // Status returns HTTPResponse.Status
 func (r CopySecretResponse) Status() string {

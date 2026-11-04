@@ -6337,7 +6337,7 @@ export interface components {
                 };
             };
         };
-        /** @description The caller's permission could not be checked because the permission lookup failed (PostgreSQL down, or the request deadline expired). The request was refused and NOTHING was changed or returned: this is not a verdict on the caller, so it is not a 403. The answer is 503 with a `Retry-After` header (seconds), the `error` label `ServiceUnavailable` and the fixed `message` "authorization temporarily unavailable, please retry"; no storage error text reaches the client. Retry unchanged once storage is back. The gRPC twin is `Unavailable` with the same message (INV-MW-authorize-lookup-error-is-503). */
+        /** @description The caller's permission could not be checked because the permission lookup failed (PostgreSQL down, or the request deadline expired). The request was refused and NOTHING was changed or returned: this is not a verdict on the caller, so it is not a 403. The answer is 503 with a `Retry-After` header (seconds), the `error` label `ServiceUnavailable` and the fixed `message` "authorization temporarily unavailable, please retry"; no storage error text reaches the client. Retry unchanged once storage is back. The gRPC twin is `Unavailable` with the same message (INV-MW-authorize-lookup-error-is-503). A failed permission lookup is the only case that carries the `ServiceUnavailable` label. On routes that also read storage for something other than the permission check (template render, secret copy, folder create, dynamic-secret config routes), a storage read failure answers 503 with the label `storage_unavailable` and the fixed message "storage temporarily unavailable, please retry". Both bodies are fixed strings and carry no storage text; both are safe to retry unchanged. */
         AuthorizeUnavailable: {
             headers: {
                 /** @description Seconds to wait before retrying. */
@@ -6349,8 +6349,12 @@ export interface components {
                     success?: boolean;
                     /** @description Always 503. */
                     code?: number;
-                    /** @description Always `ServiceUnavailable`. */
-                    error?: string;
+                    /**
+                     * @description `ServiceUnavailable` when the permission lookup failed; `storage_unavailable` when another storage read on the same route failed.
+                     * @enum {string}
+                     */
+                    error?: "ServiceUnavailable" | "storage_unavailable";
+                    /** @description Fixed string matching `error`: "authorization temporarily unavailable, please retry" or "storage temporarily unavailable, please retry". */
                     message?: string;
                 };
             };

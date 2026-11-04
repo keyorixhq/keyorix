@@ -8078,6 +8078,13 @@ components:
         "authorization temporarily unavailable, please retry"; no storage error text
         reaches the client. Retry unchanged once storage is back. The gRPC twin is
         `Unavailable` with the same message (INV-MW-authorize-lookup-error-is-503).
+        A failed permission lookup is the only case that carries the
+        `ServiceUnavailable` label. On routes that also read storage for something
+        other than the permission check (template render, secret copy, folder
+        create, dynamic-secret config routes), a storage read failure answers 503
+        with the label `storage_unavailable` and the fixed message "storage
+        temporarily unavailable, please retry". Both bodies are fixed strings
+        and carry no storage text; both are safe to retry unchanged.
       headers:
         Retry-After:
           description: Seconds to wait before retrying.
@@ -8089,8 +8096,19 @@ components:
             properties:
               success: {type: boolean}
               code: {type: integer, description: 'Always 503.'}
-              error: {type: string, description: 'Always `ServiceUnavailable`.'}
-              message: {type: string}
+              error:
+                type: string
+                description: >-
+                  `ServiceUnavailable` when the permission lookup failed;
+                  `storage_unavailable` when another storage read on the same
+                  route failed.
+                enum: [ServiceUnavailable, storage_unavailable]
+              message:
+                type: string
+                description: >-
+                  Fixed string matching `error`: "authorization temporarily
+                  unavailable, please retry" or "storage temporarily unavailable,
+                  please retry".
     SecretReadRefused:
       description: >-
         The caller may read this secret, but the secret's own state refuses the value
