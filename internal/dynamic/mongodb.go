@@ -13,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -203,6 +204,9 @@ func connectMongo(ctx context.Context, adminDSN string, allowPrivateNetwork, all
 	connectCtx, cancel := context.WithTimeout(ctx, mongoConnectTimeout)
 	defer cancel()
 
+	if err := dsn.CheckLocalFileOptions("mongodb", adminDSN); err != nil {
+		return nil, err
+	}
 	u, err := url.Parse(adminDSN)
 	if err != nil {
 		return nil, fmt.Errorf("invalid mongodb admin URI: %w", err)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -43,6 +44,11 @@ type PostgresEngine struct {
 // and DialFunc's own re-validation of whatever literal IP it receives is
 // defense-in-depth regardless of which step did the resolving.
 func dialPostgres(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (*pgx.Conn, error) {
+	// pgx.ParseConfig reads sslrootcert/sslcert/sslkey/passfile/servicefile from the
+	// server's disk; refuse them before it can (admin_dsn is project-admin input).
+	if err := dsn.CheckLocalFileOptions("postgres", adminDSN); err != nil {
+		return nil, err
+	}
 	cfg, err := pgx.ParseConfig(adminDSN)
 	if err != nil {
 		return nil, fmt.Errorf("connect to target: %w", err)
