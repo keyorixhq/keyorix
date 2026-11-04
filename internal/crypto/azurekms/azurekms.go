@@ -312,6 +312,7 @@ func (c *client) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 			return nil, fmt.Errorf("azure-kms key provider: KEK must be %d bytes, got %d", keyorixcrypto.KEKSize, n)
 		}
 		if !hmac.Equal(versionMAC(res.Result, env.Version), env.MAC) {
+			clear(res.Result)
 			return nil, fmt.Errorf("azure-kms: version-pinned envelope failed integrity check: Version does not match the recovered key material — the envelope may have been tampered with")
 		}
 	}
