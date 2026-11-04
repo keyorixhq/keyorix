@@ -177,9 +177,6 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	if err := c.requireScopeValidForRoleModel(ctx, inviteMemberRole, Scope{ProjectID: projectID}); err != nil {
 		return nil, err
 	}
-	if err := c.domainAllowedForUser(ctx, userID); err != nil {
-		return nil, err
-	}
 	// The parent project must be live. GetProject is soft-delete-scoped, so this refuses
 	// onboarding into a soft-deleted project — otherwise accepting an invitation that was
 	// outstanding when the project was deleted would re-establish a membership/role grant
@@ -216,6 +213,11 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	var out *models.ProjectMembership
 	err = c.storage.WithNamedLock(ctx, membershipLockKey(projectID, userID), func(ctx context.Context) error {
 		if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteMemberRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
+			return err
+		}
+		// The domain check loads the target user, so it runs only once the ceiling
+		// passed (OWNERSHIP-ORACLE-1, see addProjectMember).
+		if err := c.domainAllowedForUser(ctx, userID); err != nil {
 			return err
 		}
 		// One active onboarding per (project, user).
