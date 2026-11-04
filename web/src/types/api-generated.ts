@@ -2077,7 +2077,7 @@ export interface paths {
         };
         /**
          * List secrets
-         * @description List secrets accessible to the caller with optional filters for project, environment, type, and classification.
+         * @description List secrets accessible to the caller with optional filters for project, environment, type, and classification. A caller whose own share list is at the 10000-row storage cap is refused with 422 ShareListOverCap (never a list that silently omits shares), the same refusal GET /api/v1/shares answers.
          */
         get: operations["listSecrets"];
         put?: never;
@@ -9897,6 +9897,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     createSecret: {

@@ -5,6 +5,7 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -195,7 +196,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 		response, err = h.coreService.ListSecretsInScope(r.Context(), filter)
 		if err != nil {
 			log.Printf("Error listing secrets: %v", err)
-			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
+			h.sendListSecretsError(w, err)
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
@@ -240,7 +241,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 		}
 		if err != nil {
 			log.Printf("Error listing secrets: %v", err)
-			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
+			h.sendListSecretsError(w, err)
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
@@ -261,9 +262,20 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 	response, err = h.coreService.ListReadableSecrets(r.Context(), userCtx.UserID, userCtx.PrincipalID(), filter)
 	if err != nil {
 		log.Printf("Error listing readable secrets for user %d: %v", userCtx.UserID, err)
-		h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
+		h.sendListSecretsError(w, err)
 		return
 	}
 	h.resolveSecretNames(r.Context(), response.Secrets)
 	h.sendSuccess(w, newSecretListResponseWire(response), "")
+}
+
+// sendListSecretsError answers a failed secrets listing. A share fetch at the storage
+// row cap is a refusal, not a fault: the same 422 ShareListOverCap body the share lists
+// answer (shares_query.go), so a client can tell "too many shares" from a 500.
+func (h *SecretHandler) sendListSecretsError(w http.ResponseWriter, err error) {
+	if errors.Is(err, core.ErrShareListOverCap) {
+		h.sendError(w, "ShareListOverCap", err.Error(), http.StatusUnprocessableEntity, nil)
+		return
+	}
+	h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
 }
