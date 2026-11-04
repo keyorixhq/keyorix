@@ -485,13 +485,16 @@ func (c *KeyorixCore) CompleteAuditKeyTransition(ctx context.Context) (bool, err
 		if !c.auditKeyTransitionNewMACValid(t) {
 			return fmt.Errorf("key transition #%d to key version %q fails its new-key signature: not completed", t.Seq, t.NewKID)
 		}
-		stateVal, _, err := c.storage.GetSystemMetadata(ctx, auditVerifyStateKey)
+		stateVal, stateFound, err := c.storage.GetSystemMetadata(ctx, auditVerifyStateKey)
 		if err != nil {
 			return err
 		}
 		st, _, why, err := c.decodeAuditVerifyStateCarried(ctx, stateVal)
 		if err != nil {
 			return err
+		}
+		if st != nil {
+			st.stored = auditVerifyStoredRow{val: stateVal, found: stateFound, read: true}
 		}
 		if t.State != "" && (st == nil || st.KeyEpoch == nil || st.KeyEpoch.Seq != t.Seq) {
 			return fmt.Errorf("key transition #%d: the verification state changed after the transition was prepared (%s): not completed", t.Seq, why)
@@ -617,7 +620,11 @@ func (c *KeyorixCore) resignCarriedHighWater(ctx context.Context, t *auditKeyTra
 	if err != nil {
 		return false, err
 	}
-	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, auditHighWaterValueSealed(hw, bind, sig)); err != nil {
+	// Only over the mark the record names (pooler-lock-loss.md row 15): when
+	// another holder of the lock wrote a mark since, that mark is not the
+	// one to carry over, and it must not be replaced by this older count.
+	swapped, err := c.storage.CompareAndSetSystemMetadata(ctx, auditHighWaterKey, val, true, auditHighWaterValueSealed(hw, bind, sig))
+	if err != nil || !swapped {
 		return false, err
 	}
 	c.bumpWatermark(hw.ChainedEvents)

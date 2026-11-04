@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -150,9 +151,17 @@ func (e *MySQLEngine) Renew(_ context.Context, _, _ string, _ time.Time) error {
 // hostname — DialFunc only controls the raw TCP dial beneath it) while
 // pinning the raw connection to the specific address just validated.
 func openMySQL(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (*sql.DB, error) {
+	if err := dsn.CheckLocalFileOptions("mysql", adminDSN); err != nil {
+		return nil, err
+	}
 	cfg, err := mysql.ParseDSN(adminDSN)
 	if err != nil {
 		return nil, fmt.Errorf("invalid mysql admin DSN: %w", err)
+	}
+	// Belt and braces behind the textual check: whatever the parser made of the
+	// DSN, never let the remote server request a local file (LOCAL INFILE).
+	if cfg.AllowAllFiles {
+		return nil, &dsn.ForbiddenOptionError{Backend: "mysql", Option: "allowallfiles"}
 	}
 	if !allowPrivateNetwork {
 		cfg.DialFunc = (&netutil.Dialer{Disallow: netutil.IsPrivateOrLinkLocal, Resolve: dialResolve}).DialContext

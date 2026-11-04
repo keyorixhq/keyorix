@@ -277,7 +277,8 @@ after the break is not notarised: decide soon.
    The entry hash is unkeyed, so a writer who rewrites rows and recomputes their hashes is
    caught only where something signed pinned them. The plan lists the surviving rows before
    each gap that nothing signed pins (`unauthenticated: audit events #a through #b ...`). The
-   seal records them (`unpinned`). Compare those rows with your backup or an off-host anchor
+   seal records them (`unpinned`), and `keyorix-server admin verify-audit` prints them under
+   each seal (`unpinned: audit events #a through #b ...`; `unpinned` in `--json`). Compare those rows with your backup or an off-host anchor
    before you confirm. An older checkpoint deleted along with the rewrite cannot be told apart
    from one never written: those rows then read as unauthenticated, not as refused.
 
