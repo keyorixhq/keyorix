@@ -319,7 +319,7 @@ func handleFakePGConn(conn net.Conn) {
 
 // fakePGDSN builds a pgx-compatible DSN pointing at the fake server.
 func fakePGDSN(host, port string) string {
-	return fmt.Sprintf("host=%s port=%s user=admin dbname=testdb sslmode=disable connect_timeout=5", host, port)
+	return fmt.Sprintf("host=%s port=%s user=admin password=pw dbname=testdb sslmode=disable connect_timeout=5", host, port)
 }
 
 // ─── PostgresEngine.Issue – happy path ──────────────────────────────────────

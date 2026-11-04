@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -54,6 +55,10 @@ func dynamicSecretClientMessage(err error, op string) string {
 	if refused, ok := errors.AsType[*core.DynamicSecretTargetRefusedError](err); ok {
 		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(refused)) // server-side only; the client gets ClientMessage()
 		return refused.ClientMessage()
+	}
+	if forbidden, ok := errors.AsType[*dsn.ForbiddenOptionError](err); ok {
+		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(forbidden))
+		return forbidden.Error() // names only the option the caller wrote
 	}
 	msg := err.Error()
 	if isSafeDynamicSecretError(msg) {

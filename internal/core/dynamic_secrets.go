@@ -284,6 +284,11 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if err := c.enforceDynamicSecretSSRFGuard(req.AdminDSN); err != nil {
 		return nil, err
 	}
+	// admin_dsn is project-admin input: refuse options that make the driver read the
+	// server's local files (mysql allowAllFiles, mongodb tls*File, postgres ssl*/passfile).
+	if err := dsn.CheckLocalFileOptions(req.BackendType, req.AdminDSN); err != nil {
+		return nil, err
+	}
 	// #94: the admin DSN is encrypted bound to DynamicSecretConfigAAD(cfg.ID, ...), so
 	// it must be encrypted AFTER the row exists (cfg.ID is an auto-increment PK, not
 	// known beforehand) — insert first with the DSN columns empty, then encrypt and

@@ -2,12 +2,19 @@ package dynamic
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/url"
+	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -43,9 +50,9 @@ type PostgresEngine struct {
 // and DialFunc's own re-validation of whatever literal IP it receives is
 // defense-in-depth regardless of which step did the resolving.
 func dialPostgres(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (*pgx.Conn, error) {
-	cfg, err := pgx.ParseConfig(adminDSN)
+	cfg, err := parsePostgresAdminDSN(adminDSN)
 	if err != nil {
-		return nil, fmt.Errorf("connect to target: %w", err)
+		return nil, err
 	}
 	if !allowPrivateNetwork {
 		cfg.LookupFunc = func(ctx context.Context, host string) ([]string, error) {
@@ -66,6 +73,113 @@ func dialPostgres(ctx context.Context, adminDSN string, allowPrivateNetwork bool
 		return nil, fmt.Errorf("connect to target: %w", err)
 	}
 	return conn, nil
+}
+
+// postgresAdminDSNKeys is the allow-list of keys a postgres admin_dsn may set.
+// pgx refuses any other key before it reads a file or resolves a host
+// (ParseConfigOptions.ConnStringAllowedKeys), so a key pgx learns in a later
+// version is refused too. None of these makes pgx read the server's disk.
+var postgresAdminDSNKeys = []string{
+	"host", "port", "dbname", "user", "password",
+	"sslmode", "sslsni", "connect_timeout", "application_name",
+	"target_session_attrs", "channel_binding", "require_auth",
+}
+
+var pgDisallowedKeyRE = regexp.MustCompile(`connection string key "([a-z_]{1,64})" is not in ConnStringAllowedKeys`)
+
+// parsePostgresAdminDSN parses an admin_dsn the way dialPostgres needs it.
+// admin_dsn is project-admin input, and pgx would otherwise:
+//   - read sslrootcert/sslcert/sslkey/passfile/servicefile/service from the
+//     server's disk (refused by the textual check, then by the allow-list, which
+//     also covers separators the textual check might not know);
+//   - fill a password the DSN leaves out (or sets empty) from the server's
+//     PGPASSWORD, service file or ~/.pgpass, and send it to the DSN's host;
+//   - present the server's default client certificate (~/.postgresql/
+//     postgresql.crt or PGSSLCERT/PGSSLKEY) to any host that asks for one.
+//
+// The password must therefore be written in the DSN itself, and client
+// certificates are dropped (sslcert/sslkey cannot be set by the DSN, so any
+// certificate is the server's own). Settings that only make the connection
+// stricter (PGSSLMODE, a default root.crt) still apply.
+func parsePostgresAdminDSN(adminDSN string) (*pgx.ConnConfig, error) {
+	if err := dsn.CheckLocalFileOptions("postgres", adminDSN); err != nil {
+		return nil, err
+	}
+	opts := pgx.ParseConfigOptions{ParseConfigOptions: pgconn.ParseConfigOptions{ConnStringAllowedKeys: postgresAdminDSNKeys}}
+	cfg, err := pgx.ParseConfigWithOptions(adminDSN, opts)
+	if err != nil {
+		if m := pgDisallowedKeyRE.FindStringSubmatch(err.Error()); m != nil {
+			return nil, &dsn.ForbiddenOptionError{Backend: "postgres", Option: m[1], Reason: "allowed options are " + strings.Join(postgresAdminDSNKeys, ", ")}
+		}
+		if strings.Contains(err.Error(), "ConnStringAllowedKeys") {
+			return nil, &dsn.ForbiddenOptionError{Backend: "postgres", Option: "?", Reason: "allowed options are " + strings.Join(postgresAdminDSNKeys, ", ")}
+		}
+		return nil, fmt.Errorf("connect to target: %w", err)
+	}
+
+	// Did the DSN itself set a password? The same parse with "password" left out
+	// of the allow-list succeeds only when it did not; nothing else differs.
+	noPassword := slices.DeleteFunc(slices.Clone(postgresAdminDSNKeys), func(k string) bool { return k == "password" })
+	_, probeErr := pgconn.ParseConfigWithOptions(adminDSN, pgconn.ParseConfigOptions{ConnStringAllowedKeys: noPassword})
+	if probeErr == nil {
+		return nil, errAmbientPostgresPassword
+	}
+	// With the key present pgx only replaces an empty value, from ~/.pgpass. Parse
+	// the same DSN again with passfile pointing at the null device: a connection
+	// string key overrides the default and PGPASSFILE, so what comes out is the
+	// password the DSN itself carries. It must be non-empty and be the one pgx
+	// will send.
+	own, err := postgresDSNOwnPassword(adminDSN)
+	if err != nil || own == "" || own != cfg.Password {
+		return nil, errAmbientPostgresPassword
+	}
+
+	dropClientCerts(cfg.TLSConfig)
+	for _, fb := range cfg.Fallbacks {
+		dropClientCerts(fb.TLSConfig)
+	}
+	return cfg, nil
+}
+
+var errAmbientPostgresPassword = &dsn.ForbiddenOptionError{
+	Backend: "postgres",
+	Option:  "password",
+	Reason:  "admin_dsn must contain the admin password; the server's own PGPASSWORD, ~/.pgpass and service files are never used",
+}
+
+// postgresDSNOwnPassword returns the password adminDSN itself carries, parsed
+// with passfile=<os.DevNull> so ~/.pgpass (and PGPASSFILE) cannot fill it in.
+// An error means the DSN could not be rewritten safely; the caller refuses it.
+func postgresDSNOwnPassword(adminDSN string) (string, error) {
+	probe := adminDSN
+	if strings.HasPrefix(adminDSN, "postgres://") || strings.HasPrefix(adminDSN, "postgresql://") {
+		u, err := url.Parse(adminDSN)
+		if err != nil {
+			return "", err
+		}
+		u.Fragment, u.RawFragment = "", ""
+		if u.RawQuery != "" {
+			u.RawQuery += "&"
+		}
+		u.RawQuery += "passfile=" + url.QueryEscape(os.DevNull)
+		probe = u.String()
+	} else {
+		probe += " passfile=" + os.DevNull
+	}
+	keys := append(slices.Clone(postgresAdminDSNKeys), "passfile")
+	c, err := pgconn.ParseConfigWithOptions(probe, pgconn.ParseConfigOptions{ConnStringAllowedKeys: keys})
+	if err != nil {
+		return "", err
+	}
+	return c.Password, nil
+}
+
+func dropClientCerts(c *tls.Config) {
+	if c == nil {
+		return
+	}
+	c.Certificates = nil
+	c.GetClientCertificate = nil
 }
 
 func (e *PostgresEngine) BackendType() string      { return "postgres" }
