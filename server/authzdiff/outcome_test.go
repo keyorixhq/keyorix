@@ -18,6 +18,8 @@ const (
 	Allowed Outcome = "allowed"
 	Denied  Outcome = "denied"
 	Other   Outcome = "other"
+	// ModelNA: the case is outside the reference model's domain (Oracle 2 not applied).
+	ModelNA Outcome = "n/a"
 )
 
 // result is one leg's mapped outcome plus a NON-SENSITIVE detail for the

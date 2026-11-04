@@ -17,7 +17,7 @@ import (
 //     permission-subset and scope variations for the custom and machine
 //     principals. Records every case to $AUTHZDIFF_OUT and logs disagreements.
 //     It does not fail on a disagreement (Phase 2 lists findings, it does not
-//     gate on them); AUTHZDIFF_STRICT=1 makes any O1/O2 class fatal.
+//     gate on them); AUTHZDIFF_STRICT=1 fails on any case partition_test.go cannot explain (known findings D1-D4/M1-M3 are listed in REPORT.md and accepted; a new defect lands in "unexplained").
 //   - FuzzAuthzDiff: the same case space, chosen by the fuzzer.
 
 var allPerms = uint16(1<<len(customPermUniverse) - 1)
@@ -49,6 +49,9 @@ func variations(pk principalKind) []struct {
 }
 
 func argsFor(spec opSpec) []byte {
+	if spec.secretArgs {
+		return []byte{0, 1, 2, 3}
+	}
 	if strings.Contains(spec.name, "role.assign") || spec.name == "invitation.create" || spec.name == "accessrequest.approve" {
 		return []byte{0, 1, 2, 3}
 	}
@@ -81,6 +84,14 @@ func TestAuthzDiffSweep(t *testing.T) {
 	strict := os.Getenv("AUTHZDIFF_STRICT") != ""
 	specs := withDerived(t, ops())
 	var n, dis int
+	disBuckets, gapBuckets := map[string]int{}, map[string]int{}
+	defer func() {
+		t.Logf("partition of O1/O2 cases: %v", disBuckets)
+		t.Logf("partition of mapping-gap-only cases: %v", gapBuckets)
+		if (disBuckets["unexplained"] > 0 || gapBuckets["unexplained"] > 0) && strict {
+			t.Error("unexplained cases present (AUTHZDIFF_STRICT)")
+		}
+	}()
 	for _, spec := range specs {
 		if only != "" && !strings.Contains(","+only+",", ","+spec.name+",") {
 			continue
@@ -95,9 +106,12 @@ func TestAuthzDiffSweep(t *testing.T) {
 						n++
 						if r.disagreement() {
 							dis++
-							t.Log("DISAGREEMENT " + r.line())
-							if strict {
-								t.Fail()
+							disBuckets[r.Bucket]++
+							t.Log("DISAGREEMENT [" + r.Bucket + "] " + r.line())
+						} else if r.Bucket != "" {
+							gapBuckets[r.Bucket]++
+							if r.Bucket == "unexplained" {
+								t.Log("UNEXPLAINED " + r.line())
 							}
 						}
 					}
@@ -119,9 +133,9 @@ func FuzzAuthzDiff(f *testing.F) {
 		k := caseKey{Op: spec.name, Principal: pk, Target: tg.String(), Arg: arg % 4, Mask: mask & allPerms, CustomGlobal: global && pk == pkCustom}
 		r := runCase(t, spec, k, tg)
 		sink.write(r)
-		if r.disagreement() {
-			t.Log("DISAGREEMENT " + r.line())
-			if os.Getenv("AUTHZDIFF_STRICT") != "" {
+		if r.Bucket != "" {
+			t.Log("FLAGGED [" + r.Bucket + "] " + r.line())
+			if r.Bucket == "unexplained" && os.Getenv("AUTHZDIFF_STRICT") != "" {
 				t.Fail()
 			}
 		}

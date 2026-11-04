@@ -396,3 +396,144 @@ Phase 2:
 6. Machine actors on ACL grant/share: validation errors or 500 (M2).
 7. gRPC group mutations do not require `users.read` (D1). Owner decision
    first.
+
+## Before Phase 3: review follow-ups
+
+### (1) Owner, share and ACL cases for the secret operations
+
+**New fixtures.** Every secret op now runs against four secrets per project,
+selected by the op arg:
+
+| Secret | Owner | Share / ACL for the probed principals |
+|---|---|---|
+| s0 | admin | none (the Phase 2 baseline) |
+| s1 | viewer principal | none. The viewer is a member of A, not of B. |
+| s2 | admin | write share to the viewer, read share to the custom principal (A) |
+| s3 | admin | ACL `secrets.write` for the viewer, `secrets.read` for the custom principal (A) |
+
+- Shares and ACLs require the recipient to be a project member, and the
+  probed principals are members of A only. So in project B, s2 and s3 are
+  the "off" case.
+- Every secret also carries the target user's ACL, which is what
+  `acl.revoke` removes. ACLs are additive (`secret_acl.go`), so it does not
+  change any probed principal's access.
+- s1–s3 are **outside the reference model's domain**: Oracle 1 applies,
+  Oracle 2 is recorded as `n/a`.
+- **Positive control for s1**: the admin, or else the owner. An owner-only
+  action refuses a non-owner admin.
+
+**Result: REST and gRPC agree on every secret-op case.**
+
+- 2,304 secret-op cases (8 ops × 4 secrets × 2 projects × all
+  principals/variations).
+- Every REST/gRPC pair is allow/allow, deny/deny or other/other. The 4
+  other/other cases per secret in A are M2: a machine actor on share.
+- Actor 0 is n/a on both transports.
+- There are zero REST-vs-gRPC disagreements on any secret, owner, share or
+  ACL fixture, in either project.
+
+**Calibration:**
+- The admin-or-owner control calibrates every s1 operation except
+  `secret.share` (70 cases).
+- Share is owner-only, and the owner (viewer) lacks `secrets.write` at the
+  route gate. So no principal in the fixture set can share s1 on any layer.
+  Those cases are uncalibrated by construction, not by a defect.
+
+**New finding D4: ownership is a grant in core, but unreachable through any
+transport.** This is a design observation, not a bypass.
+- Core's `EnforceSecretActionPermission` (`permissions.go:112`) grants write
+  to the "owner, an allowlisted share, an ACL or a role".
+- Both transports gate the route on project RBAC (`secrets.write` /
+  `secrets.delete`) before core runs.
+- So the viewer, who owns s1 but holds only `project_viewer`, is allowed by
+  core and denied by REST (403) and gRPC (`PermissionDenied`), for update and
+  delete of s1 in A. That is 2 cases.
+- The two transports agree. The open question is whether ownership is meant
+  to grant anything at all; today it is dead code for owners without the RBAC
+  permission. It belongs with the design observation above, as question 4.
+
+### (2) Partition of the disagreements
+
+`partition_test.go`'s `explain()` assigns each flagged case to a bucket by
+an exact rule (op, principal kind, every layer's outcome), and
+`AUTHZDIFF_STRICT=1` fails the sweep on any case it cannot explain. Known
+findings are accepted. A new defect lands in `unexplained`; Phase 3 relies
+on that.
+
+**The 82 O1/O2 cases from Phase 2** (same case space, re-run):
+
+| Bucket | Cases | Breakdown |
+|---|---|---|
+| D1 | 4 | gRPC group create/update/delete/member-remove without `users.read` |
+| D2 | 76 | autorotate 59, group.role.assign 14, group.member.add 3 |
+| D3 | 2 | |
+| M1, M2, M3 | 0 | These are mapping-gap-only cases, not O1/O2; see the next table. D3 also shows the M1 symptom (REST 500) and is counted once, as D3. |
+| unexplained | **0** | |
+| **Total** | **82** | |
+
+**Extended run with owner/share/ACL fixtures** (4,572 cases):
+
+| Bucket | O1/O2 cases | Mapping-gap-only cases |
+|---|---|---|
+| D1 | 4 | |
+| D2 | 252 | |
+| D3 | 2 | |
+| D4 | 2 | |
+| M1 | | 48 |
+| M2 | | 78 |
+| M3 | | 59 |
+| unexplained | **0** | **0** |
+| **Total** | **260** | **185** |
+
+D2 grew because autorotate now runs on four secrets, not one. It is the
+same shape: core does not authorize a plain enable.
+
+### (3) One root cause behind M1, M3 and both untyped refusals
+
+**Root cause.** Core does have a typed refusal, `core.ErrPermissionDenied`,
+but it is not the single, mandatory way to say "denied" on either side of
+the boundary:
+
+- **Core side.** Some refusals are built from plain text, so
+  `errors.Is(err, ErrPermissionDenied)` is false:
+  - `errAdminAuthorityRequired`, a plain `errors.New` (secret-access-request
+    approve/reject);
+  - `TransitionMembership`'s "roles.assign is required at this membership's
+    project to transition it" (M3);
+  - SCIM's i18n `ErrorNotAuthorized`.
+- **Handler side.** Many handlers map core errors by **message substring**
+  (e.g. `changeMachineRole`, `machine_identities.go:606-625`). They have no
+  arm for a typed refusal, so a correctly typed refusal falls through to 500
+  (M1, and D3's REST symptom).
+  - The repo already knows the right shape: `secret_error_class.go`'s
+    `isPermissionRefusal` does `errors.Is(err, core.ErrPermissionDenied)`.
+    It is just only used by the secret routes.
+
+**Proposed fix: one sentinel, enforced on both sides. Not implemented.**
+
+1. **Core.** Every authorization refusal is built through the existing
+   constructors in `errors_permission.go` (`newPermissionSentinel`,
+   `permissionDeniedf`, `markPermissionDenied`), so it matches
+   `core.ErrPermissionDenied`.
+   - Concretely: `errAdminAuthorityRequired` becomes a
+     `newPermissionSentinel`; `TransitionMembership`'s refusal uses
+     `permissionDeniedf`; SCIM's `ErrorNotAuthorized` is wrapped with
+     `markPermissionDenied`.
+   - SCIM's response code can stay whatever ADR-096's SCIM exclusion decides;
+     typing the error does not force a status.
+2. **Transports.** One shared helper, e.g. `httpx.IsPermissionRefusal`
+   (hoisted from `secret_error_class.go`), is called as the **first** arm of
+   every handler error mapper, mapping to 403. The gRPC equivalent maps to
+   `PermissionDenied`. Substring arms stay only for non-authz errors.
+3. **Guards.** Each half of the contract gets a machine check:
+   - Extend `TestEveryErrorPermissionDeniedRefusalIsTyped` from literal
+     `i18n.T("ErrorPermissionDenied")` calls to every refusal the `refusal.go`
+     derivation in `devtools/authzmatrix` classes as `untyped`. That class
+     must become empty.
+   - This harness: after the fix, M1/M3 cases stop being flagged at all
+     (core and REST both say `denied`). Their `explain()` rules then match
+     nothing, and `AUTHZDIFF_STRICT=1` catches any regression as
+     `unexplained`.
+
+Items 1–4 of the defect follow-up list close under this one change. Items
+5–7 (D3's actor-type premise, M2's machine-actor handling, D1) are separate.

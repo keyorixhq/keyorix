@@ -59,10 +59,19 @@ type opSpec struct {
 	// server/ at bd16d6921: groups_members.go, rbac.go:830, machine_identities.go:600,
 	// project_memberships.go:165, group_service.go:177); the core leg mirrors it.
 	selfMachineGranter bool
-	req                func(fx *fixtures, t tgt, a byte) requirement
-	core               func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error
-	rest               func(fx *fixtures, t tgt, a byte) restReq
-	grpc               func(ctx context.Context, lg *leg, t tgt, a byte) error
+	// secretArgs: the op arg selects the fixture secret (sec): 0 = admin-owned,
+	// no share/ACL for any probed principal; 1 = owned by the viewer principal;
+	// 2 = shared (write: viewer, read: custom); 3 = ACL (secrets.write: viewer,
+	// secrets.read: custom). Shares/ACLs exist in project A only — recipients
+	// must be members, and the probed principals are members of A only — so in
+	// B args 2/3 are the "off" case. Args 1-3 are OUTSIDE the model's domain
+	// (owner/share/ACL semantics beyond the documented owner rules): Oracle 1
+	// applies, Oracle 2 is recorded as n/a.
+	secretArgs bool
+	req        func(fx *fixtures, t tgt, a byte) requirement
+	core       func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error
+	rest       func(fx *fixtures, t tgt, a byte) restReq
+	grpc       func(ctx context.Context, lg *leg, t tgt, a byte) error
 }
 
 // grantRoles is the fuzzed choice of role an op grants.
@@ -95,125 +104,125 @@ func ops() []opSpec {
 	return []opSpec{
 		// ---- REST-vs-gRPC divergent secret operations (MATRIX.md result 3) ----
 		{
-			name: "secret.update", row: "UpdateSecretWithPermissionCheck", targets: projTargets,
-			req: func(fx *fixtures, t tgt, _ byte) requirement {
+			name: "secret.update", row: "UpdateSecretWithPermissionCheck", targets: projTargets, secretArgs: true,
+			req: func(fx *fixtures, t tgt, a byte) requirement {
 				return requirement{perms: []string{"secrets.write"}, scope: pid(fx, t)}
 			},
-			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
+			core: func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error {
 				if p.isMachine() {
 					return errNotAuthzLayer
 				}
-				_, err := lg.c.UpdateSecretWithPermissionCheck(ctx, &core.UpdateSecretRequest{ID: lg.fx.proj(byte(t)).secretID, Value: []byte("synthetic-new"), UpdatedBy: p.username, UserID: p.userID})
+				_, err := lg.c.UpdateSecretWithPermissionCheck(ctx, &core.UpdateSecretRequest{ID: sec(lg.fx, t, a).id, Value: []byte("synthetic-new"), UpdatedBy: p.username, UserID: p.userID})
 				return err
 			},
-			rest: func(fx *fixtures, t tgt, _ byte) restReq {
-				return restReq{http.MethodPut, fmt.Sprintf("/api/v1/secrets/%d", fx.proj(byte(t)).secretID), map[string]any{"value": "synthetic-new"}}
+			rest: func(fx *fixtures, t tgt, a byte) restReq {
+				return restReq{http.MethodPut, fmt.Sprintf("/api/v1/secrets/%d", sec(fx, t, a).id), map[string]any{"value": "synthetic-new"}}
 			},
-			grpc: func(ctx context.Context, lg *leg, t tgt, _ byte) error {
+			grpc: func(ctx context.Context, lg *leg, t tgt, a byte) error {
 				v := "synthetic-new"
-				_, err := pb.NewSecretServiceClient(lg.conn).UpdateSecret(ctx, &pb.UpdateSecretRequest{Id: uint32(lg.fx.proj(byte(t)).secretID), Value: &v})
+				_, err := pb.NewSecretServiceClient(lg.conn).UpdateSecret(ctx, &pb.UpdateSecretRequest{Id: uint32(sec(lg.fx, t, a).id), Value: &v})
 				return err
 			},
 		},
 		{
-			name: "secret.delete", row: "DeleteSecretWithPermissionCheck", targets: projTargets,
-			req: func(fx *fixtures, t tgt, _ byte) requirement {
+			name: "secret.delete", row: "DeleteSecretWithPermissionCheck", targets: projTargets, secretArgs: true,
+			req: func(fx *fixtures, t tgt, a byte) requirement {
 				return requirement{perms: []string{"secrets.delete"}, scope: pid(fx, t)}
 			},
-			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
+			core: func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error {
 				if p.isMachine() {
 					return errNotAuthzLayer
 				}
-				return lg.c.DeleteSecretWithPermissionCheck(ctx, lg.fx.proj(byte(t)).secretID, p.userID)
+				return lg.c.DeleteSecretWithPermissionCheck(ctx, sec(lg.fx, t, a).id, p.userID)
 			},
-			rest: func(fx *fixtures, t tgt, _ byte) restReq {
-				return restReq{http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", fx.proj(byte(t)).secretID), nil}
+			rest: func(fx *fixtures, t tgt, a byte) restReq {
+				return restReq{http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", sec(fx, t, a).id), nil}
 			},
-			grpc: func(ctx context.Context, lg *leg, t tgt, _ byte) error {
-				_, err := pb.NewSecretServiceClient(lg.conn).DeleteSecret(ctx, &pb.DeleteSecretRequest{Id: uint32(lg.fx.proj(byte(t)).secretID)})
+			grpc: func(ctx context.Context, lg *leg, t tgt, a byte) error {
+				_, err := pb.NewSecretServiceClient(lg.conn).DeleteSecret(ctx, &pb.DeleteSecretRequest{Id: uint32(sec(lg.fx, t, a).id)})
 				return err
 			},
 		},
 		{
-			name: "secret.acl.grant", row: "GrantSecretACL", targets: projTargets,
-			req: func(fx *fixtures, t tgt, _ byte) requirement {
+			name: "secret.acl.grant", row: "GrantSecretACL", targets: projTargets, secretArgs: true,
+			req: func(fx *fixtures, t tgt, a byte) requirement {
 				return requirement{perms: []string{"secrets.manage"}, scope: pid(fx, t)}
 			},
-			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
-				return lg.c.GrantSecretACL(ctx, p.userID, lg.fx.proj(byte(t)).secretID, lg.fx.aclRecipientID, []string{"secrets.read"})
+			core: func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error {
+				return lg.c.GrantSecretACL(ctx, p.userID, sec(lg.fx, t, a).id, lg.fx.aclRecipientID, []string{"secrets.read"})
 			},
-			rest: func(fx *fixtures, t tgt, _ byte) restReq {
-				return restReq{http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", fx.proj(byte(t)).secretID),
+			rest: func(fx *fixtures, t tgt, a byte) restReq {
+				return restReq{http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", sec(fx, t, a).id),
 					map[string]any{"user_id": fx.aclRecipientID, "permissions": []string{"secrets.read"}}}
 			},
-			grpc: func(ctx context.Context, lg *leg, t tgt, _ byte) error {
+			grpc: func(ctx context.Context, lg *leg, t tgt, a byte) error {
 				_, err := pb.NewSecretServiceClient(lg.conn).GrantSecretACL(ctx, &pb.GrantSecretACLRequest{
-					SecretId: uint64(lg.fx.proj(byte(t)).secretID), UserId: uint64(lg.fx.aclRecipientID), Permissions: []string{"secrets.read"}})
+					SecretId: uint64(sec(lg.fx, t, a).id), UserId: uint64(lg.fx.aclRecipientID), Permissions: []string{"secrets.read"}})
 				return err
 			},
 		},
 		{
-			name: "secret.acl.revoke", row: "RevokeSecretACL", targets: projTargets,
-			req: func(fx *fixtures, t tgt, _ byte) requirement {
+			name: "secret.acl.revoke", row: "RevokeSecretACL", targets: projTargets, secretArgs: true,
+			req: func(fx *fixtures, t tgt, a byte) requirement {
 				return requirement{perms: []string{"secrets.manage"}, scope: pid(fx, t)}
 			},
-			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
-				pp := lg.fx.proj(byte(t))
-				return lg.c.RevokeSecretACL(ctx, p.userID, pp.secretID, pp.aclID)
+			core: func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error {
+				pp := sec(lg.fx, t, a)
+				return lg.c.RevokeSecretACL(ctx, p.userID, pp.id, pp.aclID)
 			},
-			rest: func(fx *fixtures, t tgt, _ byte) restReq {
-				pp := fx.proj(byte(t))
-				return restReq{http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d/acl/%d", pp.secretID, pp.aclID), nil}
+			rest: func(fx *fixtures, t tgt, a byte) restReq {
+				pp := sec(fx, t, a)
+				return restReq{http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d/acl/%d", pp.id, pp.aclID), nil}
 			},
-			grpc: func(ctx context.Context, lg *leg, t tgt, _ byte) error {
-				pp := lg.fx.proj(byte(t))
-				_, err := pb.NewSecretServiceClient(lg.conn).RevokeSecretACL(ctx, &pb.RevokeSecretACLRequest{SecretId: uint64(pp.secretID), AclId: uint64(pp.aclID)})
+			grpc: func(ctx context.Context, lg *leg, t tgt, a byte) error {
+				pp := sec(lg.fx, t, a)
+				_, err := pb.NewSecretServiceClient(lg.conn).RevokeSecretACL(ctx, &pb.RevokeSecretACLRequest{SecretId: uint64(pp.id), AclId: uint64(pp.aclID)})
 				return err
 			},
 		},
 		{
-			name: "secret.autorotate", row: "SetSecretAutoRotate", targets: projTargets,
-			req: func(fx *fixtures, t tgt, _ byte) requirement {
+			name: "secret.autorotate", row: "SetSecretAutoRotate", targets: projTargets, secretArgs: true,
+			req: func(fx *fixtures, t tgt, a byte) requirement {
 				return requirement{perms: []string{"secrets.write"}, scope: pid(fx, t)}
 			},
-			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
+			core: func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error {
 				actor := p.userID
 				if p.isMachine() {
 					actor = p.machineID
 				}
-				return lg.c.SetSecretAutoRotate(ctx, lg.fx.proj(byte(t)).secretID, core.AutoRotateSpec{Enabled: true}, actor)
+				return lg.c.SetSecretAutoRotate(ctx, sec(lg.fx, t, a).id, core.AutoRotateSpec{Enabled: true}, actor)
 			},
-			rest: func(fx *fixtures, t tgt, _ byte) restReq {
-				return restReq{http.MethodPatch, fmt.Sprintf("/api/v1/secrets/%d/auto-rotate", fx.proj(byte(t)).secretID), map[string]any{"enabled": true}}
+			rest: func(fx *fixtures, t tgt, a byte) restReq {
+				return restReq{http.MethodPatch, fmt.Sprintf("/api/v1/secrets/%d/auto-rotate", sec(fx, t, a).id), map[string]any{"enabled": true}}
 			},
-			grpc: func(ctx context.Context, lg *leg, t tgt, _ byte) error {
-				_, err := pb.NewSecretServiceClient(lg.conn).SetSecretAutoRotate(ctx, &pb.SetSecretAutoRotateRequest{Id: uint32(lg.fx.proj(byte(t)).secretID), Enabled: true})
+			grpc: func(ctx context.Context, lg *leg, t tgt, a byte) error {
+				_, err := pb.NewSecretServiceClient(lg.conn).SetSecretAutoRotate(ctx, &pb.SetSecretAutoRotateRequest{Id: uint32(sec(lg.fx, t, a).id), Enabled: true})
 				return err
 			},
 		},
 		{
-			name: "secret.share", row: "ShareSecret", targets: projTargets,
-			req: func(fx *fixtures, t tgt, _ byte) requirement {
+			name: "secret.share", row: "ShareSecret", targets: projTargets, secretArgs: true,
+			req: func(fx *fixtures, t tgt, a byte) requirement {
 				return requirement{perms: []string{"secrets.write"}, scope: pid(fx, t), ownerUserID: fx.adminID}
 			},
-			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
-				_, err := lg.c.ShareSecret(ctx, &core.ShareSecretRequest{SecretID: lg.fx.proj(byte(t)).secretID, RecipientID: lg.fx.targetUserID, Permission: "read", SharedBy: p.userID})
+			core: func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error {
+				_, err := lg.c.ShareSecret(ctx, &core.ShareSecretRequest{SecretID: sec(lg.fx, t, a).id, RecipientID: lg.fx.targetUserID, Permission: "read", SharedBy: p.userID})
 				return err
 			},
-			rest: func(fx *fixtures, t tgt, _ byte) restReq {
-				return restReq{http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/share", fx.proj(byte(t)).secretID),
+			rest: func(fx *fixtures, t tgt, a byte) restReq {
+				return restReq{http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/share", sec(fx, t, a).id),
 					map[string]any{"recipient_id": fx.targetUserID, "permission": "read"}}
 			},
-			grpc: func(ctx context.Context, lg *leg, t tgt, _ byte) error {
-				_, err := pb.NewShareServiceClient(lg.conn).ShareSecret(ctx, &pb.ShareSecretRequest{SecretId: uint32(lg.fx.proj(byte(t)).secretID), RecipientId: uint32(lg.fx.targetUserID), Permission: "read"})
+			grpc: func(ctx context.Context, lg *leg, t tgt, a byte) error {
+				_, err := pb.NewShareServiceClient(lg.conn).ShareSecret(ctx, &pb.ShareSecretRequest{SecretId: uint32(sec(lg.fx, t, a).id), RecipientId: uint32(lg.fx.targetUserID), Permission: "read"})
 				return err
 			},
 		},
-		valueRead("secret.value.byref", func(fx *fixtures, t tgt) string {
-			return "/api/v1/secrets/value?ref=" + fx.proj(byte(t)).secretRef
+		valueRead("secret.value.byref", func(fx *fixtures, t tgt, a byte) string {
+			return "/api/v1/secrets/value?ref=" + sec(fx, t, a).ref
 		}),
-		valueRead("secret.value.byid", func(fx *fixtures, t tgt) string {
-			return fmt.Sprintf("/api/v1/secrets/%d?include_value=true", fx.proj(byte(t)).secretID)
+		valueRead("secret.value.byid", func(fx *fixtures, t tgt, a byte) string {
+			return fmt.Sprintf("/api/v1/secrets/%d?include_value=true", sec(fx, t, a).id)
 		}),
 
 		// ---- groups ----
@@ -560,31 +569,36 @@ func ops() []opSpec {
 	}
 }
 
+// sec returns the fixture secret op arg a selects in target t (see secretArgs).
+func sec(fx *fixtures, t tgt, a byte) fixtureSecret {
+	return fx.proj(byte(t)).secrets[int(a)%len(fx.proj(byte(t)).secrets)]
+}
+
 // errLayerAbsent: this layer has no equivalent call for this target.
 var errLayerAbsent = errors.New("layer has no such call for this target")
 
 // valueRead builds a secret-value read op; the REST path differs per variant,
 // the core and gRPC legs are shared. Values are discarded, never printed.
-func valueRead(name string, path func(*fixtures, tgt) string) opSpec {
+func valueRead(name string, path func(*fixtures, tgt, byte) string) opSpec {
 	return opSpec{
-		name: name, row: "GetSecretForValueRead", targets: projTargets,
-		req: func(fx *fixtures, t tgt, _ byte) requirement {
+		name: name, row: "GetSecretForValueRead", targets: projTargets, secretArgs: true,
+		req: func(fx *fixtures, t tgt, a byte) requirement {
 			return requirement{perms: []string{"secrets.read"}, scope: pid(fx, t)}
 		},
-		core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
+		core: func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error {
 			if p.isMachine() {
 				return errNotAuthzLayer
 			}
-			ps, err := lg.c.GetSecretForValueRead(ctx, lg.fx.proj(byte(t)).secretID, p.userID)
+			ps, err := lg.c.GetSecretForValueRead(ctx, sec(lg.fx, t, a).id, p.userID)
 			if err != nil {
 				return err
 			}
 			_, err = lg.c.GetPermittedSecretValue(ctx, ps)
 			return err
 		},
-		rest: func(fx *fixtures, t tgt, _ byte) restReq { return restReq{http.MethodGet, path(fx, t), nil} },
-		grpc: func(ctx context.Context, lg *leg, t tgt, _ byte) error {
-			_, err := pb.NewSecretServiceClient(lg.conn).GetSecretValue(ctx, &pb.GetSecretRequest{Id: uint32(lg.fx.proj(byte(t)).secretID), IncludeValue: true})
+		rest: func(fx *fixtures, t tgt, a byte) restReq { return restReq{http.MethodGet, path(fx, t, a), nil} },
+		grpc: func(ctx context.Context, lg *leg, t tgt, a byte) error {
+			_, err := pb.NewSecretServiceClient(lg.conn).GetSecretValue(ctx, &pb.GetSecretRequest{Id: uint32(sec(lg.fx, t, a).id), IncludeValue: true})
 			return err
 		},
 	}

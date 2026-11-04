@@ -81,6 +81,15 @@ type perProject struct {
 	accessRequestID  uint
 	membershipID     uint
 	aclID            uint // ACL entry on secretID for targetUser
+	secrets          [4]fixtureSecret
+}
+
+// fixtureSecret is one of the four per-project secrets selected by an op arg
+// (opSpec.secretArgs). aclID is the ACL entry the acl.revoke op removes.
+type fixtureSecret struct {
+	id    uint
+	ref   string
+	aclID uint
 }
 
 type fixtures struct {
@@ -293,6 +302,54 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 			return nil, fmt.Errorf("acl fixture read: %w", e)
 		}
 		pp.aclID = acl.ID
+		pp.secrets[0] = fixtureSecret{id: sec.ID, ref: pp.secretRef, aclID: acl.ID}
+
+		// s1: owned by the viewer principal (a member of A, NOT of B).
+		// s2: admin-owned, write share -> viewer, read share -> custom (A only).
+		// s3: admin-owned, ACL secrets.write -> viewer, secrets.read -> custom (A only).
+		// Every one also carries the target user's ACL, the acl.revoke target (ACLs
+		// are additive, secret_acl.go, so it does not affect any probed principal).
+		viewerID, customID := fx.principals[pkViewer].userID, fx.principals[pkCustom].userID
+		for n := 1; n <= 3; n++ {
+			owner := admin.ID
+			if n == 1 {
+				owner = viewerID
+			}
+			name := fmt.Sprintf("s%d", n)
+			s := must(c.CreateSecret(ctx, &core.CreateSecretRequest{
+				Name: name, Value: []byte(fmt.Sprintf("synthetic-%d-%d", i, n)), ProjectID: pp.projectID, EnvironmentID: pp.envID,
+				Type: "password", CreatedBy: "kxadmin", OwnerID: owner,
+			}))
+			if e := c.GrantSecretACL(ctx, admin.ID, s.ID, target.ID, []string{"secrets.read"}); e != nil {
+				return nil, fmt.Errorf("acl fixture s%d: %w", n, e)
+			}
+			var a models.SecretACL
+			if e := db.Where("secret_id = ? AND user_id = ?", s.ID, target.ID).First(&a).Error; e != nil {
+				return nil, fmt.Errorf("acl fixture read s%d: %w", n, e)
+			}
+			pp.secrets[n] = fixtureSecret{id: s.ID, ref: pp.projectName + "/prod/" + name, aclID: a.ID}
+			if pp.projectID != fx.A.projectID {
+				continue // B: shares/ACLs "off" (probed principals are not members of B)
+			}
+			switch n {
+			case 2:
+				for _, sh := range []struct {
+					uid  uint
+					perm string
+				}{{viewerID, "write"}, {customID, "read"}} {
+					if _, e := c.ShareSecret(ctx, &core.ShareSecretRequest{SecretID: s.ID, RecipientID: sh.uid, Permission: sh.perm, SharedBy: admin.ID}); e != nil {
+						return nil, fmt.Errorf("share fixture: %w", e)
+					}
+				}
+			case 3:
+				if e := c.GrantSecretACL(ctx, admin.ID, s.ID, viewerID, []string{"secrets.write"}); e != nil {
+					return nil, fmt.Errorf("acl fixture viewer: %w", e)
+				}
+				if e := c.GrantSecretACL(ctx, admin.ID, s.ID, customID, []string{"secrets.read"}); e != nil {
+					return nil, fmt.Errorf("acl fixture custom: %w", e)
+				}
+			}
+		}
 	}
 
 	g := must(c.CreateGroup(ctx, admin.ID, &core.CreateGroupRequest{Name: "g-target", Description: "synthetic"}))

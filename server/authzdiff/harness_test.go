@@ -39,6 +39,7 @@ type caseResult struct {
 	Model   Outcome               `json:"model"`
 	Legs    map[layer]*legOutcome `json:"legs"`
 	Classes []string              `json:"classes,omitempty"`
+	Bucket  string                `json:"bucket,omitempty"` // partition_test.go explain()
 }
 
 // ---------- matrix-derived facts ----------
@@ -110,7 +111,9 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 	lg := newLeg(tb, l)
 	lg.applyVariation(tb, k.Mask, k.CustomGlobal)
 	if modelOut != nil {
-		if (model{lg.db}).allowed(p, spec.req(lg.fx, t, k.Arg)) {
+		if spec.secretArgs && k.Arg != 0 {
+			*modelOut = ModelNA // owner/share/ACL fixture: outside the model's domain
+		} else if (model{lg.db}).allowed(p, spec.req(lg.fx, t, k.Arg)) {
 			*modelOut = Allowed
 		} else {
 			*modelOut = Denied
@@ -172,6 +175,15 @@ func control(tb testing.TB, spec opSpec, l layer, t tgt, arg byte) *legOutcome {
 	}
 	_, fx := template(tb)
 	c := runLayer(tb, spec, l, fx.principals[pkGlobalAdmin], caseKey{Arg: arg}, t, nil)
+	if c.NA == "" && c.Outcome != Allowed && spec.secretArgs && arg == 1 {
+		// s1 is owned by the viewer: an owner-only action refuses the non-owner
+		// admin, so the owner succeeding equally proves the arguments are valid.
+		// (The owner alone often fails too: ownership does not pass the route's
+		// RBAC gate.)
+		if o := runLayer(tb, spec, l, fx.principals[pkViewer], caseKey{Arg: arg}, t, nil); o.NA == "" && o.Outcome == Allowed {
+			c = o
+		}
+	}
 	controls[key] = c
 	return c
 }
@@ -196,6 +208,7 @@ func runCase(tb testing.TB, spec opSpec, k caseKey, t tgt) *caseResult {
 		}
 	}
 	res.Classes = classify(spec, p, res)
+	res.Bucket = explain(res)
 	return res
 }
 
@@ -238,6 +251,12 @@ func classify(spec opSpec, p *principal, r *caseResult) []string {
 	for _, l := range []layer{layerCore, layerREST, layerGRPC} {
 		o, ok := part[l]
 		if !ok {
+			continue
+		}
+		if r.Model == ModelNA {
+			if o == Other {
+				out = append(out, "other-outside-model:"+string(l))
+			}
 			continue
 		}
 		switch {
