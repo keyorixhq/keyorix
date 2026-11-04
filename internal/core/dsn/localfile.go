@@ -62,9 +62,15 @@ var ambientCredentialMechanisms = map[string]struct {
 type ForbiddenOptionError struct {
 	Backend string
 	Option  string
+	// Reason, when set, replaces the default "uses its own files or credentials"
+	// explanation. It must not quote any part of the DSN.
+	Reason string
 }
 
 func (e *ForbiddenOptionError) Error() string {
+	if e.Reason != "" {
+		return fmt.Sprintf("admin_dsn option %q is not allowed for %s backends: %s", e.Option, e.Backend, e.Reason)
+	}
 	return fmt.Sprintf("admin_dsn option %q is not allowed for %s backends: it makes the server use its own files or credentials", e.Option, e.Backend)
 }
 
@@ -75,16 +81,22 @@ var (
 
 func init() {
 	for backend, keys := range localFileOptions {
-		// The key must follow a separator (start, ? & ; space, quote) and be
-		// optionally closed by a quote and followed by '=', which covers URL query strings, mysql parameters,
-		// mongodb options and libpq key/value pairs. Deliberately loose: a false
-		// positive is a rejected DSN, a false negative is a file read.
+		// The key must follow a separator (start of string, or any byte that cannot
+		// be part of a key) and be optionally closed by a quote and followed by '=',
+		// which covers URL query strings, mysql parameters, mongodb options and
+		// libpq key/value pairs. The separator is "not a key byte" rather than a
+		// hand-picked list: pgx also splits on \v, which RE2's \s does not match.
+		// Deliberately loose: a false positive is a rejected DSN, a false negative
+		// is a file read.
 		if rule, ok := ambientCredentialMechanisms[backend]; ok {
-			ambientRE[backend] = regexp.MustCompile(`(?:^|[?&;,\s'"/])` + rule.key + `\s*=\s*(` + strings.Join(rule.values, "|") + `)`)
+			ambientRE[backend] = regexp.MustCompile(`(?:^|[^a-z0-9_])` + rule.key + space + `=` + space + `(` + strings.Join(rule.values, "|") + `)`)
 		}
-		localFileOptionRE[backend] = regexp.MustCompile(`(?:^|[?&;,\s'"/])(` + strings.Join(keys, "|") + `)['"]?\s*=`)
+		localFileOptionRE[backend] = regexp.MustCompile(`(?:^|[^a-z0-9_])(` + strings.Join(keys, "|") + `)['"]?` + space + `=`)
 	}
 }
+
+// space is every byte pgx trims around a key or '=' (RE2's \s lacks \v).
+const space = `[\t\n\v\f\r ]*`
 
 // CheckLocalFileOptions returns a *ForbiddenOptionError when adminDSN names an
 // option that makes the driver for backendType touch the local filesystem. Other
