@@ -7,17 +7,49 @@
 # DSN is given for that version, on PostgreSQL. Prints one result line per
 # version at the end; exits non-zero if any leg failed.
 #
-# Usage: restore_compat_matrix.sh <work-dir> <tag>[=<empty-postgres-dsn>] ...
+# Usage: restore_compat_matrix.sh <work-dir> [--tags N] [<tag>[=<empty-postgres-dsn>] ...]
 #   e.g. restore_compat_matrix.sh .scratch/rcm v0.95.3 v0.96.1="$(kpg dsn x_0961)"
+#        restore_compat_matrix.sh .scratch/rcm --tags 3   # the newest 3 vX.Y.Z tags, SQLite only
 #
+# --tags N adds the newest N release tags (vX.Y.Z, no pre-releases; needs the tags
+# fetched: git fetch --tags) to any tags given explicitly. It is meant for a nightly job.
 # Each PostgreSQL DSN must name its own EMPTY database (restore refuses a
 # populated target). Container and Helm legs are not covered here.
 set -uo pipefail
 
-[ $# -ge 2 ] || { sed -n '2,16p' "$0" >&2; exit 2; }
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TAGS_N=""
+ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tags) TAGS_N="${2:-}"; [ $# -ge 2 ] && shift; shift ;;
+        --tags=*) TAGS_N="${1#--tags=}"; shift ;;
+        -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+if [ -n "$TAGS_N" ] && ! [[ "$TAGS_N" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--tags needs a positive number, got '$TAGS_N'" >&2
+    exit 2
+fi
+if [ $# -lt 1 ] || { [ -z "$TAGS_N" ] && [ $# -lt 2 ]; }; then sed -n '2,16p' "$0" >&2; exit 2; fi
 WORK="$1"
 shift
+if [ -n "$TAGS_N" ]; then
+    declare -a LATEST=()
+    while IFS= read -r t; do LATEST+=("$t"); done < <(git -C "$REPO_ROOT" tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n "$TAGS_N")
+    if [ "${#LATEST[@]}" -eq 0 ]; then
+        echo "--tags $TAGS_N: no vX.Y.Z tags in this checkout (git fetch --tags)" >&2
+        exit 2
+    fi
+    echo "==> --tags $TAGS_N: ${LATEST[*]}" >&2
+    for t in "${LATEST[@]}"; do
+        dup=0
+        for given in "$@"; do [ "${given%%=*}" = "$t" ] && dup=1; done
+        [ "$dup" -eq 0 ] && set -- "$@" "$t"
+    done
+fi
 mkdir -p "$WORK/bin"
 WORK="$(cd "$WORK" && pwd)"
 

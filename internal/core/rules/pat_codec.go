@@ -40,9 +40,11 @@ func EncodePATScopes(scopes []string) (string, error) {
 }
 
 // DecodePATScopes parses a stored scopes column back into a permission list.
-// An empty column yields nil (unrestricted) — a PAT created without an explicit
-// scope allowlist inherits its owner's full permission set, so nil is the
-// correct "no restriction" signal.
+// Only the exact empty column yields nil (unrestricted) — a PAT created without an
+// explicit scope allowlist (EncodePATScopes writes "") or a pre-ADR-042 row (NULL,
+// read back as "") inherits its owner's full permission set, so nil is the correct
+// "no restriction" signal. A whitespace-only column is never written, so it is
+// corrupted like any other (PAT-SCOPE-TAILS-1, the DecodePATCIDRs rule from #3840).
 //
 // A non-empty column that fails JSON parsing is treated as corrupted rather than
 // unrestricted: the token was created WITH a scope restriction that is now
@@ -52,7 +54,6 @@ func EncodePATScopes(scopes []string) (string, error) {
 var PATScopeCorrupted = []string{"__corrupted__"}
 
 func DecodePATScopes(raw string) []string {
-	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
 	}

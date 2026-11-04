@@ -240,3 +240,17 @@ func TestRunAuditMigrateChain_DryRunDefault(t *testing.T) {
 		t.Fatalf("query = %q, want dry_run=true", gotQuery)
 	}
 }
+
+// TestAuditSearchActorHelp pins the --actor help to what the server matches: the
+// username of a user or the name of a machine identity, case-insensitively and
+// partially. "Partial match on actor username" left machine identities out.
+func TestAuditSearchActorHelp(t *testing.T) {
+	f := auditSearchCmd.Flags().Lookup("actor")
+	if f == nil {
+		t.Fatal("audit search has no --actor flag")
+	}
+	const want = "Case-insensitive partial match on a user's username or a machine identity's name"
+	if f.Usage != want {
+		t.Fatalf("--actor usage = %q, want %q", f.Usage, want)
+	}
+}

@@ -317,12 +317,11 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		switch {
+		case errors.Is(err, core.ErrPermissionDenied):
+			// The grant ceiling (a role the actor cannot grant): a refusal, not a fault.
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		case errors.Is(err, storage.ErrUserNotFound):
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
-		case errors.Is(err, core.ErrPermissionDenied):
-			// A grant-ceiling refusal ("cannot grant this role: ..."): the same
-			// answer as users_crud.go and groups_members.go.
-			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		default:
 			sendError(w, "InternalError", "Failed to update user roles", http.StatusInternalServerError, nil)
 		}

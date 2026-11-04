@@ -12,6 +12,8 @@ export type BreakGlassState = 'active' | 'expired' | 'revoked';
 export interface BreakGlassActivation {
     id: number;
     userId: number;
+    /** Username of the activating user (never an email); absent when the user cannot be read, e.g. deleted. */
+    username?: string | undefined;
     roleName: string;
     justification: string;
     state: BreakGlassState;
@@ -77,6 +79,8 @@ type WireActivation = components['schemas']['BreakGlassActivation'] & {
 const normalize = (a: WireActivation): BreakGlassActivation => ({
     id: a.id ?? 0,
     userId: a.user_id ?? 0,
+    // An empty string is "no username" too: the page falls back to the id.
+    username: a.username || undefined,
     roleName: a.role_name ?? '',
     justification: a.justification ?? '',
     state: a.state ?? 'active',
