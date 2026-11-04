@@ -344,6 +344,11 @@ func (s *RoleGRPCService) resolvePermissionIDs(ctx context.Context, actorID uint
 		}
 		authorized, aerr := s.core.Authorize(ctx, actorID, n, core.Scope{})
 		if aerr != nil {
+			// A lookup that failed because storage is down is an outage the client
+			// retries (INV-MW-authorize-lookup-error-is-503), not a server fault.
+			if core.IsAuthorizeTransient(ctx, aerr) {
+				return nil, status.Error(codes.Unavailable, authorizeUnavailableMessage)
+			}
 			return nil, status.Error(codes.Internal, "failed to resolve actor authority")
 		}
 		if !authorized {
