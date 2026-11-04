@@ -5,6 +5,7 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -239,8 +240,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 			response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
 		}
 		if err != nil {
-			log.Printf("Error listing secrets: %v", err)
-			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
+			h.sendListSecretsError(w, err)
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
@@ -260,10 +260,22 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 	// happened; there is now one function, and the dashboard's number is its Total.
 	response, err = h.coreService.ListReadableSecrets(r.Context(), userCtx.UserID, userCtx.PrincipalID(), filter)
 	if err != nil {
-		log.Printf("Error listing readable secrets for user %d: %v", userCtx.UserID, err)
-		h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
+		h.sendListSecretsError(w, err)
 		return
 	}
 	h.resolveSecretNames(r.Context(), response.Secrets)
 	h.sendSuccess(w, newSecretListResponseWire(response), "")
+}
+
+// sendListSecretsError answers a failed human-principal secrets list. A share list at
+// the storage row cap is refused by core (ErrShareListOverCap) rather than shortened;
+// it is a typed 422 with the same body shape as GET /shares (shares_query.go), not a
+// 500, so a user with more shares than the cap can tell the cause from an outage.
+func (h *SecretHandler) sendListSecretsError(w http.ResponseWriter, err error) {
+	if errors.Is(err, core.ErrShareListOverCap) {
+		h.sendError(w, "ShareListOverCap", err.Error(), http.StatusUnprocessableEntity, nil)
+		return
+	}
+	log.Printf("Error listing secrets: %v", err)
+	h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
 }

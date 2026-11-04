@@ -2077,7 +2077,7 @@ export interface paths {
         };
         /**
          * List secrets
-         * @description List secrets accessible to the caller with optional filters for project, environment, type, and classification.
+         * @description List secrets accessible to the caller with optional filters for project, environment, type, and classification. A caller with more than 10000 received shares is refused with 422 `ShareListOverCap` (never a shortened list), the same refusal as GET /shares; `show_owned_only` lists without the shared-with-me fetch.
          */
         get: operations["listSecrets"];
         put?: never;
@@ -9897,6 +9897,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     createSecret: {
