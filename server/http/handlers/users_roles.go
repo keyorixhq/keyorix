@@ -316,9 +316,14 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 		if sendRoleScopeError(w, err) {
 			return
 		}
-		if errors.Is(err, storage.ErrUserNotFound) {
+		switch {
+		case errors.Is(err, storage.ErrUserNotFound):
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
-		} else {
+		case errors.Is(err, core.ErrPermissionDenied):
+			// A grant-ceiling refusal ("cannot grant this role: ..."): the same
+			// answer as users_crud.go and groups_members.go.
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+		default:
 			sendError(w, "InternalError", "Failed to update user roles", http.StatusInternalServerError, nil)
 		}
 		return

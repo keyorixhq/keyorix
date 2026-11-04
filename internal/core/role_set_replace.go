@@ -202,7 +202,7 @@ func (c *KeyorixCore) requireSelfGrantCeilingAfterRemovals(ctx context.Context, 
 			}
 		}
 		if !ok {
-			return fmt.Errorf("cannot grant this role: you do not hold permission %q yourself", p)
+			return permissionDeniedf("cannot grant this role: you do not hold permission %q yourself", p)
 		}
 	}
 	return nil

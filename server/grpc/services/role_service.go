@@ -458,6 +458,10 @@ func mapRoleError(err error) error {
 		return status.Error(codes.InvalidArgument, "invalid role name, description or assignable_scope")
 	case errors.Is(err, core.ErrBuiltinRole):
 		return status.Error(codes.FailedPrecondition, "cannot modify a built-in role")
+	// The roles.assign grant ceiling (core/authz.go) is typed (permissionDeniedf);
+	// the fixed text does not echo the permission or role name (GRPC-003).
+	case errors.Is(err, core.ErrPermissionDenied):
+		return status.Error(codes.PermissionDenied, "insufficient privileges for this operation")
 	default:
 		return status.Error(codes.Internal, "role operation failed")
 	}

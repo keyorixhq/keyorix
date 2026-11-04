@@ -30,5 +30,10 @@ func TestUpdateUserRolesHTTP_SelfReplacementLosingRolesAssign_ChangesNothing(t *
 	require.NotEqual(t, http.StatusServiceUnavailable, status, body)
 	require.NotContains(t, body, "MutationPartiallyApplied", "nothing may be applied")
 	require.NotEqual(t, http.StatusOK, status, body)
+	// A ceiling refusal is the caller's authority, not a server fault: 403 with the
+	// code users_crud.go and groups_members.go use, not 500 InternalError.
+	require.Equal(t, http.StatusForbidden, status, body)
+	require.Contains(t, body, "Forbidden")
+	require.NotContains(t, body, "InternalError")
 	require.Equal(t, before, w.userGrants(t, 2), "the refused self-replacement changed the actor's roles")
 }
