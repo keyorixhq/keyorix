@@ -194,18 +194,18 @@ func (c *KeyorixCore) plainUserRead(ctx context.Context, userID uint) error {
 }
 `
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "synthetic.go", src, 0)
+	file, err := parser.ParseFile(fset, "synthetic-src", src, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]string{}
-	for _, f := range targetLookupsBeforeAuthorize(fset, "synthetic.go", file) {
+	for _, f := range targetLookupsBeforeAuthorize(fset, "synthetic-src", file) {
 		got[f.key] = f.call
 	}
 	want := map[string]string{
-		"synthetic.go:transferBefore":  "GetUser(newOwnerID)",
-		"synthetic.go:addMemberBefore": "domainAllowedForUser",
-		"synthetic.go:joinNoAuth":      "domainAllowedForGroupJoin",
+		"synthetic-src:transferBefore":  "GetUser(newOwnerID)",
+		"synthetic-src:addMemberBefore": "domainAllowedForUser",
+		"synthetic-src:joinNoAuth":      "domainAllowedForGroupJoin",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("findings = %v, want %v", got, want)
