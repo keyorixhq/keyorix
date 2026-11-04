@@ -1126,7 +1126,7 @@ func (c *KeyorixCore) saveSealedAuditVerifyState(ctx context.Context, seq int, a
 	if prev.Seals == seq && prev.Discontinuity == nil {
 		return nil // saved by an earlier run
 	}
-	st := &auditVerifyState{V: 1, KeyEpoch: prev.KeyEpoch, Accepted: append(slices.Clone(prev.Accepted), accepted...)}
+	st := &auditVerifyState{V: 1, KeyEpoch: prev.KeyEpoch, Accepted: append(slices.Clone(prev.Accepted), accepted...), stored: prev.stored}
 	st.Gen = max(prev.Gen, c.auditVerifyGenSeen.Load(), c.auditVerifyFailureGenFloor()) + 1
 	now := c.now()
 	st.LastCheck = &auditTailCheck{At: now, Valid: true, CheckpointID: cp.ID, ThroughID: cp.HeadID, HeadHash: cp.HeadHash,

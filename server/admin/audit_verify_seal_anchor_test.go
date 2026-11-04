@@ -87,7 +87,7 @@ func TestVerifyAudit_SealAnchorDigestAndUnpinnedReported(t *testing.T) {
 	}
 
 	out := run()
-	assert.Contains(t, out, "unpinned at acceptance: audit events #1 through #3")
+	assert.Contains(t, out, "unpinned: audit events #1 through #3 were pinned by no signed checkpoint")
 	assert.Contains(t, out, "anchor sha256 "+digest+" (recorded by digest only): not checked: pass that file with --anchor")
 
 	verifyAuditAnchorFile = anchorPath

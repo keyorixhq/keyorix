@@ -453,8 +453,7 @@ func printVerifyAuditReport(r *auditverify.Result) {
 				fmt.Println("    tail truncation")
 			}
 			for _, u := range sl.Unpinned {
-				fmt.Printf("    unpinned at acceptance: audit events #%d through #%d (nothing signed pinned them; a rewrite before the seal cannot be excluded)\n",
-					u.FromID, u.ThroughID)
+				fmt.Printf("    unpinned: audit events #%d through #%d were pinned by no signed checkpoint, mark, anchor or state when the loss was accepted; a rewrite of them before the acceptance cannot be excluded\n", u.FromID, u.ThroughID)
 			}
 			if a := sl.Anchor; a != nil {
 				how := "recorded by digest only"
