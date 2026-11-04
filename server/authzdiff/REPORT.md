@@ -537,3 +537,73 @@ the boundary:
 
 Items 1–4 of the defect follow-up list close under this one change. Items
 5–7 (D3's actor-type premise, M2's machine-actor handling, D1) are separate.
+
+## Phase 3: prove it fires
+
+### Method
+
+1. Commit a clean baseline: a STRICT sweep of 4,572 cases with zero
+   unexplained. Every known finding is partitioned by `explain()`.
+2. Plant one defect in production code.
+3. Re-run the full STRICT sweep. A planted defect matches no known finding's
+   shape, so it must surface as `unexplained`, and only on the planted
+   operation.
+4. Diff every case's per-layer outcomes against the baseline.
+5. Revert with `git checkout -- <file>` and confirm `git diff --stat` is
+   empty.
+
+### Results
+
+| Plant | Production change (reverted) | Expected | Unexplained cases | Cases changed vs baseline | Named op |
+|---|---|---|---|---|---|
+| 1. Name-based role check on one entry point | `internal/core/machine_token.go` `AssignMachineRole`: `requireGranterHoldsRolePermissions` replaced by the pre-FIX-1 check (refuse only admin-tier role *names*, via `requireAdminAuthorityAt`) | Oracle 2 | 252: 185 O1/O2 and 67 mapping-gap | 254, all `machine.role.assign` | `machine.role.assign` ✔ |
+| 2. One guard call removed from a handler | `server/grpc/services/machine_identity_service.go` `RevokeMachineToken`: `authorizeScoped(roles.assign)` removed | Oracle 1 | 59, all `O1(allow=grpc;deny=rest)` + `O2(grpc)` | 59, all `machine.token.revoke` | `machine.token.revoke` ✔ |
+| 3. One router gate removed on a group op | `server/http/router.go`: `RequirePermission(users.write)` removed from `DELETE /groups/{id}` | Oracle 1 + Oracle 2 | 1: `O1(allow=rest;deny=grpc)` + `O2(rest)` | 1, `group.delete` | `group.delete` ✔ |
+
+**Plant 1 detail.**
+- **Oracle 2 caught the real end-to-end bypass**: 8 cases where core *and*
+  REST allow and the model denies.
+  - Every one is the exact FIX-1 shape: a custom role (or a machine token)
+    holding only `roles.assign`@A grants `project_viewer` or `editor`, roles
+    bundling permissions it does not hold.
+  - The cases are the custom principal at A and at global scope, in both
+    projects.
+- **Oracle 1 also fired on 177 cases** (`allow=core;deny=rest`). With the
+  ceiling gone, core alone admits principals that REST's `roles.assign` route
+  gate still refuses. Expected: the ceiling was core's only check on this op.
+- **67 mapping-gap cases**: `project_admin` grants (arg 2). They hit the
+  plant's own `requireAdminAuthorityAt`, whose `errAdminAuthorityRequired` is
+  untyped, which is defect follow-up item 1 seen from another angle.
+
+**Plant 3 detail.**
+- Only 1 case surfaced: custom role, global scope, permission subset =
+  `users.read` only. The route group's outer `users.read` gate still filters
+  every other principal. Only a principal holding `users.read` but not
+  `users.write`, globally, can tell the inner gate's absence apart.
+- **Detected, with the minimum possible margin.** Sensitivity here depends
+  on the custom role's single-permission variations. It does not depend on
+  the fixed principals, none of which holds `users.read` without
+  `users.write` globally.
+
+**Reverts and clean run.**
+- After all three reverts: `git diff --stat` is empty.
+- The final STRICT run passes: 4,572 cases, partition D1 4 / D2 252 / D3 2 /
+  D4 2 / M1 48 / M2 78 / M3 59, unexplained 0.
+- The per-case outcome diff against the pre-plant baseline is empty.
+- Each plant changed outcomes on its own op only. The other ~4,300–4,500
+  cases were identical across all five runs, so the harness is
+  deterministic.
+
+### What this does and does not show
+
+- **It does show:** a removed guard is detected whether it sits in core
+  (plant 1, Oracle 2), a gRPC service (plant 2, Oracle 1) or the REST router
+  (plant 3, both), and the report names the planted operation.
+- **It does not show** detection for defects a fixture cannot reach:
+  - environment-scoped grants;
+  - MFA-required projects;
+  - PAT restrictions;
+  - suspended accounts;
+  - operations outside the 28 covered (see the matrix for the full in-scope
+    list);
+  - secret owner/share/ACL semantics under Oracle 2 (Oracle 1 only).
