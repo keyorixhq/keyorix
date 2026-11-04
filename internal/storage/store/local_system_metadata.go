@@ -34,3 +34,25 @@ func (ls *LocalStorage) SetSystemMetadata(ctx context.Context, key, value string
 		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
 	}).Create(&models.SystemMetadata{Key: key, Value: value, UpdatedAt: time.Now().UTC()}).Error
 }
+
+// CompareAndSetSystemMetadata writes value for key only when the row still
+// holds old (oldFound) or is still absent (!oldFound): a conditional UPDATE or
+// an INSERT ... ON CONFLICT DO NOTHING, decided by the affected-row count. Both
+// PostgreSQL and SQLite count a matched row as affected even when the value is
+// unchanged, so rewriting the same value reports swapped.
+func (ls *LocalStorage) CompareAndSetSystemMetadata(ctx context.Context, key, old string, oldFound bool, value string) (bool, error) {
+	now := time.Now().UTC()
+	var res *gorm.DB
+	if oldFound {
+		res = ls.db.WithContext(ctx).Model(&models.SystemMetadata{}).
+			Where("key = ? AND value = ?", key, old).
+			Updates(map[string]any{"value": value, "updated_at": now})
+	} else {
+		res = ls.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).
+			Create(&models.SystemMetadata{Key: key, Value: value, UpdatedAt: now})
+	}
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}

@@ -41,6 +41,13 @@ type SealTruncation struct {
 	SurvivingHeadID   uint64 `json:"surviving_head_id"`
 }
 
+// SealSpan is a range of surviving rows no signed artifact pinned when the
+// loss was accepted (internal/core.AuditSealSpan).
+type SealSpan struct {
+	FromID    uint64 `json:"from_id"`
+	ThroughID uint64 `json:"through_id"`
+}
+
 // SealCount is a certified or surviving chain size (chained + purged units).
 type SealCount struct {
 	Events   int64  `json:"events"`
@@ -64,6 +71,9 @@ type Seal struct {
 	Before     *SealCount      `json:"before,omitempty"`
 	After      SealCount       `json:"after"`
 	LostEvents int64           `json:"lost_events"`
+	// Unpinned: a rewrite of these rows before the acceptance cannot be
+	// excluded (#3802). Absent on records written before it was recorded.
+	Unpinned []SealSpan `json:"unpinned,omitempty"`
 
 	payload  []byte
 	kid, mac string
@@ -99,15 +109,16 @@ type SealStatus struct {
 
 // SealSummary is one authenticated record in the report.
 type SealSummary struct {
-	Seq        int       `json:"seq"`
-	At         time.Time `json:"at"`
-	Operator   string    `json:"operator"`
-	Reason     string    `json:"reason"`
-	Evidence   string    `json:"evidence"`
-	Gaps       []SealGap `json:"gaps,omitempty"`
-	Truncated  bool      `json:"truncated,omitempty"`
-	LostEvents int64     `json:"lost_events"`
-	Digest     string    `json:"digest"`
+	Seq        int        `json:"seq"`
+	At         time.Time  `json:"at"`
+	Operator   string     `json:"operator"`
+	Reason     string     `json:"reason"`
+	Evidence   string     `json:"evidence"`
+	Gaps       []SealGap  `json:"gaps,omitempty"`
+	Truncated  bool       `json:"truncated,omitempty"`
+	LostEvents int64      `json:"lost_events"`
+	Digest     string     `json:"digest"`
+	Unpinned   []SealSpan `json:"unpinned,omitempty"`
 }
 
 var errSealMalformed = errors.New("the audit_seals record is malformed")
@@ -268,7 +279,7 @@ func summarizeSeals(recs []*Seal) []SealSummary {
 	out := make([]SealSummary, len(recs))
 	for i, r := range recs {
 		out[i] = SealSummary{Seq: r.Seq, At: r.At, Operator: r.Operator, Reason: r.Reason, Evidence: r.Evidence,
-			Gaps: r.Gaps, Truncated: r.Truncation != nil, LostEvents: r.LostEvents, Digest: r.Digest()}
+			Gaps: r.Gaps, Truncated: r.Truncation != nil, LostEvents: r.LostEvents, Digest: r.Digest(), Unpinned: r.Unpinned}
 	}
 	return out
 }

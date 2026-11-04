@@ -342,6 +342,23 @@ func (w *FaultyStorage) ClearProjectSecretOwnership(ctx context.Context, userID 
 	return w.real.ClearProjectSecretOwnership(ctx, userID, projectID)
 }
 
+func (w *FaultyStorage) CompareAndSetSystemMetadata(ctx context.Context, key string, old string, oldFound bool, value string) (bool, error) {
+	fire, kind, injected := w.check("CompareAndSetSystemMetadata")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.CompareAndSetSystemMetadata(ctx, key, old, oldFound, value)
+			return rv1, injected
+		}
+	}
+	return w.real.CompareAndSetSystemMetadata(ctx, key, old, oldFound, value)
+}
+
 func (w *FaultyStorage) ConsumeMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error) {
 	fire, kind, injected := w.check("ConsumeMFAChallenge")
 	if fire {

@@ -751,6 +751,9 @@ func (c *KeyorixCore) advanceAuditRollingCycle(ctx context.Context, res *AuditVe
 		}
 	}
 	return c.updateAuditVerifyState(ctx, func(st *auditVerifyState) *auditVerifyFailure {
+		// A lost save runs this again over the reloaded row: start from a clean
+		// result so a branch taken only on the first pass leaves no trace.
+		res.CycleCompleted = false
 		switch {
 		case failReason != "":
 			st.Cycle = nil
@@ -877,16 +880,19 @@ func (c *KeyorixCore) runAuditFullVerification(parent context.Context, id string
 			job.State, job.Error = AuditVerifyJobFailed, clientSafeJobError(err)
 			return nil
 		}
+		// A lost save runs this again over the reloaded row: adjust a copy of
+		// the walk's report, so the first pass's adjustments do not carry over.
+		r := *rep
 		if d := st.Discontinuity; d != nil {
 			// The walk proves only the rows that are left; it cannot restore the
 			// continuity, so the job reports broken like every other view.
-			rep.Status, rep.Valid = AuditVerifyStatusBroken, false
-			rep.StateReason = auditDiscontinuityText(d)
-			if rep.Reason == "" {
-				rep.Reason = rep.StateReason
+			r.Status, r.Valid = AuditVerifyStatusBroken, false
+			r.StateReason = auditDiscontinuityText(d)
+			if r.Reason == "" {
+				r.Reason = r.StateReason
 			}
 		}
-		job.State, job.Result = AuditVerifyJobSucceeded, rep
+		job.State, job.Result = AuditVerifyJobSucceeded, &r
 		st.LastFull = &auditFullResult{StartedAt: startedAt, CompletedAt: finished, ThroughID: v.HeadID,
 			Source: auditFullSourceJob, Valid: v.Valid, FirstBrokenID: v.FirstBrokenID, Reason: v.Reason,
 			UnchainedEvents: v.UnchainedEvents}
