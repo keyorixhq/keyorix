@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -123,9 +124,13 @@ func parsePostgresAdminDSN(adminDSN string) (*pgx.ConnConfig, error) {
 	if probeErr == nil {
 		return nil, errAmbientPostgresPassword
 	}
-	// With the key present pgx only replaces an empty value, from ~/.pgpass. A
-	// password the admin did not write anywhere in the DSN came from there.
-	if cfg.Password != "" && !dsnContainsPassword(adminDSN, cfg.Password) {
+	// With the key present pgx only replaces an empty value, from ~/.pgpass. Parse
+	// the same DSN again with passfile pointing at the null device: a connection
+	// string key overrides the default and PGPASSFILE, so what comes out is the
+	// password the DSN itself carries. It must be non-empty and be the one pgx
+	// will send.
+	own, err := postgresDSNOwnPassword(adminDSN)
+	if err != nil || own == "" || own != cfg.Password {
 		return nil, errAmbientPostgresPassword
 	}
 
@@ -142,21 +147,31 @@ var errAmbientPostgresPassword = &dsn.ForbiddenOptionError{
 	Reason:  "admin_dsn must contain the admin password; the server's own PGPASSWORD, ~/.pgpass and service files are never used",
 }
 
-// dsnContainsPassword reports whether password appears in adminDSN as written,
-// percent-decoded (URL form) or with backslash escapes removed (keyword/value
-// form).
-func dsnContainsPassword(adminDSN, password string) bool {
-	if strings.Contains(adminDSN, password) {
-		return true
+// postgresDSNOwnPassword returns the password adminDSN itself carries, parsed
+// with passfile=<os.DevNull> so ~/.pgpass (and PGPASSFILE) cannot fill it in.
+// An error means the DSN could not be rewritten safely; the caller refuses it.
+func postgresDSNOwnPassword(adminDSN string) (string, error) {
+	probe := adminDSN
+	if strings.HasPrefix(adminDSN, "postgres://") || strings.HasPrefix(adminDSN, "postgresql://") {
+		u, err := url.Parse(adminDSN)
+		if err != nil {
+			return "", err
+		}
+		u.Fragment, u.RawFragment = "", ""
+		if u.RawQuery != "" {
+			u.RawQuery += "&"
+		}
+		u.RawQuery += "passfile=" + url.QueryEscape(os.DevNull)
+		probe = u.String()
+	} else {
+		probe += " passfile=" + os.DevNull
 	}
-	if dec, err := url.PathUnescape(adminDSN); err == nil && strings.Contains(dec, password) {
-		return true
+	keys := append(slices.Clone(postgresAdminDSNKeys), "passfile")
+	c, err := pgconn.ParseConfigWithOptions(probe, pgconn.ParseConfigOptions{ConnStringAllowedKeys: keys})
+	if err != nil {
+		return "", err
 	}
-	if dec, err := url.QueryUnescape(adminDSN); err == nil && strings.Contains(dec, password) {
-		return true
-	}
-	unesc := func(s string) string { return strings.ReplaceAll(s, `\`, "") }
-	return strings.Contains(unesc(adminDSN), unesc(password))
+	return c.Password, nil
 }
 
 func dropClientCerts(c *tls.Config) {

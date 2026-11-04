@@ -210,6 +210,11 @@ func TestPostgresEngineNeverSendsTheServersAmbientPassword(t *testing.T) {
 		base,                  // PGPASSWORD
 		base + " password=''", // explicit empty password: pgx consults ~/.pgpass
 		base + " password=",   // same, unquoted
+		// The ambient .pgpass password written into an allowed field must not
+		// make the empty password look like the admin's own (REVFIX-3952-3).
+		base + " password='' application_name=aaa,admin,ambient-pgpass,changeme",
+		base + " password='' dbname=ambient-pgpass",
+		fmt.Sprintf("postgres://admin:@%s:%s/d?sslmode=disable&application_name=ambient-pgpass", host, port),
 		fmt.Sprintf("postgres://admin@%s:%s/d?sslmode=disable", host, port),
 		fmt.Sprintf("postgres://admin:@%s:%s/d?sslmode=disable", host, port),
 	} {
