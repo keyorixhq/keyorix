@@ -23,7 +23,3 @@ server/http/handlers/audit_search_handler_test.go	audit search filtering and pag
 # Pure logic with a schema: clock arithmetic, not storage behaviour.
 internal/core/secret_value_clock_regression_test.go	clock-step logic of enforceSecretReadGuards; storage only holds the row
 internal/core/clock_fuzz_test.go	clock-jump fuzz over expiring credentials; storage only holds the rows
-# Owned by another running session: swap after it lands (class (a), not swapped here to avoid a conflict).
-internal/core/mfa_reset_cross_replica_test.go	edited by CORE-AUTH-TAILS-1; cross-replica claim, swap to sqlitedialect once that session lands
-server/http/handlers/login_budget_count_failures_test.go	login/MFA owner (FIX-3277); claim depends on error handling, swap once FIX-3277 lands
-server/http/handlers/project_mfa_toggle_http_test.go	login/MFA owner (FIX-3277); swap once FIX-3277 lands
