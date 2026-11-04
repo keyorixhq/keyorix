@@ -20,6 +20,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
@@ -151,12 +152,23 @@ func TestCreateUser_SetupLink_S21b(t *testing.T) {
 		Email:            "setuplink@example.com",
 		DeliverSetupLink: true,
 	})
-	// The delivery validation error from core comes back as InvalidArgument via
-	// mapUserError — the branch is exercised even on failure.
+	// The delivery validation error from core (core.ErrSetupBaseURLRequired) comes
+	// back as InvalidArgument via mapUserError, as HTTP answers 400. Accepting
+	// Internal here hid a regression where the refusal fell to the default case.
 	require.Error(t, err)
-	code := status.Code(err)
-	assert.True(t, code == codes.InvalidArgument || code == codes.Internal,
-		"expected InvalidArgument or Internal from setup-link path, got %v", code)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err),
+		"setup-link refusal without credential_delivery.base_url: %v", err)
+}
+
+// TestMapUserError_SetupBaseURLRequired pins the class by sentinel: the wrapped
+// refusal maps to InvalidArgument whatever text surrounds it.
+func TestMapUserError_SetupBaseURLRequired(t *testing.T) {
+	for _, err := range []error{
+		core.ErrSetupBaseURLRequired,
+		fmt.Errorf("opaque prefix: %w", core.ErrSetupBaseURLRequired),
+	} {
+		assert.Equal(t, codes.InvalidArgument, status.Code(mapUserError(err)), "err=%v", err)
+	}
 }
 
 func TestCreateUser_OTP_S21b(t *testing.T) {

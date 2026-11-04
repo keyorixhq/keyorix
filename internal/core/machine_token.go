@@ -64,10 +64,10 @@ type IssueMachineTokenResult struct {
 func (c *KeyorixCore) machineInProject(ctx context.Context, projectID, machineID uint) (*models.MachineIdentity, error) {
 	m, err := c.storage.GetMachineIdentity(ctx, machineID)
 	if err != nil {
-		return nil, classifyReadError(err, "machine identity not found")
+		return nil, classifyReadErrorAs(err, ErrMachineIdentityNotFound, "machine identity not found")
 	}
 	if m.ProjectID != projectID {
-		return nil, fmt.Errorf("machine identity not found")
+		return nil, notFoundAs(ErrMachineIdentityNotFound, "machine identity not found")
 	}
 	return m, nil
 }
@@ -95,10 +95,10 @@ func (c *KeyorixCore) validateReplacementCredential(ctx context.Context, machine
 	}
 	oldCred, err := c.storage.GetMachineIdentityCredentialByID(ctx, replaceID)
 	if err != nil {
-		return "", classifyReadError(err, "replace_credential_id: credential not found on this machine")
+		return "", classifyReadErrorAs(err, ErrMachineIdentityNotFound, "replace_credential_id: credential not found on this machine")
 	}
 	if oldCred.MachineIdentityID != machineID {
-		return "", fmt.Errorf("replace_credential_id: credential not found on this machine")
+		return "", notFoundAs(ErrMachineIdentityNotFound, "replace_credential_id: credential not found on this machine")
 	}
 	return oldCred.TokenHash, nil
 }
@@ -113,7 +113,7 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 		return nil, err
 	}
 	if m.State != MachineActive {
-		return nil, fmt.Errorf("cannot issue a token for a %s machine identity (must be active)", m.State)
+		return nil, refuseAs(ErrMachineIdentityNotActive, fmt.Errorf("cannot issue a token for a %s machine identity (must be active)", m.State))
 	}
 	// MACH-001: enforce a privilege ceiling — a non-admin cannot issue a token for
 	// a machine that holds admin-tier roles, since the token would carry those roles
@@ -125,7 +125,7 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	}
 	classification := params.Classification
 	if !IsValidClassification(classification) {
-		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
+		return nil, validationErrorf("classification must be one of public, internal, confidential, restricted (or empty)")
 	}
 	// Default a token's classification to its machine identity's tier when unset.
 	if classification == "" {
@@ -149,7 +149,7 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	if len(params.AllowedCIDRs) > 0 {
 		validated, err := encodePATCIDRs(params.AllowedCIDRs)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", "invalid CIDR allowlist", err)
+			return nil, validationErrorf("%s: %w", "invalid CIDR allowlist", err)
 		}
 		cidrJSON = validated
 	}
@@ -240,10 +240,10 @@ func (c *KeyorixCore) RevokeMachineToken(ctx context.Context, projectID, machine
 	}
 	cred, err := c.storage.GetMachineIdentityCredentialByID(ctx, credentialID)
 	if err != nil {
-		return "", classifyReadError(err, "token not found")
+		return "", classifyReadErrorAs(err, ErrMachineIdentityNotFound, "token not found")
 	}
 	if cred.MachineIdentityID != machineID {
-		return "", fmt.Errorf("token not found")
+		return "", notFoundAs(ErrMachineIdentityNotFound, "token not found")
 	}
 	// AUDIT-TX-3: a revocation: never blocked by the audit log, row owed.
 	settle, err := c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
@@ -285,7 +285,7 @@ func (c *KeyorixCore) MachineTokenHashes(ctx context.Context, machineID uint) ([
 // credential to the machine. Audited.
 func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machineID, credentialID uint, level string, actorID uint) (*models.MachineIdentityCredential, error) {
 	if !IsValidClassification(level) {
-		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
+		return nil, validationErrorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
 	}
 	m, err := c.machineInProject(ctx, projectID, machineID)
 	if err != nil {
@@ -293,10 +293,10 @@ func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machi
 	}
 	cred, err := c.storage.GetMachineIdentityCredentialByID(ctx, credentialID)
 	if err != nil {
-		return nil, classifyReadError(err, "token not found")
+		return nil, classifyReadErrorAs(err, ErrMachineIdentityNotFound, "token not found")
 	}
 	if cred.MachineIdentityID != machineID {
-		return nil, fmt.Errorf("token not found")
+		return nil, notFoundAs(ErrMachineIdentityNotFound, "token not found")
 	}
 	if cred.Classification == level {
 		return cred, nil // no-op
@@ -346,7 +346,7 @@ func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machi
 // authorization check this function itself does not perform.
 func (c *KeyorixCore) ClassifyMachineTokenByID(ctx context.Context, credentialID uint, level string) error {
 	if !IsValidClassification(level) {
-		return fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
+		return validationErrorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
 	}
 	cred, err := c.storage.GetMachineIdentityCredentialByID(ctx, credentialID)
 	if err != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
@@ -365,15 +364,6 @@ func optStringValue(s string) *string {
 	return &s
 }
 
-// isUntypedUserValidation is the remaining text match in mapUserError: the field
-// validation errors core/users.go and identity.NewFoldedName return without a
-// sentinel. See the case that calls it.
-func isUntypedUserValidation(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "validation") || strings.Contains(msg, "required") ||
-		strings.Contains(msg, "invalid") || strings.Contains(msg, "must be")
-}
-
 // mapUserError translates core user errors into gRPC status codes.
 func mapUserError(err error) error {
 	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
@@ -419,12 +409,13 @@ func mapUserError(err error) error {
 		return status.Error(codes.PermissionDenied, "insufficient privileges for this operation") // GRPC-003: was err.Error() — leaked internal role name
 	case errors.Is(err, core.ErrInvalidInput), errors.Is(err, identity.ErrEmpty):
 		return status.Error(codes.InvalidArgument, "invalid request parameters") // GRPC-003: was err.Error() — leaked password policy thresholds
-	// Not yet typed: core/users.go builds its field validation as
-	// fmt.Errorf("%s: <rule>", i18n.T("ErrorValidation", nil)) (about nine sites:
-	// length bounds, "... is required"), and identity.NewFoldedName wraps the precis
-	// error without a sentinel. Text match kept for these only, after every typed
-	// check above; replace with a core.ErrValidation wrap and delete.
-	case isUntypedUserValidation(err):
+	// ERR-CLASS-LEFTOVERS-1: core/users.go field validation (and the folded-name checks)
+	// carry core.ErrValidation.
+	case errors.Is(err, core.ErrValidation):
+		return status.Error(codes.InvalidArgument, "invalid request parameters")
+	// REVFIX-3964-1: CreateUser with deliver_setup_link and no credential_delivery.base_url
+	// (HTTP answers 400 ConfigError for the same sentinel).
+	case errors.Is(err, core.ErrSetupBaseURLRequired):
 		return status.Error(codes.InvalidArgument, "invalid request parameters")
 	default:
 		return status.Error(codes.Internal, "user operation failed")

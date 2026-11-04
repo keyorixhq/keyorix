@@ -77,6 +77,7 @@ func TestStorageReadClass_GrantPaths(t *testing.T) {
 				require.Error(t, err)
 				assert.False(t, IsStorageReadUnavailable(err))
 				assert.Contains(t, err.Error(), "unknown role")
+				assert.ErrorIs(t, err, ErrValidation, "an absent named role/project is a validation refusal, matched by sentinel")
 			})
 
 			t.Run("resolveProjectRoleGrant: project and role lookups", func(t *testing.T) {
@@ -91,10 +92,12 @@ func TestStorageReadClass_GrantPaths(t *testing.T) {
 				require.Error(t, err)
 				assert.False(t, IsStorageReadUnavailable(err))
 				assert.Contains(t, err.Error(), "unknown project")
+				assert.ErrorIs(t, err, ErrValidation, "an absent named role/project is a validation refusal, matched by sentinel")
 				_, err = c.resolveProjectRoleGrant(ctx, admin.ID, false, ProjectAssignment{ProjectID: p.ID, Role: "no-such-role"})
 				require.Error(t, err)
 				assert.False(t, IsStorageReadUnavailable(err))
 				assert.Contains(t, err.Error(), "unknown role")
+				assert.ErrorIs(t, err, ErrValidation, "an absent named role/project is a validation refusal, matched by sentinel")
 			})
 
 			t.Run("ValidateRoleGrantAuthority: role lookup", func(t *testing.T) {
@@ -106,6 +109,7 @@ func TestStorageReadClass_GrantPaths(t *testing.T) {
 				require.Error(t, err)
 				assert.False(t, IsStorageReadUnavailable(err))
 				assert.Contains(t, err.Error(), "unknown role id")
+				assert.ErrorIs(t, err, ErrValidation, "an absent named role/project is a validation refusal, matched by sentinel")
 			})
 
 			t.Run("CreateEnvironment: parent project lookup", func(t *testing.T) {

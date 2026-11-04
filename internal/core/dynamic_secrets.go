@@ -259,7 +259,7 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	// actor or project. Found while writing scripts/e2e/journeys/journey7.
 	if req.EnvironmentID != 0 {
 		if env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID); err != nil {
-			return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
+			return nil, classifyReadErrorAs(err, ErrDynamicSecretNotFound, fmt.Sprintf("environment %d not found", req.EnvironmentID))
 		} else if env.ProjectID != req.ProjectID {
 			return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
 		}
@@ -340,10 +340,10 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 
 func validateCreateDynamicSecretConfigRequest(req *CreateDynamicSecretConfigRequest) error {
 	if req.Name == "" || req.ProjectID == 0 || req.AdminDSN == "" {
-		return fmt.Errorf("name, project_id and admin_dsn are required")
+		return validationErrorf("name, project_id and admin_dsn are required")
 	}
 	if req.MaxTTLSeconds > 0 && req.DefaultTTLSeconds > req.MaxTTLSeconds {
-		return fmt.Errorf("default_ttl_seconds (%d) cannot exceed max_ttl_seconds (%d)", req.DefaultTTLSeconds, req.MaxTTLSeconds)
+		return validationErrorf("default_ttl_seconds (%d) cannot exceed max_ttl_seconds (%d)", req.DefaultTTLSeconds, req.MaxTTLSeconds)
 	}
 	// Sibling of dynamicTTL's override bound: DefaultTTLSeconds/MaxTTLSeconds are also
 	// multiplied by time.Second (in dynamicTTL's clamp and RenewLease's per-lease hardCap
@@ -357,7 +357,7 @@ func validateCreateDynamicSecretConfigRequest(req *CreateDynamicSecretConfigRequ
 		return fmt.Errorf("max_ttl_seconds (%d) exceeds the maximum of %d seconds", req.MaxTTLSeconds, int64(maxDynamicTTLSeconds))
 	}
 	if !IsValidClassification(req.Classification) {
-		return fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
+		return validationErrorf("classification must be one of public, internal, confidential, restricted (or empty)")
 	}
 	return nil
 }
@@ -450,14 +450,14 @@ func (c *KeyorixCore) ListDynamicSecretConfigs(ctx context.Context, projectID, e
 // label on a dynamic-secret config and audits the change with a before/after diff.
 func (c *KeyorixCore) ClassifyDynamicSecretConfig(ctx context.Context, actorID uint, configID uint, level string) (*models.DynamicSecretConfig, error) {
 	if configID == 0 {
-		return nil, fmt.Errorf("config id is required")
+		return nil, validationErrorf("config id is required")
 	}
 	if !IsValidClassification(level) {
-		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
+		return nil, validationErrorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
 	}
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, configID)
 	if err != nil {
-		return nil, fmt.Errorf("dynamic-secret config not found: %w", err)
+		return nil, classifyReadErrorAs(err, ErrDynamicSecretNotFound, "dynamic-secret config not found")
 	}
 	if cfg.Classification == level {
 		return cfg, nil // no-op
@@ -501,11 +501,11 @@ func (c *KeyorixCore) ListDynamicSecretLeases(ctx context.Context, configID uint
 // re-enable its configs on its own (see RestoreProject).
 func (c *KeyorixCore) SetDynamicSecretConfigEnabled(ctx context.Context, actorID uint, configID uint, enabled bool) (*models.DynamicSecretConfig, error) {
 	if configID == 0 {
-		return nil, fmt.Errorf("config id is required")
+		return nil, validationErrorf("config id is required")
 	}
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, configID)
 	if err != nil {
-		return nil, fmt.Errorf("dynamic-secret config not found: %w", err)
+		return nil, classifyReadErrorAs(err, ErrDynamicSecretNotFound, "dynamic-secret config not found")
 	}
 	disabled := !enabled
 	if cfg.Disabled == disabled {
@@ -539,7 +539,7 @@ func (c *KeyorixCore) SetDynamicSecretConfigEnabled(ctx context.Context, actorID
 	// which is strictly worse than the bug. One direction narrowed, not both.
 	if enabled {
 		if _, perr := c.storage.GetProject(ctx, cfg.ProjectID); perr != nil {
-			return nil, fmt.Errorf("cannot enable a dynamic-secret config under project %d: project not found or deleted — restore the project first", cfg.ProjectID)
+			return nil, classifyReadErrorAs(perr, ErrDynamicSecretNotFound, fmt.Sprintf("cannot enable a dynamic-secret config under project %d: project not found or deleted — restore the project first", cfg.ProjectID))
 		}
 	}
 	old := cfg.Disabled
@@ -590,7 +590,7 @@ func (c *KeyorixCore) GetDynamicSecretLease(ctx context.Context, leaseID string)
 func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds int, userID uint) (*IssuedLease, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, configID)
 	if err != nil {
-		return nil, fmt.Errorf("dynamic-secret config not found")
+		return nil, classifyReadErrorAs(err, ErrDynamicSecretNotFound, "dynamic-secret config not found")
 	}
 	// #369: refuse to mint against a config DeleteProject's cascade (or an admin)
 	// disabled, and refuse when the owning project/environment has since been
@@ -763,7 +763,7 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if err != nil {
 		// A fault is ErrStorageReadUnavailable, never "lease not found": the
 		// underlying credential may still be live and the revoke must be retried.
-		return classifyReadError(err, "lease not found")
+		return classifyReadErrorAs(err, ErrDynamicSecretNotFound, "lease not found")
 	}
 	// Admit revoke_failed too: a prior revoke whose target drop failed left the underlying
 	// credential LIVE, so it must remain retryable (manually or via the sweep). Only an
@@ -773,7 +773,7 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	}
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
 	if err != nil {
-		return classifyReadError(err, "config not found")
+		return classifyReadErrorAs(err, ErrDynamicSecretNotFound, "config not found")
 	}
 	engine, err := c.dynamicEngine(cfg.BackendType)
 	if err != nil {
@@ -1030,11 +1030,11 @@ func (c *KeyorixCore) RevokeLeasesForConfig(ctx context.Context, configID, userI
 // that coupling holding forever.
 func (c *KeyorixCore) requireLiveProjectAndEnvironment(ctx context.Context, projectID, environmentID uint) error {
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
-		return fmt.Errorf("cannot issue lease: project not found or deleted")
+		return classifyReadErrorAs(err, ErrDynamicSecretNotFound, "cannot issue lease: project not found or deleted")
 	}
 	if environmentID != 0 {
 		if _, err := c.GetEnvironmentInProject(ctx, projectID, environmentID); err != nil {
-			return fmt.Errorf("cannot issue lease: environment not found or deleted")
+			return classifyReadErrorAs(err, ErrDynamicSecretNotFound, "cannot issue lease: environment not found or deleted")
 		}
 	}
 	return nil
@@ -1088,7 +1088,7 @@ func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) 
 func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds int, userID uint) (time.Time, error) { // NOSONAR -- cognitive complexity 21, suppress go:S3776
 	lease, err := c.storage.GetDynamicSecretLease(ctx, leaseID)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("lease not found")
+		return time.Time{}, classifyReadErrorAs(err, ErrDynamicSecretNotFound, "lease not found")
 	}
 	if lease.Status != "active" {
 		return time.Time{}, fmt.Errorf("lease is not active (status %s)", lease.Status)
@@ -1112,7 +1112,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	}
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("config not found")
+		return time.Time{}, classifyReadErrorAs(err, ErrDynamicSecretNotFound, "config not found")
 	}
 	// #369: mirrors IssueLease — a renewal is functionally a fresh mint of trust
 	// (it extends how long the credential stays live), so it gets the same

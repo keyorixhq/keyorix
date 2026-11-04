@@ -117,16 +117,16 @@ func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint,
 // whoever does the insert, after commit, and is NOT emitted here.
 func (c *KeyorixCore) newMachineIdentityForCreate(projectID uint, name, identityType, description, classification string, createdBy, createdByMachineID uint) (*models.MachineIdentity, error) {
 	if projectID == 0 || name == "" {
-		return nil, fmt.Errorf("project ID and name are required")
+		return nil, validationErrorf("project ID and name are required")
 	}
 	if identityType == "" {
 		identityType = MachineTypeOther
 	}
 	if _, ok := validMachineTypes[identityType]; !ok {
-		return nil, fmt.Errorf("invalid identity_type %q (want ci|k8s|service|automation|other)", identityType)
+		return nil, validationErrorf("invalid identity_type %q (want ci|k8s|service|automation|other)", identityType)
 	}
 	if !IsValidClassification(classification) {
-		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
+		return nil, validationErrorf("classification must be one of public, internal, confidential, restricted (or empty)")
 	}
 	now := c.now()
 	return &models.MachineIdentity{
@@ -208,16 +208,16 @@ func (c *KeyorixCore) transitionMachineInTx(ctx context.Context, tx storage.Stor
 	if err != nil {
 		// A fault on the lock read is ErrStorageReadUnavailable, not "not found":
 		// the revoke/suspend was never applied and must be retried.
-		return nil, classifyReadError(err, "machine identity not found")
+		return nil, classifyReadErrorAs(err, ErrMachineIdentityNotFound, "machine identity not found")
 	}
 	if m.ProjectID != projectID {
 		// Cross-project guard: report as "not found" (not a permission error) to
 		// avoid confirming the machine's existence to a caller scoped elsewhere.
-		return nil, fmt.Errorf("machine identity not found")
+		return nil, notFoundAs(ErrMachineIdentityNotFound, "machine identity not found")
 	}
 	fromState := m.State
 	if !canTransitionMachine(fromState, to) {
-		return nil, fmt.Errorf("cannot transition machine identity from %s to %s", fromState, to)
+		return nil, refuseAs(ErrMachineTransitionInvalid, fmt.Errorf("cannot transition machine identity from %s to %s", fromState, to))
 	}
 	m.State = to
 	m.UpdatedAt = now
@@ -236,7 +236,7 @@ func (c *KeyorixCore) transitionMachineInTx(ctx context.Context, tx storage.Stor
 		// Lost the race: the row's persisted state moved away from fromState
 		// between the lock read and this write (#388) — treat exactly like an
 		// illegal transition rather than silently overwriting the winner.
-		return nil, fmt.Errorf("cannot transition machine identity from %s to %s", fromState, to)
+		return nil, refuseAs(ErrMachineTransitionInvalid, fmt.Errorf("cannot transition machine identity from %s to %s", fromState, to))
 	}
 	return m, nil
 }
@@ -337,7 +337,7 @@ func (c *KeyorixCore) evictMachineIdentityCacheOrFlush(ctx context.Context, id u
 // on a machine identity, project-scoped (cross-project guard), and audits the change.
 func (c *KeyorixCore) ClassifyMachineIdentity(ctx context.Context, projectID, id uint, level string, actorID uint) (*models.MachineIdentity, error) {
 	if !IsValidClassification(level) {
-		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
+		return nil, validationErrorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
 	}
 	m, err := c.machineInProject(ctx, projectID, id)
 	if err != nil {

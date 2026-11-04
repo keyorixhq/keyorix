@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	"strings"
+	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -37,13 +37,17 @@ func mapDynamicError(err error) error {
 	if serr, ok := storageUnavailableStatus(err); ok {
 		return serr
 	}
-	msg := err.Error()
+	// ERR-CLASS-LEFTOVERS-1: classified by sentinel (errors.Is), never by err.Error() text.
+	// A backend or driver message that happens to say "permission" or "required" is a
+	// backend failure, not a caller refusal.
 	switch {
-	case strings.Contains(msg, "not found"):
+	case errors.Is(err, core.ErrDynamicSecretNotFound):
 		return status.Error(codes.NotFound, "config or lease not found")
-	case strings.Contains(msg, "cannot exceed") || strings.Contains(msg, "required") || strings.Contains(msg, "classification must"):
-		return status.Error(codes.InvalidArgument, msg)
-	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied"):
+	case errors.Is(err, core.ErrValidation):
+		// Fixed string, as in mapUserError/mapMachineError (GRPC-004): the wrapped text can
+		// carry submitted values or enum lists, so it is not echoed to the client.
+		return status.Error(codes.InvalidArgument, "invalid request parameters")
+	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "access denied")
 	default:
 		// Issue/renew/revoke reach the target database; surface backend trouble as Unavailable.

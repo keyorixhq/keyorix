@@ -153,11 +153,27 @@ func TestCreateMFAChallenge_Success(t *testing.T) {
 func TestRequireLiveProjectAndEnvironment_ProjectNotFound(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetProject", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
+	// A positive no-such-row, as LocalStorage reports it: a bare errors.New("not found")
+	// is not what real storage returns and is classified as a fault.
+	ms.On("GetProject", mock.Anything, uint(99)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	err := c.requireLiveProjectAndEnvironment(context.Background(), 99, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "project not found")
+	assert.ErrorIs(t, err, ErrDynamicSecretNotFound)
+}
+
+// A project read that fails for any other reason is a storage fault (retry), not proof
+// the project is gone: the lease is neither issued nor reported as "project not found".
+func TestRequireLiveProjectAndEnvironment_ProjectReadFault(t *testing.T) {
+	t.Parallel()
+	ms := new(MockStorage)
+	ms.On("GetProject", mock.Anything, uint(99)).Return(nil, errors.New("connection reset by peer"))
+	c := NewKeyorixCore(ms)
+	err := c.requireLiveProjectAndEnvironment(context.Background(), 99, 0)
+	require.Error(t, err)
+	assert.True(t, IsStorageReadUnavailable(err))
+	assert.NotErrorIs(t, err, ErrDynamicSecretNotFound)
 }
 
 func TestRequireLiveProjectAndEnvironment_ProjectFoundNoEnv(t *testing.T) {
