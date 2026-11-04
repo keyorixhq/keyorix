@@ -164,6 +164,13 @@ func (s *AuditGRPCService) reauthorizeAuditStream(ctx context.Context, actor *in
 	}
 	if actor.ImpersonatedBy != nil {
 		if err := s.core.ReauthorizeImpersonation(ctx, *actor.ImpersonatedBy, actor.UserID); err != nil {
+			// A storage fault re-reading the admin or the ceiling is not a verdict on
+			// the session (AUTH-LANE-FOLDS-1): the stream still ends, as Unavailable
+			// with the sentinel's fixed text, so the client reconnects instead of
+			// treating the impersonation as revoked.
+			if st, ok := storageUnavailableStatus(err); ok {
+				return st
+			}
 			// Fixed safe string, not err.Error(): matches this function's own
 			// convention two lines above. ReauthorizeImpersonation's errors are
 			// themselves fixed strings today, but one wraps cachedImpersonationCeiling's

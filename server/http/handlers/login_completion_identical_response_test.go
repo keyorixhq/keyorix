@@ -227,11 +227,15 @@ func postFinishWebAuthnLogin(t *testing.T, h *AuthHandler, challenge, sessionTok
 	return w
 }
 
-// TestFinishWebAuthnLogin_CompleteLoginFaultIsIdenticalToAFailedAssertion:
+// TestFinishWebAuthnLogin_CompleteLoginFaultIs503AndCostsLikeAFailedAssertion:
 // the fault is on GetUserPermissions, i.e. inside completeLogin's identity
 // read — the transport-owned post-verdict window, reached only once the
-// assertion has already verified.
-func TestFinishWebAuthnLogin_CompleteLoginFaultIsIdenticalToAFailedAssertion(t *testing.T) {
+// assertion has already verified. It answers 503 + Retry-After (an assertion
+// cannot be guessed, so the different answer confirms nothing of value: Andrei,
+// ask auth-endpoint-outage-1-refresh-webauthn-postverdict-503, AUTH-LANE-FOLDS-1),
+// but it COSTS exactly what a failed assertion costs (the lockout columns) and
+// leaves no session.
+func TestFinishWebAuthnLogin_CompleteLoginFaultIs503AndCostsLikeAFailedAssertion(t *testing.T) {
 	// Control: a tampered assertion.
 	ch, fsc, dbc := newWebAuthnCompletionEnv(t)
 	badCred, challenge := wcAssertionJSON(t, true)
@@ -255,7 +259,8 @@ func TestFinishWebAuthnLogin_CompleteLoginFaultIsIdenticalToAFailedAssertion(t *
 	require.True(t, fsp.Fired(), "the armed GetUserPermissions fault must have fired -- if not, the assertion never verified and this test proves nothing")
 	probe := observeHTTP(t, dbp, w)
 
-	requireIdenticalResponse(t, control, probe, "webauthn-login/completeLogin")
+	assertStorageUnavailable503(t, w)
+	assert.Equal(t, control.lockout, probe.lockout, "webauthn-login/completeLogin: lockout accounting differs (#2894)")
 
 	var sessions int64
 	require.NoError(t, dbp.Model(&models.Session{}).Count(&sessions).Error)

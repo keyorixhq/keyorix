@@ -117,7 +117,8 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return "", "", fmt.Errorf("user not found")
+		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
+		return "", "", classifyReadError(err, "user not found")
 	}
 	if user.MFAEnabled {
 		return "", "", ErrMFAAlreadyEnabled
@@ -181,7 +182,8 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("user not found")
+		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
+		return nil, classifyReadError(err, "user not found")
 	}
 	if err := c.requireReauth(ctx, user, password, "activate_reauth"); err != nil {
 		return nil, err
@@ -280,7 +282,8 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPassword, keepSessionToken string) error {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("user not found")
+		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
+		return classifyReadError(err, "user not found")
 	}
 	if !user.MFAEnabled {
 		return fmt.Errorf("MFA is not enabled")
@@ -324,7 +327,8 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uint, codeOrPassword string) ([]string, error) {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("user not found")
+		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
+		return nil, classifyReadError(err, "user not found")
 	}
 	if !user.MFAEnabled {
 		return nil, fmt.Errorf("MFA is not enabled")
@@ -360,7 +364,8 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 func (c *KeyorixCore) MFARecoveryCodesRemaining(ctx context.Context, userID uint) (remaining, total int, err error) {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return 0, 0, fmt.Errorf("user not found")
+		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
+		return 0, 0, classifyReadError(err, "user not found")
 	}
 	if !user.MFAEnabled {
 		return 0, 0, nil
