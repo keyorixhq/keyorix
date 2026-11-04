@@ -67,18 +67,25 @@ func iwpFindings(page, latest string) []string {
 	return out
 }
 
+// iwpLiveness returns a message when the page's pins are not visible to iwpPin: a
+// regex that stopped seeing them would pass vacuously. The "pinned tag" sentence is
+// not required: it lives in the plaintext-database note, which the release PR drops
+// (RELEASING.md); iwpFindings checks it whenever it is present.
+func iwpLiveness(page string) string {
+	if n := len(iwpPin.FindAllString(page, -1)); n < 2 {
+		return fmt.Sprintf("found %d version pins (V= / --branch), want the binary and the Compose pin", n)
+	}
+	return ""
+}
+
 func TestInstallWithAIPinsAreNotOlderThanLatestRelease(t *testing.T) {
 	page := readDoc(t, iwaDoc)
 	m := iwpLatest.FindStringSubmatch(readDoc(t, "CHANGELOG.md"))
 	if m == nil {
 		t.Fatal("CHANGELOG.md has no `## vX.Y.Z` heading to compare the page's pins with")
 	}
-	// Liveness: a regex that stopped seeing the pins would pass vacuously.
-	if n := len(iwpPin.FindAllString(page, -1)); n < 2 {
-		t.Fatalf("%s: found %d version pins (V= / --branch), want the binary and the Compose pin", iwaDoc, n)
-	}
-	if !iwpPinnedTag.MatchString(page) {
-		t.Fatalf("%s: no \"pinned tag vX.Y.Z\" sentence in the Compose section", iwaDoc)
+	if msg := iwpLiveness(page); msg != "" {
+		t.Fatalf("%s: %s", iwaDoc, msg)
 	}
 	for _, f := range iwpFindings(page, m[1]) {
 		t.Errorf("%s: %s: re-pin it (RELEASING.md, first release after v0.96.3)", iwaDoc, f)
@@ -97,14 +104,31 @@ func TestInstallWithAIPinCheckCatchesPlantedErrors(t *testing.T) {
 	if f := iwpFindings(page, newer); len(f) < 2 {
 		t.Errorf("a newer release %s must flag the page's pins: %v", newer, f)
 	}
-	// a re-pin that forgets the plaintext sentence is reported
+	// a consistent re-pin is clean
 	repinned := strings.ReplaceAll(page, pin, newer)
 	if f := iwpFindings(repinned, newer); len(f) != 0 {
 		t.Errorf("a consistent re-pin reported: %v", f)
 	}
+	// a "pinned tag" sentence that still names the old tag is reported
 	stale := strings.Replace(repinned, "pinned tag "+newer, "pinned tag "+pin, 1)
 	if f := iwpFindings(stale, newer); len(f) != 1 {
 		t.Errorf("a stale \"pinned tag\" sentence: %d findings, want 1: %v", len(f), f)
+	}
+	// RELEASING.md tells the release PR to drop the plaintext-database note, which holds
+	// the only "pinned tag" sentence: a page without one is a valid re-pin
+	noSentence := iwpPinnedTag.ReplaceAllString(repinned, "the tag")
+	if iwpPinnedTag.MatchString(noSentence) {
+		t.Fatal("planted page still has a \"pinned tag\" sentence")
+	}
+	if msg := iwpLiveness(noSentence); msg != "" {
+		t.Errorf("a re-pin that dropped the plaintext note fails the liveness check: %s", msg)
+	}
+	if f := iwpFindings(noSentence, newer); len(f) != 0 {
+		t.Errorf("a re-pin without a \"pinned tag\" sentence reported: %v", f)
+	}
+	// the liveness check still fires when the pins vanish
+	if msg := iwpLiveness(strings.ReplaceAll(page, pin, "vX")); msg == "" {
+		t.Error("a page with no version pins passes the liveness check")
 	}
 	// 0.96.10 is newer than 0.96.9: numeric, not lexical
 	if !iwpOlder("v0.96.9", "v0.96.10") || iwpOlder("v0.96.10", "v0.96.9") || iwpOlder("v1.0.0", "v0.99.99") {

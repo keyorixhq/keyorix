@@ -93,6 +93,21 @@ var (
 	// awk, xxd, base64, python -c, a script of the page's own), is refused. Matched
 	// against the whole command word: `/bin/cat`, `\rm` and `command rm` are not on it.
 	iwaNonReaders = []string{"rm", "chmod", "chown", "chgrp", "shred", "test", "[", "[[", "ls", "stat", "touch", "mkdir", "./bin/keyorix", "./bin/keyorix-server"}
+	// iwaProjectBinaries are the allowlisted commands that run or carry another
+	// command: `./bin/keyorix run -- cat x` execs it. For them the allowlist is not
+	// enough: a reader (iwaReaders) anywhere after the binary refuses the line, and
+	// the word after a `--` must itself be on the allowlist.
+	iwaProjectBinaries = []string{"./bin/keyorix", "./bin/keyorix-server"}
+	// iwaReaders are the known reading commands, the denylist the allowlist replaced.
+	// It is kept only for iwaProjectBinaries' arguments.
+	iwaReaders = []string{
+		"cat", "tac", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg", "ag", "awk", "sed",
+		"cut", "sort", "uniq", "xxd", "od", "hexdump", "base64", "base32", "strings", "cp", "scp", "rsync",
+		"tar", "zip", "openssl", "gpg", "age", "diff", "cmp", "vi", "vim", "nano", "emacs", "source", ".",
+		"python", "python3", "perl", "ruby", "node", "jq", "yq", "sqlite3", "psql", "echo", "printf",
+		"sha256sum", "sha1sum", "sha512sum", "shasum", "md5sum", "b2sum", "cksum", "curl", "wget", "nc",
+		"dd", "mv", "install", "ln",
+	}
 	// iwaDSNPassword matches a password inside a connection string: a password=
 	// keyword or URL userinfo with a password.
 	iwaDSNPassword    = regexp.MustCompile(`(?i)(^|[\s"'])password\s*=|://[^/\s:@]+:[^/\s@]+@`)
@@ -350,6 +365,21 @@ func iwaCommandWord(cmd []string) int {
 	return -1
 }
 
+// iwaProjectBinaryArgsOK reports whether the words after an allowlisted project
+// binary carry no command that could read a file: no reader among them, and the
+// word after a `--` (keyorix run -- CMD) is itself on the allowlist.
+func iwaProjectBinaryArgsOK(args []string) bool {
+	for i, w := range args {
+		if slices.Contains(iwaReaders, path.Base(w)) {
+			return false
+		}
+		if w == "--" && (i+1 >= len(args) || !slices.Contains(iwaNonReaders, args[i+1])) {
+			return false
+		}
+	}
+	return true
+}
+
 func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 	var out []secretFinding
 	add := func(l iwaLine, format string, args ...any) {
@@ -384,8 +414,12 @@ func iwaFind(lines []iwaLine, prompt string) []secretFinding {
 			name, allowed := "", false
 			if ci >= 0 {
 				name = path.Base(cmd[ci])
-				// a bare path (`secrets/x` in prose) is a noun, not a command that reads it
-				allowed = slices.Contains(iwaNonReaders, cmd[ci]) || iwaSecretPath.MatchString(cmd[ci])
+				// a bare path (`secrets/x` in prose) is a noun, not a command that reads it;
+				// in a fence every command word is a command
+				allowed = slices.Contains(iwaNonReaders, cmd[ci]) || (!l.Fenced && iwaSecretPath.MatchString(cmd[ci]))
+				if allowed && slices.Contains(iwaProjectBinaries, cmd[ci]) {
+					allowed = iwaProjectBinaryArgsOK(cmd[ci+1:])
+				}
 			}
 			// From the first word, not from ci: iwaCommandWord skips a leading
 			// redirection and its target, but `< secrets/x cat` and $(< secrets/x)
