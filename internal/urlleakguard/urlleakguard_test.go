@@ -80,8 +80,14 @@ var skippedDirs = map[string]bool{
 
 // sensitiveName reports whether an identifier names an endpoint/URL/DSN value.
 func sensitiveName(name string) bool {
+	return hasNameSuffix(name, "endpoint", "url", "dsn")
+}
+
+// hasNameSuffix reports whether name is, or ends in a camel-case/underscore
+// word that is, one of suffixes (compared case-insensitively).
+func hasNameSuffix(name string, suffixes ...string) bool {
 	l := strings.ToLower(name)
-	for _, suffix := range []string{"endpoint", "url", "dsn"} {
+	for _, suffix := range suffixes {
 		if !strings.HasSuffix(l, suffix) {
 			continue
 		}
@@ -104,21 +110,29 @@ func sensitiveName(name string) bool {
 // selector with a sensitive name, or a concatenation containing one. Calls are
 // never inspected: wrapping in a call is the sanctioned shape.
 func sensitiveExpr(e ast.Expr, extra map[string]bool) (string, bool) {
+	return sensitiveExprBy(e, func(text, last string) bool {
+		return sensitiveName(last) || (text == last && extra[text])
+	})
+}
+
+// sensitiveExprBy is sensitiveExpr with the name rule supplied: match gets the
+// expression text (x, cfg.Addr) and its final name.
+func sensitiveExprBy(e ast.Expr, match func(text, last string) bool) (string, bool) {
 	switch v := ast.Unparen(e).(type) {
 	case *ast.Ident:
-		if sensitiveName(v.Name) || extra[v.Name] {
+		if match(v.Name, v.Name) {
 			return v.Name, true
 		}
 	case *ast.SelectorExpr:
-		if sensitiveName(v.Sel.Name) {
-			return exprString(v), true
+		if text := exprString(v); match(text, v.Sel.Name) {
+			return text, true
 		}
 	case *ast.BinaryExpr:
 		if v.Op == token.ADD {
-			if n, ok := sensitiveExpr(v.X, extra); ok {
+			if n, ok := sensitiveExprBy(v.X, match); ok {
 				return n, true
 			}
-			return sensitiveExpr(v.Y, extra)
+			return sensitiveExprBy(v.Y, match)
 		}
 	}
 	return "", false
@@ -258,14 +272,16 @@ func findLeaks(fset *token.FileSet, file *ast.File, path string) []leakHit {
 				extra = map[string]bool{p: true}
 			}
 		}
-		hits = append(hits, scanDecl(fset, decl, path, extra)...)
+		hits = append(hits, scanDecl(fset, decl, path, func(e ast.Expr) (string, bool) {
+			return sensitiveExpr(e, extra)
+		})...)
 	}
 	return hits
 }
 
-// scanDecl scans one top-level declaration; extra names the identifiers that
-// are sensitive inside it besides those sensitiveName matches.
-func scanDecl(fset *token.FileSet, decl ast.Decl, path string, extra map[string]bool) []leakHit {
+// scanDecl scans one top-level declaration; sensitive decides which call
+// arguments are the values the guard protects.
+func scanDecl(fset *token.FileSet, decl ast.Decl, path string, sensitive func(ast.Expr) (string, bool)) []leakHit {
 	var hits []leakHit
 	ast.Inspect(decl, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -298,7 +314,7 @@ func scanDecl(fset *token.FileSet, decl ast.Decl, path string, extra map[string]
 				}
 			}
 			for i, arg := range operands {
-				what, bad := sensitiveExpr(arg, extra)
+				what, bad := sensitive(arg)
 				if !bad {
 					continue
 				}
@@ -309,7 +325,7 @@ func scanDecl(fset *token.FileSet, decl ast.Decl, path string, extra map[string]
 			}
 		case plainStyle[pkg.Name][sel.Sel.Name]:
 			for _, arg := range call.Args {
-				if what, bad := sensitiveExpr(arg, extra); bad {
+				if what, bad := sensitive(arg); bad {
 					add(arg, what)
 				}
 			}
@@ -322,8 +338,10 @@ func scanDecl(fset *token.FileSet, decl ast.Decl, path string, extra map[string]
 // repoRoot is the module root, two levels above this package.
 func repoRoot() string { return filepath.Join("..", "..") }
 
-func TestNoConfiguredURLFormattedIntoLogsOrErrors(t *testing.T) {
-	g := guardrules.Rollout(t)
+// scanRepo runs find over every non-test Go file of the main module that is
+// not exempt, and returns the hits sorted by file and line.
+func scanRepo(t *testing.T, find func(*token.FileSet, *ast.File, string) []leakHit) []leakHit {
+	t.Helper()
 	root := repoRoot()
 	fset := token.NewFileSet()
 	var hits []leakHit
@@ -356,7 +374,7 @@ func TestNoConfiguredURLFormattedIntoLogsOrErrors(t *testing.T) {
 			return fmt.Errorf("parsing %s: %w", rel, perr)
 		}
 		scanned++
-		hits = append(hits, findLeaks(fset, f, rel)...)
+		hits = append(hits, find(fset, f, rel)...)
 		return nil
 	})
 	if err != nil {
@@ -371,7 +389,12 @@ func TestNoConfiguredURLFormattedIntoLogsOrErrors(t *testing.T) {
 		}
 		return hits[i].line < hits[j].line
 	})
-	for _, h := range hits {
+	return hits
+}
+
+func TestNoConfiguredURLFormattedIntoLogsOrErrors(t *testing.T) {
+	g := guardrules.Rollout(t)
+	for _, h := range scanRepo(t, findLeaks) {
 		g.Errorf("%s -- name the destination with netutil.RedactURLHost(...) and strip a wrapped "+
 			"*url.Error with netutil.RedactErrorURLs(...); a configured URL/DSN can carry a token", h)
 	}
