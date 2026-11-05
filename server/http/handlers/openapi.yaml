@@ -3164,9 +3164,9 @@ paths:
       summary: List secrets
       description: >-
         List secrets accessible to the caller with optional filters for project, environment, type, and classification.
-        A caller whose own share list is at the 10000-row storage cap is refused with 422
-        ShareListOverCap (never a list that silently omits shares), the same refusal GET
-        /api/v1/shares answers.
+        A caller with 10000 or more received shares is refused with 422 `ShareListOverCap`
+        (never a shortened list), the same refusal as GET /shares. `show_owned_only` avoids
+        the refusal only for a caller with no role covering the listed scope.
       operationId: listSecrets
       security: [{bearerAuth: []}]
       parameters:

@@ -635,3 +635,23 @@ func TestSecretService_GetSecretVersions_AuditsListingNotRead(t *testing.T) {
 	assert.Equal(t, int64(1), count("SELECT COUNT(*) FROM secret_access_logs WHERE secret_node_id = ? AND action = ?", created.GetId(), core.AccessActionVersionsList))
 	assert.Zero(t, count("SELECT COUNT(*) FROM secret_access_logs WHERE secret_node_id = ? AND action = ?", created.GetId(), "read"))
 }
+
+// CORE-ERRMAP-TAILS-5: a user with more shares than the cap gets a typed refusal from
+// ListSecrets, the gRPC counterpart of HTTP's 422 ShareListOverCap, not Internal and
+// never a shortened list (ListUserShares answers the same way).
+func TestSecretService_ListSecrets_ShareListOverCapIsFailedPrecondition(t *testing.T) {
+	r := newSecretTestRig(t)
+	ctx := authCtx(1, "writer", "secrets.read")
+	sec := r.createSecret(t, authCtx(1, "writer", "secrets.write", "secrets.read"), "shared-one", "v")
+
+	const atCap = 10000 // maxShareViewBatchSize, and the storage list cap
+	shares := make([]*models.ShareRecord, atCap)
+	for i := range shares {
+		shares[i] = &models.ShareRecord{SecretID: uint(sec.GetId()), OwnerID: 2, RecipientID: 1, Permission: "read"}
+	}
+	require.NoError(t, r.db.CreateInBatches(shares, 500).Error)
+
+	resp, err := r.svc.ListSecrets(ctx, &pb.ListSecretsRequest{})
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "over-cap must be a typed refusal, not Internal: %v", err)
+}

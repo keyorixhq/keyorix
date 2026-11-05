@@ -172,9 +172,16 @@ func (c *KeyorixCore) ListReadableSecrets(ctx context.Context, userID, principal
 		// ROLE grants visibility to -- not just what the user personally owns or
 		// holds an ACL/share grant for.
 		resp, rerr := c.ListSecretsInScopeWithSharingInfo(ctx, userID, &scopeFilter)
+		// A share fetch at the storage row cap is not an unreadable scope: it hits
+		// every non-empty scope alike, so skipping it would answer a silently
+		// shortened (usually empty) list, the truncation ErrShareListOverCap exists
+		// to refuse (REVIEW-3018). Propagate it, as tiers 1 and 3 already do.
+		if errors.Is(rerr, ErrShareListOverCap) {
+			return nil, rerr
+		}
 		if rerr != nil {
-			// Best-effort per scope, matching the handler's prior behaviour: one
-			// unreadable scope must not blank the whole list. Logged, because a
+			// Best-effort per scope for any other error, matching the handler's prior
+			// behaviour: one unreadable scope must not blank the whole list. Logged, because a
 			// persistently failing scope would otherwise look like an empty one.
 			log.Printf("ListReadableSecrets: listing scope {project:%d env:%d} failed, skipping: %v",
 				scope.ProjectID, scope.EnvironmentID, rerr)
