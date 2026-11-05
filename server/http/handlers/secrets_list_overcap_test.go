@@ -15,7 +15,7 @@ import (
 // TestListSecrets_ShareListOverCapIs422 makes the shared-with-me fetch come back at
 // the storage row cap (10000 shares received by the caller) on each list path that
 // calls it: no scope filter (plain and shared-only) and a scope the caller's role
-// covers. (A project filter without a covering role lists owned secrets only and never
+// covers, then no scope filter with that role held. (A project filter without a covering role lists owned secrets only and never
 // fetches shares.) Each used to answer 500 InternalError.
 func TestListSecrets_ShareListOverCapIs422(t *testing.T) {
 	h, db := freshListFixtureS38(t)
@@ -38,6 +38,10 @@ func TestListSecrets_ShareListOverCapIs422(t *testing.T) {
 		{"no-scope", "/api/v1/secrets", false},
 		{"no-scope-shared-only", "/api/v1/secrets?show_shared_only=true", false},
 		{"scope-with-role", "/api/v1/secrets?project_id=1", true},
+		// REVIEW-3974-DEEP-2 F1: a role-holder with no filter goes through
+		// ListReadableSecrets' tier 2, which used to skip the refusal per scope and
+		// answer 200 with an empty list. The role granted above stays in place.
+		{"no-scope-with-role", "/api/v1/secrets", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

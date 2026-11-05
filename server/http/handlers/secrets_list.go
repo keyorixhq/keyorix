@@ -271,11 +271,14 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 // the storage row cap is refused by core (ErrShareListOverCap) rather than shortened;
 // it is a typed 422 with the same body shape as GET /shares (shares_query.go), not a
 // 500, so a user with more shares than the cap can tell the cause from an outage.
+// Logged first either way, so an operator can see a user stuck at the cap. The 422
+// body is the sentinel's own fixed text, never err.Error(): a wrap added anywhere in
+// the chain must not reach the response.
 func (h *SecretHandler) sendListSecretsError(w http.ResponseWriter, err error) {
+	log.Printf("Error listing secrets: %v", err)
 	if errors.Is(err, core.ErrShareListOverCap) {
-		h.sendError(w, "ShareListOverCap", err.Error(), http.StatusUnprocessableEntity, nil)
+		h.sendError(w, "ShareListOverCap", core.ErrShareListOverCap.Error(), http.StatusUnprocessableEntity, nil)
 		return
 	}
-	log.Printf("Error listing secrets: %v", err)
 	h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
 }
