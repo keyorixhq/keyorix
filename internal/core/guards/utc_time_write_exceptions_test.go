@@ -2,7 +2,7 @@ package guards
 
 // utc_time_write_exceptions_test.go -- the rows of timeWriteExceptions (GUARD-PROMOTE-2 item 3),
 // one registerTimeWriteException call each. Every row was checked on the real write path on
-// 2026-11-04; the scan is shape-based, so it cannot see these three kinds of safety.
+// 2026-11-04; the scan is shape-based, so it cannot see these two kinds of safety.
 func init() {
 	// The model has a BeforeSave hook that normalises the field, and the value is saved through it.
 	registerTimeWriteException("auth.go:capSetupSession:ExpiresAt",
@@ -13,14 +13,4 @@ func init() {
 		"in-memory only; the column is written by UpdateSecretFields, which does f.Expiration.UTC() (local_secrets.go)")
 	registerTimeWriteException("sharing.go:UpdateSharePermission:ExpiresAt",
 		"UpdateShareRecord writes a map (no hook) after share.ExpiresAt.UTC() (local_sharing.go)")
-	registerTimeWriteException("secrets.go:secretFieldUpdateFromRequest:Expiration",
-		"builds a storage.SecretFieldUpdate; LocalStorage.UpdateSecretFields does f.Expiration.UTC() before the column write (local_secrets.go)")
-	registerTimeWriteException("secret_extend_expiring.go:ExtendExpiringSecrets:Expiration",
-		"in-memory mirror of a value UpdateSecretFields already stored as UTC; the struct is not saved again")
-	registerTimeWriteException("dynamic_secrets.go:RenewLease:ExpiresAt",
-		"in-memory mirror of a value ExtendDynamicSecretLeaseExpiry already stored as newExpiry.UTC(); the struct is not saved again")
-
-	// Not a database column at all.
-	registerTimeWriteException("access_review.go:annotateLastUsedAt:LastUsedAt",
-		"core.AccessReviewEntry is a report DTO serialised as JSON, not a gorm model or a time column")
 }

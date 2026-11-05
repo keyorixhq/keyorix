@@ -1136,11 +1136,11 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	if err != nil {
 		return time.Time{}, err
 	}
-	newExpiry := c.now().Add(renewTTL)
+	newExpiry := c.now().Add(renewTTL).UTC()
 	// Never let renewal push total lifetime past the config's max-TTL ceiling.
 	if cfg.MaxTTLSeconds > 0 {
 		if hardCap := lease.IssuedAt.Add(time.Duration(cfg.MaxTTLSeconds) * time.Second); newExpiry.After(hardCap) {
-			newExpiry = hardCap
+			newExpiry = hardCap.UTC()
 		}
 	}
 	// ...nor past the install-wide ceiling (#97) — same reasoning as dynamicTTL: the
@@ -1151,7 +1151,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 		installMax = defaultMaxLeaseTTL
 	}
 	if hardCap := lease.IssuedAt.Add(installMax); newExpiry.After(hardCap) {
-		newExpiry = hardCap
+		newExpiry = hardCap.UTC()
 	}
 	if !newExpiry.After(lease.ExpiresAt) {
 		return time.Time{}, fmt.Errorf("renewal would not extend the lease (max-TTL ceiling reached)")
