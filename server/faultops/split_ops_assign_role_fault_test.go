@@ -78,6 +78,17 @@ func assignFaultHolders(t *testing.T, w *faultWorld, projectID uint, adminRoles 
 	return slices.Compact(ids)
 }
 
+// assignFaultRoleEvents counts the role.removed / role.assigned audit rows in the world.
+// The fixtures grant roles straight in the database, so every row here was written by the
+// operation under test: the narrowing commit owes its role.removed row whether or not the
+// grant that followed it failed, and a grant that never happened owes none.
+func assignFaultRoleEvents(t *testing.T, w *faultWorld, eventType string) int64 {
+	t.Helper()
+	var n int64
+	require.NoError(t, w.db.Model(&models.AuditEvent{}).Where("event_type = ?", eventType).Count(&n).Error)
+	return n
+}
+
 func TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal(t *testing.T) {
 	const projectID = 1
 	ctx := context.Background()
@@ -141,6 +152,18 @@ func TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal(t *testing.T) {
 		require.True(t, fired, "the fault must have fired at the grant (HTTP %d: %s)", st, body)
 		return st, body
 	}
+	// The narrowing commit stands, so its row is owed and written; the grant failed, so no
+	// role.assigned row may exist.
+	requireRemovedRowOwedNoAssignedRow := func(t *testing.T, w *faultWorld) {
+		t.Helper()
+		require.EqualValues(t, 1, assignFaultRoleEvents(t, w, "role.removed"), "the standing narrowing owes its role.removed row")
+		require.Zero(t, assignFaultRoleEvents(t, w, "role.assigned"), "a grant that failed must not be logged as one")
+	}
+	requireNoRoleRows := func(t *testing.T, w *faultWorld, why string) {
+		t.Helper()
+		require.Zero(t, assignFaultRoleEvents(t, w, "role.removed"), why)
+		require.Zero(t, assignFaultRoleEvents(t, w, "role.assigned"), why)
+	}
 	requirePartialNamesBothHalves := func(t *testing.T, st int, body []byte, removed, notAdded uint) {
 		t.Helper()
 		p, ok := decodeAssignFaultPartial(st, body)
@@ -159,10 +182,13 @@ func TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal(t *testing.T) {
 		st, body := faulted(t, f, func() (int, []byte) { return putUserRoles(f, u, f.developer) })
 		requirePartialNamesBothHalves(t, st, body, f.viewer, f.developer)
 		require.Empty(t, assignFaultHeld(t, f.w, u, projectID), "the narrowing committed, the grant did not")
+		requireRemovedRowOwedNoAssignedRow(t, f.w)
 		// Fault cleared: the retry the answer promises is safe and completes the request.
 		st, body = putUserRoles(f, u, f.developer)
 		require.Equal(t, http.StatusOK, st, string(body))
 		require.Equal(t, []uint{f.developer}, assignFaultHeld(t, f.w, u, projectID))
+		require.EqualValues(t, 1, assignFaultRoleEvents(t, f.w, "role.removed"), "the retry must not log the removal twice")
+		require.EqualValues(t, 1, assignFaultRoleEvents(t, f.w, "role.assigned"), "the retry logs the grant")
 	})
 
 	t.Run("SetProjectMemberRole/viewer-to-developer/partial-names-both-halves", func(t *testing.T) {
@@ -171,9 +197,12 @@ func TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal(t *testing.T) {
 		st, body := faulted(t, f, func() (int, []byte) { return putMember(f, u, "project_developer") })
 		requirePartialNamesBothHalves(t, st, body, f.viewer, f.developer)
 		require.Empty(t, assignFaultHeld(t, f.w, u, projectID))
+		requireRemovedRowOwedNoAssignedRow(t, f.w)
 		st, body = putMember(f, u, "project_developer")
 		require.Equal(t, http.StatusOK, st, string(body))
 		require.Equal(t, []uint{f.developer}, assignFaultHeld(t, f.w, u, projectID))
+		require.EqualValues(t, 1, assignFaultRoleEvents(t, f.w, "role.removed"), "the retry must not log the removal twice")
+		require.EqualValues(t, 1, assignFaultRoleEvents(t, f.w, "role.assigned"), "the retry logs the grant")
 	})
 
 	t.Run("SetProjectMemberRole/sole-admin-swap/keeps-role-and-project-keeps-its-administrator", func(t *testing.T) {
@@ -186,6 +215,7 @@ func TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal(t *testing.T) {
 		require.False(t, partial, "the swap is one transaction: nothing was applied, so the answer must not claim a partial apply")
 		require.Equal(t, []uint{f.projAdmin}, assignFaultHeld(t, f.w, u, projectID), "the member keeps the old role")
 		require.Equal(t, []uint{u}, assignFaultHolders(t, f.w, projectID, f.adminRoles...), "the project keeps its administrator")
+		requireNoRoleRows(t, f.w, "the swap rolled back as one transaction: it owes no row")
 		st, body = putMember(f, u, "assignfault-lead")
 		require.Equal(t, http.StatusOK, st, string(body))
 		require.Equal(t, []uint{f.lead}, assignFaultHeld(t, f.w, u, projectID))
@@ -199,6 +229,7 @@ func TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal(t *testing.T) {
 		requirePartialNamesBothHalves(t, st, body, f.projAdmin, f.viewer)
 		require.Empty(t, assignFaultHeld(t, f.w, u, projectID))
 		require.Equal(t, []uint{other}, assignFaultHolders(t, f.w, projectID, f.adminRoles...), "the other administrator still governs the project")
+		requireRemovedRowOwedNoAssignedRow(t, f.w)
 	})
 
 	t.Run("SetUserRoles/sole-admin-replace/refused-before-any-write", func(t *testing.T) {
@@ -216,6 +247,7 @@ func TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal(t *testing.T) {
 		require.False(t, partial, string(body))
 		require.Equal(t, []uint{f.projAdmin}, assignFaultHeld(t, f.w, u, projectID))
 		require.Equal(t, []uint{u}, assignFaultHolders(t, f.w, projectID, f.adminRoles...))
+		requireNoRoleRows(t, f.w, "the refusal came before any write: it owes no row")
 	})
 
 	t.Run("TransitionMembership/activate/grant-fault-reverts-the-membership", func(t *testing.T) {
@@ -254,6 +286,7 @@ func TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal(t *testing.T) {
 		require.GreaterOrEqual(t, st, 400, string(body))
 		require.Equal(t, "provisioned", stateOf(), "a membership whose grant failed is put back, not left active without a role")
 		require.Empty(t, assignFaultHeld(t, f.w, u, projectID), "no role was granted")
+		require.Zero(t, assignFaultRoleEvents(t, f.w, "role.assigned"), "a grant that never happened must not be logged as one")
 
 		// Fault cleared: the activation is retriable and grants the role.
 		st, body = transition("activate")
