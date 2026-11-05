@@ -164,7 +164,7 @@ func main() {
 			Rows []*CoreRow `json:"rows"`
 		}{ops, coreRows}, "", "  ")
 		must(err)
-		must(os.WriteFile(*jsonOut, append(b, '\n'), 0o644))
+		must(os.WriteFile(*jsonOut, append(b, '\n'), 0o600))
 	}
 	if green := calibrateSelfTest(ops); len(green) > 0 {
 		fatalf("calibration self-test: planted mismatches stayed green: %v", green)
@@ -172,7 +172,7 @@ func main() {
 	calib, calibOK := calibrate(ops)
 	if *mdOut != "" {
 		md := renderMarkdown(ops, coreRows) + "\n## Calibration against the 8 FIX-1 guards\n\n" + calib
-		must(os.WriteFile(*mdOut, []byte(md), 0o644))
+		must(os.WriteFile(*mdOut, []byte(md), 0o600))
 	}
 	fmt.Fprintf(os.Stderr, "ops=%d rows=%d calibration_ok=%v\n", len(ops), len(coreRows), calibOK)
 	if !calibOK {
@@ -184,6 +184,7 @@ func main() {
 // ---------- REST ----------
 
 func (a *analyzer) restOps(root string, known map[string]bool) []*Op {
+	// #nosec G304 -- root is this dev tool's own -root flag (the repo checkout)
 	raw, err := os.ReadFile(filepath.Join(root, "scripts/e2e/routes.json"))
 	must(err)
 	var routes []route
