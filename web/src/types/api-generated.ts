@@ -6337,6 +6337,25 @@ export interface components {
                 };
             };
         };
+        /** @description The service could not answer right now; retry after `Retry-After` seconds. The body is always a fixed string with no storage error text. The causes below are the ones known on these routes; the list, and the `error`/`message` pairs, are NOT exhaustive, so branch on the 503 status and `Retry-After`, not on the label or the text. (1) Permission lookup failed (PostgreSQL down, or the request deadline expired): `error` `ServiceUnavailable`, `message` "authorization temporarily unavailable, please retry". The request was refused and nothing was changed or returned; this is not a verdict on the caller, so it is not a 403. The gRPC twin is `Unavailable` with the same message (INV-MW-authorize-lookup-error-is-503). (2) Credential lookup failed while authenticating the request (any authenticated route): `error` `ServiceUnavailable`, `message` "authentication temporarily unavailable, please retry". Nothing was changed or returned. (3) SQLite write gate timed out (write requests on a SQLite deployment): `error` `ServiceUnavailable`, `message` "The service is temporarily busy. Please retry shortly.". A request may run several write transactions, so this does not promise that nothing was written; retry blindly only an idempotent request. (4) A storage read other than the permission check failed (template render, `GET /api/v1/secrets/{id}`, secret copy, folder create, dynamic-secret config routes): `error` `storage_unavailable`, `message` "storage temporarily unavailable, please retry". */
+        AuthorizeUnavailable: {
+            headers: {
+                /** @description Seconds to wait before retrying. */
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": {
+                    success?: boolean;
+                    /** @description Always 503. */
+                    code?: number;
+                    /** @description A label, for example `ServiceUnavailable` or `storage_unavailable` (see the response description). Not an exhaustive set, and `ServiceUnavailable` does not by itself mean the permission lookup failed. */
+                    error?: string;
+                    /** @description A fixed, client-safe sentence with no storage text, for example "authorization temporarily unavailable, please retry" or "storage temporarily unavailable, please retry" (see the response description). Not an exhaustive set. */
+                    message?: string;
+                };
+            };
+        };
         /** @description The caller may read this secret, but the secret's own state refuses the value read (ERRMAP-1). `error` is a stable code clients can branch on and `message` a fixed, client-safe sentence: SecretExpired (its expiration has passed; an operator can extend or clear it), SecretSuspended (resume it to allow reads), SecretMaxReadsExhausted (its max_reads budget is spent; an operator can raise it). A SecretSuspended answer whose suspension asked for the synced Kubernetes copies to be cleared also carries `details: {clear_synced_copies: true}`, which the operator and k8s-sync read. A read outside the secret's access schedule is a permission decision and answers 403 with error SecretAccessOutsideSchedule instead. 409, not 410: each state is reversible. Only a caller who may read the secret ever sees these; any other caller gets the same 403/404 as for a secret it cannot see. The gRPC GetSecretValue twin is FailedPrecondition (PermissionDenied for the schedule) with the same message and an ErrorInfo detail (domain keyorix.secrets, reason = the code). */
         SecretReadRefused: {
             headers: {
@@ -9848,6 +9867,7 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["SecretReadRefused"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     listSecrets: {
@@ -9897,6 +9917,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     createSecret: {
@@ -9946,6 +9967,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     getSecret: {
@@ -9980,6 +10002,7 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["SecretReadRefused"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     updateSecret: {
@@ -10538,6 +10561,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     listSecretDependencies: {
@@ -11073,6 +11097,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     deleteFolder: {
@@ -11711,6 +11736,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     createDynamicSecretConfig: {
@@ -11754,6 +11780,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     getDynamicSecretConfig: {

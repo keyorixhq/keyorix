@@ -69,11 +69,17 @@ func (h *SecretHandler) sendRenderTemplateError(w http.ResponseWriter, r *http.R
 	// can't read it"; everyone else gets the identical denial as a real
 	// permission failure (same branch, same body, by construction below).
 	case errors.Is(err, core.ErrSecretRefNotFound):
-		if middleware.AuthorizedAtGlobalScope(r.Context(), h.coreService, userCtx, permSecretsRead) {
+		// The global-scope probe is an authorize lookup: if IT hits a storage outage
+		// the answer is 503, not the 403 that would pass for "you hold nothing"
+		// (INV-MW-authorize-lookup-error-is-503).
+		held, aerr := middleware.AuthorizedAtGlobalScope(r.Context(), h.coreService, userCtx, permSecretsRead)
+		if aerr == nil && held {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 			return
 		}
-		h.sendError(w, "Forbidden", "Not authorized to read a referenced secret", http.StatusForbidden, nil)
+		refuseUnlessAuthorized(w, r, held, aerr, func() {
+			h.sendError(w, "Forbidden", "Not authorized to read a referenced secret", http.StatusForbidden, nil)
+		})
 	case isSecretNotFound(err):
 		h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 	case isPermissionRefusal(err):

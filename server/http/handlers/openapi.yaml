@@ -3156,6 +3156,7 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/SecretReadRefused'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
 
   /api/v1/secrets:
     get:
@@ -3210,6 +3211,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
     post:
       tags: [Secrets]
       summary: Create a secret
@@ -3249,6 +3251,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
   /api/v1/secrets/{id}:
     get:
       tags: [Secrets]
@@ -3287,6 +3290,7 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/SecretReadRefused'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
     put:
       tags: [Secrets]
       summary: Update a secret
@@ -3789,6 +3793,7 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
   /api/v1/secrets/{id}/dependencies:
     parameters:
       - {name: id, in: path, required: true, schema: {type: integer}}
@@ -4283,6 +4288,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
   /api/v1/folders/{id}:
     delete:
       tags: [Secrets]
@@ -4833,6 +4839,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
     post:
       tags: [DynamicSecrets]
       summary: Create a dynamic-secret config
@@ -4873,6 +4880,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
   /api/v1/dynamic-secrets/configs/{id}:
     get:
       tags: [DynamicSecrets]
@@ -8060,6 +8068,57 @@ components:
               code: {type: integer, description: 'Always 503.'}
               error: {type: string, description: 'Always `audit_unavailable`.'}
               message: {type: string}
+    AuthorizeUnavailable:
+      description: >-
+        The service could not answer right now; retry after `Retry-After` seconds. The
+        body is always a fixed string with no storage error text. The causes below
+        are the ones known on these routes; the list, and the `error`/`message`
+        pairs, are NOT exhaustive, so branch on the 503 status and `Retry-After`,
+        not on the label or the text.
+        (1) Permission lookup failed (PostgreSQL down, or the request deadline
+        expired): `error` `ServiceUnavailable`, `message` "authorization temporarily
+        unavailable, please retry". The request was refused and nothing was changed
+        or returned; this is not a verdict on the caller, so it is not a 403. The
+        gRPC twin is `Unavailable` with the same message
+        (INV-MW-authorize-lookup-error-is-503).
+        (2) Credential lookup failed while authenticating the request (any
+        authenticated route): `error` `ServiceUnavailable`, `message`
+        "authentication temporarily unavailable, please retry". Nothing was
+        changed or returned.
+        (3) SQLite write gate timed out (write requests on a SQLite deployment):
+        `error` `ServiceUnavailable`, `message` "The service is temporarily busy.
+        Please retry shortly.". A request may run several write transactions, so
+        this does not promise that nothing was written; retry blindly only an
+        idempotent request.
+        (4) A storage read other than the permission check failed (template render,
+        `GET /api/v1/secrets/{id}`, secret copy, folder create, dynamic-secret
+        config routes): `error` `storage_unavailable`, `message` "storage
+        temporarily unavailable, please retry".
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: {type: integer}
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: {type: boolean}
+              code: {type: integer, description: 'Always 503.'}
+              error:
+                type: string
+                description: >-
+                  A label, for example `ServiceUnavailable` or
+                  `storage_unavailable` (see the response description). Not an
+                  exhaustive set, and `ServiceUnavailable` does not by itself mean
+                  the permission lookup failed.
+              message:
+                type: string
+                description: >-
+                  A fixed, client-safe sentence with no storage text, for example
+                  "authorization temporarily unavailable, please retry" or
+                  "storage temporarily unavailable, please retry" (see the
+                  response description). Not an exhaustive set.
     SecretReadRefused:
       description: >-
         The caller may read this secret, but the secret's own state refuses the value
