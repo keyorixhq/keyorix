@@ -190,7 +190,7 @@ var setupStates = map[string]func(e *setupGateEnv) (username, password string){
 	"one-time-password user": func(e *setupGateEnv) (string, string) {
 		_, res, err := e.core.CreateUserWithOneTimePassword(context.Background(), &core.CreateUserRequest{
 			Username: "otp_user", Email: "otp_user@example.com",
-		}, 0)
+		}, 0, false)
 		require.NoError(e.t, err)
 		return "otp_user", res.OTPValue
 	},
