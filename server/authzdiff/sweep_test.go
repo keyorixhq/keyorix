@@ -14,7 +14,8 @@ import (
 //   - TestAuthzDiffSmoke (default go test): every op, its first target, as the
 //     global admin and the no-role principal. Fails if an op's admin positive
 //     control is not "allowed" on any layer it claims (a broken op definition
-//     must be loud, never a silently empty oracle).
+//     must be loud, never a silently empty oracle), and if the no-role case is
+//     "unexplained".
 //   - TestAuthzDiffSweep (AUTHZDIFF_SWEEP=1): the exhaustive sweep — every op x
 //     target x arg x (named principals + the GENERATED permission sets of
 //     genVariations). Records every case to $AUTHZDIFF_OUT and logs every
@@ -22,7 +23,8 @@ import (
 //     case partition_test.go cannot assign to a known waiver (a new case lands
 //     in "unexplained").
 //     AUTHZDIFF_OPS=a,b restricts the op set (used by the plant self-test).
-//   - FuzzAuthzDiff: the same case space, chosen by the fuzzer.
+//   - FuzzAuthzDiff: the same case space, chosen by the fuzzer. Always fails
+//     on an "unexplained" case (no AUTHZDIFF_STRICT needed).
 
 // requirementPerms is R for one (op, target, arg): the op's gate permissions
 // plus every permission of every role it grants (the ceiling), read from the
@@ -188,6 +190,9 @@ func TestAuthzDiffSmoke(t *testing.T) {
 			r := runCase(t, spec, caseKey{Op: spec.name, Principal: pkNone, Target: tg.String(), variation: defaultVariation}, tg)
 			sink.write(r)
 			t.Log(r.line())
+			if r.Bucket == "unexplained" {
+				t.Errorf("no-role case not covered by a known waiver (partition_test.go): %s", r.line())
+			}
 		})
 	}
 }
@@ -303,11 +308,10 @@ func FuzzAuthzDiff(f *testing.F) {
 		k := caseKey{Op: spec.name, Principal: pk, Target: tg.String(), Arg: arg % 4, variation: v}
 		r := runCase(t, spec, k, tg)
 		sink.write(r)
-		if r.Bucket != "" {
+		if r.Bucket == "unexplained" {
+			t.Errorf("UNEXPLAINED %s", r.line())
+		} else if r.Bucket != "" {
 			t.Logf("FLAGGED [%s] %s", r.Bucket, r.line())
-			if r.Bucket == "unexplained" && os.Getenv("AUTHZDIFF_STRICT") != "" {
-				t.Fail()
-			}
 		}
 	})
 }

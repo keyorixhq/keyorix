@@ -1402,6 +1402,19 @@ type AuditUnavailable struct {
 	Success *bool   `json:"success,omitempty"`
 }
 
+// AuthorizeUnavailable defines model for AuthorizeUnavailable.
+type AuthorizeUnavailable struct {
+	// Code Always 503.
+	Code *int `json:"code,omitempty"`
+
+	// Error A label, for example `ServiceUnavailable` or `storage_unavailable` (see the response description). Not an exhaustive set, and `ServiceUnavailable` does not by itself mean the permission lookup failed.
+	Error *string `json:"error,omitempty"`
+
+	// Message A fixed, client-safe sentence with no storage text, for example "authorization temporarily unavailable, please retry" or "storage temporarily unavailable, please retry" (see the response description). Not an exhaustive set.
+	Message *string `json:"message,omitempty"`
+	Success *bool   `json:"success,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    *int                    `json:"code,omitempty"`

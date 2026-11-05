@@ -8,6 +8,7 @@ package auditverify
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/auditverify/anchorbundle"
 	"github.com/keyorixhq/keyorix/internal/notary"
@@ -53,6 +54,7 @@ func checkpointFromAnchorBundle(b *ExternalAnchorBundle) *Checkpoint {
 func crossCheckExternalAnchor(ctx context.Context, db *DB, opts Options, result *Result) error {
 	b := opts.ExternalAnchor
 	result.ExternalAnchor.Supplied = true
+	result.ExternalAnchor.SHA256 = strings.ToLower(opts.ExternalAnchorSHA256)
 
 	// An anchor exported before an accepted audit loss (seal.go) is bound to
 	// the seals that existed then: try the current binding first, then each

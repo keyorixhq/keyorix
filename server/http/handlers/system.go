@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"runtime"
 	"time"
@@ -214,7 +215,14 @@ func MakeSystemInfoHandler(cfg *config.Config, coreService *core.KeyorixCore) ht
 		// this must not be visible to non-admins even though the rest of
 		// this endpoint is system.read-gated (the universal baseline).
 		var recoveryKeyStatus *core.RecoveryKeyStatus
-		canSystemWrite := middleware.AuthorizedAtGlobalScope(r.Context(), coreService, userCtx, permSystemWrite)
+		// canSystemWrite only toggles optional response fields, so a failed lookup keeps
+		// denying them (fail closed) and is logged, rather than turning a cosmetic flag
+		// into a 503 for a system.read caller.
+		canSystemWrite, aerr := middleware.AuthorizedAtGlobalScope(r.Context(), coreService, userCtx, permSystemWrite)
+		if aerr != nil {
+			canSystemWrite = false
+			log.Printf("WARNING: system info: system.write lookup failed, omitting admin-only fields: error=%q", aerr.Error())
+		}
 		if canSystemWrite {
 			if status, err := coreService.GetRecoveryKeyStatus(r.Context()); err == nil {
 				recoveryKeyStatus = status

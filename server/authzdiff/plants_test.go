@@ -63,6 +63,19 @@ var plants = []plant{
 		op:             "group.delete",
 		minUnexplained: 10,
 	},
+	{
+		// Removes the gRPC write gate on group delete. A waiver that matches
+		// "REST denies, gRPC allows" on group ops must still leave these cases
+		// unexplained: its counterfactual condition only absorbs a principal that
+		// lacks nothing but the route group's read permission.
+		name: "grpc-delete-gate-removed",
+		file: "server/grpc/services/group_service.go",
+		anchor: "\tif err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {\n" +
+			"\t\treturn nil, err\n\t}\n\tif err := s.core.DeleteGroup(",
+		repl:           "\t// PLANT: guard removed\n\tif err := s.core.DeleteGroup(",
+		op:             "group.delete",
+		minUnexplained: 50,
+	},
 }
 
 func TestPlantsAreDetected(t *testing.T) {

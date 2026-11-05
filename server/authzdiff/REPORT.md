@@ -281,7 +281,13 @@ the two bulk secret-copy operations. They are listed in `COVERAGE.md`.
 - impersonation sessions;
 - break-glass activations.
 
-### (4) The three plants as a permanent self-test
+### (4) The plants as a permanent self-test (four plants)
+
+Four planted defects: a name-based role check in core, a removed gRPC guard
+on machine-token revoke, a removed REST router gate on group delete, and a
+removed gRPC write gate on group delete (added later; it checks that the
+waivers which match "REST denies, gRPC allows" still leave a principal
+without the write permission unexplained).
 
 `plants_test.go` (`TestPlantsAreDetected`, opt-in `AUTHZDIFF_PLANTS=1`)
 applies each plant with `go test -overlay`. The working tree is never edited;
@@ -408,7 +414,8 @@ AUTHZDIFF_PLANTS=1 GOFLAGS= go test ./server/authzdiff/ -run '^TestPlantsAreDete
 
 ### Full strict sweep
 
-65,454 cases, 12.8 min, PASS, **0 unexplained**. Every flagged case is
+65,454 cases, 13.2 min, PASS, **0 unexplained** (after merging the waiver
+conditions that require a counterfactual model decision). Every flagged case is
 assigned to a known waiver by an exact shape rule (`partition_test.go`).
 
 ### Default run and CI
@@ -426,7 +433,7 @@ assigned to a known waiver by an exact shape rule (`partition_test.go`).
     writes (the statemap completeness guard).
   - Review-coverage ledger fragments for the two new packages (depth `none`,
     `test-helper`).
-- **Plant self-test** (`AUTHZDIFF_PLANTS=1`) after the waiver updates: PASS in 109 s, unchanged counts (670 / 239 / 26 unexplained, each only on its planted op; controls 0).
+- **Plant self-test** (`AUTHZDIFF_PLANTS=1`), four plants: PASS in 153 s (670 / 239 / 26 / 172 unexplained cases, each only on its planted op; controls 0).
 
 ## Open items
 

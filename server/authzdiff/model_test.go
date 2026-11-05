@@ -208,6 +208,27 @@ type requirement struct {
 	recipientUserIDs []uint
 }
 
+// groupReadPerm is the read permission the op's REST route group requires
+// (router.go: the /roles group requires roles.read, the /users and /groups
+// groups users.read).
+func groupReadPerm(op string) string {
+	if strings.HasPrefix(op, "role.") {
+		return "roles.read"
+	}
+	return "users.read"
+}
+
+// withoutPerm is req with perm dropped from its gate permissions (both
+// scopes). The ceiling is unchanged: it is derived from the granted roles.
+func withoutPerm(req requirement, perm string) requirement {
+	drop := func(ps []string) []string {
+		return slices.DeleteFunc(slices.Clone(ps), func(p string) bool { return p == perm })
+	}
+	req.perms = drop(req.perms)
+	req.globalPerms = drop(req.globalPerms)
+	return req
+}
+
 // holdsAdminRoleAt: p holds a live, unexpired admin role granted exactly at proj.
 // Machines never hold the override.
 func (m model) holdsAdminRoleAt(p *principal, proj uint) bool {

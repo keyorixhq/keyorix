@@ -15,11 +15,14 @@ import (
 // that matters closed: one that has the core leg allow needs EVERY present
 // transport to deny, so a transport that allows can never match it; one that
 // has a layer refuse needs the model to deny as well, so a case allowed
-// everywhere can never match it.
+// everywhere can never match it. Two waivers also require a counterfactual
+// model decision (caseResult.ModelSansGroupRead / ModelIfActive), so they
+// absorb only the exact condition they were established on.
 //
-// The three plants (plants_test.go) are exactly the shapes these rules
+// The four plants (plants_test.go) are exactly the shapes these waivers
 // exclude: core+REST allow (plant 1), gRPC allows a non-group op (plant 2),
-// REST allows what gRPC denies (plant 3).
+// REST allows what gRPC denies (plant 3), gRPC allows a group op to a
+// principal without the op's write permission (plant 4).
 //
 // Returns "" for a case with nothing to explain.
 func explain(r *caseResult) string {
@@ -38,10 +41,10 @@ func explain(r *caseResult) string {
 	case slices.Contains([]string{"group.create", "group.update", "group.delete", "group.member.remove", "group.restore",
 		"user.create", "user.create.assign", "user.update", "user.delete", "user.reissue.otp",
 		"role.create", "role.update", "role.delete"}, r.Op) &&
-		is(rest, Denied) && is(grpc, Allowed) && r.Model == Denied:
+		is(rest, Denied) && is(grpc, Allowed) && r.Model == Denied && r.ModelSansGroupRead == Allowed:
 		return "known-01"
 
-	case pk == pkSuspended && is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc):
+	case pk == pkSuspended && r.ModelIfActive == Allowed && is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc):
 		return "known-02"
 
 	case (r.Op == "secret.update" || r.Op == "secret.delete") && r.Arg == 1 && r.Target == "A" &&

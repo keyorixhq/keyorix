@@ -12,6 +12,7 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -103,7 +104,11 @@ served the anchor: "flag", "config (audit.offline_anchor_path)", or "none".
 A chain with an accepted audit loss ('admin audit accept-loss') is reported
 SEALED: the rows that remain verify, the chain is not whole. The seal records
 are authenticated with --checkpoint-key-file; without it a sealed chain reads
-BROKEN (the seal cannot be trusted, so the gap is not stepped over).
+BROKEN (the seal cannot be trusted, so the gap is not stepped over). Each seal
+is listed with the rows it recorded as unpinned (nothing signed pinned them when
+the loss was accepted) and the anchor it names: the SHA-256 of an --anchor file
+is compared with that digest, which is how a seal accepted with --anchor-sha256
+gets checked at all. Neither changes the verdict.
 
 Exit codes: 0 VALID, 1 BROKEN (tamper detected), 2 INDETERMINATE (could not
 fully verify -- e.g. an unauthenticated retention gap, or no key to check a
@@ -245,6 +250,8 @@ func buildVerifyAuditOptions(cs configLoadState) (auditverify.Options, string, e
 			return opts, anchorSource, fmt.Errorf("--anchor: %w", err)
 		}
 		opts.ExternalAnchor = bundle
+		sum := sha256.Sum256(data) // as accept-loss digests --anchor, so it compares with a seal's anchor digest
+		opts.ExternalAnchorSHA256 = hex.EncodeToString(sum[:])
 	}
 	if verifyAuditTSARootFile != "" {
 		roots, err := readTSARootsFile(verifyAuditTSARootFile)
@@ -448,6 +455,13 @@ func printVerifyAuditReport(r *auditverify.Result) {
 			for _, u := range sl.Unpinned {
 				fmt.Printf("    unpinned: audit events #%d through #%d were pinned by no signed checkpoint, mark, anchor or state when the loss was accepted; a rewrite of them before the acceptance cannot be excluded\n", u.FromID, u.ThroughID)
 			}
+			if a := sl.Anchor; a != nil {
+				how := "recorded by digest only"
+				if a.VerifiedAtAcceptance {
+					how = "verified at acceptance"
+				}
+				fmt.Printf("    anchor sha256 %s (%s): %s\n", a.Digest, how, a.Detail)
+			}
 		}
 	}
 
@@ -475,6 +489,9 @@ func printVerifyAuditReport(r *auditverify.Result) {
 
 	if r.ExternalAnchor.Supplied {
 		fmt.Println("\nExternal anchor bundle (--anchor):")
+		if r.ExternalAnchor.SHA256 != "" {
+			fmt.Printf("  sha256 %s\n", r.ExternalAnchor.SHA256)
+		}
 		if r.ExternalAnchor.Authenticated {
 			fmt.Println("  authenticated and cross-checked against the live chain")
 		} else {

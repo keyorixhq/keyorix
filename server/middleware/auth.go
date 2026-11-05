@@ -1121,20 +1121,28 @@ func requireUserAndCore(w http.ResponseWriter, r *http.Request) (*UserContext, *
 // scope — the narrow real-404 exception ADR-096 carves out of the house
 // 403-for-both anti-enumeration convention: a caller who could have read this
 // resource TYPE anywhere sees a genuine 404 for one target that truly doesn't
-// exist, instead of the identical denial shown to everyone else. Exported for
-// handler code that resolves a scoped reference inline (e.g. by name within a
-// larger multi-reference operation) rather than through RequireScopedPermission
-// — ADR-096's migration note calls for exactly this: either export
-// handleScopeResolutionError's decision or add a thin wrapper around it.
-func AuthorizedAtGlobalScope(ctx context.Context, cs *core.KeyorixCore, userCtx *UserContext, permission string) bool {
-	ok, err := cs.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
-	return err == nil && ok
+// exist, instead of the identical denial shown to everyone else. It is the ONE
+// shared decision ADR-096 requires, used by handleScopeResolutionError and by
+// handler code that resolves a scoped reference inline (secrets_render.go).
+// The lookup error is returned, never folded into "not held": the caller
+// answers a transient one with 503 (INV-MW-authorize-lookup-error-is-503) and
+// treats any error as "not held" otherwise (fail closed). What protects the
+// call sites is the per-site outage tests (handlers/authorize_global_probe_outage_test.go
+// and TestAuthorizeLookupFault_NotFoundProbeIs503); the (bool, error) signature
+// only makes the error visible, since `held, _ :=` still compiles.
+// TestEveryRefusingPermissionCheckMapsAStorageOutage does NOT cover these
+// sites: it matches only `if err != nil || !ok { 403 }` and does not scan
+// server/middleware, so the `err == nil && held` shape used here is invisible
+// to it.
+func AuthorizedAtGlobalScope(ctx context.Context, cs *core.KeyorixCore, userCtx *UserContext, permission string) (bool, error) {
+	return cs.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
 }
 
 // handleScopeResolutionError writes the response for a scope-resolution failure,
 // shared by RequireScopedPermission and RequireScopedSecretPermission. An
 // errTargetNotFound reveals "not found" only to callers who hold the permission
-// globally (AuthorizedAtGlobalScope); otherwise it denies without confirming the
+// globally (ADR-096's real-404 exception; a transient failure of that probe is a
+// 503, never folded into "not held"); otherwise it denies without confirming the
 // resource exists (avoids existence enumeration by unprivileged users). Any
 // other error is treated as an unparseable target (400).
 func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core.KeyorixCore, userCtx *UserContext, permission string, err error, denyMessage string) {
@@ -1149,7 +1157,7 @@ func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core
 		// else keeps the 403 they get for an absent target, so a fault adds no
 		// existence signal for them. The audit row records the truth either way.
 		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedInternalError)
-		held, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+		held, aerr := AuthorizedAtGlobalScope(r.Context(), cs, userCtx, permission)
 		if aerr != nil && authorizeLookupUnavailable(w, r, aerr) {
 			return
 		}
@@ -1166,7 +1174,7 @@ func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core
 		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedNotFound)
 		// The global-scope probe is an authorize lookup too: if IT hits the outage the
 		// answer is 503, not the 403 that would pass for "you hold nothing".
-		held, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+		held, aerr := AuthorizedAtGlobalScope(r.Context(), cs, userCtx, permission)
 		if aerr != nil && authorizeLookupUnavailable(w, r, aerr) {
 			return
 		}
