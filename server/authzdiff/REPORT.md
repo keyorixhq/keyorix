@@ -758,9 +758,10 @@ For each plant, a child sweep restricted to the planted op must produce:
 - and zero unexplained cases in the same restricted sweep without the
   overlay.
 
-**CI:** new job `authzdiff-plants` in `.github/workflows/ci.yml`, gated like
-`closures-pg` (merge queue, push, schedule, dispatch, or `ci:full`). Locally
-`actionlint` is clean. The job has not run in CI yet.
+**CI:** new job `authzdiff-plants` in `.github/workflows/ci.yml`. It runs only
+on the nightly schedule, on manual dispatch and on PRs labelled `ci:full`. It
+never runs in the merge queue or on push: merge-queue time is tightly managed,
+and the self-test takes ~3 min. Locally `actionlint` is clean.
 
 ### Run evidence
 
@@ -828,3 +829,84 @@ Root cause (3) now also covers:
 - M1 on `member.add`, `membership.invite` and `env.restore`;
 - M3 on `machine.oidc.create`. The untyped `errAdminAuthorityRequired`
   reaches the client as **400**: a third wrong status for one root cause.
+
+### Phase 4 final numbers (at 2292cb0bb)
+
+**Coverage of every in-scope operation in matrix.json.** The per-operation
+list, with a reason for each uncovered op, is in **`COVERAGE-ALL.md`**
+(generated; `TestCoverageAllIsCurrent` fails if it is stale or if any
+uncovered op has no reason). REST coverage is derived by request/route-template
+match. gRPC coverage is derived from the RPC each op's leg actually calls,
+recorded by a client interceptor.
+
+| family | REST in scope | REST covered | gRPC in scope | gRPC covered |
+|---|---|---|---|---|
+| groups | 8 | 8 | 6 | 6 |
+| projects | 8 | 6 | 3 | 3 |
+| machine identities | 11 | 11 | 6 | 6 |
+| invitations | 4 | 4 | 0 | 0 |
+| access requests | 5 | 5 | 0 | 0 |
+| memberships | 5 | 5 | 0 | 0 |
+| secrets | 43 | 8 | 10 | 7 |
+| other (outside the seven families) | 127 | 0 | 21 | 0 |
+| **total** | **211** | **47** | **46** | **22** |
+
+The 188 uncovered operations split into three reason classes:
+
+| Reason class | Operations |
+|---|---|
+| design: out of the requested scope, or not an authorization decision | 95 |
+| fixture: needs a fixture the harness lacks | 66 |
+| model: no reference-model rule | 27 |
+
+**Strict sweep.**
+- 41,558 cases, PASS.
+- 2,007 layer/model disagreements (O1/O2).
+- 6,527 mapping-gap-only flags.
+
+| Bucket | Cases |
+|---|---|
+| D1 | 130 |
+| D2 | 1,797 |
+| D3 | 2 |
+| D4 | 2 |
+| D5 | 62 |
+| D6 | 14 |
+| M1 | 5,761 |
+| M2 | 274 |
+| M3 | 492 |
+| **unexplained** | **0** |
+
+**New principals** (181 cases each).
+
+| Principal | Agree | D5 | D2 | M3 |
+|---|---|---|---|---|
+| suspended | 116 | 62 | — | 3 |
+| pat-restricted | 165 | — | 12 | 4 |
+
+- **suspended:** produced new finding **D5** (62 cases). Core allows it;
+  REST answers 401 and gRPC `Unauthenticated`.
+- **pat-restricted:** no PAT-specific disagreement. Its 12 D2 and 4 M3 cases
+  are pre-existing buckets, not PAT-specific. 8 cases are allowed on every
+  layer (secret value reads in project A), so the principal is not
+  vacuously denied.
+  - The restriction is enforced in a layer all three share: core's
+    permission check reads it from ctx.
+  - The REST-only ungated-write refusal covers only `core refusal = none`
+    ops, so it cannot produce a disagreement.
+  - Not yet expressible: environment-scoped PATs, CIDR-restricted PATs.
+
+**Test placement.**
+
+| Test | When it runs | Time |
+|---|---|---|
+| Default `go test ./server/authzdiff/` | normal CI test leg `root-4` | 7.6 s (8.4 s at load average ~6.9) |
+| `TestAuthzDiffSweep` | opt-in `AUTHZDIFF_SWEEP=1` | ~8 min |
+| `TestPlantsAreDetected` | opt-in `AUTHZDIFF_PLANTS=1`; CI job `authzdiff-plants` (nightly, dispatch, `ci:full`) | ~3 min |
+
+```
+AUTHZDIFF_PLANTS=1 GOFLAGS= go test ./server/authzdiff/ -run '^TestPlantsAreDetected$' -count=1 -timeout 60m -v
+```
+
+**Lint.** golangci-lint v2.14.0 (the CI-pinned version) on
+`./server/authzdiff/...` and `./devtools/authzmatrix/...`: 0 issues.

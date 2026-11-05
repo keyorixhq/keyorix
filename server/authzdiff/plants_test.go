@@ -23,7 +23,9 @@ import (
 //
 // Opt-in (AUTHZDIFF_PLANTS=1): each plant compiles the server packages with an
 // overlay and runs a restricted sweep, ~1-2 min per plant — far over the 10 s
-// default budget. CI runs it as its own job (authzdiff-plants in ci.yml).
+// default budget. CI runs it as its own job (authzdiff-plants in ci.yml):
+// nightly schedule, manual dispatch and ci:full-labelled PRs only, never the
+// merge queue.
 type plant struct {
 	name           string
 	file           string // repo-relative
