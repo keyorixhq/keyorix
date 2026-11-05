@@ -547,12 +547,16 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	// indefinitely. Mirror the gate and drop the now-invalid session.
 	user, err := c.storage.GetUser(ctx, old.UserID)
 	if err != nil {
-		if !storage.IsUserNotFound(err) {
+		if !isPositiveNotFound(err) {
 			// POST-verdict: GetSessionAny matched a live token and the reuse, ceiling
 			// and impersonation verdicts above already ran, so this fault is
 			// deliberately NOT ErrRefreshNotEvaluated. The handler keeps the slot: a
-			// correct token must never be cheaper than a wrong one (#2880).
-			return nil, fmt.Errorf("failed to read account: %w", err)
+			// correct token must never be cheaper than a wrong one (#2880). It is
+			// ErrStorageReadUnavailable, answered 503: a refresh token cannot be
+			// guessed, so the different answer confirms nothing of value, and a 401
+			// would make the client drop a live session during an outage (Andrei,
+			// ask auth-endpoint-outage-1-refresh-webauthn-postverdict-503).
+			return nil, classifyReadError(err, "user not found")
 		}
 		return nil, fmt.Errorf("user not found")
 	}

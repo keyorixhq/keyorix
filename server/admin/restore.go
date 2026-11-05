@@ -300,7 +300,7 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	// where the staging directory actually is ($TMPDIR, often a different and
 	// smaller filesystem than the archive's), since that is what fills up.
 	if err := backupfmt.CheckFreeSpace(stagingDir, saturatingQuadruple(archiveInfo.Size())); err != nil {
-		return fmt.Errorf("preflight free-space check for the staging directory %s (set TMPDIR to a larger filesystem) (design §7.4): %w", stagingDir, err)
+		return fmt.Errorf("preflight free-space check for the staging directory %s (set TMPDIR to a larger filesystem): %w", stagingDir, err)
 	}
 
 	archiveFile, err := secretenv.OpenRegularNamed("backup archive", restoreInput) // operator-supplied input path; a FIFO is refused, not waited on

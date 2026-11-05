@@ -24,7 +24,7 @@ package docsdrift
 // # What it does not recognise
 //
 //   - String literals (a runtime error message that says the signing key "is
-//     derived from the DEK" is not a comment), _test.go files, the CLI module
+//     derived from the DEK" is not a comment), the CLI module
 //     (separate go.mod), generated TypeScript (derived from openapi.yaml), ADRs
 //     (docs/adr-*.md: Andrei edits those), changelog fragments and CHANGELOG.md.
 //   - A paraphrase ("the key is bound to the DEK", "under the data key"). It is
@@ -68,8 +68,8 @@ var wordingExemptions = map[string]string{
 	"docs/cli-reference.md": "generated from cli/cmd/compliance.go; the CLI lane regenerates it",
 }
 
-// wordingFindings returns one message per unit that calls a checkpoint or
-// evidence key DEK-derived.
+// wordingFindings returns one message per unit that attributes a checkpoint or
+// evidence key to the DEK (the retired wording).
 func wordingFindings(rel string, units []wordingUnit) []string {
 	var out []string
 	for _, u := range units {
@@ -216,7 +216,7 @@ func scanWording(t testing.TB, root string) (findings []string, scanned int) {
 		}
 		var units []wordingUnit
 		switch {
-		case strings.HasSuffix(rel, ".go") && !strings.HasSuffix(rel, "_test.go"):
+		case strings.HasSuffix(rel, ".go"):
 			f, perr := parser.ParseFile(fset, p, nil, parser.ParseComments|parser.SkipObjectResolution)
 			if perr != nil {
 				return fmt.Errorf("parsing %s: %w", rel, perr)

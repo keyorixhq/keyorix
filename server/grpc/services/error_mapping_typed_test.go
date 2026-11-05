@@ -77,13 +77,42 @@ func TestMapUserError_ClassifiesBySentinel(t *testing.T) {
 		{"duplicate username (storage)", fmt.Errorf("create user: %w", storage.ErrDuplicateUsername), codes.AlreadyExists},
 		{"invalid input", fmt.Errorf("update user: %w", core.ErrInvalidInput), codes.InvalidArgument},
 		{"empty identity name", fmt.Errorf("validation: %w", identity.ErrEmpty), codes.InvalidArgument},
-		// Not yet typed: the core/users.go validation wording and the roles.assign ceiling.
-		{"untyped validation", errors.New("validation failed: email is required"), codes.InvalidArgument},
+		{"field validation", fmt.Errorf("create user: %w", core.ErrValidation), codes.InvalidArgument},
+		{"text only: validation phrase", errors.New("validation failed: email is required"), codes.Internal},
 		{"role ceiling refusal", fmt.Errorf("cannot grant this role: %w", core.ErrPermissionDenied), codes.PermissionDenied},
 		{"text only: role ceiling phrase", errors.New("cannot grant this role: you do not hold permission \"roles.assign\" yourself"), codes.Internal},
 		{"text only: not found", errors.New("record not found"), codes.Internal},
 		{"text only: already exists", errors.New("file already exists"), codes.Internal},
 		{"text only: duplicate", errors.New("duplicate key value violates unique constraint \"idx_x\""), codes.Internal},
+	})
+}
+
+func TestMapMachineError_ClassifiesBySentinel(t *testing.T) {
+	runTypedMapCases(t, mapMachineError, []typedMapCase{
+		{"missing machine", fmt.Errorf("get: %w", core.ErrMachineIdentityNotFound), codes.NotFound},
+		{"illegal transition", fmt.Errorf("revoke: %w", core.ErrMachineTransitionInvalid), codes.FailedPrecondition},
+		{"not active", fmt.Errorf("issue: %w", core.ErrMachineIdentityNotActive), codes.FailedPrecondition},
+		{"validation", fmt.Errorf("create: %w", core.ErrValidation), codes.InvalidArgument},
+		{"authz refusal", fmt.Errorf("issue: %w", core.ErrPermissionDenied), codes.PermissionDenied},
+		{"storage fault is not a not-found", core.ReadFault(errors.New("driver: connection reset by peer")), codes.Unavailable},
+		{"text only: not found", errors.New("machine identity not found"), codes.Internal},
+		{"text only: transition", errors.New("cannot transition machine identity from revoked to active"), codes.Internal},
+		{"text only: must be active", errors.New("cannot issue a token for a suspended machine identity (must be active)"), codes.Internal},
+		{"text only: invalid", errors.New("pq: invalid input syntax for type bigint"), codes.Internal},
+		{"text only: permission", errors.New("pq: permission denied for table machine_identities"), codes.Internal},
+	})
+}
+
+func TestMapDynamicError_ClassifiesBySentinel(t *testing.T) {
+	runTypedMapCases(t, mapDynamicError, []typedMapCase{
+		{"missing config or lease", fmt.Errorf("revoke: %w", core.ErrDynamicSecretNotFound), codes.NotFound},
+		{"validation", fmt.Errorf("create: %w", core.ErrValidation), codes.InvalidArgument},
+		{"authz refusal", fmt.Errorf("issue: %w", core.ErrPermissionDenied), codes.PermissionDenied},
+		{"storage fault is not a not-found", core.ReadFault(errors.New("driver: connection reset by peer")), codes.Unavailable},
+		// A backend or driver message is a backend failure whatever words it uses.
+		{"text only: not found", errors.New("pq: relation \"leases\" not found"), codes.Unavailable},
+		{"text only: required", errors.New("backend: password is required"), codes.Unavailable},
+		{"text only: permission", errors.New("pq: permission denied for table users"), codes.Unavailable},
 	})
 }
 

@@ -42,7 +42,9 @@ func newTestWebAuthnRP(t *testing.T) *gowebauthn.WebAuthn {
 func TestFinishWebAuthnRegistration_GetUserFail(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetUser", mock.Anything, uint(5)).Return(nil, errors.New("user not found"))
+	// The store's real not-found shape (a typed sentinel), not untyped text: an
+	// untyped error is classified as a storage fault (AUTH-LANE-FOLDS-1).
+	ms.On("GetUser", mock.Anything, uint(5)).Return(nil, storage.NotFound(storage.ErrUserNotFound, "user not found", nil))
 	c := NewKeyorixCore(ms)
 	c.SetWebAuthn(webauthnrp.Wrap(newTestWebAuthnRP(t)))
 	_, err := c.FinishWebAuthnRegistration(context.Background(), 5, "token", "mykey", "password", nil)

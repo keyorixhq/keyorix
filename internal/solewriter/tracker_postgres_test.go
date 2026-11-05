@@ -35,6 +35,17 @@ func (w *swWorld) serverStorage() storage.Storage {
 	if c, ok := st.(interface{ Close() error }); ok {
 		w.t.Cleanup(func() { _ = c.Close() })
 	}
+	// The store starts the trigger-integrity check, whose first pass runs in
+	// the background and commits catalog transactions the tracker counts as
+	// fenced writes. Sampled mid-test, one of them is a commit the test did not
+	// make ("expected 4, actual 5"). Wait for the pass itself to end, not for a
+	// quiet period: under CPU starvation the pass can start later than any
+	// fixed window.
+	waiter, ok := st.(interface{ WaitTriggerIntegrityFirstPass(context.Context) error })
+	require.True(w.t, ok, "the server's storage must expose WaitTriggerIntegrityFirstPass")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	require.NoError(w.t, waiter.WaitTriggerIntegrityFirstPass(ctx), "the trigger-integrity check's first pass did not end")
 	return st
 }
 

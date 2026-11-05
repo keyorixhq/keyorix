@@ -1,0 +1,2 @@
+### Testing
+- **#3684 is now driven through every transport that can reach it.** `PUT /api/v1/projects/{id}/members/{self}` that would drop the caller's own `roles.assign` answers 403 with nothing changed (it answered 503 `MutationPartiallyApplied` with `retry_safe: true` before #3840); the same replacement made by another admin still applies; and the HTTP body and the gRPC `ErrorInfo` say `retry_safe: false` when the second commit was refused on the caller's own authority, `true` after a fault. gRPC has no role-set replacement RPC.

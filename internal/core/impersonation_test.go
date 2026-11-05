@@ -2,11 +2,13 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -439,4 +441,155 @@ func TestEndImpersonation_DeleteSessionFails_NoMisleadingAuditEvent(t *testing.T
 	// still live.
 	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 	store.AssertExpectations(t)
+}
+
+// AUTH-LANE-FOLDS-1 item 1: a FAULTED read of the impersonating admin is a retry
+// answer, never "impersonating account not found". ValidateSessionToken and the
+// StreamAuditLogs re-auth ticker both call ReauthorizeImpersonation, so before this
+// a transient storage fault on that one GetUser looked like a deleted admin and the
+// session was answered 401 (and negative-cached by the middleware) instead of 503.
+// It stays fail closed: the call is refused either way.
+var errImpersonationStorageDown = errors.New("pq: connection reset by peer")
+
+func stillAuthorizedCeilingMocks(store *MockStorage, ctx context.Context) {
+	store.On("GetUserRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{5}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{5}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{5}, "users.impersonate").Return(true, nil)
+	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
+}
+
+func TestReauthorizeImpersonation_AdminReadFault_IsUnavailableNotVerdict(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetUser", ctx, uint(1)).Return(nil, errImpersonationStorageDown).Once()
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin", IsActive: true, AccountState: AccountActive}, nil)
+	stillAuthorizedCeilingMocks(store, ctx)
+
+	err := c.ReauthorizeImpersonation(ctx, 1, 2)
+	require.Error(t, err, "a faulted admin read must still refuse (fail closed)")
+	require.True(t, IsStorageReadUnavailable(err), "want the storage-read-unavailable class, got %v", err)
+	require.True(t, IsAuthTransient(err), "the session validators' callers answer 503 only for IsAuthTransient, got %v", err)
+	require.NotContains(t, err.Error(), "not found", "a fault must not read as a deleted admin")
+	require.NotContains(t, err.Error(), "connection reset", "the driver text stays out of the caller-visible error")
+
+	// The failure is not a verdict: nothing is cached, and the next call once storage
+	// is back is answered on the facts.
+	_, cached := c.impersonationCeilingCache.Load("1:2")
+	require.False(t, cached, "a read fault must not be cached as a ceiling verdict")
+	require.NoError(t, c.ReauthorizeImpersonation(ctx, 1, 2))
+}
+
+func TestReauthorizeImpersonation_AdminNotFound_StaysRefusal(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetUser", ctx, uint(1)).Return(nil, storage.NotFound(storage.ErrUserNotFound, "user not found", nil))
+
+	err := c.ReauthorizeImpersonation(ctx, 1, 2)
+	require.Error(t, err)
+	require.False(t, IsStorageReadUnavailable(err), "a positive not-found is a verdict, got %v", err)
+	require.False(t, IsAuthTransient(err), "a deleted admin is a refusal, not a retry, got %v", err)
+	require.Contains(t, err.Error(), "impersonating account not found")
+}
+
+// A fault while re-resolving the ceiling is not a verdict either: it must not be
+// cached for ceilingCacheTTL as if the admin had been demoted.
+func TestReauthorizeImpersonation_CeilingReadFault_NotCached(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin", IsActive: true, AccountState: AccountActive}, nil)
+	store.On("GetUserRoleScopes", ctx, uint(2)).Return(nil, errImpersonationStorageDown).Once()
+	stillAuthorizedCeilingMocks(store, ctx)
+
+	err := c.ReauthorizeImpersonation(ctx, 1, 2)
+	require.Error(t, err, "a faulted ceiling read must refuse (fail closed)")
+	require.True(t, IsAuthTransient(err), "a ceiling that could not be resolved is a retry, not a demotion, got %v", err)
+	require.NotContains(t, err.Error(), "connection reset")
+	_, cached := c.impersonationCeilingCache.Load("1:2")
+	require.False(t, cached, "a ceiling read fault must not be cached as a verdict")
+	require.NoError(t, c.ReauthorizeImpersonation(ctx, 1, 2))
+}
+
+func TestValidateSessionToken_ImpersonatorReadFault_IsAuthTransient(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	admin := uint(1)
+	store.On("GetSession", ctx, "imp-tok").Return(&models.Session{ID: 7, UserID: 2, ImpersonatedBy: &admin}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "alice", IsActive: true, AccountState: AccountActive}, nil)
+	store.On("GetUser", ctx, uint(1)).Return(nil, errImpersonationStorageDown)
+
+	user, roles, err := c.ValidateSessionToken(ctx, "imp-tok")
+	require.Error(t, err)
+	require.True(t, IsAuthTransient(err), "the middleware answers 503 (no negative cache) only for IsAuthTransient, got %v", err)
+	require.Nil(t, user)
+	require.Nil(t, roles)
+}
+
+func TestStartImpersonation_AdminReadFault_IsUnavailable(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetUser", ctx, uint(1)).Return(nil, errImpersonationStorageDown)
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(deniedEventMatcher(1, 2, "lookup failed"))).Return(nil)
+
+	_, _, err := c.StartImpersonation(ctx, 1, 2, "1.2.3.4")
+	require.Error(t, err)
+	require.True(t, IsStorageReadUnavailable(err), "want the storage-read-unavailable class, got %v", err)
+	require.NotContains(t, err.Error(), "not found")
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	store.AssertExpectations(t)
+}
+
+func TestStartImpersonation_TargetReadFault_IsUnavailable(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin"}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(nil, errImpersonationStorageDown)
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(deniedEventMatcher(1, 2, "lookup failed"))).Return(nil)
+
+	_, _, err := c.StartImpersonation(ctx, 1, 2, "1.2.3.4")
+	require.Error(t, err)
+	require.True(t, IsStorageReadUnavailable(err), "want the storage-read-unavailable class, got %v", err)
+	require.False(t, errors.Is(err, storage.ErrUserNotFound), "a fault is not a missing target")
+	require.NotContains(t, err.Error(), "connection reset")
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+func TestEndImpersonation_SessionReadFault_IsUnavailable(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetSession", ctx, "tok").Return(nil, errImpersonationStorageDown)
+
+	_, err := c.EndImpersonation(ctx, "tok")
+	require.Error(t, err)
+	require.True(t, IsStorageReadUnavailable(err), "want the storage-read-unavailable class, got %v", err)
+	require.NotContains(t, err.Error(), "not found")
+	store.AssertNotCalled(t, "DeleteSession", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
+}
+
+func TestEndImpersonation_SessionNotFound_StaysRefusal(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetSession", ctx, "tok").Return(nil, storage.ErrSessionNotFound)
+
+	_, err := c.EndImpersonation(ctx, "tok")
+	require.Error(t, err)
+	require.False(t, IsStorageReadUnavailable(err), "a positive not-found is a verdict, got %v", err)
+	require.Contains(t, err.Error(), "session not found")
 }
