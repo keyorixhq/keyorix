@@ -1709,11 +1709,13 @@ jobs:
   # a removed gRPC guard, and a removed REST router gate. Each plant is applied
   # with `go test -overlay` (the tree is never edited) and must surface as
   # unexplained cases on exactly the planted operation, with a clean control
-  # run. Slow (~1-2 min per plant), so it runs where closures-pg runs: merge
-  # queue, push, schedule, dispatch, or a PR labelled ci:full.
+  # run. Slow (~3 min in total), and merge-queue time is tightly managed, so it
+  # runs ONLY on the nightly schedule, on manual dispatch, and on a PR labelled
+  # ci:full -- never in the merge queue or on push. The harness's fast default
+  # tests (~8 s) run in the normal test-suite leg (root-4) on every PR.
   authzdiff-plants:
     needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
