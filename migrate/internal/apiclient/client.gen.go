@@ -2583,6 +2583,7 @@ type ListSecretsResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -2611,6 +2612,7 @@ type CreateSecretResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -2695,6 +2697,7 @@ type GetSecretResponse struct {
 	JSON403 *Error
 	JSON404 *Error
 	JSON409 *SecretReadRefused
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -4060,6 +4063,13 @@ func ParseListSecretsResponse(rsp *http.Response) (*ListSecretsResponse, error) 
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -4109,6 +4119,13 @@ func ParseCreateSecretResponse(rsp *http.Response) (*CreateSecretResponse, error
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -4277,6 +4294,13 @@ func ParseGetSecretResponse(rsp *http.Response) (*GetSecretResponse, error) {
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
