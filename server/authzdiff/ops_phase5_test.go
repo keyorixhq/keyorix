@@ -377,7 +377,9 @@ func userPhase5Ops() []opSpec {
 		{
 			// no role/assignments: CreateUserAudited.
 			name: "user.create", row: "CreateUserAudited", targets: []tgt{tGlobal}, globalHandler: true,
-			req: func(*fixtures, tgt, byte) requirement { return requirement{perms: []string{"users.read", "users.write"}} },
+			req: func(*fixtures, tgt, byte) requirement {
+				return requirement{perms: []string{"users.read", "users.write"}}
+			},
 			core: func(ctx context.Context, lg *leg, p *principal, _ tgt, _ byte) error {
 				_, err := lg.c.CreateUserAudited(ctx, &core.CreateUserRequest{Username: "u-new", Email: "u-new@example.invalid", DisplayName: "u-new", Password: fxPassword}, p.userID)
 				return err
@@ -460,9 +462,13 @@ func userPhase5Ops() []opSpec {
 				return lg.c.RestoreUser(ctx, p.userID, lg.fx.ux.deletedUserID)
 			}),
 		userOp("user.suspend", "SuspendUser", "users.write", http.MethodPost, "/suspend", acct,
-			func(ctx context.Context, lg *leg, p *principal) error { return lg.c.SuspendUser(ctx, p.userID, acct(lg.fx)) }),
+			func(ctx context.Context, lg *leg, p *principal) error {
+				return lg.c.SuspendUser(ctx, p.userID, acct(lg.fx))
+			}),
 		userOp("user.reactivate", "ReactivateUser", "users.write", http.MethodPost, "/reactivate", acct,
-			func(ctx context.Context, lg *leg, p *principal) error { return lg.c.ReactivateUser(ctx, p.userID, acct(lg.fx)) }),
+			func(ctx context.Context, lg *leg, p *principal) error {
+				return lg.c.ReactivateUser(ctx, p.userID, acct(lg.fx))
+			}),
 		userOp("user.require.reset", "RequirePasswordReset", "users.write", http.MethodPost, "/require-password-reset", acct,
 			func(ctx context.Context, lg *leg, p *principal) error {
 				return lg.c.RequirePasswordReset(ctx, p.userID, acct(lg.fx))
@@ -489,8 +495,12 @@ func userPhase5Ops() []opSpec {
 	}
 	// unlock is deliberately not ceiling-gated (login_lockout.go UnlockUser doc).
 	unlock := userOp("user.unlock", "UnlockUser", "users.write", http.MethodPost, "/unlock", acct,
-		func(ctx context.Context, lg *leg, p *principal) error { return lg.c.UnlockUser(ctx, p.userID, acct(lg.fx)) })
-	unlock.req = func(*fixtures, tgt, byte) requirement { return requirement{perms: []string{"users.read", "users.write"}} }
+		func(ctx context.Context, lg *leg, p *principal) error {
+			return lg.c.UnlockUser(ctx, p.userID, acct(lg.fx))
+		})
+	unlock.req = func(*fixtures, tgt, byte) requirement {
+		return requirement{perms: []string{"users.read", "users.write"}}
+	}
 	ops = append(ops, reissue, unlock)
 	return append(ops, rolePhase5Ops()...)
 }

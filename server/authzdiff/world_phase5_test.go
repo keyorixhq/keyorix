@@ -23,18 +23,18 @@ import (
 
 // secretFixtures exist once in each of project A and B, all in env "prod".
 type secretFixtures struct {
-	certID       uint // Type "certificate", value a synthetic self-signed PEM
-	deletedID    uint // soft-deleted (restore target)
-	suspendedID  uint // suspended (resume target)
-	multiVerID   uint // two versions (rollback / comment target)
-	v1ID         uint // multiVerID's version 1 (SecretVersion.ID)
-	commentID    uint // a comment on v1
-	depEdgeID    uint // dependency edge: certID depends on multiVerID
-	expiringID   uint // expires in 10 days (extend-expiring)
-	folderID     uint // a folder in prod (move target)
-	targetEnvID  uint // live, empty environment "staging2" (copy / clone target)
-	shareID      uint // multiVerID shared read -> the ACL recipient
-	plainID      uint // a plain admin-owned secret the metadata ops edit
+	certID      uint // Type "certificate", value a synthetic self-signed PEM
+	deletedID   uint // soft-deleted (restore target)
+	suspendedID uint // suspended (resume target)
+	multiVerID  uint // two versions (rollback / comment target)
+	v1ID        uint // multiVerID's version 1 (SecretVersion.ID)
+	commentID   uint // a comment on v1
+	depEdgeID   uint // dependency edge: certID depends on multiVerID
+	expiringID  uint // expires in 10 days (extend-expiring)
+	folderID    uint // a folder in prod (move target)
+	targetEnvID uint // live, empty environment "staging2" (copy / clone target)
+	shareID     uint // multiVerID shared read -> the ACL recipient
+	plainID     uint // a plain admin-owned secret the metadata ops edit
 }
 
 // userFixtures are install-wide.
