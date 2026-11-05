@@ -37,12 +37,19 @@ func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, 
 // addProjectMember is AddProjectMember with a caller fence run first in the
 // grant's transaction (assignUserRole).
 func (c *KeyorixCore) addProjectMember(ctx context.Context, first txFence, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
-	if err := c.domainAllowedForUser(ctx, userID); err != nil {
-		return err
-	}
 	role, err := c.storage.GetRoleByName(ctx, roleName)
 	if err != nil {
 		return fmt.Errorf("unknown role %q: %w", roleName, err)
+	}
+	// OWNERSHIP-ORACLE-1: the granter ceiling runs before the domain check, which
+	// loads the target user; refused the other way round, an actor who may not
+	// grant this role learned whether a user ID exists and whether its email is
+	// on the allowlist. assignUserRole judges the ceiling again.
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, role.ID, Scope{ProjectID: projectID}, actorIsMachine); err != nil {
+		return err
+	}
+	if err := c.domainAllowedForUser(ctx, userID); err != nil {
+		return err
 	}
 	return c.assignUserRole(ctx, first, actorID, userID, role.ID, Scope{ProjectID: projectID}, actorIsMachine)
 }
@@ -73,6 +80,12 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 	// membership (the user holds no role at this scope yet) — an existing
 	// member changing roles already passed the check when they joined.
 	if len(existing) == 0 {
+		// A new member gets exactly roleName, so the ceiling replaceUserRoleSet
+		// judges is known here: judge it before the domain check loads the user
+		// (OWNERSHIP-ORACLE-1, see addProjectMember).
+		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, role.ID, scope, actorIsMachine); err != nil {
+			return err
+		}
 		if err := c.domainAllowedForUser(ctx, userID); err != nil {
 			return err
 		}
