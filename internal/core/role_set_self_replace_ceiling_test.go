@@ -51,6 +51,7 @@ func TestReplaceUserRoleSet_SelfReplacementLosingRolesAssign_RefusedUpFront(t *t
 				require.Error(t, err)
 				require.NotErrorIs(t, err, ErrMutationPartiallyApplied, "nothing may be applied")
 				require.Contains(t, err.Error(), "cannot grant this role", "the same refusal as any other ceiling failure")
+				require.ErrorIs(t, err, ErrPermissionDenied, "transports classify the refusal by sentinel, not by its text")
 				require.Equal(t, []uint{admin.ID}, w.exactRoles(p.ID, scope), "the refused replacement changed P's roles")
 				require.Equal(t, removedRows, w.eventRows(EventRoleRemoved))
 				require.Equal(t, assignedRows, w.eventRows(EventRoleAssigned))

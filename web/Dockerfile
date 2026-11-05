@@ -81,7 +81,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # failed with "Connection refused" for that reason, pre-existing and
 # independent of the non-root change below (reproduced against the original
 # root-running image too).
-# /nginx-health (static), not /health: /health proxies to the backend (#3460), and
+# /nginx-health (static), not /health: /health reflects the backend's status (#3460), and
 # the image on its own, or under an orchestrator that runs its own backend check,
 # must report only whether nginx itself is up. docker-compose.yml overrides this
 # with /health so the stack's web service reflects the backend.

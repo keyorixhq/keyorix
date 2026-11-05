@@ -20,13 +20,14 @@ func init() {
 		// effect-then-error ends in this same state; oracle (d) may consult this
 		// row for it (oracle_d_pure_read_by_design_test.go).
 		pureReadEffectThenError: true,
-		// #3873 (AUTH-ENDPOINT-OUTAGE-1): the same pure-read twin, for oracle (h).
-		lookupVerdictEffectThenError: "post-verdict identity read after the assertion verified: refused like a " +
-			"failed login (ErrLoginPostVerdict, #2880/#2841), slot kept and auth.login_error audited",
+		// Oracle (h) needs no excuse for either kind: the identity-read fault answers
+		// 503 (AUTH-LANE-FOLDS-1, Andrei on ask
+		// auth-endpoint-outage-1-refresh-webauthn-postverdict-503).
 		designComment: "internal/core/webauthn.go FinishWebAuthnLoginPending: an identity-read failure after the " +
 			"assertion verified is denied via denyAfterCredentialMatched (ErrLoginPostVerdict wrapping " +
 			"ErrLoginIdentityUnavailable, never ErrWebAuthnLoginNotEvaluated); server/http/handlers/webauthn.go " +
-			"releases the reservation only on ErrWebAuthnLoginNotEvaluated and audits auth.login_error",
+			"releases the reservation only on ErrWebAuthnLoginNotEvaluated, audits auth.login_error and answers " +
+			"ErrLoginIdentityUnavailable 503",
 		provingTest: "internal/core/TestFinishWebAuthnLogin_PermissionsReadFailureLeavesNoSessionOrGrant",
 		why: "The assertion has passed when the permissions read fails, so the request keeps the IP slot it " +
 			"reserved (#2880) -- releasing it would make post-verification failures free -- and the login is " +

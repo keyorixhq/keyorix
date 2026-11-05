@@ -342,7 +342,7 @@ func (h *AuthHandler) loginResponseFromIdentity(session *models.Session, user *m
 	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user) || core.AccountRestricted(user.AccountState)
 	// A login always mints an interactive session.
 	resp.PendingSteps = h.coreService.PendingSetupStepsFor(
-		core.AccountRestricted(user.AccountState), user.MFAEnabled || user.WebAuthnEnabled, true)
+		core.AccountRestricted(user.AccountState), user.MFAEnabled || user.WebAuthnEnabled, true, core.MFAEnrolmentOwed(user))
 	if !user.MFAEnabled && !user.WebAuthnEnabled {
 		if resp.MFAGrace = mfaGraceSummary(h.coreService); resp.MFAGrace != nil {
 			log.Printf("WARNING: ADR-112 grace period: user id %d signed in without a second factor; security.require_mfa is enforced in %d day(s) (at %s, or when the first administrator enrols MFA), and this user is then sent to MFA enrolment.", user.ID, resp.MFAGrace.DaysLeft, resp.MFAGrace.EndsAt)
@@ -482,9 +482,15 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, core.ErrSetupNotEvaluated):
 			// #3298: the token lookup failed on storage, so no token was
 			// evaluated: hand the slot back and audit auth.login_error, as
-			// /auth/login does for ErrLoginNotEvaluated.
+			// /auth/login does for ErrLoginNotEvaluated. The lookup runs the
+			// same way for every token, valid or dead, so answering it 503 +
+			// Retry-After confirms nothing (AUTH-LANE-FOLDS-1, Andrei's decision
+			// on ask auth-endpoint-outage-1-setup-consume-503). A fault AFTER
+			// the token was found valid keeps the dead-link 400 below.
 			h.returnLoginSlot(r.Context(), slot)
 			goSafe(func() { h.coreService.LogAuthNotEvaluated(context.Background(), "", ip, err) }) // #nosec G118
+			writeStorageUnavailable(w)
+			return
 		case errors.Is(err, core.ErrSetupPostVerdict):
 			// The token was valid; a storage fault refused the consume and
 			// nothing was written (AUTH-2 item 1). Charged and answered like a
@@ -577,12 +583,21 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, core.ErrRefreshNotEvaluated) {
 			// The session lookup itself failed, so no token was found or judged
-			// (#2880): nothing was guessed, so the slot goes back. The client sees
-			// the same refusal a dead token gets -- a post-verdict fault (the owner
-			// read, RotateSession, the reuse revocation) keeps its slot and gets the
-			// same answer.
+			// (#2880): nothing was guessed, so the slot goes back, and the answer is
+			// 503 + Retry-After, not the dead-token 401 that makes a client drop a
+			// live session during an outage (AUTH-LANE-FOLDS-1).
 			log.Printf("RefreshToken: %v", err)
 			h.returnLoginSlot(r.Context(), slot)
+			writeStorageUnavailable(w)
+			return
+		}
+		// The owner read failed after the token matched (post-verdict): 503 too,
+		// but the slot stays counted (#2880). A refresh token cannot be guessed, so
+		// the different answer confirms nothing of value (Andrei, ask
+		// auth-endpoint-outage-1-refresh-webauthn-postverdict-503). A post-verdict
+		// WRITE fault (RotateSession, the reuse revocation) keeps the 401.
+		if sendStorageUnavailable(w, err) {
+			return
 		}
 		sendError(w, "Unauthorized", "Session not found or expired", http.StatusUnauthorized, nil)
 		return
@@ -645,7 +660,7 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 	// middleware.EnforceAccountSetup, so a page reload learns the confinement
 	// without probing a protected endpoint. Reporting only: GET /auth/profile is
 	// on the gate's always-allowed list and nothing else is opened by this.
-	if pending := h.coreService.PendingSetupStepsFor(userCtx.Restricted, userCtx.MFAEnabled, userCtx.SessionAuth); len(pending) > 0 {
+	if pending := h.coreService.PendingSetupStepsFor(userCtx.Restricted, userCtx.MFAEnabled, userCtx.SessionAuth, userCtx.MFAEnrolmentOwed); len(pending) > 0 {
 		profile["pending_steps"] = pending
 	}
 	// ADR-112 #2923: the require_mfa upgrade grace period, for the persistent

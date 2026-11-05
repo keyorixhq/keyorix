@@ -38,6 +38,17 @@ func TestLoginResponse_PendingSteps(t *testing.T) {
 		{"require_mfa off, restricted: change_password only", false,
 			models.User{AccountState: core.AccountPendingFirstLogin},
 			[]string{core.SetupStepChangePassword}},
+		// #3799: an administrator MFA reset leaves enrolment owed whatever
+		// security.require_mfa says; the gate's 403 lists it, so the login
+		// response must too.
+		{"require_mfa off, owed after an MFA reset: enroll_mfa", false,
+			models.User{AccountState: "active", MFAEnrolmentRequired: true},
+			[]string{core.SetupStepEnrollMFA}},
+		{"require_mfa on, owed after an MFA reset: enroll_mfa once", true,
+			models.User{AccountState: "active", MFAEnrolmentRequired: true},
+			[]string{core.SetupStepEnrollMFA}},
+		{"owed flag still set but a factor is enrolled: nothing owed", false,
+			models.User{AccountState: "active", MFAEnrolmentRequired: true, MFAEnabled: true}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -103,6 +114,16 @@ func TestProfile_PendingSteps(t *testing.T) {
 		cs.SetRequireMFA(false)
 		defer cs.SetRequireMFA(true)
 		got := profile(&middleware.UserContext{UserID: user.ID, Username: user.Username, SessionAuth: true})
+		assert.NotContains(t, got, "pending_steps")
+	})
+	t.Run("require_mfa off, enrolment owed after an MFA reset: enroll_mfa", func(t *testing.T) {
+		cs.SetRequireMFA(false)
+		defer cs.SetRequireMFA(true)
+		got := profile(&middleware.UserContext{UserID: user.ID, Username: user.Username, SessionAuth: true, MFAEnrolmentOwed: true})
+		assert.Equal(t, []any{core.SetupStepEnrollMFA}, got["pending_steps"])
+	})
+	t.Run("an owed enrolment does not bind a PAT / machine credential", func(t *testing.T) {
+		got := profile(&middleware.UserContext{UserID: user.ID, Username: user.Username, SessionAuth: false, MFAEnrolmentOwed: true})
 		assert.NotContains(t, got, "pending_steps")
 	})
 }

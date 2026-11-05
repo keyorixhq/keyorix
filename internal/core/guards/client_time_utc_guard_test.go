@@ -25,17 +25,27 @@
 //     (`now := c.now().UTC(); expires := now.Add(ttl)`; `u := exp.UTC(); exp = &u`; at most 4
 //     hops). A `.UTC()` call that only formats a value (an audit string) does not count.
 //
+// UTC-GUARD-KEK-TAILS-1 item 4 widened the tracked fields to LastUsedAt / LastSeenAt, still only
+// as keyed fields of a composite literal (OpenAccessReviewCampaign's AccessReviewItem.LastUsedAt
+// was the one such write it found). Assignments (`x.F = v`) and Update / UpdateColumn /
+// Updates(map) column writes of these fields belong to the sibling guard
+// TestEveryExpiryAssignmentAndColumnWriteInCoreIsUTC (utc_time_write_forms_guard_test.go), which
+// does not accept a BeforeSave hook for them; this guard does not scan them, so a row for one of
+// them goes only in that guard's exception table.
+//
 // What it does NOT catch:
-//   - assignments outside a composite literal (`x.ExpiresAt = v`, `Updates(map[string]any{...})`),
+//   - assignments and column writes outside a composite literal (see the sibling guard above),
 //     and literals built through a helper or a copy of another struct;
+//   - a time handed to a function that stores it (`TouchPAT(ctx, id, t)`): the store layer owns the
+//     write and sits outside the core family;
 //   - data flow: the identifier tracing is textual and per-function, so `.UTC()` applied to a
 //     different variable with the same name in another branch satisfies it;
-//   - fields that are not named Expiration / *ExpiresAt (CreatedAt, UpdatedAt, ResolvedAt, ...), and GORM's
+//   - fields that are not named Expiration / *ExpiresAt / LastUsedAt / LastSeenAt (CreatedAt, UpdatedAt, ResolvedAt, ...), and GORM's
 //     auto-timestamps, which NowFunc fills in the host zone after every hook has run;
 //   - code outside the core family (server layers, CLI).
 // Wrong-reason exemptions are checked too: an exception that no longer matches any hit fails.
 //
-// Report-only on its first day (docs/guard-rollout.d/TestEveryUnhookedExpiryWriteInCoreIsUTC.tsv).
+// The widening is report-only on its first day (docs/guard-rollout.d/TestEveryUnhookedExpiryWriteInCoreIsUTC.tsv).
 
 package guards
 
@@ -136,8 +146,8 @@ type expiryWrite struct {
 
 func (w expiryWrite) key() string { return w.File + ":" + w.Func + ":" + w.Type + "." + w.Field }
 
-// scanExpiryWrites returns every keyed Expir* field write to a models.T literal in f, for T and
-// field pairs the hook inventory does not normalise.
+// scanExpiryWrites returns every keyed tracked-field write (isUTCTrackedField) to a models.T
+// literal in f, for T and field pairs the hook inventory does not normalise.
 func scanExpiryWrites(fset *token.FileSet, f *ast.File, file string, inv map[string]map[string]bool) []expiryWrite {
 	var out []expiryWrite
 	for _, decl := range f.Decls {
@@ -164,7 +174,7 @@ func scanExpiryWrites(fset *token.FileSet, f *ast.File, file string, inv map[str
 					continue
 				}
 				key, ok := kv.Key.(*ast.Ident)
-				if !ok || !isExpiryFieldName(key.Name) || inv[typ][key.Name] {
+				if !ok || !isUTCTrackedField(key.Name) || inv[typ][key.Name] {
 					continue
 				}
 				out = append(out, expiryWrite{
@@ -184,6 +194,11 @@ func scanExpiryWrites(fset *token.FileSet, f *ast.File, file string, inv map[str
 // HygieneTrendSnapshot.ExpiredPATs.
 func isExpiryFieldName(name string) bool {
 	return name == "Expiration" || strings.HasSuffix(name, "ExpiresAt")
+}
+
+// isUTCTrackedField: the expiry fields plus the activity stamps compared against the UTC "now".
+func isUTCTrackedField(name string) bool {
+	return isExpiryFieldName(name) || name == "LastUsedAt" || name == "LastSeenAt"
 }
 
 func stripExpr(e ast.Expr) ast.Expr {
@@ -285,6 +300,7 @@ func TestExpiryWriteScanner_Calibration(t *testing.T) {
 		"server clock, local":    "package core\nfunc f() {\n\tnow := c.now()\n\texpires := now.Add(ttl)\n\t_ = &models.ProjectInvitation{ExpiresAt: &expires}\n}",
 		"inline server clock":    "package core\nfunc f() {\n\t_ = models.SSOLoginState{ExpiresAt: c.now().Add(ttl)}\n}",
 		"UTC only to format":     "package core\nfunc f(expiresAt time.Time) {\n\t_ = expiresAt.UTC().Format(time.RFC3339)\n\t_ = &models.RiskException{ExpiresAt: expiresAt}\n}",
+		"last used as sent":      "package core\nfunc f(t *time.Time) {\n\t_ = models.AccessReviewItem{LastUsedAt: t}\n}",
 	} {
 		got := scan(src)
 		if len(got) != 1 || got[0].UTC {
@@ -297,6 +313,7 @@ func TestExpiryWriteScanner_Calibration(t *testing.T) {
 		"value then UTC":  "package core\nfunc f(expiresAt time.Time) {\n\texpiresAt = expiresAt.UTC()\n\t_ = &models.RiskException{ExpiresAt: expiresAt}\n}",
 		"pointer via u":   "package core\nfunc f(expiresAt *time.Time) {\n\tif expiresAt != nil {\n\t\tu := expiresAt.UTC()\n\t\texpiresAt = &u\n\t}\n\t_ = &models.ConnectRefGrant{ExpiresAt: expiresAt}\n}",
 		"now then derive": "package core\nfunc f() {\n\tnow := c.now().UTC()\n\texpires := now.Add(ttl)\n\t_ = &models.ProjectInvitation{ExpiresAt: &expires}\n}",
+		"last seen UTC":   "package core\nfunc f(t time.Time) {\n\tu := t.UTC()\n\t_ = &models.Session{LastSeenAt: &u}\n}",
 	} {
 		got := scan(src)
 		if len(got) != 1 || !got[0].UTC {

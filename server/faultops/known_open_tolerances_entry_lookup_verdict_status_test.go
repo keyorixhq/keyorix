@@ -11,9 +11,10 @@ import "github.com/keyorixhq/keyorix/internal/faultstorage"
 // reports a row the oracle no longer consults). #3870 (AUTHZ-OUTAGE-HANDLERS-1) and
 // AUTHZ-OUTAGE-TAILS-1 are the expected fixers of the handler rows; CORE-HANDLER-TAILS-4
 // item 2 fixed and removed the POST /api/v1/rotation-policies/ rows. AUTH-ENDPOINT-OUTAGE-1
-// closed the auth-endpoint rows: step-up answers 503; the refresh and WebAuthn finish
-// effect-then-error twins are their reviewed KindError rows' (lookupVerdictEffectThenError).
-// end-impersonation stays exempt by op (lookupVerdictOrderDependent).
+// closed the auth-endpoint rows: step-up answers 503; AUTH-LANE-FOLDS-1 made the refresh
+// owner read and the WebAuthn finish identity read answer 503 too (Andrei's decision).
+// AUTH-LANE-FOLDS-1 closed end-impersonation (its op exemption is gone): a fault on the
+// impersonating admin's re-read or on the ceiling answers 503.
 func init() {
 	for _, r := range []struct {
 		name, op, method string

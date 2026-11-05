@@ -256,9 +256,10 @@ func (c *KeyorixCore) inspectActiveSetupToken(ctx context.Context, raw string) (
 // ErrSetupNotEvaluated marks a setup-token consume or describe that reached no
 // verdict on the token: its lookup failed on storage (or panicked), so whether
 // the token is valid was never checked (#3298). Its text is the dead-token
-// text, so nothing a client sees changes; the transport hands the per-IP login
-// slot back (the budget counts evaluated attempts, as ErrLoginNotEvaluated on
-// /auth/login) and audits auth.login_error.
+// text; the transport hands the per-IP login slot back (the budget counts
+// evaluated attempts, as ErrLoginNotEvaluated on /auth/login), audits
+// auth.login_error and answers 503 + Retry-After: the lookup runs the same way
+// for every token, so the answer confirms nothing (AUTH-LANE-FOLDS-1).
 var ErrSetupNotEvaluated = errors.New("setup token not evaluated: lookup failed")
 
 type setupNotEvaluatedError struct{ msg string }

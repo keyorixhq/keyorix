@@ -593,7 +593,12 @@ func (c *KeyorixCore) cachedImpersonationCeiling(ctx context.Context, actorID, t
 		}
 	}
 	err := c.requireStillAuthorizedToImpersonate(ctx, actorID, targetID)
-	c.impersonationCeilingCache.Store(key, ceilingCacheEntry{err: err, expiresAt: c.now().Add(ceilingCacheTTL)})
+	// A resolution failure (storage could not answer) is not a verdict: caching it
+	// would refuse a still-authorized impersonation for ceilingCacheTTL after storage
+	// recovers (AUTH-LANE-FOLDS-1). It is refused now and re-checked next time.
+	if !errors.Is(err, errCeilingResolutionFailed) {
+		c.impersonationCeilingCache.Store(key, ceilingCacheEntry{err: err, expiresAt: c.now().Add(ceilingCacheTTL)})
+	}
 	return err
 }
 
@@ -611,7 +616,7 @@ func (c *KeyorixCore) cachedImpersonationCeiling(ctx context.Context, actorID, t
 func (c *KeyorixCore) requireStillAuthorizedToImpersonate(ctx context.Context, actorID, targetID uint) error {
 	ok, err := c.Authorize(ctx, actorID, "users.impersonate", Scope{})
 	if err != nil {
-		return fmt.Errorf("failed to resolve actor authority: %w", err)
+		return fmt.Errorf("%w: failed to resolve actor authority: %w", errCeilingResolutionFailed, err)
 	}
 	if !ok {
 		return fmt.Errorf("impersonation authority has been revoked")

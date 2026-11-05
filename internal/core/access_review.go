@@ -463,7 +463,7 @@ func (c *KeyorixCore) annotateLastUsedAt(ctx context.Context, entries []*AccessR
 	for _, e := range entries {
 		if e.PrincipalType == "user" {
 			if t, ok := activity[e.PrincipalID]; ok {
-				tt := t
+				tt := t.UTC()
 				e.LastUsedAt = &tt
 			}
 		}

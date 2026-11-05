@@ -130,40 +130,7 @@ func verdictAnswerByDesign(in oracleInput) *oracleAByDesignError {
 		}
 		return e
 	}
-	return lookupVerdictPureReadTwin(in)
-}
-
-// lookupVerdictPureReadTwin returns the reviewed KindError row an effect-then-error
-// run on a pure read answers like, when that row opts in for oracle (h)
-// (lookupVerdictEffectThenError): same op, method and nth, and, for a row that pins
-// a wrongCredentialResponse, the same response. Anything else is nil.
-func lookupVerdictPureReadTwin(in oracleInput) *oracleAByDesignError {
-	if in.kind != faultstorage.KindEffectThenError || !pureReadMethods[in.method] {
-		return nil
-	}
-	for i := range oracleAByDesignErrors {
-		e := &oracleAByDesignErrors[i]
-		if e.lookupVerdictEffectThenError == "" || e.kind != faultstorage.KindError ||
-			e.op != in.op || e.method != in.method || e.nth != in.nth {
-			continue
-		}
-		if e.wrongCredentialResponse != "" && in.result.Detail != e.wrongCredentialResponse {
-			continue
-		}
-		return e
-	}
 	return nil
-}
-
-// lookupVerdictOrderDependent are ops whose verdict-shaped answer to a lookup fault
-// is real (#3873) but not reproducible per drive: the first drive in a process
-// answers 401 and later drives of the same (op, method, nth) do not, so a
-// knownOpenTolerances row would read as dead on the staleness guard depending on
-// test order (observed: 9 of 9 end-impersonation rows flip between two consecutive
-// drives). Exempted by op, with the reason, until #3873 fixes the answer.
-// Remove the entry in the PR that closes the end-impersonation case of #3873.
-var lookupVerdictOrderDependent = map[string]string{
-	"REST POST /api/v1/auth/end-impersonation": "#3873: answers 401 to a lookup outage on the first drive only; order-dependent, cannot carry a staleness-checked tolerance row",
 }
 
 // lookupVerdictViolation returns the oracle (h) finding for one run, or "" when
@@ -173,7 +140,7 @@ func lookupVerdictViolation(in oracleInput) string {
 	if !isLookupFaultMethod(in.method) || !isVerdictShapedAnswer(in.result) {
 		return ""
 	}
-	if verdictAnswerByDesign(in) != nil || lookupVerdictOrderDependent[in.op] != "" {
+	if verdictAnswerByDesign(in) != nil {
 		return ""
 	}
 	return fmt.Sprintf("ORACLE (h) VIOLATION — a storage fault on the lookup %s answered a verdict, not an outage "+

@@ -218,7 +218,8 @@ services:
       - no-new-privileges:true
     # web/Dockerfile bakes an image-level HEALTHCHECK against the static
     # /nginx-health (nginx:alpine has no curl); this block overrides it with
-    # /health, which web/nginx.conf proxies to the backend's /health, so `web`
+    # /health, which web/nginx.conf answers from a backend /health subrequest
+    # (status only: 200 healthy / 503 unavailable, no backend body), so `web`
     # turns unhealthy when the backend is down (#3460). A load balancer in front
     # of the stack should probe /health for the same reason, /nginx-health only
     # to ask whether the web container itself is running.

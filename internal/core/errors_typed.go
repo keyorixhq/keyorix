@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -32,3 +33,53 @@ func shareExpiryNotInFuture() error {
 	return refuseAs(storage.ErrShareExpiryNotInFuture,
 		fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "share expiry must be in the future"))
 }
+
+// ErrValidation is matched (errors.Is) by core's field-validation refusals: core/users.go
+// (length bounds, charset, "... is required", an unknown role or project named in a
+// request, a name identity.NewFoldedName rejects), the machine-identity and token inputs
+// (type, classification, CIDR allowlist) and the dynamic-secret config inputs. A transport
+// answers it with its invalid-argument class by sentinel, never by looking for "validation"
+// or "required" in the translated text. A storage read fault while resolving a named role
+// or project is never this error: it is ErrStorageReadUnavailable (classifyReadErrorAs).
+var ErrValidation = errors.New("validation failed")
+
+// validationError tags err as a field-validation refusal without changing its text.
+func validationError(err error) error { return refuseAs(ErrValidation, err) }
+
+// validationErrorf is fmt.Errorf whose result matches ErrValidation.
+func validationErrorf(format string, a ...any) error {
+	return validationError(fmt.Errorf(format, a...))
+}
+
+// ErrMachineIdentityNotFound is matched (errors.Is) by every "the machine identity or
+// token this call names does not exist" refusal of the machine-identity and
+// machine-token paths, including a project or machine mismatch (reported as not found
+// so an id in another project cannot be probed). The gRPC mapper answers it NotFound by
+// sentinel. A storage read FAULT is never this error: it is ErrStorageReadUnavailable.
+var ErrMachineIdentityNotFound = errors.New("machine identity or token not found")
+
+// ErrDynamicSecretNotFound is matched (errors.Is) by every "the dynamic-secret config,
+// lease, project or environment this call names does not exist" refusal of the
+// dynamic-secret paths. The gRPC mapper answers it NotFound by sentinel. A storage read
+// FAULT is never this error: it is ErrStorageReadUnavailable.
+var ErrDynamicSecretNotFound = errors.New("dynamic-secret config or lease not found")
+
+// classifyReadErrorAs is classifyReadError whose not-found answer also matches sentinel:
+// a positive not-found keeps the caller's text, anything else is a storage fault.
+func classifyReadErrorAs(err, sentinel error, notFound string) error {
+	if err == nil {
+		return nil
+	}
+	if isPositiveNotFound(err) {
+		return notFoundAs(sentinel, notFound)
+	}
+	return &storageReadFault{cause: err}
+}
+
+// notFoundAs is a not-found refusal with the caller's text that matches sentinel.
+func notFoundAs(sentinel error, msg string) error { return refuseAs(sentinel, errors.New(msg)) }
+
+// ErrMachineTransitionInvalid is matched (errors.Is) by the refusal of a machine-identity
+// state change the state machine does not allow (revoked is terminal), including a lost
+// race against a concurrent transition. The gRPC mapper answers it FailedPrecondition.
+var ErrMachineTransitionInvalid = errors.New("invalid machine identity state transition")

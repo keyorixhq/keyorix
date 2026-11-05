@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -118,6 +119,11 @@ func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, act
 			return cerr
 		}
 		for _, e := range entries {
+			var lastUsed *time.Time
+			if e.LastUsedAt != nil {
+				u := e.LastUsedAt.UTC()
+				lastUsed = &u
+			}
 			items = append(items, &models.AccessReviewItem{
 				CampaignID:    campaign.ID,
 				PrincipalType: e.PrincipalType,
@@ -131,7 +137,7 @@ func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, act
 				EnvironmentID: e.EnvironmentID,
 				SecretID:      e.SecretID,
 				SecretName:    e.SecretName,
-				LastUsedAt:    e.LastUsedAt,
+				LastUsedAt:    lastUsed,
 				Decision:      ReviewItemPending,
 			})
 		}

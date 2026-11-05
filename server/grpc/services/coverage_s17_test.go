@@ -127,22 +127,22 @@ func TestMapUserError_AdministratorCanGrant(t *testing.T) {
 }
 
 func TestMapUserError_Validation(t *testing.T) {
-	err := mapUserError(errors.New("validation error: email format"))
+	err := mapUserError(fmt.Errorf("%w: validation error: email format", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapUserError_Required(t *testing.T) {
-	err := mapUserError(errors.New("username is required"))
+	err := mapUserError(fmt.Errorf("%w: username is required", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapUserError_Invalid(t *testing.T) {
-	err := mapUserError(errors.New("invalid email address"))
+	err := mapUserError(fmt.Errorf("%w: invalid email address", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapUserError_MustBe(t *testing.T) {
-	err := mapUserError(errors.New("password must be at least 8 characters"))
+	err := mapUserError(fmt.Errorf("%w: password must be at least 8 characters", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 

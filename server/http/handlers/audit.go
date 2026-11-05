@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -608,8 +607,11 @@ func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Reque
 		// operator can investigate; it is a precondition failure, not a server error.
 		// core.WriteAuditCheckpoint also propagates raw storage-layer errors on this
 		// path (e.g. a lookup failure), which must not reach the client verbatim.
+		// Classified by the typed sentinel (core.ErrAuditCheckpointRefused), like the
+		// gRPC service, not by looking for its words in the text: an unrelated storage
+		// error that happens to say "refusing to checkpoint" must not be echoed.
 		msg := err.Error()
-		if !strings.Contains(msg, "refusing to checkpoint") {
+		if !errors.Is(err, core.ErrAuditCheckpointRefused) {
 			log.Printf("Error writing audit checkpoint: %v", err)
 			msg = clientSafe(err)
 		}

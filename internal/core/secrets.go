@@ -605,7 +605,8 @@ func secretFieldUpdateFromRequest(req *UpdateSecretRequest) (storage.SecretField
 	if req.ClearExpiration {
 		f.SetExpiration, f.Expiration = true, nil
 	} else if req.Expiration != nil {
-		f.SetExpiration, f.Expiration = true, req.Expiration
+		exp := req.Expiration.UTC()
+		f.SetExpiration, f.Expiration = true, &exp
 	}
 	if req.Metadata != nil {
 		metadataJSON, err := json.Marshal(req.Metadata)

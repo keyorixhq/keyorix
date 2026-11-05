@@ -14,6 +14,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"runtime/debug"
@@ -71,19 +72,27 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	}
 	admin, err := c.storage.GetUser(ctx, adminID)
 	if err != nil {
+		// A storage fault is not "no such admin" (AUTH-LANE-FOLDS-1): it is
+		// ErrStorageReadUnavailable, which the handler answers 503. Refused either way.
+		if !isPositiveNotFound(err) {
+			c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
+				fmt.Sprintf("impersonation attempt refused: acting admin user %d lookup failed", adminID))
+			return nil, nil, classifyReadError(err, "admin not found")
+		}
 		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
 			fmt.Sprintf("impersonation attempt refused: acting admin user %d not found", adminID))
 		return nil, nil, fmt.Errorf("admin not found")
 	}
 	target, err := c.storage.GetUser(ctx, targetID)
 	if err != nil {
-		if !storage.IsUserNotFound(err) {
-			// A storage failure is not "no such user": the handler maps this to 5xx,
-			// not a 404 the admin would read as a wrong id. Audited like every other
-			// refusal (#3786); emitAudit is best effort, so it never blocks the refusal.
+		if !isPositiveNotFound(err) {
+			// A storage failure is not "no such user": it is ErrStorageReadUnavailable
+			// (503), not a 404 the admin would read as a wrong id. Audited like every
+			// other refusal (#3786); emitAudit is best effort, so it never blocks the
+			// refusal.
 			c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
 				fmt.Sprintf("%s attempted to impersonate user %d, but the target lookup failed", admin.Username, targetID))
-			return nil, nil, fmt.Errorf("target user lookup failed: %w", err)
+			return nil, nil, classifyReadError(err, "target user not found")
 		}
 		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
 			fmt.Sprintf("%s attempted to impersonate user %d, but the target was not found", admin.Username, targetID))
@@ -180,7 +189,8 @@ func (c *KeyorixCore) createImpersonationSession(ctx context.Context, session *m
 func (c *KeyorixCore) EndImpersonation(ctx context.Context, token string) (uint, error) {
 	session, err := c.storage.GetSession(ctx, token)
 	if err != nil {
-		return 0, fmt.Errorf("session not found")
+		// A read fault is ErrStorageReadUnavailable (503), not "session not found".
+		return 0, classifyReadError(err, "session not found")
 	}
 	if session.ImpersonatedBy == nil {
 		return 0, fmt.Errorf("not an impersonation session")
@@ -228,18 +238,41 @@ func (c *KeyorixCore) EndImpersonation(ctx context.Context, token string) (uint,
 // stream's own auth happens once at open. Cached via cachedImpersonationCeiling
 // (IMP-001, 60s) so neither caller repeats the underlying DB reads on every
 // invocation.
+//
+// A FAULTED read of the admin (AUTH-LANE-FOLDS-1) is not "impersonating account
+// not found": it is refused with an error that is both ErrStorageReadUnavailable
+// and ErrAuthStorageUnavailable (impersonationReadFault), so ValidateSessionToken's
+// callers answer 503 / Unavailable without negative-caching the session, and the
+// gRPC ticker ends the stream as Unavailable. A positive not-found stays the
+// refusal it was.
 func (c *KeyorixCore) ReauthorizeImpersonation(ctx context.Context, adminID, targetID uint) error {
 	admin, err := c.storage.GetUser(ctx, adminID)
 	if err != nil {
-		return fmt.Errorf("impersonating account not found")
+		return impersonationReadFault(classifyReadError(err, "impersonating account not found"))
 	}
 	if !admin.IsActive || AccountLoginBlocked(admin.ID, admin.AccountState) {
 		return fmt.Errorf("impersonating account is not active")
 	}
 	if err := c.cachedImpersonationCeiling(ctx, adminID, targetID); err != nil {
+		// The ceiling could not be resolved (a storage fault, not a demotion): refused,
+		// with the same retry class as a faulted admin read.
+		if errors.Is(err, errCeilingResolutionFailed) {
+			return impersonationReadFault(&storageReadFault{cause: err})
+		}
 		return fmt.Errorf("impersonation ceiling exceeded — target's authority now exceeds impersonator's: %w", err)
 	}
 	return nil
+}
+
+// impersonationReadFault adds the credential-validator class ErrAuthStorageUnavailable
+// to a classified read fault, so IsAuthTransient (the session validators' 503 test)
+// and IsStorageReadUnavailable both hold. A verdict (nil or a not-found message) is
+// returned unchanged. Neither sentinel's text names the driver cause.
+func impersonationReadFault(err error) error {
+	if IsStorageReadUnavailable(err) {
+		return fmt.Errorf("%w: %w", ErrAuthStorageUnavailable, err)
+	}
+	return err
 }
 
 // SessionImpersonator returns the initiating admin ID if token belongs to an
