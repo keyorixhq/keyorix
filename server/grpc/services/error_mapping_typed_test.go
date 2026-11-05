@@ -57,6 +57,9 @@ func TestMapRoleError_ClassifiesBySentinel(t *testing.T) {
 		{"reserved name", fmt.Errorf("create role: %w", core.ErrRoleNameReserved), codes.AlreadyExists},
 		{"built-in role", fmt.Errorf("permission denied: cannot update %w: x", core.ErrBuiltinRole), codes.FailedPrecondition},
 		{"validation", fmt.Errorf("create role: %w", core.ErrRoleValidation), codes.InvalidArgument},
+		// The roles.assign grant ceiling (AssignRole / RemoveRole): a refusal, not a server fault.
+		{"grant ceiling refusal", fmt.Errorf("cannot grant this role: %w", core.ErrPermissionDenied), codes.PermissionDenied},
+		{"text only: cannot grant this role", errors.New("cannot grant this role: you do not hold permission \"x\" yourself"), codes.Internal},
 		{"permission listed twice", fmt.Errorf("%w: UNIQUE constraint failed: role_permissions.role_id, role_permissions.permission_id", storage.ErrDuplicateRolePermission), codes.AlreadyExists},
 		// Not yet typed: the raw unique-index error from the roles table.
 		{"untyped roles unique index", errors.New("UNIQUE constraint failed: roles.name_folded"), codes.AlreadyExists},

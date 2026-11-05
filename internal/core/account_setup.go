@@ -88,12 +88,11 @@ func (c *KeyorixCore) pendingSetupStepsFor(u *models.User) []string {
 // the enforcing gate is server/middleware.EnforceAccountSetup, which computes
 // the same answer per request. interactiveSession is false for PATs, machine
 // tokens and OIDC, which are exempt from the MFA step (ADR-112).
-//
-// It does not see an enrolment an administrator MFA reset left owed (#3799):
-// its callers (server/http/handlers/auth.go) pass no user. The gate does see it,
-// and answers MFAEnrollmentRequired with the pending steps on the next request.
-func (c *KeyorixCore) PendingSetupStepsFor(restricted, hasSecondFactor, interactiveSession bool) []string {
-	return PendingAccountSetupSteps(restricted, hasSecondFactor, interactiveSession, c.MFARequired(), false)
+// mfaEnrolmentOwed is MFAEnrolmentOwed of the account (#3799): an enrolment an
+// administrator MFA reset left owed is listed whatever security.require_mfa
+// says, as the gate's MFAEnrollmentRequired answer lists it.
+func (c *KeyorixCore) PendingSetupStepsFor(restricted, hasSecondFactor, interactiveSession, mfaEnrolmentOwed bool) []string {
+	return PendingAccountSetupSteps(restricted, hasSecondFactor, interactiveSession, c.MFARequired(), mfaEnrolmentOwed)
 }
 
 // needsSetupSession reports whether an interactive login for u must be a

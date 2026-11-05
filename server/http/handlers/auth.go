@@ -342,7 +342,7 @@ func (h *AuthHandler) loginResponseFromIdentity(session *models.Session, user *m
 	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user) || core.AccountRestricted(user.AccountState)
 	// A login always mints an interactive session.
 	resp.PendingSteps = h.coreService.PendingSetupStepsFor(
-		core.AccountRestricted(user.AccountState), user.MFAEnabled || user.WebAuthnEnabled, true)
+		core.AccountRestricted(user.AccountState), user.MFAEnabled || user.WebAuthnEnabled, true, core.MFAEnrolmentOwed(user))
 	if !user.MFAEnabled && !user.WebAuthnEnabled {
 		if resp.MFAGrace = mfaGraceSummary(h.coreService); resp.MFAGrace != nil {
 			log.Printf("WARNING: ADR-112 grace period: user id %d signed in without a second factor; security.require_mfa is enforced in %d day(s) (at %s, or when the first administrator enrols MFA), and this user is then sent to MFA enrolment.", user.ID, resp.MFAGrace.DaysLeft, resp.MFAGrace.EndsAt)
@@ -660,7 +660,7 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 	// middleware.EnforceAccountSetup, so a page reload learns the confinement
 	// without probing a protected endpoint. Reporting only: GET /auth/profile is
 	// on the gate's always-allowed list and nothing else is opened by this.
-	if pending := h.coreService.PendingSetupStepsFor(userCtx.Restricted, userCtx.MFAEnabled, userCtx.SessionAuth); len(pending) > 0 {
+	if pending := h.coreService.PendingSetupStepsFor(userCtx.Restricted, userCtx.MFAEnabled, userCtx.SessionAuth, userCtx.MFAEnrolmentOwed); len(pending) > 0 {
 		profile["pending_steps"] = pending
 	}
 	// ADR-112 #2923: the require_mfa upgrade grace period, for the persistent
