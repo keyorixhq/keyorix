@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -175,7 +176,7 @@ func buildTemplate(tb testing.TB) ([]byte, *fixtures, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	path := filepath.Join(dir, "template.db")
 	db := fuzzworld.OpenSQLite(tb, path, 1)
 	fuzzworld.Bootstrap(tb, db)
@@ -556,7 +557,8 @@ func newLeg(tb testing.TB, l layer) *leg {
 		go func() { _ = srv.Serve(lis) }()
 		conn, err := grpc.NewClient("passthrough:///bufnet",
 			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
-			grpc.WithTransportCredentials(insecure.NewCredentials()))
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithUnaryInterceptor(recordRPC))
 		if err != nil {
 			tb.Fatalf("grpc dial: %v", err)
 		}
@@ -570,8 +572,8 @@ func newLeg(tb testing.TB, l layer) *leg {
 // close releases the leg's server, database and files. Idempotent.
 func (lg *leg) close() {
 	lg.closeOnce.Do(func() {
-		for i := len(lg.closers) - 1; i >= 0; i-- {
-			lg.closers[i]()
+		for _, c := range slices.Backward(lg.closers) {
+			c()
 		}
 	})
 }
@@ -642,4 +644,22 @@ func (lg *leg) applyVariation(tb testing.TB, v variation) {
 		}
 		lg.db.Exec("UPDATE machine_identity_roles SET project_id = ? WHERE machine_identity_id = ? AND role_id = ?", proj, fx.principals[pkMachine].machineID, fx.customRoleID)
 	}
+}
+
+// rpcRecorder, when set, receives the full method name of every unary RPC a
+// leg's client makes. Coverage uses it to DERIVE which gRPC operations an op
+// exercises, instead of hand-listing them.
+var (
+	rpcRecorderMu sync.Mutex
+	rpcRecorder   func(method string)
+)
+
+func recordRPC(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	rpcRecorderMu.Lock()
+	rec := rpcRecorder
+	rpcRecorderMu.Unlock()
+	if rec != nil {
+		rec(method)
+	}
+	return invoker(ctx, method, req, reply, cc, opts...)
 }

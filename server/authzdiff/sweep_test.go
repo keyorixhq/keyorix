@@ -1,7 +1,6 @@
 package authzdiff
 
 import (
-	"fmt"
 	"os"
 	"slices"
 	"sort"
@@ -300,7 +299,7 @@ func FuzzAuthzDiff(f *testing.F) {
 		r := runCase(t, spec, k, tg)
 		sink.write(r)
 		if r.Bucket != "" {
-			t.Log(fmt.Sprintf("FLAGGED [%s] %s", r.Bucket, r.line()))
+			t.Logf("FLAGGED [%s] %s", r.Bucket, r.line())
 			if r.Bucket == "unexplained" && os.Getenv("AUTHZDIFF_STRICT") != "" {
 				t.Fail()
 			}

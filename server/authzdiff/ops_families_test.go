@@ -386,11 +386,7 @@ func jsonListHas(body []byte, key string, id uint) bool {
 				}
 			}
 		case []any:
-			for _, c := range x {
-				if walk(c) {
-					return true
-				}
-			}
+			return slices.ContainsFunc(x, walk)
 		}
 		return false
 	}

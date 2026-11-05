@@ -108,7 +108,6 @@ type route struct {
 type analyzer struct {
 	prog      *ssa.Program
 	coreNamed *types.Named
-	coreIface map[*types.Interface]bool
 	storIface *types.Named
 	// memo of the core-entry/raw-storage reach of each non-core function
 	memo map[*ssa.Function]*reachSet

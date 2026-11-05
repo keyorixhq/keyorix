@@ -133,7 +133,7 @@ func childSweep(t *testing.T, op, overlay string) childResult {
 	if err != nil {
 		t.Fatalf("child results: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var res childResult
 	seen := map[string]bool{}
 	sc := bufio.NewScanner(f)

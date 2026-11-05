@@ -71,7 +71,7 @@ func (m model) grants(p *principal) []grant {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var g grant
 		_ = rows.Scan(&g.roleID, &g.projectID, &g.expires)
