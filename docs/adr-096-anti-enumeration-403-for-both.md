@@ -207,9 +207,12 @@ check that can't be expressed as a single path-param `ScopeResolver`), the
 same decision must still be made by ONE shared, exported function callable
 from handler code — not re-derived inline. `handleScopeResolutionError`
 itself is unexported (package `server/middleware`); export the decision as
-`middleware.AuthorizedAtGlobalScope(ctx, cs, userCtx, permission) bool` so
+`middleware.AuthorizedAtGlobalScope(ctx, cs, userCtx, permission) (bool, error)` so
 handler packages can call the identical logic without a full route
-restructure. `server/grpc/services/conversions.go`'s `authorizeScopedTarget`
+restructure. It returns the lookup error rather than folding it into "not
+held": the caller answers a transient one with 503
+(`INV-MW-authorize-lookup-error-is-503`) and treats any other error as "not
+held" (fail closed). `server/grpc/services/conversions.go`'s `authorizeScopedTarget`
 is the gRPC equivalent, backing `authorizeSecretScoped`
 (`secret_service.go`) and `loadConfigScoped`/`loadLeaseScoped`
 (`dynamic_secret_service.go`).

@@ -21,9 +21,10 @@
   holds, otherwise `refuseUnlessAuthorized`). Stated exception: `system.go` `canSystemWrite`
   only toggles optional admin-only fields of `GET /api/v1/system/info`, so a failed lookup keeps
   denying those fields (fail closed), still answers 200 and logs a warning; it refuses nothing.
-  The old `middleware.AuthorizedAtGlobalScope` helper, which folded a lookup error into "not
-  authorized", is deleted (AUTHZ-OUTAGE-TAILS-1); a global probe calls `AuthorizePrincipal`
-  and handles the error. Three further in-handler `roles.assign` / `secrets.write`
+  All three global probes (`handleScopeResolutionError`, render, `canSystemWrite`) go through
+  `middleware.AuthorizedAtGlobalScope` (ADR-096's one shared decision), which returns the
+  lookup error instead of folding it into "not authorized" (AUTHZ-OUTAGE-TAILS-1), so each
+  caller handles the error. Three further in-handler `roles.assign` / `secrets.write`
   checks still answer 403 on an outage (`catalog.go` `UpdateProject`, `invitations.go`
   `CreateGlobalInvitation`, `rotation_policies_handler.go` `Create`); they are named, with
   the reason, in `authorizeOutageExempt` and tracked in a follow-up issue. The human-principal

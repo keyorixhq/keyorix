@@ -218,7 +218,7 @@ func MakeSystemInfoHandler(cfg *config.Config, coreService *core.KeyorixCore) ht
 		// canSystemWrite only toggles optional response fields, so a failed lookup keeps
 		// denying them (fail closed) and is logged, rather than turning a cosmetic flag
 		// into a 503 for a system.read caller.
-		canSystemWrite, aerr := coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSystemWrite, core.Scope{})
+		canSystemWrite, aerr := middleware.AuthorizedAtGlobalScope(r.Context(), coreService, userCtx, permSystemWrite)
 		if aerr != nil {
 			canSystemWrite = false
 			log.Printf("WARNING: system info: system.write lookup failed, omitting admin-only fields: error=%q", aerr.Error())

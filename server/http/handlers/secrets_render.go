@@ -72,7 +72,7 @@ func (h *SecretHandler) sendRenderTemplateError(w http.ResponseWriter, r *http.R
 		// The global-scope probe is an authorize lookup: if IT hits a storage outage
 		// the answer is 503, not the 403 that would pass for "you hold nothing"
 		// (INV-MW-authorize-lookup-error-is-503).
-		held, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead, core.Scope{})
+		held, aerr := middleware.AuthorizedAtGlobalScope(r.Context(), h.coreService, userCtx, permSecretsRead)
 		if aerr == nil && held {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 			return

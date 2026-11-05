@@ -1117,6 +1117,21 @@ func requireUserAndCore(w http.ResponseWriter, r *http.Request) (*UserContext, *
 	return userCtx, cs, true
 }
 
+// AuthorizedAtGlobalScope reports whether userCtx holds permission at GLOBAL
+// scope — the narrow real-404 exception ADR-096 carves out of the house
+// 403-for-both anti-enumeration convention: a caller who could have read this
+// resource TYPE anywhere sees a genuine 404 for one target that truly doesn't
+// exist, instead of the identical denial shown to everyone else. It is the ONE
+// shared decision ADR-096 requires, used by handleScopeResolutionError and by
+// handler code that resolves a scoped reference inline (secrets_render.go).
+// The lookup error is returned, never folded into "not held": the caller
+// answers a transient one with 503 (INV-MW-authorize-lookup-error-is-503), in
+// view of TestEveryRefusingPermissionCheckMapsAStorageOutage, and treats any
+// error as "not held" otherwise (fail closed).
+func AuthorizedAtGlobalScope(ctx context.Context, cs *core.KeyorixCore, userCtx *UserContext, permission string) (bool, error) {
+	return cs.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+}
+
 // handleScopeResolutionError writes the response for a scope-resolution failure,
 // shared by RequireScopedPermission and RequireScopedSecretPermission. An
 // errTargetNotFound reveals "not found" only to callers who hold the permission
@@ -1136,7 +1151,7 @@ func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core
 		// else keeps the 403 they get for an absent target, so a fault adds no
 		// existence signal for them. The audit row records the truth either way.
 		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedInternalError)
-		held, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+		held, aerr := AuthorizedAtGlobalScope(r.Context(), cs, userCtx, permission)
 		if aerr != nil && authorizeLookupUnavailable(w, r, aerr) {
 			return
 		}
@@ -1153,7 +1168,7 @@ func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core
 		core.NoteSecretReadDenial(r.Context(), core.SecretReadDeniedNotFound)
 		// The global-scope probe is an authorize lookup too: if IT hits the outage the
 		// answer is 503, not the 403 that would pass for "you hold nothing".
-		held, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+		held, aerr := AuthorizedAtGlobalScope(r.Context(), cs, userCtx, permission)
 		if aerr != nil && authorizeLookupUnavailable(w, r, aerr) {
 			return
 		}
