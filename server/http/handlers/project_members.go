@@ -38,6 +38,9 @@ func (h *CatalogHandler) GetProjectAccessReview(w http.ResponseWriter, r *http.R
 	report, err := h.coreService.GenerateProjectAccessReview(r.Context(), id)
 	if err != nil {
 		log.Printf("Error generating access review for project %d: %v", id, err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}

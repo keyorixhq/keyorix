@@ -14,7 +14,8 @@ import (
 )
 
 // STORAGE-ERR-CLASS-5 item 2: the access-review reads that are not a verdict on a named
-// target (the campaign and item listings, a force-close's group-membership lookup) answer
+// target (the campaign and item listings, a force-close's group-membership lookup, the
+// project access report's grant and secret listings) answer
 // 503 storage_unavailable on a storage fault; a campaign that does not exist stays 404.
 func TestAccessReviewReads_FaultIs503(t *testing.T) {
 	fw := newFoldWorld(t)
@@ -41,6 +42,9 @@ func TestAccessReviewReads_FaultIs503(t *testing.T) {
 		{"GetAccessReviewCampaign items", "ListAccessReviewItems", cat.GetAccessReviewCampaign, ""},
 		{"CloseAccessReviewCampaign items", "ListAccessReviewItems", cat.CloseAccessReviewCampaign, `{"force":true}`},
 		{"CloseAccessReviewCampaign group membership", "GetUserGroups", cat.CloseAccessReviewCampaign, `{"force":true}`},
+		{"GetProjectAccessReview role grants", "ListProjectRoleAssignments", cat.GetProjectAccessReview, ""},
+		{"GetProjectAccessReview machine grants", "ListProjectMachineRoleAssignments", cat.GetProjectAccessReview, ""},
+		{"GetProjectAccessReview secrets", "ListSecrets", cat.GetProjectAccessReview, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fw.faulty.Arm(&faultstorage.FaultSpec{Method: tc.method, NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
