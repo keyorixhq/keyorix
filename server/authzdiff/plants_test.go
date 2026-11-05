@@ -63,6 +63,19 @@ var plants = []plant{
 		op:             "group.delete",
 		minUnexplained: 10,
 	},
+	{
+		// The gRPC side of a group op: the shape D1 (REST denies, gRPC allows,
+		// group op) must NOT absorb unless the principal holds everything but
+		// users.read. Without the guard, principals with no group permission
+		// at all (no-role, viewer, expired grant, restricted PAT) delete groups.
+		name: "grpc-group-guard-removed",
+		file: "server/grpc/services/group_service.go",
+		anchor: "\tif err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {\n" +
+			"\t\treturn nil, err\n\t}\n\tif err := s.core.DeleteGroup(",
+		repl:           "\t// PLANT: guard removed\n\tif err := s.core.DeleteGroup(",
+		op:             "group.delete",
+		minUnexplained: 50,
+	},
 }
 
 func TestPlantsAreDetected(t *testing.T) {

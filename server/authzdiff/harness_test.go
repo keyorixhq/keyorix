@@ -35,10 +35,16 @@ type legOutcome struct {
 
 type caseResult struct {
 	caseKey
-	Model   Outcome               `json:"model"`
-	Legs    map[layer]*legOutcome `json:"legs"`
-	Classes []string              `json:"classes,omitempty"`
-	Bucket  string                `json:"bucket,omitempty"` // partition_test.go explain()
+	Model Outcome `json:"model"`
+	// Counterfactual model decisions, so a partition rule can name the exact
+	// missing condition (explain): the model with users.read dropped from the
+	// requirement (D1), and with the account active (D5). Empty when Model is
+	// ModelNA.
+	ModelSansUsersRead Outcome               `json:"model_sans_users_read,omitempty"`
+	ModelIfActive      Outcome               `json:"model_if_active,omitempty"`
+	Legs               map[layer]*legOutcome `json:"legs"`
+	Classes            []string              `json:"classes,omitempty"`
+	Bucket             string                `json:"bucket,omitempty"` // partition_test.go explain()
 	// PATUngatedWrite: the principal is a restricted PAT and the op's route is
 	// in core's restricted-PAT ungated-write table (ADR-042, PAT-GUARD-3).
 	PATUngatedWrite bool `json:"pat_ungated_write,omitempty"`
@@ -112,20 +118,30 @@ func grpcCtx(p *principal) context.Context {
 }
 
 // runLayer runs one leg of one case on its own fresh world and maps it.
-// modelOut, when non-nil, receives the model's decision computed on THIS
-// world after the variation and BEFORE the op runs.
-func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tgt, modelOut *Outcome) *legOutcome {
+// modelOut, when non-nil, receives the model's decisions (Model and its
+// counterfactuals) computed on THIS world after the variation and BEFORE the
+// op runs.
+func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tgt, modelOut *caseResult) *legOutcome {
 	tb.Helper()
 	lg := newLeg(tb, l)
 	defer lg.close()
 	lg.applyVariation(tb, k.variation)
 	if modelOut != nil {
+		decide := func(p *principal, req requirement) Outcome {
+			if (model{lg.db}).allowed(p, req) && !patRefusesUngatedWrite(tb, lg.fx, spec, p) {
+				return Allowed
+			}
+			return Denied
+		}
 		if spec.secretArgs && k.Arg != 0 {
-			*modelOut = ModelNA // owner/share/ACL fixture: outside the model's domain
-		} else if (model{lg.db}).allowed(p, spec.req(lg.fx, t, k.Arg)) && !patRefusesUngatedWrite(tb, lg.fx, spec, p) {
-			*modelOut = Allowed
+			modelOut.Model = ModelNA // owner/share/ACL fixture: outside the model's domain
 		} else {
-			*modelOut = Denied
+			req := spec.req(lg.fx, t, k.Arg)
+			modelOut.Model = decide(p, req)
+			modelOut.ModelSansUsersRead = decide(p, withoutPerm(req, "users.read"))
+			active := *p
+			active.suspended = false
+			modelOut.ModelIfActive = decide(&active, req)
 		}
 	}
 	switch l {
@@ -219,7 +235,7 @@ func runCase(tb testing.TB, spec opSpec, k caseKey, t tgt) *caseResult {
 	_, fx := template(tb)
 	p := fx.principals[k.Principal]
 	res := &caseResult{caseKey: k, Legs: map[layer]*legOutcome{}}
-	res.Legs[layerCore] = runLayer(tb, spec, layerCore, p, k, t, &res.Model)
+	res.Legs[layerCore] = runLayer(tb, spec, layerCore, p, k, t, res)
 	res.Legs[layerREST] = runLayer(tb, spec, layerREST, p, k, t, nil)
 	res.Legs[layerGRPC] = runLayer(tb, spec, layerGRPC, p, k, t, nil)
 

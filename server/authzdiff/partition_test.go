@@ -18,11 +18,14 @@ import (
 //     deny, so a transport-level bypass can never match it;
 //   - M1/M3 (refusal typing/mapping) need a refusal on some layer and the
 //     model to deny, so an allowed-everywhere bypass can never match them;
-//   - D1 stays limited to group ops and to REST-deny/gRPC-allow.
+//   - D1 stays limited to group ops, to REST-deny/gRPC-allow, and to a
+//     principal whose only missing permission is users.read; D5 to a
+//     suspended principal the model allows once active.
 //
-// The three Phase 3 plants (plants_test.go) are exactly the shapes these rules
-// exclude: core+REST allow (plant 1), gRPC allows a non-group op (plant 2),
-// REST allows what gRPC denies (plant 3).
+// The plants (plants_test.go) are exactly the shapes these rules exclude:
+// core+REST allow (plant 1), gRPC allows a non-group op (plant 2), REST allows
+// what gRPC denies (plant 3), gRPC allows a group op to a principal without
+// the write permission (plant 4).
 //
 // Returns "" for a case with nothing to explain.
 func explain(r *caseResult) string {
@@ -39,13 +42,19 @@ func explain(r *caseResult) string {
 
 	switch {
 	// D1: gRPC group mutations do not require users.read (REST's route group does).
+	// Only for a principal that holds everything else the op needs: the model
+	// denies, and the model with users.read dropped allows. A principal missing
+	// the write permission itself (users.write / roles.assign) is a real gRPC
+	// bypass and stays unexplained (plant grpc-group-guard-removed).
 	case slices.Contains([]string{"group.create", "group.update", "group.delete", "group.member.remove", "group.restore"}, r.Op) &&
-		is(rest, Denied) && is(grpc, Allowed) && r.Model == Denied:
+		is(rest, Denied) && is(grpc, Allowed) && r.Model == Denied && r.ModelSansUsersRead == Allowed:
 		return "D1"
 
 	// D5: core does not check account state; both transports reject the
-	// suspended account's credential (401 / Unauthenticated).
-	case pk == pkSuspended && is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc):
+	// suspended account's credential (401 / Unauthenticated). Only where the
+	// account state is the sole reason: the model allows the same principal
+	// once active.
+	case pk == pkSuspended && r.ModelIfActive == Allowed && is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc):
 		return "D5"
 
 	// (No D7 rule: the restricted-PAT ungated-write refusal, ADR-042 PAT-GUARD-3,

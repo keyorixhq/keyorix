@@ -201,6 +201,17 @@ type requirement struct {
 	globalAdminRole bool
 }
 
+// withoutPerm is req with perm dropped from its gate permissions (both
+// scopes). The ceiling is unchanged: it is derived from the granted roles.
+func withoutPerm(req requirement, perm string) requirement {
+	drop := func(ps []string) []string {
+		return slices.DeleteFunc(slices.Clone(ps), func(p string) bool { return p == perm })
+	}
+	req.perms = drop(req.perms)
+	req.globalPerms = drop(req.globalPerms)
+	return req
+}
+
 // holdsBypassAt: p holds a live, unexpired bypass role granted exactly at proj.
 // Machines never bypass.
 func (m model) holdsBypassAt(p *principal, proj uint) bool {
