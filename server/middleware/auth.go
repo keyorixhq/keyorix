@@ -1125,9 +1125,15 @@ func requireUserAndCore(w http.ResponseWriter, r *http.Request) (*UserContext, *
 // shared decision ADR-096 requires, used by handleScopeResolutionError and by
 // handler code that resolves a scoped reference inline (secrets_render.go).
 // The lookup error is returned, never folded into "not held": the caller
-// answers a transient one with 503 (INV-MW-authorize-lookup-error-is-503), in
-// view of TestEveryRefusingPermissionCheckMapsAStorageOutage, and treats any
-// error as "not held" otherwise (fail closed).
+// answers a transient one with 503 (INV-MW-authorize-lookup-error-is-503) and
+// treats any error as "not held" otherwise (fail closed). What protects the
+// call sites is the per-site outage tests (handlers/authorize_global_probe_outage_test.go
+// and TestAuthorizeLookupFault_NotFoundProbeIs503); the (bool, error) signature
+// only makes the error visible, since `held, _ :=` still compiles.
+// TestEveryRefusingPermissionCheckMapsAStorageOutage does NOT cover these
+// sites: it matches only `if err != nil || !ok { 403 }` and does not scan
+// server/middleware, so the `err == nil && held` shape used here is invisible
+// to it.
 func AuthorizedAtGlobalScope(ctx context.Context, cs *core.KeyorixCore, userCtx *UserContext, permission string) (bool, error) {
 	return cs.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
 }
