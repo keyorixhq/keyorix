@@ -157,6 +157,12 @@ func TestInviteMember_RejectsDisallowedDomain(t *testing.T) {
 
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
 	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Email: "outsider@evil.com"}, nil)
+	// OWNERSHIP-ORACLE-1: the domain check runs after the granter ceiling, so
+	// the inviter must pass it (roles.assign) for the allowlist to be reached.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 
 	_, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, 0, false)
 	require.Error(t, err)

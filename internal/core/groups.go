@@ -382,9 +382,11 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsM
 	// InviteMember/AddProjectMember. Runs unconditionally, with no actorID==0
 	// exemption, matching AddProjectMember/InviteMember (this is an onboarding
 	// restriction, not an escalation-by-proxy authority ceiling).
-	if err := c.domainAllowedForGroupJoin(ctx, userID, groupID, projectID); err != nil {
-		return err
-	}
+	// OWNERSHIP-ORACLE-1: it loads the target user, so it runs after the
+	// granter ceiling below: refused the other way round, an actor who may not
+	// grant the group's roles learned whether a user ID exists and whether its
+	// email is on the allowlist.
+	//
 	// #1646: validateGroupJoinRoles' set-based requireGroupJoinNoSoDViolation check
 	// and the membership write below must be treated as one step, serialized
 	// across every replica of an HA deployment -- see WithNamedLock's doc comment
@@ -394,6 +396,9 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsM
 			if err := c.validateGroupJoinRoles(ctx, actorID, actorIsMachine, userID, groupID); err != nil {
 				return err
 			}
+		}
+		if err := c.domainAllowedForGroupJoin(ctx, userID, groupID, projectID); err != nil {
+			return err
 		}
 		// AUDIT-TX-2: a membership confers every role the group holds, so it
 		// commits with its group.member_added row or not at all.

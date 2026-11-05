@@ -1,0 +1,5 @@
+### Fixed
+- **Permission-lookup outage is visible at three more places.** `CreateRole` / `UpdateRole` over gRPC answer `Unavailable` (retry) instead of `Internal` when the check that the caller holds each permission it bundles into a role cannot be made because storage is down. The template-render route (`POST /api/v1/projects/{id}/secrets/render`) answers `503` + `Retry-After` instead of `403` when the global-scope probe that decides 404 versus 403 for a missing referenced secret fails. `GET /api/v1/system/info` keeps answering `200` and still omits the admin-only fields on such a failure (a cosmetic flag is not worth a 503), and now logs a warning with the error. Fail-closed before and after: only a status code changes.
+
+### Documentation
+- **OpenAPI declares the permission-lookup `503`.** New shared `AuthorizeUnavailable` response (`Retry-After`, fixed message) on `POST|GET /api/v1/secrets`, `GET /api/v1/secrets/{id}`, `POST /api/v1/secrets/{id}/copy`, `POST /api/v1/folders`, `GET|POST /api/v1/dynamic-secrets/configs` and the template-render route. Web types and the Go CLI client are regenerated.

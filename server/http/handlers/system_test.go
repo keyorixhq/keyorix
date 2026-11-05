@@ -44,7 +44,7 @@ func TestMakeSystemInfoHandler_Authenticated(t *testing.T) {
 	req := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
 	rr := httptest.NewRecorder()
 	// freshCoreS12: UserID=1 holds no role in this fresh core, so
-	// AuthorizedAtGlobalScope(system.write) is false and recovery_key stays
+	// the global system.write probe is false and recovery_key stays
 	// omitted -- covered explicitly by TestMakeSystemInfoHandler_RecoveryKey*
 	// below.
 	MakeSystemInfoHandler(cfg, freshCoreS12(t))(rr, req)

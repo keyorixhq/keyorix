@@ -17915,6 +17915,7 @@ type ListDynamicSecretConfigsResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -17944,6 +17945,7 @@ type CreateDynamicSecretConfigResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -18237,6 +18239,7 @@ type CreateFolderResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -20404,6 +20407,7 @@ type RenderSecretTemplateResponse struct {
 	JSON403 *Error
 	JSON404 *Error
 	JSON409 *SecretReadRefused
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -21210,6 +21214,7 @@ type ListSecretsResponse struct {
 	JSON401 *Error
 	JSON403 *Error
 	JSON422 *Error
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -21238,6 +21243,7 @@ type CreateSecretResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -21432,6 +21438,7 @@ type GetSecretResponse struct {
 	JSON403 *Error
 	JSON404 *Error
 	JSON409 *SecretReadRefused
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -21793,6 +21800,7 @@ type CopySecretResponse struct {
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -28036,6 +28044,13 @@ func ParseListDynamicSecretConfigsResponse(rsp *http.Response) (*ListDynamicSecr
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -28086,6 +28101,13 @@ func ParseCreateDynamicSecretConfigResponse(rsp *http.Response) (*CreateDynamicS
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -28623,6 +28645,13 @@ func ParseCreateFolderResponse(rsp *http.Response) (*CreateFolderResponse, error
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -32382,6 +32411,13 @@ func ParseRenderSecretTemplateResponse(rsp *http.Response) (*RenderSecretTemplat
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -33719,6 +33755,13 @@ func ParseListSecretsResponse(rsp *http.Response) (*ListSecretsResponse, error) 
 		}
 		response.JSON422 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -33768,6 +33811,13 @@ func ParseCreateSecretResponse(rsp *http.Response) (*CreateSecretResponse, error
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -34122,6 +34172,13 @@ func ParseGetSecretResponse(rsp *http.Response) (*GetSecretResponse, error) {
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -34771,6 +34828,13 @@ func ParseCopySecretResponse(rsp *http.Response) (*CopySecretResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

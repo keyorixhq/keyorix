@@ -102,6 +102,9 @@ type AnchorStatus struct {
 type ExternalAnchorStatus struct {
 	Supplied      bool `json:"supplied"`
 	Authenticated bool `json:"authenticated"`
+	// SHA256 is the digest of the supplied file, compared with the anchor
+	// digest each seal records.
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // Result is the verdict of one offline verification run. Its JSON shape
@@ -236,6 +239,9 @@ type Options struct {
 	// against the live chain once authenticated by CheckpointKey and/or
 	// TSARoots. See crossCheckExternalAnchor.
 	ExternalAnchor *ExternalAnchorBundle
+	// ExternalAnchorSHA256 is the hex SHA-256 of the --anchor file's bytes,
+	// compared with the anchor digest each seal records (checkSealAnchor).
+	ExternalAnchorSHA256 string
 	// BatchSize overrides DefaultBatchSize for the keyset-paginated walk.
 	BatchSize int
 	// Now overrides time.Now for Result.GeneratedAt (tests only).
@@ -349,7 +355,7 @@ func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
 
 	if seals.authenticated && len(seals.recs) > 0 {
 		result.Seal.Authenticated = result.Verdict != VerdictBroken
-		result.Seal.Seals = summarizeSeals(seals.recs)
+		result.Seal.Seals = summarizeSeals(seals.recs, opts, result)
 		result.escalate(VerdictSealed, fmt.Sprintf("the audit chain is sealed: %d loss(es) of audit events were accepted with the checkpoint key "+
 			"(admin audit accept-loss); the rows that remain verify, the chain is not whole", len(seals.recs)))
 	}
@@ -749,6 +755,17 @@ func buildNotProven(opts Options, result *Result) []string {
 			notProven = append(notProven, fmt.Sprintf(
 				"anything about the %s audit event(s) seal #%d accepted as lost (%s, by %s: %s): they are gone, and this run "+
 					"proves only the rows that remain", lost, sl.Seq, sl.At.UTC().Format(time.RFC3339), sl.Operator, sl.Reason))
+			for _, u := range sl.Unpinned {
+				notProven = append(notProven, fmt.Sprintf(
+					"that audit events #%d through #%d were not rewritten before seal #%d was accepted: no signed artifact "+
+						"pinned them then (the seal records them as unpinned); compare them with a backup or an off-host anchor",
+					u.FromID, u.ThroughID, sl.Seq))
+			}
+			if a := sl.Anchor; a != nil && !a.VerifiedAtAcceptance && a.Check != SealAnchorMatches {
+				notProven = append(notProven, fmt.Sprintf(
+					"that the anchor seal #%d recorded by digest only (sha256 %s) certified the lost rows: it was not checked "+
+						"at acceptance, and this run did not confirm it (%s)", sl.Seq, a.Digest, a.Check))
+			}
 		}
 	}
 	if result.ExternalAnchor.Supplied && !result.ExternalAnchor.Authenticated {
