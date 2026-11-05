@@ -675,8 +675,8 @@ deleted; raise `cadence_days` (up to 366) for a longer look-back.
   the same `cadence_days` as their threshold instead of a fixed 90 days (#3459). With
   the default cadence nothing changes. A shorter cadence flags more grants dormant, a
   longer one fewer; no stored data changes.
-- The `dormant-access` control and the digest now say "no use in the last 90 days"; the
-  dormant-grant count itself is unchanged (it was always judged against 90 days).
+- The `dormant-access` control and the digest say "no use in the last N days", where N is
+  that same window (`cadence_days`, 90 by default); they used to say a fixed "90 days".
 - The campaigns table gets one column, `activity_window_days`, added automatically at
   start-up (nothing to run); a rollback to the previous binary ignores it.
 
@@ -783,7 +783,10 @@ at once and later ones could already lag by 30 seconds). A server killed
 without a graceful stop loses up to 30 seconds of these stamps. With several
 replicas each writes its own observations and the stored value only moves
 forward. No access decision uses these columns; the stale-credential and
-hygiene reports work in days. Details: [`specs/last-used-coalescing.md`](specs/last-used-coalescing.md).
+hygiene reports work in days. When a flush fails or times out (database
+overload), the next one backs off exponentially, 1 s doubling to a 60 s ceiling
+with jitter, so under sustained database trouble the wait between attempts is
+30 to 60 s, longer than the normal 30 s. Details: [`specs/last-used-coalescing.md`](specs/last-used-coalescing.md).
 
 ## 6j. First start after the upgrade: recover-admin alerting reads the audit history once
 
@@ -886,7 +889,7 @@ names the flag and the safe form. The value is never echoed.
 | `login --password`, `mfa activate --password` | `KEYORIX_PASSWORD` or `KEYORIX_PASSWORD_FILE`, or the prompt |
 | `login --mfa-code`, `mfa activate --code`, `mfa stepup --code` | `KEYORIX_MFA_CODE` or `KEYORIX_MFA_CODE_FILE`, or the prompt |
 | `change-password --current-password`, `--new-password` | `KEYORIX_CURRENT_PASSWORD`, `KEYORIX_NEW_PASSWORD` (each with `_FILE`), or the prompt |
-| `system init --admin-password`, `--bootstrap-token` | `KEYORIX_ADMIN_PASSWORD`, `KEYORIX_BOOTSTRAP_TOKEN` (each with `_FILE`), or the prompt |
+| `system init --admin-password`, `--bootstrap-token` | `KEYORIX_ADMIN_PASSWORD`, `KEYORIX_BOOTSTRAP_TOKEN` (each with `_FILE`); the admin password may also be left to the prompt, the bootstrap token has no prompt |
 | `user create --password` | `KEYORIX_INITIAL_PASSWORD`, the prompt, `--setup-link` or `--one-time-password` |
 | `secret create --value`, `secret update --value` | `--from-file <relative path>`, `--from-file -` (stdin), or `--interactive` |
 | `secret rotate --value` | leave it out: hidden prompt, or stdin when piped |
@@ -994,24 +997,26 @@ grants, machine identity create, token issue and rotate, PAT create, user create
 and delete. The inventory is `docs/specs/security-mutation-audit-inventory.md`.
 
 **What the caller sees.** The core error is `could not record the change in the audit
-log; nothing was changed, retry` (`core.ErrMutationAuditUnavailable`). The REST handlers
-do not map it to a status of its own: it reaches the handler's default error branch, so
-the client gets **HTTP 500** with that handler's generic message (for example
-`POST /api/v1/user-roles` answers `{"code":500,"error":"InternalError","message":"Failed
-to assign role"}`), not a 503 and not the sentence above. The sentence is in the server
-log (`Error assigning role: could not record the change in the audit log; ...`, plus
-`ERROR SECURITY: failed to persist audit event ...`). Checked for the role grant with a
-fault on the audit append: 500, no grant row left. The other covered endpoints go through
-their own handlers' default branch and were not each checked. So automation cannot tell
-this refusal from any other 500 by the status. Before retrying a 500 on these endpoints,
-check that the object or grant does not already exist (list the user's roles, the tokens,
-the users): this refusal committed nothing, but another 500 on a call that creates a
-user, token or grant may have committed, and a blind retry can create a second
-credential. Look in the server log when it keeps failing. The one 503 on these paths is a request that both
-narrows and widens access (a user deactivated and renamed in one call, a role update
-that removes and adds permissions): the narrowing part is applied, the rest is not, and
-the answer is `503 MutationPartiallyApplied` (`mutation_partially_applied`, gRPC
-`Unavailable`); the same request is safe to repeat.
+log; nothing was changed, retry` (`core.ErrMutationAuditUnavailable`). The REST mutation
+handlers map it (`sendAuditUnavailable`, `server/http/handlers/audit_unavailable.go:33-44`)
+to **HTTP 503** with a `Retry-After: 5` header and the stable code `audit_unavailable`
+in the envelope's `error` field (`{"success":false,"error":"audit_unavailable","code":503,
+"message":"could not record the change in the audit log; nothing was changed, retry"}`).
+The message is the sentinel's fixed text, never the underlying storage error, which is
+only in the server log. gRPC answers `Unavailable` with the same text
+(`server/grpc/services/audit_unavailable.go:35-42`). Nothing was committed, so the same
+request is safe to repeat after a short pause. Clients should branch on the code
+`audit_unavailable`, not on the message. The mapping is in the handlers of the covered
+operations (group, role, project, user, token, share, machine-identity and the other
+mutation handlers; 27 handler files call it), and the over-the-router test drives it for
+group, role and project create. A mutation handler without the mapping would still
+answer its generic 500, and any other 500 on a call that creates a user, token or grant may
+have committed: before retrying a 500 (not an `audit_unavailable` 503), check that the
+object or grant does not already exist, or a blind retry can create a second credential.
+The other 503 on these paths is `503 MutationPartiallyApplied` (`mutation_partially_applied`,
+gRPC `Unavailable`), for a request that both narrows and widens access (a user deactivated
+and renamed in one call, a role update that removes and adds permissions): the narrowing
+part is applied, the rest is not; the same request is safe to repeat.
 
 Revocations (role, share, ACL, token, session removal, suspend, delete) are
 unchanged on purpose: the audit log never blocks them. Their audit row is now owed in
@@ -1021,16 +1026,17 @@ append or a crash no longer loses it.
 What to do: nothing in the configuration. Operationally, a healthy audit path is
 now a precondition for granting access (break-glass excepted, see 6o.1). Before upgrading, run `keyorix-server admin verify-audit` and check
 database health and free disk space, and make sure automation that creates users,
-roles, shares or tokens retries on a 500 only after checking that the object does not
-already exist (see above).
+roles, shares or tokens retries `503 audit_unavailable` after the `Retry-After` pause, and
+retries any other 500 only after checking that the object does not already exist (see above).
 
 Not run against a release build. Proved on main (SQLite) by
 `internal/core/security_mutation_audit_tx_test.go:TestSecurityMutationAudit_RowExistsIffMutationCommitted`,
 `TestWithAuditedMutation_NoRowFailsClosed`, `security_mutation_audit_direction_test.go`,
 `audit_split_test.go:TestMixedRequestSplit_NarrowingNeverBlockedRemainderFailsClosed` and
 `break_glass_degraded_test.go` (all run for this entry; the PostgreSQL legs need
-`KEYORIX_TEST_PG_DSN` and were not run). The HTTP status above is from a throwaway handler
-test (the `AssignRole` handler over a faulty storage, not committed).
+`KEYORIX_TEST_PG_DSN` and were not run). The HTTP 503 `audit_unavailable` answer is proved by
+`server/http/audit_unavailable_router_test.go:TestAuditOutage_MutationsAnswerRetryable503_OverTheRouter`
+(run for this entry, SQLite, passed).
 
 ## 6o.1 Break-glass works while the audit log is down (degraded mode)
 
