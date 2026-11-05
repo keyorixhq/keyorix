@@ -213,6 +213,30 @@ Questions an ADR would settle:
    worklist.
 3. **Grant-guarded, revoke-transport-only asymmetry** (Phase 1 finding 5):
    intended or not? Revocation cannot escalate, but it can lock someone out.
+4. **D4: what does secret ownership grant?** (Recorded as a design question
+   in Phase 4.)
+   - Core's `EnforceSecretActionPermission` (`permissions.go:112`) says write
+     is granted to "owner, an allowlisted share, an ACL or a role".
+   - Both transports gate the route on project RBAC (`secrets.write` /
+     `secrets.delete`) before core runs. So an owner without that permission
+     can never update or delete their own secret, and core's owner branch is
+     unreachable for exactly the users it seems written for.
+   - Options:
+     - (a) Ownership grants nothing on its own. Remove the owner branch from
+       core, or keep it only as an additional narrowing.
+     - (b) Ownership is a grant. Then the transports must let an owner through
+       their route gate (e.g. a secret-scoped gate that consults ownership the
+       way `RequireScopedSecretPermission` already consults shares and ACLs).
+     - (c) Ownership is meaningful only together with RBAC. Document that, and
+       guard it with a test that an owner without the RBAC permission is
+       refused on every transport. This is today's behaviour, unguarded.
+   - The harness pins today's behaviour as bucket D4. Whichever option is
+     chosen, the D4 rule changes, and STRICT then catches any drift.
+5. **D5: core does not check account state.** A suspended principal is
+   refused by both transports (its credential is rejected), but core methods
+   called directly do not consult account state. Same contract question as
+   1: if core trusts its caller, account state is a transport duty and should
+   be stated as such.
 
 ## Phase 2: harness
 
@@ -607,3 +631,200 @@ Items 1–4 of the defect follow-up list close under this one change. Items
   - operations outside the 28 covered (see the matrix for the full in-scope
     list);
   - secret owner/share/ACL semantics under Oracle 2 (Oracle 1 only).
+
+## Phase 4: generated principals and operations, new principals, permanent self-test
+
+### (1) Generated principals
+
+**What replaced the hand-picked set.** The hand-picked custom/machine
+permission subsets are gone. Per (operation, target, arg), `genVariations`
+derives the requirement set R: the gate permissions plus every permission of
+every role the op grants, read from the database (`requirementPerms`). From R
+it generates these permission sets:
+
+- R itself;
+- every leave-one-out R∖{p};
+- R∖{p} plus each single distractor permission;
+- U∖{p};
+- each single permission;
+- the empty set.
+
+**How each set is held.** Each set is held three ways:
+- directly, by the custom user;
+- through a group (`g-custom`);
+- by the machine principal.
+
+Scopes are the op's project, the other project and global. Machines are
+never global.
+
+**Universe and named principals.**
+- `TestRequirementsWithinUniverse` (default `go test`) fails if an op
+  requires a permission the generator cannot express. It is how
+  `audit.read` (bundled by `project_auditor`) was found missing from the
+  universe and added.
+- The named principals stay: no role, viewer@A, project-admin@A, global
+  admin, actor 0, expired grant, plus the two added in (3). Each tests a
+  mechanism a permission set cannot express.
+
+**Plant 3 now fails on many cases.** The shape that exposes a missing
+`users.write` gate on `group.delete` ("holds `users.read`, not `users.write`,
+globally") is now generated 26 times. The count is the D1 population on
+`group.delete`, which needs exactly that principal shape. In Phase 3 it was
+generated once. The plant self-test below asserts at least 10.
+
+### (2) Operations derived from matrix.json; coverage
+
+- **Population and coverage are derived:**
+  - the population is every in-scope REST op of the six families in
+    `matrix.json`, classified by route path (`routeFamily`);
+  - an op covers a route when the REST request it actually builds matches
+    the route's template (`opRoute`).
+- `COVERAGE.md` is generated, and `TestCoverageIsCurrent` fails when it is
+  stale.
+- `TestEveryOpBindsAMatrixRoute` fails if any op's request matches no matrix
+  route (mis-built or out of scope).
+- The sweep runs ops in family order.
+- **What is still hand-written:** the per-op binding. That means which
+  fixture fills which path parameter or body field, and the core and gRPC
+  calls. The request bodies come from handler structs, not from a schema the
+  harness could generate from. That limit is stated, not hidden.
+
+20 operations were added in family order:
+
+- **groups:** restore;
+- **projects:** restore, environment create and restore;
+- **machine identities:** classify, classify token, role remove, OIDC binding
+  create and delete, migrate-from-user;
+- **invitations:** global, resend;
+- **access requests:** create, withdraw, bulk approve, bulk reject;
+- **memberships:** invite member, add, set role and remove project member.
+
+New fixtures support them: soft-deleted group, project and environments, a
+target machine role, an OIDC binding, a migration user, fresh users, and a
+requester principal. Seeded setup tokens are backdated so the 60s resend
+throttle never trips the controls.
+
+| family | in-scope routes | covered |
+|---|---|---|
+| groups | 8 | 8 |
+| projects | 8 | 6 |
+| machine identities | 11 | 11 |
+| invitations | 4 | 4 |
+| access requests | 5 | 5 |
+| memberships | 5 | 5 |
+| **total** | **41** | **39 (95%)** |
+
+Uncovered: `POST /projects/{id}/environments/{envId}/clone` and `…/copy-secrets`,
+the two bulk secret-copy operations. They are listed in `COVERAGE.md`.
+
+### (3) Suspended-account and PAT-restricted principals
+
+- **`suspended`:** `project_admin`@A, logged in, then suspended.
+  - Both transports reject its credential (401 / `Unauthenticated`).
+  - Core called directly does not check account state: new finding **D5**,
+    62 cases across 19 ops. Added as design question 5.
+- **`pat-restricted`:** a PAT owned by a `project_admin`@A user, allowed only
+  `secrets.read` in project A.
+  - The core leg mirrors the transports by attaching the restriction to ctx
+    (`core.WithPATRestriction`).
+  - REST, gRPC and core agree with the model on every PAT case once the
+    documented rules are in. The rules are the allowlist and project scope
+    on the permission check, and the restricted-PAT ungated-write table.
+  - That refusal is REST-middleware-only (ADR-042, PAT-GUARD-3). Every op it
+    covers is `core refusal = none`, so it never shows as a disagreement (no
+    bucket needed).
+
+**Not yet (deferred, not covered):**
+- environment-scoped grants and environment-scoped PATs;
+- MFA-required projects (step-up);
+- PAT CIDR allowlists;
+- SCIM-provisioned principals;
+- impersonation sessions;
+- break-glass activations.
+
+### (4) The three plants as a permanent self-test
+
+`plants_test.go` (`TestPlantsAreDetected`, opt-in `AUTHZDIFF_PLANTS=1`)
+applies each plant with `go test -overlay`. The working tree is never edited;
+the overlay swaps in a patched copy of the file at compile time. Each plant
+is an exact anchor/replacement, and the anchor must occur exactly once, or
+the test fails with "plant anchor drifted". So a refactor that moves the
+guarded code forces the plant to be re-pointed; it is never skipped.
+
+For each plant, a child sweep restricted to the planted op must produce:
+
+- at least `minUnexplained` unexplained cases;
+- all of them on that op;
+- and zero unexplained cases in the same restricted sweep without the
+  overlay.
+
+**CI:** new job `authzdiff-plants` in `.github/workflows/ci.yml`, gated like
+`closures-pg` (merge queue, push, schedule, dispatch, or `ci:full`). Locally
+`actionlint` is clean. The job has not run in CI yet.
+
+### Run evidence
+
+| Run | Result |
+|---|---|
+| Default `go test ./server/authzdiff/` | PASS in **7.4 s** (two samples, idle machine), under the 10 s budget. Includes smoke over 48 ops, the coverage freshness check, the route binding check and the universe check. |
+| Full STRICT sweep | 41,558 cases, PASS, **zero unexplained**, 7.4 min (`spawn.sh`, default parallelism) |
+| Plant self-test (`AUTHZDIFF_PLANTS=1`) | PASS in 158 s. name-based-role-check: 670 unexplained cases, all on `machine.role.assign`. grpc-guard-removed: 239, all on `machine.token.revoke`. router-gate-removed: **26**, all on `group.delete` (Phase 3: 1). Each control run without the overlay: 0. |
+| Self-test red check | With plant 3's replacement set to its own anchor (a no-op), the test fails: "0 unexplained cases on group.delete, want >= 10 — the harness stopped detecting it". Then reverted. |
+
+**Uncalibrated legs.** All have by-design causes:
+- `group.role.assign` at global scope with a project-tier role (role-scope
+  rule, 400): 826 cases.
+- `secret.share` on the viewer-owned s1. The owner lacks `secrets.write` at
+  the route gate, so nobody can share it: 254 cases.
+- None come from the 20 new ops.
+
+**A harness bug found and fixed on the way.** The first three full Phase 4
+sweeps were killed 2–3 minutes in. The cause: every test leg registered a
+`tb.Cleanup` fallback, which kept the whole leg (router, core, DB handle)
+reachable until its parallel op subtest ended, about 0.3 MB per REST leg.
+Measured: +61 MB over 200 REST legs before the fix, +0 after.
+
+- Legs now own their directory and are closed explicitly when their case
+  ends.
+- Earlier per-subtest temp directories from the killed runs (up to 1.3 GB
+  each) are left in `$TMPDIR` as `TestAuthzDiffSweep*`; deleting them was
+  not permitted from this session.
+
+### Partition of the full Phase 4 sweep (41,558 cases)
+
+| Bucket | Cases | Where |
+|---|---|---|
+| D1 gRPC group ops skip `users.read` | 130 | group create/update/delete/member-remove/**restore** (26 each) |
+| D2 core looser than every transport | 1,797 | autorotate 955, member.setrole 239, group.restore 172, group.role.assign 158, invitation.global 131, project.restore 123, group.member.add 12, bulk approve 7 |
+| D3 `IssueMachineToken` treats a machine as user 0 | 2 | machine.token.issue |
+| D4 ownership grant unreachable | 2 | secret update/delete on s1 |
+| **D5 (new) core ignores account state** | 62 | 19 ops |
+| **D6 (new) machine actor never passes the ceiling** | 14 | member.add 8, member.setrole 6 (`AddProjectMember`/`SetProjectMemberRole` never tag `WithSelfMachineGranter`) |
+| M1 REST 500/400 for a typed refusal | 5,761 | accessrequest.approve, invitation.create, machine.role.assign, member.add, membership.invite (1,150 each), env.restore 11 |
+| M2 machine actor reaches a user-only core method | 274 | secret.share 210, accessrequest.create 56, secret.acl.grant 8 |
+| M3 untyped core refusal | 492 | machine.oidc.create 252 (errAdminAuthorityRequired, answered **400** because its text contains "required"), membership.transition 240 |
+| unexplained | **0** | |
+
+**Rules generalized from op lists to outcome shapes** in Phase 4: D2, M1 and
+M3 (D1 only gained `group.restore`). The generalization keeps the
+bypass-relevant direction closed:
+
+- D2 needs every present transport to deny;
+- M1 and M3 need a refusal on some layer and the model to deny;
+- D1 stays group-only and REST-deny/gRPC-allow.
+
+The three plants are exactly the excluded shapes, and the self-test proves
+it.
+
+### Defect follow-up list (updated)
+
+New items:
+
+8. `AddProjectMember` / `SetProjectMemberRole` refuse every machine actor (D6).
+9. Core ignores account state (D5). This is a design question, not a defect
+   by itself; see design question 5.
+
+Root cause (3) now also covers:
+- M1 on `member.add`, `membership.invite` and `env.restore`;
+- M3 on `machine.oidc.create`. The untyped `errAdminAuthorityRequired`
+  reaches the client as **400**: a third wrong status for one root cause.

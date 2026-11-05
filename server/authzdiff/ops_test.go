@@ -45,6 +45,10 @@ type restReq struct {
 	body         any
 }
 
+// errItemRefused: a core call returned no error but reported the item refused
+// (bulk ops); mapped to Denied with detail "item-refused".
+var errItemRefused = errors.New("item refused")
+
 type opSpec struct {
 	name    string
 	row     string // MATRIX.md core entry
@@ -68,10 +72,18 @@ type opSpec struct {
 	// (owner/share/ACL semantics beyond the documented owner rules): Oracle 1
 	// applies, Oracle 2 is recorded as n/a.
 	secretArgs bool
-	req        func(fx *fixtures, t tgt, a byte) requirement
-	core       func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error
-	rest       func(fx *fixtures, t tgt, a byte) restReq
-	grpc       func(ctx context.Context, lg *leg, t tgt, a byte) error
+	// grantArgs: the op arg selects the granted role (grantRoles).
+	grantArgs bool
+	// restOK, when set, decides "allowed" for a REST 2xx from the body (bulk
+	// ops answer 200 even when the item was refused). Nil = any 2xx is allowed.
+	restOK func(body []byte, fx *fixtures, t tgt) bool
+	// controlAs: extra positive-control principals tried after the admin
+	// (requester-only ops: no admin can satisfy the rule).
+	controlAs []principalKind
+	req       func(fx *fixtures, t tgt, a byte) requirement
+	core      func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error
+	rest      func(fx *fixtures, t tgt, a byte) restReq
+	grpc      func(ctx context.Context, lg *leg, t tgt, a byte) error
 }
 
 // grantRoles is the fuzzed choice of role an op grants.
@@ -97,10 +109,18 @@ func actorCtx(ctx context.Context, p *principal) context.Context {
 		ctx = core.WithActorType(ctx, core.ActorTypeMachine)
 		ctx = core.WithMachineActor(ctx, p.machineID)
 	}
+	if p.pat != nil {
+		// the transports attach a PAT's restriction to ctx; mirror it
+		ctx = core.WithPATRestriction(ctx, p.pat)
+	}
 	return ctx
 }
 
-func ops() []opSpec {
+// ops is every bound operation: the hand-bound Phase 2 set plus the Phase 4
+// family bindings. The sweep orders them by family (coverage_test.go).
+func ops() []opSpec { return append(baseOps(), familyOps()...) }
+
+func baseOps() []opSpec {
 	return []opSpec{
 		// ---- REST-vs-gRPC divergent secret operations (MATRIX.md result 3) ----
 		{
@@ -317,7 +337,7 @@ func ops() []opSpec {
 		},
 		{
 			// target = the SCOPE the role is granted at; the route gate is global roles.assign.
-			name: "group.role.assign", row: "AssignRoleToGroup", targets: []tgt{tA, tB, tGlobal}, selfMachineGranter: true,
+			name: "group.role.assign", row: "AssignRoleToGroup", targets: []tgt{tA, tB, tGlobal}, grantArgs: true, selfMachineGranter: true,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign", "users.read"}, ceiling: []roleAt{{rid, pid(fx, t)}}}
@@ -465,7 +485,7 @@ func ops() []opSpec {
 			},
 		},
 		{
-			name: "machine.role.assign", row: "AssignMachineRole", targets: projTargets, selfMachineGranter: true,
+			name: "machine.role.assign", row: "AssignMachineRole", targets: projTargets, grantArgs: true, selfMachineGranter: true,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}
@@ -484,7 +504,7 @@ func ops() []opSpec {
 
 		// ---- invitations ----
 		{
-			name: "invitation.create", row: "InviteToProjectWithLink", targets: projTargets,
+			name: "invitation.create", row: "InviteToProjectWithLink", targets: projTargets, grantArgs: true,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}
@@ -516,7 +536,7 @@ func ops() []opSpec {
 
 		// ---- access requests ----
 		{
-			name: "accessrequest.approve", row: "ApproveAccessRequestWithExpiry", targets: projTargets,
+			name: "accessrequest.approve", row: "ApproveAccessRequestWithExpiry", targets: projTargets, grantArgs: true,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}

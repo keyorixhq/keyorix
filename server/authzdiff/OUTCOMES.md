@@ -128,3 +128,44 @@ actors on secret update/delete/value read), the core leg is `n/a`, not
 `allowed`. A first sweep without `WithSelfMachineGranter` produced 4 false
 `machine.role.assign` disagreements. That is the "mapping bug" class, caught
 and fixed in the harness, not in the product.
+
+## Spec notes added in Phase 4
+
+**Documented rules the model gained.** Each cites the code that states it.
+Each was added because a case showed the model missing it, never to make a
+layer agree.
+
+- **Account state.** A suspended account may do nothing (`account_state.go`).
+- **PAT restriction.** A PAT narrows its owner on the permission check
+  (`rules.PATRestriction.Allows`: allowlist plus project scope). The grant
+  ceiling reads the principal's own roles, independent of the PAT
+  (`principalHasScopedPermission`).
+- **Restricted-PAT ungated writes.** A restricted PAT is refused on the
+  writes listed in core's table (ADR-042, PAT-GUARD-3:
+  `core.RestrictedPATWriteRefusal`). The model reads that table directly,
+  keyed by the op's matrix route.
+- **Two-scope gates.**
+  - `machine.migrate`: `roles.assign`@project plus `users.write`@global
+    (`router.go:609-611`).
+  - Bulk access-request approve/reject: global `roles.assign` plus per-item
+    `roles.assign`@project (`bulk_access_requests.go`).
+- **Global admin authority.**
+  - OIDC binding create needs an admin role at global scope
+    (`requireAdminAuthorityAt(actor, 0)`).
+  - Environment restore needs one too, because it reinstates project role
+    assignments and the fixture projects hold admin-tier ones
+    (`requireAuthorityToReinstateProjectRoles`).
+- **Requester-only.** Access-request withdraw: only the requester
+  (`WithdrawAccessRequest`).
+- **Same-role no-op.** `member.setrole` to the role already held is
+  audit-only, so no ceiling applies (`SetProjectMemberRole`).
+
+**Effect-based outcome for bulk ops.**
+- Bulk approve/reject answer 200 even when the item was refused. A 2xx
+  whose body does not list the request id as approved/rejected is `denied`
+  (`2xx-item-refused`).
+- The core leg does the same from the returned result (`item-refused`).
+
+**Positive control.** The admin first, then, when the op declares one, an
+op-specific principal (`opSpec.controlAs`): the requester, for withdraw. For
+owner-only secret ops on s1, the viewer-owner (Phase 3).

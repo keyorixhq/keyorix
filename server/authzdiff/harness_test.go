@@ -20,12 +20,11 @@ import (
 
 // Case = one (op, principal, target, op-arg, custom-role variation).
 type caseKey struct {
-	Op           string        `json:"op"`
-	Principal    principalKind `json:"principal"`
-	Target       string        `json:"target"`
-	Arg          byte          `json:"arg"`
-	Mask         uint16        `json:"custom_perm_mask"`
-	CustomGlobal bool          `json:"custom_global"`
+	Op        string        `json:"op"`
+	Principal principalKind `json:"principal"`
+	Target    string        `json:"target"`
+	Arg       byte          `json:"arg"`
+	variation
 }
 
 type legOutcome struct {
@@ -40,6 +39,9 @@ type caseResult struct {
 	Legs    map[layer]*legOutcome `json:"legs"`
 	Classes []string              `json:"classes,omitempty"`
 	Bucket  string                `json:"bucket,omitempty"` // partition_test.go explain()
+	// PATUngatedWrite: the principal is a restricted PAT and the op's route is
+	// in core's restricted-PAT ungated-write table (ADR-042, PAT-GUARD-3).
+	PATUngatedWrite bool `json:"pat_ungated_write,omitempty"`
 }
 
 // ---------- matrix-derived facts ----------
@@ -84,7 +86,7 @@ func withDerived(tb testing.TB, specs []opSpec) []opSpec {
 
 // ---------- legs ----------
 
-func runREST(lg *leg, p *principal, rr restReq) result {
+func runREST(lg *leg, p *principal, rr restReq, okIf func([]byte) bool) result {
 	var body bytes.Buffer
 	if rr.body != nil {
 		_ = json.NewEncoder(&body).Encode(rr.body)
@@ -96,7 +98,13 @@ func runREST(lg *leg, p *principal, rr restReq) result {
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	rec := httptest.NewRecorder()
 	lg.router.ServeHTTP(rec, req)
-	return restOutcome(rec.Code, rec.Body.String())
+	r := restOutcome(rec.Code, rec.Body.String())
+	if r.Outcome == Allowed && okIf != nil && !okIf(rec.Body.Bytes()) {
+		// a 2xx whose body reports the item itself was refused (bulk ops answer
+		// 200 with per-item failures): the effect did not happen.
+		return result{Denied, "2xx-item-refused"}
+	}
+	return r
 }
 
 func grpcCtx(p *principal) context.Context {
@@ -109,11 +117,12 @@ func grpcCtx(p *principal) context.Context {
 func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tgt, modelOut *Outcome) *legOutcome {
 	tb.Helper()
 	lg := newLeg(tb, l)
-	lg.applyVariation(tb, k.Mask, k.CustomGlobal)
+	defer lg.close()
+	lg.applyVariation(tb, k.variation)
 	if modelOut != nil {
 		if spec.secretArgs && k.Arg != 0 {
 			*modelOut = ModelNA // owner/share/ACL fixture: outside the model's domain
-		} else if (model{lg.db}).allowed(p, spec.req(lg.fx, t, k.Arg)) {
+		} else if (model{lg.db}).allowed(p, spec.req(lg.fx, t, k.Arg)) && !patRefusesUngatedWrite(tb, lg.fx, spec, p) {
 			*modelOut = Allowed
 		} else {
 			*modelOut = Denied
@@ -132,13 +141,20 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 		if errors.Is(err, errNotAuthzLayer) {
 			return &legOutcome{NA: "transport calls a non-checking core method for this principal"}
 		}
+		if errors.Is(err, errItemRefused) {
+			return &legOutcome{Outcome: Denied, Detail: "item-refused"}
+		}
 		r := coreOutcome(err)
 		return &legOutcome{Outcome: r.Outcome, Detail: r.Detail}
 	case layerREST:
 		if p.coreOnly() {
 			return &legOutcome{NA: "ID-1: no credential exists for actor 0"}
 		}
-		r := runREST(lg, p, spec.rest(lg.fx, t, k.Arg))
+		var okIf func([]byte) bool
+		if spec.restOK != nil {
+			okIf = func(b []byte) bool { return spec.restOK(b, lg.fx, t) }
+		}
+		r := runREST(lg, p, spec.rest(lg.fx, t, k.Arg), okIf)
 		return &legOutcome{Outcome: r.Outcome, Detail: r.Detail}
 	case layerGRPC:
 		if spec.grpc == nil {
@@ -174,13 +190,21 @@ func control(tb testing.TB, spec opSpec, l layer, t tgt, arg byte) *legOutcome {
 		return c
 	}
 	_, fx := template(tb)
-	c := runLayer(tb, spec, l, fx.principals[pkGlobalAdmin], caseKey{Arg: arg}, t, nil)
+	c := runLayer(tb, spec, l, fx.principals[pkGlobalAdmin], caseKey{Arg: arg, variation: defaultVariation}, t, nil)
 	if c.NA == "" && c.Outcome != Allowed && spec.secretArgs && arg == 1 {
 		// s1 is owned by the viewer: an owner-only action refuses the non-owner
 		// admin, so the owner succeeding equally proves the arguments are valid.
 		// (The owner alone often fails too: ownership does not pass the route's
 		// RBAC gate.)
-		if o := runLayer(tb, spec, l, fx.principals[pkViewer], caseKey{Arg: arg}, t, nil); o.NA == "" && o.Outcome == Allowed {
+		if o := runLayer(tb, spec, l, fx.principals[pkViewer], caseKey{Arg: arg, variation: defaultVariation}, t, nil); o.NA == "" && o.Outcome == Allowed {
+			c = o
+		}
+	}
+	for _, pk := range spec.controlAs {
+		if c.NA == "" && c.Outcome == Allowed {
+			break
+		}
+		if o := runLayer(tb, spec, l, fx.principals[pk], caseKey{Arg: arg, variation: defaultVariation}, t, nil); o.NA == "" && o.Outcome == Allowed {
 			c = o
 		}
 	}
@@ -208,6 +232,7 @@ func runCase(tb testing.TB, spec opSpec, k caseKey, t tgt) *caseResult {
 		}
 	}
 	res.Classes = classify(spec, p, res)
+	res.PATUngatedWrite = patRefusesUngatedWrite(tb, fx, spec, p)
 	res.Bucket = explain(res)
 	return res
 }
@@ -325,6 +350,6 @@ func (r *caseResult) line() string {
 		}
 		legs = append(legs, fmt.Sprintf("%s=%s(%s)", l, lo.Outcome, lo.Detail))
 	}
-	return fmt.Sprintf("%s principal=%s target=%s arg=%d mask=%#x customGlobal=%v model=%s %s => %s",
-		r.Op, r.Principal, r.Target, r.Arg, r.Mask, r.CustomGlobal, r.Model, strings.Join(legs, " "), strings.Join(r.Classes, ","))
+	return fmt.Sprintf("%s principal=%s target=%s arg=%d perms=%s route=%s scope=%s model=%s %s => %s",
+		r.Op, r.Principal, r.Target, r.Arg, maskNames(r.Mask), r.Route, r.Scope, r.Model, strings.Join(legs, " "), strings.Join(r.Classes, ","))
 }

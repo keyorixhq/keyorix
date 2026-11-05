@@ -52,9 +52,23 @@ const (
 	pkMachine     principalKind = "machine-token"
 	pkActor0      principalKind = "actor-0"
 	pkExpired     principalKind = "expired-grant"
+	pkSuspended   principalKind = "suspended" // project_admin@A, account suspended after login
+	pkPAT         principalKind = "pat-restricted"
+	// pkRequester is the author of project A's pending access request. Not a
+	// probed principal: it is the positive control for requester-only ops
+	// (accessrequest.withdraw), whose rule no other principal can satisfy.
+	pkRequester principalKind = "requester-A"
 )
 
-var allPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkCustom, pkMachine, pkActor0, pkExpired}
+// namedPrincipalKinds are the fixed principals, each testing a mechanism a
+// permission set cannot express (no role, built-in/bypass roles, expiry, actor
+// 0, account state, PAT restriction). The custom-role and machine principals
+// are NOT here: their permission sets are generated per operation
+// (genVariations), replacing the old hand-picked subsets.
+var namedPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkActor0, pkExpired, pkSuspended, pkPAT}
+
+// allPrincipalKinds is every principal the fuzz target may pick.
+var allPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkCustom, pkMachine, pkActor0, pkExpired, pkSuspended, pkPAT}
 
 type principal struct {
 	kind            principalKind
@@ -64,6 +78,8 @@ type principal struct {
 	username        string
 	systemActor     bool // actor id 0: core only (ID-1)
 	unauthenticated bool
+	suspended       bool                 // account suspended (model: denied everywhere)
+	pat             *core.PATRestriction // non-nil: the token is a restricted PAT
 }
 
 func (p *principal) coreOnly() bool  { return p.systemActor }
@@ -82,6 +98,10 @@ type perProject struct {
 	membershipID     uint
 	aclID            uint // ACL entry on secretID for targetUser
 	secrets          [4]fixtureSecret
+	deletedEnvID     uint   // soft-deleted environment (env.restore target)
+	oidcBindingID    uint   // OIDC binding on machineID (oidc.delete target)
+	migrateUsername  string // a user migrate-from-user may convert (keep_user=true)
+	machineRoleID    uint   // role held by machineID at this project (role.remove target)
 }
 
 // fixtureSecret is one of the four per-project secrets selected by an op arg
@@ -104,6 +124,12 @@ type fixtures struct {
 	permIDs          map[string]uint
 	principals       map[principalKind]*principal
 	customGrantProjA uint // project the custom role is granted at by default (A)
+	customGroupID    uint // g-custom: the custom user is its only member; holds the custom role on the "group" route
+	deletedGroupID   uint // soft-deleted group holding project_viewer@A (group.restore target)
+	projCID          uint // soft-deleted project (project.restore target)
+	freshUserID      uint // no role, no membership anywhere (invite/add-member target)
+	freshUserID2     uint // a second one (membership.invite vs member.add must not collide)
+	requesterIDs     [2]uint
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -113,11 +139,14 @@ func (f *fixtures) proj(sel byte) *perProject {
 	return &f.A
 }
 
-// customPermUniverse is the permission set the custom role's subset is drawn
-// from: every catalog permission an op in this harness gates on.
+// customPermUniverse is the permission set generated permission sets are drawn
+// from: every catalog permission a covered op gates on or a grantable role
+// bundles (project_auditor carries audit.read), plus system.read/system.write as
+// distractors. A requirement outside it fails TestRequirementsWithinUniverse.
 var customPermUniverse = []string{
 	"secrets.read", "secrets.write", "secrets.delete", "secrets.manage",
-	"users.read", "users.write", "roles.read", "roles.assign",
+	"users.read", "users.write", "users.delete", "roles.read", "roles.write", "roles.assign",
+	"audit.read", "system.read", "system.write",
 }
 
 var (
@@ -255,6 +284,30 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	past := time.Now().UTC().Add(-time.Hour)
 	grant(exp.userID, fx.roleIDs["project_admin"], fx.A.projectID, &past)
 
+	// suspended: project_admin@A, logged in, THEN suspended (the session token is
+	// whatever suspension leaves of it — the transports decide).
+	susp := addUserPrincipal(pkSuspended, "p-suspended")
+	grant(susp.userID, fx.roleIDs["project_admin"], fx.A.projectID, nil)
+	if e := c.SuspendUser(ctx, admin.ID, susp.userID); e != nil {
+		return nil, fmt.Errorf("suspend fixture: %w", e)
+	}
+	susp.suspended = true
+
+	// PAT-restricted: owner is project_admin@A; the PAT allows only secrets.read
+	// in project A (rules.PATRestriction).
+	patOwner := addUserPrincipal(pkPAT, "p-pat")
+	grant(patOwner.userID, fx.roleIDs["project_admin"], fx.A.projectID, nil)
+	pr := must(c.CreateOwnPAT(ctx, patOwner.userID, "restricted", nil, []string{"secrets.read"}, fx.A.projectID, 0, nil))
+	patOwner.token = pr.PlainToken
+	patOwner.pat = &core.PATRestriction{Permissions: []string{"secrets.read"}, ProjectID: fx.A.projectID}
+
+	// g-custom: the "group" route of a generated permission set.
+	gc := must(c.CreateGroup(ctx, admin.ID, &core.CreateGroupRequest{Name: "g-custom", Description: "synthetic"}))
+	fx.customGroupID = gc.ID
+	if e := c.AddUserToGroup(ctx, admin.ID, false, cust.userID, gc.ID, 0); e != nil {
+		return nil, fmt.Errorf("custom group fixture: %w", e)
+	}
+
 	target := mkUser("u-target")
 	fx.targetUserID, fx.targetUserEmail = target.ID, target.Email
 	requesterA, requesterB := mkUser("u-req-a"), mkUser("u-req-b")
@@ -366,6 +419,48 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	if e := c.AssignRoleToGroup(ctx, admin.ID, g.ID, fx.roleIDs["project_auditor"], core.Scope{ProjectID: fx.A.projectID}, false); e != nil {
 		return nil, fmt.Errorf("group role fixture: %w", e)
 	}
+	// ---- Phase 4 fixtures (families coverage) ----
+	fx.requesterIDs = [2]uint{requesterA.ID, requesterB.ID}
+	reqTok, _ := mustLogin(ctx, c, "u-req-a")
+	fx.principals[pkRequester] = &principal{kind: pkRequester, userID: requesterA.ID, token: reqTok, username: "u-req-a"}
+	fx.freshUserID = mkUser("u-fresh").ID
+	fx.freshUserID2 = mkUser("u-fresh2").ID
+	db.Exec("DELETE FROM user_roles WHERE user_id IN (?, ?)", fx.freshUserID, fx.freshUserID2)
+
+	gd := must(c.CreateGroup(ctx, admin.ID, &core.CreateGroupRequest{Name: "g-deleted", Description: "synthetic"}))
+	if e := c.AssignRoleToGroup(ctx, admin.ID, gd.ID, fx.roleIDs["project_viewer"], core.Scope{ProjectID: fx.A.projectID}, false); e != nil {
+		return nil, fmt.Errorf("deleted-group role: %w", e)
+	}
+	if e := c.DeleteGroup(ctx, admin.ID, gd.ID); e != nil {
+		return nil, fmt.Errorf("delete group fixture: %w", e)
+	}
+	fx.deletedGroupID = gd.ID
+
+	pc := must(ls.CreateProject(ctx, &models.Project{Name: "projc"}))
+	if e := c.DeleteProject(ctx, admin.ID, pc.ID, true); e != nil {
+		return nil, fmt.Errorf("delete project fixture: %w", e)
+	}
+	fx.projCID = pc.ID
+
+	for i, pp := range []*perProject{&fx.A, &fx.B} {
+		env := must(c.CreateEnvironment(ctx, pp.projectID, "staging"))
+		if e := c.DeleteEnvironment(ctx, env.ID); e != nil {
+			return nil, fmt.Errorf("delete env fixture: %w", e)
+		}
+		pp.deletedEnvID = env.ID
+		pp.machineRoleID = fx.roleIDs["project_auditor"] // not a grantRoles choice: machine.role.assign must not 409
+		if e := c.AssignMachineRole(ctx, pp.machineID, pp.machineRoleID, core.Scope{ProjectID: pp.projectID}, admin.ID, false); e != nil {
+			return nil, fmt.Errorf("target machine role fixture: %w", e)
+		}
+		b := must(c.CreateOIDCBinding(ctx, pp.projectID, pp.machineID, "https://issuer.example.invalid", fmt.Sprintf("subject-%d", i), admin.ID))
+		pp.oidcBindingID = b.ID
+		pp.migrateUsername = fmt.Sprintf("u-mig-%d", i)
+		mkUser(pp.migrateUsername)
+	}
+	// Resend is throttled per (purpose, email) on setup-token age; backdate the
+	// seeded tokens so the copies are never inside the 60s window.
+	db.Exec("UPDATE setup_tokens SET created_at = ?", time.Now().UTC().Add(-2*time.Hour))
+
 	return fx, nil
 }
 
@@ -403,6 +498,9 @@ type leg struct {
 	router http.Handler
 	conn   *grpc.ClientConn
 	fx     *fixtures
+
+	closers   []func()
+	closeOnce sync.Once
 }
 
 type layer string
@@ -417,19 +515,31 @@ const (
 func newLeg(tb testing.TB, l layer) *leg {
 	tb.Helper()
 	b, fx := template(tb)
-	path := filepath.Join(tb.TempDir(), "leg.db")
+	// Each leg owns its directory and is released by close() as soon as its
+	// case ends — NOT at the end of the (parallel) op subtest, which would let
+	// thousands of database copies accumulate on disk at once.
+	dir, err := os.MkdirTemp("", "authzdiff-leg-")
+	if err != nil {
+		tb.Fatalf("leg dir: %v", err)
+	}
+	path := filepath.Join(dir, "leg.db")
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		tb.Fatalf("clone: %v", err)
 	}
 	db := fuzzworld.OpenSQLite(tb, path, 1)
-	tb.Cleanup(func() {
-		if s, e := db.DB(); e == nil {
-			_ = s.Close()
-		}
-	})
 	ls := store.NewLocalStorage(db)
 	c := newCore(ls)
 	lg := &leg{db: db, ls: ls, c: c, fx: fx}
+	lg.closers = append(lg.closers, func() {
+		if s, e := db.DB(); e == nil {
+			_ = s.Close()
+		}
+		_ = os.RemoveAll(dir)
+	})
+	// Deliberately NO tb.Cleanup(lg.close) fallback: a cleanup closure keeps the
+	// whole leg (router, core, DB handle) reachable until the op subtest ends,
+	// which retained ~0.3 MB per REST leg and got long sweeps killed under
+	// memory pressure. Every caller closes its leg explicitly.
 	switch l {
 	case layerREST:
 		r, err := httpserver.NewRouter(&config.Config{}, c)
@@ -450,33 +560,86 @@ func newLeg(tb testing.TB, l layer) *leg {
 		if err != nil {
 			tb.Fatalf("grpc dial: %v", err)
 		}
-		tb.Cleanup(func() { _ = conn.Close(); srv.Stop() })
+		// stop the server before the DB closes (closers run in reverse order)
+		lg.closers = append(lg.closers, func() { _ = conn.Close(); srv.Stop() })
 		lg.conn = conn
 	}
 	return lg
 }
 
-// applyVariation sets the custom role's permission subset (bit i of mask =
-// customPermUniverse[i]) and the scope the custom principal and the machine
-// hold it at (A, or global for the user; a machine is always project-scoped).
-// Goes through the store's mutators so the role->permission cache generation
-// moves with the change.
-func (lg *leg) applyVariation(tb testing.TB, mask uint16, customGlobal bool) {
+// close releases the leg's server, database and files. Idempotent.
+func (lg *leg) close() {
+	lg.closeOnce.Do(func() {
+		for i := len(lg.closers) - 1; i >= 0; i-- {
+			lg.closers[i]()
+		}
+	})
+}
+
+// variation is how the custom role is held for one case: its permission set
+// (bit i of Mask = customPermUniverse[i]), the grant route, and the scope.
+//
+//   - Route "user": the custom user holds it directly (user_roles).
+//   - Route "group": the custom user holds it only via g-custom (group_roles).
+//   - Route "machine": the machine principal holds it (machine_identity_roles);
+//     never at global scope (a machine role is always project-scoped).
+//
+// Named principals run with defaultVariation (custom user, all permissions, at
+// A) — that only matters for ops that grant the custom role itself.
+type variation struct {
+	Mask  uint16 `json:"mask"`
+	Route string `json:"route"`
+	Scope string `json:"scope"` // "global" | "A" | "B"
+}
+
+var allPerms = uint16(1<<len(customPermUniverse) - 1)
+
+var defaultVariation = variation{Mask: allPerms, Route: "user", Scope: "A"}
+
+func (fx *fixtures) scopeProject(s string) uint {
+	switch s {
+	case "A":
+		return fx.A.projectID
+	case "B":
+		return fx.B.projectID
+	}
+	return 0
+}
+
+// applyVariation installs v. Role permissions go through the store's mutators
+// so the role->permission cache generation moves with the change; the grant
+// rows are written directly (synthetic fixture state, read back by the model).
+func (lg *leg) applyVariation(tb testing.TB, v variation) {
 	tb.Helper()
 	ctx := context.Background()
 	fx := lg.fx
 	for i, name := range customPermUniverse {
 		pid := fx.permIDs[name]
 		var err error
-		if mask&(1<<i) != 0 {
+		if v.Mask&(1<<i) != 0 {
 			err = lg.ls.AssignPermissionToRole(ctx, fx.customRoleID, pid)
 		} else {
 			err = lg.ls.RemovePermissionFromRole(ctx, fx.customRoleID, pid)
 		}
 		_ = err // assigning an already-held / removing an absent permission may error; the model reads the result
 	}
-	if customGlobal {
-		cust := fx.principals[pkCustom]
-		lg.db.Exec("UPDATE user_roles SET project_id = 0 WHERE user_id = ? AND role_id = ?", cust.userID, fx.customRoleID)
+	proj := fx.scopeProject(v.Scope)
+	cust := fx.principals[pkCustom]
+	lg.db.Exec("DELETE FROM user_roles WHERE user_id = ? AND role_id = ?", cust.userID, fx.customRoleID)
+	lg.db.Exec("DELETE FROM group_roles WHERE group_id = ?", fx.customGroupID)
+	switch v.Route {
+	case "user":
+		if e := lg.db.Create(&models.UserRole{UserID: cust.userID, RoleID: fx.customRoleID, ProjectID: proj}).Error; e != nil {
+			tb.Fatalf("variation user grant: %v", e)
+		}
+	case "group":
+		if e := lg.db.Create(&models.GroupRole{GroupID: fx.customGroupID, RoleID: fx.customRoleID, ProjectID: proj}).Error; e != nil {
+			tb.Fatalf("variation group grant: %v", e)
+		}
+	case "machine":
+		if proj == 0 {
+			tb.Fatalf("variation: a machine role cannot be global")
+		}
+		lg.db.Exec("UPDATE machine_identity_roles SET project_id = ? WHERE machine_identity_id = ? AND role_id = ?", proj, fx.principals[pkMachine].machineID, fx.customRoleID)
 	}
 }
