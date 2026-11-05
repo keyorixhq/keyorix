@@ -250,7 +250,9 @@ func (h *H) Skip(w W, r R) { _ = h.coreService.AddProjectMember() }
 // helper hop: a handler routed through a helper that calls the mapper passes
 // (green), one routed through a helper that does not map the outage fails (red),
 // and the forms the guard documents as not followed (two hops, another
-// receiver's method, a helper only named as a value) still fail.
+// receiver's method, a helper only named as a value) still fail. A same-name
+// method that maps only on a different receiver type also fails, so the
+// helper key must include the receiver type, not just the method name.
 func TestAuditUnavailableMappingGuardFollowsOneHopHelpers(t *testing.T) {
 	dir := t.TempDir()
 	helpers := `package handlers
@@ -260,6 +262,8 @@ func sendTwoHops(w W, err error)  { sendMapped(w, err) }
 func (h *H) replyMapped(w W, err error)   { if sendAuditUnavailable(w, err) { return } }
 func (h *H) replyUnmapped(w W, err error) { sendError(w) }
 func (o *Other) replyMapped(w W, err error) { sendAuditUnavailable(w, err) }
+func (h *H) replyShared(w W, err error)     { sendAuditUnavailable(w, err) }
+func (o *Other) replyShared(w W, err error) { sendError(w) }
 `
 	handlers := `package handlers
 func (h *H) ViaFunc(w W, r R)        { if err := h.coreService.AddProjectMember(); err != nil { sendMapped(w, err) } }
@@ -271,6 +275,7 @@ func (h *H) ViaTwoHops(w W, r R)        { if err := h.coreService.AddProjectMemb
 func (h *H) ViaOtherReceiver(w W, r R, o *Other) { if err := h.coreService.AddProjectMember(); err != nil { o.replyMapped(w, err) } }
 func (h *H) ViaValue(w W, r R)          { if err := h.coreService.AddProjectMember(); err != nil { fn := sendMapped; _ = fn } }
 func (o *Other) NotMine(w W, r R)       { if err := o.coreService.AddProjectMember(); err != nil { o.replyUnmapped(w, err) } }
+func (o *Other) ViaSameNameOtherType(w W, r R) { if err := o.coreService.AddProjectMember(); err != nil { o.replyShared(w, err) } }
 `
 	for name, src := range map[string]string{"helpers.go": helpers, "handlers.go": handlers} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o600); err != nil {
@@ -281,12 +286,13 @@ func (o *Other) NotMine(w W, r R)       { if err := o.coreService.AddProjectMemb
 	want := []string{
 		"handlers.go:NotMine -> AddProjectMember",
 		"handlers.go:ViaOtherReceiver -> AddProjectMember",
+		"handlers.go:ViaSameNameOtherType -> AddProjectMember",
 		"handlers.go:ViaTwoHops -> AddProjectMember",
 		"handlers.go:ViaUnmappedFunc -> AddProjectMember",
 		"handlers.go:ViaUnmappedMethod -> AddProjectMember",
 		"handlers.go:ViaValue -> AddProjectMember",
 	}
-	if seen != 9 || !slices.Equal(violations, want) {
-		t.Fatalf("self-test: seen=%d violations=%v, want 9 and exactly %v", seen, violations, want)
+	if seen != 10 || !slices.Equal(violations, want) {
+		t.Fatalf("self-test: seen=%d violations=%v, want 10 and exactly %v", seen, violations, want)
 	}
 }
