@@ -14,6 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -22,17 +23,17 @@ import (
 
 // cappedShareFetchStorage answers the caller's share fetch with a list at the
 // 10000-row storage cap, which core refuses as possibly truncated.
-type cappedShareFetchStorage struct {
-	corestorage.Storage
-}
-
-func (cappedShareFetchStorage) ListSharesByUser(context.Context, uint, time.Time) ([]*models.ShareRecord, error) {
-	const atCap = 10000 // core.maxShareViewBatchSize, and the storage list cap
-	shares := make([]*models.ShareRecord, atCap)
-	for i := range shares {
-		shares[i] = &models.ShareRecord{SecretID: 1, OwnerID: 1, RecipientID: 2, Permission: "read"}
-	}
-	return shares, nil
+func cappedShareFetchStorage(inner corestorage.Storage) corestorage.Storage {
+	return storagetest.Hooked(inner, &storagetest.StoreHooks{
+		ListSharesByUser: func(corestorage.Storage, context.Context, uint, time.Time) ([]*models.ShareRecord, error) {
+			const atCap = 10000 // core.maxShareViewBatchSize, and the storage list cap
+			shares := make([]*models.ShareRecord, atCap)
+			for i := range shares {
+				shares[i] = &models.ShareRecord{SecretID: 1, OwnerID: 1, RecipientID: 2, Permission: "read"}
+			}
+			return shares, nil
+		},
+	})
 }
 
 // TestListSecrets_OverCapShareFetchIsTyped422: every human-principal path of
@@ -62,7 +63,7 @@ func TestListSecrets_OverCapShareFetchIsTyped422(t *testing.T) {
 	roleID := seedReadRole(t, db, "cap_global_reader")
 	require.NoError(t, db.Create(&models.UserRole{UserID: 7, RoleID: roleID}).Error)
 
-	h, err := NewSecretHandler(core.NewKeyorixCore(cappedShareFetchStorage{store.NewLocalStorage(db)}))
+	h, err := NewSecretHandler(core.NewKeyorixCore(cappedShareFetchStorage(store.NewLocalStorage(db))))
 	require.NoError(t, err)
 
 	scoped := fmt.Sprintf("/api/v1/secrets?project_id=%d", proj.ID)

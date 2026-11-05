@@ -19,6 +19,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -27,12 +28,12 @@ import (
 )
 
 // failingTxStorage refuses to open a transaction, which is where RevokeOwnPAT writes.
-type failingTxStorage struct {
-	corestorage.Storage
-}
-
-func (failingTxStorage) WithTransaction(context.Context, func(corestorage.Storage) error) error {
-	return errors.New("driver: could not begin transaction")
+func failingTxStorage(inner corestorage.Storage) corestorage.Storage {
+	return storagetest.Hooked(inner, &storagetest.StoreHooks{
+		WithTransaction: func(corestorage.Storage, context.Context, func(corestorage.Storage) error) error {
+			return errors.New("driver: could not begin transaction")
+		},
+	})
 }
 
 func TestRevokePAT_WriteFaultIsNot404(t *testing.T) {
@@ -45,7 +46,7 @@ func TestRevokePAT_WriteFaultIsNot404(t *testing.T) {
 	theirs := &models.PersonalAccessToken{UserID: 2, Name: "theirs", TokenHash: "pat-write-fault-theirs", TokenPrefix: "kx_pat_"}
 	require.NoError(t, db.Create(theirs).Error)
 
-	patH := NewPATHandler(core.NewKeyorixCore(failingTxStorage{store.NewLocalStorage(db)}))
+	patH := NewPATHandler(core.NewKeyorixCore(failingTxStorage(store.NewLocalStorage(db))))
 
 	w := httptest.NewRecorder()
 	patH.RevokePAT(w, suReq(http.MethodDelete, "", map[string]string{"id": suID(mine.ID)}))
