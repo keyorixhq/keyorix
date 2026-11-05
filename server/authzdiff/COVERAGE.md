@@ -6,12 +6,12 @@ Population: `matrix.json` REST ops that are mutating or secret-value reads, clas
 | family | in-scope routes | covered | % |
 |---|---|---|---|
 | groups | 8 | 8 | 100% |
-| projects | 8 | 6 | 75% |
+| projects | 8 | 8 | 100% |
 | machine identities | 11 | 11 | 100% |
 | invitations | 4 | 4 | 100% |
 | access requests | 5 | 5 | 100% |
 | memberships | 5 | 5 | 100% |
-| **total** | **41** | **39** | **95%** |
+| **total** | **41** | **41** | **100%** |
 
 ## groups
 
@@ -29,8 +29,8 @@ Population: `matrix.json` REST ops that are mutating or secret-value reads, clas
 - [x] `DELETE /api/v1/projects/{id}` — project.delete
 - [x] `POST /api/v1/projects` — project.create
 - [x] `POST /api/v1/projects/{id}/environments` — env.create
-- [ ] `POST /api/v1/projects/{id}/environments/{envId}/clone`
-- [ ] `POST /api/v1/projects/{id}/environments/{envId}/copy-secrets`
+- [x] `POST /api/v1/projects/{id}/environments/{envId}/clone` — env.clone
+- [x] `POST /api/v1/projects/{id}/environments/{envId}/copy-secrets` — env.copy.secrets
 - [x] `POST /api/v1/projects/{id}/restore` — project.restore
 - [x] `POST /api/v1/projects/{projectId}/environments/{id}/restore` — env.restore
 - [x] `PUT /api/v1/projects/{id}` — project.update

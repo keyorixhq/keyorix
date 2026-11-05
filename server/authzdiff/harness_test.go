@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/http/handlers"
 )
 
 // Case = one (op, principal, target, op-arg, custom-role variation).
@@ -154,7 +155,17 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 		if spec.restOK != nil {
 			okIf = func(b []byte) bool { return spec.restOK(b, lg.fx, t) }
 		}
+		if spec.globalHandler {
+			routerMu.Lock()
+			if _, _, err := handlers.InitCoreHandlers(lg.c); err != nil {
+				routerMu.Unlock()
+				tb.Fatalf("re-point handler globals: %v", err)
+			}
+		}
 		r := runREST(lg, p, spec.rest(lg.fx, t, k.Arg), okIf)
+		if spec.globalHandler {
+			routerMu.Unlock()
+		}
 		return &legOutcome{Outcome: r.Outcome, Detail: r.Detail}
 	case layerGRPC:
 		if spec.grpc == nil {

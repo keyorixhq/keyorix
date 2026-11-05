@@ -19,7 +19,7 @@ import (
 // recorded in scripts/e2e/routes.json (no per-op permission is documented in
 // OpenAPI), plus the FIX-1 grant ceiling for ops that grant a role. Oracle 2
 // against REST is therefore a check of scope resolution, expiry, machine
-// no-bypass and the ceiling — not of WHICH permission the route names; it is
+// no admin-role override and the ceiling — not of WHICH permission the route names; it is
 // fully independent only for core and gRPC.
 
 // tgt selects the target: 0 = project A, 1 = project B, 2 = global.
@@ -74,6 +74,9 @@ type opSpec struct {
 	secretArgs bool
 	// grantArgs: the op arg selects the granted role (grantRoles).
 	grantArgs bool
+	// globalHandler: the REST route is served through a package-level handler
+	// global (the /users routes); the REST leg re-points it under routerMu.
+	globalHandler bool
 	// restOK, when set, decides "allowed" for a REST 2xx from the body (bulk
 	// ops answer 200 even when the item was refused). Nil = any 2xx is allowed.
 	restOK func(body []byte, fx *fixtures, t tgt) bool
@@ -118,11 +121,11 @@ func actorCtx(ctx context.Context, p *principal) context.Context {
 
 // ops is every bound operation: the hand-bound Phase 2 set plus the Phase 4
 // family bindings. The sweep orders them by family (coverage_test.go).
-func ops() []opSpec { return append(baseOps(), familyOps()...) }
+func ops() []opSpec { return append(append(baseOps(), familyOps()...), phase5Ops()...) }
 
 func baseOps() []opSpec {
 	return []opSpec{
-		// ---- REST-vs-gRPC divergent secret operations (MATRIX.md result 3) ----
+		// ---- secret operations ----
 		{
 			name: "secret.update", row: "UpdateSecretWithPermissionCheck", targets: projTargets, secretArgs: true,
 			req: func(fx *fixtures, t tgt, a byte) requirement {

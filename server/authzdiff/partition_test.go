@@ -5,22 +5,19 @@ import (
 	"strings"
 )
 
-// explain partitions a flagged case into the known finding buckets of
-// REPORT.md. Each rule names the exact SHAPE the finding was established on —
-// principal kind and every layer's outcome, and an op list wherever the
-// mechanism is op-specific — so a case that merely resembles a finding is NOT
-// absorbed: it lands in "unexplained" and must be investigated.
+// explain assigns a flagged case to a known waiver ("known-NN"). Each waiver
+// names an exact SHAPE — principal kind and every layer's outcome, and an op
+// list where needed — so a case that merely resembles a waiver is NOT
+// absorbed: it lands in "unexplained" and must be investigated. Waivers carry
+// no descriptions here; they are tracked privately.
 //
-// Phase 4 generalized four rules from an op list to a shape, because the
-// generated principals and the new ops showed the same mechanism on more ops.
-// Each generalization keeps the direction that matters closed:
-//   - D2 (core looser than the transports) needs EVERY present transport to
-//     deny, so a transport-level bypass can never match it;
-//   - M1/M3 (refusal typing/mapping) need a refusal on some layer and the
-//     model to deny, so an allowed-everywhere bypass can never match them;
-//   - D1 stays limited to group ops and to REST-deny/gRPC-allow.
+// The waivers that match a shape rather than an op list keep the direction
+// that matters closed: one that has the core leg allow needs EVERY present
+// transport to deny, so a transport that allows can never match it; one that
+// has a layer refuse needs the model to deny as well, so a case allowed
+// everywhere can never match it.
 //
-// The three Phase 3 plants (plants_test.go) are exactly the shapes these rules
+// The three plants (plants_test.go) are exactly the shapes these rules
 // exclude: core+REST allow (plant 1), gRPC allows a non-group op (plant 2),
 // REST allows what gRPC denies (plant 3).
 //
@@ -38,57 +35,40 @@ func explain(r *caseResult) string {
 	modelDenies := r.Model == Denied || r.Model == ModelNA
 
 	switch {
-	// D1: gRPC group mutations do not require users.read (REST's route group does).
-	case slices.Contains([]string{"group.create", "group.update", "group.delete", "group.member.remove", "group.restore"}, r.Op) &&
+	case slices.Contains([]string{"group.create", "group.update", "group.delete", "group.member.remove", "group.restore",
+		"user.create", "user.create.assign", "user.update", "user.delete", "user.reissue.otp",
+		"role.create", "role.update", "role.delete"}, r.Op) &&
 		is(rest, Denied) && is(grpc, Allowed) && r.Model == Denied:
-		return "D1"
+		return "known-01"
 
-	// D5: core does not check account state; both transports reject the
-	// suspended account's credential (401 / Unauthenticated).
 	case pk == pkSuspended && is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc):
-		return "D5"
+		return "known-02"
 
-	// (No D7 rule: the restricted-PAT ungated-write refusal, ADR-042 PAT-GUARD-3,
-	// is REST-middleware-only, but every op it covers is "core refusal = none"
-	// (intended difference ID-2), so the core leg never takes part and the case
-	// never disagrees. A rule that nothing can reach is not kept.)
-
-	// D4: ownership is a grant in core, unreachable through the transports.
 	case (r.Op == "secret.update" || r.Op == "secret.delete") && r.Arg == 1 && r.Target == "A" &&
 		pk == pkViewer && is(core, Allowed) && is(rest, Denied) && is(grpc, Denied):
-		return "D4"
+		return "known-03"
 
-	// D2: core-direct looser than every transport (the base permission, or a
-	// gate, is transport-only). Not exposed by any transport.
 	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
-		return "D2"
+		return "known-04"
 
-	// D3: IssueMachineToken evaluates a machine actor as user 0.
 	case r.Op == "machine.token.issue" && pk == pkMachine &&
 		is(core, Denied) && is(grpc, Denied) && is(rest, Other) && rest.Detail == "Internal Server Error":
-		return "D3"
+		return "known-05"
 
-	// D6: AddProjectMember / SetProjectMemberRole never tag a machine actor as
-	// a self-granter, so a machine that holds every needed permission is
-	// always refused by the FIX-1 ceiling (fails closed; REST may say 500).
 	case (r.Op == "member.add" || r.Op == "member.setrole") && pk == pkMachine && r.Model == Allowed &&
 		is(core, Denied) && (is(rest, Denied) || restBadStatus):
-		return "D6"
+		return "known-06"
 
-	// M1: REST answers 500/400 for a typed core permission refusal.
 	case is(core, Denied) && core.Detail == "ErrPermissionDenied" && restBadStatus && modelDenies:
-		return "M1"
+		return "known-07"
 
-	// M2: machine actor reaches a user-only core method with UserID 0.
-	case pk == pkMachine && slices.Contains([]string{"secret.acl.grant", "secret.share", "accessrequest.create"}, r.Op) &&
+	case pk == pkMachine && slices.Contains([]string{"secret.acl.grant", "secret.share", "accessrequest.create",
+		"secret.certificate", "secret.tags", "secret.description", "secret.move", "secret.copy", "secret.extend.expiring"}, r.Op) &&
 		is(core, Other) && core.Detail == "untyped-error":
-		return "M2"
+		return "known-08"
 
-	// M3: untyped core refusal (no ErrPermissionDenied): TransitionMembership's
-	// text refusal, errAdminAuthorityRequired (OIDC binding), and kin. REST
-	// either refuses first (403) or maps the untyped text to 400/500.
 	case is(core, Other) && core.Detail == "untyped-error" && (is(rest, Denied) || restBadStatus) && modelDenies:
-		return "M3"
+		return "known-09"
 	}
 	return "unexplained"
 }

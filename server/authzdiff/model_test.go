@@ -25,7 +25,7 @@ import (
 //   - a user's grants are direct (user_roles) plus via live groups
 //     (user_groups -> group_roles); a machine's are machine_identity_roles;
 //   - a role with bypasses_permission_checks satisfies any permission for a
-//     USER; a machine never bypasses (ADR-030);
+//     USER; a machine never gets that override (ADR-030);
 //   - a role grant (ceiling) additionally needs every permission the granted
 //     role bundles, at the target scope (the FIX-1 rule: derived from the
 //     role's permissions, never its name).
@@ -89,10 +89,10 @@ func (m model) projectLive(id uint) bool {
 	return n > 0
 }
 
-func (m model) rolePerms(roleID uint) (perms []string, bypass bool) {
+func (m model) rolePerms(roleID uint) (perms []string, adminRole bool) {
 	m.db.Raw(`SELECT p.name FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ?`, roleID).Scan(&perms)
-	m.db.Raw(`SELECT bypasses_permission_checks FROM roles WHERE id = ?`, roleID).Scan(&bypass)
-	return perms, bypass
+	m.db.Raw(`SELECT bypasses_permission_checks FROM roles WHERE id = ?`, roleID).Scan(&adminRole)
+	return perms, adminRole
 }
 
 // holds reports whether p holds perm at target project proj (0 = global).
@@ -108,8 +108,8 @@ func (m model) holds(p *principal, perm string, proj uint) bool {
 		if !m.projectLive(g.projectID) {
 			continue
 		}
-		perms, bypass := m.rolePerms(g.roleID)
-		if (bypass && p.machineID == 0) || slices.Contains(perms, perm) {
+		perms, adminRole := m.rolePerms(g.roleID)
+		if (adminRole && p.machineID == 0) || slices.Contains(perms, perm) {
 			return true
 		}
 	}
@@ -147,7 +147,12 @@ func (m model) allowed(p *principal, req requirement) bool {
 		// documented requester-only rule (WithdrawAccessRequest: "not your" → refused)
 		return false
 	}
-	if req.globalAdminRole && !m.holdsBypassAt(p, 0) {
+	if req.recipientUserIDs != nil && (p.userID == 0 || !slices.Contains(req.recipientUserIDs, p.userID)) {
+		// documented recipient-only rule (RemoveSelfFromShare deletes only a direct
+		// share whose recipient is the caller; no permission is involved)
+		return false
+	}
+	if req.globalAdminRole && !m.holdsAdminRoleAt(p, 0) {
 		// documented: binding an OIDC subject "requires install-wide admin
 		// authority" (CreateOIDCBinding → requireAdminAuthorityAt(actor, 0))
 		return false
@@ -197,13 +202,15 @@ type requirement struct {
 	globalPerms []string
 	// requesterUserID != 0: only that user may act (access-request withdraw).
 	requesterUserID uint
-	// globalAdminRole: the actor must hold an admin (bypass) role at global scope.
+	// globalAdminRole: the actor must hold an admin role (bypasses_permission_checks) at global scope.
 	globalAdminRole bool
+	// recipientUserIDs non-nil: only these users may act (self-share removal).
+	recipientUserIDs []uint
 }
 
-// holdsBypassAt: p holds a live, unexpired bypass role granted exactly at proj.
-// Machines never bypass.
-func (m model) holdsBypassAt(p *principal, proj uint) bool {
+// holdsAdminRoleAt: p holds a live, unexpired admin role granted exactly at proj.
+// Machines never hold the override.
+func (m model) holdsAdminRoleAt(p *principal, proj uint) bool {
 	if p.machineID != 0 {
 		return false
 	}
@@ -212,7 +219,7 @@ func (m model) holdsBypassAt(p *principal, proj uint) bool {
 		if g.projectID != proj || (g.expires != nil && !g.expires.After(now)) {
 			continue
 		}
-		if _, bypass := m.rolePerms(g.roleID); bypass {
+		if _, adminRole := m.rolePerms(g.roleID); adminRole {
 			return true
 		}
 	}

@@ -62,7 +62,7 @@ const (
 )
 
 // namedPrincipalKinds are the fixed principals, each testing a mechanism a
-// permission set cannot express (no role, built-in/bypass roles, expiry, actor
+// permission set cannot express (no role, built-in/admin roles, expiry, actor
 // 0, account state, PAT restriction). The custom-role and machine principals
 // are NOT here: their permission sets are generated per operation
 // (genVariations), replacing the old hand-picked subsets.
@@ -103,6 +103,7 @@ type perProject struct {
 	oidcBindingID    uint   // OIDC binding on machineID (oidc.delete target)
 	migrateUsername  string // a user migrate-from-user may convert (keep_user=true)
 	machineRoleID    uint   // role held by machineID at this project (role.remove target)
+	sx               secretFixtures
 }
 
 // fixtureSecret is one of the four per-project secrets selected by an op arg
@@ -131,6 +132,7 @@ type fixtures struct {
 	freshUserID      uint // no role, no membership anywhere (invite/add-member target)
 	freshUserID2     uint // a second one (membership.invite vs member.add must not collide)
 	requesterIDs     [2]uint
+	ux               userFixtures
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -458,6 +460,13 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 		pp.migrateUsername = fmt.Sprintf("u-mig-%d", i)
 		mkUser(pp.migrateUsername)
 	}
+	if e := seedSecretFixtures(ctx, c, fx); e != nil {
+		return nil, e
+	}
+	if e := seedUserFixtures(ctx, c, fx); e != nil {
+		return nil, e
+	}
+
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
 	// seeded tokens so the copies are never inside the 60s window.
 	db.Exec("UPDATE setup_tokens SET created_at = ?", time.Now().UTC().Add(-2*time.Hour))
@@ -543,7 +552,12 @@ func newLeg(tb testing.TB, l layer) *leg {
 	// memory pressure. Every caller closes its leg explicitly.
 	switch l {
 	case layerREST:
+		// NewRouter re-points package-level handler globals (handlers.InitCoreHandlers
+		// sets defaultUserHandler); routerMu keeps that from racing a globalHandler
+		// op's request on another leg (see runLayer).
+		routerMu.Lock()
 		r, err := httpserver.NewRouter(&config.Config{}, c)
+		routerMu.Unlock()
 		if err != nil {
 			tb.Fatalf("router: %v", err)
 		}
@@ -663,3 +677,10 @@ func recordRPC(ctx context.Context, method string, req, reply any, cc *grpc.Clie
 	}
 	return invoker(ctx, method, req, reply, cc, opts...)
 }
+
+// routerMu serialises router construction with globalHandler requests.
+// server/http/handlers keeps one package-level handler for the /users routes
+// (defaultUserHandler, set by InitCoreHandlers from every NewRouter). Production
+// builds one router, so it is harmless there; with one router per leg, a /users
+// request could otherwise be served by whichever leg's core was wired last.
+var routerMu sync.Mutex

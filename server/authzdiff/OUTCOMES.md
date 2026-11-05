@@ -72,14 +72,14 @@ those operations:
 
 ## Disagreement classes in the report
 
-Each finding is reported as operation, principal, layers and outcomes, never
+Each flagged case is reported as operation, principal, layers and outcomes, never
 with a secret or a raw request body:
 
-- **real bypass**: one layer `allowed`, another `denied` (Oracle 1), or a
+- **allow/deny disagreement**: one layer `allowed`, another `denied` (Oracle 1), or a
   layer `allowed` where the model says deny (Oracle 2).
 - **over-denial**: a layer `denied` where the model says allow. Reported,
   lower priority; may be an intended stricter gate. Then classified
-  intended (documented here) or a bug.
+  intended (documented here) or unintended.
 - **mapping gap**: core `other` vs transport `denied` (untyped refusal), or
   any pair where the only difference is `other`.
 - **uncalibrated**: the positive control failed; counted per operation so a
@@ -104,7 +104,7 @@ away.
 
 Consequences:
 
-- **Oracle 2 vs REST** checks scope resolution, expiry, machine no-bypass,
+- **Oracle 2 vs REST** checks scope resolution, expiry, that machines get no admin-role override,
   the ceiling and the owner rules, but not which permission the route names.
   It is fully independent only for core and gRPC.
 - **`group.role.assign` at global scope with a project-tier role** fails the
@@ -126,8 +126,8 @@ includes, for a machine actor:
 Where a transport calls a non-checking core variant for a principal (machine
 actors on secret update/delete/value read), the core leg is `n/a`, not
 `allowed`. A first sweep without `WithSelfMachineGranter` produced 4 false
-`machine.role.assign` disagreements. That is the "mapping bug" class, caught
-and fixed in the harness, not in the product.
+`machine.role.assign` disagreements. Those were harness mapping errors, fixed in
+the harness.
 
 ## Spec notes added in Phase 4
 

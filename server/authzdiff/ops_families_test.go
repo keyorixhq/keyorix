@@ -67,7 +67,7 @@ func familyOps() []opSpec {
 			name: "env.restore", row: "RestoreEnvironment", targets: projTargets,
 			req: func(fx *fixtures, t tgt, _ byte) requirement {
 				// documented: restoring reinstates the project's role assignments, and
-				// when any is an admin-bypass role the actor must be a global admin
+				// when any is an admin role the actor must be a global admin
 				// (requireAuthorityToReinstateProjectRoles). Projects A and B hold
 				// project_admin assignments, so the rule always applies here.
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), globalAdminRole: true}

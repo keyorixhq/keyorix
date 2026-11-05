@@ -19,8 +19,8 @@ import (
 //     target x arg x (named principals + the GENERATED permission sets of
 //     genVariations). Records every case to $AUTHZDIFF_OUT and logs every
 //     flagged case with its partition bucket. AUTHZDIFF_STRICT=1 fails on any
-//     case partition_test.go cannot explain (known findings D1-D4/M1-M3 are
-//     listed in REPORT.md and accepted; a new defect lands in "unexplained").
+//     case partition_test.go cannot assign to a known waiver (a new case lands
+//     in "unexplained").
 //     AUTHZDIFF_OPS=a,b restricts the op set (used by the plant self-test).
 //   - FuzzAuthzDiff: the same case space, chosen by the fuzzer.
 
@@ -173,6 +173,11 @@ func TestAuthzDiffSmoke(t *testing.T) {
 	specs := withDerived(t, ops())
 	for _, spec := range specs {
 		t.Run(spec.name, func(t *testing.T) {
+			// parallel like the sweep's op subtests: every leg is its own world,
+			// and the one shared handler global is re-pointed under routerMu.
+			// (TestCoverageAllIsCurrent stays serial: it installs the global
+			// rpcRecorder, and top-level tests here are not parallel.)
+			t.Parallel()
 			tg := spec.targets[0]
 			for _, l := range []layer{layerCore, layerREST, layerGRPC} {
 				c := control(t, spec, l, tg, 0)

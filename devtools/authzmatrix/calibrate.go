@@ -30,7 +30,7 @@ func calibrationNames() []string { return append(slices.Clone(fix1Entries), guar
 // grepOracle is the INDEPENDENT expectation: derived by a plain text search for
 // `\.<Entry>\(` call sites under server/ (non-test) and the enclosing func of
 // each hit, done by hand on 2026-11-04 at origin/main bd16d6921 — a different
-// method from the SSA walk, so agreement is evidence and disagreement is a bug
+// method from the SSA walk, so agreement is evidence and disagreement is an error
 // in one of them. Handler suffixes are matched against Op.Handler.
 // InviteToProject/InviteGlobal have no direct server/ call site (reached only
 // through core wrappers), so the oracle only requires that SOME op reaches them.

@@ -6,14 +6,14 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | family | REST in scope | REST covered | gRPC in scope | gRPC covered |
 |---|---|---|---|---|
 | groups | 8 | 8 | 6 | 6 |
-| projects | 8 | 6 | 3 | 3 |
+| projects | 8 | 8 | 3 | 3 |
 | machine identities | 11 | 11 | 6 | 6 |
 | invitations | 4 | 4 | 0 | 0 |
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
-| secrets | 43 | 8 | 10 | 7 |
-| other | 127 | 0 | 21 | 0 |
-| **total** | **211** | **47** | **46** | **22** |
+| secrets | 43 | 29 | 10 | 10 |
+| other | 127 | 19 | 21 | 9 |
+| **total** | **211** | **89** | **46** | **34** |
 
 ## groups
 
@@ -40,8 +40,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [x] `REST DELETE /api/v1/projects/{id}` — project.delete
 - [x] `REST POST /api/v1/projects` — project.create
 - [x] `REST POST /api/v1/projects/{id}/environments` — env.create
-- [ ] `REST POST /api/v1/projects/{id}/environments/{envId}/clone` — fixture: bulk secret copy into a second environment; needs a clean target environment per case (not bound)
-- [ ] `REST POST /api/v1/projects/{id}/environments/{envId}/copy-secrets` — fixture: bulk secret copy into a second environment; needs a clean target environment per case (not bound)
+- [x] `REST POST /api/v1/projects/{id}/environments/{envId}/clone` — env.clone
+- [x] `REST POST /api/v1/projects/{id}/environments/{envId}/copy-secrets` — env.copy.secrets
 - [x] `REST POST /api/v1/projects/{id}/restore` — project.restore
 - [x] `REST POST /api/v1/projects/{projectId}/environments/{id}/restore` — env.restore
 - [x] `REST PUT /api/v1/projects/{id}` — project.update
@@ -91,59 +91,59 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 
 ## secrets
 
-- [ ] `GRPC keyorix.v1.SecretService.CreateSecret` — design: secret create was not in the Phase 2 divergent-secret set; not bound (model rule exists: secrets.write)
+- [x] `GRPC keyorix.v1.SecretService.CreateSecret` — secret.create
 - [x] `GRPC keyorix.v1.SecretService.DeleteSecret` — secret.delete
 - [x] `GRPC keyorix.v1.SecretService.GetSecretValue` — secret.value.byref, secret.value.byid
 - [x] `GRPC keyorix.v1.SecretService.GrantSecretACL` — secret.acl.grant
 - [x] `GRPC keyorix.v1.SecretService.RevokeSecretACL` — secret.acl.revoke
 - [x] `GRPC keyorix.v1.SecretService.SetSecretAutoRotate` — secret.autorotate
 - [x] `GRPC keyorix.v1.SecretService.UpdateSecret` — secret.update
-- [ ] `GRPC keyorix.v1.ShareService.RevokeShare` — fixture: needs a share-record id exposed by the fixture (s2's shares exist but their ids are not captured)
+- [x] `GRPC keyorix.v1.ShareService.RevokeShare` — share.revoke
 - [x] `GRPC keyorix.v1.ShareService.ShareSecret` — secret.share
-- [ ] `GRPC keyorix.v1.ShareService.UpdateSharePermission` — fixture: needs a share-record id exposed by the fixture (s2's shares exist but their ids are not captured)
+- [x] `GRPC keyorix.v1.ShareService.UpdateSharePermission` — share.update
 - [x] `REST DELETE /api/v1/secrets/{id}` — secret.delete
 - [x] `REST DELETE /api/v1/secrets/{id}/acl/{aclId}` — secret.acl.revoke
-- [ ] `REST DELETE /api/v1/secrets/{id}/dependencies/{depId}` — fixture: needs a secret-dependency row
+- [x] `REST DELETE /api/v1/secrets/{id}/dependencies/{depId}` — secret.dep.remove
 - [ ] `REST DELETE /api/v1/secrets/{id}/schedule` — model: time-window access schedules are not in the reference model
-- [ ] `REST DELETE /api/v1/secrets/{id}/self-share` — fixture: needs a share to the calling principal per case
-- [ ] `REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}` — fixture: needs a version comment
-- [ ] `REST DELETE /api/v1/shares/{id}` — fixture: needs a share-record id exposed by the fixture (s2's shares exist but their ids are not captured)
+- [x] `REST DELETE /api/v1/secrets/{id}/self-share` — share.self.remove
+- [x] `REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}` — secret.comment.delete
+- [x] `REST DELETE /api/v1/shares/{id}` — share.revoke
 - [x] `REST GET /api/v1/secrets/value` — secret.value.byref
 - [x] `REST GET /api/v1/secrets/{id}` — secret.value.byid
-- [ ] `REST GET /api/v1/secrets/{id}/certificate` — fixture: needs a certificate-type secret
+- [x] `REST GET /api/v1/secrets/{id}/certificate` — secret.certificate
 - [x] `REST PATCH /api/v1/secrets/{id}/auto-rotate` — secret.autorotate
 - [ ] `REST PATCH /api/v1/secrets/{id}/classification` — model: restricted-classification gate rules are not in the reference model
-- [ ] `REST PATCH /api/v1/secrets/{id}/description` — design: metadata edit outside the Phase 2 divergent-secret set; not bound
-- [ ] `REST PATCH /api/v1/secrets/{id}/retention` — design: metadata edit outside the Phase 2 divergent-secret set; not bound
-- [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-delete` — design: bulk secret operation outside the Phase 2 divergent-secret set; not bound
-- [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-rename` — design: bulk secret operation outside the Phase 2 divergent-secret set; not bound
-- [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-rotate` — design: bulk secret operation outside the Phase 2 divergent-secret set; not bound
-- [ ] `REST POST /api/v1/projects/{id}/secrets/extend-expiring` — fixture: needs expiring secrets
-- [ ] `REST POST /api/v1/projects/{id}/secrets/reassign-owner` — design: bulk secret operation outside the Phase 2 divergent-secret set; not bound
+- [x] `REST PATCH /api/v1/secrets/{id}/description` — secret.description
+- [x] `REST PATCH /api/v1/secrets/{id}/retention` — secret.retention
+- [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-delete` — design: bulk secret operation outside the initially bound secret set; not bound
+- [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-rename` — design: bulk secret operation outside the initially bound secret set; not bound
+- [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-rotate` — design: bulk secret operation outside the initially bound secret set; not bound
+- [x] `REST POST /api/v1/projects/{id}/secrets/extend-expiring` — secret.extend.expiring
+- [ ] `REST POST /api/v1/projects/{id}/secrets/reassign-owner` — design: bulk secret operation outside the initially bound secret set; not bound
 - [ ] `REST POST /api/v1/projects/{id}/secrets/render` — fixture: needs a template referencing secrets
-- [ ] `REST POST /api/v1/projects/{id}/secrets/resume-all` — design: bulk secret operation outside the Phase 2 divergent-secret set; not bound
-- [ ] `REST POST /api/v1/projects/{id}/secrets/suspend-all` — design: bulk secret operation outside the Phase 2 divergent-secret set; not bound
+- [ ] `REST POST /api/v1/projects/{id}/secrets/resume-all` — design: bulk secret operation outside the initially bound secret set; not bound
+- [ ] `REST POST /api/v1/projects/{id}/secrets/suspend-all` — design: bulk secret operation outside the initially bound secret set; not bound
 - [ ] `REST POST /api/v1/secret-access-requests` — model: restricted-classification secret-access rules are not in the reference model
 - [ ] `REST POST /api/v1/secret-access-requests/{requestId}/withdraw` — model: restricted-classification secret-access rules are not in the reference model
-- [ ] `REST POST /api/v1/secrets` — design: secret create was not in the Phase 2 divergent-secret set; not bound (model rule exists: secrets.write)
+- [x] `REST POST /api/v1/secrets` — secret.create
 - [x] `REST POST /api/v1/secrets/{id}/acl` — secret.acl.grant
-- [ ] `REST POST /api/v1/secrets/{id}/copy` — fixture: needs a clean target environment per case
-- [ ] `REST POST /api/v1/secrets/{id}/dependencies` — fixture: needs a second secret to depend on and dependency-cycle rules
-- [ ] `REST POST /api/v1/secrets/{id}/move` — fixture: needs a folder to move into
-- [ ] `REST POST /api/v1/secrets/{id}/restore` — fixture: needs a soft-deleted secret
-- [ ] `REST POST /api/v1/secrets/{id}/resume` — fixture: needs a suspended secret
-- [ ] `REST POST /api/v1/secrets/{id}/rollback` — fixture: needs a secret with two or more versions
-- [ ] `REST POST /api/v1/secrets/{id}/rotate` — design: rotation outside the Phase 2 divergent-secret set; not bound (auto-rotate is covered)
-- [ ] `REST POST /api/v1/secrets/{id}/rotation/simulate` — design: rotation outside the Phase 2 divergent-secret set; not bound (auto-rotate is covered)
+- [x] `REST POST /api/v1/secrets/{id}/copy` — secret.copy
+- [x] `REST POST /api/v1/secrets/{id}/dependencies` — secret.dep.add
+- [x] `REST POST /api/v1/secrets/{id}/move` — secret.move
+- [x] `REST POST /api/v1/secrets/{id}/restore` — secret.restore
+- [x] `REST POST /api/v1/secrets/{id}/resume` — secret.resume
+- [x] `REST POST /api/v1/secrets/{id}/rollback` — secret.rollback
+- [x] `REST POST /api/v1/secrets/{id}/rotate` — secret.rotate
+- [x] `REST POST /api/v1/secrets/{id}/rotation/simulate` — secret.rotation.simulate
 - [x] `REST POST /api/v1/secrets/{id}/share` — secret.share
-- [ ] `REST POST /api/v1/secrets/{id}/suspend` — design: lifecycle op outside the Phase 2 divergent-secret set; not bound
-- [ ] `REST POST /api/v1/secrets/{id}/transfer-ownership` — model: ownership semantics are open design question D4 (REPORT.md); not modelled until decided
-- [ ] `REST POST /api/v1/secrets/{id}/versions/{versionId}/comments` — fixture: needs a version id exposed by the fixture
+- [x] `REST POST /api/v1/secrets/{id}/suspend` — secret.suspend
+- [ ] `REST POST /api/v1/secrets/{id}/transfer-ownership` — model: ownership semantics are not in the reference model
+- [x] `REST POST /api/v1/secrets/{id}/versions/{versionId}/comments` — secret.comment.add
 - [ ] `REST PUT /api/v1/secret-access-requests/{requestId}` — model: restricted-classification secret-access rules are not in the reference model
 - [x] `REST PUT /api/v1/secrets/{id}` — secret.update
 - [ ] `REST PUT /api/v1/secrets/{id}/schedule` — model: time-window access schedules are not in the reference model
-- [ ] `REST PUT /api/v1/secrets/{id}/tags` — design: metadata edit outside the Phase 2 divergent-secret set; not bound
-- [ ] `REST PUT /api/v1/shares/{id}` — fixture: needs a share-record id exposed by the fixture (s2's shares exist but their ids are not captured)
+- [x] `REST PUT /api/v1/secrets/{id}/tags` — secret.tags
+- [x] `REST PUT /api/v1/shares/{id}` — share.update
 
 ## other
 
@@ -159,15 +159,15 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `GRPC keyorix.v1.DynamicSecretService.RenewLease` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `GRPC keyorix.v1.DynamicSecretService.RevokeLease` — fixture: needs a dynamic-secret backend (database/cloud) configured
-- [ ] `GRPC keyorix.v1.RoleService.AssignRole` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.RoleService.CreateRole` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.RoleService.DeleteRole` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.RoleService.RemoveRole` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.RoleService.UpdateRole` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.UserService.CreateUser` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.UserService.DeleteUser` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.UserService.ReissueOneTimePassword` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.UserService.UpdateUser` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
+- [x] `GRPC keyorix.v1.RoleService.AssignRole` — userrole.assign
+- [x] `GRPC keyorix.v1.RoleService.CreateRole` — role.create
+- [x] `GRPC keyorix.v1.RoleService.DeleteRole` — role.delete
+- [x] `GRPC keyorix.v1.RoleService.RemoveRole` — userrole.remove
+- [x] `GRPC keyorix.v1.RoleService.UpdateRole` — role.update
+- [x] `GRPC keyorix.v1.UserService.CreateUser` — user.create, user.create.assign
+- [x] `GRPC keyorix.v1.UserService.DeleteUser` — user.delete
+- [x] `GRPC keyorix.v1.UserService.ReissueOneTimePassword` — user.reissue.otp
+- [x] `GRPC keyorix.v1.UserService.UpdateUser` — user.update
 - [ ] `REST DELETE /api/v1/alert-escalation-policies/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST DELETE /api/v1/auth/sessions/{id}` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
 - [ ] `REST DELETE /api/v1/auth/tokens/expired` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
@@ -180,13 +180,13 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST DELETE /api/v1/notification-channels/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST DELETE /api/v1/rejection-reason-templates/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST DELETE /api/v1/risk-exceptions/{id}` — model: risk-exception approval rules are not in the reference model
-- [ ] `REST DELETE /api/v1/roles/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST DELETE /api/v1/roles/{id}/permissions/{permissionId}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
+- [x] `REST DELETE /api/v1/roles/{id}` — role.delete
+- [x] `REST DELETE /api/v1/roles/{id}/permissions/{permissionId}` — role.perm.remove
 - [ ] `REST DELETE /api/v1/rotation-policies/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST DELETE /api/v1/secret-templates/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST DELETE /api/v1/sod/policies/{id}` — model: separation-of-duties conflict rules are not in the reference model
-- [ ] `REST DELETE /api/v1/user-roles` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST DELETE /api/v1/users/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
+- [x] `REST DELETE /api/v1/user-roles` — userrole.remove
+- [x] `REST DELETE /api/v1/users/{id}` — user.delete
 - [ ] `REST DELETE /scim/v2/Groups/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
 - [ ] `REST DELETE /scim/v2/Users/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
 - [ ] `REST GET /auth/saml/{provider}/login` — fixture: needs a configured SAML identity provider
@@ -253,22 +253,22 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/rejection-reason-templates` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/risk-exceptions` — model: risk-exception approval rules are not in the reference model
 - [ ] `REST POST /api/v1/risk-exceptions/{id}/approve` — model: risk-exception approval rules are not in the reference model
-- [ ] `REST POST /api/v1/roles` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/roles/{id}/permissions` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
+- [x] `REST POST /api/v1/roles` — role.create
+- [x] `REST POST /api/v1/roles/{id}/permissions` — role.perm.add
 - [ ] `REST POST /api/v1/rotation-policies` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/secret-templates` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/secret-templates/{id}/apply` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/sod/policies` — model: separation-of-duties conflict rules are not in the reference model
-- [ ] `REST POST /api/v1/user-roles` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/users` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/users/{id}/reactivate` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/users/{id}/reissue-one-time-password` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/users/{id}/require-password-reset` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/users/{id}/resend-setup-link` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/users/{id}/restore` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/users/{id}/revoke-sessions` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/users/{id}/suspend` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/users/{id}/unlock` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
+- [x] `REST POST /api/v1/user-roles` — userrole.assign
+- [x] `REST POST /api/v1/users` — user.create, user.create.assign
+- [x] `REST POST /api/v1/users/{id}/reactivate` — user.reactivate
+- [x] `REST POST /api/v1/users/{id}/reissue-one-time-password` — user.reissue.otp
+- [x] `REST POST /api/v1/users/{id}/require-password-reset` — user.require.reset
+- [x] `REST POST /api/v1/users/{id}/resend-setup-link` — user.resend.setup
+- [x] `REST POST /api/v1/users/{id}/restore` — user.restore
+- [x] `REST POST /api/v1/users/{id}/revoke-sessions` — user.revoke.sessions
+- [x] `REST POST /api/v1/users/{id}/suspend` — user.suspend
+- [x] `REST POST /api/v1/users/{id}/unlock` — user.unlock
 - [ ] `REST POST /auth/login` — design: pre-authentication endpoint (establishes the credential); no principal whose authorization the layers could disagree on
 - [ ] `REST POST /auth/logout` — design: acts only on the caller's own session; not an authorization decision
 - [ ] `REST POST /auth/mfa/verify` — fixture: needs an MFA-enrolled principal mid-login (MFA deferred to the not-yet list)
@@ -288,11 +288,11 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST PUT /api/v1/auth/profile` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
 - [ ] `REST PUT /api/v1/notification-channels/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST PUT /api/v1/notification-channels/{id}/retry-policy` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST PUT /api/v1/roles/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
+- [x] `REST PUT /api/v1/roles/{id}` — role.update
 - [ ] `REST PUT /api/v1/rotation-policies/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST PUT /api/v1/secret-templates/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST PUT /api/v1/users/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST PUT /api/v1/users/{id}/roles` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
+- [x] `REST PUT /api/v1/users/{id}` — user.update
+- [x] `REST PUT /api/v1/users/{id}/roles` — user.roles.set
 - [ ] `REST PUT /scim/v2/Groups/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
 - [ ] `REST PUT /scim/v2/Users/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
 

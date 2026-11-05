@@ -85,6 +85,10 @@ func coveredKeys(tb testing.TB) map[string][]string {
 			restRoutes = append(restRoutes, strings.TrimPrefix(op.Key, "REST "))
 		}
 	}
+	// One gRPC leg serves every probe: only WHICH RPC an op calls is recorded,
+	// and every op's gRPC leg makes its call whatever the database state.
+	lg := newLeg(tb, layerGRPC)
+	defer lg.close()
 	for _, spec := range withDerived(tb, ops()) {
 		if r := opRoute(fx, spec, restRoutes); r != "" {
 			out["REST "+r] = append(out["REST "+r], spec.name)
@@ -97,9 +101,7 @@ func coveredKeys(tb testing.TB) map[string][]string {
 			rpcRecorderMu.Lock()
 			rpcRecorder = func(m string) { seen = append(seen, m) }
 			rpcRecorderMu.Unlock()
-			lg := newLeg(tb, layerGRPC)
 			err := spec.grpc(grpcCtx(fx.principals[pkGlobalAdmin]), lg, t, 0)
-			lg.close()
 			rpcRecorderMu.Lock()
 			rpcRecorder = nil
 			rpcRecorderMu.Unlock()
