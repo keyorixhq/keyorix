@@ -1067,28 +1067,43 @@ func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage
 // or a second row under an id a batch ended on (a schema edited to drop the
 // primary key). SQLite's INTEGER PRIMARY KEY and PostgreSQL's bigserial both
 // accept an explicit id 0, so such a row would sit in the table unverified.
-// One COUNT per walk, not per batch: from the chain start every row with an id
-// up to lastID or a NULL id, for a pinned segment the rows after its seed up
-// to lastID. The offline verifier makes the same check
-// (INV-AUDITVERIFY-every-row-walked).
+// One COUNT per walk, not per batch (auditRowsInWalkRange). The offline
+// verifier makes the same check (INV-AUDITVERIFY-every-row-walked).
 func (ls *LocalStorage) auditRowsOutsideWalk(ctx context.Context, seg storage.AuditChainSegment, lastID uint, walked int, result *storage.AuditChainVerification) (broke bool, err error) {
-	q := ls.db.WithContext(ctx).Model(&models.AuditEvent{})
-	if seg.AfterID > 0 {
-		q = q.Where("id > ? AND id <= ?", seg.AfterID, lastID)
+	held, want, err := auditRowsInWalkRange(ls.db.WithContext(ctx), seg.AfterID, lastID, walked)
+	if err != nil || held == want {
+		return false, err
+	}
+	brokenChain(result, lastID, auditRowsOutsideWalkReason(held, want, lastID))
+	return true, nil
+}
+
+// auditRowsInWalkRange counts the rows a walk from afterID through lastID had
+// to account for (held) and how many it did (want):
+//   - from the chain start, every row with an id up to lastID or a NULL id;
+//   - for a pinned segment (afterID > 0: the incremental tail check and every
+//     rolling-cycle segment after the first), its seed row, the rows after it
+//     up to lastID, and every row no keyset walk reaches (id < 1, NULL id).
+//     Counting only the rows after the seed left an id 0 row outside every
+//     request-time check until the rolling cycle next walked from the chain
+//     start; a second row under the seed's id was outside every walk.
+func auditRowsInWalkRange(db *gorm.DB, afterID, lastID uint, walked int) (held, want int64, err error) {
+	q := db.Model(&models.AuditEvent{})
+	want = int64(walked)
+	if afterID > 0 {
+		q = q.Where("id IS NULL OR id < 1 OR (id >= ? AND id <= ?)", afterID, lastID)
+		want++ // the seed row, checked by pinAuditChainSeed, not walked
 	} else {
 		q = q.Where("id IS NULL OR id <= ?", lastID)
 	}
-	var held int64
-	if err := q.Count(&held).Error; err != nil {
-		return false, err
-	}
-	if held == int64(walked) {
-		return false, nil
-	}
-	brokenChain(result, lastID, fmt.Sprintf(
-		"audit_events holds %d row(s) in the walked range through #%d (or with a NULL id), but the id-ordered walk visited %d: rows with id 0, a NULL id or a duplicated id are outside the chain (inserted directly, or through an altered schema)",
-		held, lastID, walked))
-	return true, nil
+	err = q.Count(&held).Error
+	return held, want, err
+}
+
+func auditRowsOutsideWalkReason(held, want int64, lastID uint) string {
+	return fmt.Sprintf(
+		"audit_events holds %d row(s) in the walked range through #%d (or with an id below 1 or NULL), but the id-ordered walk accounts for %d: rows with id 0, a NULL id or a duplicated id are outside the chain (inserted directly, or through an altered schema)",
+		held, lastID, want)
 }
 
 // pinAuditChainSeed checks a segment's seed row before the walk continues past
@@ -1261,6 +1276,7 @@ func refuseIfAuditChainBroken(tx *gorm.DB, anchor *storage.AuditChainAnchor) err
 	started := false
 	firstBatch := true
 	var lastID uint
+	walked := 0
 
 	for {
 		var batch []*models.AuditEvent
@@ -1272,7 +1288,7 @@ func refuseIfAuditChainBroken(tx *gorm.DB, anchor *storage.AuditChainAnchor) err
 			return err
 		}
 		if len(batch) == 0 {
-			return nil
+			return refuseIfAuditRowsOutsideWalk(tx, lastID, walked)
 		}
 		if firstBatch {
 			firstBatch = false
@@ -1319,11 +1335,24 @@ func refuseIfAuditChainBroken(tx *gorm.DB, anchor *storage.AuditChainAnchor) err
 			prevHash = e.EntryHash
 		}
 
+		walked += len(batch)
 		lastID = batch[len(batch)-1].ID
 		if len(batch) < auditChainVerifyBatch {
-			return nil
+			return refuseIfAuditRowsOutsideWalk(tx, lastID, walked)
 		}
 	}
+}
+
+// refuseIfAuditRowsOutsideWalk is the pre-flight's twin of auditRowsOutsideWalk:
+// an id 0, NULL or duplicated id row is outside the walk, so the re-encode
+// would leave it outside the rewritten chain instead of refusing.
+func refuseIfAuditRowsOutsideWalk(tx *gorm.DB, lastID uint, walked int) error {
+	held, want, err := auditRowsInWalkRange(tx, 0, lastID, walked)
+	if err != nil || held == want {
+		return err
+	}
+	return fmt.Errorf("refusing to re-encode the audit chain: %s. Investigate before migrating",
+		auditRowsOutsideWalkReason(held, want, lastID))
 }
 
 // errAuditMigrationDryRun is a sentinel used to force MigrateAuditChainEncoding's
