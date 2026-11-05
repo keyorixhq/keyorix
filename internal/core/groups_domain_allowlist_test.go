@@ -53,9 +53,11 @@ func TestAddUserToGroup_RejectsDisallowedDomain_ProjectScopedGrant(t *testing.T)
 
 	h.CoreService.SetMembershipDomainAllowlist([]string{"allowed.com"})
 
-	// actorID 99 is arbitrary/unprivileged: domain_gate_role is not an
-	// admin-tier role name, so requireAuthorityForRole imposes no ceiling here
-	// — only the domain-allowlist gate under test is exercised.
+	// OWNERSHIP-ORACLE-1: the domain check runs after the granter ceiling, so
+	// actor 99 must be an authorized granter (admin bundles roles.assign) for
+	// the allowlist gate under test to be reached.
+	h.AssignUserRole(t, 99, 2 /* admin, bundles roles.assign */, &projID)
+
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, mallory.ID, 60, proj)
 	require.Error(t, err, "adding a disallowed-domain user to a group that confers project access must be refused")
 	assert.Contains(t, err.Error(), "not on the allowlist")
@@ -88,6 +90,8 @@ func TestAddUserToGroup_RejectsDisallowedDomain_GlobalMembershipReachesProjectGr
 	trent := createTestUserWithEmail(t, h, "trent", "trent@evil.com", 91)
 
 	h.CoreService.SetMembershipDomainAllowlist([]string{"allowed.com"})
+	// OWNERSHIP-ORACLE-1: an authorized granter, see the test above.
+	h.AssignUserRole(t, 99, 2 /* admin, bundles roles.assign */, &projID)
 
 	// projectID 0 == a GLOBAL membership, not a project-scoped one.
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, trent.ID, 61, 0)

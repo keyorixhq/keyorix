@@ -297,7 +297,8 @@ after the break is not notarised: decide soon.
      gaps), or for a truncation the missing certified head. A wrong id is refused.
    - `--anchor` binds the acceptance to an `export-checkpoint` file taken after the lost rows
      existed. It must authenticate under the checkpoint key and cover the lost range, and it
-     measures the loss. `--anchor-sha256` only records the digest of one kept elsewhere.
+     measures the loss. `--anchor-sha256` only records the digest of one kept elsewhere;
+     `verify-audit --anchor <that file>` checks it later (below).
    - It writes the seal record, **one** `system.audit_loss_accepted` event, a fresh checkpoint
      and high-water mark of what survives, and the verification state, in that order. If it stops
      part way the chain reads broken until the acceptance is completed. Run the command again
@@ -332,6 +333,40 @@ after the break is not notarised: decide soon.
    | `keyorix audit verify`, `GET /api/v1/audit/verify`, posture | `not_proven` until a full verification completes, then `sealed` (`state_reason` names each seal); `valid` is false |
    | `keyorix-server admin verify-audit --checkpoint-key-file ...` | `Verdict: SEALED`, exit code 4, the seals listed; without the key, BROKEN (a seal is only trusted with the key) |
    | Deleted, altered, moved or replayed seal record, removed seal event, rows removed or put back around the gap | BROKEN, on both verifiers (except a rollback that reads as an unfinished acceptance, section 8) |
+
+   `verify-audit` lists each seal with the rows it recorded as `unpinned` and the anchor it
+   names. Pass the anchor file you kept with `--anchor`: the run takes its SHA-256, the same way
+   `accept-loss` does, and compares it with the seal's digest. For a seal accepted with
+   `--anchor-sha256`, this is the first time anything checks that file. For example, a gap
+   after #3 accepted with `--anchor-sha256`, verified with that file:
+
+   ```text
+   Verdict: SEALED
+   ...
+   Accepted audit losses (seals): 1 recorded, authenticated: true
+     seal #1 at 2026-11-04T15:55:43Z by ops: 1 event(s) lost; reason: INC-12; evidence sha256 ff661f5c...
+       gap after #3, resuming at #5
+       unpinned at acceptance: audit events #1 through #3 (nothing signed pinned them; a rewrite before the seal cannot be excluded)
+       anchor sha256 ff661f5c... (recorded by digest only): matches the supplied --anchor, which authenticates and covers the lost range
+   ...
+   External anchor bundle (--anchor):
+     sha256 ff661f5c...
+     authenticated and cross-checked against the live chain
+   ```
+
+   The anchor line ends in one of these (`--json`: `seals[].anchor.check`):
+
+   | `check` | Printed | Meaning |
+   |---|---|---|
+   | `not_supplied` | `not checked: pass that file with --anchor` | no `--anchor` given |
+   | `differs` | `DIFFERS from the supplied --anchor (sha256 ...)` | another file: find the one the seal names |
+   | `unauthenticated` | `matches the supplied --anchor, but the file did not authenticate ...` | add `--checkpoint-key-file` (or `--tsa-roots`) |
+   | `not_covering` | `matches ..., but it certifies the chain through #N only ...` | the file predates the lost rows and is no evidence for this loss |
+   | `matches` | `matches the supplied --anchor, which authenticates and covers the lost range` | the recorded anchor is confirmed |
+
+   None of these changes the verdict or the exit code (4). A digest-only anchor that is not
+   `matches`, and every `unpinned` span, are listed under "What this run does NOT prove". The
+   `unpinned` rows are the ones to compare with your backup or an off-host anchor.
 
    Then write and export a fresh anchor (above) and keep it with the evidence. A `rotate-kek` or
    `migrate-provider` carries the seal over; if the seal record cannot be trusted when the key

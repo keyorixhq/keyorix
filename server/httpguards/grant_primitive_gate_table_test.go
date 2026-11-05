@@ -104,8 +104,11 @@ var grantPrimitives = []grantPrimitive{
 		core: []coreSpec{
 			// AddProjectMember has no gate of its own; its only write is AssignUserRole (gated above).
 			{file: "project_members.go", fn: "addProjectMember", gates: []string{"assignUserRole"}}, // AddProjectMember delegates here; assignUserRole is gated above
-			{file: "project_members.go", fn: "SetProjectMemberRole", none: "removes the member's existing roles (removeUserRoleUnguarded) BEFORE AssignUserRole's " +
-				"roles.assign/ceiling check runs, so the removal half is protected only by the route gate; reachable from no other caller today"},
+			// SetProjectMemberRole delegates to replaceUserRoleSet, which judges the ceiling
+			// (requireGranterHoldsRoleSet) before any removal (#3488); for a new member it also
+			// runs requireGranterHoldsRolePermissions before the domain check loads the target
+			// user (OWNERSHIP-ORACLE-1). Its "role confirmed unchanged" no-op writes only an audit row.
+			{file: "project_members.go", fn: "SetProjectMemberRole", gates: []string{"requireGranterHoldsRolePermissions", "replaceUserRoleSet"}},
 			{file: "project_members.go", fn: "RemoveProjectMember", none: "removal; protected only by the route's roles.assign gate"},
 		},
 		callers: map[string]callerGate{

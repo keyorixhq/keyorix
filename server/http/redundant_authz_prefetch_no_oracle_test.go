@@ -69,7 +69,7 @@ func setupNoOracleFixture(t *testing.T) (c *core.KeyorixCore, secretID uint, att
 	// The attacker: a real, authenticated user with zero grants anywhere —
 	// no project role, no share, no ACL, no global permission. This is the
 	// population handleScopeResolutionError/authorizeScopedTarget's
-	// "AuthorizedAtGlobalScope" check must say no to, for BOTH the
+	// global-scope probe must say no to, for BOTH the
 	// existing-secret and nonexistent-secret branches to collapse to the
 	// same response.
 	attacker, err := c.CreateUser(ctx, &core.CreateUserRequest{
