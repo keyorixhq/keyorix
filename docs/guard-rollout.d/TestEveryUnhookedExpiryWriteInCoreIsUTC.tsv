@@ -1,0 +1,1 @@
+TestEveryUnhookedExpiryWriteInCoreIsUTC	internal/core/guards	#3966	widened to field assignments, UpdateColumn/Updates column writes and LastUsedAt/LastSeenAt (UTC-GUARD-KEK-TAILS-1), report-only until its first green nightly on main

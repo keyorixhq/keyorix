@@ -25,17 +25,33 @@
 //     (`now := c.now().UTC(); expires := now.Add(ttl)`; `u := exp.UTC(); exp = &u`; at most 4
 //     hops). A `.UTC()` call that only formats a value (an audit string) does not count.
 //
+// UTC-GUARD-KEK-TAILS-1 item 4 widened the recognised writes beyond composite literals, which is
+// why the login session mint and the Touch* stampers were never listed:
+//   - an assignment `x.F = v` (also `a.F, b.F = v, w`) for F named Expiration, ending in ExpiresAt,
+//     or LastUsedAt / LastSeenAt. The receiver's model type is resolved textually, only when the
+//     function declares it (a `*models.T` parameter, `var x models.T`, `x := &models.T{}` or
+//     `new(models.T)`); a receiver whose type is not declared that way is reported as type
+//     "unknown" and is not exempted by a hook, so it needs `.UTC()` or an exception row.
+//     Assigning `nil` is not a time and is accepted;
+//   - a column write: `UpdateColumn("last_used_at", v)`, `Update(...)`, `Updates(map[string]any{
+//     "expires_at": v})` (also UpdateColumns) with a string-literal column named expires_at,
+//     *_expires_at, expiration, last_used_at or last_seen_at. The Type is "column".
+// LastUsedAt / LastSeenAt are now tracked in composite literals and assignments too.
+//
 // What it does NOT catch:
-//   - assignments outside a composite literal (`x.ExpiresAt = v`, `Updates(map[string]any{...})`),
-//     and literals built through a helper or a copy of another struct;
+//   - a column write whose column name is not a string literal in the call or in a map literal
+//     passed to it (a map built earlier and passed by name), a GORM clause.Assignments, a raw SQL
+//     string, and literals built through a helper or a copy of another struct;
+//   - a time handed to a function that stores it (`TouchPAT(ctx, id, t)`): the store layer owns the
+//     write and sits outside the core family;
 //   - data flow: the identifier tracing is textual and per-function, so `.UTC()` applied to a
 //     different variable with the same name in another branch satisfies it;
-//   - fields that are not named Expiration / *ExpiresAt (CreatedAt, UpdatedAt, ResolvedAt, ...), and GORM's
+//   - fields that are not named Expiration / *ExpiresAt / LastUsedAt / LastSeenAt (CreatedAt, UpdatedAt, ResolvedAt, ...), and GORM's
 //     auto-timestamps, which NowFunc fills in the host zone after every hook has run;
 //   - code outside the core family (server layers, CLI).
 // Wrong-reason exemptions are checked too: an exception that no longer matches any hit fails.
 //
-// Report-only on its first day (docs/guard-rollout.d/TestEveryUnhookedExpiryWriteInCoreIsUTC.tsv).
+// The widening is report-only on its first day (docs/guard-rollout.d/TestEveryUnhookedExpiryWriteInCoreIsUTC.tsv).
 
 package guards
 
@@ -136,9 +152,20 @@ type expiryWrite struct {
 
 func (w expiryWrite) key() string { return w.File + ":" + w.Func + ":" + w.Type + "." + w.Field }
 
-// scanExpiryWrites returns every keyed Expir* field write to a models.T literal in f, for T and
-// field pairs the hook inventory does not normalise.
+// scanExpiryWrites returns every tracked time write in f (composite-literal keys, field
+// assignments and column writes), for T and field pairs the hook inventory does not normalise.
 func scanExpiryWrites(fset *token.FileSet, f *ast.File, file string, inv map[string]map[string]bool) []expiryWrite {
+	out := scanExpiryLiteralWrites(fset, f, file, inv)
+	for _, decl := range f.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+			out = append(out, scanAssignedAndColumnWrites(fset, fn, file, inv)...)
+		}
+	}
+	return out
+}
+
+// scanExpiryLiteralWrites returns every keyed tracked-field write to a models.T literal in f.
+func scanExpiryLiteralWrites(fset *token.FileSet, f *ast.File, file string, inv map[string]map[string]bool) []expiryWrite {
 	var out []expiryWrite
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -164,7 +191,7 @@ func scanExpiryWrites(fset *token.FileSet, f *ast.File, file string, inv map[str
 					continue
 				}
 				key, ok := kv.Key.(*ast.Ident)
-				if !ok || !isExpiryFieldName(key.Name) || inv[typ][key.Name] {
+				if !ok || !isUTCTrackedField(key.Name) || inv[typ][key.Name] {
 					continue
 				}
 				out = append(out, expiryWrite{
@@ -184,6 +211,154 @@ func scanExpiryWrites(fset *token.FileSet, f *ast.File, file string, inv map[str
 // HygieneTrendSnapshot.ExpiredPATs.
 func isExpiryFieldName(name string) bool {
 	return name == "Expiration" || strings.HasSuffix(name, "ExpiresAt")
+}
+
+// isUTCTrackedField: the expiry fields plus the activity stamps compared against the UTC "now".
+func isUTCTrackedField(name string) bool {
+	return isExpiryFieldName(name) || name == "LastUsedAt" || name == "LastSeenAt"
+}
+
+// isUTCTrackedColumn is the column-name spelling of isUTCTrackedField.
+func isUTCTrackedColumn(col string) bool {
+	return col == "expiration" || col == "expires_at" || strings.HasSuffix(col, "_expires_at") ||
+		col == "last_used_at" || col == "last_seen_at"
+}
+
+// modelsTypeName is T for `models.T`, `*models.T`, `&models.T{...}`, `models.T{...}` and
+// `new(models.T)`, else "".
+func modelsTypeName(e ast.Expr) string {
+	switch x := stripExpr(e).(type) {
+	case *ast.SelectorExpr:
+		if pkg, ok := x.X.(*ast.Ident); ok && pkg.Name == "models" {
+			return x.Sel.Name
+		}
+	case *ast.CompositeLit:
+		if x.Type != nil {
+			return modelsTypeName(x.Type)
+		}
+	case *ast.CallExpr:
+		if fun, ok := x.Fun.(*ast.Ident); ok && fun.Name == "new" && len(x.Args) == 1 {
+			return modelsTypeName(x.Args[0])
+		}
+	}
+	return ""
+}
+
+// declaredModelTypes maps a local identifier to the models type the function declares it as
+// (parameter, `var x models.T`, `x := &models.T{}` / `new(models.T)`). Anything else is absent.
+func declaredModelTypes(fn *ast.FuncDecl) map[string]string {
+	types := map[string]string{}
+	addParams := func(ft *ast.FuncType) {
+		if ft == nil || ft.Params == nil {
+			return
+		}
+		for _, p := range ft.Params.List {
+			if typ := modelsTypeName(p.Type); typ != "" {
+				for _, n := range p.Names {
+					types[n.Name] = typ
+				}
+			}
+		}
+	}
+	addParams(fn.Type)
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncLit:
+			addParams(x.Type)
+		case *ast.ValueSpec:
+			if typ := modelsTypeName(x.Type); typ != "" && x.Type != nil {
+				for _, name := range x.Names {
+					types[name.Name] = typ
+				}
+			}
+		case *ast.AssignStmt:
+			if len(x.Lhs) == len(x.Rhs) {
+				for i, lhs := range x.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok {
+						typ := modelsTypeName(x.Rhs[i])
+						if rhs, ok := stripExpr(x.Rhs[i]).(*ast.Ident); ok && typ == "" {
+							typ = types[rhs.Name] // `next := *cur` copies cur's declared type
+						}
+						if typ != "" {
+							types[id.Name] = typ
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return types
+}
+
+var columnWriteMethods = map[string]bool{"Update": true, "UpdateColumn": true, "Updates": true, "UpdateColumns": true}
+
+// scanAssignedAndColumnWrites finds `x.F = v` assignments and UpdateColumn / Updates column writes
+// of the tracked fields in fn (see the file comment for what is and is not recognised).
+func scanAssignedAndColumnWrites(fset *token.FileSet, fn *ast.FuncDecl, file string, inv map[string]map[string]bool) []expiryWrite {
+	var out []expiryWrite
+	declared := declaredModelTypes(fn)
+	add := func(pos token.Pos, typ, field string, value ast.Expr) {
+		out = append(out, expiryWrite{
+			File: file, Func: fn.Name.Name, Type: typ, Field: field,
+			Line: fset.Position(pos).Line,
+			UTC:  tracesToUTC(value, fn.Body, 0),
+		})
+	}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			if len(x.Lhs) != len(x.Rhs) {
+				return true
+			}
+			for i, lhs := range x.Lhs {
+				sel, ok := lhs.(*ast.SelectorExpr)
+				if !ok || !isUTCTrackedField(sel.Sel.Name) || isNilIdent(x.Rhs[i]) {
+					continue
+				}
+				typ := "unknown"
+				if root, ok := sel.X.(*ast.Ident); ok && declared[root.Name] != "" {
+					typ = declared[root.Name]
+				}
+				if inv[typ][sel.Sel.Name] {
+					continue
+				}
+				add(sel.Pos(), typ, sel.Sel.Name, x.Rhs[i])
+			}
+		case *ast.CallExpr:
+			sel, ok := x.Fun.(*ast.SelectorExpr)
+			if !ok || !columnWriteMethods[sel.Sel.Name] {
+				return true
+			}
+			for i, arg := range x.Args {
+				if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.STRING && i+1 < len(x.Args) {
+					if col := strings.Trim(lit.Value, "`\""); isUTCTrackedColumn(col) {
+						add(lit.Pos(), "column", col, x.Args[i+1])
+					}
+				}
+				m, ok := arg.(*ast.CompositeLit)
+				if !ok {
+					continue
+				}
+				if _, isMap := m.Type.(*ast.MapType); !isMap {
+					continue
+				}
+				for _, el := range m.Elts {
+					kv, ok := el.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					if k, ok := kv.Key.(*ast.BasicLit); ok && k.Kind == token.STRING {
+						if col := strings.Trim(k.Value, "`\""); isUTCTrackedColumn(col) {
+							add(k.Pos(), "column", col, kv.Value)
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return out
 }
 
 func stripExpr(e ast.Expr) ast.Expr {
@@ -301,6 +476,55 @@ func TestExpiryWriteScanner_Calibration(t *testing.T) {
 		got := scan(src)
 		if len(got) != 1 || !got[0].UTC {
 			t.Errorf("%s: want one UTC-traced write, got %+v", name, got)
+		}
+	}
+
+	// UTC-GUARD-KEK-TAILS-1 item 4: assignments and column writes. Red then green for each shape.
+	for name, src := range map[string]string{
+		"assign pointer as minted":  "package core\nfunc f(s *models.Session) {\n\texp := c.now().Add(ttl)\n\ts.ExpiresAt = &exp\n}",
+		"assign last_used field":    "package core\nfunc f(p *models.PersonalAccessToken, t time.Time) {\n\tp.LastUsedAt = &t\n}",
+		"assign undeclared type":    "package core\nfunc f(t time.Time) {\n\tx, _ := c.load()\n\tx.LastSeenAt = &t\n}",
+		"UpdateColumn last_used_at": "package core\nfunc f(db *gorm.DB) {\n\tdb.UpdateColumn(\"last_used_at\", time.Now())\n}",
+		"Updates map expires_at":    "package core\nfunc f(db *gorm.DB, e time.Time) {\n\tdb.Updates(map[string]any{\"expires_at\": e})\n}",
+		"Update last_seen_at":       "package core\nfunc f(db *gorm.DB) {\n\tdb.Update(\"last_seen_at\", c.now())\n}",
+	} {
+		got := scan(src)
+		if len(got) != 1 || got[0].UTC {
+			t.Errorf("%s: want one non-UTC write, got %+v", name, got)
+		}
+	}
+	for name, src := range map[string]string{
+		"assign pointer UTC":        "package core\nfunc f(s *models.Session) {\n\texp := c.now().Add(ttl).UTC()\n\ts.ExpiresAt = &exp\n}",
+		"assign last_used UTC":      "package core\nfunc f(p *models.PersonalAccessToken, t time.Time) {\n\tu := t.UTC()\n\tp.LastUsedAt = &u\n}",
+		"UpdateColumn UTC":          "package core\nfunc f(db *gorm.DB) {\n\tdb.UpdateColumn(\"last_used_at\", time.Now().UTC())\n}",
+		"Updates map UTC":           "package core\nfunc f(db *gorm.DB, e time.Time) {\n\tdb.Updates(map[string]any{\"expires_at\": e.UTC()})\n}",
+		"copy of a declared struct": "package core\nfunc f(cur *models.Session, e *time.Time) {\n\tn := *cur\n\tn.ExpiresAt = e\n}",
+	} {
+		got := scan(src)
+		switch name {
+		case "copy of a declared struct":
+			// Session has no hook in the calibration inventory, so the copy is a (non-UTC) write.
+			if len(got) != 1 || got[0].UTC || got[0].Type != "Session" {
+				t.Errorf("%s: want one non-UTC Session write, got %+v", name, got)
+			}
+		default:
+			if len(got) != 1 || !got[0].UTC {
+				t.Errorf("%s: want one UTC-traced write, got %+v", name, got)
+			}
+		}
+	}
+	// A hooked model's assignment (declared type, copy of it), a nil assignment, an unrelated column
+	// and an unrelated method are not writes the guard owns.
+	for name, src := range map[string]string{
+		"hooked assign":       "package core\nfunc f(p *models.PersonalAccessToken, e *time.Time) {\n\tp.ExpiresAt = e\n}",
+		"hooked copy":         "package core\nfunc f(cur *models.PersonalAccessToken, e *time.Time) {\n\tn := *cur\n\tn.ExpiresAt = e\n}",
+		"nil assign":          "package core\nfunc f(s *models.Session) {\n\ts.ExpiresAt = nil\n}",
+		"other column":        "package core\nfunc f(db *gorm.DB) {\n\tdb.UpdateColumn(\"revoked_at\", time.Now())\n}",
+		"non-update method":   "package core\nfunc f(db *gorm.DB) {\n\tdb.Where(\"expires_at\", time.Now())\n}",
+		"untracked field set": "package core\nfunc f(s *models.Session) {\n\ts.CreatedAt = time.Now()\n}",
+	} {
+		if got := scan(src); len(got) != 0 {
+			t.Errorf("%s: want no write, got %+v", name, got)
 		}
 	}
 
