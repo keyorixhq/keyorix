@@ -15,6 +15,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"strconv"
 	"testing"
@@ -22,6 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,8 +71,6 @@ func mtCeilingFixture(t *testing.T, targetRoleName string) (*httptest.Server, st
 	// RequireScopedPermission(roles.assign), already requires to reach the handler
 	// at all) -- proving the ceiling's own decision, not the route gate's.
 	require.NoError(t, c.AssignMachineRole(ctx, actorMachine.ID, roleIDByName["project_admin"], core.Scope{ProjectID: proj.ID}, admin.ID, false))
-	actorTok, err := c.IssueMachineToken(ctx, proj.ID, actorMachine.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "mtc-actor-token"})
-	require.NoError(t, err)
 
 	target, err := c.CreateMachineIdentity(ctx, proj.ID, "mtc-target", "ci", "", "", admin.ID, 0)
 	require.NoError(t, err)
@@ -83,7 +83,29 @@ func mtCeilingFixture(t *testing.T, targetRoleName string) (*httptest.Server, st
 	require.NoError(t, err)
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
-	return srv, actorTok.PlainToken, proj.ID, target.ID
+
+	// The actor's own token is minted by the human admin through the same HTTP
+	// route, not by calling core.IssueMachineToken directly, so this file compiles
+	// against the pre-fix signature too and its red/green proof is a real 500/201
+	// (and 500/403) difference, not a compile error.
+	const adminSession = "mtc-ceiling-admin-session"
+	_, err = c.Storage().CreateSession(ctx, &models.Session{UserID: admin.ID, SessionToken: adminSession})
+	require.NoError(t, err)
+	status, body := doMachineRequest(t, srv, adminSession, "POST", machineTokensPath(proj.ID, actorMachine.ID), []byte(`{"name":"mtc-actor-token"}`))
+	require.Equal(t, 201, status, "admin must be able to mint the actor machine's token: %s", body)
+	var minted struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &minted))
+	require.NotEmpty(t, minted.Data.Token)
+	return srv, minted.Data.Token, proj.ID, target.ID
+}
+
+func machineTokensPath(projectID, machineID uint) string {
+	return "/api/v1/projects/" + strconv.FormatUint(uint64(projectID), 10) +
+		"/machine-identities/" + strconv.FormatUint(uint64(machineID), 10) + "/tokens"
 }
 
 // TestIssueMachineTokenHTTP_MachineActorHoldingRolesAssign_Succeeds is the primary
@@ -96,9 +118,7 @@ func mtCeilingFixture(t *testing.T, targetRoleName string) (*httptest.Server, st
 func TestIssueMachineTokenHTTP_MachineActorHoldingRolesAssign_Succeeds(t *testing.T) {
 	srv, actorToken, projID, targetID := mtCeilingFixture(t, "" /* target holds no role: not admin-tier */)
 
-	path := "/api/v1/projects/" + strconv.FormatUint(uint64(projID), 10) +
-		"/machine-identities/" + strconv.FormatUint(uint64(targetID), 10) + "/tokens"
-	status, body := doMachineRequest(t, srv, actorToken, "POST", path, []byte(`{"name":"issued-by-machine-actor"}`))
+	status, body := doMachineRequest(t, srv, actorToken, "POST", machineTokensPath(projID, targetID), []byte(`{"name":"issued-by-machine-actor"}`))
 	require.Equal(t, 201, status, "machine actor holding roles.assign must be able to issue a token for an unprivileged target: %s", body)
 }
 
@@ -118,8 +138,6 @@ func TestIssueMachineTokenHTTP_MachineActorHoldingRolesAssign_Succeeds(t *testin
 func TestIssueMachineTokenHTTP_AdminTierTarget_MachineActorStillDenied(t *testing.T) {
 	srv, actorToken, projID, targetID := mtCeilingFixture(t, "project_admin" /* target IS admin-tier */)
 
-	path := "/api/v1/projects/" + strconv.FormatUint(uint64(projID), 10) +
-		"/machine-identities/" + strconv.FormatUint(uint64(targetID), 10) + "/tokens"
-	status, body := doMachineRequest(t, srv, actorToken, "POST", path, []byte(`{"name":"should-be-denied"}`))
+	status, body := doMachineRequest(t, srv, actorToken, "POST", machineTokensPath(projID, targetID), []byte(`{"name":"should-be-denied"}`))
 	require.Equal(t, 403, status, "a machine actor must never be treated as a global admin, so it must be denied minting a token for an admin-tier target (403, not the old 500): %s", body)
 }
