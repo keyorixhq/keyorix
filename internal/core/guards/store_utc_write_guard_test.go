@@ -42,7 +42,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -51,7 +50,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/keyorixhq/keyorix/internal/guardrules"
-	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // storeTimeWriteExceptions: "file.go:Func:column" -> why the write is safe or tracked. Filled by
@@ -78,7 +76,7 @@ func registerStoreScanSkip(file, owner string) {
 }
 
 func TestRegisterStoreTimeWriteException_RejectsADuplicateKey(t *testing.T) {
-	const key = "local_x.go:Probe:updated_at"
+	const key = "local_users.go:Probe:updated_at"
 	registerStoreTimeWriteException(key, "first")
 	t.Cleanup(func() { delete(storeTimeWriteExceptions, key) })
 	require.PanicsWithValue(t, "duplicate store time-write UTC exception "+key, func() {
@@ -374,31 +372,11 @@ func TestStoreTimeWriteScanner_Calibration(t *testing.T) {
 	}
 }
 
-func storeSources(t testing.TB) []string {
-	t.Helper()
-	dir := filepath.Join(srcpath.RepoRoot(), "internal", "storage", "store")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-		out = append(out, filepath.Join(dir, e.Name()))
-	}
-	if len(out) < 30 {
-		t.Fatalf("only %d store source files: wrong root", len(out))
-	}
-	return out
-}
-
 func TestEveryStoreTimeColumnWriteIsUTC(t *testing.T) {
 	g := guardrules.Rollout(t)
 	var all, hits []storeTimeWrite
 	seen := map[string]bool{}
-	for _, path := range storeSources(t) {
+	for _, path := range storeSourceFiles(t) {
 		seen[filepath.Base(path)] = true
 		if owner, skip := storeScanSkippedFiles[filepath.Base(path)]; skip {
 			t.Logf("skipped %s (%s)", filepath.Base(path), owner)
