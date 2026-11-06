@@ -97,18 +97,28 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 		IsActive:    req.IsActive,
 	}
 
+	// Every new user receives the system_viewer baseline, so core checks the
+	// creating actor's own permissions on every path; a directly-authenticated
+	// machine actor is tagged as its own granter so its real permissions count
+	// instead of an unconditional refusal (see requireGranterHoldsRolePermissions).
+	isMachine := actor.ActorKind() == core.ActorTypeMachine
+	grantCtx := ctx
+	if isMachine {
+		grantCtx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
+	}
+
 	resp := &pb.CreateUserResponse{}
 	var u *models.User
 	switch {
 	case setupLink:
 		var prov *core.ProvisionSetupResult
-		u, prov, err = s.core.CreateUserWithSetupLink(ctx, coreReq, actor.UserID)
+		u, prov, err = s.core.CreateUserWithSetupLink(grantCtx, coreReq, actor.UserID, isMachine)
 		if err == nil && prov != nil {
 			resp.SetupLink = optStringValue(prov.LinkForAdmin)
 		}
 	case otp:
 		var res *core.OneTimePasswordResult
-		u, res, err = s.core.CreateUserWithOneTimePassword(ctx, coreReq, actor.UserID)
+		u, res, err = s.core.CreateUserWithOneTimePassword(grantCtx, coreReq, actor.UserID, isMachine)
 		if err == nil && res != nil {
 			resp.OneTimePassword = optStringValue(res.OTPValue)
 			resp.OneTimePasswordExpiresAt = optStringValue(res.ExpiresAt.UTC().Format(time.RFC3339))
@@ -117,15 +127,7 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 		if req.GetPassword() == "" {
 			return nil, status.Error(codes.InvalidArgument, "password is required unless deliver_setup_link or generate_one_time_password is set")
 		}
-		grantCtx := ctx
-		if actor.ActorKind() == core.ActorTypeMachine {
-			// A genuine, directly-authenticated machine actor requesting this
-			// grant as itself (not a /system proxy relay) -- tag ctx so
-			// requireGranterHoldsRolePermissions checks ITS real permissions
-			// instead of unconditionally refusing. See that function's doc.
-			grantCtx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
-		}
-		u, err = s.core.CreateUserWithAssignments(grantCtx, coreReq, role, assignments, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
+		u, err = s.core.CreateUserWithAssignments(grantCtx, coreReq, role, assignments, actor.UserID, isMachine)
 	}
 	if err != nil {
 		return nil, mapUserError(err)
