@@ -41,7 +41,10 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	// users.read + users.write: mirrors the HTTP /users route group's outer
+	// RequirePermission(users.read) plus its per-route users.write gate
+	// (authzdiff known-01; router.go:931).
+	if err := authorizeGlobalMutation(ctx, s.core, actor, "users.read", "users.write"); err != nil {
 		return nil, err
 	}
 	if req.GetUsername() == "" || req.GetEmail() == "" {
@@ -97,18 +100,28 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 		IsActive:    req.IsActive,
 	}
 
+	// Every new user receives the system_viewer baseline, so core checks the
+	// creating actor's own permissions on every path; a directly-authenticated
+	// machine actor is tagged as its own granter so its real permissions count
+	// instead of an unconditional refusal (see requireGranterHoldsRolePermissions).
+	isMachine := actor.ActorKind() == core.ActorTypeMachine
+	grantCtx := ctx
+	if isMachine {
+		grantCtx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
+	}
+
 	resp := &pb.CreateUserResponse{}
 	var u *models.User
 	switch {
 	case setupLink:
 		var prov *core.ProvisionSetupResult
-		u, prov, err = s.core.CreateUserWithSetupLink(ctx, coreReq, actor.UserID)
+		u, prov, err = s.core.CreateUserWithSetupLink(grantCtx, coreReq, actor.UserID, isMachine)
 		if err == nil && prov != nil {
 			resp.SetupLink = optStringValue(prov.LinkForAdmin)
 		}
 	case otp:
 		var res *core.OneTimePasswordResult
-		u, res, err = s.core.CreateUserWithOneTimePassword(ctx, coreReq, actor.UserID)
+		u, res, err = s.core.CreateUserWithOneTimePassword(grantCtx, coreReq, actor.UserID, isMachine)
 		if err == nil && res != nil {
 			resp.OneTimePassword = optStringValue(res.OTPValue)
 			resp.OneTimePasswordExpiresAt = optStringValue(res.ExpiresAt.UTC().Format(time.RFC3339))
@@ -117,15 +130,7 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 		if req.GetPassword() == "" {
 			return nil, status.Error(codes.InvalidArgument, "password is required unless deliver_setup_link or generate_one_time_password is set")
 		}
-		grantCtx := ctx
-		if actor.ActorKind() == core.ActorTypeMachine {
-			// A genuine, directly-authenticated machine actor requesting this
-			// grant as itself (not a /system proxy relay) -- tag ctx so
-			// requireGranterHoldsRolePermissions checks ITS real permissions
-			// instead of unconditionally refusing. See that function's doc.
-			grantCtx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
-		}
-		u, err = s.core.CreateUserWithAssignments(grantCtx, coreReq, role, assignments, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
+		u, err = s.core.CreateUserWithAssignments(grantCtx, coreReq, role, assignments, actor.UserID, isMachine)
 	}
 	if err != nil {
 		return nil, mapUserError(err)
@@ -144,7 +149,8 @@ func (s *UserGRPCService) ReissueOneTimePassword(ctx context.Context, req *pb.Re
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	// users.read + users.write: see CreateUser.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, "users.read", "users.write"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -203,7 +209,8 @@ func (s *UserGRPCService) UpdateUser(ctx context.Context, req *pb.UpdateUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	// users.read + users.write: see CreateUser.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, "users.read", "users.write"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -233,7 +240,8 @@ func (s *UserGRPCService) DeleteUser(ctx context.Context, req *pb.DeleteUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.delete"); err != nil {
+	// users.read + users.delete: see CreateUser.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, "users.read", "users.delete"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {

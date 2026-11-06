@@ -31,10 +31,10 @@ type NotificationRetryConfig struct {
 // Returns a descriptive error if validation fails.
 func (c *KeyorixCore) SetNotificationRetryPolicy(ctx context.Context, actorID, channelID uint, cfg NotificationRetryConfig) error {
 	if cfg.MaxRetries < 0 || cfg.MaxRetries > maxRetriesMax {
-		return fmt.Errorf("invalid notification channel retry policy: max_retries must be between 0 and %d, got %d", maxRetriesMax, cfg.MaxRetries)
+		return invalidInput(fmt.Errorf("invalid notification channel retry policy: max_retries must be between 0 and %d, got %d", maxRetriesMax, cfg.MaxRetries))
 	}
 	if cfg.RetryBackoffMs < retryBackoffMsMin || cfg.RetryBackoffMs > retryBackoffMsMax {
-		return fmt.Errorf("invalid notification channel retry policy: retry_backoff_ms must be between %d and %d, got %d", retryBackoffMsMin, retryBackoffMsMax, cfg.RetryBackoffMs)
+		return invalidInput(fmt.Errorf("invalid notification channel retry policy: retry_backoff_ms must be between %d and %d, got %d", retryBackoffMsMin, retryBackoffMsMax, cfg.RetryBackoffMs))
 	}
 	// AUDIT-TX-3: the change and its audit row commit together (fail closed): alert
 	// delivery retries are never turned down unrecorded.
@@ -53,7 +53,7 @@ func (c *KeyorixCore) SetNotificationRetryPolicy(ctx context.Context, actorID, c
 func (c *KeyorixCore) GetNotificationRetryPolicy(ctx context.Context, channelID uint) (*NotificationRetryConfig, error) {
 	ch, err := c.storage.GetNotificationChannel(ctx, channelID)
 	if err != nil {
-		return nil, err
+		return nil, classifyTypedRead(err, storage.ErrNotificationChannelNotFound)
 	}
 	return &NotificationRetryConfig{
 		MaxRetries:     ch.MaxRetries,

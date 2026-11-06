@@ -10,7 +10,11 @@ Reports, one per line as `file:line: message`:
 External links (http, https, mailto) are not fetched. Fenced code blocks are
 skipped. Exit status 1 if anything is reported.
 
+A backticked path is looked up against the repo root and against the directory
+of the file that mentions it (docs/ pages write `operator/x.md` for docs/operator/x.md).
+
 Usage: scripts/check-doc-links.py [--refs] [paths...]   (default: docs/)
+       scripts/check-doc-links.py --self-test
 The link and anchor rules are enforced by `go test ./internal/docsdrift`
 (links_test.go); this script remains the place for --refs and ad-hoc runs.
 """
@@ -59,13 +63,18 @@ def anchors(path):
     return out
 
 
-def symbol_of_existing(p):
-    """`internal/x.Func` or `internal/x/file.go:12` names something that exists."""
+def symbol_of_existing(p, base=None):
+    """`internal/x.Func` or `internal/x/file.go:12` names something that exists.
+
+    A reference resolves against the repo root, or (when base is given) against
+    the referencing file's own directory, like a markdown link would.
+    """
     p = re.sub(r":\d+(-\d+)?$", "", p)
-    if os.path.exists(os.path.join(ROOT, p)):
+    roots = [ROOT] if base is None else [ROOT, base]
+    if any(os.path.exists(os.path.join(r, p)) for r in roots):
         return True
     head, dot, tail = p.rpartition(".")
-    return bool(dot) and tail[:1].isalpha() and "/" not in tail and os.path.exists(os.path.join(ROOT, head))
+    return bool(dot) and tail[:1].isalpha() and "/" not in tail and any(os.path.exists(os.path.join(r, head)) for r in roots)
 
 
 # Historical records describe files that existed when they were written
@@ -105,11 +114,44 @@ def check_file(path, refs, problems):
                     p = r.rstrip(".,:;")
                     if any(c in p for c in "*<>{}") or p.endswith("/"):
                         continue
-                    if not os.path.exists(os.path.join(ROOT, p)) and not symbol_of_existing(p):
+                    if not symbol_of_existing(p, base):
                         problems.append("%s:%d: stale file reference %s" % (rel, no, p))
 
 
+def self_test():
+    """Calibration for the --refs resolution rule: red and green cases."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "docs", "operator"))
+        open(os.path.join(d, "docs", "operator", "runbook.md"), "w").close()
+        doc = os.path.join(d, "docs", "page.md")
+        cases = [
+            ("resolves only relative to the file's dir", "`operator/runbook.md`", 0),
+            ("dangling reference still fails", "`operator/missing.md`", 1),
+            ("dangling under the repo root still fails", "`docs/operator/missing.md`", 1),
+        ]
+        bad = 0
+        for name, text, want in cases:
+            with open(doc, "w") as f:
+                f.write(text + "\n")
+            problems = []
+            check_file(doc, True, problems)
+            got = len(problems)
+            if got != want:
+                print("self-test FAIL: %s: want %d problem(s), got %d: %s" % (name, want, got, problems))
+                bad += 1
+        # repo-root resolution is the other half of the rule
+        probe = os.path.join(ROOT, "scripts", "check-doc-links.py")
+        if not symbol_of_existing("scripts/check-doc-links.py", os.path.dirname(doc)) or not os.path.exists(probe):
+            print("self-test FAIL: repo-root reference no longer resolves")
+            bad += 1
+    print("self-test: %s" % ("FAIL" if bad else "ok"), file=sys.stderr)
+    return 1 if bad else 0
+
+
 def main(argv):
+    if "--self-test" in argv:
+        return self_test()
     refs = "--refs" in argv
     targets = [a for a in argv if not a.startswith("--")] or [os.path.join(ROOT, "docs")]
     problems = []

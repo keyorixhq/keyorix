@@ -408,7 +408,11 @@ func (c *KeyorixCore) CreateAlertEscalationPolicy(ctx context.Context, p *models
 
 // GetAlertEscalationPolicy returns the policy with the given id.
 func (c *KeyorixCore) GetAlertEscalationPolicy(ctx context.Context, id uint) (*models.AlertEscalationPolicy, error) {
-	return c.storage.GetAlertEscalationPolicy(ctx, id)
+	p, err := c.storage.GetAlertEscalationPolicy(ctx, id)
+	if err != nil {
+		return nil, classifyTypedRead(err, storage.ErrAlertEscalationNotFound)
+	}
+	return p, nil
 }
 
 // ListAlertEscalationPolicies returns all escalation policies.
@@ -420,7 +424,7 @@ func (c *KeyorixCore) ListAlertEscalationPolicies(ctx context.Context) ([]models
 func (c *KeyorixCore) UpdateAlertEscalationPolicy(ctx context.Context, id uint, updates map[string]any) (*models.AlertEscalationPolicy, error) {
 	p, err := c.storage.GetAlertEscalationPolicy(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, classifyTypedRead(err, storage.ErrAlertEscalationNotFound)
 	}
 	before := *p // UpdateAlertEscalationPolicy mutates p in place: keep the diff's before side
 	if v, ok := updates["name"].(string); ok && v != "" {
@@ -476,13 +480,13 @@ func (c *KeyorixCore) DeleteAlertEscalationPolicy(ctx context.Context, id uint) 
 // validateEscalationPolicy enforces invariants for create and update paths.
 func validateEscalationPolicy(p *models.AlertEscalationPolicy) error {
 	if strings.TrimSpace(p.Name) == "" {
-		return fmt.Errorf("alert escalation policy name is required")
+		return invalidInput(fmt.Errorf("alert escalation policy name is required"))
 	}
 	if _, ok := severityOrder[p.MinSeverity]; !ok {
-		return fmt.Errorf("invalid min_severity %q: must be one of low, medium, high, critical", p.MinSeverity)
+		return invalidInput(fmt.Errorf("invalid min_severity %q: must be one of low, medium, high, critical", p.MinSeverity))
 	}
 	if p.EscalateAfterMinutes <= 0 {
-		return fmt.Errorf("escalate_after_minutes must be a positive integer")
+		return invalidInput(fmt.Errorf("escalate_after_minutes must be a positive integer"))
 	}
 	return nil
 }

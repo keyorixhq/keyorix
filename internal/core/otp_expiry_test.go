@@ -165,7 +165,7 @@ func TestCreateUserWithOneTimePassword_RecordsExpiry(t *testing.T) {
 			ms.On("AddPasswordHistory", ctx, uint(11), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 			ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, assertNotFoundErr())
 
-			_, otp, err := c.CreateUserWithOneTimePassword(ctx, &CreateUserRequest{Username: "dana", Email: "dana@acme.io", DisplayName: "Dana"}, 7)
+			_, otp, err := c.CreateUserWithOneTimePassword(ctx, &CreateUserRequest{Username: "dana", Email: "dana@acme.io", DisplayName: "Dana"}, 7, false)
 			require.NoError(t, err)
 
 			want := fixed.Add(tc.want)

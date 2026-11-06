@@ -57,13 +57,13 @@ const (
 // (0 = no authenticated principal).
 func (c *KeyorixCore) CreateRotationPolicy(ctx context.Context, actorID uint, req *CreateRotationPolicyRequest) (*models.RotationPolicy, error) {
 	if req.Scope == "environment" && req.EnvironmentID == nil {
-		return nil, fmt.Errorf("environment_id is required when scope is 'environment'")
+		return nil, invalidInput(fmt.Errorf("environment_id is required when scope is 'environment'"))
 	}
 	if req.Scope == "project" && req.ProjectID == nil {
-		return nil, fmt.Errorf("project_id is required when scope is 'project'")
+		return nil, invalidInput(fmt.Errorf("project_id is required when scope is 'project'"))
 	}
 	if req.AlertDaysBefore >= req.IntervalDays {
-		return nil, fmt.Errorf("alert_days_before must be less than interval_days")
+		return nil, invalidInput(fmt.Errorf("alert_days_before must be less than interval_days"))
 	}
 	if err := validateDescription(req.Description); err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func (c *KeyorixCore) CreateRotationPolicy(ctx context.Context, actorID uint, re
 func (c *KeyorixCore) GetRotationPolicy(ctx context.Context, id uint) (*models.RotationPolicy, error) {
 	policy, err := c.storage.GetRotationPolicy(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get rotation policy: %w", err)
+		return nil, classifyTypedRead(fmt.Errorf("failed to get rotation policy: %w", err), storage.ErrRotationPolicyNotFound)
 	}
 	return policy, nil
 }
@@ -136,7 +136,7 @@ func (c *KeyorixCore) ListRotationPolicies(ctx context.Context, projectID *uint,
 // UpdateRotationPolicy updates a rotation policy. See CreateRotationPolicy for actorID.
 func (c *KeyorixCore) UpdateRotationPolicy(ctx context.Context, actorID uint, req *UpdateRotationPolicyRequest) (*models.RotationPolicy, error) {
 	if req.AlertDaysBefore >= req.IntervalDays {
-		return nil, fmt.Errorf("alert_days_before must be less than interval_days")
+		return nil, invalidInput(fmt.Errorf("alert_days_before must be less than interval_days"))
 	}
 	if err := validateDescription(req.Description); err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func (c *KeyorixCore) UpdateRotationPolicy(ctx context.Context, actorID uint, re
 
 	policy, err := c.storage.GetRotationPolicy(ctx, req.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get rotation policy: %w", err)
+		return nil, classifyTypedRead(fmt.Errorf("failed to get rotation policy: %w", err), storage.ErrRotationPolicyNotFound)
 	}
 
 	// #2700: a column-scoped write of the six fields this request owns, onto a
@@ -168,7 +168,8 @@ func (c *KeyorixCore) UpdateRotationPolicy(ctx context.Context, actorID uint, re
 			return fmt.Errorf("failed to update rotation policy: %w", uerr)
 		}
 		if !matched {
-			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+			// Deleted between the read above and this write.
+			return storage.NotFound(storage.ErrRotationPolicyNotFound, i18n.T("ErrorNotFound", nil), nil)
 		}
 		policy.Name = req.Name
 		policy.Description = req.Description
@@ -189,7 +190,7 @@ func (c *KeyorixCore) UpdateRotationPolicy(ctx context.Context, actorID uint, re
 func (c *KeyorixCore) DeleteRotationPolicy(ctx context.Context, actorID, id uint) error {
 	policy, err := c.storage.GetRotationPolicy(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to get rotation policy: %w", err)
+		return classifyTypedRead(fmt.Errorf("failed to get rotation policy: %w", err), storage.ErrRotationPolicyNotFound)
 	}
 	// AUDIT-TX-3: the delete and its audit row commit together (fail closed).
 	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {

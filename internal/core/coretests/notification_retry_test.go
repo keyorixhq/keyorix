@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -189,11 +190,31 @@ func TestGetNotificationRetryPolicy_StorageError(t *testing.T) {
 	c := core.NewKeyorixCore(st)
 	ctx := context.Background()
 
+	// An untyped storage error is a read fault: it folds to the retryable
+	// "storage temporarily unavailable" refusal, never to "not found".
 	st.On("GetNotificationChannel", ctx, uint(99)).
 		Return(nil, fmt.Errorf("record not found"))
 
 	policy, err := c.GetNotificationRetryPolicy(ctx, 99)
 	require.Error(t, err)
 	assert.Nil(t, policy)
-	assert.Contains(t, err.Error(), "not found")
+	assert.Contains(t, err.Error(), "storage temporarily unavailable")
+	assert.NotErrorIs(t, err, storage.ErrNotificationChannelNotFound)
+}
+
+// TestGetNotificationRetryPolicy_TypedNotFound keeps the not-found contract: the
+// typed sentinel passes through unfolded so callers still map it to 404.
+func TestGetNotificationRetryPolicy_TypedNotFound(t *testing.T) {
+	t.Parallel()
+	st := new(storagetest.MockStorage)
+	c := core.NewKeyorixCore(st)
+	ctx := context.Background()
+
+	st.On("GetNotificationChannel", ctx, uint(99)).
+		Return(nil, storage.ErrNotificationChannelNotFound)
+
+	policy, err := c.GetNotificationRetryPolicy(ctx, 99)
+	require.Error(t, err)
+	assert.Nil(t, policy)
+	assert.ErrorIs(t, err, storage.ErrNotificationChannelNotFound)
 }

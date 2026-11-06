@@ -16,4 +16,8 @@
   (`TestUserRoutes_MissingUserIs404InEveryLocale`, `TestUserRoutes_StorageFaultIs5xxInEveryLocale`,
   `TestImpersonationStart_TargetLookupClassifiedByFailureInEveryLocale`). UNGUARDED until the
   repo-wide text-match guard lands (task 4): a new text match in an unmigrated handler is not
-  caught by CI.
+  caught by CI. `project_members.go`'s `AddProjectMember` was missing an
+  `errors.Is(err, core.ErrPermissionDenied)` case entirely (not just a text match for it) —
+  found and fixed alongside authzdiff known-06/D6 — so every `requireGranterHoldsRolePermissions`
+  refusal through that handler fell through to its switch's 500 default instead of 403;
+  `UpdateProjectMember`'s otherwise-identical switch already had the case.

@@ -12,13 +12,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
 )
@@ -189,7 +190,7 @@ func (h *RotationPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Error creating rotation policy: %v", err)
-		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be less than") {
+		if errors.Is(err, core.ErrInvalidInput) {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusUnprocessableEntity, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to create rotation policy", http.StatusInternalServerError, nil)
@@ -218,7 +219,10 @@ func (h *RotationPolicyHandler) Get(w http.ResponseWriter, r *http.Request) {
 	policy, err := h.coreService.GetRotationPolicy(r.Context(), uint(id))
 	if err != nil {
 		log.Printf("Error getting rotation policy: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, storage.ErrRotationPolicyNotFound) {
 			h.sendError(w, "NotFound", errRotationPolicyNotFound, http.StatusNotFound, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get rotation policy", http.StatusInternalServerError, nil)
@@ -278,9 +282,12 @@ func (h *RotationPolicyHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Error updating rotation policy: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, storage.ErrRotationPolicyNotFound) {
 			h.sendError(w, "NotFound", errRotationPolicyNotFound, http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), "must be less than") {
+		} else if errors.Is(err, core.ErrInvalidInput) {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusUnprocessableEntity, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to update rotation policy", http.StatusInternalServerError, nil)
@@ -311,7 +318,10 @@ func (h *RotationPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Error deleting rotation policy: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, storage.ErrRotationPolicyNotFound) {
 			h.sendError(w, "NotFound", errRotationPolicyNotFound, http.StatusNotFound, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to delete rotation policy", http.StatusInternalServerError, nil)

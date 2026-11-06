@@ -11,7 +11,7 @@ import (
 
 // FuzzDigitorusPKCS7BoundedWork is a bounded-work invariant fuzzer for digitorus/pkcs7's
 // BER→DER parser — the exact code where we found and disclosed the memory-amplification DoS
-// (CVE-2026-45447) and the OOB-panic, both reachable via keyorix's RFC3161/notary path. The
+// and the OOB-panic, both reachable via keyorix's RFC3161/notary path. The
 // never-panic harness sailed past the DoS because it was slowness, not a crash. This turns it
 // into a sub-hang amplification detector: parsing an N-byte input must not do work
 // disproportionate to N.

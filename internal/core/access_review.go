@@ -157,7 +157,7 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 	}
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, accessReviewReadFailure(err)
 	}
 	// Machine identities (CI runners, k8s workloads, service accounts) are project
 	// members with role grants exactly like users/groups, but were never enumerated
@@ -166,7 +166,7 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 	// un-attested (#91).
 	machineAssignments, err := c.storage.ListProjectMachineRoleAssignments(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, accessReviewReadFailure(err)
 	}
 	assignments = append(assignments, machineAssignments...)
 
@@ -179,7 +179,7 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 	}
 	secrets, err := c.listAllProjectSecrets(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, accessReviewReadFailure(err)
 	}
 	c.appendSecretGrantEntries(ctx, secrets, report, &entries, res)
 	report.Entries = entries
@@ -345,7 +345,7 @@ func (c *KeyorixCore) appendRoleEntries(ctx context.Context, assignments []stora
 	for _, a := range assignments {
 		ri, err := res.resolveRole(ctx, a.RoleID)
 		if err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			return accessReviewReadFailure(err)
 		}
 		if ri.action == "" {
 			continue // role grants no secret access

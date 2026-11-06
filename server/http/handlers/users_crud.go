@@ -87,11 +87,11 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// One-time-password path (ADR-028 Part E): server generates the initial password,
 	// returns it once for out-of-band relay, and forces a change on first login.
 	if body.GenerateOneTimePassword {
-		h.createUserWithOTP(w, r, req, userCtx.UserID)
+		h.createUserWithOTP(w, r, req, userCtx)
 		return
 	}
 	if body.DeliverSetupLink {
-		h.createUserWithSetupLink(w, r, req, userCtx.UserID)
+		h.createUserWithSetupLink(w, r, req, userCtx)
 		return
 	}
 	h.createUserClassic(w, r, req, userCtx, body.Password, body.Role, body.ProjectAssignments)
@@ -102,10 +102,27 @@ type projectAssignmentBody struct {
 	Role      string `json:"role"`
 }
 
-func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, actorID uint) {
-	created, otp, err := h.coreService.CreateUserWithOneTimePassword(r.Context(), req, actorID)
+// creationGrantCtx returns the context and actor kind for a user creation. A new
+// user receives the system_viewer baseline, so core checks the creating actor's
+// own permissions; a directly-authenticated machine actor is tagged as its own
+// granter (WithSelfMachineGranter), as the assignments path does, so its real
+// permissions count instead of an unconditional refusal.
+func creationGrantCtx(r *http.Request, userCtx *middleware.UserContext) (context.Context, bool) {
+	if userCtx.ActorKind() == core.ActorTypeMachine {
+		return core.WithSelfMachineGranter(r.Context(), userCtx.PrincipalID()), true
+	}
+	return r.Context(), false
+}
+
+func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, userCtx *middleware.UserContext) {
+	ctx, isMachine := creationGrantCtx(r, userCtx)
+	created, otp, err := h.coreService.CreateUserWithOneTimePassword(ctx, req, userCtx.UserID, isMachine)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, core.ErrPermissionDenied) {
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
 		}
 		log.Printf("Error creating user with one-time password: %v", err)
@@ -126,10 +143,15 @@ func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, 
 	}, i18n.T("SuccessUserCreated", nil))
 }
 
-func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, actorID uint) {
-	created, prov, err := h.coreService.CreateUserWithSetupLink(r.Context(), req, actorID)
+func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, userCtx *middleware.UserContext) {
+	ctx, isMachine := creationGrantCtx(r, userCtx)
+	created, prov, err := h.coreService.CreateUserWithSetupLink(ctx, req, userCtx.UserID, isMachine)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, core.ErrPermissionDenied) {
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
 		}
 		log.Printf("Error creating user with setup link: %v", err)
@@ -172,18 +194,12 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		for _, a := range projAssignments {
 			assignments = append(assignments, core.ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
 		}
-		ctx := r.Context()
-		if userCtx.ActorKind() == core.ActorTypeMachine {
-			// A genuine, directly-authenticated machine actor requesting this
-			// grant as itself (not a /system proxy relay) -- tag ctx so
-			// requireGranterHoldsRolePermissions checks ITS real permissions
-			// instead of unconditionally refusing. See that function's doc.
-			ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
-		}
-		created, err = h.coreService.CreateUserWithAssignments(ctx, req, role, assignments, userCtx.UserID, userCtx.ActorKind() == core.ActorTypeMachine)
+		ctx, isMachine := creationGrantCtx(r, userCtx)
+		created, err = h.coreService.CreateUserWithAssignments(ctx, req, role, assignments, userCtx.UserID, isMachine)
 	} else {
 		// AUDIT-TX-2: core writes user.created in the create's transaction.
-		created, err = h.coreService.CreateUserAudited(r.Context(), req, userCtx.UserID)
+		ctx, isMachine := creationGrantCtx(r, userCtx)
+		created, err = h.coreService.CreateUserAudited(ctx, req, userCtx.UserID, isMachine)
 	}
 	if err != nil {
 		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
