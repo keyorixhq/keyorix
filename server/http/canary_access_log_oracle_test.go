@@ -19,7 +19,7 @@ import (
 // the faultops canary fuzzer.
 //
 // The in-process half asserts the access line (carrying a planted canary in an
-// unredacted query value) lands in the world's log buffer. The subprocess half
+// query value of an allowlisted parameter, which the access log keeps verbatim) lands in the world's log buffer. The subprocess half
 // proves the oracle then FAILS on it, as TestScanCanaryLeaks_* do (a subtest that
 // is supposed to fail cannot live in an always-green test).
 func TestCanaryOracle_SeesAccessLogLines(t *testing.T) {
@@ -30,8 +30,8 @@ func TestCanaryOracle_SeesAccessLogLines(t *testing.T) {
 	t.Cleanup(w.close)
 	val := w.plant(deriveCanary("ACCESSLOG", []byte{7, 7, 7}))
 	w.drainLog()
-	w.adminReq("GET", "/api/v1/projects?x="+val, "")
-	if got := string(w.drainLog()); !strings.Contains(got, "/api/v1/projects?x="+val) {
+	w.adminReq("GET", "/api/v1/projects?status="+val, "")
+	if got := string(w.drainLog()); !strings.Contains(got, "/api/v1/projects?status="+val) {
 		t.Fatalf("the access-log line did not reach the canary world's log buffer (log = %q)", got)
 	}
 
@@ -54,6 +54,6 @@ func TestCanaryOracle_SeesAccessLogLines_Helper(t *testing.T) {
 	w := buildCanaryWorld(t)
 	defer w.close()
 	val := w.plant(deriveCanary("ACCESSLOG", []byte{7, 7, 7}))
-	rec := w.adminReq("GET", "/api/v1/projects?x="+val, "")
+	rec := w.adminReq("GET", "/api/v1/projects?status="+val, "")
 	w.scanOp(t, 0, "http", "admin", rec)
 }
