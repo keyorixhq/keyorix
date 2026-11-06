@@ -93,7 +93,7 @@ type tgt = verifierflip.Target
 
 // ---- the targets -----------------------------------------------------------
 
-func manifestTarget(t *testing.T) tgt {
+func manifestTarget(t testing.TB) tgt {
 	key := fixedKey("manifest")
 	m := backupfmt.Manifest{
 		FormatVersion: 1, Backend: "sqlite",
@@ -125,7 +125,7 @@ func manifestTarget(t *testing.T) tgt {
 	}
 }
 
-func highWaterTargets(t *testing.T) []tgt {
+func highWaterTargets(t testing.TB) []tgt {
 	key := fixedKey("checkpoint")
 	mk := func(name string, cp *auditverify.Checkpoint) tgt {
 		sig := auditverify.SignCheckpoint(cp, key)
@@ -152,7 +152,7 @@ func highWaterTargets(t *testing.T) []tgt {
 	}
 }
 
-func anchorBundleTargets(t *testing.T) []tgt {
+func anchorBundleTargets(t testing.TB) []tgt {
 	key := fixedKey("checkpoint")
 	cp := &auditverify.Checkpoint{ChainedEvents: 55, HeadID: 60, HeadHash: hex.EncodeToString(fixedKey("head")), KeyVersion: "kek-1"}
 	cp.Signature = auditverify.SignCheckpoint(cp, key)
@@ -189,7 +189,7 @@ func anchorBundleTargets(t *testing.T) []tgt {
 	return []tgt{signed, full}
 }
 
-func sealTarget(t *testing.T) tgt {
+func sealTarget(t testing.TB) tgt {
 	key := fixedKey("checkpoint")
 	var lines []string
 	prev := ""
@@ -241,7 +241,7 @@ func sealTarget(t *testing.T) tgt {
 	}
 }
 
-func keyTransitionTarget(t *testing.T) tgt {
+func keyTransitionTarget(t testing.TB) tgt {
 	keys := [][]byte{fixedKey("kt0"), fixedKey("kt1"), fixedKey("kt2")}
 	var lines []string
 	prev := ""
@@ -291,7 +291,7 @@ func keyTransitionTarget(t *testing.T) tgt {
 	}
 }
 
-func retentionTargets(t *testing.T) []tgt {
+func retentionTargets(t testing.TB) []tgt {
 	key := fixedKey("checkpoint")
 	pH, eH := hex.EncodeToString(fixedKey("p")), hex.EncodeToString(fixedKey("e"))
 	v1 := strings.Join([]string{"v1", "42", pH, eH, "kek-1", auditverify.SignRetentionAnchor(42, pH, eH, "kek-1", key)}, "\x1f")
@@ -316,7 +316,7 @@ func retentionTargets(t *testing.T) []tgt {
 	return []tgt{mk("audit-retention-anchor-v1", v1), mk("audit-retention-anchor-v2", v2)}
 }
 
-func aeadTargets(t *testing.T) []tgt {
+func aeadTargets(t testing.TB) []tgt {
 	svc, err := aead.NewEncryptionService(fixedKey("kek"))
 	if err != nil {
 		t.Fatal(err)
@@ -375,7 +375,7 @@ func aeadTargets(t *testing.T) []tgt {
 	return []tgt{main, meta, chunked}
 }
 
-func pqwrapTargets(t *testing.T) []tgt {
+func pqwrapTargets(t testing.TB) []tgt {
 	var out []tgt
 	for _, s := range []pqwrap.Suite{pqwrap.SuiteX25519MLKEM768, pqwrap.SuiteX25519MLKEM1024} {
 		seed, err := pqwrap.DeriveSeed(fixedKey("kek"), s, "epoch-1")
@@ -463,7 +463,7 @@ func pqwrapTargets(t *testing.T) []tgt {
 	return out
 }
 
-func recoveryKeyTargets(t *testing.T) []tgt {
+func recoveryKeyTargets(t testing.TB) []tgt {
 	raw, err := recoverykey.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -479,7 +479,7 @@ func recoveryKeyTargets(t *testing.T) []tgt {
 	}
 }
 
-func evidenceTarget(t *testing.T) tgt {
+func evidenceTarget(t testing.TB) tgt {
 	c := core.NewKeyorixCore(nil)
 	key := fixedKey("evidence")
 	c.SetEvidenceSignKey(key, "kek-1")
@@ -519,7 +519,7 @@ func evidenceTarget(t *testing.T) tgt {
 	}
 }
 
-func licenseTarget(t *testing.T) tgt {
+func licenseTarget(t testing.TB) tgt {
 	pub, priv, _ := ed25519.GenerateKey(bytes.NewReader(bytes.Repeat([]byte{7}, 64)))
 	reg := trust.NewRegistry()
 	if err := reg.Add(trust.PurposeLicense, "lic-1", pub); err != nil {
@@ -557,7 +557,7 @@ func licenseTarget(t *testing.T) tgt {
 
 // ---- the tests ---------------------------------------------------------------
 
-func allTargets(t *testing.T) []tgt {
+func allTargets(t testing.TB) []tgt {
 	var ts []tgt
 	ts = append(ts, manifestTarget(t))
 	ts = append(ts, highWaterTargets(t)...)

@@ -37,7 +37,7 @@ func (s staticJWKS) Key(_ context.Context, _, kid string) (any, error) {
 	return nil, fmt.Errorf("no key %q", kid)
 }
 
-func oidcTarget(t *testing.T) tgt {
+func oidcTarget(t testing.TB) tgt {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func oidcTarget(t *testing.T) tgt {
 // tokenWorld builds a real core over SQLite and returns validators for the
 // three opaque credential types. These are DB lookups by SHA-256, so the
 // verifier property is: no token other than the issued one authenticates.
-func tokenTargets(t *testing.T) []tgt {
+func tokenTargets(t testing.TB) []tgt {
 	if err := i18n.InitializeForTesting(); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func tokenTargets(t *testing.T) []tgt {
 // ed25519-signed manifest pinning every component by sha256). Verify streams
 // every component through its pinned hash, so an accepted mutation means the
 // manifest AND all components are intact; Canon is therefore the manifest.
-func bundleTarget(t *testing.T) tgt {
+func bundleTarget(t testing.TB) tgt {
 	pub, priv, err := ed25519.GenerateKey(bytes.NewReader(bytes.Repeat([]byte{9}, 64)))
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func bundleTarget(t *testing.T) tgt {
 	}
 }
 
-func extraTargets(t *testing.T) []tgt {
+func extraTargets(t testing.TB) []tgt {
 	out := []tgt{oidcTarget(t), bundleTarget(t)}
 	out = append(out, tokenTargets(t)...)
 	return out
