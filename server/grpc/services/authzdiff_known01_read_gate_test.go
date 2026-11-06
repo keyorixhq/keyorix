@@ -63,6 +63,37 @@ func TestGroupService_DeleteGroup_RequiresUsersRead(t *testing.T) {
 	require.NoError(t, err, "a holder of both users.write and users.read must still be able to delete a group")
 }
 
+// TestGroupService_AddGroupMember_RequiresUsersRead: POST /groups/{id}/members
+// sits inside HTTP's /groups route group, so the outer RequirePermission(users.read)
+// applies on top of the per-route roles.assign. A principal holding ONLY
+// roles.assign must be denied over gRPC too; roles.assign + users.read must succeed.
+func TestGroupService_AddGroupMember_RequiresUsersRead(t *testing.T) {
+	svc, h := newGroupService(t)
+
+	g, err := svc.CreateGroup(groupCtx(), &pb.CreateGroupRequest{Name: "known01-members"})
+	require.NoError(t, err)
+	h.CreateTestUser(t, "member-target", 4)
+
+	h.CreateTestUser(t, "assign-only", 2)
+	assignRole := h.CreateTestRole(t, "known01-assign-only", "roles.assign only", 230)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name = 'roles.assign'`, assignRole.ID)
+	h.AssignUserRole(t, 2, assignRole.ID, nil)
+
+	_, err = svc.AddGroupMember(authCtx(2, "assign-only"), &pb.GroupMemberRequest{GroupId: g.GetId(), UserId: 4})
+	require.Error(t, err, "known-01: roles.assign holder without users.read must NOT be able to add a group member over gRPC")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	h.CreateTestUser(t, "assign-reader", 3)
+	fullRole := h.CreateTestRole(t, "known01-assign-reader", "roles.assign + users.read", 231)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name IN ('roles.assign', 'users.read')`, fullRole.ID)
+	h.AssignUserRole(t, 3, fullRole.ID, nil)
+
+	_, err = svc.AddGroupMember(authCtx(3, "assign-reader"), &pb.GroupMemberRequest{GroupId: g.GetId(), UserId: 4})
+	require.NoError(t, err, "a holder of both roles.assign and users.read must still be able to add a group member")
+}
+
 // TestUserService_UpdateUser_RequiresUsersRead mirrors the group case for
 // UserService.UpdateUser: users.write alone must be denied; users.write +
 // users.read must succeed.

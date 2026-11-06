@@ -161,7 +161,9 @@ func (s *GroupGRPCService) AddGroupMember(ctx context.Context, req *pb.GroupMemb
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "roles.assign"); err != nil {
+	// users.read + roles.assign: POST /groups/{id}/members sits inside the /groups
+	// route group, so REST applies the group's outer users.read gate too.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, permRolesAssign); err != nil {
 		return nil, err
 	}
 	// #PM-006 sibling: actorIsMachine must be derived from the real actor kind. The
@@ -194,8 +196,7 @@ func (s *GroupGRPCService) RemoveGroupMember(ctx context.Context, req *pb.GroupM
 		return nil, err
 	}
 	// users.read + roles.assign: mirrors the /groups route group's outer gate
-	// (authzdiff known-01). AddGroupMember is deliberately left as-is: the
-	// harness's generated-permission sweep does not flag it under this waiver.
+	// (authzdiff known-01), same as AddGroupMember.
 	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, permRolesAssign); err != nil {
 		return nil, err
 	}

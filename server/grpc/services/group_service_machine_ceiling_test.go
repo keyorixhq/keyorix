@@ -31,15 +31,16 @@ func machineCtx(machineID uint) context.Context {
 		&interceptors.UserContext{ActorType: core.ActorTypeMachine, MachineIdentityID: machineID, Permissions: []string{"roles.assign"}})
 }
 
-// assignOnlyRole creates a role that bundles ONLY roles.assign -- enough to
-// pass AddGroupMember's outer authorizeGlobal("roles.assign") gate, but
-// nowhere near enough to satisfy requireGranterHoldsRolePermissions for a
-// group conferring the far more privileged seeded "admin" role.
+// assignOnlyRole creates a role that bundles ONLY roles.assign + users.read --
+// enough to pass AddGroupMember's outer authorizeGlobalMutation(users.read,
+// roles.assign) gate, but nowhere near enough to satisfy
+// requireGranterHoldsRolePermissions for a group conferring the far more
+// privileged seeded "admin" role.
 func assignOnlyRole(t *testing.T, h *testhelper.RBACTestHelper, roleID uint) uint {
 	t.Helper()
 	role := h.CreateTestRole(t, "grpc-machceiling-assign-only", "", roleID)
 	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
-		SELECT ?, id FROM permissions WHERE name = 'roles.assign'`, role.ID)
+		SELECT ?, id FROM permissions WHERE name IN ('roles.assign', 'users.read')`, role.ID)
 	return role.ID
 }
 
