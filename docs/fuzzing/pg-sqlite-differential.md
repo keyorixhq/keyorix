@@ -82,4 +82,24 @@ go test ./internal/storage/store -run '^$' -fuzz '^FuzzStorageBackendDifferentia
 
 ## Outcome
 
-(appended after the campaign)
+### Interim (written when the PR was opened; campaign still running)
+
+Campaign: CT 270 on pve01 (2 workers, nice 19), started 2026-11-06 21:30 UTC, 10-minute
+chunks, stops at 20 worker-hours or Mon 2026-11-09 24:00 UTC. Final totals are appended
+below by whoever collects `/root/pgdiff-campaign/` (crashers in `crashers/`).
+
+Findings so far, each minimised to 2 ops and replayed 3 times, classified Keyorix bug
+(low, functional, not security-relevant) and pinned in `backend_differential_v2_known_test.go`:
+- F-1 `ListSecrets{Search}`: `LOWER()` is ASCII-only on SQLite ("äö" misses "ÄÖ").
+- F-2/F-3 `ListUsers{Username}`/`{Email}`: plain `LIKE` is case-insensitive on SQLite,
+  case-sensitive on PostgreSQL.
+The fuzz target gates exactly those input classes (never silently) so the campaign keeps
+looking for others.
+
+Observations, backend-inherent: O-1 (both unique indexes violated: different sentinel
+reported), O-2 (`ORDER BY name` collation: bytewise vs `en_US.UTF-8`).
+
+Honest coverage note: a 4-minute unguided run (about 30k execs) found none of F-1..F-3;
+they were found by hand-directed 2-op probes, and the generator was then changed
+(case-varied filter terms, seeds) to make them reachable. 200 rounds of contended
+unique-key races showed no divergence.
