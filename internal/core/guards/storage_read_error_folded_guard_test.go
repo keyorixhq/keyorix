@@ -34,7 +34,9 @@
 //     as WithdrawAccessRequest does: its constant is looked at only when it is an Errorf in the
 //     if body);
 //   - folds in `switch`/`else` arms, and in the server layers other than server/middleware/auth.go
-//     (other middleware files, server/http handlers, gRPC services);
+//     (other middleware files). server/http/handlers and server/grpc/services are read by the
+//     transport scanner in storage_read_error_folded_transport_test.go (STORAGE-ERR-CLASS-5),
+//     which states its own enumeration and limits;
 //   - a middleware fold whose body ALSO classifies something else with errors.Is (e.g.
 //     RequireScopedSecretRefPermission's errors.Is(err, core.ErrSecretRefInvalid)): any errors.Is
 //     counts as classifying;
@@ -46,7 +48,8 @@
 // a fold of the shape ResolveSecretRef had before ERR-FOLD-HANDLERS-1 (#3903) fixed it
 // (internal/core/secret_ref.go) is recognised; the widening found stageRenderRef
 // (secret_render.go). The other folds STORAGE-ERR-CLASS-4 fixed (the handler pre-checks in
-// server/http/handlers, the gRPC authorizeScopedTarget callers) are outside what it can see.
+// server/http/handlers, the gRPC authorizeScopedTarget callers) were outside what it could see
+// until STORAGE-ERR-CLASS-5 added the transport scanner.
 //
 // Report-only on its first day, and again for the server/middleware widening
 // (docs/guard-rollout.d/TestNoStorageReadErrorFoldedIntoNotFound.tsv, docs/guard-rollout-contract.md).
@@ -591,6 +594,9 @@ func TestNoStorageReadErrorFoldedIntoNotFound(t *testing.T) {
 		}
 		hits = append(hits, scanFoldedReads(fset, f, "middleware/"+rel)...)
 	}
+	// The handler and gRPC pre-checks (STORAGE-ERR-CLASS-5): the transport scanner, in
+	// storage_read_error_folded_transport_test.go.
+	hits = append(hits, scanTransportSources(t)...)
 
 	used := map[string]bool{}
 	var msgs []string

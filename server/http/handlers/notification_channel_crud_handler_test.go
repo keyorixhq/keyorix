@@ -427,7 +427,8 @@ func TestNCGet_StorageError(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.Get(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A closed DB is a storage read fault: the 503 retry answer (STORAGE-ERR-CLASS-5).
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // TestNCGet_Success exercises the happy path in Get (200 + channel data).
@@ -495,7 +496,8 @@ func TestNCUpdate_StorageError(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A closed DB is a storage read fault: the 503 retry answer (STORAGE-ERR-CLASS-5).
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // TestNCUpdate_Success exercises the happy path in Update (200 + updated data).
@@ -560,7 +562,8 @@ func TestNCDelete_StorageError(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A closed DB is a storage read fault: the 503 retry answer (STORAGE-ERR-CLASS-5).
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // TestNCDelete_Success exercises the happy path in Delete (200 + deleted:true).

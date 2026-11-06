@@ -122,23 +122,33 @@ func (c *KeyorixCore) ListOwnPATs(ctx context.Context, userID uint) ([]*models.P
 	return c.storage.ListPersonalAccessTokensByUser(ctx, userID)
 }
 
+// ErrPATNotFound is matched (errors.Is) by RevokeOwnPAT's refusal when the token does not
+// exist or belongs to another user (one answer, so ids cannot be enumerated). Any other
+// failure is a storage fault (ErrStorageReadUnavailable) or a failed write, never this.
+var ErrPATNotFound = errors.New("personal access token not found")
+
 // RevokeOwnPAT revokes one of the caller's tokens after verifying ownership. A token
 // owned by another user is reported as not found to prevent ID enumeration. On success
 // it returns the token's hash so the caller can evict the auth cache immediately: the
 // HTTP token cache is keyed by SHA-256(raw token), which equals the stored TokenHash,
 // so without eviction a revoked PAT would keep authenticating until the cache TTL.
 func (c *KeyorixCore) RevokeOwnPAT(ctx context.Context, userID, tokenID uint) (tokenHash string, err error) {
+	notFound := refuseAs(ErrPATNotFound, fmt.Errorf("%s: token not found", i18n.T("ErrorNotFound", nil)))
 	if userID == 0 || tokenID == 0 {
-		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user and token IDs are required")
+		// No token has id 0, and a principal with no user id (a machine identity) owns none:
+		// the one uniform not-found, as the handler answered before the sentinel existed.
+		return "", notFound
 	}
-	notFound := fmt.Sprintf("%s: token not found", i18n.T("ErrorNotFound", nil))
 	pat, err := c.storage.GetPersonalAccessTokenByID(ctx, tokenID)
 	if err != nil {
+		if isPositiveNotFound(err) {
+			return "", notFound
+		}
 		// A read FAULT is a retry answer, not proof the token is gone.
-		return "", classifyReadError(err, notFound)
+		return "", &storageReadFault{cause: err}
 	}
 	if pat.UserID != userID {
-		return "", errors.New(notFound)
+		return "", notFound
 	}
 	// AUDIT-TX-3: a revocation: never blocked or delayed by the audit log. Its row is
 	// owed from this transaction, and appended only after the token is evicted from
