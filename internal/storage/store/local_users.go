@@ -293,7 +293,7 @@ func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginA
 // revert any concurrent writer's columns.
 func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
-		Updates(map[string]any{"account_state": state, "updated_at": updatedAt})
+		Updates(map[string]any{"account_state": state, "updated_at": updatedAt.UTC()}) // a map update runs no hook or NowFunc
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
