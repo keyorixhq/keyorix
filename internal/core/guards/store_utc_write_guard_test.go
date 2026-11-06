@@ -296,7 +296,7 @@ func sqlNamesTimeColumn(sql string) bool {
 	if !strings.Contains(s, "?") {
 		return false
 	}
-	for _, w := range strings.FieldsFunc(s, func(r rune) bool { return !(r == '_' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') }) {
+	for w := range strings.FieldsFuncSeq(s, func(r rune) bool { return !(r == '_' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') }) {
 		if isStoreTimeColumn(w) {
 			return true
 		}
