@@ -600,3 +600,46 @@ func TestProjectMemberDirectEntryPoints_RefuseMachineActor(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, members)
 }
+
+// The refusal also covers an existing member. SetProjectMemberRole used to answer
+// a machine nil for a member already holding exactly the named role (a
+// membership oracle) and wrote a role_confirmed_unchanged audit row with no
+// actor; it must now refuse, leave the role as it was, and write no such row.
+func TestSetProjectMemberRole_RefusesMachineActor_ExistingMember(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "dave", "dave@example.com"))
+	require.NoError(t, err)
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer", false))
+
+	confirmedRows := func() int {
+		action := "project_member.role_confirmed_unchanged"
+		_, total, err := st.GetAuditLogs(ctx, &storage.AuditFilter{Action: &action})
+		require.NoError(t, err)
+		return int(total)
+	}
+
+	for _, role := range []string{"project_viewer", "project_developer"} {
+		err = c.SetProjectMemberRole(ctx, 0, proj, u.ID, role, true)
+		require.ErrorIs(t, err, ErrMachineProjectMembershipDenied, "set %s", role)
+
+		err = c.AddProjectMember(ctx, 0, proj, u.ID, role, true)
+		require.ErrorIs(t, err, ErrMachineProjectMembershipDenied, "add %s", role)
+	}
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "project_viewer", members[0].RoleName, "role must be unchanged after a refused machine call")
+	assert.Zero(t, confirmedRows(), "a refused machine call must not write a role_confirmed_unchanged row")
+
+	// Positive control: the same no-op by a human is audited, so the zero above
+	// is not an artefact of the audit rows being invisible to this query.
+	require.NoError(t, c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer", false))
+	assert.Equal(t, 1, confirmedRows(), "a human no-op writes the row the machine call must not")
+}

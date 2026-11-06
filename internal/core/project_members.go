@@ -17,11 +17,13 @@ import (
 )
 
 // ErrMachineProjectMembershipDenied is returned by AddProjectMember and
-// SetProjectMemberRole when the acting principal is a machine identity: machine
-// identities do not manage project membership. It matches ErrPermissionDenied,
-// so every transport answers it as a refusal (403 / PermissionDenied) rather
-// than as a failure of the privilege ceiling.
-var ErrMachineProjectMembershipDenied = newPermissionSentinel("machine identities cannot manage project membership")
+// SetProjectMemberRole when the acting principal is a machine identity: these two
+// direct entry points (POST and PUT /projects/{id}/members) are not open to
+// machine identities. Other membership paths (invitation accept, membership
+// lifecycle, RemoveProjectMember) are unaffected and judged on their own. It
+// matches ErrPermissionDenied, so every transport answers it as a refusal
+// (403 / PermissionDenied) rather than as a failure of the privilege ceiling.
+var ErrMachineProjectMembershipDenied = newPermissionSentinel("machine identities cannot add or change project members through this route")
 
 // ListProjectMembers returns the users with a role at the project's scope.
 func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
