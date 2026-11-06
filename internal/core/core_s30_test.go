@@ -398,12 +398,13 @@ func TestCloseAccessReviewCampaign_WrongProject(t *testing.T) {
 func TestUserInGroup_StorageError(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	// userInGroup calls GetUserGroups(ctx, userID=5) — on error, returns true (fail open).
+	// userInGroup calls GetUserGroups(ctx, userID=5) — on error it refuses with the
+	// storage-unavailable class, never "not a member" (fail closed).
 	ms.On("GetUserGroups", mock.Anything, uint(5)).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
-	result := c.userInGroup(context.Background(), 5, 1)
-	// On error, userInGroup returns true (fail safe).
-	assert.True(t, result)
+	_, err := c.userInGroup(context.Background(), 5, 1)
+	require.Error(t, err)
+	assert.True(t, IsStorageReadUnavailable(err))
 }
 
 func TestUserInGroup_Found(t *testing.T) {
@@ -412,7 +413,8 @@ func TestUserInGroup_Found(t *testing.T) {
 	groups := []*models.Group{{ID: 1, Name: "admins"}}
 	ms.On("GetUserGroups", mock.Anything, uint(5)).Return(groups, nil)
 	c := NewKeyorixCore(ms)
-	result := c.userInGroup(context.Background(), 5, 1)
+	result, err := c.userInGroup(context.Background(), 5, 1)
+	require.NoError(t, err)
 	assert.True(t, result)
 }
 
@@ -422,6 +424,7 @@ func TestUserInGroup_NotFound(t *testing.T) {
 	groups := []*models.Group{{ID: 99, Name: "others"}}
 	ms.On("GetUserGroups", mock.Anything, uint(5)).Return(groups, nil)
 	c := NewKeyorixCore(ms)
-	result := c.userInGroup(context.Background(), 5, 1)
+	result, err := c.userInGroup(context.Background(), 5, 1)
+	require.NoError(t, err)
 	assert.False(t, result)
 }

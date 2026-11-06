@@ -241,7 +241,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		if d.PrincipalType == "machine" {
 			machineAssignments, err := c.storage.ListProjectMachineRoleAssignments(ctx, projectID)
 			if err != nil {
-				return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+				return accessReviewReadFailure(err)
 			}
 			for _, a := range machineAssignments {
 				if a.PrincipalID == d.PrincipalID && a.RoleID == d.RoleID && a.EnvironmentID == d.EnvironmentID {
@@ -252,7 +252,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		}
 		assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 		if err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			return accessReviewReadFailure(err)
 		}
 		wantGroup := d.PrincipalType == "group"
 		for _, a := range assignments {
@@ -283,7 +283,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		isGroup := d.Source == "group_share"
 		shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID, c.shareEffectiveNow())
 		if err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			return accessReviewReadFailure(err)
 		}
 		for _, sh := range shares {
 			if sh.RecipientID == d.PrincipalID && sh.IsGroup == isGroup {

@@ -225,10 +225,17 @@ func (h *PATHandler) RevokePAT(w http.ResponseWriter, r *http.Request) {
 	}
 	tokenHash, err := h.coreService.RevokeOwnPAT(r.Context(), userCtx.UserID, uint(id))
 	if err != nil {
-		if sendStorageUnavailable(w, err) {
+		if sendStorageUnavailable(w, err) || sendAuditUnavailable(w, err) {
 			return
 		}
-		sendError(w, "NotFound", "Token not found", http.StatusNotFound, nil)
+		// Only a token that is absent or not the caller's is "not found": a failed
+		// revoke write must not tell the caller the token is gone while it still works.
+		if errors.Is(err, core.ErrPATNotFound) {
+			sendError(w, "NotFound", "Token not found", http.StatusNotFound, nil)
+			return
+		}
+		log.Printf("Error revoking PAT %d for user %d: %v", id, userCtx.UserID, err)
+		sendError(w, "InternalError", "Failed to revoke token", http.StatusInternalServerError, nil)
 		return
 	}
 	// Evict the auth cache so the revoked token stops authenticating immediately rather
