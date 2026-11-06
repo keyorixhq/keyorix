@@ -196,6 +196,8 @@ func scanShellForSecrets(content string) []docsSecretHit {
 //     credential name (password, token, secret, passphrase, apiKey, ...). `-f <0600 values
 //     file>` and `--set-file KEY=<path>` are the safe forms.
 //   - kubectl `--from-literal=KEY=VALUE` whose KEY is a credential name. Use `--from-file`.
+//   - ZAP `-z "<options>"` whose quoted option string contains `Bearer` or a replacer
+//     `replacement=` value (DAST-SCRIPTS-TAILS-1). `-z "-configfile <path>"` is the safe form.
 //
 // Also recognised (SCRIPTS-SECRETS-3, scanShellForVarBodies, shell scripts only): a curl
 // body flag (the same list as above) whose value is a bare variable (`$NAME`, `${NAME}`,
@@ -217,6 +219,9 @@ var (
 	helmSecretRefRE  = regexp.MustCompile(`(?i)existing|secretname|secretref|\.name=`)
 	fromLiteralRE    = regexp.MustCompile(`(?i)--from-literal(?:=|\s+)["']?[A-Za-z0-9_.-]*(?:password|passwd|token|secret|passphrase|api_?key)[A-Za-z0-9_.-]*=`)
 	curlUserFlagRE   = regexp.MustCompile(`(?:^|[\s(])(?:-u|--user)(?:=|\s+)["']?[^\s"':@]+:[^\s"']`)
+	// DAST-SCRIPTS-TAILS-1: the ZAP wrapper option string (`docker run ... zap-api-scan.py -z "..."`)
+	// carrying a bearer token or a replacer replacement value. `-z "-configfile <path>"` is the safe form.
+	zapOptsCredRE = regexp.MustCompile(`(?i)(?:^|[\s(])-z(?:=|\s+)["'][^"']*(?:bearer|replacer\.full_list\([0-9]+\)\.replacement=)`)
 )
 
 // firstWord returns the first shell word of s: a quoted string (to its closing quote,
@@ -266,6 +271,9 @@ func findSecretArgvShape(line string) string {
 	// existingSecret / secretName / secretRef name a Secret object, not its contents.
 	if m := helmSetCredRE.FindString(line); m != "" && !helmSecretRefRE.MatchString(m) {
 		return "credential in helm --set on argv: " + strings.TrimSpace(m)
+	}
+	if zapOptsCredRE.MatchString(line) {
+		return "credential in ZAP -z option string on argv (use -z \"-configfile <path>\")"
 	}
 	if m := fromLiteralRE.FindString(line); m != "" {
 		return "credential in kubectl --from-literal on argv: " + strings.TrimSpace(m)
@@ -442,6 +450,11 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"docker env token":     `    -e KEYORIX_BOOTSTRAP_TOKEN="$TOK" \`,
 		"docker env long":      `docker run --env POSTGRES_PASSWORD=x img`,
 		"curl user":            `curl -u "admin:$PW" "$URL"`,
+		// DAST-SCRIPTS-TAILS-1 shapes: the pre-fix scan-zap-auth.sh -z line, and container env tokens.
+		"zap -z bearer":      `      -z "-config replacer.full_list(0).matchstr=Authorization -config replacer.full_list(0).replacement=Bearer\\ $token" \`,
+		"zap -z replacement": `zap-api-scan.py -t "$T" -z '-config replacer.full_list(0).replacement=$tok'`,
+		"docker env zap tok": `docker run --rm -e ZAP_AUTH_TOKEN="$token" keyorix-scanner:latest`,
+		"docker env bearer":  `  -e BEARER_TOKEN=$t \`,
 		// SCRIPT-SECRETS-ARGS-1 shapes.
 		"helm set master":     `    --set auth.masterPassword="k8s-e2e-master-password"`,
 		"helm set db":         `helm install r ./c --set postgresql.auth.password="$DB"`,
@@ -486,6 +499,9 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"bootstrap env prefix": `KEYORIX_BOOTSTRAP_TOKEN="$T" "$CLI" system init`,
 		"test -e":              `[ -e "$TOKEN_FILE" ] && echo ok`,
 		"curl user no pass":    `curl -u admin "$URL"`,
+		"zap -z configfile":    `      -z "-configfile /zap/auth/zap-auth.prop" \`,
+		"zap conf writer":      `printf 'replacer.full_list(0).replacement=Bearer %s\n' "$token"`,
+		"zap -z no token":      `zap-api-scan.py -t "$T" -z "-config api.disablekey=true"`,
 		"helm values file":     `helm install r ./c -f "$d/secret-values.yaml" --set server.image.tag="$TAG"`,
 		"helm set-file":        `helm install r ./c --set-file auth.masterPassword="$f"`,
 		"helm set existing":    `helm install r ./c --set secureBaseline.existingSecret="$S"`,
