@@ -209,8 +209,16 @@ func (c *KeyorixCore) stageRenderRef(ctx context.Context, ref string, projectID,
 	// candidate names via ${secret:<env>/<guess>} and learn existence per guess from
 	// 404-vs-403 alone — info never surfaced by their normal scoped listing. Folding
 	// both outcomes into the identical ErrSecretRefNotFound closes that oracle (#181).
-	if _, err := c.ValidateSecretAccess(ctx, secret.ID, userID); err != nil {
+	checkCtx, lookupFaults := WithAuthorizeFaultRecorder(ctx)
+	if _, err := c.ValidateSecretAccess(checkCtx, secret.ID, userID); err != nil {
 		c.equalizeReferenceResolutionCost(ctx, userID, secret)
+		if fault := renderRefCheckFault(err, lookupFaults.Err()); fault != nil {
+			// The check failed to EVALUATE (CORE-FAULT-TAILS-1): audited as the outage
+			// it is, and answered as a refusal that still reads as ErrSecretRefNotFound,
+			// so only a caller entitled to tell "missing" from "forbidden" learns retry.
+			refuse(SecretReadDeniedInternalError, secret)
+			return "", &secretRefCheckFault{fault: fault}
+		}
 		refuse(SecretReadDeniedForbidden, secret)
 		return "", ErrSecretRefNotFound
 	}
