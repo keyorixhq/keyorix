@@ -99,7 +99,7 @@ func TestCanaryRouteSweep(t *testing.T) {
 	// reported, not gated. Every other surface/shape still fails the run.
 	knownF1 := 0
 	for _, f := range s.findings() {
-		if sh, _ := f.Repro["shape"].(string); f.Surface == "log" && (sh == "query" || sh == "query-h") {
+		if strings.HasSuffix(f.Key, "|url-echo") {
 			knownF1++
 			continue
 		}

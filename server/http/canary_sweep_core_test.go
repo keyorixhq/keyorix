@@ -421,6 +421,14 @@ func (s *sweep) scan(surface, route string, req *sweepReq, hay []byte, status in
 			continue
 		}
 		key := strings.Join([]string{h.Surface, route, h.Label, h.Variant}, "|")
+		// Known finding F1 class: the value the caller put in the request URL
+		// (query or path) is echoed in the access log. Kept as a separate key so
+		// it can never hide a different leak of the same canary on that route.
+		if h.Surface == "log" && req != nil {
+			if c, ok := s.byLabel[h.Label]; ok && c.Core != "" && strings.Contains(req.Target, c.Core) {
+				key += "|url-echo"
+			}
+		}
 		if rec, ok := s.hits[key]; ok {
 			rec.Count++
 			continue
