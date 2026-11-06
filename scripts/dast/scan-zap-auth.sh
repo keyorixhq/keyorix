@@ -17,10 +17,13 @@
 # under umask 077 (0600, directory 0700), so the container can read it only
 # if it runs as the same uid as this script's user. If it does not, we grant
 # exactly that one uid read access with a POSIX ACL (file r, directory x) when
-# setfacl exists; failing that, we widen to 0644/0711 with a loud warning,
-# which is no worse than the old argv exposure (the path was on argv, and the
-# directory is removed when the pass ends). NOT yet run against a real ZAP
-# container: pending DAST host.
+# setfacl exists; failing that, the script aborts, unless the operator sets
+# ZAP_AUTH_ALLOW_WORLD_READ=1 to accept 0644/0711 for the pass (the directory
+# path is on the docker argv, so any local user could then read the token until
+# the pass ends). Before each pass a probe container checks that the zap user
+# can read the file; if not, the script alerts and exits instead of running an
+# unauthenticated scan. The token must match [A-Za-z0-9._~+/=-]. NOT yet run
+# against a real ZAP container: pending DAST host.
 set -euo pipefail
 WORKDIR="$(cd "$(dirname "$0")" && pwd)"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -83,6 +86,12 @@ fi
 # token goes through the shell's printf builtin into the file, never an argv.
 write_zap_authconf() {
     local token="$1" conf="$AUTH_TMP/zap-auth.prop"
+    # A newline or backslash would inject extra ZAP config lines or be read as
+    # an escape in the properties file: accept only the bearer-token alphabet.
+    if [[ ! $token =~ ^[A-Za-z0-9._~+/=-]+$ ]]; then
+        dast_alert "minted token has characters outside [A-Za-z0-9._~+/=-]; refusing to write it into the ZAP properties file"
+        exit 1
+    fi
     (
         umask 077
         {
@@ -102,7 +111,11 @@ write_zap_authconf() {
         && setfacl -m "u:$ZAP_CONTAINER_UID:r" "$conf"; then
         return 0 # only the zap uid gains access
     fi
-    echo "[$(date -u +%FT%TZ)] WARNING: cannot grant uid $ZAP_CONTAINER_UID read access to the ZAP auth config without widening it; using 0644/0711 for this pass (dir is removed when the pass ends)" >&2
+    if [ "${ZAP_AUTH_ALLOW_WORLD_READ:-}" != "1" ]; then
+        dast_alert "cannot grant uid $ZAP_CONTAINER_UID read access to the ZAP auth config without widening it (no setfacl, script uid is $(id -u)); run as uid $ZAP_CONTAINER_UID, install acl, or set ZAP_AUTH_ALLOW_WORLD_READ=1 to accept a 0644/0711 file for the pass"
+        exit 1
+    fi
+    echo "[$(date -u +%FT%TZ)] WARNING: ZAP_AUTH_ALLOW_WORLD_READ=1: using 0644/0711 for the ZAP auth config this pass (dir is removed when the pass ends)" >&2
     chmod 0711 "$AUTH_TMP"
     chmod 0644 "$conf"
 }
@@ -114,6 +127,19 @@ run_authenticated_pass() {
     AUTH_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dast-zap-auth.XXXXXX")"
     chmod 0700 "$AUTH_TMP"
     write_zap_authconf "$token"
+    # Fail closed: the old inline -config could not be unreadable, this file can
+    # (rootless/userns-remap Docker, SELinux without :z, no ACL support). The
+    # `-I || true` below hides ZAP's exit status, so an unreadable file would
+    # silently turn this pass into an unauthenticated scan. Probe with the same
+    # image, mount and default user first.
+    if ! docker run --rm --pull never \
+        -v "$AUTH_TMP:/zap/auth:ro" \
+        --entrypoint test \
+        keyorix-scanner:latest \
+        -r /zap/auth/zap-auth.prop; then
+        dast_alert "ZAP container cannot read the auth config for the $label pass (mount/uid/SELinux); not running an unauthenticated scan"
+        exit 1
+    fi
     # No --hook: see scan-zap.sh's comment -- 100001 suppression now lives in
     # accepted-exceptions.yaml, applied post-scan by create-issues.sh.
     #

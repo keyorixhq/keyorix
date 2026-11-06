@@ -221,7 +221,7 @@ var (
 	curlUserFlagRE   = regexp.MustCompile(`(?:^|[\s(])(?:-u|--user)(?:=|\s+)["']?[^\s"':@]+:[^\s"']`)
 	// DAST-SCRIPTS-TAILS-1: the ZAP wrapper option string (`docker run ... zap-api-scan.py -z "..."`)
 	// carrying a bearer token or a replacer replacement value. `-z "-configfile <path>"` is the safe form.
-	zapOptsCredRE = regexp.MustCompile(`(?i)(?:^|[\s(])-z(?:=|\s+)["'][^"']*(?:bearer|replacer\.full_list\([0-9]+\)\.replacement=)`)
+	zapOptsCredRE = regexp.MustCompile(`(?i)(?:^|[\s(])-z(?:=|\s+)["']\s*-[^"']*(?:bearer|replacer\.full_list\([0-9]+\)\.replacement=)`)
 )
 
 // firstWord returns the first shell word of s: a quoted string (to its closing quote,
@@ -502,6 +502,8 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"zap -z configfile":    `      -z "-configfile /zap/auth/zap-auth.prop" \`,
 		"zap conf writer":      `printf 'replacer.full_list(0).replacement=Bearer %s\n' "$token"`,
 		"zap -z no token":      `zap-api-scan.py -t "$T" -z "-config api.disablekey=true"`,
+		"test -z bearer var":   `[ -z "$BEARER_TOKEN" ] && exit 1`,
+		"test -z bearer dflt":  `[[ -z "${KEYORIX_BEARER:-}" ]] && exit 1`,
 		"helm values file":     `helm install r ./c -f "$d/secret-values.yaml" --set server.image.tag="$TAG"`,
 		"helm set-file":        `helm install r ./c --set-file auth.masterPassword="$f"`,
 		"helm set existing":    `helm install r ./c --set secureBaseline.existingSecret="$S"`,
