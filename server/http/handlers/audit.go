@@ -590,9 +590,15 @@ func (h *AuditHandler) GetAuditVerifyJob(w http.ResponseWriter, r *http.Request)
 
 // WriteAuditCheckpoint handles POST /api/v1/audit/checkpoint — signs a checkpoint
 // of the current verified audit-chain head (ADR-029) on demand. The usual source
-// of checkpoints is the background scheduler; this lets an operator re-baseline
-// immediately — e.g. right after a DEK rotation, when verify fails closed until a
-// fresh checkpoint is written under the new key. Privileged (system.write, on top
+// of checkpoints is the background scheduler; this lets an operator write one
+// immediately. The checkpoint signing key is derived from the KEK, not the DEK:
+// a DEK rotation does not change it, so a checkpoint signed before one stays
+// verifiable and nothing needs re-baselining. `admin encryption rotate-kek` (and
+// migrate-provider) does change it; they carry the verification state over and
+// write a fresh checkpoint themselves, and older-epoch checkpoints are then not
+// re-verified, and offline only with the previous key (docs/operator/
+// key-rotation-runbook.md section 5). Writing a checkpoint here does not re-baseline
+// a walk that is already broken: it refuses one. Privileged (system.write, on top
 // of the audit group's audit.read).
 func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
