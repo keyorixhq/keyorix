@@ -79,7 +79,8 @@ mkdir -p "$MUTATION_STATE_DIR"
 # substitutions -- under set -e the assignment then exited 127 before any
 # package was measured (FENCE-VERIFY-1; run_mutation_packages_test.py).
 PACKAGES=$(cat <<'EOF'
-internal/core|core
+# internal/core: timeout coefficient 6, from the 2026-11 mutation-run speed study (2-worker configuration)
+internal/core|core|6
 internal/storage/store|storage-store
 internal/keyfiles|keyfiles||93.55
 internal/securefiles|securefiles||98.31
