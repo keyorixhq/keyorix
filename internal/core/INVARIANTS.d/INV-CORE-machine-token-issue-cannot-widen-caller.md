@@ -1,16 +1,26 @@
 - **INV-CORE-machine-token-issue-cannot-widen-caller** A machine identity acting as itself
-  (`WithSelfMachineGranter`, not a /system relay) can never use `IssueMachineToken` to
-  obtain a credential broader than the one it called with. It cannot issue a token for
-  itself. Its presented credential (`WithMachineCallerCredential`, set by the REST and gRPC
-  handlers) must be a live opaque `kx_machine_` credential of that machine with no CIDR
-  allowlist; a federated JWT or an unrecorded credential is refused. It is refused a target
-  whose roles are admin-tier by the bypass flag, a canonical admin name or the permission
-  bundle (`roleIsAdminTier`). All refusals wrap `ErrMachinePrivilegeCeilingDenied`. Why:
+  (`WithSelfMachineGranter`, not a /system relay) cannot use `IssueMachineToken` to gain a
+  permission it does not already hold, or to shed its credential's CIDR or federation
+  confinement. It cannot issue a token for itself. Its presented credential
+  (`WithMachineCallerCredential`, set by the REST and gRPC handlers) must be a live opaque
+  `kx_machine_` credential of that machine with no CIDR allowlist; a federated JWT or an
+  unrecorded credential is refused. It is refused a target whose roles are admin-tier by the
+  bypass flag, a canonical admin name or the permission bundle (`roleIsAdminTier`). For every
+  other target it must hold `roles.assign` at the project and, at each scope where the target
+  holds a role grant, every permission those roles bundle
+  (`requireMachineActorHoldsTargetPermissions`, the rule `requireGranterHoldsRolePermissions`
+  applies when a machine grants itself a role). All refusals wrap
+  `ErrMachinePrivilegeCeilingDenied`; a lookup error is returned, never read as allow. Why:
   REVIEW-3993-DEEP-1, a CIDR-restricted machine minted itself an unrestricted, non-expiring
-  token (the machine counterpart of PAT-GUARD-1). Guard:
+  token (the machine counterpart of PAT-GUARD-1); REVIEW-3993-DEEP-2, a roles.assign-only
+  machine minted a token for a peer that reads and writes the project's secrets. Guard:
   `machine_token_caller_credential_test.go`, `machine_token_admin_tier_target_test.go`,
-  server/http/handlers `machine_token_caller_credential_test.go`, server/grpc/services
+  `machine_token_target_permission_ceiling_test.go`, server/http/handlers
+  `machine_token_caller_credential_test.go`, server/grpc/services
   `TestGRPCIssueMachineToken_MachineCaller`.
-  **Not covered**: a user caller authenticated by a CIDR-only restricted PAT, and the user
-  path's non-admin branch, which requires only `roles.assign` and not that the actor holds
-  what the target holds (INV-CORE-01 follow-up issue).
+  **Not covered**: the calling credential's expiry, so an unrestricted credential that
+  expires can still issue a non-expiring token for a peer the caller fully covers; permissions
+  the target gains after the token is issued (a later grant is checked against its granter,
+  not against whoever holds the target's tokens); a user caller authenticated by a CIDR-only restricted PAT;
+  and the user path's non-admin branch, which requires only `roles.assign` and not that the
+  actor holds what the target holds (INV-CORE-01 follow-up issue).

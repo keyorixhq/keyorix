@@ -37,12 +37,16 @@ func TestIssueMachineToken_MachineActorCannotMintForCustomAdminTierPeer(t *testi
 	}
 }
 
-// A peer whose custom role is not admin-tier is still reachable.
+// A peer whose custom role is not admin-tier is still reachable by a caller
+// that also holds that role's permissions (REVIEW-3993-DEEP-2 finding 1: a
+// caller lacking them is refused, see
+// machine_token_target_permission_ceiling_test.go).
 func TestIssueMachineToken_MachineActorMintsForNonAdminTierPeer(t *testing.T) {
 	t.Parallel()
 	c, st, caller, peer := machineCallerFixture(t, "tier_plain")
 	raw := addCallerCredential(t, st, caller.ID, "plain", "")
 	role := customRoleWithPermissions(t, st, "peer_tier_reader", "secrets.read")
+	require.NoError(t, st.AssignMachineRole(context.Background(), caller.ID, role.ID, storage.Scope{ProjectID: 1}))
 	require.NoError(t, st.AssignMachineRole(context.Background(), peer.ID, role.ID, storage.Scope{ProjectID: 1}))
 
 	res, err := c.IssueMachineToken(machineCallerCtx(caller.ID, raw), 1, peer.ID, 0, IssueMachineTokenParams{Name: "reader"})
