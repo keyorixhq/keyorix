@@ -254,7 +254,7 @@ func (ls *LocalStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user
 			"email_folded":    user.EmailFolded,
 			"display_name":    user.DisplayName,
 			"is_active":       user.IsActive,
-			"updated_at":      user.UpdatedAt,
+			"updated_at":      user.UpdatedAt.UTC(), // a map update runs no hook or NowFunc
 		})
 	if res.Error != nil {
 		if isDuplicateEmailViolation(res.Error) {
