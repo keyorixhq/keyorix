@@ -124,11 +124,16 @@ func TestGroupService_RestoreGroup_RequiresRolesAssign(t *testing.T) {
 	_, err = svc.DeleteGroup(groupCtx(), &pb.DeleteGroupRequest{Id: g2.GetId()})
 	require.NoError(t, err)
 
-	// User 2 holds ONLY users.write (the old, too-weak gate) — must be refused.
+	// User 2 holds users.write + users.read (the old, too-weak write-side gate,
+	// PLUS the outer users.read G80 D1/known-01 now also requires) — must still
+	// be refused, and refused specifically for lacking roles.assign: without
+	// users.read here too, this would be indistinguishable from a refusal on
+	// the outer gate alone, and would stop pinning the G16 rule (roles.assign,
+	// not users.write) this test exists to isolate.
 	h.CreateTestUser(t, "writer-only", 2)
-	writerRole := h.CreateTestRole(t, "writer_only", "users.write only", 100)
+	writerRole := h.CreateTestRole(t, "writer_only", "users.write + users.read, no roles.assign", 100)
 	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
-		SELECT ?, id FROM permissions WHERE name = 'users.write'`, writerRole.ID)
+		SELECT ?, id FROM permissions WHERE name IN ('users.write', 'users.read')`, writerRole.ID)
 	h.AssignUserRole(t, 2, writerRole.ID, nil)
 
 	_, err = svc.RestoreGroup(authCtx(2, "writer-only"), &pb.RestoreGroupRequest{Id: g1.GetId()})

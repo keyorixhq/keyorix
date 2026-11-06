@@ -342,8 +342,14 @@ func TestRoleService_AssignRole_ScopedCrossProjectDenied(t *testing.T) {
 func TestRoleService_CreateRole_RolesWriteHolderCannotBundleSystemWrite(t *testing.T) {
 	svc, h := newRoleService(t)
 	roleEditor := h.CreateTestRole(t, "role-editor", "can edit roles only", 100)
+	// roles.read too: G80 D1/known-01's authorizeGlobalMutation gate requires it
+	// alongside roles.write, matching HTTP's outer RequirePermission(roles.read)
+	// on the /roles route group — without it CreateRole denies at that outer
+	// gate before ever reaching the system.write-bundling escalation check
+	// this test exists to pin, making the assertion below pass regardless of
+	// whether that check still exists.
 	require.NoError(t, h.DB.Exec(
-		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name IN ('roles.write', 'roles.read')",
 		roleEditor.ID).Error)
 	h.CreateTestUser(t, "attacker", 700)
 	h.AssignUserRole(t, 700, roleEditor.ID, nil)
@@ -363,8 +369,14 @@ func TestRoleService_CreateRole_RolesWriteHolderCannotBundleSystemWrite(t *testi
 func TestRoleService_UpdateRole_RolesWriteHolderCannotAddSystemWrite(t *testing.T) {
 	svc, h := newRoleService(t)
 	roleEditor := h.CreateTestRole(t, "role-editor", "can edit roles only", 100)
+	// roles.read too: G80 D1/known-01's authorizeGlobalMutation gate requires it
+	// alongside roles.write, matching HTTP's outer RequirePermission(roles.read)
+	// on the /roles route group — without it UpdateRole denies at that outer
+	// gate before ever reaching the system.write-bundling escalation check
+	// this test exists to pin, making the assertion below pass regardless of
+	// whether that check still exists.
 	require.NoError(t, h.DB.Exec(
-		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name IN ('roles.write', 'roles.read')",
 		roleEditor.ID).Error)
 	target := h.CreateTestRole(t, "target", "a role the attacker already holds", 101)
 	require.NoError(t, h.DB.Exec(

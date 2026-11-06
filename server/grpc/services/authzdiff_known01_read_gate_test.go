@@ -1,8 +1,10 @@
 package services
 
 // authzdiff_known01_read_gate_test.go -- regression coverage for the authzdiff
-// cross-layer differential harness's known-01 waiver (server/authzdiff/REPORT.md,
-// internal historical name D1): HTTP gates /groups, /users and /roles with an
+// cross-layer differential harness's known-01 waiver (PR #3981, a test-only
+// harness not yet merged to main as of this fix -- its own
+// server/authzdiff/REPORT.md is not in this tree; internal historical name
+// D1): HTTP gates /groups, /users and /roles with an
 // outer r.Use(RequirePermission(<read>)) on the whole route group PLUS a
 // per-route RequirePermission(<write>) on the mutating ones, but the gRPC
 // services only ever checked the specific write/assign permission. A principal
@@ -14,14 +16,18 @@ package services
 // Each case below proves the actual defect this closes: a principal holding
 // ONLY the write/delete/assign permission (not the matching read permission)
 // must be denied, and a principal holding both must succeed — for one
-// representative mutating RPC per affected service. Red/green proof (CLAUDE.md
-// "a security fix needs red/green proof"): checking out the commit immediately
-// before this fix (4fb37dcb..d3db4b06's parent) and running these same three
-// write-only subtests fails every one with "must be denied" assertions seeing
-// require.NoError pass instead (the bug: a users.write/roles.write-only holder
-// was being let through); running them again at this fix's commit (or later)
-// passes all three. No production file was edited to produce the red state —
-// it is the actual pre-fix history.
+// representative mutating RPC per affected service, plus AddGroupMember
+// (below). Red/green proof (CLAUDE.md "a security fix needs red/green proof"):
+// checking out the commit immediately before this fix (4fb37dcb..d3db4b06's
+// parent) and running these same write-only subtests fails every one with
+// "must be denied" assertions seeing require.NoError pass instead (the bug: a
+// users.write/roles.write-only holder was being let through); running them
+// again at this fix's commit (or later) passes all of them. No production file
+// was edited to produce the red state — it is the actual pre-fix history
+// (TestGroupService_AddGroupMember_RequiresUsersRead is the one exception:
+// AddGroupMember was fixed in a later commit on this same branch, after
+// review flagged it, so its red state is this PR's own pre-fix commit, not
+// main's history).
 import (
 	"testing"
 
@@ -137,4 +143,42 @@ func TestRoleService_DeleteRole_RequiresRolesRead(t *testing.T) {
 
 	_, err = svc.DeleteRole(authCtx(3, "writer-reader"), &pb.DeleteRoleRequest{Id: uint32(target.ID)})
 	require.NoError(t, err, "a holder of both roles.write and roles.read must still be able to delete a role")
+}
+
+// TestGroupService_AddGroupMember_RequiresUsersRead: a principal holding ONLY
+// roles.assign (the gate AddGroupMember kept even after the rest of this PR's
+// fix, on the mistaken premise that the harness's generated-permission sweep
+// didn't flag this RPC) must be denied; a principal holding roles.assign +
+// users.read (matching HTTP's outer RequirePermission(users.read) on the
+// /groups route group, exactly like CreateGroup/UpdateGroup/DeleteGroup/
+// RestoreGroup/RemoveGroupMember above) must succeed. The target group here
+// confers no role, so core.AddUserToGroup's validateGroupJoinRoles ceiling
+// loop has nothing to check -- this test isolates the RPC's own outer gate,
+// not the separate machine-granter ceiling already covered by
+// group_service_machine_ceiling_test.go.
+func TestGroupService_AddGroupMember_RequiresUsersRead(t *testing.T) {
+	svc, h := newGroupService(t)
+
+	g, err := svc.CreateGroup(groupCtx(), &pb.CreateGroupRequest{Name: "known01-addmember-group"})
+	require.NoError(t, err)
+	target := h.CreateTestUser(t, "known01-addmember-target", 60)
+
+	h.CreateTestUser(t, "writer-only", 2)
+	assignOnlyRoleNoUsersRead := h.CreateTestRole(t, "known01am-assign-only", "roles.assign only", 230)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name = 'roles.assign'`, assignOnlyRoleNoUsersRead.ID)
+	h.AssignUserRole(t, 2, assignOnlyRoleNoUsersRead.ID, nil)
+
+	_, err = svc.AddGroupMember(authCtx(2, "writer-only"), &pb.GroupMemberRequest{GroupId: g.GetId(), UserId: uint32(target.ID)})
+	require.Error(t, err, "known-01: roles.assign holder without users.read must NOT be able to add a group member over gRPC")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	h.CreateTestUser(t, "writer-reader", 3)
+	fullRole := h.CreateTestRole(t, "known01am-assign-reader", "roles.assign + users.read", 231)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name IN ('roles.assign', 'users.read')`, fullRole.ID)
+	h.AssignUserRole(t, 3, fullRole.ID, nil)
+
+	_, err = svc.AddGroupMember(authCtx(3, "writer-reader"), &pb.GroupMemberRequest{GroupId: g.GetId(), UserId: uint32(target.ID)})
+	require.NoError(t, err, "a holder of both roles.assign and users.read must still be able to add a group member")
 }
