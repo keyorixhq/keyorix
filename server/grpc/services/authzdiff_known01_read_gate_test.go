@@ -72,13 +72,24 @@ func TestUserService_UpdateUser_RequiresUsersRead(t *testing.T) {
 	h.CreateTestUser(t, "admin", 1)
 	h.AssignUserRole(t, 1, 1, nil)
 	svc := NewUserService(h.CoreService)
-	target := svc.mustCreate(t, "known01-target", "known01-target@example.com")
 
+	// Fixture users at explicit high IDs, created BEFORE the auto-assigned
+	// "known01-target" below, so the two id spaces can't collide.
 	h.CreateTestUser(t, "writer-only", 2)
 	writerRole := h.CreateTestRole(t, "known01u-writer-only", "users.write only", 210)
 	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
 		SELECT ?, id FROM permissions WHERE name = 'users.write'`, writerRole.ID)
 	h.AssignUserRole(t, 2, writerRole.ID, nil)
+
+	h.CreateTestUser(t, "writer-reader", 3)
+	fullRole := h.CreateTestRole(t, "known01u-writer-reader", "users.write + users.read", 211)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name IN ('users.write', 'users.read')`, fullRole.ID)
+	h.AssignUserRole(t, 3, fullRole.ID, nil)
+
+	// Created last, after every explicit-ID fixture above, so its auto-assigned
+	// ID can't collide with them.
+	target := svc.mustCreate(t, "known01-target", "known01-target@example.com")
 
 	_, err := svc.UpdateUser(authCtx(2, "writer-only"), &pb.UpdateUserRequest{
 		Id: target.GetId(), DisplayName: strPtr("renamed"),
@@ -86,13 +97,7 @@ func TestUserService_UpdateUser_RequiresUsersRead(t *testing.T) {
 	require.Error(t, err, "known-01: users.write holder without users.read must NOT be able to update a user over gRPC")
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 
-	h.CreateTestUser(t, "writer-reader", 4)
-	fullRole := h.CreateTestRole(t, "known01u-writer-reader", "users.write + users.read", 211)
-	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
-		SELECT ?, id FROM permissions WHERE name IN ('users.write', 'users.read')`, fullRole.ID)
-	h.AssignUserRole(t, 4, fullRole.ID, nil)
-
-	_, err = svc.UpdateUser(authCtx(4, "writer-reader"), &pb.UpdateUserRequest{
+	_, err = svc.UpdateUser(authCtx(3, "writer-reader"), &pb.UpdateUserRequest{
 		Id: target.GetId(), DisplayName: strPtr("renamed-ok"),
 	})
 	require.NoError(t, err, "a holder of both users.write and users.read must still be able to update a user")
