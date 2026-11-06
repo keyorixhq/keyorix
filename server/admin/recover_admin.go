@@ -2,8 +2,10 @@
 // (docs/design-b2-recover-admin.md §3): restores a locked-out admin account
 // after host access AND the offline recovery key (recovery_key.go) are both
 // verified. The recovery act is identical regardless of WHY the account is
-// inaccessible (deactivated, lost password, lost MFA, login-lockout) -- all
-// four cases go through the same reset below (design §3/§9 addendum 4).
+// inaccessible (lost password, lost MFA, login-lockout) -- these cases go
+// through the same reset below (design §3/§9 addendum 4). A suspended,
+// deprovisioned or unrecognised account state is a block recovery refuses
+// unless --force-unsuspend is given (performRecoverAdminOpts).
 //
 // Deliberately bypasses internal/core entirely, calling storage.Storage
 // primitives directly (same ADR-049 CLI-storage-factory pattern every other
@@ -44,9 +46,10 @@ var (
 var recoverAdminCmd = &cobra.Command{
 	Use:   "recover-admin",
 	Short: "Restore a locked-out admin account using the local recovery key",
-	Long: `recover-admin restores an existing admin account that is deactivated, has a
-lost password, has lost MFA, or is login-locked -- all four cases go through
-the identical reset. Requires BOTH host access (running this command) AND
+	Long: `recover-admin restores an existing admin account that has a lost password,
+has lost MFA, or is login-locked -- these cases go through the identical reset.
+A suspended or deprovisioned account is refused unless --force-unsuspend is
+given (see below). Requires BOTH host access (running this command) AND
 the local recovery key -- knowing the
 key alone, or holding the host alone, is not enough.
 
@@ -56,15 +59,17 @@ Omit it entirely if security.recover_admin.insecure_keyless_admin_recovery is en
 host's config (a labs/demo escape hatch -- see the config field's own doc
 comment for why this is not recommended for a real deployment).
 
-What this resets, on the target account ONLY: reactivates it if deactivated,
-sets a one-time password (printed once, forcing a real reset on next login),
+What this resets, on the target account ONLY: sets the account state to
+password-reset-required, sets a one-time password (printed once, forcing a real reset on next login),
 clears MFA enrollment and every WebAuthn credential (forcing re-enrollment),
 clears any login-lockout state, and revokes every existing session.
 
 An account whose state is suspended (an admin's security action) or
 deprovisioned (an identity-provider deactivation) is refused by default,
-because that block is deliberate. Pass --force-unsuspend to recover it anyway;
-the audit event then records that the state was lifted. It never
+because that block is deliberate; so is an account whose state is a value
+Keyorix does not recognise (login already fails closed on it). Pass
+--force-unsuspend to recover it anyway; the audit event and the admin
+notification then record the state that was lifted. It never
 touches any other account, role, project, secret, or the KEK. Every use
 writes an audit-chain event and notifies every current admin, whether or not
 the server is running.
@@ -165,10 +170,7 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 		if summary.keyless {
 			keyDetail = "KEYLESS MODE (host access alone, no recovery key checked)"
 		}
-		notifyAllAdmins(store, "Admin account recovered",
-			fmt.Sprintf("keyorix-server admin recover-admin, run by host user %s, restored account %q (user id %d) on this host, "+
-				"using %s. If you did not expect this, investigate immediately.",
-				summary.operator, summary.username, summary.userID, keyDetail))
+		notifyAllAdmins(store, "Admin account recovered", recoverAdminNotification(summary, keyDetail))
 		return nil
 	})
 	if notifyErr != nil {
@@ -176,6 +178,19 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// recoverAdminNotification is the text every admin is notified with after a
+// recovery. When --force-unsuspend lifted a block it says so: the admin who set
+// that block is the one who most needs to know it was overridden.
+func recoverAdminNotification(summary *recoverAdminSummary, keyDetail string) string {
+	lifted := ""
+	if summary.liftedState != "" {
+		lifted = fmt.Sprintf(" The account was %s; --force-unsuspend lifted that state.", describeBlockedState(summary.liftedState))
+	}
+	return fmt.Sprintf("keyorix-server admin recover-admin, run by host user %s, restored account %q (user id %d) on this host, "+
+		"using %s.%s If you did not expect this, investigate immediately.",
+		summary.operator, summary.username, summary.userID, keyDetail, lifted)
 }
 
 // readRecoveryKeyFromStdin reads a single line from stdin and returns it
