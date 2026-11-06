@@ -1818,10 +1818,15 @@ jobs:
             ~/go/bin/gosec
           key: static-analysis-tools-v1.8.0-${{ env.GOSEC_VERSION }}-xtools${{ env.GOSEC_TOOLS_VERSION }}-go${{ steps.setup-go.outputs.go-version }}-${{ runner.os }}
 
+      # govulncheck itself has no exclusion mechanism; scripts/ci/check-
+      # govulncheck.sh is what actually decides pass/fail, against an
+      # ID-scoped allowlist in docs/govulncheck-exceptions.d/ (NEEDS ANDREI
+      # note, reports/SESSION-REVFIX-3972-4.md, 2026-11-06). See that
+      # script's own header for exactly what it does and does not waive.
       - name: govulncheck
         run: |
           [ -x ~/go/bin/govulncheck ] || go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 # NOSONAR githubactions:S8545 -- version is pinned to v1.8.0
-          govulncheck ./...
+          scripts/ci/check-govulncheck.sh
 
       - name: gosec
         run: |

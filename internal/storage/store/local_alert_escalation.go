@@ -58,7 +58,7 @@ func (ls *LocalStorage) UpdateAlertEscalationPolicy(ctx context.Context, p *mode
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrAlertEscalationNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }
@@ -69,7 +69,7 @@ func (ls *LocalStorage) DeleteAlertEscalationPolicy(ctx context.Context, id uint
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrAlertEscalationNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }

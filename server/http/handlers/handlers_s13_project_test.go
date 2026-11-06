@@ -116,10 +116,12 @@ func TestAttestProjectAccessReview_StorageError_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.AttestProjectAccessReview(w, r)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A failed grant lookup is a storage read fault: the retry answer (503), not a 500
+	// (STORAGE-ERR-CLASS-5). The driver text still never reaches the client.
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.NotContains(t, w.Body.String(), "user_roles")
 	assert.NotContains(t, w.Body.String(), "no such table")
-	assert.Contains(t, w.Body.String(), "an internal error occurred")
+	assert.Contains(t, w.Body.String(), core.StorageReadUnavailableMessage)
 }
 
 // TestUpdateProjectMember_NoUserCtx_S13 — no user context → 401.

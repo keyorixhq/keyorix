@@ -318,5 +318,6 @@ func TestGetRetryPolicy_InternalError(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.GetRetryPolicy(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A read fault is the 503 retry answer, not a 404 (STORAGE-ERR-CLASS-5).
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }

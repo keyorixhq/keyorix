@@ -666,7 +666,8 @@ func TestNotificationChannelGet_StorageError(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	// A broken DB is a storage read fault: the 503 retry answer (STORAGE-ERR-CLASS-5).
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
 
 // TestNotificationChannelUpdate_ValidationError verifies that an update body
@@ -725,7 +726,8 @@ func TestNotificationChannelUpdate_StorageError(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	// A broken DB is a storage read fault: the 503 retry answer (STORAGE-ERR-CLASS-5).
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
 
 // TestNotificationChannelDelete_StorageError verifies that a non-not-found DB
@@ -740,7 +742,8 @@ func TestNotificationChannelDelete_StorageError(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	// A broken DB is a storage read fault: the 503 retry answer (STORAGE-ERR-CLASS-5).
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
 
 // TestNotificationChannelGet_NotFound verifies that GET on a non-existent id

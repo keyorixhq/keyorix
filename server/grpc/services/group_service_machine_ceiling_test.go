@@ -31,15 +31,19 @@ func machineCtx(machineID uint) context.Context {
 		&interceptors.UserContext{ActorType: core.ActorTypeMachine, MachineIdentityID: machineID, Permissions: []string{"roles.assign"}})
 }
 
-// assignOnlyRole creates a role that bundles ONLY roles.assign -- enough to
-// pass AddGroupMember's outer authorizeGlobal("roles.assign") gate, but
-// nowhere near enough to satisfy requireGranterHoldsRolePermissions for a
-// group conferring the far more privileged seeded "admin" role.
+// assignOnlyRole creates a role that bundles ONLY users.read + roles.assign --
+// enough to pass AddGroupMember's outer authorizeGlobalMutation(users.read,
+// roles.assign) gate (authzdiff known-01/D1 widened this from roles.assign
+// alone), but nowhere near enough to satisfy requireGranterHoldsRolePermissions
+// for a group conferring the far more privileged seeded "admin" role. Without
+// users.read in this fixture's bundle, the test below would be refused by the
+// OUTER gate instead of the ceiling check it exists to pin -- the same
+// now-vacuous-test shape flagged elsewhere in this PR's review.
 func assignOnlyRole(t *testing.T, h *testhelper.RBACTestHelper, roleID uint) uint {
 	t.Helper()
 	role := h.CreateTestRole(t, "grpc-machceiling-assign-only", "", roleID)
 	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
-		SELECT ?, id FROM permissions WHERE name = 'roles.assign'`, role.ID)
+		SELECT ?, id FROM permissions WHERE name IN ('users.read', 'roles.assign')`, role.ID)
 	return role.ID
 }
 

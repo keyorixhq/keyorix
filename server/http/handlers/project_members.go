@@ -38,6 +38,9 @@ func (h *CatalogHandler) GetProjectAccessReview(w http.ResponseWriter, r *http.R
 	report, err := h.coreService.GenerateProjectAccessReview(r.Context(), id)
 	if err != nil {
 		log.Printf("Error generating access review for project %d: %v", id, err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
@@ -176,7 +179,16 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 		sendError(w, "ValidationError", "user_id and role are required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.AddProjectMember(r.Context(), userCtx.UserID, id, body.UserID, body.Role, userCtx.ActorKind() == core.ActorTypeMachine); err != nil {
+	ctx := r.Context()
+	if userCtx.ActorKind() == core.ActorTypeMachine {
+		// A genuine, directly-authenticated machine actor adding this member as
+		// itself (not a /system proxy relay) -- tag ctx so
+		// requireGranterHoldsRolePermissions checks ITS real permissions instead
+		// of unconditionally refusing. See that function's doc (authzdiff
+		// cross-layer differential harness waiver known-06, historical name D6).
+		ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
+	}
+	if err := h.coreService.AddProjectMember(ctx, userCtx.UserID, id, body.UserID, body.Role, userCtx.ActorKind() == core.ActorTypeMachine); err != nil {
 		if sendAuditUnavailable(w, err) {
 			return
 		}
@@ -186,7 +198,11 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, errDomainNotAllowed):
+		case strings.Contains(msg, errDomainNotAllowed), errors.Is(err, core.ErrPermissionDenied):
+			// The latter is requireGranterHoldsRolePermissions' escalation-by-proxy
+			// ceiling refusal (e.g. the WithSelfMachineGranter-gated machine-actor
+			// case just above) -- found missing here, unlike UpdateProjectMember's
+			// identical switch just below, while fixing authzdiff known-06/D6.
 			status = http.StatusForbidden
 		case strings.Contains(msg, "already"):
 			status = http.StatusConflict
@@ -227,7 +243,13 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 		sendError(w, "ValidationError", "role is required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, id, uint(userID), body.Role, userCtx.ActorKind() == core.ActorTypeMachine); err != nil {
+	ctx := r.Context()
+	if userCtx.ActorKind() == core.ActorTypeMachine {
+		// Same self-machine-granter tag as AddProjectMember above (authzdiff
+		// cross-layer differential harness waiver known-06, historical name D6).
+		ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
+	}
+	if err := h.coreService.SetProjectMemberRole(ctx, userCtx.UserID, id, uint(userID), body.Role, userCtx.ActorKind() == core.ActorTypeMachine); err != nil {
 		if sendAuditUnavailable(w, err) {
 			return
 		}

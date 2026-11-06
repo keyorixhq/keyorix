@@ -99,6 +99,12 @@ never written to a log file or the audit chain in plaintext, and losing it
 means running the command again (which invalidates the old key). See
 `docs/design-b2-recover-admin.md` for the full design.
 
+`recover-admin` leaves a deliberate block alone: an account that is `suspended` (an admin's
+security action) or `deprovisioned` (an identity-provider deactivation) is refused unless you
+pass `--force-unsuspend`, and the audit event and the admin notification then record the state
+that was lifted. An account whose `account_state` is a value Keyorix does not recognise (login
+already fails closed on it) is refused the same way, with a message that says so.
+
 **"Too many login attempts" (HTTP 429).** Each IP address gets
 `LoginMaxAttempts` (10) *failed* login attempts per 15 minutes, shared by the
 password, TOTP, passkey and refresh endpoints; successful logins do not count

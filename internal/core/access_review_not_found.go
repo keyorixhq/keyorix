@@ -33,6 +33,15 @@ func accessReviewNotFound(detail string) error {
 	return &accessReviewNotFoundError{err: fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil), detail)}
 }
 
+// accessReviewReadFailure classifies a failed storage read that is not a verdict on a
+// named access-review target (a listing, a pre-check scan, an independence lookup): a
+// storage fault, ErrStorageReadUnavailable, answered 503 with the driver text kept out
+// of the response. Never a 500 that reads as a bug, and never a refusal that reads as a
+// policy outcome (STORAGE-ERR-CLASS-5 item 2).
+func accessReviewReadFailure(err error) error {
+	return &storageReadFault{cause: err}
+}
+
 // accessReviewReadError classifies a failed storage read of an access-review target:
 // a positive not-found keeps the "<ErrorNotFound>: <cause>" text and matches
 // ErrAccessReviewNotFound; anything else is a storage fault (ErrStorageReadUnavailable).

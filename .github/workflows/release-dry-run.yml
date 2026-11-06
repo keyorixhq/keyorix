@@ -97,6 +97,12 @@ jobs:
       - name: Cross-compile release binaries + SBOMs (dry run)
         run: make release VERSION=v0.0.0-dryrun
 
+      # Every release binary must say CGO_ENABLED=0 in its build info (see
+      # scripts/cgo-dependency-guard.sh; the dependency half of the guard runs
+      # in cgo-guard.yml).
+      - name: Release binaries are cgo-free
+        run: scripts/cgo-dependency-guard.sh --binaries dist
+
       # ADR-109 step 6 (B4/S5): fails if the air-gapped profile links a
       # forbidden cloud-SDK package. See scripts/airgap-dependency-guard.sh's
       # own header for the allowlist mechanism.

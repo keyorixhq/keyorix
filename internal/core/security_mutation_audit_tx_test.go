@@ -262,7 +262,7 @@ func satKinds() []satKind {
 		{name: "create-user-audited", eventType: EventUserCreated, prepare: none,
 			mutate: func(w *satWorld, c *KeyorixCore, _ any) error {
 				n := w.tag("sat-pu")
-				_, err := c.CreateUserAudited(adminCtx(w), &CreateUserRequest{Username: n, Email: n + "@example.com", DisplayName: n, Password: "UserPass123!xyz-long-enough"}, w.f.adminID)
+				_, err := c.CreateUserAudited(adminCtx(w), &CreateUserRequest{Username: n, Email: n + "@example.com", DisplayName: n, Password: "UserPass123!xyz-long-enough"}, w.f.adminID, false)
 				return err
 			}},
 		{name: "create-project", eventType: EventProjectCreated, prepare: none,

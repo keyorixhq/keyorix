@@ -91,15 +91,15 @@ var allowedSecondFactorClearerSites = map[string]string{
 	"server/http/router.go:NewRouter|DeleteWebAuthnCredential":                                       "route registration of the handler above (a method value, not a call); blocked while impersonating",
 	"internal/core/mfa_reset_effect.go:ResetMFACredentialsInTx|DeleteMFAForUser":                     "the shared full credential reset: two-person online flow and host reset-mfa",
 	"internal/core/mfa_reset_effect.go:ResetMFACredentialsInTx|DeleteWebAuthnCredential":             "same reset, WebAuthn half",
-	"server/admin/recover_admin_logic.go:performRecoverAdminWithTTL|DeleteMFAForUser":                "host-side recover-admin (recovery key, server stopped)",
-	"server/admin/recover_admin_logic.go:performRecoverAdminWithTTL|DeleteWebAuthnCredential":        "same recover-admin, WebAuthn half",
+	"server/admin/recover_admin_logic.go:performRecoverAdminOpts|DeleteMFAForUser":                   "host-side recover-admin (recovery key, server stopped); clears only after the admin-role, blocked-state (#3991) and key checks",
+	"server/admin/recover_admin_logic.go:performRecoverAdminOpts|DeleteWebAuthnCredential":           "same recover-admin, WebAuthn half",
 	// #3801 (b): the flag setters with false.
 	"internal/core/mfa.go:KeyorixCore.DisableMFA|SetUserMFAEnabled(false)":                         "self-service disable, the flag half of the DeleteMFAForUser entry above",
 	"internal/core/webauthn.go:KeyorixCore.DeleteWebAuthnCredential|SetUserWebAuthnEnabled(false)": "self-service passkey delete: the flag goes off with the user's last passkey",
 	"internal/core/mfa_reset_effect.go:ResetMFACredentialsInTx|SetUserMFAEnabled(false)":           "the shared full credential reset, TOTP flag",
 	"internal/core/mfa_reset_effect.go:ResetMFACredentialsInTx|SetUserWebAuthnEnabled(false)":      "the shared full credential reset, WebAuthn flag",
-	"server/admin/recover_admin_logic.go:performRecoverAdminWithTTL|SetUserMFAEnabled(false)":      "host-side recover-admin, TOTP flag",
-	"server/admin/recover_admin_logic.go:performRecoverAdminWithTTL|SetUserWebAuthnEnabled(false)": "host-side recover-admin, WebAuthn flag",
+	"server/admin/recover_admin_logic.go:performRecoverAdminOpts|SetUserMFAEnabled(false)":         "host-side recover-admin, TOTP flag",
+	"server/admin/recover_admin_logic.go:performRecoverAdminOpts|SetUserWebAuthnEnabled(false)":    "host-side recover-admin, WebAuthn flag",
 }
 
 func secondFactorFuncKey(fd *ast.FuncDecl) string {
