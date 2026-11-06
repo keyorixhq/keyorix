@@ -274,7 +274,11 @@ func (ls *LocalStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user
 
 // UpdateLastLogin stamps last_login_at for a single user. Uses UpdateColumn so
 // only that column is written — no updated_at bump, no clobbering of other fields.
+// UpdateColumn runs no hook and no NowFunc, so loginAt is normalised to UTC here
+// (UTC-STORE-SCAN-1): ListInactiveUsers compares the column with a UTC cutoff, and on
+// SQLite a host-offset text neither orders against it nor scans back.
 func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
+	loginAt = loginAt.UTC()
 	if err := ls.db.WithContext(ctx).Model(&models.User{}).
 		Where(sqlWhereID, userID).
 		UpdateColumn("last_login_at", loginAt).Error; err != nil {
