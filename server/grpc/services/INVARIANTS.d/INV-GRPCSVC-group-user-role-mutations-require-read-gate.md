@@ -20,11 +20,10 @@
   it is now covered like every other RPC above. Why: authzdiff cross-layer
   differential harness waiver known-01 (PR #3981, a test-only harness not yet
   merged to main as of this fix; historical name D1).
-  Guard: `authzdiff_known01_read_gate_test.go`
-  (`TestGroupService_DeleteGroup_RequiresUsersRead`,
-  `TestUserService_UpdateUser_RequiresUsersRead`,
-  `TestRoleService_DeleteRole_RequiresRolesRead`,
-  `TestGroupService_AddGroupMember_RequiresUsersRead`),
-  `group_service_test.go:TestGroupService_RestoreGroup_RequiresRolesAssign`,
-  `role_service_test.go:TestRoleService_CreateRole_CannotClaimReservedAdminBypassName`,
-  `user_service_test.go:TestUserService_CreateUser_RoleGrantRequiresAssign`.
+  Guard: `authzdiff_known01_read_gate_family_test.go:TestGRPCMutations_RequireReadGate_Family`
+  (one subtest per RPC above, all 13: the write/delete/assign permission alone is
+  PermissionDenied, the same plus the read permission succeeds, so reverting any one
+  call to `authorizeGlobal(<write>)` turns its subtest red) and
+  `TestGRPCMutations_ReadGateFamily_CoversEveryGatedRPC` (AST scan: the methods
+  calling `authorizeGlobalMutation` must be exactly the table's 13 RPCs). Not
+  guarded: a new mutating RPC that never calls `authorizeGlobalMutation` at all.
