@@ -311,7 +311,7 @@ func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state stri
 func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, fromState, toState string, updatedAt time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.User{}).
 		Where("id = ? AND COALESCE(account_state, '') = ?", id, fromState).
-		Updates(map[string]any{"account_state": toState, "updated_at": updatedAt})
+		Updates(map[string]any{"account_state": toState, "updated_at": updatedAt.UTC()}) // a map update runs no hook or NowFunc
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
