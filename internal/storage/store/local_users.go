@@ -364,8 +364,8 @@ func (ls *LocalStorage) SetPasswordHash(ctx context.Context, id uint, hash strin
 func (ls *LocalStorage) SetOneTimePasswordExpiry(ctx context.Context, id uint, expiresAt *time.Time, updatedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{
-			"one_time_password_expires_at": expiresAt,
-			"updated_at":                   updatedAt,
+			"one_time_password_expires_at": utcPtr(expiresAt), // a map update runs no hook or NowFunc
+			"updated_at":                   updatedAt.UTC(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
