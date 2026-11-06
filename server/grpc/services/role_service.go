@@ -50,7 +50,10 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, permRolesWrite); err != nil {
+	// roles.read + roles.write: mirrors the HTTP /roles route group's outer
+	// RequirePermission(roles.read) plus its per-route roles.write gate
+	// (authzdiff known-01; router.go:1057).
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permRolesRead, permRolesWrite); err != nil {
 		return nil, err
 	}
 	if len(req.GetPermissions()) == 0 {
@@ -108,7 +111,8 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, permRolesWrite); err != nil {
+	// roles.read + roles.write: see CreateRole.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permRolesRead, permRolesWrite); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -175,7 +179,8 @@ func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, permRolesWrite); err != nil {
+	// roles.read + roles.write: see CreateRole.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permRolesRead, permRolesWrite); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
