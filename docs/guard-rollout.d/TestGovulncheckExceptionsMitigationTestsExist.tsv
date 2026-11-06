@@ -1,0 +1,1 @@
+TestGovulncheckExceptionsMitigationTestsExist	scripts/ci	#PENDING	new guard (govulncheck ID-scoped exception mechanism, GO-2026-6909) -- report-only until proven against open PRs and a first green nightly on main
