@@ -5,8 +5,9 @@
 #
 # Tokens are minted fresh at the start of this run by logging in as the
 # already-bootstrapped admin and the provisioned viewer account. They exist
-# only as shell variables and, for the length of one ZAP pass, as one line of
-# a ZAP properties file in a per-run mktemp -d directory (mode 0700, removed
+# only as shell variables, in the 0600 header files lib-http.sh uses, and, for
+# the length of one ZAP pass, as one line of a ZAP properties file in a per-run
+# mktemp -d directory (mode 0700, removed
 # in the EXIT trap, mounted read-only into the container). The token is never
 # on any argv (`ps`, `docker inspect` Cmd), never in the container env, never
 # in this script's log output and never written to results/.

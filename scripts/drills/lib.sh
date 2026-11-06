@@ -23,7 +23,7 @@
 #                      empty database per run (`kpg dsn <db>` / `kpg drop <db>`, or
 #                      DROP/CREATE DATABASE), and per-account state such as the last
 #                      consumed TOTP code (totp_fresh) is kept per run, not per database.
-#   DRILL_ROOT        work area (default: <repo>/.scratch/drills); each run makes a
+#   DRILL_ROOT         work area (default: <repo>/.scratch/drills); each run makes a
 #                      fresh sub-directory and removes it on success
 #   DRILL_KEEP=1       keep the work area on success as well as on failure
 

@@ -1,0 +1,2 @@
+### Security
+- **The DAST authenticated ZAP scan no longer puts its bearer token on the `docker run` argv.** `scripts/dast/scan-zap-auth.sh` passed the token as `-z "-config replacer...replacement=Bearer <token>"`, visible in `ps` and `docker inspect`. It now writes the token to a 0600 properties file in a per-run 0700 directory, mounted read-only, and passes `-z "-configfile ..."`. `TestDocsShowNoLiteralSecretOnCommandLine` now also fails on a `-z` option that carries a Bearer or replacement token in `scripts/**/*.sh`.
