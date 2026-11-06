@@ -144,9 +144,13 @@ func TestUserService_CreateUser_RoleGrantRequiresAssign(t *testing.T) {
 	// permission the actor doesn't have — the same escalation-by-proxy shape
 	// this test's explicit-role cases below are pinning, just implicit.
 	h.CreateTestRole(t, "user_provisioner", "Can create users, cannot assign roles", 50)
+	// users.read too: G80 D1/known-01's authorizeGlobalMutation gate requires it
+	// alongside users.write, matching HTTP's outer RequirePermission(users.read)
+	// on the /users route group — without it CreateUser denies before reaching
+	// the escalation gate this test actually pins.
 	_, err := h.SqlDB.Exec(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
 		SELECT r.id, p.id FROM roles r, permissions p
-		WHERE r.name = 'user_provisioner' AND p.name IN ('users.write', 'system.read')`)
+		WHERE r.name = 'user_provisioner' AND p.name IN ('users.write', 'users.read', 'system.read')`)
 	require.NoError(t, err)
 	h.AssignUserRole(t, 8, 50, nil)
 

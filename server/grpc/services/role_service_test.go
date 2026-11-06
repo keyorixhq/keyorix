@@ -392,8 +392,12 @@ func TestRoleService_UpdateRole_RolesWriteHolderCannotAddSystemWrite(t *testing.
 func TestRoleService_CreateRole_CannotClaimReservedAdminBypassName(t *testing.T) {
 	svc, h := newRoleService(t)
 	roleEditor := h.CreateTestRole(t, "role-editor-2", "can edit roles only", 102)
+	// roles.read too: G80 D1/known-01's authorizeGlobalMutation gate requires it
+	// alongside roles.write, matching HTTP's outer RequirePermission(roles.read)
+	// on the /roles route group — without it CreateRole denies before this
+	// test's reserved-name guard is ever reached.
 	require.NoError(t, h.DB.Exec(
-		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name IN ('roles.write', 'roles.read')",
 		roleEditor.ID).Error)
 	h.CreateTestUser(t, "attacker3", 702)
 	h.AssignUserRole(t, 702, roleEditor.ID, nil)

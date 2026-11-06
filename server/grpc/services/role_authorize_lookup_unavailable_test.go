@@ -5,6 +5,11 @@ package services
 // core.Authorize for each named permission. A FAILED lookup (PostgreSQL down) is
 // codes.Unavailable like every other gRPC service (INV-MW-authorize-lookup-error-is-503),
 // not Internal; an error that is not an outage stays Internal, and once the fault clears the same RPC succeeds.
+//
+// NthCall is 3, not 2: the G80 D1/known-01 fix (authorizeGlobalMutation) makes
+// CreateRole issue two authz lookups (roles.read, then roles.write) before
+// resolvePermissionIDs' own bundle-permission lookup, which is now the third
+// ResolveUserPermissionAt call, not the second.
 
 import (
 	"errors"
@@ -36,9 +41,10 @@ func TestRoleService_CreateRole_AuthorizeLookupFault(t *testing.T) {
 			perm := somePermission(t, h)
 			fs := faultstorage.NewFaultyStorage(h.CoreService.Storage(), nil)
 			svc := NewRoleService(core.NewKeyorixCore(fs))
-			// Call 1 is authorizeGlobal(roles.write) (already mapped); call 2 is the
-			// bundle-permission check in resolvePermissionIDs, the line under test.
-			fs.Arm(&faultstorage.FaultSpec{Method: "ResolveUserPermissionAt", NthCall: 2, Kind: faultstorage.KindError, Err: tc.err})
+			// Calls 1-2 are authorizeGlobalMutation's roles.read then roles.write checks
+			// (already mapped, G80 D1/known-01 fix); call 3 is the bundle-permission
+			// check in resolvePermissionIDs, the line under test.
+			fs.Arm(&faultstorage.FaultSpec{Method: "ResolveUserPermissionAt", NthCall: 3, Kind: faultstorage.KindError, Err: tc.err})
 
 			req := &pb.CreateRoleRequest{Name: "outage-role", Description: "d", Permissions: []string{perm}}
 			_, err := svc.CreateRole(roleAdminCtx(), req)
