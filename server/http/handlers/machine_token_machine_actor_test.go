@@ -31,8 +31,11 @@ func issueTokenAsMachine(t *testing.T, roleName string) *httptest.ResponseRecord
 	require.NoError(t, err)
 	require.NoError(t, st.AssignMachineRole(ctx, caller.ID, role.ID, storage.Scope{ProjectID: projID}))
 
+	raw := storeCallerCredential(t, st, caller.ID, "plain", "")
+
 	uc := &middleware.UserContext{UserID: 0, ActorType: core.ActorTypeMachine, MachineIdentityID: &caller.ID}
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"by-machine"}`))
+	req.Header.Set("Authorization", "Bearer "+raw)
 	req = req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), uc))
 	req = withChiParams(req, map[string]string{"id": machineUintToStr(projID), "machineId": machineUintToStr(target.ID)})
 	req.Header.Set("Content-Type", "application/json")

@@ -25,7 +25,8 @@ func TestIssueMachineToken_MachineActorWithRolesAssignAllowed(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, st.AssignMachineRole(ctx, caller.ID, adminRole.ID, storage.Scope{ProjectID: 1}))
 
-	res, err := c.IssueMachineToken(WithSelfMachineGranter(ctx, caller.ID), 1, target.ID, 0, IssueMachineTokenParams{Name: "by-machine"})
+	raw := addCallerCredential(t, st, caller.ID, "plain", "")
+	res, err := c.IssueMachineToken(machineCallerCtx(caller.ID, raw), 1, target.ID, 0, IssueMachineTokenParams{Name: "by-machine"})
 	require.NoError(t, err)
 	require.NotEmpty(t, res.PlainToken)
 }
@@ -43,7 +44,8 @@ func TestIssueMachineToken_MachineActorWithoutRolesAssignRefused(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, st.AssignMachineRole(ctx, caller.ID, devRole.ID, storage.Scope{ProjectID: 1}))
 
-	_, err = c.IssueMachineToken(WithSelfMachineGranter(ctx, caller.ID), 1, target.ID, 0, IssueMachineTokenParams{Name: "nope"})
+	raw := addCallerCredential(t, st, caller.ID, "plain", "")
+	_, err = c.IssueMachineToken(machineCallerCtx(caller.ID, raw), 1, target.ID, 0, IssueMachineTokenParams{Name: "nope"})
 	require.ErrorIs(t, err, ErrMachinePrivilegeCeilingDenied)
 }
 
@@ -63,7 +65,8 @@ func TestIssueMachineToken_MachineActorCannotMintForAdminTierMachine(t *testing.
 	require.NoError(t, st.AssignMachineRole(ctx, caller.ID, adminRole.ID, storage.Scope{ProjectID: 1}))
 	require.NoError(t, st.AssignMachineRole(ctx, target.ID, adminRole.ID, storage.Scope{ProjectID: 1}))
 
-	_, err = c.IssueMachineToken(WithSelfMachineGranter(ctx, caller.ID), 1, target.ID, 0, IssueMachineTokenParams{Name: "nope"})
+	raw := addCallerCredential(t, st, caller.ID, "plain", "")
+	_, err = c.IssueMachineToken(machineCallerCtx(caller.ID, raw), 1, target.ID, 0, IssueMachineTokenParams{Name: "nope"})
 	require.ErrorIs(t, err, ErrMachinePrivilegeCeilingDenied)
 }
 

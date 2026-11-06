@@ -305,8 +305,10 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
 	if actor.ActorKind() == core.ActorTypeMachine {
 		// A directly authenticated machine acting as itself: core evaluates the
-		// privilege ceiling against this machine, not against user 0.
+		// privilege ceiling against this machine, not against user 0, and
+		// refuses a caller whose own credential is restricted or federated.
 		auditCtx = core.WithSelfMachineGranter(auditCtx, actor.PrincipalID())
+		auditCtx = core.WithMachineCallerCredential(auditCtx, extractBearerToken(r))
 	}
 	result, err := h.coreService.IssueMachineToken(auditCtx, projectID, uint(machineID), actor.UserID, core.IssueMachineTokenParams{
 		Name:                body.Name,

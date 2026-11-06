@@ -3,9 +3,11 @@ package services
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -176,8 +178,10 @@ func (s *MachineIdentityGRPCService) IssueMachineToken(ctx context.Context, req 
 	}
 	if user.ActorKind() == core.ActorTypeMachine {
 		// A directly authenticated machine acting as itself: core evaluates the
-		// privilege ceiling against this machine, not against user 0.
+		// privilege ceiling against this machine, not against user 0, and
+		// refuses a caller whose own credential is restricted or federated.
 		ctx = core.WithSelfMachineGranter(ctx, user.PrincipalID())
+		ctx = core.WithMachineCallerCredential(ctx, presentedBearerToken(ctx))
 	}
 	res, err := s.core.IssueMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), user.UserID, core.IssueMachineTokenParams{
 		Name:           req.GetName(),
@@ -194,6 +198,21 @@ func (s *MachineIdentityGRPCService) IssueMachineToken(ctx context.Context, req 
 		ExpiresAt:      timePtrToTs(res.Credential.ExpiresAt),
 		Classification: res.Credential.Classification,
 	}, nil
+}
+
+// presentedBearerToken returns the bearer token the request authenticated
+// with, parsed the way the auth interceptor parses it (the first
+// "authorization" metadata value, "Bearer " prefix), or "" when there is none.
+func presentedBearerToken(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	vals := md.Get("authorization")
+	if len(vals) == 0 || !strings.HasPrefix(vals[0], "Bearer ") {
+		return ""
+	}
+	return strings.TrimPrefix(vals[0], "Bearer ")
 }
 
 func (s *MachineIdentityGRPCService) ListMachineTokens(ctx context.Context, req *pb.ListMachineTokensRequest) (*pb.ListMachineTokensResponse, error) {
