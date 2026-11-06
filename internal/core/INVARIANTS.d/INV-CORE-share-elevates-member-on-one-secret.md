@@ -32,8 +32,11 @@
   only, a per-secret ACL does not count, user id 0 / machine actors refused, a lookup error
   fails closed); `ErrShareOwnerNotMember` and every other refusal is never overridden, and the
   `share_revoked` / `group_share_revoked` row names the acting revoker and says it was not the
-  owner. Guard: `share_revoke_admin_test.go` (`TestRevokeShare_*`,
-  `TestUpdateSharePermission_ManagerStillRefused`), `TestShareRevoke_AdminOverREST`,
+  owner. Guard: `share_revoke_admin_test.go` (`TestRevokeShare_*`: scope boundary
+  `TestRevokeShare_AdminOfOtherScopeRefused`, PAT narrowing
+  `TestRevokeShare_PATNarrowsAdministratorPath`, ACL not counted
+  `TestRevokeShare_ACLManageDoesNotQualify`, lookup error `TestRevokeShare_AdminLookupErrorFailsClosed`,
+  machine `TestRevokeShare_MachineActorRefused`; `TestUpdateSharePermission_ManagerStillRefused`), `TestShareRevoke_AdminOverREST`,
   `TestShareService_RevokeShare_AdminAndMember`. `requireShareAuthority`'s typed refusals (`ErrShareOwnerNotMember`,
   `ErrShareRecipientNotMember`, ...) transports turn into the same user-facing reason via
   `ShareRefusalMessage` (#2976). Why: #2941 (a `write` share let nothing happen because the
