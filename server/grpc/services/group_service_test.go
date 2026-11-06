@@ -135,11 +135,14 @@ func TestGroupService_RestoreGroup_RequiresRolesAssign(t *testing.T) {
 	require.Error(t, err, "users.write holder without roles.assign must NOT restore a group")
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 
-	// User 3 holds roles.assign (the new, correct gate) — must succeed.
+	// User 3 holds roles.assign plus users.read (the new, correct gate: G80
+	// D1/known-01's authorizeGlobalMutation requires users.read alongside
+	// roles.assign, mirroring HTTP's outer RequirePermission(users.read) on
+	// the /groups route group) — must succeed.
 	h.CreateTestUser(t, "assigner", 3)
-	assignerRole := h.CreateTestRole(t, "assigner_only", "roles.assign only", 101)
+	assignerRole := h.CreateTestRole(t, "assigner_only", "roles.assign + users.read", 101)
 	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
-		SELECT ?, id FROM permissions WHERE name = 'roles.assign'`, assignerRole.ID)
+		SELECT ?, id FROM permissions WHERE name IN ('roles.assign', 'users.read')`, assignerRole.ID)
 	h.AssignUserRole(t, 3, assignerRole.ID, nil)
 
 	restored, err := svc.RestoreGroup(authCtx(3, "assigner"), &pb.RestoreGroupRequest{Id: g2.GetId()})
