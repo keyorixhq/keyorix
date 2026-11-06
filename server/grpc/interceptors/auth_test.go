@@ -266,7 +266,7 @@ func TestAuthInterceptor_MachineTokenAuthenticatesAndUsesMachineRBAC(t *testing.
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2 := uint(2)
 	h.AssignUserRole(t, 1, 2, &proj2)
-	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.ActorTypeUser, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(tok.PlainToken, "kx_machine_"))
 	// Grant the machine viewer (secrets.read) in project 2 only.
@@ -367,7 +367,7 @@ func TestAuthInterceptor_MachineTokenNetworkAllowlistOverGRPC(t *testing.T) {
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2cidr := uint(2)
 	h.AssignUserRole(t, 1, 2, &proj2cidr)
-	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.ActorTypeUser, 1, core.IssueMachineTokenParams{
 		Name:         "tok-cidr",
 		AllowedCIDRs: []string{"10.0.0.0/8"},
 	})
@@ -467,7 +467,7 @@ func TestAuthInterceptor_MachineRequestStampsMachineActorInAudit(t *testing.T) {
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2audit := uint(2)
 	h.AssignUserRole(t, 1, 2, &proj2audit)
-	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.ActorTypeUser, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 
 	var captured context.Context

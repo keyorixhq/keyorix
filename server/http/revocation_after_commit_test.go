@@ -82,7 +82,7 @@ func racCases() []racCase {
 			return err
 		}},
 		{kind: "machine", name: "credential-rotated", auditGated: true, end: func(_ *testing.T, w *svWorld, c racCred) error {
-			_, err := w.a.c.IssueMachineToken(ctx, w.projID, c.machineID, w.adminID, core.IssueMachineTokenParams{Name: "rac-rotated", ReplaceCredentialID: c.credID})
+			_, err := w.a.c.IssueMachineToken(ctx, w.projID, c.machineID, w.adminID, core.ActorTypeUser, w.adminID, core.IssueMachineTokenParams{Name: "rac-rotated", ReplaceCredentialID: c.credID})
 			return err
 		}},
 		{kind: "machine", name: "credential-expired", end: func(_ *testing.T, w *svWorld, c racCred) error {

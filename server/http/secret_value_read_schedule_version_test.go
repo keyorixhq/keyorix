@@ -248,7 +248,7 @@ func newSVWorldFromConfig(t *testing.T, backend string, replicas int, cfg *confi
 	m, err := c.CreateMachineIdentity(ctx, proj.ID, "sv-bot", "service", "", "", admin.ID, 0)
 	require.NoError(t, err)
 	require.NoError(t, c.AssignMachineRole(ctx, m.ID, role.ID, core.Scope{ProjectID: proj.ID}, admin.ID, false))
-	mtok, err := c.IssueMachineToken(ctx, proj.ID, m.ID, admin.ID, core.IssueMachineTokenParams{Name: "sv"})
+	mtok, err := c.IssueMachineToken(ctx, proj.ID, m.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "sv"})
 	require.NoError(t, err)
 	w.tokens = map[string]string{"machine": mtok.PlainToken, "human": sess.SessionToken}
 	return w

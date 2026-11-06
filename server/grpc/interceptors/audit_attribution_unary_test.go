@@ -54,7 +54,7 @@ func TestAuthInterceptor_UnaryAuditRowCarriesActorKindMachineIDAndImpersonator(t
 		require.NoError(t, err)
 		proj2 := uint(2)
 		h.AssignUserRole(t, 1, 2, &proj2) // admin at project 2: the issuer's privilege ceiling
-		tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
+		tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.ActorTypeUser, 1, core.IssueMachineTokenParams{Name: "tok"})
 		require.NoError(t, err)
 
 		ev := latestAuditAfter(t, h, unaryCtx(t, tok.PlainToken), m.ID)

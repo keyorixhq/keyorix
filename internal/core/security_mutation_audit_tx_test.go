@@ -235,7 +235,7 @@ func satKinds() []satKind {
 			}},
 		{name: "issue-machine-token", eventType: "machine_identity.token_issued", prepare: none,
 			mutate: func(w *satWorld, c *KeyorixCore, _ any) error {
-				_, err := c.IssueMachineToken(adminCtx(w), w.f.projectID, w.machine.ID, w.f.adminID, IssueMachineTokenParams{Name: w.tag("sat-t")})
+				_, err := c.IssueMachineToken(adminCtx(w), w.f.projectID, w.machine.ID, w.f.adminID, ActorTypeUser, w.f.adminID, IssueMachineTokenParams{Name: w.tag("sat-t")})
 				return err
 			}},
 		{name: "assign-machine-role", eventType: "machine_identity.role_granted",

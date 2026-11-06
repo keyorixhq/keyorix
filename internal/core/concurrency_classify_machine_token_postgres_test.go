@@ -38,7 +38,7 @@ func TestCTAReview_ClassifyMachineToken_vs_RevokeMachineToken_CrossReplicaPostgr
 
 	m, err := f.setup.CreateMachineIdentity(f.ctx, f.projectID, "ci-bot-2696", MachineTypeService, "", "", f.adminID, 0)
 	require.NoError(t, err)
-	issued, err := f.setup.IssueMachineToken(f.ctx, f.projectID, m.ID, f.adminID, IssueMachineTokenParams{Name: "tok-2696"})
+	issued, err := f.setup.IssueMachineToken(f.ctx, f.projectID, m.ID, f.adminID, ActorTypeUser, f.adminID, IssueMachineTokenParams{Name: "tok-2696"})
 	require.NoError(t, err)
 	credID := issued.Credential.ID
 

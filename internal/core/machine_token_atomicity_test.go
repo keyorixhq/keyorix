@@ -46,13 +46,13 @@ func TestIssueMachineToken_RevokeFailureRollsBackNewCredential(t *testing.T) {
 	require.NoError(t, err)
 
 	const actor = uint(1) // bootstrapped admin
-	first, err := c.IssueMachineToken(ctx, proj.ID, machine.ID, actor, IssueMachineTokenParams{Name: "first"})
+	first, err := c.IssueMachineToken(ctx, proj.ID, machine.ID, actor, ActorTypeUser, actor, IssueMachineTokenParams{Name: "first"})
 	require.NoError(t, err)
 
 	armed := true
 	c.storage = failOnceMachineTokenStorage(st, &armed)
 
-	_, err = c.IssueMachineToken(ctx, proj.ID, machine.ID, actor, IssueMachineTokenParams{
+	_, err = c.IssueMachineToken(ctx, proj.ID, machine.ID, actor, ActorTypeUser, actor, IssueMachineTokenParams{
 		Name: "rotated", ReplaceCredentialID: first.Credential.ID,
 	})
 	require.Error(t, err)
@@ -65,7 +65,7 @@ func TestIssueMachineToken_RevokeFailureRollsBackNewCredential(t *testing.T) {
 	assert.False(t, creds[0].Revoked, "the old credential must still be active since the rotation did not complete")
 
 	// Retry (fault already disarmed) must fully succeed.
-	second, err := c.IssueMachineToken(ctx, proj.ID, machine.ID, actor, IssueMachineTokenParams{
+	second, err := c.IssueMachineToken(ctx, proj.ID, machine.ID, actor, ActorTypeUser, actor, IssueMachineTokenParams{
 		Name: "rotated-retry", ReplaceCredentialID: first.Credential.ID,
 	})
 	require.NoError(t, err)

@@ -80,7 +80,7 @@ func machineAttributionFixture(t *testing.T) (srv *httptest.Server, token string
 
 	mi, err := c.CreateMachineIdentity(ctx, project.ID, "w1-attribution-runner", "ci", "", "", admin.ID, 0)
 	require.NoError(t, err)
-	tok, err := c.IssueMachineToken(ctx, project.ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "w1-attribution-token"})
+	tok, err := c.IssueMachineToken(ctx, project.ID, mi.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "w1-attribution-token"})
 	require.NoError(t, err)
 
 	roles, err := c.Storage().ListRoles(ctx)

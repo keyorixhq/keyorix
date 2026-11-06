@@ -95,7 +95,7 @@ func grpcMachineAttributionFixture(t *testing.T) (secrets pb.SecretServiceClient
 
 	mi, err := c.CreateMachineIdentity(ctx, project.ID, "w1-grpc-attribution-runner", "ci", "", "", admin.ID, 0)
 	require.NoError(t, err)
-	tok, err := c.IssueMachineToken(ctx, project.ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "w1-grpc-attribution-token"})
+	tok, err := c.IssueMachineToken(ctx, project.ID, mi.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "w1-grpc-attribution-token"})
 	require.NoError(t, err)
 
 	roles, err := c.Storage().ListRoles(ctx)

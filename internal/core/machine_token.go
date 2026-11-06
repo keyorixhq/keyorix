@@ -107,7 +107,17 @@ func (c *KeyorixCore) validateReplacementCredential(ctx context.Context, machine
 // The raw token is returned once for out-of-band delivery; only its SHA-256 hash
 // is stored. params.AllowedCIDRs, when non-nil and non-empty, restricts the token
 // to requests whose source IP falls within one of the listed CIDR blocks.
-func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineID, actorID uint, params IssueMachineTokenParams) (*IssueMachineTokenResult, error) {
+//
+// actorID is the audit-attribution ID (unchanged by this signature: still a
+// human user's ID, 0 for a machine actor, exactly as every other
+// machine_token.go/machine_identities.go audit call already behaves — out of
+// scope here). actorKind/actorPrincipalID are the authorizing principal for
+// the MACH-001 ceiling below: for a human they equal (ActorTypeUser, actorID);
+// for a machine actor they are (ActorTypeMachine, that machine's own identity
+// ID) — the ONE piece of information actorID alone cannot carry, since a
+// machine actor's actorID is always 0 (ADR-030). Callers pass
+// actor.ActorKind()/actor.PrincipalID() for these two.
+func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineID, actorID uint, actorKind string, actorPrincipalID uint, params IssueMachineTokenParams) (*IssueMachineTokenResult, error) {
 	m, err := c.machineInProject(ctx, projectID, machineID)
 	if err != nil {
 		return nil, err
@@ -115,12 +125,19 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	if m.State != MachineActive {
 		return nil, refuseAs(ErrMachineIdentityNotActive, fmt.Errorf("cannot issue a token for a %s machine identity (must be active)", m.State))
 	}
-	// MACH-001: enforce a privilege ceiling — a non-admin cannot issue a token for
-	// a machine that holds admin-tier roles, since the token would carry those roles
-	// and the actor could use it to escalate their own effective privileges. Every
-	// caller of IssueMachineToken (CLI, gRPC, HTTP) passes a real user's ID, never a
-	// machine principal's, so ActorTypeUser is exact here, not a default.
-	if err := c.requireMachinePrivilegeCeiling(ctx, ActorTypeUser, actorID, projectID, machineID); err != nil {
+	// MACH-001 / authzdiff known finding D3: enforce a privilege ceiling — a
+	// non-admin cannot issue a token for a machine that holds admin-tier roles,
+	// since the token would carry those roles and the actor could use it to
+	// escalate their own effective privileges. This used to hardcode
+	// (ActorTypeUser, actorID) on the premise that "every caller passes a real
+	// user's ID, never a machine principal's" — false: both the gRPC and HTTP
+	// routes' OUTER gate (RequireScopedPermission/authorizeScoped(roles.assign))
+	// already admits a machine actor holding roles.assign, but actorID for such
+	// a caller is always 0 (ADR-030), so this ceiling evaluated "user 0" and
+	// refused every machine actor unconditionally — fails closed (no
+	// escalation), but contradicts the route gate it sits behind. Use the real
+	// actor kind/principal instead.
+	if err := c.requireMachinePrivilegeCeiling(ctx, actorKind, actorPrincipalID, projectID, machineID); err != nil {
 		return nil, err
 	}
 	classification := params.Classification

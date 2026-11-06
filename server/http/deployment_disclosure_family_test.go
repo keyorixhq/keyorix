@@ -137,7 +137,7 @@ func seedFamilyFixtures(t *testing.T, c *core.KeyorixCore) familyFixtures {
 	// flagged entry.
 	mi, err := c.CreateMachineIdentity(ctx, project.ID, "family-ci-runner", "ci", "", "", admin.ID, 0)
 	require.NoError(t, err)
-	_, err = c.IssueMachineToken(ctx, project.ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "family-ci-token", ExpiresAt: &pastExpiry})
+	_, err = c.IssueMachineToken(ctx, project.ID, mi.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "family-ci-token", ExpiresAt: &pastExpiry})
 	require.NoError(t, err)
 
 	// An SoD policy that the system_auditor role itself violates (system_auditor holds

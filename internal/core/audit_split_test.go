@@ -268,13 +268,13 @@ func splitKinds() []splitKind {
 			prepare: func(w *satWorld) any {
 				m, err := w.c.CreateMachineIdentity(ctx, w.f.projectID, w.tag("sp-m"), "service", "", "", w.f.adminID, 0)
 				require.NoError(w.t, err)
-				res, err := w.c.IssueMachineToken(ctx, w.f.projectID, m.ID, w.f.adminID, IssueMachineTokenParams{Name: w.tag("sp-t")})
+				res, err := w.c.IssueMachineToken(ctx, w.f.projectID, m.ID, w.f.adminID, ActorTypeUser, w.f.adminID, IssueMachineTokenParams{Name: w.tag("sp-t")})
 				require.NoError(w.t, err)
 				return [3]any{m.ID, res.Credential.ID, w.tag("sp-rot")}
 			},
 			mutate: func(w *satWorld, c *KeyorixCore, s any) error {
 				st := s.([3]any)
-				_, err := c.IssueMachineToken(ctx, w.f.projectID, st[0].(uint), w.f.adminID,
+				_, err := c.IssueMachineToken(ctx, w.f.projectID, st[0].(uint), w.f.adminID, ActorTypeUser, w.f.adminID,
 					IssueMachineTokenParams{Name: st[2].(string), ReplaceCredentialID: st[1].(uint)})
 				return err
 			},

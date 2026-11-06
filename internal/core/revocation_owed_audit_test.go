@@ -291,7 +291,7 @@ func revKinds() []revKind {
 		{name: "revoke-machine-token",
 			prepare: func(w *satWorld) any {
 				m := machine(w).(*models.MachineIdentity)
-				res, err := w.c.IssueMachineToken(ctx, w.f.projectID, m.ID, w.f.adminID, IssueMachineTokenParams{Name: w.tag("rev-t")})
+				res, err := w.c.IssueMachineToken(ctx, w.f.projectID, m.ID, w.f.adminID, ActorTypeUser, w.f.adminID, IssueMachineTokenParams{Name: w.tag("rev-t")})
 				require.NoError(w.t, err)
 				return [2]uint{m.ID, res.Credential.ID}
 			},

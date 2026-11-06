@@ -374,7 +374,7 @@ func tx3Kinds() []grantKind {
 			prepare: func(w *satWorld) any {
 				m, err := w.c.CreateMachineIdentity(ctx, w.f.projectID, w.tag("g3-mt"), "service", "", "", w.f.adminID, 0)
 				require.NoError(w.t, err)
-				res, err := w.c.IssueMachineToken(ctx, w.f.projectID, m.ID, w.f.adminID, IssueMachineTokenParams{Name: w.tag("g3-t")})
+				res, err := w.c.IssueMachineToken(ctx, w.f.projectID, m.ID, w.f.adminID, ActorTypeUser, w.f.adminID, IssueMachineTokenParams{Name: w.tag("g3-t")})
 				require.NoError(w.t, err)
 				return [2]uint{m.ID, res.Credential.ID}
 			},

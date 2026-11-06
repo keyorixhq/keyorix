@@ -341,7 +341,7 @@ func acRunOp(t *testing.T, w *acWorld, st *acIterState, op byte) {
 			st.patID = res.Token.ID
 		}
 	case 2: // issue machine token
-		res, err := w.c.IssueMachineToken(ctx, w.projID, w.machineIdentityID, w.adminID, core.IssueMachineTokenParams{Name: "acd-mtoken"})
+		res, err := w.c.IssueMachineToken(ctx, w.projID, w.machineIdentityID, w.adminID, core.ActorTypeUser, w.adminID, core.IssueMachineTokenParams{Name: "acd-mtoken"})
 		if err == nil && res != nil {
 			st.machineToken = res.PlainToken
 			st.machineCredID = res.Credential.ID

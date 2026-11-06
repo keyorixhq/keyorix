@@ -63,7 +63,7 @@ func zeroGrantMachineRouter(t *testing.T) (http.Handler, string) {
 
 	mi, err := c.CreateMachineIdentity(ctx, projects[0].ID, "m500-ci-runner", "ci", "", "", admin.ID, 0)
 	require.NoError(t, err)
-	tok, err := c.IssueMachineToken(ctx, projects[0].ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "m500-token"})
+	tok, err := c.IssueMachineToken(ctx, projects[0].ID, mi.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "m500-token"})
 	require.NoError(t, err)
 
 	cfg := &config.Config{}

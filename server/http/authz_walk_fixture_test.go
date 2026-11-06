@@ -205,7 +205,7 @@ func newAWWorld(t *testing.T, backend string, replicas int) *awWorld {
 	// Zero-grant machine token: an identity in the canary project with NO role.
 	zero, err := c.CreateMachineIdentity(ctx, sw.projID, "aw-zero-bot", "service", "", "", sw.adminID, 0)
 	require.NoError(t, err)
-	zt, err := c.IssueMachineToken(ctx, sw.projID, zero.ID, sw.adminID, core.IssueMachineTokenParams{Name: "aw-zero"})
+	zt, err := c.IssueMachineToken(ctx, sw.projID, zero.ID, sw.adminID, core.ActorTypeUser, sw.adminID, core.IssueMachineTokenParams{Name: "aw-zero"})
 	require.NoError(t, err)
 	w.tokens["machine_zero"] = zt.PlainToken
 
@@ -283,7 +283,7 @@ func newAWWorld(t *testing.T, backend string, replicas int) *awWorld {
 	bot, err := c.CreateMachineIdentity(ctx, sw.projID, "aw-canary-bot", "service", "", "", sw.adminID, 0)
 	require.NoError(t, err)
 	w.ids["machine"] = bot.ID
-	if bt, terr := c.IssueMachineToken(ctx, sw.projID, bot.ID, sw.adminID, core.IssueMachineTokenParams{Name: "aw-canary"}); w.must(t, "canary machine token", terr) {
+	if bt, terr := c.IssueMachineToken(ctx, sw.projID, bot.ID, sw.adminID, core.ActorTypeUser, sw.adminID, core.IssueMachineTokenParams{Name: "aw-canary"}); w.must(t, "canary machine token", terr) {
 		var cred models.MachineIdentityCredential
 		if w.must(t, "cred row", db.Where("token_hash = ?", cgSHA256Hex(bt.PlainToken)).First(&cred).Error) {
 			w.ids["cred"] = cred.ID

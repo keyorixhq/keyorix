@@ -181,7 +181,7 @@ func miepRunEvictionFailureCase(t *testing.T, arm func(*faultstorage.FaultyStora
 	newMachine := func(name string) (uint, string) {
 		mi, err := c.CreateMachineIdentity(ctx, proj.ID, name, "ci", "", "", admin.ID, 0)
 		require.NoError(t, err)
-		tok, err := c.IssueMachineToken(ctx, proj.ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: name + "-token"})
+		tok, err := c.IssueMachineToken(ctx, proj.ID, mi.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: name + "-token"})
 		require.NoError(t, err)
 		require.NoError(t, c.AssignMachineRole(ctx, mi.ID, roleID, core.Scope{ProjectID: proj.ID}, admin.ID, false))
 		return mi.ID, tok.PlainToken

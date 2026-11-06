@@ -126,7 +126,7 @@ func machineSecretFixture(t *testing.T, roleName string, grantProjectID uint) (*
 
 	mi, err := c.CreateMachineIdentity(ctx, grantProjectID, "w1-ci-runner", "ci", "", "", admin.ID, 0)
 	require.NoError(t, err)
-	tok, err := c.IssueMachineToken(ctx, grantProjectID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "w1-ci-token"})
+	tok, err := c.IssueMachineToken(ctx, grantProjectID, mi.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "w1-ci-token"})
 	require.NoError(t, err)
 
 	roles, err := c.Storage().ListRoles(ctx)
@@ -245,7 +245,7 @@ func TestUpdateSecret_MachineScopedToOtherProject_Forbidden(t *testing.T) {
 
 	mi, err := c.CreateMachineIdentity(ctx, otherProject.ID, "w1-scoped-runner", "ci", "", "", admin.ID, 0)
 	require.NoError(t, err)
-	tok, err := c.IssueMachineToken(ctx, otherProject.ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "w1-scoped-token"})
+	tok, err := c.IssueMachineToken(ctx, otherProject.ID, mi.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "w1-scoped-token"})
 	require.NoError(t, err)
 
 	roles, err := c.Storage().ListRoles(ctx)

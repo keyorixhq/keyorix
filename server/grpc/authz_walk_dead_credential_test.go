@@ -185,7 +185,7 @@ func newDeadCred(t *testing.T, w *walkWorld, st deadState) *deadCred {
 		role, err := w.storageRole(t, "project_developer")
 		require.NoError(t, err)
 		require.NoError(t, c.AssignMachineRole(ctx, mi.ID, role, core.Scope{ProjectID: w.ids.canaryProject}, w.adminID, false))
-		tok, err := c.IssueMachineToken(ctx, w.ids.canaryProject, mi.ID, w.adminID, core.IssueMachineTokenParams{Name: name, ExpiresAt: expiry})
+		tok, err := c.IssueMachineToken(ctx, w.ids.canaryProject, mi.ID, w.adminID, core.ActorTypeUser, w.adminID, core.IssueMachineTokenParams{Name: name, ExpiresAt: expiry})
 		require.NoError(t, err)
 		cred.token, cred.machineID, cred.credID = tok.PlainToken, mi.ID, tok.Credential.ID
 		return cred

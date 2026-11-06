@@ -738,7 +738,7 @@ func runCrossReplicaIteration(t *testing.T, w *crWorld, goroutines [][]crOp) {
 		patID = patRes.Token.ID
 	}
 
-	machRes, err := w.c0.IssueMachineToken(ctx, w.projID, w.machineID, w.adminID, IssueMachineTokenParams{Name: fmt.Sprintf("cr-mtok-%d", crRotateSeq.Add(1))})
+	machRes, err := w.c0.IssueMachineToken(ctx, w.projID, w.machineID, w.adminID, ActorTypeUser, w.adminID, IssueMachineTokenParams{Name: fmt.Sprintf("cr-mtok-%d", crRotateSeq.Add(1))})
 	machValid := err == nil && machRes != nil
 	var machToken string
 	var machCredID uint

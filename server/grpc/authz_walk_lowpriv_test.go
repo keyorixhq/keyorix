@@ -122,7 +122,7 @@ func buildLowPrivPersonas(t *testing.T, w *walkWorld) []walkPersona {
 
 	mi, err := c.CreateMachineIdentity(ctx, w.ids.decoyProject, "walkzero", "ci", "", "", w.adminID, 0)
 	require.NoError(t, err)
-	tok, err := c.IssueMachineToken(ctx, w.ids.decoyProject, mi.ID, w.adminID, core.IssueMachineTokenParams{Name: "walkzero-token"})
+	tok, err := c.IssueMachineToken(ctx, w.ids.decoyProject, mi.ID, w.adminID, core.ActorTypeUser, w.adminID, core.IssueMachineTokenParams{Name: "walkzero-token"})
 	require.NoError(t, err)
 
 	mkUser := func(name string) uint {

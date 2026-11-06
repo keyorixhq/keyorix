@@ -40,7 +40,7 @@ func TestAuthInterceptor_MachineCredentialLookupFault_IsUnavailableAndUnthrottle
 	require.NoError(t, err)
 	proj2 := uint(2)
 	h.AssignUserRole(t, 1, 2, &proj2)
-	tok, err := h.CoreService.IssueMachineToken(ctxBg, 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok-lookupdown"})
+	tok, err := h.CoreService.IssueMachineToken(ctxBg, 2, m.ID, 1, core.ActorTypeUser, 1, core.IssueMachineTokenParams{Name: "tok-lookupdown"})
 	require.NoError(t, err)
 	require.NoError(t, h.CoreService.AssignMachineRole(ctxBg, m.ID, 4, core.Scope{ProjectID: 2}, 1, false))
 

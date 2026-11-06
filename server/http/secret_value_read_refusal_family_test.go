@@ -276,7 +276,7 @@ func buildRefusalFamilyWorld(t *testing.T) *guardParityWorld {
 	m, err := w.c.CreateMachineIdentity(ctx, other.ID, "other-bot", "service", "", "", w.adminID, 0)
 	require.NoError(t, err)
 	require.NoError(t, w.c.AssignMachineRole(ctx, m.ID, role.ID, core.Scope{ProjectID: other.ID}, w.adminID, false))
-	mtok, err := w.c.IssueMachineToken(ctx, other.ID, m.ID, w.adminID, core.IssueMachineTokenParams{Name: "other"})
+	mtok, err := w.c.IssueMachineToken(ctx, other.ID, m.ID, w.adminID, core.ActorTypeUser, w.adminID, core.IssueMachineTokenParams{Name: "other"})
 	require.NoError(t, err)
 	w.tokens["outsider-machine"] = mtok.PlainToken
 	return w

@@ -232,7 +232,7 @@ func newRRWorld(t *testing.T, backend string, twoReplicas bool) *rrWorld {
 
 	mi, err := c.CreateMachineIdentity(ctx, project.ID, "rr-runner", "ci", "", "", admin.ID, 0)
 	require.NoError(t, err)
-	tok, err := c.IssueMachineToken(ctx, project.ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "rr-token"})
+	tok, err := c.IssueMachineToken(ctx, project.ID, mi.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "rr-token"})
 	require.NoError(t, err)
 	require.NoError(t, c.AssignMachineRole(ctx, mi.ID, roleID["project_developer"], core.Scope{ProjectID: project.ID}, admin.ID, false))
 	w.machineToken = tok.PlainToken

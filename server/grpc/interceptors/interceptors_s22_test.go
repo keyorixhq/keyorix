@@ -510,7 +510,7 @@ func TestStreamAuthInterceptor_S22_MachineTokenAuthenticates(t *testing.T) {
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2stream := uint(2)
 	h.AssignUserRole(t, 1, 2, &proj2stream)
-	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.ActorTypeUser, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(tok.PlainToken, "kx_machine_"))
 

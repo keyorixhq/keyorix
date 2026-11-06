@@ -7,8 +7,11 @@
   under a non-English locale and turns an unrelated failure that happens to contain the word
   ("permission denied" from the OS, a driver error under a "user not found" prefix) into a
   404/403. Migration state: done for the user routes (`users_crud.go`, `users_roles.go`,
-  `admin_impersonation.go`); the other families move over one pull request each (ERRLOSS-SENTINELS-1
-  task 3). A text match that is not about a translated message (driver SQL dialect, an English
+  `admin_impersonation.go`); `machine_identities.go`'s `IssueMachineToken` now also checks
+  `errors.Is(err, core.ErrPermissionDenied)` before its substring switch (authzdiff known-03/D3
+  follow-up: `ErrMachinePrivilegeCeilingDenied`'s wrapped prose never matched any of that switch's
+  fixed substrings, so every legitimate MACH-001 ceiling refusal fell through to the default 500);
+  the other families move over one pull request each (ERRLOSS-SENTINELS-1 task 3). A text match that is not about a translated message (driver SQL dialect, an English
   literal core returns without a sentinel) stays until its sentinel exists. Guard: per family a
   table test over the real handler that runs under `en` and a translated pseudo-locale
   (`error_class_locale_helper_test.go`) and asserts not-found -> 404 and an injected storage

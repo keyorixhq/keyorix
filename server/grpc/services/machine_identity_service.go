@@ -174,7 +174,7 @@ func (s *MachineIdentityGRPCService) IssueMachineToken(ctx context.Context, req 
 		t := time.Now().AddDate(0, 0, int(req.GetExpiresInDays()))
 		expiresAt = &t
 	}
-	res, err := s.core.IssueMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), user.UserID, core.IssueMachineTokenParams{
+	res, err := s.core.IssueMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), user.UserID, user.ActorKind(), user.PrincipalID(), core.IssueMachineTokenParams{
 		Name:           req.GetName(),
 		ExpiresAt:      expiresAt,
 		Classification: req.GetClassification(),

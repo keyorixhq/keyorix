@@ -246,7 +246,7 @@ func TestBreakGlassOwnList_MachinePrincipalUnchanged(t *testing.T) {
 		mi, err := c.CreateMachineIdentity(ctx, f.d.projectID, name, "ci", "", "", f.d.adminID, 0)
 		require.NoError(t, err)
 		require.NoError(t, c.AssignMachineRole(ctx, mi.ID, roleID(role), core.Scope{ProjectID: f.d.projectID}, f.d.adminID, false))
-		tok, err := c.IssueMachineToken(ctx, f.d.projectID, mi.ID, f.d.adminID, core.IssueMachineTokenParams{Name: name + "-token"})
+		tok, err := c.IssueMachineToken(ctx, f.d.projectID, mi.ID, f.d.adminID, core.ActorTypeUser, f.d.adminID, core.IssueMachineTokenParams{Name: name + "-token"})
 		require.NoError(t, err)
 		return tok.PlainToken
 	}

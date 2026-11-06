@@ -122,7 +122,7 @@ func buildGuardParityWorld(t *testing.T) *guardParityWorld {
 	m, err := c.CreateMachineIdentity(ctx, proj.ID, "guard-bot", "service", "", "", admin.ID, 0)
 	require.NoError(t, err)
 	require.NoError(t, c.AssignMachineRole(ctx, m.ID, role.ID, core.Scope{ProjectID: proj.ID}, admin.ID, false))
-	mtok, err := c.IssueMachineToken(ctx, proj.ID, m.ID, admin.ID, core.IssueMachineTokenParams{Name: "guard"})
+	mtok, err := c.IssueMachineToken(ctx, proj.ID, m.ID, admin.ID, core.ActorTypeUser, admin.ID, core.IssueMachineTokenParams{Name: "guard"})
 	require.NoError(t, err)
 
 	r, err := NewRouter(&config.Config{}, c)

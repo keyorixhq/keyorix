@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -302,7 +303,7 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 	// #2545, extended to machine credentials: a client-asserted origin is recorded as a
 	// labelled note on the audit event, never as attribution.
 	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
-	result, err := h.coreService.IssueMachineToken(auditCtx, projectID, uint(machineID), actor.UserID, core.IssueMachineTokenParams{
+	result, err := h.coreService.IssueMachineToken(auditCtx, projectID, uint(machineID), actor.UserID, actor.ActorKind(), actor.PrincipalID(), core.IssueMachineTokenParams{
 		Name:                body.Name,
 		ExpiresAt:           expiresAt,
 		Classification:      body.Classification,
@@ -329,6 +330,15 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 			status = http.StatusNotFound
 		case strings.Contains(msg, "must be active"):
 			status = http.StatusConflict
+		case errors.Is(err, core.ErrPermissionDenied):
+			// MACH-001 privilege-ceiling refusal (requireMachinePrivilegeCeiling,
+			// ErrMachinePrivilegeCeilingDenied): a refusal, not a fault. This
+			// switch's other arms match by message substring, which never catches
+			// a sentinel error wrapped by fmt.Errorf("%w: ...", ...) -- found
+			// alongside authzdiff known-01-D3 (internal/core/machine_token.go):
+			// every legitimate ceiling denial here was falling through to the
+			// default 500 branch below instead of 403.
+			status = http.StatusForbidden
 		default:
 			log.Printf("Error issuing machine token for machine %d in project %d: %v", machineID, projectID, err)
 			msg = clientSafe(err)

@@ -232,7 +232,7 @@ var awDeadStates = []awDeadState{
 		require.NoError(t, err)
 		m, err := w.a.c.CreateMachineIdentity(ctx, p.ID, "doomed-bot", "service", "", "", w.adminID, 0)
 		require.NoError(t, err)
-		tok, err := w.a.c.IssueMachineToken(ctx, p.ID, m.ID, w.adminID, core.IssueMachineTokenParams{Name: "doomed"})
+		tok, err := w.a.c.IssueMachineToken(ctx, p.ID, m.ID, w.adminID, core.ActorTypeUser, w.adminID, core.IssueMachineTokenParams{Name: "doomed"})
 		require.NoError(t, err)
 		return awDeadCred{tok.PlainToken, func(t *testing.T) { require.NoError(t, w.a.c.DeleteProject(ctx, w.adminID, p.ID, true)) }}
 	}},
@@ -243,7 +243,7 @@ func awMintMachine(t *testing.T, w *awWorld, seq int, to string) awDeadCred {
 	ctx := context.Background()
 	m, err := w.a.c.CreateMachineIdentity(ctx, w.projID, fmt.Sprintf("aw-dead-%s-%d", to, seq), "service", "", "", w.adminID, 0)
 	require.NoError(t, err)
-	tok, err := w.a.c.IssueMachineToken(ctx, w.projID, m.ID, w.adminID, core.IssueMachineTokenParams{Name: "aw-dead"})
+	tok, err := w.a.c.IssueMachineToken(ctx, w.projID, m.ID, w.adminID, core.ActorTypeUser, w.adminID, core.IssueMachineTokenParams{Name: "aw-dead"})
 	require.NoError(t, err)
 	return awDeadCred{tok.PlainToken, func(t *testing.T) {
 		_, terr := w.a.c.TransitionMachineIdentity(ctx, w.projID, m.ID, to, w.adminID)

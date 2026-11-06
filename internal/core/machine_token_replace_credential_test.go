@@ -89,7 +89,7 @@ func TestIssueMachineToken_ReplaceCredential_EndToEnd(t *testing.T) {
 
 	c := NewKeyorixCore(store)
 	c.now = func() time.Time { return fixed }
-	res, err := c.IssueMachineToken(context.Background(), 2, 1, 7, IssueMachineTokenParams{
+	res, err := c.IssueMachineToken(context.Background(), 2, 1, 7, ActorTypeUser, 7, IssueMachineTokenParams{
 		Name: "rotated-ci", ReplaceCredentialID: 50,
 	})
 	require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestIssueMachineToken_ReplaceCredential_BadID_FailsFast(t *testing.T) {
 	stubAuthorizedPrincipal(store, 7, Scope{ProjectID: 2}, permRolesAssign)
 
 	c := NewKeyorixCore(store)
-	_, err := c.IssueMachineToken(context.Background(), 2, 1, 7, IssueMachineTokenParams{
+	_, err := c.IssueMachineToken(context.Background(), 2, 1, 7, ActorTypeUser, 7, IssueMachineTokenParams{
 		Name: "rotated-ci", ReplaceCredentialID: 999,
 	})
 	require.Error(t, err)
