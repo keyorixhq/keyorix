@@ -1,0 +1,1 @@
+TestEveryStoreTimeColumnWriteIsUTC	internal/core/guards	#4005	new: every Update/UpdateColumn(s)/map-Updates/Exec write of a time column in internal/storage/store carries a UTC time (UTC-STORE-SCAN-1); report-only until its first green nightly on main

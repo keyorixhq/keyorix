@@ -155,3 +155,4 @@ internal/docsdrift/gitattributes_union_test.go	.gitattributes,docs/atomicity-exe
 migrate/internal/accessplan/implied_test.go	scripts/vault-migration-testbed/seed.sh	checks the HCL stanza literals against scripts/vault-migration-testbed/seed.sh
 server/pq_transport_guard_test.go	operator/**/*.go,!**/*.md	repo-root walk over every non-Markdown, non-test file; reads operator/ Go, skips Markdown
 internal/cryptoinventory/cbom_test.go	internal/cryptoinventory/testdata/**,!LICENSE	the vendored CycloneDX schema under its own testdata/cyclonedx-1.6 (with its LICENSE); the root LICENSE is not read
+internal/core/guards/server_utc_write_guard_test.go	!operator/**	walks server/ and the store/handler trees; operator/ is not walked

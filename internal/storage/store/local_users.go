@@ -254,7 +254,7 @@ func (ls *LocalStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user
 			"email_folded":    user.EmailFolded,
 			"display_name":    user.DisplayName,
 			"is_active":       user.IsActive,
-			"updated_at":      user.UpdatedAt,
+			"updated_at":      user.UpdatedAt.UTC(), // a map update runs no hook or NowFunc
 		})
 	if res.Error != nil {
 		if isDuplicateEmailViolation(res.Error) {
@@ -274,7 +274,11 @@ func (ls *LocalStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user
 
 // UpdateLastLogin stamps last_login_at for a single user. Uses UpdateColumn so
 // only that column is written — no updated_at bump, no clobbering of other fields.
+// UpdateColumn runs no hook and no NowFunc, so loginAt is normalised to UTC here
+// (UTC-STORE-SCAN-1): ListInactiveUsers compares the column with a UTC cutoff, and on
+// SQLite a host-offset text neither orders against it nor scans back.
 func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
+	loginAt = loginAt.UTC()
 	if err := ls.db.WithContext(ctx).Model(&models.User{}).
 		Where(sqlWhereID, userID).
 		UpdateColumn("last_login_at", loginAt).Error; err != nil {
@@ -289,7 +293,7 @@ func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginA
 // revert any concurrent writer's columns.
 func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
-		Updates(map[string]any{"account_state": state, "updated_at": updatedAt})
+		Updates(map[string]any{"account_state": state, "updated_at": updatedAt.UTC()}) // a map update runs no hook or NowFunc
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
@@ -307,7 +311,7 @@ func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state stri
 func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, fromState, toState string, updatedAt time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.User{}).
 		Where("id = ? AND COALESCE(account_state, '') = ?", id, fromState).
-		Updates(map[string]any{"account_state": toState, "updated_at": updatedAt})
+		Updates(map[string]any{"account_state": toState, "updated_at": updatedAt.UTC()}) // a map update runs no hook or NowFunc
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
@@ -326,7 +330,7 @@ func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 func (ls *LocalStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.User{}).
 		Where("id = ? AND COALESCE(external_id, '') = ''", id).
-		Updates(map[string]any{"external_id": externalID, "updated_at": updatedAt})
+		Updates(map[string]any{"external_id": externalID, "updated_at": updatedAt.UTC()}) // a map update runs no hook or NowFunc
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
@@ -342,9 +346,9 @@ func (ls *LocalStorage) SetPasswordHash(ctx context.Context, id uint, hash strin
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{
 			"password_hash":                hash,
-			"password_changed_at":          changedAt,
+			"password_changed_at":          changedAt.UTC(), // a map update runs no hook or NowFunc
 			"one_time_password_expires_at": nil,
-			"updated_at":                   changedAt,
+			"updated_at":                   changedAt.UTC(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
@@ -360,8 +364,8 @@ func (ls *LocalStorage) SetPasswordHash(ctx context.Context, id uint, hash strin
 func (ls *LocalStorage) SetOneTimePasswordExpiry(ctx context.Context, id uint, expiresAt *time.Time, updatedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{
-			"one_time_password_expires_at": expiresAt,
-			"updated_at":                   updatedAt,
+			"one_time_password_expires_at": utcPtr(expiresAt), // a map update runs no hook or NowFunc
+			"updated_at":                   updatedAt.UTC(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
@@ -378,8 +382,8 @@ func (ls *LocalStorage) UpdateLoginLockoutState(ctx context.Context, id uint, at
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{
 			"failed_login_attempts": attempts,
-			"last_failed_login_at":  lastFailedAt,
-			"login_locked_until":    lockedUntil,
+			"last_failed_login_at":  utcPtr(lastFailedAt), // a map update runs no hook or NowFunc
+			"login_locked_until":    utcPtr(lockedUntil),
 			"login_lockout_count":   lockoutCount,
 		})
 	if result.Error != nil {
@@ -600,7 +604,7 @@ func (ls *LocalStorage) UpdateGroupFields(ctx context.Context, id uint, name, na
 	// updated_at is passed in rather than left to GORM's implicit stamp, matching
 	// SetAccountState/SetPasswordHash/UpdateUserIfActiveStateMatches in this file:
 	// the caller's clock source is the one the rest of core compares against.
-	cols := map[string]any{"updated_at": updatedAt}
+	cols := map[string]any{"updated_at": updatedAt.UTC()} // a map update runs no hook or NowFunc
 	if name != nil {
 		cols["name"] = *name
 	}
