@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -320,7 +321,8 @@ func shareUpdateWidens(oldPerm string, oldExp *time.Time, newPerm string, newExp
 	}
 }
 
-// RevokeShare revokes a share. Only the secret owner can revoke.
+// RevokeShare revokes a share. The secret's owner can revoke it, and so can a
+// holder of secrets.manage at the secret's scope.
 func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy uint) error {
 	shareRecord, err := c.storage.GetShareRecord(ctx, shareID)
 	if err != nil {
@@ -332,8 +334,24 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 		return err
 	}
 	// Owner authority also requires live project membership — see ShareSecret.
+	// A holder of secrets.manage at the secret's scope may also revoke a share on
+	// a secret they do not own (the permission that already governs per-secret ACL
+	// revocation). Only the "not the owner" refusal is overridable: an owner who is
+	// no longer a project member stays refused, and updating a share stays
+	// owner-only.
+	byManager := false
 	if err := c.requireShareAuthority(ctx, secret, revokedBy); err != nil {
-		return err
+		if !errors.Is(err, ErrShareNotOwner) {
+			return err
+		}
+		ok, aerr := c.revokerMayManageSecret(ctx, secret, revokedBy)
+		if aerr != nil {
+			return aerr
+		}
+		if !ok {
+			return err
+		}
+		byManager = true
 	}
 
 	// Wrapped in a transaction (not a bare c.storage.DeleteShareRecord call) so a
@@ -357,6 +375,7 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 		IsGroup:     shareRecord.IsGroup,
 		Permission:  shareRecord.Permission,
 		ShareID:     shareRecord.ID,
+		ByManager:   byManager,
 	}
 	if err := c.withOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		if err := tx.DeleteShareRecord(ctx, shareID); err != nil {
@@ -430,4 +449,14 @@ func (c *KeyorixCore) RemoveSelfFromShare(ctx context.Context, secretID, userID 
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
+}
+
+// revokerMayManageSecret reports whether actorID holds secrets.manage at the
+// secret's own project/environment scope. Role-based only; machine actors
+// (user id 0) never qualify. Fails closed on any resolution error.
+func (c *KeyorixCore) revokerMayManageSecret(ctx context.Context, secret *models.SecretNode, actorID uint) (bool, error) {
+	if actorID == 0 {
+		return false, nil
+	}
+	return c.Authorize(ctx, actorID, permSecretsManage, Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID})
 }

@@ -43,14 +43,14 @@ func TestTransferOwnership_ReownsSharesOverREST(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, raw)
 	assert.Equal(t, []uint{f.olgaShareP, f.wendyShareP}, shareIDs(out.Data.Data), "new owner must list the transferred secret's share: %s", raw)
 
-	// The previous owner is refused on update and revoke, and nothing changes.
+	// The previous owner is refused on update, and nothing changes. (Olga is also a
+	// project_admin of P, an administrator of the secret's scope, so she may still
+	// revoke it as an administrator; that is covered in share_revoke_admin_test.go.)
 	code, raw = doMachineRequest(t, f.d.srv, f.ownerTok, http.MethodPut, sharePath, []byte(`{"permission":"write"}`))
-	assert.Equal(t, http.StatusForbidden, code, raw)
-	code, raw = doMachineRequest(t, f.d.srv, f.ownerTok, http.MethodDelete, sharePath, nil)
 	assert.Equal(t, http.StatusForbidden, code, raw)
 	code, out, raw = f.owned(t, f.writerTok, "")
 	require.Equal(t, http.StatusOK, code, raw)
-	assert.Contains(t, shareIDs(out.Data.Data), f.olgaShareP, "a refused revoke must not remove the share: %s", raw)
+	assert.Contains(t, shareIDs(out.Data.Data), f.olgaShareP, "a refused update must not remove the share: %s", raw)
 
 	// The recipient keeps exactly the access they had.
 	aliceAfter, aliceRawAfter := doMachineRequest(t, f.d.srv, f.viewerTok, http.MethodGet, secretPath, nil)
