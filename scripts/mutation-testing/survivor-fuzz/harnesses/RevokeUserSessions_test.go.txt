@@ -1,0 +1,66 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// FuzzSF_RevokeUserSessions: RevokeUserSessions vs its mutated clone, each run
+// on its own freshly bootstrapped core (identical ids and data). The actor and
+// the target are picked from {bootstrap admin, two plain users, id 0, an
+// unknown id}; the target gets 0-3 sessions. What is compared: sessions
+// revoked, the error class, and the sessions left behind.
+func FuzzSF_RevokeUserSessions(f *testing.F) {
+	f.Add(uint8(1), uint8(0), uint8(2))
+	f.Fuzz(func(t *testing.T, actorSel, targetSel, nSessions uint8) {
+		run := func(mutant bool) string {
+			ctx := context.Background()
+			c, st := newBootstrappedCore(t)
+			admin, err := st.GetUserByUsername(ctx, "admin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			mk := func(name string) uint {
+				u, err := c.CreateUser(ctx, &CreateUserRequest{
+					Username: name, Email: name + "@example.com", DisplayName: name,
+					Password: "Tr1cky-Passphrase-For-Tests!",
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return u.ID
+			}
+			ids := []uint{admin.ID, mk("sf-one"), mk("sf-two"), 0, 99999}
+			actor := ids[int(actorSel)%len(ids)]
+			target := ids[int(targetSel)%len(ids)]
+			for i := 0; i < int(nSessions%4); i++ {
+				_, _ = st.CreateSession(ctx, &models.Session{UserID: target, SessionToken: fmt.Sprintf("sf-tok-%d", i), CreatedAt: time.Now()})
+			}
+			var n int
+			if mutant {
+				n, err = c.RevokeUserSessions__mut(ctx, actor, target)
+			} else {
+				n, err = c.RevokeUserSessions(ctx, actor, target)
+			}
+			class := "ok"
+			switch {
+			case err == nil:
+			case errors.Is(err, ErrInsufficientAdminAuthority):
+				class = "403"
+			default:
+				class = "err:" + err.Error()
+			}
+			left, _ := st.ListSessionsByUser(ctx, target)
+			return fmt.Sprintf("actor=%d target=%d n=%d class=%s left=%d", actor, target, n, class, len(left))
+		}
+		orig, mut := run(false), run(true)
+		if orig != mut {
+			t.Fatalf("ORIG [%s] != MUT [%s]", orig, mut)
+		}
+	})
+}

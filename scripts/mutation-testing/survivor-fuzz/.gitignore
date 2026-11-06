@@ -1,0 +1,2 @@
+# survivor-fuzz.sh writes per-run output (mutated clones, fuzz logs, verdicts) here by default.
+results/

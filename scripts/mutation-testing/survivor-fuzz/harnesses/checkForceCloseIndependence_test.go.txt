@@ -1,0 +1,45 @@
+package core
+
+import (
+	"context"
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// FuzzSF_checkForceCloseIndependence: checkForceCloseIndependence vs its mutated
+// clone. Each input byte is one review item: bit 0 decided/pending, bits 1-2
+// principal type (user / group / machine / other), bit 3 whether the principal is
+// the acting user (id 1) or someone else (id 2). The group branch goes through a
+// real bootstrapped core (the actor belongs to no group).
+func FuzzSF_checkForceCloseIndependence(f *testing.F) {
+	f.Add([]byte{0x00})
+	f.Fuzz(func(t *testing.T, b []byte) {
+		c, _ := newBootstrappedCore(t)
+		types := []string{"user", "group", "machine", "other"}
+		var items []*models.AccessReviewItem
+		for _, x := range b {
+			dec := ReviewItemPending
+			if x&1 != 0 {
+				dec = "attested"
+			}
+			id := uint(2)
+			if x&8 != 0 {
+				id = 1
+			}
+			items = append(items, &models.AccessReviewItem{Decision: dec, PrincipalType: types[(x>>1)&3], PrincipalID: id})
+		}
+		ctx := context.Background()
+		o, m := c.checkForceCloseIndependence(ctx, 1, items), c.checkForceCloseIndependence__mut(ctx, 1, items)
+		os, ms := "", ""
+		if o != nil {
+			os = o.Error()
+		}
+		if m != nil {
+			ms = m.Error()
+		}
+		if os != ms {
+			t.Fatalf("ORIG %q != MUT %q for items %v", os, ms, b)
+		}
+	})
+}
