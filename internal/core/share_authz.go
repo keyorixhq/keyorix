@@ -178,7 +178,7 @@ func ShareRefusalMessage(err error) (string, bool) {
 		return "The recipient group has no role in this secret's project. Shares only apply to project members: " +
 			"give the group a role in the project first, then share again.", true
 	case errors.Is(err, ErrShareNotOwner):
-		return "Only the secret's owner can share it or change its shares.", true
+		return "Only the secret's owner can share it or change its shares. An administrator of the secret's project can also revoke a share.", true
 	case errors.Is(err, ErrShareRecipientSearchDenied):
 		return ShareRecipientSearchDeniedMessage, true
 	case errors.Is(err, ErrOwnedShareListDenied):

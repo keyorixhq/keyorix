@@ -57,8 +57,10 @@ permission on the shared secret is the **higher** of the two:
 - A share never grants delete, restore, secret management (`secrets.manage`:
   ACLs, schedules, retention) or the right to share the secret onward. Only
   the owner can share or change shares, including other people's. Revoking
-  a share is also open to anyone with administrator authority over the secret's
-  scope (`secrets.manage`, or an admin role); the audit entry names who did it.
+  a share is also open to an administrator of the secret's scope: a holder of
+  `secrets.manage` plus `secrets.write` there (the revoke route needs
+  `secrets.write` first), or an admin role such as `project_admin`. The audit
+  entry names who did it.
 - Revoking a share removes exactly the elevation. The recipient keeps whatever
   their role gives them (in the table above, a `project_viewer` keeps read).
 - An expired share grants nothing, even before it is cleaned up.
