@@ -867,7 +867,7 @@ code. The checklist to follow is
 | `ssl_root_cert`, the `ssl_mode` allowlist, Compose Postgres over TLS (#3162, #3189, #3203) | §2 |
 | CLI: webhook URLs refused as `--url` (CLI-UX-2) | §6x |
 | SECURITY: audit Vault access migrated with `keyorix-migrate` v0.96.0 to v0.96.3 (`vault audit-access`) | §6y |
-| Roles carry an assignable scope; API clients that grant a new role without `project_id` get 400 (schema epoch 7, #3546) | §6z |
+| Roles carry an assignable scope; API clients that grant a new role without `project_id` get 400 (added in schema epoch 7, #3546) | §6z |
 | PostgreSQL: the server checks it holds the database's DEK; upgrade every replica before the next DEK rotation (#3344) | §6s |
 | SCIM no longer creates or manages `sso:` accounts (#3493) | §6v |
 | "Last used" in access recertification means "within the review period" (`recertification.cadence_days`) | §6w |
@@ -974,12 +974,17 @@ is refused by the template and by `values.schema.json`.
 The same PR also fixes nested named locks that could stall every named lock on a
 replica (#3358), with no configuration change.
 
-Not run against a release build. Proved on main (PostgreSQL) by
+Not run against a release build. Covered on main (PostgreSQL) by
 `internal/storage/postgres_replication_role_postgres_test.go:TestCreateStorage_Postgres_RefusesNonOriginReplicationRole`
 and `internal/storage/store/secret_node_cache_epoch_replication_role_postgres_test.go:TestSecretNodeCacheEpoch_ReplicaRoleWriter_StillMovesStamp_Postgres`.
-For this entry only the "startup parameter in the DSN" case ran (it passed): the
-sandbox's PostgreSQL role is not a superuser and cannot set the parameter for the
-other cases, so those and the trigger test still need a run against a superuser role.
+Both need a database role that may `SET session_replication_role`
+(`internal/testutil/pgpriv/pgpriv.go`): they skip without one and fail instead of
+skipping when `CI=true`, so only a run as a superuser role proves them. With the
+sandbox's non-superuser PostgreSQL role (2026-11-06) both skipped, and PostgreSQL
+itself refused that role even a `session_replication_role` startup option in the DSN
+(`permission denied to set parameter`), so no case of either has run here. The two
+statements above ran there: on a database with no setting `SHOW` printed `origin` and
+the query returned no rows.
 
 ## 6o. Grants fail closed without their audit row (#3367)
 
@@ -1198,10 +1203,13 @@ values), `internal/config/config_load_test.go:TestValidate_RejectsGRPCAutoCert` 
 `mfa.failed`, `mfa.error`, `webauthn.failed` and the other audit events whose name
 records a failure (`auth.session_revocation_failed`, `auth.keep_session_lookup_failed`,
 `auth.session_revocation_panicked`, `secret.rotate_failed`, `dynamic_lease.revoke_failed`,
-`notification.failed`, and the rest of the `*_failed` / `*.failed` / `*_panicked`
-family) were written with `success = true`, so a wrong TOTP code or a failed passkey
-assertion was invisible to `success = false` filters, SIEM rules and exports (#3363).
-New rows have `success = false`. **Rows written before the upgrade keep
+`notification.failed`, `system.audit_verification_state_rejected`, and the rest of the
+`internal/core` events whose name ends in `.failed`, `_failed`, `.error`, `_rejected` or
+`_panicked`) were written with `success = true`, so a wrong TOTP code or a failed
+passkey assertion was invisible to `success = false` filters, SIEM rules and exports
+(#3363). New rows have `success = false`; the family guard also holds every
+`internal/core` event ending in `denied`, `refused` or `unresolved` to `success = false`
+(#3363 changed none of those). **Rows written before the upgrade keep
 `success = true`**: audit rows are hash-chained and never rewritten. A query or SIEM
 rule that must cover older history should match on `event_type` as well as
 `success`. `access_request.rejected` is unchanged (it records a successful decision).
@@ -1312,8 +1320,11 @@ keyorix-migrate vault audit-access --vault-addr https://vault.example.com:8200 \
 ```
 
 It lists each grant that is wider than its Vault policy, why, and the API call that revokes
-exactly that grant. It exits 1 when it finds any, and also when the audit is incomplete
-because a Vault input (`sys/mounts`, the policy list, a policy, an auth role list or role)
+exactly that grant. A finding marked `POSSIBLY WIDER THAN VAULT` (`"status": "unconfirmed"`
+in `--json`) is one where the current rules also grant that role in the same project at
+another environment, so the API cannot tell the two apart; revoking a grant that does not
+exist is a harmless 404. It exits 1 when it finds any, and also when the audit is incomplete
+because a Vault input (`sys/mounts`, the policy list, a policy, an auth role or user list, a role or user)
 could not be read, or because the Keyorix token cannot see every project (the project list
 holds only the projects a token may read, so grants into the others would be missed): grant the
 Vault token the `healthscan-policy.hcl` stanzas, use a Keyorix token with global `secrets.read`,
@@ -1330,12 +1341,13 @@ Two more shapes, both in every release that shipped `plan-access`:
   (names only) and reports such grants. It sees today's Vault tree: a mount emptied since the
   migration is not reported, and a mount it cannot list counts as holding paths (reported).
   A `plan-access` file written before this release is refused by `apply-access`: re-run
-  `plan-access`. The same holds for a `--path-map` scope: `--path-map secret/data=<team-a>:<dev>`
+  `plan-access`. The same holds for a `--path-map` scope (the flag takes numeric IDs,
+  `<vault-prefix>=<project-id>:<environment-id>`): `--path-map secret/data=<id of team-a>:<id of dev>`
   maps the secret mount into team-a/dev, and `kv1/team-a/dev/x` lands in team-a/dev by name, so
   a grant there reaches it too. `plan-access` and `audit-access` now report such a policy as
   `cross-mount-scope` and print the other mount's path; send that mount's paths to their own
   scope with another `--path-map` entry to clear it. The policy's own mount counts too: with
-  `--path-map secret/data/legacy=<team-a>:<dev>`, `secret/team-a/dev/x` lies outside
+  `--path-map secret/data/legacy=<id of team-a>:<id of dev>`, `secret/team-a/dev/x` lies outside
   `secret/data/legacy/*` and lands in team-a/dev by name, so the report prints
   `secret/team-a/dev/: present (policy mount, outside the policy)`.
 - **`secrets.read` implies listing** (known residual, not revocable by an upgrade): a migrated
@@ -1345,10 +1357,11 @@ Two more shapes, both in every release that shipped `plan-access`:
   report, `implied_access` in the JSON); if names must stay hidden for one of them, revoke its
   grant and grant the secrets by hand.
 
-## 6z. Roles carry an assignable scope (schema epoch 7, #3546)
+## 6z. Roles carry an assignable scope (added in schema epoch 7, #3546)
 
-The first boot adds `roles.assignable_scope` (schema epoch 7; the compatibility floor stays
-3, so an epoch-6 replica keeps running during a rolling upgrade) and sets it once:
+The first boot adds `roles.assignable_scope` (the column arrived with schema epoch 7, which
+left the compatibility floor at 3, so an epoch-6 replica keeps running during a rolling
+upgrade) and sets it once:
 `project_*` roles `project`, `system_*` and `alert_operator` `global`, the legacy
 `admin`/`editor`/`viewer`/`auditor`/`super_admin` roles and **every existing custom role
 `any`** (nothing that worked before breaks). Roles created after the upgrade default to
@@ -1366,11 +1379,13 @@ What to check:
   role with `PUT /api/v1/roles/{id}`.
 - **A `system_*` role granted with a `project_id`** (for example through project members or a
   project invitation) is now refused; grant it without a project.
-- **The startup `WARNING` lists** existing grants outside their role's scope and pending
-  invitations that can no longer be accepted. Nothing is changed or removed automatically.
-- **Mixed versions and rolling back the binary.** An epoch-5 binary (allowed by the
-  compatibility floor) ignores `assignable_scope`: it refuses only the four `project_*`
-  built-ins without a project. While it runs, a custom role set to `project` or `global`, or a
+- **The startup `WARNING` lists** existing grants outside their role's scope, pending
+  invitations that can no longer be accepted, SSO settings that would create such grants,
+  and grants at `project_id=0` with an `environment_id`. Nothing is changed or removed
+  automatically, and the check never blocks startup.
+- **Mixed versions and rolling back the binary.** A binary from before epoch 7 (epoch 6, or
+  older down to the compatibility floor, 3) ignores `assignable_scope`: an epoch-6 one
+  refuses only the four `project_*` built-ins without a project. While it runs, a custom role set to `project` or `global`, or a
   `system_*` role offered on a project, is not refused by that binary. Roles it creates get
   the column default, `project`. Finish the rollout (or the rollback) promptly and read the
   startup `WARNING` on the new version afterwards.
