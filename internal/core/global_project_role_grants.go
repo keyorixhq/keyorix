@@ -114,7 +114,14 @@ func (c *KeyorixCore) ListPendingInvitationsOutsideAssignableScope(ctx context.C
 			}
 			for _, g := range grants {
 				r, err := c.storage.GetRoleByName(ctx, g.role)
-				if err != nil || validateRoleScope(r, g.scope) == nil {
+				if err != nil {
+					if isPositiveNotFound(err) {
+						continue
+					}
+					// #3988 sibling: a failed read must not under-report.
+					return nil, classifyReadError(err, "role not found")
+				}
+				if validateRoleScope(r, g.scope) == nil {
 					continue
 				}
 				out = append(out, InvitationOutsideScope{InvitationID: inv.ID, Email: inv.Email, RoleName: r.Name, ProjectID: g.scope.ProjectID})

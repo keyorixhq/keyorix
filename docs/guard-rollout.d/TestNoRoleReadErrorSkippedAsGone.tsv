@@ -1,0 +1,1 @@
+TestNoRoleReadErrorSkippedAsGone	internal/core/guards	#TBD	new guard for the GetRole-error-then-continue class (#3988), report-only until its first green nightly on main
