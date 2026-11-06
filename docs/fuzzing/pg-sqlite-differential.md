@@ -42,6 +42,13 @@ complete (it is the production enterprise backend); nothing here invents backend
    collation-only difference (SQLite BINARY vs PostgreSQL `en_US.UTF-8`) is pre-classed
    "backend-inherent / ordering contract" and reported as one item, not per-case.
 5. Error text is not compared; error class is.
+6. (Added after the first smoke run and BEFORE any campaign.) When one `CreateUser`
+   violates BOTH the username and the email unique index, the engine decides which one it
+   reports: SQLite returned `ErrDuplicateEmail`, PostgreSQL `ErrDuplicateUsername`
+   (`isDuplicate*Violation` in `local_users.go` match on engine-specific message text).
+   Only in that both-violated case the two classes are treated as one. Single-index
+   violations stay exact, and the harness now constructs them separately so the
+   normalisation cannot mask them. Recorded as observation O-1 in the outcome.
 
 ## Success rule (fixed before running)
 
