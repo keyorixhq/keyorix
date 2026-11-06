@@ -5,12 +5,21 @@
 #
 # Tokens are minted fresh at the start of this run by logging in as the
 # already-bootstrapped admin and the provisioned viewer account. They exist
-# only as in-memory shell variables and short-lived container env vars for
-# the duration of this run — never written to results/. The one caveat: the
-# admin/user token is passed to `docker run` as a ZAP replacer config value,
-# so it is visible in that container's own argv (`docker inspect`/`ps`) for
-# its lifetime — the container is --rm and gone within minutes, and no
-# persisted file (report, JSON, or coverage log) ever contains it.
+# only as shell variables and, for the length of one ZAP pass, as one line of
+# a ZAP properties file in a per-run mktemp -d directory (mode 0700, removed
+# in the EXIT trap, mounted read-only into the container). The token is never
+# on any argv (`ps`, `docker inspect` Cmd), never in the container env, never
+# in this script's log output and never written to results/.
+#
+# Container uid (SCRIPTS-SECRETS tail): the ZAP image runs as user "zap",
+# uid 1000 (override with ZAP_CONTAINER_UID). The properties file is written
+# under umask 077 (0600, directory 0700), so the container can read it only
+# if it runs as the same uid as this script's user. If it does not, we grant
+# exactly that one uid read access with a POSIX ACL (file r, directory x) when
+# setfacl exists; failing that, we widen to 0644/0711 with a loud warning,
+# which is no worse than the old argv exposure (the path was on argv, and the
+# directory is removed when the pass ends). NOT yet run against a real ZAP
+# container: pending DAST host.
 set -euo pipefail
 WORKDIR="$(cd "$(dirname "$0")" && pwd)"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -28,8 +37,12 @@ fi
 # shellcheck source=/dev/null
 . "$WORKDIR/lib-http.sh"
 
+AUTH_TMP=""
+ZAP_CONTAINER_UID="${ZAP_CONTAINER_UID:-1000}"
+
 record_heartbeat() {
     local rc=$?
+    if [ -n "$AUTH_TMP" ]; then rm -rf "$AUTH_TMP"; fi
     echo "$(date -u +%FT%TZ) scan=zap-auth start=$START_TS end=$(date -u +%FT%TZ) exit=$rc sha=${SCAN_SHA:-unknown}" >> "$HB_LOG"
 }
 trap record_heartbeat EXIT
@@ -63,31 +76,63 @@ if [ -z "$ADMIN_TOKEN" ] || [ -z "$USER_TOKEN" ]; then
     exit 1
 fi
 
+# write_zap_authconf <token>: write the ZAP replacer config (the Authorization
+# header rewrite) into $AUTH_TMP/zap-auth.prop and make it readable by the
+# container's zap uid only as far as needed (see the header comment). The
+# token goes through the shell's printf builtin into the file, never an argv.
+write_zap_authconf() {
+    local token="$1" conf="$AUTH_TMP/zap-auth.prop"
+    (
+        umask 077
+        {
+            echo "replacer.full_list(0).description=auth"
+            echo "replacer.full_list(0).enabled=true"
+            echo "replacer.full_list(0).matchtype=REQ_HEADER"
+            echo "replacer.full_list(0).matchstr=Authorization"
+            echo "replacer.full_list(0).regex=false"
+            printf 'replacer.full_list(0).replacement=Bearer %s\n' "$token"
+        } > "$conf"
+    )
+    if [ "$(id -u)" = "$ZAP_CONTAINER_UID" ]; then
+        return 0 # same uid as the container's zap user: 0600 file / 0700 dir suffice
+    fi
+    if command -v setfacl >/dev/null 2>&1 \
+        && setfacl -m "u:$ZAP_CONTAINER_UID:x" "$AUTH_TMP" \
+        && setfacl -m "u:$ZAP_CONTAINER_UID:r" "$conf"; then
+        return 0 # only the zap uid gains access
+    fi
+    echo "[$(date -u +%FT%TZ)] WARNING: cannot grant uid $ZAP_CONTAINER_UID read access to the ZAP auth config without widening it; using 0644/0711 for this pass (dir is removed when the pass ends)" >&2
+    chmod 0711 "$AUTH_TMP"
+    chmod 0644 "$conf"
+}
+
 run_authenticated_pass() {
     local label="$1" token="$2"
     local report="$WORKDIR/results/zap-$label-$TIMESTAMP-$SCAN_SHA.html"
     echo "[$(date -u +%FT%TZ)] Starting ZAP API scan as $label (sha=$SCAN_SHA) -> $report"
+    AUTH_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dast-zap-auth.XXXXXX")"
+    chmod 0700 "$AUTH_TMP"
+    write_zap_authconf "$token"
     # No --hook: see scan-zap.sh's comment -- 100001 suppression now lives in
     # accepted-exceptions.yaml, applied post-scan by create-issues.sh.
     #
-    # KNOWN GAP (SCRIPTS-SECRETS-2): the -z string below carries the principal's bearer token, so
-    # it is visible in `ps` on this host for the length of the scan. It is the one argv secret
-    # left under scripts/dast; the cli guard (TestDocsShowNoLiteralSecretOnCommandLine) cannot see it
-    # because the token is interpolated from a variable. Moving it into a ZAP properties file
-    # (`-z "-configfile ..."`) needs the file readable by the container's zap uid and a run on the
-    # DAST host to confirm, so it is not done blind.
+    # The bearer token lives only in $AUTH_TMP/zap-auth.prop, mounted read-only;
+    # -z carries just the file path, so no argv or `docker inspect` field has it.
     docker run --rm \
       --pull never \
       --network keyorix-dast_default \
       -v "$WORKDIR/results:/zap/wrk" \
+      -v "$AUTH_TMP:/zap/auth:ro" \
       keyorix-scanner:latest \
       zap-api-scan.py \
       -t http://keyorix:8080/openapi.yaml \
       -f openapi \
       -r "$(basename "$report")" \
       -J "zap-$label-$TIMESTAMP-$SCAN_SHA.json" \
-      -z "-config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Authorization -config replacer.full_list(0).regex=false -config replacer.full_list(0).replacement=Bearer\\ $token" \
+      -z "-configfile /zap/auth/zap-auth.prop" \
       -I || true
+    rm -rf "$AUTH_TMP"
+    AUTH_TMP=""
     echo "[$(date -u +%FT%TZ)] ZAP $label pass done -> $report"
     if [ -x "$WORKDIR/create-issues.sh" ]; then
         "$WORKDIR/create-issues.sh" "-" "$WORKDIR/results/zap-$label-$TIMESTAMP-$SCAN_SHA.json"
