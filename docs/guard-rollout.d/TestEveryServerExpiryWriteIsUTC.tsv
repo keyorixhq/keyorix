@@ -1,0 +1,1 @@
+TestEveryServerExpiryWriteIsUTC	internal/core/guards	#4005	new: expiry/last-used fields and cutoff bounds assigned in server/http/handlers and server/grpc are UTC or rendering, and no raw gorm write lives there (UTC-STORE-SCAN-1); report-only until its first green nightly on main

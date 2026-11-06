@@ -163,7 +163,8 @@ func (c *KeyorixCore) deliverSetupLink(ctx context.Context, issued *IssueSetupTo
 // password and provisions an account_setup link, so the user sets their own password
 // via the link instead of the admin choosing one (ADR-025 / ADR-028). Returns the
 // created user and the delivery outcome (the link to relay in out-of-band mode).
-func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUserRequest, createdBy uint) (*models.User, *ProvisionSetupResult, error) {
+// The actor needs the baseline role's permissions, as in CreateUserAudited.
+func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUserRequest, createdBy uint, actorIsMachine bool) (*models.User, *ProvisionSetupResult, error) {
 	if c.setupBaseURL == "" {
 		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrSetupBaseURLRequired)
 	}
@@ -179,7 +180,7 @@ func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUs
 	}
 	reqCopy.Password = unusable
 	reqCopy.AccountState = AccountPendingFirstLogin
-	user, err := c.CreateUserAudited(ctx, &reqCopy, createdBy)
+	user, err := c.CreateUserAudited(ctx, &reqCopy, createdBy, actorIsMachine)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -216,8 +217,9 @@ type OneTimePasswordResult struct {
 // setup-link path for when an admin wants to set an initial credential rather than have
 // the end user choose one: the admin holds the first credential, so the account must
 // change it on first login. The password is never emailed and never persisted in clear
-// (only its bcrypt hash). No base URL is required — there is no link.
-func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *CreateUserRequest, createdBy uint) (*models.User, *OneTimePasswordResult, error) {
+// (only its bcrypt hash). No base URL is required — there is no link. The actor
+// needs the baseline role's permissions, as in CreateUserAudited.
+func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *CreateUserRequest, createdBy uint, actorIsMachine bool) (*models.User, *OneTimePasswordResult, error) {
 	otp, err := GenerateInitialCredential()
 	if err != nil {
 		return nil, nil, err
@@ -232,7 +234,7 @@ func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *Cr
 	// The expiry is written by the same insert as the password (OTP-EXPIRY-1).
 	expiresAt := c.now().Add(c.effectiveOneTimePasswordExpiry()).UTC()
 	reqCopy.OneTimePasswordExpiresAt = &expiresAt
-	user, err := c.CreateUserAudited(ctx, &reqCopy, createdBy)
+	user, err := c.CreateUserAudited(ctx, &reqCopy, createdBy, actorIsMachine)
 	if err != nil {
 		return nil, nil, err
 	}

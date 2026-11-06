@@ -248,6 +248,7 @@ func TestCreateUserWithSetupLink_Conflict_S20(t *testing.T) {
 			DisplayName: "Setup Conflict S20",
 		},
 		1,
+		false,
 	)
 	require.NoError(t, err)
 

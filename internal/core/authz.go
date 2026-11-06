@@ -634,6 +634,9 @@ func (c *KeyorixCore) requireStillAuthorizedToImpersonate(ctx context.Context, a
 //     "a machine is never a global admin," so a machine holding an admin-tier
 //     role itself can never mint a credential for ANOTHER admin-tier machine,
 //     regardless of what that role's explicit permission bundle contains.
+//     For a machine actor, admin-tier means the bypass flag OR a canonical
+//     admin name OR an administrative bundle (isAdminRoleName/roleIsAdminTier),
+//     the test the machine grant paths apply.
 //   - Otherwise (machineID doesn't hold an admin-tier role today, OR
 //     machineID==0 because the identity doesn't exist yet): the actor must
 //     still hold roles.assign at the machine's own project scope — the SAME
@@ -652,7 +655,11 @@ func (c *KeyorixCore) requireStillAuthorizedToImpersonate(ctx context.Context, a
 //     holds that same roles.assign authority — so the ceiling for "may this
 //     actor control this identity's credential" is derived from the SAME
 //     authority that already governs "may this actor bring this identity into
-//     existence," not picked independently per call site.
+//     existence," not picked independently per call site. A machine actor
+//     minting for an existing machine must in addition hold every permission
+//     the target holds, at each scope it holds it
+//     (requireMachineActorHoldsTargetPermissions). The user path has no such
+//     check yet (INV-CORE-01 follow-up).
 func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorType string, principalID, projectID, machineID uint) error {
 	if machineID != 0 {
 		roles, err := c.storage.GetMachineRoles(ctx, machineID)
@@ -666,6 +673,29 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorT
 		containsAdmin, err := c.roleSetContainsAdmin(ctx, roleIDs)
 		if err != nil {
 			return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+		}
+		if !containsAdmin && actorType == ActorTypeMachine {
+			// A machine actor is held to the same admin-tier test as the
+			// machine grant paths (requireGranterHoldsRolePermissionsNoBaseline):
+			// a canonical admin name or an administrative bundle counts, not only
+			// the bypass flag. Otherwise a roles.assign holder could mint a token
+			// for a peer whose custom role is admin-tier and act as that peer.
+			// Fails closed: a permission lookup error is returned, never read
+			// as "not admin-tier".
+			for _, r := range roles {
+				if isAdminRoleName(r.Name) {
+					containsAdmin = true
+					break
+				}
+				perms, err := c.storage.GetRolePermissions(ctx, r.ID)
+				if err != nil {
+					return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+				}
+				if roleIsAdminTier(perms) {
+					containsAdmin = true
+					break
+				}
+			}
 		}
 		if containsAdmin {
 			isAdmin := false
@@ -688,6 +718,51 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorT
 	}
 	if !allowed {
 		return fmt.Errorf("%w: creating a machine identity, or minting a credential for one, requires roles.assign at the project scope", ErrMachinePrivilegeCeilingDenied)
+	}
+	if actorType == ActorTypeMachine && machineID != 0 {
+		return c.requireMachineActorHoldsTargetPermissions(ctx, principalID, machineID)
+	}
+	return nil
+}
+
+// requireMachineActorHoldsTargetPermissions refuses a machine actor control
+// over targetID's credential unless the actor holds, at every scope where the
+// target holds a role grant, every permission those roles bundle. It is the
+// rule requireGranterHoldsRolePermissions applies when a machine grants a
+// role, evaluated the same way (AuthorizePrincipal for the machine, so a
+// broader-scope grant of the actor covers a narrower one of the target).
+// Without it a roles.assign-only machine could mint a durable token for a
+// non-admin-tier peer that reads or writes the project's secrets and act as
+// that peer, although it is refused when granting itself the same role
+// (REVIEW-3993-DEEP-2 finding 1). Scopes and role IDs come from storage
+// (GetMachineRoleScopes, GetMachineRoleIDsAt), never from the caller. Fails
+// closed: every lookup error is returned, and every refusal wraps
+// ErrMachinePrivilegeCeilingDenied.
+func (c *KeyorixCore) requireMachineActorHoldsTargetPermissions(ctx context.Context, actorID, targetID uint) error {
+	scopes, err := c.storage.GetMachineRoleScopes(ctx, targetID)
+	if err != nil {
+		return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+	}
+	for _, scope := range scopes {
+		roleIDs, err := c.storage.GetMachineRoleIDsAt(ctx, targetID, scope)
+		if err != nil {
+			return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+		}
+		for _, roleID := range roleIDs {
+			perms, err := c.storage.GetRolePermissions(ctx, roleID)
+			if err != nil {
+				return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+			}
+			for _, p := range perms {
+				ok, err := c.AuthorizePrincipal(ctx, ActorTypeMachine, actorID, p.Name, scope)
+				if err != nil {
+					return fmt.Errorf("failed to verify actor authority: %w", err)
+				}
+				if !ok {
+					return fmt.Errorf("%w: issuing a token for a machine identity requires holding every permission it holds; the caller does not hold %q at that scope", ErrMachinePrivilegeCeilingDenied, p.Name)
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -1055,11 +1130,11 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, ac
 // requireGranterHoldsRolePermissionsNoBaseline is requireGranterHoldsRolePermissions'
 // per-permission loop WITHOUT the roles.assign baseline check -- the actor must
 // still hold every permission the role bundles, but is not additionally required
-// to hold roles.assign itself. Reserved for the one call site where that
-// distinction is correct: CreateUserWithAssignments' mandatory default
-// system_viewer grant, which mirrors plain CreateUser's own unconditional,
-// zero-ceiling auto-assign (users.go) -- "create a plain user" has always been
-// gated by users.write alone, not roles.assign, and every OTHER caller of the
+// to hold roles.assign itself. Reserved for the mandatory system_viewer
+// baseline every new user receives: CreateUserWithAssignments' default system
+// role and plain creation (requireBaselineRoleGrantAuthority, users.go) --
+// "create a plain user" is gated by users.write plus the baseline role's own
+// permissions, not roles.assign, and every OTHER caller of the
 // escalation-by-proxy check in this codebase represents a genuinely
 // discretionary role grant the actor is choosing to make, which this one does
 // not. Do not reach for this function for a new call site without the same

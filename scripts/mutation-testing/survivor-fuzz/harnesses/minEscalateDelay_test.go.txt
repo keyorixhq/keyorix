@@ -1,0 +1,26 @@
+package core
+
+import (
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// FuzzSF_minEscalateDelay: minEscalateDelay vs its mutated clone on the same
+// policy list (each byte is one EscalateAfterMinutes; the list is never empty).
+func FuzzSF_minEscalateDelay(f *testing.F) {
+	f.Add([]byte{5, 3, 9})
+	f.Fuzz(func(t *testing.T, b []byte) {
+		if len(b) == 0 {
+			return
+		}
+		pol := make([]models.AlertEscalationPolicy, len(b))
+		for i, x := range b {
+			pol[i].EscalateAfterMinutes = int(x)
+		}
+		orig, mut := minEscalateDelay(pol), minEscalateDelay__mut(pol)
+		if orig != mut {
+			t.Fatalf("ORIG %d != MUT %d for %v", orig, mut, b)
+		}
+	})
+}
