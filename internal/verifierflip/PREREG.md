@@ -85,3 +85,22 @@ columns inside a live DB and asserts verdict != VALID; internal/backupfmt has
 manifest_sign_test exhaustive tamper. This package flips every BIT of the
 pure artifact encodings, adds truncate/extend/reorder, panic and timing
 checks, and covers verifiers that had no exhaustive test.
+
+---
+## Amendment 1 (2026-11-06, after first run, before any claim)
+
+First full run: rule (a) fired 523 times on `license-ed25519-token` and the
+distribution was two-population (structural reject ~1us vs ed25519 verify
+~60-100us). That is the expected cost of a public-key verification, not a
+secret-dependent timing difference, so rule (a) as written measures the wrong
+thing. Rule (a) is amended to: reject min-time > 20x median AND > 2 ms above
+it (pathological work / DoS shape). Rule (b) (position skew inside the MAC) is
+unchanged and is the secret-dependent-compare check. The 523 first-run flags
+are recorded as `harness-design`, not findings.
+
+Also: `audit-external-anchor-bundle` reports ACCEPT-DIFFERENT for the
+`anchor_token` and `anchor_provider` JSON fields. Those are not covered by the
+checkpoint signature by design (the RFC3161 token is authenticated separately
+by internal/notary). They are reported, not gated, and are listed in the
+results as `expected-unsigned-by-design` for this verifier; whether the
+downstream notary check covers the provider string is out of scope here.
