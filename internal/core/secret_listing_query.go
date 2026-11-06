@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"maps"
 	"sort"
 	"strings"
@@ -176,7 +177,7 @@ func (c *KeyorixCore) ListSecretsInScopeWithSharingInfo(ctx context.Context, use
 	// ListSecretsWithSharingInfo applies to the rows it adds does not apply. Without them
 	// a recipient of a write share on a secret in their own project got no user_permission,
 	// and the UI could not offer the Edit / Rotate the share elevates them to.
-	shared, err := c.getSharedSecretsWithSharingInfo(ctx, userID, filter)
+	shared, err := c.sharedSecretDecorations(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -487,7 +488,35 @@ func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userI
 	if shareFetchMayBeTruncated(shares) {
 		return nil, ErrShareListOverCap
 	}
+	return c.sharedSecretRows(ctx, shares)
+}
 
+// sharedSecretDecorations is the received-share fetch of
+// ListSecretsInScopeWithSharingInfo, where the rows only DECORATE secrets the role
+// already makes visible (IsShared, UserPermission, the share indicators); they never
+// add a row. A fetch at the storage row cap is therefore used as it came back
+// instead of refused (#3943): a share cut off by the cap leaves its secret's row
+// undecorated, which under-reports the caller's own share permission (the UI offers
+// less, nothing is granted), while the list itself is complete. Refusing it let
+// anyone able to share 10000 secrets with a user turn that user's GET
+// /api/v1/secrets and gRPC ListSecrets into an error. The share-list endpoints
+// (ListUserShareViews, ListSharesByUser) and the no-role listing, where shares ARE
+// the rows, still refuse at the cap (REVIEW-3018). Logged, so an operator can see a
+// user whose decorations are partial.
+func (c *KeyorixCore) sharedSecretDecorations(ctx context.Context, userID uint) ([]*models.SecretWithSharingInfo, error) {
+	shares, err := c.storage.ListSharesByUser(ctx, userID, c.shareEffectiveNow())
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if shareFetchMayBeTruncated(shares) {
+		log.Printf("secret listing: user %d has at least %d received shares (the fetch cap); shares past the cap are not "+
+			"shown as IsShared/UserPermission on their rows, the listed rows themselves are complete", userID, len(shares))
+	}
+	return c.sharedSecretRows(ctx, shares)
+}
+
+// sharedSecretRows builds the shared-with-me rows for shares.
+func (c *KeyorixCore) sharedSecretRows(ctx context.Context, shares []*models.ShareRecord) ([]*models.SecretWithSharingInfo, error) {
 	// Secrets and their owners' names for every share in two batched lookups
 	// (LIST-ENDPOINTS-1), not a GetSecret + GetUser per share. A share whose secret
 	// is gone is skipped, as before; an owner that cannot be resolved shows "".
