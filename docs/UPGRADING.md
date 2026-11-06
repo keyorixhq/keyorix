@@ -867,7 +867,7 @@ code. The checklist to follow is
 | `ssl_root_cert`, the `ssl_mode` allowlist, Compose Postgres over TLS (#3162, #3189, #3203) | §2 |
 | CLI: webhook URLs refused as `--url` (CLI-UX-2) | §6x |
 | SECURITY: audit Vault access migrated with `keyorix-migrate` v0.96.0 to v0.96.3 (`vault audit-access`) | §6y |
-| Roles carry an assignable scope; API clients that grant a new role without `project_id` get 400 (schema epoch 7, #3546) | §6z |
+| Roles carry an assignable scope; API clients that grant a new role without `project_id` get 400 (added in schema epoch 7, #3546) | §6z |
 | PostgreSQL: the server checks it holds the database's DEK; upgrade every replica before the next DEK rotation (#3344) | §6s |
 | SCIM no longer creates or manages `sso:` accounts (#3493) | §6v |
 | "Last used" in access recertification means "within the review period" (`recertification.cadence_days`) | §6w |
@@ -1357,10 +1357,11 @@ Two more shapes, both in every release that shipped `plan-access`:
   report, `implied_access` in the JSON); if names must stay hidden for one of them, revoke its
   grant and grant the secrets by hand.
 
-## 6z. Roles carry an assignable scope (schema epoch 7, #3546)
+## 6z. Roles carry an assignable scope (added in schema epoch 7, #3546)
 
-The first boot adds `roles.assignable_scope` (schema epoch 7; the compatibility floor stays
-3, so an epoch-6 replica keeps running during a rolling upgrade) and sets it once:
+The first boot adds `roles.assignable_scope` (the column arrived with schema epoch 7, which
+left the compatibility floor at 3, so an epoch-6 replica keeps running during a rolling
+upgrade) and sets it once:
 `project_*` roles `project`, `system_*` and `alert_operator` `global`, the legacy
 `admin`/`editor`/`viewer`/`auditor`/`super_admin` roles and **every existing custom role
 `any`** (nothing that worked before breaks). Roles created after the upgrade default to
