@@ -709,7 +709,7 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorT
 // rolesAreAdminTier reports whether any role is admin-tier by name
 // (isAdminRoleName) or by its permission bundle (roleIsAdminTier). Fails closed:
 // a permission lookup error is returned, never read as "not admin-tier".
-func (c *KeyorixCore) rolesAreAdminTier(ctx context.Context, roles []*models.Role) (bool, error) {
+func (c *KeyorixCore) rolesAreAdminTier(ctx context.Context, roles []*models.Role) (bool, error) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- roles is the target machine's already-fetched, storage-bounded role assignment list, not a client-supplied array
 	for _, r := range roles {
 		if isAdminRoleName(r.Name) {
 			return true, nil
