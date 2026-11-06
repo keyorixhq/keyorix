@@ -143,6 +143,11 @@ func WithMachineCallerCredential(ctx context.Context, presented string) context.
 //     refused, fail closed. The allowlist is read from storage, not from the
 //     cached request identity, so a restriction added since login applies.
 //
+// Not checked: the calling credential's ExpiresAt. An unrestricted opaque
+// credential that expires may still issue a non-expiring token for a peer (a
+// peer the caller fully covers, see requireMachineActorHoldsTargetPermissions);
+// "confined" here means CIDR-restricted or federated only.
+//
 // Every refusal wraps ErrMachinePrivilegeCeilingDenied (403 / PermissionDenied).
 func (c *KeyorixCore) requireMachineCallerMayIssue(ctx context.Context, callerID, targetID uint) error {
 	if callerID == targetID {
