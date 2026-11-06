@@ -51,12 +51,12 @@ func redactQueryParams(rawQuery string) string {
 		}
 		if _, ok := loggableQueryKeys[key]; ok {
 			// An allowlisted name is not enough: the value must also have a
-				// strict shape, or a caller can smuggle a secret after it.
-				if loggableQueryValue(val) {
-					out = append(out, p)
-				} else {
-					out = append(out, key+"="+redactedMark)
-				}
+			// strict shape, or a caller can smuggle a secret after it.
+			if loggableQueryValue(val) {
+				out = append(out, p)
+			} else {
+				out = append(out, key+"="+redactedMark)
+			}
 			continue
 		}
 		if plainIdentifier(key) {
