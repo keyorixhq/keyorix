@@ -16,6 +16,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
+// ErrMachineProjectMembershipDenied is returned by AddProjectMember and
+// SetProjectMemberRole when the acting principal is a machine identity: machine
+// identities do not manage project membership. It matches ErrPermissionDenied,
+// so every transport answers it as a refusal (403 / PermissionDenied) rather
+// than as a failure of the privilege ceiling.
+var ErrMachineProjectMembershipDenied = newPermissionSentinel("machine identities cannot manage project membership")
+
 // ListProjectMembers returns the users with a role at the project's scope.
 func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
 	return c.storage.ListProjectMembers(ctx, projectID)
@@ -31,6 +38,9 @@ func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([
 // mint a project_admin (or any role bundling permissions they don't hold) through
 // this direct entry point.
 func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
+	if actorIsMachine {
+		return ErrMachineProjectMembershipDenied
+	}
 	return c.addProjectMember(ctx, noTxFence, actorID, projectID, userID, roleName, actorIsMachine)
 }
 
@@ -67,6 +77,9 @@ func (c *KeyorixCore) addProjectMember(ctx context.Context, first txFence, actor
 // would strand the project, is applied as ONE fail-closed transaction instead: it
 // changes nothing during an audit outage rather than leave the project ungoverned.
 func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
+	if actorIsMachine {
+		return ErrMachineProjectMembershipDenied
+	}
 	role, err := c.storage.GetRoleByName(ctx, roleName)
 	if err != nil {
 		return fmt.Errorf("unknown role %q: %w", roleName, err)

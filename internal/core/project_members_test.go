@@ -574,3 +574,29 @@ func TestSetProjectMemberRole_RefusesLastAdminDemotion_EmptyAdminGroup(t *testin
 	require.Len(t, members, 1)
 	assert.Equal(t, "project_admin", members[0].RoleName, "role must be unchanged after a refused demotion")
 }
+
+// A machine actor does not manage project membership. The direct entry points
+// refuse it up front with a typed permission refusal (not through the
+// privilege ceiling), whatever role it names, and change nothing.
+func TestProjectMemberDirectEntryPoints_RefuseMachineActor(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "carol", "carol@example.com"))
+	require.NoError(t, err)
+
+	for _, role := range []string{"project_viewer", "no_such_role"} {
+		err = c.AddProjectMember(ctx, 0, proj, u.ID, role, true)
+		require.ErrorIs(t, err, ErrMachineProjectMembershipDenied, "add %s", role)
+		require.ErrorIs(t, err, ErrPermissionDenied)
+
+		err = c.SetProjectMemberRole(ctx, 0, proj, u.ID, role, true)
+		require.ErrorIs(t, err, ErrMachineProjectMembershipDenied, "set %s", role)
+		require.ErrorIs(t, err, ErrPermissionDenied)
+	}
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	assert.Empty(t, members)
+}
