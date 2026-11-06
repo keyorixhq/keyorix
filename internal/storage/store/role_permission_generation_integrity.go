@@ -1297,10 +1297,12 @@ func (ls *LocalStorage) rolePermGenerationTarget() *triggerIntegrityTarget {
 // started has ended its first pass over every target (or ctx ends). A stopped
 // check still ends its pass (each check fails fast on the cancelled context),
 // so Close releases waiters; nil does not say the pass was clean. It returns
-// at once when no check was started. The first pass runs in
-// the background right after the store is built and commits catalog
-// transactions of its own, so a test that counts commits on this database must
-// wait for it before sampling.
+// at once when no check was started. The first pass runs in the background
+// right after the store is built. On a healthy catalog it writes nothing (each
+// reading runs in a transaction that is rolled back); it commits only when it
+// repairs a definition or invalidates a cache, so a test that tampers with the
+// triggers and counts commits or epoch moves on this database waits for it
+// before sampling.
 func (ls *LocalStorage) WaitTriggerIntegrityFirstPass(ctx context.Context) error {
 	if ls.triggerIntegrityFirstPass == nil {
 		return nil
@@ -1311,6 +1313,42 @@ func (ls *LocalStorage) WaitTriggerIntegrityFirstPass(ctx context.Context) error
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// triggerIntegrityCheckers is a fresh checker for every target whose tables
+// exist.
+func (ls *LocalStorage) triggerIntegrityCheckers(logf func(string, ...any)) []*triggerIntegrityChecker {
+	var checkers []*triggerIntegrityChecker
+	if storeTableExists(ls.db, "role_permissions") && storeTableExists(ls.db, "permissions") && storeTableExists(ls.db, "system_metadata") {
+		checkers = append(checkers, &triggerIntegrityChecker{ls: ls, logf: logf, target: ls.rolePermGenerationTarget()})
+	}
+	if secretNodesTableExists(ls.db) {
+		checkers = append(checkers, &triggerIntegrityChecker{ls: ls, logf: logf, target: secretNodeCacheEpochIntegrityTarget})
+	}
+	return checkers
+}
+
+// RunTriggerIntegrityPassForTest runs, on the calling goroutine, the ticks
+// StartTriggerIntegrityCheck's job runs: passes times over fresh checkers of
+// every target, the first pass recording the baseline. It reports whether any
+// tick invalidated a cache, and the first error. PostgreSQL only. For tests
+// outside this package (internal/solewriter's tracker tests) that need a tick
+// at a known moment.
+func (ls *LocalStorage) RunTriggerIntegrityPassForTest(ctx context.Context, passes int, logf func(string, ...any)) (bool, error) {
+	checkers := ls.triggerIntegrityCheckers(logf)
+	flushedAny := false
+	for range passes {
+		for _, c := range checkers {
+			tctx, cancel := context.WithTimeout(ctx, rolePermGenerationIntegrityTickTimeout)
+			flushed, err := c.check(tctx)
+			cancel()
+			flushedAny = flushedAny || flushed
+			if err != nil {
+				return flushedAny, err
+			}
+		}
+	}
+	return flushedAny, nil
 }
 
 // StartTriggerIntegrityCheck runs the check of every target whose tables
@@ -1325,13 +1363,7 @@ func (ls *LocalStorage) StartTriggerIntegrityCheck(logf func(string, ...any)) {
 	if ls.db.Dialector.Name() != "postgres" || ls.rolePermIntegrity != nil {
 		return
 	}
-	var checkers []*triggerIntegrityChecker
-	if storeTableExists(ls.db, "role_permissions") && storeTableExists(ls.db, "permissions") && storeTableExists(ls.db, "system_metadata") {
-		checkers = append(checkers, &triggerIntegrityChecker{ls: ls, logf: logf, target: ls.rolePermGenerationTarget()})
-	}
-	if secretNodesTableExists(ls.db) {
-		checkers = append(checkers, &triggerIntegrityChecker{ls: ls, logf: logf, target: secretNodeCacheEpochIntegrityTarget})
-	}
+	checkers := ls.triggerIntegrityCheckers(logf)
 	if len(checkers) == 0 {
 		return
 	}
