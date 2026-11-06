@@ -118,7 +118,7 @@ func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, 
 	ctx, isMachine := creationGrantCtx(r, userCtx)
 	created, otp, err := h.coreService.CreateUserWithOneTimePassword(ctx, req, userCtx.UserID, isMachine)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		if errors.Is(err, core.ErrPermissionDenied) {
@@ -147,7 +147,7 @@ func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Req
 	ctx, isMachine := creationGrantCtx(r, userCtx)
 	created, prov, err := h.coreService.CreateUserWithSetupLink(ctx, req, userCtx.UserID, isMachine)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
 			return
 		}
 		if errors.Is(err, core.ErrPermissionDenied) {
