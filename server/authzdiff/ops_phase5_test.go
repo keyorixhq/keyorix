@@ -381,7 +381,7 @@ func userPhase5Ops() []opSpec {
 				return requirement{perms: []string{"users.read", "users.write"}}
 			},
 			core: func(ctx context.Context, lg *leg, p *principal, _ tgt, _ byte) error {
-				_, err := lg.c.CreateUserAudited(ctx, &core.CreateUserRequest{Username: "u-new", Email: "u-new@example.invalid", DisplayName: "u-new", Password: fxPassword}, p.userID)
+				_, err := lg.c.CreateUserAudited(ctx, &core.CreateUserRequest{Username: "u-new", Email: "u-new@example.invalid", DisplayName: "u-new", Password: fxPassword}, p.userID, false)
 				return err
 			},
 			rest: func(*fixtures, tgt, byte) restReq {
