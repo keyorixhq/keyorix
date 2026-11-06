@@ -59,13 +59,19 @@ command -v go >/dev/null 2>&1 || die "go not found in PATH"
 
 # cgo_packages DIR GOOS TAGS PKG: non-stdlib packages with active cgo files.
 cgo_packages() {
-	local dir="$1" goos="$2" tags="$3" pkg="$4" out
+	local dir="$1" goos="$2" tags="$3" pkg="$4" out errf
+	# stderr stays out of the package list: on a cold module cache go prints
+	# "go: downloading ..." lines there, which are not packages.
+	errf="$(mktemp)"
 	if ! out="$(cd "$dir" && GOWORK=off GOOS="$goos" CGO_ENABLED=1 go list ${tags:+-tags "$tags"} -deps \
-		-f '{{if and .CgoFiles (not .Standard)}}{{.ImportPath}}{{end}}' "$pkg" 2>&1)"; then
+		-f '{{if and .CgoFiles (not .Standard)}}{{.ImportPath}}{{end}}' "$pkg" 2>"$errf")"; then
 		echo "cgo-dependency-guard: go list failed in $dir for $pkg ($goos):" >&2
 		echo "$out" >&2
+		cat "$errf" >&2
+		rm -f "$errf"
 		return 2
 	fi
+	rm -f "$errf"
 	printf '%s\n' "$out" | sed '/^$/d' | sort -u
 }
 
