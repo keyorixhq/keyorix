@@ -31,10 +31,11 @@ equals the ledger; `PRAGMA integrity_check`=ok; no orphan secret_versions;
 
 R1  Planted-defect control: the invariant checker is the one proven by the
     crash-recovery planted-defect suite (same code, fuzzharness_common_test.go).
-    Additionally this suite plants (U1) a v-old fixture whose `migrate` is
-    replaced by a no-op copy of the OLD binary (schema not upgraded): S2 must
-    FAIL on it, else the harness cannot see a missing migration. If U1 does not
-    fail, the campaign is void.
+    Additionally this suite plants (U1) one flipped ciphertext byte in a
+    cleanly upgraded copy: the S2 verification path must report it, else the
+    campaign is void. (Revision before any run: U1 was first written as a
+    no-op migrate; dropped because HEAD's server re-migrates on boot, so it
+    could not be made to fail meaningfully.)
 R2  A tag is "covered" only if S2-S5 all ran. A tag whose old binary cannot be
     installed/populated/backed-up by this harness is reported BLOCKED with the
     reason; BLOCKED is never reported as PASS.
