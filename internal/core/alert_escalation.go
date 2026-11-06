@@ -87,7 +87,9 @@ func (c *KeyorixCore) dispatchPolicyChannels(ctx context.Context, alert *models.
 		// to actually dial.
 		ch, err := c.GetNotificationChannel(ctx, cid)
 		if err != nil {
-			log.Printf("alert escalation: policy %d: channel %d: %v", policy.ID, cid, err)
+			// StorageReadFaultDetail, not err: a read fault renders as the fixed
+			// client-safe text, and the server log needs the driver cause.
+			log.Printf("alert escalation: policy %d: channel %d: %s", policy.ID, cid, StorageReadFaultDetail(err))
 			continue
 		}
 		if !ch.Enabled {
