@@ -1378,11 +1378,13 @@ What to check:
   role with `PUT /api/v1/roles/{id}`.
 - **A `system_*` role granted with a `project_id`** (for example through project members or a
   project invitation) is now refused; grant it without a project.
-- **The startup `WARNING` lists** existing grants outside their role's scope and pending
-  invitations that can no longer be accepted. Nothing is changed or removed automatically.
-- **Mixed versions and rolling back the binary.** An epoch-5 binary (allowed by the
-  compatibility floor) ignores `assignable_scope`: it refuses only the four `project_*`
-  built-ins without a project. While it runs, a custom role set to `project` or `global`, or a
+- **The startup `WARNING` lists** existing grants outside their role's scope, pending
+  invitations that can no longer be accepted, SSO settings that would create such grants,
+  and grants at `project_id=0` with an `environment_id`. Nothing is changed or removed
+  automatically, and the check never blocks startup.
+- **Mixed versions and rolling back the binary.** A binary from before epoch 7 (epoch 6, or
+  older down to the compatibility floor, 3) ignores `assignable_scope`: an epoch-6 one
+  refuses only the four `project_*` built-ins without a project. While it runs, a custom role set to `project` or `global`, or a
   `system_*` role offered on a project, is not refused by that binary. Roles it creates get
   the column default, `project`. Finish the rollout (or the rollback) promptly and read the
   startup `WARNING` on the new version afterwards.
