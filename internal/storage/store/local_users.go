@@ -330,7 +330,7 @@ func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 func (ls *LocalStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.User{}).
 		Where("id = ? AND COALESCE(external_id, '') = ''", id).
-		Updates(map[string]any{"external_id": externalID, "updated_at": updatedAt})
+		Updates(map[string]any{"external_id": externalID, "updated_at": updatedAt.UTC()}) // a map update runs no hook or NowFunc
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
