@@ -65,7 +65,7 @@ func loadGovulncheckExceptions(t *testing.T) []govulncheckExceptionRow {
 			continue
 		}
 		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path) // nolint:gosec -- fixed, repo-relative test path
+		data, err := os.ReadFile(path) // #nosec G304 -- fixed, repo-relative test path
 		if err != nil {
 			t.Fatalf("reading %s: %v", path, err)
 		}
@@ -88,7 +88,7 @@ func loadGovulncheckExceptions(t *testing.T) []govulncheckExceptionRow {
 		}
 		var tests []string
 		if mitigations != "-" {
-			for _, tn := range strings.Split(mitigations, ",") {
+			for tn := range strings.SplitSeq(mitigations, ",") {
 				tn = strings.TrimSpace(tn)
 				if tn == "" {
 					t.Errorf("%s:1: mitigation_tests has an empty entry", path)
@@ -163,7 +163,7 @@ func TestGovulncheckExceptionsMitigationTestsExist(t *testing.T) {
 				if !strings.HasSuffix(path, "_test.go") {
 					return nil
 				}
-				data, err := os.ReadFile(path) // nolint:gosec -- walking the repo's own test files
+				data, err := os.ReadFile(path) // #nosec G304 -- walking the repo's own test files
 				if err != nil {
 					return nil
 				}
