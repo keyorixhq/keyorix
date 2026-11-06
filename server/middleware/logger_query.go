@@ -44,13 +44,19 @@ func redactQueryParams(rawQuery string) string {
 		if p == "" {
 			continue
 		}
-		key, _, hasEq := strings.Cut(p, "=")
+		key, val, hasEq := strings.Cut(p, "=")
 		if !hasEq {
 			out = append(out, redactedMark) // bare token: could be the credential itself
 			continue
 		}
 		if _, ok := loggableQueryKeys[key]; ok {
-			out = append(out, p)
+			// An allowlisted name is not enough: the value must also have a
+				// strict shape, or a caller can smuggle a secret after it.
+				if loggableQueryValue(val) {
+					out = append(out, p)
+				} else {
+					out = append(out, key+"="+redactedMark)
+				}
 			continue
 		}
 		if plainIdentifier(key) {
@@ -60,6 +66,28 @@ func redactQueryParams(rawQuery string) string {
 		}
 	}
 	return strings.Join(out, "&")
+}
+
+// maxLoggableQueryValue caps the length of a value that is logged verbatim.
+const maxLoggableQueryValue = 64
+
+// loggableQueryValue reports whether the raw (still percent-encoded) value of an
+// allowlisted parameter may be logged: 1..64 characters of [A-Za-z0-9_.:-]. That
+// rejects '%', ';', '/', '+', '&' and '=', so encoded or delimiter smuggling and
+// path-like secret references fail closed (logged as "[redacted]").
+func loggableQueryValue(v string) bool {
+	if v == "" || len(v) > maxLoggableQueryValue {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '.', c == ':', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func plainIdentifier(s string) bool {
