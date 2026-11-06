@@ -1320,8 +1320,11 @@ keyorix-migrate vault audit-access --vault-addr https://vault.example.com:8200 \
 ```
 
 It lists each grant that is wider than its Vault policy, why, and the API call that revokes
-exactly that grant. It exits 1 when it finds any, and also when the audit is incomplete
-because a Vault input (`sys/mounts`, the policy list, a policy, an auth role list or role)
+exactly that grant. A finding marked `POSSIBLY WIDER THAN VAULT` (`"status": "unconfirmed"`
+in `--json`) is one where the current rules also grant that role in the same project at
+another environment, so the API cannot tell the two apart; revoking a grant that does not
+exist is a harmless 404. It exits 1 when it finds any, and also when the audit is incomplete
+because a Vault input (`sys/mounts`, the policy list, a policy, an auth role or user list, a role or user)
 could not be read, or because the Keyorix token cannot see every project (the project list
 holds only the projects a token may read, so grants into the others would be missed): grant the
 Vault token the `healthscan-policy.hcl` stanzas, use a Keyorix token with global `secrets.read`,
@@ -1338,12 +1341,13 @@ Two more shapes, both in every release that shipped `plan-access`:
   (names only) and reports such grants. It sees today's Vault tree: a mount emptied since the
   migration is not reported, and a mount it cannot list counts as holding paths (reported).
   A `plan-access` file written before this release is refused by `apply-access`: re-run
-  `plan-access`. The same holds for a `--path-map` scope: `--path-map secret/data=<team-a>:<dev>`
+  `plan-access`. The same holds for a `--path-map` scope (the flag takes numeric IDs,
+  `<vault-prefix>=<project-id>:<environment-id>`): `--path-map secret/data=<id of team-a>:<id of dev>`
   maps the secret mount into team-a/dev, and `kv1/team-a/dev/x` lands in team-a/dev by name, so
   a grant there reaches it too. `plan-access` and `audit-access` now report such a policy as
   `cross-mount-scope` and print the other mount's path; send that mount's paths to their own
   scope with another `--path-map` entry to clear it. The policy's own mount counts too: with
-  `--path-map secret/data/legacy=<team-a>:<dev>`, `secret/team-a/dev/x` lies outside
+  `--path-map secret/data/legacy=<id of team-a>:<id of dev>`, `secret/team-a/dev/x` lies outside
   `secret/data/legacy/*` and lands in team-a/dev by name, so the report prints
   `secret/team-a/dev/: present (policy mount, outside the policy)`.
 - **`secrets.read` implies listing** (known residual, not revocable by an upgrade): a migrated
