@@ -24,8 +24,17 @@
   `share_access_elevated` (action, secret, share id, actor) by `CommitShareElevations` only
   when the action was performed (HTTP 2xx in the gate; gRPC nil error in
   `ShareElevationAuditInterceptor`) — never on a refusal, a failed request, or a decision the
-  role made. A write elevation with no recorder on the context is refused (fail closed). Share mutations are owner-only through
-  `requireShareAuthority`, whose typed refusals (`ErrShareOwnerNotMember`,
+  role made. A write elevation with no recorder on the context is refused (fail closed). Creating
+  and updating a share are owner-only through `requireShareAuthority`. Revoking one (#3992) is
+  open to the live owner and, when the ONLY refusal is `ErrShareNotOwner`, to a human user who
+  holds `secrets.manage` (or an admin-bypass role) at the secret's own project/environment
+  scope through `Authorize` (`revokerMayManageSecret`: PAT restriction applied, role-based
+  only, a per-secret ACL does not count, user id 0 / machine actors refused, a lookup error
+  fails closed); `ErrShareOwnerNotMember` and every other refusal is never overridden, and the
+  `share_revoked` / `group_share_revoked` row names the acting revoker and says it was not the
+  owner. Guard: `share_revoke_admin_test.go` (`TestRevokeShare_*`,
+  `TestUpdateSharePermission_ManagerStillRefused`), `TestShareRevoke_AdminOverREST`,
+  `TestShareService_RevokeShare_AdminAndMember`. `requireShareAuthority`'s typed refusals (`ErrShareOwnerNotMember`,
   `ErrShareRecipientNotMember`, ...) transports turn into the same user-facing reason via
   `ShareRefusalMessage` (#2976). Why: #2941 (a `write` share let nothing happen because the
   role-only route gates refused first, and the gRPC gate was role-only too), #2976 (bare 403).
