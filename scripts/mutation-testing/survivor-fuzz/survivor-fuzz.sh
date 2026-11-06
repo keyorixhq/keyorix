@@ -74,7 +74,7 @@ harness="$here/harnesses/${name}_test.go.txt"
 [ -f "$harness" ] || { echo "$id: $desc (no harness for $name)"; verdict harness-missing; }
 # The fuzz target must be func FuzzSF_<Name>. Without one fuzzfn would be empty
 # and the rm -rf below would delete the package's whole committed fuzz corpus.
-fuzzfn="$(grep -o 'func FuzzSF_[A-Za-z0-9_]*' "$harness" | head -1 | sed 's/func //')"
+fuzzfn="$(grep -oE '^func FuzzSF_[A-Za-z0-9_]+\(' "$harness" | head -1 | sed 's/^func //; s/($//')"
 [ -n "$fuzzfn" ] || { echo "$id: $desc (harness for $name has no func FuzzSF_<Name>)"; verdict harness-missing; }
 
 "$mutate" -file "$src" -line "$line" -col "$col" -type "$typ" -clone "$repo/$pkg/zz_sf_clone_test.go" >/dev/null || verdict no-node
