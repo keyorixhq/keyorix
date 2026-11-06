@@ -574,3 +574,75 @@ func TestSetProjectMemberRole_RefusesLastAdminDemotion_EmptyAdminGroup(t *testin
 	require.Len(t, members, 1)
 	assert.Equal(t, "project_admin", members[0].RoleName, "role must be unchanged after a refused demotion")
 }
+
+// A machine actor changing an EXISTING member's project role is judged by the
+// privilege ceiling on the role it names (#3990), as a new member already was.
+// Before, a no-op (the member already holds exactly that role) answered nil and
+// wrote a role_confirmed_unchanged row with no actor: nothing was added, so no
+// ceiling ran. Here the ctx carries no WithSelfMachineGranter tag, so the
+// ceiling refuses the machine whatever it holds (an untagged relay); the
+// handler tests in server/http/handlers cover a tagged machine both ways.
+func TestSetProjectMemberRole_MachineActorExistingMember_NoOpJudgedByCeiling(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "dave", "dave@example.com"))
+	require.NoError(t, err)
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer", false))
+
+	confirmedRows := func() int {
+		action := "project_member.role_confirmed_unchanged"
+		_, total, err := st.GetAuditLogs(ctx, &storage.AuditFilter{Action: &action})
+		require.NoError(t, err)
+		return int(total)
+	}
+
+	err = c.SetProjectMemberRole(ctx, 0, proj, u.ID, "project_viewer", true)
+	require.ErrorIs(t, err, ErrPermissionDenied)
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "project_viewer", members[0].RoleName, "role must be unchanged after a refused machine call")
+	assert.Zero(t, confirmedRows(), "a refused machine call must not write a role_confirmed_unchanged row")
+
+	// Positive control: the same no-op by a human is audited, so the zero above
+	// is not an artefact of the audit rows being invisible to this query.
+	require.NoError(t, c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer", false))
+	assert.Equal(t, 1, confirmedRows(), "a human no-op writes the row the machine call must not")
+}
+
+// A machine naming one of two roles an existing member holds is a narrowing:
+// before #3990 it removed the other role and answered nil, because nothing was
+// being added and so no privilege ceiling ran. It is now judged by the ceiling
+// (refused here: untagged ctx, see the test above) and leaves both roles.
+func TestSetProjectMemberRole_MachineActorNarrowing_JudgedByCeiling(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "erin", "erin@example.com"))
+	require.NoError(t, err)
+	for _, name := range []string{"project_viewer", "project_developer"} {
+		role, err := st.GetRoleByName(ctx, name)
+		require.NoError(t, err)
+		require.NoError(t, st.AssignRole(ctx, u.ID, role.ID, storage.Scope{ProjectID: proj}))
+	}
+
+	err = c.SetProjectMemberRole(ctx, 0, proj, u.ID, "project_viewer", true)
+	require.ErrorIs(t, err, ErrPermissionDenied)
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	var held []string
+	for _, m := range members {
+		held = append(held, m.RoleName)
+	}
+	assert.ElementsMatch(t, []string{"project_viewer", "project_developer"}, held,
+		"a refused machine narrowing must not remove any role")
+}

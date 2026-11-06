@@ -7,8 +7,9 @@ package handlers
 // used to answer by target: 404 / 403 "email domain is not on the allowlist" / the
 // ceiling refusal, so the refusal said which user IDs exist and whose email is off
 // the allowlist. Every target now gets the same status and body. The status itself
-// is not asserted: POST /projects/{id}/members and /memberships answer a ceiling
-// refusal 500 today (no ErrPermissionDenied case in their error switch), which is
+// is not asserted here: POST /projects/{id}/members answers a ceiling refusal 403
+// (pinned by TestAddProjectMember_HumanFailingCeilingAnswers403), but /memberships has no
+// ErrPermissionDenied case in its error switch and answers 500 today, which is
 // the error-map owner's to change, not this test's to pin.
 
 import (
