@@ -516,7 +516,7 @@ func (c *KeyorixCore) sharedSecretDecorations(ctx context.Context, userID uint) 
 }
 
 // sharedSecretRows builds the shared-with-me rows for shares.
-func (c *KeyorixCore) sharedSecretRows(ctx context.Context, shares []*models.ShareRecord) ([]*models.SecretWithSharingInfo, error) {
+func (c *KeyorixCore) sharedSecretRows(ctx context.Context, shares []*models.ShareRecord) ([]*models.SecretWithSharingInfo, error) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- shares is the ListSharesByUser result (bounded by the storage fetch cap), not a client-supplied array; the lookups are two batched queries, not one per item
 	// Secrets and their owners' names for every share in two batched lookups
 	// (LIST-ENDPOINTS-1), not a GetSecret + GetUser per share. A share whose secret
 	// is gone is skipped, as before; an owner that cannot be resolved shows "".
