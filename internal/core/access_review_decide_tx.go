@@ -231,7 +231,7 @@ func (c *KeyorixCore) revokeReviewShareOn(ctx context.Context, st storage.Storag
 	isGroup := d.Source == "group_share"
 	shares, err := st.ListSharesBySecret(ctx, d.SecretID, c.shareEffectiveNow())
 	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return accessReviewReadFailure(err)
 	}
 	for _, sh := range shares {
 		if sh.RecipientID == d.PrincipalID && sh.IsGroup == isGroup {

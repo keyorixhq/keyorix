@@ -1,0 +1,51 @@
+name: cgo guard
+
+# Keyorix ships static, cgo-free binaries (CGO_ENABLED=0). This fails a PR whose
+# change lets a shipped binary link a package with cgo files, or drops
+# CGO_ENABLED=0 from a release/Docker build command. Only `go list` runs (about
+# 20 seconds, no compile), so it is cheap enough for any Go or build-file change.
+# The built-binary half (`--binaries dist`) runs in release-dry-run.yml.
+on:
+  pull_request:
+    paths:
+      - '**.go'
+      - go.mod
+      - go.sum
+      - '**/go.mod'
+      - '**/go.sum'
+      - Makefile
+      - '**/Dockerfile*'
+      - scripts/cgo-dependency-guard.sh
+      - .github/workflows/cgo-guard.yml
+      - .github/workflows/release.yml
+      - .github/workflows/docker-publish.yml
+  schedule:
+    # A dependency can start pulling in cgo on a new release with no PR here.
+    - cron: '41 5 * * 1'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  cgo-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+
+      - name: Guard self-test
+        run: scripts/cgo-dependency-guard.sh --self-test
+
+      - name: Shipped binaries link no cgo package; build commands set CGO_ENABLED=0
+        run: scripts/cgo-dependency-guard.sh

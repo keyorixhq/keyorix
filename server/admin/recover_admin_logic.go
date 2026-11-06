@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -39,6 +40,10 @@ type recoverAdminSummary struct {
 	// oneTimePasswordExpiresAt (UTC) is when that password stops working; the CLI
 	// prints it and the audit event records it.
 	oneTimePasswordExpiresAt time.Time
+	// liftedState is the blocked account state (suspended, deprovisioned or an
+	// unrecognised value) the recovery cleared because --force-unsuspend was
+	// given, as read on the row lock; empty when the account was not blocked.
+	liftedState string
 }
 
 // performRecoverAdmin is the whole recovery act (design §3): verify the
@@ -62,6 +67,18 @@ func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIde
 // OTP-EXPIRY-1). A non-positive otpTTL means the default: the password always
 // gets an expiry.
 func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, userIdentifier, rawRecoveryKey string, keyless bool, otpTTL time.Duration) (*recoverAdminSummary, error) {
+	return performRecoverAdminOpts(ctx, store, userIdentifier, rawRecoveryKey, keyless, otpTTL, false)
+}
+
+// performRecoverAdminOpts is performRecoverAdminWithTTL with forceUnsuspend. A
+// target whose account state is suspended or deprovisioned is a deliberate
+// block (an admin's security action or an IdP deactivation), and an
+// unrecognised state fails closed the same way (core.AccountLoginBlocked), so
+// recovery refuses it, before any write, unless forceUnsuspend is true. The
+// state is checked on the first read and again on the row lock inside the reset
+// transaction. With forceUnsuspend the recovery proceeds and the audit event
+// names the state that was lifted.
+func performRecoverAdminOpts(ctx context.Context, store corestorage.Storage, userIdentifier, rawRecoveryKey string, keyless bool, otpTTL time.Duration, forceUnsuspend bool) (*recoverAdminSummary, error) {
 	if otpTTL <= 0 {
 		otpTTL = core.DefaultRecoveryOneTimePasswordExpiry
 	}
@@ -84,6 +101,15 @@ func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, 
 		username: user.Username,
 		keyless:  keyless,
 		operator: hostOperator(),
+	}
+	// First check on the unlocked read, so a refusal needs no recovery key. The
+	// authoritative check is repeated on the row lock inside the transaction below.
+	if state := core.NormalizeAccountState(user.AccountState); core.AccountLoginBlocked(user.ID, state) {
+		if !forceUnsuspend {
+			recordRecoveryBlockedRefusal(ctx, store, summary, state)
+			return nil, blockedStateError(user, state)
+		}
+		summary.liftedState = state
 	}
 	if !keyless {
 		record, found, err := store.GetRecoveryKeyRecord(ctx)
@@ -126,7 +152,25 @@ func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, 
 		return nil, fmt.Errorf("hash one-time password: %w", err)
 	}
 
+	// refusedState is set when the re-check on the row lock refuses, so the
+	// refusal is audited after the transaction has rolled back.
+	refusedState := ""
 	err = store.WithTransaction(ctx, func(tx corestorage.Storage) error {
+		// Re-validated on the row lock: the account may have been suspended or
+		// reactivated since the read above (a live server can still write under the
+		// admin --force lock bypass). liftedState comes from the locked row.
+		locked, err := tx.LockUserForUpdate(ctx, user.ID)
+		if err != nil {
+			return fmt.Errorf("lock account: %w", err)
+		}
+		summary.liftedState = ""
+		if state := core.NormalizeAccountState(locked.AccountState); core.AccountLoginBlocked(locked.ID, state) {
+			if !forceUnsuspend {
+				refusedState = state
+				return blockedStateError(locked, state)
+			}
+			summary.liftedState = state
+		}
 		if err := tx.SetAccountState(ctx, user.ID, core.AccountPasswordResetRequired, now); err != nil {
 			return fmt.Errorf("reactivate account: %w", err)
 		}
@@ -178,6 +222,9 @@ func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, 
 		return nil
 	})
 	if err != nil {
+		if refusedState != "" {
+			recordRecoveryBlockedRefusal(ctx, store, summary, refusedState)
+		}
 		return nil, err
 	}
 	summary.oneTimePassword = otp
@@ -215,11 +262,15 @@ func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, su
 	if summary.keyless {
 		keyDetail = "KEYLESS MODE -- no recovery key was checked (security.recover_admin.insecure_keyless_admin_recovery)"
 	}
+	lifted := ""
+	if summary.liftedState != "" {
+		lifted = fmt.Sprintf("; the account was %s and --force-unsuspend lifted that state", describeBlockedState(summary.liftedState))
+	}
 	description := fmt.Sprintf(
 		"keyorix-server admin recover-admin, run by host user %s, restored account %q (user id %d): reactivated, password reset required, "+
-			"MFA cleared, %d WebAuthn credential(s) cleared, login-lockout cleared, %d session(s) revoked (%s); one-time password expires %s",
+			"MFA cleared, %d WebAuthn credential(s) cleared, login-lockout cleared, %d session(s) revoked (%s); one-time password expires %s%s",
 		summary.operator, summary.username, summary.userID, summary.webAuthnCredentialsCleared, summary.sessionsRevoked, keyDetail,
-		summary.oneTimePasswordExpiresAt.UTC().Format(time.RFC3339))
+		summary.oneTimePasswordExpiresAt.UTC().Format(time.RFC3339), lifted)
 
 	if err == nil && !verification.Valid {
 		summary.auditChainBroken = true
@@ -272,6 +323,64 @@ func recordRecoveryKeyMismatch(ctx context.Context, store corestorage.Storage, s
 	if err != nil {
 		fmt.Printf("note: could not record this refused attempt to the audit chain (%v)\n", err)
 	}
+}
+
+// recordRecoveryBlockedRefusal writes the audit event for a recover-admin
+// attempt refused because the target is suspended, deprovisioned or in an
+// unrecognised account state and --force-unsuspend was not given
+// (Success=false). Best effort; the refusal stands either way.
+func recordRecoveryBlockedRefusal(ctx context.Context, store corestorage.Storage, summary *recoverAdminSummary, state string) {
+	uid := summary.userID
+	failed := false
+	err := store.LogAuditEvent(ctx, &models.AuditEvent{
+		EventType: "admin.recover_admin_failed",
+		UserID:    &uid,
+		Description: withLockBypassNote(fmt.Sprintf(
+			"keyorix-server admin recover-admin, run by host user %s, for account %q (user id %d): refused, the account is %s and --force-unsuspend was not given; nothing was changed",
+			summary.operator, summary.username, summary.userID, describeBlockedState(state))),
+		Success:   &failed,
+		ActorType: adminActorType,
+		EventTime: time.Now(),
+	})
+	if err != nil {
+		fmt.Printf("note: could not record this refused attempt to the audit chain (%v)\n", err)
+	}
+}
+
+// isDeliberateBlock reports whether state is one of the two block states an
+// actor sets on purpose (suspended, deprovisioned). Any other state that
+// core.AccountLoginBlocked reports as blocked is an unrecognised value it fails
+// closed on.
+func isDeliberateBlock(state string) bool {
+	switch strings.TrimSpace(state) {
+	case core.AccountSuspended, core.AccountDeprovisioned:
+		return true
+	}
+	return false
+}
+
+// describeBlockedState names a blocking account state for the audit events and
+// the admin notification. The raw value is always quoted: an unrecognised one
+// comes straight from the database.
+func describeBlockedState(state string) string {
+	if isDeliberateBlock(state) {
+		return fmt.Sprintf("in the %q state", state)
+	}
+	return fmt.Sprintf("in an unrecognised account state %q", state)
+}
+
+// blockedStateError is the refusal recover-admin returns for a blocked target
+// without --force-unsuspend.
+func blockedStateError(user *models.User, state string) error {
+	if isDeliberateBlock(state) {
+		return fmt.Errorf("account %q (id %d) is in the %q state, which blocks login on purpose -- "+
+			"recover-admin does not lift it by default. If you intend to, run the command again with --force-unsuspend "+
+			"(the audit event records the state that was lifted); nothing was changed", user.Username, user.ID, state)
+	}
+	return fmt.Errorf("account %q (id %d) has an unrecognised account state %q, which Keyorix never writes, so login "+
+		"is blocked (failing closed) -- recover-admin does not replace it by default. Check how that value got there; "+
+		"if you intend to recover the account anyway, run the command again with --force-unsuspend "+
+		"(the audit event records the state that was replaced); nothing was changed", user.Username, user.ID, state)
 }
 
 // hostOperator names the host OS account running this process, as

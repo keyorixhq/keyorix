@@ -152,7 +152,7 @@ func TestProvisionRequiresBaseURL(t *testing.T) {
 	c.SetCredentialDelivery(&fakeDeliverer{}, "") // no base URL
 
 	req := CreateUserRequest{Username: "dana", Email: "dana@acme.io", DisplayName: "Dana"}
-	_, _, err := c.CreateUserWithSetupLink(ctx, &req, 0)
+	_, _, err := c.CreateUserWithSetupLink(ctx, &req, 0, false)
 	require.Error(t, err)
 	// The HTTP layer maps this to a 400 ConfigError via errors.Is, so the sentinel
 	// must survive the i18n-prefixed wrap.
@@ -192,7 +192,7 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 
 	user, prov, err := c.CreateUserWithSetupLink(ctx, &CreateUserRequest{
 		Username: "dana", Email: "dana@acme.io", DisplayName: "Dana",
-	}, 7)
+	}, 7, false)
 	require.NoError(t, err)
 	assert.Equal(t, AccountPendingFirstLogin, user.AccountState, "account is confined until the link is consumed")
 	ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
@@ -235,7 +235,7 @@ func TestCreateUserWithSetupLink_ThrottlesCreateDeleteRecreateLoop(t *testing.T)
 	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "dana@acme.io", (*uint)(nil)).Return(nil).Once()
 	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil).Once()
 
-	_, prov1, err := c.CreateUserWithSetupLink(ctx, req, 7)
+	_, prov1, err := c.CreateUserWithSetupLink(ctx, req, 7, false)
 	require.NoError(t, err)
 	require.NotNil(t, prov1)
 
@@ -252,7 +252,7 @@ func TestCreateUserWithSetupLink_ThrottlesCreateDeleteRecreateLoop(t *testing.T)
 	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-24*time.Hour)).Return(int64(1), nil).Once()
 	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-resendMinInterval)).Return(int64(1), nil).Once()
 
-	_, prov2, err := c.CreateUserWithSetupLink(ctx, req, 7)
+	_, prov2, err := c.CreateUserWithSetupLink(ctx, req, 7, false)
 	require.Error(t, err, "the recreate must be throttled by the still-live min-interval window")
 	assert.Contains(t, err.Error(), "wait")
 	assert.Nil(t, prov2)
@@ -284,7 +284,7 @@ func TestCreateUserWithOneTimePassword(t *testing.T) {
 
 	user, otp, err := c.CreateUserWithOneTimePassword(ctx, &CreateUserRequest{
 		Username: "dana", Email: "dana@acme.io", DisplayName: "Dana",
-	}, 7)
+	}, 7, false)
 	require.NoError(t, err)
 	assert.Equal(t, AccountPasswordResetRequired, user.AccountState, "account must change the credential on first login")
 	ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)

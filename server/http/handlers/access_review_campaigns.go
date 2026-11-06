@@ -90,8 +90,8 @@ func (h *CatalogHandler) ListAccessReviewCampaigns(w http.ResponseWriter, r *htt
 	}
 	campaigns, err := h.coreService.ListAccessReviewCampaigns(r.Context(), uint(projectID))
 	if err != nil {
-		log.Printf("Error listing access-review campaigns for project %d: %v", projectID, err)
-		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		// 503 on a storage read fault; any other error is logged and answered 500.
+		sendCampaignError(w, "listing access-review campaigns", err)
 		return
 	}
 	sendSuccess(w, map[string]any{"campaigns": campaigns, "count": len(campaigns)}, "")

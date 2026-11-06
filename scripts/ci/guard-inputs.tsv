@@ -81,6 +81,7 @@ scripts/ci/codeql_gate_realdata_test.go	scripts/ci/codeql-gate.sh,scripts/ci/tes
 scripts/ci/global_guards_test.go	scripts/ci/global-guards.txt,!scripts/**	every listed guard package exists
 scripts/ci/select_affected_test.go	scripts/ci/select-affected.py,scripts/ci-test-legs.sh,scripts/ci-test-quick.py,!**	the selection script; other paths are fake changed-file inputs
 scripts/ci/coverage_shadow_test.go	scripts/ci/coverage-shadow.py,scripts/ci/coverage_shadow_unittest.py,scripts/ci/select-affected.py,scripts/ci/declrefs/**	the lever-C shadow script's unit tests (they also load select-affected.py's helpers and build scripts/ci/declrefs)
+scripts/ci/govulncheck_exceptions_test.go	operator/**/*.go,**/*.sh,scripts/**/*.tsv,docs/govulncheck-exceptions.d/*.tsv	docs/govulncheck-exceptions.d/*.tsv (its own exception rows); TestGovulncheckCheckScript runs check-govulncheck-test.sh; TestGovulncheckExceptionsMitigationTestsExist walks the repo root over every _test.go file (all modules) for the named mitigation tests
 scripts/demo/demo_scripts_test.go	scripts/demo/**/*.sh	demo shell scripts
 scripts/demo/native_up_helpers_test.go	scripts/demo/**/*.sh	native-up helpers
 server/container_bind_configs_test.go	scripts/dast/keyorix-dast.yaml,scripts/demo/up.sh	container bind configs used by DAST and the demo
@@ -154,3 +155,4 @@ internal/docsdrift/gitattributes_union_test.go	.gitattributes,docs/atomicity-exe
 migrate/internal/accessplan/implied_test.go	scripts/vault-migration-testbed/seed.sh	checks the HCL stanza literals against scripts/vault-migration-testbed/seed.sh
 server/pq_transport_guard_test.go	operator/**/*.go,!**/*.md	repo-root walk over every non-Markdown, non-test file; reads operator/ Go, skips Markdown
 internal/cryptoinventory/cbom_test.go	internal/cryptoinventory/testdata/**,!LICENSE	the vendored CycloneDX schema under its own testdata/cyclonedx-1.6 (with its LICENSE); the root LICENSE is not read
+internal/core/guards/server_utc_write_guard_test.go	!operator/**	walks server/ and the store/handler trees; operator/ is not walked

@@ -103,6 +103,76 @@ func (c *KeyorixCore) validateReplacementCredential(ctx context.Context, machine
 	return oldCred.TokenHash, nil
 }
 
+// machineCallerCredentialCtxKey is the unexported context key carrying the
+// credential a directly authenticated machine caller presented for the
+// current request (see WithMachineCallerCredential).
+type machineCallerCredentialCtxKey struct{}
+
+// machineCallerCredential is what WithMachineCallerCredential records: the
+// SHA-256 of a presented opaque machine token, or opaque=false for any other
+// bearer (a federated OIDC/Kubernetes JWT, or nothing recognisable).
+type machineCallerCredential struct {
+	opaque bool
+	hash   string
+}
+
+// WithMachineCallerCredential tags ctx with the bearer credential the calling
+// machine presented for this request. The REST and gRPC token-issue handlers
+// set it next to WithSelfMachineGranter, so IssueMachineToken can refuse a
+// caller whose own credential is restricted or federated. Only the token's
+// hash is kept in ctx, never the plaintext.
+func WithMachineCallerCredential(ctx context.Context, presented string) context.Context {
+	ref := machineCallerCredential{}
+	if strings.HasPrefix(presented, machineTokenPrefix) {
+		ref = machineCallerCredential{opaque: true, hash: sha256Hex(presented)}
+	}
+	return context.WithValue(ctx, machineCallerCredentialCtxKey{}, ref)
+}
+
+// requireMachineCallerMayIssue runs, for a machine caller acting as itself,
+// the checks IssueMachineToken needs on top of the privilege ceiling. It is
+// the machine-token counterpart of ErrRestrictedPATCannotMintPAT (PAT-GUARD-1):
+// a minted token is unrestricted and non-expiring unless the request asks
+// otherwise, so a confined caller must not be able to mint one.
+//
+//   - A machine may not issue a token for itself: that would turn any
+//     credential, however short-lived or confined, into a fresh durable one.
+//   - The calling credential must be a known opaque kx_machine_ token of this
+//     machine with no CIDR allowlist. A federated JWT (ADR-031: no long-lived
+//     secret to distribute) or a credential the handler did not record is
+//     refused, fail closed. The allowlist is read from storage, not from the
+//     cached request identity, so a restriction added since login applies.
+//
+// Not checked: the calling credential's ExpiresAt. An unrestricted opaque
+// credential that expires may still issue a non-expiring token for a peer (a
+// peer the caller fully covers, see requireMachineActorHoldsTargetPermissions);
+// "confined" here means CIDR-restricted or federated only.
+//
+// Every refusal wraps ErrMachinePrivilegeCeilingDenied (403 / PermissionDenied).
+func (c *KeyorixCore) requireMachineCallerMayIssue(ctx context.Context, callerID, targetID uint) error {
+	if callerID == targetID {
+		return fmt.Errorf("%w: a machine identity cannot issue a token for itself", ErrMachinePrivilegeCeilingDenied)
+	}
+	ref, ok := ctx.Value(machineCallerCredentialCtxKey{}).(machineCallerCredential)
+	if !ok || !ref.opaque {
+		return fmt.Errorf("%w: a federated or unidentified machine credential cannot issue machine tokens", ErrMachinePrivilegeCeilingDenied)
+	}
+	cred, err := c.storage.GetMachineIdentityCredentialByHash(ctx, ref.hash)
+	if err != nil {
+		if credentialRowGone(err) {
+			return fmt.Errorf("%w: the calling machine credential no longer exists", ErrMachinePrivilegeCeilingDenied)
+		}
+		return fmt.Errorf("failed to resolve the calling machine credential: %w", err)
+	}
+	if cred.MachineIdentityID != callerID || cred.Revoked {
+		return fmt.Errorf("%w: the calling machine credential does not belong to the caller", ErrMachinePrivilegeCeilingDenied)
+	}
+	if machineRestrictionFrom(cred) != nil {
+		return fmt.Errorf("%w: a network-restricted machine credential cannot issue machine tokens", ErrMachinePrivilegeCeilingDenied)
+	}
+	return nil
+}
+
 // IssueMachineToken mints an opaque bearer token for an active machine identity.
 // The raw token is returned once for out-of-band delivery; only its SHA-256 hash
 // is stored. params.AllowedCIDRs, when non-nil and non-empty, restricts the token
@@ -117,10 +187,21 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	}
 	// MACH-001: enforce a privilege ceiling — a non-admin cannot issue a token for
 	// a machine that holds admin-tier roles, since the token would carry those roles
-	// and the actor could use it to escalate their own effective privileges. Every
-	// caller of IssueMachineToken (CLI, gRPC, HTTP) passes a real user's ID, never a
-	// machine principal's, so ActorTypeUser is exact here, not a default.
-	if err := c.requireMachinePrivilegeCeiling(ctx, ActorTypeUser, actorID, projectID, machineID); err != nil {
+	// and the actor could use it to escalate their own effective privileges.
+	//
+	// The ceiling is evaluated for the real caller. A user caller passes its ID as
+	// actorID. A machine caller authenticated directly for this request has actor
+	// ID 0 (ADR-030) and is identified by the self-granter tag the REST and gRPC
+	// handlers set (WithSelfMachineGranter); a system-proxy relay tag is not that
+	// machine acting as itself and is not honoured here.
+	ceilingType, ceilingID := ActorTypeUser, actorID
+	if callerID, tagged := selfMachineGranterFromContext(ctx); tagged && !isSystemProxyRelayGrant(ctx) {
+		if err := c.requireMachineCallerMayIssue(ctx, callerID, machineID); err != nil {
+			return nil, err
+		}
+		ceilingType, ceilingID = ActorTypeMachine, callerID
+	}
+	if err := c.requireMachinePrivilegeCeiling(ctx, ceilingType, ceilingID, projectID, machineID); err != nil {
 		return nil, err
 	}
 	classification := params.Classification

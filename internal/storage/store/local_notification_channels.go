@@ -80,7 +80,7 @@ func (ls *LocalStorage) UpdateNotificationChannel(ctx context.Context, ch *model
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrNotificationChannelNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }
@@ -98,7 +98,7 @@ func (ls *LocalStorage) UpdateNotificationRetryPolicy(ctx context.Context, chann
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrNotificationChannelNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }
@@ -110,7 +110,7 @@ func (ls *LocalStorage) DeleteNotificationChannel(ctx context.Context, id uint) 
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrNotificationChannelNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }

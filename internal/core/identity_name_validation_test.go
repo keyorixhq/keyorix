@@ -85,7 +85,7 @@ func TestCreateUserPaths_RejectSpoofedUsernames(t *testing.T) {
 	creators := map[string]func(req *CreateUserRequest) error{
 		"CreateUser": func(req *CreateUserRequest) error { _, err := c.CreateUser(ctx, req); return err },
 		"CreateUserAudited": func(req *CreateUserRequest) error {
-			_, err := c.CreateUserAudited(ctx, req, actor)
+			_, err := c.CreateUserAudited(ctx, req, actor, false)
 			return err
 		},
 		"CreateUserWithAssignments": func(req *CreateUserRequest) error {
@@ -93,7 +93,7 @@ func TestCreateUserPaths_RejectSpoofedUsernames(t *testing.T) {
 			return err
 		},
 		"CreateUserWithOneTimePassword": func(req *CreateUserRequest) error {
-			_, _, err := c.CreateUserWithOneTimePassword(ctx, req, actor)
+			_, _, err := c.CreateUserWithOneTimePassword(ctx, req, actor, false)
 			return err
 		},
 	}
