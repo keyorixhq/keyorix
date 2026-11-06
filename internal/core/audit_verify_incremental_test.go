@@ -397,16 +397,15 @@ func TestIncrementalVerify_LongTailNotProven(t *testing.T) {
 	assert.True(t, tail.v.Valid)
 }
 
+// waitAuditJob returns once the full job this core started has finished and
+// saved its result. It waits on the job's own completion signal
+// (awaitOwnFullJob) rather than a wall-clock poll: the job walks the whole
+// chain, so on Postgres under -race and CPU contention a healthy job outlives
+// any fixed window (#3715 for _RowDeleted; the sibling cases failed the same
+// way at a 10 s poll).
 func waitAuditJob(t *testing.T, c *KeyorixCore, id string) *AuditVerifyJobStatus {
 	t.Helper()
-	var j *AuditVerifyJobStatus
-	require.Eventually(t, func() bool {
-		var err error
-		j, err = c.AuditFullVerificationJob(context.Background(), id)
-		require.NoError(t, err)
-		return j.State != AuditVerifyJobRunning
-	}, 10*time.Second, 10*time.Millisecond)
-	return j
+	return awaitOwnFullJob(t, c, id)
 }
 
 // startFullJobWhenFree starts a full verification, retrying while the
