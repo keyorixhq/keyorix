@@ -135,8 +135,7 @@ func TestUpdateProjectMember_MachineActorMissingRolePermissionsBlocked(t *testin
 
 	req := httptest.NewRequest("PUT", "/", strings.NewReader(`{"role":"project_admin"}`))
 	req = req.WithContext(machineReqCtx(req, machineID))
-	req = withChiParamS8(req, "id", "1")
-	req = withChiParamS8(req, "userId", fmt.Sprintf("%d", targetID))
+	req = withChiParamsS8(req, map[string]string{"id": "1", "userId": fmt.Sprintf("%d", targetID)})
 	w := httptest.NewRecorder()
 
 	h.UpdateProjectMember(w, req)
@@ -152,8 +151,7 @@ func TestUpdateProjectMember_MachineActorHoldingRolePermissionsAllowed(t *testin
 
 	req := httptest.NewRequest("PUT", "/", strings.NewReader(`{"role":"project_admin"}`))
 	req = req.WithContext(machineReqCtx(req, machineID))
-	req = withChiParamS8(req, "id", "1")
-	req = withChiParamS8(req, "userId", fmt.Sprintf("%d", targetID))
+	req = withChiParamsS8(req, map[string]string{"id": "1", "userId": fmt.Sprintf("%d", targetID)})
 	w := httptest.NewRecorder()
 
 	h.UpdateProjectMember(w, req)
