@@ -58,6 +58,35 @@ func TestRevokeShare_ManagerRevokesAndIsAudited(t *testing.T) {
 	assert.True(t, strings.Contains(desc, "not the owner"), "the audit row says the revoker was not the owner: %q", desc)
 }
 
+// The group-share branch of the revoke audit (logGroupShareRevokedOn) carries the
+// same actor and "not the owner" marker as the direct one.
+func TestRevokeShare_ManagerRevokesGroupShareAndIsAudited(t *testing.T) {
+	f, owner, _, s := newShareRevokeFixture(t)
+	group, err := f.setup.CreateGroup(f.ctx, f.adminID, &CreateGroupRequest{Name: "rev-group"})
+	require.NoError(t, err)
+	viewer, err := f.setup.Storage().GetRoleByName(f.ctx, "project_viewer")
+	require.NoError(t, err)
+	require.NoError(t, f.setup.Storage().AssignRoleToGroup(f.ctx, group.ID, viewer.ID, Scope{ProjectID: f.projectID}))
+	sh, err := f.coreA.ShareSecretWithGroup(f.ctx, &GroupShareSecretRequest{
+		SecretID: s.ID, GroupID: group.ID, Permission: "read", SharedBy: owner.ID,
+	})
+	require.NoError(t, err)
+	require.True(t, sh.IsGroup)
+
+	require.NoError(t, f.coreA.RevokeShare(f.ctx, sh.ID, f.adminID))
+	_, err = f.coreA.Storage().GetShareRecord(f.ctx, sh.ID)
+	assert.Error(t, err, "the group share is gone")
+
+	var desc string
+	var actor uint
+	row := f.setupDB.Raw(
+		"SELECT description, user_id FROM audit_events WHERE event_type = ? AND secret_node_id = ? ORDER BY id DESC LIMIT 1",
+		string(ShareAuditEventGroupRevoked), s.ID).Row()
+	require.NoError(t, row.Scan(&desc, &actor))
+	assert.Equal(t, f.adminID, actor, "the group_share_revoked row names the acting administrator")
+	assert.True(t, strings.Contains(desc, "not the owner"), "the group_share_revoked row says the revoker was not the owner: %q", desc)
+}
+
 func TestRevokeShare_ProjectAdminRevokes(t *testing.T) {
 	f, owner, recipient, s := newShareRevokeFixture(t)
 	sh := f.shareFor(s.ID, owner.ID, recipient.ID)
