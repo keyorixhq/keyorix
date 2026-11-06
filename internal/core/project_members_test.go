@@ -643,3 +643,35 @@ func TestSetProjectMemberRole_RefusesMachineActor_ExistingMember(t *testing.T) {
 	require.NoError(t, c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer", false))
 	assert.Equal(t, 1, confirmedRows(), "a human no-op writes the row the machine call must not")
 }
+
+// A machine naming one of two roles an existing member holds is a narrowing:
+// on main it removed the other role and answered nil, because nothing was being
+// added and so no privilege ceiling ran. It must now be refused and leave both
+// roles in place.
+func TestSetProjectMemberRole_RefusesMachineActor_Narrowing(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "erin", "erin@example.com"))
+	require.NoError(t, err)
+	for _, name := range []string{"project_viewer", "project_developer"} {
+		role, err := st.GetRoleByName(ctx, name)
+		require.NoError(t, err)
+		require.NoError(t, st.AssignRole(ctx, u.ID, role.ID, storage.Scope{ProjectID: proj}))
+	}
+
+	err = c.SetProjectMemberRole(ctx, 0, proj, u.ID, "project_viewer", true)
+	require.ErrorIs(t, err, ErrMachineProjectMembershipDenied)
+	require.ErrorIs(t, err, ErrPermissionDenied)
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	var held []string
+	for _, m := range members {
+		held = append(held, m.RoleName)
+	}
+	assert.ElementsMatch(t, []string{"project_viewer", "project_developer"}, held,
+		"a refused machine narrowing must not remove any role")
+}
