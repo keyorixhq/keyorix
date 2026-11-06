@@ -34,6 +34,30 @@ func TestRedactSensitiveURI_QueryRedactedByDefault(t *testing.T) {
 	}
 }
 
+// An allowlisted key is not a free pass: its value is logged only when it has a
+// strict shape (no '%', ';', '/', '+', '&', ...). Anything else fails closed.
+func TestRedactSensitiveURI_AllowlistedValueShapeChecked(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"plain enum value kept", "/api/v1/x?format=csv", "/api/v1/x?format=csv"},
+		{"number and colon/dot/dash value kept", "/api/v1/x?since=2026-01-02T03:04:05Z&limit=10&type=a.b_c:d", "/api/v1/x?since=2026-01-02T03:04:05Z&limit=10&type=a.b_c:d"},
+		{"secret-shaped value is not kept", "/api/v1/x?format=AKIASECRETVALUE/x", "/api/v1/x?format=[redacted]"},
+		{"semicolon smuggle", "/api/v1/x?page=1;api_key=AKIASECRETVALUE", "/api/v1/x?page=[redacted]"},
+		{"encoded ampersand smuggle", "/api/v1/x?status=hunter2%26token%3DAKIASECRET", "/api/v1/x?status=[redacted]"},
+		{"path-like value", "/api/v1/x?resource=prod/db/password", "/api/v1/x?resource=[redacted]"},
+		{"plus is rejected", "/api/v1/x?since=2026-01-02T03:04:05+01:00", "/api/v1/x?since=[redacted]"},
+		{"empty value is rejected", "/api/v1/x?page=", "/api/v1/x?page=[redacted]"},
+		{"over-long value is rejected", "/api/v1/x?format=" + strings.Repeat("a", 65), "/api/v1/x?format=[redacted]"},
+		{"max-length value kept", "/api/v1/x?format=" + strings.Repeat("a", 64), "/api/v1/x?format=" + strings.Repeat("a", 64)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, redactSensitiveURI(tc.in))
+		})
+	}
+}
+
 // The access log must never contain a caller-supplied secret placed in a query
 // parameter on any route, including routes with no redaction rule of their own.
 func TestLogger_NeverLogsArbitraryQuerySecret(t *testing.T) {
@@ -48,6 +72,9 @@ func TestLogger_NeverLogsArbitraryQuerySecret(t *testing.T) {
 		"password=" + canary, "api_key=" + canary, "secret=" + canary, "code=" + canary,
 		"key=" + canary, "value=" + canary, "page=1&token=" + canary, canary,
 		"%70assword=" + canary, // percent-encoded key name
+		// allowlisted keys carrying a secret-shaped or smuggling value
+		"format=" + canary + "/x", "page=1;api_key=" + canary, "status=x%26token%3D" + canary,
+		"resource=prod/db/" + canary, "since=" + canary + "%2B",
 	} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/anything?"+q, nil)
 		Logger()(ok).ServeHTTP(httptest.NewRecorder(), req)
