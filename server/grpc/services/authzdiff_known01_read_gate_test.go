@@ -81,10 +81,17 @@ func TestUserService_UpdateUser_RequiresUsersRead(t *testing.T) {
 		SELECT ?, id FROM permissions WHERE name = 'users.write'`, writerRole.ID)
 	h.AssignUserRole(t, 2, writerRole.ID, nil)
 
+	// system.read too: every new user (including "known01-target" below) gets
+	// the default system_viewer role whether or not one is requested, so
+	// RequireEqualOrGreaterAdminAuthority's permission-derived ceiling (a
+	// separate, legitimate check UpdateUser already made before this fix, and
+	// unrelated to known-01) requires the actor hold everything the target
+	// holds, system.read included, or UpdateUser denies before ever reaching
+	// known-01's gate.
 	h.CreateTestUser(t, "writer-reader", 3)
-	fullRole := h.CreateTestRole(t, "known01u-writer-reader", "users.write + users.read", 211)
+	fullRole := h.CreateTestRole(t, "known01u-writer-reader", "users.write + users.read + system.read", 211)
 	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
-		SELECT ?, id FROM permissions WHERE name IN ('users.write', 'users.read')`, fullRole.ID)
+		SELECT ?, id FROM permissions WHERE name IN ('users.write', 'users.read', 'system.read')`, fullRole.ID)
 	h.AssignUserRole(t, 3, fullRole.ID, nil)
 
 	// Created last, after every explicit-ID fixture above, so its auto-assigned
