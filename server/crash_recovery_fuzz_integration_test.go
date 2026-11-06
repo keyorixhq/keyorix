@@ -101,6 +101,21 @@ func buildWorld(t *testing.T, bin string, rng *rand.Rand) *crashWorld {
 		}
 	}
 	mk(6)
+	// Soft-delete two secrets before the backup: archive A must carry deleted-secret
+	// rows (their versions/audit rows stay referenced), the shape that broke
+	// old-release backups in the upgrade-path fuzz. Deleted ids leave the ledger.
+	var delIDs []uint
+	for id := range led {
+		if len(delIDs) < 2 {
+			delIDs = append(delIDs, id)
+		}
+	}
+	for _, id := range delIDs {
+		if code, _, err := api.do(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", id), nil); err != nil || (code != http.StatusOK && code != http.StatusNoContent) {
+			t.Fatalf("delete secret %d: code=%d err=%v", id, code, err)
+		}
+		delete(led, id)
+	}
 	w.ledgerA = led.clone()
 	srv.stopGraceful()
 	// Archive A (server stopped: SQLite backup is exclusive).
