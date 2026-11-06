@@ -604,7 +604,7 @@ func (ls *LocalStorage) UpdateGroupFields(ctx context.Context, id uint, name, na
 	// updated_at is passed in rather than left to GORM's implicit stamp, matching
 	// SetAccountState/SetPasswordHash/UpdateUserIfActiveStateMatches in this file:
 	// the caller's clock source is the one the rest of core compares against.
-	cols := map[string]any{"updated_at": updatedAt}
+	cols := map[string]any{"updated_at": updatedAt.UTC()} // a map update runs no hook or NowFunc
 	if name != nil {
 		cols["name"] = *name
 	}
