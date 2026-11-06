@@ -634,6 +634,9 @@ func (c *KeyorixCore) requireStillAuthorizedToImpersonate(ctx context.Context, a
 //     "a machine is never a global admin," so a machine holding an admin-tier
 //     role itself can never mint a credential for ANOTHER admin-tier machine,
 //     regardless of what that role's explicit permission bundle contains.
+//     For a machine actor, admin-tier means the bypass flag OR a canonical
+//     admin name OR an administrative bundle (rolesAreAdminTier), the test the
+//     machine grant paths apply.
 //   - Otherwise (machineID doesn't hold an admin-tier role today, OR
 //     machineID==0 because the identity doesn't exist yet): the actor must
 //     still hold roles.assign at the machine's own project scope — the SAME
@@ -667,6 +670,17 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorT
 		if err != nil {
 			return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
 		}
+		if !containsAdmin && actorType == ActorTypeMachine {
+			// A machine actor is held to the same admin-tier test as the
+			// machine grant paths (requireGranterHoldsRolePermissionsNoBaseline):
+			// a canonical admin name or an administrative bundle counts, not only
+			// the bypass flag. Otherwise a roles.assign holder could mint a token
+			// for a peer whose custom role is admin-tier and act as that peer.
+			containsAdmin, err = c.rolesAreAdminTier(ctx, roles)
+			if err != nil {
+				return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+			}
+		}
 		if containsAdmin {
 			isAdmin := false
 			if actorType != ActorTypeMachine {
@@ -690,6 +704,25 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorT
 		return fmt.Errorf("%w: creating a machine identity, or minting a credential for one, requires roles.assign at the project scope", ErrMachinePrivilegeCeilingDenied)
 	}
 	return nil
+}
+
+// rolesAreAdminTier reports whether any role is admin-tier by name
+// (isAdminRoleName) or by its permission bundle (roleIsAdminTier). Fails closed:
+// a permission lookup error is returned, never read as "not admin-tier".
+func (c *KeyorixCore) rolesAreAdminTier(ctx context.Context, roles []*models.Role) (bool, error) {
+	for _, r := range roles {
+		if isAdminRoleName(r.Name) {
+			return true, nil
+		}
+		perms, err := c.storage.GetRolePermissions(ctx, r.ID)
+		if err != nil {
+			return false, err
+		}
+		if roleIsAdminTier(perms) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // RequireMachinePrivilegeCeiling is requireMachinePrivilegeCeiling's exported
