@@ -262,6 +262,24 @@ func authorizeGlobal(ctx context.Context, cs *core.KeyorixCore, actor *intercept
 	return authorizeScoped(ctx, cs, actor, perm, core.Scope{})
 }
 
+// authorizeGlobalMutation enforces BOTH readPerm and writePerm at global scope,
+// mirroring the outer+inner permission layering HTTP's router applies to the
+// /groups, /users and /roles route groups: an `r.Use(RequirePermission(<read>))`
+// on the whole group, plus a per-route `RequirePermission(<write>)` on the
+// mutating ones. gRPC's per-RPC handlers only ever checked the specific write
+// permission, so a principal holding the write permission alone (but not the
+// group's read permission) could mutate groups/users/roles over gRPC in cases
+// REST would deny (authzdiff harness waiver known-01). This does not grant any
+// caller more authority than they already had over REST — it closes a
+// transport-dependent gap in an existing precondition. Checks the read
+// permission first, matching the order HTTP's middleware chain evaluates them.
+func authorizeGlobalMutation(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, readPerm, writePerm string) error {
+	if err := authorizeGlobal(ctx, cs, actor, readPerm); err != nil {
+		return err
+	}
+	return authorizeGlobal(ctx, cs, actor, writePerm)
+}
+
 // --- Pagination ---
 
 // normalizePage applies the standard page (>=1) / page_size (1..100, default 20)
