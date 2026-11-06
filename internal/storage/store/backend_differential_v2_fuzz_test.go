@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"gorm.io/driver/postgres"
@@ -233,6 +234,9 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 	f.Add([]byte{3, 0, 6, 0x10, 6, 0x20, 6, 0x30, 6, 0x40}, "", "")
 	f.Add([]byte{10, 3, 10, 4, 0x1a, 3, 0x1a, 5, 0x2a, 9}, "grp", "Grp")                                // groups: create, rename, page
 	f.Add([]byte{11, 1, 0x1b, 1, 12, 2, 0, 1, 13, 1}, "proj", "Proj")                                   // project lifecycle, rename, case probe
+	f.Add([]byte{1, 1, 0x48, 0}, "", "")                                                                // F-2 shape: user "Alpha", Username filter "alpha"
+	f.Add([]byte{3, 6, 0x17, 7}, "", "")                                                                // F-1 shape: secret "ÄÖ", search "äö"
+	f.Add([]byte{0x21, 1, 0x58, 0}, "", "")                                                             // F-3 shape: user+email "Alpha", Email filter "alpha"
 	f.Add([]byte{3, 1, 3, 2, 3, 3, 0x37, 1, 0x47, 2, 0x57, 3, 0x67, 4, 0x77, 5, 0x87, 6}, "alp", "ALP") // every ListSecrets variant
 
 	f.Fuzz(func(t *testing.T, program []byte, s1, s2 string) {
@@ -257,7 +261,7 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 		}
 
 		for i := 0; i+1 < len(program) && steps < maxSteps; i += 2 {
-			op, a := program[i]%14, program[i+1]
+			op, a := (program[i]&0x0f)%14, program[i+1]
 			mode := int(program[i] >> 4)
 			bits := uint(a>>5) | uint(mode)<<3
 			// Low 5 bits of the operand pick the primary name, so two ops given the same
@@ -406,12 +410,14 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 					return fmt.Sprintf("%s latest=%s/%s list=%s/%s", diffClass(cerr), diffClass(lerr), diffVersionFP(lv), diffClass(verr), strings.Join(parts, ","))
 				})
 			case 7: // ListSecrets: filters + full page walk
-				both(fmt.Sprintf("ListSecrets(variant=%d,name=%q,pageSize=%d)", mode%9, name, int(a)%3+1), func(s *diffSide) string {
-					return diffListSecrets(t, ctx, s, mode%9, name, int(a)%3+1)
+				term := diffTerm(name, name2, a)
+				both(fmt.Sprintf("ListSecrets(variant=%d,term=%q,pageSize=%d)", mode%9, term, int(a)%3+1), func(s *diffSide) string {
+					return diffListSecrets(t, ctx, s, mode%9, term, int(a)%3+1)
 				})
 			case 8: // ListUsers: filters + full page walk
-				both(fmt.Sprintf("ListUsers(variant=%d,name=%q,pageSize=%d)", mode%6, name, int(a)%3+1), func(s *diffSide) string {
-					return diffListUsers(t, ctx, s, mode%6, name, int(a)%3+1)
+				term := diffTerm(name, name2, a)
+				both(fmt.Sprintf("ListUsers(variant=%d,term=%q,pageSize=%d)", mode%6, term, int(a)%3+1), func(s *diffSide) string {
+					return diffListUsers(t, ctx, s, mode%6, term, int(a)%3+1)
 				})
 			case 9: // deactivate/reactivate a user via the state-matching update
 				both(fmt.Sprintf("ToggleUserActive(%q)", name), func(s *diffSide) string {
@@ -518,6 +524,31 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 	})
 }
 
+// diffTerm derives a filter/search term from the primary and secondary names: as-is,
+// upper-cased, lower-cased, or the secondary name. The case variants are what make a
+// collation/LIKE-case divergence reachable without the fuzzer having to find a matching
+// pair of names across two separate ops.
+func diffTerm(name, name2 string, a byte) string {
+	switch (a >> 5) & 3 {
+	case 1:
+		return strings.ToUpper(name)
+	case 2:
+		return strings.ToLower(name)
+	case 3:
+		return name2
+	}
+	return name
+}
+
+func diffASCII(s string) bool {
+	for _, r := range s {
+		if r > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
+}
+
 func ptrOf[T any](v T) *T { return &v }
 
 func userNameOrNil(u *models.User) string {
@@ -557,6 +588,12 @@ func liveUsernameSet(db *gorm.DB) []string {
 // unordered query is not a contract — see normalisation 2). It also enforces the
 // within-backend invariant: the page walk is duplicate-free and equals the unpaged set.
 func diffListSecrets(t *testing.T, ctx context.Context, s *diffSide, variant int, name string, pageSize int) string {
+	// Known finding F-1 (see backend_differential_v2_known_test.go): the name Search is
+	// not Unicode case-insensitive on SQLite. Gated to ASCII search terms so the campaign
+	// can keep looking for OTHER divergences; the known test pins that F-1 still reproduces.
+	if (variant == 1 || variant == 8) && !diffASCII(name) {
+		return "gated:F-1"
+	}
 	mk := func(page, size int) *storage.SecretFilter {
 		fl := &storage.SecretFilter{ProjectID: &s.proj, Page: page, PageSize: size}
 		switch variant {
@@ -615,6 +652,12 @@ func diffListSecrets(t *testing.T, ctx context.Context, s *diffSide, variant int
 }
 
 func diffListUsers(t *testing.T, ctx context.Context, s *diffSide, variant int, name string, pageSize int) string {
+	// Known findings F-2 / F-3 (backend_differential_v2_known_test.go): the Username and
+	// Email filters use plain LIKE, which is ASCII-case-insensitive on SQLite and
+	// case-sensitive on PostgreSQL. For those two variants the fingerprint keeps only rows
+	// that also match case-sensitively and omits the total, so the rest of the filter
+	// (substring semantics, paging, deleted/active handling) is still compared.
+	exactOnly := variant == 4 || variant == 5
 	mk := func(page, size int) *storage.UserFilter {
 		fl := &storage.UserFilter{Page: page, PageSize: size}
 		switch variant {
@@ -644,6 +687,9 @@ func diffListUsers(t *testing.T, ctx context.Context, s *diffSide, variant int, 
 			firstLen = len(rows)
 		}
 		for _, r := range rows {
+			if exactOnly && !diffUserMatchesCaseSensitive(r, variant, name) {
+				continue
+			}
 			union = append(union, fmt.Sprintf("%q/%v/%v", r.Username, r.IsActive, r.DeletedAt.Valid))
 		}
 		if len(rows) < pageSize {
@@ -656,11 +702,24 @@ func diffListUsers(t *testing.T, ctx context.Context, s *diffSide, variant int, 
 	}
 	var allNames []string
 	for _, r := range all {
+		if exactOnly && !diffUserMatchesCaseSensitive(r, variant, name) {
+			continue
+		}
 		allNames = append(allNames, fmt.Sprintf("%q/%v/%v", r.Username, r.IsActive, r.DeletedAt.Valid))
 	}
 	u, a := diffJoinSorted(append([]string{}, union...)), diffJoinSorted(allNames)
 	if u != a {
 		t.Fatalf("BACKEND DIVERGENCE (within-backend pagination): %s ListUsers variant=%d pageSize=%d page walk != unpaged set\n  walk=%q\n  all =%q", s.label, variant, pageSize, u, a)
 	}
+	if exactOnly {
+		return fmt.Sprintf("set=%s", u)
+	}
 	return fmt.Sprintf("total=%d first=%d set=%s", total, firstLen, u)
+}
+
+func diffUserMatchesCaseSensitive(u *models.User, variant int, term string) bool {
+	if variant == 4 {
+		return strings.Contains(u.Username, term)
+	}
+	return strings.Contains(u.Email, term+"@x.io")
 }
