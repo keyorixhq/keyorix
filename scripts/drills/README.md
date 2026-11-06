@@ -9,6 +9,12 @@ drills read the URL of an EMPTY database from the file named by `DRILL_PG_DSN_FI
 `DRILL_PG_DSN_FILE2`, `DRILL_PG_DSN_FILE3` where the table says so). A drill needs no `psql`:
 without it, `tools/pgsql.go` stands in.
 
+No drill (`kill9-soak.sh` included) drops or recreates the PostgreSQL database between runs: a
+drill holds only the DSN, not an admin role. Give every run a fresh EMPTY database (`kpg dsn <db>`
+then `kpg drop <db>`, or `DROP`/`CREATE DATABASE`). Re-running against a used database starts from
+its old rows and the old audit chain, which the drills do not expect. The TOTP anti-replay memory in `lib.sh`
+(`totp_fresh`) is per secret and lives in the run's directory, so it does not carry over either.
+
 Exit status: 0 = every check passed (or the whole drill had nothing to run and said so),
 non-zero = a check failed (`DRILL FAILED: ...` on stderr). A leg that is not covered on the
 selected backend prints one line, `SKIP <backend>: <reason>`, and the drill goes on.
