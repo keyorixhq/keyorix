@@ -39,6 +39,10 @@ type recoverAdminSummary struct {
 	// oneTimePasswordExpiresAt (UTC) is when that password stops working; the CLI
 	// prints it and the audit event records it.
 	oneTimePasswordExpiresAt time.Time
+	// liftedState is the blocked account state (suspended or deprovisioned) the
+	// recovery cleared because --force-unsuspend was given; empty when the account
+	// was not in a blocked state.
+	liftedState string
 }
 
 // performRecoverAdmin is the whole recovery act (design §3): verify the
@@ -62,6 +66,15 @@ func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIde
 // OTP-EXPIRY-1). A non-positive otpTTL means the default: the password always
 // gets an expiry.
 func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, userIdentifier, rawRecoveryKey string, keyless bool, otpTTL time.Duration) (*recoverAdminSummary, error) {
+	return performRecoverAdminOpts(ctx, store, userIdentifier, rawRecoveryKey, keyless, otpTTL, false)
+}
+
+// performRecoverAdminOpts is performRecoverAdminWithTTL with forceUnsuspend. A
+// target whose account state is suspended or deprovisioned is a deliberate
+// block (an admin's security action or an IdP deactivation), so recovery
+// refuses it, before any write, unless forceUnsuspend is true. With it, the
+// recovery proceeds and the audit event names the state that was lifted.
+func performRecoverAdminOpts(ctx context.Context, store corestorage.Storage, userIdentifier, rawRecoveryKey string, keyless bool, otpTTL time.Duration, forceUnsuspend bool) (*recoverAdminSummary, error) {
 	if otpTTL <= 0 {
 		otpTTL = core.DefaultRecoveryOneTimePasswordExpiry
 	}
@@ -84,6 +97,15 @@ func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, 
 		username: user.Username,
 		keyless:  keyless,
 		operator: hostOperator(),
+	}
+	if state := core.NormalizeAccountState(user.AccountState); core.AccountLoginBlocked(user.ID, state) {
+		if !forceUnsuspend {
+			recordRecoveryBlockedRefusal(ctx, store, summary, state)
+			return nil, fmt.Errorf("account %q (id %d) is in the %q state, which blocks login on purpose -- "+
+				"recover-admin does not lift it by default. If you intend to, run the command again with --force-unsuspend "+
+				"(the audit event records the state that was lifted); nothing was changed", user.Username, user.ID, state)
+		}
+		summary.liftedState = state
 	}
 	if !keyless {
 		record, found, err := store.GetRecoveryKeyRecord(ctx)
@@ -215,11 +237,15 @@ func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, su
 	if summary.keyless {
 		keyDetail = "KEYLESS MODE -- no recovery key was checked (security.recover_admin.insecure_keyless_admin_recovery)"
 	}
+	lifted := ""
+	if summary.liftedState != "" {
+		lifted = fmt.Sprintf("; the account was %s and --force-unsuspend lifted that state", summary.liftedState)
+	}
 	description := fmt.Sprintf(
 		"keyorix-server admin recover-admin, run by host user %s, restored account %q (user id %d): reactivated, password reset required, "+
-			"MFA cleared, %d WebAuthn credential(s) cleared, login-lockout cleared, %d session(s) revoked (%s); one-time password expires %s",
+			"MFA cleared, %d WebAuthn credential(s) cleared, login-lockout cleared, %d session(s) revoked (%s); one-time password expires %s%s",
 		summary.operator, summary.username, summary.userID, summary.webAuthnCredentialsCleared, summary.sessionsRevoked, keyDetail,
-		summary.oneTimePasswordExpiresAt.UTC().Format(time.RFC3339))
+		summary.oneTimePasswordExpiresAt.UTC().Format(time.RFC3339), lifted)
 
 	if err == nil && !verification.Valid {
 		summary.auditChainBroken = true
@@ -265,6 +291,28 @@ func recordRecoveryKeyMismatch(ctx context.Context, store corestorage.Storage, s
 		Description: withLockBypassNote(fmt.Sprintf(
 			"keyorix-server admin recover-admin, run by host user %s, for account %q (user id %d): refused, the recovery key did not match (stored generation %d); nothing was changed",
 			summary.operator, summary.username, summary.userID, keyVersion)),
+		Success:   &failed,
+		ActorType: adminActorType,
+		EventTime: time.Now(),
+	})
+	if err != nil {
+		fmt.Printf("note: could not record this refused attempt to the audit chain (%v)\n", err)
+	}
+}
+
+// recordRecoveryBlockedRefusal writes the audit event for a recover-admin
+// attempt refused because the target is suspended or deprovisioned and
+// --force-unsuspend was not given (Success=false). Best effort; the refusal
+// stands either way.
+func recordRecoveryBlockedRefusal(ctx context.Context, store corestorage.Storage, summary *recoverAdminSummary, state string) {
+	uid := summary.userID
+	failed := false
+	err := store.LogAuditEvent(ctx, &models.AuditEvent{
+		EventType: "admin.recover_admin_failed",
+		UserID:    &uid,
+		Description: withLockBypassNote(fmt.Sprintf(
+			"keyorix-server admin recover-admin, run by host user %s, for account %q (user id %d): refused, the account is %s and --force-unsuspend was not given; nothing was changed",
+			summary.operator, summary.username, summary.userID, state)),
 		Success:   &failed,
 		ActorType: adminActorType,
 		EventTime: time.Now(),

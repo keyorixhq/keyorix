@@ -36,6 +36,9 @@ import (
 var (
 	recoverAdminUser string
 	recoverAdminKey  string
+	// recoverAdminForceUnsuspend lets the recovery proceed on an account whose state
+	// is suspended or deprovisioned (a deliberate block that recovery otherwise respects).
+	recoverAdminForceUnsuspend bool
 )
 
 var recoverAdminCmd = &cobra.Command{
@@ -56,7 +59,12 @@ comment for why this is not recommended for a real deployment).
 What this resets, on the target account ONLY: reactivates it if deactivated,
 sets a one-time password (printed once, forcing a real reset on next login),
 clears MFA enrollment and every WebAuthn credential (forcing re-enrollment),
-clears any login-lockout state, and revokes every existing session. It never
+clears any login-lockout state, and revokes every existing session.
+
+An account whose state is suspended (an admin's security action) or
+deprovisioned (an identity-provider deactivation) is refused by default,
+because that block is deliberate. Pass --force-unsuspend to recover it anyway;
+the audit event then records that the state was lifted. It never
 touches any other account, role, project, secret, or the KEK. Every use
 writes an audit-chain event and notifies every current admin, whether or not
 the server is running.
@@ -68,6 +76,7 @@ Exit codes: 0 on success, 1 on any failure (see the printed error message).`,
 func init() {
 	recoverAdminCmd.Flags().StringVar(&recoverAdminUser, "user", "", "The account to recover: numeric user ID or email address (required)")
 	recoverAdminCmd.Flags().StringVar(&recoverAdminKey, "recovery-key", "", `Must be "-" -- the key is read from stdin, never a CLI argument (required unless security.recover_admin.insecure_keyless_admin_recovery is enabled)`)
+	recoverAdminCmd.Flags().BoolVar(&recoverAdminForceUnsuspend, "force-unsuspend", false, "Recover the account even if it is suspended or deprovisioned (otherwise refused); the audit event records the lifted state")
 	rootCmd.AddCommand(recoverAdminCmd)
 }
 
@@ -115,8 +124,8 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 
 	var summary *recoverAdminSummary
 	err = withUsableStorage(cfg, func(store corestorage.Storage) error {
-		s, err := performRecoverAdminWithTTL(context.Background(), store, recoverAdminUser, rawKey, keyless,
-			cfg.Security.GetRecoveryOneTimePasswordExpiry())
+		s, err := performRecoverAdminOpts(context.Background(), store, recoverAdminUser, rawKey, keyless,
+			cfg.Security.GetRecoveryOneTimePasswordExpiry(), recoverAdminForceUnsuspend)
 		summary = s
 		return err
 	})
@@ -125,6 +134,9 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Recovered admin account: %s (user id %d).\n", summary.username, summary.userID)
+	if summary.liftedState != "" {
+		fmt.Printf("Lifted the %q state (--force-unsuspend).\n", summary.liftedState)
+	}
 	fmt.Println("Reset: account state, password, MFA enrollment,")
 	fmt.Printf("  %d WebAuthn credential(s), login-lockout state, %d active session(s).\n",
 		summary.webAuthnCredentialsCleared, summary.sessionsRevoked)
