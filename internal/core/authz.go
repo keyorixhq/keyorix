@@ -1055,11 +1055,11 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, ac
 // requireGranterHoldsRolePermissionsNoBaseline is requireGranterHoldsRolePermissions'
 // per-permission loop WITHOUT the roles.assign baseline check -- the actor must
 // still hold every permission the role bundles, but is not additionally required
-// to hold roles.assign itself. Reserved for the one call site where that
-// distinction is correct: CreateUserWithAssignments' mandatory default
-// system_viewer grant, which mirrors plain CreateUser's own unconditional,
-// zero-ceiling auto-assign (users.go) -- "create a plain user" has always been
-// gated by users.write alone, not roles.assign, and every OTHER caller of the
+// to hold roles.assign itself. Reserved for the mandatory system_viewer
+// baseline every new user receives: CreateUserWithAssignments' default system
+// role and plain creation (requireBaselineRoleGrantAuthority, users.go) --
+// "create a plain user" is gated by users.write plus the baseline role's own
+// permissions, not roles.assign, and every OTHER caller of the
 // escalation-by-proxy check in this codebase represents a genuinely
 // discretionary role grant the actor is choosing to make, which this one does
 // not. Do not reach for this function for a new call site without the same

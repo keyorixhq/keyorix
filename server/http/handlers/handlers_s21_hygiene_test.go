@@ -214,12 +214,13 @@ func TestCreateUserWithOTP_CoreValidationError_S21(t *testing.T) {
 	assert.Less(t, w.Code, http.StatusInternalServerError)
 }
 
-// ── createUserWithOTP: internal-error branch (storage down) ──────────────────
+// ── createUserWithOTP: storage-down branch ───────────────────────────────────
 
 // TestCreateUserWithOTP_InternalError_S21 closes the underlying DB and calls
-// CreateUser with generate_one_time_password=true so that
-// CreateUserWithOneTimePassword returns a non-ErrUserAlreadyExists, non-
-// validation-tagged error, driving the 500 branch of createUserWithOTP.
+// CreateUser with generate_one_time_password=true. The creating actor's
+// baseline-role check reads storage first, so the outage answers 503
+// storage_unavailable (STORAGE-ERR-CLASS), not the generic 500, and the driver
+// error does not reach the client.
 func TestCreateUserWithOTP_InternalError_S21(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	uh, _, db := freshUserHandlerS12(t)
@@ -238,6 +239,7 @@ func TestCreateUserWithOTP_InternalError_S21(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	uh.CreateUser(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "InternalError")
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), storageUnavailableCode)
+	assert.NotContains(t, w.Body.String(), "database is closed")
 }

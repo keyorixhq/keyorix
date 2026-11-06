@@ -55,7 +55,7 @@ CLI_RELEASE_LDFLAGS=-ldflags "-s -w $(CLI_VERSION_LDFLAGS)"
 MIGRATE_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/migrate/internal/migrateversion.Version=$(VERSION)
 MIGRATE_RELEASE_LDFLAGS=-ldflags "-s -w $(MIGRATE_VERSION_LDFLAGS)"
 
-.PHONY: build build-cli build-server build-server-airgap airgap-dependency-guard build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e k8s-e2e demo-check
+.PHONY: build build-cli build-server build-server-airgap airgap-dependency-guard cgo-dependency-guard build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e k8s-e2e demo-check
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -105,6 +105,14 @@ build-server-airgap:
 # header for the full allowlist mechanism.
 airgap-dependency-guard:
 	./scripts/airgap-dependency-guard.sh
+
+# cgo-dependency-guard: fails if a shipped binary can link a package with cgo
+# files, or a release build command lacks CGO_ENABLED=0. See the script's own
+# header. `./scripts/cgo-dependency-guard.sh --binaries dist` additionally
+# inspects built release binaries (release-dry-run.yml runs it after
+# `make release`); `--self-test` proves the guard fires.
+cgo-dependency-guard:
+	./scripts/cgo-dependency-guard.sh
 
 # populate-webui-dist: builds the dashboard (web/, now an in-repo subtree —
 # ADR-070) and copies the real output into server/webui/dist/, which is
