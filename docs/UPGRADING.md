@@ -974,12 +974,17 @@ is refused by the template and by `values.schema.json`.
 The same PR also fixes nested named locks that could stall every named lock on a
 replica (#3358), with no configuration change.
 
-Not run against a release build. Proved on main (PostgreSQL) by
+Not run against a release build. Covered on main (PostgreSQL) by
 `internal/storage/postgres_replication_role_postgres_test.go:TestCreateStorage_Postgres_RefusesNonOriginReplicationRole`
 and `internal/storage/store/secret_node_cache_epoch_replication_role_postgres_test.go:TestSecretNodeCacheEpoch_ReplicaRoleWriter_StillMovesStamp_Postgres`.
-For this entry only the "startup parameter in the DSN" case ran (it passed): the
-sandbox's PostgreSQL role is not a superuser and cannot set the parameter for the
-other cases, so those and the trigger test still need a run against a superuser role.
+Both need a database role that may `SET session_replication_role`
+(`internal/testutil/pgpriv/pgpriv.go`): they skip without one and fail instead of
+skipping when `CI=true`, so only a run as a superuser role proves them. With the
+sandbox's non-superuser PostgreSQL role (2026-11-06) both skipped, and PostgreSQL
+itself refused that role even a `session_replication_role` startup option in the DSN
+(`permission denied to set parameter`), so no case of either has run here. The two
+statements above ran there: on a database with no setting `SHOW` printed `origin` and
+the query returned no rows.
 
 ## 6o. Grants fail closed without their audit row (#3367)
 
