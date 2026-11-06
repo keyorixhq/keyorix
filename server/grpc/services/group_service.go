@@ -165,9 +165,9 @@ func (s *GroupGRPCService) AddGroupMember(ctx context.Context, req *pb.GroupMemb
 	// RequirePermission(users.read) gate (authzdiff known-01). Previously left
 	// unmodified on the mistaken premise that the harness's generated-permission
 	// sweep didn't flag this RPC -- a reviewer traced the same REST/gRPC asymmetry
-	// here directly: a users.write-or-roles.assign holder lacking users.read could
-	// add group members over gRPC in cases REST's outer gate on /groups would deny.
-	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, "roles.assign"); err != nil {
+	// here directly: a roles.assign holder lacking users.read could add group
+	// members over gRPC in cases REST's outer gate on /groups would deny.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, permRolesAssign); err != nil {
 		return nil, err
 	}
 	// #PM-006 sibling: actorIsMachine must be derived from the real actor kind. The

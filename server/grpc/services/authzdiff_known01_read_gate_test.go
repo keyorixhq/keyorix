@@ -18,8 +18,8 @@ package services
 // must be denied, and a principal holding both must succeed — for one
 // representative mutating RPC per affected service, plus AddGroupMember
 // (below). Red/green proof (CLAUDE.md "a security fix needs red/green proof"):
-// checking out the commit immediately before this fix (4fb37dcb..d3db4b06's
-// parent) and running these same write-only subtests fails every one with
+// checking out this branch's base commit (4fb37dcb, before this fix's first
+// commit) and running these same write-only subtests fails every one with
 // "must be denied" assertions seeing require.NoError pass instead (the bug: a
 // users.write/roles.write-only holder was being let through); running them
 // again at this fix's commit (or later) passes all of them. No production file
