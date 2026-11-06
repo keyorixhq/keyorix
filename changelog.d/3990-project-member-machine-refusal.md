@@ -1,7 +1,3 @@
-### Changed
+### Security
 
-- **Breaking for machine callers:** `PUT /api/v1/projects/{id}/members/{userId}` now refuses a machine-identity caller with 403 in every case. Before, a machine holding `roles.assign` at the project could use it on an existing member when nothing was being added: naming the role the member already held answered 200 (and wrote a `role_confirmed_unchanged` audit row), and naming one of several roles the member held removed the others and answered 200. `DELETE /api/v1/projects/{id}/members/{userId}` is unchanged. (#3990)
-
-### Fixed
-
-- `POST /api/v1/projects/{id}/members` now refuses a machine-identity caller with 403 before any role or user is looked up, and answers 403 for any permission refusal (a human failing the privilege ceiling included). It used to answer these with 500. A machine `PUT` that adds a role was already refused with 403 by the privilege ceiling and now gets the same up-front refusal. The invitation and membership-lifecycle paths are unchanged. (#3990)
+- **Changed for machine callers:** `PUT /api/v1/projects/{id}/members/{userId}` on a member who already belongs to the project now runs the privilege ceiling for a machine caller on the role it names, as it already did for a new member. Before, when the request added nothing, no ceiling ran: a machine holding only `roles.assign` at the project could name the role the member already held (200, plus a `role_confirmed_unchanged` audit row) or name one of several roles the member held, which removed the others (200). Such a machine is now refused with 403 and nothing changes. A machine that holds `roles.assign` and every permission of the named role is still allowed, as on main. Human callers and `DELETE /api/v1/projects/{id}/members/{userId}` are unchanged. (#3990)
