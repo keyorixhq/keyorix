@@ -162,6 +162,13 @@ func (c *KeyorixCore) RevokeOwnPAT(ctx context.Context, userID, tokenID uint) (t
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrPersonalAccessTokenNotFound) {
+			// Deleted between the read and the revoke (CORE-FAULT-TAILS-1): the token is
+			// gone, so the answer is the uniform not-found, not a failed write. Still
+			// evict it: a cached entry must not outlive the row.
+			c.invalidateTokenCache(pat.TokenHash)
+			return "", notFound
+		}
 		return "", err
 	}
 	c.invalidateTokenCache(pat.TokenHash)

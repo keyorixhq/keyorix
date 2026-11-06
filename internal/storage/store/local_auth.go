@@ -380,7 +380,7 @@ func (ls *LocalStorage) RevokePersonalAccessToken(ctx context.Context, id uint) 
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrPersonalAccessTokenNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }

@@ -37,6 +37,11 @@ var (
 	// ErrRolePermissionNotAssigned: RemovePermissionFromRole matched no
 	// role_permissions row (the permission was not bundled into that role).
 	ErrRolePermissionNotAssigned = errors.New("permission not assigned to role")
+
+	// ErrPersonalAccessTokenNotFound: RevokePersonalAccessToken matched no
+	// personal_access_tokens row (deleted, e.g. by the retention purge, after the
+	// caller read it).
+	ErrPersonalAccessTokenNotFound = errors.New("personal access token not found")
 )
 
 // notFoundError carries a caller-visible message (typically a translated i18n

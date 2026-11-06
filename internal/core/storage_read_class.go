@@ -59,7 +59,8 @@ func isPositiveNotFound(err error) bool {
 		storage.IsEnvironmentNotFound(err) ||
 		errors.Is(err, storage.ErrGroupNotFound) ||
 		errors.Is(err, storage.ErrMachineCredentialNotFound) ||
-		errors.Is(err, storage.ErrOIDCBindingNotFound)
+		errors.Is(err, storage.ErrOIDCBindingNotFound) ||
+		errors.Is(err, storage.ErrPersonalAccessTokenNotFound)
 }
 
 // ReadFault is for transports that read through a pass-through core getter which
