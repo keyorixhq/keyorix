@@ -18,7 +18,9 @@
 //
 // The column gremlins reports is matched against the operator token, the start
 // of the binary expression, or its left operand, whichever lines up; the tool
-// refuses to mutate if no node matches (prints "no-node", exit 3).
+// refuses to mutate if no node matches (prints "no-node", exit 3). -clone also
+// refuses (same "no-node", exit 3) a node outside every function, such as a
+// package-level var/const initialiser.
 package main
 
 import (
@@ -60,6 +62,15 @@ func main() {
 	var fn, enclosing string
 	var encl *ast.FuncDecl
 	var enclDecl *ast.FuncDecl
+	// setFound records x; the enclosing FuncDecl counts only if x lies inside
+	// it (enclDecl is the last FuncDecl entered, not reset when the walk leaves
+	// it, so a package-level var/const would otherwise inherit the previous one).
+	setFound := func(x ast.Node) {
+		found, fn, encl = x, "(package level)", nil
+		if enclDecl != nil && enclDecl.Pos() <= x.Pos() && x.End() <= enclDecl.End() {
+			fn, encl = enclosing, enclDecl
+		}
+	}
 	ast.Inspect(f, func(n ast.Node) bool {
 		if n == nil || found != nil {
 			return false
@@ -78,24 +89,30 @@ func main() {
 			xl, xc := pos(x.X.Pos())
 			if (ol == *line && oc == *col) || (sl == *line && sc == *col) || (xl == *line && xc == *col) {
 				if opFor(*typ, x.Op) != token.ILLEGAL {
-					found, fn, encl = x, enclosing, enclDecl
+					setFound(x)
 				}
 			}
 		case *ast.IncDecStmt:
 			l, c := pos(x.TokPos)
 			sl, sc := pos(x.Pos())
 			if (l == *line && c == *col) || (sl == *line && sc == *col) {
-				found, fn, encl = x, enclosing, enclDecl
+				setFound(x)
 			}
 		case *ast.UnaryExpr:
 			l, c := pos(x.OpPos)
 			if l == *line && c == *col && x.Op == token.SUB && *typ == "INVERT_NEGATIVES" {
-				found, fn, encl = x, enclosing, enclDecl
+				setFound(x)
 			}
 		}
 		return true
 	})
 	if found == nil {
+		fmt.Println("no-node")
+		os.Exit(3)
+	}
+	if *clone != "" && encl == nil {
+		// -clone copies only the enclosing function; a mutation outside one
+		// would leave the clone unmutated (a false likely-equivalent).
 		fmt.Println("no-node")
 		os.Exit(3)
 	}
