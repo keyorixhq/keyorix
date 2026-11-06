@@ -74,6 +74,13 @@ func (h *SecretHandler) sendRenderTemplateError(w http.ResponseWriter, r *http.R
 		// (INV-MW-authorize-lookup-error-is-503).
 		held, aerr := middleware.AuthorizedAtGlobalScope(r.Context(), h.coreService, userCtx, permSecretsRead)
 		if aerr == nil && held {
+			// The holder may learn existence anyway, so a per-reference permission
+			// check that could not be evaluated is answered as what it is (retry),
+			// not as "no such secret". Everyone else keeps the identical refusal
+			// below: that fault only happens for a secret that exists.
+			if sendStorageUnavailable(w, core.SecretRefCheckFault(err)) {
+				return
+			}
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 			return
 		}
