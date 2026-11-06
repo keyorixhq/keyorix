@@ -41,7 +41,10 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	// users.read + users.write: mirrors the HTTP /users route group's outer
+	// RequirePermission(users.read) plus its per-route users.write gate
+	// (authzdiff known-01; router.go:931).
+	if err := authorizeGlobalMutation(ctx, s.core, actor, "users.read", "users.write"); err != nil {
 		return nil, err
 	}
 	if req.GetUsername() == "" || req.GetEmail() == "" {
@@ -144,7 +147,8 @@ func (s *UserGRPCService) ReissueOneTimePassword(ctx context.Context, req *pb.Re
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	// users.read + users.write: see CreateUser.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, "users.read", "users.write"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -203,7 +207,8 @@ func (s *UserGRPCService) UpdateUser(ctx context.Context, req *pb.UpdateUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	// users.read + users.write: see CreateUser.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, "users.read", "users.write"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -233,7 +238,8 @@ func (s *UserGRPCService) DeleteUser(ctx context.Context, req *pb.DeleteUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.delete"); err != nil {
+	// users.read + users.delete: see CreateUser.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, "users.read", "users.delete"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
