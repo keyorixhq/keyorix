@@ -61,7 +61,7 @@ func TestRevokeUserSessions_LowerRankActorCannotRevokeAdminSessions(t *testing.T
 		Password: "Tr1cky-Passphrase-For-Tests!",
 	})
 	require.NoError(t, err)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, err := st.CreateSession(ctx, &models.Session{UserID: admin.ID, SessionToken: fmt.Sprintf("sf-adm-%d", i), CreatedAt: time.Now()})
 		require.NoError(t, err)
 	}

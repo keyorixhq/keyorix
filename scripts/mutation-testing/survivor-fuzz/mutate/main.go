@@ -138,7 +138,7 @@ func main() {
 		if err := format.Node(&buf, token.NewFileSet(), cf); err != nil {
 			fatal(err)
 		}
-		if err := os.WriteFile(*clone, buf.Bytes(), 0o644); err != nil {
+		if err := os.WriteFile(*clone, buf.Bytes(), 0o600); err != nil {
 			fatal(err)
 		}
 	}
@@ -147,7 +147,7 @@ func main() {
 		if err := format.Node(&buf, fset, f); err != nil {
 			fatal(err)
 		}
-		if err := os.WriteFile(*out, buf.Bytes(), 0o644); err != nil {
+		if err := os.WriteFile(*out, buf.Bytes(), 0o600); err != nil {
 			fatal(err)
 		}
 	}
