@@ -16,15 +16,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
-// ErrMachineProjectMembershipDenied is returned by AddProjectMember and
-// SetProjectMemberRole when the acting principal is a machine identity: these two
-// direct entry points (POST and PUT /projects/{id}/members) are not open to
-// machine identities. Other membership paths (invitation accept, membership
-// lifecycle, RemoveProjectMember) are unaffected and judged on their own. It
-// matches ErrPermissionDenied, so every transport answers it as a refusal
-// (403 / PermissionDenied) rather than as a failure of the privilege ceiling.
-var ErrMachineProjectMembershipDenied = newPermissionSentinel("machine identities cannot add or change project members through this route")
-
 // ListProjectMembers returns the users with a role at the project's scope.
 func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
 	return c.storage.ListProjectMembers(ctx, projectID)
@@ -40,9 +31,6 @@ func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([
 // mint a project_admin (or any role bundling permissions they don't hold) through
 // this direct entry point.
 func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
-	if actorIsMachine {
-		return ErrMachineProjectMembershipDenied
-	}
 	return c.addProjectMember(ctx, noTxFence, actorID, projectID, userID, roleName, actorIsMachine)
 }
 
@@ -79,9 +67,6 @@ func (c *KeyorixCore) addProjectMember(ctx context.Context, first txFence, actor
 // would strand the project, is applied as ONE fail-closed transaction instead: it
 // changes nothing during an audit outage rather than leave the project ungoverned.
 func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
-	if actorIsMachine {
-		return ErrMachineProjectMembershipDenied
-	}
 	role, err := c.storage.GetRoleByName(ctx, roleName)
 	if err != nil {
 		return fmt.Errorf("unknown role %q: %w", roleName, err)
@@ -94,13 +79,21 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 	// Only re-run the domain check when this call is establishing NEW project
 	// membership (the user holds no role at this scope yet) — an existing
 	// member changing roles already passed the check when they joined.
-	if len(existing) == 0 {
-		// A new member gets exactly roleName, so the ceiling replaceUserRoleSet
-		// judges is known here: judge it before the domain check loads the user
-		// (OWNERSHIP-ORACLE-1, see addProjectMember).
+	//
+	// A new member gets exactly roleName, so the ceiling replaceUserRoleSet
+	// judges is known here: judge it before the domain check loads the user
+	// (OWNERSHIP-ORACLE-1, see addProjectMember). A machine actor is judged on
+	// roleName for an existing member too (#3990): a no-op or a narrowing adds
+	// nothing, so replaceUserRoleSet judges no ceiling, and a machine lacking
+	// roles.assign or roleName's permissions (or an untagged relay, see
+	// requireGranterHoldsRolePermissions) could otherwise confirm a membership
+	// or strip a member's other roles.
+	if len(existing) == 0 || actorIsMachine {
 		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, role.ID, scope, actorIsMachine); err != nil {
 			return err
 		}
+	}
+	if len(existing) == 0 {
 		if err := c.domainAllowedForUser(ctx, userID); err != nil {
 			return err
 		}

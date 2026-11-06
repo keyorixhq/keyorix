@@ -575,37 +575,14 @@ func TestSetProjectMemberRole_RefusesLastAdminDemotion_EmptyAdminGroup(t *testin
 	assert.Equal(t, "project_admin", members[0].RoleName, "role must be unchanged after a refused demotion")
 }
 
-// A machine actor does not manage project membership. The direct entry points
-// refuse it up front with a typed permission refusal (not through the
-// privilege ceiling), whatever role it names, and change nothing.
-func TestProjectMemberDirectEntryPoints_RefuseMachineActor(t *testing.T) {
-	t.Parallel()
-	c, st := newBootstrappedCore(t)
-	ctx := context.Background()
-	const proj = uint(7)
-	u, err := st.CreateUser(ctx, foldedTestUser(t, "carol", "carol@example.com"))
-	require.NoError(t, err)
-
-	for _, role := range []string{"project_viewer", "no_such_role"} {
-		err = c.AddProjectMember(ctx, 0, proj, u.ID, role, true)
-		require.ErrorIs(t, err, ErrMachineProjectMembershipDenied, "add %s", role)
-		require.ErrorIs(t, err, ErrPermissionDenied)
-
-		err = c.SetProjectMemberRole(ctx, 0, proj, u.ID, role, true)
-		require.ErrorIs(t, err, ErrMachineProjectMembershipDenied, "set %s", role)
-		require.ErrorIs(t, err, ErrPermissionDenied)
-	}
-
-	members, err := c.ListProjectMembers(ctx, proj)
-	require.NoError(t, err)
-	assert.Empty(t, members)
-}
-
-// The refusal also covers an existing member. SetProjectMemberRole used to answer
-// a machine nil for a member already holding exactly the named role (a
-// membership oracle) and wrote a role_confirmed_unchanged audit row with no
-// actor; it must now refuse, leave the role as it was, and write no such row.
-func TestSetProjectMemberRole_RefusesMachineActor_ExistingMember(t *testing.T) {
+// A machine actor changing an EXISTING member's project role is judged by the
+// privilege ceiling on the role it names (#3990), as a new member already was.
+// Before, a no-op (the member already holds exactly that role) answered nil and
+// wrote a role_confirmed_unchanged row with no actor: nothing was added, so no
+// ceiling ran. Here the ctx carries no WithSelfMachineGranter tag, so the
+// ceiling refuses the machine whatever it holds (an untagged relay); the
+// handler tests in server/http/handlers cover a tagged machine both ways.
+func TestSetProjectMemberRole_MachineActorExistingMember_NoOpJudgedByCeiling(t *testing.T) {
 	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
@@ -624,13 +601,8 @@ func TestSetProjectMemberRole_RefusesMachineActor_ExistingMember(t *testing.T) {
 		return int(total)
 	}
 
-	for _, role := range []string{"project_viewer", "project_developer"} {
-		err = c.SetProjectMemberRole(ctx, 0, proj, u.ID, role, true)
-		require.ErrorIs(t, err, ErrMachineProjectMembershipDenied, "set %s", role)
-
-		err = c.AddProjectMember(ctx, 0, proj, u.ID, role, true)
-		require.ErrorIs(t, err, ErrMachineProjectMembershipDenied, "add %s", role)
-	}
+	err = c.SetProjectMemberRole(ctx, 0, proj, u.ID, "project_viewer", true)
+	require.ErrorIs(t, err, ErrPermissionDenied)
 
 	members, err := c.ListProjectMembers(ctx, proj)
 	require.NoError(t, err)
@@ -645,10 +617,10 @@ func TestSetProjectMemberRole_RefusesMachineActor_ExistingMember(t *testing.T) {
 }
 
 // A machine naming one of two roles an existing member holds is a narrowing:
-// on main it removed the other role and answered nil, because nothing was being
-// added and so no privilege ceiling ran. It must now be refused and leave both
-// roles in place.
-func TestSetProjectMemberRole_RefusesMachineActor_Narrowing(t *testing.T) {
+// before #3990 it removed the other role and answered nil, because nothing was
+// being added and so no privilege ceiling ran. It is now judged by the ceiling
+// (refused here: untagged ctx, see the test above) and leaves both roles.
+func TestSetProjectMemberRole_MachineActorNarrowing_JudgedByCeiling(t *testing.T) {
 	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
@@ -663,7 +635,6 @@ func TestSetProjectMemberRole_RefusesMachineActor_Narrowing(t *testing.T) {
 	}
 
 	err = c.SetProjectMemberRole(ctx, 0, proj, u.ID, "project_viewer", true)
-	require.ErrorIs(t, err, ErrMachineProjectMembershipDenied)
 	require.ErrorIs(t, err, ErrPermissionDenied)
 
 	members, err := c.ListProjectMembers(ctx, proj)

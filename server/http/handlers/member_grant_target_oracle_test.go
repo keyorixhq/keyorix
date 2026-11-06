@@ -8,7 +8,7 @@ package handlers
 // ceiling refusal, so the refusal said which user IDs exist and whose email is off
 // the allowlist. Every target now gets the same status and body. The status itself
 // is not asserted here: POST /projects/{id}/members answers a ceiling refusal 403
-// (pinned by TestProjectMemberRoutes_RefusalsAnswer403), but /memberships has no
+// (pinned by TestAddProjectMember_HumanFailingCeilingAnswers403), but /memberships has no
 // ErrPermissionDenied case in its error switch and answers 500 today, which is
 // the error-map owner's to change, not this test's to pin.
 
