@@ -382,8 +382,8 @@ func (ls *LocalStorage) UpdateLoginLockoutState(ctx context.Context, id uint, at
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{
 			"failed_login_attempts": attempts,
-			"last_failed_login_at":  lastFailedAt,
-			"login_locked_until":    lockedUntil,
+			"last_failed_login_at":  utcPtr(lastFailedAt), // a map update runs no hook or NowFunc
+			"login_locked_until":    utcPtr(lockedUntil),
 			"login_lockout_count":   lockoutCount,
 		})
 	if result.Error != nil {
