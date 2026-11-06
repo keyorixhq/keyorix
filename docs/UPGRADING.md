@@ -1203,10 +1203,13 @@ values), `internal/config/config_load_test.go:TestValidate_RejectsGRPCAutoCert` 
 `mfa.failed`, `mfa.error`, `webauthn.failed` and the other audit events whose name
 records a failure (`auth.session_revocation_failed`, `auth.keep_session_lookup_failed`,
 `auth.session_revocation_panicked`, `secret.rotate_failed`, `dynamic_lease.revoke_failed`,
-`notification.failed`, and the rest of the `*_failed` / `*.failed` / `*_panicked`
-family) were written with `success = true`, so a wrong TOTP code or a failed passkey
-assertion was invisible to `success = false` filters, SIEM rules and exports (#3363).
-New rows have `success = false`. **Rows written before the upgrade keep
+`notification.failed`, `system.audit_verification_state_rejected`, and the rest of the
+`internal/core` events whose name ends in `.failed`, `_failed`, `.error`, `_rejected` or
+`_panicked`) were written with `success = true`, so a wrong TOTP code or a failed
+passkey assertion was invisible to `success = false` filters, SIEM rules and exports
+(#3363). New rows have `success = false`; the family guard also holds every
+`internal/core` event ending in `denied`, `refused` or `unresolved` to `success = false`
+(#3363 changed none of those). **Rows written before the upgrade keep
 `success = true`**: audit rows are hash-chained and never rewritten. A query or SIEM
 rule that must cover older history should match on `event_type` as well as
 `success`. `access_request.rejected` is unchanged (it records a successful decision).
