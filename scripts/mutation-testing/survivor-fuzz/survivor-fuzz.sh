@@ -22,11 +22,18 @@
 #   3. `go test -fuzz` runs the harness for --fuzztime.
 # Verdict word (last line of stdout, also in <out>/<id>.verdict):
 #   killed-by-input    the fuzzer found an input where original and mutant
-#                      differ; the input is saved under <out>/<id>/ and is a
-#                      ready regression-test seed
-#   likely-equivalent  no difference found in --fuzztime (NOT a proof)
-#   harness-missing    no harness for the enclosing function, or it did not build
+#                      differ (the harness failed with its `ORIG ... MUT` line);
+#                      the input is saved under <out>/<id>/ and is a ready
+#                      regression-test seed
+#   likely-equivalent  the fuzzer ran for --fuzztime and found no difference
+#                      (NOT a proof)
+#   harness-missing    no harness for the enclosing function, the harness has
+#                      no `func FuzzSF_<Name>`, it did not build, or go test
+#                      found no fuzz test to run
 #   no-node            the position maps to no mutable node at this commit
+#   error              go test failed any other way (worker crash or OOM kill,
+#                      hung worker, a panic in the mutant): read <out>/<id>.log.
+#                      Exits 1; never reported as likely-equivalent.
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -51,9 +58,12 @@ id="${typ}-${file%.go}-${line}-${col}"
 : "${out:=$here/results}"
 mkdir -p "$out"
 
-verdict() { echo "$1" >"$out/$id.verdict"; echo "$id $1"; exit 0; }
+verdict() { echo "$1" >"$out/$id.verdict"; echo "$id $1"; exit "${2:-0}"; }
 
-mutate="$(mktemp -d)/mutate"
+tmp="$(mktemp -d)"
+cleanup() { rm -f "$repo/$pkg/zz_sf_clone_test.go" "$repo/$pkg/zz_sf_harness_test.go"; rm -rf "$tmp"; }
+trap cleanup EXIT
+mutate="$tmp/mutate"
 (cd "$here" && go build -o "$mutate" ./mutate) || { echo "cannot build mutate" >&2; exit 2; }
 
 src="$repo/$pkg/$file"
@@ -62,14 +72,15 @@ fn="${desc%%:*}"
 name="${fn##*.}"
 harness="$here/harnesses/${name}_test.go.txt"
 [ -f "$harness" ] || { echo "$id: $desc (no harness for $name)"; verdict harness-missing; }
+# The fuzz target must be func FuzzSF_<Name>. Without one fuzzfn would be empty
+# and the rm -rf below would delete the package's whole committed fuzz corpus.
+fuzzfn="$(grep -o 'func FuzzSF_[A-Za-z0-9_]*' "$harness" | head -1 | sed 's/func //')"
+[ -n "$fuzzfn" ] || { echo "$id: $desc (harness for $name has no func FuzzSF_<Name>)"; verdict harness-missing; }
 
-cleanup() { rm -f "$repo/$pkg/zz_sf_clone_test.go" "$repo/$pkg/zz_sf_harness_test.go"; }
-trap cleanup EXIT
 "$mutate" -file "$src" -line "$line" -col "$col" -type "$typ" -clone "$repo/$pkg/zz_sf_clone_test.go" >/dev/null || verdict no-node
 goimports -w "$repo/$pkg/zz_sf_clone_test.go" || verdict harness-missing
 cp "$harness" "$repo/$pkg/zz_sf_harness_test.go"
 
-fuzzfn="$(grep -o 'func FuzzSF_[A-Za-z0-9_]*' "$harness" | head -1 | sed 's/func //')"
 rm -rf "$repo/$pkg/testdata/fuzz/$fuzzfn"
 echo "$id: $desc (harness $fuzzfn, $fuzztime)"
 log="$out/$id.log"
@@ -78,7 +89,10 @@ st=$?
 if [ $st -ne 0 ] && grep -q '^FAIL\s.*\[build failed\]\|^# ' "$log" && ! grep -q 'Failing input' "$log"; then
   echo "build problem, see $log" >&2; verdict harness-missing
 fi
-if [ $st -ne 0 ] && grep -q -- '--- FAIL' "$log"; then
+if grep -q 'no fuzz tests to fuzz' "$log"; then
+  echo "go test found no fuzz test $fuzzfn, see $log" >&2; verdict harness-missing
+fi
+if [ $st -ne 0 ] && grep -q -- '--- FAIL' "$log" && grep -q 'ORIG' "$log"; then
   mkdir -p "$out/$id"
   # a failure on a seed (f.Add) is not saved by Go under testdata/fuzz; keep the log line
   grep -m1 'ORIG' "$log" >"$out/$id/failing-observation.txt" || true
@@ -88,5 +102,8 @@ if [ $st -ne 0 ] && grep -q -- '--- FAIL' "$log"; then
   fi
   head -1 "$out/$id/failing-observation.txt"
   verdict killed-by-input
+fi
+if [ $st -ne 0 ]; then
+  echo "go test failed without an ORIG/MUT difference, see $log" >&2; verdict error 1
 fi
 verdict likely-equivalent

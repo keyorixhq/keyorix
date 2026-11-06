@@ -12,7 +12,9 @@ survivor-fuzz.sh --repo <keyorix checkout> --fuzztime 5m "CONDITIONALS_NEGATION 
 ```
 
 Verdict words: `killed-by-input`, `likely-equivalent` (no difference found in the
-time given, not a proof), `harness-missing`, `no-node`. See the header of
+time given, not a proof), `harness-missing`, `no-node`, `error` (go test failed
+in some other way, for example a worker killed by the memory guard: read the log;
+exit 1). See the header of
 `survivor-fuzz.sh` for the mechanism and `mutate/` for the mutator (gremlins has
 no "apply one mutant" command, so the operator rewrites are re-created there).
 
@@ -24,6 +26,16 @@ copied into the package as an in-package `_test.go` so unexported helpers are
 reachable). Writing the harness is the real work: the fuzzer has no comparison
 tracing, so an input encoding must make boundary values reachable (for example
 "age = days*24h + a small signed delta" instead of a raw int64).
+
+Harness contract (the script relies on both):
+
+- The fuzz target is named `FuzzSF_<Name>`, for example `FuzzSF_minEscalateDelay`
+  in `harnesses/minEscalateDelay_test.go.txt`. A harness without a
+  `func FuzzSF_` function is reported as `harness-missing` and nothing is run or
+  deleted (only `testdata/fuzz/FuzzSF_<Name>/` is ever cleared).
+- A difference fails with `t.Fatalf("ORIG ... != MUT ...", ...)`. Only a failure
+  carrying that `ORIG` line counts as `killed-by-input`; any other failure is
+  `error`.
 
 Survivor positions are only valid against the commit the mutation run used.
 
