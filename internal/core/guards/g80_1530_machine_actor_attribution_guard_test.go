@@ -114,6 +114,9 @@ var auditAttributionAllowlist = map[string]string{
 		"UserID is set only to the TARGET account of the attempt, never to an acting identity: the actor is " +
 		"the host OS user, and ActorType is never \"machine_identity\", so emitAudit's MachineIdentityID " +
 		"stamp has nothing to correct here.",
+	"server/admin/recover_admin_logic.go:recordRecoveryBlockedRefusal": "hardcodes ActorType: adminActorType " +
+		"(\"admin_cli\") for a recover-admin attempt refused because the target is suspended or deprovisioned " +
+		"(#3991) -- same shape as recordRecoveryKeyMismatch above: UserID is only the target, never an acting identity.",
 	"server/admin/reset_mfa_logic.go:performResetMFA": "hardcodes ActorType: adminActorType " +
 		"(\"admin_cli\") for `keyorix-server admin reset-mfa` (RECOVERY-MFA-RESET-1), written through the " +
 		"reset's own transaction -- same host-side, no-network-listener shape as recordRecoveryAuditEvent " +
