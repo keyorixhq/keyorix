@@ -117,10 +117,18 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	}
 	// MACH-001: enforce a privilege ceiling — a non-admin cannot issue a token for
 	// a machine that holds admin-tier roles, since the token would carry those roles
-	// and the actor could use it to escalate their own effective privileges. Every
-	// caller of IssueMachineToken (CLI, gRPC, HTTP) passes a real user's ID, never a
-	// machine principal's, so ActorTypeUser is exact here, not a default.
-	if err := c.requireMachinePrivilegeCeiling(ctx, ActorTypeUser, actorID, projectID, machineID); err != nil {
+	// and the actor could use it to escalate their own effective privileges.
+	//
+	// The ceiling is evaluated for the real caller. A user caller passes its ID as
+	// actorID. A machine caller authenticated directly for this request has actor
+	// ID 0 (ADR-030) and is identified by the self-granter tag the REST and gRPC
+	// handlers set (WithSelfMachineGranter); a system-proxy relay tag is not that
+	// machine acting as itself and is not honoured here.
+	ceilingType, ceilingID := ActorTypeUser, actorID
+	if machineID, tagged := selfMachineGranterFromContext(ctx); tagged && !isSystemProxyRelayGrant(ctx) {
+		ceilingType, ceilingID = ActorTypeMachine, machineID
+	}
+	if err := c.requireMachinePrivilegeCeiling(ctx, ceilingType, ceilingID, projectID, machineID); err != nil {
 		return nil, err
 	}
 	classification := params.Classification

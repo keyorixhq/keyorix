@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -302,6 +303,11 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 	// #2545, extended to machine credentials: a client-asserted origin is recorded as a
 	// labelled note on the audit event, never as attribution.
 	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
+	if actor.ActorKind() == core.ActorTypeMachine {
+		// A directly authenticated machine acting as itself: core evaluates the
+		// privilege ceiling against this machine, not against user 0.
+		auditCtx = core.WithSelfMachineGranter(auditCtx, actor.PrincipalID())
+	}
 	result, err := h.coreService.IssueMachineToken(auditCtx, projectID, uint(machineID), actor.UserID, core.IssueMachineTokenParams{
 		Name:                body.Name,
 		ExpiresAt:           expiresAt,
@@ -323,6 +329,10 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
+		case errors.Is(err, core.ErrMachinePrivilegeCeilingDenied):
+			// A refusal by the privilege ceiling, not a fault.
+			sendError(w, "Forbidden", "access denied", http.StatusForbidden, nil)
+			return
 		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "replace_credential_id"):

@@ -174,6 +174,11 @@ func (s *MachineIdentityGRPCService) IssueMachineToken(ctx context.Context, req 
 		t := time.Now().AddDate(0, 0, int(req.GetExpiresInDays()))
 		expiresAt = &t
 	}
+	if user.ActorKind() == core.ActorTypeMachine {
+		// A directly authenticated machine acting as itself: core evaluates the
+		// privilege ceiling against this machine, not against user 0.
+		ctx = core.WithSelfMachineGranter(ctx, user.PrincipalID())
+	}
 	res, err := s.core.IssueMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), user.UserID, core.IssueMachineTokenParams{
 		Name:           req.GetName(),
 		ExpiresAt:      expiresAt,
