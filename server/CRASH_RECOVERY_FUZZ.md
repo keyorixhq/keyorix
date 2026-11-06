@@ -54,8 +54,13 @@ R1  Planted-defect self-tests must ALL be detected by the checker, or the
     campaign is void and no result may be reported: (P1) flip one byte in a
     secret's stored ciphertext; (P2) insert a `secret_versions` row whose
     parent does not exist; (P3) tamper one audit row; (P4) swap in the pre-
-    rotation `dek.key` after a DEK rotation; (P5) truncate a backup archive and
-    present it as complete. Each is an independent test; 5/5 required.
+    rotation `dek.key` after a DEK rotation; (P5) delete one version row of a secret
+    (lost version). Each is an independent test; 5/5 required, and the
+    unmodified control must report zero violations.
+    (Revision before any campaign run: P5 was first written as "truncate a
+    backup archive"; replaced because a truncated archive is rejected by the
+    signed manifest, which tests restore, not the checker. Backup-file
+    behaviour is covered by I6 in the campaign itself.)
 R2  Campaign passes if >= 300 kill iterations (>= 60 per operation, spread over
     the three kill-point kinds) end with zero invariant violations.
 R3  A violation becomes a FINDING only after the post-kill directory snapshot
