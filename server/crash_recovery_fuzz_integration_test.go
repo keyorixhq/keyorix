@@ -291,7 +291,7 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 		}
 	}
 	artifacts := os.Getenv("KX_CRASH_ARTIFACTS")
-	bin := buildServerBinary(t)
+	bin := fuzzHeadBinary(t)
 	w := buildWorld(t, bin, rng)
 
 	stats := map[string]map[string]int{}
@@ -380,7 +380,7 @@ func TestCrashRecoveryChecker_PlantedDefects(t *testing.T) {
 		t.Skip("spawns real processes; skipped with -short")
 	}
 	rng := rand.New(rand.NewSource(crashSeed())) //nolint:gosec // test randomness
-	bin := buildServerBinary(t)
+	bin := fuzzHeadBinary(t)
 	w := buildWorld(t, bin, rng)
 	ids := unionIDs(w.ledgerB)
 	pass := "soak-test-passphrase-edge-crash"
@@ -497,7 +497,7 @@ func TestCrashRecoveryReplay(t *testing.T) {
 	if err := json.Unmarshal(b, &meta); err != nil {
 		t.Fatalf("meta: %v", err)
 	}
-	bin := buildServerBinary(t)
+	bin := fuzzHeadBinary(t)
 	dir := t.TempDir()
 	copyTree(t, filepath.Join(src, "install"), dir)
 	w := &crashWorld{t: t, bin: bin, dir: dir, ledgerA: meta.LedgerA, ledgerB: meta.LedgerB, archiveA: filepath.Join(src, "archiveA.tar.gz")}

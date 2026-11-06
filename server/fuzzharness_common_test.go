@@ -357,3 +357,14 @@ func diffObs(obs map[uint]string, allowed []crashLedger) string {
 	}
 	return b.String()
 }
+
+// fuzzHeadBinary returns the keyorix-server under test: $KX_FUZZ_HEAD_BIN when
+// set (lets a cross-compiled test binary run on a host without a Go toolchain),
+// otherwise the shared build of this tree.
+func fuzzHeadBinary(t *testing.T) string {
+	t.Helper()
+	if p := os.Getenv("KX_FUZZ_HEAD_BIN"); p != "" {
+		return p
+	}
+	return buildServerBinary(t)
+}
