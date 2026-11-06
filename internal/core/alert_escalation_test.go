@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -847,12 +848,28 @@ func TestUpdateAlertEscalationPolicy_StorageError(t *testing.T) {
 
 func TestUpdateAlertEscalationPolicy_GetError(t *testing.T) {
 	store := new(MockStorage)
-	store.On("GetAlertEscalationPolicy", mock.Anything, uint(99)).Return((*models.AlertEscalationPolicy)(nil), fmt.Errorf("not found"))
+	// LocalStorage types a missing row with its storage sentinel; the mock does the same.
+	store.On("GetAlertEscalationPolicy", mock.Anything, uint(99)).Return((*models.AlertEscalationPolicy)(nil),
+		corestorage.NotFound(corestorage.ErrAlertEscalationNotFound, "not found", nil))
 	c := NewKeyorixCore(store)
 
 	_, err := c.UpdateAlertEscalationPolicy(context.Background(), 99, map[string]any{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.ErrorIs(t, err, corestorage.ErrAlertEscalationNotFound)
+	assert.False(t, IsStorageReadUnavailable(err))
+	store.AssertExpectations(t)
+}
+
+// Any other read error is a storage fault, whatever words it uses.
+func TestUpdateAlertEscalationPolicy_ReadFaultIsUnavailable(t *testing.T) {
+	store := new(MockStorage)
+	store.On("GetAlertEscalationPolicy", mock.Anything, uint(99)).Return((*models.AlertEscalationPolicy)(nil), fmt.Errorf("driver: row not found in replica"))
+	c := NewKeyorixCore(store)
+
+	_, err := c.UpdateAlertEscalationPolicy(context.Background(), 99, map[string]any{})
+	require.Error(t, err)
+	assert.True(t, IsStorageReadUnavailable(err))
+	assert.NotErrorIs(t, err, corestorage.ErrAlertEscalationNotFound)
 	store.AssertExpectations(t)
 }
 

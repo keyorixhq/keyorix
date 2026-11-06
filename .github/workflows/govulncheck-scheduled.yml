@@ -41,21 +41,24 @@ jobs:
           key: govulncheck-scheduled-v1.8.0-${{ runner.os }}
 
       # Intentionally the EXACT SAME two lines as ci.yml's static-analysis
-      # job's own govulncheck step, not a paraphrase. govulncheck's own
-      # pass/fail rule (x/vuln@v1.8.0 internal/scan/text.go:80-85) returns
-      # exit 3 ONLY when a finding is call-graph-REACHABLE at the default
-      # `-scan symbol` level; a finding that's merely present in a required
-      # module (module-tier only, e.g. GO-2026-5932 / golang.org/x/crypto's
-      # unmaintained openpgp package, confirmed unreachable here as of
-      # 2026-09-22 -- see the PR this workflow shipped with) exits 0. Running
-      # the identical invocation, with no extra flags or filtering of our
-      # own, means this scheduled job inherits that exact rule: it cannot be
+      # job's own govulncheck step, not a paraphrase: install, then
+      # scripts/ci/check-govulncheck.sh (added 2026-11-06, NEEDS ANDREI note
+      # in reports/SESSION-REVFIX-3972-4.md -- a bare `govulncheck ./...` has
+      # no exclusion mechanism, and GO-2026-6909 has no fixed version). That
+      # script replicates govulncheck's own pass/fail rule exactly (a finding
+      # is call-graph-reachable, and so blocking, the moment any of its trace
+      # entries has more than one frame -- see the script's header for how
+      # that was confirmed against this repo's own output) and additionally
+      # passes a reachable finding only when docs/govulncheck-exceptions.d/
+      # carries a row for its exact ID. Running the identical invocation
+      # means this scheduled job inherits that exact rule too: it cannot be
       # red on arrival where the PR-gated job is green, and a real newly-
-      # reachable finding fails here exactly as it would on a PR.
+      # reachable, non-allowlisted finding fails here exactly as it would on
+      # a PR.
       - name: govulncheck
         run: |
           [ -x ~/go/bin/govulncheck ] || go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 # NOSONAR githubactions:S8545 -- version is pinned to v1.8.0
-          govulncheck ./...
+          scripts/ci/check-govulncheck.sh
 
   # Before 2026-09-28 a red scheduled run alerted nobody. Same one-issue-per-
   # job mechanism as e2e-nightly.yml.

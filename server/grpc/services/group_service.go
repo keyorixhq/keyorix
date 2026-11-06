@@ -69,7 +69,10 @@ func (s *GroupGRPCService) CreateGroup(ctx context.Context, req *pb.CreateGroupR
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {
+	// users.read + users.write: mirrors the HTTP /groups route group's outer
+	// RequirePermission(users.read) plus its per-route users.write gate
+	// (authzdiff known-01; router.go:1019).
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, permUsersWrite); err != nil {
 		return nil, err
 	}
 	g, err := s.core.CreateGroup(ctx, actor.UserID, &core.CreateGroupRequest{
@@ -86,7 +89,8 @@ func (s *GroupGRPCService) UpdateGroup(ctx context.Context, req *pb.UpdateGroupR
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {
+	// users.read + users.write: see CreateGroup.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, permUsersWrite); err != nil {
 		return nil, err
 	}
 	g, err := s.core.UpdateGroup(ctx, actor.UserID, &core.UpdateGroupRequest{
@@ -103,7 +107,8 @@ func (s *GroupGRPCService) DeleteGroup(ctx context.Context, req *pb.DeleteGroupR
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {
+	// users.read + users.write: see CreateGroup.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, permUsersWrite); err != nil {
 		return nil, err
 	}
 	if err := s.core.DeleteGroup(ctx, actor.UserID, uint(req.GetId())); err != nil {
@@ -120,8 +125,9 @@ func (s *GroupGRPCService) RestoreGroup(ctx context.Context, req *pb.RestoreGrou
 	// Restore reinstates every role grant the group carried at deletion — the same
 	// blast radius as a role grant — so gate on roles.assign, not users.write,
 	// matching the HTTP sibling (server/http/router.go: POST /groups/{id}/restore,
-	// gated permRolesAssign, #147) (G16).
-	if err := authorizeGlobal(ctx, s.core, actor, permRolesAssign); err != nil {
+	// gated permRolesAssign, #147) (G16). Also needs users.read first, mirroring
+	// the /groups route group's outer gate (authzdiff known-01).
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, permRolesAssign); err != nil {
 		return nil, err
 	}
 	g, err := s.core.RestoreGroup(ctx, actor.UserID, uint(req.GetId()))
@@ -155,7 +161,13 @@ func (s *GroupGRPCService) AddGroupMember(ctx context.Context, req *pb.GroupMemb
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "roles.assign"); err != nil {
+	// users.read + roles.assign: mirrors the /groups route group's outer
+	// RequirePermission(users.read) gate (authzdiff known-01). Previously left
+	// unmodified on the mistaken premise that the harness's generated-permission
+	// sweep didn't flag this RPC -- a reviewer traced the same REST/gRPC asymmetry
+	// here directly: a roles.assign holder lacking users.read could add group
+	// members over gRPC in cases REST's outer gate on /groups would deny.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, permRolesAssign); err != nil {
 		return nil, err
 	}
 	// #PM-006 sibling: actorIsMachine must be derived from the real actor kind. The
@@ -187,7 +199,9 @@ func (s *GroupGRPCService) RemoveGroupMember(ctx context.Context, req *pb.GroupM
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "roles.assign"); err != nil {
+	// users.read + roles.assign: mirrors the /groups route group's outer gate
+	// (authzdiff known-01), same as AddGroupMember above.
+	if err := authorizeGlobalMutation(ctx, s.core, actor, permUsersRead, permRolesAssign); err != nil {
 		return nil, err
 	}
 	if err := s.core.RemoveUserFromGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0)

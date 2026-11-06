@@ -222,8 +222,39 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 // CreateUserAudited is CreateUser for a caller that knows the creating actor:
 // the user row, its baseline role and its user.created row commit in ONE
 // transaction (AUDIT-TX-2), so the caller must NOT call LogUserCreated too.
-func (c *KeyorixCore) CreateUserAudited(ctx context.Context, req *CreateUserRequest, actorID uint) (*models.User, error) {
+//
+// The new user receives the system_viewer baseline, so the actor must hold
+// every permission that role bundles (requireBaselineRoleGrantAuthority), the
+// same ceiling CreateUserWithAssignments applies to its default system role.
+// actorIsMachine: the actor is a machine identity (actorID is then 0); the
+// transport tags ctx with WithSelfMachineGranter so its own permissions count.
+func (c *KeyorixCore) CreateUserAudited(ctx context.Context, req *CreateUserRequest, actorID uint, actorIsMachine bool) (*models.User, error) {
+	if err := c.requireBaselineRoleGrantAuthority(ctx, actorID, actorIsMachine); err != nil {
+		return nil, err
+	}
 	return c.createUser(ctx, req, &actorID)
+}
+
+// requireBaselineRoleGrantAuthority refuses an actor that does not hold every
+// permission of the system_viewer baseline role every new user is granted.
+// The check (without the roles.assign baseline) is the one
+// CreateUserWithAssignments applies to its default system role. It covers the
+// grant that actually happens: when the role does not exist, createUser grants
+// nothing (best-effort), so there is nothing to check; any other read error
+// fails closed. A trusted internal caller (actorID 0, not a machine) is exempt,
+// as in requireGranterHoldsRolePermissionsNoBaseline itself.
+func (c *KeyorixCore) requireBaselineRoleGrantAuthority(ctx context.Context, actorID uint, actorIsMachine bool) error {
+	if actorID == 0 && !actorIsMachine {
+		return nil
+	}
+	sr, err := c.storage.GetRoleByName(ctx, "system_viewer")
+	if err != nil {
+		if isPositiveNotFound(err) {
+			return nil
+		}
+		return &storageReadFault{cause: err}
+	}
+	return c.requireGranterHoldsRolePermissionsNoBaseline(ctx, actorID, sr.ID, Scope{}, actorIsMachine)
 }
 
 // createUser is CreateUser's body. auditActor nil writes no audit row (the
@@ -383,11 +414,12 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	// F6 sweep (2026-09-22): requireGranterHoldsRolePermissions's roles.assign
 	// BASELINE deliberately does not apply when systemRole was left empty (the
 	// caller never asked for a specific system role -- sysRole defaulted to
-	// system_viewer above). That mandatory, non-discretionary default mirrors
-	// plain CreateUser's own unconditional auto-assign (users.go): "create a
-	// plain user" has always been gated by users.write alone. Only an
-	// EXPLICITLY requested system role represents a real discretionary grant
-	// the actor is choosing to make, so only that case needs roles.assign.
+	// system_viewer above). That mandatory, non-discretionary default is the
+	// same baseline plain creation grants (CreateUserAudited, which applies the
+	// same check): creating a plain user needs users.write plus the baseline
+	// role's permissions, not roles.assign. Only an EXPLICITLY requested system
+	// role represents a real discretionary grant the actor is choosing to make,
+	// so only that case needs roles.assign.
 	if systemRole == "" {
 		if err := c.requireGranterHoldsRolePermissionsNoBaseline(ctx, actorID, sr.ID, Scope{}, actorIsMachine); err != nil {
 			return nil, err

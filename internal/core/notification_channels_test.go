@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -175,12 +176,14 @@ func TestUpdateNotificationChannel_GetError(t *testing.T) {
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
 
+	// LocalStorage types a missing row with its storage sentinel; the mock does the same.
 	st.On("GetNotificationChannel", ctx, uint(99)).
-		Return(nil, fmt.Errorf("record not found"))
+		Return(nil, corestorage.NotFound(corestorage.ErrNotificationChannelNotFound, "not found", nil))
 
 	_, err := c.UpdateNotificationChannel(ctx, 99, map[string]any{"events": "secret.rotated"}, 1)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.ErrorIs(t, err, corestorage.ErrNotificationChannelNotFound)
+	assert.False(t, IsStorageReadUnavailable(err))
 	st.AssertExpectations(t)
 }
 

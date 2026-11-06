@@ -59,7 +59,7 @@ func (c *KeyorixCore) ListNotificationChannels(ctx context.Context) ([]*models.N
 func (c *KeyorixCore) GetNotificationChannel(ctx context.Context, id uint) (*models.NotificationChannel, error) {
 	ch, err := c.storage.GetNotificationChannel(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, classifyTypedRead(err, storage.ErrNotificationChannelNotFound)
 	}
 	if err := c.decryptNotificationChannelURL(ch); err != nil {
 		return nil, err
@@ -259,7 +259,7 @@ func (c *KeyorixCore) CreateNotificationChannel(ctx context.Context, ch *models.
 func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, updates map[string]any, actorID uint) (*models.NotificationChannel, error) {
 	ch, err := c.storage.GetNotificationChannel(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, classifyTypedRead(err, storage.ErrNotificationChannelNotFound)
 	}
 	// Decrypt the EXISTING URL first (#2433): storage.GetNotificationChannel
 	// never populates ch.URL on its own (not a persisted column any more), so
@@ -332,7 +332,7 @@ func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, up
 func (c *KeyorixCore) DeleteNotificationChannel(ctx context.Context, id uint, actorID uint) error {
 	ch, err := c.storage.GetNotificationChannel(ctx, id)
 	if err != nil {
-		return err
+		return classifyTypedRead(err, storage.ErrNotificationChannelNotFound)
 	}
 	// AUDIT-TX-3: the delete and its audit row commit together (fail closed):
 	// deleting the channel is the most complete way to silence alert delivery.
@@ -354,10 +354,10 @@ const ElidedChannelURLSuffix = "/…"
 // validateNotificationChannel enforces invariants for create and update paths.
 func (c *KeyorixCore) validateNotificationChannel(ch *models.NotificationChannel) error {
 	if strings.TrimSpace(ch.Name) == "" {
-		return fmt.Errorf("notification channel name is required")
+		return invalidInput(fmt.Errorf("notification channel name is required"))
 	}
 	if _, ok := validChannelTypes[ch.Type]; !ok {
-		return fmt.Errorf("invalid notification channel type %q: must be one of webhook, slack, teams, email", ch.Type)
+		return invalidInput(fmt.Errorf("invalid notification channel type %q: must be one of webhook, slack, teams, email", ch.Type))
 	}
 	urlValidator := c.webhookURLValidator
 	if urlValidator == nil {
@@ -366,19 +366,19 @@ func (c *KeyorixCore) validateNotificationChannel(ch *models.NotificationChannel
 	switch ch.Type {
 	case "webhook", "slack", "teams":
 		if strings.TrimSpace(ch.URL) == "" {
-			return fmt.Errorf("notification channel URL is required for type %q", ch.Type)
+			return invalidInput(fmt.Errorf("notification channel URL is required for type %q", ch.Type))
 		}
 		// GET/list return the elided "https://host/…" form; a client that echoes it
 		// back in a PUT would otherwise replace the stored credential with it.
 		if strings.HasSuffix(strings.TrimSpace(ch.URL), ElidedChannelURLSuffix) {
-			return fmt.Errorf("notification channel URL is the elided display form; send the full URL to replace it, or omit url to keep the stored one")
+			return invalidInput(fmt.Errorf("notification channel URL is the elided display form; send the full URL to replace it, or omit url to keep the stored one"))
 		}
 		if err := urlValidator(ch.URL); err != nil {
-			return err
+			return invalidInput(err)
 		}
 	case "email":
 		if strings.TrimSpace(ch.Email) == "" {
-			return fmt.Errorf("notification channel email is required for type \"email\"")
+			return invalidInput(fmt.Errorf("notification channel email is required for type \"email\""))
 		}
 	}
 	return nil

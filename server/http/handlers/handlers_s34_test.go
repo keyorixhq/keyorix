@@ -37,7 +37,8 @@ func TestListAccessReviewCampaigns_DBError_S34(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/access-review/campaigns", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.ListAccessReviewCampaigns(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A storage read fault is the retry answer (STORAGE-ERR-CLASS-5), not a 500.
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // ── CatalogHandler / break_glass.go ───────────────────────────────────────────
