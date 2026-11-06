@@ -75,19 +75,21 @@ func TestUserService_UpdateUser_RequiresUsersRead(t *testing.T) {
 
 	// Fixture users at explicit high IDs, created BEFORE the auto-assigned
 	// "known01-target" below, so the two id spaces can't collide.
-	h.CreateTestUser(t, "writer-only", 2)
-	writerRole := h.CreateTestRole(t, "known01u-writer-only", "users.write only", 210)
-	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
-		SELECT ?, id FROM permissions WHERE name = 'users.write'`, writerRole.ID)
-	h.AssignUserRole(t, 2, writerRole.ID, nil)
-
-	// system.read too: every new user (including "known01-target" below) gets
-	// the default system_viewer role whether or not one is requested, so
+	//
+	// Both fixture roles below hold system.read, matching the one extra
+	// permission the default-assigned system_viewer role gives "known01-target"
+	// (every new user gets it whether or not one is requested): without it,
 	// RequireEqualOrGreaterAdminAuthority's permission-derived ceiling (a
 	// separate, legitimate check UpdateUser already made before this fix, and
-	// unrelated to known-01) requires the actor hold everything the target
-	// holds, system.read included, or UpdateUser denies before ever reaching
-	// known-01's gate.
+	// unrelated to known-01) would deny BOTH roles for a reason that has
+	// nothing to do with known-01, masking the one gate this test exists to
+	// isolate — users.read.
+	h.CreateTestUser(t, "writer-only", 2)
+	writerRole := h.CreateTestRole(t, "known01u-writer-only", "users.write + system.read, no users.read", 210)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name IN ('users.write', 'system.read')`, writerRole.ID)
+	h.AssignUserRole(t, 2, writerRole.ID, nil)
+
 	h.CreateTestUser(t, "writer-reader", 3)
 	fullRole := h.CreateTestRole(t, "known01u-writer-reader", "users.write + users.read + system.read", 211)
 	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
