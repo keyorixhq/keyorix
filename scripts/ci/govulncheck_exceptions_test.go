@@ -35,13 +35,13 @@ func TestGovulncheckCheckScript(t *testing.T) {
 // govulncheckExceptionRow is one parsed row of a docs/govulncheck-exceptions.d/
 // fragment. See that directory's README.md for what each field means.
 type govulncheckExceptionRow struct {
-	file             string
-	line             int
-	id               string
-	module           string
-	expires          string
-	mitigationTests  []string
-	note             string
+	file            string
+	line            int
+	id              string
+	module          string
+	expires         string
+	mitigationTests []string
+	note            string
 }
 
 var govulncheckIDRe = regexp.MustCompile(`^GO-\d{4}-\d+$`)
