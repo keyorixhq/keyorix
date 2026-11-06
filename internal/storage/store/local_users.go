@@ -346,9 +346,9 @@ func (ls *LocalStorage) SetPasswordHash(ctx context.Context, id uint, hash strin
 	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]any{
 			"password_hash":                hash,
-			"password_changed_at":          changedAt,
+			"password_changed_at":          changedAt.UTC(), // a map update runs no hook or NowFunc
 			"one_time_password_expires_at": nil,
-			"updated_at":                   changedAt,
+			"updated_at":                   changedAt.UTC(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
