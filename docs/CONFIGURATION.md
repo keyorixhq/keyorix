@@ -657,7 +657,7 @@ with `O_CREATE|O_EXCL`), then start the server.
 
 ### Committing with fdatasync
 
-`fdatasync` (SQLite only, default `false`).
+`storage.database.fdatasync` (SQLite only, default `false`).
 
 Every SQLite commit ends in a sync to stable storage. The driver's default is `fsync(2)`. With
 `fdatasync: true` the server switches the process to `fdatasync(2)` once, at storage start-up

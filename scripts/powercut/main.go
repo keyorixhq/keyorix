@@ -165,7 +165,7 @@ func runWrite(path, acksPath string, fdatasync bool, n, workers int) {
 	log.SetOutput(os.Stderr)
 	st := openStorage(path, fdatasync)
 	fmt.Printf("fdatasync_requested=%v fdatasync_effective=%v\n", fdatasync, msqlite.FdatasyncEnabled())
-	f, err := os.OpenFile(filepath.Clean(acksPath), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filepath.Clean(acksPath), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G703 -- acksPath is the operator's own flag to this hand-run power-cut tool, no remote input
 	if err != nil {
 		fatalf("acks: %v", err)
 	}
@@ -190,7 +190,7 @@ func runWrite(path, acksPath string, fdatasync bool, n, workers int) {
 // drop is silent), so acknowledgements from then on promise nothing and are
 // excluded by the caller passing the moment the cut began.
 func readAcks(path string, cutoffNanos int64) (required []int, ignored int, err error) {
-	f, err := os.Open(filepath.Clean(path))
+	f, err := os.Open(filepath.Clean(path)) // #nosec G703 -- path is the operator's own flag to this hand-run power-cut tool, no remote input
 	if err != nil {
 		return nil, 0, err
 	}
