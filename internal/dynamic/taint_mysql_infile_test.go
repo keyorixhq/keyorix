@@ -86,8 +86,7 @@ func FuzzTaintMySQLServerInfile(f *testing.F) {
 	f.Fuzz(func(t *testing.T, keyIdx uint16) {
 		taint.RequireOverlay(t.Fatalf)
 		taint.Reset()
-		taint.ResetRules()
-		taint.Allow(taint.Rule{Class: taint.Host, Why: "loopback rogue server is the admin_dsn host"})
+		taint.ResetRules() // no rules: the loopback address never carries the marker
 		defer taint.Check(t.Fatalf)
 		l, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {

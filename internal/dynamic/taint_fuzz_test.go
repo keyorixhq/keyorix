@@ -8,7 +8,8 @@ package dynamic_test
 // identifier-like string literal in the pgx, mongo-driver and go-sql-driver
 // sources) and the oracle marker is the option's value. The harness does not
 // know which options read files: any option whose value reaches a file path,
-// command, query or non-admin host fails the iteration.
+// command or query fails the iteration, and so does a host flow from any option
+// other than the ones in taintHostKeys (which name the destination itself).
 //
 // Run: go test -tags taintoverlay -overlay <taintoverlay dir>/overlay.json \
 //        -vet=off -run '^$' -fuzz FuzzTaintAdminDSN ./internal/dynamic
@@ -29,16 +30,28 @@ var taintKeysRaw string
 
 var taintKeys = strings.Fields(taintKeysRaw)
 
+// taintHostKeys are the DSN options that name the destination host. Every DSN
+// below dials the literal 127.0.0.1, so the marker can reach a host sink only
+// through an option value; for these options that is the admin's chosen
+// destination (SSRF-guarded at dial time). A host flow from any other option
+// redirects the connection and fails the iteration.
+var taintHostKeys = map[string]bool{"host": true, "hostaddr": true}
+
 func FuzzTaintAdminDSN(f *testing.F) {
 	for sel := uint8(0); sel < 4; sel++ {
 		f.Add(sel, uint16(0), "a") // no seed names a file option
 	}
-	taint.Allow(taint.Rule{Class: taint.Host, Why: "admin_dsn host is the admin's chosen destination (SSRF-guarded separately)"})
 	f.Fuzz(func(t *testing.T, sel uint8, keyIdx uint16, extra string) {
 		taint.RequireOverlay(t.Fatalf)
 		taint.Reset()
 		defer taint.Check(t.Fatalf)
 		key := taintKeys[int(keyIdx)%len(taintKeys)]
+		// Rules are package-global and FuzzTaintMySQLServerInfile resets them, so
+		// each iteration installs its own.
+		taint.ResetRules()
+		if taintHostKeys[key] {
+			taint.Allow(taint.Rule{Class: taint.Host, Why: "option " + key + " names the admin_dsn destination host"})
+		}
 		m := taint.Marker()
 		x := strings.Map(func(r rune) rune {
 			if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {

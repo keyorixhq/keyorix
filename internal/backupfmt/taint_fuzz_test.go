@@ -31,6 +31,10 @@ func FuzzTaintExtractArchive(f *testing.F) {
 		taint.Reset()
 		defer taint.Check(t.Fatalf)
 		staging := t.TempDir()
+		// Rules are package-global: without the reset every iteration would add one
+		// more rule (for a staging dir that no longer exists) and each path hit would
+		// walk them all.
+		taint.ResetRules()
 		taint.Allow(taint.Rule{Class: taint.Path, Root: staging, Why: "extraction confined to the staging dir"})
 
 		payload := []byte("x")
