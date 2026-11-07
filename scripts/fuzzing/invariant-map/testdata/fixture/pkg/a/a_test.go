@@ -4,7 +4,7 @@ import "testing"
 
 // FuzzThing checks INV-A-01: the parser never panics.
 func FuzzThing(f *testing.F) {
-	f.Fuzz(func(t *testing.T, b []byte) {})
+	f.Fuzz(func(t *testing.T, b []byte) { helperOracle() })
 }
 
 // helperOracle is shared by the fuzz target. INV-A-07 is only named here.
