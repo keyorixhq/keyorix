@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,6 +63,15 @@ func seqPlants() []seqPlant {
 		{
 			fault: seqFault{name: "revoke-noop", skipDo: func(l layer, st seqStep) bool { return l == layerREST && st.Kind == skRevoke }},
 			steps: []seqStep{{skGrant, pkGlobalAdmin, pkNone, tA, 0, 0}, {skRevoke, pkGlobalAdmin, pkNone, tA, 0, 0}},
+			class: "O-E:revoked-row-still-present",
+		},
+		{
+			// a revoke of a grant the viewer holds in the fixture that no leg
+			// carries out: every leg agrees, the model (reading the same tables)
+			// agrees, and the failing step alone reproduces it, so only an O-E
+			// class that always fails catches it
+			fault: seqFault{name: "revoke-noop-held", skipDo: func(l layer, st seqStep) bool { return st.Kind == skRevoke }},
+			steps: []seqStep{{skRevoke, pkGlobalAdmin, pkViewer, tA, 0, 0}},
 			class: "O-E:revoked-row-still-present",
 		},
 		{
@@ -125,18 +135,40 @@ func TestSeqClassKey(t *testing.T) {
 			t.Errorf("isOverAllow(%q) = %v, want %v", c, got, want)
 		}
 	}
+	// every over-allow, every O-E intent class and O-S:other always fail; the
+	// two known single-step behaviours (SEQUENCE.md) do not
+	for c, want := range map[string]bool{
+		a: true, b: false,
+		"O-E:denied-step-changed-state(x;grpc)":                   true,
+		"O-E:revoked-row-still-present(x;core)":                   true,
+		"O-E:granted-row-missing(x;rest)":                         true,
+		"O-E:account-state-not-suspended(x;grpc)":                 true,
+		"O-E:account-state-not-active(x;rest)":                    true,
+		"O-E:group-row-missing(x;core)":                           true,
+		"O-E:group-row-still-present(x;rest)":                     true,
+		"O-E:reactivated-user-cannot-log-in(x;grpc)":              true,
+		"O-S:other(x;other=rest;got=allowed;model=allowed)":       true,
+		"O-S:layers-disagree(x;allow=core;deny=rest)":             false,
+		"O-P:over-denial(x;rest)":                                 false,
+		"O-S:step-vs-model(role.revoke;got=denied;model=allowed)": false,
+	} {
+		if got := alwaysFails(c); got != want {
+			t.Errorf("alwaysFails(%q) = %v, want %v", c, got, want)
+		}
+	}
 }
 
-// seqDefaultPlant is the plant that runs in the default `go test`, so the
-// oracles are watched failing in CI; AUTHZSEQ_SELFTEST=1 runs all of them
-// (about 8 s).
-const seqDefaultPlant = "revoke-noop"
+// seqDefaultPlants run in the default `go test`, so the oracles and the triage
+// are watched failing in CI; AUTHZSEQ_SELFTEST=1 runs all of them (about 10 s).
+var seqDefaultPlants = map[string]bool{"revoke-noop": true, "revoke-noop-held": true}
 
+// TestSeqPlantsAreDetected: each plant is seen by its oracle class, and the
+// triage FuzzAuthzSeq and the sweep use (seqVerdict) fails the run on it.
 func TestSeqPlantsAreDetected(t *testing.T) {
 	all := os.Getenv("AUTHZSEQ_SELFTEST") == "1"
 	for _, pl := range seqPlants() {
 		t.Run(pl.fault.name, func(t *testing.T) {
-			if !all && pl.fault.name != seqDefaultPlant {
+			if !all && !seqDefaultPlants[pl.fault.name] {
 				t.Skip("set AUTHZSEQ_SELFTEST=1")
 			}
 			limited := seqRateLimited.Load()
@@ -145,12 +177,12 @@ func TestSeqPlantsAreDetected(t *testing.T) {
 				t.Fatalf("sequence is not clean without the plant: %v", clean)
 			}
 			fs := runSeq(t, pl.steps, &pl.fault, nil)
-			for _, f := range fs {
-				if classKind(f.Class) == pl.class {
-					return
-				}
+			if !slices.ContainsFunc(fs, func(f seqFinding) bool { return classKind(f.Class) == pl.class }) {
+				t.Fatalf("plant %s not detected as %s; findings=%v", pl.fault.name, pl.class, fs)
 			}
-			t.Fatalf("plant %s not detected as %s; findings=%v", pl.fault.name, pl.class, fs)
+			if v := seqVerdict(t, pl.steps, &pl.fault, nil); !v.fail() {
+				t.Fatalf("plant %s detected as %s but the triage does not fail the run: verdict=%d key=%s", pl.fault.name, pl.class, v.kind, v.key)
+			}
 		})
 	}
 }

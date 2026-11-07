@@ -390,9 +390,17 @@ func isOverAllow(c string) bool {
 }
 
 // alwaysFails reports whether a finding class fails the run however it
-// reproduces: it is never absorbed as single-step noise.
+// reproduces: it is never absorbed as single-step noise. That is every
+// over-allow, every O-E intent class (a revocation, suspension or membership
+// change that did not take effect: the model reads the same tables, so only O-E
+// sees it, and the single-step harness has no effect oracle) and O-S:other (a
+// step that ended in a 5xx or an untyped error).
 func alwaysFails(c string) bool {
-	return isOverAllow(c)
+	if isOverAllow(c) {
+		return true
+	}
+	k := classKind(c)
+	return strings.HasPrefix(k, "O-E:") || k == "O-S:other"
 }
 
 // pickFinding is the finding to report and shrink: the first over-allow one if
