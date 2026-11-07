@@ -3,19 +3,19 @@ package store_test
 // Known divergences from FuzzStorageBackendDifferentialV2. Each test PINS a divergence that
 // was minimised, replayed three times and classified (docs/fuzzing/pg-sqlite-differential.md).
 // The fuzz target gates or normalises exactly that input class so a campaign can keep
-// looking for other divergences. When one is fixed its test fails with "FIXED": delete the
-// gate in the fuzz target and the test together.
+// looking for other divergences. When one is fixed its test fails with "FIXED": whichever
+// lands second, the fix or this harness, deletes the gate in the fuzz target and the test
+// together in the same PR.
 //
 // F-1 (ListSecrets search), F-2 and F-3 (ListUsers Username/Email filters) were pinned here
-// first and are fixed by #4019; their gates and tests are gone.
+// first and are fixed by #4019; their gates and tests are gone. Class C is not pinned here:
+// its fix (#4022) merges before this harness and carries its own PostgreSQL regression test.
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -47,17 +47,37 @@ func TestBackendDifferentialKnownDifference_A_EmptyValueNilness(t *testing.T) {
 	t.Logf("A still differs: empty value reads back nil on sqlite=%v, on postgres=%v", isNil["sqlite"], isNil["postgres"])
 }
 
+// diffRequireUnicodeLower skips a pin whose divergence only exists when PostgreSQL's
+// LOWER() folds non-ASCII letters, which depends on the database collation (en_US.UTF-8
+// does, C/POSIX does not). On a C-collation database B and D cannot be observed, and the
+// pin would otherwise report a false "FIXED". It checks the behaviour itself, not the
+// collation name, so any provider that folds counts.
+func diffRequireUnicodeLower(t *testing.T, s *diffSide) {
+	t.Helper()
+	var folds bool
+	if err := s.db.Raw("SELECT LOWER('ÄÖ') = 'äö'").Scan(&folds).Error; err != nil {
+		t.Fatalf("probe LOWER() on %s: %v", s.label, err)
+	}
+	if !folds {
+		var coll string
+		_ = s.db.Raw("SELECT datcollate FROM pg_database WHERE datname = current_database()").Scan(&coll).Error
+		t.Skipf("PostgreSQL LOWER() does not fold non-ASCII on this database (datcollate=%q): the divergence cannot be observed here, so a pass would be a false FIXED", coll)
+	}
+}
+
 // B: project-name uniqueness and lookup. The partial unique index on LOWER(name)
 // (uniq_projects_name_active, #385) uses SQLite's built-in LOWER, which folds ASCII only, so
 // two projects whose names differ only by NON-ASCII case ("ÄÖ" / "äö") coexist on SQLite;
 // PostgreSQL rejects the second with ErrDuplicateProjectName. GetProjectByName and
 // UpdateProjectFields (rename) behave the same way. #4019 deliberately left this index
-// alone. Keyorix bug (storage-level uniqueness differs by backend); fix needs a folded
-// project-name column or a Unicode-aware index expression plus a migration for existing
-// SQLite databases that may already hold such a pair.
+// alone. Storage-layer divergence, not reachable through a live writer: every project
+// name write goes through internal/core's validateProjectName, which accepts ASCII
+// letters, digits, space, '-' and '_' only (see the doc's class B row for the trace).
+// Defence in depth; #4027 makes the index identical on both backends.
 func TestBackendDifferentialKnownFinding_B_ProjectNameUnicodeCaseUniqueness(t *testing.T) {
 	w := newDiffWorld(t, "diffv2known_")
 	w.reset(t)
+	diffRequireUnicodeLower(t, w.p)
 	ctx := context.Background()
 	second := map[string]string{}
 	for _, s := range []*diffSide{w.s, w.p} {
@@ -73,61 +93,16 @@ func TestBackendDifferentialKnownFinding_B_ProjectNameUnicodeCaseUniqueness(t *t
 	t.Logf("B still differs: second project differing only by non-ASCII case: sqlite=%s postgres=%s", second["sqlite"], second["postgres"])
 }
 
-// C: list queries paginate without ORDER BY. On PostgreSQL the row order is whatever the
-// plan yields, and the first statistics (autovacuum ANALYZE) flip the plan from the unique
-// index's order to heap order. A client paging through the list while that happens sees rows
-// twice and misses others. SQLite never changed order in the same scenario. Keyorix bug
-// (list pagination needs a deterministic ORDER BY with an id tiebreak). The 14 campaign
-// crashers did not replay (the flip needs the statistics to change mid-walk); this test
-// forces the flip deterministically with an explicit ANALYZE between pages.
-func TestBackendDifferentialKnownFinding_C_UnorderedPagingPlanFlip(t *testing.T) {
-	w := newDiffWorld(t, "diffv2known_")
-	w.reset(t)
-	ctx := context.Background()
-	s := w.p
-	names := []string{"a_b", "0", "a%b", "a\\b"}
-	for _, n := range names {
-		fn, _ := identity.NewFoldedName(n)
-		e := n + "@x.io"
-		if _, err := s.ls.CreateUser(ctx, &models.User{Username: n, UsernameFolded: fn.Folded(), Email: e, EmailFolded: e, IsActive: true}); err != nil {
-			t.Fatalf("CreateUser(%q): %v", n, err)
-		}
-	}
-	var walk []string
-	for page := 1; page <= len(names); page++ {
-		if page == 2 {
-			if err := s.db.Exec("ANALYZE users").Error; err != nil { // what autovacuum does at an arbitrary moment
-				t.Fatal(err)
-			}
-		}
-		rows, _, err := s.ls.ListUsers(ctx, &storage.UserFilter{Page: page, PageSize: 1})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range rows {
-			walk = append(walk, r.Username)
-		}
-	}
-	seen := map[string]int{}
-	for _, n := range walk {
-		seen[n]++
-	}
-	dup := false
-	for _, c := range seen {
-		dup = dup || c > 1
-	}
-	if !dup && len(seen) == len(names) {
-		t.Fatalf("FIXED: C no longer duplicates/skips across a statistics change (walk=%q); remove gate C (diffStabilisePlans) and this test", strings.Join(walk, ","))
-	}
-	t.Logf("C still reproduces: 4 users, 1 per page, ANALYZE between page 1 and 2: walk=%q (distinct=%d of %d)", strings.Join(walk, ","), len(seen), len(names))
-}
-
 // D: ListUsers{Search} is `LIKE` on SQLite and `ILIKE` on PostgreSQL, so a non-ASCII case
 // variant ("ÄÖ" for user "äö") matches on PostgreSQL only. Same family as the #4019 fixes;
-// #4019 names it as a follow-up. Keyorix bug, low (admin user search).
+// #4019 names it as a follow-up. Reachable: display_name (and an IdP-provisioned email)
+// accepts any Unicode and the admin user search (users.read) passes the term straight
+// through; usernames are ASCII-only. Keyorix bug, low (search results differ by backend;
+// no authorization decision uses Search). Trace in the doc's class D section.
 func TestBackendDifferentialKnownFinding_D_UserSearchUnicodeCase(t *testing.T) {
 	w := newDiffWorld(t, "diffv2known_")
 	w.reset(t)
+	diffRequireUnicodeLower(t, w.p)
 	ctx := context.Background()
 	got := map[string]int64{}
 	for _, s := range []*diffSide{w.s, w.p} {

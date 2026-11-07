@@ -201,7 +201,8 @@ func diffVersionFP(v *models.SecretVersion) string {
 	if v == nil {
 		return "<nil>"
 	}
-	// Normalisation 7 (known difference A): an empty value reads back as nil on SQLite and
+	// Normalisation 7 (known difference A; added after campaign 1, declared in the doc's
+	// Outcome section, not part of the pre-registered list): an empty value reads back as nil on SQLite and
 	// as []byte{} on PostgreSQL, so nil-ness of EncryptedValue is not compared (length and
 	// bytes are). Real values are ciphertext and never empty.
 	return fmt.Sprintf("v%d len=%d crc=%08x meta=%q metaNil=%v reads=%d", v.VersionNumber, len(v.EncryptedValue),
@@ -275,7 +276,7 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 
 			switch op {
 			case 0: // CreateProject + readback
-				if !diffASCII(name) || !diffASCII(name2) { // gate B: project-name uniqueness is ASCII-only on SQLite
+				if !diffASCII(name) { // gate B: project-name uniqueness is ASCII-only on SQLite (name2 is only the description)
 					break
 				}
 				both(fmt.Sprintf("CreateProject(%q)", name), func(s *diffSide) string {
@@ -536,7 +537,7 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 		assertSetEqual(t, "projects", projectNameSet(mustListProjects(t, w.s.ls, ctx)), projectNameSet(mustListProjects(t, w.p.ls, ctx)))
 		assertSetEqual(t, "secret_nodes", secretNameSet(w.s.db), secretNameSet(w.p.db))
 		assertSetEqual(t, "groups", groupNameSet(w.s.db), groupNameSet(w.p.db))
-		assertSetEqual(t, "users", liveUsernameSet(w.s.db), liveUsernameSet(w.p.db))
+		assertSetEqual(t, "users", liveUsernameSet(t, w.s.label, w.s.db), liveUsernameSet(t, w.p.label, w.p.db))
 	})
 }
 
@@ -565,21 +566,6 @@ func diffASCII(s string) bool {
 	return true
 }
 
-// diffStabilisePlans refreshes planner statistics on PostgreSQL before a page walk.
-// Gate C (known divergence, backend_differential_v2_known_test.go): the list queries have
-// no ORDER BY, so PostgreSQL's row order depends on the chosen plan, and autovacuum's first
-// ANALYZE flips index-scan order to heap order in the middle of a walk, duplicating and
-// skipping rows. Fresh statistics keep the plan fixed for the walk so the campaign can keep
-// looking for other divergences; the pinned test shows the flip.
-func diffStabilisePlans(s *diffSide) {
-	if s.label != "postgres" {
-		return
-	}
-	for _, tbl := range []string{"users", "secret_nodes", "environments", "groups"} {
-		_ = s.db.Exec("ANALYZE " + tbl).Error
-	}
-}
-
 func ptrOf[T any](v T) *T { return &v }
 
 func userNameOrNil(u *models.User) string {
@@ -603,9 +589,12 @@ func secNameOrNil(n *models.SecretNode) string {
 	return n.Name
 }
 
-func liveUsernameSet(db *gorm.DB) []string {
+func liveUsernameSet(t *testing.T, label string, db *gorm.DB) []string {
+	t.Helper()
 	var us []models.User
-	db.Find(&us)
+	if err := db.Find(&us).Error; err != nil {
+		t.Fatalf("%s list users for final-state compare: %v", label, err)
+	}
 	out := make([]string, 0, len(us))
 	for _, u := range us {
 		out = append(out, fmt.Sprintf("%s|%v", u.Username, u.IsActive))
@@ -619,7 +608,6 @@ func liveUsernameSet(db *gorm.DB) []string {
 // unordered query is not a contract — see normalisation 2). It also enforces the
 // within-backend invariant: the page walk is duplicate-free and equals the unpaged set.
 func diffListSecrets(t *testing.T, ctx context.Context, s *diffSide, variant int, name string, pageSize int) string {
-	diffStabilisePlans(s)
 	mk := func(page, size int) *storage.SecretFilter {
 		fl := &storage.SecretFilter{ProjectID: &s.proj, Page: page, PageSize: size}
 		switch variant {
@@ -684,7 +672,6 @@ func diffListUsers(t *testing.T, ctx context.Context, s *diffSide, variant int, 
 	if variant == 1 && !diffASCII(name) {
 		return "gated:D"
 	}
-	diffStabilisePlans(s)
 	mk := func(page, size int) *storage.UserFilter {
 		fl := &storage.UserFilter{Page: page, PageSize: size}
 		switch variant {
