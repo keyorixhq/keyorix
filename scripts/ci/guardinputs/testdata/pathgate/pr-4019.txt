@@ -1,0 +1,11 @@
+changelog.d/backend-consistent-search.md
+internal/identity/searchfold.go
+internal/identity/searchfold_test.go
+internal/storage/sqlitedialect/fold.go
+internal/storage/store/local_secrets.go
+internal/storage/store/local_users.go
+internal/storage/store/search_fold.go
+internal/storage/store/search_fold_consistency_test.go
+internal/testutil/sqlitetest/driver_import_allowlist.tsv
+server/http/handlers/handlers_s12_test.go
+server/http/handlers/handlers_s4_test.go

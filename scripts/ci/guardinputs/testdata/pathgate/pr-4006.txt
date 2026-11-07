@@ -1,0 +1,4 @@
+.github/workflows/cgo-guard.yml
+.github/workflows/release-dry-run.yml
+Makefile
+scripts/cgo-dependency-guard.sh
