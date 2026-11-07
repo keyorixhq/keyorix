@@ -26,6 +26,7 @@ type fakeSecret struct {
 type fakeUser struct{ tenant, role string }
 
 type fakeAPI struct {
+	reads   int // observer-visible counter bumped by every authorised GET (self-drift)
 	mu      sync.Mutex
 	plant   string
 	users   map[string]fakeUser
@@ -105,7 +106,14 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				reply(403, map[string]string{"error": "forbidden"})
 				return
 			}
-			reply(200, map[string]string{"name": s.name, "value": s.value})
+			if f.plant == "driftreads" || f.plant == "driftbare" || f.plant == "effectdrift" {
+				f.reads++
+			}
+			key := "total_reads"
+			if f.plant == "driftbare" || f.plant == "effectdrift" {
+				key = "hits" // not recognised as volatile: calibration must catch it
+			}
+			reply(200, map[string]any{"name": s.name, "value": s.value, key: f.reads})
 		case "PUT":
 			okRole := u.role == "admin" || (f.plant == "role" && u.role == "viewer")
 			if !member(s.tenant) || !okRole {
@@ -118,7 +126,7 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(200, map[string]string{"ok": "updated"})
 		case "DELETE":
 			if !member(s.tenant) || u.role != "admin" {
-				if f.plant == "effect" {
+				if f.plant == "effect" || f.plant == "effectdrift" {
 					delete(f.secrets, id) // 403 but executed
 				}
 				reply(403, map[string]string{"error": "forbidden"})
@@ -244,5 +252,52 @@ func TestSelfTest_PlantedDefectsAreFound(t *testing.T) {
 				t.Fatalf("planted %q defect not reported as %s by %s on %s; candidates=%d", tc.plant, tc.wantClass, tc.wantActor, tc.wantOp, len(cands))
 			}
 		})
+	}
+}
+
+// Oracle noise: a GET that bumps a read counter must not make every denied
+// request look like a state change. With the counter key recognised as
+// volatile the run is silent; with an unrecognised key name the quiescence
+// calibration must detect and mask the drift, and say so.
+func TestSelfTest_ObserverReadDriftIsNotAnEffect(t *testing.T) {
+	for _, plant := range []string{"driftreads"} {
+		w := fakeWorld(t, plant)
+		rs := w.Run(Options{})
+		if c := Candidates(rs); len(c) != 0 {
+			for _, r := range c {
+				t.Logf("candidate: %s %s %s %s (%s)", r.Class, r.Actor, r.Method, r.Target, r.Detail)
+			}
+			t.Fatalf("%s: %d candidates from observer-induced drift", plant, len(c))
+		}
+	}
+}
+
+func TestSelfTest_UnknownDriftKeyIsCalibratedAway(t *testing.T) {
+	w := fakeWorld(t, "driftbare")
+	rs := w.Run(Options{})
+	if len(w.DriftFound) == 0 {
+		t.Fatalf("calibration did not notice a self-drifting path")
+	}
+	if c := Candidates(rs); len(c) != 0 {
+		t.Fatalf("drifting path still produced %d candidates", len(c))
+	}
+}
+
+// A handler that mutates state on a 403 must still be flagged when the read
+// path also drifts: masking drift may not hide a real effect.
+func TestSelfTest_EffectOn403StillFoundAmidDrift(t *testing.T) {
+	w := fakeWorld(t, "effectdrift")
+	cands := Candidates(w.Run(Options{}))
+	found := false
+	for _, r := range cands {
+		if r.OpKey != "DELETE /api/v1/secrets/{id}" {
+			t.Errorf("candidate on unplanted op: %s %s %s", r.Class, r.OpKey, r.Detail)
+		}
+		if r.Class == ClassCandEffect && r.Status == 403 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("403-but-executed delete not flagged amid drift; candidates=%d", len(cands))
 	}
 }

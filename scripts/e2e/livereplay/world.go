@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,13 @@ type World struct {
 	FPTenant map[string]string
 	// Client is the HTTP client every request goes through.
 	Client *http.Client
+
+	// Drift lists fingerprint paths that change with no probe in flight (see Calibrate).
+	Drift map[string]bool
+	// DriftLeaves: path -> JSON pointer of a leaf that drifts on its own.
+	DriftLeaves map[string]map[string]bool
+	// DriftFound is Calibrate's result from the last Run (empty = quiescent).
+	DriftFound []string
 
 	mu        sync.Mutex
 	Throttled int
@@ -175,7 +183,7 @@ func (w *World) matchOp(method, path string) (Op, bool) {
 	return Op{}, false
 }
 
-var volatileKey = regexp.MustCompile(`(?i)(_at$|time|^last|count|accessed|updated|created|expir|^token$|nonce|etag|checksum|duration|^ts$)`)
+var volatileKey = regexp.MustCompile(`(?i)(_at$|time|^last|count|reads$|accessed|updated|created|expir|^token$|nonce|etag|checksum|duration|^ts$)`)
 
 // stable removes volatile keys from decoded JSON so two reads of unchanged
 // state hash equal.
@@ -200,24 +208,71 @@ func stable(v any) any {
 	return v
 }
 
+// readState reads one fingerprint path as the observer and returns the
+// status class and the decoded body with volatile keys removed.
+func (w *World) readState(p string) (int, any, []byte, error) {
+	status, body, err := w.Do(w.Observer, "GET", p, nil)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	var v any
+	if json.Unmarshal(body, &v) == nil {
+		return status, stable(v), nil, nil
+	}
+	return status, nil, body, nil
+}
+
+// leaves flattens a decoded value into pointer -> scalar text.
+func leaves(ptr string, v any, out map[string]string) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, x := range t {
+			leaves(ptr+"/"+k, x, out)
+		}
+	case []any:
+		out[ptr+"#len"] = strconv.Itoa(len(t))
+		for i, x := range t {
+			leaves(ptr+"/"+strconv.Itoa(i), x, out)
+		}
+	default:
+		b, _ := json.Marshal(t)
+		out[ptr] = string(b)
+	}
+}
+
 // Fingerprint hashes each FPPath as the observer. The returned map is path ->
-// digest; compare two of them with Changed.
+// digest; compare two of them with Changed. Leaves that Calibrate found to
+// drift on their own are left out of the digest, everything else is in it.
 func (w *World) Fingerprint() map[string]string {
 	out := map[string]string{}
+	w.mu.Lock()
+	dl := w.DriftLeaves
+	w.mu.Unlock()
 	for _, p := range w.FPPaths {
-		status, body, err := w.Do(w.Observer, "GET", p, nil)
+		status, v, raw, err := w.readState(p)
 		if err != nil {
 			out[p] = "error:" + err.Error()
 			continue
 		}
-		var v any
-		if json.Unmarshal(body, &v) == nil {
-			if nb, err := json.Marshal(stable(v)); err == nil {
-				body = nb
+		h := sha256.New()
+		h.Write([]byte{byte(status / 100)})
+		if v != nil {
+			lv := map[string]string{}
+			leaves("", v, lv)
+			keys := make([]string, 0, len(lv))
+			for k := range lv {
+				if !dl[p][k] {
+					keys = append(keys, k)
+				}
 			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				h.Write([]byte(k + "=" + lv[k] + "\n"))
+			}
+		} else {
+			h.Write(raw)
 		}
-		h := sha256.Sum256(append([]byte{byte(status / 100)}, body...))
-		out[p] = hex.EncodeToString(h[:8])
+		out[p] = hex.EncodeToString(h.Sum(nil)[:8])
 	}
 	return out
 }
@@ -231,5 +286,92 @@ func Changed(before, after map[string]string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// Calibrate reads every fingerprint path n times back to back with no other
+// request in flight. A scalar leaf whose value differs between reads is
+// changing without any probe (an observer read with a side effect, a
+// background job): it is recorded in w.DriftLeaves and left out of the digest,
+// so a real change to any other part of the same document is still seen. A
+// path whose status or shape moves is masked as a whole (w.Drift). The
+// drifting items are returned as "path leaf" strings for the report; a
+// quiescent server returns nil.
+func (w *World) Calibrate(n int) []string {
+	if n < 2 {
+		n = 2
+	}
+	type snap struct {
+		status int
+		lv     map[string]string
+		raw    string
+	}
+	first := map[string]snap{}
+	dl := map[string]map[string]bool{}
+	drift := map[string]bool{}
+	var rep []string
+	for i := 0; i < n; i++ {
+		for _, p := range w.FPPaths {
+			st, v, raw, err := w.readState(p)
+			s := snap{status: st, lv: map[string]string{}, raw: string(raw)}
+			if err != nil {
+				s.raw = "error:" + err.Error()
+			}
+			if v != nil {
+				leaves("", v, s.lv)
+			}
+			if i == 0 {
+				first[p] = s
+				continue
+			}
+			f := first[p]
+			if f.status/100 != s.status/100 || f.raw != s.raw || len(f.lv) != len(s.lv) {
+				if !drift[p] {
+					rep = append(rep, p+" (whole path)")
+				}
+				drift[p] = true
+				continue
+			}
+			for k, x := range s.lv {
+				if f.lv[k] != x {
+					if dl[p] == nil {
+						dl[p] = map[string]bool{}
+					}
+					if !dl[p][k] {
+						rep = append(rep, p+" "+k)
+					}
+					dl[p][k] = true
+				}
+			}
+		}
+	}
+	w.mu.Lock()
+	w.Drift, w.DriftLeaves = drift, dl
+	w.mu.Unlock()
+	sort.Strings(rep)
+	return rep
+}
+
+// RealChanges returns the paths that a probe changed: different between
+// before and after, not known to drift on their own, and still different in a
+// confirmation snapshot taken straight after. Whether the request was denied
+// does not matter here; the caller decides what a change means.
+func (w *World) RealChanges(before map[string]string) []string {
+	ch := Changed(before, w.Fingerprint())
+	if len(ch) == 0 {
+		return nil
+	}
+	again := map[string]bool{}
+	for _, p := range Changed(before, w.Fingerprint()) {
+		again[p] = true
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var out []string
+	for _, p := range ch {
+		if again[p] && !w.Drift[p] {
+			out = append(out, p)
+		}
+	}
 	return out
 }

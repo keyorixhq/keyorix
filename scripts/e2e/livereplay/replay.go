@@ -237,6 +237,9 @@ func (w *World) orderedOps(only string) []Op {
 // Run executes the whole replay and returns every result.
 func (w *World) Run(opt Options) []Result {
 	var results []Result
+	// Quiescence check before any probe: paths that move on their own are
+	// masked from the effect oracle and reported in w.DriftFound.
+	w.DriftFound = w.Calibrate(3)
 	emit := func(r Result) {
 		results = append(results, r)
 		if opt.Log != nil {
@@ -453,7 +456,7 @@ func (w *World) exec(p Probe, op Op) Result {
 		detail = append(detail, "response carries "+leak)
 	}
 	if unsafe {
-		if ch := Changed(before, w.Fingerprint()); len(ch) > 0 && r.Verdict != Allow {
+		if ch := w.RealChanges(before); len(ch) > 0 && r.Verdict != Allow {
 			var sus []string
 			for _, path := range ch {
 				own := !a.DenyAll && a.Role != "" && w.FPTenant[path] == a.Tenant && a.Tenant != ""
