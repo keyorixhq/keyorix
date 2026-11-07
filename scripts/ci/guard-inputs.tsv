@@ -1,4 +1,6 @@
 # guard-inputs.tsv -- guard test file -> the repo paths it reads (CI-GUARD-TRIGGERS-1).
+# NEW ROWS GO TO scripts/ci/guard-inputs.d/ (one fragment per guard, see its README.md),
+# not here: the reader takes this file PLUS every fragment.
 #
 # Every Go job in ci.yml skips a docs_only / web_only / go_unaffected /
 # operator_only change. The docs-guards job runs, for each changed path, the Test
