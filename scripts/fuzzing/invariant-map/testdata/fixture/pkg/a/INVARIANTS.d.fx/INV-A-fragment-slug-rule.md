@@ -1,0 +1,1 @@
+- **INV-A-fragment-slug-rule** A fragment-defined rule with no check yet. Why: fixture. UNGUARDED (#2).
