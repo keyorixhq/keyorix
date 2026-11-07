@@ -8,7 +8,7 @@ Request: tab-separated fields
     OP <TAB> hex(base_url) <TAB> hex(token) <TAB> timeout_ms <TAB> arg1 <TAB> arg2 ...
 
 - `OP`: `construct` (base_url is the literal under test, no request is made), `health`, `login`
-  (args: username, password), `list_secrets` (environment), `get_secret` (name, environment),
+  (args: username, password), `list_secrets` (environment; project fixed to "alpha"), `get_secret` (name, environment; project "alpha"), `get_secret_in` (project, environment, name), `get_secret_by_ref` (ref), `list_deleted_secrets` (project id, digits only else n/a),
   `list_projects`, `create_project` (name, description), `list_environments` (project id as decimal text).
 - every text field is the hex of its UTF-8 bytes, `~` stands for null/absent (hex avoids any escaping
   problem and needs no JSON parser in the Java driver)

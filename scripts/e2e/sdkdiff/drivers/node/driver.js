@@ -57,11 +57,14 @@ async function run(f) {
   try {
     switch (cmd) {
       case 'health': return { ok: true, value: await c.health() };
-      case 'list_secrets': {
-        const s = await c.listSecrets(args[0]);
-        return { ok: true, value: s.map((x) => ({ id: x.id, name: x.name, type: x.type, project_id: x.projectId, environment: x.environment, created_at: x.createdAt })) };
+      case 'list_secrets': return { ok: true, value: secretList(await c.listSecretsScoped('alpha', args[0])) };
+      case 'get_secret': return { ok: true, value: await c.getSecretScoped(args[0], 'alpha', args[1]) };
+      case 'get_secret_in': return { ok: true, value: await c.getSecretIn(args[0], args[1], args[2]) };
+      case 'get_secret_by_ref': return { ok: true, value: await c.getSecretByRef(args[0]) };
+      case 'list_deleted_secrets': {
+        if (typeof args[0] !== 'string' || !/^[0-9]{1,9}$/.test(args[0])) return { na: true };
+        return { ok: true, value: secretList(await c.listDeletedSecrets(Number(args[0]))) };
       }
-      case 'get_secret': return { ok: true, value: await c.getSecret(args[0], args[1]) };
       case 'list_projects': {
         const p = await c.listProjects();
         return { ok: true, value: p.map((x) => ({ id: x.id, name: x.name, description: x.description, created_at: x.createdAt })) };
@@ -90,3 +93,7 @@ async function run(f) {
     process.stdout.write(JSON.stringify(res, (k, v) => (v === undefined ? null : v)) + '\n');
   }
 })();
+
+function secretList(s) {
+  return s.map((x) => ({ id: x.id, name: x.name, type: x.type, project_id: x.projectId, environment: x.environment, created_at: x.createdAt, purge_at: x.purgeAt ?? "" }));
+}

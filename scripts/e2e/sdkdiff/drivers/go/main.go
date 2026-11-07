@@ -115,22 +115,39 @@ func handle(f []string) map[string]any {
 			}
 			return map[string]any{"ok": true, "value": true}
 		case "list_secrets":
-			s, err := c.ListSecrets(ctx, str(arg(0)))
+			s, err := c.ListSecretsScoped(ctx, keyorix.ProjectByName("alpha"), keyorix.EnvironmentByName(str(arg(0))))
 			if err != nil {
 				return fail(err, "")
 			}
-			out := make([]any, 0, len(s))
-			for _, x := range s {
-				out = append(out, map[string]any{"id": x.ID, "name": x.Name, "type": x.Type, "project_id": x.ProjectID,
-					"environment": x.Environment, "created_at": ts(x.CreatedAt)})
-			}
-			return map[string]any{"ok": true, "value": out}
+			return map[string]any{"ok": true, "value": secretList(s)}
 		case "get_secret":
-			v, err := c.GetSecret(ctx, str(arg(0)), str(arg(1)))
+			v, err := c.GetSecretScoped(ctx, str(arg(0)), keyorix.ProjectByName("alpha"), keyorix.EnvironmentByName(str(arg(1))))
 			if err != nil {
 				return fail(err, "")
 			}
 			return map[string]any{"ok": true, "value": v}
+		case "get_secret_in":
+			v, err := c.GetSecretIn(ctx, str(arg(0)), str(arg(1)), str(arg(2)))
+			if err != nil {
+				return fail(err, "")
+			}
+			return map[string]any{"ok": true, "value": v}
+		case "get_secret_by_ref":
+			v, err := c.GetSecretByRef(ctx, str(arg(0)))
+			if err != nil {
+				return fail(err, "")
+			}
+			return map[string]any{"ok": true, "value": v}
+		case "list_deleted_secrets":
+			id, perr := strconv.ParseUint(str(arg(0)), 10, 32)
+			if perr != nil || len(str(arg(0))) > 9 {
+				return map[string]any{"na": true}
+			}
+			s, err := c.ListDeletedSecrets(ctx, keyorix.ProjectByID(uint(id)))
+			if err != nil {
+				return fail(err, "")
+			}
+			return map[string]any{"ok": true, "value": secretList(s)}
 		case "list_projects":
 			p, err := c.ListProjects(ctx)
 			if err != nil {
@@ -205,4 +222,20 @@ func fail(err error, force string) map[string]any {
 		class = "decode"
 	}
 	return map[string]any{"ok": false, "class": class, "status": status, "native": fmt.Sprintf("%T", err), "msg": err.Error()}
+}
+
+func secretList(s []keyorix.Secret) []any {
+	out := make([]any, 0, len(s))
+	for _, x := range s {
+		out = append(out, map[string]any{"id": x.ID, "name": x.Name, "type": x.Type, "project_id": x.ProjectID,
+			"environment": x.Environment, "created_at": ts(x.CreatedAt), "purge_at": tsp(x.PurgeAt)})
+	}
+	return out
+}
+
+func tsp(t *time.Time) any {
+	if t == nil {
+		return ""
+	}
+	return ts(*t)
 }

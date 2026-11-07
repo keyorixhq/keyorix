@@ -87,14 +87,21 @@ def run(f):
             env = args[0]
             if PLANT == "P1" and env:
                 env = urllib.parse.quote(env)
-            s = c.list_secrets(env)
-            return {"ok": True, "value": [dict(id=x.id, name=x.name, type=x.type, project_id=x.project_id,
-                                               environment=x.environment, created_at=x.created_at) for x in s]}
+            return {"ok": True, "value": secret_list(c.list_secrets_scoped("alpha", env))}
         if cmd == "get_secret":
             env = args[1]
             if PLANT == "P1" and env:
                 env = urllib.parse.quote(env)
-            return {"ok": True, "value": c.get_secret(args[0], env)}
+            return {"ok": True, "value": c.get_secret_scoped(args[0], "alpha", env)}
+        if cmd == "get_secret_in":
+            return {"ok": True, "value": c.get_secret_in(args[0], args[1], args[2])}
+        if cmd == "get_secret_by_ref":
+            return {"ok": True, "value": c.get_secret_by_ref(args[0])}
+        if cmd == "list_deleted_secrets":
+            import re as _re
+            if not isinstance(args[0], str) or not _re.fullmatch(r"[0-9]{1,9}", args[0]):
+                return {"na": True}
+            return {"ok": True, "value": secret_list(c.list_deleted_secrets(int(args[0])))}
         if cmd == "list_projects":
             return {"ok": True, "value": [dict(id=x.id, name=x.name, description=x.description, created_at=x.created_at)
                                           for x in c.list_projects()]}
@@ -107,6 +114,11 @@ def run(f):
         return {"driver_error": "unknown cmd " + cmd}
     except Exception as e:  # noqa: BLE001
         return classify(e)
+
+
+def secret_list(l):
+    return [dict(id=x.id, name=x.name, type=x.type, project_id=x.project_id, environment=x.environment,
+                 created_at=x.created_at, purge_at=getattr(x, "purge_at", None)) for x in l]
 
 
 def main():

@@ -82,26 +82,46 @@ public class Driver {
                 case "list_secrets": {
                     String env = a[0];
                     if (PLANT.equals("P6") && env != null) env = Normalizer.normalize(env, Normalizer.Form.NFD);
-                    List<Secret> l = c.listSecrets(env);
-                    StringBuilder sb = new StringBuilder("{\"ok\":true,\"value\":[");
-                    for (int i = 0; i < l.size(); i++) {
-                        Secret s = l.get(i);
-                        if (i > 0) sb.append(',');
-                        sb.append("{\"id\":").append(s.getId()).append(",\"name\":").append(js(s.getName()))
-                          .append(",\"type\":").append(js(s.getType())).append(",\"project_id\":").append(s.getProjectId())
-                          .append(",\"environment\":").append(js(s.getEnvironment()))
-                          .append(",\"created_at\":").append(js(s.getCreatedAt())).append('}');
-                    }
-                    return sb.append("]}").toString();
+                    return "{\"ok\":true,\"value\":" + secretList(c.listSecretsScoped("alpha", env)) + "}";
                 }
                 case "get_secret": {
                     String env = a[1];
                     if (PLANT.equals("P6") && env != null) env = Normalizer.normalize(env, Normalizer.Form.NFD);
-                    return "{\"ok\":true,\"value\":" + js(c.getSecret(a[0], env)) + "}";
+                    return "{\"ok\":true,\"value\":" + js(c.getSecretScoped(a[0], "alpha", env)) + "}";
                 }
-                case "list_projects":
+                case "get_secret_in":
+                    return "{\"ok\":true,\"value\":" + js(c.getSecretIn(a[0], a[1], a[2])) + "}";
+                case "get_secret_by_ref":
+                    return "{\"ok\":true,\"value\":" + js(c.getSecretByRef(a[0])) + "}";
+                case "list_deleted_secrets": {
+                    if (a[0] == null || !a[0].matches("[0-9]{1,9}")) return "{\"na\":true}";
+                    return "{\"ok\":true,\"value\":" + secretList(c.listDeletedSecrets(Long.parseLong(a[0]))) + "}";
+                }
+                case "list_projects": {
+                    StringBuilder sb = new StringBuilder("{\"ok\":true,\"value\":[");
+                    List<com.keyorix.Project> l = c.listProjects();
+                    for (int i = 0; i < l.size(); i++) {
+                        com.keyorix.Project p = l.get(i);
+                        if (i > 0) sb.append(',');
+                        sb.append("{\"id\":").append(p.getId()).append(",\"name\":").append(js(p.getName()))
+                          .append(",\"description\":").append(js(p.getDescription()))
+                          .append(",\"created_at\":").append(js(p.getCreatedAt())).append('}');
+                    }
+                    return sb.append("]}").toString();
+                }
+                case "list_environments": {
+                    if (a[0] == null || !a[0].matches("[0-9]{1,18}")) return "{\"na\":true}";
+                    StringBuilder sb = new StringBuilder("{\"ok\":true,\"value\":[");
+                    List<com.keyorix.Environment> l = c.listEnvironments(Long.parseLong(a[0]));
+                    for (int i = 0; i < l.size(); i++) {
+                        com.keyorix.Environment e = l.get(i);
+                        if (i > 0) sb.append(',');
+                        sb.append("{\"id\":").append(e.getId()).append(",\"project_id\":").append(e.getProjectId())
+                          .append(",\"name\":").append(js(e.getName())).append('}');
+                    }
+                    return sb.append("]}").toString();
+                }
                 case "create_project":
-                case "list_environments":
                     return "{\"na\":true}";
                 default:
                     return "{\"driver_error\":" + js("unknown cmd " + cmd) + "}";
@@ -125,6 +145,20 @@ public class Driver {
         }
         return "{\"ok\":false,\"class\":" + js(cls) + ",\"status\":" + (status == null ? "null" : status.toString())
             + ",\"native\":" + js(e.getClass().getSimpleName()) + ",\"msg\":" + js(String.valueOf(e.getMessage())) + "}";
+    }
+
+        static String secretList(List<Secret> l) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < l.size(); i++) {
+            Secret s = l.get(i);
+            if (i > 0) sb.append(',');
+            sb.append("{\"id\":").append(s.getId()).append(",\"name\":").append(js(s.getName()))
+              .append(",\"type\":").append(js(s.getType())).append(",\"project_id\":").append(s.getProjectId())
+              .append(",\"environment\":").append(js(s.getEnvironment()))
+              .append(",\"created_at\":").append(js(s.getCreatedAt()))
+              .append(",\"purge_at\":").append(js(s.getPurgeAt() == null ? "" : s.getPurgeAt())).append('}');
+        }
+        return sb.append(']').toString();
     }
 
     static String js(String s) {

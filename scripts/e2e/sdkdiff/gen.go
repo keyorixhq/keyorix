@@ -130,6 +130,20 @@ func (s Step) withClient(r *rand.Rand) Step {
 	return s
 }
 
+// randRef builds a project/environment/name reference, well formed or not.
+func randRef(r *rand.Rand) string {
+	parts := []string{pick(r, []string{"alpha", "gamma 2", "beta", "missing", "", "ALPHA"}), pick(r, envs), pick(r, seeded)}
+	switch r.Intn(6) {
+	case 0:
+		return strings.Join(parts[:2], "/")
+	case 1:
+		return strings.Join(parts, "/") + "/" + pick(r, specials)
+	case 2:
+		return pick(r, specials) + strings.Join(parts, "/")
+	}
+	return strings.Join(parts, "/")
+}
+
 // genRandom builds one phase-B scenario from a seed.
 func genRandom(seed int64) Scenario {
 	r := rand.New(rand.NewSource(seed))
@@ -144,9 +158,22 @@ func genRandom(seed int64) Scenario {
 		case 1:
 			st = Step{Op: "login", Args: []Arg{randArg(r, []string{adminUser, "nobody"}, true), randArg(r, []string{adminPW, "wrong"}, true)}}
 		case 2, 3:
-			st = Step{Op: "list_secrets", Args: []Arg{randArg(r, envs, true)}}
+			switch r.Intn(4) {
+			case 0:
+				st = Step{Op: "list_deleted_secrets", Args: []Arg{randArg(r, ids, true)}}
+			default:
+				st = Step{Op: "list_secrets", Args: []Arg{randArg(r, envs, true)}}
+			}
 		case 4, 5:
-			st = Step{Op: "get_secret", Args: []Arg{randArg(r, seeded, false), randArg(r, envs, true)}}
+			switch r.Intn(4) {
+			case 0:
+				st = Step{Op: "get_secret_in", Args: []Arg{randArg(r, append([]string{"alpha", "gamma 2", "beta"}, specials...), true),
+					randArg(r, envs, true), randArg(r, seeded, false)}}
+			case 1:
+				st = Step{Op: "get_secret_by_ref", Args: []Arg{S(randRef(r))}}
+			default:
+				st = Step{Op: "get_secret", Args: []Arg{randArg(r, seeded, false), randArg(r, envs, true)}}
+			}
 		case 6:
 			st = Step{Op: "list_projects"}
 			lastList = i
@@ -216,6 +243,8 @@ func genMatrix() []Scenario {
 	for _, st := range [][]Step{
 		{{Op: "health", Expect: "ok"}},
 		{{Op: "list_environments", Args: []Arg{S("2")}, Expect: "ok"}},
+		{{Op: "list_secrets", Args: []Arg{S("production")}, Expect: "ok"}},
+		{{Op: "get_secret_in", Args: []Arg{S("alpha"), S("production"), S("db-password")}, Expect: "ok"}},
 		{{Op: "create_project", Args: []Arg{S("golden-one"), S("d")}, Expect: "ok"}},
 		{{Op: "login", Args: []Arg{S(adminUser), S(adminPW)}, Expect: "ok"}},
 		{{Op: "construct", Base: "literal:https://example.com", Expect: "ok"}},
@@ -232,6 +261,22 @@ func genMatrix() []Scenario {
 	for _, e := range envs {
 		add([]string{"edge-env"}, Step{Op: "get_secret", Args: []Arg{S("db-password"), S(e)}})
 	}
+	for _, e := range es {
+		add([]string{"edge-ref"}, Step{Op: "get_secret_in", Args: []Arg{S("alpha"), S("production"), S(e)}})
+		add([]string{"edge-ref"}, Step{Op: "get_secret_in", Args: []Arg{S(e), S("production"), S("db-password")}})
+		add([]string{"edge-ref"}, Step{Op: "get_secret_in", Args: []Arg{S("alpha"), S(e), S("db-password")}})
+		add([]string{"edge-ref"}, Step{Op: "get_secret_by_ref", Args: []Arg{S(e)}})
+		add([]string{"edge-ref"}, Step{Op: "get_secret_by_ref", Args: []Arg{S("alpha/production/" + e)}})
+	}
+	for _, ref := range []string{"alpha/production/db-password", "alpha/production", "alpha", "alpha//db-password", "/production/db-password",
+		"alpha/production/", "alpha/production/q&a=b?c#d/e", "alpha/production/quote\"and\\back", "gamma 2/production/db-password",
+		"ALPHA/production/db-password", "alpha/PRODUCTION/db-password", " alpha/production/db-password", "alpha/production/db-password "} {
+		add([]string{"edge-ref"}, Step{Op: "get_secret_by_ref", Args: []Arg{S(ref)}})
+	}
+	for _, id := range ids {
+		add([]string{"edge-id"}, Step{Op: "list_deleted_secrets", Args: []Arg{S(id)}})
+	}
+	add([]string{"edge-null"}, Step{Op: "get_secret_by_ref", Args: []Arg{Null()}}, Step{Op: "get_secret_in", Args: []Arg{Null(), Null(), Null()}})
 	add([]string{"edge-null"}, Step{Op: "list_secrets", Args: []Arg{Null()}})
 	add([]string{"edge-null"}, Step{Op: "get_secret", Args: []Arg{S("db-password"), Null()}})
 	add([]string{"edge-null"}, Step{Op: "get_secret", Args: []Arg{Null(), S("")}})
