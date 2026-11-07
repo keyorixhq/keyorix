@@ -78,3 +78,13 @@ R5  Campaign wall-clock must end before 2026-11-10T05:00Z; load average on the
     host is kept below 60% of cores (campaign serialized).
 R6  An iteration where the child finished before the kill landed is counted
     as "completed" and excluded from the 300 total (reported separately).
+
+## Results (2026-11-07)
+
+Three rounds of 160 iterations each (480 total), run on a separate host at nice 19.
+
+- Rule R2 (at least 300 landed SIGKILLs): MET. 320 kills landed. Per operation: 78 / 81 / 81 / 80 (rotate-dek, rotate-kek, backup, restore), each above the 60 minimum. By kind: 166 at a directory-change count, 154 at a time fraction.
+- The disk-full kind (ulimit -f) produced no kills, only about 81 runs that ended in an error; those count toward iterations but not toward the kill bar.
+- Violations of I1-I7 after documented recovery: 0 in all three rounds.
+- Planted-defect self-test (P1-P5): all detected.
+- Scope limit: SIGKILL of the process is not a power cut. Page-cache loss and torn writes below the file system are not exercised.
