@@ -196,6 +196,19 @@ func checkWebHealthLocations(t *testing.T, conf, readiness, liveness string) {
 		t.Errorf("backend probe needs short proxy timeouts so a hung backend fails the probe:\n%s", probe)
 	}
 
+	// The probe is a proxied request like the API location: it must overwrite the
+	// forwarding headers, otherwise a client-supplied X-Real-IP / X-Forwarded-For
+	// reaches a server that trusts this pod as a proxy and lands in its request log.
+	for _, h := range []string{
+		"proxy_set_header X-Real-IP $remote_addr;",
+		"proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+		"proxy_set_header X-Forwarded-Proto $scheme;",
+	} {
+		if !strings.Contains(probe, h) {
+			t.Errorf("backend probe must set `%s` like the API location (trusted-proxy contract):\n%s", h, probe)
+		}
+	}
+
 	// (e) failure maps to a fixed 503, success to a fixed 200, both through named
 	// locations that exist, and neither carries backend data.
 	errRe := regexp.MustCompile(`error_page\s+([0-9 ]+?)\s*=\s*@(\S+?);`).FindStringSubmatch(ready)
