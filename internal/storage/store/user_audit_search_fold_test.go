@@ -151,3 +151,58 @@ func TestAuditActorFilter_UnicodeCase_SQLite(t *testing.T) {
 func TestAuditActorFilter_UnicodeCase_Postgres(t *testing.T) {
 	runAuditActorFold(t, newActorMachinePGStore(t))
 }
+
+// runAuditAllFilters sets every AuditFilter predicate applyAuditFilter knows at
+// once, with a folded actor term, as the /audit/search all-params request does
+// (TestSearchAuditLogs_Handler_AllParams). Each decoy misses exactly one
+// predicate, so only the target row may come back, on both backends.
+func runAuditAllFilters(t *testing.T, ls *LocalStorage) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	unal := &models.User{Username: "Ünal", Email: "unal@example.com", PasswordHash: "x"}
+	other := &models.User{Username: "other", Email: "other@example.com", PasswordHash: "x"}
+	require.NoError(t, ls.db.Create(unal).Error)
+	require.NoError(t, ls.db.Create(other).Error)
+
+	project, secret, yes := uint(2), uint(3), true
+	// request_id is stamped only from the server-minted id in the context.
+	log := func(reqID string, uid uint, ip string) {
+		require.NoError(t, ls.LogAuditEvent(serverRequestCtx(reqID), &models.AuditEvent{
+			EventType: "secret.read", EventTime: now, ActorType: "user", UserID: &uid,
+			ProjectID: &project, SecretNodeID: &secret, IPAddress: ip, Success: &yes,
+		}))
+	}
+	log("req-target", unal.ID, "10.0.0.1")
+	log("req-target", other.ID, "10.0.0.1") // other actor
+	log("req-target", unal.ID, "10.0.0.2")  // other IP
+	log("req-decoy", unal.ID, "10.0.0.1")   // other request id
+
+	actor, action, resource, actorType := "ünal", "secret.read", "secret", "user"
+	ip, reqID := "10.0.0.1", "req-target"
+	start, end := now.Add(-time.Hour), now.Add(time.Hour)
+	after, upTo := uint(0), uint(1<<31)
+	uid := unal.ID
+	f := &storage.AuditFilter{
+		ProjectID: &project, UserID: &uid, SecretID: &secret, Action: &action,
+		Actions: []string{action}, StartTime: &start, EndTime: &end, Success: &yes,
+		ActorType: &actorType, AfterID: &after, UpToID: &upTo, IPAddress: &ip,
+		RequestID: &reqID, ActorUsername: &actor, ResourceType: &resource, PageSize: 50,
+	}
+	events, total, err := ls.GetAuditLogs(ctx, f)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.EqualValues(t, 1, total)
+	assert.Equal(t, unal.ID, *events[0].UserID)
+	assert.Equal(t, "10.0.0.1", events[0].IPAddress)
+	assert.Equal(t, "req-target", *events[0].RequestID)
+}
+
+func TestAuditAllFilters_FoldedActor_SQLite(t *testing.T) {
+	runAuditAllFilters(t, newActorMachineSQLiteStore(t))
+}
+
+func TestAuditAllFilters_FoldedActor_Postgres(t *testing.T) {
+	runAuditAllFilters(t, newActorMachinePGStore(t))
+}
