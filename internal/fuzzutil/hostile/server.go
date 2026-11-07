@@ -25,9 +25,10 @@ import (
 
 // Resp is a (valid) backend response.
 type Resp struct {
-	Status int
-	CT     string
-	Body   []byte
+	Status  int
+	CT      string
+	Body    []byte
+	Headers [][2]string // extra response headers
 }
 
 // Route is one backend endpoint. Valid returns the pristine response for the
@@ -37,6 +38,9 @@ type Route struct {
 	Method string // "" matches any
 	Prefix string // URL path prefix; the longest matching prefix wins
 	Valid  func(n int, r *http.Request) Resp
+	// Pass, when set, may answer a request itself (e.g. an auth challenge) with a
+	// pristine response that is never mutated, counted or recorded.
+	Pass func(r *http.Request) (Resp, bool)
 }
 
 // Served records what one request to a route actually received.
@@ -54,6 +58,7 @@ type Served struct {
 }
 
 type plan struct {
+	hdrs     [][2]string
 	status   int
 	ct       string
 	wire     []byte
@@ -100,7 +105,7 @@ func crossHost(u string) string { return strings.Replace(u, "127.0.0.1", "localh
 
 // buildPlan applies the program (when active) to the valid response.
 func buildPlan(valid Resp, p Program, active bool, selfURL, attackerURL string, followed bool) plan {
-	pl := plan{status: valid.Status, ct: valid.CT, complete: true}
+	pl := plan{status: valid.Status, ct: valid.CT, complete: true, hdrs: valid.Headers}
 	if pl.status == 0 {
 		pl.status = 200
 	}
@@ -440,6 +445,12 @@ func (h *Harness) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
+	if rt.Pass != nil {
+		if resp, ok := rt.Pass(r); ok {
+			h.writePlain(w, buildPlan(resp, Program{}, false, "", "", false))
+			return
+		}
+	}
 	h.mu.Lock()
 	h.counts[rt.Name]++
 	n := h.counts[rt.Name]
@@ -488,6 +499,9 @@ func (h *Harness) writePlain(w http.ResponseWriter, pl plan) {
 	}
 	if pl.enc != "" {
 		hd.Set("Content-Encoding", pl.enc)
+	}
+	for _, kv := range pl.hdrs {
+		hd.Set(kv[0], kv[1])
 	}
 	if pl.location != "" {
 		hd.Set("Location", pl.location)
@@ -590,6 +604,9 @@ func (h *Harness) writeRaw(w http.ResponseWriter, pl plan) {
 	cl := func(n int) string { return fmt.Sprintf("Content-Length: %d", n) }
 	body := pl.wire
 	head := func(extra ...string) []byte {
+		for _, kv := range pl.hdrs {
+			extra = append(extra, kv[0]+": "+kv[1])
+		}
 		return rawHead(pl.status, pl.ct, pl.enc, pl.location, append(extra, "Connection: close")...)
 	}
 	switch pl.fault {
