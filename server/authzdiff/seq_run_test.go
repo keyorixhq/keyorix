@@ -357,8 +357,8 @@ func classKind(c string) string {
 }
 
 // classKey is the class with the direction kept and the step or probe tag
-// dropped: "O-S:step-vs-model(<tag>;got=Allowed;model=Denied)" becomes
-// "O-S:step-vs-model(got=Allowed;model=Denied)". Two findings with the same
+// dropped: "O-S:step-vs-model(<tag>;got=allowed;model=denied)" becomes
+// "O-S:step-vs-model(got=allowed;model=denied)". Two findings with the same
 // kind but opposite directions (a transport allowing versus denying) have
 // different keys, so one direction's known noise never absorbs the other.
 func classKey(c string) string {
@@ -389,11 +389,22 @@ func isOverAllow(c string) bool {
 	return false
 }
 
+// alwaysFails reports whether a finding class fails the run however it
+// reproduces: it is never absorbed as single-step noise.
+func alwaysFails(c string) bool {
+	return isOverAllow(c)
+}
+
 // pickFinding is the finding to report and shrink: the first over-allow one if
-// there is any, else the first.
+// there is any, else the first one that always fails, else the first.
 func pickFinding(fs []seqFinding) seqFinding {
 	for _, f := range fs {
 		if isOverAllow(f.Class) {
+			return f
+		}
+	}
+	for _, f := range fs {
+		if alwaysFails(f.Class) {
 			return f
 		}
 	}
@@ -405,16 +416,75 @@ func hasKey(fs []seqFinding, key string) bool {
 	return slices.ContainsFunc(fs, func(f seqFinding) bool { return classKey(f.Class) == key })
 }
 
-// isSingleStep reports whether the failing step alone, from a fresh world,
-// reproduces the same direction-bearing class. An over-allow is never single-step.
-func isSingleStep(tb testing.TB, steps []seqStep, f seqFinding) bool {
-	if isOverAllow(f.Class) {
+// isSingleStep reports whether the failing step alone, from a fresh world (with
+// the same planted fault, if any), reproduces the same direction-bearing class.
+// A class that always fails is never single-step.
+func isSingleStep(tb testing.TB, steps []seqStep, f seqFinding, fault *seqFault) bool {
+	if alwaysFails(f.Class) {
 		return false
 	}
 	if f.Step < 0 || f.Step >= len(steps) {
 		return false
 	}
-	return hasKey(runSeq(tb, steps[f.Step:f.Step+1], nil, nil), classKey(f.Class))
+	return hasKey(runSeq(tb, steps[f.Step:f.Step+1], fault, nil), classKey(f.Class))
+}
+
+// seqVerdictKind is how one sequence's findings are triaged.
+type seqVerdictKind int
+
+const (
+	seqClean      seqVerdictKind = iota // no finding
+	seqSingleStep                       // the failing step alone reproduces the class: covered by the single-step harness
+	seqAlwaysFail                       // a class that always fails (alwaysFails)
+	seqCandidate                        // a class only the sequence shows: sequence-dependent candidate
+)
+
+type seqTriage struct {
+	kind  seqVerdictKind
+	key   string    // classKey of the reported finding
+	class string    // the reported finding's full class (private file only)
+	min   []seqStep // the shrunk sequence (nil for a clean or cheap single-step verdict)
+}
+
+// fail reports whether the verdict fails a fuzz run or a sweep.
+func (v seqTriage) fail() bool { return v.kind == seqAlwaysFail || v.kind == seqCandidate }
+
+// seqShrinkBudget bounds the runs shrink spends on one sequence.
+const seqShrinkBudget = 40
+
+// seqVerdict runs steps (with the planted fault, if any) and triages the
+// findings. It is the one triage FuzzAuthzSeq, the sweep and the plant tests use.
+// Cheap first: if the failing step alone reproduces the class it is single-step
+// and needs no shrinking. Otherwise the sequence is shrunk and re-triaged. A class
+// that always fails fails even when the shrunk replay comes back clean.
+func seqVerdict(tb testing.TB, steps []seqStep, fault *seqFault, stats *seqStats) seqTriage {
+	tb.Helper()
+	fs := runSeq(tb, steps, fault, stats)
+	if len(fs) == 0 {
+		return seqTriage{kind: seqClean}
+	}
+	top := pickFinding(fs)
+	if isSingleStep(tb, steps, top, fault) {
+		return seqTriage{kind: seqSingleStep, key: classKey(top.Class), class: top.Class}
+	}
+	min := shrink(tb, steps, fault, seqShrinkBudget)
+	if mfs := runSeq(tb, min, fault, nil); len(mfs) > 0 {
+		top = pickFinding(mfs)
+	} else if !alwaysFails(top.Class) {
+		return seqTriage{kind: seqClean}
+	} else {
+		min = steps
+	}
+	v := seqTriage{key: classKey(top.Class), class: top.Class, min: min}
+	switch {
+	case alwaysFails(top.Class):
+		v.kind = seqAlwaysFail
+	case len(min) == 1 || isSingleStep(tb, min, top, fault):
+		v.kind = seqSingleStep
+	default:
+		v.kind = seqCandidate
+	}
+	return v
 }
 
 // shrink removes steps while a finding of the same class survives.

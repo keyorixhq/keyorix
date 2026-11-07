@@ -205,40 +205,20 @@ func TestSeqSweep(t *testing.T) {
 	first, _ := strconv.Atoi(os.Getenv("AUTHZSEQ_START"))
 	for i := first; i < first+n && time.Since(start) < capD; i++ {
 		steps := genSeq(rand.New(rand.NewSource(int64(seed*1_000_000 + i))))
-		fs := runSeq(t, steps, nil, stats)
+		v := seqVerdict(t, steps, nil, stats)
 		ran++
-		if len(fs) == 0 {
-			continue
-		}
-		// Cheap first: if the failing step alone reproduces the class (same
-		// direction), it is single-step behaviour and needs no shrinking. An
-		// over-allow is never single-step noise.
-		if top := pickFinding(fs); isSingleStep(t, steps, top) {
+		switch v.kind {
+		case seqSingleStep:
 			singleStep++
-			byClass["single-step:"+classKey(top.Class)]++
-			continue
+			byClass["single-step:"+v.key]++
+		case seqAlwaysFail:
+			byClass["ALWAYS-FAIL:"+v.key]++
+			privateSink(v.key, v.min, v.class)
+			t.Errorf("always-fail class %s after %d steps (minimal sequence in the private file)", v.key, len(v.min))
+		case seqCandidate:
+			byClass["CANDIDATE:"+v.key]++
+			privateSink(v.key, v.min, v.class)
 		}
-		min := shrink(t, steps, nil, 40)
-		fs = runSeq(t, min, nil, nil)
-		if len(fs) == 0 {
-			continue
-		}
-		top := pickFinding(fs)
-		key := classKey(top.Class)
-		if isOverAllow(top.Class) {
-			byClass["OVER-ALLOW:"+key]++
-			privateSink(key, min, top.Class)
-			t.Errorf("over-allow %s after %d steps (minimal sequence in the private file)", key, len(min))
-			continue
-		}
-		// single-step replay: the failing step alone from a fresh world
-		if len(min) == 1 || isSingleStep(t, min, top) {
-			singleStep++
-			byClass["single-step:"+key]++
-			continue
-		}
-		byClass["CANDIDATE:"+key]++
-		privateSink(key, min, top.Class)
 	}
 	keys := make([]string, 0, len(byClass))
 	for k := range byClass {
@@ -260,29 +240,17 @@ func FuzzAuthzSeq(f *testing.F) {
 	f.Add([]byte{0, 0, 0, 0, 0, 1, 0, 0, 0, 0})
 	f.Add([]byte{2, 0, 1, 0, 0, 3, 0, 1, 0, 0})
 	f.Fuzz(func(t *testing.T, data []byte) {
-		steps := decodeSeq(data)
-		fs := runSeq(t, steps, nil, nil)
-		if len(fs) == 0 {
-			return
+		v := seqVerdict(t, decodeSeq(data), nil, nil)
+		switch v.kind {
+		case seqSingleStep:
+			t.Logf("single-step %s", v.key)
+		case seqAlwaysFail:
+			privateSink(v.key, v.min, v.class)
+			t.Errorf("always-fail class %s after %d steps (minimal sequence in the private file)", v.key, len(v.min))
+		case seqCandidate:
+			privateSink(v.key, v.min, v.class)
+			t.Errorf("sequence-dependent candidate %s after %d steps (minimal sequence in the private file)", v.key, len(v.min))
 		}
-		min := shrink(t, steps, nil, 30)
-		fs = runSeq(t, min, nil, nil)
-		if len(fs) == 0 {
-			return
-		}
-		first := pickFinding(fs)
-		key := classKey(first.Class)
-		if isOverAllow(first.Class) {
-			privateSink(key, min, first.Class)
-			t.Errorf("over-allow %s after %d steps (minimal sequence in the private file)", key, len(min))
-			return
-		}
-		if len(min) == 1 || isSingleStep(t, min, first) {
-			t.Logf("single-step %s", key)
-			return
-		}
-		privateSink(key, min, first.Class)
-		t.Errorf("sequence-dependent candidate %s after %d steps (minimal sequence in the private file)", key, len(min))
 	})
 }
 
