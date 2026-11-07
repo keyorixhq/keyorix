@@ -3,14 +3,20 @@ package store
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 // Paginated list queries must have a deterministic order, so that walking the
@@ -35,7 +41,10 @@ func seedPageWalkRows(t *testing.T, ls *LocalStorage) (users, secrets, groups in
 		}).Error)
 		require.NoError(t, ls.db.Create(&models.Group{Name: n}).Error)
 	}
-	// Secrets with equal names in different environments exercise the tiebreak.
+	// Extra secrets sharing the name "tie" across environments. The unfiltered
+	// ListSecrets query has no name key, so these do not exercise a tiebreak; they
+	// only add rows. The tiebreak cases are the equal-expiration and equal-deleted_at
+	// subtests below.
 	for env := uint(2); env <= 4; env++ {
 		require.NoError(t, ls.db.Create(&models.SecretNode{
 			ProjectID: 1, EnvironmentID: env, Name: "tie", IsSecret: true,
@@ -124,6 +133,113 @@ func runPageWalkTests(t *testing.T, env pageWalkEnv) {
 		}
 		require.Equal(t, want, got)
 	})
+
+	// Secrets sharing one expiration: ORDER BY expiration alone leaves the tie order to
+	// the planner, and PostgreSQL's top-N heapsort under LIMIT/OFFSET orders tied rows
+	// differently per page (a walk repeats one row and skips others). This is the
+	// red-proven ListSecrets case: it fails at the base commit on PostgreSQL.
+	t.Run("ListSecrets_ExpiresBefore_equal_expirations", func(t *testing.T) {
+		const n = 40
+		exp := time.Date(2031, 1, 2, 3, 4, 5, 0, time.UTC)
+		for i := range n {
+			require.NoError(t, env.ls.db.Create(&models.SecretNode{
+				ProjectID: 1, EnvironmentID: 1, Name: fmt.Sprintf("exp-tie-%02d", i), IsSecret: true,
+				Expiration: &exp,
+			}).Error)
+		}
+		env.analyze(t)
+		before := exp.Add(time.Hour)
+		for _, size := range []int{1, 3, 7} {
+			var seen []uint
+			for page := 1; ; page++ {
+				got, total, err := env.ls.ListSecrets(ctx, &storage.SecretFilter{
+					ExpiresBefore: &before, Page: page, PageSize: size,
+				})
+				require.NoError(t, err)
+				require.EqualValues(t, n, total)
+				if len(got) == 0 {
+					break
+				}
+				for _, s := range got {
+					seen = append(seen, s.ID)
+				}
+				if page == 1 {
+					env.analyze(t)
+				}
+			}
+			requireExactlyOnce(t, seen, n)
+		}
+	})
+
+	// Soft-deleted secrets sharing one deleted_at. Regression guard only: this was NOT
+	// observed red at the base commit (the tie order happened to be stable there), and
+	// the unfiltered ListSecrets and ListGroupsPage legs above are likewise defensive,
+	// not red-proven.
+	t.Run("ListSecrets_DeletedOnly_equal_deleted_at", func(t *testing.T) {
+		const n = 40
+		var ids []uint
+		for i := range n {
+			node := &models.SecretNode{
+				ProjectID: 1, EnvironmentID: 1, Name: fmt.Sprintf("del-tie-%02d", i), IsSecret: true,
+			}
+			require.NoError(t, env.ls.db.Create(node).Error)
+			ids = append(ids, node.ID)
+		}
+		deletedAt := time.Date(2030, 6, 7, 8, 9, 10, 0, time.UTC)
+		require.NoError(t, env.ls.db.Unscoped().Model(&models.SecretNode{}).
+			Where("id IN ?", ids).Update("deleted_at", deletedAt).Error)
+		env.analyze(t)
+		for _, size := range []int{1, 3, 7} {
+			var seen []uint
+			for page := 1; ; page++ {
+				got, total, err := env.ls.ListSecrets(ctx, &storage.SecretFilter{
+					DeletedOnly: true, Page: page, PageSize: size,
+				})
+				require.NoError(t, err)
+				require.EqualValues(t, n, total)
+				if len(got) == 0 {
+					break
+				}
+				for _, s := range got {
+					seen = append(seen, s.ID)
+				}
+				if page == 1 {
+					env.analyze(t)
+				}
+			}
+			requireExactlyOnce(t, seen, n)
+		}
+	})
+}
+
+// newPagePGStore opens a PostgreSQL store in its own schema. It is separate from
+// newFoldPGStore so the skip reason and the schema name belong to this test.
+func newPagePGStore(t *testing.T) *LocalStorage {
+	t.Helper()
+	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("KEYORIX_TEST_PG_DSN not set — PostgreSQL leg of the list pagination order test")
+	}
+	const schema = "list_pagination_order_test"
+	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	require.NoError(t, admin.Exec("DROP SCHEMA IF EXISTS "+schema+" CASCADE").Error)
+	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
+	t.Cleanup(func() {
+		_ = admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error
+		if sqlDB, e := admin.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.SecretNode{}))
+	t.Cleanup(func() {
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	return NewLocalStorage(db)
 }
 
 func requireExactlyOnce(t *testing.T, seen []uint, n int) {
@@ -148,7 +264,7 @@ func TestListPagination_WalkReturnsEveryRowOnce_SQLite(t *testing.T) {
 // unordered query from index order to heap order. With a deterministic ORDER BY
 // the walk is unaffected. Skipped unless KEYORIX_TEST_PG_DSN is set.
 func TestListPagination_WalkReturnsEveryRowOnce_Postgres(t *testing.T) {
-	ls := newFoldPGStore(t)
+	ls := newPagePGStore(t)
 	require.NoError(t, ls.db.AutoMigrate(&models.Group{}))
 	// The production partial unique index (created by the storage factory, not by
 	// AutoMigrate). On a fresh table the planner walks this index for an unordered
