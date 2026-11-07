@@ -160,7 +160,7 @@ Registered rule (1) needs a strictly smaller median AND at least as many found
 runs. The median is smaller (78 s against 155 s) but T found it in 2 runs and P
 in 3, so the rule is NOT met. The claim "the metric finds a rare-decision defect
 faster" is WITHDRAWN. The plant turned out not to be rare for the fuzzer
-either: it was found in under a minute in only 2 of 6 runs, but in 5 of 6 within 3 minutes.
+either: it was found in under a minute in only 2 of 6 runs, and in 5 of 6 within 5 minutes.
 
 ### Condition 3, COMMON plant (control)
 
