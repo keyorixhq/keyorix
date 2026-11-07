@@ -147,6 +147,33 @@ func (ls *LocalStorage) GetRole(ctx context.Context, id uint) (*models.Role, err
 	return &role, nil
 }
 
+// LockRoleForUpdate is GetRole with a row-level write lock on Postgres (SELECT …
+// FOR UPDATE), so a transaction that classifies an update against the row and
+// then writes it serializes against every other writer of it across replicas
+// (mirrors LockShareRecordForUpdate). Outside a transaction the lock ends with the
+// statement. SQLite has no row lock; its write transactions are BEGIN IMMEDIATE, so
+// no other writer can commit between the read and the write anyway.
+//
+// #3919: core.UpdateRole decides from this read whether an explicit
+// assignable-scope change widens (fail closed) or narrows (owed), and which
+// "a -> b" its audit row names. Unlocked, a narrowing another replica committed
+// after the read turned a project -> global widening into an any -> global
+// "narrowing" on the owed path, with the wrong audit text.
+func (ls *LocalStorage) LockRoleForUpdate(ctx context.Context, id uint) (*models.Role, error) {
+	q := ls.db.WithContext(ctx)
+	if ls.db.Dialector.Name() == "postgres" {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var role models.Role
+	if err := q.First(&role, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), storage.ErrRoleNotFound)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &role, nil
+}
+
 // GetRoleByName looks up a role by its exact display name.
 //
 // #1642 follow-up (filed, not fixed here): this queries the raw `name`
