@@ -300,6 +300,7 @@ storage.database.audit_durability
 storage.database.audit_flusher_linger_window
 storage.database.conn_max_lifetime_minutes
 storage.database.dsn
+storage.database.fdatasync
 storage.database.host
 storage.database.insecure_audit_skip_durable_sync
 storage.database.insecure_audit_skip_reads

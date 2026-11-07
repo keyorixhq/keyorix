@@ -24,11 +24,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
@@ -50,7 +52,7 @@ func freshCoreS12(t *testing.T) *core.KeyorixCore {
 func freshLocalStorageS12(t *testing.T) *store.LocalStorage {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	db := sqlitetest.Open(t, "kxhandlers_s12_")
+	db := sqlitetest.OpenWithDialector(t, "kxhandlers_s12_", sqlite.Open, &gorm.Config{Logger: logger.Discard})
 	err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
@@ -90,7 +92,7 @@ func freshLocalStorageS12(t *testing.T) *store.LocalStorage {
 func freshCoreS12WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	db := sqlitetest.Open(t, "kxhandlers_s12a_")
+	db := sqlitetest.OpenWithDialector(t, "kxhandlers_s12a_", sqlite.Open, &gorm.Config{Logger: logger.Discard})
 	err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},

@@ -45,8 +45,14 @@ func redactSensitiveURI(uri string) string {
 	// Then redact query strings for endpoints that accept secret ref/name params.
 	if idx := strings.IndexByte(uri, '?'); idx != -1 {
 		if sensitiveQueryPattern.MatchString(uri[:idx]) {
-			uri = uri[:idx] + "?[redacted]"
+			return uri[:idx] + "?[redacted]"
 		}
+		// Every other query is redacted by default: only allowlisted parameter
+		// values (pagination, sorting, switches) are logged. See loggableQueryKeys.
+		if q := redactQueryParams(uri[idx+1:]); q != "" {
+			return uri[:idx] + "?" + q
+		}
+		return uri[:idx]
 	}
 	return uri
 }

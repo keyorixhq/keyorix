@@ -61,7 +61,8 @@ func TestTransferSecretOwnership_ReownsShares(t *testing.T) {
 }
 
 func runReownSharesScenario(t *testing.T, f *ctaReview) {
-	oldOwner := f.user("reown-old", "project_admin")
+	// A developer, not a project_admin: an administrator of the scope may revoke any share.
+	oldOwner := f.user("reown-old", "project_developer")
 	newOwner := f.user("reown-new", "project_admin")
 	live := f.user("reown-live", "project_viewer")
 	toRevoke := f.user("reown-revoked", "project_viewer")

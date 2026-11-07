@@ -607,7 +607,13 @@ func (c *KeyorixCore) requireInvitationGrantScopesValid(ctx context.Context, inv
 	for _, g := range grants {
 		role, err := c.storage.GetRoleByName(ctx, g.role)
 		if err != nil {
-			continue // applyInvitationGrants reports the unknown role
+			if isPositiveNotFound(err) {
+				continue // applyInvitationGrants reports the unknown role
+			}
+			// #3988 sibling: a failed read is not an unknown role. Skipping it
+			// would let applyInvitationGrants' own read succeed and grant at a
+			// scope this check never saw.
+			return classifyReadError(err, "role not found")
 		}
 		if err := c.requireScopeValidForRoleModel(ctx, role, g.scope); err != nil {
 			return fmt.Errorf("invitation %d can no longer be accepted, ask the inviter for a new one: %w", inv.ID, err)

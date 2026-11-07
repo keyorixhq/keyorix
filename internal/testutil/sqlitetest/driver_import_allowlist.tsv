@@ -16,7 +16,6 @@ server/admin_encryption_integration_test.go	encryption wiring over a file databa
 server/admin/restore_otp_expiry_test.go	restore-time backfill of one column on an already migrated schema
 server/http/handlers/bulk_access_requests_test.go	closed connection: every call fails with a generic database/sql error, identical on both drivers
 server/http/handlers/init_system_error_body_test.go	error is injected through the fault wrapper; no real storage error is translated
-server/http/handlers/handlers_s4_test.go	handler response plumbing over a plain schema; no error-translation or constraint claim (grep and read)
 server/http/handlers/handlers_s14_test.go	handler response plumbing over a plain schema; no error-translation or constraint claim (grep and read)
 server/http/handlers/admin_billing_test.go	billing summary rendering over a plain schema
 server/http/handlers/audit_search_handler_test.go	audit search filtering and pagination over a plain schema

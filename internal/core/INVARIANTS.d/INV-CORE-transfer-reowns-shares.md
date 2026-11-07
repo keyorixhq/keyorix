@@ -4,7 +4,10 @@
   owner and calls `Storage.ReassignSecretShareOwner` inside ONE `WithTransaction`, so the
   two cannot be observed apart: the owner-scoped lists (`ListSharesByOwner`, behind
   `GET /api/v1/shares/owned`, gRPC `ListUserShares`) key on `ShareRecord.OwnerID` while
-  revoke/update gate on owning the SECRET (`requireShareAuthority`). Every row of the
+  update gates on owning the SECRET (`requireShareAuthority`) and revoke on owning it OR
+  holding `secrets.manage`/an admin-bypass role at its scope (#3992, see
+  INV-CORE-share-elevates-member-on-one-secret), so a previous owner without that authority
+  is refused on both after the transfer. Every row of the
   secret is re-stamped (live, expired-unswept and soft-deleted), only `owner_id` is
   written (recipients, permissions, expiry, `deleted_at` untouched, so no access is
   granted or removed and a revoked share is not resurrected), and the one
@@ -14,7 +17,7 @@
   authorised by the previous owner cannot commit with the previous owner's stamp after
   a transfer. Why: #3102 (found in the #3018 review). Guard:
   `TestTransferSecretOwnership_ReownsShares` (SQLite + Postgres, list/update/revoke by
-  both owners, recipient grants unchanged, revoked/expired rows re-stamped, audit count),
+  both owners with a non-admin previous owner, recipient grants unchanged, revoked/expired rows re-stamped, audit count),
   `TestShareService_TransferOwnership_ReownsShares` (gRPC),
   `TestTransferOwnership_ReownsSharesOverREST`, and the two-pool Postgres tests
   `TestCTAReview_TransferOwnership_vs_RevokeShare_CrossReplicaPostgres`,

@@ -118,12 +118,43 @@ data:
           add_header Content-Type text/plain;
         }
 
-        # /health: proxied to the server Service's own /health (the web
-        # readinessProbe), so the pod is NotReady while the backend is down. Same
-        # upstream and TLS verification as the API location above; short timeouts
-        # so a hung backend fails the probe instead of hanging it.
+        # /health (the web readinessProbe, and what the public ingress can reach):
+        # STATUS ONLY. The backend's /health body (auth_rate_limit, uptime, ...) is
+        # detail for operators, not for unauthenticated callers, so it is never
+        # proxied through. auth_request asks the internal location below for the
+        # backend's verdict; a 2xx from the backend lets this location answer a
+        # fixed 200, anything else (backend down, 5xx, timeout) becomes a fixed 503
+        # via @kx_health_down. return would run in the rewrite phase, BEFORE
+        # auth_request (access phase), so the 200 is reached through try_files
+        # (which runs after it) and a named location instead.
         location = /health {
           access_log off;
+          auth_request /_kx_backend_health;
+          error_page 401 403 500 502 503 504 = @kx_health_down;
+          try_files /.kx-no-such-file @kx_health_up;
+        }
+
+        location @kx_health_up {
+          default_type text/plain;
+          return 200 "ok\n";
+          {{- include "keyorix.web.securityHeaders" . | nindent 10 }}
+        }
+
+        location @kx_health_down {
+          default_type text/plain;
+          return 503 "unavailable\n";
+          {{- include "keyorix.web.securityHeaders" . | nindent 10 }}
+        }
+
+        # Internal only (not reachable from outside): the one place /health reaches
+        # the server Service. Same upstream and TLS verification as the API location
+        # above; short timeouts so a hung backend fails the probe instead of hanging
+        # it. Its response body never leaves nginx (auth_request discards it).
+        location = /_kx_backend_health {
+          internal;
+          access_log off;
+          proxy_pass_request_body off;
+          proxy_set_header Content-Length "";
           proxy_connect_timeout 2s;
           proxy_read_timeout 3s;
           {{- if .Values.secureBaseline.enabled }}
@@ -141,16 +172,6 @@ data:
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
-          proxy_hide_header X-Frame-Options;
-          proxy_hide_header X-Content-Type-Options;
-          proxy_hide_header X-XSS-Protection;
-          proxy_hide_header Referrer-Policy;
-          proxy_hide_header Content-Security-Policy;
-          proxy_hide_header Cross-Origin-Resource-Policy;
-          proxy_hide_header Cross-Origin-Embedder-Policy;
-          proxy_hide_header Cross-Origin-Opener-Policy;
-          proxy_hide_header Strict-Transport-Security;
-          {{- include "keyorix.web.securityHeaders" . | nindent 10 }}
         }
 
         location ~ /\. { deny all; access_log off; log_not_found off; }

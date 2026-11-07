@@ -32,6 +32,11 @@ storage:
     # database is only reachable on the stack's private compose network.
     # Switch to verify-full + ssl_root_cert when this stack's postgres gets TLS like the
     # Compose stack (#3203).
+    # Boot-checked natively (DAST-SCRIPTS-TAILS-1, 2026-11-06): this file, with only host/port/
+    # database/key paths pointed at a local Postgres and no web-dist, starts the server binary,
+    # runs the schema migration, reports the insecure_disable_database_tls warning above and
+    # answers /health and /openapi.yaml with 200. The container build, compose networking and
+    # the ZAP run are pending the DAST host.
     ssl_mode: disable
   encryption:
     enabled: true

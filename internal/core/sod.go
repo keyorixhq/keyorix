@@ -953,7 +953,13 @@ func requireGroupJoinNoSoDViolationOn(ctx context.Context, st storage.Storage, u
 	for _, g := range grants {
 		role, err := st.GetRole(ctx, g.RoleID)
 		if err != nil {
-			continue // mirrors validateGroupJoinRoles' existing "skip roles whose definition cannot be loaded"
+			// #3988: like validateGroupJoinRoles, skip only a role that is
+			// positively gone; a failed read would drop this role's permissions
+			// from the set and let a toxic pair through.
+			if isPositiveNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", classifyReadError(err, "role not found"))
 		}
 		if isAdminRoleName(role.Name) {
 			return nil // this join grants admin-bypass — see package doc above

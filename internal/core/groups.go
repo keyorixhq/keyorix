@@ -330,8 +330,15 @@ func (c *KeyorixCore) validateGroupJoinRoles(ctx context.Context, actorID uint, 
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, g := range grants {
+		// #3988: only a role that is positively gone is skipped (it confers
+		// nothing). A failed read says nothing about the role, so skipping it
+		// let the join through with this grant's ceiling never checked: refuse
+		// with the retryable storage-unavailable error instead.
 		if _, err := c.storage.GetRole(ctx, g.RoleID); err != nil {
-			continue
+			if isPositiveNotFound(err) {
+				continue
+			}
+			return classifyReadError(err, "role not found")
 		}
 		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, g.RoleID, Scope{ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID}, actorIsMachine); err != nil {
 			return err

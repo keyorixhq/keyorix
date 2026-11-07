@@ -1,0 +1,2 @@
+changelog.d/3939-recovery-options-unpinned-seal-field.md
+docs/design/recovery-options.md

@@ -304,6 +304,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	// Serializing Open ensures only one goroutine ever performs the actual mode
 	// switch; every later Open against an already-WAL file is a same-mode pragma
 	// no-op that always succeeds immediately, regardless of other open connections.
+	applySQLiteFdatasync(cfg.Storage.Database.Fdatasync)
 	migrationMu.Lock()
 	db, err := openSQLiteGorm(sqliteDSN(dbPath))
 	migrationMu.Unlock()

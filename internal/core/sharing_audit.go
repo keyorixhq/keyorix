@@ -50,6 +50,9 @@ type ShareAuditContext struct {
 	// create/update/revoke names its share, so an elevated action's
 	// share_access_elevated row can be tied back to the grant). 0 = unknown.
 	ShareID uint
+	// ByManager marks a revoke done by a holder of secrets.manage who is not the
+	// secret's owner.
+	ByManager bool
 }
 
 // shareRef renders " (share N)" for a known share id, "" otherwise.
@@ -120,6 +123,9 @@ func (c *KeyorixCore) logShareRevokedOn(ctx context.Context, tgt auditTarget, au
 	}
 
 	desc := fmt.Sprintf("Revoked share of %s for %s%s", c.auditRef(ctx, tgt.st, auditKindSecret, auditCtx.SecretID), c.auditRef(ctx, tgt.st, recipientType, auditCtx.RecipientID), shareRef(auditCtx))
+	if auditCtx.ByManager {
+		desc += " (by a secret manager, not the owner)"
+	}
 	c.writeAuditEventFullOn(ctx, tgt, string(ShareAuditEventRevoked), &auditCtx.ActorID, &auditCtx.SecretID, nil, "", desc)
 }
 
@@ -140,6 +146,9 @@ func (c *KeyorixCore) LogGroupShareRevoked(ctx context.Context, auditCtx *ShareA
 
 func (c *KeyorixCore) logGroupShareRevokedOn(ctx context.Context, tgt auditTarget, auditCtx *ShareAuditContext) {
 	desc := fmt.Sprintf("Revoked group share of %s for %s%s", c.auditRef(ctx, tgt.st, auditKindSecret, auditCtx.SecretID), c.auditRef(ctx, tgt.st, auditKindGroup, auditCtx.RecipientID), shareRef(auditCtx))
+	if auditCtx.ByManager {
+		desc += " (by a secret manager, not the owner)"
+	}
 	c.writeAuditEventFullOn(ctx, tgt, string(ShareAuditEventGroupRevoked), &auditCtx.ActorID, &auditCtx.SecretID, nil, "", desc)
 }
 
