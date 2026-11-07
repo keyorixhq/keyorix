@@ -61,7 +61,7 @@ var auditAttributionAllowlist = map[string]string{
 		"linked into the server. It writes only fixed powercut.commit events with no ActorType, no UserID " +
 		"and no MachineIdentityID, so it can never emit a machine-identity-typed event that needs the " +
 		"emitAudit attribution stamp; the rows only exist to be counted and hash-chain-verified after the cut.",
-	"internal/core/audit_target.go:emitAuditOn":"#2676: emitAuditOn is emitAudit against an explicit " +
+	"internal/core/audit_target.go:emitAuditOn": "#2676: emitAuditOn is emitAudit against an explicit " +
 		"storage handle (the transaction-scoped one the access-review revoke path needs so its evidence " +
 		"row commits or rolls back with the removal it describes). It is NOT a bypass of the attribution " +
 		"stamp this guard protects: it calls the SAME prepareAuditEventForEmit(ctx, event) immediately " +
