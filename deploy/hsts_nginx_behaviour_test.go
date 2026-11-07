@@ -172,7 +172,7 @@ func TestWebNginxHSTS_ComposeImage(t *testing.T) {
 				args = append(args, "-e", "KEYORIX_WEB_HSTS="+c.mode)
 			}
 			base := runNginx(t, append(args, nginxImage)...)
-			assertHSTS(t, c, base, "/nginx-health", "/", "/missing.js")// server scope, SPA, static-asset location
+			assertHSTS(t, c, base, "/nginx-health", "/", "/missing.js") // server scope, SPA, static-asset location
 		})
 	}
 }
