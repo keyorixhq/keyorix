@@ -1339,7 +1339,10 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 	pageSize := clampPageSize(filter.PageSize)
 	page := clampPage(filter.Page)
 	offset := (page - 1) * pageSize
-	query = query.Offset(offset).Limit(pageSize)
+	// Deterministic page order: the filter-specific keys above (if any) come first, then
+	// the id as the final tiebreak, so the order never depends on the query plan and a
+	// page walk is stable (see ListUsers).
+	query = query.Order("secret_nodes.id ASC").Offset(offset).Limit(pageSize)
 
 	var secrets []*models.SecretNode
 	if err := query.Find(&secrets).Error; err != nil {
