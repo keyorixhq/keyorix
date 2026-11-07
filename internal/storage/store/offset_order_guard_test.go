@@ -10,7 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // Class guard for INV-STORE-paged-lists-total-order: a query paged with
@@ -24,12 +27,14 @@ import (
 // sit on a different statement than the Offset (the audit list builds the query in
 // steps), so the check is per function, not per call chain.
 //
+// Report-only on its first day (docs/guard-rollout.d/TestOffsetPagedQueriesEndInUniqueIDOrder.tsv).
+//
 // What it does not do: it cannot tell that the id Order is applied to the same
 // query value as the Offset, it does not follow a query passed to another function,
 // and it does not recognise Order built from a non-literal or a Limit-only list
 // (those are not offset-paged). A function that pages with a keyset (id > last)
 // has no .Offset( call and is out of scope.
-func offsetWithoutIDTiebreak(t *testing.T, filename string, src any) []string {
+func offsetWithoutIDTiebreak(t testing.TB, filename string, src any) []string {
 	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, filename, src, 0)
@@ -93,6 +98,7 @@ func lastSortKeyIsID(order string) bool {
 }
 
 func TestOffsetPagedQueriesEndInUniqueIDOrder(t *testing.T) {
+	g := guardrules.Rollout(t)
 	var checked int
 	for _, dir := range []string{".", filepath.Join("..", "..", "encryption")} {
 		entries, err := os.ReadDir(dir)
@@ -109,7 +115,7 @@ func TestOffsetPagedQueriesEndInUniqueIDOrder(t *testing.T) {
 				continue
 			}
 			checked++
-			require.Empty(t, offsetWithoutIDTiebreak(t, path, data),
+			assert.Empty(g, offsetWithoutIDTiebreak(t, path, data),
 				"%s: an offset-paged query needs an Order whose last key is the unique id (INV-STORE-paged-lists-total-order)", path)
 		}
 	}
