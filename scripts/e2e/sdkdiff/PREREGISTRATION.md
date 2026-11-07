@@ -181,3 +181,34 @@ A pve01 run reported one harness note: a batch of 20 scenarios was lost because 
 ## Amendment A11 (Go driver class mapping)
 
 Reading the 200+ E1 signatures of the first full run, one root cause explained most of the Go ones: the Go driver tested errors.As(err, *APIError) first, and keyorix.AuthError embeds and unwraps to *APIError, so every 401 was reported as class http while the typed auth errors of the other three SDKs were reported as auth. This is the pre-registered rule "class by the native type of the SDK" applied wrongly in one driver: a harness artefact, not an SDK difference. Fixed (AuthError -> auth, SecretNotFoundError -> not_found, checked before APIError). Honest consequence: the E1 counts of every earlier run in this campaign are inflated by it and are discarded; all campaigns are re-run with this driver. The other three drivers were re-read against the same table and found consistent.
+
+## Results (written after the runs; the rules above were not changed after this point)
+
+SDK source: keyorix-sdks origin/main e972b6e. Phases: A = 1535 deterministic scenarios (edge matrix incl. the v0.3.0
+secrets API), S = 35 cross-origin redirect scenarios, B = random seeds (Mac: 1..1500 with Go/Node/Python/Java;
+pve01: 1..3020 with Go/Node/Python, stopped by hand at B-003020 for time, signatures rebuilt from raw.jsonl), all in raw mode.
+
+- Controls: C2 golden set silent on both hosts (8 scenarios). C1 self-pair twins (kind@2): PASS on the Mac (8 instances,
+  1535 scenarios) and on pve01 (6 instances).
+- Planted defects (7 registered + 2 re-registered): detected as registered: P2, P3, P4, P5, P7, P1b. MISSED as registered:
+  P1 and P6 (they stopped being observable when the SDKs began resolving environment names client-side, A9), and P6b was
+  surfaced by a different oracle than registered (W2 request difference instead of R2), which counts as a miss of the
+  registered category. Detection rate: 6 of 9 registrations; 5 of the 7 original defects.
+- Honest metric ("value added by fuzzing"): B found 315 signatures on the Mac (163 not present verbatim in A or S) and 278 on
+  pve01 (164 new), but 0 new root causes: every B-only signature was a sibling of an A root cause (another operation, or
+  another fault combination, of null-versus-empty-string, null stringified into a reference, a base URL with a query, a
+  redirect). B did not pay off for discovery; it paid off only as breadth.
+- What did find things: reading raw outcomes. Eight harness defects were found that way, recorded as amendments A6, A7,
+  A8, A9, A10, A11 (and A2/A3 earlier); two of them (A10, A11) were harness defects, the rest process errors. The largest by far: A7 (SDK checkout 129 commits behind) and A8 (secrets path
+  vacuously "agreeing" because the old API had been removed), both of which made a silent run look clean.
+- Root causes found, by class (signature counts are inflated by combinations; counts of root causes are what matter):
+  SDK bug 7 (Java JSON unescape; Java control characters in the login body; Go and Java trailing slashes; plus 3 reported
+  privately and not described here), spec ambiguity 7 (redirect policy, login error typing, null vs empty string, base URL with userinfo or query,
+  Java without a decode error class, shorthand loopback hosts, GET versus POST after redirect), server 0 (the server
+  redirects `//path`, which turns a POST into a GET; arguably server behaviour, reported with the Go bug), harness artefact 4
+  (flows that depend on a result Java cannot produce, JavaScript number precision above 2^53, login rate limiting making
+  scenarios state-dependent, late-recorded requests).
+- Minimise and replay: one representative per root cause minimised to a single step and replayed 3 of 3 (14 of 15; the
+  login 4xx family does not reproduce alone because it depends on the server rate limiter).
+- Fix check: the Java escape fix (keyorix-sdks #85) was re-run through the harness: the five Java signatures disappear and
+  nothing new appears among the Java ones. The trailing-slash fixes (#86, #87) are covered by their own unit tests only.
