@@ -202,12 +202,18 @@ func fail(err error, force string) map[string]any {
 	class := "other"
 	var status any
 	var ae *keyorix.APIError
+	var au *keyorix.AuthError
+	var snf *keyorix.SecretNotFoundError
 	var ue *url.Error
 	var se *json.SyntaxError
 	var te *json.UnmarshalTypeError
 	switch {
 	case force != "":
 		class = force
+	case errors.As(err, &au):
+		class, status = "auth", au.StatusCode
+	case errors.As(err, &snf):
+		class = "not_found"
 	case errors.As(err, &ae):
 		class, status = "http", ae.StatusCode
 		if plant == "P3" && ae.StatusCode == 404 {

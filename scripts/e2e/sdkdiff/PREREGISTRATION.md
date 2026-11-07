@@ -177,3 +177,7 @@ Pre-registered result recorded first: plant P6 (NFD-normalised environment in Ja
 ## Amendment A10 (batch start retry)
 
 A pve01 run reported one harness note: a batch of 20 scenarios was lost because the freshly started server answered the login with a proxy fault body of another concurrent instance, i.e. the free port chosen for the server was taken by a proxy of the parallel run between probe and bind (a TOCTOU in port selection). Harness artefact, not a finding. A failed batch is now retried up to 3 times; a batch that still fails stays reported as H1. Affected runs (pve01 A-raw) are re-run. No oracle changed.
+
+## Amendment A11 (Go driver class mapping)
+
+Reading the 200+ E1 signatures of the first full run, one root cause explained most of the Go ones: the Go driver tested errors.As(err, *APIError) first, and keyorix.AuthError embeds and unwraps to *APIError, so every 401 was reported as class http while the typed auth errors of the other three SDKs were reported as auth. This is the pre-registered rule "class by the native type of the SDK" applied wrongly in one driver: a harness artefact, not an SDK difference. Fixed (AuthError -> auth, SecretNotFoundError -> not_found, checked before APIError). Honest consequence: the E1 counts of every earlier run in this campaign are inflated by it and are discarded; all campaigns are re-run with this driver. The other three drivers were re-read against the same table and found consistent.
