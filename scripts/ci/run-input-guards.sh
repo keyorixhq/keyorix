@@ -6,7 +6,8 @@
 # operator_only change, so a guard that reads a Markdown file, web/nginx.conf, a
 # script or operator/ code needs a runner that does not (#3616: a QUICK_START.md
 # change merged past TestDocsShowNoLiteralSecretOnCommandLine and turned main
-# red). scripts/ci/guard-inputs.tsv maps each such guard test file to its input
+# red). scripts/ci/guard-inputs.tsv plus the one-row fragments in
+# scripts/ci/guard-inputs.d/ map each such guard test file to its input
 # globs; this runs the Test funcs of every file with a glob matching a path in
 # CHANGED_LIST (one path per line). An empty list runs every mapped file.
 # scripts/ci/guardinputs/guardinputs_test.go keeps the map complete against the
