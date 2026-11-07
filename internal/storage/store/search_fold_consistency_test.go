@@ -223,14 +223,66 @@ func TestListUsers_UsernameEmailUnicodeCase_Postgres(t *testing.T) {
 	runUserFoldCases(t, newFoldPGStore(t))
 }
 
+// newFoldPGStoreCollateC is newFoldPGStore with the searched columns switched to
+// COLLATE "C", the collation of an externally provisioned C/POSIX-locale
+// cluster, where PostgreSQL LOWER() leaves non-ASCII letters unchanged.
+func newFoldPGStoreCollateC(t *testing.T) *LocalStorage {
+	t.Helper()
+	ls := newFoldPGStore(t)
+	for _, stmt := range []string{
+		`ALTER TABLE secret_nodes ALTER COLUMN name TYPE text COLLATE "C"`,
+		`ALTER TABLE users ALTER COLUMN username TYPE text COLLATE "C"`,
+		`ALTER TABLE users ALTER COLUMN email TYPE text COLLATE "C"`,
+	} {
+		require.NoError(t, ls.db.Exec(stmt).Error, stmt)
+	}
+	return ls
+}
+
+// On a C-collated column an exact-case non-ASCII search must still find itself:
+// both sides go through the same SQL fold, so LOWER() under C is applied to the
+// term as well as the column. (Before, the term was lowered in Go and the column
+// under C, so "ÄÖ" never matched a stored "ÄÖ".)
+func TestSearchUnicodeExactCase_Postgres_CCollation(t *testing.T) {
+	ls := newFoldPGStoreCollateC(t)
+	ctx := context.Background()
+	names := []string{"ÄÖ", "ΣΑΣ", "Äb", "plain"}
+	for _, n := range names {
+		require.NoError(t, ls.db.Create(&models.SecretNode{
+			ProjectID: 1, EnvironmentID: 1, Name: n, IsSecret: true,
+		}).Error)
+		require.NoError(t, ls.db.Create(&models.User{Username: n, Email: n + "@example.com", PasswordHash: "x"}).Error)
+	}
+	cases := []struct{ query, want string }{
+		{"ÄÖ", "ÄÖ"},
+		{"ΣΑΣ", "ΣΑΣ"},
+		{"Äb", "Äb"}, // composed input finds the stored decomposed name
+		{"Äb", "Äb"},
+	}
+	for _, c := range cases {
+		q := c.query
+		got, _, err := ls.ListSecrets(ctx, &storage.SecretFilter{Search: &q, PageSize: 100})
+		require.NoError(t, err, "secret query %q", q)
+		require.Len(t, got, 1, "secret query %q", q)
+		assert.Equal(t, c.want, got[0].Name, "secret query %q", q)
+
+		users, _, err := ls.ListUsers(ctx, &storage.UserFilter{Username: &q, PageSize: 100})
+		require.NoError(t, err, "username query %q", q)
+		require.Len(t, users, 1, "username query %q", q)
+		assert.Equal(t, c.want, users[0].Username, "username query %q", q)
+	}
+}
+
 func TestFoldedContainsClause_EscapesAfterFolding(t *testing.T) {
 	cond, arg := foldedContainsClause("sqlite", "name", `A_%\B`)
 	assert.Equal(t, `keyorix_fold(name) LIKE ? ESCAPE '\'`, cond)
 	assert.Equal(t, `%a\_\%\\b%`, arg)
 
-	cond, arg = foldedContainsClause("postgres", "name", "Σ")
-	assert.Equal(t, "translate(LOWER(normalize(name, NFC)), 'ς', 'σ') LIKE ? ESCAPE '\\'", cond)
-	assert.Equal(t, "%σ%", arg)
+	// PostgreSQL folds the term in SQL with the same expression as the column, so
+	// Go leaves the case alone and only escapes.
+	cond, arg = foldedContainsClause("postgres", "name", `Σ_%\`)
+	assert.Equal(t, "translate(LOWER(normalize(name, NFC)), 'ς', 'σ') LIKE translate(LOWER(normalize(? || substr(name, 1, 0), NFC)), 'ς', 'σ') ESCAPE '\\'", cond)
+	assert.Equal(t, `%Σ\_\%\\%`, arg)
 }
 
 // The SQL function must be NULL-safe: nullable columns (users.email) pass NULL through.
