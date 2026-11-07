@@ -19,7 +19,9 @@ import (
 // TestConfigSurface_LeafSetRatchet (internal/config) keeps equal to the live yaml surface of
 // config.Config, so a new or renamed key lands here without anyone remembering to add it.
 // A leaf counts as documented when docs/CONFIGURATION.md (the reference page), the
-// self-hosting guide or the quick start names it as
+// self-hosting guide, the quick start or a docs/configuration.d/<key, dots as __>.md
+// fragment (DOCS-FRAGMENTS-1: where a PR documents a NEW key; see that directory's
+// README.md) names it as
 //
 //   - its full dotted path, anywhere in the text (prose, table, code block), or
 //   - a key path of a ```yaml block (nested the way a config file is), or
@@ -136,6 +138,7 @@ func documentedConfigLeaves(docs []string, leaves []string) map[string]bool {
 	return out
 }
 
+// configReferenceDocs returns the text of the flat reference documents.
 func configReferenceDocs(t testing.TB) []string {
 	t.Helper()
 	var docs []string
@@ -143,6 +146,60 @@ func configReferenceDocs(t testing.TB) []string {
 		docs = append(docs, readDoc(t, rel))
 	}
 	return docs
+}
+
+// configFragmentDocs returns the text of every docs/configuration.d fragment by its
+// repo-relative path.
+func configFragmentDocs(t testing.TB) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, rel := range fragmentFiles(t, configFragmentsDir) {
+		out[rel] = readDoc(t, rel)
+	}
+	return out
+}
+
+// configFragmentName is a fragment file name: the key with dots replaced by "__", so a
+// segment never holds a double underscore.
+var configFragmentName = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*(?:__[a-z][a-z0-9]*(?:_[a-z0-9]+)*)+\.md$`)
+
+// configFragmentProblems validates the docs/configuration.d fragments (path -> text)
+// against the leaf list and the flat reference documents, in sorted path order. A
+// fragment is a problem when its name is not <key with dots as __>.md, the key is not
+// a config leaf, its text is empty or does not name its key (it would document
+// nothing), or the flat documents already document the key (the same duplicate rule
+// the ledger readers apply: one place per key).
+func configFragmentProblems(frags map[string]string, leaves, flat []string) []string {
+	isLeaf := map[string]bool{}
+	for _, l := range leaves {
+		isLeaf[l] = true
+	}
+	flatDocumented := documentedConfigLeaves(flat, leaves)
+	paths := make([]string, 0, len(frags))
+	for p := range frags {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var out []string
+	for _, p := range paths {
+		base := p[strings.LastIndex(p, "/")+1:]
+		if !configFragmentName.MatchString(base) {
+			out = append(out, p+": name must be <config key with dots replaced by __>.md, e.g. storage__database__fdatasync.md")
+			continue
+		}
+		key := strings.ReplaceAll(strings.TrimSuffix(base, ".md"), "__", ".")
+		switch {
+		case !isLeaf[key]:
+			out = append(out, p+": "+key+" is not a config key (internal/config/testdata/config_surface_leaves.txt); rename the fragment or delete it")
+		case strings.TrimSpace(frags[p]) == "":
+			out = append(out, p+": empty fragment documents nothing; write what "+key+" does, its default and when to change it")
+		case !documentedConfigLeaves([]string{frags[p]}, []string{key})[key]:
+			out = append(out, p+": the text never names "+key+" (its full dotted path, a yaml block, or a table under a heading naming its parent)")
+		case flatDocumented[key]:
+			out = append(out, p+": "+key+" is already documented in the flat documents; delete the fragment or fold the text into the flat document")
+		}
+	}
+	return out
 }
 
 func TestEveryConfigKeyIsDocumented(t *testing.T) {
@@ -156,7 +213,16 @@ func TestEveryConfigKeyIsDocumented(t *testing.T) {
 			g.Fatalf("%s lists %q but config.Config has no field %q: the surface file is stale (TestConfigSurface_LeafSetRatchet should have failed)", configLeavesFile, l, bad)
 		}
 	}
-	documented := documentedConfigLeaves(configReferenceDocs(g), leaves)
+	flat := configReferenceDocs(g)
+	frags := configFragmentDocs(g)
+	for _, p := range configFragmentProblems(frags, leaves, flat) {
+		g.Errorf("%s", p)
+	}
+	docs := append([]string{}, flat...)
+	for _, p := range sortedKeys(frags) {
+		docs = append(docs, frags[p])
+	}
+	documented := documentedConfigLeaves(docs, leaves)
 
 	exempt, noReason := parseExemptions(readLeafList(g, undocumentedLeavesFile))
 	for _, k := range noReason {
@@ -175,8 +241,8 @@ func TestEveryConfigKeyIsDocumented(t *testing.T) {
 		}
 	}
 	for _, l := range missing {
-		g.Errorf("config key %q is not named in %v: document it in docs/CONFIGURATION.md (what it does, its default, when to change it). "+
-			"Do not add it to %s", l, configDocs, undocumentedLeavesTitle)
+		g.Errorf("config key %q is not named in %v or %s/*.md: document it in %s/%s.md (what it does, its default, when to change it). "+
+			"Do not add it to %s", l, configDocs, configFragmentsDir, configFragmentsDir, strings.ReplaceAll(l, ".", "__"), undocumentedLeavesTitle)
 	}
 	var stale []string
 	for l := range known {
@@ -192,6 +258,15 @@ func TestEveryConfigKeyIsDocumented(t *testing.T) {
 		g.Errorf("%s lists %s: delete the line", undocumentedLeavesTitle, s)
 	}
 	g.Logf("%d config keys, %d documented, %d known undocumented", len(leaves), len(documented), len(known))
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func TestParseExemptions_RequiresAReason(t *testing.T) {

@@ -236,7 +236,7 @@ func findConfigKeyDrift(docName, doc string) (findings []keyFinding, checkedBloc
 }
 
 func TestDocsConfigKeysExist(t *testing.T) {
-	for _, rel := range configDocs {
+	for _, rel := range configDocFiles(t) {
 		t.Run(rel, func(t *testing.T) {
 			findings, blocks, skipped, tokens := findConfigKeyDrift(rel, readDoc(t, rel))
 			t.Logf("%s: %d yaml blocks checked, %d skipped (not config excerpts or unparseable), %d table keys checked",
@@ -312,7 +312,7 @@ func undocumentedRegistryEntries(docs string, yamlPaths map[string]bool, registr
 func TestInsecureRegistryEntriesAreDocumented(t *testing.T) {
 	var corpus strings.Builder
 	yamlPaths := map[string]bool{}
-	for _, rel := range configDocs {
+	for _, rel := range configDocFiles(t) {
 		doc := readDoc(t, rel)
 		corpus.WriteString(doc)
 		corpus.WriteString("\n")
