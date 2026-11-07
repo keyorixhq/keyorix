@@ -35,7 +35,7 @@ func TestArchiveBitFlip(t *testing.T) {
 		if err != nil {
 			return Manifest{}, false
 		}
-		defer os.RemoveAll(dir)
+		defer func() { _ = os.RemoveAll(dir) }()
 		m, err := ExtractArchive(bytes.NewReader(b), dir, 0, 0)
 		if err != nil || !VerifyManifestSignature(m, key) {
 			return Manifest{}, false

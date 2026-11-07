@@ -226,7 +226,7 @@ func sealTarget(t testing.TB) tgt {
 			}
 			// The MAC string itself is part of the meaning; recover it from
 			// the raw line since Seal does not export it.
-			for _, ln := range strings.Split(string(b), "\n") {
+			for ln := range strings.SplitSeq(string(b), "\n") {
 				p := strings.Split(ln, "\x1f")
 				if len(p) == 4 {
 					sb.WriteString(p[3] + ";")
@@ -276,7 +276,7 @@ func keyTransitionTarget(t testing.TB) tgt {
 			for _, r := range recs {
 				sb.WriteString(r.Digest() + ";")
 			}
-			for _, ln := range strings.Split(string(b), "\n") {
+			for ln := range strings.SplitSeq(string(b), "\n") {
 				p := strings.Split(ln, "\x1f")
 				if len(p) == 4 {
 					sb.WriteString(p[2] + "|" + p[3] + ";")
@@ -488,11 +488,11 @@ func evidenceTarget(t testing.TB) tgt {
 	mac := hmacHex(key, []byte(filename), []byte{0}, data)
 	art := append([]byte("kek-1:"+mac+"\n"), data...)
 	split := func(b []byte) (sig string, d []byte, ok bool) {
-		i := bytes.IndexByte(b, '\n')
-		if i < 0 {
+		before, after, ok := bytes.Cut(b, []byte{'\n'})
+		if !ok {
 			return "", nil, false
 		}
-		return string(b[:i]), b[i+1:], true
+		return string(before), after, true
 	}
 	return tgt{
 		Name: "evidence-pack-signature", Artifact: art,

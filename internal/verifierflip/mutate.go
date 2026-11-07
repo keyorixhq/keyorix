@@ -57,7 +57,7 @@ func generate(t Target, o Options, rng *rand.Rand, emit func(mutation)) {
 	emit(mutation{"extend+self", append(append([]byte(nil), a...), a...), -1})
 	r64 := make([]byte, 64)
 	for i := range r64 {
-		r64[i] = byte(rng.UintN(256))
+		r64[i] = byte(rng.UintN(256) & 0xff) // UintN(256) < 256, the mask only makes the range visible to gosec G115
 	}
 	emit(mutation{"extend+rand64", append(append([]byte(nil), a...), r64...), -1})
 	emit(mutation{"prepend+0x00", append([]byte{0}, a...), -1})
@@ -85,7 +85,7 @@ func generate(t Target, o Options, rng *rand.Rand, emit func(mutation)) {
 	}
 	for si, sep := range t.Seps {
 		parts := bytes.Split(a, sep)
-		for i := 0; i < len(parts); i++ {
+		for i := range parts {
 			for j := i + 1; j < len(parts); j++ {
 				p := append([][]byte(nil), parts...)
 				p[i], p[j] = p[j], p[i]

@@ -13,7 +13,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand/v2"
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -128,7 +128,7 @@ func Run(t Target, o Options) (*Report, error) {
 	}
 	baseCanon := canon(t.Artifact)
 	rep := &Report{Target: t.Name, ByRegion: map[string]int{}}
-	rng := rand.New(rand.NewPCG(o.Seed, 0x9e3779b97f4a7c15))
+	rng := rand.New(rand.NewPCG(o.Seed, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic, seed-reproducible mutation schedule for a test harness, not security-sensitive
 
 	var rejectTimes []int64
 	var pos []PosSample
@@ -182,7 +182,7 @@ func Run(t Target, o Options) (*Report, error) {
 
 	if !o.SkipTiming && len(rejectTimes) > 0 {
 		sorted := append([]int64(nil), rejectTimes...)
-		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+		slices.Sort(sorted)
 		med := sorted[len(sorted)/2]
 		rep.MedianNS = med
 		thr := int64(float64(med) * o.TimingFactor)
@@ -253,7 +253,7 @@ func safeCanon(f func([]byte) string, b []byte) (s string, panicMsg string) {
 
 func minTime(f func([]byte) bool, b []byte, reps int) int64 {
 	best := int64(1<<62 - 1)
-	for i := 0; i < reps; i++ {
+	for range reps {
 		cp := append([]byte(nil), b...)
 		t0 := time.Now()
 		func() {
@@ -306,7 +306,7 @@ func trimmedMean(v []int64) float64 {
 	if len(v) == 0 {
 		return 0
 	}
-	sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
+	slices.Sort(v)
 	v = v[:len(v)-len(v)/10]
 	var sum float64
 	for _, x := range v {
