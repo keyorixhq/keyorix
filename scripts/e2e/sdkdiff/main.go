@@ -275,6 +275,9 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 		end := min(i+batch, len(scs))
 		chunk := scs[i:end]
 		res, err := r.RunBatch(chunk)
+		for try := 0; err != nil && try < 3; try++ { // A10: transient start errors (port taken between probe and bind)
+			res, err = r.RunBatch(chunk)
+		}
 		if err != nil {
 			rep.Harness = append(rep.Harness, "H1 batch error: "+err.Error())
 			continue
