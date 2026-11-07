@@ -224,6 +224,7 @@ type Harness struct {
 	mu   sync.Mutex
 
 	counts   map[string]int
+	hops     map[string]int
 	served   []Served
 	conns    []net.Conn
 	unmatch  []string
@@ -249,7 +250,7 @@ func New(cfg Config) *Harness {
 	if cfg.Program.Enc == 2 {
 		bombBytes() // pre-build outside any timed region
 	}
-	h := &Harness{cfg: cfg, done: make(chan struct{}), counts: map[string]int{}}
+	h := &Harness{cfg: cfg, done: make(chan struct{}), counts: map[string]int{}, hops: map[string]int{}}
 	h.before, h.fd0 = census(), fdCount()
 	h.attacker = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.attHits.Add(1)
@@ -461,6 +462,18 @@ func (h *Harness) handle(w http.ResponseWriter, r *http.Request) {
 	active := idx == p.Route%len(h.cfg.Routes) && !p.Pristine() &&
 		(p.Occ == 1 || (p.Occ == 0 && n == 1) || (p.Occ == 2 && n >= 2))
 	followed := r.URL.Query().Get("kxr") == "1"
+	if active && p.Redir > 0 && redirects[p.Redir-1] == "self-loop-307" {
+		// Bound the loop: after 12 hops answer with the (mutated) response, so a
+		// connector with no hop limit ends in a visible request-count violation
+		// (O8) instead of an endless run that also trips O4 as a side effect.
+		h.mu.Lock()
+		h.hops[rt.Name]++
+		over := h.hops[rt.Name] > 12
+		h.mu.Unlock()
+		if over {
+			followed = true
+		}
+	}
 	scheme := "http"
 	if h.cfg.TLS {
 		scheme = "https"
