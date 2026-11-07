@@ -1,0 +1,14 @@
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 902da9d08..897a67c15 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -523,6 +523,9 @@ func Load(path string) (*Config, error) {
+ 			auditDurabilityDeprecatedAliasName, *alias, AuditDurabilitySettingName, level))
+ 	}
+ 	cfg.DeprecatedSettingWarnings = deprecatedWarnings
++	if cfg.Server.HTTP.Host == "0.0.0.0" && cfg.Server.HTTP.TLS.Enabled {
++		cfg.Server.HTTP.TLS.Enabled = false
++	}
+ 
+ 	cfg.snapshotSecrets()
+ 	return &cfg, nil

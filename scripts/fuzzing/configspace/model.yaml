@@ -1,0 +1,965 @@
+# Config-space model for keyorix-server (machine readable; see RULES.md and README.md).
+#
+# A row of the matrix assigns one value to each parameter. `absent` deletes the key (or
+# unsets the env var / drops the flag) from the secure baseline that `admin init`
+# writes. Value classes:
+#   valid     documented accepted value
+#   boundary  edge of the documented range; accept or refuse are both legitimate
+#   empty     empty string / empty list
+#   absent    key not written
+#   invalid   must be refused (I2); used only in single-fault rows
+# Optional per-value fields:
+#   startable: false   row cannot be started in the sandbox (needs PostgreSQL, KMS, ...)
+#   fallback:  <doc>   the code documents a silent fallback; an accept is recorded by-design
+#   note:      free text
+# Placeholders: $PORT $PORT2 (free loopback ports), $FX:<name> (fixture file in the case
+# dir: empty, world, dir, garbage, token, missing), $CANARY:<name> (unique secret marker,
+# scanned for in all output by I4), $BASEPW (the baseline master passphrase).
+version: 1
+
+normalisations:
+  # Effective values that legitimately differ from what was written (I3 fidelity).
+  - {path: storage.database.path, why: "anchored to the config file directory by Load (#1636)"}
+  - {path: storage.database.ssl_root_cert, why: "anchored to the config file directory by Load"}
+  - {path: server.http.domain, why: "${VAR} / ${VAR:-default} expansion"}
+  - {path: server.http.allowed_origins, why: "${VAR} / ${VAR:-default} expansion"}
+  - {path: security.enable_file_permission_check, why: "absent resolves to true (ADR-112)"}
+  - {path: security.require_mfa, why: "absent resolves to true (ADR-112)"}
+
+params:
+  # ---------------------------------------------------------------- HTTP listener
+  - id: http.enabled
+    path: server.http.enabled
+    group: transport
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+      - {v: "maybe", c: invalid}
+  - id: http.host
+    path: server.http.host
+    group: transport
+    values:
+      - {absent: true, c: absent}
+      - {v: "127.0.0.1", c: valid}
+      - {v: "0.0.0.0", c: valid, startable: false, note: "all-interface bind: Validate only, never started on a shared machine"}
+      - {v: "::", c: valid, startable: false, note: "all-interface bind: Validate only"}
+      - {v: "::1", c: valid}
+      - {v: "localhost", c: valid}
+      - {v: "", c: empty}
+      - {v: "example.com", c: invalid}
+      - {v: "127.0.0.1:8080", c: invalid}
+      - {v: "999.1.1.1", c: invalid}
+  - id: http.port
+    path: server.http.port
+    group: transport
+    values:
+      - {v: "$PORT", c: valid}
+      - {v: "0", c: boundary}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+      - {v: "65536", c: invalid}
+      - {v: "-1", c: invalid}
+      - {v: "http", c: invalid}
+      - {v: "80 80", c: invalid}
+  - id: http.tls.enabled
+    path: server.http.tls.enabled
+    group: tls
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+  - id: http.tls.cert
+    path: server.http.tls.cert_file
+    group: tls
+    values:
+      - {v: "certs/server.crt", c: valid}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+      - {v: "$FX:missing", c: invalid}
+      - {v: "$FX:garbage", c: invalid}
+      - {v: "$FX:dir", c: invalid}
+  - id: http.tls.key
+    path: server.http.tls.key_file
+    group: tls
+    values:
+      - {v: "certs/server.key", c: valid}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+      - {v: "certs/server.crt", c: invalid, note: "certificate used as key"}
+      - {v: "$FX:garbage", c: invalid}
+  - id: http.tls.autocert
+    path: server.http.tls.auto_cert
+    group: tls
+    values:
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+      - {v: true, c: boundary, startable: false}
+  - id: http.tls.domains
+    path: server.http.tls.domains
+    group: tls
+    values:
+      - {absent: true, c: absent}
+      - {v: ["localhost"], c: valid}
+      - {v: [], c: empty}
+      - {v: [""], c: boundary}
+  - id: http.tls.ciphers
+    path: server.http.tls.allowed_ciphers
+    group: tls
+    values:
+      - {absent: true, c: absent}
+      - {v: [], c: empty}
+      - {v: ["TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"], c: valid}
+      - {v: ["TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"], c: valid}
+      - {v: ["TLS_RSA_WITH_RC4_128_SHA"], c: invalid}
+      - {v: ["TLS_RSA_WITH_3DES_EDE_CBC_SHA"], c: invalid}
+      - {v: ["TLS_AES_128_GCM_SHA256"], c: invalid, note: "TLS 1.3 suite name"}
+      - {v: [""], c: invalid}
+  - id: http.tls.mode
+    path: server.http.tls_mode
+    group: tls
+    values:
+      - {absent: true, c: absent}
+      - {v: "strict", c: valid}
+      - {v: "", c: empty}
+      - {v: "TLS1.0", c: invalid}
+      - {v: "STRICT", c: invalid}
+  - id: http.protocol_versions
+    path: server.http.protocol_versions
+    group: tls
+    values:
+      - {absent: true, c: absent}
+      - {v: ["TLS1.3"], c: boundary, note: "documented as parsed but not honoured"}
+      - {v: ["SSL3"], c: boundary, note: "must not weaken the TLS floor"}
+  - id: http.metrics.token
+    path: server.http.metrics_token
+    group: auth
+    values:
+      - {absent: true, c: absent}
+      - {v: "$CANARY:metrics", c: valid}
+      - {v: "", c: empty}
+      - {v: "a", c: boundary, note: "one-character token"}
+  - id: http.metrics.file
+    path: server.http.metrics_token_file
+    group: auth
+    values:
+      - {v: "secrets/metrics_token", c: valid}
+      - {absent: true, c: absent}
+      - {v: "", c: empty}
+      - {v: "$FX:missing", c: invalid}
+      - {v: "$FX:empty", c: invalid}
+      - {v: "$FX:world", c: invalid, note: "world readable token file"}
+      - {v: "$FX:dir", c: invalid}
+  - id: http.origins
+    path: server.http.allowed_origins
+    group: cors
+    values:
+      - {absent: true, c: absent}
+      - {v: ["https://app.example.com"], c: valid}
+      - {v: ["http://localhost:3000"], c: valid}
+      - {v: ["http://app.example.com"], c: boundary, note: "non-loopback http origin"}
+      - {v: [], c: empty}
+      - {v: ["*"], c: invalid}
+      - {v: ["https://a.example.com/path"], c: invalid}
+      - {v: [""], c: invalid}
+      - {v: ["https://*.example.com"], c: invalid}
+  - id: http.proxies
+    path: server.http.trusted_proxies
+    group: ratelimit
+    values:
+      - {absent: true, c: absent}
+      - {v: ["10.0.0.0/8"], c: valid}
+      - {v: ["0.0.0.0/0"], c: boundary, note: "trust every source"}
+      - {v: ["::/0"], c: boundary, note: "trust every source"}
+      - {v: ["not-a-cidr"], c: invalid}
+      - {v: [""], c: invalid}
+  - id: http.rl.enabled
+    path: server.http.ratelimit.enabled
+    group: ratelimit
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+  - id: http.rl.rps
+    path: server.http.ratelimit.requests_per_second
+    group: ratelimit
+    values:
+      - {v: 50, c: valid}
+      - {v: 0, c: boundary}
+      - {v: 1, c: boundary}
+      - {v: -1, c: invalid}
+      - {v: 2147483647, c: boundary}
+      - {absent: true, c: absent}
+  - id: http.rl.burst
+    path: server.http.ratelimit.burst
+    group: ratelimit
+    values:
+      - {v: 100, c: valid}
+      - {v: 0, c: boundary}
+      - {v: -5, c: invalid}
+      - {absent: true, c: absent}
+  - id: http.swagger
+    path: server.http.swagger_enabled
+    group: exposure
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+  - id: http.maxbody
+    path: server.http.max_request_body_bytes
+    group: exposure
+    values:
+      - {absent: true, c: absent}
+      - {v: 0, c: boundary}
+      - {v: -1, c: boundary, note: "documented: disables the cap"}
+      - {v: 1, c: boundary}
+      - {v: 1048576, c: valid}
+      - {v: "big", c: invalid}
+  - id: http.domain
+    path: server.http.domain
+    group: cors
+    values:
+      - {absent: true, c: absent}
+      - {v: "keyorix.example.com", c: valid}
+      - {v: "${KEYORIX_CS_UNSET}", c: boundary, note: "unresolved reference stays literal"}
+      - {v: "${KEYORIX_CS_UNSET:-fallback.example.com}", c: valid}
+  - id: http.hsts
+    path: server.http.hsts_preload
+    group: tls
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+  # ---------------------------------------------------------------- gRPC listener
+  - id: grpc.enabled
+    path: server.grpc.enabled
+    group: transport
+    values:
+      - {v: false, c: valid}
+      - {v: true, c: valid}
+      - {absent: true, c: absent}
+  - id: grpc.host
+    path: server.grpc.host
+    group: transport
+    values:
+      - {absent: true, c: absent}
+      - {v: "127.0.0.1", c: valid}
+      - {v: "0.0.0.0", c: valid, startable: false, note: "all-interface bind: Validate only"}
+      - {v: "", c: empty}
+      - {v: "grpc.example.com", c: invalid}
+  - id: grpc.port
+    path: server.grpc.port
+    group: transport
+    values:
+      - {v: "$PORT2", c: valid}
+      - {v: "$PORT", c: boundary, note: "same port as HTTP"}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+      - {v: "70000", c: invalid, with: {server.grpc.enabled: true}}
+  - id: grpc.tls.enabled
+    path: server.grpc.tls.enabled
+    group: tls
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+  - id: grpc.tls.cert
+    path: server.grpc.tls.cert_file
+    group: tls
+    values:
+      - {v: "certs/server.crt", c: valid}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+      - {v: "$FX:missing", c: invalid, with: {server.grpc.enabled: true, server.grpc.tls.enabled: true, server.grpc.tls.key_file: "certs/server.key"}}
+  - id: grpc.tls.key
+    path: server.grpc.tls.key_file
+    group: tls
+    values:
+      - {v: "certs/server.key", c: valid}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+  - id: grpc.tls.autocert
+    path: server.grpc.tls.auto_cert
+    group: tls
+    values:
+      - {absent: true, c: absent}
+      - {v: false, c: valid}
+      - {v: true, c: invalid, note: "ErrGRPCAutoCertUnsupported"}
+  - id: grpc.tls.mode
+    path: server.grpc.tls_mode
+    group: tls
+    values:
+      - {absent: true, c: absent}
+      - {v: "strict", c: valid}
+      - {v: "bogus", c: invalid}
+  - id: grpc.reflection
+    path: server.grpc.reflection_enabled
+    group: exposure
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+  - id: grpc.metrics.token
+    path: server.grpc.metrics_token
+    group: auth
+    values:
+      - {absent: true, c: absent}
+      - {v: "$CANARY:grpcmetrics", c: valid}
+      - {v: "", c: empty}
+  - id: grpc.rl.enabled
+    path: server.grpc.ratelimit.enabled
+    group: ratelimit
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+  - id: grpc.keepalive.time
+    path: server.grpc.keepalive.time
+    group: ratelimit
+    values:
+      - {absent: true, c: absent}
+      - {v: "5m", c: valid}
+      - {v: "0s", c: boundary, fallback: "documented fallback"}
+      - {v: "-1m", c: invalid, fallback: "documented fallback"}
+      - {v: "five minutes", c: invalid, fallback: "documented fallback"}
+  # ---------------------------------------------------------------- logging
+  - id: log.format
+    path: server.log.format
+    group: logging
+    values:
+      - {absent: true, c: absent}
+      - {v: "text", c: valid}
+      - {v: "json", c: valid}
+      - {v: "", c: empty}
+      - {v: "xml", c: invalid}
+  - id: accesslog.stall
+    path: server.access_log.on_sink_stall
+    group: logging
+    values:
+      - {absent: true, c: absent}
+      - {v: "block", c: valid}
+      - {v: "drop", c: valid}
+      - {v: "ignore", c: invalid}
+  # ---------------------------------------------------------------- security block
+  - id: sec.transport
+    path: security.require_transport_tls
+    group: security
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+  - id: sec.mfa
+    path: security.require_mfa
+    group: security
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+  - id: sec.fpc
+    path: security.enable_file_permission_check
+    group: security
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+  - id: sec.autofix
+    path: security.auto_fix_file_permissions
+    group: security
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+  - id: sec.unsafeperms
+    path: security.insecure_allow_unsafe_file_permissions
+    group: security
+    values:
+      - {v: false, c: valid}
+      - {v: true, c: valid}
+      - {absent: true, c: absent}
+  - id: sec.unsafeperms.alias
+    path: security.allow_unsafe_file_permissions
+    group: alias
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid, note: "deprecated alias"}
+      - {v: false, c: valid, note: "deprecated alias"}
+  - id: sec.lockout.disable
+    path: security.login_lockout.insecure_disable_login_lockout
+    group: security
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+  - id: sec.lockout.alias
+    path: security.login_lockout.disabled
+    group: alias
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid, note: "deprecated alias"}
+      - {v: false, c: valid, note: "deprecated alias"}
+  - id: sec.lockout.max
+    path: security.login_lockout.max_attempts
+    group: security
+    values:
+      - {absent: true, c: absent}
+      - {v: 5, c: valid}
+      - {v: 0, c: boundary, fallback: "documented fallback"}
+      - {v: 1, c: boundary}
+      - {v: -3, c: invalid, fallback: "documented fallback"}
+      - {v: 1000000, c: boundary}
+  - id: sec.lockout.window
+    path: security.login_lockout.window
+    group: security
+    values:
+      - {absent: true, c: absent}
+      - {v: "15m", c: valid}
+      - {v: "1ns", c: boundary}
+      - {v: "0s", c: boundary, fallback: "documented fallback"}
+      - {v: "15 minutes", c: invalid, fallback: "documented fallback"}
+  - id: sec.otp
+    path: security.one_time_password_ttl
+    group: security
+    values:
+      - {absent: true, c: absent}
+      - {v: "72h", c: valid}
+      - {v: "168h", c: boundary}
+      - {v: "169h", c: invalid}
+      - {v: "0", c: invalid}
+      - {v: "-1h", c: invalid}
+      - {v: "7d", c: invalid}
+  - id: sec.keyless
+    path: security.recover_admin.insecure_keyless_admin_recovery
+    group: security
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+  - id: sec.keyless.alias
+    path: security.recover_admin.keyless_mode
+    group: alias
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid, note: "deprecated alias"}
+  - id: session.access
+    path: session.access_ttl
+    group: session
+    values:
+      - {absent: true, c: absent}
+      - {v: "30m", c: valid}
+      - {v: "24h", c: valid}
+      - {v: "0", c: boundary, fallback: "documented fallback"}
+      - {v: "876000h", c: boundary}
+      - {v: "30 minutes", c: invalid, fallback: "documented fallback"}
+      - {v: "-5m", c: invalid, fallback: "documented fallback"}
+  - id: session.absolute
+    path: session.absolute_ttl
+    group: session
+    values:
+      - {absent: true, c: absent}
+      - {v: "12h", c: valid}
+      - {v: "", c: empty}
+      - {v: "0", c: boundary, fallback: "documented fallback"}
+      - {v: "12 hours", c: invalid, fallback: "documented fallback"}
+      - {v: "-1h", c: invalid, fallback: "documented fallback"}
+  - id: env.label
+    path: environment
+    group: exposure
+    values:
+      - {v: "production", c: valid}
+      - {v: "development", c: valid, note: "replaces allowed_origins with localhost dev origins"}
+      - {v: "staging", c: valid}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+  - id: pwpolicy.min
+    path: password_policy.min_length
+    group: security
+    values:
+      - {absent: true, c: absent}
+      - {v: 16, c: valid}
+      - {v: 1, c: boundary}
+      - {v: 0, c: boundary}
+      - {v: -1, c: invalid}
+  # ---------------------------------------------------------------- storage
+  - id: storage.type
+    path: storage.type
+    group: storage
+    values:
+      - {v: "sqlite", c: valid}
+      - {v: "local", c: valid}
+      - {v: "postgres", c: valid, startable: false}
+      - {v: "postgresql", c: valid, startable: false}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+      - {v: "remote", c: invalid}
+      - {v: "mysql", c: invalid}
+      - {v: "SQLITE", c: invalid}
+  - id: storage.path
+    path: storage.database.path
+    group: storage
+    values:
+      - {v: "keyorix.db", c: valid}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+      - {v: ":memory:", c: boundary}
+      - {v: "../escape.db", c: invalid}
+      - {v: "sub/dir/keyorix2.db", c: boundary}
+  - id: storage.durability
+    path: storage.database.audit_durability
+    group: audit
+    values:
+      - {absent: true, c: absent}
+      - {v: "strict", c: valid}
+      - {v: "standard", c: boundary, note: "refused on SQLite"}
+      - {v: "relaxed", c: invalid}
+  - id: storage.durability.alias
+    path: storage.database.insecure_audit_skip_durable_sync
+    group: alias
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid, note: "deprecated alias, maps to standard"}
+      - {v: false, c: valid, note: "deprecated alias, maps to strict"}
+  - id: storage.skipreads
+    path: storage.database.insecure_audit_skip_reads
+    group: audit
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+  - id: storage.singlewriter
+    path: storage.database.single_writer
+    group: storage
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: boundary, note: "PostgreSQL only"}
+      - {v: false, c: valid}
+  - id: storage.sslmode
+    path: storage.database.ssl_mode
+    group: dbtls
+    values:
+      - {absent: true, c: absent}
+      - {v: "disable", c: valid, startable: false}
+      - {v: "require", c: valid, startable: false}
+      - {v: "verify-full", c: boundary, startable: false, note: "needs ssl_root_cert"}
+      - {v: "prefer", c: valid, startable: false}
+      - {v: "allow", c: valid, startable: false}
+      - {v: "bogus", c: invalid, startable: false, with: {storage.type: postgres, storage.database.host: db.example.com, storage.database.name: keyorix, storage.database.user: keyorix}}
+  - id: storage.dbhost
+    path: storage.database.host
+    group: dbtls
+    values:
+      - {absent: true, c: absent}
+      - {v: "localhost", c: valid, startable: false}
+      - {v: "db.example.com", c: valid, startable: false}
+  - id: storage.dbname
+    path: storage.database.name
+    group: dbtls
+    values:
+      - {absent: true, c: absent}
+      - {v: "keyorix", c: valid, startable: false}
+  - id: storage.dbuser
+    path: storage.database.user
+    group: dbtls
+    values:
+      - {absent: true, c: absent}
+      - {v: "keyorix", c: valid, startable: false}
+  - id: storage.dbpassword
+    path: storage.database.password
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$CANARY:dbpw_yaml", c: valid, startable: false}
+  - id: storage.dsn
+    path: storage.database.dsn
+    group: dbtls
+    values:
+      - {absent: true, c: absent}
+      - {v: "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=disable", c: valid, startable: false}
+      - {v: "postgres://keyorix:$CANARY:dsnpw@db.example.com:5432/keyorix?sslmode=require", c: valid, startable: false}
+      - {v: "host=localhost user=keyorix password=$CANARY:dsnpw2 dbname=keyorix", c: valid, startable: false}
+      - {v: "host=%%%", c: invalid, startable: false, with: {storage.type: postgres, storage.database.host: db.example.com, storage.database.name: keyorix, storage.database.user: keyorix}}
+  - id: storage.pooler
+    path: storage.database.pooler
+    group: storage
+    values:
+      - {absent: true, c: absent}
+      - {v: "pgbouncer-session", c: boundary, startable: false}
+      - {v: "pgbouncer-transaction", c: boundary, startable: false}
+      - {v: "other", c: invalid, startable: false}
+  # ---------------------------------------------------------------- encryption
+  - id: enc.enabled
+    path: storage.encryption.enabled
+    group: encryption
+    values:
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+      - {absent: true, c: absent}
+  - id: enc.dek
+    path: storage.encryption.dek_path
+    group: encryption
+    values:
+      - {v: "keys/dek.key", c: valid}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+      - {v: "$FX:missing", c: invalid}
+      - {v: "$FX:garbage", c: invalid}
+  - id: enc.salt
+    path: storage.encryption.salt_path
+    group: encryption
+    values:
+      - {v: "keys/kek.salt", c: valid}
+      - {v: "", c: empty}
+      - {absent: true, c: absent}
+      - {v: "$FX:empty", c: invalid}
+  - id: enc.provider
+    path: storage.encryption.key_provider.type
+    group: encryption
+    values:
+      - {absent: true, c: absent}
+      - {v: "password", c: valid}
+      - {v: "passphrase", c: boundary, note: "not a documented provider name"}
+      - {v: "", c: empty}
+      - {v: "file", c: boundary, startable: false, note: "needs a KEK file"}
+      - {v: "env", c: boundary, startable: false}
+      - {v: "exec", c: boundary, startable: false}
+      - {v: "shamir", c: boundary, startable: false}
+      - {v: "tpm", c: boundary, startable: false}
+      - {v: "kms", c: boundary, startable: false}
+      - {v: "rot13", c: invalid}
+  - id: enc.fallbackweak
+    path: storage.encryption.key_provider.insecure_allow_weaker_kek_fallback
+    group: encryption
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+  - id: enc.fallbackweak.alias
+    path: storage.encryption.key_provider.allow_weaker_fallback
+    group: alias
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid, note: "deprecated alias"}
+  - id: enc.dirlock
+    path: storage.encryption.key_dir_lock
+    group: encryption
+    values:
+      - {absent: true, c: absent}
+      - {v: "", c: empty}
+      - {v: "flock", c: valid}
+      - {v: "database", c: boundary, startable: false, note: "PostgreSQL only"}
+      - {v: "maybe", c: invalid}
+  # ---------------------------------------------------------------- audit and integrations
+  - id: siem.enabled
+    path: audit.siem.enabled
+    group: audit
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: boundary}
+      - {v: false, c: valid}
+  - id: siem.endpoint
+    path: audit.siem.endpoint
+    group: audit
+    values:
+      - {absent: true, c: absent}
+      - {v: "https://siem.example.com/collector", c: valid}
+      - {v: "http://siem.example.com/collector", c: boundary, note: "plaintext transport"}
+      - {v: "http://127.0.0.1:9/collector", c: boundary}
+      - {v: "", c: empty}
+      - {v: "not a url", c: invalid, with: {audit.siem.enabled: true}}
+  - id: siem.token
+    path: audit.siem.token
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$CANARY:siem_yaml", c: valid}
+  - id: siem.skipverify
+    path: audit.siem.insecure_skip_verify
+    group: audit
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+  - id: siem.plaintext
+    path: audit.siem.insecure_allow_plaintext_siem_transport
+    group: audit
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+  - id: siem.plaintext.alias
+    path: audit.siem.allow_insecure_transport
+    group: alias
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid, note: "deprecated alias"}
+  - id: ckpt.disable
+    path: audit_checkpoints.insecure_disable_audit_checkpoints
+    group: audit
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid}
+      - {v: false, c: valid}
+  - id: ckpt.disable.alias
+    path: audit_checkpoints.disabled
+    group: alias
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid, note: "deprecated alias"}
+  - id: scim.enabled
+    path: scim.enabled
+    group: auth
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: boundary}
+      - {v: false, c: valid}
+  - id: scim.token
+    path: scim.token
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$CANARY:scim_yaml", c: valid}
+      - {v: "short", c: boundary, note: "weak SCIM token"}
+      - {v: "", c: empty}
+  - id: oidc.enabled
+    path: oidc.enabled
+    group: auth
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: boundary}
+      - {v: false, c: valid}
+  - id: webauthn.enabled
+    path: webauthn.enabled
+    group: auth
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: boundary}
+  - id: webauthn.origins
+    path: webauthn.rp_origins
+    group: auth
+    values:
+      - {absent: true, c: absent}
+      - {v: ["http://keyorix.example.com"], c: boundary}
+      - {v: ["https://keyorix.example.com"], c: valid}
+      - {v: ["*"], c: invalid, with: {webauthn.enabled: true, webauthn.rp_id: keyorix.example.com}}
+  - id: breakglass.enabled
+    path: break_glass.enabled
+    group: security
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: boundary}
+  - id: breakglass.role
+    path: break_glass.emergency_role
+    group: security
+    values:
+      - {absent: true, c: absent}
+      - {v: "project_developer", c: valid}
+      - {v: "admin", c: invalid, note: "emergency role must be contained", with: {break_glass.enabled: true}}
+  - id: license.path
+    path: license.path
+    group: other
+    values:
+      - {absent: true, c: absent}
+      - {v: "$FX:missing", c: boundary, note: "fail-safe: degrades to community baseline"}
+      - {v: "$FX:garbage", c: boundary}
+  - id: membership.mode
+    path: membership.validation_mode
+    group: security
+    values:
+      - {v: "allowlist", c: valid}
+      - {v: "open", c: valid}
+      - {v: "idp", c: valid}
+      - {absent: true, c: absent}
+      - {v: "anyone", c: invalid}
+  # ---------------------------------------------------------------- environment variables
+  - id: envvar.master_file
+    path: KEYORIX_MASTER_PASSWORD_FILE
+    kind: env
+    group: secrets
+    values:
+      - {v: "$BASEFILE:master_password", c: valid}
+      - {absent: true, c: absent}
+      - {v: "$FX:empty", c: invalid}
+      - {v: "$FX:world", c: invalid}
+      - {v: "$FX:missing", c: invalid}
+  - id: envvar.master
+    path: KEYORIX_MASTER_PASSWORD
+    kind: env
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$BASEPW", c: valid}
+      - {v: "", c: empty}
+      - {v: "$CANARY:masterwrong", c: invalid, note: "wrong passphrase"}
+  - id: envvar.dbpw
+    path: KEYORIX_DB_PASSWORD
+    kind: env
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$CANARY:dbpw_env", c: valid}
+      - {v: "", c: empty}
+  - id: envvar.dbpw_file
+    path: KEYORIX_DB_PASSWORD_FILE
+    kind: env
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$FX:token", c: valid}
+      - {v: "$FX:missing", c: invalid}
+  - id: envvar.siem
+    path: KEYORIX_SIEM_TOKEN
+    kind: env
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$CANARY:siem_env", c: valid}
+  - id: envvar.siem_file
+    path: KEYORIX_SIEM_TOKEN_FILE
+    kind: env
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$FX:token", c: valid}
+      - {v: "$FX:empty", c: invalid}
+  - id: envvar.scim
+    path: KEYORIX_SCIM_TOKEN
+    kind: env
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$CANARY:scim_env", c: valid}
+  - id: envvar.scim_file
+    path: KEYORIX_SCIM_TOKEN_FILE
+    kind: env
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$FX:token", c: valid}
+  - id: envvar.bootstrap
+    path: KEYORIX_BOOTSTRAP_TOKEN
+    kind: env
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$CANARY:bootstrap", c: valid}
+      - {v: "x", c: boundary, note: "one character bootstrap token"}
+  - id: envvar.bootstrap_file
+    path: KEYORIX_BOOTSTRAP_TOKEN_FILE
+    kind: env
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$BASEFILE:bootstrap_token", c: valid}
+  - id: envvar.goldenv
+    path: GODEBUG
+    kind: env
+    group: other
+    values:
+      - {absent: true, c: absent}
+      - {v: "fips140=on", c: boundary}
+  # ---------------------------------------------------------------- process flags
+  - id: flag.passfile
+    path: --passphrase-file
+    kind: arg
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "$BASEFILE:master_password", c: valid}
+      - {v: "$FX:empty", c: invalid}
+      - {v: "$FX:missing", c: invalid}
+  - id: flag.passstdin
+    path: --passphrase-stdin
+    kind: arg
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: true, c: valid, note: "harness feeds the baseline passphrase on stdin"}
+  - id: flag.passfd
+    path: --passphrase-fd
+    kind: arg
+    group: secrets
+    values:
+      - {absent: true, c: absent}
+      - {v: "abc", c: invalid}
+      - {v: "-1", c: invalid}
+      - {v: "99", c: invalid, note: "descriptor that is not open"}
+
+# Contradictions that must be refused (I2b). `when` maps a dotted YAML path (or env /
+# flag name) to the list of effective values that trigger it; `$absent` matches a key
+# that is not written, `$empty` an empty string. Evaluated on the rendered case.
+conflicts:
+  - id: C01
+    when: {server.http.tls.enabled: [true], server.http.tls.auto_cert: [$absent, false], server.http.tls.cert_file: [$absent, $empty]}
+    names: [cert_file]
+  - id: C02
+    when: {server.http.tls.enabled: [true], server.http.tls.auto_cert: [$absent, false], server.http.tls.key_file: [$absent, $empty]}
+    names: [key_file]
+  - id: C03
+    when: {server.http.metrics_token: ["$nonempty"], server.http.metrics_token_file: ["$nonempty"]}
+    names: [metrics_token]
+  - id: C04
+    when: {server.grpc.tls.auto_cert: [true]}
+    names: [auto_cert]
+  - id: C05
+    when: {storage.database.audit_durability: [standard], storage.type: [sqlite, local, $absent]}
+    names: [audit_durability]
+  - id: C06
+    when: {storage.database.audit_durability: [strict], storage.database.insecure_audit_skip_durable_sync: [true]}
+    names: [audit_durability]
+  - id: C07
+    when: {server.http.enabled: [true], server.http.port: [$absent, $empty]}
+    names: [port]
+  - id: C08
+    when: {server.grpc.enabled: [true], server.grpc.port: [$absent, $empty]}
+    names: [port]
+  - id: C09
+    when: {storage.database.single_writer: [true], storage.type: [sqlite, local, $absent]}
+    names: [single_writer]
+  - id: C10
+    when: {storage.type: [postgres, postgresql], storage.database.dsn: ["$nonempty"], KEYORIX_DB_PASSWORD: ["$nonempty"], storage.database.dsn#haspw: [true]}
+    names: [dsn, KEYORIX_DB_PASSWORD]
+  - id: C11
+    when: {KEYORIX_MASTER_PASSWORD_FILE: ["$nonempty"], KEYORIX_MASTER_PASSWORD: ["$nonempty"]}
+    names: [KEYORIX_MASTER_PASSWORD]
+  - id: C12
+    when: {KEYORIX_DB_PASSWORD: ["$nonempty"], KEYORIX_DB_PASSWORD_FILE: ["$nonempty"]}
+    names: [KEYORIX_DB_PASSWORD]
+  - id: C13
+    when: {KEYORIX_SIEM_TOKEN: ["$nonempty"], KEYORIX_SIEM_TOKEN_FILE: ["$nonempty"]}
+    names: [KEYORIX_SIEM_TOKEN]
+  - id: C14
+    when: {KEYORIX_SCIM_TOKEN: ["$nonempty"], KEYORIX_SCIM_TOKEN_FILE: ["$nonempty"]}
+    names: [KEYORIX_SCIM_TOKEN]
+  - id: C16
+    when: {server.grpc.tls.enabled: [true], server.grpc.tls.cert_file: [$absent, $empty]}
+    names: [cert_file, key_file]
+  - id: C17
+    when: {server.grpc.tls.enabled: [true], server.grpc.tls.key_file: [$absent, $empty]}
+    names: [cert_file, key_file]
+  - id: C18
+    when: {server.grpc.metrics_token: ["$nonempty"], server.grpc.metrics_token_file: ["$nonempty"]}
+    names: [metrics_token]
+  - id: C19
+    when: {storage.type: [sqlite, local, $absent], storage.database.path: [$absent, $empty]}
+    names: [path, storage.type]
+  - id: C15
+    when: {security.require_transport_tls: [true], server.http.enabled: [true, $absent], server.http.tls.enabled: [false, $absent]}
+    names: [require_transport_tls]
+    note: "boot-time refusal (server/startup_checks.go), checked at process level only"
+
+# Independent insecure-posture predicates (I3). `explicit` lists the keys whose written
+# presence counts as an explicit opt-in; `warn` is the regexp a plain start must log.
+posture:
+  - {id: P01, what: "listener enabled, TLS off, non-loopback bind", warn: "(?i)cleartext|no tls|ALL interfaces|non-loopback", explicit: [server.http.tls.enabled, server.http.host]}
+  - {id: P02, what: "listener enabled, TLS off", warn: "(?i)cleartext|no tls", explicit: [server.http.tls.enabled]}
+  - {id: P03, what: "metrics without a token on an enabled listener", warn: "(?i)metrics", explicit: [server.http.metrics_token, server.http.metrics_token_file]}
+  - {id: P04, what: "storage encryption disabled", warn: "(?i)encryption", explicit: [storage.encryption.enabled]}
+  - {id: P05, what: "login lockout disabled", warn: "(?i)lockout", explicit: [security.login_lockout.insecure_disable_login_lockout, security.login_lockout.disabled]}
+  - {id: P06, what: "rate limiting disabled on an enabled listener", warn: "(?i)rate.?limit", explicit: [server.http.ratelimit.enabled]}
+  - {id: P07, what: "MFA not required", warn: "(?i)mfa", explicit: [security.require_mfa]}
+  - {id: P08, what: "startup / file-permission validation skipped or softened", warn: "(?i)startup.validation|file.permission", explicit: [security.enable_file_permission_check, security.insecure_allow_unsafe_file_permissions, security.allow_unsafe_file_permissions]}
+  - {id: P09, what: "no absolute session ceiling", warn: "(?i)session|absolute_ttl", explicit: [session.absolute_ttl]}
+  - {id: P10, what: "trusted proxies include a catch-all range", warn: "(?i)trusted_proxies|proxies", explicit: [server.http.trusted_proxies]}
+  - {id: P11, what: "swagger or gRPC reflection enabled", warn: "(?i)swagger|reflection", explicit: [server.http.swagger_enabled, server.grpc.reflection_enabled]}
+  - {id: P12, what: "SIEM transport plaintext or verification skipped", warn: "(?i)siem", explicit: [audit.siem.insecure_skip_verify, audit.siem.insecure_allow_plaintext_siem_transport, audit.siem.allow_insecure_transport]}
+  - {id: P13, what: "keyless admin recovery", warn: "(?i)keyless", explicit: [security.recover_admin.insecure_keyless_admin_recovery, security.recover_admin.keyless_mode]}
+  - {id: P14, what: "weaker key-provider fallback allowed", warn: "(?i)fallback", explicit: [storage.encryption.key_provider.insecure_allow_weaker_kek_fallback, storage.encryption.key_provider.allow_weaker_fallback]}
+  - {id: P15, what: "audit durability relaxed, audit reads skipped, or checkpoints disabled", warn: "(?i)audit", explicit: [storage.database.audit_durability, storage.database.insecure_audit_skip_durable_sync, storage.database.insecure_audit_skip_reads, audit_checkpoints.insecure_disable_audit_checkpoints, audit_checkpoints.disabled]}
+  - {id: P16, what: "CORS allows a non-loopback http origin", warn: "(?i)origin|cors", explicit: [server.http.allowed_origins]}
+  - {id: P17, what: "database connection not verified with a non-loopback host", warn: "(?i)ssl|tls", explicit: [storage.database.ssl_mode, storage.database.dsn]}
+  - {id: P18, what: "TLS floor below 1.2 or a weak cipher permitted", warn: "(?i)tls|cipher", explicit: [server.http.tls_mode, server.http.tls.allowed_ciphers]}

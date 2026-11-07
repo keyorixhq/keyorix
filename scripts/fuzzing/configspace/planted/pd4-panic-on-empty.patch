@@ -1,0 +1,13 @@
+diff --git a/internal/config/config_server.go b/internal/config/config_server.go
+index 36f718e49..94481a38b 100644
+--- a/internal/config/config_server.go
++++ b/internal/config/config_server.go
+@@ -363,7 +363,7 @@ func validateBindHost(field, host string) error {
+ // Access-Control-Allow-Origin expects an Origin header to have.
+ func validateAllowedOrigins(origins []string) error {
+ 	for _, o := range origins {
+-		if o == "*" {
++		if o[0] == '*' && len(o) == 1 {
+ 			return fmt.Errorf("server.http.allowed_origins must not contain \"*\" — list explicit origins (e.g. https://app.example.com); a wildcard origin defeats the CORS allowlist")
+ 		}
+ 		u, err := url.Parse(o)

@@ -141,4 +141,25 @@ only valid if the self-test passed on the same commit.
 
 ## Amendments
 
-(none)
+2026-11-07 (made after an exploratory first run; the rules' intent is unchanged,
+only predicate precision):
+
+- P06: the predicate also covers a degenerate rate-limit setting on an enabled
+  listener (details withheld from this public file).
+- P12: only a non-loopback plaintext SIEM endpoint, or a skipped certificate
+  verification, counts as insecure. Loopback endpoints are exempt.
+- I2a: command-line and master-passphrase parameters are judged only by the
+  process stage; the in-process stage does not apply I2a to them.
+- Deferral: an "invalid value accepted" result from the in-process stage is
+  dropped when the same option is refused at boot in any case (key level).
+
+
+2026-11-07 (second amendment, before the final run):
+
+- Process stage binds loopback only. Values that bind every interface (host
+  0.0.0.0 or ::) are checked by Load and Validate only and are never started.
+  Consequence: the P02 warning check (non-loopback, no TLS) cannot be exercised
+  at process level, and the planted warning-suppression defect targets the
+  login-lockout warning instead.
+- Process stage adds, for each inline-secret option, one case with the file-based
+  twin removed, so the inline secret is actually in effect when I4 is checked.
