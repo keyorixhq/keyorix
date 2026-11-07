@@ -50,6 +50,7 @@ import (
 func docsCmdDocs(t *testing.T) []string {
 	t.Helper()
 	docs := []string{"docs/CONFIGURATION.md", "docs/SELF_HOSTING.md", "QUICK_START.md", "docs/AIRGAP_RUNBOOK.md", "INSTALL-WITH-AI.md"}
+	docs = append(docs, adminDocFragments(t, "docs/configuration.d")...)
 	root := adminDocRepoRoot(t)
 	matches, err := filepath.Glob(filepath.Join(root, "docs", "operator", "*.md"))
 	if err != nil {
@@ -61,6 +62,28 @@ func docsCmdDocs(t *testing.T) []string {
 	}
 	sort.Strings(docs)
 	return docs
+}
+
+// adminDocFragments returns the repo-relative *.md fragments of a docs/*.d directory
+// (docs/configuration.d for CONFIGURATION.md, docs/upgrading.d for UPGRADING.md), without
+// its README.md: the documents that the flat file's checks must also read (DOCS-FRAGMENTS-1).
+func adminDocFragments(t *testing.T, dir string) []string {
+	t.Helper()
+	root := adminDocRepoRoot(t)
+	matches, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(dir), "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, m := range matches {
+		if filepath.Base(m) == "README.md" {
+			continue
+		}
+		rel, _ := filepath.Rel(root, m)
+		out = append(out, filepath.ToSlash(rel))
+	}
+	sort.Strings(out)
+	return out
 }
 
 // docsCmdInvocation is one documented use of the server binary.
