@@ -269,7 +269,7 @@ func FuzzSAMLXMLTransitive(f *testing.F) {
 	f.Add([]byte(strings.Repeat("<a>", 10000)+strings.Repeat("</a>", 10000)), uint8(0)) // 10k nested elements
 	{
 		var attrs strings.Builder
-		for i := 0; i < 50000; i++ {
+		for i := range 50000 {
 			fmt.Fprintf(&attrs, ` a%d="v"`, i)
 		}
 		f.Add([]byte("<r"+attrs.String()+"/>"), uint8(0)) // 50k attributes
@@ -280,7 +280,7 @@ func FuzzSAMLXMLTransitive(f *testing.F) {
 		// once per descendant inside elementToBytes) progressively longer per level:
 		// O(depth) per call, O(n*depth) total across all n descendants.
 		var b strings.Builder
-		for i := 0; i < 5000; i++ {
+		for i := range 5000 {
 			fmt.Fprintf(&b, `<e%d xmlns:p%d="urn:ns:%d">`, i, i, i)
 		}
 		b.WriteString("<leaf/>")
