@@ -18,7 +18,8 @@
 #      device is discarded: this is the power cut).
 #   5. Recreate the mapping healthy, mount (ext4 replays its journal), then
 #      `powercut verify`: PRAGMA integrity_check, audit hash chain, and every
-#      commit acknowledged before the cut is present. Also e2fsck -fn.
+#      commit acknowledged before the cut is present. Also e2fsck -fn; a
+#      non-clean e2fsck fails the run (exit 5).
 #
 # What this does NOT model: a disk whose volatile write cache lies about
 # flushes, torn sector writes, or any filesystem other than ext4. dm-flakey
@@ -94,7 +95,12 @@ sleep "$RUN_SECS"
 kill -0 "$WPID" 2>/dev/null || { echo "writer finished before the cut; raise --n or lower --run-secs" >&2; exit 3; }
 
 CUT_NS=$(date +%s%N)
-dmsetup suspend "$NAME"
+# --nolockfs: a plain suspend freezes the filesystem first (freeze_super, then
+# sync_filesystem), which writes every dirty page and the journal to the device
+# BEFORE the drop table loads. That would make durable whatever the commit's own
+# sync call left unsynced, so the run could not tell fsync from fdatasync.
+# xfstests' dm-flakey helper uses --nolockfs for the same reason.
+dmsetup suspend --nolockfs "$NAME"
 dropping_table | dmsetup load "$NAME"
 dmsetup resume "$NAME"
 sleep 1
@@ -127,6 +133,16 @@ else
   echo "control ok: $(grep -m1 '^acknowledged_before_cut=' "$WORK/$NAME.control.txt")"
 fi
 umount "$MNT"
-e2fsck -fn "/dev/mapper/$NAME" >"$WORK/$NAME.e2fsck.txt" 2>&1 && FSCK=clean || FSCK="exit-$?"
+set +e
+e2fsck -fn "/dev/mapper/$NAME" >"$WORK/$NAME.e2fsck.txt" 2>&1
+FRC=$?
+set -e
+if [ "$FRC" = 0 ]; then
+  FSCK=clean
+else
+  FSCK="exit-$FRC"
+  echo "FSCK FAILED: e2fsck reported problems after the power cut" >&2
+  [ "$RC" = 0 ] && RC=5
+fi
 echo "e2fsck=$FSCK (log: $WORK/$NAME.e2fsck.txt)"
 exit "$RC"

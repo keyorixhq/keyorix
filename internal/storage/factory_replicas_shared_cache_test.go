@@ -16,7 +16,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
-// TestFactoryReplicas_SharedCacheLocksAndFileDoesNot guards the production shape for
+// TestFactoryReplicas_FileDBHasNoWriteErrorsUnderConcurrentReads guards the production shape for
 // a two-replica test world: two storages from the production factory on one database
 // file (WAL), a writer on A and readers on B, where no write may fail.
 //
@@ -26,7 +26,7 @@ import (
 // control was retired when modernc.org/sqlite v1.61.0 made shared-cache BeginTx wait
 // for the lock instead of failing with 262, so it no longer demonstrates anything.
 // The FactoryPath guidance stands: a shared cache is still not the production shape.
-func TestFactoryReplicas_SharedCacheLocksAndFileDoesNot(t *testing.T) {
+func TestFactoryReplicas_FileDBHasNoWriteErrorsUnderConcurrentReads(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
 

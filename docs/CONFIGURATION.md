@@ -671,15 +671,15 @@ often what a commit waits for, so a commit can be considerably faster.
   server logs one warning and keeps `fsync`. It never refuses to start over this option.
 - **PostgreSQL:** not affected. The option is never applied to the PostgreSQL backend.
 - **Durability trade-off:** upstream's reasoning is that skipping the timestamp update does not
-  weaken a commit's durability for SQLite's WAL and journal files on ext4 and xfs. This project
-  tested it with its own power-cut test (`scripts/powercut/run-dmflakey.sh`): audit commits on
-  ext4 over a dm-flakey device, writes dropped mid-run, remount, then `PRAGMA integrity_check`,
-  audit-chain verification and a check that every acknowledged commit is present. It passed 4 of
-  4 runs with the option on (ext4 on LVM over a SATA SSD): `integrity_check` ok, audit chain
-  valid, no acknowledged commit missing, `e2fsck` clean. The same test also passed once with the
-  option off. dm-flakey models dropped writes, not the behaviour of a real disk's write cache, so
-  this is strong evidence but not proof. xfs and other filesystems were not tested. The default
-  stays off.
+  weaken a commit's durability for SQLite's WAL and journal files on ext4 and xfs, and upstream
+  SQLite uses `fdatasync` on every Linux build. This project has a power-cut test of its own
+  (`scripts/powercut/run-dmflakey.sh`: audit commits on ext4 over a dm-flakey device, writes
+  dropped mid-run, remount, then `PRAGMA integrity_check`, audit-chain verification and a check
+  that every acknowledged commit is present), but no published result: earlier runs suspended the
+  device with a filesystem freeze, which flushes all dirty data before the cut and so cannot tell
+  `fsync` from `fdatasync`. The script now suspends with `--nolockfs`, and a re-run is pending.
+  dm-flakey models dropped writes, not the behaviour of a real disk's write cache, and xfs and
+  other filesystems are not covered. The default stays off.
 - **seccomp and other syscall filters:** with the option on, every commit issues `fdatasync`
   instead of `fsync`. A filter that allows `fsync` but not `fdatasync` turns every commit into a
   disk I/O error, and the failure shows up at runtime, not at start-up. Allow `fdatasync` wherever
