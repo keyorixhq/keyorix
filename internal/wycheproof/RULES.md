@@ -24,7 +24,7 @@ Declared scope per wrapper:
 
 * `internal/encryption/aead` (AES-256-GCM): key 256 bit, nonce 96 bit, tag 128 bit. Vectors with another key, IV or tag size are out of scope. Flags `SmallIv`, `LongIv`, `ZeroLengthIv` and any non-128-bit tag are tolerated by design as "rejected".
 * `pkg/trust` (Ed25519): any message, 32-byte key, 64-byte signature.
-* JWT verification path (`rules.ParseJWK` + `golang-jwt/jwt/v5` methods ES256, ES384, RS256, PS256): the algorithms Keyorix allows in `WithValidMethods`. PS256 uses SHA-256, MGF1-SHA-256, salt length 32.
+* JWT verification path (`rules.ParseJWK` + `golang-jwt/jwt/v5` methods ES256, ES384, RS256, PS256). PS256 uses SHA-256, MGF1-SHA-256, salt length 32. Keyorix's `WithValidMethods` (`internal/oidcverify/oidc.go`, `internal/core/sso.go`) allows nine methods; RS384, RS512, ES512, PS384 and PS512 are NOT covered by these suites.
 * crewjam/saml `xmlenc` (AES128GCM): key 128 bit, nonce 96 bit, tag 128 bit, empty AAD.
 * HKDF-SHA256 and PBKDF2-HMAC-SHA256: library level, with the same call shape Keyorix uses (`hkdf.Key`/`hkdf.New`, `pbkdf2.Key`, `encryption.GenerateKEK` for 32-byte output). PBKDF2 vectors above 100,000 iterations are skipped to keep the run short and are counted as skipped.
 
@@ -70,9 +70,16 @@ with no defect. They must report zero failures.
 packages and reports any `==`/`!=` where an operand is named like a MAC
 (`mac`, `hmac`, `sig`, `signature`, `tag` as the final word) and the
 other operand is not a literal, `nil` or a `len` call; and any `bytes.Equal`,
-`strings.EqualFold` or `reflect.DeepEqual` on such names. MACs must be compared
+`strings.EqualFold` or `reflect.DeepEqual` on such names. An operand is also
+recognised through a slice expression and through `string(x)`, `[]byte(x)`,
+`hex.EncodeToString(x)` or a base64 `EncodeToString(x)`. It does not see a MAC
+copied into a differently named variable, other encoders, or a comparison in a
+helper that receives the MAC under another name. MACs must be compared
 with `hmac.Equal` or `subtle.ConstantTimeCompare`. Findings are triaged by hand
-(a false positive gets an entry with a reason in the allow list).
+(a false positive gets an entry with a reason in the allow list). The check is
+a repo-wide guard and follows `docs/guard-rollout-contract.md` (report-only on
+PRs while `docs/guard-rollout.d/TestMACComparisonsAreConstantTime.tsv` exists);
+a listed package with no non-test Go file fails it.
 
 ## 5. Divergence handling
 
@@ -85,8 +92,12 @@ artifact, by-design flag.
 `FuzzWycheproofAEADOpen`, `FuzzWycheproofEd25519Verify`,
 `FuzzWycheproofJWTVerify` are differential: the Keyorix wrapper or the library
 under test must agree (accept/reject and output) with the standard library
-primitive used directly. They are seeded from the vectors when present and from
-generated values otherwise.
+primitive used directly. They are seeded from the vectors when present. They
+are always seeded with generated valid inputs as well (an AES-GCM ciphertext
+sealed with crypto/cipher, an Ed25519 signature from a fixed seed key), and the
+JWT target falls back to a fixed P-256 and RSA-2048 public key with one valid
+signature each, so without the vectors every target still checks its accept
+and reject branches. The JWT target fails at setup if it has no usable key.
 
 ## 7. Amendments after the first run
 
@@ -101,3 +112,8 @@ generated values otherwise.
   signature).
 * Section 1: a vector may be listed as a known library behaviour for one
   exact test id; it must still reproduce, and the reason is kept privately.
+* Sections 1, 4 and 6 (review of #4038): section 1 names the five allowed JWT
+  methods the suites do not cover; section 4 describes the operand forms the
+  check recognises and the ones it does not, and its rollout status; section 6
+  describes the fallback seeds, which did not exist before (the JWT target
+  checked nothing without the vectors).
