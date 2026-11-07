@@ -56,7 +56,12 @@ var auditAttributionAllowlist = map[string]string{
 		"with no ActorType, no UserID and no MachineIdentityID, so it can never emit a machine-identity-" +
 		"typed event that needs the emitAudit attribution stamp; the rows only exist to be backed up, " +
 		"restored and verified at volume.",
-	"internal/core/audit_target.go:emitAuditOn": "#2676: emitAuditOn is emitAudit against an explicit " +
+	"scripts/powercut/main.go:commitAll": "SQLITE-FDATASYNC-1: scripts/powercut is the dm-flakey power-cut and " +
+		"commit-latency tool (scripts/powercut/run-dmflakey.sh), a standalone dev/test binary that is never " +
+		"linked into the server. It writes only fixed powercut.commit events with no ActorType, no UserID " +
+		"and no MachineIdentityID, so it can never emit a machine-identity-typed event that needs the " +
+		"emitAudit attribution stamp; the rows only exist to be counted and hash-chain-verified after the cut.",
+	"internal/core/audit_target.go:emitAuditOn":"#2676: emitAuditOn is emitAudit against an explicit " +
 		"storage handle (the transaction-scoped one the access-review revoke path needs so its evidence " +
 		"row commits or rolls back with the removal it describes). It is NOT a bypass of the attribution " +
 		"stamp this guard protects: it calls the SAME prepareAuditEventForEmit(ctx, event) immediately " +
