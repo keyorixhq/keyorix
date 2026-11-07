@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // Coverage: which in-scope REST operations of the six review families are
@@ -168,7 +170,8 @@ func pct(a, b int) int {
 }
 
 func TestCoverageIsCurrent(t *testing.T) {
-	got := coverageMarkdown(t)
+	g := guardrules.Rollout(t)
+	got := coverageMarkdown(g)
 	if os.Getenv("AUTHZDIFF_REGEN_COVERAGE") != "" {
 		if err := os.WriteFile("COVERAGE.md", []byte(got), 0o644); err != nil {
 			t.Fatal(err)
@@ -177,7 +180,7 @@ func TestCoverageIsCurrent(t *testing.T) {
 	}
 	want, err := os.ReadFile("COVERAGE.md")
 	if err != nil || string(want) != got {
-		t.Fatalf("COVERAGE.md is stale; regenerate with AUTHZDIFF_REGEN_COVERAGE=1 go test ./server/authzdiff -run TestCoverageIsCurrent")
+		g.Fatalf("COVERAGE.md is stale; regenerate with AUTHZDIFF_REGEN_COVERAGE=1 go test ./server/authzdiff -run TestCoverageIsCurrent")
 	}
 }
 
