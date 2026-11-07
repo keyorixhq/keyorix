@@ -245,6 +245,11 @@ web:
   # topologySpreadConstraints for replicas > 1; same default and override rules as
   # server.topologySpreadConstraints (labelSelector: component=web).
   topologySpreadConstraints: []
+  # Web pod probes (fixed, not configurable): liveness is GET /nginx-health, a
+  # static 200 from the web nginx alone (a backend outage never restarts it);
+  # readiness is GET /health, which answers STATUS ONLY: a fixed 200 "ok" while the
+  # server Service's /health is 2xx, a fixed 503 otherwise. The backend's health
+  # body is never proxied, so it does not reach the public ingress.
   service:
     type: ClusterIP
     port: 80

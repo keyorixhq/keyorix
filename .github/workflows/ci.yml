@@ -342,6 +342,23 @@ jobs:
       harness_demo: ${{ steps.filter.outputs.harness_demo }}
       harness_e2e: ${{ steps.filter.outputs.harness_e2e }}
       harness_fuzz: ${{ steps.filter.outputs.harness_fuzz }}
+      # FAST-profile gates for two always-on checks (CI-PATHGATE-1). Each is
+      # true when the PR touches that check's own inputs (or ci.yml, or the
+      # file list is unknown: the `relevant` helper), and always true outside
+      # pull_request. The jobs read them only when full_profile is false, so
+      # merge_group, push, schedule, dispatch, ci:full and release/** PRs run
+      # exactly what they ran before. scripts/ci/guardinputs/pathgate_test.go
+      # derives each check's inputs from its scripts and fails when a gate no
+      # longer opens for one of them.
+      #   closure_selftest_relevant: the calibration half of
+      #     `check-closures.sh --self-test` (adr-numbers): the guard scripts and
+      #     the packages holding its fixture tests.
+      #   shard_layout_relevant: assert-leg-completeness's shard-partition
+      #     proof: test files of the by-name-sharded packages, the leg table and
+      #     the weights file.
+      # repo-guards is deliberately not gated: see its own comment.
+      closure_selftest_relevant: ${{ steps.filter.outputs.closure_selftest_relevant }}
+      shard_layout_relevant: ${{ steps.filter.outputs.shard_layout_relevant }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -426,6 +443,8 @@ jobs:
               echo "deps_changed=true"
               echo "helm_changed=true"
               echo "openapi_changed=true"
+              echo "closure_selftest_relevant=true"
+              echo "shard_layout_relevant=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           else
@@ -478,6 +497,18 @@ jobs:
           relevant deps_changed '(^|/)go\.(mod|sum|work|work\.sum)$'
           relevant helm_changed '^(deploy/helm/|\.github/testdata/helm)'
           relevant openapi_changed '^(server/http/handlers/openapi\.yaml$|\.vacuum\.yaml$|devtools/vacuum/)'
+          # FAST-profile gates of CI-PATHGATE-1 (see the outputs). The closure
+          # self-test's calibration cases run the guard scripts against
+          # synthetic ledgers and the fixture tests of the packages its rows
+          # name (internal/securefiles is a must-reject row: a fixture added
+          # there would flip it); their test harness (any _test.go there,
+          # internal/testutil) and the module files are its only other inputs.
+          relevant closure_selftest_relevant '^scripts/(check-closures|check-adr-conformance|closure-pkg|gen-security-closures-tsv)\.sh$|^(internal/core|internal/securefiles|cli/internal/securefiles|migrate/internal/accessplan)/[^/]*_test\.go$|^internal/testutil/|(^|/)go\.(mod|sum|work|work\.sum)$'
+          # Test names only live in _test.go files, so the shard partition of
+          # a sharded package (sharded_legs in scripts/ci-test-legs.sh, more
+          # than one shard) changes only with its test files, the leg table or
+          # the weights file.
+          relevant shard_layout_relevant '^(internal/core|internal/encryption|server|server/http|server/http/handlers|server/faultops|server/admin)/[^/]*_test\.go$|^scripts/ci-test-legs\.sh$|^scripts/ci-test-weights\.tsv$|(^|/)go\.(mod|sum|work|work\.sum)$'
 
           if [ -z "$changed" ] || echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
@@ -806,8 +837,16 @@ jobs:
       # docs-only change. docs_only is computed on the whole queue stack, so a
       # stack that also changes a script or Go file runs them. The "Verify
       # every ... claim" steps read the real ledgers under docs/ and stay on.
+      #
+      # FAST pull_request (CI-PATHGATE-1): `--self-test` first verifies the
+      # REAL ledger exactly like the plain run, then adds the calibration
+      # cases. So on a FAST PR each ledger is verified once: by the self-test
+      # when closure_selftest_relevant (its scripts or fixture packages
+      # changed), else by the plain "Verify" step. Each Verify step's `if:` is
+      # the negation of its self-test's, so one of the two always runs
+      # (pathgate_test.go checks it). FULL runs keep both steps as before.
       - name: Self-test the closure guard (must be able to go red)
-        if: needs.changes.outputs.docs_only != 'true'
+        if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.closure_selftest_relevant == 'true')
         run: ./scripts/check-closures.sh --self-test
 
       # This job never sets KEYORIX_TEST_PG_DSN, so every pg-gated row in
@@ -816,13 +855,15 @@ jobs:
       # job's `core-1` leg below runs this SAME script again, WITH the DSN, and
       # is what actually proves those rows.
       - name: Verify every security closure claim names a passing test
+        if: needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
         run: ./scripts/check-closures.sh
 
       - name: Self-test the ADR conformance guard (must be able to go red)
-        if: needs.changes.outputs.docs_only != 'true'
+        if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.closure_selftest_relevant == 'true')
         run: ./scripts/check-adr-conformance.sh --self-test
 
       - name: Verify every ADR conformance claim names a passing test
+        if: needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
         run: ./scripts/check-adr-conformance.sh
 
       - name: Self-test the review-coverage guard (must be able to go red both ways)
@@ -1801,7 +1842,12 @@ jobs:
       # (core, http, handlers, encryption, faultops), built from the same
       # weighted_run_filter the legs run. Before, only faultops and core had
       # one, each with its own hand-written filter.
+      # On a FAST pull_request it runs only when shard_layout_relevant (a test
+      # file of a sharded package, the leg table or the weights file changed:
+      # nothing else can change which shard a test lands in), CI-PATHGATE-1.
+      # The package-level steps above and below always run.
       - name: Assert every test of every sharded package runs in exactly one shard
+        if: needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.shard_layout_relevant == 'true'
         run: |
           source scripts/ci-test-legs.sh
           assert_all_shards_complete
@@ -2297,6 +2343,14 @@ jobs:
   # docs change can break a docs-scanning guard (#3616 vs
   # TestDocsShowNoLiteralSecretOnCommandLine), and docs-only PRs skip every
   # other Go job.
+  #
+  # Not path-gated on pull_request (CI-PATHGATE-1 measured it): a guard scans
+  # the whole tree, so any Go change can break one (55 of the last 60 merged
+  # PRs touched Go), and with a "no Go file changed" skip
+  # scripts/ci/guardinputs TestGuardInputsCoverSkippedPaths names 54 guard
+  # test files that read a non-Go path with no guard-inputs.tsv row (26 of
+  # them for docs-only changes), so docs-guards could not stand in for this
+  # job. Map those first.
   #
   # Merge-queue selection (CI-SELECT-1): on a SELECTED merge_group run (the
   # `select` job's mode=selected) this job also runs. The test-suite legs that

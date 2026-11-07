@@ -122,12 +122,15 @@ func OpenWithDialector(tb testing.TB, prefix string, open func(dsn string) gorm.
 // (storage.NewStorageFactory().CreateStorage): a fresh SQLite file in tb's temp
 // directory. Never DSN for that: the factory opens a pool of up to
 // DefaultSQLiteMaxOpenConns connections per storage (and a multi-replica world
-// opens several storages on one path), so on a shared-cache DSN every read lock one
-// connection holds can fail another's write with SQLITE_LOCKED (262), "database
-// table is locked", at once and past any busy timeout. A file is what production
-// runs: WAL, so readers never block the writer, and a writer waits for another
-// writer's lock up to the DSN's busy timeout. TestEveryRouteRefusesADeadCredential_G3
-// failed in the merge queue on the DSN shape (run 40142034894).
+// opens several storages on one path), and a shared cache is not the production
+// shape. Before modernc.org/sqlite v1.61.0 every read lock one connection held could
+// fail another's write with SQLITE_LOCKED (262), "database table is locked", at once
+// and past any busy timeout. Since v1.61.0 shared-cache BeginTx waits for the lock
+// instead, bounded only by the context, so the same contention now hangs a test
+// rather than failing it. A file is what production runs: WAL, so readers never block
+// the writer, and a writer waits for another writer's lock up to the DSN's busy
+// timeout. TestEveryRouteRefusesADeadCredential_G3 failed in the merge queue on the
+// DSN shape (run 40142034894).
 // TestFactoryConfigsNeverUseSharedCacheDSN keeps DSN out of DatabaseConfig.Path.
 func FactoryPath(tb testing.TB, name string) string {
 	tb.Helper()

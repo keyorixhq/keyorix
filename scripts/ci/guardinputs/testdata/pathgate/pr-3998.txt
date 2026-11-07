@@ -1,0 +1,11 @@
+changelog.d/core-fault-tails-1.md
+docs/security-closures.d/render-permission-check-fault-not-404-001.tsv
+docs/security-closures.d/render-permission-outage-no-existence-oracle-001.tsv
+internal/core/CLUSTERS.d/secretops.txt
+internal/core/INVARIANTS.d/INV-CORE-render-check-fault-reads-as-ref-not-found.md
+internal/core/secret_render.go
+internal/core/secret_render_check_fault.go
+internal/core/secret_render_check_fault_test.go
+server/http/handlers/secrets_render.go
+server/http/handlers/secrets_render_check_fault_test.go
+server/http/handlers/secrets_render_outage_oracle_test.go
