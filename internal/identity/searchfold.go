@@ -20,8 +20,8 @@ import (
 // contextual fold of a fragment can disagree with the fold of the whole
 // name ("ΑΣ" inside "ΑΣΑ"). Both sides of the comparison are folded with
 // this one function: Go-side for the search term, and in SQL for the column
-// (the keyorix_fold function on SQLite, translate(LOWER(col), ...) on
-// PostgreSQL, see internal/storage/store/search_fold.go).
+// (the keyorix_fold function on SQLite, translate(LOWER(normalize(col, NFC)),
+// ...) on PostgreSQL, see internal/storage/store/search_fold.go).
 //
 // It is not a security or uniqueness boundary: it only decides which rows a
 // list filter returns.

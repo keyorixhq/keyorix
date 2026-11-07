@@ -11,9 +11,15 @@ import (
 //
 // Both sides are folded with identity.FoldForSearch: the term here in Go, the
 // column in SQL (keyorix_fold on SQLite, registered in
-// internal/storage/sqlitedialect/fold.go; LOWER plus a final-sigma translate on
-// PostgreSQL). A bare LIKE or LOWER() cannot be used: on SQLite both fold ASCII
-// only, and on PostgreSQL LIKE is case-sensitive.
+// internal/storage/sqlitedialect/fold.go; normalize(..., NFC), LOWER and a
+// final-sigma translate on PostgreSQL). The stored column is NFC-normalized on
+// both backends, so a name stored decomposed (NFD) is found by composed input.
+// A bare LIKE or LOWER() cannot be used: on SQLite both fold ASCII only, and on
+// PostgreSQL LIKE is case-sensitive.
+//
+// PostgreSQL's normalize() and the non-ASCII translate literals need a UTF8
+// server encoding; on any other encoding the statement errors (search fails
+// closed, never a wider result).
 //
 // col must be a trusted constant column name, never user input. term is
 // LIKE-escaped (escapeLIKE) after folding, so %, _ and \ stay literal.
@@ -24,7 +30,7 @@ import (
 func foldedContainsClause(dialect, col, term string) (string, string) {
 	arg := "%" + escapeLIKE(identity.FoldForSearch(term)) + "%"
 	if dialect == "postgres" {
-		return "translate(LOWER(" + col + "), 'ς', 'σ') LIKE ? ESCAPE '\\'", arg
+		return "translate(LOWER(normalize(" + col + ", NFC)), 'ς', 'σ') LIKE ? ESCAPE '\\'", arg
 	}
 	return sqlite.FoldFunc + "(" + col + ") LIKE ? ESCAPE '\\'", arg
 }

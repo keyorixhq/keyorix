@@ -77,12 +77,17 @@ var foldSecretNames = []string{
 	"100%done",
 	"100xdone",
 	`back\slash`,
+	"A\u0308-nfd", // Ä-nfd stored decomposed (A + U+0308), not NFC
 }
 
 var foldSecretCases = []foldCase{
 	{"umlaut lower finds upper", "äö", []string{"ÄÖ-key"}},
 	{"umlaut upper finds upper", "ÄÖ", []string{"ÄÖ-key"}},
 	{"decomposed input is NFC-normalized", "a\u0308ö", []string{"ÄÖ-key"}},
+	{"composed lower finds stored decomposed", "ä-nfd", []string{"A\u0308-nfd"}},
+	{"composed upper finds stored decomposed", "Ä-NFD", []string{"A\u0308-nfd"}},
+	{"decomposed input finds stored decomposed", "a\u0308-nfd", []string{"A\u0308-nfd"}},
+	{"composed fragment finds composed and decomposed", "ä", []string{"ÄÖ-key", "A\u0308-nfd"}},
 	{"sharp s matches itself", "STRAßE", []string{"straße"}},
 	{"sharp s is not expanded to ss", "STRASSE", nil},
 	{"greek capital sigma", "ΟΔΟΣ", []string{"ΟΔΟΣ", "οδος-lower"}},
@@ -144,6 +149,7 @@ var foldUsers = []foldUser{
 	{"aXb", "aXb@example.com"},
 	{"50%off", "50%off@example.com"},
 	{"plain", "plain@example.com"},
+	{"Zoe\u0308", "Zoe\u0308@example.com"}, // Zoë stored decomposed (e + U+0308), not NFC
 }
 
 var foldUsernameCases = []foldCase{
@@ -153,6 +159,7 @@ var foldUsernameCases = []foldCase{
 	{"umlaut lower finds upper", "ünal", []string{"Ünal"}},
 	{"umlaut upper", "ÜNAL", []string{"Ünal"}},
 	{"greek final sigma", "οδος", []string{"ΟΔΟΣ"}},
+	{"composed finds stored decomposed", "ZOË", []string{"Zoe\u0308"}},
 	{"underscore is literal", "a_b", []string{"a_b"}},
 	{"lone underscore is literal", "_", []string{"a_b"}},
 	{"percent is literal", "%", []string{"50%off"}},
@@ -163,6 +170,7 @@ var foldEmailCases = []foldCase{
 	{"ascii lower finds mixed", "alpha@example.com", []string{"Alpha@Example.COM"}},
 	{"ascii upper finds lower", "PLAIN@EXAMPLE", []string{"plain@example.com"}},
 	{"umlaut lower finds upper", "ünal@", []string{"Ünal@example.com"}},
+	{"composed finds stored decomposed", "zoë@", []string{"Zoe\u0308@example.com"}},
 	{"underscore is literal", "a_b@", []string{"a_b@example.com"}},
 	{"lone underscore is literal", "_", []string{"a_b@example.com"}},
 	{"percent is literal", "%", []string{"50%off@example.com"}},
@@ -221,7 +229,7 @@ func TestFoldedContainsClause_EscapesAfterFolding(t *testing.T) {
 	assert.Equal(t, `%a\_\%\\b%`, arg)
 
 	cond, arg = foldedContainsClause("postgres", "name", "Σ")
-	assert.Equal(t, "translate(LOWER(name), 'ς', 'σ') LIKE ? ESCAPE '\\'", cond)
+	assert.Equal(t, "translate(LOWER(normalize(name, NFC)), 'ς', 'σ') LIKE ? ESCAPE '\\'", cond)
 	assert.Equal(t, "%σ%", arg)
 }
 
