@@ -95,10 +95,13 @@ go test ./internal/storage/store -run '^$' -fuzz '^FuzzStorageBackendDifferentia
 
 | Class | Crashers | Divergence | Minimal repro | Replayed | Classification | Needs |
 |---|---|---|---|---|---|---|
-| A | 86 | empty secret value: nil on SQLite, `[]byte{}` on PostgreSQL | 2 ops | 3x | backend-inherent (driver NULL / empty-blob mapping); ciphertext is never empty | harness normalisation 7 (done) |
-| B | 58 | projects whose names differ only by non-ASCII case (`ÄÖ`/`äö`, `İstanbul`/`istanbul`): SQLite accepts both, PostgreSQL rejects the second; same for rename and by-name lookup | 2 ops | 3x | Keyorix bug (project-name uniqueness differs by backend; #4019 left the index alone) | code fix + migration; gated in the harness; pinned |
-| C | 14 | list pagination without `ORDER BY`: PostgreSQL changes row order when the planner's statistics change (index order to heap order), so a page walk duplicates and skips rows | the 14 crashers did **not** replay; mechanism reproduced deterministically in 4 users + 1 `ANALYZE` between pages | 3x (forced) | Keyorix bug (non-deterministic pagination) | code fix (`ORDER BY` with id tiebreak); statistics refreshed before walks in the harness; pinned |
-| D | 3 | `ListUsers{Search}` with a non-ASCII case variant: LIKE on SQLite, ILIKE on PostgreSQL | 2 ops | 3x | Keyorix bug, low; named as a follow-up in #4019 | code fix; gated; pinned |
+| A | 86 | empty secret value: nil on SQLite, `[]byte{}` on PostgreSQL | 2 ops | 3x | backend-inherent (driver NULL / empty-blob mapping); ciphertext is never empty | harness normalisation 7 (added after this campaign, see below) |
+| B | 58 | projects whose names differ only by non-ASCII case (`ÄÖ`/`äö`, `İstanbul`/`istanbul`): SQLite accepts both, PostgreSQL rejects the second; same for rename and by-name lookup | 2 ops | 3x | storage-layer divergence, not reachable through a live writer (trace below); defence in depth | #4027; gated in the harness; pinned |
+| C | 14 | security-relevant under the pre-registration's last rule; recorded in the private findings file only | - | - | - | fixed by #4022, which merges before this harness |
+| D | 3 | `ListUsers{Search}` with a non-ASCII case variant: LIKE on SQLite, ILIKE on PostgreSQL | 2 ops | 3x | Keyorix bug, reachable, low (trace below); named as a follow-up in #4019 | #4023; gated; pinned |
+
+The B and D classifications were revised on 2026-11-07 after review, from the reachability
+trace below; campaign 1 had classified both as Keyorix bugs from the storage-layer repro alone.
 
 - F-1 (`ListSecrets` search) and F-2/F-3 (`ListUsers` Username/Email filters), found by the
   first smoke runs of this harness, are fixed by #4019. Their seeds pass against that fix and their
@@ -109,7 +112,56 @@ go test ./internal/storage/store -run '^$' -fuzz '^FuzzStorageBackendDifferentia
   identical error-class multisets and exactly one winner on both backends.
 
 What the rule yields: **not a negative result.** Four distinct divergence classes plus the three
-fixed ones. Details of B and C that go beyond what is written here are kept in the private notes.
+fixed ones. Details of B that go beyond what is written here, and everything about C, are kept in
+the private notes.
+
+### Normalisation added after campaign 1
+
+The pre-registered list (1-6 above) stays as committed. One normalisation was added after
+campaign 1, so it is declared here and not read as part of that list:
+
+7. `SecretVersion.EncryptedValue` nil versus empty is not compared; its length and bytes are
+   (class A). Every class-A crasher of campaign 1 was counted before this existed.
+
+### Reachability of B and D (traced against origin/main 91d145183)
+
+A storage-layer repro proves the divergence at that layer only. Whether a live caller can drive it:
+
+B, project names:
+- Every project-name write in the application goes through `internal/core`:
+  `CreateProject` and `CreateProjectWithEnvs` (`internal/core/catalog.go:734`, `:928`) and
+  `UpdateProject` (`:206`) call `validateProjectName` (`:138`), which allows only
+  `^[a-zA-Z0-9 _-]+$` (`identifierRegex`, `:114`). The HTTP handler
+  (`server/http/handlers/catalog.go:269`), the gRPC service
+  (`server/grpc/services/project_service.go:209`) and the migrate tool (through the HTTP API)
+  reach storage only through these. The bootstrap writes the literal `default`
+  (`internal/core/auth_bootstrap.go:440`); the MFA-only update writes back the stored name
+  (`catalog.go:305`).
+- The one by-name lookup, `GetProjectByName`, is called from `server/wire_connect.go:63` with
+  the operator's connector config value, not with request input.
+- Non-core writer: `admin restore` inserts archived rows as they are
+  (`internal/backupfmt/loader.go:193`) and may restore a SQLite archive into PostgreSQL. A
+  pair can only be in an archive if it predates G38 (#1448, 2026-08-16), when the charset check
+  was HTTP-only and gRPC or embedded CLI could store non-ASCII names. Restoring such an archive
+  into PostgreSQL fails at the unique index instead of merging the pair.
+- Classification: storage-layer divergence, not reachable through any live caller with new
+  data; defence in depth. #4027 makes the index identical and refuses an upgrade that would
+  hit such a legacy pair.
+
+D, user search:
+- `users.display_name` accepts any Unicode: core create and update check only its length
+  (`internal/core/users.go:82`), and SCIM (`internal/core/scim.go:188`, `:491`) and SSO JIT
+  (`internal/core/sso.go:745`, `:788`) copy it from the IdP. Emails from SCIM and SSO JIT come
+  from the IdP too (`scim.go:119`, `sso.go:1451`) and are not held to the ASCII pattern that
+  core's own user API applies (`users.go:34`). Usernames are ASCII-only (`users.go:59`). So
+  `display_name`, and the email of an IdP-provisioned user, are what drive D.
+- The search term reaches `ListUsers` unchanged from `GET /api/v1/users?search=`
+  (`server/http/handlers/users_list.go:55`) and `GET /api/v1/users/search?q=` (`:118`), both
+  behind `users.read` (`server/http/router.go:931`), and from gRPC `ListUsers`
+  (`server/grpc/services/user_service.go:268`, `users.read`).
+- No internal caller sets `Search`, so no authorization or notification decision depends on it.
+- Classification: Keyorix bug, reachable, low. An admin searching for a non-ASCII case variant
+  of a display name finds the user on PostgreSQL and not on SQLite. Fixed by #4023.
 
 Caveats, so the numbers are not over-read:
 - A chunk ends at its first divergence, and A and B were found within seconds of every chunk
@@ -118,14 +170,15 @@ Caveats, so the numbers are not over-read:
   the rest of the space.
 - An unguided 4-minute run early on found none of F-1..F-3; hand-directed probes did. Reachability
   of cross-operation combinations is limited by the program generator.
-- The harness now normalises A and gates B, C and D (narrowly, listed in
-  `backend_differential_v2_known_test.go`), so a later campaign can look past them. A
-  confirmation run with the gates in place is reported below.
+- The harness now normalises A and gates B and D (narrowly, listed in
+  `backend_differential_v2_known_test.go`), so a later campaign can look past them. C has no
+  gate: its fix merges first. A confirmation run with the campaign-1 gates in place is reported
+  below.
 
 ### Confirmation run with A/B/C/D handled
 
 After merging #4019 and adding the normalisation/gates, 3 chunks of 10 minutes, 2 workers
 (1.02 worker-hours, about 98k executions, 2026-11-07 10:43 to 11:16 UTC) ran **clean**: no
-divergence. That is evidence only for those 30 minutes. It does not restart the 20 worker-hour
-count; a further full campaign with the gates in place is the next step, and the gates themselves
-(A, B, C, D) are removed one by one as the causes are fixed.
+divergence. That is evidence only for those 30 minutes. It does not count toward the 20 CPU-hours
+the rule asks for; a further full campaign is the next step. The gates for B and D are removed,
+together with their pinned tests, by whichever of the fix and this harness merges second.
