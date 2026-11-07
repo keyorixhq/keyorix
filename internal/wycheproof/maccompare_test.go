@@ -6,9 +6,10 @@ import (
 	"go/token"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // macName matches identifiers that hold a MAC, signature, tag or digest.
@@ -126,8 +127,7 @@ var macCompareAllow = map[string]string{
 }
 
 func TestMACComparisonsAreConstantTime(t *testing.T) {
-	_, thisFile, _, _ := runtime.Caller(0)
-	root := filepath.Join(filepath.Dir(thisFile), "..", "..")
+	root := srcpath.RepoRoot()
 	total := 0
 	for _, d := range macCompareDirs {
 		files, _ := filepath.Glob(filepath.Join(root, d, "*.go"))
@@ -155,10 +155,9 @@ func TestMACComparisonsAreConstantTime(t *testing.T) {
 
 func allowKey(finding string) string {
 	// "dir/file.go:line:col: <text>" -> "file.go:<text>"
-	i := strings.Index(finding, ": ")
-	if i < 0 {
+	loc, text, ok := strings.Cut(finding, ": ")
+	if !ok {
 		return finding
 	}
-	loc, text := finding[:i], finding[i+2:]
 	return filepath.Base(strings.SplitN(loc, ":", 2)[0]) + ":" + text
 }

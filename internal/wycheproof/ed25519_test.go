@@ -93,10 +93,10 @@ func edMutations(r *Report, verify edVerify, id string, pub, msg, sig []byte, ot
 		}
 		r.RejectRef(id+" "+label, func() bool { return verify(p, m, s) }, func() bool { return stdlibEdVerify(p, m, s) })
 	}
-	for i := 0; i < 512; i++ {
+	for i := range 512 {
 		rej("sigbit"+itoa(i), pub, msg, flipBit(sig, i))
 	}
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		rej("pubbit"+itoa(i), flipBit(pub, i), msg, sig)
 	}
 	for i := 0; i < len(msg)*8 && i < 256; i++ {

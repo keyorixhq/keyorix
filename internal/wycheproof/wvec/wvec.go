@@ -50,7 +50,7 @@ func (h *Hex) UnmarshalJSON(b []byte) error {
 // Sums returns file name -> expected SHA-256 (hex).
 func Sums() map[string]string {
 	m := map[string]string{}
-	for _, line := range strings.Split(sumsFile, "\n") {
+	for line := range strings.SplitSeq(sumsFile, "\n") {
 		f := strings.Fields(line)
 		if len(f) == 2 && !strings.HasPrefix(f[0], "#") {
 			m[f[1]] = f[0]

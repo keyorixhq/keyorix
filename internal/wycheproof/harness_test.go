@@ -4,14 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 	"github.com/keyorixhq/keyorix/internal/wycheproof/wvec"
 )
 
@@ -203,8 +205,7 @@ var (
 )
 
 func pinsPath() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "testdata", "acceptable_pins.json")
+	return filepath.Join(srcpath.PkgDir(), "testdata", "acceptable_pins.json")
 }
 
 func loadPins() map[string]string {
@@ -244,12 +245,8 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	if os.Getenv("WYCHEPROOF_RECORD") == "1" && len(pinsNew) > 0 {
 		merged := map[string]string{}
-		for k, v := range loadPins() {
-			merged[k] = v
-		}
-		for k, v := range pinsNew {
-			merged[k] = v
-		}
+		maps.Copy(merged, loadPins())
+		maps.Copy(merged, pinsNew)
 		b, _ := json.MarshalIndent(merged, "", " ")
 		_ = os.WriteFile(pinsPath(), append(b, '\n'), 0o600)
 	}
@@ -280,12 +277,7 @@ func loadVectors(t *testing.T, name string, v any) {
 }
 
 func hasFlag(flags []string, f string) bool {
-	for _, x := range flags {
-		if x == f {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(flags, f)
 }
 
 // flipBit returns a copy of b with bit i flipped.
