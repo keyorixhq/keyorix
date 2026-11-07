@@ -40,6 +40,7 @@ type Result struct {
 	Verdict Verdict
 	Class   string
 	Detail  string
+	Resp    string // first bytes of the response body (private output only)
 }
 
 // IsCandidate reports whether the class needs a verdict.
@@ -250,7 +251,7 @@ func (w *World) Run(opt Options) []Result {
 		for _, p := range w.probesFor(op) {
 			emit(w.exec(p, op))
 		}
-		if !opt.SkipControl && !isDestructive(op) && !selfOp(op) {
+		if !opt.SkipControl && !isDestructive(op) && !selfOp(op) && !authorityChanging(op) {
 			if a := w.Actors["A"]; a != nil {
 				if p, ok := w.build(a, op, "A", "control"); ok {
 					r := w.exec(p, op)
@@ -427,6 +428,11 @@ func (w *World) exec(p Probe, op Op) Result {
 	}
 	status, body, err := w.Do(a, p.Method, p.Target, p.Body)
 	r := Result{Probe: p, Status: status}
+	if len(body) > 300 {
+		r.Resp = string(body[:300])
+	} else {
+		r.Resp = string(body)
+	}
 	if err != nil {
 		r.Class, r.Detail = ClassInconclusive, "transport: "+err.Error()
 		return r

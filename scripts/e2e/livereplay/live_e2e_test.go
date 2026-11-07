@@ -534,11 +534,20 @@ func runOnce(t *testing.T, binary, sink string) runStats {
 	enc := json.NewEncoder(bw)
 	st := runStats{Conclusive: map[string]bool{}}
 	rs := w.Run(Options{Only: os.Getenv("LIVEREPLAY_ONLY"), Log: func(r Result) {
-		_ = enc.Encode(map[string]any{"variant": r.Variant, "actor": r.Actor, "op": r.OpKey, "method": r.Method, "target": r.Target,
-			"obj": r.ObjTenant, "verdict": r.Verdict.String(), "status": r.Status, "class": r.Class, "detail": r.Detail, "desc": r.Desc})
+		rec := map[string]any{"variant": r.Variant, "actor": r.Actor, "op": r.OpKey, "method": r.Method, "target": r.Target,
+			"obj": r.ObjTenant, "verdict": r.Verdict.String(), "status": r.Status, "class": r.Class, "detail": r.Detail, "desc": r.Desc}
+		if r.IsCandidate() || r.Class == ClassServerError {
+			rec["req"], rec["resp"] = string(r.Body), r.Resp
+		}
+		_ = enc.Encode(rec)
 	}})
 	_ = bw.Flush()
 	_ = f.Close()
+	// keep the server's own log beside the results: panics and unhandled
+	// errors behind a 5xx are read from it
+	if lb, err := os.ReadFile(srv.LogPath); err == nil { // #nosec G304 -- harness temp path
+		_ = os.WriteFile(sink+".server.log", lb, 0o600) // #nosec G306 -- operator-chosen output path
+	}
 	for _, r := range rs {
 		switch {
 		case strings.HasPrefix(r.Class, "control"):
@@ -705,4 +714,117 @@ func TestLiveReplay_PlantedDefects(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLiveReplay_Isolate replays only the candidates (and 5xx probes) listed in
+// a previous results file, on LIVEREPLAY_REPEAT (default 3) fresh servers, and
+// reports for each how often it reproduces. Output (request, response snippet,
+// server log) goes to LIVEREPLAY_OUT and is private.
+//
+//	LIVEREPLAY_ISOLATE  results-runN.jsonl of an earlier run
+func TestLiveReplay_Isolate(t *testing.T) {
+	src := os.Getenv("LIVEREPLAY_ISOLATE")
+	if src == "" {
+		t.Skip("set LIVEREPLAY_ISOLATE")
+	}
+	raw, err := os.ReadFile(src) // #nosec G304,G703 -- operator-chosen input
+	if err != nil {
+		t.Fatal(err)
+	}
+	type rec struct {
+		Variant, Actor, Op, Method, Target, Obj, Class, Detail, Req, Resp string
+		Status                                                            int
+	}
+	var recs []rec
+	for _, ln := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var m rec
+		if json.Unmarshal([]byte(ln), &m) == nil && (strings.HasPrefix(m.Class, "CANDIDATE") || m.Class == ClassServerError) {
+			recs = append(recs, m)
+		}
+	}
+	reps := 3
+	if n, err := strconv.Atoi(os.Getenv("LIVEREPLAY_REPEAT")); err == nil && n > 0 {
+		reps = n
+	}
+	root := harness.RepoRoot(t)
+	bin := filepath.Join(t.TempDir(), "keyorix-server")
+	buildServer(t, root, bin, nil)
+	out := outDir(t)
+	hits := make([]int, len(recs))
+	var report strings.Builder
+	for rep := 1; rep <= reps; rep++ {
+		srv, pw := bootThrowaway(t, bin)
+		w := buildWorld(t, srv, pw)
+		w.DriftFound = w.Calibrate(3)
+		if pre := os.Getenv("LIVEREPLAY_ISOLATE_PRE"); pre != "" {
+			// run the named operations' normal probes and controls first, to show
+			// which earlier step a candidate depends on
+			if pre == "machine-roles-control" {
+				ap, _ := w.FirstID("A", "project")
+				am, _ := w.FirstID("A", "machine")
+				op, ok := w.matchOp("POST", "/api/v1/projects/"+ap+"/machine-identities/"+am+"/roles")
+				if !ok {
+					t.Fatal("machine roles operation not found")
+				}
+				p, ok := w.build(w.Actors["A"], op, "A", "control")
+				if !ok {
+					t.Fatal("cannot build the control")
+				}
+				st, b, _ := w.Do(w.Actors["A"], p.Method, p.Target, p.Body)
+				fmt.Fprintf(&report, "PRE control as A: %s %s body=%s -> %d %.200s\n", p.Method, p.Target, p.Body, st, b)
+			} else {
+				w.Run(Options{Only: pre})
+			}
+			w.DriftFound = w.Calibrate(3)
+		}
+		// LIVEREPLAY_EXTRA: lines "ACTOR METHOD PATH [JSON body]" sent as-is, for
+		// follow-up questions a triage raises (private output only).
+		for _, ln := range strings.Split(os.Getenv("LIVEREPLAY_EXTRA"), ";") {
+			f := strings.Fields(ln)
+			if len(f) < 3 {
+				continue
+			}
+			a := w.Actors[f[0]]
+			if f[0] == "root" {
+				a = w.Observer
+			}
+			var body []byte
+			if len(f) > 3 {
+				body = []byte(strings.Join(f[3:], " "))
+			}
+			st, b, _ := w.Do(a, f[1], f[2], body)
+			fmt.Fprintf(&report, "EXTRA %s %s %s %s -> %d %.240s\n", f[0], f[1], f[2], body, st, b)
+		}
+		if rep == 1 {
+			ap, _ := w.FirstID("A", "project")
+			am, _ := w.FirstID("A", "machine")
+			_, b, _ := w.Do(w.Observer, "GET", "/api/v1/projects/"+ap+"/machine-identities/"+am+"/roles", nil)
+			fmt.Fprintf(&report, "MA machine-identity roles (root view, before probes): %.600s\n\n", b)
+		}
+		for i, m := range recs {
+			path := m.Target
+			if j := strings.IndexByte(path, '?'); j >= 0 {
+				path = path[:j]
+			}
+			op, ok := w.matchOp(m.Method, path)
+			if !ok {
+				t.Fatalf("no operation for %s %s", m.Method, path)
+			}
+			r := w.exec(Probe{Variant: m.Variant, Actor: m.Actor, OpKey: m.Op, Method: m.Method, Target: m.Target, Body: []byte(m.Req), ObjTenant: m.Obj}, op)
+			same := r.Class == m.Class
+			if same {
+				hits[i]++
+			}
+			fmt.Fprintf(&report, "rep%d %-22s same=%v status=%d actor=%s %s %s\n    req=%.200s\n    resp=%.300s\n    detail=%s\n", rep, r.Class, same, r.Status, m.Actor, m.Method, m.Target, m.Req, r.Resp, r.Detail)
+		}
+		if lb, err := os.ReadFile(srv.LogPath); err == nil { // #nosec G304 -- harness temp path
+			_ = os.WriteFile(filepath.Join(out, fmt.Sprintf("isolate-rep%d.server.log", rep)), lb, 0o600) // #nosec G306 -- operator path
+		}
+	}
+	fmt.Fprintf(&report, "\nreproduction in isolation (%d fresh servers):\n", reps)
+	for i, m := range recs {
+		fmt.Fprintf(&report, "  %d/%d  %s %s %s as %s\n", hits[i], reps, m.Class, m.Method, m.Target, m.Actor)
+	}
+	_ = os.WriteFile(filepath.Join(out, "isolate-report.txt"), []byte(report.String()), 0o600) // #nosec G306 -- operator path
+	t.Log("isolation report written to " + filepath.Join(out, "isolate-report.txt"))
 }

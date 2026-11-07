@@ -112,6 +112,9 @@ func Expect(a *Actor, op Op, objTenant string) Verdict {
 	if knownPublic(op) {
 		return Unknown
 	}
+	if selfService(op) {
+		return Unknown
+	}
 	if objTenant == "" {
 		// No object ids: self-service, or an install-wide route.
 		if globalMutation(op) {
@@ -147,6 +150,34 @@ func Expect(a *Actor, op Op, objTenant string) Verdict {
 func readLikePOST(op Op) bool {
 	for _, s := range []string{"/render", "/simulate", "/search", "/preview", "/dry-run", "/validate"} {
 		if strings.HasSuffix(op.Path, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// selfService lists routes any signed-in user may call about themselves: asking
+// for access to a secret and removing oneself from a share. A project viewer
+// succeeding there is the feature, not a hole; the model has no opinion and
+// only the leak and effect oracles apply.
+func selfService(op Op) bool {
+	return (op.Method == "POST" && op.Path == "/api/v1/secret-access-requests") ||
+		(op.Method == "DELETE" && strings.HasSuffix(op.Path, "/self-share"))
+}
+
+// authorityChanging reports operations that change who may do what (role
+// bindings, memberships, group members). Their positive control is a legitimate
+// run by the project admin that really succeeds, so it moves other actors'
+// authority (the model's table) under the replay. The control is skipped for
+// them: a harness that changes the world must not keep judging with the old
+// table.
+func authorityChanging(op Op) bool {
+	if op.Method == "GET" {
+		return false
+	}
+	for _, s := range strings.Split(strings.Trim(op.Path, "/"), "/") {
+		switch s {
+		case "roles", "user-roles", "members", "memberships", "invitations", "groups":
 			return true
 		}
 	}
