@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	keyorixgrpc "github.com/keyorixhq/keyorix/server/grpc"
 )
 
@@ -28,13 +29,14 @@ import (
 // behind a route changes; regenerating on every such change is the
 // generator's job, not this key-set check's.
 func TestMatrixKeysAreCurrent(t *testing.T) {
+	g := guardrules.Rollout(t)
 	type gate struct {
 		gated bool
 		perms string
 	}
 	b, err := os.ReadFile("matrix.json")
 	if err != nil {
-		t.Fatalf("matrix.json: %v", err)
+		g.Fatalf("matrix.json: %v", err)
 	}
 	var m struct {
 		Ops []struct {
@@ -45,7 +47,7 @@ func TestMatrixKeysAreCurrent(t *testing.T) {
 		} `json:"ops"`
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("matrix.json: %v", err)
+		g.Fatalf("matrix.json: %v", err)
 	}
 	matrixREST := map[string]gate{}
 	matrixGRPC := map[string]bool{}
@@ -60,7 +62,7 @@ func TestMatrixKeysAreCurrent(t *testing.T) {
 
 	rb, err := os.ReadFile(filepath.Join("..", "..", "scripts", "e2e", "routes.json"))
 	if err != nil {
-		t.Fatalf("routes.json: %v", err)
+		g.Fatalf("routes.json: %v", err)
 	}
 	var routes []struct {
 		Method    string   `json:"method"`
@@ -69,7 +71,7 @@ func TestMatrixKeysAreCurrent(t *testing.T) {
 		GatePerms []string `json:"gate_perms"`
 	}
 	if err := json.Unmarshal(rb, &routes); err != nil {
-		t.Fatalf("routes.json: %v", err)
+		g.Fatalf("routes.json: %v", err)
 	}
 	inventoryREST := map[string]gate{}
 	for _, r := range routes {
@@ -78,7 +80,7 @@ func TestMatrixKeysAreCurrent(t *testing.T) {
 
 	srv, err := keyorixgrpc.NewServer(&config.Config{}, nil)
 	if err != nil {
-		t.Fatalf("grpc server: %v", err)
+		g.Fatalf("grpc server: %v", err)
 	}
 	defer srv.Stop()
 	registered := map[string]bool{}
@@ -91,16 +93,16 @@ func TestMatrixKeysAreCurrent(t *testing.T) {
 		}
 	}
 	if len(inventoryREST) == 0 || len(registered) == 0 {
-		t.Fatalf("empty population (routes=%d, rpcs=%d): the check is vacuous", len(inventoryREST), len(registered))
+		g.Fatalf("empty population (routes=%d, rpcs=%d): the check is vacuous", len(inventoryREST), len(registered))
 	}
 
 	var stale []string
-	for k, g := range inventoryREST {
+	for k, ig := range inventoryREST {
 		mg, ok := matrixREST[k]
 		switch {
 		case !ok:
 			stale = append(stale, "missing from matrix: "+k)
-		case mg != g:
+		case mg != ig:
 			stale = append(stale, "gate changed: "+k)
 		}
 	}
@@ -121,6 +123,6 @@ func TestMatrixKeysAreCurrent(t *testing.T) {
 	}
 	if len(stale) > 0 {
 		slices.Sort(stale)
-		t.Errorf("matrix.json is stale (%d keys); regenerate it (see this test's doc):\n  %s", len(stale), strings.Join(stale, "\n  "))
+		g.Errorf("matrix.json is stale (%d keys); regenerate it (see this test's doc):\n  %s", len(stale), strings.Join(stale, "\n  "))
 	}
 }

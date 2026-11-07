@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // TestGlobalHandlerFlagMatchesRouter: an op whose REST route is served by a
@@ -22,13 +24,14 @@ import (
 // mapping is matrix.json's. An op whose route is not in matrix.json is not
 // checked here (TestMatrixKeysAreCurrent covers matrix freshness).
 func TestGlobalHandlerFlagMatchesRouter(t *testing.T) {
-	delegating := defaultUserHandlerFuncs(t)
+	g := guardrules.Rollout(t)
+	delegating := defaultUserHandlerFuncs(g)
 	if len(delegating) == 0 {
-		t.Fatal("no handlers func references defaultUserHandler: the derivation is broken")
+		g.Fatal("no handlers func references defaultUserHandler: the derivation is broken")
 	}
 	b, err := os.ReadFile("matrix.json")
 	if err != nil {
-		t.Fatalf("matrix.json: %v", err)
+		g.Fatalf("matrix.json: %v", err)
 	}
 	var m struct {
 		Ops []struct {
@@ -38,7 +41,7 @@ func TestGlobalHandlerFlagMatchesRouter(t *testing.T) {
 		} `json:"ops"`
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("matrix.json: %v", err)
+		g.Fatalf("matrix.json: %v", err)
 	}
 	handlerOf := map[string]string{}
 	for _, op := range m.Ops {
@@ -46,24 +49,24 @@ func TestGlobalHandlerFlagMatchesRouter(t *testing.T) {
 			handlerOf[strings.TrimPrefix(op.Key, "REST ")] = op.Handler
 		}
 	}
-	_, fx := template(t)
+	_, fx := template(g)
 	checked := 0
 	for _, spec := range ops() {
 		if spec.rest == nil {
 			continue
 		}
-		route := opRouteKey(t, fx, spec)
+		route := opRouteKey(g, fx, spec)
 		fn, ok := strings.CutPrefix(handlerOf[route], "handlers.")
 		if !ok || !delegating[fn] {
 			continue
 		}
 		checked++
 		if !spec.globalHandler {
-			t.Errorf("op %s: route %s is served by handlers.%s, which delegates to defaultUserHandler; set globalHandler", spec.name, route, fn)
+			g.Errorf("op %s: route %s is served by handlers.%s, which delegates to defaultUserHandler; set globalHandler", spec.name, route, fn)
 		}
 	}
 	if checked == 0 {
-		t.Fatal("no op is served through defaultUserHandler: the check is vacuous")
+		g.Fatal("no op is served through defaultUserHandler: the check is vacuous")
 	}
 }
 

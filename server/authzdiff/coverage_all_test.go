@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // Coverage over EVERY in-scope operation in matrix.json (REST and gRPC), not
@@ -177,15 +179,16 @@ func coverageAllMarkdown(tb testing.TB) (string, []string) {
 }
 
 func TestCoverageAllIsCurrent(t *testing.T) {
-	got, missing := coverageAllMarkdown(t)
+	g := guardrules.Rollout(t)
+	got, missing := coverageAllMarkdown(g)
 	if os.Getenv("AUTHZDIFF_REGEN_COVERAGE") != "" {
 		if err := os.WriteFile("COVERAGE-ALL.md", []byte(got), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	} else if want, err := os.ReadFile("COVERAGE-ALL.md"); err != nil || string(want) != got {
-		t.Fatalf("COVERAGE-ALL.md is stale; regenerate with AUTHZDIFF_REGEN_COVERAGE=1 go test ./server/authzdiff -run TestCoverageAllIsCurrent")
+		g.Fatalf("COVERAGE-ALL.md is stale; regenerate with AUTHZDIFF_REGEN_COVERAGE=1 go test ./server/authzdiff -run TestCoverageAllIsCurrent")
 	}
 	for _, k := range missing {
-		t.Errorf("in-scope operation %s is neither covered nor given a reason in uncoveredReasons", k)
+		g.Errorf("in-scope operation %s is neither covered nor given a reason in uncoveredReasons", k)
 	}
 }

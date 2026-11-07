@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -81,22 +82,74 @@ func TestMigrateAuditChainEncoding_RefusesRowsOutsideTheWalk(t *testing.T) {
 	assert.Contains(t, err.Error(), "outside the chain")
 }
 
-// PostgreSQL's bigserial accepts an explicit id 0 (pg-gated).
-func TestVerifyAuditChainSegment_IDZeroRowNotValid_Postgres(t *testing.T) {
+// pgSegmentChain is segmentChain over an isolated PostgreSQL schema.
+func pgSegmentChain(t *testing.T, n int) (*LocalStorage, []*models.AuditEvent) {
+	t.Helper()
 	db := pgOpen(t, pgIsolatedSchemaDSN(t, pgTestDSN(t)))
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
 	ls := NewLocalStorage(db)
 	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	var rows []*models.AuditEvent
-	for i := range 4 {
+	for i := range n {
 		rows = append(rows, appendEvent(t, ls, "secret.read", "e", at.Add(time.Duration(i)*time.Second)))
 	}
+	return ls, rows
+}
+
+// dropAuditEventsPKPostgres leaves id a plain nullable column (the PostgreSQL
+// counterpart of dropAuditEventsPK).
+func dropAuditEventsPKPostgres(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Exec(`ALTER TABLE audit_events DROP CONSTRAINT audit_events_pkey`).Error)
+	require.NoError(t, db.Exec(`ALTER TABLE audit_events ALTER COLUMN id DROP NOT NULL`).Error)
+}
+
+// PostgreSQL's bigserial accepts an explicit id 0 (pg-gated); the same cases
+// as TestVerifyAuditChainSegment_RowsNoWalkReachesAreNotValid run on it.
+func TestVerifyAuditChainSegment_IDZeroRowNotValid_Postgres(t *testing.T) {
+	ls, rows := pgSegmentChain(t, 4)
 	v, err := ls.VerifyAuditChainSegment(context.Background(), storage.AuditChainSegment{AfterID: rows[2].ID, SeedHash: rows[2].EntryHash})
 	require.NoError(t, err)
 	require.True(t, v.Valid, v.Reason)
-	insertForgedAuditRow(t, db, 0)
+	insertForgedAuditRow(t, ls.db, 0)
 	assertSegmentNotValid(t, ls, rows[2])
 	_, err = ls.MigrateAuditChainEncoding(context.Background(), true, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "outside the chain")
+}
+
+func TestVerifyAuditChainSegment_RowsNoWalkReachesAreNotValid_Postgres(t *testing.T) {
+	t.Run("id 0 under a tail segment with nothing after the seed", func(t *testing.T) {
+		ls, rows := pgSegmentChain(t, 6)
+		insertForgedAuditRow(t, ls.db, 0)
+		assertSegmentNotValid(t, ls, rows[5])
+	})
+	t.Run("negative id", func(t *testing.T) {
+		ls, rows := pgSegmentChain(t, 6)
+		insertForgedAuditRow(t, ls.db, -7)
+		assertSegmentNotValid(t, ls, rows[3])
+	})
+	t.Run("NULL id", func(t *testing.T) {
+		ls, rows := pgSegmentChain(t, 6)
+		dropAuditEventsPKPostgres(t, ls.db)
+		insertForgedAuditRow(t, ls.db, nil)
+		assertSegmentNotValid(t, ls, rows[3])
+	})
+	t.Run("a second row under the seed's id", func(t *testing.T) {
+		ls, rows := pgSegmentChain(t, 6)
+		dropAuditEventsPKPostgres(t, ls.db)
+		require.NoError(t, ls.db.Exec(`INSERT INTO audit_events SELECT * FROM audit_events WHERE id = ?`, rows[3].ID).Error)
+		assertSegmentNotValid(t, ls, rows[3])
+	})
+	t.Run("an intact chain stays valid from every seed", func(t *testing.T) {
+		ls, rows := pgSegmentChain(t, 6)
+		for _, seed := range rows {
+			v, err := ls.VerifyAuditChainSegment(context.Background(), storage.AuditChainSegment{AfterID: seed.ID, SeedHash: seed.EntryHash})
+			require.NoError(t, err)
+			assert.True(t, v.Valid, "seed #%d: %s", seed.ID, v.Reason)
+		}
+		v, err := ls.VerifyAuditChainSegment(context.Background(), storage.AuditChainSegment{AfterID: rows[1].ID, SeedHash: rows[1].EntryHash, ThroughID: rows[3].ID})
+		require.NoError(t, err)
+		assert.True(t, v.Valid, v.Reason)
+	})
 }

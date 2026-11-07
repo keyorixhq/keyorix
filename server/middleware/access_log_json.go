@@ -15,8 +15,8 @@ import (
 // line (ts, level, msg, request_id, principal_type, route) plus method, uri, status,
 // bytes, duration_ms and remote_addr. The text format keeps chi's DefaultLogFormatter.
 //
-// uri is the request URI after logSafeRequestURI's redaction (setup/reset tokens and
-// secret-reference query strings never reach the log), exactly what the text format
+// uri is the request URI after logSafeRequestURI's redaction (setup/reset tokens never reach
+// the log, and query values are redacted except short plain values of allowlisted parameters), exactly what the text format
 // prints; route is the chi route pattern, which has bounded cardinality and is what
 // dashboards should group by.
 type jsonLogFormatter struct {
