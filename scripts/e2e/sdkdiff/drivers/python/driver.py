@@ -94,7 +94,10 @@ def run(f):
                 env = urllib.parse.quote(env)
             return {"ok": True, "value": c.get_secret_scoped(args[0], "alpha", env)}
         if cmd == "get_secret_in":
-            return {"ok": True, "value": c.get_secret_in(args[0], args[1], args[2])}
+            nm = args[2]
+            if PLANT == "P1b" and nm:
+                nm = urllib.parse.quote(nm)
+            return {"ok": True, "value": c.get_secret_in(args[0], args[1], nm)}
         if cmd == "get_secret_by_ref":
             return {"ok": True, "value": c.get_secret_by_ref(args[0])}
         if cmd == "list_deleted_secrets":

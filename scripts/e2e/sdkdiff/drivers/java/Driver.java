@@ -89,8 +89,11 @@ public class Driver {
                     if (PLANT.equals("P6") && env != null) env = Normalizer.normalize(env, Normalizer.Form.NFD);
                     return "{\"ok\":true,\"value\":" + js(c.getSecretScoped(a[0], "alpha", env)) + "}";
                 }
-                case "get_secret_in":
-                    return "{\"ok\":true,\"value\":" + js(c.getSecretIn(a[0], a[1], a[2])) + "}";
+                case "get_secret_in": {
+                    String nm = a[2];
+                    if (PLANT.equals("P6b") && nm != null) nm = Normalizer.normalize(nm, Normalizer.Form.NFD);
+                    return "{\"ok\":true,\"value\":" + js(c.getSecretIn(a[0], a[1], nm)) + "}";
+                }
                 case "get_secret_by_ref":
                     return "{\"ok\":true,\"value\":" + js(c.getSecretByRef(a[0])) + "}";
                 case "list_deleted_secrets": {

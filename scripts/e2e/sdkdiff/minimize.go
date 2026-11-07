@@ -229,8 +229,8 @@ func cmdMinimize(args []string) error {
 }
 
 var plantExpect = map[string]struct{ Cat, SDK string }{
-	"P1": {"W2", "python"}, "P2": {"W2", "node"}, "P3": {"E1", "go"}, "P4": {"W1", "python"},
-	"P5": {"W3", "node"}, "P6": {"W2", "java"}, "P7": {"W4", "python"},
+	"P1": {"W2", "python"}, "P1b": {"R2", "python"}, "P2": {"W2", "node"}, "P3": {"E1", "go"}, "P4": {"W1", "python"},
+	"P5": {"W3", "node"}, "P6": {"W2", "java"}, "P6b": {"R2", "java"}, "P7": {"W4", "python"},
 }
 
 func cmdValidate(args []string) error {
