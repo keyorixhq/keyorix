@@ -238,8 +238,6 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 		return findings
 	}
 	admin := w.fx.principals[pkGlobalAdmin]
-	adminP := admin
-	_ = adminP
 	for i, st := range steps {
 		stats.steps++
 		if st.Kind == skPermToggle || st.Kind == skExpire {
@@ -275,7 +273,7 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 			}
 			outs[l] = o
 		}
-		var allow, deny []string
+		var allow, deny, other []string
 		for _, l := range seqLayers {
 			if outs[l].NA != "" {
 				continue
@@ -285,6 +283,8 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 				allow = append(allow, string(l))
 			case Denied:
 				deny = append(deny, string(l))
+			default:
+				other = append(other, string(l))
 			}
 		}
 		tag := st.String()
@@ -322,16 +322,26 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 				}
 			}
 		}
+		// A leg that answered Other (5xx, untyped core error, gRPC Internal) is a
+		// finding of its own. When the model denies the step, or the other legs
+		// denied it, it must also have left the state untouched.
+		if len(other) > 0 {
+			findings = append(findings, seqFinding{i, fmt.Sprintf("O-S:other(%s;other=%s;got=%s;model=%s)", tag, strings.Join(other, "+"), consensus, modelWant)})
+		}
+		mustNotChange := consensus == Denied || (len(other) > 0 && consensus == Other && modelWant == Denied)
 		for _, l := range seqLayers {
 			lg := w.legs[l]
 			switch {
-			case consensus == Denied && authzSnapshot(lg.db) != before[l]:
+			case mustNotChange && authzSnapshot(lg.db) != before[l]:
 				findings = append(findings, seqFinding{i, fmt.Sprintf("O-E:denied-step-changed-state(%s;%s)", tag, l)})
 			case consensus == Allowed && call.effect != nil:
 				if ok, why := call.effect(lg.db); !ok {
 					findings = append(findings, seqFinding{i, fmt.Sprintf("O-E:%s(%s;%s)", why, tag, l)})
 				}
 			}
+		}
+		if len(other) > 0 {
+			return findings // the legs may have diverged; later steps would compare different worlds
 		}
 		findings = append(findings, w.probeAll(tb, specs, i, f, stats, st.Kind == skSuspend || st.Kind == skReactivate)...)
 	}
@@ -346,13 +356,74 @@ func classKind(c string) string {
 	return c
 }
 
+// classKey is the class with the direction kept and the step or probe tag
+// dropped: "O-S:step-vs-model(<tag>;got=Allowed;model=Denied)" becomes
+// "O-S:step-vs-model(got=Allowed;model=Denied)". Two findings with the same
+// kind but opposite directions (a transport allowing versus denying) have
+// different keys, so one direction's known noise never absorbs the other.
+func classKey(c string) string {
+	before, rest, ok := strings.Cut(c, "(")
+	if !ok {
+		return c
+	}
+	_, dir, _ := strings.Cut(strings.TrimSuffix(rest, ")"), ";")
+	return before + "(" + dir + ")"
+}
+
+// isOverAllow reports whether a finding class means a transport allowed what the
+// model (or another leg, or the state) says must be denied. Such a class is never
+// single-step noise: it always fails. Only core allowing alone is not an
+// over-allow, because core is not a transport and some of its operations leave
+// the check to the transport.
+func isOverAllow(c string) bool {
+	switch classKind(c) {
+	case "O-P:allowed-but-model-denies", "O-E:denied-step-changed-state":
+		return true
+	case "O-S:step-vs-model":
+		return strings.Contains(c, "got=allowed;model=denied")
+	case "O-S:layers-disagree", "O-P:layers-disagree":
+		_, rest, _ := strings.Cut(c, ";allow=")
+		allow, _, _ := strings.Cut(rest, ";")
+		return strings.Contains(allow, string(layerREST)) || strings.Contains(allow, string(layerGRPC))
+	}
+	return false
+}
+
+// pickFinding is the finding to report and shrink: the first over-allow one if
+// there is any, else the first.
+func pickFinding(fs []seqFinding) seqFinding {
+	for _, f := range fs {
+		if isOverAllow(f.Class) {
+			return f
+		}
+	}
+	return fs[0]
+}
+
+// hasKey reports whether any finding has the class key.
+func hasKey(fs []seqFinding, key string) bool {
+	return slices.ContainsFunc(fs, func(f seqFinding) bool { return classKey(f.Class) == key })
+}
+
+// isSingleStep reports whether the failing step alone, from a fresh world,
+// reproduces the same direction-bearing class. An over-allow is never single-step.
+func isSingleStep(tb testing.TB, steps []seqStep, f seqFinding) bool {
+	if isOverAllow(f.Class) {
+		return false
+	}
+	if f.Step < 0 || f.Step >= len(steps) {
+		return false
+	}
+	return hasKey(runSeq(tb, steps[f.Step:f.Step+1], nil, nil), classKey(f.Class))
+}
+
 // shrink removes steps while a finding of the same class survives.
 func shrink(tb testing.TB, steps []seqStep, f *seqFault, budget int) []seqStep {
 	fs := runSeq(tb, steps, f, nil)
 	if len(fs) == 0 {
 		return steps
 	}
-	target := classKind(fs[0].Class)
+	target := classKey(pickFinding(fs).Class)
 	cur := slices.Clone(steps)
 	for budget > 0 {
 		progressed := false
@@ -360,7 +431,7 @@ func shrink(tb testing.TB, steps []seqStep, f *seqFault, budget int) []seqStep {
 			cand := slices.Delete(slices.Clone(cur), i, i+1)
 			budget--
 			got := runSeq(tb, cand, f, nil)
-			if len(got) > 0 && classKind(got[0].Class) == target {
+			if hasKey(got, target) {
 				cur = cand
 				progressed = true
 				break

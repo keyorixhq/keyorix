@@ -29,11 +29,23 @@ func TestSeqControl(t *testing.T) {
 	if os.Getenv("AUTHZSEQ_SELFTEST") == "1" {
 		list = seqControls
 	}
+	limited := seqRateLimited.Load()
 	for i, steps := range list {
 		fs := runSeq(t, steps, nil, nil)
 		for _, f := range fs {
 			t.Errorf("control %d: step %d: %s", i, f.Step, f.Class)
 		}
+	}
+	requireNoRateLimited(t, limited)
+}
+
+// requireNoRateLimited fails when a probe hit the invalid-token limiter since
+// before was read: such a probe is recorded as n/a and checked nothing, so a
+// control or plant run that has one proves less than it claims.
+func requireNoRateLimited(t *testing.T, before int64) {
+	t.Helper()
+	if n := seqRateLimited.Load() - before; n > 0 {
+		t.Errorf("%d probe(s) hit the invalid-token rate limiter and checked nothing", n)
 	}
 }
 
@@ -72,16 +84,63 @@ func seqPlants() []seqPlant {
 			steps: []seqStep{{skSuspend, pkGlobalAdmin, pkViewer, tA, 0, 0}},
 			class: "O-P:layers-disagree",
 		},
+		{
+			fault: seqFault{name: "step-5xx", step: func(l layer, st seqStep, lg *leg, o *legOutcome) *legOutcome {
+				if l == layerREST && st.Kind == skRevoke {
+					return &legOutcome{Outcome: Other, Detail: "planted-500"}
+				}
+				return o
+			}},
+			steps: []seqStep{{skGrant, pkGlobalAdmin, pkNone, tA, 0, 0}, {skRevoke, pkGlobalAdmin, pkNone, tA, 0, 0}},
+			class: "O-S:other",
+		},
 	}
 }
 
-// TestSeqPlantsAreDetected: opt-in (AUTHZSEQ_SELFTEST=1), about 8 s.
-func TestSeqPlantsAreDetected(t *testing.T) {
-	if os.Getenv("AUTHZSEQ_SELFTEST") != "1" {
-		t.Skip("set AUTHZSEQ_SELFTEST=1")
+// TestSeqClassKey: the class key keeps the direction, and only a class where a
+// transport allows against the model, the other legs or the state is an
+// over-allow.
+func TestSeqClassKey(t *testing.T) {
+	a := "O-S:step-vs-model(role.grant admin->none;got=allowed;model=denied)"
+	b := "O-S:step-vs-model(role.grant admin->none;got=denied;model=allowed)"
+	if classKey(a) == classKey(b) {
+		t.Fatalf("opposite directions share the key %q", classKey(a))
 	}
+	if classKey(a) != "O-S:step-vs-model(got=allowed;model=denied)" {
+		t.Fatalf("unexpected key %q", classKey(a))
+	}
+	for c, want := range map[string]bool{
+		a: true, b: false,
+		"O-P:allowed-but-model-denies(x;rest)":                        true,
+		"O-P:over-denial(x;rest)":                                     false,
+		"O-E:denied-step-changed-state(x;grpc)":                       true,
+		"O-S:layers-disagree(x;allow=core;deny=rest+grpc)":            false,
+		"O-S:layers-disagree(x;allow=rest;deny=core)":                 true,
+		"O-P:layers-disagree(x;allow=core+grpc;deny=rest)":            true,
+		"O-S:other(x;other=rest;got=allowed;model=allowed)":           false,
+		"O-E:revoked-row-still-present(x;rest)":                       false,
+		"O-S:layers-disagree(x;allow=core;deny=rest) # no allow=rest": false,
+	} {
+		if got := isOverAllow(c); got != want {
+			t.Errorf("isOverAllow(%q) = %v, want %v", c, got, want)
+		}
+	}
+}
+
+// seqDefaultPlant is the plant that runs in the default `go test`, so the
+// oracles are watched failing in CI; AUTHZSEQ_SELFTEST=1 runs all of them
+// (about 8 s).
+const seqDefaultPlant = "revoke-noop"
+
+func TestSeqPlantsAreDetected(t *testing.T) {
+	all := os.Getenv("AUTHZSEQ_SELFTEST") == "1"
 	for _, pl := range seqPlants() {
 		t.Run(pl.fault.name, func(t *testing.T) {
+			if !all && pl.fault.name != seqDefaultPlant {
+				t.Skip("set AUTHZSEQ_SELFTEST=1")
+			}
+			limited := seqRateLimited.Load()
+			defer requireNoRateLimited(t, limited)
 			if clean := runSeq(t, pl.steps, nil, nil); len(clean) != 0 {
 				t.Fatalf("sequence is not clean without the plant: %v", clean)
 			}
@@ -138,6 +197,7 @@ func TestSeqSweep(t *testing.T) {
 		}
 	}
 	stats := newSeqStats()
+	limited0 := seqRateLimited.Load()
 	start := time.Now()
 	byClass := map[string]int{}
 	singleStep := 0
@@ -150,36 +210,35 @@ func TestSeqSweep(t *testing.T) {
 		if len(fs) == 0 {
 			continue
 		}
-		// Cheap first: if the failing step alone reproduces the class, it is
-		// single-step behaviour and needs no shrinking.
-		if fs[0].Step >= 0 && fs[0].Step < len(steps) {
-			if alone := runSeq(t, steps[fs[0].Step:fs[0].Step+1], nil, nil); len(alone) > 0 && classKind(alone[0].Class) == classKind(fs[0].Class) {
-				singleStep++
-				byClass["single-step:"+classKind(fs[0].Class)]++
-				continue
-			}
+		// Cheap first: if the failing step alone reproduces the class (same
+		// direction), it is single-step behaviour and needs no shrinking. An
+		// over-allow is never single-step noise.
+		if top := pickFinding(fs); isSingleStep(t, steps, top) {
+			singleStep++
+			byClass["single-step:"+classKey(top.Class)]++
+			continue
 		}
 		min := shrink(t, steps, nil, 40)
 		fs = runSeq(t, min, nil, nil)
 		if len(fs) == 0 {
 			continue
 		}
-		kind := classKind(fs[0].Class)
-		// single-step replay: the failing step alone from a fresh world
-		if len(min) > 1 && fs[0].Step >= 0 && fs[0].Step < len(min) {
-			if alone := runSeq(t, min[fs[0].Step:fs[0].Step+1], nil, nil); len(alone) > 0 && classKind(alone[0].Class) == kind {
-				singleStep++
-				byClass["single-step:"+kind]++
-				continue
-			}
-		}
-		if len(min) == 1 {
-			singleStep++
-			byClass["single-step:"+kind]++
+		top := pickFinding(fs)
+		key := classKey(top.Class)
+		if isOverAllow(top.Class) {
+			byClass["OVER-ALLOW:"+key]++
+			privateSink(key, min, top.Class)
+			t.Errorf("over-allow %s after %d steps (minimal sequence in the private file)", key, len(min))
 			continue
 		}
-		byClass["CANDIDATE:"+kind]++
-		privateSink(kind, min, fs[0].Class)
+		// single-step replay: the failing step alone from a fresh world
+		if len(min) == 1 || isSingleStep(t, min, top) {
+			singleStep++
+			byClass["single-step:"+key]++
+			continue
+		}
+		byClass["CANDIDATE:"+key]++
+		privateSink(key, min, top.Class)
 	}
 	keys := make([]string, 0, len(byClass))
 	for k := range byClass {
@@ -190,7 +249,7 @@ func TestSeqSweep(t *testing.T) {
 	for k := range numSeqKinds {
 		cov = append(cov, fmt.Sprintf("%s=%d/%d", seqKindNames[k], stats.kindAllowed[k], stats.kindDenied[k]))
 	}
-	t.Logf("SEQ-SWEEP sequences=%d steps=%d probes=%d elapsed=%s single-step=%d", ran, stats.steps, stats.probes, time.Since(start).Round(time.Second), singleStep)
+	t.Logf("SEQ-SWEEP sequences=%d steps=%d probes=%d rate-limited=%d elapsed=%s single-step=%d", ran, stats.steps, stats.probes, seqRateLimited.Load()-limited0, time.Since(start).Round(time.Second), singleStep)
 	t.Logf("SEQ-SWEEP coverage allowed/denied: %s", strings.Join(cov, " "))
 	for _, k := range keys {
 		t.Logf("SEQ-SWEEP class %s x%d", k, byClass[k])
@@ -211,19 +270,19 @@ func FuzzAuthzSeq(f *testing.F) {
 		if len(fs) == 0 {
 			return
 		}
-		kind := classKind(fs[0].Class)
-		if len(min) == 1 {
-			t.Logf("single-step %s", kind)
+		first := pickFinding(fs)
+		key := classKey(first.Class)
+		if isOverAllow(first.Class) {
+			privateSink(key, min, first.Class)
+			t.Errorf("over-allow %s after %d steps (minimal sequence in the private file)", key, len(min))
 			return
 		}
-		if len(min) > 1 && fs[0].Step >= 0 && fs[0].Step < len(min) {
-			if alone := runSeq(t, min[fs[0].Step:fs[0].Step+1], nil, nil); len(alone) > 0 && classKind(alone[0].Class) == kind {
-				t.Logf("single-step %s", kind)
-				return
-			}
+		if len(min) == 1 || isSingleStep(t, min, first) {
+			t.Logf("single-step %s", key)
+			return
 		}
-		privateSink(kind, min, fs[0].Class)
-		t.Errorf("sequence-dependent candidate %s after %d steps (minimal sequence in the private file)", kind, len(min))
+		privateSink(key, min, first.Class)
+		t.Errorf("sequence-dependent candidate %s after %d steps (minimal sequence in the private file)", key, len(min))
 	})
 }
 
