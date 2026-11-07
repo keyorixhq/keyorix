@@ -592,10 +592,22 @@ func TestGuardInputsCoverSkippedPaths(t *testing.T) {
 			more = fmt.Sprintf("\n      ... and %d more", len(bad)-5)
 			bad = bad[:5]
 		}
-		t.Errorf("%s (%s) reads paths whose change alone runs none of its tests:\n      %s%s\n    add or extend its row in %s: an input glob if it reads them, a !glob if it does not. Covering globs: %s",
-			r.file, strings.Join(r.tests, ","), strings.Join(bad, "\n      "), more, DefaultMap, strings.Join(suggestGlobs(badPaths), ","))
+		t.Errorf("%s (%s) reads paths whose change alone runs none of its tests:\n      %s%s\n    %s Covering globs: %s",
+			r.file, strings.Join(r.tests, ","), strings.Join(bad, "\n      "), more, fixHint(r.file, mapped, row), strings.Join(suggestGlobs(badPaths), ","))
 	}
 	t.Logf("%d test files read %d distinct repo paths (simulated in %d classes); %d files unmapped", len(rs), len(all), len(cov.goJobs), missing)
+}
+
+// fixHint tells the author how to cover a guard: a guard with no row gets ONE
+// new fragment (never a line in the shared legacy file, which every PR that
+// adds a guard would conflict on); a guard with a row extends that row where
+// it lives.
+func fixHint(file string, mapped bool, row Row) string {
+	if mapped {
+		return fmt.Sprintf("add or extend its row in %s: an input glob if it reads them, a !glob if it does not.", row.Source)
+	}
+	return fmt.Sprintf("add ONE fragment %s/%s.tsv (three tab-separated columns: file, globs, note; see %s/README.md), not a line in %s: an input glob if it reads them, a !glob if it does not.",
+		FragmentDir(DefaultMap), strings.ReplaceAll(file, "/", "__"), FragmentDir(DefaultMap), DefaultMap)
 }
 
 // suggestGlobs turns uncovered "path\x00why" pairs into globs for the failure
@@ -742,9 +754,16 @@ func TestGuardInputsMapIsLive(t *testing.T) {
 	if len(rows) == 0 {
 		t.Fatal("guard-inputs.tsv has no rows")
 	}
+	var inFragments int
+	for _, r := range rows {
+		if filepath.Base(filepath.Dir(r.Source)) == filepath.Base(FragmentDir(DefaultMap)) {
+			inFragments++
+		}
+	}
+	t.Logf("%d rows seen by LoadMap: %d in the legacy file, %d in fragments", len(rows), len(rows)-inFragments, inFragments)
 	for _, r := range rows {
 		if !isTracked[r.File] || !strings.HasSuffix(r.File, "_test.go") {
-			t.Errorf("line %d: %s is not a tracked _test.go file", r.Line, r.File)
+			t.Errorf("%s: %s is not a tracked _test.go file", r.Where(), r.File)
 			continue
 		}
 		src, err := os.ReadFile(filepath.Join(root, r.File)) // #nosec G304 -- tracked repo file
@@ -752,7 +771,7 @@ func TestGuardInputsMapIsLive(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(TestFuncs(src)) == 0 {
-			t.Errorf("line %d: %s declares no Test func", r.Line, r.File)
+			t.Errorf("%s: %s declares no Test func", r.Where(), r.File)
 		}
 		for _, g := range append(append([]string{}, r.Inputs...), r.NotRead...) {
 			hit := false
@@ -763,7 +782,7 @@ func TestGuardInputsMapIsLive(t *testing.T) {
 				}
 			}
 			if !hit {
-				t.Errorf("line %d: glob %q of %s matches no tracked file", r.Line, g, r.File)
+				t.Errorf("%s: glob %q of %s matches no tracked file", r.Where(), g, r.File)
 			}
 		}
 	}
