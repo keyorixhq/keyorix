@@ -251,8 +251,17 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 		call := buildCall(tb, w.fx, st)
 		p := w.fx.principals[st.Actor] // userID and kind only; per-layer tokens below
 		before := map[layer]string{}
+		// The #4020 precondition on the pre-step state of every leg: the step's
+		// effect already holds before it runs (a revoke's grant is absent, a
+		// grant's is present). A step with no effect check never qualifies.
+		preKnown := call.effect != nil
 		for _, l := range seqLayers {
 			before[l] = authzSnapshot(w.legs[l].db)
+			if preKnown {
+				if ok, _ := call.effect(w.legs[l].db); !ok {
+					preKnown = false
+				}
+			}
 		}
 		modelWant := ModelNA
 		if call.req != nil {
@@ -337,7 +346,7 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 				serverErr = true
 			}
 		}
-		known := serverErr && knownSeqOther(st, outs, modelWant)
+		known := serverErr && knownSeqOther(st, outs, modelWant, preKnown)
 		if len(other) > 0 {
 			kind := "O-S:other"
 			switch {
@@ -405,8 +414,11 @@ func isKnownOpen(c string) bool { return classKind(c) == seqKnownOtherKind }
 // hold and AssignRole of one it already holds answer Internal, where REST answers
 // 404 and 409. A row matches only a step of its kind that the model allows, with
 // exactly these outcomes and details on every leg (core nil: the core leg did not
-// run). runSeq still requires the state unchanged on every leg. Remove when #4020
-// is fixed.
+// run), and only when the #4020 precondition held on the pre-step state of every
+// leg (preKnown: the step's effect was already true before it ran, so the revoked
+// grant was absent and the granted one present). Without it, a revoke of a held
+// grant that does nothing would look like the known no-op. runSeq still requires
+// the state unchanged on every leg. Remove when #4020 is fixed.
 var knownSeqOthers = []struct {
 	kind             seqKind
 	core, rest, grpc *legOutcome
@@ -415,8 +427,8 @@ var knownSeqOthers = []struct {
 	{skGrant, &legOutcome{Outcome: Other, Detail: "untyped-error"}, &legOutcome{Outcome: Other, Detail: "Conflict"}, &legOutcome{Outcome: Other, Detail: "Internal"}},
 }
 
-func knownSeqOther(st seqStep, outs map[layer]*legOutcome, modelWant Outcome) bool {
-	if modelWant != Allowed {
+func knownSeqOther(st seqStep, outs map[layer]*legOutcome, modelWant Outcome, preKnown bool) bool {
+	if modelWant != Allowed || !preKnown {
 		return false
 	}
 	same := func(got, want *legOutcome) bool {

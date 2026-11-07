@@ -1,6 +1,7 @@
 package authzdiff
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
@@ -73,6 +74,24 @@ func seqPlants() []seqPlant {
 			fault: seqFault{name: "revoke-noop-held-grant", skipDo: func(l layer, st seqStep) bool { return st.Kind == skRevoke }},
 			steps: []seqStep{{skRevoke, pkGlobalAdmin, pkViewer, tA, 0, 0}},
 			class: "O-E:revoked-row-still-present",
+		},
+		{
+			// a revoke of a held grant that does nothing and answers with the #4020
+			// signature (REST 404, gRPC Internal): the tolerance must not absorb it,
+			// because the grant was held before the step
+			fault: seqFault{name: "revoke-noop-held-grant-4020", step: func(l layer, st seqStep, lg *leg, o *legOutcome) *legOutcome {
+				if st.Kind != skRevoke || l == layerCore {
+					return o
+				}
+				admin := lg.fx.principals[pkGlobalAdmin]
+				_ = buildCallRaw(lg.fx, seqStep{Kind: skGrant, Actor: st.Actor, Subject: st.Subject, T: st.T, Role: st.Role}).core(actorCtx(context.Background(), admin), lg, admin)
+				if l == layerREST {
+					return &legOutcome{Outcome: Denied, Detail: "Not Found"}
+				}
+				return &legOutcome{Outcome: Other, Detail: "Internal"}
+			}},
+			steps: []seqStep{{skRevoke, pkGlobalAdmin, pkViewer, tA, 0, 0}},
+			class: "O-S:other",
 		},
 		{
 			fault: seqFault{name: "stale-allow", probe: func(l layer, p *principal, t tgt, lg *leg, o *legOutcome) *legOutcome {
@@ -233,19 +252,24 @@ func TestSeqKnownOtherIsNarrow(t *testing.T) {
 		"core allowed": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) { *o[layerCore] = legOutcome{Outcome: Allowed} },
 	}
 	for kind, sig := range sigs {
-		if !knownSeqOther(seqStep{Kind: kind}, sig(), Allowed) {
+		if !knownSeqOther(seqStep{Kind: kind}, sig(), Allowed, true) {
 			t.Fatalf("%s: the #4020 signature is not matched", seqKindNames[kind])
+		}
+		// the signature without its precondition (a held grant revoked, a missing
+		// one granted) is not the known-open case
+		if knownSeqOther(seqStep{Kind: kind}, sig(), Allowed, false) {
+			t.Errorf("%s: matched the #4020 tolerance without its precondition", seqKindNames[kind])
 		}
 		for name, m := range cases {
 			st, o, want := seqStep{Kind: kind}, sig(), Allowed
 			m(&st, o, &want)
-			if knownSeqOther(st, o, want) {
+			if knownSeqOther(st, o, want, true) {
 				t.Errorf("%s/%s: matched the #4020 tolerance", seqKindNames[kind], name)
 			}
 		}
 	}
 	// the two signatures do not cross: a revoke with the grant's outcomes, and back
-	if knownSeqOther(seqStep{Kind: skRevoke}, sigs[skGrant](), Allowed) || knownSeqOther(seqStep{Kind: skGrant}, sigs[skRevoke](), Allowed) {
+	if knownSeqOther(seqStep{Kind: skRevoke}, sigs[skGrant](), Allowed, true) || knownSeqOther(seqStep{Kind: skGrant}, sigs[skRevoke](), Allowed, true) {
 		t.Error("one kind matched the other kind's signature")
 	}
 	// on the real legs: a grant repeated in the sequence (fuzzer input) is the
@@ -258,7 +282,7 @@ func TestSeqKnownOtherIsNarrow(t *testing.T) {
 
 // seqDefaultPlants run in the default `go test`, so the oracles and the triage
 // are watched failing in CI; AUTHZSEQ_SELFTEST=1 runs all of them (about 10 s).
-var seqDefaultPlants = map[string]bool{"revoke-noop": true, "revoke-noop-held-grant": true}
+var seqDefaultPlants = map[string]bool{"revoke-noop": true, "revoke-noop-held-grant": true, "revoke-noop-held-grant-4020": true}
 
 // TestSeqPlantsAreDetected: each plant is seen by its oracle class, and the
 // triage FuzzAuthzSeq and the sweep use (seqVerdict) fails the run on it.
