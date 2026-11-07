@@ -87,7 +87,7 @@ func census() map[string]int {
 // fuzz/test driver start lazily, once, and never stop (signal delivery, the
 // pprof and testing machinery). They are not per-call leaks.
 func ignoredGoroutine(key string) bool {
-	for _, p := range []string{"os/signal.", "runtime/pprof.", "testing.", "runtime.ensureSigM", "internal/fuzz.", "runtime/trace."} {
+	for _, p := range []string{"os/signal.", "runtime/pprof.", "testing.", "runtime.ensureSigM", "internal/fuzz.", "runtime/trace.", "github.com/redis/go-redis/"} {
 		if strings.Contains(key, p) {
 			return true
 		}

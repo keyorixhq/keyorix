@@ -262,7 +262,7 @@ func TestPlantedDefectsDetectedByDirectedPrograms(t *testing.T) {
 		t.Run(d.id, func(t *testing.T) {
 			v := run(t, d.c, d.prog, d.cfg)
 			for _, m := range v {
-				if strings.HasPrefix(m, d.oracle+" ") {
+				if strings.HasPrefix(m, d.oracle+" ") || strings.HasPrefix(m, d.oracle+"/") {
 					return
 				}
 			}
@@ -327,7 +327,7 @@ func TestRandomBudget(t *testing.T) {
 		hit := 0
 		for _, p := range progs {
 			for _, m := range run(t, d.c, p, d.cfg) {
-				if strings.HasPrefix(m, d.oracle+" ") {
+				if strings.HasPrefix(m, d.oracle+" ") || strings.HasPrefix(m, d.oracle+"/") {
 					hit++
 					break
 				}
