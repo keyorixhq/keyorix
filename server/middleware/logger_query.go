@@ -28,12 +28,23 @@ var loggableQueryKeys = map[string]struct{}{
 	"show_shared_only": {}, "show_owned_only": {},
 }
 
+// sensitiveQueryKeys is a short fixed set of well-known credential/identity
+// parameter names. Their VALUES are always redacted; the NAME is kept so the log
+// still shows that such a parameter was sent. This is not a denylist of what to
+// redact: any name in neither set is replaced entirely.
+var sensitiveQueryKeys = map[string]struct{}{
+	"password": {}, "passwd": {}, "token": {}, "access_token": {}, "refresh_token": {},
+	"api_key": {}, "apikey": {}, "secret": {}, "code": {}, "state": {}, "key": {}, "value": {},
+	"ref": {}, "name": {}, "q": {}, "search": {}, "username": {}, "email": {},
+}
+
 const redactedMark = "[redacted]"
 
 // redactQueryParams rewrites a raw query string so only allowlisted parameter
-// values survive. Parameter names are kept when they look like plain identifiers
-// (so the log still shows which parameters were sent) and replaced when they do
-// not, because a bare token or odd key can itself be the secret.
+// values survive. A parameter name is kept only when it is allowlisted or one of
+// the fixed sensitiveQueryKeys (so the log still shows a credential was sent);
+// every other name is replaced, because a bare token or odd key name can itself
+// be the secret.
 func redactQueryParams(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
@@ -59,7 +70,11 @@ func redactQueryParams(rawQuery string) string {
 			}
 			continue
 		}
-		if plainIdentifier(key) {
+		// A key name outside the allowlist can itself be the credential
+		// (?ghp_...=1), so only a fixed set of well-known sensitive names is
+		// kept, to show that such a parameter was sent. Every other name is
+		// replaced.
+		if _, ok := sensitiveQueryKeys[key]; ok {
 			out = append(out, key+"="+redactedMark)
 		} else {
 			out = append(out, redactedMark+"="+redactedMark)
@@ -83,20 +98,6 @@ func loggableQueryValue(v string) bool {
 		c := v[i]
 		switch {
 		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '.', c == ':', c == '-':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func plainIdentifier(s string) bool {
-	if s == "" || len(s) > 40 {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-', r == '.':
 		default:
 			return false
 		}

@@ -16,7 +16,9 @@ func TestRedactSensitiveURI_QueryRedactedByDefault(t *testing.T) {
 		name, in, want string
 	}{
 		{"allowlisted values survive", "/api/v1/audit/logs?page=2&page_size=50", "/api/v1/audit/logs?page=2&page_size=50"},
-		{"unknown key value redacted, name kept", "/api/v1/x?foo=bar", "/api/v1/x?foo=[redacted]"},
+		{"unknown key name and value redacted", "/api/v1/x?foo=bar", "/api/v1/x?[redacted]=[redacted]"},
+		{"token-shaped key name redacted", "/api/v1/x?CANARY-9f3b7c-do-not-log=1&ghp_abcdefghijklmnopqrstuvwxyz0123456789=",
+			"/api/v1/x?[redacted]=[redacted]&[redacted]=[redacted]"},
 		{"credential-like keys redacted", "/api/v1/x?password=hunter2&api_key=AKIAxxxx&secret=s&code=c&key=k&value=v",
 			"/api/v1/x?password=[redacted]&api_key=[redacted]&secret=[redacted]&code=[redacted]&key=[redacted]&value=[redacted]"},
 		{"mixed keeps safe, redacts unsafe", "/api/v1/x?limit=10&token=abc", "/api/v1/x?limit=10&token=[redacted]"},
@@ -72,6 +74,8 @@ func TestLogger_NeverLogsArbitraryQuerySecret(t *testing.T) {
 		"password=" + canary, "api_key=" + canary, "secret=" + canary, "code=" + canary,
 		"key=" + canary, "value=" + canary, "page=1&token=" + canary, canary,
 		"%70assword=" + canary, // percent-encoded key name
+		// a credential sent as the key NAME (plain-identifier shaped) must not be logged either
+		canary + "=", canary + "=1", "ghp_abcdefghijklmnopqrstuvwxyz0123456789=1",
 		// allowlisted keys carrying a secret-shaped or smuggling value
 		"format=" + canary + "/x", "page=1;api_key=" + canary, "status=x%26token%3D" + canary,
 		"resource=prod/db/" + canary, "since=" + canary + "%2B",
