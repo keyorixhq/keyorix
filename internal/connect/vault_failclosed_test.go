@@ -53,9 +53,7 @@ func TestVault_MountInfoMustCarryKnownKVVersion(t *testing.T) {
 		"data null":             `{"data":null}`,
 		"data empty":            `{"data":{}}`,
 		"no path":               `{"data":{"options":{"version":"2"}}}`,
-		"options empty":         `{"data":{"path":"secret/","options":{}}}`,
 		"version unknown":       `{"data":{"path":"secret/","options":{"version":"3"}}}`,
-		"version empty":         `{"data":{"path":"secret/","options":{"version":""}}}`,
 		"version null":          `{"data":{"path":"secret/","options":{"version":null}}}`,
 		"version wrong type":    `{"data":{"path":"secret/","options":{"version":2}}}`,
 		"options wrong type":    `{"data":{"path":"secret/","options":"2"}}`,
@@ -79,11 +77,16 @@ func TestVault_MountInfoMustCarryKnownKVVersion(t *testing.T) {
 }
 
 func TestVault_MountInfoOptionsNullIsKVv1(t *testing.T) {
-	// A KV v1 mount enabled without a version option reports "options": null.
+	// A KV v1 mount enabled without a version option reports "options": null,
+	// or an empty options map (mounts created through the API or Terraform
+	// vault_mount without options), or an empty version. Vault's own KV preflight
+	// treats all of these as KV v1.
 	for name, mountInfo := range map[string]string{
-		"null":   `{"data":{"path":"secret/","type":"kv","options":null}}`,
-		"absent": `{"data":{"path":"secret/","type":"kv"}}`,
-		"v1":     `{"data":{"path":"secret/","type":"kv","options":{"version":"1"}}}`,
+		"null":          `{"data":{"path":"secret/","type":"kv","options":null}}`,
+		"absent":        `{"data":{"path":"secret/","type":"kv"}}`,
+		"v1":            `{"data":{"path":"secret/","type":"kv","options":{"version":"1"}}}`,
+		"options empty": `{"data":{"path":"secret/","type":"kv","options":{}}}`,
+		"version empty": `{"data":{"path":"secret/","type":"kv","options":{"version":""}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := vaultStub(t, mountInfo, `{"data":{"password":"p"}}`, nil)

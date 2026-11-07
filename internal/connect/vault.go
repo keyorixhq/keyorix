@@ -216,10 +216,11 @@ func (c *VaultConnector) resolveKVMountVersion(ctx context.Context, safeRef stri
 	}
 
 	// Vault reports a KV v2 mount as options {"version": "2"}; a KV v1 mount
-	// reports either {"version": "1"} or, when it was enabled without a version
-	// option, "options": null. Anything else is not a mount-info reply this
-	// connector understands, and guessing "v1" from it would hand the whole KV v2
-	// envelope back as the secret, so the lookup fails closed instead.
+	// reports {"version": "1"} or, when it was enabled without a version option,
+	// "options": null, an empty options map or an empty version (Vault's own KV
+	// preflight reads all of those as v1). Anything else is not a mount-info reply
+	// this connector understands, and guessing "v1" from it would hand the whole
+	// KV v2 envelope back as the secret, so the lookup fails closed instead.
 	var mountResp struct {
 		Data *struct {
 			Path    string          `json:"path"`
@@ -247,35 +248,42 @@ func (c *VaultConnector) resolveKVMountVersion(ctx context.Context, safeRef stri
 }
 
 // mountInfoKVVersion maps the "options" member of a sys/internal/ui/mounts reply
-// to a KV version. An absent or null options is KV v1 (the caller has already
-// checked that the rest of the reply is well-formed); an object must carry
-// version "1" or "2".
+// to a KV version. An absent or null options, an options object without a
+// version key, and a version of "" are KV v1, as in Vault's own KV preflight (the
+// caller has already checked that the rest of the reply is well-formed). Any
+// other version must be the string "1" or "2"; a non-object options or a
+// non-string version is an error.
 func mountInfoKVVersion(raw json.RawMessage) (int, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return 1, nil
 	}
-	var opts struct {
-		Version *string `json:"version"`
+	var opts map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &opts); err != nil || opts == nil {
+		return 0, fmt.Errorf("data.options is not an object")
 	}
-	if err := json.Unmarshal(trimmed, &opts); err != nil {
-		return 0, fmt.Errorf("unreadable data.options: %w", err)
+	rawVersion, ok := opts["version"]
+	if !ok {
+		return 1, nil
 	}
-	if opts.Version != nil {
-		switch *opts.Version {
-		case "1":
-			return 1, nil
-		case "2":
-			return 2, nil
-		}
+	var version string
+	if err := json.Unmarshal(rawVersion, &version); err != nil || bytes.Equal(bytes.TrimSpace(rawVersion), []byte("null")) {
+		return 0, fmt.Errorf("data.options.version is not a string")
+	}
+	switch version {
+	case "", "1":
+		return 1, nil
+	case "2":
+		return 2, nil
 	}
 	return 0, fmt.Errorf("data.options.version is not \"1\" or \"2\"")
 }
 
 // isEmptyKVPayload reports whether a decoded KV secret body is null, not a JSON
-// object, or an empty object. A KV secret is always a non-empty map of fields
-// (Vault refuses to store an empty one), so anything else is not a real secret
-// and must not be delivered as a successful read.
+// object, or an empty object. None of these is delivered as a successful read.
+// KV v1 refuses to store an empty secret; KV v2 accepts an empty data map, and
+// reading such a secret through this connector is deliberately an error
+// (fail closed) rather than an empty value.
 func isEmptyKVPayload(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
