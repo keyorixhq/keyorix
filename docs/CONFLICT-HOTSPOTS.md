@@ -75,17 +75,17 @@ Left alone, on purpose:
 - **`BACKLOG.md`, `web/BACKLOG.md`**: status lines are edited in place, so union would
   duplicate them.
 
-## Fragment proposal for the prose hotspots (not implemented here)
+## Fragments for the prose hotspots (DOCS-FRAGMENTS-1: CONFIGURATION.md and UPGRADING.md done)
 
 `docs/CONFIGURATION.md` (42 merged PRs), `docs/UPGRADING.md` (28) and `docs/SELF_HOSTING.md`
 (19) are edited by feature PRs for one reason: each adds its own setting, upgrade note or
-section. The same pattern as `changelog.d/` fits:
+section. The dual-read fragment pattern of the ledgers fits, and is in place for two of them:
 
-- `docs/upgrading.d/<PR-or-slug>.md`, one fragment per PR, assembled into the "Unreleased"
-  section of `docs/UPGRADING.md` by a script with a `--check` mode (copy
-  `scripts/changelog-assemble.sh`);
-- the same for `docs/CONFIGURATION.md` only for new-setting entries, with the generated
-  config reference left as is.
+- a new config key is documented in `docs/configuration.d/<key, dots as __>.md`
+  (`docs/configuration.d/README.md`); the docs-drift guards read the flat file plus the
+  fragments;
+- an upgrade note goes in `docs/upgrading.d/<slug>.md` (`docs/upgrading.d/README.md`); no
+  script assembles `docs/UPGRADING.md`, the release preparer folds the fragments in by hand
+  and assigns the section numbers.
 
-This changes how three documents are authored and needs a decision on the assembled
-output (committed or generated at release), so it is left for a follow-up.
+Still open: `docs/SELF_HOSTING.md`, which no guard forces a PR to edit.

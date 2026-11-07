@@ -124,6 +124,10 @@ var actorSentinelAllowlist = map[string]actorSentinelEntry{
 		class: classPerActorCeiling, status: statusEnforced,
 		note: "SHARE-3: refuses actorID==0 outright, together with any actorType other than ActorTypeUser, so a machine actor (or an unknown caller) gets the owner-scoped share list's fixed refusal, never another user's or everyone's shares. The HTTP handler passes ActorKind()/PrincipalID(); TestOwnedShares_MachineIsRefusedWithReason drives a real machine token.",
 	},
+	"sharing.go:revokerMayManageSecret": {
+		class: classPerActorCeiling, status: statusEnforced,
+		note: "refuses actorID==0 outright (returns false before any role lookup), so a machine actor can never take the administrator-revoke path and falls through to the owner-only refusal; only a human holding secrets.manage at the secret's own project/environment scope qualifies. TestRevokeShare_MachineActorRefused drives the machine case.",
+	},
 	"authz.go:requireGranterHoldsRolePermissions": {
 		class: classPerActorCeiling, status: statusEnforced,
 		note: "#1542: actorIsMachine parameter added, denies a machine actor instead of exempting it. AssignRoleWithExpiryProxy's non-node-relay path now passes isMachineActor(r); a genuine node relay skips this function entirely (still calls raw storage, by design -- see rbac_role_grants_proxy.go). #2495 (2026-10-05) audited the sibling gap this note used to describe as open: AssignUserRole's own callers -- AddProjectMember/SetProjectMemberRole, the AssignRole gRPC and HTTP endpoints, SetUserRoles, AddUserToGroup -- all derive the real actor kind today (closed by #1542/#1545 and follow-ups), so that half of the note was stale. Access-request approval was genuinely still open, on the BULK path only, and is now closed; see INV-CORE-14 and actor_kind_literal_completeness_test.go, which is the standing enumeration so this does not have to be re-derived from prose again.",

@@ -17,6 +17,10 @@ import (
 // calls it: no scope filter (plain and shared-only) and a scope the caller's role
 // covers, then no scope filter with that role held. (A project filter without a covering role lists owned secrets only and never
 // fetches shares.) Each used to answer 500 InternalError.
+//
+// #3943: with a role the shares only decorate the rows the role makes visible, so the
+// two role-holder paths now answer 200 with the rows (decoration partial) instead of
+// the refusal; without a role the shares ARE the rows and the refusal stays.
 func TestListSecrets_ShareListOverCapIs422(t *testing.T) {
 	h, db := freshListFixtureS38(t)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "sharer", Email: "sharer@example.com", AccountState: "active"}).Error)
@@ -34,14 +38,15 @@ func TestListSecrets_ShareListOverCapIs422(t *testing.T) {
 	cases := []struct {
 		name, query string
 		grantRole   bool
+		refused     bool
 	}{
-		{"no-scope", "/api/v1/secrets", false},
-		{"no-scope-shared-only", "/api/v1/secrets?show_shared_only=true", false},
-		{"scope-with-role", "/api/v1/secrets?project_id=1", true},
+		{"no-scope", "/api/v1/secrets", false, true},
+		{"no-scope-shared-only", "/api/v1/secrets?show_shared_only=true", false, true},
+		{"scope-with-role", "/api/v1/secrets?project_id=1", true, false},
 		// REVIEW-3974-DEEP-2 F1: a role-holder with no filter goes through
 		// ListReadableSecrets' tier 2, which used to skip the refusal per scope and
 		// answer 200 with an empty list. The role granted above stays in place.
-		{"no-scope-with-role", "/api/v1/secrets", false},
+		{"no-scope-with-role", "/api/v1/secrets", false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -50,6 +55,10 @@ func TestListSecrets_ShareListOverCapIs422(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			h.ListSecrets(w, withUserCtxS38(httptest.NewRequest(http.MethodGet, tc.query, nil), 1))
+			if !tc.refused {
+				require.Equal(t, http.StatusOK, w.Code, "a role-holder's listing must answer over the share cap (#3943): %s", w.Body.String())
+				return
+			}
 			require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
 			require.Contains(t, w.Body.String(), "ShareListOverCap")
 		})

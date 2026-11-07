@@ -1324,7 +1324,11 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 	if filter.Search != nil && *filter.Search != "" {
 		// escapeLIKE sanitises % and _ so a caller-supplied search term cannot
 		// widen the match beyond the intended prefix/suffix anchors (#r124 LIKE injection).
-		query = query.Where(`LOWER(secret_nodes.name) LIKE LOWER(?) ESCAPE '\'`, "%"+escapeLIKE(*filter.Search)+"%")
+		//
+		// The comparison is Unicode-case-insensitive on both backends (a bare
+		// LOWER() is ASCII-only on SQLite); see foldedContainsClause.
+		cond, arg := foldedContainsClause(ls.db.Dialector.Name(), "secret_nodes.name", *filter.Search)
+		query = query.Where(cond, arg)
 	}
 
 	var total int64

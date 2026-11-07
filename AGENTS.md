@@ -32,6 +32,9 @@ Read [CLAUDE.md](CLAUDE.md) (applies to every agent, not only Claude) and
 
 - Before editing a package, read its `INVARIANTS.md`; keep every invariant listed.
 - Add a `changelog.d/<PR-number>-<slug>.md` fragment; never edit `CHANGELOG.md`.
+- Document a new config key in `docs/configuration.d/<key with dots as __>.md` and put an
+  upgrade note in `docs/upgrading.d/<slug>.md`; do not append to `docs/CONFIGURATION.md` or
+  `docs/UPGRADING.md`.
 - A security fix ships with a test that fails without the fix.
 - Build with `make build`; run `go test` on the packages you touched, plus `gofmt`,
   `go vet` and `golangci-lint`.

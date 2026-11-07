@@ -38,7 +38,9 @@ func (f *ctaReview) shareRowsNotOwnedBy(secretID, want uint) int64 {
 func TestCTAReview_TransferOwnership_vs_RevokeShare_CrossReplicaPostgres(t *testing.T) {
 	t.Parallel()
 	f := newCTAReview(t)
-	oldOwner := f.user("cta-xfer-old", "project_admin")
+	// A developer, not a project_admin: an administrator of the scope may revoke any
+	// share (#3992), which would make the previous owner's refusal unreachable.
+	oldOwner := f.user("cta-xfer-old", "project_developer")
 	newOwner := f.user("cta-xfer-new", "project_admin")
 	recipient := f.user("cta-xfer-rcpt", "project_viewer")
 	s := f.secret("cta-xfer-secret", oldOwner.ID)
@@ -70,7 +72,9 @@ func TestCTAReview_TransferOwnership_vs_RevokeShare_CrossReplicaPostgres(t *test
 func TestCTAReview_TransferOwnership_RevokeBlockedBehindRestamp_CrossReplicaPostgres(t *testing.T) {
 	t.Parallel()
 	f := newCTAReview(t)
-	oldOwner := f.user("cta-xferb-old", "project_admin")
+	// A developer, not a project_admin: an administrator of the scope may revoke any
+	// share (#3992), which would make the previous owner's refusal unreachable.
+	oldOwner := f.user("cta-xferb-old", "project_developer")
 	newOwner := f.user("cta-xferb-new", "project_admin")
 	recipient := f.user("cta-xferb-rcpt", "project_viewer")
 	s := f.secret("cta-xferb-secret", oldOwner.ID)

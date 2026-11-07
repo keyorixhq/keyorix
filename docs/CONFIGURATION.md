@@ -344,6 +344,9 @@ storage:
     #   REFUSES to start if the SQLite file above does not already exist,
     #   instead of creating a new, empty one in its place — see
     #   "Refusing to vivify a missing database" below.
+    # fdatasync: false              # default false. When true, SQLite commits
+    #   with fdatasync(2) instead of fsync(2) — see "Committing with
+    #   fdatasync" below. Linux/FreeBSD/illumos/NetBSD only; SQLite only.
     # PostgreSQL (recommended for production) — set type: postgres above:
     # dsn: "host=db user=keyorix dbname=keyorix port=5432 sslmode=require"
     # ...or field by field: host, port, name, user, and
@@ -651,6 +654,38 @@ empty database in its place
 
 Create the database deliberately with `keyorix-server admin init --database` (which creates the file
 with `O_CREATE|O_EXCL`), then start the server.
+
+### Committing with fdatasync
+
+`storage.database.fdatasync` (SQLite only, default `false`).
+
+Every SQLite commit ends in a sync to stable storage. The driver's default is `fsync(2)`. With
+`fdatasync: true` the server switches the process to `fdatasync(2)` once, at storage start-up
+(`sqlite.Fdatasync(true)` in modernc.org/sqlite v1.62.0 or later). `fdatasync` writes the data and
+the metadata needed to read it back, file size included, but not the file's timestamps. On a
+journaling filesystem such as ext4 the timestamp update that `fsync` forces through the journal is
+often what a commit waits for, so a commit can be considerably faster.
+
+- **Where it takes effect:** Linux, FreeBSD, illumos and NetBSD. On OpenBSD the C library maps
+  `fdatasync` to `fsync`, so nothing changes. On macOS and Windows the driver cannot switch: the
+  server logs one warning and keeps `fsync`. It never refuses to start over this option.
+- **PostgreSQL:** not affected. The option is never applied to the PostgreSQL backend.
+- **Durability trade-off:** upstream's reasoning is that skipping the timestamp update does not
+  weaken a commit's durability for SQLite's WAL and journal files on ext4 and xfs, and upstream
+  SQLite uses `fdatasync` on every Linux build. This project has a power-cut test of its own
+  (`scripts/powercut/run-dmflakey.sh`: audit commits on ext4 over a dm-flakey device, writes
+  dropped mid-run, remount, then `PRAGMA integrity_check`, audit-chain verification and a check
+  that every acknowledged commit is present), but no published result: earlier runs suspended the
+  device with a filesystem freeze, which flushes all dirty data before the cut and so cannot tell
+  `fsync` from `fdatasync`. The script now suspends with `--nolockfs`, and a re-run is pending.
+  dm-flakey models dropped writes, not the behaviour of a real disk's write cache, and xfs and
+  other filesystems are not covered. The default stays off.
+- **seccomp and other syscall filters:** with the option on, every commit issues `fdatasync`
+  instead of `fsync`. A filter that allows `fsync` but not `fdatasync` turns every commit into a
+  disk I/O error, and the failure shows up at runtime, not at start-up. Allow `fdatasync` wherever
+  `fsync` is allowed before enabling the option. The shipped Helm chart and systemd units use the
+  container runtime's `RuntimeDefault` profile or no syscall filter, and `RuntimeDefault` permits
+  `fdatasync`, so they need no change.
 
 In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
 pre-exist. The Postgres backend is unaffected too.

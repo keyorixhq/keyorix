@@ -72,12 +72,12 @@ func TestLogger_PassesThroughOrdinaryPaths(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/42?foo=bar", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/42?page=2", nil)
 	rec := httptest.NewRecorder()
 	Logger()(ok).ServeHTTP(rec, req)
 
 	logged := buf.String()
-	assert.Contains(t, logged, "/api/v1/secrets/42?foo=bar", "an ordinary path is logged unmodified")
+	assert.Contains(t, logged, "/api/v1/secrets/42?page=2", "an ordinary path is logged unmodified")
 }
 
 // TestLogger_PassesRequestUnmodifiedToHandler confirms the redaction is purely a
@@ -112,7 +112,7 @@ func TestRedactSensitiveURI(t *testing.T) {
 		want string
 	}{
 		{"setup token redacted", "/auth/setup/abc123", "/auth/setup/[REDACTED]"},
-		{"setup token with query redacted (query string preserved)", "/auth/setup/abc123?x=1", "/auth/setup/[REDACTED]?x=1"},
+		{"setup token with query redacted (allowlisted query parameters preserved)", "/auth/setup/abc123?page=1", "/auth/setup/[REDACTED]?page=1"},
 		{"api-prefixed setup token redacted", "/api/v1/auth/setup/abc123", "/api/v1/auth/setup/[REDACTED]"},
 		{"path shape matches even for the literal 'consume' segment (harmless: the real consume token travels in the POST body, never this GET path)", "/auth/setup/consume", "/auth/setup/[REDACTED]"},
 		{"unrelated path untouched", "/api/v1/secrets/42", "/api/v1/secrets/42"},
