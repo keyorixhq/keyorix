@@ -139,22 +139,120 @@ func TestSeqClassKey(t *testing.T) {
 	// two known single-step behaviours (SEQUENCE.md) do not
 	for c, want := range map[string]bool{
 		a: true, b: false,
-		"O-E:denied-step-changed-state(x;grpc)":                   true,
-		"O-E:revoked-row-still-present(x;core)":                   true,
-		"O-E:granted-row-missing(x;rest)":                         true,
-		"O-E:account-state-not-suspended(x;grpc)":                 true,
-		"O-E:account-state-not-active(x;rest)":                    true,
-		"O-E:group-row-missing(x;core)":                           true,
-		"O-E:group-row-still-present(x;rest)":                     true,
-		"O-E:reactivated-user-cannot-log-in(x;grpc)":              true,
-		"O-S:other(x;other=rest;got=allowed;model=allowed)":       true,
-		"O-S:layers-disagree(x;allow=core;deny=rest)":             false,
-		"O-P:over-denial(x;rest)":                                 false,
-		"O-S:step-vs-model(role.revoke;got=denied;model=allowed)": false,
+		"O-E:denied-step-changed-state(x;grpc)":                       true,
+		"O-E:revoked-row-still-present(x;core)":                       true,
+		"O-E:granted-row-missing(x;rest)":                             true,
+		"O-E:account-state-not-suspended(x;grpc)":                     true,
+		"O-E:account-state-not-active(x;rest)":                        true,
+		"O-E:group-row-missing(x;core)":                               true,
+		"O-E:group-row-still-present(x;rest)":                         true,
+		"O-E:reactivated-user-cannot-log-in(x;grpc)":                  true,
+		"O-S:other(x;other=rest;got=allowed;model=allowed)":           true,
+		"O-S:layers-disagree(x;allow=core;deny=rest)":                 false,
+		"O-P:over-denial(x;rest)":                                     false,
+		"O-S:step-vs-model(role.revoke;got=denied;model=allowed)":     false,
+		"O-S:known-other-4020(x;other=grpc;got=denied;model=allowed)": false,
 	} {
 		if got := alwaysFails(c); got != want {
 			t.Errorf("alwaysFails(%q) = %v, want %v", c, got, want)
 		}
+	}
+}
+
+// TestSeqClientErrorSplit: only a transport's client error keeps an Other step
+// out of the always-failing O-S:other; an unknown detail is a server error.
+func TestSeqClientErrorSplit(t *testing.T) {
+	for _, c := range []struct {
+		l      layer
+		detail string
+		want   bool
+	}{
+		{layerREST, "Bad Request", true},
+		{layerREST, "Conflict", true},
+		{layerREST, "Unprocessable Entity", true},
+		{layerREST, "Internal Server Error", false},
+		{layerREST, "Service Unavailable", false},
+		{layerREST, "planted-500", false},
+		{layerREST, "", false},
+		{layerGRPC, "InvalidArgument", true},
+		{layerGRPC, "AlreadyExists", true},
+		{layerGRPC, "FailedPrecondition", true},
+		{layerGRPC, "Internal", false},
+		{layerGRPC, "Unknown", false},
+		{layerGRPC, "Unavailable", false},
+		{layerGRPC, "Bad Request", false},
+		{layerCore, "untyped-error", false},
+	} {
+		if got := isClientError(c.l, &legOutcome{Outcome: Other, Detail: c.detail}); got != c.want {
+			t.Errorf("isClientError(%s, %q) = %v, want %v", c.l, c.detail, got, c.want)
+		}
+	}
+	if alwaysFails("O-S:other-client(x;other=rest+grpc;got=other;model=allowed)") {
+		t.Error("O-S:other-client always fails")
+	}
+}
+
+// TestSeqKnownOtherIsNarrow: the #4020 tolerance matches only its own two
+// signatures, and any change to a step kind, the model's decision or one leg's
+// outcome or detail falls back to the always-failing O-S:other.
+func TestSeqKnownOtherIsNarrow(t *testing.T) {
+	sigs := map[seqKind]func() map[layer]*legOutcome{
+		skRevoke: func() map[layer]*legOutcome {
+			return map[layer]*legOutcome{
+				layerCore: {NA: "transport-enforced: core leg is state-synced"},
+				layerREST: {Outcome: Denied, Detail: "Not Found"},
+				layerGRPC: {Outcome: Other, Detail: "Internal"},
+			}
+		},
+		skGrant: func() map[layer]*legOutcome {
+			return map[layer]*legOutcome{
+				layerCore: {Outcome: Other, Detail: "untyped-error"},
+				layerREST: {Outcome: Other, Detail: "Conflict"},
+				layerGRPC: {Outcome: Other, Detail: "Internal"},
+			}
+		},
+	}
+	type mut func(st *seqStep, o map[layer]*legOutcome, m *Outcome)
+	cases := map[string]mut{
+		"other kind":   func(st *seqStep, _ map[layer]*legOutcome, _ *Outcome) { st.Kind = skGroupAdd },
+		"model denies": func(_ *seqStep, _ map[layer]*legOutcome, m *Outcome) { *m = Denied },
+		"grpc Unknown": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) { o[layerGRPC].Detail = "Unknown" },
+		"grpc allowed": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) {
+			*o[layerGRPC] = legOutcome{Outcome: Allowed, Detail: "OK"}
+		},
+		"rest 500": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) {
+			*o[layerREST] = legOutcome{Outcome: Other, Detail: "Internal Server Error"}
+		},
+		"rest allowed": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) {
+			*o[layerREST] = legOutcome{Outcome: Allowed, Detail: "OK"}
+		},
+		"rest forbidden": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) {
+			*o[layerREST] = legOutcome{Outcome: Denied, Detail: "Forbidden"}
+		},
+		"rest not run": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) { *o[layerREST] = legOutcome{NA: "x"} },
+		"core allowed": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) { *o[layerCore] = legOutcome{Outcome: Allowed} },
+	}
+	for kind, sig := range sigs {
+		if !knownSeqOther(seqStep{Kind: kind}, sig(), Allowed) {
+			t.Fatalf("%s: the #4020 signature is not matched", seqKindNames[kind])
+		}
+		for name, m := range cases {
+			st, o, want := seqStep{Kind: kind}, sig(), Allowed
+			m(&st, o, &want)
+			if knownSeqOther(st, o, want) {
+				t.Errorf("%s/%s: matched the #4020 tolerance", seqKindNames[kind], name)
+			}
+		}
+	}
+	// the two signatures do not cross: a revoke with the grant's outcomes, and back
+	if knownSeqOther(seqStep{Kind: skRevoke}, sigs[skGrant](), Allowed) || knownSeqOther(seqStep{Kind: skGrant}, sigs[skRevoke](), Allowed) {
+		t.Error("one kind matched the other kind's signature")
+	}
+	// on the real legs: a grant repeated in the sequence (fuzzer input) is the
+	// known-open signature and nothing else. This fails once #4020 is fixed:
+	// then remove knownSeqOthers.
+	if v := seqVerdict(t, decodeSeq([]byte("0220002200")), nil, nil); v.kind != seqKnown {
+		t.Errorf("repeated grant: verdict=%d key=%s, want the #4020 known-open verdict", v.kind, v.key)
 	}
 }
 
@@ -243,6 +341,8 @@ func TestSeqSweep(t *testing.T) {
 		case seqSingleStep:
 			singleStep++
 			byClass["single-step:"+v.key]++
+		case seqKnown:
+			byClass["known-open:"+v.key]++
 		case seqAlwaysFail:
 			byClass["ALWAYS-FAIL:"+v.key]++
 			privateSink(v.key, v.min, v.class)
@@ -276,6 +376,8 @@ func FuzzAuthzSeq(f *testing.F) {
 		switch v.kind {
 		case seqSingleStep:
 			t.Logf("single-step %s", v.key)
+		case seqKnown:
+			t.Logf("known-open %s", v.key)
 		case seqAlwaysFail:
 			privateSink(v.key, v.min, v.class)
 			t.Errorf("always-fail class %s after %d steps (minimal sequence in the private file)", v.key, len(v.min))

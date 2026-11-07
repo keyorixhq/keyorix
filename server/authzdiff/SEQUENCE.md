@@ -77,6 +77,16 @@ so a revocation that does not revoke shows only in O-E, and the single-step
 harness has no effect oracle: "the step alone reproduces it" does not mean it is
 covered elsewhere. FuzzAuthzSeq and the sweep share one triage (`seqVerdict`).
 
+`O-S:other` is a step on which a transport answered a server error (a 5xx, gRPC
+`Internal`/`Unknown`/`Unavailable`, or any detail not known to be a client
+error). A step whose only Other answers are client errors (REST 4xx, gRPC
+`InvalidArgument`/`AlreadyExists`/`FailedPrecondition`/`OutOfRange`; for
+example a project-tier role granted at global scope: REST 400, gRPC
+`InvalidArgument`) is `O-S:other-client`: it is triaged like any other class, and
+when no leg allowed it the state must be unchanged on every leg. Core's
+`untyped-error` does not decide either way (core maps errors by identity only).
+`TestSeqClientErrorSplit` pins the split.
+
 ## Pre-registered success rule
 
 Success is EITHER
@@ -145,9 +155,20 @@ alone from a fresh world: (1) 120 x `O-S:layers-disagree`, group.add by a projec
 admin: core allows, the REST gate (which also requires `users.read`) denies;
 (2) 77 x `O-S:step-vs-model`, role.revoke of a grant the subject does not hold:
 every transport answers not-found, the model says the actor is authorised. Neither
-is sequence-dependent. Neither class is an over-allow, an O-E class or
-`O-S:other`, so the always-fail exception does not move them (`TestSeqClassKey`
-checks both).
+is sequence-dependent.
+
+Correction (review): in (2) REST answers 404 but gRPC answers `Internal`
+(`mapRoleError` has no case for `storage.ErrRoleNotAssigned`, #4020), so the
+step also carries an `O-S:other`; the report above picked the first finding,
+`O-S:step-vs-model`. The same gap exists for a grant the subject already holds
+(`storage.ErrRoleAlreadyAssigned`: core untyped error, REST 409, gRPC
+`Internal`), which native fuzzing hit within seconds once `O-S:other` always
+failed. Both are one known-open tolerance, `O-S:known-other-4020`, matched only
+on those two exact signatures (the step kind, the model allowing it, and every
+leg's outcome and detail; `TestSeqKnownOtherIsNarrow`) and removed when #4020 is
+fixed. A tolerated step must still leave the state unchanged on every leg, and it
+still ends the sequence. (1) is neither an over-allow, an O-E class nor
+`O-S:other` (`TestSeqClassKey`).
 
 An earlier run of the same seeds with the pre-fix model (288 + 312 sequences)
 likewise had 0 candidates; a further 40 sequences (indices 900-939) produced the
