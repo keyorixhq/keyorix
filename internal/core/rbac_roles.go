@@ -260,28 +260,34 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 	// "" means keep the stored scope: role.AssignableScope stays "" all the way to
 	// storage.UpdateRole, which then leaves the column out of its UPDATE. The
 	// scope read below only classifies the update; it is never written back, so a
-	// narrowing another replica commits after that read (plain GetRole, no row
-	// lock, READ COMMITTED) is kept (#3909). Copying the read scope into the
+	// narrowing another replica commits after that read (between commit 1 and
+	// commit 2, or before #3919 added the row lock, within one) is kept (#3909). Copying the read scope into the
 	// UPDATE, as this did before, undid it.
+	//
+	// #3919: an EXPLICIT scope is classified from that read (widening or not, and
+	// the "a -> b" of the audit row), so the read is the transaction's first
+	// statement and takes the role row's write lock (tx.LockRoleForUpdate, FOR
+	// UPDATE on Postgres). A concurrent update of the same role waits for this
+	// transaction instead of committing between the read and the write, which
+	// turned a project -> global widening into an owed any -> global
+	// "narrowing" with the wrong audit text.
 	keepScope := role.AssignableScope == ""
 	var narrowed, rest bool
 	if err := c.withOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		// fn may run again (the owed fallback): start from a clean slate.
 		updated, finalPermissions, narrowed, rest, scopeChange = nil, nil, false, false, ""
+		stored, err := tx.LockRoleForUpdate(ctx, role.ID)
+		if err != nil {
+			return err
+		}
 		remove, add, err := rolePermissionDiff(ctx, tx, role.ID, newPermissionIDs)
 		if err != nil {
 			return err
 		}
-		stored, err := tx.GetRole(ctx, role.ID)
-		if err != nil {
-			return err
-		}
+		scopeChange = roleScopeChangeText(stored.AssignableScope, role.AssignableScope)
 		want := role.AssignableScope
 		if keepScope {
 			want = stored.AssignableScope
-		}
-		if want != stored.AssignableScope {
-			scopeChange = fmt.Sprintf(" (assignable_scope %s -> %s)", stored.AssignableScope, want)
 		}
 		// A scope change that lets the role be granted somewhere it could not be
 		// before is a widening, like an added permission: fail closed (commit 2).
@@ -311,6 +317,13 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 	// removal a concurrent writer made necessary since commit 1. Its rows commit with
 	// it or none of it commits (no phantom row on rollback: F3b).
 	widen := func(tx storage.Storage, tgt auditTarget) error {
+		// Re-read under the row lock: a change another replica committed since
+		// commit 1 is what this write replaces, so its audit text names that.
+		stored, err := tx.LockRoleForUpdate(ctx, role.ID)
+		if err != nil {
+			return err
+		}
+		scopeChange = roleScopeChangeText(stored.AssignableScope, role.AssignableScope)
 		remove, add, err := rolePermissionDiff(ctx, tx, role.ID, newPermissionIDs)
 		if err != nil {
 			return err
@@ -334,6 +347,15 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return updated, finalPermissions, nil
+}
+
+// roleScopeChangeText is the audit suffix for an update that sets want over the
+// stored scope ("" when it keeps the stored scope or sets the same one).
+func roleScopeChangeText(stored, want string) string {
+	if want == "" || want == stored {
+		return ""
+	}
+	return fmt.Sprintf(" (assignable_scope %s -> %s)", stored, want)
 }
 
 // errRoleAssignableScopeInvalid is the validation text for a bad assignable_scope.
