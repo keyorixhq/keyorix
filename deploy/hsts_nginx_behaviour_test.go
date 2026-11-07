@@ -172,6 +172,9 @@ func TestWebNginxHSTS_ComposeImage(t *testing.T) {
 				args = append(args, "-e", "KEYORIX_WEB_HSTS="+c.mode)
 			}
 			base := runNginx(t, append(args, nginxImage)...)
+			// /health (auth_request to the Docker-DNS backend, 503 via @health_unavailable) is
+			// not probed here: with no backend and no 127.0.0.11 resolver it can stall past the
+			// client timeout. Pending e2e VM check that it answers 503 promptly.
 			assertHSTS(t, c, base, "/nginx-health", "/", "/missing.js") // server scope, SPA, static-asset location
 		})
 	}
@@ -245,7 +248,7 @@ func TestWebNginxHSTS_HelmChart(t *testing.T) {
 				// (proxy_ssl_trusted_certificate); nginx will not start without the file.
 				"-v", caFile+":/etc/keyorix/tls/ca.crt:ro",
 				nginxImage)
-			assertHSTS(t, c, base, "/nginx-health", "/", "/missing.js", "/api/v1/x") // incl. the proxied (502) API location
+			assertHSTS(t, c, base, "/nginx-health", "/health", "/", "/missing.js", "/api/v1/x") // incl. the proxied (502) /health and API locations
 		})
 	}
 }
