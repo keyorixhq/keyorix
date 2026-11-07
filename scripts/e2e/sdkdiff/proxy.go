@@ -129,6 +129,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rec := Rec{Method: r.Method, RequestURI: r.RequestURI, Header: hdr, Body: body, BodyCut: cut}
 
+	if strings.HasPrefix(r.RequestURI, "/sink") {
+		// redirect target on a different origin (localhost vs 127.0.0.1): records what an SDK
+		// forwards after following a cross-origin redirect (oracle X1)
+		rec.Faulted = "sink"
+		rec.RespStatus = 200
+		rec.RespBody = `{"success":true,"data":{}}`
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, rec.RespBody)
+		p.push(rec)
+		return
+	}
 	f := p.takeFault()
 	if f != nil && f.Kind != "slow" {
 		rec.Faulted = f.Kind
@@ -293,7 +304,12 @@ func (p *Proxy) synthetic(w http.ResponseWriter, f *Fault, rec *Rec) {
 		if st == 0 {
 			st = http.StatusFound
 		}
-		w.Header().Set("Location", f.Location)
+		loc := f.Location
+		if loc == "@sink" {
+			_, port, _ := net.SplitHostPort(p.Addr())
+			loc = "http://localhost:" + port + "/sink"
+		}
+		w.Header().Set("Location", loc)
 		w.WriteHeader(st)
 		rec.RespStatus = st
 	case "empty200":

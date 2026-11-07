@@ -541,6 +541,13 @@ func absoluteChecks(scID string, step int, st Step, vs []view, spec *Spec, token
 				}
 			}
 		}
+		// X1: a credential must not follow a redirect to another origin
+		for _, r := range v.recs {
+			if h := r.Header["Host"]; len(h) > 0 && strings.HasPrefix(h[0], "localhost:") && len(r.Header["Authorization"]) > 0 {
+				one("X1", "authorization-sent-to-other-origin", r.Method+" "+clipStr(r.RequestURI))
+				break
+			}
+		}
 		if st.Expect == "ok" && !v.ok {
 			one("S2", "valid-step-failed", v.class+"/"+v.status)
 		}

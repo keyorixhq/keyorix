@@ -153,3 +153,7 @@ finding in a way that removes one. Each is a harness or control correction, list
 - A4 the standalone SDK driver for Go cannot be built on pve01 (Go 1.24, SDK needs 1.26): drivers and the
   orchestrator are cross-compiled on the Mac and shipped as binaries; Java is not available on pve01 (no JDK) and runs
   on the Mac only.
+
+## Amendment A5 (sink family and oracle X1)
+
+Added before any sink scenario was run against a campaign. A /sink path on the recording proxy records requests and answers 200. A redirect fault target @sink expands to the proxy sink URL on a different origin (localhost vs 127.0.0.1). Phase S generates 7 ops x redirect codes 301/302/303/307/308. Oracle X1: any recorded request whose Host starts with localhost: and carries an Authorization header is a finding (credential forwarded to another origin). Expected for controls: no SDK forwards. Results of X1 are security-relevant and are recorded only in private notes.

@@ -182,6 +182,27 @@ func genRandom(seed int64) Scenario {
 	return sc
 }
 
+// genSink builds the cross-origin redirect family (amendment A5, oracle X1): every operation, every redirect status,
+// target on another origin served by the proxy itself.
+func genSink() []Scenario {
+	var out []Scenario
+	ops := []Step{{Op: "health"}, {Op: "list_secrets", Args: []Arg{S("")}}, {Op: "get_secret", Args: []Arg{S("db-password"), S("")}}, {Op: "list_projects"},
+		{Op: "create_project", Args: []Arg{S("sink-p"), S("d")}}, {Op: "list_environments", Args: []Arg{S("2")}}, {Op: "login", Args: []Arg{S(adminUser), S(adminPW)}}}
+	n := 0
+	for i, op := range ops {
+		for _, code := range []int{301, 302, 303, 307, 308} {
+			s := op
+			if op.Op == "create_project" {
+				s.Args = []Arg{S(fmt.Sprintf("sink-p-%d", code)), S("d")}
+			}
+			s.Fault = &Fault{Kind: "redirect", Status: code, Location: "@sink"}
+			n++
+			out = append(out, Scenario{ID: fmt.Sprintf("S-%05d", n), Tags: []string{"sink", fmt.Sprintf("op%d", i)}, Steps: []Step{s}})
+		}
+	}
+	return out
+}
+
 // genMatrix builds the deterministic phase-A edge matrix.
 func genMatrix() []Scenario {
 	var out []Scenario

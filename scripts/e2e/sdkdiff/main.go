@@ -152,9 +152,12 @@ func cmdGen(args []string) error {
 	out := fs.String("out", "scenarios.jsonl", "output file")
 	_ = fs.Parse(args)
 	var scs []Scenario
-	if *phase == "A" {
+	switch *phase {
+	case "A":
 		scs = genMatrix()
-	} else {
+	case "S":
+		scs = genSink()
+	default:
 		for s := *from; s <= *to; s++ {
 			scs = append(scs, genRandom(s))
 		}
