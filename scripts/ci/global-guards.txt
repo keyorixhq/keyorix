@@ -24,3 +24,4 @@
 ./internal/crypto
 ./cli/cmd
 ./internal/testutil/sqlitetest
+./scripts/ci
