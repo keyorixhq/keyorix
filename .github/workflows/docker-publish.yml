@@ -24,7 +24,7 @@ env:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -183,7 +183,7 @@ jobs:
   # gets the identical vulnerability-scanning bar the full image does, not a
   # weaker one.
   build-and-push-server-airgap:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -309,7 +309,7 @@ jobs:
 
   # The Kubernetes sync agent image (keyorix-k8s-sync), published alongside the server.
   build-and-push-k8s-sync:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -411,7 +411,7 @@ jobs:
   # The Kubernetes operator image (keyorix-operator). It is a separate Go module, so its
   # build context is the operator/ directory (not the repo root).
   build-and-push-operator:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -510,7 +510,7 @@ jobs:
   # The MCP server image (keyorix-mcp) — read-only Keyorix access for AI agents over
   # stdio. Published alongside the server.
   build-and-push-mcp:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -617,7 +617,7 @@ jobs:
   # keyorix-web had its own separate tag history (only v0.2.0 ever cut) with
   # no mechanism to track the server's version at all.
   build-and-push-web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write

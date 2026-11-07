@@ -22,7 +22,7 @@ permissions: {}
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # create the release and upload assets
       # Keyless cosign signing of the release binaries' checksums.txt (#115) — no
@@ -157,7 +157,7 @@ jobs:
           fi
 
   publish-chart:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write # push the Helm charts to GHCR (OCI)
