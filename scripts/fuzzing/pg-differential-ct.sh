@@ -21,8 +21,28 @@ HOSTNAME_CT="${HOSTNAME_CT:-keyorix-pgdiff}"
 TEMPLATE="${TEMPLATE:-local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst}"
 STORAGE="${STORAGE:-local-hdd}"
 DISK_GB="${DISK_GB:-25}"
-GO_VERSION="${GO_VERSION:-1.27.3}" # must match go.mod's toolchain line
+GO_VERSION="${GO_VERSION:-1.27.3}" # must match go.mod's toolchain line (checked below)
+# SHA-256 of go${GO_VERSION}.linux-amd64.tar.gz as published at go.dev/dl. Pinned for the
+# default version; a different GO_VERSION must come with its own GO_SHA256.
+GO_SHA256_1_27_3=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
+if [ "$GO_VERSION" = "1.27.3" ]; then GO_SHA256="${GO_SHA256:-$GO_SHA256_1_27_3}"; fi
+GO_SHA256="${GO_SHA256:-}"
 PG_PASSWORD="${PG_PASSWORD:-difffuzz}"
+
+if [ -z "$GO_SHA256" ]; then
+  echo "GO_VERSION=$GO_VERSION has no pinned checksum: set GO_SHA256 to the value go.dev/dl publishes" >&2
+  exit 2
+fi
+GOMOD="$(cd "$(dirname "$0")/../.." && pwd)/go.mod"
+if [ -f "$GOMOD" ]; then
+  want=$(sed -n 's/^toolchain go//p' "$GOMOD")
+  if [ -n "$want" ] && [ "$want" != "$GO_VERSION" ]; then
+    echo "GO_VERSION=$GO_VERSION does not match $GOMOD (toolchain go$want)" >&2
+    exit 2
+  fi
+else
+  echo "warning: $GOMOD not found, GO_VERSION=$GO_VERSION not checked against the repo" >&2
+fi
 
 if pct status "$CTID" >/dev/null 2>&1; then
   echo "CT $CTID already exists; skipping create"
@@ -36,7 +56,7 @@ fi
 pct status "$CTID" | grep -q running || pct start "$CTID"
 sleep 8
 
-pct exec "$CTID" -- env PG_PASSWORD="$PG_PASSWORD" GO_VERSION="$GO_VERSION" bash -s <<'INNER'
+pct exec "$CTID" -- env PG_PASSWORD="$PG_PASSWORD" GO_VERSION="$GO_VERSION" GO_SHA256="$GO_SHA256" bash -s <<'INNER'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C
 apt-get update -qq
@@ -59,7 +79,11 @@ su postgres -c "psql -tAc \"select 1 from pg_roles where rolname='difffuzz'\"" |
 su postgres -c "psql -tAc \"select 1 from pg_database where datname='difffuzz'\"" | grep -q 1 || \
   su postgres -c "createdb -O difffuzz difffuzz"
 if [ ! -x /usr/local/go/bin/go ]; then
-  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
+  tgz=/root/go${GO_VERSION}.linux-amd64.tar.gz
+  curl -fsSL -o "$tgz" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+  echo "${GO_SHA256}  ${tgz}" | sha256sum -c - || { echo "Go toolchain checksum mismatch; not installing" >&2; rm -f "$tgz"; exit 1; }
+  tar -C /usr/local -xzf "$tgz"
+  rm -f "$tgz"
 fi
 echo "collation: $(su postgres -c "psql -tAc \"select datcollate from pg_database where datname='difffuzz'\"")"
 INNER
