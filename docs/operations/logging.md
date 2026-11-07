@@ -32,7 +32,7 @@ Lines about an HTTP request (the access log, panics, and core's audit-write fail
 | `route` | the matched route pattern, e.g. `/api/v1/secrets/{id}`, or `unmatched`. Never the raw path |
 
 The access log line (`"msg":"http request"`) adds `method`, `uri` (with setup/reset tokens already redacted
-and every query value redacted except short plain values of allowlisted parameters such as `page` or `limit`), `remote_addr`, `status`, `bytes` and `duration_ms`.
+and every query value redacted except values of allowlisted parameters that match their own grammar, such as digits for `page` or `limit`), `remote_addr`, `status`, `bytes` and `duration_ms`.
 5xx responses are `error`, everything else `info`.
 
 Level for the many pre-existing plain log lines is taken from their prefix: `PANIC`, `FATAL`,

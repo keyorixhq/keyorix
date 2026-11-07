@@ -2,8 +2,22 @@ package middleware
 
 import "strings"
 
+// queryValueKind is the value grammar an allowlisted parameter may carry. One
+// shared shape for every key let Keyorix's own tokens (kx_pat_, kx_machine_) and
+// any plain identifier through under e.g. ?format=, so each key gets the
+// narrowest grammar its legitimate values need.
+type queryValueKind uint8
+
+const (
+	kindDigits queryValueKind = iota + 1 // 1..20 ASCII digits: pagination, counts, numeric ids
+	kindBool                             // true|false|1|0
+	kindTime                             // date/RFC3339 shape, starts with a digit
+	kindEnum                             // short lowercase enum, never a kx_ credential prefix
+)
+
 // loggableQueryKeys is the allowlist of query-parameter names whose VALUES may
-// appear in the access log. Everything else is logged as "[redacted]".
+// appear in the access log, each with the value grammar it is checked against.
+// Everything else is logged as "[redacted]".
 //
 // Redaction is by default (allowlist), not by exception (denylist): a caller can
 // put anything in a URL query, including a password, API key or token on a route
@@ -13,19 +27,28 @@ import "strings"
 // carry a secret reference or name (ref, name, q, search), credential-like value
 // (code, state, token, key, value, password), person identifier (username, email,
 // ip, actor, external_id), opaque cursor, redirect target or free-form filter.
-var loggableQueryKeys = map[string]struct{}{
-	"page": {}, "page_size": {}, "pageSize": {}, "limit": {}, "offset": {}, "startIndex": {}, "count": {},
-	"sort_by": {}, "sort_order": {}, "format": {}, "days": {}, "lead_days": {},
-	"since": {}, "until": {}, "start_time": {}, "end_time": {}, "expires_before": {},
-	"project_id": {}, "environment_id": {}, "environment": {}, "secret_id": {}, "secretId": {},
-	"parent_id": {}, "after_id": {}, "user_id": {},
-	"action": {}, "actor_type": {}, "type": {}, "status": {}, "severity": {},
-	"classification": {}, "alertType": {}, "resource_type": {}, "resource": {},
-	"recipientType": {}, "permission": {},
-	"include_value": {}, "include_deleted": {}, "include_total": {}, "is_active": {},
-	"unread": {}, "unacknowledged": {}, "acknowledged": {}, "stale": {}, "full": {},
-	"force": {}, "dry_run": {}, "all": {}, "folder_only": {},
-	"show_shared_only": {}, "show_owned_only": {},
+//
+// What the value check does NOT cover: a short (<=32 chars) all-lowercase secret
+// sent under an enum key still matches the enum grammar. Digits, bool and time
+// keys cannot carry a credential-shaped value.
+var loggableQueryKeys = map[string]queryValueKind{
+	"page": kindDigits, "page_size": kindDigits, "pageSize": kindDigits, "limit": kindDigits,
+	"offset": kindDigits, "startIndex": kindDigits, "count": kindDigits,
+	"days": kindDigits, "lead_days": kindDigits,
+	"project_id": kindDigits, "environment_id": kindDigits, "secret_id": kindDigits, "secretId": kindDigits,
+	"parent_id": kindDigits, "after_id": kindDigits, "user_id": kindDigits,
+
+	"since": kindTime, "until": kindTime, "start_time": kindTime, "end_time": kindTime, "expires_before": kindTime,
+
+	"include_value": kindBool, "include_deleted": kindBool, "include_total": kindBool, "is_active": kindBool,
+	"unread": kindBool, "unacknowledged": kindBool, "acknowledged": kindBool, "stale": kindBool, "full": kindBool,
+	"force": kindBool, "dry_run": kindBool, "all": kindBool, "folder_only": kindBool,
+	"show_shared_only": kindBool, "show_owned_only": kindBool,
+
+	"sort_by": kindEnum, "sort_order": kindEnum, "format": kindEnum, "environment": kindEnum,
+	"action": kindEnum, "actor_type": kindEnum, "type": kindEnum, "status": kindEnum, "severity": kindEnum,
+	"classification": kindEnum, "alertType": kindEnum, "resource_type": kindEnum, "resource": kindEnum,
+	"recipientType": kindEnum, "permission": kindEnum,
 }
 
 // sensitiveQueryKeys is a short fixed set of well-known credential/identity
@@ -60,10 +83,10 @@ func redactQueryParams(rawQuery string) string {
 			out = append(out, redactedMark) // bare token: could be the credential itself
 			continue
 		}
-		if _, ok := loggableQueryKeys[key]; ok {
-			// An allowlisted name is not enough: the value must also have a
-			// strict shape, or a caller can smuggle a secret after it.
-			if loggableQueryValue(val) {
+		if kind, ok := loggableQueryKeys[key]; ok {
+			// An allowlisted name is not enough: the value must also match the
+			// key's own grammar, or a caller can smuggle a secret after it.
+			if loggableQueryValue(kind, val) {
 				out = append(out, p)
 			} else {
 				out = append(out, key+"="+redactedMark)
@@ -83,22 +106,40 @@ func redactQueryParams(rawQuery string) string {
 	return strings.Join(out, "&")
 }
 
-// maxLoggableQueryValue caps the length of a value that is logged verbatim.
-const maxLoggableQueryValue = 64
+const (
+	maxLoggableDigits = 20
+	maxLoggableTime   = 35
+	maxLoggableEnum   = 32
+)
 
 // loggableQueryValue reports whether the raw (still percent-encoded) value of an
-// allowlisted parameter may be logged: 1..64 characters of [A-Za-z0-9_.:-]. That
-// rejects '%', ';', '/', '+', '&' and '=', so encoded or delimiter smuggling and
-// path-like secret references fail closed (logged as "[redacted]").
-func loggableQueryValue(v string) bool {
-	if v == "" || len(v) > maxLoggableQueryValue {
-		return false
+// allowlisted parameter matches the grammar of its kind. '%', ';', '/', '+', '&'
+// and '=' are never accepted, so encoded or delimiter smuggling and path-like
+// secret references fail closed (logged as "[redacted]").
+func loggableQueryValue(kind queryValueKind, v string) bool {
+	switch kind {
+	case kindDigits:
+		return len(v) >= 1 && len(v) <= maxLoggableDigits && allBytes(v, isDigit)
+	case kindBool:
+		return v == "true" || v == "false" || v == "1" || v == "0"
+	case kindTime:
+		return len(v) >= 1 && len(v) <= maxLoggableTime && isDigit(v[0]) &&
+			allBytes(v, func(c byte) bool { return isDigit(c) || c == '-' || c == ':' || c == '.' || c == 'T' || c == 'Z' })
+	case kindEnum:
+		// No kx_ prefix: that is the start of every Keyorix credential.
+		return len(v) >= 1 && len(v) <= maxLoggableEnum && !strings.HasPrefix(v, "kx_") &&
+			allBytes(v, func(c byte) bool {
+				return (c >= 'a' && c <= 'z') || isDigit(c) || c == '_' || c == '.' || c == ':' || c == '-'
+			})
 	}
+	return false
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+func allBytes(v string, ok func(byte) bool) bool {
 	for i := 0; i < len(v); i++ {
-		c := v[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '.', c == ':', c == '-':
-		default:
+		if !ok(v[i]) {
 			return false
 		}
 	}

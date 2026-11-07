@@ -50,8 +50,13 @@ func TestRedactSensitiveURI_AllowlistedValueShapeChecked(t *testing.T) {
 		{"path-like value", "/api/v1/x?resource=prod/db/password", "/api/v1/x?resource=[redacted]"},
 		{"plus is rejected", "/api/v1/x?since=2026-01-02T03:04:05+01:00", "/api/v1/x?since=[redacted]"},
 		{"empty value is rejected", "/api/v1/x?page=", "/api/v1/x?page=[redacted]"},
-		{"over-long value is rejected", "/api/v1/x?format=" + strings.Repeat("a", 65), "/api/v1/x?format=[redacted]"},
-		{"max-length value kept", "/api/v1/x?format=" + strings.Repeat("a", 64), "/api/v1/x?format=" + strings.Repeat("a", 64)},
+		{"over-long enum is rejected", "/api/v1/x?format=" + strings.Repeat("a", 33), "/api/v1/x?format=[redacted]"},
+		{"max-length enum kept", "/api/v1/x?format=" + strings.Repeat("a", 32), "/api/v1/x?format=" + strings.Repeat("a", 32)},
+		{"uppercase enum is rejected", "/api/v1/x?format=CSV", "/api/v1/x?format=[redacted]"},
+		{"non-digit page is rejected", "/api/v1/x?page=abc", "/api/v1/x?page=[redacted]"},
+		{"non-bool switch is rejected", "/api/v1/x?force=yes", "/api/v1/x?force=[redacted]"},
+		{"bool switch kept", "/api/v1/x?force=true&dry_run=0", "/api/v1/x?force=true&dry_run=0"},
+		{"non-time since is rejected", "/api/v1/x?since=yesterday", "/api/v1/x?since=[redacted]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,5 +91,31 @@ func TestLogger_NeverLogsArbitraryQuerySecret(t *testing.T) {
 	// Flush asynchronous writer, if any, by issuing one more request.
 	Logger()(ok).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/flush", nil))
 
+	// Positive control: the access lines did reach the log, so the absence below
+	// is not vacuous.
+	assert.Contains(t, buf.String(), "/api/v1/projects/1/anything", "the access line never reached the log writer")
 	assert.False(t, strings.Contains(buf.String(), canary), "a caller-supplied query secret reached the access log")
+}
+
+// Keyorix's own credential formats (and the oracle canary) must be redacted
+// under EVERY allowlisted key, whatever its grammar. Iterates the map, so a key
+// added later with too loose a grammar fails here.
+func TestRedactSensitiveURI_NoCredentialShapeSurvivesUnderAnyAllowlistedKey(t *testing.T) {
+	b64 := strings.Repeat("aB3_-", 9)[:43] // base64url(32 bytes) is 43 chars
+	secrets := map[string]string{
+		"pat":            "kx_pat_" + b64,
+		"machine_token":  "kx_machine_" + b64,
+		"canary":         "kxcanary-0123456789abcdef0123456789abcdef",
+		"lowercase_pat":  "kx_pat_" + strings.ToLower(b64),
+		"digits_and_hex": "0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	if !assert.NotEmpty(t, loggableQueryKeys) {
+		return
+	}
+	for key := range loggableQueryKeys {
+		for name, secret := range secrets {
+			got := redactSensitiveURI("/api/v1/projects?" + key + "=" + secret)
+			assert.NotContains(t, got, secret, "key %q leaked %s", key, name)
+		}
+	}
 }
