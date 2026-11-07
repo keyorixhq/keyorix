@@ -1,1 +1,1 @@
-scripts/ci/guardinputs/loadmap_test.go	scripts/ci/guard-inputs.tsv,scripts/ledgers/migrate-to-fragments.sh	reads the legacy ledger (TestMigrateScriptKnowsGuardInputs runs the migrate script with --dry-run against it); everything else it loads comes from t.TempDir()
+scripts/ci/guardinputs/loadmap_test.go	scripts/ledgers/migrate-to-fragments.sh	runs the migrate script (TestMigrateScriptKnowsGuardInputs, plain and --dry-run) with LEDGER_ROOT set to a t.TempDir() tree; every ledger it loads comes from t.TempDir()

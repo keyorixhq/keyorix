@@ -4,6 +4,7 @@ package main
 // one-row fragments in guard-inputs.d/.
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -270,34 +271,91 @@ func TestFixHintAsksForOneFragment(t *testing.T) {
 }
 
 // TestMigrateScriptKnowsGuardInputs: scripts/ledgers/migrate-to-fragments.sh
-// --dry-run lists guard-inputs.tsv and writes nothing.
+// migrates guard-inputs.tsv rows into fragments that LoadMap reads, and
+// --dry-run writes nothing. It runs against a t.TempDir() tree (LEDGER_ROOT)
+// seeded with one guard-inputs row, not against the real tree, so it holds
+// both before and after the coordinator has migrated the real ledger.
 func TestMigrateScriptKnowsGuardInputs(t *testing.T) {
-	root := repoRoot(t)
-	before, err := os.ReadFile(filepath.Join(root, DefaultMap)) // #nosec G304 -- tracked repo file
+	script := filepath.Join(repoRoot(t), "scripts", "ledgers", "migrate-to-fragments.sh")
+	const row = "x/a_guard_test.go\tx/**\treads x"
+	ledgers := []string{
+		"docs/adr-conformance-enforced.tsv",
+		"docs/review-coverage.tsv",
+		"docs/check-then-act-lock-exempt.tsv",
+		DefaultMap,
+	}
+	files := map[string]string{}
+	for _, l := range ledgers {
+		files[l] = legacyHeader
+	}
+	files[DefaultMap] += row + "\n"
+	tree := writeTree(t, files)
+	legacy := filepath.Join(tree, DefaultMap)
+	migrate := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("bash", append([]string{script}, args...)...) // #nosec G204 -- fixed repo script
+		cmd.Env = append(os.Environ(), "LEDGER_ROOT="+tree)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("migrate %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	dryRunWritesNothing := func(want string) {
+		t.Helper()
+		before := snapshotLedgers(t, tree, ledgers)
+		if out := migrate("--dry-run"); !strings.Contains(out, want) {
+			t.Errorf("--dry-run output lacks %q:\n%s", want, out)
+		}
+		if after := snapshotLedgers(t, tree, ledgers); !maps.Equal(before, after) {
+			t.Errorf("--dry-run modified the tree:\nbefore %v\nafter  %v", before, after)
+		}
+	}
+
+	// Before the migration: the row is in the legacy file.
+	dryRunWritesNothing(DefaultMap)
+	if out := migrate(); !strings.Contains(out, "migrated 1 row(s): "+DefaultMap) {
+		t.Fatalf("migration did not move the guard-inputs row:\n%s", out)
+	}
+
+	// After the migration: the legacy file holds only its header, and LoadMap
+	// reads the same row from its fragment.
+	if b, err := os.ReadFile(legacy); err != nil || string(b) != legacyHeader { // #nosec G304 -- t.TempDir() file
+		t.Errorf("legacy file after migration = %q, %v; want the header only", b, err)
+	}
+	rows, err := LoadMap(legacy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := LoadMap(filepath.Join(root, DefaultMap))
-	if err != nil {
-		t.Fatal(err)
+	wantSource := filepath.Join(FragmentDir(legacy), "x__a_guard_test.go.tsv")
+	if len(rows) != 1 || rows[0].File != "x/a_guard_test.go" || rows[0].Source != wantSource {
+		t.Errorf("rows after migration = %+v; want x/a_guard_test.go from %s", rows, wantSource)
 	}
-	cmd := exec.Command("bash", filepath.Join(root, "scripts", "ledgers", "migrate-to-fragments.sh"), "--dry-run")
-	cmd.Env = append(os.Environ(), "LEDGER_ROOT="+root)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("migrate --dry-run: %v\n%s", err, out)
+	dryRunWritesNothing("nothing to migrate")
+}
+
+// snapshotLedgers maps each ledger under root, and every file in its <name>.d/
+// directory (the only places the migrate script writes), to its content.
+func snapshotLedgers(t *testing.T, root string, ledgers []string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	read := func(p string) {
+		b, err := os.ReadFile(p) // #nosec G304 -- a t.TempDir() file
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[p] = string(b)
 	}
-	if !strings.Contains(string(out), "scripts/ci/guard-inputs.tsv") {
-		t.Errorf("--dry-run does not mention scripts/ci/guard-inputs.tsv:\n%s", out)
+	for _, l := range ledgers {
+		legacy := filepath.Join(root, l)
+		read(legacy)
+		entries, err := os.ReadDir(FragmentDir(legacy))
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			read(filepath.Join(FragmentDir(legacy), e.Name()))
+		}
 	}
-	after, err := os.ReadFile(filepath.Join(root, DefaultMap)) // #nosec G304 -- tracked repo file
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(before) != string(after) {
-		t.Error("--dry-run modified the legacy file")
-	}
-	if len(rows) == 0 {
-		t.Error("no rows loaded")
-	}
+	return files
 }
