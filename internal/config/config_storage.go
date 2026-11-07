@@ -41,6 +41,18 @@ type DatabaseConfig struct {
 	// has no file to pre-exist, nor to the Postgres backend.
 	RequireExistingPath bool `yaml:"require_existing_path"`
 
+	// Fdatasync makes the SQLite backend commit with fdatasync(2) instead of
+	// fsync(2) (modernc.org/sqlite >= v1.62.0, process-wide). fdatasync skips
+	// the file-timestamp update fsync forces through the filesystem journal,
+	// which on ext4 is often what a commit waits for. Default false: the
+	// system call stays fsync. Takes effect on Linux, FreeBSD, illumos and
+	// NetBSD; on macOS and Windows the server logs one warning and keeps
+	// fsync. A seccomp allowlist that permits fsync but not fdatasync turns
+	// every commit into an I/O error, so enable it only after checking the
+	// profile (the shipped ones allow both). Not applied to the Postgres
+	// backend.
+	Fdatasync bool `yaml:"fdatasync"`
+
 	// PostgreSQL — use DSN directly or set individual fields
 	DSN      string `yaml:"dsn"` // e.g. "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
 	Host     string `yaml:"host"`

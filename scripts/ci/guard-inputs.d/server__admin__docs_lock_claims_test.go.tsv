@@ -1,0 +1,1 @@
+server/admin/docs_lock_claims_test.go	QUICK_START.md,INSTALL-WITH-AI.md,docs/CONFIGURATION.md,docs/configuration.d/*.md,docs/SELF_HOSTING.md,docs/AIRGAP_RUNBOOK.md,docs/operator/*.md,!operator/**,!docs/**	#4029: TestDocsLockClaimsMatchCommandHelp reads docsCmdDocs, the same documents as docs_commands_test.go ("operator" names docs/operator only)

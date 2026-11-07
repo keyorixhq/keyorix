@@ -130,8 +130,11 @@ not just at the end.
 | A storage backend | `internal/storage/factory_<backend>.go`: `var <backend>Backend = storageBackend{names: ..., create: ...}` | `storageBackends` in `internal/storage/factory.go` (also extend `Config.Validate`'s storage.type switch and `TestStorageBackends_SelectionTable`) |
 
 Then, as for any change: a new config key updates
-`internal/config/testdata/config_surface_leaves.txt` and is classified by the
-insecure-settings sweep; a new job regenerates the state map
+`internal/config/testdata/config_surface_leaves.txt`, is classified by the
+insecure-settings sweep and is documented in its own file
+`docs/configuration.d/<key with dots as __>.md` (not appended to
+`docs/CONFIGURATION.md`; see that directory's `README.md`); an upgrade note goes in
+`docs/upgrading.d/<slug>.md`, not in `docs/UPGRADING.md`; a new job regenerates the state map
 (`go run ./cmd/statemapgen`). Schema migrations still go in `migrateDatabase` in
 `factory.go` with a `currentSchemaEpoch` bump: two PRs bumping the epoch must
 serialise, so that collision is deliberate.

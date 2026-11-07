@@ -175,7 +175,9 @@ func (c *KeyorixCore) ListReadableSecrets(ctx context.Context, userID, principal
 		// A share fetch at the storage row cap is not an unreadable scope: it hits
 		// every non-empty scope alike, so skipping it would answer a silently
 		// shortened (usually empty) list, the truncation ErrShareListOverCap exists
-		// to refuse (REVIEW-3018). Propagate it, as tiers 1 and 3 already do.
+		// to refuse (REVIEW-3018). Since #3943 the scoped listing only decorates with
+		// that fetch and no longer refuses at the cap; propagate it anyway should a
+		// later change make it refuse again.
 		if errors.Is(rerr, ErrShareListOverCap) {
 			return nil, rerr
 		}

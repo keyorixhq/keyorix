@@ -9,10 +9,12 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +44,19 @@ func TestTransferOwnership_ReownsSharesOverREST(t *testing.T) {
 	code, out, raw = f.owned(t, f.writerTok, "")
 	require.Equal(t, http.StatusOK, code, raw)
 	assert.Equal(t, []uint{f.olgaShareP, f.wendyShareP}, shareIDs(out.Data.Data), "new owner must list the transferred secret's share: %s", raw)
+
+	// Olga is a project_admin of P, and an administrator of the secret's scope may
+	// revoke any share (#3992). Make her a project_developer (secrets.write, no
+	// secrets.manage) so the refusals below come from her no longer owning the secret,
+	// past the route's secrets.write gate. (Through storage, as the fixture assigns its
+	// roles: she is P's only project_admin, so core's last-admin guard would refuse.)
+	ctx, st, inP := context.Background(), f.d.c.Storage(), storage.Scope{ProjectID: f.d.projectID}
+	dev, err := st.GetRoleByName(ctx, "project_developer")
+	require.NoError(t, err)
+	admin, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, f.ownerID, dev.ID, inP))
+	require.NoError(t, st.RemoveRole(ctx, f.ownerID, admin.ID, inP))
 
 	// The previous owner is refused on update and revoke, and nothing changes.
 	code, raw = doMachineRequest(t, f.d.srv, f.ownerTok, http.MethodPut, sharePath, []byte(`{"permission":"write"}`))

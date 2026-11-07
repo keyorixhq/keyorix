@@ -35,6 +35,12 @@ var shareListCapExempt = map[string]string{
 	"sharing_query.go:sharesReceivedAndOwned": "the fetch helper itself; its callers are checked",
 	"permissions.go:ListUserPermissions": "no production caller (see its own comment); a truncated list there " +
 		"only omits share grants, which fails closed",
+	// #3943: it calls shareFetchMayBeTruncated, but only to log, and uses the capped
+	// list as it is. Listed so the exception to the refusal is explicit, not hidden
+	// behind a check whose result is ignored.
+	"secret_listing_query.go:sharedSecretDecorations": "decorates rows the role already makes visible and never adds " +
+		"one; a share past the cap leaves its row undecorated (IsShared/UserPermission under-reported, fails safe) and " +
+		"the list stays complete. Refusing let a mass sharer turn the victim's secret listing into an error",
 }
 
 // TestShareListFetchCallersRefuseAtTheCap: every core family function that calls a

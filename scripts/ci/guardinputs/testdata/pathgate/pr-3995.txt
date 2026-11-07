@@ -1,0 +1,2 @@
+changelog.d/docs-upgrading-truth-7-upgrading-claims.md
+docs/UPGRADING.md

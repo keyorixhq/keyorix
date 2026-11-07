@@ -1,0 +1,10 @@
+changelog.d/guard-inputs-frag-1.md
+scripts/ci/README.md
+scripts/ci/guard-inputs.d/README.md
+scripts/ci/guard-inputs.d/scripts__ci__guardinputs__loadmap_test.go.tsv
+scripts/ci/guard-inputs.tsv
+scripts/ci/guardinputs/guardinputs_test.go
+scripts/ci/guardinputs/loadmap_test.go
+scripts/ci/guardinputs/main.go
+scripts/ci/run-input-guards.sh
+scripts/ledgers/migrate-to-fragments.sh
