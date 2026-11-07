@@ -128,7 +128,7 @@ func (c Canary) Variants() []Variant {
 		n string
 		e *base64.Encoding
 	}{{"b64-std", base64.StdEncoding}, {"b64-url", base64.URLEncoding}} {
-		for a := 0; a < 3; a++ {
+		for a := range 3 {
 			padded := append(make([]byte, a), core...)
 			full := e.e.EncodeToString(padded)
 			gs := ((a + 2) / 3) * 3
@@ -166,8 +166,8 @@ func (h Hit) Key() string { return h.Surface + "|" + h.Label + "|" + h.Variant }
 type Scanner struct {
 	cans    []Canary
 	needles []needle
-	byKey   map[uint64][]int32 // first 8 bytes of a needle -> needle indexes
-	windows map[string]int     // 12-char core window -> index into cans
+	byKey   map[uint64][]int // first 8 bytes of a needle -> needle indexes
+	windows map[string]int   // 12-char core window -> index into cans
 }
 
 type needle struct {
@@ -178,7 +178,7 @@ type needle struct {
 
 // NewScanner builds a scanner for cs.
 func NewScanner(cs ...Canary) *Scanner {
-	s := &Scanner{windows: map[string]int{}, byKey: map[uint64][]int32{}}
+	s := &Scanner{windows: map[string]int{}, byKey: map[uint64][]int{}}
 	for _, c := range cs {
 		s.Add(c)
 	}
@@ -200,7 +200,7 @@ func (s *Scanner) Add(c Canary) {
 			continue
 		}
 		seen[string(v.Bytes)] = true
-		ni := int32(len(s.needles))
+		ni := len(s.needles)
 		s.needles = append(s.needles, needle{ci: i, name: v.Name, b: v.Bytes})
 		k := binary.LittleEndian.Uint64(v.Bytes)
 		s.byKey[k] = append(s.byKey[k], ni)
@@ -221,7 +221,7 @@ func (s *Scanner) Canaries() []Canary { return append([]Canary(nil), s.cans...) 
 func (s *Scanner) Scan(surface string, hay []byte) []Hit {
 	var hits []Hit
 	full := map[int]bool{}
-	got := map[int32]bool{}
+	got := map[int]bool{}
 	winFound := map[int]int{}
 	for off := 0; off+8 <= len(hay); off++ {
 		if list, ok := s.byKey[binary.LittleEndian.Uint64(hay[off:])]; ok {

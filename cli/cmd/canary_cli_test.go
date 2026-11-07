@@ -94,7 +94,7 @@ func TestCLICanaryStdoutStderr(t *testing.T) {
 	// closed port: connection refused
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	dead := "http://" + ln.Addr().String()
-	ln.Close()
+	_ = ln.Close()
 
 	type vec struct {
 		name  string
@@ -148,11 +148,11 @@ func TestCLICanaryStdoutStderr(t *testing.T) {
 			cmd.Stdin = strings.NewReader(v.stdin)
 			var so, se strings.Builder
 			cmd.Stdout, cmd.Stderr = &so, &se
-			done := make(chan error, 1)
+			done := make(chan struct{})
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
-			go func() { done <- cmd.Wait() }()
+			go func() { _ = cmd.Wait(); close(done) }()
 			select {
 			case <-done:
 			case <-time.After(20 * time.Second):

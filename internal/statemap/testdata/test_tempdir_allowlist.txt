@@ -13,3 +13,5 @@
 server/admin_integration_test.go:buildServerBinary  # binary built once per process; the directory is removed by TestMain in the same file
 internal/auditverify/bench_test.go:buildBenchFixture1M  # 1M-row fixture built once per process; the directory is removed by TestMain in the same file
 server/http/canary_secret_leakage_fuzz_test.go:buildCanaryWorld  # directory is recorded in canaryWorld.tempDir and removed by canaryWorld.close() (a fuzz iteration may rebuild the world, so t.TempDir() would be reaped at the wrong time)
+server/http/canary_sweep_core_test.go:newSweep  # directory is recorded in sweep.tmpDir and removed by sweep.close() (a fuzz iteration rebuilds the world, so t.TempDir() would be reaped at the wrong time)
+server/http/canary_sweep_fuzz_test.go:ownedTB.TempDir  # directory is recorded in ownedTB.dirs and removed by ownedTB.release() when the fuzz world is rebuilt (the world outlives one *testing.T)

@@ -1,0 +1,1 @@
+internal/canary	none	-	PR #4011 (fuzz/canary-leak-oracle): secret-leak canary generator and multi-variant scanner used only by the whole-router sweep tests in server/http and the cli canary test; no production import, no auth, storage or network decisions; self-tested by internal/canary/canary_test.go and TestCanaryOracle_PlantedLeaksAreDetected	test-helper

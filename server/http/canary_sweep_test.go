@@ -28,7 +28,7 @@ func base64Std(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 func sweepSeed() uint64 {
 	if v := os.Getenv("CANARY_SEED"); v != "" {
 		var n uint64
-		fmt.Sscan(v, &n)
+		_, _ = fmt.Sscan(v, &n)
 		return n
 	}
 	return 1
@@ -47,7 +47,7 @@ func TestCanaryRouteSweep(t *testing.T) {
 	dispN := 0
 	if v := os.Getenv("CANARY_MAX_ROUTES"); v != "" {
 		var n int
-		fmt.Sscan(v, &n)
+		_, _ = fmt.Sscan(v, &n)
 		routes = routes[:min(n, len(routes))]
 	}
 	for i, rt := range routes {
@@ -278,7 +278,7 @@ func TestCanaryOracle_PlantedLeaksAreDetected(t *testing.T) {
 		case "log":
 			log.Printf("leaked: %s", plant.data)
 		case "stdout":
-			fmt.Fprintf(os.Stdout, "leaked: %s\n", plant.data)
+			_, _ = fmt.Fprintf(os.Stdout, "leaked: %s\n", plant.data)
 		case "stderr":
 			fmt.Fprintf(os.Stderr, "leaked: %s\n", plant.data)
 		case "db":
@@ -293,7 +293,7 @@ func TestCanaryOracle_PlantedLeaksAreDetected(t *testing.T) {
 	var expected []exp
 	for _, surf := range surfaces {
 		nvars := len(canary.New("probe", canary.Secret, 1, true).Variants())
-		for vi := 0; vi < nvars; vi++ {
+		for vi := range nvars {
 			// A distinct canary per (surface, variant) so each planted encoding
 			// is judged on its own and cannot be satisfied by another's hit.
 			c := canary.New(fmt.Sprintf("st-%s-%d", surf, vi), canary.Secret, 4242+uint64(vi), true)
@@ -305,7 +305,9 @@ func TestCanaryOracle_PlantedLeaksAreDetected(t *testing.T) {
 			// The persistent scan treats the planted bytes as already seen after
 			// the first sighting (per surface/label/variant); labels are unique
 			// per planted variant so each is judged on its own.
-			s.scanPersistent("plant " + label)
+			// The db plant is also asserted on the raw dbfile surface, which only
+			// the deep scan reads, so that surface must be scanned deep here.
+			s.scanPersistentDeep("plant "+label, surf == "db")
 			prefix := map[string]string{"db": "db:", "tempfile": "tempfile:", "metrics": "metrics"}[surf]
 			if prefix == "" {
 				prefix = surf
@@ -356,6 +358,6 @@ func TestCanaryOracle_PlantedLeaksAreDetected(t *testing.T) {
 func variantIndex(label string) int {
 	i := strings.LastIndex(label, "-")
 	var n int
-	fmt.Sscan(label[i+1:], &n)
+	_, _ = fmt.Sscan(label[i+1:], &n)
 	return n
 }

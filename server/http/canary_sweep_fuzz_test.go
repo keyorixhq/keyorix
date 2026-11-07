@@ -2,6 +2,7 @@ package http
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -32,8 +33,8 @@ func (o *ownedTB) Errorf(string, ...any)     {}
 func (o *ownedTB) Error(...any)              {}
 func (o *ownedTB) Skipf(string, ...any)      {}
 func (o *ownedTB) release() {
-	for i := len(o.cleanups) - 1; i >= 0; i-- {
-		o.cleanups[i]()
+	for _, v := range slices.Backward(o.cleanups) {
+		v()
 	}
 	for _, d := range o.dirs {
 		_ = os.RemoveAll(d)
