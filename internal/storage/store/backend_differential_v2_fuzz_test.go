@@ -276,9 +276,6 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 
 			switch op {
 			case 0: // CreateProject + readback
-				if !diffASCII(name) { // gate B: project-name uniqueness is ASCII-only on SQLite (name2 is only the description)
-					break
-				}
 				both(fmt.Sprintf("CreateProject(%q)", name), func(s *diffSide) string {
 					_, err := s.ls.CreateProject(ctx, &models.Project{Name: name, Description: name2})
 					g, gerr := s.ls.GetProjectByName(ctx, name)
@@ -479,9 +476,6 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 					return fmt.Sprintf("%s total=%d walk=%s", out, total, diffJoinSorted(names))
 				})
 			case 11: // project lifecycle: create, delete, maybe recreate the name, restore
-				if !diffASCII(name) { // gate B
-					break
-				}
 				both(fmt.Sprintf("ProjectLifecycle(%q,bits=%d)", name, bits&3), func(s *diffSide) string {
 					p, err := s.ls.CreateProject(ctx, &models.Project{Name: name})
 					if err != nil {
@@ -498,9 +492,6 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 					return fmt.Sprintf("del=%s recreate=%s restore=%s envs=%d secrets=%d get=%s/%q", diffClass(derr), rc, diffClass(rerr), envs, secs, diffClass(gerr), projNameOrNil(g))
 				})
 			case 12: // UpdateProjectFields (rename / MFA flag)
-				if !diffASCII(name) || !diffASCII(name2) { // gate B
-					break
-				}
 				both(fmt.Sprintf("UpdateProjectFields(%q->%q)", name, name2), func(s *diffSide) string {
 					p, err := s.ls.GetProjectByName(ctx, name)
 					if err != nil {
@@ -521,11 +512,7 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 					u1, e1 := s.ls.GetUserByUsername(ctx, up)
 					u2, e2 := s.ls.GetUserByEmail(ctx, up+"@x.io")
 					n3, e3 := s.ls.GetSecretByName(ctx, up, s.proj, s.env)
-					var p4 *models.Project
-					var e4 error
-					if diffASCII(up) { // gate B: project lookup folds ASCII only on SQLite
-						p4, e4 = s.ls.GetProjectByName(ctx, up)
-					}
+					p4, e4 := s.ls.GetProjectByName(ctx, up)
 					return fmt.Sprintf("user=%s/%q email=%s/%q secret=%s/%q project=%s/%q", diffClass(e1), userNameOrNil(u1), diffClass(e2), userNameOrNil(u2),
 						diffClass(e3), secNameOrNil(n3), diffClass(e4), projNameOrNil(p4))
 				})
