@@ -14,6 +14,7 @@
 #   docs/adr-conformance-enforced.tsv   -> docs/adr-conformance-enforced.d/   (scripts/check-adr-conformance.sh)
 #   docs/review-coverage.tsv            -> docs/review-coverage.d/            (scripts/check-review-coverage.sh)
 #   docs/check-then-act-lock-exempt.tsv -> docs/check-then-act-lock-exempt.d/ (internal/core/guards TestCheckThenActLockGuard_*)
+#   scripts/ci/guard-inputs.tsv         -> scripts/ci/guard-inputs.d/         (scripts/ci/guardinputs LoadMap)
 # NOT migrated: docs/security-closures.tsv — it is already GENERATED from
 # docs/security-closures.d/ (scripts/gen-security-closures-tsv.sh).
 #
@@ -48,6 +49,7 @@ LEDGERS=(
     docs/adr-conformance-enforced.tsv
     docs/review-coverage.tsv
     docs/check-then-act-lock-exempt.tsv
+    scripts/ci/guard-inputs.tsv
 )
 
 fragment_name() {

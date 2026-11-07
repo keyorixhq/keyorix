@@ -80,6 +80,15 @@ type RBACStore interface {
 	// part of the PRECIS profile) or fail to compile.
 	CreateRole(ctx context.Context, name identity.FoldedName, description string) (*models.Role, error)
 	GetRole(ctx context.Context, id uint) (*models.Role, error)
+	// LockRoleForUpdate is GetRole inside a WithTransaction, taking a row-level
+	// write lock on backends that support one (Postgres: SELECT … FOR UPDATE) so a
+	// decision made from the row and the write of it serialize against every
+	// concurrent writer across replicas. On SQLite it is a plain read (write
+	// transactions there are BEGIN IMMEDIATE). Use this — not GetRole — whenever a
+	// transaction classifies an update against the role row it then writes
+	// (core.UpdateRole's assignable-scope widening and audit text, #3919). Outside
+	// a transaction it locks nothing.
+	LockRoleForUpdate(ctx context.Context, id uint) (*models.Role, error)
 	GetRoleByName(ctx context.Context, name string) (*models.Role, error)
 	UpdateRole(ctx context.Context, role *models.Role) (*models.Role, error)
 	// DeleteRole hard-deletes a role and cascades the delete to every

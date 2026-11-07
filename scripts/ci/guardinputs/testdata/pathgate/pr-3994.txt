@@ -1,0 +1,13 @@
+.github/workflows/ci.yml
+.github/workflows/govulncheck-scheduled.yml
+changelog.d/deps-compress-1-klauspost-compress-1.20.2.md
+changelog.d/govulncheck-6909-exception.md
+docs/govulncheck-exceptions.d/GO-2026-6909.tsv
+docs/govulncheck-exceptions.d/README.md
+docs/guard-rollout.d/TestGovulncheckExceptionsMitigationTestsExist.tsv
+go.mod
+go.sum
+scripts/ci/check-govulncheck-test.sh
+scripts/ci/check-govulncheck.sh
+scripts/ci/govulncheck_exceptions_test.go
+scripts/ci/guard-inputs.tsv

@@ -1,10 +1,16 @@
 package core
 
-// secret_readable_listing_share_cap_test.go — REVIEW-3974-DEEP-2 F1: a received-share
-// fetch at the storage cap must reach the caller of ListReadableSecrets as
-// ErrShareListOverCap on EVERY tier. Tier 2 used to treat it as one unreadable scope
-// and skip it, and since it hits every non-empty scope alike, a project-role reader got
-// a silently empty list (HTTP 200) instead of the refusal.
+// secret_readable_listing_share_cap_test.go — a received-share fetch at the storage
+// cap, on every ListReadableSecrets tier.
+//
+// REVIEW-3974-DEEP-2 F1: tier 2 used to treat the refusal as one unreadable scope and
+// skip it, and since it hits every non-empty scope alike, a project-role reader got a
+// silently empty list (HTTP 200). #3943 then narrowed where the refusal applies: on
+// tiers 1 and 2 the received shares only decorate rows the role already makes visible,
+// so a fetch at the cap no longer refuses the list (that let a mass sharer deny the
+// victim's listing); the rows are complete and only the decoration is partial. Tier 3
+// (no role) lists exactly owned ∪ shared ∪ ACL, so there the shares ARE the rows and
+// the refusal stays.
 
 import (
 	"context"
@@ -44,30 +50,37 @@ func shareCapTierFixture(t *testing.T, received []*models.ShareRecord, grant fun
 	return c
 }
 
-func TestListReadableSecrets_EveryTierRefusesAShareFetchAtTheCap(t *testing.T) {
+func TestListReadableSecrets_ShareFetchAtTheCap(t *testing.T) {
 	t.Parallel()
 	for _, tier := range readableListingTiers {
 		t.Run(tier.name, func(t *testing.T) {
 			t.Parallel()
 			c := shareCapTierFixture(t, shareRecords(1, maxShareViewBatchSize), tier.grant)
 			ctx := context.Background()
+			refuses := tier.name == "tier3-no-role"
 
 			resp, err := c.ListReadableSecrets(ctx, 1, 1, &models.SecretListFilter{})
-			require.ErrorIs(t, err, ErrShareListOverCap,
-				"a received-share fetch at the cap must be refused, not answered as a shortened list")
-			assert.Nil(t, resp)
-
-			_, _, err = c.CountReadableSecrets(ctx, 1, 1)
-			require.ErrorIs(t, err, ErrShareListOverCap, "the dashboard count goes through the same listing")
+			_, exact, cerr := c.CountReadableSecrets(ctx, 1, 1)
+			if refuses {
+				require.ErrorIs(t, err, ErrShareListOverCap,
+					"tier 3's rows ARE the shares: a fetch at the cap must be refused, not answered as a shortened list")
+				assert.Nil(t, resp)
+				require.ErrorIs(t, cerr, ErrShareListOverCap, "the dashboard count goes through the same listing")
+			} else {
+				require.NoError(t, err, "the shares only decorate role-visible rows: the list must still answer (#3943)")
+				assert.Equal(t, int64(3), resp.Total, "the role makes project 1's three secrets visible")
+				require.NoError(t, cerr)
+				assert.True(t, exact, "the count is the role-visible rows, not the share fetch")
+			}
 
 			stats, err := c.GetDashboardStats(ctx, 1, "reader", 1)
 			require.NoError(t, err, "the dashboard degrades a tile, it does not fail")
-			assert.True(t, stats.Degraded)
-			var degraded bool
+			assert.True(t, stats.Degraded, "shared_with_me comes from a fetch at the cap: a floor, not a count")
+			var totalDegraded bool
 			for _, r := range stats.DegradedReasons {
-				degraded = degraded || strings.HasPrefix(r, "total_secrets:")
+				totalDegraded = totalDegraded || strings.HasPrefix(r, "total_secrets:")
 			}
-			assert.True(t, degraded, "TOTAL SECRETS must be degraded, not shown as a count: %v", stats.DegradedReasons)
+			assert.Equal(t, refuses, totalDegraded, "TOTAL SECRETS is degraded exactly where the listing refuses: %v", stats.DegradedReasons)
 		})
 	}
 }

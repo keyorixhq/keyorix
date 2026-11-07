@@ -44,6 +44,7 @@ var dirListingAllowlist = map[string]string{
 	"internal/core/cross_replica_forced_interleaving_test.go:g5SeedFile":      "fuzz seed files under testdata/fuzz-pending",
 	"internal/core/cross_replica_forced_interleaving_test.go:g5PendingIssues": "fuzz seed dirs under testdata/fuzz-pending",
 	"internal/core/exempt_ledger_review_test.go:discoverExemptLedgers":        "ledger *.tsv files under docs/",
+	"internal/core/exempt_ledger_review_test.go:readExemptLedgerRows":         "ledger fragment *.tsv files under docs/<name>.d/",
 	"internal/core/fuzz_cross_replica_invariants_pending_seeds_test.go:TestPendingSeedsPromotedAfterFix": "fuzz " +
 		"seed dirs under testdata/fuzz-pending",
 	"internal/core/hook_storage_selftest_test.go:coreTestFiles": "lists the TEST files of internal/core and of " +

@@ -94,8 +94,9 @@ only through shares writes one `share_access_elevated` row for the call (action
 same transaction: afterwards the shares appear in the new owner's
 `GET /api/v1/shares/owned` and gRPC `ListUserShares` as their own (`createdBy` is the
 new owner), disappear from the previous owner's, and only the new owner can update
-or revoke them (`PUT`/`DELETE /api/v1/shares/{id}` answer `403` for the previous
-owner). Recipients, permissions and expiries are untouched. Who originally created a
+them (`PUT /api/v1/shares/{id}` answers `403` for the previous owner). The previous
+owner can no longer revoke them either (`DELETE` answers `403`), unless they are an
+administrator of the secret's scope (see [Revoke Share](#4-revoke-share)). Recipients, permissions and expiries are untouched. Who originally created a
 share is in the audit log (`share_created`), not in `createdBy`.
 
 **Example:**
@@ -197,6 +198,16 @@ curl -X PUT "https://api.keyorix.com/api/v1/shares/456" \
 Remove access to a shared secret.
 
 **Endpoint:** `DELETE /shares/{id}`
+
+**Who may revoke:** the secret's owner, while still a member of its project, or an
+administrator of the secret's scope: a user who holds both `secrets.write` (the
+route's gate) and `secrets.manage` at the secret's project/environment, or an admin
+role there (`project_admin`, `system_admin`). A personal access token must itself
+allow `secrets.manage` at that scope to use the administrator path; machine
+identities cannot use it. An owner who has left the project is refused. The
+`share_revoked` / `group_share_revoked` audit entry names who revoked it and, for an
+administrator, says it was not the owner. Creating and updating a share stay
+owner-only.
 
 **Parameters:**
 - `id` (path, required): Share ID

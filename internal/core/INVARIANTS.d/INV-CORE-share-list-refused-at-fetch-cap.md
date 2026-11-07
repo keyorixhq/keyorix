@@ -6,10 +6,14 @@
   whoever is reviewing or revoking them. Applies to `ListUserShareViews` (HTTP, 422
   `ShareListOverCap`), `ListOwnedShareViews`, `ListSharesByUser` (gRPC/CLI; gRPC answers
   `FailedPrecondition`) and the shared-with-me secret listing
-  (`getSharedSecretsWithSharingInfo`, behind `ListSecretsWithSharingInfo` and
-  `ListSecretsInScopeWithSharingInfo`), including every tier of `ListReadableSecrets`:
-  tier 2's best-effort per-scope skip must propagate the refusal, never drop the scope. A count from such a fetch is a floor:
-  `GetDashboardStats` degrades `shared_secrets` / `shared_with_me` (and `total_secrets`, through `CountReadableSecrets`) instead of presenting
+  (`getSharedSecretsWithSharingInfo`, behind `ListSecretsWithSharingInfo`: tier 3 of
+  `ListReadableSecrets`, where the shares ARE the rows). One exception, because there the
+  shares add no row: `ListSecretsInScopeWithSharingInfo` (tiers 1 and 2) only DECORATES
+  role-visible rows and uses the capped fetch as it is (`sharedSecretDecorations`, #3943),
+  so a share past the cap under-reports `IsShared`/`UserPermission` (fails safe) and the
+  list still answers; refusing let a mass sharer deny the victim's secret listing. Tier 2's
+  best-effort per-scope skip must still propagate a refusal, never drop the scope. A count from such a fetch is a floor:
+  `GetDashboardStats` degrades `shared_secrets` / `shared_with_me` (and, on tier 3, `total_secrets`, through `CountReadableSecrets`) instead of presenting
   it as a count. The refusal is decided per fetch, not on the merged length (a fully
   overlapping received+owned pair merges to one fetch's size). Why: REVIEW-3018 — the
   gRPC/CLI merge had no refusal while the HTTP and owner-scoped lists did.
@@ -20,8 +24,9 @@
   / `TestListSharesByUser_ListsBothFetchesUnderTheCap`, `share_list_cap_siblings_test.go`
   (shared-with-me listing and dashboard tiles, each with a positive control),
   `secret_readable_listing_share_cap_test.go`
-  `TestListReadableSecrets_EveryTierRefusesAShareFetchAtTheCap` (list, count and dashboard
-  tile on every tier, with a positive control), and
+  `TestListReadableSecrets_ShareFetchAtTheCap` (tier 3 refuses; tiers 1 and 2 list
+  with partial decoration; list, count and dashboard tile on every tier, with a positive
+  control), `secret_listing_share_cap_decoration_test.go`, and
   `server/grpc/services` `TestShareService_ListUserShares_OverCapIsFailedPrecondition`.
   **Not covered**: a fetch reached through a wrapper not in `shareListFetches` is invisible
   to the guard, and the guard checks that the refusal is called, not that a caller up the

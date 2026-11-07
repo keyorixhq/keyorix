@@ -84,8 +84,15 @@ var legacyUnreviewedLedgers = map[string]string{
 const exemptLedgerDir = "../../docs"
 
 type reviewLedgerRow struct {
-	line   int
-	fields []string
+	line     int
+	fields   []string
+	file     string // display path of the file the row came from (set by readExemptLedgerRows)
+	fragment bool   // the row came from <name>.d/*.tsv, not the flat file
+}
+
+// where is "<file>:<line>" for a row read by readExemptLedgerRows.
+func (r reviewLedgerRow) where() string {
+	return fmt.Sprintf("%s:%d", r.file, r.line)
 }
 
 func readReviewLedgerRows(t *testing.T, path string) []reviewLedgerRow {
@@ -100,6 +107,47 @@ func readReviewLedgerRows(t *testing.T, path string) []reviewLedgerRow {
 		rows = append(rows, reviewLedgerRow{line: i + 1, fields: strings.Split(line, "\t")})
 	}
 	return rows
+}
+
+// readExemptLedgerRows reads an exemption ledger the dual-read way (the same
+// convention as internal/core/guards readLedgerRows and
+// docs/review-coverage.d/README.md): the flat docs/<name> PLUS every *.tsv in
+// the sibling docs/<name minus .tsv>.d/ directory. A missing directory means
+// zero fragments. Comment and blank lines are skipped in both. dups lists each
+// key (the keyCols columns) that appears twice where at least one of the two
+// rows is a fragment, naming both places; a key repeated only inside the flat
+// file is not reported, as before.
+func readExemptLedgerRows(t *testing.T, dir, name string, keyCols []int) (rows []reviewLedgerRow, dups []string) {
+	t.Helper()
+	flat := "docs/" + name
+	for _, r := range readReviewLedgerRows(t, filepath.Join(dir, name)) {
+		r.file = flat
+		rows = append(rows, r)
+	}
+	fragDir := strings.TrimSuffix(name, ".tsv") + ".d"
+	frags, err := filepath.Glob(filepath.Join(dir, fragDir, "*.tsv"))
+	require.NoError(t, err)
+	sort.Strings(frags)
+	for _, f := range frags {
+		for _, r := range readReviewLedgerRows(t, f) {
+			r.file = "docs/" + fragDir + "/" + filepath.Base(f)
+			r.fragment = true
+			rows = append(rows, r)
+		}
+	}
+	seen := map[string]reviewLedgerRow{}
+	for _, r := range rows {
+		k := ledgerKey(r, keyCols)
+		prev, ok := seen[k]
+		if !ok {
+			seen[k] = r
+			continue
+		}
+		if prev.fragment || r.fragment {
+			dups = append(dups, fmt.Sprintf("duplicate key %q at %s and %s", strings.ReplaceAll(k, "\t", " "), prev.where(), r.where()))
+		}
+	}
+	return rows, dups
 }
 
 func ledgerKey(r reviewLedgerRow, cols []int) string {
@@ -160,11 +208,12 @@ func exemptLedgerProblems(t *testing.T, dir string) []string {
 			problems = append(problems, fmt.Sprintf("docs/%s is an exemption ledger not registered in exemptLedgers (internal/core/exempt_ledger_review_test.go): give it added_by/reviewed_by columns or a .reviewed.tsv sidecar and register it", name))
 			continue
 		}
-		rows := readReviewLedgerRows(t, filepath.Join(dir, name))
+		rows, dups := readExemptLedgerRows(t, dir, name, l.keyCols)
+		problems = append(problems, dups...)
 		if l.sidecar == "" {
 			for _, r := range rows {
 				if p := checkReviewed(field(r, l.addedByCol), field(r, l.reviewedByCol)); p != "" {
-					problems = append(problems, fmt.Sprintf("docs/%s:%d %s: %s", name, r.line, strings.ReplaceAll(ledgerKey(r, l.keyCols), "\t", " "), p))
+					problems = append(problems, fmt.Sprintf("%s %s: %s", r.where(), strings.ReplaceAll(ledgerKey(r, l.keyCols), "\t", " "), p))
 				}
 			}
 			continue
@@ -191,7 +240,7 @@ func exemptLedgerProblems(t *testing.T, dir string) []string {
 			k := ledgerKey(r, l.keyCols)
 			keys[k] = true
 			if _, ok := side[k]; !ok {
-				problems = append(problems, fmt.Sprintf("docs/%s:%d %s has no row in docs/%s — add one naming who added it and who (someone else) reviewed it", name, r.line, k, l.sidecar))
+				problems = append(problems, fmt.Sprintf("%s %s has no row in docs/%s — add one naming who added it and who (someone else) reviewed it", r.where(), k, l.sidecar))
 			}
 		}
 		for k, r := range side {
@@ -258,6 +307,81 @@ func TestExemptLedgers_Calibration(t *testing.T) {
 	} {
 		require.NotEmptyf(t, run(bad), "%s must be rejected", name)
 	}
+}
+
+// TestReadExemptLedgerRows_DualRead: the ledger's keys are the flat file's plus
+// every *.tsv of the sibling <name>.d/ directory, so the review rule keeps
+// working after scripts/ledgers/migrate-to-fragments.sh moves rows out of the
+// flat file.
+func TestReadExemptLedgerRows_DualRead(t *testing.T) {
+	const name = "check-then-act-lock-exempt.tsv"
+	cases := []struct {
+		name     string
+		flat     string
+		frags    map[string]string // nil: no .d directory at all
+		wantKeys []string
+		wantDups []string
+	}{
+		{name: "flat only", flat: "# h\nF1\tC\tr\nF2\tC\tr\n", wantKeys: []string{"F1", "F2"}},
+		{name: "fragment only", flat: "# h\n", frags: map[string]string{"F1.tsv": "F1\tC\tr\n", "F2.tsv": "F2\tC\tr\n"}, wantKeys: []string{"F1", "F2"}},
+		{name: "both", flat: "F1\tC\tr\n", frags: map[string]string{"F2.tsv": "F2\tC\tr\n"}, wantKeys: []string{"F1", "F2"}},
+		{
+			name: "duplicate key flat vs fragment", flat: "F1\tC\tr\n", frags: map[string]string{"F1.tsv": "F1\tC\tr\n"},
+			wantKeys: []string{"F1", "F1"},
+			wantDups: []string{`duplicate key "F1" at docs/` + name + `:1 and docs/check-then-act-lock-exempt.d/F1.tsv:1`},
+		},
+		{
+			name: "duplicate key between two fragments", flat: "# h\n", frags: map[string]string{"a.tsv": "F1\tC\tr\n", "b.tsv": "F1\tC\tr\n"},
+			wantKeys: []string{"F1", "F1"},
+			wantDups: []string{`duplicate key "F1" at docs/check-then-act-lock-exempt.d/a.tsv:1 and docs/check-then-act-lock-exempt.d/b.tsv:1`},
+		},
+		{name: "comment-only fragment", flat: "F1\tC\tr\n", frags: map[string]string{"c.tsv": "# nothing here\n\n", "F2.tsv": "F2\tC\tr\n"}, wantKeys: []string{"F1", "F2"}},
+		{name: "missing .d directory", flat: "F1\tC\tr\n", wantKeys: []string{"F1"}},
+		{name: "non-tsv file in .d is ignored", flat: "F1\tC\tr\n", frags: map[string]string{"README.md": "F9\tC\tr\n"}, wantKeys: []string{"F1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(tc.flat), 0o600))
+			if tc.frags != nil {
+				fd := filepath.Join(dir, "check-then-act-lock-exempt.d")
+				require.NoError(t, os.Mkdir(fd, 0o750))
+				for n, b := range tc.frags {
+					require.NoError(t, os.WriteFile(filepath.Join(fd, n), []byte(b), 0o600))
+				}
+			}
+			rows, dups := readExemptLedgerRows(t, dir, name, []int{0})
+			var keys []string
+			for _, r := range rows {
+				keys = append(keys, ledgerKey(r, []int{0}))
+			}
+			require.Equal(t, tc.wantKeys, keys)
+			require.Equal(t, tc.wantDups, dups)
+		})
+	}
+}
+
+// TestExemptLedgers_FragmentRowsAreReviewed: a fragment row needs a sidecar row
+// like a flat row (green when it has one, red when it has none), and a sidecar
+// row for a key that only exists as a fragment is not an orphan.
+func TestExemptLedgers_FragmentRowsAreReviewed(t *testing.T) {
+	run := func(flat, sidecar string, frags map[string]string) []string {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "check-then-act-lock-exempt.tsv"), []byte(flat), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "check-then-act-lock-exempt.reviewed.tsv"), []byte(sidecar), 0o600))
+		fd := filepath.Join(dir, "check-then-act-lock-exempt.d")
+		require.NoError(t, os.Mkdir(fd, 0o750))
+		for n, b := range frags {
+			require.NoError(t, os.WriteFile(filepath.Join(fd, n), []byte(b), 0o600))
+		}
+		return exemptLedgerProblems(t, dir)
+	}
+	require.Empty(t, run("# h\n", "F1\tC-GUARD-2\tC-GUARD2-EXEMPT-REVIEW\n", map[string]string{"F1.tsv": "F1\tC\tr\n"}))
+	p := run("# h\n", "# h\n", map[string]string{"F1.tsv": "F1\tC\tr\n"})
+	require.Len(t, p, 1)
+	require.Contains(t, p[0], "docs/check-then-act-lock-exempt.d/F1.tsv:1")
+	require.Contains(t, p[0], "has no row in docs/check-then-act-lock-exempt.reviewed.tsv")
+	require.NotEmpty(t, run("F1\tC\tr\n", "F1\tA\tB\n", map[string]string{"F1.tsv": "F1\tC\tr\n"}), "flat+fragment duplicate must be rejected")
 }
 
 var pendingRowRe = regexp.MustCompile(`pending: #(\d+)`)

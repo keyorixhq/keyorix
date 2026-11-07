@@ -10,7 +10,8 @@
 // turned main red: TestDocsShowNoLiteralSecretOnCommandLine reads every *.md.
 //
 // scripts/ci/guard-inputs.tsv maps each such guard test file to the globs it
-// reads. This command reads changed paths (one per line) on stdin and prints,
+// reads, plus one-row fragments in scripts/ci/guard-inputs.d/ (new rows go
+// there, see its README.md). This command reads changed paths (one per line) on stdin and prints,
 // for every mapped file with a matching glob, one line
 //
 //	<module dir> TAB <package dir relative to the module, ./x/y> TAB <-run regex>
@@ -51,6 +52,7 @@ type Row struct {
 	NotRead []string
 	Note    string
 	Line    int
+	Source  string // the legacy map or the fragment the row was read from
 }
 
 func main() {
@@ -84,9 +86,22 @@ func main() {
 	}
 }
 
+// FragmentDir is the directory of one-row fragments that sits next to the
+// legacy map p: p without its .tsv suffix, plus ".d" (guard-inputs.tsv ->
+// guard-inputs.d).
+func FragmentDir(p string) string {
+	return strings.TrimSuffix(p, ".tsv") + ".d"
+}
+
 // LoadMap parses the TSV map: file TAB globs TAB note, '#' comments and blank
 // lines ignored. globs is a comma-separated list; '!glob' marks a reviewed
 // non-input.
+//
+// It is dual-read, like docs/review-coverage.d: the legacy file p (which must
+// exist) is followed by every *.tsv in FragmentDir(p), in sorted file-name
+// order (a missing directory is fine). A fragment holds exactly one data row;
+// a key that appears twice, in the legacy file or in two fragments, is an
+// error naming both places.
 func LoadMap(p string) ([]Row, error) {
 	f, err := os.Open(p) // #nosec G304 -- fixed repo path or an explicit -map flag
 	if err != nil {
@@ -94,7 +109,7 @@ func LoadMap(p string) ([]Row, error) {
 	}
 	defer func() { _ = f.Close() }()
 	var rows []Row
-	seen := map[string]int{}
+	seen := map[string]string{} // key -> where it was first mapped
 	sc := bufio.NewScanner(f)
 	n := 0
 	for sc.Scan() {
@@ -103,32 +118,106 @@ func LoadMap(p string) ([]Row, error) {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		cols := strings.Split(line, "\t")
-		if len(cols) != 3 {
-			return nil, fmt.Errorf("%s:%d: want 3 tab-separated columns (file, globs, note), got %d", p, n, len(cols))
+		r, err := parseRow(line, p, n)
+		if err != nil {
+			return nil, err
 		}
-		r := Row{File: cols[0], Note: strings.TrimSpace(cols[2]), Line: n}
 		if prev, dup := seen[r.File]; dup {
-			return nil, fmt.Errorf("%s:%d: %s already mapped on line %d", p, n, r.File, prev)
+			return nil, fmt.Errorf("%s: %s already mapped at %s", r.Where(), r.File, prev)
 		}
-		seen[r.File] = n
-		for g := range strings.SplitSeq(cols[1], ",") {
-			g = strings.TrimSpace(g)
-			switch {
-			case g == "":
-				return nil, fmt.Errorf("%s:%d: empty glob", p, n)
-			case strings.HasPrefix(g, "!"):
-				r.NotRead = append(r.NotRead, g[1:])
-			default:
-				r.Inputs = append(r.Inputs, g)
-			}
-		}
-		if r.Note == "" {
-			return nil, fmt.Errorf("%s:%d: the note column is empty: say what the file reads (or why a path is not read)", p, n)
-		}
+		seen[r.File] = r.Where()
 		rows = append(rows, r)
 	}
-	return rows, sc.Err()
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	frags, err := loadFragments(FragmentDir(p), seen)
+	if err != nil {
+		return nil, err
+	}
+	return append(rows, frags...), nil
+}
+
+// loadFragments reads every *.tsv in dir in sorted file-name order. seen maps
+// the keys already mapped to where; it is extended with the fragments' keys.
+func loadFragments(dir string, seen map[string]string) ([]Row, error) {
+	ents, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range ents {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".tsv") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	var rows []Row
+	for _, name := range names {
+		fp := filepath.Join(dir, name)
+		b, err := os.ReadFile(fp) // #nosec G304 -- entry of the fragment directory next to the map
+		if err != nil {
+			return nil, err
+		}
+		var frag []Row
+		n := 0
+		for line := range strings.SplitSeq(string(b), "\n") {
+			n++
+			line = strings.TrimSuffix(line, "\r")
+			if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			r, err := parseRow(line, fp, n)
+			if err != nil {
+				return nil, err
+			}
+			frag = append(frag, r)
+		}
+		if len(frag) != 1 {
+			return nil, fmt.Errorf("%s: a fragment holds exactly one data row, found %d", fp, len(frag))
+		}
+		r := frag[0]
+		if prev, dup := seen[r.File]; dup {
+			return nil, fmt.Errorf("%s: %s already mapped at %s", r.Where(), r.File, prev)
+		}
+		seen[r.File] = r.Where()
+		rows = append(rows, r)
+	}
+	return rows, nil
+}
+
+// parseRow parses one data line of the legacy file or of a fragment; src and
+// n name where it came from in errors.
+func parseRow(line, src string, n int) (Row, error) {
+	cols := strings.Split(line, "\t")
+	if len(cols) != 3 {
+		return Row{}, fmt.Errorf("%s:%d: want 3 tab-separated columns (file, globs, note), got %d", src, n, len(cols))
+	}
+	r := Row{File: cols[0], Note: strings.TrimSpace(cols[2]), Line: n, Source: src}
+	for g := range strings.SplitSeq(cols[1], ",") {
+		g = strings.TrimSpace(g)
+		switch {
+		case g == "":
+			return Row{}, fmt.Errorf("%s:%d: empty glob", src, n)
+		case strings.HasPrefix(g, "!"):
+			r.NotRead = append(r.NotRead, g[1:])
+		default:
+			r.Inputs = append(r.Inputs, g)
+		}
+	}
+	if r.Note == "" {
+		return Row{}, fmt.Errorf("%s:%d: the note column is empty: say what the file reads (or why a path is not read)", src, n)
+	}
+	return r, nil
+}
+
+// Where names the row's place for error messages: map-or-fragment path and
+// line, never a bare line number.
+func (r Row) Where() string {
+	return fmt.Sprintf("%s:%d", r.Source, r.Line)
 }
 
 // MatchGlob reports whether name (a slash-separated repo path) matches
@@ -214,11 +303,11 @@ func Plan(root string, rows []Row, changed []string) ([]Step, error) {
 		}
 		src, err := os.ReadFile(filepath.Join(root, r.File)) // #nosec G304 -- path from the repo map
 		if err != nil {
-			return nil, fmt.Errorf("line %d: %w", r.Line, err)
+			return nil, fmt.Errorf("%s: %w", r.Where(), err)
 		}
 		names := TestFuncs(src)
 		if len(names) == 0 {
-			return nil, fmt.Errorf("line %d: %s declares no Test func", r.Line, r.File)
+			return nil, fmt.Errorf("%s: %s declares no Test func", r.Where(), r.File)
 		}
 		dir := path.Dir(r.File)
 		mod := ModuleOf(root, dir)
