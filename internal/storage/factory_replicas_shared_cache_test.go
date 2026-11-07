@@ -16,14 +16,17 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
-// TestFactoryReplicas_SharedCacheLocksAndFileDoesNot is why tests hand the factory
-// sqlitetest.FactoryPath and never sqlitetest.DSN: two storages from the production
-// factory on one database (a two-replica test world), a writer on A and readers on B.
-// On the shared-cache DSN the writer fails with "database table is locked" (SQLITE_LOCKED,
-// 262) whenever a reader holds the table, at once, past the DSN's 30 s busy timeout:
-// TestEveryRouteRefusesADeadCredential_G3/sqlite failed in the merge queue on it (run
-// 40142034894). On a file (WAL, the production shape) the same load never fails.
-func TestFactoryReplicas_SharedCacheLocksAndFileDoesNot(t *testing.T) {
+// TestFactoryReplicas_FileDBHasNoWriteErrorsUnderConcurrentReads guards the production shape for
+// a two-replica test world: two storages from the production factory on one database
+// file (WAL), a writer on A and readers on B, where no write may fail.
+//
+// It used to carry a control showing that the shared-cache DSN (sqlitetest.DSN) fails
+// the same load with "database table is locked" (SQLITE_LOCKED, 262): that is why
+// tests hand the factory sqlitetest.FactoryPath (merge-queue run 40142034894). The
+// control was retired when modernc.org/sqlite v1.61.0 made shared-cache BeginTx wait
+// for the lock instead of failing with 262, so it no longer demonstrates anything.
+// The FactoryPath guidance stands: a shared cache is still not the production shape.
+func TestFactoryReplicas_FileDBHasNoWriteErrorsUnderConcurrentReads(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
 
@@ -97,11 +100,6 @@ func TestFactoryReplicas_SharedCacheLocksAndFileDoesNot(t *testing.T) {
 		return writes, locked, firstLockErr
 	}
 
-	t.Run("shared-cache DSN: writes fail with database table is locked", func(t *testing.T) {
-		_, locked, first := run(t, sqlitetest.DSN("replicas_lock_probe_"))
-		require.Positive(t, locked, "control: two factory storages on a shared cache must collide, or the file half below proves nothing")
-		require.Contains(t, first, "database table is locked (262)", "the shared-cache code CI failed on")
-	})
 	t.Run("file (FactoryPath): no write fails", func(t *testing.T) {
 		writes, locked, _ := run(t, sqlitetest.FactoryPath(t, "replicas_lock_probe"))
 		require.Zero(t, locked)

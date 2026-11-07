@@ -486,10 +486,14 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 			pattern, pattern, pattern)
 	}
 	if filter.Username != nil {
-		query = query.Where("username LIKE ? ESCAPE '\\'", "%"+escapeLike(*filter.Username)+"%")
+		// Case-insensitive (Unicode-aware) on both backends: plain LIKE is
+		// ASCII-case-insensitive on SQLite but case-sensitive on PostgreSQL.
+		cond, arg := foldedContainsClause(ls.db.Dialector.Name(), "username", *filter.Username)
+		query = query.Where(cond, arg)
 	}
 	if filter.Email != nil {
-		query = query.Where("email LIKE ? ESCAPE '\\'", "%"+escapeLike(*filter.Email)+"%")
+		cond, arg := foldedContainsClause(ls.db.Dialector.Name(), "email", *filter.Email)
+		query = query.Where(cond, arg)
 	}
 	if filter.IsActive != nil {
 		query = query.Where("is_active = ?", *filter.IsActive)

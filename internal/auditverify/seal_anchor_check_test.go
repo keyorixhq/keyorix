@@ -125,9 +125,7 @@ func TestSealAnchorCheck_DigestOnly_Postgres(t *testing.T) {
 
 // The recorded file was exported before the lost rows existed: it matches,
 // authenticates, and still is no evidence for this loss.
-func TestSealAnchorCheck_AnchorBeforeTheLossDoesNotCover(t *testing.T) {
-	t.Parallel()
-	e := sealAnchorEnvSQLite(t)
+func runSealAnchorBeforeTheLoss(t *testing.T, e sealAnchorEnv) {
 	e.logEvents(3)
 	early, _, err := e.core.WriteAuditCheckpoint(e.ctx)
 	require.NoError(t, err)
@@ -144,11 +142,19 @@ func TestSealAnchorCheck_AnchorBeforeTheLossDoesNotCover(t *testing.T) {
 	assert.Contains(t, strings.Join(r.NotProven, "\n"), "recorded by digest only")
 }
 
+func TestSealAnchorCheck_AnchorBeforeTheLossDoesNotCover(t *testing.T) {
+	t.Parallel()
+	runSealAnchorBeforeTheLoss(t, sealAnchorEnvSQLite(t))
+}
+
+func TestSealAnchorCheck_AnchorBeforeTheLossDoesNotCover_Postgres(t *testing.T) {
+	t.Parallel()
+	runSealAnchorBeforeTheLoss(t, sealAnchorEnvPostgres(t))
+}
+
 // A file passed with --anchor at acceptance is reported as verified then, and
 // a re-supplied copy matches.
-func TestSealAnchorCheck_VerifiedAtAcceptance(t *testing.T) {
-	t.Parallel()
-	e := sealAnchorEnvSQLite(t)
+func runSealAnchorVerifiedAtAcceptance(t *testing.T, e sealAnchorEnv) {
 	e.logEvents(12)
 	cp, _, err := e.core.WriteAuditCheckpoint(e.ctx)
 	require.NoError(t, err)
@@ -165,11 +171,32 @@ func TestSealAnchorCheck_VerifiedAtAcceptance(t *testing.T) {
 	assert.Equal(t, auditverify.SealAnchorMatches, s.Anchor.Check)
 }
 
+func TestSealAnchorCheck_VerifiedAtAcceptance(t *testing.T) {
+	t.Parallel()
+	runSealAnchorVerifiedAtAcceptance(t, sealAnchorEnvSQLite(t))
+}
+
+func TestSealAnchorCheck_VerifiedAtAcceptance_Postgres(t *testing.T) {
+	t.Parallel()
+	runSealAnchorVerifiedAtAcceptance(t, sealAnchorEnvPostgres(t))
+}
+
 // A seal without an anchor reports none.
+func runSealNoAnchorRecorded(t *testing.T, e sealAnchorEnv) {
+	e.logEvents(12)
+	_, _, err := e.core.WriteAuditCheckpoint(e.ctx)
+	require.NoError(t, err)
+	e.sealWith(core.AuditLossRequest{})
+	_, s := e.verify(auditverify.Options{})
+	assert.Nil(t, s.Anchor)
+}
+
 func TestSealAnchorCheck_NoAnchorRecorded(t *testing.T) {
 	t.Parallel()
-	f := sealed(t, "id = 4")
-	r := f.agree(auditverify.VerdictSealed)
-	require.Len(t, r.Seal.Seals, 1)
-	assert.Nil(t, r.Seal.Seals[0].Anchor)
+	runSealNoAnchorRecorded(t, sealAnchorEnvSQLite(t))
+}
+
+func TestSealAnchorCheck_NoAnchorRecorded_Postgres(t *testing.T) {
+	t.Parallel()
+	runSealNoAnchorRecorded(t, sealAnchorEnvPostgres(t))
 }

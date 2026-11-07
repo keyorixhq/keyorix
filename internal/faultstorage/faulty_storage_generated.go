@@ -5897,6 +5897,23 @@ func (w *FaultyStorage) LockNamedKeyInTx(ctx context.Context, lockKey string) er
 	return w.real.LockNamedKeyInTx(ctx, lockKey)
 }
 
+func (w *FaultyStorage) LockRoleForUpdate(ctx context.Context, id uint) (*models.Role, error) {
+	fire, kind, injected := w.check("LockRoleForUpdate")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 *models.Role
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.LockRoleForUpdate(ctx, id)
+			return rv1, injected
+		}
+	}
+	return w.real.LockRoleForUpdate(ctx, id)
+}
+
 func (w *FaultyStorage) LockShareRecordForUpdate(ctx context.Context, shareID uint) (*models.ShareRecord, error) {
 	fire, kind, injected := w.check("LockShareRecordForUpdate")
 	if fire {

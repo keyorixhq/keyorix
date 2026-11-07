@@ -112,6 +112,13 @@ jobs:
       # this workflow's) but is no longer silent: the guard below fails loudly
       # if the run produced no usable profile, so a coverage figure on the
       # SonarCloud dashboard is never quietly sourced from a run that died.
+      #
+      # Both go test calls skip deploy/TestWebNginxHSTS_ComposeImage: it builds a
+      # docker compose image (8 minute timeout in CI), which blows this step's
+      # 600s budget and kills the run. It stays covered by the docker-boot/e2e
+      # tiers and by ci.yml. The skip is pinned to that one test name, so no
+      # other test is affected (unlike -short, which would also skip others and
+      # change the coverage numbers).
       - name: Generate coverage report
         id: gocov
         if: needs.changes.outputs.skip_go != 'true'
@@ -121,7 +128,7 @@ jobs:
         run: |
           set -o pipefail
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            go test -timeout 600s -coverprofile=coverage.out -covermode=set ./...
+            go test -timeout 600s -skip '^TestWebNginxHSTS_ComposeImage$' -coverprofile=coverage.out -covermode=set ./...
             exit $?
           fi
           changed=$(gh api \
@@ -147,7 +154,7 @@ jobs:
           fi
           echo "Changed Go packages:$pkgs"
           # shellcheck disable=SC2086
-          go test -timeout 600s -coverprofile=coverage.out -covermode=set $pkgs
+          go test -timeout 600s -skip '^TestWebNginxHSTS_ComposeImage$' -coverprofile=coverage.out -covermode=set $pkgs
 
       # The step above is continue-on-error, which is how a broken coverage run
       # previously reached SonarCloud as a silently truncated (or absent)

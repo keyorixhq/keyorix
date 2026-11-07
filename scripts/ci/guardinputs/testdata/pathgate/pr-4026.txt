@@ -1,0 +1,5 @@
+changelog.d/cta-exempt-dualread-1.md
+changelog.d/sidecar-review-1.md
+docs/check-then-act-lock-exempt.reviewed.tsv
+internal/core/exempt_ledger_review_test.go
+internal/core/guards/core_family_walkers_test.go
