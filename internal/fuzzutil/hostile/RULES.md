@@ -1,0 +1,105 @@
+# Hostile-backend record-and-mutate fuzzer: pre-registered rules
+
+Status: PRE-REGISTRATION. This file is committed BEFORE any campaign run. Rules
+may be tightened later only by a commit that says so; a rule may not be relaxed
+to make a finding go away (a finding is reclassified in the findings log with a
+reason, not by editing this file).
+
+## Mechanism
+
+For each connector C the harness (package `hostile`):
+
+1. serves a hand-written VALID response sequence (one `Route` per backend
+   endpoint the connector calls) from a local `httptest` server, never a real
+   endpoint, never a real credential; all data synthetic;
+2. applies a MUTATION PROGRAM (decoded from the fuzz input bytes; every byte
+   string is a valid program; the all-zero/empty program is the pristine
+   control) to ONE route at selected occurrences: JSON field-level ops (null,
+   delete, type swap, duplicate key, huge/deep/odd-unicode values, NUL, CRLF,
+   lone surrogates, number extremes, oversized lists, key renames), status and
+   Content-Type changes, gzip / gzip bomb / corrupt gzip / unknown
+   Content-Encoding, framing oddities (short/long/duplicate Content-Length,
+   bad/huge/unterminated chunks, giant chunk extensions, giant headers,
+   close-delimited bodies), redirects (to a sentinel "internal" server, to
+   self in a loop, same-origin once), and network faults (RST after headers /
+   mid-body, close after headers, never respond, slow-drip, garbage bytes,
+   TLS-alert bytes, accept-and-close);
+3. runs the connector call through `Harness.Run`, then evaluates the oracles.
+
+Not covered in this PR (stated so nobody over-reads it): XML and protobuf
+field-level mutation (only JSON is structure-aware; SAML/STS XML and GCP gRPC
+remain covered by their existing byte-level targets), real TLS handshake
+failures (only TLS-alert-shaped bytes on a plaintext listener), HTTP/2.
+
+## Oracles (all must hold for every input unless a target documents an exemption)
+
+- O1 NO-PANIC. Any panic is a failure (native fuzz recording).
+- O2 NO-HANG. The call returns within `CallTimeout + 1s` of start. The call is
+  given a context with deadline `CallTimeout` (500 ms); not honouring the
+  caller's context is a failure even if the client has its own larger timeout.
+- O3 NO-LEAK. After the call and after the harness closes its servers, the
+  per-function goroutine census must return to the pre-call census within
+  1.2 s (poll), and on Linux the open-FD count must return to the pre-call
+  count + 2.
+- O4 BOUNDED-WORK. `runtime.MemStats.TotalAlloc` delta over the call is at most
+  `256 MiB + 16 x (bytes the server wrote)`. (Gross-amplification tripwire, not
+  a fine-grained budget.)
+- O5 FAIL-CLOSED. If the call reports success then ALL of: the consumed
+  response was completely delivered (framing intact, no network fault, gzip
+  intact); its final status is in the target's accepted set; the target's
+  independent STRICT decoder accepts the delivered body; the returned
+  value/identity/credential equals what the strict decoder extracts (no
+  partial or invented value); and the value is not empty/`null` unless the
+  strict decoder says the backend really stored an empty value. The strict
+  decoder is written from the backend's documented wire format, NOT copied
+  from the connector. Where the documented format permits several readings the
+  target states which reading it takes; a disagreement on a legitimately
+  ambiguous reading is classified `expected`, not hidden.
+- O6 LIVENESS (anti-vacuity). The pristine program must succeed and return the
+  exact expected value. A target whose control fails is invalid and reports
+  `HARNESS` rather than passing.
+- O7 NO-LEAKAGE. A synthetic canary (`kx-hostile-canary-...`) placed in hostile
+  response fields, and the credential the connector sent, must not appear in
+  the returned error text or in captured `log`/`slog` output (`slog.Default`
+  is captured; connectors with a private logger are best effort and noted).
+- O8 BOUNDED-RETRIES. Requests to the fake backend per call are at most the
+  target's declared ceiling (vault 3, JWKS 3, Kubernetes TokenRequest 3,
+  Keyorix fetcher 64: a pagination walk longer than 64 pages for a 1-page
+  listing is a failure). Repeated pagination tokens / huge `total_pages` count.
+- O9 SSRF-ISH. A sentinel server standing for an internal address receives
+  zero requests: connectors that declare "never follow redirects" must not
+  follow any redirect; connectors that follow same-origin redirects (JWKS)
+  must not follow cross-origin ones. Response-controlled URLs are not
+  followed. Note: loopback sentinel means this tests redirect policy, not
+  address filtering; do not generalise to "SSRF-safe".
+
+## Planted defects (harness validity)
+
+`selftest_test.go` implements toy clients, each with ONE planted defect, plus a
+correct control, and requires:
+
+- every planted defect detected by the oracle named in the table below, by a
+  directed program AND reported with random-program detection rate;
+- the control silent over the same random budget (0 violations).
+
+| id | defect | expected oracle |
+|----|--------|-----------------|
+| P1 | 200 with missing field returned as empty success | O5 |
+| P2 | unchecked type assertion on hostile JSON | O1 |
+| P3 | unbounded pagination on repeated token | O8 |
+| P4 | follows redirects to attacker address | O9 |
+| P5 | error echoes response-controlled secret-like field | O7 |
+| P6 | body read error ignored, partial body accepted | O5 |
+| P7 | ignores caller context, 30 s client timeout | O2 |
+| P8 | goroutine left blocked on failure | O3 |
+| P9 | unbounded decompression of gzip response | O4 / O2 |
+
+If a planted defect is not detected, the harness is broken and no campaign
+result may be reported as a negative.
+
+## Finding discipline
+
+Each failing input is minimised, replayed at least 3 times from the saved
+corpus file, then classified as one of: KEYORIX-BUG, SDK-BUG, EXPECTED
+(documented behaviour; note why), HARNESS-ARTIFACT. Security-relevant findings
+are recorded only in the private notes file, never in this repository.
