@@ -204,7 +204,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, up string, body 
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-	if p.Shim && resp.StatusCode == 200 && strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
+	if p.Shim && resp.StatusCode/100 == 2 && strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
 		rb = shimKeys(rb)
 	}
 	for k, v := range resp.Header {

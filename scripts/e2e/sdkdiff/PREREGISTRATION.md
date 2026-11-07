@@ -127,4 +127,29 @@ nice 19, never CT 100/221/240/270, everything cleaned by 2026-11-09 22:00 UTC. J
 so Java runs on the Mac with a small share of the load. Server and SDK commits are recorded in each run header.
 
 ## Amendments
-(none yet)
+
+All amendments below were made after the first phase-A runs had been looked at; none changes what counts as a
+finding in a way that removes one. Each is a harness or control correction, listed with its reason.
+
+- A1 (2026-11-07 ~17:00 CET) shim mode. The first raw golden run showed that the server answers with
+  lower-case snake_case keys (`id`, `name`, `created_at`) while Node, Python and Java read `ID`, `Name`, `CreatedAt`,
+  so every list result is empty-valued in those SDKs and `get_secret` can never match a name; the server also rejects
+  `?environment=` with 400 and returns only 20 secrets per page. That is a finding (reported), and it hides everything
+  behind it. A second run mode `-shim` is added: the proxy records the SDK request unchanged, then adapts only the
+  copy sent upstream (drops `environment`, adds `page_size=100`) and renames the response keys to the PascalCase the
+  SDKs read. Both modes are run and reported separately; "raw" is the real behaviour, "shim" is the deeper comparison.
+- A2 golden set (control C2) is evaluated in shim mode and no longer contains `list_projects` or an unfiltered
+  `list_secrets`: the server's project objects have no `created_at`, so Go (zero time), Node (null) and Python
+  (empty string) legitimately represent the missing field differently (reported as R1 low severity, not hidden), and
+  the seeded secret list deliberately contains names that expose Java's missing JSON unescaping (reported). The golden
+  scenarios are now: health, list_environments of the seeded project, create_project with a plain name, login, two
+  `construct` with accepted URLs.
+- A3 oracle/driver corrections: (a) request #j is compared only among SDKs that made a request #j, a differing count
+  is reported once as W6 (before, one root cause produced five signatures); (b) S1 is evaluated on the first request of
+  a step with an ordinary base URL only (redirect-followed requests and deliberately malformed base URLs made noise);
+  (c) E1 signatures bucket the server status (401 / other 4xx / 5xx / none) instead of using the exact status;
+  (d) E3 also matches the escaped (`repr`/quoted) form of the token, because Python and Java print the header value
+  escaped; (e) the Python driver mapped every `ValueError` to `decode`, now only `JSONDecodeError`/`UnicodeDecodeError`.
+- A4 the standalone SDK driver for Go cannot be built on pve01 (Go 1.24, SDK needs 1.26): drivers and the
+  orchestrator are cross-compiled on the Mac and shipped as binaries; Java is not available on pve01 (no JDK) and runs
+  on the Mac only.
