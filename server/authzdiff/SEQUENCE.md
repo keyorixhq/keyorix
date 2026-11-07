@@ -41,10 +41,14 @@ check.
   sequences are clean. A non-clean control means a harness/model gap to fix first;
   it is not a finding.
 * Plants (in the harness, never in production code): `revoke-noop` (the REST leg
-  reports success without revoking), `stale-allow` (the gRPC probe still allows a
-  revoked principal) and `suspend-ignored` (the REST probe allows a suspended
-  principal). Each plant must be detected by its designated sequence with the
-  named oracle class, and the same sequence without the plant must be clean.
+  reports success without revoking), `revoke-noop-held` (no leg carries out the
+  revoke of a grant the viewer holds in the fixture: one step, and every leg and
+  the model agree), `stale-allow` (the gRPC probe still allows a revoked
+  principal), `suspend-ignored` (the REST probe allows a suspended principal) and
+  `step-5xx` (the REST leg answers 500 on a revoke). Each plant must be detected
+  by its designated sequence with the named oracle class, the same sequence
+  without the plant must be clean, and the triage that FuzzAuthzSeq and the
+  sweep use (`seqVerdict`) must fail the run on it.
 
 ## Run
 
@@ -62,6 +66,16 @@ as a single step in a fresh world.
 * class only in the sequence: candidate `sequence-dependent`; the minimal
   sequence goes to the private file, never to a PR.
 A candidate is then read against the code to decide product bug versus model gap.
+
+Exception (added in review, before any result below was re-counted): a class
+that always fails is never `single-step`, however it reproduces. That is every
+over-allow (a transport allows what the model, another leg or the state denies),
+every O-E intent class (`revoked-row-still-present`, `granted-row-missing`,
+`account-state-not-*`, `group-row-*`, `reactivated-user-cannot-log-in`,
+`denied-step-changed-state`) and `O-S:other`. The model reads the same tables,
+so a revocation that does not revoke shows only in O-E, and the single-step
+harness has no effect oracle: "the step alone reproduces it" does not mean it is
+covered elsewhere. FuzzAuthzSeq and the sweep share one triage (`seqVerdict`).
 
 ## Pre-registered success rule
 
@@ -81,9 +95,12 @@ A clean run (b) is a statement about THIS state space and the 8 steps above only
 
 ### Self-test
 
-Control (zero steps and five benign sequences) clean; the three harness plants
-(`revoke-noop`, `stale-allow`, `suspend-ignored`) each detected with the named
-oracle class, and the same sequences clean without the plant.
+Control (zero steps and five benign sequences) clean; the four harness plants
+of that run (`revoke-noop`, `stale-allow`, `suspend-ignored`, `step-5xx`) each
+detected with the named oracle class, and the same sequences clean without the
+plant. `revoke-noop-held` and the check that `seqVerdict` fails on every plant
+were added in review; at the commit before the always-fail exception,
+`revoke-noop-held` is detected but triaged `single-step` and the run passes.
 `AUTHZSEQ_SELFTEST=1 go test ./server/authzdiff -run 'TestSeqControl|TestSeqPlantsAreDetected'`.
 
 Harness issues found and fixed while getting the control clean (not product
@@ -100,12 +117,17 @@ findings; recorded because they shape what the result means):
   core leg is not an oracle for a suspended principal; likewise ops whose core
   entry has `core_refusal: none` (matrix.json) are state-synced on core rather
   than run with the real actor (ID-2).
-* The model ignored `user_groups.project_id`: a group membership scoped to
-  project B confers the group's roles only in B (`models.UserGroup`). A sequence
+* The model ignored `user_groups.project_id`: in the store's group-role
+  resolution (`GetUserGroupRoleIDsAt`), a group membership scoped to project B
+  confers the group's roles only in B (`models.UserGroup`). A sequence
   (group.add at B, then expire the direct grant) exposed it as an
   `O-P:over-denial`; read against the code it is a model gap, not a product bug.
-  The model now respects the scope. The single-step suite was re-run after the
-  change.
+  The model's group-role resolution now respects the scope. The single-step
+  suite was re-run after the change. The model's `memberOf` applies the same
+  scope, which is stricter than the product's project-membership check
+  (`IsProjectMember` ignores `user_groups.project_id`); that direction fails
+  closed here (it would show as a reported over-allow), and the sequence probes
+  (value reads) do not reach `memberOf`.
 
 ### Sweep, final run (model fixed)
 
@@ -123,7 +145,9 @@ alone from a fresh world: (1) 120 x `O-S:layers-disagree`, group.add by a projec
 admin: core allows, the REST gate (which also requires `users.read`) denies;
 (2) 77 x `O-S:step-vs-model`, role.revoke of a grant the subject does not hold:
 every transport answers not-found, the model says the actor is authorised. Neither
-is sequence-dependent.
+is sequence-dependent. Neither class is an over-allow, an O-E class or
+`O-S:other`, so the always-fail exception does not move them (`TestSeqClassKey`
+checks both).
 
 An earlier run of the same seeds with the pre-fix model (288 + 312 sequences)
 likewise had 0 candidates; a further 40 sequences (indices 900-939) produced the
@@ -157,3 +181,13 @@ the intent checks stay in step through 2,345 state changes.
   injected clock.
 * The model reads the grant tables, so the independent intent checks (O-E) cover
   only the relations named in `buildCall`.
+* A suspended principal is probed only right after a suspend or reactivate step,
+  and only at project A by ref (the invalid-token limiter). A later step on a
+  suspended subject (for example suspend the viewer, then grant it a role at B)
+  is not probed for that subject, so a suspension that one route ignores for a
+  newly granted role or a cache is outside the oracle.
+* group.remove removes only global memberships (core passes project 0, REST and
+  gRPC send no project, and the effect check reads `project_id = 0`). A
+  project-scoped membership created by group.add at A or B is never removed, so
+  a group removal that leaves access behind is exercised only for global
+  memberships.

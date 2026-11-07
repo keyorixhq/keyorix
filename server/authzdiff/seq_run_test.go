@@ -241,7 +241,7 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 	for i, st := range steps {
 		stats.steps++
 		if st.Kind == skPermToggle || st.Kind == skExpire {
-			w.applyStateStep(st)
+			w.applyStateStep(tb, st)
 			stats.kindAllowed[st.Kind]++ // always applies; counted so coverage lists every kind
 			findings = append(findings, w.probeAll(tb, specs, i, f, stats, false)...)
 			continue
