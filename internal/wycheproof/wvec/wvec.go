@@ -14,8 +14,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // Commit is the C2SP/wycheproof commit the vectors come from.
@@ -59,13 +60,14 @@ func Sums() map[string]string {
 	return m
 }
 
-// Dir is the directory holding the downloaded vectors (WYCHEPROOF_DIR overrides).
+// Dir is the directory holding the downloaded vectors (WYCHEPROOF_DIR
+// overrides). The default is found from the repository root, not from
+// runtime.Caller, whose file name is module-relative under -trimpath.
 func Dir() string {
 	if d := os.Getenv("WYCHEPROOF_DIR"); d != "" {
 		return d
 	}
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "testdata", "vectors")
+	return filepath.Join(srcpath.RepoRoot(), "internal", "wycheproof", "testdata", "vectors")
 }
 
 // Load reads name from Dir, verifies its SHA-256 against SHA256SUMS and
