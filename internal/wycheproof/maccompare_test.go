@@ -9,24 +9,34 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
-// macName matches identifiers that hold a MAC, signature, tag or digest.
+// macName matches identifiers that hold a MAC, signature or tag.
 var macName = regexp.MustCompile(`(?i)(^|[a-z0-9_])(mac|hmac|sig|signature|tag)$`)
 
 // macCompareFindings returns "file:line: text" for every non-constant-time
 // comparison of a MAC-like value in src (RULES.md section 4).
+//
+// An operand is named by its identifier or selector (mac, x.Sig), also
+// through a slice expression (sig[:], tag[:16]) and through one wrapping
+// call: string(x), []byte(x), hex.EncodeToString(x),
+// base64.<Encoding>.EncodeToString(x).
+//
+// What it does NOT see: a MAC copied into a variable whose name does not
+// match (got := mac; got == want), index expressions (mac[0]), other
+// encoders (fmt.Sprintf("%x", mac)), comparisons inside a helper that takes
+// the MAC under another parameter name, and switch statements on a MAC.
 func macCompareFindings(fset *token.FileSet, f *ast.File) []string {
 	var out []string
 	name := func(e ast.Expr) string {
 		switch v := e.(type) {
-		case *ast.Ident:
-			return v.Name
-		case *ast.SelectorExpr:
-			return v.Sel.Name
+		case *ast.Ident, *ast.SelectorExpr, *ast.SliceExpr:
+			return name2(v)
 		case *ast.CallExpr:
-			// string(x), []byte(x), hex.EncodeToString(x): look through the conversion
+			// string(x), []byte(x), hex.EncodeToString(x),
+			// base64.StdEncoding.EncodeToString(x): look through the call
 			if len(v.Args) == 1 {
 				switch fn := v.Fun.(type) {
 				case *ast.Ident:
@@ -35,6 +45,10 @@ func macCompareFindings(fset *token.FileSet, f *ast.File) []string {
 					}
 				case *ast.ArrayType:
 					return name2(v.Args[0])
+				case *ast.SelectorExpr:
+					if fn.Sel.Name == "EncodeToString" {
+						return name2(v.Args[0])
+					}
 				}
 			}
 		}
@@ -97,6 +111,8 @@ func name2(e ast.Expr) string {
 		return v.Name
 	case *ast.SelectorExpr:
 		return v.Sel.Name
+	case *ast.SliceExpr:
+		return name2(v.X)
 	}
 	return ""
 }
@@ -126,11 +142,21 @@ var macCompareAllow = map[string]string{
 	"backup_legacy_url_guard.go:== on tag / NotificationChannelURLTagAbsent":                     "storage format marker, not an authentication tag",
 }
 
+// TestMACComparisonsAreConstantTime is a repo-wide guard over macCompareDirs
+// (docs/guard-rollout-contract.md): it reports through guardrules.Rollout and
+// is report-only on PRs while docs/guard-rollout.d/TestMACComparisonsAreConstantTime.tsv
+// exists. A listed directory that is gone or holds no non-test Go file fails,
+// so a moved package cannot drop out of the scan silently.
 func TestMACComparisonsAreConstantTime(t *testing.T) {
+	g := guardrules.Rollout(t)
 	root := srcpath.RepoRoot()
 	total := 0
 	for _, d := range macCompareDirs {
-		files, _ := filepath.Glob(filepath.Join(root, d, "*.go"))
+		files, err := filepath.Glob(filepath.Join(root, d, "*.go"))
+		if err != nil {
+			g.Fatalf("%s: %v", d, err)
+		}
+		scanned := 0
 		for _, fn := range files {
 			if strings.HasSuffix(fn, "_test.go") {
 				continue
@@ -138,17 +164,21 @@ func TestMACComparisonsAreConstantTime(t *testing.T) {
 			fset := token.NewFileSet()
 			f, err := parser.ParseFile(fset, fn, nil, 0)
 			if err != nil {
-				t.Fatalf("%s: %v", fn, err)
+				g.Fatalf("%s: %v", fn, err)
 			}
-			total++
+			scanned++
 			for _, finding := range macCompareFindings(fset, f) {
 				rel := strings.TrimPrefix(finding, root+string(filepath.Separator))
 				if _, ok := macCompareAllow[allowKey(rel)]; ok {
 					continue
 				}
-				t.Errorf("non-constant-time comparison of a MAC-like value: %s", rel)
+				g.Errorf("non-constant-time comparison of a MAC-like value: %s", rel)
 			}
 		}
+		if scanned == 0 {
+			g.Errorf("macCompareDirs: %s has no non-test Go files (moved or renamed? update the list)", d)
+		}
+		total += scanned
 	}
 	t.Logf("scanned %d files in %d packages", total, len(macCompareDirs))
 }

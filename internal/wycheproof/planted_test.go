@@ -215,6 +215,21 @@ func empty(sig string) bool { return sig == "" }
 	if fs := findingsInSource(t, good); len(fs) != 0 {
 		t.Errorf("control reported findings: %v", fs)
 	}
+	// Forms reached through an encoder or a slice expression.
+	badWrapped := `package p
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/hex"
+)
+func v1(mac []byte, want string) bool { return hex.EncodeToString(mac) == want }
+func v2(sig [64]byte, want string) bool { return string(sig[:]) == want }
+func v3(tag, want []byte) bool { return bytes.Equal(tag[:16], want) }
+func v4(x struct{ Sig []byte }, want string) bool { return base64.RawURLEncoding.EncodeToString(x.Sig) != want }
+`
+	if fs := findingsInSource(t, badWrapped); len(fs) != 4 {
+		t.Errorf("encoded / sliced MAC operands: %d findings %v, want 4", len(fs), fs)
+	}
 }
 
 var _ = ed25519.PublicKeySize
