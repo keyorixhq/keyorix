@@ -131,13 +131,30 @@ func (h *Harness) Violations() []string {
 	return append([]string(nil), h.viol...)
 }
 
+// hangSlack is how long past its context deadline a call may take before O2
+// reports a hang. 1 s produced false positives on PRISTINE programs when the
+// rig host was saturated (two seen in the first campaign hour), so it is 4 s.
+const hangSlack = 4 * time.Second
+
+// leakWindow is how long Finish polls for goroutines/FDs to return to their
+// pre-call census. 1.2 s gave one non-reproducible report (replayed 3/3 clean)
+// on a saturated host, so it is 4 s.
+const leakWindow = 4 * time.Second
+
 // Run executes the connector call under the deadline, hang, panic and
 // allocation oracles (O1, O2, O4) and scans the returned error and captured
 // logs for leakage (O7). It returns the call's error.
 func (h *Harness) Run(label string, fn func(ctx context.Context) error) error {
 	var m0, m1 runtime.MemStats
 	runtime.ReadMemStats(&m0)
-	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.CallTimeout)
+	// A pristine program has no fault to wait for, so a deadline hit there is
+	// host starvation (seen on the saturated rig host), never a finding. Give it
+	// a long deadline so O6 (liveness) measures the connector, not the scheduler.
+	timeout := h.cfg.CallTimeout
+	if h.cfg.Program.Pristine() {
+		timeout *= 10
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	type result struct {
@@ -160,9 +177,9 @@ func (h *Harness) Run(label string, fn func(ctx context.Context) error) error {
 	var r result
 	select {
 	case r = <-ch:
-	case <-time.After(h.cfg.CallTimeout + time.Second):
+	case <-time.After(timeout + hangSlack):
 		cancel()
-		h.Violate("O2 HANG: %s did not return within %s of a %s context deadline", label, time.Second, h.cfg.CallTimeout)
+		h.Violate("O2 HANG: %s did not return within %s of a %s context deadline", label, hangSlack, h.cfg.CallTimeout)
 		return nil
 	}
 	cancel()
@@ -211,7 +228,7 @@ func (h *Harness) CheckLeak(label, text string) {
 // (O9) oracles and reports every recorded violation via fatalf.
 func (h *Harness) Finish(fatalf func(format string, args ...any)) {
 	h.Close()
-	deadline := time.Now().Add(1200 * time.Millisecond)
+	deadline := time.Now().Add(leakWindow)
 	var lk []string
 	for {
 		lk = leaked(h.before, census())
@@ -221,7 +238,7 @@ func (h *Harness) Finish(fatalf func(format string, args ...any)) {
 		}
 		if time.Now().After(deadline) {
 			if len(lk) > 0 {
-				h.Violate("O3 LEAK: goroutines still alive 1.2s after the call: %s", strings.Join(lk, "; "))
+				h.Violate("O3 LEAK: goroutines still alive %s after the call: %s", leakWindow, strings.Join(lk, "; "))
 			}
 			if !fdOK {
 				h.Violate("O3 LEAK: open FDs %d, was %d before the call", fdCount(), h.fd0)
