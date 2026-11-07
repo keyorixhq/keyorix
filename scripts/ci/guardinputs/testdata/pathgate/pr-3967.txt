@@ -1,0 +1,2 @@
+server/admin/audit_accept_loss.go
+server/admin/restore.go

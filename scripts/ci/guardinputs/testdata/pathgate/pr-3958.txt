@@ -1,0 +1,3 @@
+internal/docsdrift/install_with_ai_allowlist_test.go
+internal/docsdrift/install_with_ai_pin_test.go
+internal/docsdrift/install_with_ai_test.go
