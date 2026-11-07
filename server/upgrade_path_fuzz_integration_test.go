@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -179,7 +180,7 @@ func upgPopulate(t *testing.T, bin, dir, port string, env []string, rng *rand.Ra
 	}
 	led := upgLedger{}
 	n := 10 + rng.Intn(15)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		name := upgName(rng, i)
 		val := upgValue(rng, "v1")
 		code, data, err := api.do(http.MethodPost, "/api/v1/secrets", map[string]any{"name": name, "value": val, "project_id": pid, "environment_id": eid, "type": "generic"})
@@ -236,7 +237,7 @@ func dbFingerprint(t *testing.T, dir string) (schema, data string) {
 	} {
 		r, err := db.Query(q)
 		if err != nil {
-			fmt.Fprintf(dh, "ERR:%v\n", err)
+			_, _ = fmt.Fprintf(dh, "ERR:%v\n", err)
 			continue
 		}
 		cols, _ := r.Columns()
@@ -247,7 +248,7 @@ func dbFingerprint(t *testing.T, dir string) (schema, data string) {
 				ptrs[i] = &vals[i]
 			}
 			_ = r.Scan(ptrs...)
-			fmt.Fprintf(dh, "%v\n", vals)
+			_, _ = fmt.Fprintf(dh, "%v\n", vals)
 		}
 		_ = r.Close()
 	}
@@ -304,7 +305,6 @@ func TestUpgradePathFuzz(t *testing.T) {
 	head := fuzzHeadBinary(t)
 
 	for _, tag := range tags {
-		tag := tag
 		t.Run(tag, func(t *testing.T) {
 			rng := rand.New(rand.NewSource(seed ^ int64(len(tag))*7919 ^ int64(tag[len(tag)-1]))) //nolint:gosec // test randomness, seed logged
 			oldBin := filepath.Join(binDir, tag)
@@ -344,7 +344,7 @@ func TestUpgradePathFuzz(t *testing.T) {
 				for id := range led {
 					ids = append(ids, id)
 				}
-				sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+				slices.Sort(ids)
 				return ids
 			}(), expect: led.asCrash()}
 			u.w = &crashWorld{t: t, bin: head}
@@ -389,7 +389,7 @@ func TestUpgradePathFuzz(t *testing.T) {
 			copyTree(t, dir, calDir)
 			w := &crashWorld{t: t, bin: head, dir: calDir}
 			_, nChanges, calDur, _, _ := runChild(w, calDir, upgPass, []string{"migrate", "--config", "./keyorix.yaml"}, nil)
-			for i := 0; i < kills; i++ {
+			for i := range kills {
 				var plan killPlan
 				switch i % 3 {
 				case 0:
@@ -503,7 +503,7 @@ func TestUpgradePathChecker_Planted(t *testing.T) {
 	for id := range led {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	u := &upgCtx{t: t, head: head, led: led, ids: ids, expect: led.asCrash(), w: &crashWorld{t: t, bin: head}}
 	if out, err := runAdmin(t, head, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+upgPass), "migrate", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("migrate: %v %s", err, tail(out, 300))

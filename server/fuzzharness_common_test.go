@@ -27,28 +27,11 @@ import (
 // crashLedger maps secret id -> versions (index 0 = v1) of plaintext values.
 type crashLedger map[uint][]string
 
-func (l crashLedger) clone() crashLedger {
-	o := crashLedger{}
-	for k, v := range l {
-		o[k] = append([]string(nil), v...)
-	}
-	return o
-}
-
 type crashWorld struct {
-	t         *testing.T
-	bin       string
-	dir       string // quiescent base install (state B)
-	port      string
-	projectID uint
-	envID     uint
-	ledgerA   crashLedger // state captured in archiveA
-	ledgerB   crashLedger // state in dir
-	archiveA  string
-}
-
-func (w *crashWorld) env(pass string) []string {
-	return append(baseEnv(w.dir), "KEYORIX_MASTER_PASSWORD="+pass)
+	t    *testing.T
+	bin  string
+	dir  string // quiescent base install (state B)
+	port string
 }
 
 func copyTree(t *testing.T, src, dst string) {
@@ -157,21 +140,6 @@ func latest(l crashLedger, id uint) string {
 		return vs[len(vs)-1]
 	}
 	return "<gone>"
-}
-
-func unionIDs(ls ...crashLedger) []uint {
-	seen := map[uint]bool{}
-	var ids []uint
-	for _, l := range ls {
-		for id := range l {
-			if !seen[id] {
-				seen[id] = true
-				ids = append(ids, id)
-			}
-		}
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids
 }
 
 // matchState reports which allowed ledgers the observation equals entirely.
