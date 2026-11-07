@@ -157,3 +157,7 @@ finding in a way that removes one. Each is a harness or control correction, list
 ## Amendment A5 (sink family and oracle X1)
 
 Added before any sink scenario was run against a campaign. A /sink path on the recording proxy records requests and answers 200. A redirect fault target @sink expands to the proxy sink URL on a different origin (localhost vs 127.0.0.1). Phase S generates 7 ops x redirect codes 301/302/303/307/308. Oracle X1: any recorded request whose Host starts with localhost: and carries an Authorization header is a finding (credential forwarded to another origin). Expected for controls: no SDK forwards. Results of X1 are security-relevant and are recorded only in private notes.
+
+## Amendment A6 (late-recorded requests)
+
+Found while minimising W6|health (did not reproduce alone): the proxy recorded a request only when its handler finished, so a request the SDK had already abandoned (timeout, 8 MB bigbody, slow fault) was attributed to the NEXT scenario, inflating request counts (W6), and producing spurious ok-vs-err and response-shape signatures after fault scenarios. Fix: Drain waits (max 12 s) for in-flight handlers. This is a harness artefact, not an SDK finding. All results gathered before this fix are kept as out-preA6 and are not used for the final counts. The full A and B campaigns, controls and plants are re-run with the fixed binary. Rules otherwise unchanged.

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,6 +37,7 @@ type Proxy struct {
 	upstream string
 	recs     []Rec
 	faults   []*Fault
+	inflight int32 // handlers still running; Drain waits for them (amendment A6)
 }
 
 // NewProxy listens on 127.0.0.1 on a free port.
@@ -83,6 +85,11 @@ func (p *Proxy) SetFault(f *Fault) {
 
 // Drain returns and clears the recorded requests; it also disarms faults.
 func (p *Proxy) Drain() []Rec {
+	// a request the SDK already gave up on (timeout, aborted big body) can still be in its
+	// handler; wait for it so it is attributed to its own step, not to the next scenario
+	for i := 0; i < 240 && atomic.LoadInt32(&p.inflight) > 0; i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	r := p.recs
@@ -114,6 +121,8 @@ func (p *Proxy) push(r Rec) {
 
 // ServeHTTP records the request, then applies a fault or forwards it.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	atomic.AddInt32(&p.inflight, 1)
+	defer atomic.AddInt32(&p.inflight, -1)
 	body, _ := io.ReadAll(io.LimitReader(r.Body, maxRecBody+1))
 	cut := len(body) > maxRecBody
 	if cut {
