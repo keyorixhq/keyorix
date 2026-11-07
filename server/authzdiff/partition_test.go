@@ -14,13 +14,31 @@ import (
 // absorbed: it lands in "unexplained" and must be investigated. Waivers carry
 // no descriptions here; they are tracked privately.
 //
-// The waivers that match a shape rather than an op list keep the direction
-// that matters closed: one that has the core leg allow needs EVERY present
-// transport to deny, so a transport that allows can never match it; one that
-// has a layer refuse needs the model to deny as well, so a case allowed
-// everywhere can never match it. known-02 also requires a counterfactual
-// model decision (caseResult.ModelIfActive), so it absorbs only the exact
-// condition it was established on.
+// Every waiver keeps one direction closed: none matches a case where a present
+// transport leg (REST or gRPC) allows and the model denies (or has no
+// decision). TestExplainNeverWaivesTransportAllowOverModelDeny checks this over
+// every combination of the values explain compares against.
+//
+// The waiver families, what each matches, and what it does not detect:
+//
+//   - Core allows (known-02, known-03, known-04): the core leg allows, REST
+//     denies and gRPC denies or is absent. A transport that allows never
+//     matches. known-02 also requires a counterfactual model decision
+//     (caseResult.ModelIfActive), so it absorbs only the exact condition it was
+//     established on; known-03 is limited to two ops, one target and one
+//     principal. Not detected: a core leg that allows while every present
+//     transport denies (see below).
+//   - Core refuses what the model allows (known-06): machine principal on
+//     member.add / member.setrole, core denies, REST denies or returns
+//     400/500. Not detected: an over-denial by core or REST on those ops for
+//     that principal.
+//   - Core returns a refusal or error the model does not map (known-07,
+//     known-08, known-09): core denies with ErrPermissionDenied (known-07) or
+//     returns an untyped error (known-08, known-09), and the model denies
+//     (known-07, known-09) or the case is a machine principal on the listed ops
+//     (known-08). Not detected: on those shapes, whether REST answers 400/500
+//     instead of a typed deny; and for known-08, a transport that denies or
+//     errors where the model allows (an over-denial).
 //
 // The plants (plants_test.go) are exactly the shapes these waivers exclude:
 // core+REST allow (plant 1), gRPC allows a non-group op (plant 2), REST allows
@@ -50,6 +68,9 @@ func explain(r *caseResult) string {
 	restBadStatus := is(rest, Other) && (rest.Detail == "Internal Server Error" || rest.Detail == "Bad Request")
 	pk := r.Principal
 	modelDenies := r.Model == Denied || r.Model == ModelNA
+	// transportAllowsDenied: a present transport leg allows what the model
+	// denies. No waiver may match such a case.
+	transportAllowsDenied := modelDenies && (is(rest, Allowed) || is(grpc, Allowed))
 
 	switch {
 	case pk == pkSuspended && r.ModelIfActive == Allowed && is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc):
@@ -63,18 +84,18 @@ func explain(r *caseResult) string {
 		return "known-04"
 
 	case (r.Op == "member.add" || r.Op == "member.setrole") && pk == pkMachine && r.Model == Allowed &&
-		is(core, Denied) && (is(rest, Denied) || restBadStatus):
+		is(core, Denied) && (is(rest, Denied) || restBadStatus) && !transportAllowsDenied:
 		return "known-06"
 
-	case is(core, Denied) && core.Detail == "ErrPermissionDenied" && restBadStatus && modelDenies:
+	case is(core, Denied) && core.Detail == "ErrPermissionDenied" && restBadStatus && modelDenies && !transportAllowsDenied:
 		return "known-07"
 
 	case pk == pkMachine && slices.Contains([]string{"secret.acl.grant", "secret.share", "accessrequest.create",
 		"secret.certificate", "secret.tags", "secret.description", "secret.move", "secret.copy", "secret.extend.expiring"}, r.Op) &&
-		is(core, Other) && core.Detail == "untyped-error":
+		is(core, Other) && core.Detail == "untyped-error" && !transportAllowsDenied:
 		return "known-08"
 
-	case is(core, Other) && core.Detail == "untyped-error" && (is(rest, Denied) || restBadStatus) && modelDenies:
+	case is(core, Other) && core.Detail == "untyped-error" && (is(rest, Denied) || restBadStatus) && modelDenies && !transportAllowsDenied:
 		return "known-09"
 	}
 	return "unexplained"
