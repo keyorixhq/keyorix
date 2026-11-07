@@ -429,6 +429,15 @@ feature branch. `docs/security-closures.tsv` is different: it is no longer
 committed at all, only built from `docs/security-closures.d/` on demand (see
 "Closing a security fix" above).
 
+### Docs: new config keys and upgrade notes go in `docs/*.d/`
+
+Document a NEW config key in `docs/configuration.d/<key with dots as __>.md` and put an
+upgrade note in `docs/upgrading.d/<slug>.md`, not in `docs/CONFIGURATION.md` /
+`docs/UPGRADING.md`. `TestEveryConfigKeyIsDocumented` and the other readers of
+`CONFIGURATION.md` read the flat file PLUS the fragments (dual-read); existing text stays
+in the flat files. Naming, folding at release time and the reader's checks: each
+directory's `README.md`.
+
 ### Test registry tables: one file per entry, never append to a shared list
 
 The exemption/guard tables that every fuzzer or security PR used to append to are
