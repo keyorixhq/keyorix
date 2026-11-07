@@ -45,7 +45,15 @@ type grant struct {
 	roleID    uint
 	projectID uint
 	expires   *time.Time
+	// viaMemberAt: the grant comes from a group membership scoped to this
+	// project (user_groups.project_id); 0 = a direct grant or a global membership.
+	// A project-scoped membership confers the group's roles only in that project
+	// (models.UserGroup), so a grant with viaMemberAt != 0 does not apply elsewhere.
+	viaMemberAt uint
 }
+
+// appliesAt reports whether the grant can apply when the target is project proj.
+func (g grant) appliesAt(proj uint) bool { return g.viaMemberAt == 0 || g.viaMemberAt == proj }
 
 type model struct{ db *gorm.DB }
 
@@ -66,9 +74,9 @@ func (m model) grants(p *principal) []grant {
 	if p.userID == 0 {
 		return nil
 	}
-	rows, err := m.db.Raw(`SELECT role_id, project_id, expires_at FROM user_roles WHERE user_id = ? AND environment_id = 0
+	rows, err := m.db.Raw(`SELECT role_id, project_id, expires_at, 0 AS via FROM user_roles WHERE user_id = ? AND environment_id = 0
 		UNION ALL
-		SELECT gr.role_id, gr.project_id, gr.expires_at FROM group_roles gr
+		SELECT gr.role_id, gr.project_id, gr.expires_at, ug.project_id AS via FROM group_roles gr
 		  JOIN user_groups ug ON ug.group_id = gr.group_id
 		  JOIN groups g ON g.id = gr.group_id AND g.deleted_at IS NULL
 		 WHERE ug.user_id = ? AND gr.environment_id = 0`, p.userID, p.userID).Rows()
@@ -78,7 +86,7 @@ func (m model) grants(p *principal) []grant {
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var g grant
-		_ = rows.Scan(&g.roleID, &g.projectID, &g.expires)
+		_ = rows.Scan(&g.roleID, &g.projectID, &g.expires, &g.viaMemberAt)
 		out = append(out, g)
 	}
 	return out
@@ -104,6 +112,9 @@ func (m model) holds(p *principal, perm string, proj uint) bool {
 	now := time.Now().UTC()
 	for _, g := range m.grants(p) {
 		if g.projectID != 0 && g.projectID != proj {
+			continue
+		}
+		if !g.appliesAt(proj) {
 			continue
 		}
 		if g.expires != nil && !g.expires.After(now) {
@@ -212,7 +223,7 @@ func (m model) machineCovers(p *principal, target uint) bool {
 func (m model) memberOf(p *principal, proj uint) bool {
 	now := time.Now().UTC()
 	for _, g := range m.grants(p) {
-		if g.projectID == proj && proj != 0 && (g.expires == nil || g.expires.After(now)) && m.projectLive(proj) {
+		if g.projectID == proj && proj != 0 && g.appliesAt(proj) && (g.expires == nil || g.expires.After(now)) && m.projectLive(proj) {
 			return true
 		}
 	}
@@ -258,7 +269,7 @@ func (m model) holdsAdminRoleAt(p *principal, proj uint) bool {
 	}
 	now := time.Now().UTC()
 	for _, g := range m.grants(p) {
-		if g.projectID != proj || (g.expires != nil && !g.expires.After(now)) {
+		if g.projectID != proj || !g.appliesAt(proj) || (g.expires != nil && !g.expires.After(now)) {
 			continue
 		}
 		if _, adminRole := m.rolePerms(g.roleID); adminRole {
