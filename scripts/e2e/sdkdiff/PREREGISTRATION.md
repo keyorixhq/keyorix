@@ -199,7 +199,7 @@ pve01: 1..3020 with Go/Node/Python, stopped by hand at B-003020 for time, signat
   another fault combination, of null-versus-empty-string, null stringified into a reference, a base URL with a query, a
   redirect). B did not pay off for discovery; it paid off only as breadth.
 - What did find things: reading raw outcomes. Eight harness defects were found that way, recorded as amendments A6, A7,
-  A8, A9, A10, A11 (and A2/A3 earlier); two of them (A10, A11) were harness defects, the rest process errors. The largest by far: A7 (SDK checkout 129 commits behind) and A8 (secrets path
+  A8, A9, A10, A11 (and A2/A3 earlier); A6, A10 and A11 were harness defects, the rest process errors. The largest by far: A7 (SDK checkout 129 commits behind) and A8 (secrets path
   vacuously "agreeing" because the old API had been removed), both of which made a silent run look clean.
 - Root causes found, by class (signature counts are inflated by combinations; counts of root causes are what matter):
   SDK bug 7 (Java JSON unescape; Java control characters in the login body; Go and Java trailing slashes; plus 3 reported
