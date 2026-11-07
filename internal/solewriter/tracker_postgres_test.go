@@ -35,18 +35,38 @@ func (w *swWorld) serverStorage() storage.Storage {
 	if c, ok := st.(interface{ Close() error }); ok {
 		w.t.Cleanup(func() { _ = c.Close() })
 	}
-	// The store starts the trigger-integrity check, whose first pass runs in
-	// the background and commits catalog transactions the tracker counts as
-	// fenced writes. Sampled mid-test, one of them is a commit the test did not
-	// make ("expected 4, actual 5"). Wait for the pass itself to end, not for a
-	// quiet period: under CPU starvation the pass can start later than any
-	// fixed window.
-	waiter, ok := st.(interface{ WaitTriggerIntegrityFirstPass(context.Context) error })
-	require.True(w.t, ok, "the server's storage must expose WaitTriggerIntegrityFirstPass")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	require.NoError(w.t, waiter.WaitTriggerIntegrityFirstPass(ctx), "the trigger-integrity check's first pass did not end")
+	// The store starts the trigger-integrity check, whose ticks run in the
+	// background from now on. A healthy tick only reads, in a transaction it
+	// rolls back, and none of its statements is a fenced write
+	// (TestTracker_TriggerIntegrityTicksAreNotFencedWrites), so a tick landing
+	// inside a step adds no commit to the tracker. Until #3978 its
+	// concat_ws('; ', ...) read was counted as one ("expected 4, actual 5"),
+	// and this fixture waited for the first pass to end.
 	return st
+}
+
+// TestTracker_TriggerIntegrityTicksAreNotFencedWrites (#3978): a healthy
+// trigger-integrity tick only reads, in a transaction it rolls back. Before
+// the lexer, its concat_ws('; ', ...) read counted as a string of several
+// statements, so every 30 s tick of a single_writer server raised Inflight
+// and moved the generation at its ROLLBACK, flushing every memo. Red then:
+// each pass counted commits.
+func TestTracker_TriggerIntegrityTicksAreNotFencedWrites(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	w := newSWWorld(t)
+	g := w.start(Options{})
+	tr := g.Tracker()
+	st := w.serverStorage()
+	ticks, ok := st.(interface {
+		RunTriggerIntegrityPassForTest(context.Context, int, func(string, ...any)) (bool, error)
+	})
+	require.True(t, ok, "the server's storage must expose RunTriggerIntegrityPassForTest")
+	c0 := tr.commits.Load()
+	flushed, err := ticks.RunTriggerIntegrityPassForTest(context.Background(), 3, t.Logf)
+	require.NoError(t, err)
+	require.False(t, flushed, "precondition: the catalog is healthy, so no tick repairs or invalidates")
+	require.Zero(t, tr.Inflight(), "a tick's read is still counted in flight")
+	require.Equal(t, c0, tr.commits.Load(), "the integrity ticks' reads were counted as fenced writes")
 }
 
 // TestTracker_EveryEpochMoveIsAWriteTheTrackerSaw drives the storage writes

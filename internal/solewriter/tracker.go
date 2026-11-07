@@ -225,12 +225,15 @@ var fencedNameRE = func() *regexp.Regexp {
 // fence's triggers do not count either (an UPDATE of a table's bookkeeping
 // columns only; a system_metadata write that does not touch the fenced key).
 func classifyStatement(sql string, args []any) stmtKind {
-	s := strings.TrimSpace(stripLeadingComments(sql))
 	// Several statements in one string (the simple protocol allows it) are
-	// not parsed one by one: any of them may write a fenced table.
-	if strings.Contains(strings.TrimRight(s, "; \t\n"), ";") {
+	// not parsed one by one: any of them may write a fenced table. Neither is
+	// text the lexer cannot read with certainty. What is classified below is
+	// the statement with its comments blanked out.
+	clean, ok := lexStatement(sql)
+	if !ok {
 		return stmtFencedWrite
 	}
+	s := strings.TrimSpace(clean)
 	verb := strings.ToLower(firstWord(s))
 	switch verb {
 	case "begin", "start":
@@ -343,10 +346,11 @@ func onlySets(s string, cols []string) bool {
 		return false
 	}
 	setList, _, _ := strings.Cut(after, " where ")
-	// A parenthesis is a subquery, a row constructor or a function call: its
-	// own " where " or "," would cut the list in the wrong place. Count it as
-	// a write of the table (the safe side).
-	if strings.Contains(setList, "(") {
+	// A parenthesis is a subquery, a row constructor or a function call, and
+	// a string or dollar-quoted literal can hold any text: its own " where "
+	// or "," would cut the list in the wrong place. Count it as a write of the
+	// table (the safe side).
+	if strings.ContainsAny(setList, "('") || dollarQuoteRE.MatchString(setList) {
 		return false
 	}
 	for part := range strings.SplitSeq(setList, ",") {
@@ -368,33 +372,197 @@ func onlySets(s string, cols []string) bool {
 	return true
 }
 
+// dollarQuoteRE matches a dollar-quote delimiter ($$ or $tag$; not $1), and
+// dollarQuoteStartRE one at the start of the text.
+var (
+	dollarQuoteRE      = regexp.MustCompile(dollarQuoteDelim)
+	dollarQuoteStartRE = regexp.MustCompile(`^` + dollarQuoteDelim)
+)
+
+const dollarQuoteDelim = `\$([A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*)?\$`
+
+// firstWord is the keyword s starts with: its leading run of identifier
+// characters, so a verb is read whatever follows it (white space of any kind,
+// a parenthesis, an operator).
 func firstWord(s string) string {
-	for i, r := range s {
-		if r == ' ' || r == '\n' || r == '\t' || r == '(' || r == ';' {
+	for i := 0; i < len(s); i++ {
+		if !identCont(s[i]) || s[i] == '$' {
 			return s[:i]
 		}
 	}
 	return s
 }
 
-func stripLeadingComments(s string) string {
-	for {
-		s = strings.TrimSpace(s)
+// lexStatement reads sql the way PostgreSQL's lexer does and returns it with
+// every comment replaced by one space and the statement-ending semicolons cut
+// off. ok is false, and the caller counts a fenced write, when sql holds a
+// semicolon outside a literal, quoted identifier or comment with anything but
+// semicolons and white space after it (a second statement), or anything the
+// lexer cannot read with certainty: an unterminated string, quoted
+// identifier, dollar quote or block comment; a backslash right before a
+// quote in a string without the E prefix (whether it escapes that quote
+// depends on standard_conforming_strings); a U& identifier; a '$' that
+// neither continues an identifier, starts a parameter nor opens a dollar
+// quote.
+//
+// It recognises: '...' with doubled quotes (any prefix: B, X, N, U&),
+// E'...' with doubled quotes and backslash escapes, $tag$...$tag$, "..."
+// with doubled quotes, -- to the end of the line (\n or \r), and /* */
+// nested as PostgreSQL nests them. A literal's text stays in the result, so
+// a table name or verb inside one still counts towards a write (the safe
+// side). Only ever widening: a construct this misses is text that stays
+// outside every literal, where a semicolon ends the statement.
+func lexStatement(sql string) (clean string, ok bool) {
+	var b strings.Builder
+	b.Grow(len(sql))
+	for i := 0; i < len(sql); {
+		c := sql[i]
 		switch {
-		case strings.HasPrefix(s, "--"):
-			_, rest, ok := strings.Cut(s, "\n")
-			if !ok {
-				return ""
+		case c == '-' && i+1 < len(sql) && sql[i+1] == '-':
+			j := strings.IndexAny(sql[i:], "\n\r")
+			if j < 0 {
+				j = len(sql) - i
 			}
-			s = rest
-		case strings.HasPrefix(s, "/*"):
-			_, rest, ok := strings.Cut(s, "*/")
+			b.WriteByte(' ')
+			i += j
+		case c == '/' && i+1 < len(sql) && sql[i+1] == '*':
+			j, ok := blockCommentEnd(sql, i)
 			if !ok {
-				return ""
+				return "", false
 			}
-			s = rest
+			b.WriteByte(' ')
+			i = j
+		case c == '\'':
+			j, ok := stringEnd(sql, i, ePrefixed(sql, i))
+			if !ok {
+				return "", false
+			}
+			b.WriteString(sql[i:j])
+			i = j
+		case c == '"':
+			if i > 0 && sql[i-1] == '&' {
+				return "", false // U&"...": a name spelled with escapes
+			}
+			j, ok := quotedIdentEnd(sql, i)
+			if !ok {
+				return "", false
+			}
+			b.WriteString(sql[i:j])
+			i = j
+		case c == '$':
+			switch {
+			case i > 0 && identCont(sql[i-1]):
+				// Part of an identifier (a$b) or of what follows a number:
+				// no dollar quote opens here.
+				b.WriteByte(c)
+				i++
+			case i+1 < len(sql) && sql[i+1] >= '0' && sql[i+1] <= '9':
+				b.WriteByte(c) // a parameter ($1)
+				i++
+			default:
+				delim := dollarQuoteStartRE.FindString(sql[i:])
+				if delim == "" {
+					return "", false
+				}
+				k := strings.Index(sql[i+len(delim):], delim)
+				if k < 0 {
+					return "", false
+				}
+				j := i + 2*len(delim) + k
+				b.WriteString(sql[i:j])
+				i = j
+			}
+		case c == ';':
+			if strings.Trim(sql[i:], "; \t\n\r\f\v") != "" {
+				return "", false
+			}
+			return b.String(), true
 		default:
-			return s
+			b.WriteByte(c)
+			i++
 		}
 	}
+	return b.String(), true
+}
+
+// identCont reports whether c can continue an identifier (PostgreSQL's
+// ident_cont: letters, digits, _, $ and every byte of a multi-byte
+// character).
+func identCont(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '$' || c >= 0x80
+}
+
+// ePrefixed reports whether the quote at sql[i] opens an E-prefixed string: an E
+// (or e) right before it that does not end a longer identifier.
+func ePrefixed(sql string, i int) bool {
+	if i == 0 || (sql[i-1] != 'e' && sql[i-1] != 'E') {
+		return false
+	}
+	return i == 1 || !identCont(sql[i-2])
+}
+
+// stringEnd returns the index just past the string literal opening at
+// sql[i]. ok is false when it does not end, or when a string without the E
+// prefix has a backslash right before a quote. Only there do the two
+// standard_conforming_strings settings end it in different places: with the
+// setting off a backslash escapes the next byte, and as long as that byte is
+// never a quote, every quote means the same under both.
+func stringEnd(sql string, i int, escapes bool) (int, bool) {
+	for j := i + 1; j < len(sql); j++ {
+		switch sql[j] {
+		case '\\':
+			if !escapes {
+				if j+1 < len(sql) && sql[j+1] == '\'' {
+					return 0, false
+				}
+				continue
+			}
+			j++ // the escaped byte, a quote included
+		case '\'':
+			if j+1 < len(sql) && sql[j+1] == '\'' {
+				j++
+				continue
+			}
+			return j + 1, true
+		}
+	}
+	return 0, false
+}
+
+// quotedIdentEnd returns the index just past the quoted identifier opening
+// at sql[i], where "" stands for one quote.
+func quotedIdentEnd(sql string, i int) (int, bool) {
+	for j := i + 1; j < len(sql); j++ {
+		if sql[j] != '"' {
+			continue
+		}
+		if j+1 < len(sql) && sql[j+1] == '"' {
+			j++
+			continue
+		}
+		return j + 1, true
+	}
+	return 0, false
+}
+
+// blockCommentEnd returns the index just past the block comment opening at
+// sql[i], counting nested /* */ pairs as PostgreSQL does.
+func blockCommentEnd(sql string, i int) (int, bool) {
+	depth := 0
+	for j := i; j+1 < len(sql); {
+		switch sql[j : j+2] {
+		case "/*":
+			depth++
+			j += 2
+		case "*/":
+			depth--
+			j += 2
+			if depth == 0 {
+				return j, true
+			}
+		default:
+			j++
+		}
+	}
+	return 0, false
 }

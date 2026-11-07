@@ -17,7 +17,12 @@
 #   DRILL_CLI_BIN      keyorix CLI binary (default: build ./cli)
 #   DRILL_BACKEND      sqlite (default) | postgres
 #   DRILL_PG_DSN_FILE  postgres only: file holding a postgres:// URL of an EMPTY
-#                      database (read from a file so the password is never on argv)
+#                      database (read from a file so the password is never on argv).
+#                      No drill drops or recreates that database between runs (a drill
+#                      holds only the DSN, no admin role): the caller supplies a fresh
+#                      empty database per run (`kpg dsn <db>` / `kpg drop <db>`, or
+#                      DROP/CREATE DATABASE), and per-account state such as the last
+#                      consumed TOTP code (totp_fresh) is kept per run, not per database.
 #   DRILL_ROOT         work area (default: <repo>/.scratch/drills); each run makes a
 #                      fresh sub-directory and removes it on success
 #   DRILL_KEEP=1       keep the work area on success as well as on failure

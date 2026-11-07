@@ -29,12 +29,12 @@ func TestLogger_AccessLineKeepsFields(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte("hello"))
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/things?x=1", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/things?page=1", nil)
 	req.RemoteAddr = "192.0.2.7:4242"
 	Logger()(h).ServeHTTP(httptest.NewRecorder(), req)
 
 	line := buf.String()
-	re := regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} "POST http://example\.com/api/v1/things\?x=1 HTTP/1\.1" from 192\.0\.2\.7:4242 - 201 5B in \S+\n$`)
+	re := regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} "POST http://example\.com/api/v1/things\?page=1 HTTP/1\.1" from 192\.0\.2\.7:4242 - 201 5B in \S+\n$`)
 	assert.Regexp(t, re, line)
 }
 
