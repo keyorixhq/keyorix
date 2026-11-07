@@ -61,11 +61,14 @@ func TestBackendDifferentialOrdering(t *testing.T) {
 			}
 		}
 	}
+	// ordered=false marks a list with no ORDER BY in its contract: only its row set is
+	// compared (normalisation 2); its order is logged but never fails, even in strict mode.
 	lists := []struct {
-		name string
-		fn   func(s *diffSide) ([]string, error)
+		name    string
+		ordered bool
+		fn      func(s *diffSide) ([]string, error)
 	}{
-		{"ListGroupsPage(ORDER BY name)", func(s *diffSide) ([]string, error) {
+		{"ListGroupsPage(ORDER BY name)", true, func(s *diffSide) ([]string, error) {
 			gs, _, err := s.ls.ListGroupsPage(ctx, 0, 100)
 			var out []string
 			for _, g := range gs {
@@ -73,7 +76,7 @@ func TestBackendDifferentialOrdering(t *testing.T) {
 			}
 			return out, err
 		}},
-		{"ListOrphanedSecrets(ORDER BY name ASC)", func(s *diffSide) ([]string, error) {
+		{"ListOrphanedSecrets(ORDER BY name ASC)", true, func(s *diffSide) ([]string, error) {
 			ns, err := s.ls.ListOrphanedSecrets(ctx, s.proj)
 			var out []string
 			for _, n := range ns {
@@ -81,7 +84,7 @@ func TestBackendDifferentialOrdering(t *testing.T) {
 			}
 			return out, err
 		}},
-		{"ListSecrets(ExpiresBefore: ORDER BY expiration ASC)", func(s *diffSide) ([]string, error) {
+		{"ListSecrets(ExpiresBefore: ORDER BY expiration ASC)", true, func(s *diffSide) ([]string, error) {
 			ns, _, err := s.ls.ListSecrets(ctx, &storage.SecretFilter{ProjectID: &s.proj, ExpiresBefore: ptrOf(diffAuditBaseTime.Add(1000 * time.Hour)), PageSize: 100})
 			var out []string
 			for _, n := range ns {
@@ -89,7 +92,7 @@ func TestBackendDifferentialOrdering(t *testing.T) {
 			}
 			return out, err
 		}},
-		{"ListProjects(unspecified order; informational)", func(s *diffSide) ([]string, error) {
+		{"ListProjects(unspecified order; row set only)", false, func(s *diffSide) ([]string, error) {
 			ps, err := s.ls.ListProjects(ctx)
 			var out []string
 			for _, p := range ps {
@@ -112,6 +115,10 @@ func TestBackendDifferentialOrdering(t *testing.T) {
 				t.Fatalf("BACKEND DIVERGENCE (row set):\n  sqlite:   %q\n  postgres: %q", a, b)
 			}
 			if strings.Join(a, "\x1f") != strings.Join(b, "\x1f") {
+				if !l.ordered {
+					t.Logf("order differs on a list with no ORDER BY contract (not compared):\n  sqlite:   %q\n  postgres: %q", a, b)
+					return
+				}
 				// Same rows, different ORDER: SQLite compares text bytewise (BINARY) while
 				// PostgreSQL uses the database collation (en_US.UTF-8: case-insensitive
 				// first pass, punctuation ignored, accents interleaved). Backend-inherent
@@ -201,6 +208,17 @@ func race(n int, fn func(i int) error) string {
 	return strings.Join(res, ",")
 }
 
+// raceWinners counts the "ok" entries in a race result multiset.
+func raceWinners(out string) int {
+	n := 0
+	for c := range strings.SplitSeq(out, ",") {
+		if c == "ok" {
+			n++
+		}
+	}
+	return n
+}
+
 // TestBackendDifferentialConcurrentUnique races N writers at one unique key on each
 // backend. The error-class multiset must match, and each backend must admit exactly
 // one winner. Rounds: $DIFF_CONC_ROUNDS (default 20).
@@ -256,7 +274,7 @@ func TestBackendDifferentialConcurrentUnique(t *testing.T) {
 			if sOut != pOut {
 				t.Fatalf("BACKEND DIVERGENCE (concurrent): round=%d %s\n  sqlite:   %s\n  postgres: %s", r, c.name, sOut, pOut)
 			}
-			if strings.Count(sOut, "ok") != 1 {
+			if raceWinners(sOut) != 1 {
 				t.Fatalf("BACKEND DIVERGENCE (concurrent, both backends): round=%d %s expected exactly one winner, got %s", r, c.name, sOut)
 			}
 		}
@@ -288,6 +306,9 @@ func TestBackendDifferentialConcurrentUnique(t *testing.T) {
 		if sOut != pOut {
 			t.Fatalf("BACKEND DIVERGENCE (concurrent): round=%d CreateSecret same name\n  sqlite:   %s\n  postgres: %s", r, sOut, pOut)
 		}
+		if raceWinners(sOut) != 1 {
+			t.Fatalf("BACKEND DIVERGENCE (concurrent, both backends): round=%d CreateSecret same name expected exactly one winner, got %s", r, sOut)
+		}
 		sn, _ := w.sls.GetSecretByName(ctx, name, sp, se)
 		pn, _ := w.pls.GetSecretByName(ctx, name, pp, pe)
 		if sn == nil || pn == nil {
@@ -303,6 +324,9 @@ func TestBackendDifferentialConcurrentUnique(t *testing.T) {
 		})
 		if vs != vp {
 			t.Fatalf("BACKEND DIVERGENCE (concurrent): round=%d CreateSecretVersion same number\n  sqlite:   %s\n  postgres: %s", r, vs, vp)
+		}
+		if raceWinners(vs) != 1 {
+			t.Fatalf("BACKEND DIVERGENCE (concurrent, both backends): round=%d CreateSecretVersion same number expected exactly one winner, got %s", r, vs)
 		}
 	}
 }
