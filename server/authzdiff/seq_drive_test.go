@@ -70,7 +70,7 @@ func seqPlants() []seqPlant {
 			// carries out: every leg agrees, the model (reading the same tables)
 			// agrees, and the failing step alone reproduces it, so only an O-E
 			// class that always fails catches it
-			fault: seqFault{name: "revoke-noop-held", skipDo: func(l layer, st seqStep) bool { return st.Kind == skRevoke }},
+			fault: seqFault{name: "revoke-noop-held-grant", skipDo: func(l layer, st seqStep) bool { return st.Kind == skRevoke }},
 			steps: []seqStep{{skRevoke, pkGlobalAdmin, pkViewer, tA, 0, 0}},
 			class: "O-E:revoked-row-still-present",
 		},
@@ -258,7 +258,7 @@ func TestSeqKnownOtherIsNarrow(t *testing.T) {
 
 // seqDefaultPlants run in the default `go test`, so the oracles and the triage
 // are watched failing in CI; AUTHZSEQ_SELFTEST=1 runs all of them (about 10 s).
-var seqDefaultPlants = map[string]bool{"revoke-noop": true, "revoke-noop-held": true}
+var seqDefaultPlants = map[string]bool{"revoke-noop": true, "revoke-noop-held-grant": true}
 
 // TestSeqPlantsAreDetected: each plant is seen by its oracle class, and the
 // triage FuzzAuthzSeq and the sweep use (seqVerdict) fails the run on it.

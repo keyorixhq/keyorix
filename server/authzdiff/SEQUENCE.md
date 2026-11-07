@@ -41,7 +41,7 @@ check.
   sequences are clean. A non-clean control means a harness/model gap to fix first;
   it is not a finding.
 * Plants (in the harness, never in production code): `revoke-noop` (the REST leg
-  reports success without revoking), `revoke-noop-held` (no leg carries out the
+  reports success without revoking), `revoke-noop-held-grant` (no leg carries out the
   revoke of a grant the viewer holds in the fixture: one step, and every leg and
   the model agree), `stale-allow` (the gRPC probe still allows a revoked
   principal), `suspend-ignored` (the REST probe allows a suspended principal) and
@@ -108,9 +108,9 @@ A clean run (b) is a statement about THIS state space and the 8 steps above only
 Control (zero steps and five benign sequences) clean; the four harness plants
 of that run (`revoke-noop`, `stale-allow`, `suspend-ignored`, `step-5xx`) each
 detected with the named oracle class, and the same sequences clean without the
-plant. `revoke-noop-held` and the check that `seqVerdict` fails on every plant
+plant. `revoke-noop-held-grant` and the check that `seqVerdict` fails on every plant
 were added in review; at the commit before the always-fail exception,
-`revoke-noop-held` is detected but triaged `single-step` and the run passes.
+`revoke-noop-held-grant` is detected but triaged `single-step` and the run passes.
 `AUTHZSEQ_SELFTEST=1 go test ./server/authzdiff -run 'TestSeqControl|TestSeqPlantsAreDetected'`.
 
 Harness issues found and fixed while getting the control clean (not product
