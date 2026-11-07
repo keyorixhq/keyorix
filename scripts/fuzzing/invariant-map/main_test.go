@@ -195,24 +195,16 @@ func TestRunCheckExitCodes(t *testing.T) {
 	}
 }
 
-// TestRepoCheck is the CI guard: the real tree must pass `-check`.
-func TestRepoCheck(t *testing.T) {
-	root, err := findRoot()
-	if err != nil {
-		t.Skip(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "docs", "INVARIANTS.md")); err != nil {
-		t.Skip("not the keyorix tree")
-	}
-	rep, err := Analyze(root, true)
+// TestAllowlistParses keeps the committed allowlist loadable. It reads only
+// that file: running `-check` over the real tree is a manual step (README), not
+// a test, because a repo-wide guard needs the rollout contract
+// (docs/guard-rollout-contract.md) and a scripts/ci/guard-inputs.d row first.
+func TestAllowlistParses(t *testing.T) {
+	rules, err := loadAllowlist("allowlist.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rules, err := loadAllowlist(filepath.Join(root, selfDir, "allowlist.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p := Check(rep, rules, true, false); len(p) > 0 {
-		t.Fatalf("invariant-map -check failed:\n%s", strings.Join(p, "\n"))
+	if len(rules) == 0 {
+		t.Fatal("allowlist.txt has no rules")
 	}
 }

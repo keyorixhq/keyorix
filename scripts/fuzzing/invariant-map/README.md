@@ -87,8 +87,13 @@ no-check    INV-FOO-bar      # reason
 stale-check INV-FOO-baz      # reason
 ```
 
-`go test ./scripts/fuzzing/invariant-map/` runs the same check against the real
-tree (`TestRepoCheck`), so the repository's normal test run enforces it.
+`-check` is a manual tool for now: `go test ./scripts/fuzzing/invariant-map/`
+runs only the fixture tests and does not check the real tree. Run
+`go run ./scripts/fuzzing/invariant-map -check` yourself. Making it a blocking
+test needs the guard rollout contract (`docs/guard-rollout-contract.md`: a
+`guardrules.Rollout(t)` report, a `docs/guard-rollout.d/` row, a
+`scripts/guard-meets-open-prs.sh` run) and a `scripts/ci/guard-inputs.d/` row.
+Without that row, a docs-only PR would skip the test and could turn main red.
 
 ## Tests and fixtures
 
