@@ -87,7 +87,7 @@ func startServer(binary, dir string, withBootstrap bool) (*Instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(binary) // #nosec G204 -- operator-supplied server binary
+	cmd := exec.Command(binary) // #nosec G204 -- operator-supplied server binary // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- binary is the operator's own server build passed on this test tool's command line
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env, logf, logf
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -225,7 +225,7 @@ func copyTree(src, dst string) error {
 }
 
 func adminCmd(binary, dir string, args ...string) error {
-	cmd := exec.Command(binary, append([]string{"admin"}, args...)...) // #nosec G204 -- operator-supplied binary
+	cmd := exec.Command(binary, append([]string{"admin"}, args...)...) // #nosec G204 -- operator-supplied binary // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- binary is the operator's own server build, args are fixed by this tool
 	cmd.Dir, cmd.Env = dir, baseEnv(dir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

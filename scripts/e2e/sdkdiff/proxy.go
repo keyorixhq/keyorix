@@ -145,7 +145,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rec.RespStatus = 200
 		rec.RespBody = `{"success":true,"data":{}}`
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, rec.RespBody) // #nosec G705 -- fixed JSON literal set two lines above, not request-derived, JSON content type
+		_, _ = io.WriteString(w, rec.RespBody) // #nosec G705 -- fixed JSON literal set two lines above, not request-derived, JSON content type // nosemgrep: go.lang.security.audit.xss.no-io-writestring-to-responsewriter.no-io-writestring-to-responsewriter -- loopback test double writing a fixed JSON literal, no HTML is rendered
 		p.push(rec)
 		return
 	}
@@ -236,7 +236,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, up string, body 
 	}
 	w.Header().Set("Content-Length", fmt.Sprint(len(rb)))
 	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(rb)
+	_, _ = w.Write(rb) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- loopback test double relaying the upstream test server's bytes verbatim; never rendered as HTML
 	return resp.StatusCode, rb, nil
 }
 
@@ -288,7 +288,7 @@ func (p *Proxy) synthetic(w http.ResponseWriter, f *Fault, rec *Rec) {
 	send := func(status int, ct, body string) {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(status)
-		_, _ = io.WriteString(w, body)
+		_, _ = io.WriteString(w, body) // nosemgrep: go.lang.security.audit.xss.no-io-writestring-to-responsewriter.no-io-writestring-to-responsewriter -- loopback test double replaying a scenario-defined fault body; never rendered as HTML
 		rec.RespStatus = status
 		rec.RespBody = clip([]byte(body))
 	}

@@ -27,7 +27,7 @@ type Driver struct {
 }
 
 func (d *Driver) start() error {
-	cmd := exec.Command(d.argv[0], d.argv[1:]...) // #nosec G204 -- operator-built driver commands
+	cmd := exec.Command(d.argv[0], d.argv[1:]...) // #nosec G204 -- operator-built driver commands // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- argv is the operator's own driver command line for this test tool, not remote input
 	cmd.Env = d.env
 	cmd.Stderr = os.Stderr
 	in, err := cmd.StdinPipe()
