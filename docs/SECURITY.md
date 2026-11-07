@@ -24,6 +24,7 @@ Do not open a public GitHub issue for a suspected vulnerability.
 | [`security/hardening-guide.md`](security/hardening-guide.md) | A production configuration checklist with the exact config keys, verified against `internal/config`. |
 | [`security/testing.md`](security/testing.md) | CI gates, the fuzzing program, differential/property testing, and the machine-checked coverage ledgers. |
 | [`security/incident-response-plan.md`](security/incident-response-plan.md) | Roles, severity scale, first-hour checklist, notification, evidence preservation, and secrets-platform cases. |
+| [`security/cra-reporting-process.md`](security/cra-reporting-process.md) | DRAFT. EU Cyber Resilience Act reporting path (24 h early warning, 72 h notification, final report): roles, timeline, templates, evidence, one-page checklist. |
 | [`security/tabletop-1.md`](security/tabletop-1.md) | The first incident-response tabletop exercise: scenario script, injects, and outcomes table. |
 | [`security/security-txt.md`](security/security-txt.md) | Source, hosting and renewal of the RFC 9116 `security.txt`. |
 | [`compliance/README.md`](compliance/README.md) | Regulatory control mappings (NIS2, DORA, ISO 27001, ENS, SOC 2) built on top of the above. |
