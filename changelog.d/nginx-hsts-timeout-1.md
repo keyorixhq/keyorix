@@ -1,0 +1,2 @@
+### Fixed
+- **`TestWebNginxHSTS_ComposeImage` no longer runs under `go test -short`.** The quick tier (`test-quick-root`) died with `panic: test timed out after 8m0s` in `deploy/` on every PR whose affected set included that package. The test starts one real nginx container per case, so it now skips under `-short` and stays covered by the full `test-suite` matrix. Its HTTP requests also get a 10 s timeout so a stalled connection fails the case instead of hanging the package. No assertion changed.
