@@ -47,7 +47,10 @@ func isDuplicateProjectNameViolation(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "uniq_projects_name_active")
+	msg := err.Error()
+	// PostgreSQL names the violated index; SQLite names the column for a plain
+	// column index ("UNIQUE constraint failed: projects.name_folded").
+	return strings.Contains(msg, "uniq_projects_name_active") || strings.Contains(msg, "projects.name_folded")
 }
 
 func (ls *LocalStorage) CreateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
@@ -148,15 +151,16 @@ func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Projec
 }
 
 // GetProjectByName resolves a project by name, case-insensitively — matching
-// ensureProjectNameIndex's LOWER(name) partial unique index exactly, so this can
-// never resolve two different rows for names differing only in case. GORM's
+// ensureProjectNameIndex's partial unique index on name_folded exactly (both use
+// identity.FoldProjectName), so this can never resolve two different rows for
+// names differing only in case, on either backend. GORM's
 // soft-delete scoping (Project.DeletedAt) already excludes a soft-deleted project
 // from this query without an explicit deleted_at clause, consistent with a deleted
 // project's name being freed for reuse (see Project.Name's own doc comment) — this
 // must never resolve a name to a row that no longer legitimately holds it.
 func (ls *LocalStorage) GetProjectByName(ctx context.Context, name string) (*models.Project, error) {
 	var project models.Project
-	if err := ls.db.WithContext(ctx).Where("LOWER(name) = LOWER(?)", name).First(&project).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Where("name_folded = ?", identity.FoldProjectName(name)).First(&project).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w", storage.ErrProjectNotFound)
 		}
@@ -177,6 +181,7 @@ func (ls *LocalStorage) GetProjectByName(ctx context.Context, name string) (*mod
 func (ls *LocalStorage) UpdateProjectFields(ctx context.Context, id uint, name, description string, requireMFA *bool, updatedAt time.Time) (bool, error) {
 	cols := map[string]any{
 		"name":        name,
+		"name_folded": identity.FoldProjectName(name), // a map update runs no BeforeSave hook
 		"description": description,
 		"updated_at":  updatedAt.UTC(), // a map update runs no NowFunc
 	}
