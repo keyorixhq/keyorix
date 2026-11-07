@@ -145,6 +145,7 @@ type seqFinding struct {
 type seqStats struct {
 	kindAllowed, kindDenied map[seqKind]int
 	steps, probes           int
+	tuples                  []int // decision tuples seen (seq_novelty_test.go)
 }
 
 func newSeqStats() *seqStats {
@@ -196,6 +197,14 @@ func (w *seqWorld) probeAll(tb testing.TB, specs []opSpec, step int, f *seqFault
 					}
 				}
 				tag := fmt.Sprintf("%s@%s/%s", pk, t, spec.name)
+				switch {
+				case len(allow) > 0 && len(deny) == 0:
+					stats.tuples = append(stats.tuples, novProbeID(pk, t, Allowed))
+				case len(deny) > 0 && len(allow) == 0:
+					stats.tuples = append(stats.tuples, novProbeID(pk, t, Denied))
+				case len(allow) > 0:
+					stats.tuples = append(stats.tuples, novProbeID(pk, t, Other))
+				}
 				if len(allow) > 0 && len(deny) > 0 {
 					out = append(out, seqFinding{step, fmt.Sprintf("O-P:layers-disagree(%s;allow=%s;deny=%s)", tag, strings.Join(allow, "+"), strings.Join(deny, "+"))})
 				}
@@ -311,6 +320,7 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 			consensus = Denied
 			stats.kindDenied[st.Kind]++
 		}
+		stats.tuples = append(stats.tuples, novStepID(st.Actor, st.Kind, consensus, st.T))
 		if modelWant != ModelNA && consensus != Other && consensus != modelWant {
 			findings = append(findings, seqFinding{i, fmt.Sprintf("O-S:step-vs-model(%s;got=%s;model=%s)", tag, consensus, modelWant)})
 		}
