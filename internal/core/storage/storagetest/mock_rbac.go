@@ -121,6 +121,11 @@ func (m *MockStorage) GetRole(ctx context.Context, id uint) (*models.Role, error
 	return args.Get(0).(*models.Role), args.Error(1)
 }
 
+// LockRoleForUpdate has no row lock in the mock; it reuses the GetRole expectation.
+func (m *MockStorage) LockRoleForUpdate(ctx context.Context, id uint) (*models.Role, error) {
+	return m.GetRole(ctx, id)
+}
+
 func (m *MockStorage) GetRoleByName(ctx context.Context, name string) (*models.Role, error) {
 	args := m.Called(ctx, name)
 	if args.Get(0) == nil {

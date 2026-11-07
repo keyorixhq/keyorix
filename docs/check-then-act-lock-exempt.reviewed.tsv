@@ -39,3 +39,6 @@
 (*KeyorixCore).UpdateUser	GUARD-2	C-GUARD2-EXEMPT-REVIEW
 (*KeyorixCore).deleteGroupGuarded	GUARD-2	C-GUARD2-EXEMPT-REVIEW
 (*KeyorixCore).inviteMemberWithMode	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).ReissueOneTimePassword	REISSUE-1	SIDECAR-REVIEW-1
+(*KeyorixCore).SetUserRoles	GROUP-ROLE-SCOPE-1	SIDECAR-REVIEW-1
+(*KeyorixCore).completeInvitationAccept	GROUP-ROLE-SCOPE-1	SIDECAR-REVIEW-1

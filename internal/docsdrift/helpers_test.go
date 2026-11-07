@@ -34,13 +34,49 @@ var configDocs = []string{
 	"QUICK_START.md",
 }
 
+// Fragment directories (DOCS-FRAGMENTS-1): a PR documents a NEW config key in
+// docs/configuration.d/<key, dots as __>.md and an upgrade note in
+// docs/upgrading.d/<slug>.md instead of editing the shared flat file. Every reader of
+// docs/CONFIGURATION.md reads both (dual-read, like the ledgers).
+const (
+	configFragmentsDir    = "docs/configuration.d"
+	upgradingFragmentsDir = "docs/upgrading.d"
+)
+
+// fragmentFiles returns the repo-relative paths of the *.md fragments in dir, sorted,
+// without the directory's README.md.
+func fragmentFiles(t testing.TB, dir string) []string {
+	t.Helper()
+	root := repoRoot(t)
+	matches, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(dir), "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, m := range matches {
+		if filepath.Base(m) == "README.md" {
+			continue
+		}
+		rel, _ := filepath.Rel(root, m)
+		out = append(out, filepath.ToSlash(rel))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// configDocFiles is configDocs plus every docs/configuration.d fragment.
+func configDocFiles(t testing.TB) []string {
+	t.Helper()
+	return append(append([]string{}, configDocs...), fragmentFiles(t, configFragmentsDir)...)
+}
+
 // commandDocs are the documents whose `keyorix-server` lines and KEYORIX_*
-// variables are checked: configDocs plus docs/operator/*.md, the air-gap
-// runbook and the assistant install procedure.
+// variables are checked: configDocs and its fragments plus docs/operator/*.md, the
+// air-gap runbook and the assistant install procedure.
 func commandDocs(t testing.TB) []string {
 	t.Helper()
 	root := repoRoot(t)
-	out := append([]string{}, configDocs...)
+	out := configDocFiles(t)
 	out = append(out, "docs/AIRGAP_RUNBOOK.md", "INSTALL-WITH-AI.md")
 	matches, err := filepath.Glob(filepath.Join(root, "docs", "operator", "*.md"))
 	if err != nil {

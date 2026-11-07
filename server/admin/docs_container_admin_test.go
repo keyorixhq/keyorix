@@ -294,6 +294,7 @@ func imageServerBinaryInvocations(t *testing.T) map[string]bool {
 // Deliberately NOT t.Parallel() -- see TestQuickStartAdminCommandsExist's comment.
 func TestDockerDocsAdminCommandsAreRunnable(t *testing.T) {
 	files := []string{"docs/SELF_HOSTING.md", "docs/UPGRADING.md", "QUICK_START.md", "README.md"}
+	files = append(files, adminDocFragments(t, "docs/upgrading.d")...)
 	invs := dockerDocAdminInvocations(t, files)
 	if len(invs) == 0 {
 		t.Fatalf("extracted zero `docker compose exec|run ... keyorix...` lines from %v; SELF_HOSTING.md documents "+
