@@ -31,9 +31,15 @@ bin/sdkdiff validate -in A.jsonl -baseline out/A/report.json -plants P1,P2,P3,P4
 bin/sdkdiff validate -in A.jsonl -sdks go,go@2,node,node@2,python,python@2 -controls ...         # self-pair control
 ```
 
-`-shim` rewrites the server's JSON keys to the PascalCase names the SDKs read (and asks for `page_size=100`,
-dropping the unsupported `environment` filter upstream only; the recorded request is what the SDK sent). It exists to
-compare SDK behaviour past the contract break that raw mode shows.
+Always point `-sdks-dir` at an up-to-date `origin/main` checkout of keyorix-sdks (amendment A7: a first campaign on a
+checkout 129 commits behind produced only stale findings). `-shim` (rewrites server JSON keys to the PascalCase
+names old SDKs read) is retired for current SDKs and kept only to reproduce pre-A7 runs.
+
+Operation vocabulary: `health`, `login`, `list_secrets` (environment; project fixed to the seeded `alpha`), `get_secret`,
+`get_secret_in`, `get_secret_by_ref`, `list_deleted_secrets`, `list_projects`, `create_project`, `list_environments`,
+`construct`; Java has no `create_project`, so scenarios that depend on its result diverge for Java by construction.
+Limits found while building it: plants only count when they change an observable (A9), and a differential tool
+cannot see a defect all four SDKs share.
 
 `SDKDIFF_PLANT=P1..P7` (set by `-plant`) switches on a deliberate defect in one driver; it is how the harness proves it can
 see a discrepancy. Never set it for a real run.
