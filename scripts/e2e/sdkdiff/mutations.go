@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -87,8 +88,6 @@ func mutByID(id string) *Mut {
 
 func okPlan(e *Env, b []byte) *Plan { return validPlan(templates[e.Cls].status, b) }
 
-func mainOf(cls string) string { return templates[cls].main }
-
 // docWith renders the class document with a replaced main string.
 func docWith(e *Env, mainS string) []byte {
 	t := templates[e.Cls]
@@ -103,8 +102,8 @@ func swapMain(e *Env, repl string) []byte {
 // splitMain returns the document text before and after the main string content.
 func splitMain(e *Env) (pre, post []byte) {
 	d := docWith(e, "@M@")
-	i := bytes.Index(d, []byte("@M@"))
-	return d[:i], d[i+3:]
+	pre, post, _ = bytes.Cut(d, []byte("@M@"))
+	return pre, post
 }
 
 func streamFill(pre, post []byte, n int64, fill byte) func(io.Writer) error {
@@ -114,10 +113,7 @@ func streamFill(pre, post []byte, n int64, fill byte) func(io.Writer) error {
 		}
 		buf := bytes.Repeat([]byte{fill}, 64<<10)
 		for n > 0 {
-			k := int64(len(buf))
-			if n < k {
-				k = n
-			}
+			k := min(int64(len(buf)), n)
 			if _, err := w.Write(buf[:k]); err != nil {
 				return err
 			}
@@ -167,7 +163,7 @@ func nestText(kind string, depth int) (open, close string) {
 	}
 	// alternating
 	var o, c strings.Builder
-	for i := 0; i < depth; i++ {
+	for i := range depth {
 		if i%2 == 0 {
 			o.WriteString(`[`)
 		} else {
@@ -579,7 +575,7 @@ func init() {
 	add(Mut{ID: "U21", Family: "U", Desc: "1 MiB key name", Exp: "E", Scens: scBody,
 		Plan: func(e *Env) *Plan {
 			d := validDoc(e.Cls, e.Page)
-			return okPlan(e, append(append(append([]byte{}, d[:len(d)-1]...), []byte(`,"`+repeatStr("k", 1<<20)+`":1}`)...)))
+			return okPlan(e, slices.Concat(d[:len(d)-1], []byte(`,"`+repeatStr("k", 1<<20)+`":1}`)))
 		}})
 	add(Mut{ID: "U22", Family: "U", Desc: "UTF-16LE body with BOM", Exp: "R", Scens: scBody,
 		Plan: func(e *Env) *Plan {
@@ -615,7 +611,7 @@ func init() {
 				ev = `{"` + t.list + `":[]}`
 			}
 			d := validDoc(e.Cls, e.Page)
-			return okPlan(e, append(append(append([]byte{}, d[:len(d)-1]...), []byte(`,"data":`+ev+`}`)...)))
+			return okPlan(e, slices.Concat(d[:len(d)-1], []byte(`,"data":`+ev+`}`)))
 		}})
 	shape := func(id, desc string, f func(e *Env, m map[string]any)) {
 		add(Mut{ID: id, Family: "D", Desc: desc, Exp: "R", Scens: scBody,
@@ -826,7 +822,6 @@ func init() {
 	pages("G01", "endless pages", func(e *Env) (string, int) { return strconv.Itoa(e.Page + 1), e.Page })
 	pages("G02", "total_pages 2147483647", func(e *Env) (string, int) { return "2147483647", e.Page })
 	for i, v := range []string{"1e18", "-1", "0", `"x"`, "null", "1.5"} {
-		v := v
 		pages("G03"+string(rune('a'+i)), "total_pages "+v, func(e *Env) (string, int) { return v, e.Page })
 	}
 	add(Mut{ID: "G04", Family: "G", Desc: "list of 100000 items", Exp: "E", Scens: ss("S03 S05 S06 S10"),

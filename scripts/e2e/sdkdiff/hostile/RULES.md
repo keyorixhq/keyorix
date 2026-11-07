@@ -181,6 +181,25 @@ Mac only: GOMAXPROCS 2, `nice -n 10`, at most 2 SDK runners in parallel, bounded
 SDK trees under test: `sdks-hostile-base` = keyorix-sdks origin/main 64c66a8; `sdks-hostile-harden` = PR #88 head d39dafc
 merged with origin/main (88cdecf, local merge, not pushed). Both run through the same matrix.
 
+## 8. Mechanism B: direct fuzzing of the Java JsonParser
+
+Target: `com.keyorix.JsonParser` as the Java SDK calls it. Tools (`jsonparser/fetch-tools.sh`, versions and SHA-256 pinned, kept
+outside the SDK build): Jazzer standalone 0.30.0, Gson 2.15.0 in STRICT mode as the RFC 8259 reference, JSONTestSuite
+(y_/n_/i_ files) as seed corpus and conformance table. Fallback when Jazzer cannot run: `PlainFuzz`, a plain driver that
+mutates the corpus with a fixed seed.
+
+Oracles:
+- B1 only the declared exception type escapes; no StackOverflowError, OutOfMemoryError or hang (5 s per input).
+- B2 on input the reference accepts, the values the parser extracts equal the reference's values.
+- B3 on input the reference rejects, the parser returns null/empty or throws the declared type. The parser is an extractor and
+  not a validator, so acceptance of invalid input is reported as a strictness difference (LOW), not as a defect, unless the
+  extracted value differs from every reading of the input a strict parser could give.
+- B4 the same input is classified identically across repeated runs.
+
+Divergence classes already explained are listed in `-Dhj.ignore` so that further runs reach new classes; every ignored class
+is named in the run output. The decoder conformance table (`sdkdiff hostile jsontable`) lists, for the JSONTestSuite files, the
+accept/reject result of the Python, Node and Go decoders as the SDKs call them; it is descriptive and has no pass/fail.
+
 ## Amendments
 
 All amendments below were made after the control run (C0-C4 over the four SDKs, 260 records, silent) and before any
@@ -192,3 +211,12 @@ mutation family was run.
 - A3 Implementation file names: `templates.go`, `mutations.go`, `hostile_srv.go`, `hostile_run.go` in `scripts/e2e/sdkdiff`.
 - A4 The driver output gained `sdk_error`, `full` (rendered error chain) and `side_events`; Node reports unhandled
   rejections and uncaught exceptions instead of dying, Java records uncaught exceptions of other threads. Existing fields are unchanged.
+- A5 Up to 4 SDK drivers run at the same time (`-par 4`, each `nice -n 10`, GOMAXPROCS 2, memory-capped), overriding the "2 in parallel" of section 7.
+- A6 Mechanism B text (section 8) was written after the Java tooling was built and before the fuzz runs whose results are reported.
+- A7 The judge reports an echoed token on S13m (a 500 whose body repeats the Authorization header) as O4, not as the
+  informational O4r of section 4. In reports, S13m results are read as O4r.
+- A8 The 25 s hard limit of the harness is below the 30 s default timeout of the Node and Go SDKs, so a stall or drip longer than
+  25 s is recorded as O2 (no answer within the limit) for those SDKs; it is read as "bounded only by the SDK's own default timeout".
+- A9 Content-Encoding family H09/H12-H14: an SDK that returns the complete valid payload despite a bad or truncated encoding is
+  reported as O3 by the judge; in reports it is classified individually (the payload was complete, so no data is wrong).
+- A10 Mechanism B was run on the base tree only: `JsonParser.java` is byte-identical in the PR #88 tree.

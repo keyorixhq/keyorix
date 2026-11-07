@@ -192,8 +192,7 @@ func (s *HostSrv) loop() {
 		if err != nil {
 			return
 		}
-		s.wg.Add(1)
-		go func() { defer s.wg.Done(); s.serve(c) }()
+		s.wg.Go(func() { s.serve(c) })
 	}
 }
 

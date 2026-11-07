@@ -112,7 +112,8 @@ func (d *HDriver) kill() {
 	if d.cmd != nil && d.cmd.Process != nil {
 		_ = d.cmd.Process.Kill()
 		select {
-		case <-d.waitCh:
+		case err := <-d.waitCh:
+			_ = err
 		case <-time.After(5 * time.Second):
 		}
 	}
@@ -162,9 +163,7 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 	stop := make(chan struct{})
 	pid := d.cmd.Process.Pid
 	var mwg sync.WaitGroup
-	mwg.Add(1)
-	go func() {
-		defer mwg.Done()
+	mwg.Go(func() {
 		tk := time.NewTicker(50 * time.Millisecond)
 		defer tk.Stop()
 		for {
@@ -183,7 +182,7 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 				}
 			}
 		}
-	}()
+	})
 	var r res
 	select {
 	case r = <-ch:
@@ -471,12 +470,12 @@ func checkExact(sc *HScen, m *Mut, drv map[string]any, ok bool, reqs []HReq, add
 	v := drv["value"]
 	if m.WantID != "" {
 		var got string
-		switch {
-		case sc.ID == "S04":
+		switch sc.ID {
+		case "S04":
 			if mm, _ := v.(map[string]any); mm != nil {
 				got = str(mm["id"])
 			}
-		case sc.ID == "S11" || sc.ID == "S12" || sc.ID == "S13":
+		case "S11", "S12", "S13":
 			return // judged on the forwarded id
 		default:
 			if it := firstOf(v); it != nil {
@@ -516,7 +515,6 @@ func hexs(s string) string { return hex.EncodeToString([]byte(s)) }
 type hostileCfg struct {
 	sdks, sdksDir, build, root, out, muts, scens, label string
 	par                                                 int
-	quiet                                               bool
 }
 
 func (c *hostileCfg) flags(fs *flag.FlagSet) {
@@ -527,7 +525,7 @@ func (c *hostileCfg) flags(fs *flag.FlagSet) {
 	fs.StringVar(&c.out, "out", "out-hostile", "output dir")
 	fs.StringVar(&c.muts, "mut", "", "comma list of mutation ids or id prefixes (default all)")
 	fs.StringVar(&c.scens, "scen", "", "comma list of scenario ids (default per mutation)")
-	fs.IntVar(&c.par, "par", 2, "SDKs in parallel")
+	fs.IntVar(&c.par, "par", 4, "SDKs in parallel")
 	fs.StringVar(&c.label, "label", "", "label recorded in the report header")
 }
 
@@ -538,7 +536,7 @@ func selectMuts(sel string) []*Mut {
 			out = append(out, &muts[i])
 			continue
 		}
-		for _, p := range strings.Split(sel, ",") {
+		for p := range strings.SplitSeq(sel, ",") {
 			if p != "" && strings.HasPrefix(muts[i].ID, p) {
 				out = append(out, &muts[i])
 				break
@@ -555,7 +553,7 @@ type job struct {
 
 func buildJobs(ms []*Mut, scSel string) []job {
 	want := map[string]bool{}
-	for _, s := range strings.Split(scSel, ",") {
+	for s := range strings.SplitSeq(scSel, ",") {
 		if s != "" {
 			want[s] = true
 		}
@@ -611,9 +609,12 @@ func runSDK(cfg *hostileCfg, name string, jobs []job, out chan<- RunRec) error {
 		trimDrv(&rec)
 		out <- rec
 	}
-	for _, j := range jobs {
+	for i, j := range jobs {
 		if j.m.ID == "C0" {
 			continue
+		}
+		if i%100 == 99 {
+			fmt.Fprintf(os.Stderr, "%s %s %d/%d (%s %s)\n", time.Now().Format("15:04:05"), name, i+1, len(jobs), j.m.ID, j.sc.ID)
 		}
 		rec := runOne(d, srv, j.sc, j.m, golden[j.sc.ID])
 		rec.SDK = name
@@ -629,13 +630,11 @@ func runMatrix(cfg *hostileCfg, jobs []job) ([]RunRec, error) {
 	out := make(chan RunRec, 64)
 	var recs []RunRec
 	var rmu sync.WaitGroup
-	rmu.Add(1)
-	go func() {
-		defer rmu.Done()
+	rmu.Go(func() {
 		for r := range out {
 			recs = append(recs, r)
 		}
-	}()
+	})
 	sem := make(chan struct{}, max(1, cfg.par))
 	var wg sync.WaitGroup
 	var firstErr error
@@ -677,6 +676,8 @@ func cmdHostile(args []string) error {
 		return hostileReplay(args[1:])
 	case "diff":
 		return hostileDiff(args[1:])
+	case "jsontable":
+		return cmdJSONTable(args[1:])
 	}
 	return fmt.Errorf("unknown hostile command %q", args[0])
 }
@@ -760,15 +761,15 @@ func report(recs []RunRec, label string, took time.Duration) string {
 			vc[r.SDK] = map[string]int{}
 		}
 		c.runs++
-		switch {
-		case r.Applied == "applied":
+		switch r.Applied {
+		case "applied":
 			c.applied++
 			if r.Outcome == "ok" {
 				c.ok++
 			} else {
 				c.errs++
 			}
-		case r.Applied == "n/a":
+		case "n/a":
 			c.na++
 		default:
 			c.nr++
@@ -931,7 +932,7 @@ func hostileReplay(args []string) error {
 	_ = fs.Parse(args)
 	absAll(&cfg.sdksDir, &cfg.build, &cfg.root, &cfg.out)
 	by := map[string][]string{}
-	for _, t := range strings.Split(*triples, ",") {
+	for t := range strings.SplitSeq(*triples, ",") {
 		p := strings.Split(t, ":")
 		if len(p) != 3 {
 			return fmt.Errorf("bad triple %q", t)
@@ -1061,4 +1062,3 @@ func hostileDiff(args []string) error {
 	fmt.Printf("new=%d gone=%d\n", n, gone)
 	return nil
 }
-
