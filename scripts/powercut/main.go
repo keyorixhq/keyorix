@@ -34,7 +34,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -152,7 +152,7 @@ func runBench(path string, fdatasync bool, n, workers int) {
 		mu.Unlock()
 	})
 	elapsed := time.Since(t0)
-	sort.Slice(lat, func(a, b int) bool { return lat[a] < lat[b] })
+	slices.Sort(lat)
 	pct := func(p float64) time.Duration { return lat[int(float64(len(lat)-1)*p)] }
 	fmt.Printf("fdatasync_requested=%v fdatasync_effective=%v workers=%d n=%d ok=%d p50=%.3fms p99=%.3fms rps=%.1f\n",
 		fdatasync, msqlite.FdatasyncEnabled(), workers, n, len(lat),
@@ -169,7 +169,7 @@ func runWrite(path, acksPath string, fdatasync bool, n, workers int) {
 	if err != nil {
 		fatalf("acks: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var mu sync.Mutex
 	commitAll(st, n, workers, func(i int, _ time.Duration) {
 		mu.Lock()
@@ -194,7 +194,7 @@ func readAcks(path string, cutoffNanos int64) (required []int, ignored int, err 
 	if err != nil {
 		return nil, 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
