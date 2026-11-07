@@ -107,3 +107,78 @@ reported as such.
 
 No change to the engine, no custom corpus manager (the edge-switch needs
 none). The deterministic sweep (`TestSeqSweep`) is not changed.
+
+## Results (2026-11-07, Mac, GOMAXPROCS=2, `-test.parallel=2`, nice 15, 5 min per run)
+
+Raw logs are kept outside the repository. 18 runs, arms interleaved. The Mac was
+shared with other builders (load average 8 to 100 during the runs), which moved
+the executions per run between 94 and 666; the registered axis for reach is
+executions, not seconds, for that reason. The binary was built once
+(`go test -c -fuzz`).
+
+### Condition 1, CLEAN: decision tuples reached (of the 103 census tuples)
+
+| | after 100 execs | 200 | 300 | 500 | end of run (execs) |
+|---|---|---|---|---|---|
+| P repeat 1 | 30 | 32 | 37 | 38 | 38 (553) |
+| P repeat 2 | 31 | 35 | 35 | 42 | 42 (552) |
+| P repeat 3 | 31 | 40 | 44 | 47 | 47 (567) |
+| T repeat 1 | 27 | 36 | 38 | n/a | 38 (311) |
+| T repeat 2 | 29 | 34 | 37 | 40 | 42 (666) |
+| T repeat 3 | 29 | 32 | 37 | 44 | 44 (500) |
+| median P / T | 31 / 29 | 35 / 34 | 37 / 37 | 42 / 42 | 42 / 42 |
+
+* M1: T is not ahead. At 300 executions T is higher in 2 of 3 pairs (38>37,
+  37>35, 37<44) and the medians are equal, so success condition (2) holds, but
+  only because nothing differs.
+* M2 time-to-all: not reached in any run of either arm (best run 47 of 103).
+  Time to 90 of 103: not reached.
+* Tuples outside the census: 3 to 8 per run in both arms.
+* Engine "new interesting" inputs at the end: P 6 to 7, T 7 to 8.
+* Reference (not a comparison arm): `TestNovCensus`, plain random generation of
+  100 sequences, reached all 103 tuples in about 4 minutes on the same machine.
+  Go's native fuzzer, with or without tuple feedback, reached 30 to 31 tuples
+  after 100 executions and about 40 after 500. For this state space the random
+  generator of `TestSeqSweep` explores decisions far faster than the fuzz engine
+  mutating short seeds.
+
+### Condition 2, RARE plant (custom-role principal allowed to read at scope A)
+
+Time to the first `F` line (the registered measure; it includes the harness's
+own triage and shrink, equal in both arms):
+
+| | repeat 1 | repeat 2 | repeat 3 | median | found within 5 min |
+|---|---|---|---|---|---|
+| P | 155 s | 27 s | 188 s | 155 s | 3 of 3 |
+| T | 20 s | 78 s | not found (94 execs only: machine starved) | 78 s | 2 of 3 |
+
+Secondary: the Go engine itself reported a failing input in 1 of 3 P runs and in
+2 of 3 T runs; in the other P runs the target saw the defect (`F` line) but the
+engine ended with PASS.
+
+Registered rule (1) needs a strictly smaller median AND at least as many found
+runs. The median is smaller (78 s against 155 s) but T found it in 2 runs and P
+in 3, so the rule is NOT met. The claim "the metric finds a rare-decision defect
+faster" is WITHDRAWN. The plant turned out not to be rare for the fuzzer
+either: both arms found it in under a minute in 3 of 6 runs.
+
+### Condition 3, COMMON plant (control)
+
+P 29, 24, 11 s; T 26, 14, 10 s; all 6 found. The planted tuple is the first
+seed's own step, so both arms find it while gathering the baseline coverage:
+the control shows no harm and says nothing more.
+
+### Reading
+
+* No evidence that decision-tuple feedback helps in this harness. Reach is the
+  same, the one apparent speed-up (median 78 s against 155 s) comes with a lost
+  run and rests on 3 repeats under heavy machine load.
+* Likely reason: plain coverage already separates allow from deny for each
+  principal, because the product code takes different edges, so a tuple adds
+  little that the engine did not already count. The fuzz engine's limit here is
+  mutation of tiny seeds, not the feedback signal.
+* What would change the conclusion: a quiet machine (the pve01 slot) with 10
+  repeats, and a plant on a decision that does not change any code edge.
+* The mechanism itself works (it adds one instrumented block per tuple) and costs
+  nothing measurable; it stays opt-in (`AUTHZNOV_FEED=1`) and is not wired into
+  any campaign.
