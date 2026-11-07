@@ -49,3 +49,15 @@ R4  A violation becomes a FINDING only after the saved post-kill snapshot (or
 R5  Data-loss or undecryptable-after-upgrade BUGs go to
     ~/proj/crash-private/FINDINGS.md first.
 R6  Finish before 2026-11-10T05:00Z; serialized, load kept below 60% of cores.
+
+## Results (2026-11-07)
+
+| Tag | Result |
+| --- | --- |
+| v0.96.3 | S2-S5 pass |
+| v0.96.0 | S2-S5 pass |
+| v0.95.0 | S2-S5 pass |
+| v0.92.0 - v0.94.0 | BLOCKED: no admin CLI in these releases, the harness cannot install and populate them |
+| v0.95.x (other) | Out of scope: older releases without a supported upgrade path |
+
+The schema did change between the covered tags and HEAD, so the covered upgrades exercise real migrations. Planted-defect self-test (U1) detects the injected fault.
