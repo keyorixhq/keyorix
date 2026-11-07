@@ -301,3 +301,33 @@ func TestSelfTest_EffectOn403StillFoundAmidDrift(t *testing.T) {
 		t.Fatalf("403-but-executed delete not flagged amid drift; candidates=%d", len(cands))
 	}
 }
+
+// The model has no opinion on self-service routes, and the positive control is
+// skipped exactly for operations that change who may do what.
+func TestModel_SelfServiceAndAuthorityChanging(t *testing.T) {
+	viewer := &Actor{Name: "V", Tenant: "A", Role: "viewer"}
+	for _, op := range []Op{
+		{Method: "POST", Path: "/api/v1/secret-access-requests"},
+		{Method: "DELETE", Path: "/api/v1/secrets/{id}/self-share"},
+	} {
+		if got := Expect(viewer, op, "A"); got != Unknown {
+			t.Errorf("%s %s: verdict %v, want unknown", op.Method, op.Path, got)
+		}
+	}
+	if got := Expect(viewer, Op{Method: "PUT", Path: "/api/v1/secrets/{id}"}, "A"); got != Deny {
+		t.Errorf("viewer PUT secret: verdict %v, want deny", got)
+	}
+	for path, want := range map[string]bool{
+		"/api/v1/projects/{id}/machine-identities/{mid}/roles": true,
+		"/api/v1/projects/{id}/members":                        true,
+		"/api/v1/secrets/{id}":                                 false,
+		"/api/v1/projects/{id}":                                false,
+	} {
+		if got := authorityChanging(Op{Method: "POST", Path: path}); got != want {
+			t.Errorf("authorityChanging(POST %s) = %v, want %v", path, got, want)
+		}
+	}
+	if authorityChanging(Op{Method: "GET", Path: "/api/v1/projects/{id}/members"}) {
+		t.Error("a GET never changes authority")
+	}
+}

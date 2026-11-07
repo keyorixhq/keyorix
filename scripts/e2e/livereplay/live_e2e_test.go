@@ -569,7 +569,7 @@ func runOnce(t *testing.T, binary, sink string) runStats {
 			st.Ops++
 		}
 	}
-	t.Logf("server throttled %d requests", w.Throttled)
+	t.Logf("server throttled %d requests; quiescence calibration found %d drifting item(s): %v", w.Throttled, len(w.DriftFound), w.DriftFound)
 	return st
 }
 
