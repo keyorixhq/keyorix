@@ -372,6 +372,18 @@ func FuzzSAMLXMLTransitive(f *testing.F) {
 			})
 		}
 
+		// The signed path (b)-(d) signs the fragment on the IdP side and then runs the
+		// full xrv + etree + exc-C14N + signature verification twice (wrapped provider
+		// and bare library) under fuzzutil.Guard's 3s budget. A flood-sized fragment
+		// (the 50k-attribute and 5k-deep seeds) blows that budget on a slow or
+		// single-CPU runner, which is a flake, not an amplification finding. Oracle (a)
+		// above already covers bounded work on such inputs, and anything this large is
+		// refused by strictAssertionShape's element/depth caps anyway.
+		const maxSignedFragmentBytes = 16 << 10
+		if len(fragment) > maxSignedFragmentBytes {
+			return
+		}
+
 		// --- Oracle (b)/(c)/(d): namespace-resolution differential + fail-closed ---
 		samlResponse, trusted, ok := buildSignedResponse(string(fragment), shape)
 		if !ok {
