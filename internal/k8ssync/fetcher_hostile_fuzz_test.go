@@ -173,6 +173,8 @@ func FuzzKeyorixFetcherHostileServer(f *testing.F) {
 			obs.mu.Unlock()
 
 			switch {
+			case (ek == "status" || lk == "status" || vk == "status") && servedAll2xx(h):
+				// 2xx other than 200 accepted by design: nothing further to assert.
 			case ek == "status" || lk == "status" || vk == "status":
 				h.Violate("O5/bad-status-accepted: fetch succeeded (%q) on a response whose final HTTP status was not 200 (env=%q list=%q value=%q)", val, ek, lk, vk)
 			case ek == "bad" || lk == "bad" || vk == "bad":
@@ -203,4 +205,18 @@ func listHasDup(h *hostile.Harness) bool {
 		}
 	}
 	return false
+}
+
+// servedAll2xx reports whether every response the fetcher consumed ended with a
+// 2xx status. The fetcher treats any 2xx as success, which is accepted
+// behaviour (see RULES.md, classification "expected"); only non-2xx is a defect.
+func servedAll2xx(h *hostile.Harness) bool {
+	for _, r := range []string{"envs", "list", "value"} {
+		for _, rec := range h.Served(r) {
+			if rec.Status != 0 && (rec.Status < 200 || rec.Status > 299) {
+				return false
+			}
+		}
+	}
+	return true
 }
