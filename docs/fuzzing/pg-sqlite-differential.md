@@ -82,24 +82,50 @@ go test ./internal/storage/store -run '^$' -fuzz '^FuzzStorageBackendDifferentia
 
 ## Outcome
 
-### Interim (written when the PR was opened; campaign still running)
+### Campaign 1 (2026-11-06 21:30 UTC to 2026-11-07 07:33 UTC, CT 270 on pve01)
 
-Campaign: CT 270 on pve01 (2 workers, nice 19), started 2026-11-06 21:30 UTC, 10-minute
-chunks, stops at 20 worker-hours or Mon 2026-11-09 24:00 UTC. Final totals are appended
-below by whoever collects `/root/pgdiff-campaign/` (crashers in `crashers/`).
+- 168 chunks of up to 10 minutes, 2 workers, nice 19, about 2.3 million executions.
+- Time actually spent in the fuzz loop, summed over chunks: 9.77 h x 2 workers = **19.55
+  worker-hours** (wall time x workers = 20.08; CT cgroup CPU including PostgreSQL = 19.9
+  CPU-hours). The campaign stopped on its 20.08 wall-time budget. Measured by fuzz-loop time it is
+  0.45 worker-hours short of the 20 the rule asks for, which does not matter here because the
+  result is not negative.
+- 161 of 168 chunks ended in a `BACKEND DIVERGENCE`; 7 chunks ran clean. Every crasher was
+  clustered (not by input), none is unexplained:
 
-Findings so far, each minimised to 2 ops and replayed 3 times, classified Keyorix bug
-(low, functional, not security-relevant) and pinned in `backend_differential_v2_known_test.go`:
-- F-1 `ListSecrets{Search}`: `LOWER()` is ASCII-only on SQLite ("äö" misses "ÄÖ").
-- F-2/F-3 `ListUsers{Username}`/`{Email}`: plain `LIKE` is case-insensitive on SQLite,
-  case-sensitive on PostgreSQL.
-The fuzz target gates exactly those input classes (never silently) so the campaign keeps
-looking for others.
+| Class | Crashers | Divergence | Minimal repro | Replayed | Classification | Needs |
+|---|---|---|---|---|---|---|
+| A | 86 | empty secret value: nil on SQLite, `[]byte{}` on PostgreSQL | 2 ops | 3x | backend-inherent (driver NULL / empty-blob mapping); ciphertext is never empty | harness normalisation 7 (done) |
+| B | 58 | projects whose names differ only by non-ASCII case (`ÄÖ`/`äö`, `İstanbul`/`istanbul`): SQLite accepts both, PostgreSQL rejects the second; same for rename and by-name lookup | 2 ops | 3x | Keyorix bug (project-name uniqueness differs by backend; #4019 left the index alone) | code fix + migration; gated in the harness; pinned |
+| C | 14 | list pagination without `ORDER BY`: PostgreSQL changes row order when the planner's statistics change (index order to heap order), so a page walk duplicates and skips rows | the 14 crashers did **not** replay; mechanism reproduced deterministically in 4 users + 1 `ANALYZE` between pages | 3x (forced) | Keyorix bug (non-deterministic pagination) | code fix (`ORDER BY` with id tiebreak); statistics refreshed before walks in the harness; pinned |
+| D | 3 | `ListUsers{Search}` with a non-ASCII case variant: LIKE on SQLite, ILIKE on PostgreSQL | 2 ops | 3x | Keyorix bug, low; named as a follow-up in #4019 | code fix; gated; pinned |
 
-Observations, backend-inherent: O-1 (both unique indexes violated: different sentinel
-reported), O-2 (`ORDER BY name` collation: bytewise vs `en_US.UTF-8`).
+- F-1 (`ListSecrets` search) and F-2/F-3 (`ListUsers` Username/Email filters), found by the
+  first smoke runs of this harness, are fixed by #4019. Their seeds pass against that fix and their
+  gates and pinned tests were removed.
+- Observations, backend-inherent: O-1 (both user unique indexes violated: different sentinel
+  reported), O-2 (`ORDER BY name` collation: bytewise vs `en_US.UTF-8`).
+- Concurrency: 200 rounds of 7 contended unique-key races on real connection pools produced
+  identical error-class multisets and exactly one winner on both backends.
 
-Honest coverage note: a 4-minute unguided run (about 30k execs) found none of F-1..F-3;
-they were found by hand-directed 2-op probes, and the generator was then changed
-(case-varied filter terms, seeds) to make them reachable. 200 rounds of contended
-unique-key races showed no divergence.
+What the rule yields: **not a negative result.** Four distinct divergence classes plus the three
+fixed ones. Details of B and C that go beyond what is written here are kept in the private notes.
+
+Caveats, so the numbers are not over-read:
+- A chunk ends at its first divergence, and A and B were found within seconds of every chunk
+  start. For most of the 168 chunks the fuzzer therefore spent its time re-finding A/B/C/D, not
+  exploring past them. The campaign is evidence about those four classes, not a clean bill for
+  the rest of the space.
+- An unguided 4-minute run early on found none of F-1..F-3; hand-directed probes did. Reachability
+  of cross-operation combinations is limited by the program generator.
+- The harness now normalises A and gates B, C and D (narrowly, listed in
+  `backend_differential_v2_known_test.go`), so a later campaign can look past them. A
+  confirmation run with the gates in place is reported below.
+
+### Confirmation run with A/B/C/D handled
+
+After merging #4019 and adding the normalisation/gates, 3 chunks of 10 minutes, 2 workers
+(1.02 worker-hours, about 98k executions, 2026-11-07 10:43 to 11:16 UTC) ran **clean**: no
+divergence. That is evidence only for those 30 minutes. It does not restart the 20 worker-hour
+count; a further full campaign with the gates in place is the next step, and the gates themselves
+(A, B, C, D) are removed one by one as the causes are fixed.
