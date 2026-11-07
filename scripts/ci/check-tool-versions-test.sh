@@ -188,6 +188,20 @@ fresh
 edit .github/workflows/dast.yml '/^[[:space:]]*NUCLEI_VERSION:/d'
 expect 1 '^DRIFT NUCLEI_VERSION: not pinned in any workflow' "listed tool no longer pinned anywhere"
 
+# --- runner pin: runs-on ubuntu-latest is drift ------------------------------------
+fresh
+edit .github/workflows/dco.yml 's/^\([[:space:]]*runs-on:\) ubuntu-24\.04$/\1 ubuntu-latest/'
+expect 1 '^DRIFT \.github/workflows/dco\.yml:[0-9]+: RUNNER: runs-on uses ubuntu-latest' "runs-on regressed to ubuntu-latest"
+
+fresh
+add extra.yml 'jobs:
+  x:
+    # runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # was ubuntu-latest
+    steps:
+      - run: echo ubuntu-latest'
+expect 0 '^check-tool-versions: OK' "ubuntu-latest in a comment or a step is not a runs-on pin"
+
 # --- exit 2: cannot parse -> never green -------------------------------------------
 fresh
 edit .github/workflows/ci.yml "s/^\([[:space:]]*GOSEC_VERSION:\) $gosec\$/\1 \${{ vars.GOSEC }}/"

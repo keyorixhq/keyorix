@@ -33,6 +33,9 @@
 # Version strings compare with a leading "v" ignored, so a release URL's
 # ".../download/v${X}" and "X: v1.2.3" agree.
 #
+# Also drift: a `runs-on:` line naming ubuntu-latest (the runner pin must not
+# regress; trailing YAML comments are ignored).
+#
 # Not checked: action refs (uses: owner/repo@sha), Go itself (go.mod and
 # setup-go), tools outside the env file; see reports/SESSION-TOOLCHAIN-UNIFY-1.md
 # for the follow-up list.
@@ -209,6 +212,13 @@ FNR == 1 {
 	line = $0
 	sub(/\r$/, "", line)
 	if (line ~ /^[ \t]*#/) next
+
+	# Runner pin: a runs-on that names ubuntu-latest is drift (the label floats
+	# to the next Ubuntu image; the workflows pin ubuntu-24.04).
+	if (line ~ /^[ \t]*(-[ \t]+)?runs-on:/) {
+		ro = line; sub(/[ \t]+#.*$/, "", ro)
+		if (ro ~ /ubuntu-latest/) drift("RUNNER: runs-on uses ubuntu-latest, pin ubuntu-24.04")
+	}
 
 	# golangci-lint-action: its version: input, until the step ends (the
 	# first non-blank line indented less than the keys of the step).
