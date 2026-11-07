@@ -227,7 +227,8 @@ func fail(err error, force string) map[string]any {
 	case errors.As(err, &se), errors.As(err, &te), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
 		class = "decode"
 	}
-	return map[string]any{"ok": false, "class": class, "status": status, "native": fmt.Sprintf("%T", err), "msg": err.Error()}
+	return map[string]any{"ok": false, "class": class, "status": status, "native": fmt.Sprintf("%T", err), "msg": err.Error(),
+		"sdk_error": strings.HasPrefix(err.Error(), "keyorix:") || strings.Contains(fmt.Sprintf("%T", err), "keyorix."), "full": fullErr(err)}
 }
 
 func secretList(s []keyorix.Secret) []any {
@@ -244,4 +245,14 @@ func tsp(t *time.Time) any {
 		return ""
 	}
 	return ts(*t)
+}
+
+// fullErr renders the whole error chain the way a logger would (%+v per link).
+func fullErr(err error) string {
+	var b strings.Builder
+	for i := 0; err != nil && i < 20; i++ {
+		fmt.Fprintf(&b, "%T: %+v | ", err, err)
+		err = errors.Unwrap(err)
+	}
+	return b.String()
 }

@@ -3,6 +3,7 @@
 const http = require('node:http');
 const path = require('node:path');
 const readline = require('node:readline');
+const util = require('node:util');
 
 const plant = process.env.SDKDIFF_PLANT || '';
 if (plant === 'P2' || plant === 'P5') {
@@ -46,7 +47,9 @@ function classify(err, force) {
     if (err.statusCode !== undefined && err.statusCode !== null) { cls = 'http'; status = err.statusCode; }
     else if (/^(Request failed|Server unreachable)/.test(err.message)) cls = 'network';
   } else if (err instanceof SyntaxError) cls = 'decode';
-  return { ok: false, class: cls, status, native: (err && err.constructor && err.constructor.name) || typeof err, msg: String(err && err.message !== undefined ? err.message : err) };
+  let full = '';
+  try { full = util.inspect(err, { depth: 4 }).slice(0, 20000); } catch (e2) { full = 'inspect failed'; }
+  return { ok: false, class: cls, status, native: (err && err.constructor && err.constructor.name) || typeof err, msg: String(err && err.message !== undefined ? err.message : err), sdk_error: err instanceof sdk.KeyorixError, full };
 }
 
 async function run(f) {
@@ -96,13 +99,28 @@ async function run(f) {
   } catch (e) { return classify(e); }
 }
 
+// Unhandled rejections and uncaught exceptions are reported, not fatal, so that the harness can see them (hostile mode, oracle O1).
+const sideEvents = [];
+let wake = null;
+function side(kind, e) {
+  sideEvents.push(kind + ': ' + String(e && e.stack || e).slice(0, 2000));
+  if (wake) wake();
+}
+process.on('unhandledRejection', (e) => side('unhandledRejection', e));
+process.on('uncaughtException', (e) => side('uncaughtException', e));
+
 (async () => {
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line) continue;
     const t0 = Date.now();
     let res;
-    try { res = await run(line.split('\t')); } catch (e) { res = { driver_error: String(e && e.stack || e) }; }
+    try {
+      const ev = new Promise((resolve) => { wake = () => resolve({ ok: false, class: 'other', native: 'SideEvent', sdk_error: false, msg: 'side event during call', full: '' }); });
+      res = await Promise.race([run(line.split('\t')), ev]);
+    } catch (e) { res = { driver_error: String(e && e.stack || e) }; }
+    wake = null;
+    if (sideEvents.length) { res.side_events = sideEvents.splice(0); }
     res.ms = Date.now() - t0;
     process.stdout.write(JSON.stringify(res, (k, v) => (v === undefined ? null : v)) + '\n');
   }

@@ -18,7 +18,10 @@ import java.util.List;
 public class Driver {
     static final String PLANT = System.getenv("SDKDIFF_PLANT") == null ? "" : System.getenv("SDKDIFF_PLANT");
 
+    static final java.util.List<String> SIDE = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
     public static void main(String[] argv) throws Exception {
+        Thread.setDefaultUncaughtExceptionHandler((t, ex) -> SIDE.add("uncaught in " + t.getName() + ": " + ex));
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8), 1 << 20);
         PrintStream out = new PrintStream(System.out, false, "UTF-8");
         String line;
@@ -32,7 +35,16 @@ public class Driver {
                 res = "{\"driver_error\":" + js(String.valueOf(t)) + "}";
             }
             long ms = (System.nanoTime() - t0) / 1_000_000;
-            res = res.substring(0, res.length() - 1) + ",\"ms\":" + ms + "}";
+            String side = "";
+            synchronized (SIDE) {
+                if (!SIDE.isEmpty()) {
+                    StringBuilder sb = new StringBuilder(",\"side_events\":[");
+                    for (int i = 0; i < SIDE.size(); i++) { if (i > 0) sb.append(','); sb.append(js(SIDE.get(i))); }
+                    side = sb.append(']').toString();
+                    SIDE.clear();
+                }
+            }
+            res = res.substring(0, res.length() - 1) + side + ",\"ms\":" + ms + "}";
             out.println(res);
             out.flush();
         }
@@ -147,7 +159,8 @@ public class Driver {
             else if (ke.getCause() != null) cls = "network";
         }
         return "{\"ok\":false,\"class\":" + js(cls) + ",\"status\":" + (status == null ? "null" : status.toString())
-            + ",\"native\":" + js(e.getClass().getSimpleName()) + ",\"msg\":" + js(String.valueOf(e.getMessage())) + "}";
+            + ",\"native\":" + js(e.getClass().getSimpleName()) + ",\"msg\":" + js(String.valueOf(e.getMessage()))
+            + ",\"sdk_error\":" + (e instanceof KeyorixException) + ",\"full\":" + js(fullTrace(e)) + "}";
     }
 
         static String secretList(List<Secret> l) {
@@ -162,6 +175,17 @@ public class Driver {
               .append(",\"purge_at\":").append(js(s.getPurgeAt() == null ? "" : s.getPurgeAt())).append('}');
         }
         return sb.append(']').toString();
+    }
+
+    static String fullTrace(Throwable e) {
+        try {
+            java.io.StringWriter sw = new java.io.StringWriter();
+            e.printStackTrace(new java.io.PrintWriter(sw));
+            String t = sw.toString();
+            return t.length() > 20000 ? t.substring(0, 20000) : t;
+        } catch (Throwable t2) {
+            return "trace failed: " + t2;
+        }
     }
 
     static String js(String s) {

@@ -4,6 +4,7 @@ import os
 import socket
 import sys
 import time
+import traceback
 import urllib.parse
 import urllib.request
 
@@ -73,7 +74,12 @@ def classify(err, force=None):
         cls = "decode"
     elif isinstance(err, OSError):
         cls = "network"
-    return {"ok": False, "class": cls, "status": status, "native": type(err).__name__, "msg": str(err)}
+    try:
+        full = "".join(traceback.format_exception(err))
+    except Exception as e2:  # noqa: BLE001
+        full = "format failed: " + type(e2).__name__
+    return {"ok": False, "class": cls, "status": status, "native": type(err).__name__, "msg": str(err),
+            "sdk_error": isinstance(err, keyorix.KeyorixError), "full": full[:20000]}
 
 
 def run(f):

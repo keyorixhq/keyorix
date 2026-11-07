@@ -183,4 +183,12 @@ merged with origin/main (88cdecf, local merge, not pushed). Both run through the
 
 ## Amendments
 
-(none yet)
+All amendments below were made after the control run (C0-C4 over the four SDKs, 260 records, silent) and before any
+mutation family was run.
+
+- A1 Health reads the status line only (the Go SDK ignores the body; the drivers report `true`). Body-content expectations
+  R/X on scenario S01 are therefore treated as E, except for the status family S, R03 (reset) and R04 (cut status line).
+- A2 The login driver returns only the token length, so X on S02 cannot be checked and is treated as E there.
+- A3 Implementation file names: `templates.go`, `mutations.go`, `hostile_srv.go`, `hostile_run.go` in `scripts/e2e/sdkdiff`.
+- A4 The driver output gained `sdk_error`, `full` (rendered error chain) and `side_events`; Node reports unhandled
+  rejections and uncaught exceptions instead of dying, Java records uncaught exceptions of other threads. Existing fields are unchanged.
