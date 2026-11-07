@@ -299,7 +299,8 @@ func buildCallRaw(fx *fixtures, st seqStep) *seqCall {
 // toggling one permission of the custom role (through the store's mutators, so
 // the role->permission cache generation moves), and expiring a subject's
 // direct grants (the fake clock: time moves past the grant).
-func (w *seqWorld) applyStateStep(st seqStep) {
+func (w *seqWorld) applyStateStep(tb testing.TB, st seqStep) {
+	tb.Helper()
 	past := time.Now().UTC().Add(-time.Hour)
 	for _, lg := range w.legs {
 		switch st.Kind {
@@ -307,10 +308,14 @@ func (w *seqWorld) applyStateStep(st seqStep) {
 			name := customPermUniverse[int(st.Bit)%len(customPermUniverse)]
 			pidv := lg.fx.permIDs[name]
 			held := countRows(lg.db, `SELECT COUNT(*) FROM role_permissions WHERE role_id = ? AND permission_id = ?`, lg.fx.customRoleID, pidv) > 0
+			var err error
 			if held {
-				_ = lg.ls.RemovePermissionFromRole(context.Background(), lg.fx.customRoleID, pidv)
+				err = lg.ls.RemovePermissionFromRole(context.Background(), lg.fx.customRoleID, pidv)
 			} else {
-				_ = lg.ls.AssignPermissionToRole(context.Background(), lg.fx.customRoleID, pidv)
+				err = lg.ls.AssignPermissionToRole(context.Background(), lg.fx.customRoleID, pidv)
+			}
+			if err != nil {
+				tb.Fatalf("permission toggle failed on a leg: %v", err)
 			}
 		case skExpire:
 			lg.db.Exec(`UPDATE user_roles SET expires_at = ? WHERE user_id = ? AND environment_id = 0`, past, lg.fx.principals[st.Subject].userID)

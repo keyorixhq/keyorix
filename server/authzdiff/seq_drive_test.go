@@ -94,6 +94,14 @@ func seqPlants() []seqPlant {
 			steps: []seqStep{{skGrant, pkGlobalAdmin, pkNone, tA, 0, 0}, {skRevoke, pkGlobalAdmin, pkNone, tA, 0, 0}},
 			class: "O-S:other",
 		},
+		{
+			// The revoke does nothing on every leg, and the grant it targets is a
+			// fixture one, so the failing step alone reproduces the class: only the
+			// always-fail rule keeps the fuzz verdict from calling it single-step.
+			fault: seqFault{name: "revoke-noop-held-grant", skipDo: func(l layer, st seqStep) bool { return st.Kind == skRevoke }},
+			steps: []seqStep{{skRevoke, pkGlobalAdmin, pkViewer, tA, 0, 0}},
+			class: "O-E:revoked-row-still-present",
+		},
 	}
 }
 
@@ -125,6 +133,21 @@ func TestSeqClassKey(t *testing.T) {
 			t.Errorf("isOverAllow(%q) = %v, want %v", c, got, want)
 		}
 	}
+	// Every O-E class always fails, even though only some are over-allows.
+	for c, want := range map[string]bool{
+		"O-E:revoked-row-still-present(x;rest)":            true,
+		"O-E:account-state-not-suspended(x;core)":          true,
+		"O-E:group-row-still-present(x;grpc)":              true,
+		"O-E:granted-row-missing(x;rest)":                  true,
+		"O-E:reactivated-user-cannot-log-in(x;core)":       true,
+		"O-E:denied-step-changed-state(x;grpc)":            true,
+		"O-S:layers-disagree(x;allow=core;deny=rest+grpc)": false,
+		"O-P:over-denial(x;rest)":                          false,
+	} {
+		if got := alwaysFails(c); got != want {
+			t.Errorf("alwaysFails(%q) = %v, want %v", c, got, want)
+		}
+	}
 }
 
 // seqDefaultPlant is the plant that runs in the default `go test`, so the
@@ -145,14 +168,62 @@ func TestSeqPlantsAreDetected(t *testing.T) {
 				t.Fatalf("sequence is not clean without the plant: %v", clean)
 			}
 			fs := runSeq(t, pl.steps, &pl.fault, nil)
+			found := false
 			for _, f := range fs {
-				if classKind(f.Class) == pl.class {
-					return
-				}
+				found = found || classKind(f.Class) == pl.class
 			}
-			t.Fatalf("plant %s not detected as %s; findings=%v", pl.fault.name, pl.class, fs)
+			if !found {
+				t.Fatalf("plant %s not detected as %s; findings=%v", pl.fault.name, pl.class, fs)
+			}
+			// The oracle firing is not enough: the verdict the fuzzer applies must fail.
+			if v := seqVerdict(t, pl.steps, fs, &pl.fault, 30); !v.Fail {
+				t.Fatalf("plant %s is detected as %s but the fuzz verdict is %q, not a failure", pl.fault.name, pl.class, v.Kind)
+			}
 		})
 	}
+}
+
+// seqVerdict is the one triage of a sequence whose run produced findings fs: the
+// fuzz body, the sweep and the plant tests all use it, so what the self-test
+// proves fails is what the fuzzer fails. Kinds: "" (no findings), "always-fail"
+// (alwaysFails class after shrinking), "single-step" (the failing step alone, from
+// a fresh world and without the fault, reproduces the class: logged, not counted)
+// and "candidate" (sequence-dependent). Fail is true for always-fail and candidate.
+type seqVerdictResult struct {
+	Kind string
+	Fail bool
+	Key  string
+	Min  []seqStep
+	Top  seqFinding
+}
+
+func seqVerdict(tb testing.TB, steps []seqStep, fs []seqFinding, fault *seqFault, budget int) seqVerdictResult {
+	if len(fs) == 0 {
+		return seqVerdictResult{}
+	}
+	// Cheap first: the failing step alone reproduces the class, so there is
+	// nothing to shrink.
+	if top := pickFinding(fs); isSingleStep(tb, steps, top) {
+		return seqVerdictResult{Kind: "single-step", Key: classKey(top.Class), Min: steps, Top: top}
+	}
+	min := shrink(tb, steps, fault, budget)
+	fs = runSeq(tb, min, fault, nil)
+	if len(fs) == 0 {
+		return seqVerdictResult{}
+	}
+	top := pickFinding(fs)
+	v := seqVerdictResult{Key: classKey(top.Class), Min: min, Top: top}
+	switch {
+	case alwaysFails(top.Class):
+		v.Kind, v.Fail = "always-fail", true
+	// With a fault injected the replay below runs without it, so a one-step
+	// minimal sequence is not proof of single-step behaviour.
+	case (len(min) == 1 && fault == nil) || isSingleStep(tb, min, top):
+		v.Kind = "single-step"
+	default:
+		v.Kind, v.Fail = "candidate", true
+	}
+	return v
 }
 
 func genSeq(r *rand.Rand) []seqStep {
@@ -210,35 +281,19 @@ func TestSeqSweep(t *testing.T) {
 		if len(fs) == 0 {
 			continue
 		}
-		// Cheap first: if the failing step alone reproduces the class (same
-		// direction), it is single-step behaviour and needs no shrinking. An
-		// over-allow is never single-step noise.
-		if top := pickFinding(fs); isSingleStep(t, steps, top) {
+		v := seqVerdict(t, steps, fs, nil, 40)
+		switch v.Kind {
+		case "single-step":
 			singleStep++
-			byClass["single-step:"+classKey(top.Class)]++
-			continue
+			byClass["single-step:"+v.Key]++
+		case "always-fail":
+			byClass["ALWAYS-FAIL:"+v.Key]++
+			privateSink(v.Key, v.Min, v.Top.Class)
+			t.Errorf("%s after %d steps (minimal sequence in the private file)", v.Key, len(v.Min))
+		case "candidate":
+			byClass["CANDIDATE:"+v.Key]++
+			privateSink(v.Key, v.Min, v.Top.Class)
 		}
-		min := shrink(t, steps, nil, 40)
-		fs = runSeq(t, min, nil, nil)
-		if len(fs) == 0 {
-			continue
-		}
-		top := pickFinding(fs)
-		key := classKey(top.Class)
-		if isOverAllow(top.Class) {
-			byClass["OVER-ALLOW:"+key]++
-			privateSink(key, min, top.Class)
-			t.Errorf("over-allow %s after %d steps (minimal sequence in the private file)", key, len(min))
-			continue
-		}
-		// single-step replay: the failing step alone from a fresh world
-		if len(min) == 1 || isSingleStep(t, min, top) {
-			singleStep++
-			byClass["single-step:"+key]++
-			continue
-		}
-		byClass["CANDIDATE:"+key]++
-		privateSink(key, min, top.Class)
 	}
 	keys := make([]string, 0, len(byClass))
 	for k := range byClass {
@@ -261,28 +316,17 @@ func FuzzAuthzSeq(f *testing.F) {
 	f.Add([]byte{2, 0, 1, 0, 0, 3, 0, 1, 0, 0})
 	f.Fuzz(func(t *testing.T, data []byte) {
 		steps := decodeSeq(data)
-		fs := runSeq(t, steps, nil, nil)
-		if len(fs) == 0 {
-			return
+		v := seqVerdict(t, steps, runSeq(t, steps, nil, nil), nil, 30)
+		switch v.Kind {
+		case "single-step":
+			t.Logf("single-step %s", v.Key)
+		case "always-fail":
+			privateSink(v.Key, v.Min, v.Top.Class)
+			t.Errorf("%s after %d steps (minimal sequence in the private file)", v.Key, len(v.Min))
+		case "candidate":
+			privateSink(v.Key, v.Min, v.Top.Class)
+			t.Errorf("sequence-dependent candidate %s after %d steps (minimal sequence in the private file)", v.Key, len(v.Min))
 		}
-		min := shrink(t, steps, nil, 30)
-		fs = runSeq(t, min, nil, nil)
-		if len(fs) == 0 {
-			return
-		}
-		first := pickFinding(fs)
-		key := classKey(first.Class)
-		if isOverAllow(first.Class) {
-			privateSink(key, min, first.Class)
-			t.Errorf("over-allow %s after %d steps (minimal sequence in the private file)", key, len(min))
-			return
-		}
-		if len(min) == 1 || isSingleStep(t, min, first) {
-			t.Logf("single-step %s", key)
-			return
-		}
-		privateSink(key, min, first.Class)
-		t.Errorf("sequence-dependent candidate %s after %d steps (minimal sequence in the private file)", key, len(min))
 	})
 }
 

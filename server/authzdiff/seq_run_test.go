@@ -241,7 +241,7 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 	for i, st := range steps {
 		stats.steps++
 		if st.Kind == skPermToggle || st.Kind == skExpire {
-			w.applyStateStep(st)
+			w.applyStateStep(tb, st)
 			stats.kindAllowed[st.Kind]++ // always applies; counted so coverage lists every kind
 			findings = append(findings, w.probeAll(tb, specs, i, f, stats, false)...)
 			continue
@@ -389,11 +389,21 @@ func isOverAllow(c string) bool {
 	return false
 }
 
-// pickFinding is the finding to report and shrink: the first over-allow one if
-// there is any, else the first.
+// alwaysFails reports whether a finding class is never single-step noise: an
+// over-allow, or any O-E class. O-E reads the tables a step was meant to change,
+// and it is the only oracle that sees a revocation, suspension or group removal
+// that silently did nothing (the model reads the same tables, so O-P agrees with
+// the stale row). The single-step harness has no effect oracle, so "the failing
+// step alone reproduces it" does not mean "covered elsewhere" for these classes.
+func alwaysFails(c string) bool {
+	return isOverAllow(c) || strings.HasPrefix(classKind(c), "O-E:")
+}
+
+// pickFinding is the finding to report and shrink: the first always-failing one
+// if there is any, else the first.
 func pickFinding(fs []seqFinding) seqFinding {
 	for _, f := range fs {
-		if isOverAllow(f.Class) {
+		if alwaysFails(f.Class) {
 			return f
 		}
 	}
@@ -406,9 +416,10 @@ func hasKey(fs []seqFinding, key string) bool {
 }
 
 // isSingleStep reports whether the failing step alone, from a fresh world,
-// reproduces the same direction-bearing class. An over-allow is never single-step.
+// reproduces the same direction-bearing class. An always-failing class is never
+// single-step.
 func isSingleStep(tb testing.TB, steps []seqStep, f seqFinding) bool {
-	if isOverAllow(f.Class) {
+	if alwaysFails(f.Class) {
 		return false
 	}
 	if f.Step < 0 || f.Step >= len(steps) {

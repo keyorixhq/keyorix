@@ -42,9 +42,13 @@ check.
   it is not a finding.
 * Plants (in the harness, never in production code): `revoke-noop` (the REST leg
   reports success without revoking), `stale-allow` (the gRPC probe still allows a
-  revoked principal) and `suspend-ignored` (the REST probe allows a suspended
-  principal). Each plant must be detected by its designated sequence with the
-  named oracle class, and the same sequence without the plant must be clean.
+  revoked principal), `suspend-ignored` (the REST probe allows a suspended
+  principal), `step-5xx` (the REST revoke ends in a planted 500) and
+  `revoke-noop-held-grant` (every leg skips the revoke of a grant the fixture
+  holds, so the failing step alone reproduces it). Each plant must be detected by
+  its designated sequence with the named oracle class, the same sequence without
+  the plant must be clean, and the fuzz verdict (`seqVerdict`, the triage
+  `FuzzAuthzSeq` and the sweep use) must fail for it.
 
 ## Run
 
@@ -58,6 +62,10 @@ On the Mac only (shared machine): `GOMAXPROCS=2`, one test process.
 
 After shrinking (delete steps while the class survives) every finding is replayed
 as a single step in a fresh world.
+* an over-allow class, or any `O-E` class (a step that should have changed state
+  and did not, or a denied step that did): always fails, never `single-step`. `O-E`
+  is the only oracle that sees a revocation that does not revoke, and the
+  single-step harness has no effect oracle;
 * same class alone: `single-step` (known behaviour or model gap; not counted);
 * class only in the sequence: candidate `sequence-dependent`; the minimal
   sequence goes to the private file, never to a PR.
@@ -157,3 +165,12 @@ the intent checks stay in step through 2,345 state changes.
   injected clock.
 * The model reads the grant tables, so the independent intent checks (O-E) cover
   only the relations named in `buildCall`.
+* A suspended principal is probed only right after a suspend or reactivate step
+  and only at project A by ref: a grant made to an already-suspended subject is not
+  probed for that subject.
+* `group.remove` removes only global memberships (core passes project 0, REST and
+  gRPC send none), so a removal that leaves a project-scoped membership behind is
+  not exercised.
+* The model's `memberOf` honours the membership's project scope, like
+  `GetUserGroupRoleIDsAt`; the product's `IsProjectMember` does not (open question,
+  not a property of this harness).
