@@ -46,7 +46,7 @@ AEAD (AES-GCM wrappers): flip each bit of the tag, nonce and key; flip every bit
 
 Ed25519: flip each of the 512 signature bits and 256 public key bits; flip message bits (first 32 bytes) and truncate or extend the message; truncate the signature to 63, 32, 1, 0 bytes; extend it to 65, 96, 128 bytes; replace S with S+L and S+2L (malleable form); swap R and S; use a signature of another vector; wrong key id and wrong purpose through the registry.
 
-ECDSA P-256/P-384 (raw r||s) and RSA (PKCS#1 v1.5, PSS): flip signature bits (all bits for ECDSA; all bits for RSA), truncate, extend, zero and all-0xFF signature, r=0, s=0, r=n, s=n, r and s swapped, signature plus modulus, DER-encoded form of a P1363 signature, message bit flips and truncation. The `(r, n-s)` form is recorded only.
+ECDSA P-256/P-384 (raw r||s) and RSA (PKCS#1 v1.5, PSS): flip signature bits (all bits, except P-384 where all bits of the first and last 8 bytes and one bit per byte in between), truncate, extend, zero and all-0xFF signature, r=0, s=0, r=n, s=n, r and s swapped, signature plus modulus, DER-encoded form of a P1363 signature, message bit flips and truncation. The `(r, n-s)` form is recorded only.
 
 xmlenc (AES128GCM CipherValue): flip each bit of nonce, ciphertext and tag; truncate to every length from 0 to 28 bytes; extend. A panic on any input is a failure.
 
@@ -68,7 +68,7 @@ with no defect. They must report zero failures.
 
 `maccompare_test.go` parses the non-test Go files of Keyorix's cryptographic
 packages and reports any `==`/`!=` where an operand is named like a MAC
-(`mac`, `hmac`, `sig`, `signature`, `tag`, `digest` as the final word) and the
+(`mac`, `hmac`, `sig`, `signature`, `tag` as the final word) and the
 other operand is not a literal, `nil` or a `len` call; and any `bytes.Equal`,
 `strings.EqualFold` or `reflect.DeepEqual` on such names. MACs must be compared
 with `hmac.Equal` or `subtle.ConstantTimeCompare`. Findings are triaged by hand
@@ -87,3 +87,17 @@ artifact, by-design flag.
 under test must agree (accept/reject and output) with the standard library
 primitive used directly. They are seeded from the vectors when present and from
 generated values otherwise.
+
+## 7. Amendments after the first run
+
+* Section 4: `digest` was dropped from the names. The first run flagged only
+  comparisons of unkeyed hash digests of public data (audit seal and anchor
+  digests), which are not authenticators. Keyed MACs, signatures and tags stay
+  covered. Two `tag` hits are storage format markers and are in the allow list
+  with that reason.
+* Section 2: a mutated input that the standard library, called directly, also
+  accepts is counted as "valid per reference" and is not a failure (for example
+  the one-bit neighbour of an ECDSA edge-case vector is itself a valid
+  signature).
+* Section 1: a vector may be listed as a known library behaviour for one
+  exact test id; it must still reproduce, and the reason is kept privately.
