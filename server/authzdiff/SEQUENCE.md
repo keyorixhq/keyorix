@@ -43,7 +43,8 @@ check.
 * Plants (in the harness, never in production code): `revoke-noop` (the REST leg
   reports success without revoking), `revoke-noop-held-grant` (no leg carries out the
   revoke of a grant the viewer holds in the fixture: one step, and every leg and
-  the model agree), `stale-allow` (the gRPC probe still allows a revoked
+  the model agree), `revoke-noop-held-grant-4020` (the same no-op revoke, answering
+  the #4020 signature: REST 404, gRPC `Internal`), `stale-allow` (the gRPC probe still allows a revoked
   principal), `suspend-ignored` (the REST probe allows a suspended principal) and
   `step-5xx` (the REST leg answers 500 on a revoke). Each plant must be detected
   by its designated sequence with the named oracle class, the same sequence
@@ -165,8 +166,11 @@ step also carries an `O-S:other`; the report above picked the first finding,
 `Internal`), which native fuzzing hit within seconds once `O-S:other` always
 failed. Both are one known-open tolerance, `O-S:known-other-4020`, matched only
 on those two exact signatures (the step kind, the model allowing it, and every
-leg's outcome and detail; `TestSeqKnownOtherIsNarrow`) and removed when #4020 is
-fixed. A tolerated step must still leave the state unchanged on every leg, and it
+leg's outcome and detail) and only when the #4020 precondition held on every leg
+before the step: the revoked grant was absent, the granted one already present
+(`TestSeqKnownOtherIsNarrow`). A revoke of a held grant that does nothing is
+therefore `O-S:other` and always fails (plant `revoke-noop-held-grant-4020`).
+It is removed when #4020 is fixed. A tolerated step must still leave the state unchanged on every leg, and it
 still ends the sequence. (1) is neither an over-allow, an O-E class nor
 `O-S:other` (`TestSeqClassKey`).
 
