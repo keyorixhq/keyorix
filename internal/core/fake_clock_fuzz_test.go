@@ -20,8 +20,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -110,9 +110,7 @@ func fkcRun(c fkcCred, set func(time.Time), issue, _ time.Time, steps []fkcStep)
 		set(T)
 		acc := c.Check()
 		past := T.After(expiry) // judged against the expiry in force BEFORE this check
-		if acc {
-			// an accepted check at T <= expiry is fine; a lease may now have moved its expiry
-		}
+		// An accepted check at T <= expiry is fine; a lease may now have moved its expiry.
 		regress := maxSeen.Sub(T)
 		if T.After(maxSeen) {
 			maxSeen = T
@@ -292,10 +290,7 @@ func fkcMintRaw(t testing.TB, w *fkcWorld, sel int, ttl time.Duration) (cred fkc
 		if err != nil {
 			return nil, issue, expiry, false, "lease config refused: " + err.Error()
 		}
-		secs := int(ttl.Seconds())
-		if secs < 1 {
-			secs = 1
-		}
+		secs := max(int(ttl.Seconds()), 1)
 		l, err := w.core.IssueLease(ctx, cfg.ID, secs, w.userID)
 		if err != nil {
 			return nil, issue, expiry, false, "lease refused: " + err.Error()
@@ -314,7 +309,7 @@ func fkcDecode(data []byte) (start time.Time, credSel int, ttl time.Duration, st
 	}
 	base := fakeClockInstants[int(data[0])%len(fakeClockInstants)]
 	var off int64
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		off = off<<8 | int64(data[1+i])
 	}
 	start = base.Add(time.Duration(off%7200) * time.Second)
@@ -324,7 +319,7 @@ func fkcDecode(data []byte) (start time.Time, credSel int, ttl time.Duration, st
 	rest := data[8:]
 	for i := 0; i < n && len(rest) >= 9; i++ {
 		var d int64
-		for j := 0; j < 8; j++ {
+		for j := range 8 {
 			d = d<<8 | int64(rest[1+j])
 		}
 		steps = append(steps, fkcStep{kind: rest[0], delta: d})
@@ -379,9 +374,9 @@ func TestFakeClockExtremes_Cross(t *testing.T) {
 	}
 	ttls := []time.Duration{time.Second, time.Hour, 100 * 365 * 24 * time.Hour}
 	for si, start := range fakeClockInstants {
-		for cred := 0; cred < 3; cred++ {
+		for cred := range 3 {
 			for _, ttl := range ttls {
-				for kind := uint8(0); kind < 9; kind++ {
+				for kind := range uint8(9) {
 					// A fresh world per program: a credential observed expired (or a lease
 					// renewed) in one program must not leak into the next.
 					w := buildFkcWorld(t, start)
@@ -491,7 +486,7 @@ func fkcIndependentVerdict(s *models.SecretAccessSchedule, t time.Time, loc *tim
 			iso = 7
 		}
 		ok := false
-		for _, p := range strings.Split(s.AllowedDays, ",") {
+		for p := range strings.SplitSeq(s.AllowedDays, ",") {
 			if d, _ := strconv.Atoi(strings.TrimSpace(p)); d == iso {
 				ok = true
 			}
@@ -550,7 +545,7 @@ func TestScheduleMutantLocalHour(t *testing.T) {
 	if time.Local.String() != "Asia/Kolkata" && !caught {
 		t.Errorf("M5 not detected (local zone %v)", time.Local)
 	}
-	for h := 0; h < 24; h++ { // control: real implementation agrees everywhere
+	for h := range 24 { // control: real implementation agrees everywhere
 		inst := time.Date(2026, 6, 12, h, 30, 0, 0, time.UTC)
 		if (enforceSchedule(s, inst) == nil) != fkcIndependentVerdict(s, inst, loc) {
 			t.Errorf("CONTROL: enforceSchedule disagrees with the independent computation at %v", inst)
@@ -558,13 +553,14 @@ func TestScheduleMutantLocalHour(t *testing.T) {
 	}
 }
 
-// TestKnownLimit_SQLiteYear10000ReadsAsZeroTime pins today's behaviour (R3
+// TestKnownLimit_SQLiteYear10000IsNotReadBack pins today's behaviour (R3
 // classification EXPECTED, fail-closed): an expiry beyond year 9999 is stored by
-// SQLite without error and read back as the zero time, i.e. long expired. Not
+// SQLite without error but never read back as the stored instant (the production
+// dialect fails the scan, the other driver returned the zero time). Not
 // reachable through the API (RFC 3339 input stops at year 9999); reachable only by
 // clock arithmetic past 9999. If storage ever starts rejecting or preserving
 // such values, this test should change with it.
-func TestKnownLimit_SQLiteYear10000ReadsAsZeroTime(t *testing.T) {
+func TestKnownLimit_SQLiteYear10000IsNotReadBack(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -586,17 +582,25 @@ func TestKnownLimit_SQLiteYear10000ReadsAsZeroTime(t *testing.T) {
 			t.Fatalf("create %v: %v", in, err)
 		}
 		var out models.SecretNode
-		if err := db.First(&out, n.ID).Error; err != nil {
+		err := db.First(&out, n.ID).Error
+		if !c.exact {
+			// On the production dialect (modernc) the stored year-10000 text cannot
+			// be scanned back into a time at all; the other SQLite driver read it
+			// back as the zero time. Either way the value is never read back as
+			// the stored instant.
+			if err == nil && out.Expiration != nil && !out.Expiration.IsZero() {
+				t.Errorf("%v: documented known-limit changed (now reads back %v); update this test", in, *out.Expiration)
+			}
+			continue
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
 		if out.Expiration == nil {
 			t.Fatalf("%v: expiration vanished", in)
 		}
-		if c.exact && !out.Expiration.Equal(in) {
+		if !out.Expiration.Equal(in) {
 			t.Errorf("%v did not round-trip: got %v", in, *out.Expiration)
-		}
-		if !c.exact && !out.Expiration.IsZero() {
-			t.Errorf("%v: documented known-limit changed (now reads back %v); update this test", in, *out.Expiration)
 		}
 	}
 }
