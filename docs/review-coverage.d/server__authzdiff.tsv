@@ -1,0 +1,1 @@
+server/authzdiff	none	-	test-only package (no non-test files): the cross-layer authorization differential harness (core vs REST vs gRPC); nothing here ships in a build	test-helper

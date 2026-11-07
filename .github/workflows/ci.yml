@@ -1704,6 +1704,36 @@ jobs:
         if: steps.leg.outputs.run == 'true'
         run: ./scripts/check-closures.sh
 
+  # The authzdiff harness must keep detecting the five planted authorization
+  # defects (server/authzdiff/plants_test.go): a name-based role check in core,
+  # a removed gRPC guard, a removed REST router gate, and a removed gRPC write
+  # gate and route-group read gate on group delete. Each plant is applied
+  # with `go test -overlay` (the tree is never edited) and must surface as
+  # unexplained cases on exactly the planted operation, with a clean control
+  # run. Slow (~3 min in total), and merge-queue time is tightly managed, so it
+  # runs ONLY on the nightly schedule, on manual dispatch, and on a PR labelled
+  # ci:full -- never in the merge queue or on push. The harness's fast default
+  # tests (~8 s) run in the normal test-suite leg (root-4) on every PR.
+  authzdiff-plants:
+    needs: [preflight, changes]
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+
+      - name: Planted-defect self-test of the cross-layer authz harness
+        env:
+          AUTHZDIFF_PLANTS: '1'
+        run: go test ./server/authzdiff/ -run '^TestPlantsAreDetected$' -count=1 -timeout 60m -v
+
   # G80 C5: fails (does not warn) when a TEMPORARY exclusion in
   # scripts/ci-test-legs.sh has sat unreviewed for more than 30 days. Cheap
   # and fast (bash + `date`, no Go/checkout of test code needed beyond the
