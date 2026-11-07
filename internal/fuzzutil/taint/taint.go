@@ -143,7 +143,7 @@ func buildNeedles(m string) []needle {
 	add("HEX", strings.ToUpper(hex.EncodeToString([]byte(m))))
 	// base64 at the three possible alignments; keep only characters fully
 	// determined by the marker bytes.
-	for k := 0; k < 3; k++ {
+	for k := range 3 {
 		for _, e := range []struct {
 			n   string
 			enc *base64.Encoding
@@ -444,23 +444,23 @@ func isStd(fn string) bool {
 		first = fn[:i]
 	}
 	// std packages have no dot in the first path element
-	if i := strings.IndexByte(fn, '/'); i >= 0 {
-		return !strings.Contains(fn[:i], ".") && std[first]
+	if head, _, ok := strings.Cut(fn, "/"); ok {
+		return !strings.Contains(head, ".") && std[first]
 	}
 	return std[first]
 }
 
 var std = func() map[string]bool {
 	m := map[string]bool{}
-	for _, s := range strings.Fields("runtime os io bufio bytes strings strconv fmt errors sort sync syscall time context net database log text html encoding path reflect unsafe internal crypto compress archive mime unicode regexp math slices maps iter testing") {
+	for s := range strings.FieldsSeq("runtime os io bufio bytes strings strconv fmt errors sort sync syscall time context net database log text html encoding path reflect unsafe internal crypto compress archive mime unicode regexp math slices maps iter testing") {
 		m[s] = true
 	}
 	return m
 }()
 
 func shortFile(f string) string {
-	if i := strings.LastIndex(f, "/"); i >= 0 {
-		if j := strings.LastIndex(f[:i], "/"); j >= 0 {
+	if dir, _, ok := strings.CutLast(f, "/"); ok {
+		if j := strings.LastIndex(dir, "/"); j >= 0 {
 			return f[j+1:]
 		}
 	}
