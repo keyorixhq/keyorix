@@ -33,7 +33,7 @@ func seedSecrets() []SeedSecret {
 		{"val-long", strings.Repeat("x", 40000)},
 		{"val-control", "bell\u0007 esc\u001b del\u007f"},
 	}
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		s = append(s, SeedSecret{fmt.Sprintf("filler-%02d", i), fmt.Sprintf("filler-value-%02d", i)})
 	}
 	return append(s, SeedSecret{"zz-late", "late-value"})

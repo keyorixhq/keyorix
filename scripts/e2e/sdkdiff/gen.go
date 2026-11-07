@@ -146,11 +146,11 @@ func randRef(r *rand.Rand) string {
 
 // genRandom builds one phase-B scenario from a seed.
 func genRandom(seed int64) Scenario {
-	r := rand.New(rand.NewSource(seed))
+	r := rand.New(rand.NewSource(seed)) // #nosec G404 -- deterministic, seeded scenario generator: reproducibility is the point, nothing security-sensitive
 	sc := Scenario{ID: fmt.Sprintf("B-%06d", seed)}
 	n := 1 + r.Intn(6)
 	lastCreate, lastList := -1, -1
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var st Step
 		switch r.Intn(10) {
 		case 0:

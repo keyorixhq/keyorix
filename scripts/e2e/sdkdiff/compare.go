@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime"
 	"net/url"
 	"sort"
@@ -12,6 +13,10 @@ import (
 	"strings"
 	"time"
 )
+
+// maxJSONDoc caps how much of one JSON document the harness decodes; a driver or
+// server response beyond it is treated as not JSON rather than buffered whole.
+const maxJSONDoc = 64 << 20
 
 // NReq is a normalised wire request (see PREREGISTRATION.md section 2).
 type NReq struct {
@@ -61,7 +66,7 @@ func canonJSONBytes(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
+	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(b), maxJSONDoc))
 	dec.UseNumber()
 	var v any
 	if err := dec.Decode(&v); err != nil || dec.More() {
@@ -250,7 +255,7 @@ func compareStep(scID string, step int, op string, vs []view) []Finding {
 		b, rep := partition(comparable, func(v view) string { return fmt.Sprint(len(v.reqs)) })
 		add("W6", "count", fmt.Sprint(rep), b)
 		n := maxReqs(comparable)
-		for j := 0; j < n; j++ {
+		for j := range n {
 			// request #j is compared only among SDKs that made one; differences in the
 			// number of requests are reported once, as W6
 			var have []view
@@ -365,7 +370,7 @@ func pathShape(rep map[string]string) string {
 func queryShape(rep map[string]string) string {
 	names := map[string]bool{}
 	for _, q := range rep {
-		for _, kv := range strings.Split(q, "&") {
+		for kv := range strings.SplitSeq(q, "&") {
 			k, _, _ := strings.Cut(kv, "=")
 			names[k] = true
 		}
@@ -376,7 +381,7 @@ func queryShape(rep map[string]string) string {
 		seen := map[string]bool{}
 		for _, q := range rep {
 			val := "<absent>"
-			for _, kv := range strings.Split(q, "&") {
+			for kv := range strings.SplitSeq(q, "&") {
 				if kk, vv, _ := strings.Cut(kv, "="); kk == k {
 					val = vv
 				}
@@ -448,7 +453,7 @@ func valueShape(rep map[string]string) string {
 	var vals []any
 	for _, s := range rep {
 		var v any
-		dec := json.NewDecoder(strings.NewReader(s))
+		dec := json.NewDecoder(io.LimitReader(strings.NewReader(s), maxJSONDoc))
 		dec.UseNumber()
 		_ = dec.Decode(&v)
 		vals = append(vals, v)

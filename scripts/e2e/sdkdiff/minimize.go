@@ -274,7 +274,7 @@ func cmdValidate(args []string) error {
 		if err := json.Unmarshal(raw, &base); err != nil {
 			return err
 		}
-		for _, p := range strings.Split(*plants, ",") {
+		for p := range strings.SplitSeq(*plants, ",") {
 			exp, ok := plantExpect[p]
 			if !ok {
 				return fmt.Errorf("unknown plant %s", p)

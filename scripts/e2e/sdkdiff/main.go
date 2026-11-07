@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -344,11 +345,8 @@ func cmdRun(args []string) error {
 	if *tag != "" {
 		var f []Scenario
 		for _, s := range scs {
-			for _, t := range s.Tags {
-				if t == *tag {
-					f = append(f, s)
-					break
-				}
+			if slices.Contains(s.Tags, *tag) {
+				f = append(f, s)
 			}
 		}
 		scs = f

@@ -1,0 +1,1 @@
+scripts/e2e/sdkdiff	none	-	development tool: differential harness driving the first-party SDK drivers against a throwaway loopback server (synthetic data, no shipped code); behaviour is pinned by compare_test.go and PREREGISTRATION.md	main-wiring

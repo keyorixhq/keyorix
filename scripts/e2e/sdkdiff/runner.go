@@ -76,7 +76,7 @@ func (d *Driver) call(line string, limit time.Duration) (map[string]any, error) 
 			d.kill()
 			return nil, fmt.Errorf("read: %w", r.err)
 		}
-		dec := json.NewDecoder(strings.NewReader(r.s))
+		dec := json.NewDecoder(io.LimitReader(strings.NewReader(r.s), maxJSONDoc))
 		dec.UseNumber()
 		var m map[string]any
 		if err := dec.Decode(&m); err != nil {
@@ -137,7 +137,6 @@ type Runner struct {
 	Mask      Masking
 	Spec      *Spec
 
-	mu      sync.Mutex
 	drivers map[string]*Driver
 	proxies map[string]*Proxy
 }
@@ -217,7 +216,7 @@ func (r *Runner) runSDK(name string, scs []Scenario) ([]Outcome, error) {
 	return outs, nil
 }
 
-const canaryToken = "CANARY-TOKEN-7f3a9c1d5e2b8a40"
+const canaryToken = "CANARY-TOKEN-7f3a9c1d5e2b8a40" // #nosec G101 -- synthetic canary marker used to detect leaks, not a credential
 
 func tokenFor(kind, good string) string {
 	switch kind {
