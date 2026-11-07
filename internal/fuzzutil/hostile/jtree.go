@@ -179,3 +179,35 @@ func (r ref) remove(root **Node) {
 		p.Keys = append(p.Keys[:r.idx:r.idx], p.Keys[r.idx+1:]...)
 	}
 }
+
+// HasDuplicateKeys reports whether any JSON object in b repeats a member name.
+// RFC 8259 leaves the meaning of such an object undefined ("behavior of
+// software that receives such an object is unpredictable"), so strict decoders
+// in targets treat a body with duplicates as having no single correct reading
+// and skip value-level assertions on it (delivery and bounded-work oracles
+// still apply). Unparseable input reports false.
+func HasDuplicateKeys(b []byte) bool {
+	root, err := ParseJSON(b)
+	if err != nil {
+		return false
+	}
+	var walk func(n *Node) bool
+	walk = func(n *Node) bool {
+		if n.K == KObj {
+			seen := make(map[string]struct{}, len(n.Keys))
+			for _, k := range n.Keys {
+				if _, dup := seen[k]; dup {
+					return true
+				}
+				seen[k] = struct{}{}
+			}
+		}
+		for _, c := range n.Kids {
+			if walk(c) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(root)
+}

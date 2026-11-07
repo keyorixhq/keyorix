@@ -103,3 +103,42 @@ Each failing input is minimised, replayed at least 3 times from the saved
 corpus file, then classified as one of: KEYORIX-BUG, SDK-BUG, EXPECTED
 (documented behaviour; note why), HARNESS-ARTIFACT. Security-relevant findings
 are recorded only in the private notes file, never in this repository.
+
+## Amendments after the pre-registration commit
+
+Each amendment states what changed and why. None relaxes an oracle to hide a
+finding; findings that were reclassified are in the private findings log.
+
+1. O2 slack 1 s -> 4 s. The first campaign hour produced two O2 reports on
+   PRISTINE programs (the control path) while the rig host was saturated by
+   other jobs; a pristine run cannot hang by construction. The call still gets
+   a 500 ms context deadline, and a connector that ignores it (the planted
+   P7) is still caught.
+2. Duplicate member names. RFC 8259 leaves a JSON object with repeated names
+   undefined. Strict decoders skip VALUE-level assertions on a body that has
+   duplicate names (`hostile.HasDuplicateKeys`); delivery, status, bounded-work,
+   leak, retry and redirect oracles still apply. Reason: a decoder that treats
+   `null` as "unset" and one that treats it as "assign" disagree on
+   `{"v":"2","v":null}` and both are defensible.
+3. `Delivery` classifies a success on an exchange whose transport ended in an
+   error AFTER the whole body arrived (declared length longer than sent,
+   unterminated chunked body, corrupt gzip trailer) as
+   `O5/transport-error-ignored`, separate from `O5/incomplete` (content missing).
+   Reason: the first classification lumped both together.
+4. `Config.Retries`: for connectors whose SDK or code retries, a success is
+   judged on the last exchange only. Earlier failed attempts are expected.
+5. `KX_HOSTILE_ALLOW`: suppresses already-triaged violation classes so the
+   native fuzzer (which stops at its first failure) can keep exploring. Every
+   suppressed hit is still printed as `HOSTILE-KNOWN`.
+6. The census ignores goroutines the runtime or the test driver start once and
+   keep (`os/signal`, `testing`, pprof, internal/fuzz).
+7. O3 poll window 1.2 s -> 4 s. One O3 report (vault target, 4 KB string in
+   the secret response) did not reproduce in three standalone replays and
+   appeared while the host was saturated; goroutine teardown simply lagged.
+   A genuine leak (planted P8) is still caught.
+8. Pristine programs get 10x the call deadline. Two O6 (liveness) reports in
+   the first hour were pristine calls that hit the 500 ms deadline because the
+   rig host was saturated (the request had not even reached the server). A
+   pristine run has no injected delay, so a deadline there measures the
+   scheduler. Faulted programs keep 500 ms; their oracles are one-directional
+   (a starved call turns into an error, which is fail-closed, not a finding).
