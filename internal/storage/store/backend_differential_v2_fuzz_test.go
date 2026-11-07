@@ -201,7 +201,10 @@ func diffVersionFP(v *models.SecretVersion) string {
 	if v == nil {
 		return "<nil>"
 	}
-	return fmt.Sprintf("v%d len=%d nil=%v crc=%08x meta=%q metaNil=%v reads=%d", v.VersionNumber, len(v.EncryptedValue), v.EncryptedValue == nil,
+	// Normalisation 7 (known difference A): an empty value reads back as nil on SQLite and
+	// as []byte{} on PostgreSQL, so nil-ness of EncryptedValue is not compared (length and
+	// bytes are). Real values are ciphertext and never empty.
+	return fmt.Sprintf("v%d len=%d crc=%08x meta=%q metaNil=%v reads=%d", v.VersionNumber, len(v.EncryptedValue),
 		crc32.ChecksumIEEE(v.EncryptedValue), string(v.EncryptionMetadata), v.EncryptionMetadata == nil, v.ReadCount)
 }
 
@@ -235,7 +238,7 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 	f.Add([]byte{10, 3, 10, 4, 0x1a, 3, 0x1a, 5, 0x2a, 9}, "grp", "Grp")                                // groups: create, rename, page
 	f.Add([]byte{11, 1, 0x1b, 1, 12, 2, 0, 1, 13, 1}, "proj", "Proj")                                   // project lifecycle, rename, case probe
 	f.Add([]byte{1, 1, 0x48, 0}, "", "")                                                                // F-2 shape: user "Alpha", Username filter "alpha"
-	f.Add([]byte{3, 6, 0x17, 7}, "", "")                                                                // F-1 shape: secret "ÄÖ", search "äö"
+	f.Add([]byte{3, 6, 0x17, 7}, "", "")                                                                // secret "ÄÖ", search "äö" (was F-1, fixed by #4019)
 	f.Add([]byte{0x21, 1, 0x58, 0}, "", "")                                                             // F-3 shape: user+email "Alpha", Email filter "alpha"
 	f.Add([]byte{3, 1, 3, 2, 3, 3, 0x37, 1, 0x47, 2, 0x57, 3, 0x67, 4, 0x77, 5, 0x87, 6}, "alp", "ALP") // every ListSecrets variant
 
@@ -272,6 +275,9 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 
 			switch op {
 			case 0: // CreateProject + readback
+				if !diffASCII(name) || !diffASCII(name2) { // gate B: project-name uniqueness is ASCII-only on SQLite
+					break
+				}
 				both(fmt.Sprintf("CreateProject(%q)", name), func(s *diffSide) string {
 					_, err := s.ls.CreateProject(ctx, &models.Project{Name: name, Description: name2})
 					g, gerr := s.ls.GetProjectByName(ctx, name)
@@ -472,6 +478,9 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 					return fmt.Sprintf("%s total=%d walk=%s", out, total, diffJoinSorted(names))
 				})
 			case 11: // project lifecycle: create, delete, maybe recreate the name, restore
+				if !diffASCII(name) { // gate B
+					break
+				}
 				both(fmt.Sprintf("ProjectLifecycle(%q,bits=%d)", name, bits&3), func(s *diffSide) string {
 					p, err := s.ls.CreateProject(ctx, &models.Project{Name: name})
 					if err != nil {
@@ -488,6 +497,9 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 					return fmt.Sprintf("del=%s recreate=%s restore=%s envs=%d secrets=%d get=%s/%q", diffClass(derr), rc, diffClass(rerr), envs, secs, diffClass(gerr), projNameOrNil(g))
 				})
 			case 12: // UpdateProjectFields (rename / MFA flag)
+				if !diffASCII(name) || !diffASCII(name2) { // gate B
+					break
+				}
 				both(fmt.Sprintf("UpdateProjectFields(%q->%q)", name, name2), func(s *diffSide) string {
 					p, err := s.ls.GetProjectByName(ctx, name)
 					if err != nil {
@@ -508,7 +520,11 @@ func FuzzStorageBackendDifferentialV2(f *testing.F) {
 					u1, e1 := s.ls.GetUserByUsername(ctx, up)
 					u2, e2 := s.ls.GetUserByEmail(ctx, up+"@x.io")
 					n3, e3 := s.ls.GetSecretByName(ctx, up, s.proj, s.env)
-					p4, e4 := s.ls.GetProjectByName(ctx, up)
+					var p4 *models.Project
+					var e4 error
+					if diffASCII(up) { // gate B: project lookup folds ASCII only on SQLite
+						p4, e4 = s.ls.GetProjectByName(ctx, up)
+					}
 					return fmt.Sprintf("user=%s/%q email=%s/%q secret=%s/%q project=%s/%q", diffClass(e1), userNameOrNil(u1), diffClass(e2), userNameOrNil(u2),
 						diffClass(e3), secNameOrNil(n3), diffClass(e4), projNameOrNil(p4))
 				})
@@ -547,6 +563,21 @@ func diffASCII(s string) bool {
 		}
 	}
 	return true
+}
+
+// diffStabilisePlans refreshes planner statistics on PostgreSQL before a page walk.
+// Gate C (known divergence, backend_differential_v2_known_test.go): the list queries have
+// no ORDER BY, so PostgreSQL's row order depends on the chosen plan, and autovacuum's first
+// ANALYZE flips index-scan order to heap order in the middle of a walk, duplicating and
+// skipping rows. Fresh statistics keep the plan fixed for the walk so the campaign can keep
+// looking for other divergences; the pinned test shows the flip.
+func diffStabilisePlans(s *diffSide) {
+	if s.label != "postgres" {
+		return
+	}
+	for _, tbl := range []string{"users", "secret_nodes", "environments", "groups"} {
+		_ = s.db.Exec("ANALYZE " + tbl).Error
+	}
 }
 
 func ptrOf[T any](v T) *T { return &v }
@@ -588,12 +619,7 @@ func liveUsernameSet(db *gorm.DB) []string {
 // unordered query is not a contract — see normalisation 2). It also enforces the
 // within-backend invariant: the page walk is duplicate-free and equals the unpaged set.
 func diffListSecrets(t *testing.T, ctx context.Context, s *diffSide, variant int, name string, pageSize int) string {
-	// Known finding F-1 (see backend_differential_v2_known_test.go): the name Search is
-	// not Unicode case-insensitive on SQLite. Gated to ASCII search terms so the campaign
-	// can keep looking for OTHER divergences; the known test pins that F-1 still reproduces.
-	if (variant == 1 || variant == 8) && !diffASCII(name) {
-		return "gated:F-1"
-	}
+	diffStabilisePlans(s)
 	mk := func(page, size int) *storage.SecretFilter {
 		fl := &storage.SecretFilter{ProjectID: &s.proj, Page: page, PageSize: size}
 		switch variant {
@@ -652,12 +678,13 @@ func diffListSecrets(t *testing.T, ctx context.Context, s *diffSide, variant int
 }
 
 func diffListUsers(t *testing.T, ctx context.Context, s *diffSide, variant int, name string, pageSize int) string {
-	// Known findings F-2 / F-3 (backend_differential_v2_known_test.go): the Username and
-	// Email filters use plain LIKE, which is ASCII-case-insensitive on SQLite and
-	// case-sensitive on PostgreSQL. For those two variants the fingerprint keeps only rows
-	// that also match case-sensitively and omits the total, so the rest of the filter
-	// (substring semantics, paging, deleted/active handling) is still compared.
-	exactOnly := variant == 4 || variant == 5
+	// Known divergence D (backend_differential_v2_known_test.go): the free-text Search
+	// filter is LIKE on SQLite and ILIKE on PostgreSQL, so a non-ASCII case-variant
+	// term matches on PostgreSQL only. Named as a follow-up in #4019. Gated to ASCII terms.
+	if variant == 1 && !diffASCII(name) {
+		return "gated:D"
+	}
+	diffStabilisePlans(s)
 	mk := func(page, size int) *storage.UserFilter {
 		fl := &storage.UserFilter{Page: page, PageSize: size}
 		switch variant {
@@ -687,9 +714,6 @@ func diffListUsers(t *testing.T, ctx context.Context, s *diffSide, variant int, 
 			firstLen = len(rows)
 		}
 		for _, r := range rows {
-			if exactOnly && !diffUserMatchesCaseSensitive(r, variant, name) {
-				continue
-			}
 			union = append(union, fmt.Sprintf("%q/%v/%v", r.Username, r.IsActive, r.DeletedAt.Valid))
 		}
 		if len(rows) < pageSize {
@@ -702,24 +726,11 @@ func diffListUsers(t *testing.T, ctx context.Context, s *diffSide, variant int, 
 	}
 	var allNames []string
 	for _, r := range all {
-		if exactOnly && !diffUserMatchesCaseSensitive(r, variant, name) {
-			continue
-		}
 		allNames = append(allNames, fmt.Sprintf("%q/%v/%v", r.Username, r.IsActive, r.DeletedAt.Valid))
 	}
 	u, a := diffJoinSorted(append([]string{}, union...)), diffJoinSorted(allNames)
 	if u != a {
 		t.Fatalf("BACKEND DIVERGENCE (within-backend pagination): %s ListUsers variant=%d pageSize=%d page walk != unpaged set\n  walk=%q\n  all =%q", s.label, variant, pageSize, u, a)
 	}
-	if exactOnly {
-		return fmt.Sprintf("set=%s", u)
-	}
 	return fmt.Sprintf("total=%d first=%d set=%s", total, firstLen, u)
-}
-
-func diffUserMatchesCaseSensitive(u *models.User, variant int, term string) bool {
-	if variant == 4 {
-		return strings.Contains(u.Username, term)
-	}
-	return strings.Contains(u.Email, term+"@x.io")
 }
