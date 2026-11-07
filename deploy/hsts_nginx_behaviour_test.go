@@ -91,7 +91,7 @@ func runNginx(t *testing.T, args ...string) string {
 	base := "http://" + hostPort
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
-		if resp, err := hstsClient.Get(base + "/health"); err == nil { //nolint:gosec,noctx // local test server
+		if resp, err := hstsClient.Get(base + "/nginx-health"); err == nil { //nolint:gosec,noctx // local test server
 			_ = resp.Body.Close()
 			return base
 		}
@@ -172,7 +172,7 @@ func TestWebNginxHSTS_ComposeImage(t *testing.T) {
 				args = append(args, "-e", "KEYORIX_WEB_HSTS="+c.mode)
 			}
 			base := runNginx(t, append(args, nginxImage)...)
-			assertHSTS(t, c, base, "/health", "/", "/missing.js") // server scope, SPA, static-asset location
+			assertHSTS(t, c, base, "/nginx-health", "/", "/missing.js")// server scope, SPA, static-asset location
 		})
 	}
 }
@@ -245,7 +245,7 @@ func TestWebNginxHSTS_HelmChart(t *testing.T) {
 				// (proxy_ssl_trusted_certificate); nginx will not start without the file.
 				"-v", caFile+":/etc/keyorix/tls/ca.crt:ro",
 				nginxImage)
-			assertHSTS(t, c, base, "/health", "/", "/missing.js", "/api/v1/x") // incl. the proxied (502) API location
+			assertHSTS(t, c, base, "/nginx-health", "/", "/missing.js", "/api/v1/x") // incl. the proxied (502) API location
 		})
 	}
 }
