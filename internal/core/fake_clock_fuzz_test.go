@@ -233,8 +233,23 @@ func fkcWrapped(issue, expiry time.Time) bool { return expiry.Before(issue) }
 // fkcMint mints the selected credential at the world's current (start) clock.
 // ok=false with a reason means a CLEAN refusal to mint at this instant (O4 pass).
 func fkcMint(t testing.TB, w *fkcWorld, sel int, ttl time.Duration) (cred fkcCred, issue, expiry time.Time, ok bool, note string) {
+	cred, issue, expiry, ok, note = fkcMintRaw(t, w, sel, ttl)
+	if ok && expiry.Year() > 9999 {
+		return nil, issue, expiry, false, "expiry beyond year 9999 (KNOWN-LIMIT, see TestKnownLimit_*)"
+	}
+	return cred, issue, expiry, ok, note
+}
+
+func fkcMintRaw(t testing.TB, w *fkcWorld, sel int, ttl time.Duration) (cred fkcCred, issue, expiry time.Time, ok bool, note string) {
 	ctx := context.Background()
 	issue = w.clock.t
+	if issue.Year() < 1 || issue.Year() >= 9999 {
+		// KNOWN-LIMIT domain, pinned by TestKnownLimit_* below: SQLite storage turns a
+		// stored year >= 10000 into the zero time with no error, and the anti-rollback
+		// watermark starts at the zero time (year 1), so a clock in year <= 0 reads as
+		// already past every expiry. Both fail CLOSED (credential refused early).
+		return nil, issue, expiry, false, "instant outside the storable year range 1..9998"
+	}
 	if issue.Year() > 1_000_000_000 {
 		// TEST-ARTIFACT domain (R3): within ~100 years of time.Time's own upper limit
 		// (year 292277026596) Add/Sub/After saturate or wrap inside the Go runtime,
@@ -540,5 +555,61 @@ func TestScheduleMutantLocalHour(t *testing.T) {
 		if (enforceSchedule(s, inst) == nil) != fkcIndependentVerdict(s, inst, loc) {
 			t.Errorf("CONTROL: enforceSchedule disagrees with the independent computation at %v", inst)
 		}
+	}
+}
+
+// TestKnownLimit_SQLiteYear10000ReadsAsZeroTime pins today's behaviour (R3
+// classification EXPECTED, fail-closed): an expiry beyond year 9999 is stored by
+// SQLite without error and read back as the zero time, i.e. long expired. Not
+// reachable through the API (RFC 3339 input stops at year 9999); reachable only by
+// clock arithmetic past 9999. If storage ever starts rejecting or preserving
+// such values, this test should change with it.
+func TestKnownLimit_SQLiteYear10000ReadsAsZeroTime(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		in    time.Time
+		exact bool
+	}{
+		{time.Date(9999, 12, 31, 23, 59, 59, 5, time.UTC), true},
+		{time.Date(0, 6, 1, 0, 0, 0, 0, time.UTC), true},
+		{time.Date(10000, 1, 2, 1, 27, 11, 999999999, time.UTC), false},
+	} {
+		in := c.in
+		n := &models.SecretNode{Name: "kl", Expiration: &in}
+		if err := db.Create(n).Error; err != nil {
+			t.Fatalf("create %v: %v", in, err)
+		}
+		var out models.SecretNode
+		if err := db.First(&out, n.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if out.Expiration == nil {
+			t.Fatalf("%v: expiration vanished", in)
+		}
+		if c.exact && !out.Expiration.Equal(in) {
+			t.Errorf("%v did not round-trip: got %v", in, *out.Expiration)
+		}
+		if !c.exact && !out.Expiration.IsZero() {
+			t.Errorf("%v: documented known-limit changed (now reads back %v); update this test", in, *out.Expiration)
+		}
+	}
+}
+
+// TestKnownLimit_Year0ClockFailsClosed pins that a session minted with the clock in
+// year 0 is refused at once (the watermark starts at year 1) rather than accepted.
+func TestKnownLimit_Year0ClockFailsClosed(t *testing.T) {
+	w := buildFkcWorld(t, time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC))
+	cred, _, _, ok, _ := fkcMintRaw(t, w, 0, time.Hour)
+	if !ok {
+		t.Skip("minting at year 0 now refuses cleanly (also fail-closed)")
+	}
+	if cred.Check() {
+		t.Errorf("session minted at year 0 is accepted; the documented behaviour is fail-closed refusal, review the watermark")
 	}
 }

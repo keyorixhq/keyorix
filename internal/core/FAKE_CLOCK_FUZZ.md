@@ -73,3 +73,11 @@ R4  No production change is made by this PR. If a seam is missing the finding
     names the smallest change instead.
 R5  Security-class BUGs are recorded in ~/proj/crash-private/FINDINGS.md first.
 R6  Campaigns end before 2026-11-10T05:00Z with host load < 60% of cores.
+
+## Results (2026-11-07)
+
+- Schedule fuzz (FuzzEnforceScheduleDST, independent tzdata oracle): 10 min, PASS, no violations.
+- Extreme-instant fuzz and cross-product test: no O1/O2 violations (no credential accepted after expiry, none accepted from a rolled-back clock). Mutants M1-M5 are all caught by the oracles.
+- Observation, classified EXPECTED / low, fail-closed: with the clock at year <= 0, or a credential whose expiry is beyond year 9999, sessions and PATs are refused before their expiry (O3). Cause for year >= 10000: SQLite stores the value without error and reads it back as the zero time. The year-0 case is refused at mint time (the anti-rollback watermark starts at year 1). Neither is reachable through the API (RFC 3339 input stops at year 9999). The generators now skip that domain, and TestKnownLimit_* pin the behaviour.
+- TOML: Keyorix does not parse TOML dates; BurntSushi/toml is only a transitive dependency of go-i18n and only JSON locale files are loaded.
+- Seam gaps (not fixed here): unexpiredSecret and checkSecretAccessScheduleWith call time.Now() directly, so the fake clock cannot reach them.
