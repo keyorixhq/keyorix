@@ -187,7 +187,7 @@ func race(n int, fn func(i int) error) string {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	res := make([]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
