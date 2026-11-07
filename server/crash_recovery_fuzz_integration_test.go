@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,8 +37,47 @@ const (
 	crashPass3 = "crash-fuzz-passphrase-three-0003"
 )
 
+// crashRun is the crash-recovery fuzzer's view of a crashWorld: the shared
+// world plus the state-A/state-B ledgers and ids only this fuzzer needs (kept
+// out of fuzzharness_common_test.go, which the upgrade-path fuzzer shares).
+type crashRun struct {
+	*crashWorld
+	projectID uint
+	envID     uint
+	ledgerA   crashLedger // state captured in archiveA
+	ledgerB   crashLedger // state in dir
+	archiveA  string
+}
+
+func (w *crashWorld) env(pass string) []string {
+	return append(baseEnv(w.dir), "KEYORIX_MASTER_PASSWORD="+pass)
+}
+
+func (l crashLedger) clone() crashLedger {
+	o := crashLedger{}
+	for k, v := range l {
+		o[k] = append([]string(nil), v...)
+	}
+	return o
+}
+
+func unionIDs(ls ...crashLedger) []uint {
+	seen := map[uint]bool{}
+	var ids []uint
+	for _, l := range ls {
+		for id := range l {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 // buildWorld installs, populates (state A), backs up, then diverges (state B).
-func buildWorld(t *testing.T, bin string, rng *rand.Rand) *crashWorld {
+func buildWorld(t *testing.T, bin string, rng *rand.Rand) *crashRun {
 	t.Helper()
 	// soakPrepareInstall uses its own fixed passphrase; override via env below.
 	srv, _ := soakPrepareInstall(t, bin)
@@ -48,7 +88,7 @@ func buildWorld(t *testing.T, bin string, rng *rand.Rand) *crashWorld {
 			srv.env[i] = "KEYORIX_MASTER_PASSWORD=soak-test-passphrase-edge-crash"
 		}
 	}
-	w := &crashWorld{t: t, bin: bin, dir: dir, port: srv.port}
+	w := &crashRun{crashWorld: &crashWorld{t: t, bin: bin, dir: dir, port: srv.port}}
 	srv.start("KEYORIX_BOOTSTRAP_TOKEN=" + soakBootstrapTok)
 	if !srv.tryHealthy(soakHealthTimeout) {
 		t.Fatalf("base install did not start:\n%s", srv.logTail())
@@ -79,7 +119,7 @@ func buildWorld(t *testing.T, bin string, rng *rand.Rand) *crashWorld {
 
 	led := crashLedger{}
 	mk := func(n int) {
-		for i := 0; i < n; i++ {
+		for range n {
 			name := fmt.Sprintf("crash-%d-%d", len(led), rng.Intn(1e6))
 			val := fmt.Sprintf("val-%s-v1-%x", name, rng.Int63())
 			code, data, err := api.do(http.MethodPost, "/api/v1/secrets", map[string]any{
@@ -157,7 +197,7 @@ type crashOp struct {
 	name string
 	args func(dir string) []string
 	// prep stages files the op needs inside dir.
-	prep func(w *crashWorld, dir string)
+	prep func(w *crashRun, dir string)
 }
 
 var crashOps = []crashOp{
@@ -166,7 +206,7 @@ var crashOps = []crashOp{
 	}},
 	{name: "rotate-kek", args: func(string) []string {
 		return []string{"encryption", "rotate-kek", "--confirm", "--new-passphrase-file", "./newpass", "--config", "./keyorix.yaml"}
-	}, prep: func(w *crashWorld, dir string) {
+	}, prep: func(w *crashRun, dir string) {
 		_ = os.WriteFile(filepath.Join(dir, "newpass"), []byte(crashPass2), 0o600)
 	}},
 	{name: "backup", args: func(string) []string {
@@ -174,14 +214,14 @@ var crashOps = []crashOp{
 	}},
 	{name: "restore", args: func(string) []string {
 		return []string{"restore", "--config", "./keyorix.yaml", "--input", "./archiveA.tar.gz", "--overwrite-existing", "--allow-rollback"}
-	}, prep: func(w *crashWorld, dir string) {
+	}, prep: func(w *crashRun, dir string) {
 		copyTree2(w.t, w.archiveA, filepath.Join(dir, "archiveA.tar.gz"))
 	}},
 }
 
 // recoverAndCheck performs documented recovery on dir and returns violations.
 // allowed = ledgers the final state may equal as a whole.
-func (w *crashWorld) recoverAndCheck(op crashOp, dir string, allowed []crashLedger, notes *[]string) []string {
+func (w *crashRun) recoverAndCheck(op crashOp, dir string, allowed []crashLedger, notes *[]string) []string {
 	var v []string
 	ids := unionIDs(w.ledgerA, w.ledgerB)
 	passes := []string{"soak-test-passphrase-edge-crash"}
@@ -300,7 +340,7 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 	t.Logf("crash-recovery fuzz: seed=%d iters/op=%d (replay with KX_CRASH_SEED=%d)", seed, iters, seed)
 	rng := rand.New(rand.NewSource(seed)) //nolint:gosec // test randomness, seed logged
 	only := map[string]bool{}
-	for _, o := range strings.Split(os.Getenv("KX_CRASH_OPS"), ",") {
+	for o := range strings.SplitSeq(os.Getenv("KX_CRASH_OPS"), ",") {
 		if o != "" {
 			only[o] = true
 		}
@@ -321,13 +361,13 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 		if op.prep != nil {
 			op.prep(w, cal)
 		}
-		_, nChanges, calDur, calOut, calErr := runChild(w, cal, "soak-test-passphrase-edge-crash", op.args(cal), nil)
+		_, nChanges, calDur, calOut, calErr := runChild(w.crashWorld, cal, "soak-test-passphrase-edge-crash", op.args(cal), nil)
 		if calErr != nil {
 			t.Fatalf("calibration run of %s failed: %v\n%s", op.name, calErr, calOut)
 		}
 		t.Logf("op %s: calibration %s, %d dir-signature changes", op.name, calDur.Round(time.Millisecond), nChanges)
 
-		for i := 0; i < iters; i++ {
+		for i := range iters {
 			var plan killPlan
 			switch k := i % 3; k {
 			case 0:
@@ -342,7 +382,7 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 			if op.prep != nil {
 				op.prep(w, dir)
 			}
-			killed, _, _, out, cerr := runChild(w, dir, "soak-test-passphrase-edge-crash", op.args(dir), &plan)
+			killed, _, _, out, cerr := runChild(w.crashWorld, dir, "soak-test-passphrase-edge-crash", op.args(dir), &plan)
 			outcome := "completed"
 			switch {
 			case killed:
@@ -479,10 +519,10 @@ func crashYAMLPath(t *testing.T, dir, key string) string {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	for _, ln := range strings.Split(string(raw), "\n") {
+	for ln := range strings.SplitSeq(string(raw), "\n") {
 		ln = strings.TrimSpace(ln)
-		if strings.HasPrefix(ln, key+":") {
-			v := strings.Trim(strings.TrimSpace(strings.TrimPrefix(ln, key+":")), `"'`)
+		if after, ok := strings.CutPrefix(ln, key+":"); ok {
+			v := strings.Trim(strings.TrimSpace(after), `"'`)
 			if !filepath.IsAbs(v) {
 				v = filepath.Join(dir, v)
 			}
@@ -515,10 +555,10 @@ func TestCrashRecoveryReplay(t *testing.T) {
 	bin := fuzzHeadBinary(t)
 	dir := t.TempDir()
 	copyTree(t, filepath.Join(src, "install"), dir)
-	w := &crashWorld{t: t, bin: bin, dir: dir, ledgerA: meta.LedgerA, ledgerB: meta.LedgerB, archiveA: filepath.Join(src, "archiveA.tar.gz")}
+	w := &crashRun{crashWorld: &crashWorld{t: t, bin: bin, dir: dir}, ledgerA: meta.LedgerA, ledgerB: meta.LedgerB, archiveA: filepath.Join(src, "archiveA.tar.gz")}
 	// Port from the copied config.
 	if raw, err := os.ReadFile(filepath.Join(dir, "keyorix.yaml")); err == nil { //nolint:gosec // test path
-		for _, ln := range strings.Split(string(raw), "\n") {
+		for ln := range strings.SplitSeq(string(raw), "\n") {
 			if strings.Contains(ln, "port:") && strings.Contains(ln, `"`) {
 				w.port = strings.Trim(strings.TrimSpace(strings.SplitN(ln, ":", 2)[1]), `"`)
 				break
