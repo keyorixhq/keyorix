@@ -137,7 +137,7 @@ func assertHSTS(t *testing.T, c hstsCase, base string, paths ...string) {
 // image entrypoint script from the KEYORIX_WEB_* environment.
 func TestWebNginxHSTS_ComposeImage(t *testing.T) {
 	if testing.Short() {
-		t.Skip("starts one real nginx container per case; covered by the full test-suite matrix (no -short)")
+		t.Skip("starts one real nginx container per case (minutes); runs only in the non-short tiers")
 	}
 	needDocker(t)
 	web, err := filepath.Abs(filepath.Join("..", "web"))
