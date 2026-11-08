@@ -97,6 +97,22 @@ func globalMutation(op Op) bool {
 		strings.HasPrefix(p, "/api/v1/audit/")
 }
 
+// identityMutation reports writes to one user or one role (PUT/DELETE
+// /users/{id}, /users/{id}/suspend, /roles/{id}/permissions, ...). The user and
+// role kinds are install-wide, not tenant-owned, so these requests carry no
+// tenant object and would otherwise never be judged. A viewer or an actor with no
+// grant must not perform them; this is the privilege-escalation surface. The
+// replay never aims an attacker at the attacker's own user id, so there is no
+// self-service case to exclude here.
+func identityMutation(op Op) bool {
+	if op.Method == "GET" {
+		return false
+	}
+	segs := strings.Split(strings.Trim(op.Path, "/"), "/")
+	// api, v1, users|roles, {id}, ...
+	return len(segs) >= 4 && (segs[2] == "users" || segs[2] == "roles") && strings.HasPrefix(segs[3], "{")
+}
+
 // Expect is the in-test authorization model (compare internal/core/authz.go and
 // the role table in internal/core/auth_bootstrap.go: project_admin bypasses
 // per-permission checks inside its project; project_viewer holds
@@ -116,8 +132,8 @@ func Expect(a *Actor, op Op, objTenant string) Verdict {
 		return Unknown
 	}
 	if objTenant == "" {
-		// No object ids: self-service, or an install-wide route.
-		if globalMutation(op) {
+		// No tenant-owned object ids: self-service, or an install-wide route.
+		if globalMutation(op) || identityMutation(op) {
 			if a.Role == "" || a.Role == "viewer" {
 				return Deny
 			}

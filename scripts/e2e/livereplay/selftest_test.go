@@ -64,6 +64,15 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	member := func(t string) bool { return u.tenant == "*" || (u.tenant == t && t != "") }
 	segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// /api/v1/users/{id}: install-wide identity writes belong to the global admin only
+	if len(segs) == 4 && segs[2] == "users" && r.Method == "PUT" {
+		if u.tenant == "*" || f.plant == "userwrite" {
+			reply(200, map[string]string{"ok": "updated"})
+			return
+		}
+		reply(403, map[string]string{"error": "forbidden"})
+		return
+	}
 	// /api/v1/secrets[/{id}]
 	if len(segs) >= 3 && segs[2] == "secrets" {
 		if len(segs) == 3 {
@@ -102,6 +111,10 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		switch r.Method {
 		case "GET":
+			if f.plant == "deadfp" && s.tenant == "B" && u.tenant == "*" {
+				reply(403, map[string]string{"error": "owner only"}) // readable by the owner, not by the observer
+				return
+			}
 			if !member(s.tenant) && f.plant != "bola" {
 				reply(403, map[string]string{"error": "forbidden"})
 				return
@@ -170,6 +183,7 @@ func fakeOps() []Op {
 		{Method: "PUT", Path: "/api/v1/secrets/{id}", Body: valueBody},
 		{Method: "DELETE", Path: "/api/v1/secrets/{id}"},
 		{Method: "GET", Path: "/api/v1/projects/{id}/secrets"},
+		{Method: "PUT", Path: "/api/v1/users/{id}", Params: []Param{{Name: "id", In: "path"}}},
 	}
 }
 
@@ -231,6 +245,9 @@ func TestSelfTest_PlantedDefectsAreFound(t *testing.T) {
 		{"noauth", ClassCandStatus, "GET /api/v1/projects/{id}/secrets", "anon"},
 		{"effect", ClassCandEffect, "DELETE /api/v1/secrets/{id}", "N"},
 		{"leak", ClassCandLeak, "GET /api/v1/secrets", "B"},
+		// users are not a tenant kind: without the identity rule these were never judged
+		{"userwrite", ClassCandStatus, "PUT /api/v1/users/{id}", "V"},
+		{"userwrite", ClassCandStatus, "PUT /api/v1/users/{id}", "N"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.plant, func(t *testing.T) {
@@ -329,5 +346,133 @@ func TestModel_SelfServiceAndAuthorityChanging(t *testing.T) {
 	}
 	if authorityChanging(Op{Method: "GET", Path: "/api/v1/projects/{id}/members"}) {
 		t.Error("a GET never changes authority")
+	}
+}
+
+// Writes to one user or role by an actor with no authority are judged even
+// though the ids are install-wide, not tenant-owned.
+func TestModel_IdentityWritesAreDeniedForViewerAndNoGrant(t *testing.T) {
+	viewer := &Actor{Name: "V", Tenant: "A", Role: "viewer"}
+	none := &Actor{Name: "N"}
+	admin := &Actor{Name: "A", Tenant: "A", Role: "admin"}
+	for _, op := range []Op{
+		{Method: "PUT", Path: "/api/v1/users/{id}"},
+		{Method: "DELETE", Path: "/api/v1/users/{id}"},
+		{Method: "POST", Path: "/api/v1/users/{id}/suspend"},
+		{Method: "POST", Path: "/api/v1/users/{id}/revoke-sessions"},
+		{Method: "POST", Path: "/api/v1/users/{id}/reissue-one-time-password"},
+		{Method: "PUT", Path: "/api/v1/roles/{id}"},
+		{Method: "DELETE", Path: "/api/v1/roles/{id}"},
+		{Method: "POST", Path: "/api/v1/roles/{id}/permissions"},
+	} {
+		for _, a := range []*Actor{viewer, none} {
+			if got := Expect(a, op, ""); got != Deny {
+				t.Errorf("%s %s %s: verdict %v, want deny", a.Name, op.Method, op.Path, got)
+			}
+		}
+		if got := Expect(admin, op, ""); got != Unknown {
+			t.Errorf("project admin %s %s: verdict %v, want unknown (ceiling rules not modelled)", op.Method, op.Path, got)
+		}
+	}
+	for _, op := range []Op{
+		{Method: "GET", Path: "/api/v1/users/{id}"},
+		{Method: "GET", Path: "/api/v1/roles/by-name"},
+		{Method: "POST", Path: "/api/v1/users"},
+	} {
+		if identityMutation(op) {
+			t.Errorf("%s %s is not a write to one user or role", op.Method, op.Path)
+		}
+	}
+}
+
+// A response that carries a different marked name than the request sent is a
+// leak even when the request itself carried the marker prefix.
+func TestLeakOracle_ComparesNamesNotThePrefix(t *testing.T) {
+	w := NewWorld("http://unused.invalid", &Spec{})
+	b := &Actor{Name: "B", Tenant: "B", Role: "admin"}
+	p := Probe{Method: "GET", Target: "/api/v1/secrets/value?ref=lrcanary-a-proj%2Fdevelopment%2Flrcanary-a-secret-1"}
+	if got := w.leaked(b, p, []byte(`{"error":"no access to lrcanary-a-proj/development/lrcanary-a-secret-1."}`)); got != "" {
+		t.Errorf("echo of the requested name reported as a leak: %s", got)
+	}
+	if got := w.leaked(b, p, []byte(`{"data":[{"name":"lrcanary-a-secret-1"},{"name":"lrcanary-a-secret-2"}]}`)); got == "" {
+		t.Error("a second tenant-A name in the response was excused by the request's prefix")
+	}
+	if got := w.leaked(&Actor{Name: "A", Tenant: "A", Role: "admin"}, p, []byte(`lrcanary-a-secret-2`)); got != "" {
+		t.Errorf("own tenant's names are not a leak: %s", got)
+	}
+}
+
+// A fingerprint path that never answers 2xx makes the effect oracle blind; the
+// run must say so. Reading it as its owner fixes it.
+func TestSelfTest_DeadFingerprintPathIsReported(t *testing.T) {
+	w := fakeWorld(t, "deadfp")
+	dead := w.DeadFingerprintPaths()
+	if len(dead) != 1 || !strings.Contains(dead[0], "/api/v1/secrets/3") {
+		t.Fatalf("dead paths = %v, want only /api/v1/secrets/3", dead)
+	}
+	w.FPReader["/api/v1/secrets/3"] = w.Actors["B"]
+	if dead := w.DeadFingerprintPaths(); len(dead) != 0 {
+		t.Fatalf("owner read still dead: %v", dead)
+	}
+	w2 := fakeWorld(t, "deadfp")
+	w2.Run(Options{Only: "/api/v1/secrets/{id}"})
+	if len(w2.DeadBefore) == 0 || len(w2.DeadAfter) == 0 {
+		t.Fatalf("Run did not record dead paths: before=%v after=%v", w2.DeadBefore, w2.DeadAfter)
+	}
+}
+
+// A server that goes away must leave a trace: transport errors are counted.
+func TestSelfTest_TransportErrorsAreCounted(t *testing.T) {
+	srv := httptest.NewServer(newFakeAPI(""))
+	w := NewWorld(srv.URL, &Spec{Ops: fakeOps()})
+	w.Observer = &Actor{Name: "root", Token: "tokRoot"}
+	w.Actors["root"] = w.Observer
+	if _, _, err := w.Do(w.Observer, "GET", "/api/v1/secrets/1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := w.TransportErrors(); n != 0 {
+		t.Fatalf("%d transport errors on a healthy server", n)
+	}
+	srv.Close()
+	r := w.exec(Probe{Actor: "root", Method: "GET", Target: "/api/v1/secrets/1"}, Op{Method: "GET", Path: "/api/v1/secrets/{id}"})
+	if r.Class != ClassInconclusive {
+		t.Errorf("class = %s", r.Class)
+	}
+	if n, last := w.TransportErrors(); n == 0 || last == "" {
+		t.Fatalf("transport error not recorded: %d %q", n, last)
+	}
+}
+
+// Mutated-id probes must not be aimed at the actor's own fixtures.
+func TestOwnedByActor(t *testing.T) {
+	w := fakeWorld(t, "")
+	a := &Actor{Name: "A", Tenant: "A", Role: "admin"}
+	del := Op{Method: "DELETE", Path: "/api/v1/secrets/{id}"}
+	if !w.ownedByActor(a, del, "/api/v1/secrets/2") {
+		t.Error("secret 2 is tenant A's own")
+	}
+	if w.ownedByActor(a, del, "/api/v1/secrets/3") {
+		t.Error("secret 3 is tenant B's: a legitimate attack target")
+	}
+	if w.ownedByActor(a, Op{Method: "GET", Path: "/api/v1/secrets/{id}"}, "/api/v1/secrets/2") {
+		t.Error("reads are always sent")
+	}
+}
+
+// The volatile-key filter drops only what moves on its own, and says what it dropped.
+func TestStable_NarrowAndReports(t *testing.T) {
+	dropped := map[string]bool{}
+	in := map[string]any{
+		"total_reads": 3, "last_login_at": "x", "expires_at": "2030", "created_by": "u1",
+		"account_id": 7, "checksum": "abc", "updated_at": "t", "name": "n",
+	}
+	out := stable(in, dropped).(map[string]any)
+	for _, k := range []string{"expires_at", "created_by", "account_id", "checksum", "updated_at", "name"} {
+		if _, ok := out[k]; !ok {
+			t.Errorf("%s was dropped; it is state", k)
+		}
+	}
+	if !dropped["total_reads"] || !dropped["last_login_at"] || len(dropped) != 2 {
+		t.Errorf("dropped = %v", dropped)
 	}
 }

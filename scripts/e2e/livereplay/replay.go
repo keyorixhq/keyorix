@@ -3,6 +3,7 @@ package livereplay
 import (
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -140,6 +141,7 @@ func (w *World) build(a *Actor, op Op, tenant, variant string) (Probe, bool) {
 		id, ok := w.FirstID(tenant, kind)
 		if !ok {
 			id = "1"
+			w.noteFallback(kind)
 		} else if tenantKinds[kind] {
 			objTenant = tenant
 		}
@@ -232,6 +234,7 @@ func (w *World) Run(opt Options) []Result {
 	// Quiescence check before any probe: paths that move on their own are
 	// masked from the effect oracle and reported in w.DriftFound.
 	w.DriftFound = w.Calibrate(3)
+	w.DeadBefore = w.DeadFingerprintPaths()
 	emit := func(r Result) {
 		results = append(results, r)
 		if opt.Log != nil {
@@ -256,6 +259,7 @@ func (w *World) Run(opt Options) []Result {
 			}
 		}
 	}
+	w.DeadAfter = w.DeadFingerprintPaths()
 	return results
 }
 
@@ -309,7 +313,7 @@ func (w *World) probesFor(op Op) []Probe {
 				out = append(out, m)
 			}
 			for _, d := range []int{-1, 1} {
-				if t, ok := neighbour(base.Target, op, d); ok {
+				if t, ok := neighbour(base.Target, op, d); ok && !w.ownedByActor(a, op, t) {
 					m := base
 					m.Desc = "neighbour" + strconv.Itoa(d)
 					m.Target = t
@@ -431,7 +435,6 @@ func (w *World) exec(p Probe, op Op) Result {
 	r.Verdict = Expect(a, op, p.ObjTenant)
 	r.Class = ClassOK
 	success := status >= 200 && status < 300
-	denied := status == 401 || status == 403 || status == 404
 
 	var sig []string
 	var detail []string
@@ -446,7 +449,6 @@ func (w *World) exec(p Probe, op Op) Result {
 	case status == 400 || status == 405 || status == 409 || status == 415 || status == 422 || status == 429 || (status == 404 && r.Verdict != Deny):
 		r.Class = ClassInconclusive
 	}
-	_ = denied
 
 	if leak := w.leaked(a, p, body); leak != "" {
 		sig = append(sig, "LEAK")
@@ -479,16 +481,62 @@ func (w *World) exec(p Probe, op Op) Result {
 func (w *World) leaked(a *Actor, p Probe, body []byte) string {
 	lb := strings.ToLower(string(body))
 	req := strings.ToLower(p.Target + string(p.Body))
+	if q, err := url.QueryUnescape(p.Target); err == nil {
+		req += " " + strings.ToLower(q)
+	}
 	for _, t := range []string{"A", "B"} {
 		if a.Tenant == t && !a.DenyAll {
 			continue
 		}
 		m := w.Marker[t]
-		if m != "" && strings.Contains(lb, m) && !strings.Contains(req, m) {
-			return "tenant " + t + " marker"
+		if m == "" {
+			continue
+		}
+		// Compare the whole marked names in the response with what the request
+		// carried: a request that sent one tenant-A name does not excuse a
+		// different tenant-A name in the answer.
+		re := regexp.MustCompile(regexp.QuoteMeta(m) + `[a-z0-9_.\-]*`)
+		for _, tok := range re.FindAllString(lb, -1) {
+			tok = strings.TrimRight(tok, ".-_") // sentence punctuation after a name
+			if !strings.Contains(req, tok) {
+				return "tenant " + t + " marker " + tok
+			}
 		}
 	}
 	return ""
+}
+
+// ownedByActor reports whether target (an id-mutated request path) now names an
+// object of the acting tenant. A destructive probe aimed at one's own object
+// would delete or suspend the harness's own fixtures mid-run; it is not an
+// authorization test, so it is not sent. Ids are compared across all kinds: a
+// numeric collision only makes the filter skip one more probe.
+func (w *World) ownedByActor(a *Actor, op Op, target string) bool {
+	if op.Method == "GET" || a.Tenant == "" {
+		return false
+	}
+	path := target
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	own := map[string]bool{}
+	for _, ids := range w.IDs[a.Tenant] {
+		for _, id := range ids {
+			own[id] = true
+		}
+	}
+	for seg := range strings.SplitSeq(path, "/") {
+		if numSeg(seg) && own[seg] {
+			return true
+		}
+	}
+	return false
+}
+
+func (w *World) noteFallback(kind string) {
+	w.mu.Lock()
+	w.Fallbacks[kind]++
+	w.mu.Unlock()
 }
 
 // Summary counts results by variant/actor/class.

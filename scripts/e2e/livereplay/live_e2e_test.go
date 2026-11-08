@@ -6,7 +6,10 @@ package livereplay
 // data), seeds two tenants, records actor A's legitimate session, and replays it
 // (see replay.go). Opt-in:
 //
-//	go test -tags e2e ./scripts/e2e/livereplay/ -run TestLiveReplay -v -timeout 40m
+//	go test -tags e2e ./scripts/e2e/livereplay/ -run 'TestLiveReplay$' -v -timeout 40m
+//
+// (-run TestLiveReplay without the anchor also runs TestLiveReplay_PlantedDefects,
+// which builds the server three more times and takes about 13 minutes.)
 //
 // Knobs (environment):
 //
@@ -17,7 +20,7 @@ package livereplay
 // The rate limiter is switched off in the generated config (a 50 req/s per-principal
 // limit would only slow the replay; authorization is not what it protects) and
 // require_mfa is switched off so the actors can be logged in with a password. Both
-// are recorded in the run header.
+// are written to the test log when the server is booted.
 
 import (
 	"bufio"
@@ -26,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,6 +82,7 @@ func bootThrowaway(t *testing.T, binary string) (*harness.Server, string) {
 			t.Fatalf("admin %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}
+	t.Log("config: ratelimit.enabled=false, require_mfa=false (throwaway server only)")
 	cfg := "./keyorix.yaml"
 	run("init", "--dev", "--config", cfg)
 	path := filepath.Join(dir, "keyorix.yaml")
@@ -127,7 +132,7 @@ func findID(b []byte) string {
 	if d == nil {
 		return ""
 	}
-	if s := scalar(d["id"]); s != "" {
+	if s := idOf(d); s != "" {
 		return s
 	}
 	keys := make([]string, 0, len(d))
@@ -137,12 +142,21 @@ func findID(b []byte) string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		if sub, ok := d[k].(map[string]any); ok {
-			if s := scalar(sub["id"]); s != "" {
+			if s := idOf(sub); s != "" {
 				return s
 			}
 		}
 	}
 	return ""
+}
+
+// idOf reads the id of one object: "id", or "ID" for the few handlers that
+// serialise a struct without JSON tags (invitations).
+func idOf(m map[string]any) string {
+	if s := scalar(m["id"]); s != "" {
+		return s
+	}
+	return scalar(m["ID"])
 }
 
 // findStr returns the first string value under any of keys, searching data and one level below.
@@ -196,6 +210,48 @@ func findIDByName(b []byte, name string) string {
 		}
 	}
 	walk(jparse(b))
+	return out
+}
+
+// mustID fails the test when a seeding response carries no id: a world without
+// the object would make the operations on it fall back to id 1 (another
+// tenant's object) and go unjudged.
+func mustID(t *testing.T, what string, resp []byte) string {
+	t.Helper()
+	id := findID(resp)
+	if id == "" {
+		t.Fatalf("seeding %s: no id in %.300s", what, resp)
+	}
+	return id
+}
+
+// firstListedID wraps the first "id" found anywhere in a response so that
+// mustID can read it: used when a create answers without the new object's id.
+func firstListedID(b []byte) []byte {
+	var id string
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case map[string]any:
+			if s := scalar(t["id"]); s != "" && id == "" {
+				id = s
+			}
+			keys := make([]string, 0, len(t))
+			for k := range t {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				walk(t[k])
+			}
+		case []any:
+			for _, x := range t {
+				walk(x)
+			}
+		}
+	}
+	walk(jparse(b))
+	out, _ := json.Marshal(map[string]any{"data": map[string]any{"id": id}})
 	return out
 }
 
@@ -386,20 +442,24 @@ func buildWorld(t *testing.T, srv *harness.Server, rootPW string) *World {
 	// A's legitimate session: reads, updates, shares, machine identity, tokens, ACL, group, invitation
 	s.record(A, "GET", "/api/v1/projects", nil)
 	s.record(A, "GET", "/api/v1/projects/"+aProj, nil)
+	// The replay's positive control and its swaps reuse this body. It restates the
+	// project's own name and description, so a successful control does not rename
+	// the project and break the by-reference fingerprint path.
+	s.record(A, "PUT", "/api/v1/projects/"+aProj, map[string]any{"name": "lrcanary-a-proj", "description": "lrcanary-a-proj description"})
 	s.record(A, "GET", "/api/v1/secrets?project_id="+aProj, nil)
 	s.record(A, "GET", "/api/v1/secrets/"+a1, nil)
 	s.record(A, "GET", "/api/v1/secrets/value?ref="+w.Refs["A"], nil)
 	s.record(A, "PUT", "/api/v1/secrets/"+a1, map[string]any{"value": "LRCANARY-A-VALUE-1b"})
 	s.record(A, "GET", "/api/v1/secrets/"+a1+"/versions", nil)
 	sb := s.record(A, "POST", "/api/v1/secrets/"+a1+"/share", map[string]any{"recipient_id": pn(uid["vivian"]), "permission": "read"})
-	if id := findID(sb); id != "" {
-		w.AddID("A", "share", id)
-	}
+	w.AddID("A", "share", mustID(t, "share", sb))
 	s.record(A, "GET", "/api/v1/secrets/"+a1+"/shares", nil)
 	ab := s.record(A, "POST", "/api/v1/secrets/"+a1+"/acl", map[string]any{"user_id": pn(uid["victima"]), "permissions": []string{"secrets.read"}})
-	if id := findID(ab); id != "" {
-		w.AddID("A", "acl", id)
+	// the grant answers {"granted":true} without an id: the entry id is read back from the list
+	if findID(ab) == "" {
+		ab = s.record(A, "GET", "/api/v1/secrets/"+a1+"/acl", nil)
 	}
+	w.AddID("A", "acl", mustID(t, "acl", firstListedID(ab)))
 	s.call(B, "POST", "/api/v1/secrets/"+b1+"/share", map[string]any{"recipient_id": pn(uid["victimb"]), "permission": "read"})
 	mb := s.record(A, "POST", "/api/v1/projects/"+aProj+"/machine-identities", map[string]any{"name": "lrcanary-a-machine", "description": "lrcanary-a machine"})
 	mA := findID(mb)
@@ -424,24 +484,20 @@ func buildWorld(t *testing.T, srv *harness.Server, rootPW string) *World {
 	w.Actors["MB"] = &Actor{Name: "MB", Token: findStr(mtB, "token", "raw_token", "value"), Tenant: "B", Role: "admin", Machine: true}
 	w.Actors["revokedmachine"] = &Actor{Name: "revokedmachine", Token: revokedMachine, DenyAll: true}
 
-	gb := s.record(A, "POST", "/api/v1/groups", map[string]any{"name": "lrcanary-a-group", "description": "lrcanary-a"})
-	if id := findID(gb); id != "" {
-		w.AddID("A", "group", id)
-		s.call(root, "POST", "/api/v1/groups/"+id+"/members", map[string]any{"user_id": pn(uid["victima"])})
-	}
+	// Groups are install-wide: a project admin cannot create one (403), so the
+	// fixtures and the recorded request come from root.
+	gb := s.record(root, "POST", "/api/v1/groups", map[string]any{"name": "lrcanary-a-group", "description": "lrcanary-a"})
+	gid := mustID(t, "group A", gb)
+	w.AddID("A", "group", gid)
+	s.call(root, "POST", "/api/v1/groups/"+gid+"/members", map[string]any{"user_id": pn(uid["victima"])})
 	gbb := s.call(root, "POST", "/api/v1/groups", map[string]any{"name": "lrcanary-b-group", "description": "lrcanary-b"})
-	if id := findID(gbb); id != "" {
-		w.AddID("B", "group", id)
-		s.call(root, "POST", "/api/v1/groups/"+id+"/members", map[string]any{"user_id": pn(uid["victimb"])})
-	}
+	gidB := mustID(t, "group B", gbb)
+	w.AddID("B", "group", gidB)
+	s.call(root, "POST", "/api/v1/groups/"+gidB+"/members", map[string]any{"user_id": pn(uid["victimb"])})
 	ib := s.record(A, "POST", "/api/v1/projects/"+aProj+"/invitations", map[string]any{"email": "lr-invitee-a@example.invalid", "role": "project_viewer"})
-	if id := findID(ib); id != "" {
-		w.AddID("A", "invitation", id)
-	}
+	w.AddID("A", "invitation", mustID(t, "invitation", ib))
 	pb := s.record(A, "POST", "/api/v1/auth/tokens", map[string]any{"name": "lrcanary-a-pat"})
-	if id := findID(pb); id != "" {
-		w.AddID("A", "pat", id)
-	}
+	w.AddID("A", "pat", mustID(t, "pat", pb))
 
 	// credential variants that must be refused everywhere
 	rp := s.call(A, "POST", "/api/v1/auth/tokens", map[string]any{"name": "lrcanary-a-revokedpat"})
@@ -485,6 +541,8 @@ func buildWorld(t *testing.T, srv *harness.Server, rootPW string) *World {
 			fp(tn, "/api/v1/secrets/"+sid)
 			fp(tn, "/api/v1/secrets/"+sid+"/versions")
 			fp(tn, "/api/v1/secrets/"+sid+"/shares")
+			// shares are readable by the secret's creator only (403 for the global admin)
+			w.FPReader["/api/v1/secrets/"+sid+"/shares"] = w.Actors[tn]
 			fp(tn, "/api/v1/secrets/"+sid+"/acl")
 		}
 		fp(tn, "/api/v1/secrets/value?ref="+w.Refs[tn])
@@ -517,22 +575,32 @@ func outDir(t *testing.T) string {
 type runStats struct {
 	Probes, Controls, ControlOK int
 	Ops                         int
-	Conclusive                  map[string]bool
-	Cands                       []Result
-	Summary                     map[string]int
+	// Conclusive: operations with a non-400/422/429 answer from any actor,
+	// credential-rejecting ones (anon, garbage, ...) included.
+	Conclusive map[string]bool
+	// ConclusiveDenied: operations where a real signed-in actor (A, B, V, N, MA,
+	// MB) was probed with a Deny verdict and got a conclusive answer. This is the
+	// authorization coverage PREREG R4 defines.
+	ConclusiveDenied map[string]bool
+	Cands            []Result
+	Summary          map[string]int
 }
 
-func runOnce(t *testing.T, binary, sink string) runStats {
+// runOnce boots a fresh server and replays against it. unmodified is true for
+// the build from this tree: only there is a fixture that stops answering 2xx a
+// harness fault. On a planted build the defect itself may let an attacker delete
+// or suspend a fixture, which is logged, not failed.
+func runOnce(t *testing.T, binary, sink string, unmodified bool) runStats {
 	t.Helper()
 	srv, rootPW := bootThrowaway(t, binary)
 	w := buildWorld(t, srv, rootPW)
-	f, err := os.Create(sink) // #nosec G304 -- operator-chosen output path
+	f, err := os.OpenFile(sink, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec G304 -- operator-chosen output path
 	if err != nil {
 		t.Fatal(err)
 	}
 	bw := bufio.NewWriter(f)
 	enc := json.NewEncoder(bw)
-	st := runStats{Conclusive: map[string]bool{}}
+	st := runStats{Conclusive: map[string]bool{}, ConclusiveDenied: map[string]bool{}}
 	rs := w.Run(Options{Only: os.Getenv("LIVEREPLAY_ONLY"), Log: func(r Result) {
 		rec := map[string]any{"variant": r.Variant, "actor": r.Actor, "op": r.OpKey, "method": r.Method, "target": r.Target,
 			"obj": r.ObjTenant, "verdict": r.Verdict.String(), "status": r.Status, "class": r.Class, "detail": r.Detail, "desc": r.Desc}
@@ -559,6 +627,9 @@ func runOnce(t *testing.T, binary, sink string) runStats {
 			st.Probes++
 			if r.Status != 0 && r.Status != 400 && r.Status != 422 && r.Status != 429 {
 				st.Conclusive[r.OpKey] = true
+				if a := w.Actors[r.Actor]; a != nil && !a.DenyAll && r.Verdict == Deny {
+					st.ConclusiveDenied[r.OpKey] = true
+				}
 			}
 		}
 	}
@@ -569,7 +640,26 @@ func runOnce(t *testing.T, binary, sink string) runStats {
 			st.Ops++
 		}
 	}
+	t.Logf("volatile keys dropped from fingerprints: %v; id fallbacks (kind: probes sent id 1): %v", w.DroppedVolatile(), w.Fallbacks)
 	t.Logf("server throttled %d requests; quiescence calibration found %d drifting item(s): %v", w.Throttled, len(w.DriftFound), w.DriftFound)
+	// A run whose oracles were blind or whose server went away proves nothing
+	// (review findings 2, 3, 7): fail it instead of reporting a null result.
+	if len(w.DeadBefore) > 0 {
+		t.Errorf("effect oracle blind before the first probe: fingerprint paths not 2xx: %v", w.DeadBefore)
+	}
+	if len(w.DeadAfter) > 0 && !unmodified {
+		t.Logf("planted build: fingerprint paths not 2xx after the run (expected when the defect lets a probe destroy a fixture): %v", w.DeadAfter)
+	} else if len(w.DeadAfter) > 0 {
+		t.Errorf("fingerprint paths not 2xx after the run (a probe destroyed or suspended a fixture, or the server failed): %v", w.DeadAfter)
+	}
+	if n, last := w.TransportErrors(); n > 0 {
+		t.Errorf("%d request(s) got no HTTP answer (last: %s); the results of this run cannot be believed", n, last)
+	}
+	select {
+	case <-srv.Exited():
+		t.Errorf("the server process exited during the run; see %s.server.log", sink)
+	default:
+	}
 	return st
 }
 
@@ -594,7 +684,7 @@ func TestLiveReplay(t *testing.T) {
 	}
 	var stable map[string]Result
 	for i := 1; i <= repeat; i++ {
-		st := runOnce(t, bin, filepath.Join(out, fmt.Sprintf("results-run%d.jsonl", i)))
+		st := runOnce(t, bin, filepath.Join(out, fmt.Sprintf("results-run%d.jsonl", i)), true)
 		writeCandidates(t, filepath.Join(out, fmt.Sprintf("candidates-run%d.tsv", i)), st.Cands)
 		keys := map[string]Result{}
 		for _, c := range st.Cands {
@@ -609,7 +699,15 @@ func TestLiveReplay(t *testing.T) {
 				}
 			}
 		}
-		t.Logf("run %d: probes=%d controls=%d (ok %d) candidates=%d conclusive-ops=%d/%d", i, st.Probes, st.Controls, st.ControlOK, len(st.Cands), len(st.Conclusive), st.Ops)
+		t.Logf("run %d: probes=%d controls=%d (ok %d) candidates=%d", i, st.Probes, st.Controls, st.ControlOK, len(st.Cands))
+		t.Logf("run %d coverage: authz-conclusive-ops=%d/%d (a real signed-in actor, model verdict deny, conclusive answer; PREREG R4); any-actor-conclusive-ops=%d/%d (includes credential rejection by anon/garbage/... and is not authorization coverage)", i, len(st.ConclusiveDenied), st.Ops, len(st.Conclusive), st.Ops)
+		// R2: the unplanted build must not report what a plant is meant to cause.
+		for _, p := range plants {
+			if k := slices.IndexFunc(st.Cands, p.detected); k >= 0 {
+				c := st.Cands[k]
+				t.Errorf("R2: the unmodified server reports the candidate plant %q looks for: %s %s %s", p.name, c.Class, c.Actor, c.Target)
+			}
+		}
 		var sk []string
 		for k, v := range st.Summary {
 			sk = append(sk, fmt.Sprintf("%s=%d", k, v))
@@ -664,7 +762,7 @@ var plants = []plant{
 		},
 	},
 	{
-		name: "revoked PAT and revoked machine token still validate",
+		name: "revoked PAT still validates (PAT validation skips the revoked flag)",
 		file: "internal/core/pat.go",
 		edits: [][2]string{{
 			"\tif pat.Revoked {\n\t\treturn nil, nil, nil, 0, ErrPATRevoked",
@@ -695,19 +793,12 @@ func TestLiveReplay_PlantedDefects(t *testing.T) {
 	root := harness.RepoRoot(t)
 	out := outDir(t)
 	for i, p := range plants {
-		p := p
 		t.Run(fmt.Sprintf("plant%d", i+1), func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "keyorix-server")
 			buildServer(t, root, bin, applyPlant(t, root, p))
-			st := runOnce(t, bin, filepath.Join(out, fmt.Sprintf("plant%d.jsonl", i+1)))
+			st := runOnce(t, bin, filepath.Join(out, fmt.Sprintf("plant%d.jsonl", i+1)), false)
 			writeCandidates(t, filepath.Join(out, fmt.Sprintf("plant%d-candidates.tsv", i+1)), st.Cands)
-			found := false
-			for _, c := range st.Cands {
-				if p.detected(c) {
-					found = true
-					break
-				}
-			}
+			found := slices.ContainsFunc(st.Cands, p.detected)
 			t.Logf("plant %q: %d candidates, detected=%v", p.name, len(st.Cands), found)
 			if !found {
 				t.Fatalf("planted defect NOT detected: %s. The harness is broken; no clean result from this run can be believed.", p.name)
@@ -736,7 +827,7 @@ func TestLiveReplay_Isolate(t *testing.T) {
 		Status                                                            int
 	}
 	var recs []rec
-	for _, ln := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	for ln := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		var m rec
 		if json.Unmarshal([]byte(ln), &m) == nil && (strings.HasPrefix(m.Class, "CANDIDATE") || m.Class == ClassServerError) {
 			recs = append(recs, m)
@@ -756,51 +847,6 @@ func TestLiveReplay_Isolate(t *testing.T) {
 		srv, pw := bootThrowaway(t, bin)
 		w := buildWorld(t, srv, pw)
 		w.DriftFound = w.Calibrate(3)
-		if pre := os.Getenv("LIVEREPLAY_ISOLATE_PRE"); pre != "" {
-			// run the named operations' normal probes and controls first, to show
-			// which earlier step a candidate depends on
-			if pre == "machine-roles-control" {
-				ap, _ := w.FirstID("A", "project")
-				am, _ := w.FirstID("A", "machine")
-				op, ok := w.matchOp("POST", "/api/v1/projects/"+ap+"/machine-identities/"+am+"/roles")
-				if !ok {
-					t.Fatal("machine roles operation not found")
-				}
-				p, ok := w.build(w.Actors["A"], op, "A", "control")
-				if !ok {
-					t.Fatal("cannot build the control")
-				}
-				st, b, _ := w.Do(w.Actors["A"], p.Method, p.Target, p.Body)
-				fmt.Fprintf(&report, "PRE control as A: %s %s body=%s -> %d %.200s\n", p.Method, p.Target, p.Body, st, b)
-			} else {
-				w.Run(Options{Only: pre})
-			}
-			w.DriftFound = w.Calibrate(3)
-		}
-		// LIVEREPLAY_EXTRA: lines "ACTOR METHOD PATH [JSON body]" sent as-is, for
-		// follow-up questions a triage raises (private output only).
-		for _, ln := range strings.Split(os.Getenv("LIVEREPLAY_EXTRA"), ";") {
-			f := strings.Fields(ln)
-			if len(f) < 3 {
-				continue
-			}
-			a := w.Actors[f[0]]
-			if f[0] == "root" {
-				a = w.Observer
-			}
-			var body []byte
-			if len(f) > 3 {
-				body = []byte(strings.Join(f[3:], " "))
-			}
-			st, b, _ := w.Do(a, f[1], f[2], body)
-			fmt.Fprintf(&report, "EXTRA %s %s %s %s -> %d %.240s\n", f[0], f[1], f[2], body, st, b)
-		}
-		if rep == 1 {
-			ap, _ := w.FirstID("A", "project")
-			am, _ := w.FirstID("A", "machine")
-			_, b, _ := w.Do(w.Observer, "GET", "/api/v1/projects/"+ap+"/machine-identities/"+am+"/roles", nil)
-			fmt.Fprintf(&report, "MA machine-identity roles (root view, before probes): %.600s\n\n", b)
-		}
 		for i, m := range recs {
 			path := m.Target
 			if j := strings.IndexByte(path, '?'); j >= 0 {

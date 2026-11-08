@@ -55,6 +55,11 @@ type World struct {
 	// FPTenant tags each FPPath with the tenant whose state it shows ("" =
 	// shared/global). An actor may legitimately change its own tenant's state.
 	FPTenant map[string]string
+	// FPReader overrides the principal that reads a fingerprint path (default
+	// Observer). Some paths are readable only by the object's owner: a secret's
+	// shares answer 403 to the global admin, and a fingerprint of a constant 403
+	// cannot see any change.
+	FPReader map[string]*Actor
 	// Client is the HTTP client every request goes through.
 	Client *http.Client
 
@@ -64,22 +69,36 @@ type World struct {
 	DriftLeaves map[string]map[string]bool
 	// DriftFound is Calibrate's result from the last Run (empty = quiescent).
 	DriftFound []string
+	// DeadBefore and DeadAfter are DeadFingerprintPaths before the first probe
+	// and after the last one of the last Run. Either being non-empty means the
+	// effect oracle was blind on those paths.
+	DeadBefore, DeadAfter []string
 
 	mu        sync.Mutex
 	Throttled int
+	// transportErrs counts requests that got no HTTP answer at all (see
+	// TransportErrors). A run with any of them cannot be believed.
+	transportErrs   int
+	lastTransport   string
+	droppedVolatile map[string]bool
+	// Fallbacks counts build() calls that had no id of a kind and sent id "1".
+	Fallbacks map[string]int
 }
 
 // NewWorld returns an empty world bound to baseURL.
 func NewWorld(baseURL string, spec *Spec) *World {
 	w := &World{
-		BaseURL:  baseURL,
-		Spec:     spec,
-		Actors:   map[string]*Actor{},
-		IDs:      map[string]map[string][]string{"A": {}, "B": {}},
-		Marker:   map[string]string{"A": "lrcanary-a-", "B": "lrcanary-b-"},
-		Refs:     map[string]string{},
-		Recorded: map[string][]Recorded{},
-		Client:   &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		BaseURL:         baseURL,
+		Spec:            spec,
+		Actors:          map[string]*Actor{},
+		IDs:             map[string]map[string][]string{"A": {}, "B": {}},
+		Marker:          map[string]string{"A": "lrcanary-a-", "B": "lrcanary-b-"},
+		Refs:            map[string]string{},
+		Recorded:        map[string][]Recorded{},
+		FPReader:        map[string]*Actor{},
+		Fallbacks:       map[string]int{},
+		droppedVolatile: map[string]bool{},
+		Client:          &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
 	return w
 }
@@ -121,6 +140,10 @@ func (w *World) Do(a *Actor, method, target string, body []byte) (int, []byte, e
 		}
 		resp, err := w.Client.Do(req)
 		if err != nil {
+			w.mu.Lock()
+			w.transportErrs++
+			w.lastTransport = method + " " + target + ": " + err.Error()
+			w.mu.Unlock()
 			return 0, nil, err
 		}
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -183,43 +206,101 @@ func (w *World) matchOp(method, path string) (Op, bool) {
 	return Op{}, false
 }
 
-var volatileKey = regexp.MustCompile(`(?i)(_at$|time|^last|count|reads$|accessed|updated|created|expir|^token$|nonce|etag|checksum|duration|^ts$)`)
+// volatileKey names the keys known to move without any state change: last-seen
+// stamps, read counters, one-time tokens. It is deliberately narrow: an
+// expiry, a created_by, a checksum or an updated_at is state, and a probe that
+// changes one must be seen. A key that drifts on its own without being listed
+// here is found by Calibrate and masked there, with a report. Every key this
+// pattern drops is recorded and logged (World.DroppedVolatile).
+var volatileKey = regexp.MustCompile(`(?i)^(last_[a-z_]+|[a-z_]*_reads|total_reads|(access|read|view)_count|[a-z_]*accessed[a-z_]*|token|nonce|etag|duration[a-z_]*|ts|timestamp|server_time|now)$`)
 
 // stable removes volatile keys from decoded JSON so two reads of unchanged
-// state hash equal.
-func stable(v any) any {
+// state hash equal. Dropped key names are added to dropped (may be nil).
+func stable(v any, dropped map[string]bool) any {
 	switch t := v.(type) {
 	case map[string]any:
 		out := map[string]any{}
 		for k, x := range t {
 			if volatileKey.MatchString(k) {
+				if dropped != nil {
+					dropped[k] = true
+				}
 				continue
 			}
-			out[k] = stable(x)
+			out[k] = stable(x, dropped)
 		}
 		return out
 	case []any:
 		out := make([]any, len(t))
 		for i, x := range t {
-			out[i] = stable(x)
+			out[i] = stable(x, dropped)
 		}
 		return out
 	}
 	return v
 }
 
-// readState reads one fingerprint path as the observer and returns the
-// status class and the decoded body with volatile keys removed.
+// DroppedVolatile lists the key names the volatile-key filter removed from
+// fingerprint documents so far.
+func (w *World) DroppedVolatile() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := make([]string, 0, len(w.droppedVolatile))
+	for k := range w.droppedVolatile {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TransportErrors returns how many requests got no HTTP answer (connection
+// refused or reset, timeout) and the last such error. A server that died or
+// hung mid-run turns every later probe into one of these, which would otherwise
+// read as "nothing found".
+func (w *World) TransportErrors() (int, string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.transportErrs, w.lastTransport
+}
+
+// readState reads one fingerprint path (as the observer unless FPReader names
+// the owner) and returns the status and the decoded body with volatile keys
+// removed.
 func (w *World) readState(p string) (int, any, []byte, error) {
-	status, body, err := w.Do(w.Observer, "GET", p, nil)
+	reader := w.Observer
+	if a := w.FPReader[p]; a != nil {
+		reader = a
+	}
+	status, body, err := w.Do(reader, "GET", p, nil)
 	if err != nil {
 		return 0, nil, nil, err
 	}
 	var v any
 	if json.Unmarshal(body, &v) == nil {
-		return status, stable(v), nil, nil
+		w.mu.Lock()
+		dropped := w.droppedVolatile
+		w.mu.Unlock()
+		// the map is only written from the single replay goroutine
+		return status, stable(v, dropped), nil, nil
 	}
 	return status, nil, body, nil
+}
+
+// DeadFingerprintPaths lists the fingerprint paths that do not currently answer
+// 2xx. A path whose answer is a constant refusal or error can never show a
+// change, so the effect oracle is blind there. Run it before the replay (the
+// world is not usable if it is non-empty) and after (a probe destroyed or
+// suspended a fixture).
+func (w *World) DeadFingerprintPaths() []string {
+	var dead []string
+	for _, p := range w.FPPaths {
+		st, _, _, err := w.readState(p)
+		if err != nil || st < 200 || st > 299 {
+			dead = append(dead, p+" -> "+strconv.Itoa(st))
+		}
+	}
+	sort.Strings(dead)
+	return dead
 }
 
 // leaves flattens a decoded value into pointer -> scalar text.

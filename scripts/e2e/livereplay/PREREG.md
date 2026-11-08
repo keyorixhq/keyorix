@@ -45,9 +45,11 @@ R2. Planted-defect self-test (must pass before any result is believed).
     missing auth, 403-but-executed delete, filter leak) is reported with the
     expected class and actor and no candidate lands on an unplanted op.
     Level 2: the real server built with `go build -overlay` plants
-    (cross-tenant secret authorization, lower-role write, token-revocation
+    (cross-tenant secret authorization, lower-role write, PAT-revocation
     skip) must each surface as a candidate on the planted behaviour, and the
-    unplanted build must not report those candidates. A plant that is not
+    unplanted build must not report those candidates (asserted by
+    `TestLiveReplay` for every plant). The revoked machine token has no plant;
+    its refusal is exercised but its detection is not proven. A plant that is not
     found voids the run: the harness is then declared broken, not the server
     clean.
 
@@ -61,10 +63,19 @@ R3. Finding rule. A candidate is a FINDING only when (a) its key (class,
 R4. Model divergence. Report counts of `model-allow-refused`, `inconclusive`
     (400/404/405/409/422/429) and `server-error` per variant. Coverage is
     reported, not gated: the share of operations with at least one
-    conclusive (non-400/422) probe from a denied actor.
+    conclusive (non-400/422) probe from a denied actor. Two numbers are logged
+    and must not be confused: authz coverage (a signed-in actor A, B, V, N, MA
+    or MB with a Deny verdict) and any-actor coverage (also counts anon,
+    garbage and other credential rejections, which is always close to 100%).
 
 R5. A null result (zero confirmed findings) is a valid outcome and is
     reported as such.
+
+R6. Run integrity. A run is void, not clean, if before the first or after the
+    last probe any fingerprint path of the effect oracle does not answer 2xx
+    (the oracle is blind there, or a probe destroyed a fixture), if any request
+    got no HTTP answer, or if the server process exited. Seeding that cannot
+    create a fixture (group, ACL, invitation, share, PAT) fails the run.
 
 ## Safety
 
