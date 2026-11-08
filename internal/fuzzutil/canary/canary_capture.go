@@ -129,11 +129,11 @@ func RunGuarded(fatalf func(format string, args ...any), label string, fn func()
 // their fixture: the coordinator process builds the fixture too but never runs an
 // input, and redirecting its standard output would swallow the fuzzer's progress
 // lines. Safe to call on every execution.
-func (c *Capture) InstallOnce(dir string) error {
+func (c *Capture) InstallOnce(dir string, create func(string) (*os.File, error)) error {
 	var err error
 	c.installOnce.Do(func() {
 		restoreLogs := c.InstallLogs()
-		restoreStdio, stdioErr := c.InstallStdio(dir)
+		restoreStdio, stdioErr := c.InstallStdio(dir, create)
 		if stdioErr != nil {
 			restoreLogs()
 			err = stdioErr
@@ -172,10 +172,12 @@ func (c *Capture) InstallLogs() (restore func()) {
 // InstallStdio points os.Stdout and os.Stderr at files in dir until the returned
 // function is called. It replaces the two variables, so it sees everything that
 // writes through them; it does not see a direct write to file descriptor 1 or 2,
-// or a writer that copied the variable earlier.
-func (c *Capture) InstallStdio(dir string) (restore func(), err error) {
+// or a writer that copied the variable earlier. The test passes create (os.Create)
+// so that this non-test package holds no file-write call of its own for
+// cmd/statemapgen's inventory of production stores to pick up.
+func (c *Capture) InstallStdio(dir string, create func(string) (*os.File, error)) (restore func(), err error) {
 	open := func(channel string) (*capturedFile, error) {
-		f, err := os.Create(filepath.Join(dir, "captured-"+channel))
+		f, err := create(filepath.Join(dir, "captured-"+channel))
 		if err != nil {
 			return nil, err
 		}

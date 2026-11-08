@@ -34,7 +34,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"gorm.io/driver/sqlite"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -617,7 +617,7 @@ func coreFail(format string, args ...any) { panic(coreInvalid(fmt.Sprintf(format
 // reason the run proved nothing.
 func runCoreCanaryProgram(t testing.TB, fx *coreCanaryFixture, dir string, program []byte, allow *canary.Allowlist, leak coreCanaryLeak) (r *coreCanaryRun, invalid string) {
 	t.Helper()
-	if err := fx.capture.InstallOnce(fx.dir); err != nil {
+	if err := fx.capture.InstallOnce(fx.dir, os.Create); err != nil {
 		t.Fatalf("capture: %v", err)
 	}
 	r = fx.newRun(t, dir, program, allow)

@@ -486,7 +486,7 @@ func (in requestEchoInput) seed() []byte {
 // runRequestEcho executes one input. plant is the red-proof's planted leak.
 func runRequestEcho(t testing.TB, fx *requestEchoFixture, dir string, in requestEchoInput, allow *canary.Allowlist, wrap func(*requestEchoRun, http.Handler) http.Handler, plant func(*requestEchoRun)) (r *requestEchoRun, invalid string) {
 	t.Helper()
-	if err := fx.capture.InstallOnce(fx.captureDir); err != nil {
+	if err := fx.capture.InstallOnce(fx.captureDir, os.Create); err != nil {
 		t.Fatalf("capture: %v", err)
 	}
 	r = fx.newRun(t, dir, in.seed(), allow)

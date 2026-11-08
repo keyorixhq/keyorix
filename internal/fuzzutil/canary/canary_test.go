@@ -181,7 +181,7 @@ func TestInstallLogsCapturesBothLoggers(t *testing.T) {
 
 func TestInstallStdioSeesEveryWriteWithoutWaiting(t *testing.T) {
 	c := NewCapture()
-	restore, err := c.InstallStdio(t.TempDir())
+	restore, err := c.InstallStdio(t.TempDir(), os.Create)
 	if err != nil {
 		t.Fatal(err)
 	}
