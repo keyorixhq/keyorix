@@ -1635,6 +1635,7 @@ paths:
           description: "Envelope {data=null, message='Member added'}."
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
 
   /api/v1/projects/{id}/members/{userId}:
@@ -1739,6 +1740,7 @@ paths:
           description: "Envelope {data, message='Member invited'}. data.membership is the created membership object."
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
 
   /api/v1/projects/{id}/memberships/{membershipId}:
