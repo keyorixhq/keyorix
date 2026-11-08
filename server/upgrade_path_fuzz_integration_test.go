@@ -22,7 +22,7 @@ package main
 //
 // Env: KX_UPGRADE_BINDIR (required), KX_UPGRADE_TAGS (comma list; default: every
 // file in BINDIR), KX_UPGRADE_SEED, KX_UPGRADE_KILLS (kill iterations per tag,
-// default 3), KX_UPGRADE_ARTIFACTS (failing post-kill snapshots).
+// default 6; a tag needs >= 3 that landed, see R3), KX_UPGRADE_ARTIFACTS (failing post-kill snapshots).
 
 import (
 	"bytes"
@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -45,6 +46,9 @@ import (
 )
 
 const upgPass = "upgrade-fuzz-passphrase-0001"
+
+// upgMinLandedKills is R3's minimum of landed interrupted-migration kills per tag.
+const upgMinLandedKills = 3
 
 type upgSecret struct {
 	Name     string
@@ -224,8 +228,13 @@ func dbFingerprint(t *testing.T, dir string) (schema, data string) {
 	var parts []string
 	for rows.Next() {
 		var s string
-		_ = rows.Scan(&s)
+		if err := rows.Scan(&s); err != nil {
+			t.Fatalf("schema scan: %v", err)
+		}
 		parts = append(parts, s)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("schema rows: %v", err)
 	}
 	_ = rows.Close()
 	h := sha256.Sum256([]byte(strings.Join(parts, "\n")))
@@ -235,29 +244,52 @@ func dbFingerprint(t *testing.T, dir string) (schema, data string) {
 		`SELECT id, secret_node_id, version_number, hex(encrypted_value) FROM secret_versions ORDER BY id`,
 		`SELECT id, name, COALESCE(deleted_at,'') FROM secret_nodes ORDER BY id`,
 	} {
+		// A failing read must fail the test: two identically broken reads would
+		// otherwise hash equal and make the S3 comparison pass vacuously.
 		r, err := db.Query(q)
 		if err != nil {
-			_, _ = fmt.Fprintf(dh, "ERR:%v\n", err)
-			continue
+			t.Fatalf("data fingerprint query %q: %v", q, err)
 		}
-		cols, _ := r.Columns()
+		cols, err := r.Columns()
+		if err != nil {
+			t.Fatalf("data fingerprint columns %q: %v", q, err)
+		}
 		for r.Next() {
 			vals := make([]any, len(cols))
 			ptrs := make([]any, len(cols))
 			for i := range vals {
 				ptrs[i] = &vals[i]
 			}
-			_ = r.Scan(ptrs...)
+			if err := r.Scan(ptrs...); err != nil {
+				t.Fatalf("data fingerprint scan %q: %v", q, err)
+			}
 			_, _ = fmt.Fprintf(dh, "%v\n", vals)
+		}
+		if err := r.Err(); err != nil {
+			t.Fatalf("data fingerprint rows %q: %v", q, err)
 		}
 		_ = r.Close()
 	}
 	return schema, hex.EncodeToString(dh.Sum(nil))
 }
 
+// upgKillLanded reports whether a planned kill really interrupted the child
+// (R3 counts only those). change/time plans land only if the child died of
+// SIGKILL: runChild also sets killed when the signal races a child that had
+// already exited. A diskfull plan has no signal; it lands if the child failed.
+func upgKillLanded(plan killPlan, exitErr error) bool {
+	var ee *exec.ExitError
+	if !errors.As(exitErr, &ee) {
+		return false
+	}
+	if plan.kind == "diskfull" {
+		return true
+	}
+	ws, ok := ee.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL
+}
+
 type upgCtx struct {
-	t      *testing.T
-	head   string
 	led    upgLedger
 	w      *crashWorld // reuse of checker plumbing
 	ids    []uint
@@ -299,7 +331,7 @@ func TestUpgradePathFuzz(t *testing.T) {
 		sort.Strings(tags)
 	}
 	seed := int64(soakEnvInt("KX_UPGRADE_SEED", int(time.Now().UnixNano()%1_000_000)+1))
-	kills := soakEnvInt("KX_UPGRADE_KILLS", 3)
+	kills := soakEnvInt("KX_UPGRADE_KILLS", 6) // not every attempt lands; R3 needs >= upgMinLandedKills that do
 	artifacts := os.Getenv("KX_UPGRADE_ARTIFACTS")
 	t.Logf("upgrade-path fuzz: seed=%d kills/tag=%d tags=%v", seed, kills, tags)
 	head := fuzzHeadBinary(t)
@@ -326,6 +358,11 @@ func TestUpgradePathFuzz(t *testing.T) {
 				backupOK = false
 				t.Logf("NOTE(%s): old binary cannot take a backup (%v): %s", tag, err, tail(out, 200))
 			}
+			if !backupOK {
+				// R2: without S5 the tag is not covered. Reported BLOCKED (never PASS)
+				// once the remaining scenarios have run; a failure above still fails the tag.
+				defer t.Skipf("BLOCKED(%s): S5 not run, the old binary cannot take a backup", tag)
+			}
 			nDel := 0
 			for _, sec := range led {
 				if sec.Deleted {
@@ -339,7 +376,7 @@ func TestUpgradePathFuzz(t *testing.T) {
 				}
 				return n
 			}())
-			u := &upgCtx{t: t, head: head, led: led, ids: func() []uint {
+			u := &upgCtx{led: led, ids: func() []uint {
 				var ids []uint
 				for id := range led {
 					ids = append(ids, id)
@@ -364,7 +401,9 @@ func TestUpgradePathFuzz(t *testing.T) {
 			if v := u.verifyUpgraded(clean, port); len(v) > 0 {
 				t.Errorf("S2 clean upgrade from %s: %s", tag, strings.Join(v, "\n  "))
 			}
-			s1, d1 := dbFingerprint(t, clean)
+			// s1 is the schema after the S2 verification boot: the reference for S4 (a),
+			// which also ends with a boot. S4 (b) compares migrate-only schemas (cleanSchema).
+			s1, _ := dbFingerprint(t, clean)
 			if sOld, _ := dbFingerprint(t, dir); sOld == s1 {
 				t.Logf("NOTE(%s): HEAD migration left the schema fingerprint unchanged (no schema delta between this tag and HEAD)", tag)
 			}
@@ -372,7 +411,10 @@ func TestUpgradePathFuzz(t *testing.T) {
 			// since a server start may legitimately touch state; compare migrate-only).
 			clean2 := t.TempDir()
 			copyTree(t, dir, clean2)
-			_, _ = migrate(clean2)
+			if out, err := migrate(clean2); err != nil {
+				t.Errorf("S3 first migrate failed: %v\n%s", err, tail(out, 400))
+				return
+			}
 			sA, dA := dbFingerprint(t, clean2)
 			if out, err := migrate(clean2); err != nil {
 				t.Errorf("S3 second migrate failed: %v\n%s", err, tail(out, 400))
@@ -382,18 +424,21 @@ func TestUpgradePathFuzz(t *testing.T) {
 				t.Errorf("S3 migrate is not idempotent on %s data (schema same=%v, data same=%v)", tag, sA == sB, dA == dB)
 			}
 			cleanSchema := sA
-			_ = s1
-			_ = d1
 			// S4: interrupted migration.
 			calDir := t.TempDir()
 			copyTree(t, dir, calDir)
 			w := &crashWorld{t: t, bin: head, dir: calDir}
-			_, nChanges, calDur, _, _ := runChild(w, calDir, upgPass, []string{"migrate", "--config", "./keyorix.yaml"}, nil)
+			_, nChanges, calDur, calOut, calErr := runChild(w, calDir, upgPass, []string{"migrate", "--config", "./keyorix.yaml"}, nil)
+			if calErr != nil {
+				t.Fatalf("S4 calibration migrate failed (kill points would all land at t=0): %v\n%s", calErr, tail(calOut, 400))
+			}
+			landed := map[string]int{}
 			for i := range kills {
 				var plan killPlan
 				switch i % 3 {
 				case 0:
-					plan = killPlan{kind: "change", n: rng.Intn(nChanges + 1)}
+					// n >= 1: n=0 kills on the first poll, before migration did any work.
+					plan = killPlan{kind: "change", n: 1 + rng.Intn(max(nChanges, 1))}
 				case 1:
 					plan = killPlan{kind: "time", after: time.Duration(rng.Int63n(int64(calDur) + 1))}
 				default:
@@ -401,23 +446,36 @@ func TestUpgradePathFuzz(t *testing.T) {
 				}
 				d := t.TempDir()
 				copyTree(t, dir, d)
-				killed, _, _, _, _ := runChild(w, d, upgPass, []string{"migrate", "--config", "./keyorix.yaml"}, &plan)
+				_, _, _, _, killErr := runChild(w, d, upgPass, []string{"migrate", "--config", "./keyorix.yaml"}, &plan)
+				killed := upgKillLanded(plan, killErr)
+				if killed {
+					landed[plan.kind]++
+				}
 				snap := t.TempDir()
 				copyTree(t, d, filepath.Join(snap, "install"))
 				var viol []string
-				// (a) plain server start (auto-migration path), must reach the clean state.
+				// (a) plain server start (auto-migration path): values (verifyUpgraded) and
+				// the schema after that boot must equal the clean upgrade's (s1).
 				if va := u.verifyUpgraded(d, port); len(va) > 0 {
 					viol = append(viol, "(a) server start after killed migrate: "+strings.Join(va, "; "))
+				} else if sa, _ := dbFingerprint(t, d); sa != s1 {
+					viol = append(viol, "(a) schema after server start on a killed migrate differs from clean upgrade")
 				}
-				// (b) re-run migrate on a fresh copy of the same snapshot.
+				// (b) re-run migrate on a fresh copy of the same snapshot: schema right after
+				// the migrate (before any boot) equals cleanSchema, then values via a boot.
 				d2 := t.TempDir()
 				copyTree(t, filepath.Join(snap, "install"), d2)
 				if out, err := migrate(d2); err != nil {
 					viol = append(viol, fmt.Sprintf("(b) re-run migrate after kill failed: %v %s", err, tail(out, 300)))
-				} else if sx, _ := dbFingerprint(t, d2); sx != cleanSchema {
-					viol = append(viol, "(b) schema after kill+re-run migrate differs from clean upgrade")
+				} else {
+					if sx, _ := dbFingerprint(t, d2); sx != cleanSchema {
+						viol = append(viol, "(b) schema after kill+re-run migrate differs from clean upgrade")
+					}
+					if vb := u.verifyUpgraded(d2, port); len(vb) > 0 {
+						viol = append(viol, "(b) values after kill+re-run migrate: "+strings.Join(vb, "; "))
+					}
 				}
-				t.Logf("%s S4 iter %d plan=%s killed=%v violations=%d", tag, i, plan, killed, len(viol))
+				t.Logf("%s S4 iter %d plan=%s landed=%v violations=%d", tag, i, plan, killed, len(viol))
 				if len(viol) > 0 {
 					dest := snap
 					if artifacts != "" {
@@ -427,6 +485,11 @@ func TestUpgradePathFuzz(t *testing.T) {
 					}
 					t.Errorf("VIOLATION %s S4 iter %d plan=%s snapshot=%s:\n  %s", tag, i, plan, dest, strings.Join(viol, "\n  "))
 				}
+			}
+			nLanded := landed["change"] + landed["time"] + landed["diskfull"]
+			t.Logf("%s S4 kills landed: %d of %d attempts (change=%d time=%d diskfull=%d)", tag, nLanded, kills, landed["change"], landed["time"], landed["diskfull"])
+			if nLanded < upgMinLandedKills {
+				t.Errorf("R3 not met for %s: %d kills landed of %d attempts, need >= %d (raise KX_UPGRADE_KILLS)", tag, nLanded, kills, upgMinLandedKills)
 			}
 			// S5: OLD backup restores with HEAD into a wiped host.
 			if backupOK {
@@ -475,9 +538,6 @@ func TestUpgradePathFuzz(t *testing.T) {
 
 func copyTreeFile(t *testing.T, src, dst string) { copyTree2(t, src, dst) }
 
-var _ = exec.Command
-var _ = syscall.SIGKILL
-
 // TestUpgradePathChecker_Planted (pre-registered R1/U1): after a clean upgrade,
 // one flipped ciphertext byte must make the S2 verification path fail.
 func TestUpgradePathChecker_Planted(t *testing.T) {
@@ -504,7 +564,7 @@ func TestUpgradePathChecker_Planted(t *testing.T) {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	u := &upgCtx{t: t, head: head, led: led, ids: ids, expect: led.asCrash(), w: &crashWorld{t: t, bin: head}}
+	u := &upgCtx{led: led, ids: ids, expect: led.asCrash(), w: &crashWorld{t: t, bin: head}}
 	if out, err := runAdmin(t, head, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+upgPass), "migrate", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("migrate: %v %s", err, tail(out, 300))
 	}
