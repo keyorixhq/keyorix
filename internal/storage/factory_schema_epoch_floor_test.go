@@ -135,7 +135,7 @@ func TestSchemaEpochFloor_StartsInsideSupportedRange(t *testing.T) {
 		{name: "same epoch, same floor", epoch: e, floor: floor, wantEpoch: e, wantFloor: floor},
 		{name: "same epoch, no floor yet (pre-ADR-101 database)", epoch: e, floor: "", wantEpoch: e, wantFloor: floor},
 		{name: "newer epoch, floor covers this binary", epoch: next, floor: e, wantEpoch: next, wantFloor: e},
-		{name: "much newer epoch, floor covers this binary", epoch: "9", floor: e, wantEpoch: "9", wantFloor: e},
+		{name: "much newer epoch, floor covers this binary", epoch: strconv.Itoa(currentSchemaEpoch + 5), floor: e, wantEpoch: strconv.Itoa(currentSchemaEpoch + 5), wantFloor: e},
 		{name: "previous epoch (normal upgrade)", epoch: "1", floor: "1", wantEpoch: e, wantFloor: floor},
 		{name: "older epoch (normal upgrade)", epoch: "0", floor: "", wantEpoch: e, wantFloor: floor},
 	}

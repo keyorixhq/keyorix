@@ -42,6 +42,10 @@ var jwksEgressTransport = func() *http.Transport {
 	return tr
 }()
 
+// maxJWKSRedirects is the number of requests (the original plus followed
+// redirects) after which a further redirect is refused.
+const maxJWKSRedirects = 3
+
 // jwksCacheTTL bounds how long a fetched key set is trusted before a refetch.
 const jwksCacheTTL = 1 * time.Hour
 
@@ -121,13 +125,19 @@ func NewHTTPJWKSResolver(jwksURIs map[string]string) (*HTTPJWKSResolver, error) 
 // scheme. validateJWKSScheme only vets the *configured* jwks_uri; without this a
 // trusted https jwks_uri that 302s (open redirect on the IdP, or a compromised
 // IdP) to http://attacker/ would be followed and attacker keys fetched, which
-// would then validate forged tokens. Same-origin redirects are still allowed.
+// would then validate forged tokens. Same-origin redirects are still allowed, up
+// to maxJWKSRedirects hops: a custom CheckRedirect replaces net/http's own
+// 10-hop default, so the cap has to be enforced here. "Origin" includes the port
+// (URL.Host, not Hostname()).
 func noCrossOriginRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) == 0 {
 		return nil
 	}
+	if len(via) >= maxJWKSRedirects {
+		return fmt.Errorf("jwks fetch: refusing redirect after %d hops", len(via))
+	}
 	prev := via[len(via)-1].URL
-	if !strings.EqualFold(req.URL.Hostname(), prev.Hostname()) {
+	if !strings.EqualFold(req.URL.Host, prev.Host) {
 		return fmt.Errorf("jwks fetch: refusing cross-host redirect to %q", req.URL.Host)
 	}
 	if prev.Scheme == "https" && req.URL.Scheme != "https" {
