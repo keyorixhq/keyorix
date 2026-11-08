@@ -219,3 +219,86 @@ above stay as they are.
   either arm, otherwise it is a harness finding and is reported as such.
   A run that dies for infrastructure reasons (not a fuzz failure) is rerun with
   the same label and the rerun is reported.
+
+## Results (10 repeats, 2026-11-08, pve01, Amendment 1)
+
+60 runs, 10 per arm per condition, each with an empty cache, 5 minutes, 6 runs
+in parallel (`-test.parallel=1`, `GOMAXPROCS=1`, nice 10), arms interleaved. One
+binary (commit `bac73541e` sources). Package temperature peaked at 92 C, load
+average about 5 to 6 during the runs. No run died for infrastructure reasons;
+none was rerun. Raw logs are kept outside the repository. Throughput was about
+260 executions per run (the Mac round had 94 to 666), so the registered
+"after 300 executions" point was reached by only 2 of 10 runs per arm.
+
+### Validity checks
+
+* Self-test: the RARE plant was detected (an `F` line) in 4 of 10 P runs and
+  5 of 10 T runs; the COMMON plant in 10 of 10 in each arm. Valid.
+* CLEAN control: no `F` line in either arm (0 of 20). Silent, as required.
+
+### Condition 2, RARE plant: time to the first `F` line (seconds; 300 = not found in 5 min)
+
+| arm | runs | median | min / max | found |
+|---|---|---|---|---|
+| P | 300, 300, 15, 300, 88, 33, 300, 17, 300, 300 | 300 | 15 / 300 | 4 of 10 |
+| T | 300, 219, 26, 30, 22, 300, 270, 300, 300, 300 | 285 | 22 / 300 | 5 of 10 |
+
+Rule (1): T median 285 s is strictly smaller than P median 300 s, and T found 5
+against 4, so rule (1) is met on its letter. Both medians sit at the censoring
+cap or one step from it: the P median is the cap itself, and the T median is the
+mean of the 5th and 6th ordered values (270 and 300). The difference is one
+found run; an exact two-sided permutation p-value on the median difference is
+1.00 (description only). The Go engine itself reported a failing input in 4 P
+and 3 T runs. Secondary: in the 3-repeat round the plant was found in 5 of 6
+runs; here in 9 of 20, so the plant is hard for both arms on one core.
+
+### Condition 1, CLEAN: decision tuples reached (of the 103 census tuples)
+
+| | median | min / max |
+|---|---|---|
+| P, after 100 execs | 29 | 26 / 42 |
+| T, after 100 execs | 28 | 26 / 36 |
+| P, after 200 execs | 33 (9 runs) | 29 / 44 |
+| T, after 200 execs | 31 | 28 / 43 |
+| P, end of run (median 261 execs) | 35 | 31 / 44 |
+| T, end of run (median 267.5 execs) | 35 | 28 / 47 |
+
+* Paired repeats (repeat i of P against repeat i of T), T higher / lower / tied:
+  at 100 execs 3 / 6 / 1; at 200 execs 3 / 6 / 0 (9 pairs); at end of run
+  5 / 5 / 0.
+* At 300 executions only 2 P runs (33, 40) and 2 T runs (34, 35) have a value;
+  only one repeat has a value in both arms (T 34 against P 40). The registered
+  criterion "T higher in at least 7 of 10 paired repeats at 300 executions" is
+  therefore not met (0 of 10; 1 evaluable pair, T lower). The medians at 300
+  executions (P 36.5, T 34.5) rest on 2 runs each and mean little.
+* M2 time-to-all and time to 90 of 103: not reached in any run of either arm
+  (best run 47 of 103). Tuples outside the census: 2 to 7 per run in both arms.
+
+### Condition 3, COMMON plant (control)
+
+P median 4 s (4 to 5), T median 5 s (4 to 5); 10 of 10 found in each arm, on the
+first seed execution. Ratio of medians T/P is 1.03, far from the 2x harm line.
+The control is trivial by construction and says only that the feedback does no
+harm here.
+
+### Verdict by the registered rule
+
+* Rule (1), RARE: met on its letter (285 s against 300 s; 5 against 4 found).
+* Rule (2), CLEAN: not met. Median reach at the end of the run is equal (35 and
+  35, so "not lower" holds), but the paired criterion fails (0 of 10 at 300
+  executions, and 300 executions were mostly not reached), and at 100 and 200
+  executions T is lower in 6 of 10 and 6 of 9 pairs.
+* Both are required, so the metric is not credited. The control shows no harm.
+
+### Is 10 repeats enough
+
+No. The rare-plant result is borderline: it rests on a one-run difference in
+found counts and a median that sits at the censoring cap; the permutation
+p-value is 1.00. 4 of 10 against 5 of 10 cannot be told apart at this sample
+size (a difference of that size would need on the order of hundreds of runs to
+be detected). The clean-condition reach differences are within the spread
+between repeats (end-of-run range 31 to 44 for P, 28 to 47 for T). The run
+supports "no measurable effect of the feedback in this harness at this
+budget", not "the feedback helps" and not a proof of harm. The earlier
+conclusion that tuple feedback adds little over plain edge coverage here is
+unchanged.
