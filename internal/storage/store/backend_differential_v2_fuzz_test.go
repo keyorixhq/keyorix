@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"gorm.io/driver/postgres"
@@ -542,15 +541,6 @@ func diffTerm(name, name2 string, a byte) string {
 		return name2
 	}
 	return name
-}
-
-func diffASCII(s string) bool {
-	for _, r := range s {
-		if r > unicode.MaxASCII {
-			return false
-		}
-	}
-	return true
 }
 
 func ptrOf[T any](v T) *T { return &v }
