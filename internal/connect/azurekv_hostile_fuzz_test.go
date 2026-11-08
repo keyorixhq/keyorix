@@ -33,15 +33,24 @@ func (hostileAzureCred) GetToken(_ context.Context, _ policy.TokenRequestOptions
 }
 
 // strictAzureSecret: Key Vault "Get Secret" returns {"value": "<string>", ...};
-// an absent, null or empty value is not a secret.
+// an absent, null or empty value is not a secret. Member names are matched
+// exactly (RFC 8259 names are case-sensitive): encoding/json's struct decoding
+// folds case, which would let a {"value":"x","VALUE":null} body read as "no
+// value" while the SDK, which looks the member up by its exact name, reads "x".
 func strictAzureSecret(b []byte) (string, bool) {
-	var d struct {
-		Value *string `json:"value"`
-	}
-	if json.Unmarshal(b, &d) != nil || d.Value == nil || *d.Value == "" {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
 		return "", false
 	}
-	return *d.Value, true
+	raw, ok := m["value"]
+	if !ok {
+		return "", false
+	}
+	var v *string
+	if json.Unmarshal(raw, &v) != nil || v == nil || *v == "" {
+		return "", false
+	}
+	return *v, true
 }
 
 func FuzzAzureKVHostileEndpoint(f *testing.F) {
