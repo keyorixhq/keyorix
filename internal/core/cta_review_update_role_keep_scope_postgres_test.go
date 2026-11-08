@@ -22,18 +22,48 @@
 package core
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
 func TestCTAReview_UpdateRoleKeepScope_vs_NarrowScope_CrossReplicaPostgres(t *testing.T) {
-	t.Parallel()
+	// delayAAudit holds replica A's audit INSERT back until B's audit row exists, which
+	// forces the order the unforced run only hits occasionally: B commits its roles
+	// UPDATE after A, finishes and audits before A's post-commit audit row lands.
+	for _, delayAAudit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delay-A-audit=%v", delayAAudit), func(t *testing.T) {
+			t.Parallel()
+			testUpdateRoleKeepScopeVsNarrowScope(t, delayAAudit)
+		})
+	}
+}
+
+func testUpdateRoleKeepScopeVsNarrowScope(t *testing.T, delayAAudit bool) {
 	f := newCTAReview(t)
+	coreA := f.coreA
+	if delayAAudit {
+		// A's audit row is the one that names no scope change; B's names the narrowing.
+		coreA = NewKeyorixCore(hooked(localstore.NewLocalStorage(f.dbA), &storeHooks{
+			WrapTx: true,
+			LogAuditEvent: func(next storage.Storage, ctx context.Context, e *models.AuditEvent) error {
+				if strings.Contains(e.Description, "cta-keep-scope") && !strings.Contains(e.Description, "assignable_scope") {
+					time.Sleep(500 * time.Millisecond)
+				}
+				return next.LogAuditEvent(ctx, e)
+			},
+		}))
+		coreA.SetAuthEncryptor(f.enc)
+	}
 
 	role, _, err := f.setup.CreateRoleWithScope(f.ctx, f.adminID, "cta-keep-scope", "before", nil, models.RoleAssignableAny)
 	require.NoError(t, err)
@@ -50,7 +80,7 @@ func TestCTAReview_UpdateRoleKeepScope_vs_NarrowScope_CrossReplicaPostgres(t *te
 	keep := *role
 	keep.AssignableScope = ""
 	keep.Description = "A edits the description"
-	_, _, updErr := f.coreA.UpdateRole(f.ctx, f.adminID, &keep, nil)
+	_, _, updErr := coreA.UpdateRole(f.ctx, f.adminID, &keep, nil)
 	waitB()
 
 	require.True(t, fired(), "replica A never reached its roles UPDATE — the interleaving under test never happened")
@@ -81,13 +111,13 @@ func TestCTAReview_UpdateRoleKeepScope_vs_NarrowScope_CrossReplicaPostgres(t *te
 	}
 	assert.Equal(t, 1, narrowRows, "B's row must record the narrowing: %v", descs)
 	assert.Equal(t, 1, noScopeRows, "A's row must not claim a scope change: %v", descs)
-	// Both requests carry a description, so it is last writer wins: before #3919 B
-	// committed inside A's window and A's edit was last; with the row lock B waits
-	// and its own request's description ("before") is last. Either way the stored
-	// description is the last committer's, never a mix.
-	wantDesc := "A edits the description"
-	if strings.Contains(descs[len(descs)-1], "(assignable_scope any -> project)") {
-		wantDesc = role.Description
-	}
-	assert.Equal(t, wantDesc, stored.Description, "the description is not the last committed update's: rows %v", descs)
+	// Both requests carry a description, so it is last writer wins, and which
+	// request writes the roles row last depends on the row lock. The order of the
+	// audit rows says nothing about it: an update's audit row is inserted after its
+	// own transaction commits (best-effort, or owed), so B can commit second, finish
+	// and audit before A's row lands (delay-A-audit=true forces exactly that). Roles
+	// have no timestamp to tell the writers apart, so the invariant is: the stored
+	// description is one of the two requests' descriptions, never a mix or anything else.
+	assert.Contains(t, []string{keep.Description, role.Description}, stored.Description,
+		"the stored description is neither request's: rows %v", descs)
 }
