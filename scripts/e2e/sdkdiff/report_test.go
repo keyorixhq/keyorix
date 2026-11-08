@@ -70,6 +70,51 @@ func TestNoWireRequestFailsControlAndNotRun(t *testing.T) {
 	}
 }
 
+// A scenario set whose steps are all constructor checks makes no request by design, so a run over it
+// must not be refused for recording no wire request (F2). The decision comes from the scenarios, never
+// from driver output: a set with any other step still requires the wire, and a report that does not
+// say (an older baseline) keeps requiring it.
+func TestWireRequiredOnlyWhenScenariosNeedIt(t *testing.T) {
+	construct := Scenario{ID: "c1", Steps: []Step{{Op: "construct", Base: "literal:https://example.com"}}}
+	call := Scenario{ID: "s1", Steps: []Step{{Op: "construct", Base: "plain"}, {Op: "health"}}}
+	if scenariosNeedWire([]Scenario{construct, construct}) {
+		t.Error("a construct-only set was said to need the wire")
+	}
+	if !scenariosNeedWire([]Scenario{construct, call}) {
+		t.Error("a set with a non-construct step was said not to need the wire")
+	}
+	if !scenariosNeedWire(nil) {
+		t.Error("an empty set must default to requiring the wire")
+	}
+
+	silent := StepOutcome{Drv: map[string]any{"ok": true, "value": "1"}}
+	run := func(noWire bool) *Report {
+		rep := &Report{SDKs: []string{"go", "node"}, Scenarios: 2, Sigs: map[string]*SigStat{}, NoWireNeeded: noWire}
+		o := map[string]Outcome{"go": {Steps: []StepOutcome{silent}}, "node": {Steps: []StepOutcome{silent}}}
+		rep.recordOutcomes(o)
+		rep.recordOutcomes(o)
+		return rep
+	}
+	// green: a construct-only run with no requests is a valid run and a valid control
+	rep := run(true)
+	if p := rep.notRun(); len(p) != 0 {
+		t.Errorf("construct-only run refused: %v", p)
+	}
+	if line, ok := controlC1(rep); !ok {
+		t.Errorf("construct-only control failed: %q", line)
+	}
+	// red: the same outputs over scenarios that need the wire are still refused
+	rep = run(false)
+	if p := rep.notRun(); len(p) != 2 {
+		t.Errorf("notRun = %v, want one 'no wire request' entry per SDK", p)
+	}
+	// even with no wire needed, an SDK that answered nothing is still not run
+	rep = &Report{SDKs: []string{"go"}, Scenarios: 1, NoWireNeeded: true, Sigs: map[string]*SigStat{}}
+	if p := rep.notRun(); len(p) != 1 || !strings.Contains(p[0], "executed no step") {
+		t.Errorf("notRun = %v, want 'executed no step'", p)
+	}
+}
+
 // A driver whose SDK lacks a method it calls must answer driver_error (a harness failure), whatever
 // the command, and must keep working when the SDK is intact. The fake SDK checkouts below define every
 // function the driver looks for; the renamed copy renames one method.

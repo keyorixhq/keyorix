@@ -198,6 +198,12 @@ Found in review: `runScenarios` recorded a failed batch as a note and counted it
 
 A8's last sentence says the summary prints the share of scenarios that ended in the removed-API error: no code does that; the sentence is withdrawn (the lesson stands, the check is not implemented). Section 5 registers 1 MiB values; the generator's longest value is 65536 bytes (`longLens` in `gen.go`), so 1 MiB values were never run: the coverage claim is limited to 64 KiB.
 
+## Amendment A16 (an SDK with no wire request fails the run; driver-side missing-method check; 2026-11-08)
+
+Found in review (D2): a renamed SDK method made every call a driver error that C1 and `run` read as an ordinary answer, so a driver that exercised nothing passed. A14's executed count now ignores `driver_error` (a harness failure, not an answer). Added in the same change: (1) a report counts, per SDK, the requests the recording proxy saw, independent of driver replies; C1, `run` and `validate` fail an SDK whose count is zero ("recorded no wire request"); (2) the Python and Node drivers check up front that the SDK has the client methods they call (plus `login` and `Client`) and answer `driver_error` naming the missing function when it does not. Limits: neither check catches a method that exists but fails before the wire while other operations still make requests (the A8 case), and nothing checks the drivers' method lists against the methods the drivers call. A baseline written before this change has no `wire` field and is refused; results that depended on one are re-run.
+
+Refinement (F2, review of the same change): `construct` checks client-side validation and makes no request by design, so a run whose scenarios are all `construct` steps (for example `run -tag edge-construct`) cannot record a wire request and was wrongly refused. The wire requirement is now waived only when every scenario run consists of `construct` steps. That is decided from the scenarios, not from driver output (`Report.NoWireNeeded`, absent means false), so a report that does not say, an empty scenario set, and any set with one other step keep requiring the wire. The "executed no step" check still applies.
+
 ## Results (written after the runs; the rules above were not changed after this point)
 
 Review note 2026-11-08: the statements below predate A12 to A15. The S family, every `slash`/`slash2` result and the "server redirects `//path`" statement need re-measuring with the fixed harness; control and plant verdicts need re-running under A14.

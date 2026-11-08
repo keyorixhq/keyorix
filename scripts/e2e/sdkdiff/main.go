@@ -199,10 +199,16 @@ type Report struct {
 	Executed map[string]int `json:"executed"`
 	// Wire counts, per SDK, the requests the recording proxy saw. It does not depend on driver code, so
 	// an SDK whose calls never reach the wire is caught even when its driver reports ordinary errors.
-	Wire     map[string]int            `json:"wire"`
-	Coverage map[string]map[string]int `json:"coverage"`
-	Info     map[string]int            `json:"info"`
-	InfoEx   map[string][]string       `json:"info_examples"`
+	Wire map[string]int `json:"wire"`
+	// NoWireNeeded is true only when every scenario run was constructor checks (op construct), which make
+	// no request by design. It is derived from the scenarios, not from driver output, and false when
+	// absent, so a report that does not say keeps requiring a wire request.
+	NoWireNeeded bool                      `json:"no_wire_needed"`
+	Coverage     map[string]map[string]int `json:"coverage"`
+	Info         map[string]int            `json:"info"`
+	InfoEx       map[string][]string       `json:"info_examples"`
+
+	needWire bool // some scenario run so far has a step that makes a request
 }
 
 func newReport(c *common) *Report {
@@ -287,6 +293,8 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 	}
 	defer r.Close()
 	rep.Scenarios += len(scs)
+	rep.needWire = rep.needWire || scenariosNeedWire(scs)
+	rep.NoWireNeeded = !rep.needWire
 	for i := 0; i < len(scs); i += batch {
 		end := min(i+batch, len(scs))
 		chunk := scs[i:end]
@@ -344,6 +352,22 @@ func (rep *Report) recordOutcomes(outs map[string]Outcome) {
 	}
 }
 
+// scenariosNeedWire reports whether any step of the scenarios makes a request. Only the construct op
+// does not (it checks client-side validation); an empty set reports true so it fails closed.
+func scenariosNeedWire(scs []Scenario) bool {
+	if len(scs) == 0 {
+		return true
+	}
+	for _, sc := range scs {
+		for _, st := range sc.Steps {
+			if st.Op != "construct" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // answered reports whether the driver gave a protocol answer for the step. A driver_error is a harness
 // failure (PROTOCOL.md), not an answer: an SDK method rename turns every call into one. na and
 // inexpressible are answers the protocol defines.
@@ -353,7 +377,8 @@ func answered(so StepOutcome) bool {
 
 // notRun lists the ways a run compared less than it claims: batches that never ran, and SDKs whose
 // driver answered no step of any scenario (a driver that cannot start leaves the comparison silently),
-// and SDKs whose calls never produced a request on the wire (their driver ran, but nothing was exercised).
+// and SDKs whose calls never produced a request on the wire (their driver ran, but nothing was exercised),
+// unless the scenarios were constructor checks only (NoWireNeeded).
 // An empty result means every SDK executed at least one step; it does not mean every scenario ran.
 func (rep *Report) notRun() []string {
 	var p []string
@@ -366,7 +391,7 @@ func (rep *Report) notRun() []string {
 	for _, n := range rep.SDKs {
 		if rep.Scenarios > 0 && rep.Executed[n] == 0 {
 			p = append(p, n+" executed no step")
-		} else if rep.Scenarios > 0 && rep.Wire[n] == 0 {
+		} else if rep.Scenarios > 0 && rep.Wire[n] == 0 && !rep.NoWireNeeded {
 			p = append(p, n+" recorded no wire request")
 		}
 	}
