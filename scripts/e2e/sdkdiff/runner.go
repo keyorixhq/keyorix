@@ -361,6 +361,9 @@ func (r *Runner) Analyse(sc Scenario, outs map[string]Outcome) (findings []Findi
 				so = o.Steps[i]
 			}
 			vs = append(vs, toView(n, so, r.Mask, o.Token))
+			if vs[len(vs)-1].skip == "driver_error" {
+				harness = append(harness, fmt.Sprintf("H2 %s %s step %d: driver_error", sc.ID, n, i))
+			}
 		}
 		abs := absoluteChecks(sc.ID, i, st, vs, r.Spec, func(sdk string) string { return tokenFor(st.Token, outs[sdk].Token) })
 		if diverged {

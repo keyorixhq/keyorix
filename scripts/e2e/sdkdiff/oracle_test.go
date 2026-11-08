@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -117,5 +118,90 @@ func TestRunnerRefusesMissingSeedManifest(t *testing.T) {
 	c := common{snapshot: t.TempDir(), sdks: "go"}
 	if _, err := c.runner(); err == nil || !strings.Contains(err.Error(), "manifest") {
 		t.Fatalf("missing sdkdiff-seed.json: err = %v", err)
+	}
+}
+
+// A driver that answers only driver_error exercised nothing: it is a harness note, and the scenario
+// does not count as executed (an SDK method rename produces exactly this).
+func TestDriverErrorIsHarnessNoteAndNotExecuted(t *testing.T) {
+	de := StepOutcome{Drv: map[string]any{"driver_error": "no such method"}}
+	ok := StepOutcome{Drv: map[string]any{"ok": true, "value": "1"}}
+	for _, so := range []StepOutcome{{Drv: map[string]any{"na": true}}, {Drv: map[string]any{"inexpressible": true}}, ok} {
+		if !answered(so) {
+			t.Errorf("%v is a protocol answer", so.Drv)
+		}
+	}
+	for _, so := range []StepOutcome{de, {}} {
+		if answered(so) {
+			t.Errorf("%v counted as an answer", so.Drv)
+		}
+	}
+	r := &Runner{SDKs: []string{"python", "python@2"}}
+	_, h := r.Analyse(Scenario{ID: "s", Steps: []Step{{Op: "list_projects"}}}, map[string]Outcome{
+		"python":   {Steps: []StepOutcome{de}},
+		"python@2": {Steps: []StepOutcome{de}},
+	})
+	if len(h) != 2 {
+		t.Fatalf("want one harness note per SDK, got %v", h)
+	}
+	rep := &Report{SDKs: r.SDKs, Scenarios: 1, Executed: map[string]int{}, Sigs: map[string]*SigStat{}, Harness: h}
+	if line, pass := controlC1(rep); pass {
+		t.Errorf("control passed with driver_error only: %q", line)
+	}
+	// the harness-note clause alone must fail the control (every other clause satisfied)
+	rep = &Report{SDKs: r.SDKs, Scenarios: 1, Executed: map[string]int{"python": 1, "python@2": 1}, Sigs: map[string]*SigStat{}, Harness: h}
+	if line, pass := controlC1(rep); pass || !strings.Contains(line, "harness note") {
+		t.Errorf("harness notes alone: pass=%v %q", pass, line)
+	}
+}
+
+// After a step diverges, later steps are not compared between SDKs and only E3 and X1 are still
+// reported (L3): R1 at step 0 and X1 at step 2 are kept, S2 at step 1 is dropped.
+func TestAnalyseAfterDivergenceKeepsOnlyCredentialOracles(t *testing.T) {
+	val := func(v string) StepOutcome { return StepOutcome{Drv: map[string]any{"ok": true, "value": v}} }
+	failed := StepOutcome{Drv: map[string]any{"ok": false, "error": map[string]any{"class": "server", "status": json.Number("500")}}}
+	leak := val("1")
+	leak.Reqs = []Rec{{Method: "GET", RequestURI: "/x", Header: map[string][]string{"Host": {"localhost:9"}, "Authorization": {"Bearer t"}}}}
+	r := &Runner{SDKs: []string{"go", "node"}}
+	fs, h := r.Analyse(Scenario{ID: "s", Steps: []Step{{Op: "list_projects"}, {Op: "list_projects", Expect: "ok"}, {Op: "list_projects"}}},
+		map[string]Outcome{
+			"go":   {Steps: []StepOutcome{val("1"), failed, leak}},
+			"node": {Steps: []StepOutcome{val("2"), val("1"), val("1")}},
+		})
+	if len(h) != 0 {
+		t.Fatalf("harness notes: %v", h)
+	}
+	if countCat(fs, "R1", "") == 0 {
+		t.Errorf("no R1 at the diverging step: %+v", fs)
+	}
+	if n := countCat(fs, "S2", ""); n != 0 {
+		t.Errorf("S2 after divergence not suppressed: %d", n)
+	}
+	if n := countCat(fs, "X1", ""); n != 1 {
+		t.Errorf("X1 after divergence: %d findings, want 1", n)
+	}
+}
+
+// A baseline that compared less than the plant run must not be used: its missing signatures would
+// read as new (N2).
+func TestBaselineProblem(t *testing.T) {
+	sdks := []string{"go", "node"}
+	good := func() *Report {
+		return &Report{SDKs: sdks, Scenarios: 2, Executed: map[string]int{"go": 2, "node": 2}}
+	}
+	if why := baselineProblem(good(), sdks, 2); why != "" {
+		t.Errorf("genuine baseline refused: %s", why)
+	}
+	failedBatch := good()
+	failedBatch.BatchErrors = 2
+	failedBatch.Executed = map[string]int{}
+	silent := good()
+	silent.Executed["node"] = 0
+	for name, b := range map[string]*Report{"failed batch": failedBatch, "silent sdk": silent,
+		"other sdks":           {SDKs: []string{"go"}, Scenarios: 2, Executed: map[string]int{"go": 2}},
+		"other scenario count": {SDKs: sdks, Scenarios: 1, Executed: map[string]int{"go": 1, "node": 1}}} {
+		if why := baselineProblem(b, sdks, 2); why == "" {
+			t.Errorf("%s: baseline accepted", name)
+		}
 	}
 }

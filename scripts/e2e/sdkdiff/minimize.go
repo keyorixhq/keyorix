@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -231,6 +232,22 @@ func cmdMinimize(args []string) error {
 var plantExpect = map[string]struct{ Cat, SDK string }{
 	"P1": {"W2", "python"}, "P1b": {"R2", "python"}, "P2": {"W2", "node"}, "P3": {"E1", "go"}, "P4": {"W1", "python"},
 	"P5": {"W3", "node"}, "P6": {"W2", "java"}, "P6b": {"R2", "java"}, "P7": {"W4", "python"},
+}
+
+// baselineProblem says why a baseline report cannot stand in for the unplanted run over these SDKs and
+// scenarios, or "" when it can. A signature counts as new when the baseline lacks it, so a baseline that
+// compared less than this run (a failed batch, a silent SDK) would credit a plant with old signatures.
+func baselineProblem(base *Report, sdks []string, scenarios int) string {
+	if np := base.notRun(); len(np) > 0 {
+		return "it did not compare everything: " + strings.Join(np, "; ")
+	}
+	if !slices.Equal(base.SDKs, sdks) {
+		return fmt.Sprintf("it ran SDKs %v, this run has %v", base.SDKs, sdks)
+	}
+	if base.Scenarios != scenarios {
+		return fmt.Sprintf("it ran %d scenarios, this run has %d", base.Scenarios, scenarios)
+	}
+	return ""
 }
 
 func cmdValidate(args []string) error {

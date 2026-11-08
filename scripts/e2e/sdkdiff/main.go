@@ -194,7 +194,8 @@ type Report struct {
 	// BatchErrors counts batches that could not run at all (server or driver start failure);
 	// their scenarios are in Scenarios but were never compared.
 	BatchErrors int `json:"batch_errors"`
-	// Executed counts, per SDK, the scenarios in which its driver answered at least one step.
+	// Executed counts, per SDK, the scenarios in which its driver answered at least one step with
+	// something other than driver_error.
 	Executed map[string]int            `json:"executed"`
 	Coverage map[string]map[string]int `json:"coverage"`
 	Info     map[string]int            `json:"info"`
@@ -304,7 +305,7 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 			}
 			for n, o := range outs {
 				for _, so := range o.Steps {
-					if so.Drv != nil {
+					if answered(so) {
 						rep.Executed[n]++
 						break
 					}
@@ -326,6 +327,13 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 		}
 	}
 	return nil
+}
+
+// answered reports whether the driver gave a protocol answer for the step. A driver_error is a harness
+// failure (PROTOCOL.md), not an answer: an SDK method rename turns every call into one. na and
+// inexpressible are answers the protocol defines.
+func answered(so StepOutcome) bool {
+	return so.Drv != nil && so.Drv["driver_error"] == nil
 }
 
 // notRun lists the ways a run compared less than it claims: batches that never ran, and SDKs whose
