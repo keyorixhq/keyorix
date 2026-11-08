@@ -238,6 +238,15 @@ func TestProcessCrashRedProof(t *testing.T) {
 		})
 		pcrashWant(t, v, "I4")
 	})
+	t.Run("I5-migration-schema-differs", func(t *testing.T) {
+		if v := w.runPCrashMigrate(t, 1, nil); len(v) > 0 {
+			t.Fatalf("control: an undamaged migration must be clean: %v", v)
+		}
+		v := w.runPCrashMigrate(t, 1, func(dir string) {
+			pcrashExecSQL(t, dir, "DROP INDEX uniq_users_email_active")
+		})
+		pcrashWant(t, v, "I5")
+	})
 	t.Run("backup-after-kill-control-and-damage", func(t *testing.T) {
 		const killAt = 12 // mid-rotation; any kill point that leaves the backup succeeding works
 		if v := w.checkBackupAfterKilledRotation(t, killAt, 1, nil); len(v) > 0 {

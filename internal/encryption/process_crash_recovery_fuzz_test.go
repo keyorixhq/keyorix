@@ -327,7 +327,9 @@ func (w *pcrashWorld) calibrateMigrate(t *testing.T) (int64, string) {
 // runPCrashMigrate kills a fresh-install migration at killAt. There are no
 // secrets to compare, so it checks I1 and I5: the install opens or refuses
 // explicitly, and rerunning the migration converges on the clean schema.
-func (w *pcrashWorld) runPCrashMigrate(t *testing.T, killAt int64) []string {
+//
+// plant, when set, damages the schema before the comparison; only the red-proof uses it.
+func (w *pcrashWorld) runPCrashMigrate(t *testing.T, killAt int64, plant func(dir string)) []string {
 	t.Helper()
 	_, want := w.calibrateMigrate(t)
 	dir := t.TempDir()
@@ -359,6 +361,9 @@ func (w *pcrashWorld) runPCrashMigrate(t *testing.T, killAt int64) []string {
 	}
 	if again.panicked() || again.killed || again.exit != 0 {
 		return []string{fmt.Sprintf("I5 rerun migrate did not complete (exit %d): %s", again.exit, pcrashTail(again.output))}
+	}
+	if plant != nil {
+		plant(dir)
 	}
 	got, err := pcrashSchema(dir)
 	if err != nil {
@@ -745,7 +750,7 @@ func TestProcessCrashExhaustive(t *testing.T) {
 	for killAt := int64(1); killAt <= seams; killAt++ {
 		t.Run(fmt.Sprintf("migrate-fresh/%d", killAt), func(t *testing.T) {
 			t.Parallel()
-			if v := w.runPCrashMigrate(t, killAt); len(v) > 0 {
+			if v := w.runPCrashMigrate(t, killAt, nil); len(v) > 0 {
 				t.Errorf("%s", strings.Join(v, "; "))
 			}
 		})
@@ -933,7 +938,7 @@ func FuzzProcessCrashRecovery(f *testing.F) {
 		if opIdx == len(pcrashOps) {
 			seams, _ := w.calibrateMigrate(t)
 			killAt := 1 + int64(killRaw)%(seams+1)
-			if v := w.runPCrashMigrate(t, killAt); len(v) > 0 {
+			if v := w.runPCrashMigrate(t, killAt, nil); len(v) > 0 {
 				t.Fatalf("op=migrate-fresh killAt=%d (of %d seams): %s", killAt, seams, strings.Join(v, "; "))
 			}
 			return
