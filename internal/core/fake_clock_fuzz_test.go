@@ -7,7 +7,9 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,6 +29,9 @@ import (
 
 // ---- special instants and TTLs ----------------------------------------------
 
+// fakeClockInstants are the clock program's jump targets and the base instants of a
+// mint. Year 0 and the last three entries never mint (see fkcMint); they stay in the
+// table as jump targets, and appending or reordering changes the fuzz input encoding.
 var fakeClockInstants = []time.Time{
 	{}, // zero time, 0001-01-01
 	time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -225,34 +230,27 @@ func (l *fkcLease) Check() bool {
 func (l *fkcLease) Strict() bool                     { return false }
 func (l *fkcLease) RollbackTolerance() time.Duration { return 30 * time.Second }
 
-// fkcWrapped reports an expiry that precedes its own issue instant.
-func fkcWrapped(issue, expiry time.Time) bool { return expiry.Before(issue) }
+// fkcO4Violation is the O4 mint check, shared by the real mint paths and planted
+// mutant M4: an expiry that precedes its own issue instant has wrapped around.
+func fkcO4Violation(kind string, issue, expiry time.Time) string {
+	if expiry.Before(issue) {
+		return fmt.Sprintf("O4: %s minted at %v has expiry %v BEFORE its issue instant (wrap-around)", kind, issue, expiry)
+	}
+	return ""
+}
 
 // fkcMint mints the selected credential at the world's current (start) clock.
 // ok=false with a reason means a CLEAN refusal to mint at this instant (O4 pass).
 func fkcMint(t testing.TB, w *fkcWorld, sel int, ttl time.Duration) (cred fkcCred, issue, expiry time.Time, ok bool, note string) {
-	cred, issue, expiry, ok, note = fkcMintRaw(t, w, sel, ttl)
-	if ok && expiry.Year() > 9999 {
-		return nil, issue, expiry, false, "expiry beyond year 9999 (KNOWN-LIMIT, see TestKnownLimit_*)"
-	}
-	return cred, issue, expiry, ok, note
-}
-
-func fkcMintRaw(t testing.TB, w *fkcWorld, sel int, ttl time.Duration) (cred fkcCred, issue, expiry time.Time, ok bool, note string) {
 	ctx := context.Background()
 	issue = w.clock.t
 	if issue.Year() < 1 || issue.Year() >= 9999 {
-		// KNOWN-LIMIT domain, pinned by TestKnownLimit_* below: SQLite storage turns a
-		// stored year >= 10000 into the zero time with no error, and the anti-rollback
-		// watermark starts at the zero time (year 1), so a clock in year <= 0 reads as
-		// already past every expiry. Both fail CLOSED (credential refused early).
-		return nil, issue, expiry, false, "instant outside the storable year range 1..9998"
-	}
-	if issue.Year() > 1_000_000_000 {
-		// TEST-ARTIFACT domain (R3): within ~100 years of time.Time's own upper limit
-		// (year 292277026596) Add/Sub/After saturate or wrap inside the Go runtime,
-		// so an "expiry" computed there is not meaningful for any credential.
-		return nil, issue, expiry, false, "instant beyond the Go time.Time arithmetic range"
+		// KNOWN-LIMIT domain, pinned by TestKnownLimit_* below. The production SQLite
+		// dialect cannot scan a stored year >= 10000 back, and the table's only instant
+		// in year 9999 is its last second, so every TTL from it lands in year 10000.
+		// The auth watermark starts at the zero time (year 1), so a clock in year <= 0
+		// reads as already past every expiry. Both fail CLOSED (credential refused early).
+		return nil, issue, expiry, false, "instant outside the minted year range 1..9998"
 	}
 	switch sel % 3 {
 	case 0:
@@ -264,18 +262,13 @@ func fkcMintRaw(t testing.TB, w *fkcWorld, sel int, ttl time.Duration) (cred fkc
 			return nil, issue, expiry, false, "session without ExpiresAt"
 		}
 		expiry = *s.ExpiresAt
-		if fkcWrapped(issue, expiry) {
-			t.Errorf("O4: session minted at %v has expiry %v BEFORE its issue instant (wrap-around)", issue, expiry)
+		if v := fkcO4Violation("session", issue, expiry); v != "" {
+			t.Error(v)
 			return nil, issue, expiry, false, "wrapped"
 		}
 		return &fkcSession{w: w, token: s.SessionToken, expiry: expiry}, issue, expiry, true, ""
 	case 1:
 		exp := issue.Add(ttl)
-		if exp.Sub(issue) != ttl {
-			// Outside time.Time's own representable arithmetic (Add/Sub saturate or
-			// wrap near year 292277026596): a Go-runtime limit, not a Keyorix one.
-			return nil, issue, expiry, false, "ttl not representable from this instant"
-		}
 		r, err := w.core.CreateOwnPAT(ctx, w.userID, "fc-pat", &exp, nil, 0, 0, nil)
 		if err != nil {
 			return nil, issue, expiry, false, "PAT refused: " + err.Error()
@@ -295,8 +288,8 @@ func fkcMintRaw(t testing.TB, w *fkcWorld, sel int, ttl time.Duration) (cred fkc
 		if err != nil {
 			return nil, issue, expiry, false, "lease refused: " + err.Error()
 		}
-		if fkcWrapped(issue, l.ExpiresAt) {
-			t.Errorf("O4: lease minted at %v has expiry %v BEFORE its issue instant", issue, l.ExpiresAt)
+		if v := fkcO4Violation("lease", issue, l.ExpiresAt); v != "" {
+			t.Error(v)
 			return nil, issue, l.ExpiresAt, false, "wrapped"
 		}
 		return &fkcLease{w: w, id: l.LeaseID, ttl: secs, expiry: l.ExpiresAt}, issue, l.ExpiresAt, true, ""
@@ -349,11 +342,11 @@ func FuzzFakeClockExtremes(f *testing.F) {
 	}
 	f.Add(enc(10, 0, 1, 1, [9]byte{3}))                                     // session, expiry+1ns
 	f.Add(enc(10, 1, 2, 1, [9]byte{2}))                                     // PAT at exactly expiry
-	f.Add(enc(14, 1, 0, 2, [9]byte{3}, [9]byte{0}))                         // PAT minted 9999-12-31, then back
+	f.Add(enc(13, 1, 0, 2, [9]byte{3}, [9]byte{0}))                         // PAT minted 2106, then back
 	f.Add(enc(0, 1, 3, 1, [9]byte{0}))                                      // PAT minted at the zero time
-	f.Add(enc(1, 1, 7, 2, [9]byte{3}, [9]byte{8}))                          // year 0, 100y TTL, jump back to issue
-	f.Add(enc(16, 2, 5, 1, [9]byte{3}))                                     // lease minted near max Time
-	f.Add(enc(15, 0, 4, 2, [9]byte{4, 0, 0, 0, 0, 0, 0, 0, 6}, [9]byte{6})) // minted at year 10000, special instant, zero time
+	f.Add(enc(12, 1, 7, 2, [9]byte{3}, [9]byte{8}))                         // 2100, 100y TTL, jump back to issue
+	f.Add(enc(0, 2, 5, 1, [9]byte{3}))                                      // lease minted at the zero time
+	f.Add(enc(11, 0, 4, 2, [9]byte{4, 0, 0, 0, 0, 0, 0, 0, 6}, [9]byte{6})) // minted 2038, special instant, zero time
 	f.Add(enc(7, 1, 3, 3, [9]byte{2}, [9]byte{3}, [9]byte{1}))              // DST edge, expire, back by 1ns
 	f.Fuzz(func(t *testing.T, data []byte) {
 		start, credSel, ttl, steps, ok := fkcDecode(data)
@@ -367,12 +360,20 @@ func FuzzFakeClockExtremes(f *testing.F) {
 }
 
 // TestFakeClockExtremes_Cross is the deterministic enumeration: every special
-// start instant x every TTL x each single-step kind, per credential type.
+// start instant x TTL x each step kind, per credential type. A default run uses
+// three TTLs to bound its cost; KEYORIX_FAKE_CLOCK_FULL_CROSS=1 runs all of them,
+// which is the R2 campaign. Each program's first step is R2's single step, and the
+// two steps after it (past expiry, then back to issue) only add checks.
 func TestFakeClockExtremes_Cross(t *testing.T) {
 	if testing.Short() {
 		t.Skip("enumeration builds one core per case; skipped with -short")
 	}
 	ttls := []time.Duration{time.Second, time.Hour, 100 * 365 * 24 * time.Hour}
+	if os.Getenv("KEYORIX_FAKE_CLOCK_FULL_CROSS") != "" {
+		ttls = fakeClockTTLs
+	}
+	programs := 0
+	defer func() { t.Logf("%d TTLs, %d programs ran", len(ttls), programs) }()
 	for si, start := range fakeClockInstants {
 		for cred := range 3 {
 			for _, ttl := range ttls {
@@ -384,6 +385,7 @@ func TestFakeClockExtremes_Cross(t *testing.T) {
 					if !ok {
 						break
 					}
+					programs++
 					steps := []fkcStep{{kind: kind, delta: int64(si)}, {kind: 3}, {kind: 8, delta: 0}}
 					if v := fkcRun(c, func(x time.Time) { w.clock.t = x }, issue, expiry, steps); len(v) > 0 {
 						t.Errorf("start#%d=%v cred=%d ttl=%v kind=%d: %s", si, start, cred, ttl, kind, strings.Join(v, "; "))
@@ -415,7 +417,7 @@ func (m *fkcModel) Check() bool {
 		m.watermark = now
 	}
 	switch m.mut {
-	case "M1": // accepts at exactly expiry
+	case "M1": // accepts 1ns past expiry (acceptance at exactly expiry is correct)
 		return !now.After(m.expiry.Add(1))
 	case "M2": // rejects 1ns before expiry
 		return now.Before(m.expiry.Add(-1))
@@ -451,10 +453,25 @@ func TestFakeClockOracles_PlantedMutants(t *testing.T) {
 			t.Errorf("planted mutant %s was NOT detected by the oracle driver", mut)
 		}
 	}
-	// M4: wrap-around of an expiry to before the issue instant is what fkcMint's
-	// O4 check keys on; prove the predicate flags a wrapped value and not a sane one.
-	if !fkcWrapped(issue, issue.Add(-1<<40)) || fkcWrapped(issue, issue.Add(time.Hour)) {
-		t.Errorf("M4: fkcWrapped does not separate wrapped from sane expiries")
+	// M4: a mint that computes the expiry in 32-bit seconds wraps the 100-year TTL to
+	// the past. It goes through fkcO4Violation, the check the real mint paths use.
+	mintViolations := func(mut string) (viol int) {
+		for _, ttl := range fakeClockTTLs {
+			mintedExpiry := issue.Add(ttl)
+			if mut == "M4" {
+				mintedExpiry = issue.Add(time.Duration(int32(ttl/time.Second)) * time.Second) // #nosec G115 -- the overflow is the planted defect
+			}
+			if fkcO4Violation("model credential", issue, mintedExpiry) != "" {
+				viol++
+			}
+		}
+		return viol
+	}
+	if n := mintViolations(""); n != 0 {
+		t.Fatalf("CONTROL: the correct reference mint reports %d O4 violations: oracle unsound", n)
+	}
+	if mintViolations("M4") == 0 {
+		t.Errorf("planted mutant M4 was NOT detected by the O4 check")
 	}
 }
 
@@ -530,20 +547,26 @@ func FuzzEnforceScheduleDST(f *testing.F) {
 }
 
 // TestScheduleMutantLocalHour (R1/M5): the independent oracle must catch an
-// implementation that reads the host-local hour instead of the zone's.
+// implementation that reads a host-local hour instead of the zone's. The mutant's
+// host zone is explicit, so the result does not depend on the machine's TZ.
 func TestScheduleMutantLocalHour(t *testing.T) {
 	s := &models.SecretAccessSchedule{AllowedDays: "*", StartHour: 9, EndHour: 17, Timezone: "Asia/Kolkata"}
 	loc, _ := time.LoadLocation("Asia/Kolkata")
-	mutant := func(t time.Time) bool { h := t.Local().Hour(); return h >= s.StartHour && h < s.EndHour }
-	caught := false
-	for h := 0; h < 24 && !caught; h++ {
-		inst := time.Date(2026, 6, 12, h, 0, 0, 0, time.UTC)
-		if mutant(inst) != fkcIndependentVerdict(s, inst, loc) {
-			caught = true
+	disagreements := func(host *time.Location) (n int) {
+		for h := range 24 {
+			inst := time.Date(2026, 6, 12, h, 0, 0, 0, time.UTC)
+			hour := inst.In(host).Hour()
+			if (hour >= s.StartHour && hour < s.EndHour) != fkcIndependentVerdict(s, inst, loc) {
+				n++
+			}
 		}
+		return n
 	}
-	if time.Local.String() != "Asia/Kolkata" && !caught {
-		t.Errorf("M5 not detected (local zone %v)", time.Local)
+	if disagreements(time.FixedZone("mutant-host", -5*3600)) == 0 {
+		t.Errorf("M5 not detected: reading the hour in a host zone agrees with the oracle")
+	}
+	if n := disagreements(loc); n != 0 {
+		t.Errorf("CONTROL: reading the hour in the schedule's own zone disagrees with the oracle %d times", n)
 	}
 	for h := range 24 { // control: real implementation agrees everywhere
 		inst := time.Date(2026, 6, 12, h, 30, 0, 0, time.UTC)
@@ -606,14 +629,97 @@ func TestKnownLimit_SQLiteYear10000IsNotReadBack(t *testing.T) {
 }
 
 // TestKnownLimit_Year0ClockFailsClosed pins that a session minted with the clock in
-// year 0 is refused at once (the watermark starts at year 1) rather than accepted.
+// year 0 mints, then is refused at validation (the auth watermark starts at year 1)
+// rather than accepted. It calls Login directly: fkcMint refuses year 0 before
+// reaching the core, so going through it would prove nothing about Keyorix.
 func TestKnownLimit_Year0ClockFailsClosed(t *testing.T) {
 	w := buildFkcWorld(t, time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC))
-	cred, _, _, ok, _ := fkcMintRaw(t, w, 0, time.Hour)
-	if !ok {
-		t.Skip("minting at year 0 now refuses cleanly (also fail-closed)")
+	ctx := context.Background()
+	s, _, err := w.core.Login(ctx, &LoginRequest{Username: "fcadmin", Password: "FakeClockAdmin123!"})
+	if err != nil {
+		t.Fatalf("Login at year 0 no longer mints; the documented known limit changed, update this test and FAKE_CLOCK_FUZZ.md: %v", err)
 	}
-	if cred.Check() {
+	if s.ExpiresAt == nil || s.ExpiresAt.Year() != 0 {
+		t.Fatalf("session minted at year 0 has expiry %v; the documented known limit changed", s.ExpiresAt)
+	}
+	if _, _, err := w.core.ValidateSessionToken(ctx, s.SessionToken); err == nil {
 		t.Errorf("session minted at year 0 is accepted; the documented behaviour is fail-closed refusal, review the watermark")
+	}
+}
+
+// TestSeamGap_UnexpiredSecretIgnoresInjectedClock pins a SEAM-GAP (R3) and asserts
+// today's behaviour: unexpiredSecret, behind GetSecret, reads time.Now() directly, so
+// the injected clock cannot decide a secret's expiry there. The smallest change (R4)
+// is to pass c.now() into it. This test then goes red and should be replaced by one
+// asserting that the injected clock decides. The fixed dates keep it independent of
+// the real date until the year 9000.
+func TestSeamGap_UnexpiredSecretIgnoresInjectedClock(t *testing.T) {
+	w := buildFkcWorld(t, time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC))
+	ctx := context.Background()
+	for i, c := range []struct {
+		expiration, injected time.Time
+		wantExpired          bool
+	}{
+		{time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(1999, 1, 1, 0, 0, 0, 0, time.UTC), true},  // real clock past expiry, injected before it
+		{time.Date(9000, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(9001, 1, 1, 0, 0, 0, 0, time.UTC), false}, // real clock before expiry, injected past it
+	} {
+		expiration := c.expiration
+		s, err := w.core.storage.CreateSecret(ctx, &models.SecretNode{
+			Name: fmt.Sprintf("fc-seam-%d", i), ProjectID: w.boot.Project.ID, EnvironmentID: w.boot.Environments[0].ID,
+			Type: "password", OwnerID: w.userID, IsSecret: true, Expiration: &expiration,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.clock.t = c.injected
+		_, err = w.core.GetSecret(ctx, s.ID)
+		if expired := errors.Is(err, ErrSecretExpired); expired != c.wantExpired {
+			t.Errorf("expiration %v, injected clock %v: expired=%v (err %v), want %v; if GetSecret now uses the injected clock the seam gap is closed, replace this test", c.expiration, c.injected, expired, err, c.wantExpired)
+		}
+	}
+}
+
+// TestSeamGap_SecretScheduleIgnoresInjectedClock pins the same SEAM-GAP for
+// checkSecretAccessScheduleWith, which also reads time.Now() directly. Each window is
+// one UTC hour, and the injected clock is 12 hours from the real one, so enforceSchedule
+// at the injected instant gives the opposite verdict from the one asserted. The smallest
+// change (R4) is to pass c.now() in from checkSecretAccessSchedule and the versions.go
+// callers. This test then goes red and should be replaced by one asserting that the
+// injected clock decides.
+func TestSeamGap_SecretScheduleIgnoresInjectedClock(t *testing.T) {
+	w := buildFkcWorld(t, time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC))
+	ctx := context.Background()
+	s, err := w.core.storage.CreateSecret(ctx, &models.SecretNode{
+		Name: "fc-seam-schedule", ProjectID: w.boot.Project.ID, EnvironmentID: w.boot.Environments[0].ID,
+		Type: "password", OwnerID: w.userID, IsSecret: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, realInWindow := range []bool{true, false} {
+		for attempt := 0; ; attempt++ {
+			wall := time.Now().UTC()
+			injected := wall.Add(12 * time.Hour)
+			hour := injected.Hour()
+			if realInWindow {
+				hour = wall.Hour()
+			}
+			sched := &models.SecretAccessSchedule{SecretNodeID: s.ID, AllowedDays: "*", StartHour: hour, EndHour: hour + 1, Timezone: "UTC"}
+			if err := w.core.storage.SetSecretAccessSchedule(ctx, sched); err != nil {
+				t.Fatal(err)
+			}
+			w.clock.t = injected
+			err := w.core.checkSecretAccessSchedule(ctx, s.ID)
+			if time.Now().UTC().Hour() != wall.Hour() && attempt == 0 {
+				continue // the real clock crossed an hour mid-check; the window no longer applies
+			}
+			if allowed := err == nil; allowed != realInWindow {
+				t.Errorf("real clock in window=%v: allowed=%v (err %v); if the check now uses the injected clock the seam gap is closed, replace this test", realInWindow, allowed, err)
+			}
+			if allowedAtInjected := enforceSchedule(sched, injected) == nil; allowedAtInjected == realInWindow {
+				t.Errorf("real clock in window=%v: enforceSchedule at the injected instant allowed=%v, so this case cannot tell the two clocks apart", realInWindow, allowedAtInjected)
+			}
+			break
+		}
 	}
 }
