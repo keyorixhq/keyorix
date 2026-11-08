@@ -39,14 +39,19 @@
 // 8 -> 9 for pending_audit_events.request_id (AUDIT-REQUEST-ID-2), a nullable column an
 // epoch-8 binary never writes (its owed rows read as "no request id") and outside the
 // hash chain. The floor stays 3.
+// 9 -> 10 for projects.name_folded (the project-name unique index moves from LOWER(name)
+// to the Go-folded column). An epoch-9 binary would write projects without it, which is
+// not safe, but no released binary has an epoch between 3 and 9 (all unreleased v0.97.0
+// builds) and v0.96.x is already refused, so the floor stays 3 (see
+// minCompatibleSchemaEpoch's doc for the alternative).
 package storage
 
 import "testing"
 
-func TestCurrentSchemaEpoch_Is9_SeeADR101(t *testing.T) {
-	if currentSchemaEpoch != 9 {
+func TestCurrentSchemaEpoch_Is10_SeeADR101(t *testing.T) {
+	if currentSchemaEpoch != 10 {
 		t.Fatalf(
-			"currentSchemaEpoch is now %d (expected 9) -- STOP: docs/adr-101-schema-epoch-compatibility-floor.md "+
+			"currentSchemaEpoch is now %d (expected 10) -- STOP: docs/adr-101-schema-epoch-compatibility-floor.md "+
 				"requires every bump to also decide minCompatibleSchemaEpoch (additive-and-safe leaves it "+
 				"unchanged; a migration an older binary cannot safely run against raises it to the new epoch). "+
 				"Make that decision in factory.go, THEN update this test's expected value alongside your "+

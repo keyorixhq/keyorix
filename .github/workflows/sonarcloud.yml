@@ -36,7 +36,7 @@ jobs:
   # gate. Mirrors the `changes`/docs_only job in ci.yml (same gh api
   # approach, no external paths-filter action needed).
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
@@ -73,7 +73,7 @@ jobs:
 
   Analysis:
     needs: [changes]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read

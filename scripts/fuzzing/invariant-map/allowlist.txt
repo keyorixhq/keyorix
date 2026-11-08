@@ -1,0 +1,23 @@
+# invariant-map allowlist. One rule per line: <kind> <ID or glob>  # reason
+#
+# kinds:
+#   unknown-ref   an ID that code or docs may mention without a definition
+#   no-check      an invariant allowed to have no check reference, no Guard:
+#                 text and no UNGUARDED marker
+#   stale-check   an invariant allowed to name a check that no longer exists
+#
+# Prefer fixing the reference over adding a rule here.
+
+# Placeholder and fixture IDs used by the invariant-doc guard tests and docs.
+unknown-ref INV-PKG-*          # fixtures in internal/statemap/invariants_fragments_guard_test.go
+unknown-ref INV-X-*            # fixtures in internal/threatmodelcheck
+unknown-ref INV-CORE-foo       # fixture in internal/statemap guard test
+
+# Existing code comments that mention a name which is not (or no longer) a
+# defined ID. Each should be corrected to the defined ID in a follow-up.
+unknown-ref INV-GRPC-LOWPRIV-WALK
+unknown-ref INV-MW-cache-hit-recheck
+unknown-ref INV-STORE-advisory-lock
+
+# Prose in the INV-WEB-06 entry names a component file that no longer exists.
+stale-check INV-WEB-06

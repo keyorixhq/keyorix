@@ -1,0 +1,2 @@
+### Testing
+- **Opt-in input-to-sink taint fuzz harnesses.** New `Fuzz*Taint*` targets in internal/backupfmt, internal/config, internal/connect and internal/dynamic, built only with the `taintoverlay` tag and run through the overlay wrapper from fuzz-corpus. They fail an iteration when fuzz input reaches a file path, command, query or unexpected host sink. internal/fuzzutil/taint is a vendored copy of the oracle; default builds and CI are unaffected.

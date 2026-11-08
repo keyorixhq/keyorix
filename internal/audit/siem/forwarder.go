@@ -115,6 +115,9 @@ func refuseRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) == 0 {
 		return nil
 	}
+	if len(via) >= maxRedirectHops {
+		return fmt.Errorf("siem: refusing redirect after %d hops", len(via))
+	}
 	prev := via[len(via)-1]
 	if req.URL.Host != prev.URL.Host {
 		return fmt.Errorf("siem: refusing cross-host redirect to %q", req.URL.Host)
@@ -482,3 +485,8 @@ func (f *Forwarder) send(ctx context.Context, e *models.AuditEvent) (retryable b
 	retryable = resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
 	return retryable, fmt.Errorf("siem endpoint returned %s", strings.TrimSpace(resp.Status))
 }
+
+// maxRedirectHops is the number of requests (the original plus followed
+// redirects) after which a further redirect is refused. A custom CheckRedirect
+// replaces net/http's own hop limit, so it has to be enforced here.
+const maxRedirectHops = 3
