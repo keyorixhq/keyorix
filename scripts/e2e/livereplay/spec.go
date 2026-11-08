@@ -15,6 +15,7 @@ package livereplay
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
 	"sort"
@@ -127,13 +128,13 @@ func (s *Spec) params(pl []any) []Param {
 
 // resolve follows a local $ref chain.
 func (s *Spec) resolve(m map[string]any) map[string]any {
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		ref, ok := m["$ref"].(string)
 		if !ok {
 			return m
 		}
 		cur := any(s.doc)
-		for _, k := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+		for k := range strings.SplitSeq(strings.TrimPrefix(ref, "#/"), "/") {
 			cm, ok := cur.(map[string]any)
 			if !ok {
 				return m
@@ -180,9 +181,7 @@ func (s *Spec) gen(sch map[string]any, name string, depth int) any {
 		for _, part := range ao {
 			if pm, ok := part.(map[string]any); ok {
 				if g, ok := s.gen(pm, name, depth+1).(map[string]any); ok {
-					for k, v := range g {
-						merged[k] = v
-					}
+					maps.Copy(merged, g)
 				}
 			}
 		}

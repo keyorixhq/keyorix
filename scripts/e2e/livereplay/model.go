@@ -1,5 +1,7 @@
 package livereplay
 
+import "slices"
+
 import "strings"
 
 // Verdict is what the in-test authorization model says an actor may do with a
@@ -71,11 +73,9 @@ var adminTierSegments = []string{
 }
 
 func isAdminTier(path string) bool {
-	for _, s := range strings.Split(strings.Trim(path, "/"), "/") {
-		for _, a := range adminTierSegments {
-			if s == a {
-				return true
-			}
+	for s := range strings.SplitSeq(strings.Trim(path, "/"), "/") {
+		if slices.Contains(adminTierSegments, s) {
+			return true
 		}
 	}
 	return false
@@ -175,7 +175,7 @@ func authorityChanging(op Op) bool {
 	if op.Method == "GET" {
 		return false
 	}
-	for _, s := range strings.Split(strings.Trim(op.Path, "/"), "/") {
+	for s := range strings.SplitSeq(strings.Trim(op.Path, "/"), "/") {
 		switch s {
 		case "roles", "user-roles", "members", "memberships", "invitations", "groups":
 			return true

@@ -192,15 +192,6 @@ func (w *World) build(a *Actor, op Op, tenant, variant string) (Probe, bool) {
 	return p, true
 }
 
-func (w *World) opByKey(k string) (Op, bool) {
-	for _, o := range w.Spec.Ops {
-		if o.Key() == k {
-			return o, true
-		}
-	}
-	return Op{}, false
-}
-
 // Options tune a run.
 type Options struct {
 	// Only restricts the run to operations whose key contains this substring.

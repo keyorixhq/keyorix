@@ -150,8 +150,8 @@ func (w *World) Record(a *Actor, method, target string, body []byte) (int, []byt
 		return status, resp, err
 	}
 	path, query := target, ""
-	if i := strings.IndexByte(target, '?'); i >= 0 {
-		path, query = target[:i], target[i+1:]
+	if before, after, ok := strings.Cut(target, "?"); ok {
+		path, query = before, after
 	}
 	if op, ok := w.matchOp(method, path); ok {
 		w.Recorded[op.Key()] = append(w.Recorded[op.Key()], Recorded{Method: method, Path: path, Query: query, Body: body, Status: status})
@@ -255,7 +255,7 @@ func (w *World) Fingerprint() map[string]string {
 			continue
 		}
 		h := sha256.New()
-		h.Write([]byte{byte(status / 100)})
+		h.Write([]byte{byte(status / 100)}) // #nosec G115 -- status is an HTTP status code, status/100 is at most 9
 		if v != nil {
 			lv := map[string]string{}
 			leaves("", v, lv)
