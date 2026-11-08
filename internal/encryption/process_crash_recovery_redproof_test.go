@@ -243,7 +243,7 @@ func TestProcessCrashRedProof(t *testing.T) {
 			t.Fatalf("control: an undamaged migration must be clean: %v", v)
 		}
 		v := w.runPCrashMigrate(t, 1, func(dir string) {
-			pcrashExecSQL(t, dir, "DROP INDEX uniq_users_email_active")
+			pcrashExecSQL(t, dir, "DROP TABLE secret_tags")
 		})
 		pcrashWant(t, v, "I5")
 	})
