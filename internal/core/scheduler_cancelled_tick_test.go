@@ -3,7 +3,8 @@ package core
 import (
 	"context"
 	"errors"
-	"os"
+	"io/fs"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -116,9 +117,16 @@ func TestExportComplianceEvidence_CancelledDuringCollectionDeliversNothing(t *te
 	require.ErrorIs(t, err, errTickLockLost)
 	assert.Nil(t, res)
 
-	entries, rerr := os.ReadDir(dir)
-	require.NoError(t, rerr)
-	assert.Empty(t, entries, "no pack and no signature on disk")
+	// The export dir is a t.TempDir(), not core sources: walk it rather than list it
+	// (TestNoAdHocCoreDirListing).
+	var onDisk []string
+	require.NoError(t, filepath.WalkDir(dir, func(p string, _ fs.DirEntry, werr error) error {
+		if werr == nil && p != dir {
+			onDisk = append(onDisk, p)
+		}
+		return werr
+	}))
+	assert.Empty(t, onDisk, "no pack and no signature on disk")
 
 	var rows int64
 	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "compliance.evidence_exported").Count(&rows).Error)
