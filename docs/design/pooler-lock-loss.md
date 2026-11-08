@@ -159,17 +159,17 @@ test it would take.
 | 3 | `last-admin-guard`, direct global admin-role removal: `rbac_management.go` removeGlobalAdminRoleIfApplicable; `role_set_replace.go` (global branch) | the same | nothing against another row-3 holder; zero admins together with a row-1 or row-2 holder | `RemoveGlobalAdminRoleGuarded` (`local_rbac.go`): check and delete in one transaction with FOR UPDATE on every global admin grant row and its holders | **covered against itself**; not across sections until rows 1–2 take the same row locks |
 | 4 | `project-admin-guard`, last project admin: `rbac_management.go` withUserRoleRemovalGuards and RemoveRoleFromGroup (project scope); `project_members.go` RemoveProjectMember; `role_set_replace.go` (project branch, swap); `break_glass.go` RevokeBreakGlassActivationAtomic | at least one project-level `roles.assign` holder | two removals of two different project admins: zero project admins (a global admin can re-add one) | nothing: `guardLastProjectAdmin` reads out of the transaction; the removals are plain deletes | **not covered, cheap** (row 1's change, scoped to the project); low value |
 | 5 | `project-admin-guard`, break-glass activate: `break_glass.go` | an activation's grant never lands after a revoke reported success (#2722) | nothing | record and grant in one transaction (#3109); `uniq_break_glass_active_project_user`; the revoke is one transaction with a conditional update | **covered** (the lock is no longer load-bearing) |
-| 6 | `sod-grant:user`: `rbac_management.go` AssignUserRole, SSO grant, baseline backfill, withOrderedUserSoDLocks; `jit_access.go`; `invitations.go` access-request finalize; `groups.go` AddUserToGroup; `role_set_replace.go` | separation of duties: no principal holds a policy-toxic permission set (#419) | grant two individually clean roles to one user concurrently: an **SoD-conflicting pair** | only a duplicate of the same grant (`user_roles_pkey`); the SoD check reads out of the transaction, or (`role_set_replace.go`) inside it with no shared row lock | **not covered, expensive** |
-| 7 | `sod-grant:group`: `rbac_management.go` AssignRoleToGroup; `jit_access.go` group grant with expiry | SoD across every group member (#1780) | a group grant and a direct grant to a member: a toxic pair | duplicates only (`group_roles_pkey`) | **not covered, expensive** |
-| 8 | `sod-grant:machine`: `machine_token.go` AssignMachineRole; withMachineRoleRemovalGuards | SoD on machine credentials | AssignMachineRole: a toxic pair. The removal section cannot create a conflict | duplicates only | grant: **not covered, expensive**; removal: nothing to protect |
-| 9 | `sod-grant:group`, RestoreGroup: `groups.go` | a non-global admin cannot restore a group carrying an admin role its ceiling check never saw (#2455) | an admin-role grant lands on the deleted group after the restore read its roles | nothing | **not covered, expensive**; low |
-| 10 | `dual-control-approval`: `invitations.go` | M-of-K: the grant is made exactly once, at the K-th distinct approver | (a) a double grant or a double finalize; (b) two approvers straddling K both record a partial approval, so the request stays pending and lapses | (a) `user_roles_pkey`, the conditional `UpdateAccessRequest … WHERE state = 'pending'` with a RowsAffected check, `ux_access_request_approver`; (b) nothing | (a) **covered**; (b) **not covered, expensive** (fails closed: availability only) |
+| 6 | `sod-grant:user`: `rbac_management.go` AssignUserRole, SSO grant, baseline backfill, withOrderedUserSoDLocks; `jit_access.go`; `invitations.go` access-request finalize; `groups.go` AddUserToGroup; `role_set_replace.go` | separation of duties: no principal holds a policy-toxic permission set (#419) | grant two individually clean roles to one user concurrently: an **SoD-conflicting pair** | only a duplicate of the same grant (`user_roles_pkey`); the SoD check reads out of the transaction, or (`role_set_replace.go`) inside it with no shared row lock | **not covered, accepted** (below) |
+| 7 | `sod-grant:group`: `rbac_management.go` AssignRoleToGroup; `jit_access.go` group grant with expiry | SoD across every group member (#1780) | a group grant and a direct grant to a member: a toxic pair | duplicates only (`group_roles_pkey`) | **not covered, accepted** (below) |
+| 8 | `sod-grant:machine`: `machine_token.go` AssignMachineRole; withMachineRoleRemovalGuards | SoD on machine credentials | AssignMachineRole: a toxic pair. The removal section cannot create a conflict | duplicates only | grant: **not covered, accepted** (below); removal: nothing to protect |
+| 9 | `sod-grant:group`, RestoreGroup: `groups.go` | a non-global admin cannot restore a group carrying an admin role its ceiling check never saw (#2455) | an admin-role grant lands on the deleted group after the restore read its roles | nothing | **not covered, accepted** (below); low |
+| 10 | `dual-control-approval`: `invitations.go` | M-of-K: the grant is made exactly once, at the K-th distinct approver | (a) a double grant or a double finalize; (b) two approvers straddling K both record a partial approval, so the request stays pending and lapses | (a) `user_roles_pkey`, the conditional `UpdateAccessRequest … WHERE state = 'pending'` with a RowsAffected check, `ux_access_request_approver`; (b) nothing | (a) **covered**; (b) **not covered, accepted** (below; fails closed: availability only) |
 | 11 | `project-membership`: `membership_lifecycle.go` invite, TransitionMembership | a revoked membership never has a live grant (#2657, #2659); one active onboarding per project and user | the activation's state change commits, a revoke runs and succeeds, then the activation's grant lands: a **revoked member with live access** | the duplicate onboarding by `uniq_project_memberships_active`; not the grant against the revoke (the state change and the grant are separate transactions) | **not covered, cheap** (move the state change into the grant and removal transactions) |
 | 12 | `secret-dependency-graph`: `secret_dependencies.go` | the dependency graph stays acyclic (INV-CORE-31) | add A→B and B→A concurrently: a **cycle** | duplicates by `idx_secret_dep_edge`; not cycles (FOR UPDATE on existing edges does not block a new edge) | **not covered, cheap** (a BEFORE INSERT trigger that takes a per-project transaction lock and checks reachability; no client round trip) |
 | 13 | `environment-secret-guard`: `secrets.go` CreateSecret, CreateFolder, RestoreSecret; `secret_suspend.go` resume; `catalog.go` and `local_secrets.go` DeleteEnvironment | no active secret or folder under a deleted environment | a create passes its environment check, DeleteEnvironment counts zero and deletes, then the insert commits: an **orphaned active secret** | nothing: the create transaction re-checks only the project row; DeleteEnvironment counts, then deletes | **not covered, cheap** (FOR SHARE on the environment row in place of the project lock; delete first, then count, in one transaction) |
 | 14 | `WithBootstrapLock`: `auth_bootstrap.go` | one first-admin seed | nothing | one transaction; the loser hits unique `permissions.name`, `uniq_roles_name_folded`, `uniq_projects_name_active` | **covered** |
 | 15 | `WithAuditCheckpointLock`: `audit_checkpoint.go`, `audit_verify_state.go`, `audit_verify_incremental.go`, `audit_key_transition.go` | the audit high-water mark never moves back; the signed verify state never loses a recorded failure | the slower holder writes a lower high-water mark after the faster one, so a truncation of the newest events goes unseen; a lost update of the verify state can drop a sticky failure | `CompareAndSetSystemMetadata` (AUDIT-HIGHWATER-CAS-1): `advanceAuditHighWater`, the key-transition re-sign of the mark and `saveAuditVerifyState` write only over the value they read. A lost mark write re-reads the floor and skips (floor already at cp) or retries once; a lost state save is redone once over the reloaded row by `updateAuditVerifyState` (other state writers fail and their next run retries). Proved by `TestAuditHighWaterCAS_SlowerHolderNeverLowersTheMark` and `TestAuditVerifyStateCAS_LostUpdateKeepsRecordedFailure` (two cores, separate pools, SQLite and PostgreSQL) | **covered** |
-| 16 | `WithSchedulerLock`: `server/scheduler_run.go` (about 20 jobs) | one replica per tick | run the same tick twice: duplicate audit rows and notifications for idempotent sweeps; a double action for jobs with an outside effect (auto-rotation, evidence delivery, recertification) | per job, not audited here | **not audited per job** |
+| 16 | `WithSchedulerLock`: `server/scheduler_run.go` (about 20 jobs) | one replica per tick | run the same tick twice | per job: see "Scheduler jobs" below | **audited per job**: one job can leave a credential out of step (auto-rotation with a backend), one can open a duplicate campaign (recertification), the rest are safe or only repeat output |
 | 17 | audit list index build: `audit_list_indexes.go` | one builder | the second builder drops the first one's in-progress index as invalid, and the build retries | catalog name uniqueness, the validity check after the build | operational only; accept |
 
 What the uncovered rows need, none of it adding a round trip to a request path:
@@ -185,16 +185,108 @@ What the uncovered rows need, none of it adding a round trip to a request path:
   delete first, then count, in one transaction.
 - **Row 15** (audit high-water and verify state): done, `CompareAndSetSystemMetadata` in place
   of the upsert (AUDIT-HIGHWATER-CAS-1).
-- **Rows 6–9** (SoD): move the SoD read into the grant transaction under
-  `pg_advisory_xact_lock` on the same key (option E), across about twelve grant paths.
-- **Row 10b**: an `approvals_count` updated with `RETURNING`.
-- **Row 16**: a per-job idempotence audit, starting with auto-rotation and evidence
-  delivery.
+- **Rows 6–9** (SoD): accepted for now, see below. The fix, if it is ever wanted: move the
+  SoD read into the grant transaction under `pg_advisory_xact_lock` on the same key
+  (option E), across about twelve grant paths.
+- **Row 10b**: accepted for now, see below. The fix: an `approvals_count` updated with
+  `RETURNING`.
+- **Row 16**: audited, see "Scheduler jobs" below.
 
 Each fix is proved with the cross-replica fixtures in
 `internal/core/concurrency_check_then_act_exempt_review_postgres_test.go` (`newCTAReview`):
 replica A's `WithNamedLock` is replaced by a pass-through hook to model the silent loss,
 then the two replicas race.
+
+### Accepted window: SoD grants and dual-control straddle
+
+Decision (2026-11-08): rows 6–9 and 10b stay as they are for now. Restructuring them is
+option E across about twelve grant paths, and the exposure does not justify it yet.
+
+What is accepted, for the overlap window only (from a lost lock until the holder notices,
+at most one ping interval plus the ping timeout, 5 s + 5 s by default):
+
+- **Rows 6–9.** Two grants to the same principal (or to a group and one of its members)
+  can each pass the SoD check and together form a policy-toxic set. On RestoreGroup, an
+  admin-role grant can land on the group after the restore read its roles.
+- **Row 10b.** Two approvers straddling K can both record a partial approval. The request
+  stays pending and lapses, and has to be requested again. It fails closed: nothing is
+  granted.
+
+Why that is acceptable: it needs a lost advisory lock and two concurrent authorised
+requests inside the same few seconds, so nobody can trigger it without already holding
+the right to grant. Rows 6–8 also leave a detectable end state: the SoD register
+(`DetectSoDViolations`) reports the toxic pair in the compliance digest and the evidence
+pack, where an administrator can remove it. Row 9 has no such report.
+
+Reopen this if the window grows (a longer ping interval, or a pooler that reconnects
+silently, see option B), or if SoD becomes a control a customer needs enforced at grant
+time with no exceptions.
+
+## Scheduler jobs (row 16, FU-SERVERGUARD-SCHED-1)
+
+For each of the 20 jobs in `schedulerStarts` (`server/main.go`): what happens if two replicas
+run the same tick in the overlap window. This is a code-reading audit: no two-replica race
+was run. The two fixes at the end have red/green tests.
+
+A holder that loses its lock has its context cancelled within the window, so most work it
+has not started fails on its own. What matters is what the two holders do before that, and
+what a cancelled tick still emits. Audit rows are written on a detached context
+(`store.auditWriteContext`), so a cancelled tick can still write them.
+
+| Job | Two runs of one tick | Stopped by | Verdict |
+|---|---|---|---|
+| `auto_rotation`, no backend | each run stores a version: two rotations, the last stored value is current | `uniq_secret_versions_node_version` and the retry give each its own number; nothing outside Keyorix changes | safe, one extra rotation |
+| `auto_rotation`, password-set backend (PostgreSQL, MySQL, Redis, MongoDB) | both set a password upstream and both store. Upstream ends on the last *apply*, Keyorix on the last *store*. If those differ, Keyorix holds a password that does not work, with no `DRIFT` audit row | nothing: `rotationBackendLock` is per process | **not idempotent**: credential out of step until someone rotates it |
+| `auto_rotation`, generate-upstream backend (AWS IAM, GCP, Azure) | each run mints a key and deletes the keys it listed, which can include the other run's new key. Keyorix can end up storing a deleted key | nothing, as above | **not idempotent**: same outcome |
+| `evidence_delivery` | a second signed pack, file and webhook, and a second audit row. Each pack is complete and self-consistent | names are per second. Two runs in the same second overwrite each other's file (`O_TRUNC`, no rename), only on a shared `output_dir`, and pack and signature can then come from different runs | safe, repeats output |
+| `recertification`, `auto_open` | two open campaigns for one project, each needing review. Reminders repeat | nothing: check-then-create, no unique index on open campaigns | **not idempotent**: duplicate review work, no access change |
+| `compliance_digest` | a second broadcast | nothing | repeats output |
+| `rotation_reminder`, `expiry_reminder` | one notification; the summary audit row repeats | `uniq_notifications_unread_reminder`; a refused insert sends nothing out of band (#488) | idempotent |
+| `certificate_expiry`, `license_expiry`, `read_quota_alerts` | duplicate notification and its out-of-band delivery | nothing: the index covers only the two reminder types above | repeats output |
+| `break_glass_review_reminder` | a second round of an already repeating reminder and audit row | nothing | repeats output |
+| `anomaly_detection` | duplicate alerts are possible on PostgreSQL, and each is announced | the dedup in `CreateAnomalyAlert` is one transaction but is not serialised on PostgreSQL. A high-water mark moved back only re-scans | repeats output |
+| `recover_admin_alert` | the in-flight batch is alerted twice | at-least-once by design. The mark's check-then-set is not atomic, so it can move back: more repeats, never a skipped event | repeats output |
+| `jit_access_expiry` | each grant goes once; a run that read the rows before the other deleted them writes `role.expired` / `share.expired` again | row deletes | idempotent for access, audit rows can repeat |
+| `dynamic_secret_sweep` | each credential goes once; `dynamic_lease.revoked` can repeat. A target failure in the second run can mark a revoked lease `revoke_failed`, and the next sweep clears it | revokes are no-ops when already gone (`DROP ... IF EXISTS`, `ACL DELUSER`, not-found ignored) | idempotent |
+| `retention_purge`, `data_retention`, `login_attempt_prune`, `mfa_stepup_grant_prune` | the second run deletes nothing; its audit row is written only when it removed rows | delete by cutoff | idempotent |
+| `audit_owed_backfill` | each owed row is written once | `ClaimPendingAuditEvent` in the write's transaction | idempotent |
+| `audit_checkpoint` | checkpoint and verify state as row 15. The rolling cycle can lose a step and re-walk it | `CompareAndSetSystemMetadata`; a recorded failure stays | idempotent |
+
+Also on the scheduler lock but not a tick: the on-demand full audit verification
+(`AuditVerifyJobLockKey`). It is outside this table.
+
+### Fixed here
+
+Both are the case where a cancelled tick did something worse than stop:
+
+- **Auto-rotation** walked the rest of its queue on the dead context. Every secret it had
+  not reached got a "started" and a "FAILED" audit row, and the alert channels were told it
+  failed. It now stops at the cancellation, and those secrets stay due for the next tick
+  (`TestRunAutoRotation_CancelledTickDoesNotTouchRemainingSecrets`).
+- **Evidence delivery** turned a collection cut off by the cancellation into a signed
+  `DEGRADED` pack, wrote it and audited it as an export. It now stops before delivering
+  anything (`TestExportComplianceEvidence_CancelledDuringCollectionDeliversNothing`).
+
+### Left as it is
+
+- **Auto-rotation with a backend** is the one that matters. The fix is cross-replica
+  serialisation per (backend, ref), replacing the in-process `rotationBackendLock` (which
+  already leaves on-demand and scheduled rotation unserialised across replicas), plus a
+  re-read of `last_rotated_at` under it. It needs its own design, and a two-replica test
+  with an executor that records the order of applies and stores.
+- **Do not detach the store from the cancelled context** to save a value already applied
+  upstream, though it looks like the obvious fix. Today a store cancelled after the apply
+  writes a `DRIFT` audit row, leaves `last_rotated_at` alone, and the next tick rotates
+  again (hourly by default), which repairs it. A detached store could land after the other
+  holder's, and would make the silent case above more likely.
+- **Recertification**: a partial unique index on open campaigns per project, with a
+  duplicates pre-flight. It changes what an on-demand open may do.
+- **`compliance_digest` and `AlertNewAnomalies`** could take the same stop-on-cancel check.
+  Without it a cancelled digest can broadcast an `INCOMPLETE` headline, and a cancelled alert
+  loop can write audit rows that the next tick repeats. Both are noise, so they are left.
+- **`certificate_expiry`, `license_expiry`, `read_quota_alerts`**: a unique key would need a
+  structured dedup key (`read_quota_alerts.go` explains why the current index cannot
+  cover per-secret notifications).
 
 ## Evidence
 
