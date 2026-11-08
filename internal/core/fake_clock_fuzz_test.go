@@ -685,19 +685,21 @@ func TestSeamGap_UnexpiredSecretIgnoresInjectedClock(t *testing.T) {
 // at the injected instant gives the opposite verdict from the one asserted. The smallest
 // change (R4) is to pass c.now() in from checkSecretAccessSchedule and the versions.go
 // callers. This test then goes red and should be replaced by one asserting that the
-// injected clock decides.
+// injected clock decides. Every attempt uses a new secret so that its schedule is
+// created, not updated: updating a schedule to StartHour 0 keeps the old start hour,
+// which would break the window asked for when the real clock is in hour 12.
 func TestSeamGap_SecretScheduleIgnoresInjectedClock(t *testing.T) {
 	w := buildFkcWorld(t, time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC))
 	ctx := context.Background()
-	s, err := w.core.storage.CreateSecret(ctx, &models.SecretNode{
-		Name: "fc-seam-schedule", ProjectID: w.boot.Project.ID, EnvironmentID: w.boot.Environments[0].ID,
-		Type: "password", OwnerID: w.userID, IsSecret: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, realInWindow := range []bool{true, false} {
 		for attempt := 0; ; attempt++ {
+			s, err := w.core.storage.CreateSecret(ctx, &models.SecretNode{
+				Name: fmt.Sprintf("fc-seam-schedule-%t-%d", realInWindow, attempt), ProjectID: w.boot.Project.ID, EnvironmentID: w.boot.Environments[0].ID,
+				Type: "password", OwnerID: w.userID, IsSecret: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			wall := time.Now().UTC()
 			injected := wall.Add(12 * time.Hour)
 			hour := injected.Hour()
@@ -709,7 +711,7 @@ func TestSeamGap_SecretScheduleIgnoresInjectedClock(t *testing.T) {
 				t.Fatal(err)
 			}
 			w.clock.t = injected
-			err := w.core.checkSecretAccessSchedule(ctx, s.ID)
+			err = w.core.checkSecretAccessSchedule(ctx, s.ID)
 			if time.Now().UTC().Hour() != wall.Hour() && attempt == 0 {
 				continue // the real clock crossed an hour mid-check; the window no longer applies
 			}
