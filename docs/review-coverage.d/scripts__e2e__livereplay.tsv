@@ -1,0 +1,1 @@
+scripts/e2e/livereplay	none	-	test-only harness: replays recorded API traffic against a live server in tests and checks response rules; live e2e test behind the e2e build tag, not linked into any shipped binary	test-helper
