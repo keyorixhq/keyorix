@@ -666,12 +666,6 @@ func diffListSecrets(t *testing.T, ctx context.Context, s *diffSide, variant int
 }
 
 func diffListUsers(t *testing.T, ctx context.Context, s *diffSide, variant int, name string, pageSize int) string {
-	// Known divergence D (backend_differential_v2_known_test.go): the free-text Search
-	// filter is LIKE on SQLite and ILIKE on PostgreSQL, so a non-ASCII case-variant
-	// term matches on PostgreSQL only. Named as a follow-up in #4019. Gated to ASCII terms.
-	if variant == 1 && !diffASCII(name) {
-		return "gated:D"
-	}
 	mk := func(page, size int) *storage.UserFilter {
 		fl := &storage.UserFilter{Page: page, PageSize: size}
 		switch variant {
