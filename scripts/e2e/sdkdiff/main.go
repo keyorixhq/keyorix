@@ -196,7 +196,10 @@ type Report struct {
 	BatchErrors int `json:"batch_errors"`
 	// Executed counts, per SDK, the scenarios in which its driver answered at least one step with
 	// something other than driver_error.
-	Executed map[string]int            `json:"executed"`
+	Executed map[string]int `json:"executed"`
+	// Wire counts, per SDK, the requests the recording proxy saw. It does not depend on driver code, so
+	// an SDK whose calls never reach the wire is caught even when its driver reports ordinary errors.
+	Wire     map[string]int            `json:"wire"`
 	Coverage map[string]map[string]int `json:"coverage"`
 	Info     map[string]int            `json:"info"`
 	InfoEx   map[string][]string       `json:"info_examples"`
@@ -204,7 +207,7 @@ type Report struct {
 
 func newReport(c *common) *Report {
 	return &Report{Started: time.Now().UTC().Format(time.RFC3339), SDKs: strings.Split(c.sdks, ","), Plant: c.plant,
-		Sigs: map[string]*SigStat{}, Executed: map[string]int{}, Coverage: map[string]map[string]int{}, Info: map[string]int{}, InfoEx: map[string][]string{}}
+		Sigs: map[string]*SigStat{}, Executed: map[string]int{}, Wire: map[string]int{}, Coverage: map[string]map[string]int{}, Info: map[string]int{}, InfoEx: map[string][]string{}}
 }
 
 func (rep *Report) add(f Finding, sc Scenario) {
@@ -303,11 +306,7 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 					outs[n] = l[j]
 				}
 			}
-			for n, o := range outs {
-				if slices.ContainsFunc(o.Steps, answered) {
-					rep.Executed[n]++
-				}
-			}
+			rep.recordOutcomes(outs)
 			fs, h := r.Analyse(sc, outs)
 			rep.Harness = append(rep.Harness, h...)
 			if rawOut != nil && (len(fs) > 0 || rawAll) {
@@ -326,6 +325,25 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 	return nil
 }
 
+// recordOutcomes counts one scenario's outcomes per SDK: Executed when the driver answered at least one
+// step (see answered), Wire by the requests the proxy recorded.
+func (rep *Report) recordOutcomes(outs map[string]Outcome) {
+	if rep.Executed == nil {
+		rep.Executed = map[string]int{}
+	}
+	if rep.Wire == nil {
+		rep.Wire = map[string]int{}
+	}
+	for n, o := range outs {
+		if slices.ContainsFunc(o.Steps, answered) {
+			rep.Executed[n]++
+		}
+		for _, st := range o.Steps {
+			rep.Wire[n] += len(st.Reqs)
+		}
+	}
+}
+
 // answered reports whether the driver gave a protocol answer for the step. A driver_error is a harness
 // failure (PROTOCOL.md), not an answer: an SDK method rename turns every call into one. na and
 // inexpressible are answers the protocol defines.
@@ -334,7 +352,8 @@ func answered(so StepOutcome) bool {
 }
 
 // notRun lists the ways a run compared less than it claims: batches that never ran, and SDKs whose
-// driver answered no step of any scenario (a driver that cannot start leaves the comparison silently).
+// driver answered no step of any scenario (a driver that cannot start leaves the comparison silently),
+// and SDKs whose calls never produced a request on the wire (their driver ran, but nothing was exercised).
 // An empty result means every SDK executed at least one step; it does not mean every scenario ran.
 func (rep *Report) notRun() []string {
 	var p []string
@@ -347,6 +366,8 @@ func (rep *Report) notRun() []string {
 	for _, n := range rep.SDKs {
 		if rep.Scenarios > 0 && rep.Executed[n] == 0 {
 			p = append(p, n+" executed no step")
+		} else if rep.Scenarios > 0 && rep.Wire[n] == 0 {
+			p = append(p, n+" recorded no wire request")
 		}
 	}
 	return p

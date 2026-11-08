@@ -18,6 +18,19 @@ if (plant === 'P2' || plant === 'P5') {
 }
 const sdk = require(path.join(process.env.SDKDIFF_SDKS_DIR, 'node', 'keyorix.js'));
 
+const CLIENT_METHODS = ['health', 'listSecretsScoped', 'getSecretScoped', 'getSecretIn', 'getSecretByRef',
+  'listDeletedSecrets', 'listProjects', 'createProject', 'listEnvironments'];
+
+// SDK functions this driver calls that the SDK does not define. A renamed method must read as a harness
+// failure (driver_error), not as an SDK error to compare, so this is checked up front rather than by
+// mapping TypeError at call time (an SDK may throw it on a scenario that is behaviour).
+function missingApi() {
+  const miss = typeof sdk.login === 'function' ? [] : ['login'];
+  if (typeof sdk.Client !== 'function') return miss.concat('Client');
+  return miss.concat(CLIENT_METHODS.filter((m) => typeof sdk.Client.prototype[m] !== 'function').map((m) => 'Client.' + m));
+}
+const MISSING = missingApi();
+
 function field(f) {
   if (f === '~') return null;
   return Buffer.from(f, 'hex').toString('utf8');
@@ -37,6 +50,7 @@ function classify(err, force) {
 }
 
 async function run(f) {
+  if (MISSING.length > 0) return { driver_error: 'SDK lacks ' + MISSING.join(', ') };
   const cmd = f[0];
   const base = field(f[1]) ?? '';
   const token = field(f[2]) ?? '';

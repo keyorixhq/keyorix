@@ -30,6 +30,24 @@ if PLANT in ("P4", "P7"):
     urllib.request.urlopen = _patched
 
 
+CLIENT_METHODS = ("health", "list_secrets_scoped", "get_secret_scoped", "get_secret_in", "get_secret_by_ref",
+                  "list_deleted_secrets", "list_projects", "create_project", "list_environments")
+
+
+def missing_api():
+    """SDK functions this driver calls that the SDK does not define. A renamed method must read as a
+    harness failure (driver_error), not as an SDK error to compare, so this is checked up front rather
+    than by mapping AttributeError at call time (an SDK may raise it on a scenario that is behaviour)."""
+    miss = [] if callable(getattr(keyorix, "login", None)) else ["login"]
+    client = getattr(keyorix, "Client", None)
+    if client is None:
+        return miss + ["Client"]
+    return miss + ["Client." + m for m in CLIENT_METHODS if not callable(getattr(client, m, None))]
+
+
+MISSING = missing_api()
+
+
 def field(f):
     if f == "~":
         return None
@@ -59,6 +77,8 @@ def classify(err, force=None):
 
 
 def run(f):
+    if MISSING:
+        return {"driver_error": "SDK lacks " + ", ".join(MISSING)}
     cmd, base, token = f[0], field(f[1]) or "", field(f[2]) or ""
     timeout_ms = int(f[3] or 0)
     args = [field(x) for x in f[4:]]

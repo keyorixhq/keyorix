@@ -62,7 +62,8 @@ func TestControlC1FailsWhenNothingRan(t *testing.T) {
 	}
 
 	// green direction: everything ran, no harness note, no finding
-	rep = &Report{SDKs: []string{"go", "go@2"}, Scenarios: 2, Executed: map[string]int{"go": 2, "go@2": 2}, Sigs: map[string]*SigStat{}}
+	rep = &Report{SDKs: []string{"go", "go@2"}, Scenarios: 2, Executed: map[string]int{"go": 2, "go@2": 2},
+		Wire: map[string]int{"go": 4, "go@2": 4}, Sigs: map[string]*SigStat{}}
 	if line, ok := controlC1(rep); !ok {
 		t.Fatalf("complete clean run failed: %q", line)
 	}
@@ -78,7 +79,7 @@ func TestControlC1FailsWhenNothingRan(t *testing.T) {
 
 	// a split twin still fails
 	rep = &Report{SDKs: []string{"go", "go@2"}, Scenarios: 1, Executed: map[string]int{"go": 1, "go@2": 1},
-		Sigs: map[string]*SigStat{"x": {First: Finding{Blocks: [][]string{{"go"}, {"go@2"}}}}}}
+		Wire: map[string]int{"go": 1, "go@2": 1}, Sigs: map[string]*SigStat{"x": {First: Finding{Blocks: [][]string{{"go"}, {"go@2"}}}}}}
 	if _, ok := controlC1(rep); ok {
 		t.Error("split twins passed")
 	}
@@ -150,7 +151,8 @@ func TestDriverErrorIsHarnessNoteAndNotExecuted(t *testing.T) {
 		t.Errorf("control passed with driver_error only: %q", line)
 	}
 	// the harness-note clause alone must fail the control (every other clause satisfied)
-	rep = &Report{SDKs: r.SDKs, Scenarios: 1, Executed: map[string]int{"python": 1, "python@2": 1}, Sigs: map[string]*SigStat{}, Harness: h}
+	rep = &Report{SDKs: r.SDKs, Scenarios: 1, Executed: map[string]int{"python": 1, "python@2": 1},
+		Wire: map[string]int{"python": 1, "python@2": 1}, Sigs: map[string]*SigStat{}, Harness: h}
 	if line, pass := controlC1(rep); pass || !strings.Contains(line, "harness note") {
 		t.Errorf("harness notes alone: pass=%v %q", pass, line)
 	}
@@ -188,7 +190,7 @@ func TestAnalyseAfterDivergenceKeepsOnlyCredentialOracles(t *testing.T) {
 func TestBaselineProblem(t *testing.T) {
 	sdks := []string{"go", "node"}
 	good := func() *Report {
-		return &Report{SDKs: sdks, Scenarios: 2, Executed: map[string]int{"go": 2, "node": 2}}
+		return &Report{SDKs: sdks, Scenarios: 2, Executed: map[string]int{"go": 2, "node": 2}, Wire: map[string]int{"go": 3, "node": 3}}
 	}
 	if why := baselineProblem(good(), sdks, 2); why != "" {
 		t.Errorf("genuine baseline refused: %s", why)
@@ -235,7 +237,8 @@ func TestCmdValidateRefusesUnusableBaseline(t *testing.T) {
 	if _, err := loadBaseline(base, []string{"go", "node"}, 1); err == nil {
 		t.Error("loadBaseline accepted it")
 	}
-	good := &Report{SDKs: []string{"go", "node"}, Scenarios: 1, Executed: map[string]int{"go": 1, "node": 1}}
+	good := &Report{SDKs: []string{"go", "node"}, Scenarios: 1, Executed: map[string]int{"go": 1, "node": 1},
+		Wire: map[string]int{"go": 1, "node": 1}}
 	raw, _ = json.Marshal(good)
 	if err := os.WriteFile(base, raw, 0o600); err != nil {
 		t.Fatal(err)
