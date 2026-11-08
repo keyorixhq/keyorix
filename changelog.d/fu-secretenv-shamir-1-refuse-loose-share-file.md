@@ -1,0 +1,2 @@
+### Security
+- **A loose Shamir share file is refused when it is read.** A `shamir_share_files` file that fails the secretenv owner + mode rule now refuses the unseal unconditionally, like `shamir_share_env` + `_FILE` and the file KEK provider, judged on the descriptor that is read. **Upgrade note:** a loose share file that only warned in the warn or ADR-112 grace modes now stops the server from booting; fix it with `chmod`/`chown` before upgrading (docs/upgrading.d/shamir-share-file-refused.md). Guarded by `TestShamirKeyProvider_ShareFileRefusedAtRead`.
