@@ -194,6 +194,9 @@ func refuseRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) == 0 {
 		return nil
 	}
+	if len(via) >= maxRedirectHops {
+		return fmt.Errorf("evidencesink: refusing redirect after %d hops", len(via))
+	}
 	prev := via[len(via)-1]
 	if req.URL.Host != prev.URL.Host {
 		return fmt.Errorf("evidencesink: refusing cross-host redirect to %q", req.URL.Host)
@@ -262,3 +265,8 @@ func (w *Webhook) post(ctx context.Context, name string, data []byte, signature 
 
 // Target labels this forwarder in the export result.
 func (w *Webhook) Target() string { return "webhook" }
+
+// maxRedirectHops is the number of requests (the original plus followed
+// redirects) after which a further redirect is refused. A custom CheckRedirect
+// replaces net/http's own hop limit, so it has to be enforced here.
+const maxRedirectHops = 3

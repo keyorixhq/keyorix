@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
@@ -107,6 +109,9 @@ func secretStateRefusal(resp *http.Response) error {
 	if json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&env) != nil {
 		return nil
 	}
+	// code is the server-supplied error string, made safe to print: control
+	// characters stripped, length bounded. Every use below formats it with %q.
+	code := sanitizeServerString(env.Error)
 	switch env.Error {
 	case "SecretSuspended":
 		// details is decoded on its own: a shape this agent does not know drops only the
@@ -118,9 +123,9 @@ func secretStateRefusal(resp *http.Response) error {
 			_ = json.Unmarshal(env.Details, &details)
 		}
 		if details.ClearSyncedCopies {
-			return fmt.Errorf("%s (HTTP %d, clear_synced_copies): %w: %w", env.Error, resp.StatusCode, ErrSourceSuspended, ErrSourceClearRequested)
+			return fmt.Errorf("%q (HTTP %d, clear_synced_copies): %w: %w", code, resp.StatusCode, ErrSourceSuspended, ErrSourceClearRequested)
 		}
-		return fmt.Errorf("%s (HTTP %d): %w", env.Error, resp.StatusCode, ErrSourceSuspended)
+		return fmt.Errorf("%q (HTTP %d): %w", code, resp.StatusCode, ErrSourceSuspended)
 	case "SecretExpired":
 		// An expired secret that is also suspended with the clear marker answers
 		// SecretExpired carrying details.clear_synced_copies (#3215): clear, not retain.
@@ -133,13 +138,36 @@ func secretStateRefusal(resp *http.Response) error {
 			_ = json.Unmarshal(env.Details, &details)
 		}
 		if details.ClearSyncedCopies {
-			return fmt.Errorf("%s (HTTP %d, clear_synced_copies): %w: %w: %w", env.Error, resp.StatusCode, ErrSourceSuspended, ErrSourceClearRequested, ErrSourceExpired)
+			return fmt.Errorf("%q (HTTP %d, clear_synced_copies): %w: %w: %w", code, resp.StatusCode, ErrSourceSuspended, ErrSourceClearRequested, ErrSourceExpired)
 		}
-		return fmt.Errorf("%s (HTTP %d): %w", env.Error, resp.StatusCode, ErrSourceExpired)
+		return fmt.Errorf("%q (HTTP %d): %w", code, resp.StatusCode, ErrSourceExpired)
 	case "SecretAccessOutsideSchedule", "SecretMaxReadsExhausted":
-		return fmt.Errorf("value read refused: %s (HTTP %d)", env.Error, resp.StatusCode)
+		return fmt.Errorf("value read refused: %q (HTTP %d)", code, resp.StatusCode)
 	}
 	return nil
+}
+
+// maxServerErrorStringBytes bounds how much of a server-supplied error string is
+// carried into an error (and so into logs).
+const maxServerErrorStringBytes = 200
+
+// sanitizeServerString makes a string received from the Keyorix server safe to put
+// into an error message: control characters (CR, LF, NUL, ESC, DEL and the rest of
+// the C0/C1 ranges) are dropped, invalid UTF-8 is dropped, and the result is cut to
+// maxServerErrorStringBytes bytes on a rune boundary. Callers format the result
+// with %q.
+func sanitizeServerString(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r == utf8.RuneError || unicode.IsControl(r) {
+			continue
+		}
+		if b.Len()+utf8.RuneLen(r) > maxServerErrorStringBytes {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // maxServerPageSize is the Keyorix server's maximum accepted page_size for
@@ -288,6 +316,11 @@ func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (uint,
 	if err != nil {
 		return 0, err
 	}
+	if envID == 0 {
+		// Never scope a list to environment 0: the server would not treat it as
+		// "this environment".
+		return 0, fmt.Errorf("environment %q: server returned an invalid id", env)
+	}
 
 	for page := 1; ; page++ {
 		q := url.Values{}
@@ -308,6 +341,9 @@ func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (uint,
 		}
 		for _, s := range body.Secrets {
 			if s.Name == name {
+				if s.ID == 0 {
+					return 0, fmt.Errorf("secret %q in environment %q: server returned an invalid id", name, env)
+				}
 				return s.ID, nil
 			}
 		}
@@ -376,6 +412,11 @@ func (f *KeyorixFetcher) fetchValue(ctx context.Context, id uint) ([]byte, *time
 	if err := f.getJSON(ctx, fmt.Sprintf("/api/v1/secrets/%d?include_value=true", id), &body); err != nil {
 		return nil, nil, fmt.Errorf("read secret %d value: %w", id, err)
 	}
+	if body.Value == "" {
+		// A missing or empty value is not a secret to sync; delivering it would
+		// overwrite the synced copy with nothing.
+		return nil, nil, fmt.Errorf("read secret %d value: server returned no value", id)
+	}
 	return []byte(body.Value), body.Secret.Expiration, nil
 }
 
@@ -423,7 +464,9 @@ func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out any) erro
 	if resp.StatusCode >= 500 {
 		return fmt.Errorf("server returned HTTP %d: %w", resp.StatusCode, ErrServerError)
 	}
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Anything that is not a 2xx (a 3xx without a usable Location included) is
+		// not a response this fetcher parses.
 		return fmt.Errorf("server returned HTTP %d", resp.StatusCode)
 	}
 

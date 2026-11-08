@@ -1,0 +1,1 @@
+internal/fuzzutil/taint	none	-	test-only helper for the opt-in taint fuzz harnesses (taintoverlay build tag): marker generation and flow checks used only by *_fuzz_test.go files; not linked into any shipped binary	test-helper

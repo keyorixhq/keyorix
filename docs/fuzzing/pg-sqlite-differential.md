@@ -96,7 +96,7 @@ go test ./internal/storage/store -run '^$' -fuzz '^FuzzStorageBackendDifferentia
 | Class | Crashers | Divergence | Minimal repro | Replayed | Classification | Needs |
 |---|---|---|---|---|---|---|
 | A | 86 | empty secret value: nil on SQLite, `[]byte{}` on PostgreSQL | 2 ops | 3x | backend-inherent (driver NULL / empty-blob mapping); ciphertext is never empty | harness normalisation 7 (added after this campaign, see below) |
-| B | 58 | projects whose names differ only by non-ASCII case (`ÄÖ`/`äö`, `İstanbul`/`istanbul`): SQLite accepts both, PostgreSQL rejects the second; same for rename and by-name lookup | 2 ops | 3x | storage-layer divergence, not reachable through a live writer (trace below); defence in depth | #4027; gated in the harness; pinned |
+| B | 58 | projects whose names differ only by non-ASCII case (`ÄÖ`/`äö`, `İstanbul`/`istanbul`): SQLite accepts both, PostgreSQL rejects the second; same for rename and by-name lookup | 2 ops | 3x | storage-layer divergence, not reachable through a live writer (trace below); defence in depth | fixed by #4027 (`projects.name_folded`); gate and pin removed in that PR |
 | C | 14 | security-relevant under the pre-registration's last rule; recorded in the private findings file only | - | - | - | fixed by #4022, which merges before this harness |
 | D | 3 | `ListUsers{Search}` with a non-ASCII case variant: LIKE on SQLite, ILIKE on PostgreSQL | 2 ops | 3x | Keyorix bug, reachable, low (trace below); named as a follow-up in #4019 | #4023; gated; pinned |
 
@@ -145,8 +145,10 @@ B, project names:
   was HTTP-only and gRPC or embedded CLI could store non-ASCII names. Restoring such an archive
   into PostgreSQL fails at the unique index instead of merging the pair.
 - Classification: storage-layer divergence, not reachable through any live caller with new
-  data; defence in depth. #4027 makes the index identical and refuses an upgrade that would
-  hit such a legacy pair.
+  data; defence in depth. Fixed by #4027: the unique index and the by-name lookup now use
+  the `name_folded` column (the same fold on both backends), and an upgrade that would hit
+  such a legacy pair is refused. The harness gate and the pinned test for B were removed in
+  that PR.
 
 D, user search:
 - `users.display_name` accepts any Unicode: core create and update check only its length

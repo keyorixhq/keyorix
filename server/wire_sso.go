@@ -124,8 +124,11 @@ func noDiscoveryCrossOriginRedirect(req *http.Request, via []*http.Request) erro
 	if len(via) == 0 {
 		return nil
 	}
+	if len(via) >= maxDiscoveryRedirects {
+		return fmt.Errorf("discovery: refusing redirect after %d hops", len(via))
+	}
 	prev := via[len(via)-1].URL
-	if !strings.EqualFold(req.URL.Hostname(), prev.Hostname()) {
+	if !strings.EqualFold(req.URL.Host, prev.Host) {
 		return fmt.Errorf("discovery: refusing cross-host redirect to %q", req.URL.Host)
 	}
 	if prev.Scheme == "https" && req.URL.Scheme != "https" {
@@ -270,3 +273,7 @@ func buildSAMLProvider(pc config.SSOProviderConfig) (*samlpkg.Provider, error) {
 		GroupsAttr:        pc.SAML.GroupsAttribute,
 	})
 }
+
+// maxDiscoveryRedirects is the number of requests (the original plus followed
+// redirects) after which a further discovery redirect is refused.
+const maxDiscoveryRedirects = 3

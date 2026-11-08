@@ -1,6 +1,8 @@
 module asymanalyzer
 
-go 1.26.6
+go 1.27
+
+toolchain go1.27.3
 
 require (
 	golang.org/x/mod v0.38.0 // indirect
