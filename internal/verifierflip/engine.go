@@ -9,9 +9,14 @@
 package verifierflip
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"path"
 	"slices"
@@ -138,6 +143,40 @@ func GzipRegion(n int) func(int) string {
 			return "gzip-trailer"
 		default:
 			return "deflate"
+		}
+	}
+}
+
+// GzipTarDigest hashes the name, size and content of every tar entry of a
+// gzip+tar artifact, up to the tar end-of-archive, leaving out the entries
+// named in skip. Archive targets put it in their Canon: a signed manifest only
+// says what the components should be, and a verifier that stopped checking them
+// would return the same manifest. It stops where a streaming verifier stops, so
+// bytes after the end-of-archive do not count, and it ignores the other header
+// fields (mode, owner, mtime). An unreadable archive returns a value no
+// readable one can.
+func GzipTarDigest(artifact []byte, skip ...string) string {
+	gz, err := gzip.NewReader(bytes.NewReader(artifact))
+	if err != nil {
+		return "unreadable: " + err.Error()
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	h := sha256.New()
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return hex.EncodeToString(h.Sum(nil))
+		}
+		if err != nil {
+			return "unreadable: " + err.Error()
+		}
+		if slices.Contains(skip, hdr.Name) {
+			continue
+		}
+		_, _ = fmt.Fprintf(h, "%q %d\n", hdr.Name, hdr.Size)
+		if _, err := io.CopyN(h, tr, hdr.Size); err != nil {
+			return "unreadable: " + err.Error()
 		}
 	}
 }

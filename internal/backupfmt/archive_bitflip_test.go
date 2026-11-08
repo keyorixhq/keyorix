@@ -21,8 +21,8 @@ import (
 // per-entry sha256 pins + VerifyManifestSignature) through the verifierflip
 // mutation set: every single bit of a real gzip+tar backup archive, plus
 // truncation, extension, reordering and byte insert/delete. An accepted
-// mutation must leave the manifest (which pins every staged file by sha256)
-// semantically identical, otherwise it is a silent accept. See
+// mutation must leave the manifest semantically identical and every other tar
+// entry byte-identical, otherwise it is a silent accept. See
 // internal/verifierflip/PREREG.md.
 func TestArchiveBitFlip(t *testing.T) {
 	o := verifierflip.DefaultOptions(1)
@@ -35,7 +35,8 @@ func TestArchiveBitFlip(t *testing.T) {
 	}
 	// Reviewed equivalents (PREREG "Verdicts"): gzip framing that is not
 	// content or is never read, because extraction stops at the tar
-	// end-of-archive. Canon is the signed manifest, which pins every entry.
+	// end-of-archive. Canon is the signed manifest plus a digest of every other
+	// tar entry, so these classes cannot hide a changed entry.
 	reviewed := []string{"gzip-header|bitflip", "deflate|*", "gzip-trailer|*", "|dup8", "|truncate", "|extend+*"}
 	for _, c := range rep.UnexpectedEquivalents(reviewed) {
 		t.Errorf("unreviewed ACCEPT-EQUIVALENT class %s", c)
@@ -81,7 +82,9 @@ func archiveBitFlipTarget(t *testing.T, extract func(io.Reader, string, int64, i
 		Canon: func(b []byte) string {
 			m, _ := verify(b)
 			o, _ := json.Marshal(m)
-			return string(o)
+			// MANIFEST.json is left out: m already carries its meaning, and JSON
+			// whitespace in it is free.
+			return string(o) + "|" + verifierflip.GzipTarDigest(b, "MANIFEST.json")
 		},
 		Region: verifierflip.GzipRegion(archive.Len()),
 	}

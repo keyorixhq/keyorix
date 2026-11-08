@@ -52,7 +52,8 @@ var reviewedEquivalents = map[string][]string{
 	"oidc-jwt-rs256": {"signature|bitflip", "|extend+0x0a"},
 	// Gzip framing the verifier never reaches or that is not content: reserved
 	// flag bits, MTIME, XFL, OS, and everything after the tar end-of-archive
-	// (final deflate bytes, CRC, length, trailing data). The signed manifest
-	// pins every component by sha256, and Canon includes manifest and signature.
+	// (final deflate bytes, CRC, length, trailing data). Canon includes the
+	// manifest, the signature and a digest of every tar entry, so these classes
+	// cannot hide a changed component.
 	"update-bundle-ed25519-manifest": {"gzip-header|bitflip", "deflate|*", "gzip-trailer|*", "|dup8", "|truncate", "|extend+*"},
 }

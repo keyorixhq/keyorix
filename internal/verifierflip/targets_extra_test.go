@@ -157,10 +157,10 @@ func tokenTargets(t testing.TB) []tgt {
 }
 
 // bundleTarget: pkg/bundleverify's signed air-gap update bundle (gzip+tar,
-// ed25519-signed manifest pinning every component by sha256). Verify streams
-// every component through its pinned hash, so an accepted mutation means the
-// manifest AND all components are intact; Canon is therefore the manifest plus
-// the signature bytes carried in the archive.
+// ed25519-signed manifest pinning every component by sha256). Canon is the
+// manifest, the signature bytes carried in the archive and a digest of every
+// tar entry, so a verifier that stops checking components cannot hide behind an
+// unchanged manifest (TestCanonContract_BundleIgnoringComponentDigestIsDifferent).
 func bundleTarget(t testing.TB) tgt {
 	return bundleTargetWith(t, bundleverify.Verify)
 }
@@ -201,7 +201,7 @@ func bundleTargetWith(t testing.TB, verify func(io.Reader, *trust.KeyRegistry) (
 		Canon: func(b []byte) string {
 			mm, _ := verify(bytes.NewReader(b), reg)
 			o, _ := mm.MarshalCanonical()
-			return string(o) + "|" + hex.EncodeToString(bundleSignature(b))
+			return string(o) + "|" + hex.EncodeToString(bundleSignature(b)) + "|" + verifierflip.GzipTarDigest(b)
 		},
 		Region: verifierflip.GzipRegion(buf.Len()),
 	}
