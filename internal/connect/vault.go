@@ -8,6 +8,7 @@
 package connect
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -105,8 +106,9 @@ func sanitizeVaultRef(ref string) (string, error) {
 }
 
 // CheckTokenTTL performs a token self-lookup and returns the remaining TTL in
-// seconds. Returns (0, false, nil) for root tokens (TTL = 0). Returns an error if the
-// lookup fails or the token is invalid.
+// seconds. Returns (0, false, nil) for tokens that report an explicit "ttl": 0
+// (root tokens, which never expire). Returns an error if the lookup fails, the token
+// is invalid, or the response carries no numeric data.ttl.
 func (c *VaultConnector) CheckTokenTTL(ctx context.Context) (ttlSeconds int, renewable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.address+"/v1/auth/token/lookup-self", nil)
 	if err != nil {
@@ -122,16 +124,26 @@ func (c *VaultConnector) CheckTokenTTL(ctx context.Context) (ttlSeconds int, ren
 	if resp.StatusCode != http.StatusOK {
 		return 0, false, fmt.Errorf("vault: token lookup returned %d", resp.StatusCode)
 	}
+	// ttl is decoded through a pointer so that an ABSENT ttl is distinguishable
+	// from an explicit 0: a real root token reports "ttl": 0 (alongside
+	// "policies": ["root"]) and keeps meaning "no expiry", but a reply that
+	// carries no numeric ttl at all is a malformed lookup, not a root token.
 	var result struct {
 		Data struct {
-			TTL       int  `json:"ttl"`
+			TTL       *int `json:"ttl"`
 			Renewable bool `json:"renewable"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return 0, false, fmt.Errorf("vault: token lookup parse error: %w", err)
 	}
-	return result.Data.TTL, result.Data.Renewable, nil
+	if result.Data.TTL == nil {
+		return 0, false, fmt.Errorf("vault: token lookup response has no numeric data.ttl")
+	}
+	if *result.Data.TTL < 0 {
+		return 0, false, fmt.Errorf("vault: token lookup response has a negative data.ttl")
+	}
+	return *result.Data.TTL, result.Data.Renewable, nil
 }
 
 // validateConnectorURL checks that a connector destination is a well-formed absolute
@@ -203,29 +215,29 @@ func (c *VaultConnector) resolveKVMountVersion(ctx context.Context, safeRef stri
 		return 0, fmt.Errorf("vault: read response: %w", err)
 	}
 
+	// Vault reports a KV v2 mount as options {"version": "2"}; a KV v1 mount
+	// reports {"version": "1"} or, when it was enabled without a version option,
+	// "options": null, an empty options map or an empty version (Vault's own KV
+	// preflight reads all of those as v1). Anything else is not a mount-info reply
+	// this connector understands, and guessing "v1" from it would hand the whole
+	// KV v2 envelope back as the secret, so the lookup fails closed instead.
 	var mountResp struct {
-		Data struct {
-			Path    string `json:"path"`
-			Options struct {
-				Version string `json:"version"`
-			} `json:"options"`
+		Data *struct {
+			Path    string          `json:"path"`
+			Options json.RawMessage `json:"options"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &mountResp); err != nil {
 		return 0, fmt.Errorf("vault: parse mount-info response: %w", err)
 	}
-
-	version := 1
-	if mountResp.Data.Options.Version == "2" {
-		version = 2
+	if mountResp.Data == nil || mountResp.Data.Path == "" {
+		return 0, fmt.Errorf("vault: mount-info response for %q is missing data.path", safeRef)
+	}
+	version, err := mountInfoKVVersion(mountResp.Data.Options)
+	if err != nil {
+		return 0, fmt.Errorf("vault: mount-info response for %q: %w", safeRef, err)
 	}
 	mountPath := mountResp.Data.Path
-	if mountPath == "" {
-		// Should not normally happen for a real Vault response, but fall back to
-		// caching under the exact ref rather than caching nothing, so a repeat
-		// lookup of the identical ref is still free.
-		mountPath = safeRef
-	}
 	c.mountVersionsMu.Lock()
 	if c.mountVersions == nil {
 		c.mountVersions = make(map[string]int)
@@ -233,6 +245,55 @@ func (c *VaultConnector) resolveKVMountVersion(ctx context.Context, safeRef stri
 	c.mountVersions[mountPath] = version
 	c.mountVersionsMu.Unlock()
 	return version, nil
+}
+
+// mountInfoKVVersion maps the "options" member of a sys/internal/ui/mounts reply
+// to a KV version. An absent or null options, an options object without a
+// version key, and a version of "" are KV v1, as in Vault's own KV preflight (the
+// caller has already checked that the rest of the reply is well-formed). Any
+// other version must be the string "1" or "2"; a non-object options or a
+// non-string version is an error.
+func mountInfoKVVersion(raw json.RawMessage) (int, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return 1, nil
+	}
+	var opts map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &opts); err != nil || opts == nil {
+		return 0, fmt.Errorf("data.options is not an object")
+	}
+	rawVersion, ok := opts["version"]
+	if !ok {
+		return 1, nil
+	}
+	var version string
+	if err := json.Unmarshal(rawVersion, &version); err != nil || bytes.Equal(bytes.TrimSpace(rawVersion), []byte("null")) {
+		return 0, fmt.Errorf("data.options.version is not a string")
+	}
+	switch version {
+	case "", "1":
+		return 1, nil
+	case "2":
+		return 2, nil
+	}
+	return 0, fmt.Errorf("data.options.version is not \"1\" or \"2\"")
+}
+
+// isEmptyKVPayload reports whether a decoded KV secret body is null, not a JSON
+// object, or an empty object. None of these is delivered as a successful read.
+// KV v1 refuses to store an empty secret; KV v2 accepts an empty data map, and
+// reading such a secret through this connector is deliberately an error
+// (fail closed) rather than an empty value.
+func isEmptyKVPayload(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return true
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &m); err != nil {
+		return true // not an object (string, number, array, bool)
+	}
+	return len(m) == 0
 }
 
 func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, error) {
@@ -323,6 +384,9 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 		return "", fmt.Errorf("vault: secret %q has no data", ref)
 	}
 	if kvVersion == 1 {
+		if isEmptyKVPayload(env.Data) {
+			return "", fmt.Errorf("vault: secret %q has no data", ref)
+		}
 		return string(env.Data), nil // KV v1: the data map itself, whatever fields it contains
 	}
 
@@ -340,6 +404,9 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 	}
 	if len(kv2.Data) == 0 || string(kv2.Data) == "null" {
 		return "", fmt.Errorf("vault: secret %q not found (KV v2 version has no data — likely deleted or destroyed)", ref)
+	}
+	if isEmptyKVPayload(kv2.Data) {
+		return "", fmt.Errorf("vault: secret %q has no data", ref)
 	}
 	return string(kv2.Data), nil
 }
