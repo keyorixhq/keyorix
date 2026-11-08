@@ -162,6 +162,12 @@ func tokenTargets(t testing.TB) []tgt {
 // manifest AND all components are intact; Canon is therefore the manifest plus
 // the signature bytes carried in the archive.
 func bundleTarget(t testing.TB) tgt {
+	return bundleTargetWith(t, bundleverify.Verify)
+}
+
+// bundleTargetWith builds the bundle target around verify, so planted defects
+// (canon_plant_test.go) run through the same Canon as the real verifier.
+func bundleTargetWith(t testing.TB, verify func(io.Reader, *trust.KeyRegistry) (*bundleverify.Manifest, error)) tgt {
 	pub, priv, err := ed25519.GenerateKey(bytes.NewReader(bytes.Repeat([]byte{9}, 64)))
 	if err != nil {
 		t.Fatal(err)
@@ -191,9 +197,9 @@ func bundleTarget(t testing.TB) tgt {
 	}
 	return tgt{
 		Name: "update-bundle-ed25519-manifest", Artifact: buf.Bytes(),
-		Verify: func(b []byte) bool { _, err := bundleverify.Verify(bytes.NewReader(b), reg); return err == nil },
+		Verify: func(b []byte) bool { _, err := verify(bytes.NewReader(b), reg); return err == nil },
 		Canon: func(b []byte) string {
-			mm, _ := bundleverify.Verify(bytes.NewReader(b), reg)
+			mm, _ := verify(bytes.NewReader(b), reg)
 			o, _ := mm.MarshalCanonical()
 			return string(o) + "|" + hex.EncodeToString(bundleSignature(b))
 		},
