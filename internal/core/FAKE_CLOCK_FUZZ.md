@@ -1,6 +1,7 @@
 # Fake-clock fuzz (fake_clock_fuzz_test.go) -- pre-registration
 
-Committed BEFORE any campaign run. Rules are fixed; results go in a later commit.
+The oracles and rules were written before any campaign run. Results and the
+amendments made after review are recorded at the end of this file.
 
 ## Scope and what already exists
 
@@ -9,11 +10,13 @@ Committed BEFORE any campaign run. Rules are fixed; results go in a later commit
 credentials minted at one fixed instant (2026-06-12), with jumps clamped to +/-5
 years. This suite adds what that one structurally cannot reach:
 
-* credentials MINTED at extreme instants (zero time, year 0, 1970, 2038, 2106,
-  leap days, DST edges, 9999-12-31, year 10000, the far future) and TTLs from 1s to
-  100 years (overflow / wrap / serialization of the stored expiry);
+* credentials MINTED at extreme instants from the zero time (year 1) through 2106
+  (1970, 2038, 2106, leap days, DST edges) and TTLs from 1s to 100 years (overflow /
+  wrap / serialization of the stored expiry). Instants in year 0, 9999-12-31, year
+  10000 and the far future never mint here; they are clock-program targets, and
+  `TestKnownLimit_*` covers the first and third;
 * multi-step clock programs (up to 6 steps): exact-expiry +/-1ns, absolute jumps
-  to the special instants, backward jumps, the zero time, monotonic-reading
+  to all the special instants, backward jumps, the zero time, monotonic-reading
   stripped / re-zoned values;
 * the secret access schedule (`enforceSchedule`) across real tzdata zones with
   DST transitions (spring-forward gaps, fall-back overlaps, half-hour DST at
@@ -54,10 +57,11 @@ O6  schedule: `enforceSchedule(s, t)` agrees with an independent computation of
 
 R1  Planted defects. The oracle driver is a pure function over a credential
     interface. It must (a) report ZERO violations on a correct reference model
-    and (b) report a violation for each planted mutant: M1 accepts at exactly
-    E (off-by-one late), M2 rejects at E-1ns (early expiry), M3 no anti-rollback
-    watermark (resurrection after a backward step), M4 wraps TTL overflow to a
-    past expiry, M5 for the schedule: uses `Local` hour instead of the zone's
+    and (b) report a violation for each planted mutant: M1 accepts at E+1ns
+    (off-by-one late; acceptance at exactly E is correct), M2 rejects at E-1ns
+    (early expiry), M3 no anti-rollback watermark (resurrection after a backward
+    step), M4 wraps TTL overflow to a past expiry (caught by the O4 mint check),
+    M5 for the schedule: uses a host zone's hour instead of the schedule zone's
     hour. 5/5 required, else the campaign is void.
 R2  Campaign: FuzzFakeClockExtremes and FuzzEnforceScheduleDST each run >= 10
     minutes of fuzzing (-fuzz, 4 workers) after the seed corpus passes, plus the
@@ -71,13 +75,24 @@ R3  A failure is a FINDING only after the exact saved corpus input fails 3 out
     asserts today's behaviour and says so.
 R4  No production change is made by this PR. If a seam is missing the finding
     names the smallest change instead.
-R5  Security-class BUGs are recorded in ~/proj/crash-private/FINDINGS.md first.
+R5  Security-class BUGs are recorded in the private findings log first.
 R6  Campaigns end before 2026-11-10T05:00Z with host load < 60% of cores.
 
-## Results (2026-11-07)
+## Results (2026-11-08, re-run after the generators were narrowed)
 
-- Schedule fuzz (FuzzEnforceScheduleDST, independent tzdata oracle): 10 min, PASS, no violations.
-- Extreme-instant fuzz and cross-product test: no O1/O2 violations (no credential accepted after expiry, none accepted from a rolled-back clock). Mutants M1-M5 are all caught by the oracles.
-- Observation, classified EXPECTED / low, fail-closed: with the clock at year <= 0, or a credential whose expiry is beyond year 9999, sessions and PATs are refused before their expiry (O3). Cause for year >= 10000: SQLite stores the value without error but it is never read back as the stored instant (the production dialect fails the scan; the other SQLite driver returned the zero time). The year-0 case is refused at mint time (the anti-rollback watermark starts at year 1). Neither is reachable through the API (RFC 3339 input stops at year 9999). The generators now skip that domain, and TestKnownLimit_* pin the behaviour.
+- FuzzEnforceScheduleDST (independent tzdata oracle): 10 min, 4 workers, 1,436,323 execs, PASS.
+- FuzzFakeClockExtremes: 10 min, 4 workers, 1,525 execs, PASS. Each exec builds a full core, so this is a small sample of the input space. It is not exhaustive evidence.
+- TestFakeClockExtremes_Cross with KEYORIX_FAKE_CLOCK_FULL_CROSS=1: all 8 TTLs, 2,808 programs, PASS.
+- Across these runs there were no O1/O2 violations (no credential accepted after expiry, none accepted from a rolled-back clock). Mutants M1-M5 are all caught by the oracles.
+- R6 was NOT met: the deadline held, but the host's load average ranged from 7 to 35 on 10 cores during the campaign, above the 60% limit. Other sessions shared the host, and the campaign's own workers added to the load. High load lowers the exec count; it does not change a verdict.
+- Observation, classified EXPECTED / low, fail-closed: with the clock at year <= 0, or a credential whose expiry is beyond year 9999, sessions and PATs are refused before their expiry (O3). Cause for year >= 10000: SQLite stores the value without error but it is never read back as the stored instant (the production dialect fails the scan; the other SQLite driver returned the zero time). In the year-0 case Login mints a session and validation refuses it (the auth watermark starts at year 1). Neither is reachable through the API (RFC 3339 input stops at year 9999). The generators skip that domain, and TestKnownLimit_* pin the behaviour.
 - TOML: Keyorix does not parse TOML dates; BurntSushi/toml is only a transitive dependency of go-i18n and only JSON locale files are loaded.
-- Seam gaps (not fixed here): unexpiredSecret and checkSecretAccessScheduleWith call time.Now() directly, so the fake clock cannot reach them.
+- SEAM-GAP, not fixed here (R4): unexpiredSecret and checkSecretAccessScheduleWith call time.Now() directly, so the fake clock cannot reach them, and they have no anti-rollback watermark. Smallest change: pass c.now() into both, from their callers in secrets.go, secret_schedule.go and versions.go. TestSeamGap_UnexpiredSecretIgnoresInjectedClock and TestSeamGap_SecretScheduleIgnoresInjectedClock assert today's behaviour (R3) and go red when that change lands.
+
+## Amendments after review
+
+- M1's description was corrected: the mutant always accepted at E+1ns, and acceptance at exactly E is correct.
+- M4 originally only checked the wrap predicate. It now plants a wrapping mint and runs it through the O4 check the real mint paths use.
+- M5 now reads an explicit host zone instead of the machine's, with a control for the schedule's own zone.
+- R2's cross product: a default test run covers three of the eight TTLs to limit its cost, and the Results above are from the all-TTL run. Each program's first step is the R2 single step, followed by two extra steps that only add checks.
+- The Scope section now states the range that actually mints.
