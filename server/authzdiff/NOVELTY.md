@@ -182,3 +182,40 @@ the control shows no harm and says nothing more.
 * The mechanism itself works (it adds one instrumented block per tuple) and costs
   nothing measurable; it stays opt-in (`AUTHZNOV_FEED=1`) and is not wired into
   any campaign.
+
+## Amendment 1 (2026-11-08), written and committed BEFORE the 10-repeat run
+
+The success rule above is NOT changed. The run is repeated on a quieter machine
+with more repeats, and the only edits are the ones below. The 3-repeat results
+above stay as they are.
+
+* Machine and process model: pve01 (Intel i7-6700, 8 cores), not the Mac. Each
+  run is one fuzz process with `-test.parallel=1` and `GOMAXPROCS=1`, nice 10,
+  at most 6 runs in parallel (so about one core per run). The first round used
+  `-test.parallel=2`, `GOMAXPROCS=2`. Executions per run therefore differ from
+  the first round; reach stays measured on the executions axis as registered.
+* Binary: built once from this branch (cross-built `GOOS=linux GOARCH=amd64`,
+  `CGO_ENABLED=0`, `go test -c -fuzz`), the same binary for both arms.
+* Repeats and cap: 10 independent runs per arm per condition (clean, rare,
+  common), each with its own empty fuzz cache, 5 minutes per run in every
+  condition (the first round used 3 minutes for the common plant; the registered
+  cap is 5). Run order is interleaved by repeat (P then T for each repeat, the
+  conditions in turn) and scheduled across the 6 slots.
+* Counts of the rule, scaled from 3 to 10 repeats, mechanically:
+  - rule (1): "strictly smaller median" and "at least as many found-runs" are
+    unchanged (a run not found in 5 minutes counts as 5 minutes);
+  - rule (2): "T not lower in median M1 at 300 executions and at the end of the
+    run" is unchanged; "T higher in at least 2 of the 3 paired repeats at 300
+    executions" becomes "T higher in at least 7 of the 10 paired repeats"
+    (2/3 rounded up; repeat i of P is paired with repeat i of T; the pairing is
+    nominal because the repeats are independent; ties count against T);
+  - rule (3): "T more than 2x slower than P in median" is unchanged.
+* Reporting: medians, min and max, found counts, every run. For the RARE
+  time-to-find an exact two-sided permutation p-value is also printed as a
+  description only; it does not enter the rule. No other test is run.
+* Validity checks, decided now: (a) self-test: the planted defect must be found
+  (an `F` line) in at least one arm of its condition, otherwise that condition
+  is invalid; (b) the CLEAN condition (no plant) must produce no `F` line in
+  either arm, otherwise it is a harness finding and is reported as such.
+  A run that dies for infrastructure reasons (not a fuzz failure) is rerun with
+  the same label and the rerun is reported.
