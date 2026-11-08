@@ -1,6 +1,8 @@
 module github.com/keyorixhq/keyorix/operator
 
-go 1.26.6
+go 1.27
+
+toolchain go1.27.3
 
 require (
 	github.com/go-logr/logr v1.4.4
