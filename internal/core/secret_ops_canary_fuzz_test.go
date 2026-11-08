@@ -33,8 +33,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/prometheus/client_golang/prometheus"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/prometheus/client_golang/prometheus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -89,7 +89,6 @@ type coreCanaryFixture struct {
 	envID         uint
 	capture       *canary.Capture
 	controlMetric *prometheus.GaugeVec
-
 }
 
 func newCoreCanaryFixture(tb testing.TB) *coreCanaryFixture {
