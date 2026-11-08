@@ -675,6 +675,8 @@ func TestSeamGap_UnexpiredSecretIgnoresInjectedClock(t *testing.T) {
 		_, err = w.core.GetSecret(ctx, s.ID)
 		if expired := errors.Is(err, ErrSecretExpired); expired != c.wantExpired {
 			t.Errorf("expiration %v, injected clock %v: expired=%v (err %v), want %v; if GetSecret now uses the injected clock the seam gap is closed, replace this test", c.expiration, c.injected, expired, err, c.wantExpired)
+		} else if !expired && err != nil {
+			t.Errorf("expiration %v, injected clock %v: GetSecret failed for a reason other than expiry, so this case proves nothing: %v", c.expiration, c.injected, err)
 		}
 	}
 }
