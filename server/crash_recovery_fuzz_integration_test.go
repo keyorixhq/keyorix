@@ -47,6 +47,8 @@ type crashRun struct {
 	ledgerA   crashLedger // state captured in archiveA
 	ledgerB   crashLedger // state in dir
 	archiveA  string
+	// deletedIDs are soft-deleted before archive A, so they are in no ledger.
+	deletedIDs []uint
 }
 
 func (w *crashWorld) env(pass string) []string {
@@ -156,6 +158,7 @@ func buildWorld(t *testing.T, bin string, rng *rand.Rand) *crashRun {
 		}
 		delete(led, id)
 	}
+	w.deletedIDs = delIDs
 	w.ledgerA = led.clone()
 	srv.stopGraceful()
 	// Archive A (server stopped: SQLite backup is exclusive).
@@ -499,6 +502,9 @@ func TestCrashRecoveryChecker_PlantedDefects(t *testing.T) {
 		}},
 		{"P5-lost-version-rows", func(d string) {
 			exec(d, `DELETE FROM secret_versions WHERE secret_node_id=? AND version_number=1`, someID)
+		}},
+		{"P6-resurrected-soft-deleted-secret", func(d string) {
+			exec(d, `UPDATE secret_nodes SET deleted_at=NULL WHERE id=?`, w.deletedIDs[0])
 		}},
 	}
 	for _, c := range cases {
