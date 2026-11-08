@@ -73,6 +73,7 @@ func testUpdateRoleKeepScopeVsNarrowScope(t *testing.T, delayAAudit bool) {
 		// Replica B narrows any -> project and commits, after A read "any".
 		narrow := *role
 		narrow.AssignableScope = models.RoleAssignableProject
+		narrow.Description = "B narrows"
 		_, _, narrowErr = f.coreB.UpdateRole(f.ctx, f.adminID, &narrow, nil)
 	})
 
@@ -111,13 +112,15 @@ func testUpdateRoleKeepScopeVsNarrowScope(t *testing.T, delayAAudit bool) {
 	}
 	assert.Equal(t, 1, narrowRows, "B's row must record the narrowing: %v", descs)
 	assert.Equal(t, 1, noScopeRows, "A's row must not claim a scope change: %v", descs)
-	// Both requests carry a description, so it is last writer wins, and which
-	// request writes the roles row last depends on the row lock. The order of the
-	// audit rows says nothing about it: an update's audit row is inserted after its
-	// own transaction commits (best-effort, or owed), so B can commit second, finish
-	// and audit before A's row lands (delay-A-audit=true forces exactly that). Roles
-	// have no timestamp to tell the writers apart, so the invariant is: the stored
-	// description is one of the two requests' descriptions, never a mix or anything else.
-	assert.Contains(t, []string{keep.Description, role.Description}, stored.Description,
-		"the stored description is neither request's: rows %v", descs)
+	// Both requests carry a description, so it is last writer wins. The forced
+	// interleaving fixes the order: A takes the role row lock as its first statement
+	// (LockRoleForUpdate) before B is started at A's roles UPDATE, and B then waits
+	// for A, so B always commits after A and B's description is the stored one. The
+	// order of the audit rows is not evidence of the writer order: an update's audit
+	// row is inserted after its own transaction commits (best-effort, or owed), so
+	// B can audit before A's row lands (delay-A-audit=true forces exactly that).
+	// B's description differs from the role's original and from A's, so this also
+	// fails if B's committed write is lost or if A writes last.
+	assert.Equal(t, "B narrows", stored.Description,
+		"replica B is the last writer, its description must be stored: rows %v", descs)
 }
