@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -197,11 +198,49 @@ func TestBaselineProblem(t *testing.T) {
 	failedBatch.Executed = map[string]int{}
 	silent := good()
 	silent.Executed["node"] = 0
-	for name, b := range map[string]*Report{"failed batch": failedBatch, "silent sdk": silent,
+	withHarness := good()
+	withHarness.Harness = []string{"H2 driver_error: s1 go step 3"}
+	for name, b := range map[string]*Report{"failed batch": failedBatch, "silent sdk": silent, "harness note": withHarness,
 		"other sdks":           {SDKs: []string{"go"}, Scenarios: 2, Executed: map[string]int{"go": 2}},
 		"other scenario count": {SDKs: sdks, Scenarios: 1, Executed: map[string]int{"go": 1, "node": 1}}} {
 		if why := baselineProblem(b, sdks, 2); why == "" {
 			t.Errorf("%s: baseline accepted", name)
 		}
+	}
+}
+
+// cmdValidate must stop on a baseline that compared less than the plant run, before it starts any server.
+// A test of baselineProblem alone passes whether or not the function is called (D1).
+func TestCmdValidateRefusesUnusableBaseline(t *testing.T) {
+	dir := t.TempDir()
+	scs := filepath.Join(dir, "scenarios.jsonl")
+	if err := os.WriteFile(scs, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// What a run with a missing server leaves behind: a failed batch, nothing executed, no signatures.
+	bad := &Report{SDKs: []string{"go", "node"}, Scenarios: 1, BatchErrors: 1,
+		Executed: map[string]int{}, Sigs: map[string]*SigStat{}}
+	raw, err := json.Marshal(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dir, "report.json")
+	if err := os.WriteFile(base, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = cmdValidate([]string{"-in", scs, "-baseline", base, "-plants", "P3", "-sdks", "go,node", "-out", dir})
+	if err == nil || !strings.Contains(err.Error(), "cannot be used") {
+		t.Fatalf("cmdValidate accepted a baseline that compared nothing: err=%v", err)
+	}
+	if _, err := loadBaseline(base, []string{"go", "node"}, 1); err == nil {
+		t.Error("loadBaseline accepted it")
+	}
+	good := &Report{SDKs: []string{"go", "node"}, Scenarios: 1, Executed: map[string]int{"go": 1, "node": 1}}
+	raw, _ = json.Marshal(good)
+	if err := os.WriteFile(base, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadBaseline(base, []string{"go", "node"}, 1); err != nil {
+		t.Errorf("genuine baseline refused: %v", err)
 	}
 }

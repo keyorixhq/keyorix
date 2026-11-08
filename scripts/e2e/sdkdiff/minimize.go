@@ -241,6 +241,9 @@ func baselineProblem(base *Report, sdks []string, scenarios int) string {
 	if np := base.notRun(); len(np) > 0 {
 		return "it did not compare everything: " + strings.Join(np, "; ")
 	}
+	if len(base.Harness) > 0 {
+		return fmt.Sprintf("it has %d harness note(s), so some steps compared less than this run", len(base.Harness))
+	}
 	if !slices.Equal(base.SDKs, sdks) {
 		return fmt.Sprintf("it ran SDKs %v, this run has %v", base.SDKs, sdks)
 	}
@@ -248,6 +251,23 @@ func baselineProblem(base *Report, sdks []string, scenarios int) string {
 		return fmt.Sprintf("it ran %d scenarios, this run has %d", base.Scenarios, scenarios)
 	}
 	return ""
+}
+
+// loadBaseline reads the baseline report of a plant validation and refuses one that baselineProblem
+// rejects.
+func loadBaseline(path string, sdks []string, scenarios int) (*Report, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- operator path
+	if err != nil {
+		return nil, err
+	}
+	var base Report
+	if err := json.Unmarshal(raw, &base); err != nil {
+		return nil, err
+	}
+	if why := baselineProblem(&base, sdks, scenarios); why != "" {
+		return nil, fmt.Errorf("baseline %s cannot be used: %s", path, why)
+	}
+	return &base, nil
 }
 
 func cmdValidate(args []string) error {
@@ -279,12 +299,8 @@ func cmdValidate(args []string) error {
 		}
 	}
 	if *plants != "" {
-		raw, err := os.ReadFile(*baseline) // #nosec G304 -- operator path
+		base, err := loadBaseline(*baseline, strings.Split(c.sdks, ","), len(scs))
 		if err != nil {
-			return err
-		}
-		var base Report
-		if err := json.Unmarshal(raw, &base); err != nil {
 			return err
 		}
 		for p := range strings.SplitSeq(*plants, ",") {
