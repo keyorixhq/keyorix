@@ -207,13 +207,14 @@ type Report struct {
 	Coverage     map[string]map[string]int `json:"coverage"`
 	Info         map[string]int            `json:"info"`
 	InfoEx       map[string][]string       `json:"info_examples"`
-
-	needWire bool // some scenario run so far has a step that makes a request
 }
 
-func newReport(c *common) *Report {
+// newReport builds the report for a run over scs. NoWireNeeded is decided here, from the scenarios the
+// report will be filled from, so every caller has to pass them; runScenarios is called once per report.
+func newReport(c *common, scs []Scenario) *Report {
 	return &Report{Started: time.Now().UTC().Format(time.RFC3339), SDKs: strings.Split(c.sdks, ","), Plant: c.plant,
-		Sigs: map[string]*SigStat{}, Executed: map[string]int{}, Wire: map[string]int{}, Coverage: map[string]map[string]int{}, Info: map[string]int{}, InfoEx: map[string][]string{}}
+		NoWireNeeded: !scenariosNeedWire(scs),
+		Sigs:         map[string]*SigStat{}, Executed: map[string]int{}, Wire: map[string]int{}, Coverage: map[string]map[string]int{}, Info: map[string]int{}, InfoEx: map[string][]string{}}
 }
 
 func (rep *Report) add(f Finding, sc Scenario) {
@@ -293,8 +294,6 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 	}
 	defer r.Close()
 	rep.Scenarios += len(scs)
-	rep.needWire = rep.needWire || scenariosNeedWire(scs)
-	rep.NoWireNeeded = !rep.needWire
 	for i := 0; i < len(scs); i += batch {
 		end := min(i+batch, len(scs))
 		chunk := scs[i:end]
@@ -474,7 +473,7 @@ func cmdRun(args []string) error {
 	if *limit > 0 && len(scs) > *limit {
 		scs = scs[:*limit]
 	}
-	rep := newReport(&c)
+	rep := newReport(&c, scs)
 	if err := runScenarios(&c, scs, *batch, rep, true); err != nil {
 		return err
 	}

@@ -115,6 +115,49 @@ func TestWireRequiredOnlyWhenScenariosNeedIt(t *testing.T) {
 	}
 }
 
+// The waiver is decided where the report is built (G1): newReport takes the scenarios, so no caller can
+// forget to pass them and no run can switch the waiver on for a set that needs the wire. A report built
+// over a set with any request-making step, or over an empty set, keeps requiring the wire; only a
+// construct-only set waives it. The second half drives the run end to end, through newReport and
+// notRun, with a driver that answers but reaches no wire.
+func TestNewReportDecidesWireWaiverFromScenarios(t *testing.T) {
+	construct := Scenario{ID: "c1", Steps: []Step{{Op: "construct", Base: "literal:https://example.com"}}}
+	call := Scenario{ID: "s1", Steps: []Step{{Op: "construct", Base: "plain"}, {Op: "health"}}}
+	c := &common{sdks: "go,node"}
+	for _, tc := range []struct {
+		name string
+		scs  []Scenario
+		want bool
+	}{
+		{"construct only", []Scenario{construct, construct}, true},
+		{"one request-making step", []Scenario{construct, call}, false},
+		{"only request-making steps", []Scenario{call}, false},
+		{"empty set", nil, false},
+	} {
+		if got := newReport(c, tc.scs).NoWireNeeded; got != tc.want {
+			t.Errorf("%s: NoWireNeeded = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	silent := StepOutcome{Drv: map[string]any{"ok": true, "value": "1"}}
+	outs := map[string]Outcome{"go": {Steps: []StepOutcome{silent}}, "node": {Steps: []StepOutcome{silent}}}
+	for _, tc := range []struct {
+		name    string
+		scs     []Scenario
+		wantRun bool
+	}{
+		{"construct-only run with no wire is valid", []Scenario{construct}, true},
+		{"run needing the wire and recording none is refused", []Scenario{call}, false},
+	} {
+		rep := newReport(c, tc.scs)
+		rep.Scenarios = len(tc.scs)
+		rep.recordOutcomes(outs)
+		if p := rep.notRun(); (len(p) == 0) != tc.wantRun {
+			t.Errorf("%s: notRun = %v", tc.name, p)
+		}
+	}
+}
+
 // A driver whose SDK lacks a method it calls must answer driver_error (a harness failure), whatever
 // the command, and must keep working when the SDK is intact. The fake SDK checkouts below define every
 // function the driver looks for; the renamed copy renames one method.

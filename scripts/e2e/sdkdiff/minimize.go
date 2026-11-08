@@ -287,7 +287,7 @@ func cmdValidate(args []string) error {
 	var results []string
 	failed := false // a missed plant, a failed control or a run that did not execute
 	if *controls {
-		rep := newReport(&c)
+		rep := newReport(&c, scs)
 		if err := runScenarios(&c, scs, *batch, rep, true); err != nil {
 			return err
 		}
@@ -310,7 +310,7 @@ func cmdValidate(args []string) error {
 			}
 			pc := c
 			pc.plant = p
-			rep := newReport(&pc)
+			rep := newReport(&pc, scs)
 			if err := runScenarios(&pc, scs, *batch, rep, true); err != nil {
 				return err
 			}
