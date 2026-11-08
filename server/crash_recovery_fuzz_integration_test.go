@@ -11,28 +11,36 @@ package main
 // restore) at fuzzed points, recovers the way the docs say, and checks
 // whole-install invariants. It reuses the soak's server/API helpers.
 //
-// Env: KX_CRASH_ITERS (kill iterations per op, default 2), KX_CRASH_SEED,
-// KX_CRASH_OPS (comma list, default all), KX_CRASH_ARTIFACTS (dir; failing
-// post-kill snapshots are saved here, always logged), KX_CRASH_REPLAY
-// (snapshot dir from a previous failure: re-runs recovery+checks on it).
+// Env: KX_CRASH_ITERS (kill iterations per op, default 3, one per kill-point
+// kind), KX_CRASH_SEED, KX_CRASH_OPS (comma list, default all; an unknown name
+// fails the test), KX_CRASH_ARTIFACTS (dir; failing post-kill snapshots are
+// saved here, always logged), KX_CRASH_REPLAY (snapshot dir from a previous
+// failure: re-runs recovery+checks on it).
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
 	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/restorejournal"
 )
 
 const (
-	crashPass1 = "crash-fuzz-passphrase-one-0001"
 	crashPass2 = "crash-fuzz-passphrase-two-0002"
 	crashPass3 = "crash-fuzz-passphrase-three-0003"
 )
@@ -47,8 +55,11 @@ type crashRun struct {
 	ledgerA   crashLedger // state captured in archiveA
 	ledgerB   crashLedger // state in dir
 	archiveA  string
-	// deletedIDs are soft-deleted before archive A, so they are in no ledger.
+	// deletedIDs are soft-deleted before archive A, so they are in no ledger;
+	// the checker still reads them and expects "<gone>".
 	deletedIDs []uint
+	// rotatedPass is the passphrase a rotate-kek moves the install to.
+	rotatedPass string
 }
 
 func (w *crashWorld) env(pass string) []string {
@@ -81,17 +92,11 @@ func unionIDs(ls ...crashLedger) []uint {
 // buildWorld installs, populates (state A), backs up, then diverges (state B).
 func buildWorld(t *testing.T, bin string, rng *rand.Rand) *crashRun {
 	t.Helper()
-	// soakPrepareInstall uses its own fixed passphrase; override via env below.
 	srv, _ := soakPrepareInstall(t, bin)
 	dir := srv.dir
-	// Re-key to our passphrases is not needed: keep the soak passphrase as pass1.
-	for i, e := range srv.env {
-		if strings.HasPrefix(e, "KEYORIX_MASTER_PASSWORD=") {
-			srv.env[i] = "KEYORIX_MASTER_PASSWORD=soak-test-passphrase-edge-crash"
-		}
-	}
-	w := &crashRun{crashWorld: &crashWorld{t: t, bin: bin, dir: dir, port: srv.port}}
+	w := &crashRun{crashWorld: &crashWorld{t: t, bin: bin, dir: dir, port: srv.port}, rotatedPass: crashPass2}
 	srv.start("KEYORIX_BOOTSTRAP_TOKEN=" + soakBootstrapTok)
+	t.Cleanup(srv.kill9) // also covers the restart below: kill9 acts on the current process
 	if !srv.tryHealthy(soakHealthTimeout) {
 		t.Fatalf("base install did not start:\n%s", srv.logTail())
 	}
@@ -145,13 +150,10 @@ func buildWorld(t *testing.T, bin string, rng *rand.Rand) *crashRun {
 	mk(6)
 	// Soft-delete two secrets before the backup: archive A must carry deleted-secret
 	// rows (their versions/audit rows stay referenced), the shape that broke
-	// old-release backups in the upgrade-path fuzz. Deleted ids leave the ledger.
-	var delIDs []uint
-	for id := range led {
-		if len(delIDs) < 2 {
-			delIDs = append(delIDs, id)
-		}
-	}
+	// old-release backups in the upgrade-path fuzz. Deleted ids leave the ledger
+	// and are kept in deletedIDs. Ids are taken in sorted order so that one seed
+	// builds one world.
+	delIDs := slices.Sorted(maps.Keys(led))[:2]
 	for _, id := range delIDs {
 		if code, _, err := api.do(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", id), nil); err != nil || (code != http.StatusOK && code != http.StatusNoContent) {
 			t.Fatalf("delete secret %d: code=%d err=%v", id, code, err)
@@ -178,7 +180,8 @@ func buildWorld(t *testing.T, bin string, rng *rand.Rand) *crashRun {
 	api = newSoakAPI(srv.baseURL())
 	api.login(t)
 	mk(3)
-	for id, vs := range led {
+	for _, id := range slices.Sorted(maps.Keys(led)) {
+		vs := led[id]
 		if rng.Intn(2) == 0 {
 			nv := fmt.Sprintf("val-%d-v%d-%x", id, len(vs)+1, rng.Int63())
 			if code, _, err := api.do(http.MethodPut, fmt.Sprintf("/api/v1/secrets/%d", id), map[string]any{"value": nv}); err != nil || code != http.StatusOK {
@@ -222,18 +225,36 @@ var crashOps = []crashOp{
 	}},
 }
 
+func crashOpByName(name string) (crashOp, bool) {
+	for _, o := range crashOps {
+		if o.name == name {
+			return o, true
+		}
+	}
+	return crashOp{}, false
+}
+
+// allowedFor is the ledgers op may end on as a whole: a restore may be wholly
+// old or wholly new, anything else must keep state B.
+func (w *crashRun) allowedFor(op crashOp) []crashLedger {
+	if op.name == "restore" {
+		return []crashLedger{w.ledgerB, w.ledgerA}
+	}
+	return []crashLedger{w.ledgerB}
+}
+
 // recoverAndCheck performs documented recovery on dir and returns violations.
 // allowed = ledgers the final state may equal as a whole.
 func (w *crashRun) recoverAndCheck(op crashOp, dir string, allowed []crashLedger, notes *[]string) []string {
 	var v []string
-	ids := unionIDs(w.ledgerA, w.ledgerB)
+	ids := append(unionIDs(w.ledgerA, w.ledgerB), w.deletedIDs...)
 	passes := []string{"soak-test-passphrase-edge-crash"}
 	if op.name == "rotate-kek" {
-		passes = []string{"soak-test-passphrase-edge-crash", crashPass2}
+		passes = []string{"soak-test-passphrase-edge-crash", w.rotatedPass}
 	}
 	// Journal present -> documented recovery.
 	if _, err := os.Stat(filepath.Join(dir, ".keyorix-restore-journal.json")); err == nil {
-		out, rerr := runAdmin(w.t, w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+passes[0]), "restore", "--recover", "--config", "./keyorix.yaml")
+		out, rerr := runAdminBounded(w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+passes[0]), "restore", "--recover", "--config", "./keyorix.yaml")
 		*notes = append(*notes, fmt.Sprintf("restore-journal present -> restore --recover (err=%v): %s", rerr, tail(out, 200)))
 	}
 	var working []string
@@ -256,9 +277,9 @@ func (w *crashRun) recoverAndCheck(op crashOp, dir string, allowed []crashLedger
 		*notes = append(*notes, "no passphrase boots -> documented resume: re-run op / restore --recover")
 		for _, p := range passes {
 			if op.name == "restore" {
-				_, _ = runAdmin(w.t, w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+p), "restore", "--recover", "--config", "./keyorix.yaml")
+				_, _ = runAdminBounded(w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+p), "restore", "--recover", "--config", "./keyorix.yaml")
 			} else if op.name == "rotate-dek" || op.name == "rotate-kek" {
-				_, _ = runAdmin(w.t, w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+p), op.args(dir)...)
+				_, _ = runAdminBounded(w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+p), op.args(dir)...)
 			}
 		}
 		boot()
@@ -288,12 +309,12 @@ func (w *crashRun) recoverAndCheck(op crashOp, dir string, allowed []crashLedger
 	// I5: resumable -- re-run to completion.
 	switch op.name {
 	case "rotate-dek":
-		if out, err := runAdmin(w.t, w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+pass), op.args(dir)...); err != nil {
+		if out, err := runAdminBounded(w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+pass), op.args(dir)...); err != nil {
 			v = append(v, fmt.Sprintf("I5 re-run rotate-dek failed: %v %s", err, tail(out, 300)))
 		}
 	case "rotate-kek":
 		_ = os.WriteFile(filepath.Join(dir, "newpass"), []byte(crashPass3), 0o600)
-		if out, err := runAdmin(w.t, w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+pass), op.args(dir)...); err != nil {
+		if out, err := runAdminBounded(w.bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+pass), op.args(dir)...); err != nil {
 			v = append(v, fmt.Sprintf("I5 follow-up rotate-kek failed: %v %s", err, tail(out, 300)))
 		} else {
 			pass = crashPass3
@@ -312,7 +333,7 @@ func (w *crashRun) recoverAndCheck(op crashOp, dir string, allowed []crashLedger
 		if _, err := os.Stat(filepath.Join(dir, "b.tar.gz")); err == nil {
 			tgt := w.t.TempDir()
 			copyTree(w.t, w.dir, tgt)
-			out, rerr := runAdmin(w.t, w.bin, tgt, w.env(passes[0]), "restore", "--config", "./keyorix.yaml", "--input", filepath.Join(dir, "b.tar.gz"), "--overwrite-existing", "--allow-rollback")
+			out, rerr := runAdminBounded(w.bin, tgt, w.env(passes[0]), "restore", "--config", "./keyorix.yaml", "--input", filepath.Join(dir, "b.tar.gz"), "--overwrite-existing", "--allow-rollback")
 			if rerr == nil {
 				o, up, lg := w.bootAndObserve(tgt, passes[0], ids)
 				if !up {
@@ -334,19 +355,73 @@ func crashSeed() int64 {
 	return int64(soakEnvInt("KX_CRASH_SEED", int(time.Now().UnixNano()%1_000_000)+1))
 }
 
+// parseCrashOps turns a KX_CRASH_OPS value into a set. An unknown name is an
+// error: it would otherwise run nothing and pass.
+func parseCrashOps(spec string) (map[string]bool, error) {
+	only := map[string]bool{}
+	for o := range strings.SplitSeq(spec, ",") {
+		if o == "" {
+			continue
+		}
+		if _, ok := crashOpByName(o); !ok {
+			return nil, fmt.Errorf("unknown operation %q in KX_CRASH_OPS", o)
+		}
+		only[o] = true
+	}
+	return only, nil
+}
+
+// drawTimeKill picks a time-kind kill offset inside the calibrated span between
+// the first and the last directory change, where the operation is mutating the
+// install. Startup and key derivation come before that span, and a kill there
+// tests nothing. With no observed change it falls back to the first 90%.
+func drawTimeKill(rng *rand.Rand, win changeWindow, calDur time.Duration) time.Duration {
+	if win.n == 0 {
+		return time.Duration(rng.Int63n(int64(calDur)*9/10 + 1))
+	}
+	return win.first + time.Duration(rng.Int63n(int64(win.last-win.first)+1))
+}
+
+// installDigest is a SHA-256 over every regular file's relative path and
+// content. It tells a kill that changed the install from one that did not.
+func installDigest(t *testing.T, dir string) string {
+	t.Helper()
+	h := sha256.New()
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		b, err := os.ReadFile(p) //nolint:gosec // test-generated path
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", rel, len(b))
+		_, _ = h.Write(b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("digest %s: %v", dir, err)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 	if testing.Short() {
 		t.Skip("crash-recovery fuzz spawns real processes; skipped with -short")
 	}
 	seed := crashSeed()
-	iters := soakEnvInt("KX_CRASH_ITERS", 2)
-	t.Logf("crash-recovery fuzz: seed=%d iters/op=%d (replay with KX_CRASH_SEED=%d)", seed, iters, seed)
+	iters := soakEnvInt("KX_CRASH_ITERS", 3)
+	// The seed fixes the world and the draws, but kill points depend on calibrated
+	// timing, so only a saved snapshot (KX_CRASH_REPLAY) replays a failure.
+	t.Logf("crash-recovery fuzz: seed=%d iters/op=%d", seed, iters)
 	rng := rand.New(rand.NewSource(seed)) //nolint:gosec // test randomness, seed logged
-	only := map[string]bool{}
-	for o := range strings.SplitSeq(os.Getenv("KX_CRASH_OPS"), ",") {
-		if o != "" {
-			only[o] = true
-		}
+	only, err := parseCrashOps(os.Getenv("KX_CRASH_OPS"))
+	if err != nil {
+		t.Fatal(err)
 	}
 	artifacts := os.Getenv("KX_CRASH_ARTIFACTS")
 	bin := fuzzHeadBinary(t)
@@ -364,11 +439,12 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 		if op.prep != nil {
 			op.prep(w, cal)
 		}
-		_, nChanges, calDur, calOut, calErr := runChild(w.crashWorld, cal, "soak-test-passphrase-edge-crash", op.args(cal), nil)
+		var win changeWindow
+		_, nChanges, calDur, calOut, calErr := runChild(w.crashWorld, cal, "soak-test-passphrase-edge-crash", op.args(cal), &killPlan{kind: "calibrate", window: &win})
 		if calErr != nil {
 			t.Fatalf("calibration run of %s failed: %v\n%s", op.name, calErr, calOut)
 		}
-		t.Logf("op %s: calibration %s, %d dir-signature changes", op.name, calDur.Round(time.Millisecond), nChanges)
+		t.Logf("op %s: calibration %s, %d dir-signature changes between %s and %s", op.name, calDur.Round(time.Millisecond), nChanges, win.first.Round(time.Millisecond), win.last.Round(time.Millisecond))
 
 		for i := range iters {
 			var plan killPlan
@@ -376,7 +452,7 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 			case 0:
 				plan = killPlan{kind: "change", n: rng.Intn(nChanges + 1)}
 			case 1:
-				plan = killPlan{kind: "time", after: time.Duration(rng.Int63n(int64(calDur)*9/10 + 1))}
+				plan = killPlan{kind: "time", after: drawTimeKill(rng, win, calDur)}
 			default:
 				plan = killPlan{kind: "diskfull", ulimitBl: 1 + rng.Intn(4096)}
 			}
@@ -385,11 +461,17 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 			if op.prep != nil {
 				op.prep(w, dir)
 			}
+			before := installDigest(t, dir)
 			killed, _, _, out, cerr := runChild(w.crashWorld, dir, "soak-test-passphrase-edge-crash", op.args(dir), &plan)
+			changedInstall := installDigest(t, dir) != before
 			outcome := "completed"
 			switch {
-			case killed:
+			case errors.Is(cerr, errChildDeadline):
+				outcome = "hung"
+			case killed && changedInstall:
 				outcome = "killed"
+			case killed:
+				outcome = "killed-noeffect"
 			case plan.kind == "diskfull" && cerr != nil:
 				outcome = "diskfull-error"
 			case cerr != nil:
@@ -399,12 +481,11 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 			// Snapshot BEFORE recovery: this is the repro artifact.
 			snap := t.TempDir()
 			copyTree(t, dir, filepath.Join(snap, "install"))
-			allowed := []crashLedger{w.ledgerB}
-			if op.name == "restore" {
-				allowed = []crashLedger{w.ledgerB, w.ledgerA}
-			}
 			var notes []string
-			viol := w.recoverAndCheck(op, dir, allowed, &notes)
+			viol := w.recoverAndCheck(op, dir, w.allowedFor(op), &notes)
+			if outcome == "hung" {
+				viol = append(viol, fmt.Sprintf("child did not finish: %v", cerr))
+			}
 			t.Logf("%s iter %d plan=%s outcome=%s notes=%v violations=%d", op.name, i, plan, outcome, notes, len(viol))
 			if len(viol) > 0 {
 				dest := snap
@@ -412,7 +493,7 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 					dest = filepath.Join(artifacts, fmt.Sprintf("%s-seed%d-iter%d", op.name, seed, i))
 					_ = os.MkdirAll(dest, 0o700)
 					copyTree(t, filepath.Join(snap, "install"), filepath.Join(dest, "install"))
-					lj, _ := json.Marshal(map[string]any{"op": op.name, "plan": plan.String(), "ledgerA": w.ledgerA, "ledgerB": w.ledgerB, "out": out, "violations": viol})
+					lj, _ := json.Marshal(map[string]any{"op": op.name, "plan": plan.String(), "ledgerA": w.ledgerA, "ledgerB": w.ledgerB, "deletedIDs": w.deletedIDs, "out": out, "violations": viol})
 					_ = os.WriteFile(filepath.Join(dest, "meta.json"), lj, 0o600)
 					_ = copyFileIfExists(w.archiveA, filepath.Join(dest, "archiveA.tar.gz"))
 				}
@@ -421,6 +502,16 @@ func TestCrashRecoveryFuzz_SQLite(t *testing.T) {
 		}
 	}
 	t.Logf("campaign stats (op -> kind/outcome -> count): %v", stats)
+	// R2 counts only kills that landed and changed the install.
+	effective := map[string]int{}
+	for op, kinds := range stats {
+		for k, n := range kinds {
+			if strings.HasSuffix(k, "/killed") {
+				effective[op] += n
+			}
+		}
+	}
+	t.Logf("R2 tally (kills that landed and changed the install, per op): %v", effective)
 }
 
 func copyFileIfExists(src, dst string) error {
@@ -432,7 +523,9 @@ func copyFileIfExists(src, dst string) error {
 }
 
 // TestCrashRecoveryChecker_PlantedDefects (pre-registered R1): the checker must
-// flag every planted defect, and pass the unmodified control.
+// flag every planted defect, and pass the unmodified control. Every case goes
+// through recoverAndCheck and must fail on the invariant it plants, so a case
+// cannot pass on an unrelated violation.
 func TestCrashRecoveryChecker_PlantedDefects(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns real processes; skipped with -short")
@@ -440,27 +533,16 @@ func TestCrashRecoveryChecker_PlantedDefects(t *testing.T) {
 	rng := rand.New(rand.NewSource(crashSeed())) //nolint:gosec // test randomness
 	bin := fuzzHeadBinary(t)
 	w := buildWorld(t, bin, rng)
-	ids := unionIDs(w.ledgerB)
 	pass := "soak-test-passphrase-edge-crash"
+	dataOnly := crashOp{name: "planted-data-only"} // no re-run and no archive step
 
-	full := func(dir string) []string {
-		var v []string
-		o, up, lg := w.bootAndObserve(dir, pass, ids)
-		if !up {
-			return []string{"server down: " + tail(lg, 200)}
-		}
-		if _, ok := matchState(o, w.ledgerB); !ok {
-			v = append(v, "observed state mismatch: "+diffObs(o, []crashLedger{w.ledgerB}))
-		}
-		return append(v, w.checkQuiescent(dir, pass, w.ledgerB)...)
-	}
 	fresh := func() string {
 		d := t.TempDir()
 		copyTree(t, w.dir, d)
 		return d
 	}
-	exec := func(dir, q string, args ...any) {
-		db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "keyorix.db")+"?_pragma=busy_timeout(5000)")
+	execAt := func(dbPath, q string, args ...any) {
+		db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
 		if err != nil {
 			t.Fatalf("open: %v", err)
 		}
@@ -469,25 +551,81 @@ func TestCrashRecoveryChecker_PlantedDefects(t *testing.T) {
 			t.Fatalf("plant %q: %v", q, err)
 		}
 	}
+	exec := func(dir, q string, args ...any) { execAt(filepath.Join(dir, "keyorix.db"), q, args...) }
+	// interpose is w running a wrapper in place of the server: for commands
+	// whose arguments contain match it runs action, otherwise the real binary.
+	// That plants a defect in a recovery command rather than in the data.
+	interpose := func(match, action string) *crashRun {
+		cw := *w.crashWorld
+		cw.bin = fakeServerBin(t, fmt.Sprintf("case \"$*\" in\n*%q*) %s ;;\nesac\nexec %q \"$@\"", match, action, bin))
+		r := *w
+		r.crashWorld = &cw
+		return &r
+	}
+	opNamed := func(name string) crashOp {
+		op, ok := crashOpByName(name)
+		if !ok {
+			t.Fatalf("no operation %q", name)
+		}
+		return op
+	}
+	garbleDEK := func(d string) {
+		if err := os.WriteFile(crashYAMLPath(t, d, "dek_path"), []byte("garbage"), 0o600); err != nil {
+			t.Fatalf("garble dek: %v", err)
+		}
+	}
+	// plantJournal leaves the journal a restore killed after staging would leave,
+	// rolling forward to a database that resurrects a soft-deleted secret.
+	plantJournal := func(d string) {
+		const ts = "20260101-000000"
+		// Recovery compares these with its own resolved paths, and a TMPDIR may
+		// sit behind a symlink (/tmp on macOS).
+		d, err := filepath.EvalSymlinks(d)
+		if err != nil {
+			t.Fatalf("resolve install dir: %v", err)
+		}
+		db := filepath.Join(d, "keyorix.db")
+		staged := db + ".restoring-" + ts
+		execAt(db, `VACUUM INTO ?`, staged) // a plain copy would miss the WAL's contents
+		execAt(staged, `UPDATE secret_nodes SET deleted_at=NULL WHERE id=?`, w.deletedIDs[0])
+		sum, err := restorejournal.HashFile(staged)
+		if err != nil {
+			t.Fatalf("hash staged db: %v", err)
+		}
+		if err := restorejournal.Write(filepath.Join(d, restorejournal.FileName), restorejournal.Journal{
+			Version: restorejournal.Version, Backend: "sqlite", Timestamp: ts, Overwrite: true, CompletedEvent: "planted restore",
+			Entries: []restorejournal.Entry{{Path: db, Staged: staged, SHA256: sum, SQLiteDB: true}},
+		}); err != nil {
+			t.Fatalf("write journal: %v", err)
+		}
+	}
 
-	if v := full(fresh()); len(v) != 0 {
+	var controlNotes []string
+	if v := w.recoverAndCheck(dataOnly, fresh(), w.allowedFor(dataOnly), &controlNotes); len(v) != 0 {
 		t.Fatalf("CONTROL: unmodified install reports violations (checker unsound): %v", v)
 	}
-	someID := ids[0]
+	someID := unionIDs(w.ledgerB)[0]
 	cases := []struct {
-		name  string
-		plant func(dir string)
+		name string
+		op   crashOp
+		// plant damages dir; a non-nil result is the world to check it with.
+		plant    func(d string) *crashRun
+		want     string // substring of the violations
+		wantNote string // substring of the recovery notes, if any
 	}{
-		{"P1-flip-ciphertext-byte", func(d string) {
+		{name: "P1-flip-ciphertext-byte", op: dataOnly, want: "I1/I7", plant: func(d string) *crashRun {
 			exec(d, `UPDATE secret_versions SET encrypted_value = substr(encrypted_value,1,length(encrypted_value)-1) || char(unicode(substr(encrypted_value,length(encrypted_value),1)) % 255 + 1) WHERE secret_node_id=? AND version_number=(SELECT MAX(version_number) FROM secret_versions WHERE secret_node_id=?)`, someID, someID)
+			return nil
 		}},
-		{"P2-orphan-version-row", func(d string) {
+		{name: "P2-orphan-version-row", op: dataOnly, want: "I3", plant: func(d string) *crashRun {
 			exec(d, `INSERT INTO secret_versions (secret_node_id, version_number, encrypted_value, created_at) VALUES (999999, 1, x'00', CURRENT_TIMESTAMP)`)
+			return nil
 		}},
-		{"P3-tamper-audit-row", func(d string) {
+		{name: "P3-tamper-audit-row", op: dataOnly, want: "I2", plant: func(d string) *crashRun {
 			exec(d, `UPDATE audit_events SET event_type = event_type || 'x' WHERE id = (SELECT id FROM audit_events ORDER BY id LIMIT 1 OFFSET 3)`)
+			return nil
 		}},
-		{"P4-stale-dek-after-rotation", func(d string) {
+		{name: "P4-stale-dek-after-rotation", op: dataOnly, want: "I1", plant: func(d string) *crashRun {
 			old := crashYAMLPath(t, d, "dek_path")
 			saved, err := os.ReadFile(old) //nolint:gosec // test-generated
 			if err != nil {
@@ -499,22 +637,69 @@ func TestCrashRecoveryChecker_PlantedDefects(t *testing.T) {
 			if err := os.WriteFile(old, saved, 0o600); err != nil {
 				t.Fatalf("restore stale dek: %v", err)
 			}
+			return nil
 		}},
-		{"P5-lost-version-rows", func(d string) {
+		{name: "P5-lost-version-rows", op: dataOnly, want: "I3", plant: func(d string) *crashRun {
 			exec(d, `DELETE FROM secret_versions WHERE secret_node_id=? AND version_number=1`, someID)
+			return nil
 		}},
-		{"P6-resurrected-soft-deleted-secret", func(d string) {
+		{name: "P6-resurrected-soft-deleted-secret", op: dataOnly, want: "I1/I7", plant: func(d string) *crashRun {
 			exec(d, `UPDATE secret_nodes SET deleted_at=NULL WHERE id=?`, w.deletedIDs[0])
+			return nil
+		}},
+		{name: "I4-neither-passphrase-works", op: opNamed("rotate-kek"), want: "I4 rotate-kek: 0 passphrases", plant: func(d string) *crashRun {
+			garbleDEK(d)
+			return nil
+		}},
+		// Both candidates are the same passphrase, so the install boots for both.
+		{name: "I4-both-passphrases-work", op: opNamed("rotate-kek"), want: "I4 rotate-kek: 2 passphrases", plant: func(string) *crashRun {
+			r := *w
+			r.rotatedPass = pass
+			return &r
+		}},
+		{name: "I5-rotate-dek-rerun-fails", op: opNamed("rotate-dek"), want: "I5 re-run rotate-dek failed", plant: func(string) *crashRun {
+			return interpose("encryption rotate --confirm", "exit 7")
+		}},
+		{name: "I5-rotate-kek-followup-fails", op: opNamed("rotate-kek"), want: "I5 follow-up rotate-kek failed", plant: func(string) *crashRun {
+			return interpose("encryption rotate-kek", "exit 7")
+		}},
+		{name: "I5-server-down-after-rerun", op: opNamed("rotate-dek"), want: "I5 server down after re-run", plant: func(d string) *crashRun {
+			return interpose("encryption rotate --confirm", fmt.Sprintf("%q \"$@\"; printf garbage > %q; exit 0", bin, crashYAMLPath(t, d, "dek_path")))
+		}},
+		// Archive A presented as the killed backup: it restores cleanly to the wrong state.
+		{name: "I6-archive-restores-wrong-state", op: opNamed("backup"), want: "I6 restore from killed-backup file succeeded with wrong data", plant: func(d string) *crashRun {
+			copyTree2(t, w.archiveA, filepath.Join(d, "b.tar.gz"))
+			return nil
+		}},
+		{name: "I7-journal-rolls-forward-to-mixed-state", op: opNamed("restore"), want: "I1/I7", wantNote: "restore-journal present", plant: func(d string) *crashRun {
+			plantJournal(d)
+			return nil
+		}},
+		{name: "I7-unreadable-journal-blocks-boot", op: opNamed("restore"), want: "I1 server cannot start", wantNote: "restore-journal present", plant: func(d string) *crashRun {
+			if err := os.WriteFile(filepath.Join(d, restorejournal.FileName), []byte("{not json"), 0o600); err != nil {
+				t.Fatalf("write journal: %v", err)
+			}
+			return nil
 		}},
 	}
 	for _, c := range cases {
 		d := fresh()
-		c.plant(d)
-		if v := full(d); len(v) == 0 {
-			t.Errorf("planted defect %s was NOT detected: checker is blind to this class", c.name)
-		} else {
-			t.Logf("planted defect %s detected: %s", c.name, tail(v[0], 160))
+		rw := c.plant(d)
+		if rw == nil {
+			rw = w
 		}
+		var notes []string
+		v := rw.recoverAndCheck(c.op, d, w.allowedFor(c.op), &notes)
+		got := strings.Join(v, "\n")
+		if !strings.Contains(got, c.want) {
+			t.Errorf("planted defect %s was NOT detected as %q: checker is blind to this class; violations: %v; notes: %v", c.name, c.want, v, notes)
+			continue
+		}
+		if c.wantNote != "" && !strings.Contains(strings.Join(notes, "\n"), c.wantNote) {
+			t.Errorf("planted defect %s did not take the expected recovery path %q; notes: %v", c.name, c.wantNote, notes)
+			continue
+		}
+		t.Logf("planted defect %s detected: %s", c.name, tail(got, 160))
 	}
 }
 
@@ -539,6 +724,25 @@ func crashYAMLPath(t *testing.T, dir, key string) string {
 	return ""
 }
 
+// replayPort reads the HTTP port from a copied config: the first quoted `port:`
+// line, which is the HTTP one in the install template.
+func replayPort(dir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "keyorix.yaml")) //nolint:gosec // test path
+	if err != nil {
+		return "", fmt.Errorf("read config: %w", err)
+	}
+	for ln := range strings.SplitSeq(string(raw), "\n") {
+		if strings.Contains(ln, "port:") && strings.Contains(ln, `"`) {
+			p := strings.Trim(strings.TrimSpace(strings.SplitN(ln, ":", 2)[1]), `"`)
+			if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
+				return "", fmt.Errorf("config port %q is not a valid TCP port", p)
+			}
+			return p, nil
+		}
+	}
+	return "", errors.New("no quoted port: line in config")
+}
+
 // TestCrashRecoveryReplay re-runs recovery + checks on a saved post-kill snapshot
 // (KX_CRASH_REPLAY=<artifact dir>). Deterministic given the snapshot.
 func TestCrashRecoveryReplay(t *testing.T) {
@@ -547,9 +751,10 @@ func TestCrashRecoveryReplay(t *testing.T) {
 		t.Skip("KX_CRASH_REPLAY not set")
 	}
 	var meta struct {
-		Op      string      `json:"op"`
-		LedgerA crashLedger `json:"ledgerA"`
-		LedgerB crashLedger `json:"ledgerB"`
+		Op         string      `json:"op"`
+		LedgerA    crashLedger `json:"ledgerA"`
+		LedgerB    crashLedger `json:"ledgerB"`
+		DeletedIDs []uint      `json:"deletedIDs"`
 	}
 	b, err := os.ReadFile(filepath.Join(src, "meta.json")) //nolint:gosec // operator-supplied replay path
 	if err != nil {
@@ -558,29 +763,19 @@ func TestCrashRecoveryReplay(t *testing.T) {
 	if err := json.Unmarshal(b, &meta); err != nil {
 		t.Fatalf("meta: %v", err)
 	}
+	op, ok := crashOpByName(meta.Op)
+	if !ok {
+		t.Fatalf("meta.json names unknown operation %q", meta.Op)
+	}
 	bin := fuzzHeadBinary(t)
 	dir := t.TempDir()
 	copyTree(t, filepath.Join(src, "install"), dir)
-	w := &crashRun{crashWorld: &crashWorld{t: t, bin: bin, dir: dir}, ledgerA: meta.LedgerA, ledgerB: meta.LedgerB, archiveA: filepath.Join(src, "archiveA.tar.gz")}
-	// Port from the copied config.
-	if raw, err := os.ReadFile(filepath.Join(dir, "keyorix.yaml")); err == nil { //nolint:gosec // test path
-		for ln := range strings.SplitSeq(string(raw), "\n") {
-			if strings.Contains(ln, "port:") && strings.Contains(ln, `"`) {
-				w.port = strings.Trim(strings.TrimSpace(strings.SplitN(ln, ":", 2)[1]), `"`)
-				break
-			}
-		}
+	port, err := replayPort(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var op crashOp
-	for _, o := range crashOps {
-		if o.name == meta.Op {
-			op = o
-		}
-	}
-	allowed := []crashLedger{w.ledgerB}
-	if op.name == "restore" {
-		allowed = []crashLedger{w.ledgerB, w.ledgerA}
-	}
+	w := &crashRun{crashWorld: &crashWorld{t: t, bin: bin, dir: dir, port: port}, ledgerA: meta.LedgerA, ledgerB: meta.LedgerB, archiveA: filepath.Join(src, "archiveA.tar.gz"), deletedIDs: meta.DeletedIDs, rotatedPass: crashPass2}
+	allowed := w.allowedFor(op)
 	var notes []string
 	viol := w.recoverAndCheck(op, dir, allowed, &notes)
 	t.Logf("replay verdict: notes=%v violations=%v", notes, viol)

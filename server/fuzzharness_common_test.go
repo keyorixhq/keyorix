@@ -8,8 +8,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -23,6 +25,32 @@ import (
 	"testing"
 	"time"
 )
+
+const (
+	// fuzzChildDeadline bounds every maintenance child and post-kill admin
+	// command, so a hang is a reported failure with its snapshot rather than a
+	// `go test` timeout panic.
+	fuzzChildDeadline = 2 * time.Minute
+	// fuzzWaitDelay bounds Wait once the child is gone, if something still
+	// holds its output pipes.
+	fuzzWaitDelay = 5 * time.Second
+)
+
+// errChildDeadline marks a child that was stopped for exceeding its deadline.
+var errChildDeadline = errors.New("child exceeded its deadline")
+
+// runAdminBounded is runAdmin with fuzzChildDeadline applied.
+func runAdminBounded(binPath, dir string, env []string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), fuzzChildDeadline)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binPath, append([]string{"admin"}, args...)...) //nolint:gosec // test-controlled args
+	cmd.Dir, cmd.Env, cmd.WaitDelay = dir, env, fuzzWaitDelay
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return string(out), fmt.Errorf("%w (%s): admin %v: %w", errChildDeadline, fuzzChildDeadline, args, err)
+	}
+	return string(out), err
+}
 
 // crashLedger maps secret id -> versions (index 0 = v1) of plaintext values.
 type crashLedger map[uint][]string
@@ -164,10 +192,10 @@ func matchState(obs map[uint]string, allowed ...crashLedger) (idx int, ok bool) 
 func (w *crashWorld) checkQuiescent(dir, pass string, versionLedger crashLedger) []string {
 	var v []string
 	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+pass)
-	if out, err := runAdmin(w.t, w.bin, dir, env, "verify-audit", "--config", "./keyorix.yaml"); err != nil || !strings.Contains(out, "VALID") {
+	if out, err := runAdminBounded(w.bin, dir, env, "verify-audit", "--config", "./keyorix.yaml"); err != nil || !strings.Contains(out, "VALID") {
 		v = append(v, fmt.Sprintf("I2 verify-audit not VALID (err=%v): %s", err, tail(out, 400)))
 	}
-	if out, err := runAdmin(w.t, w.bin, dir, env, "encryption", "validate", "--config", "./keyorix.yaml"); err != nil {
+	if out, err := runAdminBounded(w.bin, dir, env, "encryption", "validate", "--config", "./keyorix.yaml"); err != nil {
 		v = append(v, fmt.Sprintf("I4 encryption validate failed: %v %s", err, tail(out, 400)))
 	}
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "keyorix.db")+"?mode=ro&_pragma=busy_timeout(5000)")
@@ -231,7 +259,8 @@ func copyTree2(t *testing.T, src, dst string) {
 	}
 }
 
-// dirSig is a cheap signature of the install directory: names + sizes.
+// dirSig is a cheap signature of the install directory: names, sizes and
+// mtimes, so a same-size write in place also counts as a change.
 func dirSig(dir string) string {
 	var parts []string
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -240,7 +269,7 @@ func dirSig(dir string) string {
 		}
 		if info, e := d.Info(); e == nil {
 			rel, _ := filepath.Rel(dir, p)
-			parts = append(parts, fmt.Sprintf("%s:%d", rel, info.Size()))
+			parts = append(parts, fmt.Sprintf("%s:%d:%d", rel, info.Size(), info.ModTime().UnixNano()))
 		}
 		return nil
 	})
@@ -249,20 +278,62 @@ func dirSig(dir string) string {
 }
 
 type killPlan struct {
-	kind     string // "change", "time", "diskfull"
+	kind     string // "change", "time", "diskfull", or "calibrate" (never kills)
 	n        int    // change index
 	after    time.Duration
 	ulimitBl int // diskfull: ulimit -f blocks
+	// deadline overrides fuzzChildDeadline when > 0.
+	deadline time.Duration
+	// window, when set, records when the directory signature changed.
+	window *changeWindow
 }
 
 func (p killPlan) String() string {
 	return fmt.Sprintf("%s(n=%d after=%s ulimit=%d)", p.kind, p.n, p.after, p.ulimitBl)
 }
 
+// due reports whether the plan's SIGKILL should fire now.
+func (p killPlan) due(changes int, elapsed time.Duration) bool {
+	switch p.kind {
+	case "change":
+		return changes >= p.n
+	case "time":
+		return elapsed >= p.after
+	}
+	return false
+}
+
+// changeWindow is when a child's directory-signature changes happened, as
+// offsets from its start.
+type changeWindow struct {
+	n           int
+	first, last time.Duration
+}
+
+func (c *changeWindow) observe(at time.Duration) {
+	if c.n == 0 {
+		c.first = at
+	}
+	c.last = at
+	c.n++
+}
+
+// endedBySIGKILL reports whether st is a process terminated by SIGKILL.
+func endedBySIGKILL(st *os.ProcessState) bool {
+	ws, ok := st.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL
+}
+
 // runChild runs `<bin> admin <args>` in dir under plan. changes is the number of
-// dir-signature changes observed (for calibration). killed is true if the plan's
-// SIGKILL landed before the child exited by itself.
+// dir-signature changes observed (for calibration). killed is true only if the
+// wait status shows the plan's SIGKILL ended the child: a signal that reached an
+// already-finished child does not count (R6). A child still running after the
+// deadline is SIGKILLed and returned as errChildDeadline, with killed false.
 func runChild(w *crashWorld, dir, pass string, args []string, plan *killPlan) (killed bool, changes int, dur time.Duration, out string, exitErr error) {
+	deadline := fuzzChildDeadline
+	if plan != nil && plan.deadline > 0 {
+		deadline = plan.deadline
+	}
 	var cmd *exec.Cmd
 	full := append([]string{"admin"}, args...)
 	if plan != nil && plan.kind == "diskfull" {
@@ -274,6 +345,7 @@ func runChild(w *crashWorld, dir, pass string, args []string, plan *killPlan) (k
 	cmd.Env = append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+pass)
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
+	cmd.WaitDelay = fuzzWaitDelay
 	begin := time.Now()
 	if err := cmd.Start(); err != nil {
 		w.t.Fatalf("start child: %v", err)
@@ -281,28 +353,32 @@ func runChild(w *crashWorld, dir, pass string, args []string, plan *killPlan) (k
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	last := dirSig(dir)
+	signalled, timedOut := false, false
 	for {
 		select {
 		case err := <-done:
-			return killed, changes, time.Since(begin), buf.String(), err
+			if timedOut {
+				return false, changes, time.Since(begin), buf.String(), fmt.Errorf("%w (%s): %w", errChildDeadline, deadline, err)
+			}
+			return signalled && endedBySIGKILL(cmd.ProcessState), changes, time.Since(begin), buf.String(), err
 		default:
 		}
-		if plan != nil && !killed {
-			doKill := false
-			switch plan.kind {
-			case "change":
-				doKill = changes >= plan.n
-			case "time":
-				doKill = time.Since(begin) >= plan.after
-			}
-			if doKill {
+		if !signalled {
+			elapsed := time.Since(begin)
+			timedOut = elapsed >= deadline
+			if timedOut || (plan != nil && plan.due(changes, elapsed)) {
+				// The result is ignored on purpose: the wait status above
+				// decides whether this landed.
 				_ = cmd.Process.Signal(syscall.SIGKILL)
-				killed = true
+				signalled = true
 			}
 		}
 		if s := dirSig(dir); s != last {
 			last = s
 			changes++
+			if plan != nil && plan.window != nil {
+				plan.window.observe(time.Since(begin))
+			}
 		}
 		time.Sleep(300 * time.Microsecond)
 	}
