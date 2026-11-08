@@ -1,8 +1,10 @@
 # Crash-recovery fuzz (TestCrashRecoveryFuzz_SQLite) -- pre-registration
 
-Committed BEFORE the first campaign run (see git history: this file's commit
-precedes the commit that records results). Rules below are fixed; results are
-appended in a separate, later commit and may not edit these rules.
+Written BEFORE the first campaign run. On PR #4014 the commit with these rules
+(5bd0af7b2) precedes the one with the results (2c4ef818e); a squash merge removes
+both from main's history, so the PR's commit list is the record. Rules below are
+fixed; results are appended later and may not edit these rules. Changes to the
+harness after a campaign are listed under "Amendments", not edited into the rules.
 
 ## What it does
 
@@ -83,8 +85,19 @@ R6  An iteration where the child finished before the kill landed is counted
 
 Three rounds of 160 iterations each (480 total), run on a separate host at nice 19.
 
-- Rule R2 (at least 300 landed SIGKILLs): MET. 320 kills landed. Per operation: 78 / 81 / 81 / 80 (rotate-dek, rotate-kek, backup, restore), each above the 60 minimum. By kind: 166 at a directory-change count, 154 at a time fraction.
-- The disk-full kind (ulimit -f) produced no kills, only about 81 runs that ended in an error; those count toward iterations but not toward the kill bar.
-- Violations of I1-I7 after documented recovery: 0 in all three rounds.
-- Planted-defect self-test (P1-P5): all detected.
+- Rule R2: NOT MET. This campaign must not be cited as passing R2. It recorded 320 SIGKILLs, 78 / 81 / 81 / 80 per operation (rotate-dek, rotate-kek, backup, restore), 166 at a directory-change count and 154 at a time fraction. That falls short of R2 for three reasons:
+  - The disk-full kind (ulimit -f) produced no kills, only about 81 runs that ended in an error, so the kills were not spread over the three kinds.
+  - Most time-fraction kills tested nothing. A later probe (30 kills per operation, comparing the SHA-256 of every file before and after each kill) found 42 of 45 time kills on rotate-dek, backup and restore left the install byte-for-byte unchanged, because they landed during startup and key derivation. The change-count kills alone, about 42 per operation, are below both the 300 and the 60 bars.
+  - The 320 count came from a flag set when the signal was sent, not from the exit status, so it may include children that had already finished (R6).
+- Violations of I1-I7 after documented recovery: 0 in all three rounds, over the states those kills actually reached. The checker could not yet see a resurrected soft-deleted secret (see Amendments).
+- Planted-defect self-test (P1-P5): all detected, but only through the boot and quiescent checks.
 - Scope limit: SIGKILL of the process is not a power cut. Page-cache loss and torn writes below the file system are not exercised.
+
+## Amendments after the first campaign (review of PR #4014)
+
+These change the harness, not the rules above, and apply to any later campaign.
+
+- Kill points: the directory signature also includes mtimes. Time kills are drawn between the first and the last signature change seen in calibration, replacing the time fraction of the whole runtime.
+- Counting: a kill counts only if the wait status shows SIGKILL ended the child and the SHA-256 of the install changed. Other kills are reported as `killed-noeffect`. The test logs the tally per operation.
+- Checker: soft-deleted secrets are read as well and must stay `<gone>`. The planted-defect test now drives every case through the full recovery path and requires the planted invariant to fire. It adds P6 (a resurrected soft-deleted secret) and cases for the I4, I5, I6 and I7 branches.
+- A child or post-kill admin command past its deadline is reported as a violation with its snapshot.
