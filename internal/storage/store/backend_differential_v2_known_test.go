@@ -8,7 +8,9 @@ package store_test
 // together in the same PR.
 //
 // F-1 (ListSecrets search), F-2 and F-3 (ListUsers Username/Email filters) were pinned here
-// first and are fixed by #4019; their gates and tests are gone. Class C is not pinned here:
+// first and are fixed by #4019; their gates and tests are gone. B (project-name uniqueness
+// and lookup on non-ASCII case) is fixed by #4027 (projects.name_folded); its gate and test
+// are gone too. Class C is not pinned here:
 // its fix (#4022) merges before this harness and carries its own PostgreSQL regression test.
 
 import (
@@ -63,34 +65,6 @@ func diffRequireUnicodeLower(t *testing.T, s *diffSide) {
 		_ = s.db.Raw("SELECT datcollate FROM pg_database WHERE datname = current_database()").Scan(&coll).Error
 		t.Skipf("PostgreSQL LOWER() does not fold non-ASCII on this database (datcollate=%q): the divergence cannot be observed here, so a pass would be a false FIXED", coll)
 	}
-}
-
-// B: project-name uniqueness and lookup. The partial unique index on LOWER(name)
-// (uniq_projects_name_active, #385) uses SQLite's built-in LOWER, which folds ASCII only, so
-// two projects whose names differ only by NON-ASCII case ("ÄÖ" / "äö") coexist on SQLite;
-// PostgreSQL rejects the second with ErrDuplicateProjectName. GetProjectByName and
-// UpdateProjectFields (rename) behave the same way. #4019 deliberately left this index
-// alone. Storage-layer divergence, not reachable through a live writer: every project
-// name write goes through internal/core's validateProjectName, which accepts ASCII
-// letters, digits, space, '-' and '_' only (see the doc's class B row for the trace).
-// Defence in depth; #4027 makes the index identical on both backends.
-func TestBackendDifferentialKnownFinding_B_ProjectNameUnicodeCaseUniqueness(t *testing.T) {
-	w := newDiffWorld(t, "diffv2known_")
-	w.reset(t)
-	diffRequireUnicodeLower(t, w.p)
-	ctx := context.Background()
-	second := map[string]string{}
-	for _, s := range []*diffSide{w.s, w.p} {
-		if _, err := s.ls.CreateProject(ctx, &models.Project{Name: "ÄÖ"}); err != nil {
-			t.Fatalf("%s first CreateProject: %v", s.label, err)
-		}
-		_, err := s.ls.CreateProject(ctx, &models.Project{Name: "äö"})
-		second[s.label] = diffClass(err)
-	}
-	if second["sqlite"] == second["postgres"] {
-		t.Fatalf("FIXED: B no longer differs (sqlite=%s postgres=%s); remove gate B in the fuzz target and this test", second["sqlite"], second["postgres"])
-	}
-	t.Logf("B still differs: second project differing only by non-ASCII case: sqlite=%s postgres=%s", second["sqlite"], second["postgres"])
 }
 
 // D: ListUsers{Search} is `LIKE` on SQLite and `ILIKE` on PostgreSQL, so a non-ASCII case
