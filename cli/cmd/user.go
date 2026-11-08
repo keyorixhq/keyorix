@@ -3,7 +3,8 @@
 // internal/cli/user package's remote-mode branch -- this is a pure transport port (REST
 // only), not a behavior change. `--by` is kept on the five account-lifecycle commands that
 // required it in the old CLI (suspend/reactivate/force-password-reset/revoke-sessions/
-// resend-setup-link/delete) for flag-compatibility even though, exactly as in the old CLI's
+// resend-setup-link/delete) as a deprecated, optional no-op (SUBTRACT-202611; removed after
+// one minor release) for flag-compatibility even though, exactly as in the old CLI's
 // own remote mode, it is not sent to the server: the acting admin in remote mode is always
 // the session identity behind the configured bearer token, never --by (which only had
 // meaning for the old CLI's now-removed local/embedded audit trail).
@@ -421,19 +422,15 @@ var userDeleteCmd = &cobra.Command{
 func init() {
 	userDeleteCmd.Flags().UintVar(&userDeleteID, "id", 0, "User ID (required)")
 	userDeleteCmd.Flags().BoolVar(&userDeleteForce, "force", false, "Skip the confirmation prompt")
-	userDeleteCmd.Flags().StringVar(&userDeleteBy, "by", "", "Acting admin email (required; unused in this REST-only CLI -- kept for flag compatibility)")
+	userDeleteCmd.Flags().StringVar(&userDeleteBy, "by", "", descActingAdminEmail)
 	_ = userDeleteCmd.MarkFlagRequired("id")
-	_ = userDeleteCmd.MarkFlagRequired("by")
+	_ = userDeleteCmd.Flags().MarkDeprecated("by", msgByDeprecated)
 }
 
 func runUserDelete(_ *cobra.Command, _ []string) error {
 	if userDeleteID == 0 {
 		return usageErrorf("user id is required (use --id)")
 	}
-	if userDeleteBy == "" {
-		return usageErrorf("acting admin email is required (use --by)")
-	}
-
 	ctx := context.Background()
 	client, err := apiClientWithSkewCheck(ctx)
 	if err != nil {
@@ -524,7 +521,8 @@ func runUserList(_ *cobra.Command, _ []string) error {
 // ── account-lifecycle commands: suspend / reactivate / force-password-reset ──
 
 const (
-	descActingAdminEmail = "Acting admin email (required; unused in this REST-only CLI -- kept for flag compatibility)"
+	descActingAdminEmail = "Acting admin email (unused in this REST-only CLI -- kept for flag compatibility)"
+	msgByDeprecated      = "it has no effect (the acting admin is always your session) and will be removed in the next minor release"
 	descTargetUserID     = "Target user ID (required)"
 )
 
@@ -545,9 +543,6 @@ var userSuspendCmd = &cobra.Command{
 		if userSuspendID == 0 {
 			return usageErrorf("user id is required (use --id)")
 		}
-		if userSuspendBy == "" {
-			return usageErrorf("acting admin email is required (use --by)")
-		}
 		return runAccountStateChange(userSuspendID, "suspend", "Suspending", "suspended")
 	},
 }
@@ -559,9 +554,6 @@ var userReactivateCmd = &cobra.Command{
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if userReactivateID == 0 {
 			return usageErrorf("user id is required (use --id)")
-		}
-		if userReactivateBy == "" {
-			return usageErrorf("acting admin email is required (use --by)")
 		}
 		return runAccountStateChange(userReactivateID, "reactivate", "Reactivating", "reactivated")
 	},
@@ -575,9 +567,6 @@ var userForcePasswordResetCmd = &cobra.Command{
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if userForcePasswordResetID == 0 {
 			return usageErrorf("user id is required (use --id)")
-		}
-		if userForcePasswordResetBy == "" {
-			return usageErrorf("acting admin email is required (use --by)")
 		}
 		return runAccountStateChange(userForcePasswordResetID, "require-password-reset", "Requiring a password reset for", "required to reset their password")
 	},
@@ -597,9 +586,6 @@ var userRevokeSessionsCmd = &cobra.Command{
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if userRevokeSessionsID == 0 {
 			return usageErrorf("user id is required (use --id)")
-		}
-		if userRevokeSessionsBy == "" {
-			return usageErrorf("acting admin email is required (use --by)")
 		}
 		ctx := context.Background()
 		client, err := apiClientWithSkewCheck(ctx)
@@ -635,22 +621,22 @@ func init() {
 	userSuspendCmd.Flags().UintVar(&userSuspendID, "id", 0, descTargetUserID)
 	userSuspendCmd.Flags().StringVar(&userSuspendBy, "by", "", descActingAdminEmail)
 	_ = userSuspendCmd.MarkFlagRequired("id")
-	_ = userSuspendCmd.MarkFlagRequired("by")
+	_ = userSuspendCmd.Flags().MarkDeprecated("by", msgByDeprecated)
 
 	userReactivateCmd.Flags().UintVar(&userReactivateID, "id", 0, descTargetUserID)
 	userReactivateCmd.Flags().StringVar(&userReactivateBy, "by", "", descActingAdminEmail)
 	_ = userReactivateCmd.MarkFlagRequired("id")
-	_ = userReactivateCmd.MarkFlagRequired("by")
+	_ = userReactivateCmd.Flags().MarkDeprecated("by", msgByDeprecated)
 
 	userForcePasswordResetCmd.Flags().UintVar(&userForcePasswordResetID, "id", 0, descTargetUserID)
 	userForcePasswordResetCmd.Flags().StringVar(&userForcePasswordResetBy, "by", "", descActingAdminEmail)
 	_ = userForcePasswordResetCmd.MarkFlagRequired("id")
-	_ = userForcePasswordResetCmd.MarkFlagRequired("by")
+	_ = userForcePasswordResetCmd.Flags().MarkDeprecated("by", msgByDeprecated)
 
 	userRevokeSessionsCmd.Flags().UintVar(&userRevokeSessionsID, "id", 0, descTargetUserID)
 	userRevokeSessionsCmd.Flags().StringVar(&userRevokeSessionsBy, "by", "", descActingAdminEmail)
 	_ = userRevokeSessionsCmd.MarkFlagRequired("id")
-	_ = userRevokeSessionsCmd.MarkFlagRequired("by")
+	_ = userRevokeSessionsCmd.Flags().MarkDeprecated("by", msgByDeprecated)
 }
 
 // runAccountStateChange performs the suspend/reactivate/require-password-reset transition
@@ -715,9 +701,6 @@ var userResendSetupLinkCmd = &cobra.Command{
 		if userResendSetupLinkID == 0 {
 			return usageErrorf("user id is required (use --id)")
 		}
-		if userResendSetupLinkBy == "" {
-			return usageErrorf("acting admin email is required (use --by)")
-		}
 		ctx := context.Background()
 		client, err := apiClientWithSkewCheck(ctx)
 		if err != nil {
@@ -754,9 +737,9 @@ var userResendSetupLinkCmd = &cobra.Command{
 
 func init() {
 	userResendSetupLinkCmd.Flags().UintVar(&userResendSetupLinkID, "id", 0, "Target user ID (required)")
-	userResendSetupLinkCmd.Flags().StringVar(&userResendSetupLinkBy, "by", "", "Acting admin email (required; unused in this REST-only CLI -- kept for flag compatibility)")
+	userResendSetupLinkCmd.Flags().StringVar(&userResendSetupLinkBy, "by", "", descActingAdminEmail)
 	_ = userResendSetupLinkCmd.MarkFlagRequired("id")
-	_ = userResendSetupLinkCmd.MarkFlagRequired("by")
+	_ = userResendSetupLinkCmd.Flags().MarkDeprecated("by", msgByDeprecated)
 }
 
 // ── user reissue-one-time-password ───────────────────────────────────────────
