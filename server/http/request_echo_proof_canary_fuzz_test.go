@@ -109,9 +109,51 @@ func TestRequestEchoCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 	})
 }
 
+// TestRequestEchoCanaryEchoRowsAreLive proves each echo row of requestEchoRules is
+// needed and sufficient: its route still echoes when the row is absent, and is clean
+// when it is present. A fix to the echo fails this test, so the row gets removed.
+func TestRequestEchoCanaryEchoRowsAreLive(t *testing.T) {
+	fx := newRequestEchoFixture(t)
+	cases := []struct {
+		route     string
+		principal uint8
+		shape     uint8
+	}{
+		{"GET /auth/sso/{provider}/login", 0, 0},
+		{"POST /api/v1/notification-channels", 0, 0},
+		{"GET /api/v1/secrets/{id}/access-log/export", 0, 9},
+	}
+	for _, tc := range cases {
+		t.Run(tc.route, func(t *testing.T) {
+			idx := slices.IndexFunc(fx.routes, func(r sweepRoute) bool { return r.String() == tc.route })
+			if idx < 0 {
+				t.Fatalf("route %s is not registered", tc.route)
+			}
+			in := requestEchoInput{route: uint16(idx), principal: tc.principal, shape: tc.shape}
+			without, invalid := runRequestEcho(t, fx, t.TempDir(), in, canary.NewAllowlist(), nil, nil)
+			if invalid != "" {
+				t.Fatal(invalid)
+			}
+			echoed := slices.ContainsFunc(without.findings, func(s string) bool { return strings.Contains(s, "channel="+echoChanBody+" ") })
+			if !echoed {
+				t.Fatalf("no echo without the allowlist, so the row is stale; findings: %v", without.findings)
+			}
+			with, invalid := runRequestEcho(t, fx, t.TempDir(), in, requestEchoRules(), nil, nil)
+			if invalid != "" {
+				t.Fatal(invalid)
+			}
+			if len(with.findings) != 0 {
+				t.Fatalf("findings with the allowlist: %v", with.findings)
+			}
+		})
+	}
+}
+
 var (
-	echoSweepAll = flag.Bool("canary-echo-sweep", false, "TestRequestEchoCanarySweep: send every shape to every route (several minutes)")
-	echoSweepOut = flag.String("canary-echo-out", "", "TestRequestEchoCanarySweep: write the deduplicated findings to this file")
+	echoSweepAll  = flag.Bool("canary-echo-sweep", false, "TestRequestEchoCanarySweep: send every shape to every route (several minutes)")
+	echoSweepOut  = flag.String("canary-echo-out", "", "TestRequestEchoCanarySweep: write the deduplicated findings to this file")
+	echoSweepFrom = flag.Int("canary-echo-from", 0, "TestRequestEchoCanarySweep: first route index")
+	echoSweepTo   = flag.Int("canary-echo-to", 1<<30, "TestRequestEchoCanarySweep: end route index (exclusive)")
 )
 
 // TestRequestEchoCanarySweep sends every shape to every route as every principal
@@ -125,7 +167,8 @@ func TestRequestEchoCanarySweep(t *testing.T) {
 	}
 	seen := map[string]string{}
 	statuses := map[int]int{}
-	for ri := 0; ri < len(fx.routes); ri += step {
+	t.Logf("routes: %d", len(fx.routes))
+	for ri := *echoSweepFrom; ri < min(len(fx.routes), *echoSweepTo); ri += step {
 		for pi := range 4 {
 			for sh := range 12 {
 				in := requestEchoInput{route: uint16(ri), principal: uint8(pi), shape: uint8(sh)}
