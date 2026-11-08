@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   demo-check-sqlite:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -74,7 +74,7 @@ jobs:
         run: docker logs keyorix-demo 2>&1 || true
 
   demo-check-postgres:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -123,7 +123,7 @@ jobs:
   alert:
     needs: [demo-check-sqlite, demo-check-postgres]
     if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: write

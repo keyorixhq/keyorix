@@ -62,7 +62,7 @@ concurrency:
 
 jobs:
   pg-gated-race-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
       contents: read
@@ -99,7 +99,7 @@ jobs:
     # govulncheck-scheduled.yml's identical guard) -- a PR run's own failing
     # check is already visible on the PR, no separate issue needed.
     if: always() && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: write

@@ -1,0 +1,1 @@
+internal/wycheproof/wvec	none	-	vector-file loader and SHA-256 pin check used only by the internal/wycheproof tests; not linked into any shipped binary	test-helper

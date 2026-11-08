@@ -520,7 +520,10 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 	if filter.Offset > 0 {
 		offset = filter.Offset
 	}
-	query = query.Offset(offset).Limit(pageSize)
+	// Deterministic order: without ORDER BY the row order follows the query plan, which
+	// PostgreSQL changes when its statistics change (index order to heap order), so a
+	// client paging through the list could see rows twice and miss others.
+	query = query.Order("users.id ASC").Offset(offset).Limit(pageSize)
 
 	var users []*models.User
 	if err := query.Find(&users).Error; err != nil {
@@ -677,7 +680,7 @@ func (ls *LocalStorage) ListGroupsPage(ctx context.Context, offset, pageSize int
 		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	var groups []*models.Group
-	if err := ls.db.WithContext(ctx).Order("name").Offset(offset).Limit(pageSize).Find(&groups).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Order("name ASC, id ASC").Offset(offset).Limit(pageSize).Find(&groups).Error; err != nil {
 		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return groups, total, nil
