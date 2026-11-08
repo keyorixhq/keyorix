@@ -191,7 +191,7 @@ func runPanicDump(t *testing.T, fx *panicDumpFixture, in panicDumpInput, allow *
 	t.Helper()
 	ctx := context.Background()
 	op := panicDumpOps[int(in.op)%len(panicDumpOps)]
-	if err := fx.capture.InstallOnce(fx.captureDir); err != nil {
+	if err := fx.capture.InstallOnce(fx.captureDir, os.Create); err != nil {
 		t.Fatalf("capture: %v", err)
 	}
 	counts := fx.callsFor(t, op)
