@@ -233,7 +233,11 @@ func TestSearchAuditLogs_Handler_OffsetZero(t *testing.T) {
 // ── all query params at once (smoke) ─────────────────────────────────────────
 
 func TestSearchAuditLogs_Handler_AllParams(t *testing.T) {
-	h := NewAuditHandler(freshCoreS13(t))
+	// ?actor= matches through the keyorix_fold SQL function, which only the
+	// production SQLite dialect (internal/storage/sqlitedialect, modernc) registers;
+	// freshCoreS13 opens the gorm.io/driver/sqlite test driver, which has no such
+	// function. freshCoreS12 opens the production dialect with the same schema.
+	h := NewAuditHandler(freshCoreS12(t))
 	url := "/api/v1/audit/search?actor=alice&user_id=1&project_id=2&action=secret.read" +
 		"&resource_type=secret&resource_id=3&ip=10.0.0.1&success=true" +
 		"&since=2020-01-01T00:00:00Z&until=2030-01-01T00:00:00Z&limit=50&offset=0"
