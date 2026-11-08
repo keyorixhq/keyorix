@@ -87,7 +87,7 @@ jobs:
     # Runs on pull_request too since CODEQL-PR-GATE-1: there it only decides
     # whether the PR-time gate (Analyze (server)) runs; operator_go_changed
     # and web_changed are always false on a PR.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -231,7 +231,7 @@ jobs:
     # Additionally skips when operator_only -- an operator-only diff can't
     # affect root-module CodeQL findings.
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.root_go_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       security-events: write
@@ -305,7 +305,7 @@ jobs:
     name: Analyze (operator)
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_go_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       security-events: write
@@ -380,7 +380,7 @@ jobs:
     # the queue). Always runs on push to main and the weekly schedule. Not a
     # required check.
     if: needs.changes.outputs.web_changed == 'true' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       security-events: write
@@ -442,7 +442,7 @@ jobs:
   summary:
     name: CodeQL
     needs: [changes, analyze-server, analyze-operator, analyze-web]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: always() && github.event_name != 'pull_request' && needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     steps:
       - name: Check analysis results

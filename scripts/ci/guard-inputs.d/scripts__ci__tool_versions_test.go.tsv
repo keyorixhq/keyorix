@@ -1,0 +1,1 @@
+scripts/ci/tool_versions_test.go	.github/workflows/*.yml,scripts/ci/tool-versions.env,scripts/ci/check-tool-versions.sh,scripts/ci/check-tool-versions-test.sh	TOOLCHAIN-UNIFY-1: check-tool-versions.sh reads every workflow and the env file (TestToolVersionsGuard on the tree; TestToolVersionsCheckScript runs check-tool-versions-test.sh over a copy of the workflows)

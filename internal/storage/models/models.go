@@ -4,17 +4,25 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/identity"
 )
 
 type Project struct {
 	ID uint `gorm:"primaryKey"`
-	// Name uniqueness is enforced by a case-insensitive PARTIAL unique index
-	// (LOWER(name) WHERE deleted_at IS NULL), created in migrateDatabase (#385) — not
+	// Name uniqueness is enforced by a case-insensitive PARTIAL unique index on
+	// NameFolded (WHERE deleted_at IS NULL), created in migrateDatabase (#385) — not
 	// the plain `uniqueIndex` tag — so "Production"/"production" can't land as two
 	// distinct rows (closing a shadow-project confusion vector against the
 	// case-insensitive CLI project-name resolution), while a soft-deleted project's
 	// name is still freed for reuse.
-	Name        string `gorm:"not null"`
+	Name string `gorm:"not null"`
+	// NameFolded is Name run through identity.FoldProjectName (NFC-normalized and
+	// case-folded in Go). The unique index and GetProjectByName use it instead of
+	// SQL LOWER(name), which folds ASCII only on SQLite but follows the database
+	// locale on PostgreSQL, so the two backends accepted different sets of names.
+	// Set by BeforeSave on create/save and explicitly by UpdateProjectFields.
+	NameFolded  string `gorm:"not null;default:''" json:"-"`
 	Description string
 	// RequireMFA, when true, denies interactive (session-authenticated) callers
 	// without a second factor access to this project's scoped resources, even when
@@ -24,6 +32,12 @@ type Project struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	DeletedAt  gorm.DeletedAt `gorm:"index"` // soft delete
+}
+
+// BeforeSave keeps NameFolded in step with Name for every create and Save.
+func (p *Project) BeforeSave(_ *gorm.DB) error {
+	p.NameFolded = identity.FoldProjectName(p.Name)
+	return nil
 }
 
 type Environment struct {

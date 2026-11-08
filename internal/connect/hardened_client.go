@@ -7,11 +7,14 @@ package connect
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/netutil"
@@ -280,6 +283,91 @@ func newConnectHardenedTransport(base *http.Transport) http.RoundTripper {
 	d := connectGuardedDialer()
 	base.DialContext = d.DialContext
 	return targetGuardRoundTripper{Transport: sizeCappedRoundTripper{Transport: base, MaxBytes: connectMaxResponseBytes}}
+}
+
+// errorBodyScrubRoundTripper replaces the body of every non-success response
+// (status >= 300; redirects are refused upstream of the SDK, so a 3xx that
+// arrives here is an error response too) with a short, fixed JSON body before
+// the SDK sees it. Azure's azcore parses an error response body as nested JSON
+// and builds a ResponseError from it; that parse allocates thousands of times the
+// size of a deeply nested body (a few tens of KB can cost hundreds of MB), and a
+// plain size cap does not help because the amplifying body is small. Replacing
+// the body bounds that work no matter what the server sends. The status code and
+// all headers (Retry-After, WWW-Authenticate, x-ms-*, ...) are kept, so the SDK's
+// retry and auth-challenge decisions, which are made from those, are unchanged.
+// The original body is read for at most errorBodyDrainBytes (so a keep-alive
+// connection can usually be reused) and is never surfaced, which also keeps
+// server-supplied text out of returned errors.
+type errorBodyScrubRoundTripper struct {
+	Transport http.RoundTripper
+}
+
+// errorBodyDrainBytes bounds how much of an error response's original body is
+// consumed before it is discarded.
+const errorBodyDrainBytes = 4 << 10
+
+// scrubbedErrorBody returns what the SDK sees in place of an error response body:
+// a fixed message and, when the original body's first errorBodyDrainBytes carry a
+// plain top-level error.code made only of [A-Za-z0-9_.-] (at most 64 bytes), that
+// code (e.g. "SecretNotFound"), so operators keep the one field that is useful in
+// logs. Nothing else from the original body is passed on.
+func scrubbedErrorBody(original []byte) string {
+	code := "UpstreamError"
+	var parsed struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(original, &parsed) == nil && validErrorCode(parsed.Error.Code) {
+		code = parsed.Error.Code
+	}
+	return `{"error":{"code":"` + code + `","message":"upstream error response body suppressed"}}`
+}
+
+func validErrorCode(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func (rt errorBodyScrubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := rt.Transport.RoundTrip(req)
+	if err != nil || resp == nil || resp.StatusCode < 300 {
+		return resp, err
+	}
+	var original []byte
+	if resp.Body != nil {
+		original, _ = io.ReadAll(io.LimitReader(resp.Body, errorBodyDrainBytes))
+		_ = resp.Body.Close()
+	}
+	body := scrubbedErrorBody(original)
+	resp.Body = io.NopCloser(strings.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.TransferEncoding = nil
+	resp.Uncompressed = true
+	if resp.Header == nil {
+		resp.Header = http.Header{}
+	}
+	resp.Header.Del("Content-Encoding")
+	resp.Header.Del("Content-Range")
+	resp.Header.Del("Content-Md5")
+	resp.Header.Set("Content-Type", "application/json")
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	return resp, nil
+}
+
+// newAzureHardenedTransport is newConnectHardenedTransport plus the
+// error-body scrub, for the Azure SDK path (the AWS path installs
+// newConnectHardenedTransport(awsBaseTransport()) directly).
+func newAzureHardenedTransport(base *http.Transport) http.RoundTripper {
+	return errorBodyScrubRoundTripper{Transport: newConnectHardenedTransport(base)}
 }
 
 // validateConnectorAddressNotLinkLocal rejects a connector's configured address
