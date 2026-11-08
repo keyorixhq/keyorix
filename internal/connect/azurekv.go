@@ -65,6 +65,10 @@ func (c *AzureKeyVaultConnector) client(ctx context.Context) (azSecretGetter, er
 	// stdlib default redirect-following policy applies), no size cap, and no
 	// host-classification on the dialer -- confirmed live in
 	// docs/findings/2026-09-19-FINDING-connect-response-trust-gaps.md §2/§3.
+	// newAzureHardenedTransport also replaces every non-success response body with
+	// a short fixed one before azcore parses it (errorBodyScrubRoundTripper): the
+	// SDK's error parsing amplifies a small, deeply nested body into a very large
+	// allocation, which a size cap cannot prevent.
 	// azsecrets builds its OWN internal auth-challenge policy on top of whatever
 	// Transporter is supplied here, so this doesn't disturb that handshake.
 	// azureBaseTransport() replicates azcore's own default transport tuning
@@ -73,7 +77,7 @@ func (c *AzureKeyVaultConnector) client(ctx context.Context) (azSecretGetter, er
 	cl, err := azsecrets.NewClient(c.vaultURL, cred, &azsecrets.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Transport: &http.Client{
-				Transport:     newConnectHardenedTransport(azureBaseTransport()),
+				Transport:     newAzureHardenedTransport(azureBaseTransport()),
 				CheckRedirect: refuseRedirect,
 			},
 		},
