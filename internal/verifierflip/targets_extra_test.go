@@ -1,7 +1,9 @@
 package verifierflip_test
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -9,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +27,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
+	"github.com/keyorixhq/keyorix/internal/verifierflip"
 	"github.com/keyorixhq/keyorix/pkg/bundleverify"
 	"github.com/keyorixhq/keyorix/pkg/trust"
 )
@@ -88,6 +92,8 @@ func oidcTarget(t testing.TB) tgt {
 // tokenWorld builds a real core over SQLite and returns validators for the
 // three opaque credential types. These are DB lookups by SHA-256, so the
 // verifier property is: no token other than the issued one authenticates.
+// Canon is nil on purpose: the raw token is the credential, so any other
+// accepted token is ACCEPT-DIFFERENT even when it resolves to the same user.
 func tokenTargets(t testing.TB) []tgt {
 	if err := i18n.InitializeForTesting(); err != nil {
 		t.Fatal(err)
@@ -116,10 +122,6 @@ func tokenTargets(t testing.TB) []tgt {
 			u, _, err := c.ValidateSessionToken(ctx, string(b))
 			return err == nil && u != nil
 		},
-		Canon: func(b []byte) string {
-			u, _, _ := c.ValidateSessionToken(ctx, string(b))
-			return fmt.Sprint(u.ID)
-		},
 	})
 	pat, err := c.CreateOwnPAT(ctx, admin.ID, "vflip", nil, []string{"secrets.read"}, 0, 0, nil)
 	if err != nil {
@@ -131,40 +133,34 @@ func tokenTargets(t testing.TB) []tgt {
 			u, _, _, _, err := c.ValidatePATToken(ctx, string(b))
 			return err == nil && u != nil
 		},
-		Canon: func(b []byte) string {
-			u, _, _, _, _ := c.ValidatePATToken(ctx, string(b))
-			return fmt.Sprint(u.ID)
-		},
 	})
 	p, err := ls.CreateProject(ctx, &models.Project{Name: "vflip-proj"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m, err := c.CreateMachineIdentity(ctx, p.ID, "vflip-machine", "service", "d", "", admin.ID, 0); err != nil {
-		t.Logf("machine identity skipped: %v", err)
-	} else if res, err := c.IssueMachineToken(ctx, p.ID, m.ID, admin.ID, core.IssueMachineTokenParams{Name: "vflip"}); err != nil {
-		t.Logf("machine token skipped: %v", err)
-	} else {
-		tokenStr := res.PlainToken
-		out = append(out, tgt{
-			Name: "machine-token", Artifact: []byte(tokenStr),
-			Verify: func(b []byte) bool {
-				mi, _, _, _, err := c.ValidateMachineToken(ctx, string(b))
-				return err == nil && mi != nil
-			},
-			Canon: func(b []byte) string {
-				mi, _, _, _, _ := c.ValidateMachineToken(ctx, string(b))
-				return fmt.Sprint(mi.ID)
-			},
-		})
+	m, err := c.CreateMachineIdentity(ctx, p.ID, "vflip-machine", "service", "d", "", admin.ID, 0)
+	if err != nil {
+		t.Fatalf("machine identity: %v", err)
 	}
+	res, err := c.IssueMachineToken(ctx, p.ID, m.ID, admin.ID, core.IssueMachineTokenParams{Name: "vflip"})
+	if err != nil {
+		t.Fatalf("machine token: %v", err)
+	}
+	out = append(out, tgt{
+		Name: "machine-token", Artifact: []byte(res.PlainToken),
+		Verify: func(b []byte) bool {
+			mi, _, _, _, err := c.ValidateMachineToken(ctx, string(b))
+			return err == nil && mi != nil
+		},
+	})
 	return out
 }
 
 // bundleTarget: pkg/bundleverify's signed air-gap update bundle (gzip+tar,
 // ed25519-signed manifest pinning every component by sha256). Verify streams
 // every component through its pinned hash, so an accepted mutation means the
-// manifest AND all components are intact; Canon is therefore the manifest.
+// manifest AND all components are intact; Canon is therefore the manifest plus
+// the signature bytes carried in the archive.
 func bundleTarget(t testing.TB) tgt {
 	pub, priv, err := ed25519.GenerateKey(bytes.NewReader(bytes.Repeat([]byte{9}, 64)))
 	if err != nil {
@@ -199,8 +195,29 @@ func bundleTarget(t testing.TB) tgt {
 		Canon: func(b []byte) string {
 			mm, _ := bundleverify.Verify(bytes.NewReader(b), reg)
 			o, _ := mm.MarshalCanonical()
-			return string(o)
+			return string(o) + "|" + hex.EncodeToString(bundleSignature(b))
 		},
+		Region: verifierflip.GzipRegion(buf.Len()),
+	}
+}
+
+// bundleSignature returns the manifest.sig entry of a gzip+tar bundle, nil if
+// it cannot be read. bundleverify does not expose the signature it checked.
+func bundleSignature(b []byte) []byte {
+	gz, err := gzip.NewReader(bytes.NewReader(b))
+	if err != nil {
+		return nil
+	}
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			return nil
+		}
+		if h.Name == "manifest.sig" {
+			sig, _ := io.ReadAll(tr)
+			return sig
+		}
 	}
 }
 

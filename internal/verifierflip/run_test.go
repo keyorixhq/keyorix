@@ -34,9 +34,11 @@ func TestVerifierBitFlip(t *testing.T) {
 		// design (RFC3161 token is authenticated by internal/notary elsewhere).
 		"audit-external-anchor-bundle-unsigned-fields-informational": true,
 	}
+	opts := verifierflip.DefaultOptions(seed)
+	opts.SkipTiming = raceEnabled
 	var all []*verifierflip.Report
 	for _, tg := range allTargets(t) {
-		rep, err := verifierflip.Run(tg, verifierflip.DefaultOptions(seed))
+		rep, err := verifierflip.Run(tg, opts)
 		if err != nil {
 			t.Errorf("%s: INVALID target: %v", tg.Name, err)
 			continue
@@ -49,6 +51,9 @@ func TestVerifierBitFlip(t *testing.T) {
 		}
 		if informational[rep.Target] {
 			continue
+		}
+		for _, c := range rep.UnexpectedEquivalents(reviewedEquivalents[rep.Target]) {
+			t.Errorf("%s: unreviewed ACCEPT-EQUIVALENT class %s", rep.Target, c)
 		}
 		if rep.Panics > 0 || rep.Different > 0 || rep.TimingFlags > 0 {
 			for _, c := range rep.Candidates {

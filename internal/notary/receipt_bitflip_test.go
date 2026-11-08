@@ -5,6 +5,8 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,33 +50,60 @@ func TestReceiptBitFlip(t *testing.T) {
 	// eContentType OID and the eContent OCTET STRING header (<=62), and
 	// SignerInfo.version. The TSTInfo (time, message imprint) stays signed, so
 	// none of these changes the verified time or the message binding. Anything
-	// ACCEPT-DIFFERENT outside this set fails the test.
+	// ACCEPT-DIFFERENT outside this set fails the test, including mutations
+	// with no byte offset (truncate, extend, reorder, duplicate).
 	siv := bytes.LastIndex(legit.token, []byte{0x02, 0x01, 0x01, 0x30, 0x25})
 	require.Greater(t, siv, 100, "could not locate SignerInfo.version")
-	bad := 0
-	for k, n := range rep.ByRegion {
-		var off int
-		if _, err := fmt.Sscanf(k, "ACCEPT-DIFFERENT/off%d", &off); err != nil {
-			continue
-		}
-		if off <= 62 || (off >= siv && off <= siv+3) {
-			t.Logf("expected-equivalent framing field: offset %d x%d", off, n)
-			continue
-		}
-		bad += n
-		t.Errorf("ACCEPT-DIFFERENT outside framing allowlist: offset %d x%d", off, n)
-	}
-	require.Zero(t, bad)
+	require.Empty(t, receiptViolations(rep, siv))
 
-	// Planted defect: a verifier that ignores the last byte must be caught.
-	planted := verifierflip.Target{Name: "planted-ignore-last", Artifact: legit.token,
-		Verify: func(b []byte) bool {
-			if len(b) == 0 {
-				return false
-			}
-			return verify(append(append([]byte(nil), b[:len(b)-1]...), legit.token[len(legit.token)-1]))
-		}}
-	brep, err := verifierflip.Run(planted, o)
-	require.NoError(t, err)
-	require.NotZero(t, brep.Different, "planted defect not detected")
+	// Planted defects, judged by the same check as the real verifier.
+	region := func(off int) string { return fmt.Sprintf("off%04d", off) }
+	n := len(legit.token)
+	plants := []struct {
+		name         string
+		verify       func([]byte) bool
+		wantNoOffset bool
+	}{
+		{"ignores-last-byte", func(b []byte) bool {
+			return len(b) > 0 && verify(append(bytes.Clone(b[:len(b)-1]), legit.token[n-1]))
+		}, false},
+		{"ignores-trailing-bytes", func(b []byte) bool {
+			return len(b) >= n && verify(b[:n])
+		}, true},
+	}
+	for _, p := range plants {
+		planted := verifierflip.Target{Name: "planted-" + p.name, Artifact: legit.token, Verify: p.verify, Region: region}
+		brep, err := verifierflip.Run(planted, o)
+		require.NoError(t, err)
+		got := receiptViolations(brep, siv)
+		require.NotEmpty(t, got, "planted defect %s not detected", p.name)
+		if p.wantNoOffset {
+			require.True(t, slices.ContainsFunc(got, func(v string) bool { return strings.Contains(v, noOffsetViolation) }),
+				"planted defect %s not reported as a no-offset accept: %v", p.name, got)
+		}
+	}
+}
+
+const noOffsetViolation = "no byte offset"
+
+// receiptViolations lists the ACCEPT-DIFFERENT results outside the framing
+// allowlist documented in TestReceiptBitFlip. A key that does not parse has
+// no byte offset to allow, so it is always a violation.
+func receiptViolations(rep *verifierflip.Report, siv int) []string {
+	var bad []string
+	for k, n := range rep.ByRegion {
+		if !strings.HasPrefix(k, verifierflip.AcceptDifferent+"/") {
+			continue
+		}
+		var off int
+		if _, err := fmt.Sscanf(k, verifierflip.AcceptDifferent+"/off%d", &off); err != nil {
+			bad = append(bad, fmt.Sprintf("%s x%d: %s", k, n, noOffsetViolation))
+			continue
+		}
+		if off > 62 && (off < siv || off > siv+3) {
+			bad = append(bad, fmt.Sprintf("offset %d x%d outside framing allowlist", off, n))
+		}
+	}
+	slices.Sort(bad)
+	return bad
 }

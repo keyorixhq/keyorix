@@ -111,6 +111,57 @@ func spin(d time.Duration) {
 	}
 }
 
+// TestSelfTest_PlantedSlowRejectIsDetected plants PREREG timing rule (a): one
+// input does pathological work before it is rejected. The correct verifier is
+// the control, so the rule is watched in both directions.
+func TestSelfTest_PlantedSlowRejectIsDetected(t *testing.T) {
+	slow := func(b []byte) bool {
+		if len(b) == 64 && b[0] == stMsg[0]^1 {
+			spin(5 * time.Millisecond)
+		}
+		return good(b)
+	}
+	r, err := Run(stTarget("slow-reject", slow), DefaultOptions(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.TimingFlags == 0 {
+		t.Fatalf("planted slow reject NOT detected: median=%dns", r.MedianNS)
+	}
+	rc, err := Run(stTarget("constant", good), DefaultOptions(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc.TimingFlags != 0 {
+		t.Fatalf("false timing flag on a correct verifier: %+v", rc.Candidates)
+	}
+}
+
+// TestSelfTest_UnexpectedEquivalentIsReported: an equivalent class outside the
+// target's reviewed list must be reported, and listing it must clear it.
+func TestSelfTest_UnexpectedEquivalentIsReported(t *testing.T) {
+	tg := stTarget("trailing-equivalent", func(b []byte) bool {
+		return len(b) >= 64 && good(b[:64])
+	})
+	tg.Canon = func(b []byte) string { return string(b[:64]) }
+	r, err := Run(tg, Options{Seed: 1, SkipTiming: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Equivalent == 0 {
+		t.Fatalf("planted equivalent class not produced: %+v", r)
+	}
+	if got := r.UnexpectedEquivalents(nil); len(got) == 0 {
+		t.Fatal("unreviewed equivalent class not reported")
+	}
+	if got := r.UnexpectedEquivalents([]string{"|*"}); len(got) != 0 {
+		t.Fatalf("reviewed class still reported: %v", got)
+	}
+	if got := r.UnexpectedEquivalents([]string{"|*", "["}); len(got) != 1 {
+		t.Fatalf("malformed pattern not reported: %v", got)
+	}
+}
+
 func TestSelfTest_PlantedTimingSkewIsDetected(t *testing.T) {
 	r, err := Run(stTarget("early-exit", earlyExit), DefaultOptions(1))
 	if err != nil {

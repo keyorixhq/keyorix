@@ -50,6 +50,7 @@ func TestArchiveBitFlip(t *testing.T) {
 			o, _ := json.Marshal(m)
 			return string(o)
 		},
+		Region: verifierflip.GzipRegion(archive.Len()),
 	}
 	o := verifierflip.DefaultOptions(1)
 	o.SkipTiming = true // I/O bound (temp dir per call); timing is covered by the pure-MAC targets
@@ -58,6 +59,13 @@ func TestArchiveBitFlip(t *testing.T) {
 	t.Logf("%s mutations=%d reject=%d equiv=%d DIFFERENT=%d PANIC=%d", rep.Target, rep.Mutations, rep.Rejects, rep.Equivalent, rep.Different, rep.Panics)
 	for k, n := range rep.ByRegion {
 		t.Logf("    %s x%d", k, n)
+	}
+	// Reviewed equivalents (PREREG "Verdicts"): gzip framing that is not
+	// content or is never read, because extraction stops at the tar
+	// end-of-archive. Canon is the signed manifest, which pins every entry.
+	reviewed := []string{"gzip-header|bitflip", "deflate|*", "gzip-trailer|*", "|dup8", "|truncate", "|extend+*"}
+	for _, c := range rep.UnexpectedEquivalents(reviewed) {
+		t.Errorf("unreviewed ACCEPT-EQUIVALENT class %s", c)
 	}
 	for _, c := range rep.Candidates {
 		if c.Kind == verifierflip.AcceptEquivalent {

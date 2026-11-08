@@ -13,7 +13,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand/v2"
+	"path"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -96,6 +98,55 @@ type Report struct {
 	Candidates []Candidate
 	// ByRegion counts non-reject candidates by kind and region.
 	ByRegion map[string]int
+	// EquivalentClasses counts ACCEPT-EQUIVALENT results by "region|mutation
+	// kind" (see UnexpectedEquivalents). It is never capped.
+	EquivalentClasses map[string]int
+}
+
+// UnexpectedEquivalents returns, sorted, every ACCEPT-EQUIVALENT class of r
+// that matches none of the allowed path.Match patterns. PREREG requires each
+// equivalent class to be reviewed once: a target's allowed list is that
+// review, so a class outside it is new and unreviewed. A malformed pattern is
+// reported rather than ignored, so a typo cannot widen the list.
+func (r *Report) UnexpectedEquivalents(allowed []string) []string {
+	var out []string
+	for _, p := range allowed {
+		if _, err := path.Match(p, ""); err != nil {
+			out = append(out, fmt.Sprintf("malformed pattern %q: %v", p, err))
+		}
+	}
+	for class, n := range r.EquivalentClasses {
+		if !slices.ContainsFunc(allowed, func(p string) bool {
+			ok, err := path.Match(p, class)
+			return err == nil && ok
+		}) {
+			out = append(out, fmt.Sprintf("%s x%d", class, n))
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// GzipRegion names the framing regions of an n-byte gzip stream with the
+// default 10-byte header, for targets whose artifact is gzip-compressed.
+func GzipRegion(n int) func(int) string {
+	return func(off int) string {
+		switch {
+		case off < 10:
+			return "gzip-header"
+		case off >= n-8:
+			return "gzip-trailer"
+		default:
+			return "deflate"
+		}
+	}
+}
+
+// mutationKind strips the position from a mutation name: "bitflip@17.3" is
+// "bitflip", "fieldswap[0]@1,2" is "fieldswap[0]", "extend+0x00" is unchanged.
+func mutationKind(name string) string {
+	kind, _, _ := strings.Cut(name, "@")
+	return kind
 }
 
 type mutation struct {
@@ -127,7 +178,7 @@ func Run(t Target, o Options) (*Report, error) {
 		return t.Canon(b)
 	}
 	baseCanon := canon(t.Artifact)
-	rep := &Report{Target: t.Name, ByRegion: map[string]int{}}
+	rep := &Report{Target: t.Name, ByRegion: map[string]int{}, EquivalentClasses: map[string]int{}}
 	rng := rand.New(rand.NewPCG(o.Seed, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic, seed-reproducible mutation schedule for a test harness, not security-sensitive
 
 	var rejectTimes []int64
@@ -161,6 +212,7 @@ func Run(t Target, o Options) (*Report, error) {
 				rep.add(Candidate{Kind: Panic, Mutation: m.name, Region: region, Hex: hx(m.data), Detail: "canon: " + pc})
 			case c == baseCanon:
 				rep.Equivalent++
+				rep.EquivalentClasses[region+"|"+mutationKind(m.name)]++
 				rep.add(Candidate{Kind: AcceptEquivalent, Mutation: m.name, Region: region, Hex: hx(m.data)})
 			default:
 				rep.Different++

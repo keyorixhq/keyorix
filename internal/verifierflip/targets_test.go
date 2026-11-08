@@ -2,6 +2,7 @@ package verifierflip_test
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -78,10 +80,13 @@ func jsonRegion(doc []byte) func(int) string {
 	}
 }
 
-// fieldRegion names regions of a sep-delimited artifact by field index.
+// fieldRegion names regions of a sep-delimited artifact by field index,
+// counting from the start of the offset's line.
 func fieldRegion(doc []byte, sep byte, names ...string) func(int) string {
 	return func(off int) string {
-		n := bytes.Count(doc[:min(off, len(doc))], []byte{sep})
+		off = min(off, len(doc))
+		lineStart := bytes.LastIndexByte(doc[:off], '\n') + 1
+		n := bytes.Count(doc[lineStart:off], []byte{sep})
 		if n < len(names) {
 			return names[n]
 		}
@@ -341,7 +346,8 @@ func aeadTargets(t testing.TB) []tgt {
 		p, _ := svc.DecryptWithAAD(d, aad)
 		return string(p)
 	}
-	main := tgt{Name: "aead-envelope-plaintext", Artifact: art, Verify: verify, Canon: plain, Region: jsonRegion(art)}
+	main := tgt{Name: "aead-envelope-plaintext", Artifact: art, Verify: verify, Region: jsonRegion(art),
+		Canon: aeadCanon(func(d *aead.EncryptedData) ([]byte, error) { return svc.DecryptWithAAD(d, aad) })}
 	// Metadata variant: KeyVersion/EncryptedAt/AADVersion are not covered by
 	// the GCM tag; this target makes that visible instead of hiding it.
 	meta := tgt{Name: "aead-envelope-metadata-informational", Artifact: art, Verify: verify,
@@ -354,25 +360,62 @@ func aeadTargets(t testing.TB) []tgt {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cart, _ := json.Marshal(chunks)
+	// One JSON chunk per line, so the '\n' field mutations swap, drop and
+	// duplicate whole chunks and stay well-formed.
+	lines := make([][]byte, len(chunks))
+	for i, c := range chunks {
+		lines[i], _ = json.Marshal(c)
+	}
+	cart := bytes.Join(lines, []byte{'\n'})
+	parse := func(b []byte) ([]*aead.EncryptedData, bool) {
+		var cs []*aead.EncryptedData
+		for l := range bytes.SplitSeq(b, []byte{'\n'}) {
+			var c aead.EncryptedData
+			if json.Unmarshal(l, &c) != nil {
+				return nil, false
+			}
+			cs = append(cs, &c)
+		}
+		return cs, true
+	}
 	chunked := tgt{Name: "aead-chunked-stream", Artifact: cart,
 		Verify: func(b []byte) bool {
-			var cs []*aead.EncryptedData
-			if json.Unmarshal(b, &cs) != nil {
+			cs, ok := parse(b)
+			if !ok {
 				return false
 			}
 			_, err := svc.DecryptChunked(cs)
 			return err == nil
 		},
+		// DecryptChunked documents that chunks may arrive out of order, so
+		// the tag bytes are taken in chunk-index order.
 		Canon: func(b []byte) string {
-			var cs []*aead.EncryptedData
-			_ = json.Unmarshal(b, &cs)
+			cs, _ := parse(b)
 			p, _ := svc.DecryptChunked(cs)
-			return string(p)
+			slices.SortFunc(cs, func(x, y *aead.EncryptedData) int {
+				return cmp.Compare(x.Metadata.ChunkIndex, y.Metadata.ChunkIndex)
+			})
+			var sb strings.Builder
+			sb.Write(p)
+			for _, c := range cs {
+				sb.WriteString("|" + hex.EncodeToString(c.Data))
+			}
+			return sb.String()
 		},
+		Seps:   [][]byte{{'\n'}},
 		Region: jsonRegion(cart),
 	}
 	return []tgt{main, meta, chunked}
+}
+
+// aeadCanon is the meaning of an accepted envelope: the plaintext open returns
+// and the sealed bytes (ciphertext and GCM tag), per the Target.Canon contract.
+func aeadCanon(open func(*aead.EncryptedData) ([]byte, error)) func([]byte) string {
+	return func(b []byte) string {
+		d, _ := aead.DeserializeEncryptedData(b)
+		p, _ := open(d)
+		return string(p) + "|" + hex.EncodeToString(d.Data)
+	}
 }
 
 func pqwrapTargets(t testing.TB) []tgt {
@@ -395,15 +438,14 @@ func pqwrapTargets(t testing.TB) []tgt {
 		if s == pqwrap.SuiteX25519MLKEM1024 {
 			ctLen = 1568
 		}
+		// The three pqwrap targets below keep Canon nil: these are fixed binary
+		// layouts with no documented encoding freedom, so the raw bytes (tag
+		// and MAC included) are the meaning.
 		out = append(out, tgt{
 			Name: "pqwrap-envelope-" + s.String(), Artifact: env,
 			Verify: func(b []byte) bool {
 				_, err := pqwrap.Unwrap(priv, pqwrap.PurposeDEK, ctx, b)
 				return err == nil
-			},
-			Canon: func(b []byte) string {
-				k, _ := pqwrap.Unwrap(priv, pqwrap.PurposeDEK, ctx, b)
-				return hex.EncodeToString(k)
 			},
 			Region: func(off int) string {
 				switch {
@@ -435,16 +477,7 @@ func pqwrapTargets(t testing.TB) []tgt {
 		}
 		out = append(out, tgt{
 			Name: "pqwrap-keyset-mac", Artifact: ks,
-			Verify: func(b []byte) bool { _, err := pqwrap.OpenKeyset(b, fixedKey("kek")); return err == nil },
-			Canon: func(b []byte) string {
-				k, _ := pqwrap.OpenKeyset(b, fixedKey("kek"))
-				var sb strings.Builder
-				sb.WriteString(hex.EncodeToString(k.DEK) + hex.EncodeToString(k.KEKID[:]))
-				for _, r := range k.Recipients {
-					sb.WriteString(hex.EncodeToString(r.Bytes()))
-				}
-				return sb.String()
-			},
+			Verify:   func(b []byte) bool { _, err := pqwrap.OpenKeyset(b, fixedKey("kek")); return err == nil },
 			MACStart: len(ks) - 32, MACEnd: len(ks),
 		})
 		leg, err := pqwrap.SealLegacy(dek, fixedKey("kek"))
@@ -454,10 +487,6 @@ func pqwrapTargets(t testing.TB) []tgt {
 		out = append(out, tgt{
 			Name: "pqwrap-legacy60-keyfile", Artifact: leg,
 			Verify: func(b []byte) bool { _, _, err := pqwrap.OpenKeyFile(b, fixedKey("kek")); return err == nil },
-			Canon: func(b []byte) string {
-				k, _, _ := pqwrap.OpenKeyFile(b, fixedKey("kek"))
-				return hex.EncodeToString(k.DEK)
-			},
 		})
 	}
 	return out
