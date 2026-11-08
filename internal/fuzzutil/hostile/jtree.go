@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 )
 
 // Kind is a JSON node kind. KRaw holds verbatim text emitted as-is, which lets
@@ -202,12 +203,7 @@ func HasDuplicateKeys(b []byte) bool {
 				seen[k] = struct{}{}
 			}
 		}
-		for _, c := range n.Kids {
-			if walk(c) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(n.Kids, walk)
 	}
 	return walk(root)
 }

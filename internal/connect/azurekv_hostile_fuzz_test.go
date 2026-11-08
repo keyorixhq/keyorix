@@ -6,7 +6,7 @@ package connect
 // record-and-mutate target for the Azure Key Vault connector (rules: internal/
 // fuzzutil/hostile/RULES.md). It builds a REAL azsecrets client with the same
 // hardened transport production installs (azureBaseTransport wrapped by
-// newConnectHardenedTransport, redirects refused), trusting only the harness's
+// newAzureHardenedTransport, redirects refused), trusting only the harness's
 // TLS certificate, and answers the SDK's bearer-challenge handshake with a
 // pristine 401 that the mutation program never touches (Route.Pass).
 
@@ -82,7 +82,7 @@ func FuzzAzureKVHostileEndpoint(f *testing.F) {
 		cl, err := azsecrets.NewClient(h.URL(), hostileAzureCred{}, &azsecrets.ClientOptions{
 			DisableChallengeResourceVerification: true,
 			ClientOptions: azcore.ClientOptions{
-				Transport: &http.Client{Transport: newConnectHardenedTransport(tr), CheckRedirect: refuseRedirect},
+				Transport: &http.Client{Transport: newAzureHardenedTransport(tr), CheckRedirect: refuseRedirect},
 				Retry:     policy.RetryOptions{MaxRetries: 2, RetryDelay: time.Millisecond, MaxRetryDelay: time.Millisecond},
 			},
 		})

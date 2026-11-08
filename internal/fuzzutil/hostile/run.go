@@ -60,7 +60,7 @@ func census() map[string]int {
 		buf = make([]byte, 2*len(buf))
 	}
 	out := map[string]int{}
-	for _, g := range strings.Split(string(buf), "\n\n") {
+	for g := range strings.SplitSeq(string(buf), "\n\n") {
 		lines := strings.Split(g, "\n")
 		if len(lines) < 2 {
 			continue
@@ -194,7 +194,7 @@ func (h *Harness) Run(label string, fn func(ctx context.Context) error) error {
 	}
 
 	runtime.ReadMemStats(&m1)
-	limit := uint64(256<<20) + 16*uint64(h.wrote.Load())
+	limit := uint64(256<<20) + 16*uint64(h.wrote.Load()) // #nosec G115 -- wrote only ever accumulates non-negative byte counts
 	if d := m1.TotalAlloc - m0.TotalAlloc; d > limit {
 		h.Violate("O4 BOUNDED-WORK: %s allocated %d bytes (limit %d, server wrote %d)", label, d, limit, h.wrote.Load())
 	}

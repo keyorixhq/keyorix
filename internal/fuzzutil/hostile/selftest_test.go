@@ -103,7 +103,7 @@ func control(ctx context.Context, base string) (string, error) {
 	cl := &http.Client{Timeout: 5 * time.Second, CheckRedirect: refuse}
 	seen := map[string]bool{}
 	tok := ""
-	for page := 0; page < 3; page++ {
+	for range 3 {
 		b, code, err := fetch(ctx, cl, base+"/secret"+tok, 1<<20)
 		if err != nil || code != 200 {
 			return "", fmt.Errorf("fetch failed: status %d: %v", code, err)
@@ -287,7 +287,7 @@ func randProgram(r *rand.Rand) Program {
 	for i := range b {
 		b[i] = byte(r.Intn(256))
 	}
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		if r.Intn(5) != 0 {
 			b[i] = byte(r.Intn(224))
 		}
@@ -342,7 +342,7 @@ func TestDecodeTotalAndPristine(t *testing.T) {
 		t.Fatal("zero programs must be pristine")
 	}
 	r := rand.New(rand.NewSource(1))
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		b := make([]byte, r.Intn(80))
 		r.Read(b)
 		p := Decode(b)

@@ -29,10 +29,9 @@ const (
 )
 
 type fetchObs struct {
-	mu         sync.Mutex
-	listEnvID  []string
-	valueIDs   []string
-	valueCalls int
+	mu        sync.Mutex
+	listEnvID []string
+	valueIDs  []string
 }
 
 func fetcherHostileRoutes(o *fetchObs) []hostile.Route {

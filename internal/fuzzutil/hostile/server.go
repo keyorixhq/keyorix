@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -82,7 +83,7 @@ func bombBytes() []byte {
 		var b bytes.Buffer
 		zw, _ := gzip.NewWriterLevel(&b, gzip.BestSpeed)
 		chunk := make([]byte, 1<<20)
-		for i := 0; i < 320; i++ {
+		for range 320 {
 			_, _ = zw.Write(chunk)
 		}
 		_ = zw.Close()
@@ -145,10 +146,7 @@ func buildPlan(valid Resp, p Program, active bool, selfURL, attackerURL string, 
 			pl.complete, pl.seen = false, nil // the client rejects the size line before any data
 		case "cl-too-short":
 			if n := len(pl.wire); n > 0 {
-				k := 1 + n/4
-				if k > n {
-					k = n
-				}
+				k := min(1+n/4, n)
 				if pl.enc == "" {
 					pl.seen = pl.wire[:n-k]
 				} else {
@@ -363,8 +361,8 @@ func (h *Harness) Delivery(route string, contentOK func(seen []byte) bool, okSta
 		return nil, "bad"
 	}
 	if h.cfg.Retries {
-		for i := len(recs) - 1; i >= 0; i-- {
-			if recs[i].Redirect == 0 || !h.cfg.AllowRedirect {
+		for i, rec := range slices.Backward(recs) {
+			if rec.Redirect == 0 || !h.cfg.AllowRedirect {
 				recs = recs[i : i+1]
 				break
 			}
@@ -579,10 +577,7 @@ func chunked(b []byte, pieces int, ext string) []byte {
 	}
 	step := len(b)/pieces + 1
 	for i := 0; i < len(b); i += step {
-		j := i + step
-		if j > len(b) {
-			j = len(b)
-		}
+		j := min(i+step, len(b))
 		fmt.Fprintf(&out, "%x%s\r\n", j-i, ext)
 		out.Write(b[i:j])
 		out.WriteString("\r\n")
@@ -640,7 +635,7 @@ func (h *Harness) writeRaw(w http.ResponseWriter, pl plan) {
 		return
 	case "slow-drip":
 		wr(head(cl(len(body))))
-		for i := 0; i < len(body); i++ {
+		for i := range body {
 			wr(body[i : i+1])
 			if !h.sleep(15 * time.Millisecond) {
 				return
@@ -669,10 +664,7 @@ func (h *Harness) writeRaw(w http.ResponseWriter, pl plan) {
 		wr(chunked(body, 3, ""))
 		wr([]byte("0\r\n\r\n"))
 	case "cl-too-short":
-		k := 1 + len(body)/4
-		if k > len(body) {
-			k = len(body)
-		}
+		k := min(1+len(body)/4, len(body))
 		wr(head(cl(len(body) - k)))
 		wr(body)
 	case "dup-cl":

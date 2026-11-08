@@ -74,7 +74,7 @@ func Decode(b []byte) Program {
 		p.Trunc = 1 + int(t-224)%32
 	}
 	n := int(at(9)) % 5
-	for i := 0; i < n; i++ {
+	for i := range n {
 		base := 10 + 3*i
 		if base >= len(b) {
 			break
@@ -127,11 +127,11 @@ var weirdStrings = []*Node{
 	{K: KRaw, S: "\"a\x00b\""},
 	{K: KRaw, S: "\"line1\r\nline2\""},
 	{K: KStr, S: "x\r\nX-Injected: 1"},
-	{K: KStr, S: "‮​secret‏"},
+	{K: KStr, S: "\u202e\u200bsecret\u200f"},
 	{K: KRaw, S: `"\ud800"`},
 	{K: KRaw, S: "\"\xff\xfe\xc0\""},
 	{K: KStr, S: "\xef\xbb\xbfvalue"},
-	{K: KStr, S: "a b c"},
+	{K: KStr, S: "a\u2028b\u2029c"},
 	{K: KStr, S: "../../etc/passwd"},
 	{K: KStr, S: "http://127.0.0.1:1/internal"},
 	{K: KStr, S: "${jndi:ldap://x}"},
@@ -242,17 +242,17 @@ func applyOp(root **Node, o Op) {
 		switch {
 		case n.K == KArr && len(n.Kids) > 0:
 			first := n.Kids[0]
-			for i := 0; i < cnt; i++ {
+			for range cnt {
 				n.Kids = append(n.Kids, clone(first))
 			}
 		case n.K == KObj:
-			for i := 0; i < cnt; i++ {
+			for i := range cnt {
 				n.Keys = append(n.Keys, "k"+strconv.Itoa(i))
 				n.Kids = append(n.Kids, &Node{K: KNull})
 			}
 		default:
 			arr := &Node{K: KArr}
-			for i := 0; i < cnt; i++ {
+			for range cnt {
 				arr.Kids = append(arr.Kids, clone(n))
 			}
 			r.set(root, arr)
@@ -316,8 +316,9 @@ func Encode(p Program) []byte {
 		if idx <= 0 {
 			return 0
 		}
-		return byte(224 + idx - 1)
+		return byte(224 + idx - 1) // #nosec G115 -- idx is a small enum index bounded by the option tables
 	}
+	// #nosec G115 -- every field is a small enum index or a count capped by the encoder's op limit
 	b := []byte{byte(p.Route), byte(p.Occ), on(p.Status), on(p.CT), on(p.Enc), on(p.Frame), on(p.Fault), on(p.Redir), on(p.Trunc), byte(len(p.Ops))}
 	for _, o := range p.Ops {
 		b = append(b, o.Code, o.A, o.B)

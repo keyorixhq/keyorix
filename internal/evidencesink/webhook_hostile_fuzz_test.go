@@ -11,6 +11,7 @@ package evidencesink
 import (
 	"context"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -65,11 +66,11 @@ func FuzzWebhookHostileReceiver(f *testing.F) {
 
 // served2xx reports whether the last non-redirect exchange ended in 2xx.
 func served2xx(recs []hostile.Served) bool {
-	for i := len(recs) - 1; i >= 0; i-- {
-		if recs[i].Redirect != 0 {
+	for _, rec := range slices.Backward(recs) {
+		if rec.Redirect != 0 {
 			continue
 		}
-		return recs[i].Status >= 200 && recs[i].Status < 300
+		return rec.Status >= 200 && rec.Status < 300
 	}
 	return false
 }
