@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Channel names used by Capture's process hooks.
@@ -31,6 +32,9 @@ type Capture struct {
 	mu       sync.Mutex
 	channels map[string]*bytes.Buffer
 	files    []*capturedFile
+
+	installOnce sync.Once
+	restore     func()
 }
 
 type capturedFile struct {
@@ -95,6 +99,60 @@ func (c *Capture) Drain() []Output {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Channel < out[j].Channel })
 	return out
+}
+
+// RunTimeout is the budget of one RunGuarded call. A canary execution runs a real
+// database and several operations, so fuzzutil.Guard's 3 seconds trips on a loaded
+// machine; this only needs to catch a hang.
+const RunTimeout = 60 * time.Second
+
+// RunGuarded runs fn with a deadline and reports a hang through fatalf. fn must not
+// call t.Fatalf, which only works on the test's own goroutine.
+func RunGuarded(fatalf func(format string, args ...any), label string, fn func()) {
+	done := make(chan any, 1)
+	go func() {
+		defer func() { done <- recover() }()
+		fn()
+	}()
+	select {
+	case p := <-done:
+		if p != nil {
+			panic(p)
+		}
+	case <-time.After(RunTimeout):
+		fatalf("%s exceeded %s", label, RunTimeout)
+	}
+}
+
+// InstallOnce redirects the logs and standard streams, once per Capture, until
+// Uninstall. Fuzz targets call it from the first execution rather than when building
+// their fixture: the coordinator process builds the fixture too but never runs an
+// input, and redirecting its standard output would swallow the fuzzer's progress
+// lines. Safe to call on every execution.
+func (c *Capture) InstallOnce(dir string) error {
+	var err error
+	c.installOnce.Do(func() {
+		restoreLogs := c.InstallLogs()
+		restoreStdio, stdioErr := c.InstallStdio(dir)
+		if stdioErr != nil {
+			restoreLogs()
+			err = stdioErr
+			return
+		}
+		c.restore = func() {
+			restoreStdio()
+			restoreLogs()
+		}
+	})
+	return err
+}
+
+// Uninstall undoes InstallOnce. It does nothing if InstallOnce never ran.
+func (c *Capture) Uninstall() {
+	if c.restore != nil {
+		c.restore()
+		c.restore = nil
+	}
 }
 
 // InstallLogs redirects the standard logger and the slog default logger into this

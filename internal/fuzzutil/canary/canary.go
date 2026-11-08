@@ -108,10 +108,12 @@ func (h Hit) String() string {
 // query and path, double URL, HTML, Go-quoted, hex, base64 std/url with and without
 // padding, basic-auth); any run of MinWindow or more bytes of the core, which also
 // covers the JSON, URL and HTML forms of a fragment because the core's alphabet
-// needs no escaping; hex of any such fragment; and base64 of a fragment when it
-// spans three aligned groups (9 or more bytes of the core). It does not detect a
-// base64 fragment shorter than that, a fragment shorter than MinWindow, or a value
-// that was compressed, encrypted, hashed or case-folded.
+// needs no escaping; the same run lower-cased or upper-cased, because an error path
+// that normalises its input before quoting it is a real shape (a window of the
+// folded core still carries about 41 bits); hex of any such fragment; and base64 of a
+// fragment when it spans three aligned groups (9 or more bytes of the core). It does
+// not detect a base64 fragment shorter than that, a fragment shorter than MinWindow,
+// or a value that was compressed, encrypted or hashed.
 type Scanner struct {
 	cans    []Canary
 	needles []needle
@@ -151,10 +153,15 @@ func (s *Scanner) Add(c Canary) {
 	for _, v := range c.Variants() {
 		add(v.Name, v.Bytes, false)
 	}
+	add("raw-lower", []byte(strings.ToLower(c.Raw)), false)
+	add("raw-upper", []byte(strings.ToUpper(c.Raw)), false)
 	core := []byte(c.Core)
+	lower, upper := bytes.ToLower(core), bytes.ToUpper(core)
 	for k := 0; k+MinWindow <= len(core); k++ {
 		frag := core[k : k+MinWindow]
 		add("core-window", frag, true)
+		add("core-window-lower", lower[k:k+MinWindow], true)
+		add("core-window-upper", upper[k:k+MinWindow], true)
 		add("hex-window", []byte(hex.EncodeToString(frag)), true)
 		add("hex-window", []byte(strings.ToUpper(hex.EncodeToString(frag))), true)
 	}

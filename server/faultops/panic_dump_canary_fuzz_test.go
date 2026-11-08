@@ -61,6 +61,8 @@ type panicDumpFixture struct {
 	capture *canary.Capture
 	control *prometheus.GaugeVec
 	calls   map[string]map[string]int
+
+	captureDir string
 }
 
 func newPanicDumpFixture(tb testing.TB) *panicDumpFixture {
@@ -71,12 +73,8 @@ func newPanicDumpFixture(tb testing.TB) *panicDumpFixture {
 	}
 	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
 	fx := &panicDumpFixture{capture: canary.NewCapture(), calls: map[string]map[string]int{}}
-	tb.Cleanup(fx.capture.InstallLogs())
-	restore, err := fx.capture.InstallStdio(dir)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	tb.Cleanup(restore)
+	tb.Cleanup(fx.capture.Uninstall)
+	fx.captureDir = dir
 	fx.control = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "keyorix_panic_canary_control", Help: "Harness control for the metrics capture."}, []string{"v"})
 	if err := prometheus.Register(fx.control); err != nil {
 		tb.Fatal(err)
@@ -193,6 +191,9 @@ func runPanicDump(t *testing.T, fx *panicDumpFixture, in panicDumpInput, allow *
 	t.Helper()
 	ctx := context.Background()
 	op := panicDumpOps[int(in.op)%len(panicDumpOps)]
+	if err := fx.capture.InstallOnce(fx.captureDir); err != nil {
+		t.Fatalf("capture: %v", err)
+	}
 	counts := fx.callsFor(t, op)
 	methods := make([]string, 0, len(counts))
 	for m := range counts {

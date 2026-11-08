@@ -42,7 +42,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
-	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/canary"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -74,6 +73,7 @@ func coreCanaryAllow() *canary.Allowlist {
 	return canary.NewAllowlist(
 		canary.Rule{ID: "value-reveal", Channel: coreChanReveal, Origin: "read-value", Why: "GetSecretValueWithPermissionCheck is the authorised read"},
 		canary.Rule{ID: "meta-result", Channel: coreChanResult, MetadataOnly: true, Why: "names, descriptions, tags and metadata are returned by the operations that manage them"},
+		canary.Rule{ID: "meta-error", Channel: coreChanError, MetadataOnly: true, Why: "a rejected non-secret field (an export format) is named in the error returned to the caller who sent it"},
 		canary.Rule{ID: "meta-db", Channel: canary.ChannelDBPrefix + "*", MetadataOnly: true, Why: "stored in plaintext by design"},
 		canary.Rule{ID: "meta-rawdb", Channel: coreChanRawDB, MetadataOnly: true, Why: "stored in plaintext by design"},
 	)
@@ -89,6 +89,7 @@ type coreCanaryFixture struct {
 	envID         uint
 	capture       *canary.Capture
 	controlMetric *prometheus.GaugeVec
+
 }
 
 func newCoreCanaryFixture(tb testing.TB) *coreCanaryFixture {
@@ -125,12 +126,7 @@ func newCoreCanaryFixture(tb testing.TB) *coreCanaryFixture {
 	fx.enc = enc
 
 	fx.capture = canary.NewCapture()
-	tb.Cleanup(fx.capture.InstallLogs())
-	restore, err := fx.capture.InstallStdio(dir)
-	if err != nil {
-		tb.Fatalf("capture stdio: %v", err)
-	}
-	tb.Cleanup(restore)
+	tb.Cleanup(fx.capture.Uninstall)
 
 	fx.controlMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "keyorix_core_canary_control", Help: "Harness control for the metrics capture."}, []string{"v"})
 	if err := prometheus.Register(fx.controlMetric); err != nil {
@@ -500,7 +496,7 @@ func (r *coreCanaryRun) opInvalid(id uint, flag byte) {
 		s, err := r.c.RotateSecret(r.ctx, r.mutable(flag), nil, coreCanaryAdminID, "canary-admin")
 		r.observe("invalid-rotate-empty", s, err)
 	case 3:
-		data, _, err := r.c.ExportSecretAccessLog(r.ctx, ActorTypeUser, coreCanaryAdminID, id, hostile.Raw)
+		data, _, err := r.c.ExportSecretAccessLog(r.ctx, ActorTypeUser, coreCanaryAdminID, id, bad.Raw)
 		r.fx.capture.Record(coreChanExport, data)
 		r.observe("invalid-export-format", nil, err)
 	}
@@ -621,8 +617,11 @@ func coreFail(format string, args ...any) { panic(coreInvalid(fmt.Sprintf(format
 // reason the run proved nothing.
 func runCoreCanaryProgram(t testing.TB, fx *coreCanaryFixture, dir string, program []byte, allow *canary.Allowlist, leak coreCanaryLeak) (r *coreCanaryRun, invalid string) {
 	t.Helper()
+	if err := fx.capture.InstallOnce(fx.dir); err != nil {
+		t.Fatalf("capture: %v", err)
+	}
 	r = fx.newRun(t, dir, program, allow)
-	fuzzutil.Guard(t.Fatalf, "core canary program", func() {
+	canary.RunGuarded(t.Fatalf, "core canary program", func() {
 		defer func() {
 			if p := recover(); p != nil {
 				msg, ok := p.(coreInvalid)

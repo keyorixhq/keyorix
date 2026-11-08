@@ -60,6 +60,16 @@ func TestScanFindsAnyFragmentOfEightBytes(t *testing.T) {
 	}
 }
 
+func TestScanFindsCaseFoldedForms(t *testing.T) {
+	c := testCanary(false)
+	s := NewScanner(c)
+	for _, hay := range []string{strings.ToLower(c.Raw), strings.ToUpper(c.Raw), strings.ToLower(c.Core[3:15]), strings.ToUpper(c.Core[3:15])} {
+		if len(s.Scan("x", []byte("<<"+hay+">>"))) == 0 {
+			t.Fatalf("case-folded form %q not detected", hay)
+		}
+	}
+}
+
 // The window claim in the Scanner doc comment: base64 of a fragment is found once
 // the fragment spans three aligned groups, wherever it sits in the stream.
 func TestScanFindsBase64Fragments(t *testing.T) {
