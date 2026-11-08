@@ -80,6 +80,7 @@ func (d *Driver) call(line string, limit time.Duration) (map[string]any, error) 
 		dec.UseNumber()
 		var m map[string]any
 		if err := dec.Decode(&m); err != nil {
+			d.kill() // the real reply may still be buffered: the next call would read it as its own answer
 			return nil, fmt.Errorf("driver output not JSON: %v: %.200s", err, r.s)
 		}
 		return m, nil
@@ -350,6 +351,7 @@ func (r *Runner) Analyse(sc Scenario, outs map[string]Outcome) (findings []Findi
 		}
 	}
 	names := append([]string(nil), r.SDKs...)
+	diverged := false
 	for i, st := range sc.Steps {
 		var vs []view
 		for _, n := range names {
@@ -360,13 +362,21 @@ func (r *Runner) Analyse(sc Scenario, outs map[string]Outcome) (findings []Findi
 			}
 			vs = append(vs, toView(n, so, r.Mask, o.Token))
 		}
+		abs := absoluteChecks(sc.ID, i, st, vs, r.Spec, func(sdk string) string { return tokenFor(st.Token, outs[sdk].Token) })
+		if diverged {
+			// later steps may depend on state diverged by an earlier one: no peer comparison, and
+			// only the oracles about a leaked credential (E3, X1), which hold whatever the state
+			for _, f := range abs {
+				if f.Cat == "E3" || f.Cat == "X1" {
+					findings = append(findings, f)
+				}
+			}
+			continue
+		}
 		part := compareStep(sc.ID, i, st.Op, vs)
 		findings = append(findings, part...)
-		findings = append(findings, absoluteChecks(sc.ID, i, st, vs, r.Spec, func(sdk string) string { return tokenFor(st.Token, outs[sdk].Token) })...)
-		if len(part) > 0 {
-			// later steps may depend on state diverged by this one
-			break
-		}
+		findings = append(findings, abs...)
+		diverged = len(part) > 0
 	}
 	return
 }

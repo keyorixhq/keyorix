@@ -182,7 +182,25 @@ A pve01 run reported one harness note: a batch of 20 scenarios was lost because 
 
 Reading the 200+ E1 signatures of the first full run, one root cause explained most of the Go ones: the Go driver tested errors.As(err, *APIError) first, and keyorix.AuthError embeds and unwraps to *APIError, so every 401 was reported as class http while the typed auth errors of the other three SDKs were reported as auth. This is the pre-registered rule "class by the native type of the SDK" applied wrongly in one driver: a harness artefact, not an SDK difference. Fixed (AuthError -> auth, SecretNotFoundError -> not_found, checked before APIError). Honest consequence: the E1 counts of every earlier run in this campaign are inflated by it and are discarded; all campaigns are re-run with this driver. The other three drivers were re-read against the same table and found consistent.
 
+## Amendment A12 (oracle X1 also covers a credential in a request body; 2026-11-08)
+
+Found in review of the harness, not by a signature: X1 (A5) looked only at the `Authorization` header, so a login request that forwards its credential in the BODY to the other origin produced no X1 finding (it surfaced only as W6/E1, which do not say a credential moved, and W6 goes quiet when all SDKs behave alike). X1 now also flags a request to the other origin whose body contains the synthetic login password or the session token of that SDK instance, verbatim. Limits, stated rather than hidden: a credential in the URL, in another header, or encoded/hashed is not detected. Findings of X1 stay private as before (section 7). Results of earlier runs are unchanged in meaning for `Authorization`; any run whose S family is quoted must be re-run with this oracle.
+
+## Amendment A13 (proxy rewrote request targets starting with `//`; 2026-11-08)
+
+Found in review: the recording proxy forwarded the recorded request-target through `url.URL.Opaque`, and `url.URL.RequestURI` prefixes `http:` to an Opaque value that starts with `//`. A target `//api/x` reached the server as the absolute URI `http://api/x` (Host `api`), and `///api/x` as `http:///api/x`, which the server treats as a clean path, while the proxy still recorded the original target. The server therefore answered a different request from the one the report shows. Fixed: such targets are forwarded through `Path`/`RawPath`, and a raw-socket test with an asserting upstream pins the exact request-target. Consequences, not yet re-measured: every `slash`/`slash2` result in the Results below (the trailing-slash root cause, keyorix-sdks #86/#87) was observed through the faulty proxy and must be re-run; the Results statement that the server redirects `//path` did not reproduce directly against the server at review time (a direct `POST //auth/login` returned 405 with no `Location`), and is withdrawn until re-measured.
+
+## Amendment A14 (a run that executed nothing no longer passes; plant check; 2026-11-08)
+
+Found in review: `runScenarios` recorded a failed batch as a note and counted its scenarios as run, so `validate -controls` printed `CONTROL C1 PASS` and `run` exited 0 when every batch failed (a probe with a non-existent server binary did exactly that) and when a driver could not start. Now: the report counts failed batches and, per SDK, the scenarios in which its driver answered a step; C1 passes only with zero harness notes and every scenario executed by every SDK; `run` exits non-zero on a failed batch or an SDK that executed no step; `validate` exits non-zero on a failed control, a plant that did not run, or a missed plant. The plant criterion of section 6 is now enforced as written: the planted SDK must be in a minority block of the partition (before, any block sufficed, which every SDK that ran satisfies). The per-SDK credential oracles (E3, X1) keep running on steps after a partition divergence; peer comparison and the other absolute oracles still stop there, because later state may differ. A driver that prints a non-JSON line is killed, so a buffered real reply cannot be taken for the next step's answer. A missing `sdkdiff-seed.json` is an error, not a silent mask of every id. `build-drivers.sh` resolves its output directory to an absolute path before the Go build. Earlier green controls are not evidence of a valid control run and are re-run.
+
+## Amendment A15 (two registered statements the code did not match; 2026-11-08)
+
+A8's last sentence says the summary prints the share of scenarios that ended in the removed-API error: no code does that; the sentence is withdrawn (the lesson stands, the check is not implemented). Section 5 registers 1 MiB values; the generator's longest value is 65536 bytes (`longLens` in `gen.go`), so 1 MiB values were never run: the coverage claim is limited to 64 KiB.
+
 ## Results (written after the runs; the rules above were not changed after this point)
+
+Review note 2026-11-08: the statements below predate A12 to A15. The S family, every `slash`/`slash2` result and the "server redirects `//path`" statement need re-measuring with the fixed harness; control and plant verdicts need re-running under A14.
 
 SDK source: keyorix-sdks origin/main e972b6e. Phases: A = 1535 deterministic scenarios (edge matrix incl. the v0.3.0
 secrets API), S = 35 cross-origin redirect scenarios, B = random seeds (Mac: 1..1500 with Go/Node/Python/Java;
@@ -204,8 +222,8 @@ pve01: 1..3020 with Go/Node/Python, stopped by hand at B-003020 for time, signat
 - Root causes found, by class (signature counts are inflated by combinations; counts of root causes are what matter):
   SDK bug 7 (Java JSON unescape; Java control characters in the login body; Go and Java trailing slashes; plus 3 reported
   privately and not described here), spec ambiguity 7 (redirect policy, login error typing, null vs empty string, base URL with userinfo or query,
-  Java without a decode error class, shorthand loopback hosts, GET versus POST after redirect), server 0 (the server
-  redirects `//path`, which turns a POST into a GET; arguably server behaviour, reported with the Go bug), harness artefact 4
+  Java without a decode error class, shorthand loopback hosts, GET versus POST after redirect), server 0 (an earlier
+  statement that the server redirects `//path` is withdrawn, see A13), harness artefact 4
   (flows that depend on a result Java cannot produce, JavaScript number precision above 2^53, login rate limiting making
   scenarios state-dependent, late-recorded requests).
 - Minimise and replay: one representative per root cause minimised to a single step and replayed 3 of 3 (14 of 15; the

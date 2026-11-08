@@ -207,8 +207,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, up string, body 
 	if err != nil {
 		return 0, nil, err
 	}
-	// Opaque makes Go write the request-target byte for byte as the SDK sent it.
-	req.URL = &url.URL{Scheme: "http", Host: u.Host, Opaque: rawPath, RawQuery: rawQuery}
+	req.URL = upstreamURL(u.Host, rawPath, rawQuery)
 	req.Host = u.Host
 	for k, v := range r.Header {
 		switch http.CanonicalHeaderKey(k) {
@@ -238,6 +237,21 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, up string, body 
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(rb) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- loopback test double relaying the upstream test server's bytes verbatim; never rendered as HTML
 	return resp.StatusCode, rb, nil
+}
+
+// upstreamURL builds the URL whose RequestURI is the request-target the SDK sent, byte for byte.
+// Opaque writes the target verbatim, except that url.URL.RequestURI prefixes "http:" to an Opaque
+// value starting with "//" (the server would then see an absolute URI, a different request). For
+// those targets the path is carried in Path/RawPath instead, which RequestURI emits unchanged.
+func upstreamURL(host, rawPath, rawQuery string) *url.URL {
+	if strings.HasPrefix(rawPath, "//") {
+		decoded, err := url.PathUnescape(rawPath)
+		if err != nil {
+			decoded = rawPath
+		}
+		return &url.URL{Scheme: "http", Host: host, Path: decoded, RawPath: rawPath, RawQuery: rawQuery}
+	}
+	return &url.URL{Scheme: "http", Host: host, Opaque: rawPath, RawQuery: rawQuery}
 }
 
 var shimRename = map[string]string{"id": "ID", "name": "Name", "type": "Type", "project_id": "ProjectID", "created_at": "CreatedAt", "description": "Description"}

@@ -510,6 +510,16 @@ func firstDiffPath(a, b any, p string) string {
 	return ""
 }
 
+// credentialInBody reports whether a recorded request body carries the synthetic login password
+// or the session token (len >= 8, to avoid matching short or empty tokens) verbatim.
+func credentialInBody(body []byte, token string) bool {
+	b := string(body)
+	if strings.Contains(b, adminPW) {
+		return true
+	}
+	return len(token) >= 8 && strings.Contains(b, token)
+}
+
 // absoluteChecks applies the per-SDK oracles E3, S1, S2 and T1.
 func absoluteChecks(scID string, step int, st Step, vs []view, spec *Spec, tokenOf func(string) string) []Finding {
 	var out []Finding
@@ -546,11 +556,20 @@ func absoluteChecks(scID string, step int, st Step, vs []view, spec *Spec, token
 				}
 			}
 		}
-		// X1: a credential must not follow a redirect to another origin
+		// X1: a credential must not follow a redirect to another origin. Covers an Authorization
+		// header (A5) and, since A12, the login password or this instance's session token in the
+		// request body. Not covered: a credential in the URL, in another header or in a form of
+		// the secret other than the verbatim string (encoded, hashed).
 		for _, r := range v.recs {
-			if h := r.Header["Host"]; len(h) > 0 && strings.HasPrefix(h[0], "localhost:") && len(r.Header["Authorization"]) > 0 {
-				one("X1", "authorization-sent-to-other-origin", r.Method+" "+clipStr(r.RequestURI))
-				break
+			if h := r.Header["Host"]; len(h) > 0 && strings.HasPrefix(h[0], "localhost:") {
+				if len(r.Header["Authorization"]) > 0 {
+					one("X1", "authorization-sent-to-other-origin", r.Method+" "+clipStr(r.RequestURI))
+					break
+				}
+				if credentialInBody(r.Body, token) {
+					one("X1", "credential-in-body-sent-to-other-origin", r.Method+" "+clipStr(r.RequestURI))
+					break
+				}
 			}
 		}
 		if st.Expect == "ok" && !v.ok {

@@ -248,21 +248,17 @@ func cmdValidate(args []string) error {
 		return err
 	}
 	var results []string
+	failed := false // a missed plant, a failed control or a run that did not execute
 	if *controls {
 		rep := newReport(&c)
 		if err := runScenarios(&c, scs, *batch, rep, true); err != nil {
 			return err
 		}
 		_ = rep.save(filepath.Join(c.out, "control-selfpair"))
-		bad := 0
-		for sig, st := range rep.Sigs {
-			if twinsSplit(st.First.Blocks) {
-				bad++
-				results = append(results, "CONTROL C1 FAIL twins split: "+sig)
-			}
-		}
-		if bad == 0 {
-			results = append(results, fmt.Sprintf("CONTROL C1 PASS: %d scenarios, no finding separates an SDK from its twin (%d other signatures present, all between different SDKs)", len(scs), len(rep.Sigs)))
+		line, ok := controlC1(rep)
+		results = append(results, line)
+		if !ok {
+			failed = true
 		}
 	}
 	if *plants != "" {
@@ -286,23 +282,25 @@ func cmdValidate(args []string) error {
 				return err
 			}
 			_ = rep.save(filepath.Join(c.out, "plant-"+p))
+			if np := rep.notRun(); len(np) > 0 {
+				results = append(results, fmt.Sprintf("PLANT %s NOT RUN: %s", p, strings.Join(np, "; ")))
+				failed = true
+				continue
+			}
 			hit := ""
 			for sig, st := range rep.Sigs {
 				if _, inBase := base.Sigs[sig]; inBase || st.First.Cat != exp.Cat {
 					continue
 				}
-				for _, blk := range st.First.Blocks {
-					for _, n := range blk {
-						if kindOf(n) == exp.SDK && len(st.First.Blocks) > 1 {
-							hit = sig
-						}
-					}
+				if plantedIsOddOneOut(st.First.Blocks, exp.SDK) {
+					hit = sig
 				}
 			}
 			if hit != "" {
 				results = append(results, fmt.Sprintf("PLANT %s DETECTED as new signature %s", p, hit))
 			} else {
 				results = append(results, fmt.Sprintf("PLANT %s MISSED (expected %s involving %s)", p, exp.Cat, exp.SDK))
+				failed = true
 			}
 		}
 	}
@@ -312,7 +310,31 @@ func cmdValidate(args []string) error {
 	for _, l := range results {
 		fmt.Println(l)
 	}
+	if failed {
+		return fmt.Errorf("validation failed (see lines above)")
+	}
 	return nil
+}
+
+// plantedIsOddOneOut reports whether the planted SDK kind sits in a minority block of the partition
+// (PREREGISTRATION section 6: the odd-one-out block must contain it). Being in some block is not
+// enough: every SDK that ran is in one.
+func plantedIsOddOneOut(blocks [][]string, kind string) bool {
+	if len(blocks) < 2 {
+		return false
+	}
+	total := 0
+	for _, b := range blocks {
+		total += len(b)
+	}
+	for _, b := range blocks {
+		for _, n := range b {
+			if kindOf(n) == kind && 2*len(b) < total {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // twinsSplit reports whether any SDK and its kind@N twin sit in different blocks of one finding.

@@ -41,6 +41,11 @@ Operation vocabulary: `health`, `login`, `list_secrets` (environment; project fi
 Limits found while building it: plants only count when they change an observable (A9), and a differential tool
 cannot see a defect all four SDKs share.
 
+`run` and `validate` exit non-zero when a batch failed to run, an SDK executed no step (for example a driver that cannot
+start), a control failed or a plant was missed or did not run (A14). Oracle X1 flags an `Authorization` header and the login
+password or session token in a body sent to the other origin (A12); it does not see a credential in the URL, in another
+header, or in an encoded form.
+
 `SDKDIFF_PLANT=P1..P7` (set by `-plant`) switches on a deliberate defect in one driver; it is how the harness proves it can
 see a discrepancy. Never set it for a real run.
 

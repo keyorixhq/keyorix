@@ -52,9 +52,15 @@ func (c *common) runner() (*Runner, error) {
 		}
 		r.Spec = s
 	}
+	// without the manifest both maxima are 0 and every project and environment id is masked as
+	// volatile, which silently weakens R1: fail instead
 	var man map[string]float64
-	if b, err := os.ReadFile(filepath.Join(c.snapshot, "sdkdiff-seed.json")); err == nil { // #nosec G304 -- operator path
-		_ = json.Unmarshal(b, &man)
+	b, err := os.ReadFile(filepath.Join(c.snapshot, "sdkdiff-seed.json")) // #nosec G304 -- operator path
+	if err != nil {
+		return nil, fmt.Errorf("snapshot manifest: %w (run `sdkdiff seed` and pass -snapshot)", err)
+	}
+	if err := json.Unmarshal(b, &man); err != nil {
+		return nil, fmt.Errorf("snapshot manifest sdkdiff-seed.json: %w", err)
 	}
 	r.Mask = Masking{ProjectMax: man["project_max"], EnvMax: man["env_max"]}
 	return r, nil
@@ -179,20 +185,25 @@ func scSize(s Scenario) int { b, _ := json.Marshal(s); return len(b) + 1000*len(
 
 // Report is the machine-readable result of a run.
 type Report struct {
-	Started   string                    `json:"started"`
-	SDKs      []string                  `json:"sdks"`
-	Plant     string                    `json:"plant"`
-	Scenarios int                       `json:"scenarios"`
-	Sigs      map[string]*SigStat       `json:"sigs"`
-	Harness   []string                  `json:"harness"`
-	Coverage  map[string]map[string]int `json:"coverage"`
-	Info      map[string]int            `json:"info"`
-	InfoEx    map[string][]string       `json:"info_examples"`
+	Started   string              `json:"started"`
+	SDKs      []string            `json:"sdks"`
+	Plant     string              `json:"plant"`
+	Scenarios int                 `json:"scenarios"`
+	Sigs      map[string]*SigStat `json:"sigs"`
+	Harness   []string            `json:"harness"`
+	// BatchErrors counts batches that could not run at all (server or driver start failure);
+	// their scenarios are in Scenarios but were never compared.
+	BatchErrors int `json:"batch_errors"`
+	// Executed counts, per SDK, the scenarios in which its driver answered at least one step.
+	Executed map[string]int            `json:"executed"`
+	Coverage map[string]map[string]int `json:"coverage"`
+	Info     map[string]int            `json:"info"`
+	InfoEx   map[string][]string       `json:"info_examples"`
 }
 
 func newReport(c *common) *Report {
 	return &Report{Started: time.Now().UTC().Format(time.RFC3339), SDKs: strings.Split(c.sdks, ","), Plant: c.plant,
-		Sigs: map[string]*SigStat{}, Coverage: map[string]map[string]int{}, Info: map[string]int{}, InfoEx: map[string][]string{}}
+		Sigs: map[string]*SigStat{}, Executed: map[string]int{}, Coverage: map[string]map[string]int{}, Info: map[string]int{}, InfoEx: map[string][]string{}}
 }
 
 func (rep *Report) add(f Finding, sc Scenario) {
@@ -281,6 +292,7 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 		}
 		if err != nil {
 			rep.Harness = append(rep.Harness, "H1 batch error: "+err.Error())
+			rep.BatchErrors++
 			continue
 		}
 		for j, sc := range chunk {
@@ -288,6 +300,14 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 			for n, l := range res {
 				if j < len(l) {
 					outs[n] = l[j]
+				}
+			}
+			for n, o := range outs {
+				for _, so := range o.Steps {
+					if so.Drv != nil {
+						rep.Executed[n]++
+						break
+					}
 				}
 			}
 			fs, h := r.Analyse(sc, outs)
@@ -306,6 +326,55 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 		}
 	}
 	return nil
+}
+
+// notRun lists the ways a run compared less than it claims: batches that never ran, and SDKs whose
+// driver answered no step of any scenario (a driver that cannot start leaves the comparison silently).
+// An empty result means every SDK executed at least one step; it does not mean every scenario ran.
+func (rep *Report) notRun() []string {
+	var p []string
+	if rep.BatchErrors > 0 {
+		p = append(p, fmt.Sprintf("%d batch(es) failed to run", rep.BatchErrors))
+	}
+	if rep.Scenarios == 0 {
+		p = append(p, "no scenarios")
+	}
+	for _, n := range rep.SDKs {
+		if rep.Scenarios > 0 && rep.Executed[n] == 0 {
+			p = append(p, n+" executed no step")
+		}
+	}
+	return p
+}
+
+// controlC1 is the self-pair control verdict. It passes only when every scenario ran for every SDK
+// with no harness note, and no finding separates an SDK from its twin; a run that compared nothing
+// must not read as "no difference found".
+func controlC1(rep *Report) (string, bool) {
+	var why []string
+	why = append(why, rep.notRun()...)
+	if len(rep.Harness) > 0 {
+		why = append(why, fmt.Sprintf("%d harness note(s)", len(rep.Harness)))
+	}
+	for _, n := range rep.SDKs {
+		if rep.Scenarios > 0 && rep.Executed[n] > 0 && rep.Executed[n] < rep.Scenarios {
+			why = append(why, fmt.Sprintf("%s executed %d of %d scenarios", n, rep.Executed[n], rep.Scenarios))
+		}
+	}
+	if len(why) > 0 {
+		return "CONTROL C1 FAIL: not a valid control run: " + strings.Join(why, "; "), false
+	}
+	var bad []string
+	for sig, st := range rep.Sigs {
+		if twinsSplit(st.First.Blocks) {
+			bad = append(bad, "CONTROL C1 FAIL twins split: "+sig)
+		}
+	}
+	if len(bad) > 0 {
+		sort.Strings(bad)
+		return strings.Join(bad, "\n"), false
+	}
+	return fmt.Sprintf("CONTROL C1 PASS: %d scenarios, no finding separates an SDK from its twin (%d other signatures present, all between different SDKs)", rep.Scenarios, len(rep.Sigs)), true
 }
 
 func (rep *Report) save(dir string) error {
@@ -362,6 +431,9 @@ func cmdRun(args []string) error {
 		return err
 	}
 	printSummary(rep)
+	if p := rep.notRun(); len(p) > 0 {
+		return fmt.Errorf("run did not compare what it was asked to: %s (see harness notes in report.json)", strings.Join(p, "; "))
+	}
 	return nil
 }
 

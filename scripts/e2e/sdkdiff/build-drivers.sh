@@ -7,6 +7,7 @@ SDKS=$(cd "$1" && pwd)
 OUT=$2
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$OUT"
+OUT=$(cd "$OUT" && pwd) # absolute: the go build below runs after a cd into drivers/go
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
