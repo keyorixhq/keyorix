@@ -3,6 +3,7 @@ package configspace
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -71,7 +72,7 @@ func (r *runState) inproc(c *Case) (InProcResult, bool) {
 		r.logf("materialize %s: %v", c.ID, err)
 		return InProcResult{}, false
 	}
-	defer os.RemoveAll(c.Dir)
+	defer func() { _ = os.RemoveAll(c.Dir) }()
 	res := RunInProc(r.o.Model, c)
 	switch {
 	case res.Panic != "":
@@ -209,7 +210,7 @@ func (r *runState) procCase(c *Case) {
 		r.logf("materialize %s: %v", c.ID, err)
 		return
 	}
-	defer os.RemoveAll(c.Dir)
+	defer func() { _ = os.RemoveAll(c.Dir) }()
 	ip := RunInProc(r.o.Model, c)
 	httpOn, grpcOn := enabledFlags(c, ip)
 	pr := RunProc(r.o.Bin, c, httpOn, grpcOn, 30*time.Second, 15*time.Second)
@@ -360,7 +361,7 @@ func (r *runState) finish() (Summary, error) {
 	if err != nil {
 		return r.sum, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
 	for _, k := range order {
 		_ = enc.Encode(uniq[k])
@@ -375,13 +376,13 @@ func (r *runState) finish() (Summary, error) {
 // findings get a small run budget because every run starts the real server.
 func (r *runState) confirm(u *UniqueFinding) {
 	if len(u.Key) > 6 && u.Key[:6] == "alias-" {
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			u.Replays++
 			res := map[string]InProcResult{}
 			for _, ac := range AliasCases() {
 				if err := ac.Materialize(r.o.Model, r.o.Template, r.o.Work, true); err == nil {
 					res[ac.ID] = RunInProc(r.o.Model, ac)
-					os.RemoveAll(ac.Dir)
+					_ = os.RemoveAll(ac.Dir)
 				}
 			}
 			for _, f := range CheckAliases(res) {
@@ -397,7 +398,7 @@ func (r *runState) confirm(u *UniqueFinding) {
 	if c == nil {
 		return
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		u.Replays++
 		if r.reproduces(c, u) {
 			u.Confirmed++
@@ -444,9 +445,7 @@ func (r *runState) confirm(u *UniqueFinding) {
 
 func copyAssign(a map[string]int) map[string]int {
 	b := make(map[string]int, len(a))
-	for k, v := range a {
-		b[k] = v
-	}
+	maps.Copy(b, a)
 	return b
 }
 
@@ -459,7 +458,7 @@ func (r *runState) reproduces(c *Case, u *UniqueFinding) bool {
 		if err := tc.Materialize(r.o.Model, r.o.Template, r.o.Work, false); err != nil {
 			return false
 		}
-		defer os.RemoveAll(tc.Dir)
+		defer func() { _ = os.RemoveAll(tc.Dir) }()
 		ip := RunInProc(r.o.Model, tc)
 		httpOn, grpcOn := enabledFlags(tc, ip)
 		pr := RunProc(r.o.Bin, tc, httpOn, grpcOn, 30*time.Second, 15*time.Second)
@@ -468,7 +467,7 @@ func (r *runState) reproduces(c *Case, u *UniqueFinding) bool {
 	if err := tc.Materialize(r.o.Model, r.o.Template, r.o.Work, true); err != nil {
 		return false
 	}
-	defer os.RemoveAll(tc.Dir)
+	defer func() { _ = os.RemoveAll(tc.Dir) }()
 	res := RunInProc(r.o.Model, tc)
 	fs := CheckInProc(r.o.Model, tc, res)
 	if u.Inv == "I5" {

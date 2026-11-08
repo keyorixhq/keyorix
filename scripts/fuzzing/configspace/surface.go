@@ -19,7 +19,7 @@ type SurfaceEntry struct {
 // "whole surface" inventory; model.yaml is the curated, value-annotated subset.
 func Surface() []SurfaceEntry {
 	var out []SurfaceEntry
-	walk(reflect.TypeOf(config.Config{}), "", map[reflect.Type]int{}, &out)
+	walk(reflect.TypeFor[config.Config](), "", map[reflect.Type]int{}, &out)
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }
@@ -37,7 +37,7 @@ func yamlName(f reflect.StructField) (name string, skip bool) {
 }
 
 func walk(t reflect.Type, prefix string, seen map[reflect.Type]int, out *[]SurfaceEntry) {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	switch t.Kind() {
@@ -47,8 +47,7 @@ func walk(t reflect.Type, prefix string, seen map[reflect.Type]int, out *[]Surfa
 		}
 		seen[t]++
 		defer func() { seen[t]-- }()
-		for i := 0; i < t.NumField(); i++ {
-			f := t.Field(i)
+		for f := range t.Fields() {
 			if f.PkgPath != "" {
 				continue
 			}
@@ -61,7 +60,7 @@ func walk(t reflect.Type, prefix string, seen map[reflect.Type]int, out *[]Surfa
 				p = prefix + "." + name
 			}
 			ft := f.Type
-			for ft.Kind() == reflect.Ptr {
+			for ft.Kind() == reflect.Pointer {
 				ft = ft.Elem()
 			}
 			switch ft.Kind() {
@@ -69,7 +68,7 @@ func walk(t reflect.Type, prefix string, seen map[reflect.Type]int, out *[]Surfa
 				walk(ft, p, seen, out)
 			case reflect.Slice:
 				et := ft.Elem()
-				for et.Kind() == reflect.Ptr {
+				for et.Kind() == reflect.Pointer {
 					et = et.Elem()
 				}
 				if et.Kind() == reflect.Struct {
@@ -90,8 +89,8 @@ func walk(t reflect.Type, prefix string, seen map[reflect.Type]int, out *[]Surfa
 // yaml tags. ok is false when the path does not resolve to a scalar or []string leaf.
 func lookupEffective(cfg *config.Config, path string) (val any, ok bool) {
 	v := reflect.ValueOf(cfg).Elem()
-	for _, seg := range strings.Split(path, ".") {
-		for v.Kind() == reflect.Ptr {
+	for seg := range strings.SplitSeq(path, ".") {
+		for v.Kind() == reflect.Pointer {
 			if v.IsNil() {
 				return nil, false
 			}
@@ -118,7 +117,7 @@ func lookupEffective(cfg *config.Config, path string) (val any, ok bool) {
 			return nil, false
 		}
 	}
-	for v.Kind() == reflect.Ptr {
+	for v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return nil, true
 		}

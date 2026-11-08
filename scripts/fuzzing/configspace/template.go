@@ -26,7 +26,7 @@ func BuildTemplate(bin, dir string) error {
 		{"admin", "migrate"},
 	}
 	for _, s := range steps {
-		cmd := exec.Command("nice", append([]string{"-n", "15", bin}, s...)...)
+		cmd := exec.Command("nice", append([]string{"-n", "15", bin}, s...)...) // #nosec G204 -- fixed "nice" wrapper around the keyorix binary under test; arguments are the fuzzer's own fixed setup steps
 		cmd.Dir = dir
 		cmd.Env = env
 		var out bytes.Buffer

@@ -2,6 +2,7 @@ package configspace
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -16,7 +17,14 @@ var accessors = []struct {
 }{
 	{"KEYORIX_SIEM_TOKEN", "audit.siem.token", func(c *config.Config) string { return c.Audit.SIEM.GetToken() }},
 	{"KEYORIX_SCIM_TOKEN", "scim.token", func(c *config.Config) string { return c.SCIM.GetToken() }},
-	{"KEYORIX_DB_PASSWORD", "storage.database.password", func(c *config.Config) string { return c.Storage.Database.GetPassword() }},
+	{"KEYORIX_DB_PASSWORD", "storage.database.password", func(c *config.Config) string {
+		// Read through the production resolver: the password is only ever handed to the driver as parsed config.
+		cc, err := config.ResolvePostgresConnConfig(&c.Storage.Database)
+		if err != nil {
+			return ""
+		}
+		return cc.Password
+	}},
 }
 
 // PrecedenceCases builds the targeted I5 cases for the secret sources.
@@ -47,7 +55,7 @@ func PrecedenceCases() []*Case {
 		&Case{ID: "prec-dsnpw-env", Kind: "targeted",
 			RawYAML: map[string]any{"storage.type": "postgres", "storage.database.path": nil,
 				"storage.database.dsn": "host=localhost user=k dbname=k password=$CANARY:dsnpw sslmode=disable"},
-			RawEnv: map[string]string{"KEYORIX_DB_PASSWORD": "$CANARY:envpw"}},
+			RawEnv: map[string]string{"KEYORIX_DB_PASSWORD": "$CANARY:envpw"}}, // #nosec G101 -- synthetic canary placeholder, not a credential
 	)
 	return out
 }
@@ -100,8 +108,8 @@ func CheckPrecedence(c *Case, r InProcResult) []Finding {
 func aliasYAML(path string, val any) map[string]any {
 	segs := strings.Split(path, ".")
 	for i, s := range segs {
-		if strings.HasSuffix(s, "[]") {
-			head := strings.Join(append(append([]string{}, segs[:i]...), strings.TrimSuffix(s, "[]")), ".")
+		if before, ok := strings.CutSuffix(s, "[]"); ok {
+			head := strings.Join(append(append([]string{}, segs[:i]...), before), ".")
 			elem := map[string]any{}
 			if i+1 < len(segs) {
 				cur := elem
@@ -135,18 +143,14 @@ func AliasCases() []*Case {
 				}
 			}
 			if oldv != nil {
-				for k, v := range aliasYAML(old, oldv) {
-					raw[k] = v
-				}
+				maps.Copy(raw, aliasYAML(old, oldv))
 			}
 			if newv != nil {
 				for k, v := range aliasYAML(nw, newv) {
 					// merge when both spellings live in one list element
 					if ex, ok := raw[k].([]any); ok {
 						if nm, ok := v.([]any); ok {
-							for kk, vv := range nm[0].(map[string]any) {
-								ex[0].(map[string]any)[kk] = vv
-							}
+							maps.Copy(ex[0].(map[string]any), nm[0].(map[string]any))
 							continue
 						}
 					}

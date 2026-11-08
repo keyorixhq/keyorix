@@ -2,13 +2,14 @@ package configspace
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
 // warnLines returns the log lines that look like warnings.
 func warnLines(log string) []string {
 	var out []string
-	for _, l := range strings.Split(log, "\n") {
+	for l := range strings.SplitSeq(log, "\n") {
 		ll := strings.ToLower(l)
 		if strings.Contains(ll, "warn") {
 			out = append(out, l)
@@ -125,13 +126,7 @@ func CheckProc(m *Model, c *Case, ip InProcResult, pr ProcResult) []Finding {
 	wl := warnLines(pr.Log)
 	for _, id := range ip.Posture {
 		rule := m.PostureRule(id)
-		hit := false
-		for _, l := range wl {
-			if rule.warnRE.MatchString(l) {
-				hit = true
-				break
-			}
-		}
+		hit := slices.ContainsFunc(wl, rule.warnRE.MatchString)
 		if hit {
 			continue
 		}

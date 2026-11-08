@@ -50,22 +50,22 @@ func applyEnv(env map[string]string) func() {
 		}
 	}
 	for _, kv := range os.Environ() {
-		k := strings.SplitN(kv, "=", 2)[0]
+		k, _, _ := strings.Cut(kv, "=")
 		if strings.HasPrefix(k, "KEYORIX_") || k == "VAULT_TOKEN" {
 			save(k)
-			os.Unsetenv(k)
+			_ = os.Unsetenv(k)
 		}
 	}
 	for k, v := range env {
 		save(k)
-		os.Setenv(k, v)
+		_ = os.Setenv(k, v)
 	}
 	return func() {
 		for k, v := range saved {
 			if v == nil {
-				os.Unsetenv(k)
+				_ = os.Unsetenv(k)
 			} else {
-				os.Setenv(k, *v)
+				_ = os.Setenv(k, *v)
 			}
 		}
 	}
@@ -132,8 +132,8 @@ func errNames(errText string, tokens []string) bool {
 }
 
 func lastSeg(p string) string {
-	if i := strings.LastIndex(p, "."); i >= 0 {
-		return p[i+1:]
+	if _, after, ok := strings.CutLast(p, "."); ok {
+		return after
 	}
 	return p
 }

@@ -47,7 +47,7 @@ type Template struct {
 
 // LoadTemplate reads the baseline written into dir.
 func LoadTemplate(dir string) (*Template, error) {
-	b, err := os.ReadFile(filepath.Join(dir, "keyorix.yaml"))
+	b, err := os.ReadFile(filepath.Join(dir, "keyorix.yaml")) // #nosec G304 -- dir is the fuzzer's own template directory, chosen by the operator on the command line
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func LoadTemplate(dir string) (*Template, error) {
 	if err := yaml.Unmarshal(b, &doc); err != nil {
 		return nil, err
 	}
-	pw, err := os.ReadFile(filepath.Join(dir, "secrets", "master_password"))
+	pw, err := os.ReadFile(filepath.Join(dir, "secrets", "master_password")) // #nosec G304 -- dir is the fuzzer's own template directory, chosen by the operator on the command line
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func freePort() int {
 	if err != nil {
 		return 0
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -123,7 +123,7 @@ func setPath(doc map[string]any, path string, val any, del bool) {
 // GetPath returns the value at a dotted path of a generic document.
 func GetPath(doc map[string]any, path string) (any, bool) {
 	var cur any = doc
-	for _, s := range strings.Split(path, ".") {
+	for s := range strings.SplitSeq(path, ".") {
 		m, ok := cur.(map[string]any)
 		if !ok {
 			return nil, false
@@ -320,11 +320,11 @@ func copyTree(src, dst string) error {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return nil
 		}
-		b, err := os.ReadFile(p)
+		b, err := os.ReadFile(p) // #nosec G304 G122 -- copies the fuzzer's own template tree into a private temp dir; symlinks and non-regular files are skipped above
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, b, info.Mode().Perm())
+		return os.WriteFile(target, b, info.Mode().Perm()) // #nosec G703 -- target is dst joined with a path relative to the template tree, dst is a private temp dir
 	})
 }
 
@@ -332,8 +332,8 @@ func copyTree(src, dst string) error {
 // YAML dotted paths from the document, env names from the environment, flag names from
 // the arguments.
 func (c *Case) lookup(path string) (any, bool) {
-	if strings.HasSuffix(path, "#haspw") {
-		v, ok := GetPath(c.Doc, strings.TrimSuffix(path, "#haspw"))
+	if before, ok := strings.CutSuffix(path, "#haspw"); ok {
+		v, ok := GetPath(c.Doc, before)
 		s, _ := v.(string)
 		return ok && (strings.Contains(s, "password=") || regexp.MustCompile(`://[^/@:]+:[^@]+@`).MatchString(s)), true
 	}
@@ -354,12 +354,12 @@ func (c *Case) lookup(path string) (any, bool) {
 
 func matchOne(want any, got any, present bool) bool {
 	w, _ := want.(string)
-	switch {
-	case w == "$absent":
+	switch w {
+	case "$absent":
 		return !present
-	case w == "$empty":
+	case "$empty":
 		return present && fmt.Sprint(got) == ""
-	case w == "$nonempty":
+	case "$nonempty":
 		return present && fmt.Sprint(got) != "" && got != nil
 	}
 	return present && fmt.Sprint(got) == fmt.Sprint(want)

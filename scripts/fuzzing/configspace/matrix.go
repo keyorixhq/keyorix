@@ -88,9 +88,9 @@ func PairwiseCases(m *Model, o PairwiseOpts) ([]*Case, [][]int, []int) {
 // (k in [kmin,kmax]). With pInvalid probability a chosen option takes an invalid value,
 // so these rows also probe fault masking.
 func MutationCases(m *Model, n int, seed int64, kmin, kmax int, pInvalid float64) []*Case {
-	rng := rand.New(rand.NewSource(seed))
+	rng := rand.New(rand.NewSource(seed)) // #nosec G404 -- deterministic, seeded sampling so a case set can be reproduced from its seed; not a security use
 	var out []*Case
-	for i := 0; i < n; i++ {
+	for i := range n {
 		k := kmin + rng.Intn(kmax-kmin+1)
 		c := &Case{ID: fmt.Sprintf("mut-%03d", i), Kind: "mutation", Assign: map[string]int{}}
 		for _, pi := range rng.Perm(len(m.Params))[:k] {

@@ -32,7 +32,7 @@ func Pairwise(sizes []int, seed int64, tries int) [][]int {
 	covered := make([]bool, p*maxV*p*maxV)
 	type pair struct{ i, a, j, b int }
 	var pending []pair
-	for i := 0; i < p; i++ {
+	for i := range p {
 		for j := i + 1; j < p; j++ {
 			for a := 0; a < sizes[i]; a++ {
 				for b := 0; b < sizes[j]; b++ {
@@ -41,7 +41,7 @@ func Pairwise(sizes []int, seed int64, tries int) [][]int {
 			}
 		}
 	}
-	rng := rand.New(rand.NewSource(seed))
+	rng := rand.New(rand.NewSource(seed)) // #nosec G404 -- deterministic, seeded sampling so a case set can be reproduced from its seed; not a security use
 	remaining := len(pending)
 	var rows [][]int
 	for remaining > 0 {
@@ -56,13 +56,13 @@ func Pairwise(sizes []int, seed int64, tries int) [][]int {
 		}
 		var best []int
 		bestScore := -1
-		for t := 0; t < tries; t++ {
+		for t := range tries {
 			// seed with an uncovered pair: the first for t==0, a random one otherwise
 			var sp pair
 			if t == 0 {
 				sp = pending[0]
 			} else {
-				for n := 0; n < 50; n++ {
+				for range 50 {
 					c := pending[rng.Intn(len(pending))]
 					if !covered[idx(c.i, c.a, c.j, c.b)] {
 						sp = c
@@ -87,7 +87,7 @@ func Pairwise(sizes []int, seed int64, tries int) [][]int {
 				for off := 0; off < sizes[i]; off++ {
 					a := (start + off) % sizes[i]
 					gain := 0
-					for j := 0; j < p; j++ {
+					for j := range p {
 						if row[j] == -1 || j == i {
 							continue
 						}
@@ -112,7 +112,7 @@ func Pairwise(sizes []int, seed int64, tries int) [][]int {
 				bestScore, best = score, row
 			}
 		}
-		for i := 0; i < p; i++ {
+		for i := range p {
 			for j := i + 1; j < p; j++ {
 				id := idx(i, best[i], j, best[j])
 				if !covered[id] {
@@ -132,14 +132,14 @@ func PairGaps(sizes []int, rows [][]int) int {
 	p := len(sizes)
 	seen := map[[4]int]bool{}
 	for _, r := range rows {
-		for i := 0; i < p; i++ {
+		for i := range p {
 			for j := i + 1; j < p; j++ {
 				seen[[4]int{i, r[i], j, r[j]}] = true
 			}
 		}
 	}
 	gaps := 0
-	for i := 0; i < p; i++ {
+	for i := range p {
 		for j := i + 1; j < p; j++ {
 			for a := 0; a < sizes[i]; a++ {
 				for b := 0; b < sizes[j]; b++ {

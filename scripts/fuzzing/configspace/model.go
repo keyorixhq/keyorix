@@ -199,13 +199,11 @@ func (m *Model) Counts() Counts {
 	return c
 }
 
-var canaryRE = regexp.MustCompile(`\$CANARY:([a-z0-9_]+)`)
-
 // IsSecretPath reports whether a dotted YAML path names a secret-bearing field.
 func IsSecretPath(path string) bool {
 	last := path
-	if i := strings.LastIndex(path, "."); i >= 0 {
-		last = path[i+1:]
+	if _, after, ok := strings.CutLast(path, "."); ok {
+		last = after
 	}
 	switch {
 	case strings.HasSuffix(last, "_file"), strings.HasSuffix(last, "_env"), strings.HasSuffix(last, "_path"):

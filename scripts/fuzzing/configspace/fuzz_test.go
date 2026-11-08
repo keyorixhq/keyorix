@@ -37,7 +37,7 @@ func FuzzConfigLoadValidate(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	f.Cleanup(func() { os.RemoveAll(dir) })
+	f.Cleanup(func() { _ = os.RemoveAll(dir) })
 	tok := filepath.Join(dir, "tok")
 	_ = os.WriteFile(tok, []byte("fixture-token-value-0123456789\n"), 0o600)
 	cfgPath := filepath.Join(dir, "keyorix.yaml")
@@ -52,7 +52,7 @@ func FuzzConfigLoadValidate(f *testing.F) {
 			t.Skip()
 		}
 		// ${VAR} expansion reads the process environment; keep it deterministic
-		os.Unsetenv("KEYORIX_CS_UNSET")
+		_ = os.Unsetenv("KEYORIX_CS_UNSET")
 		for i, name := range []string{"KEYORIX_SIEM_TOKEN", "KEYORIX_DB_PASSWORD", "KEYORIX_SCIM_TOKEN", "KEYORIX_SIEM_TOKEN_FILE", "KEYORIX_DB_PASSWORD_FILE"} {
 			val := ""
 			switch {
@@ -66,7 +66,7 @@ func FuzzConfigLoadValidate(f *testing.F) {
 			}
 			if val == "" {
 				t.Setenv(name, "")
-				os.Unsetenv(name)
+				_ = os.Unsetenv(name)
 			} else {
 				t.Setenv(name, val)
 			}

@@ -60,7 +60,7 @@ func procEnv(c *Case) []string {
 
 func niceCmd(ctx context.Context, bin string, c *Case, args ...string) *exec.Cmd {
 	full := append([]string{"-n", "15", bin}, args...)
-	cmd := exec.CommandContext(ctx, "nice", full...)
+	cmd := exec.CommandContext(ctx, "nice", full...) // #nosec G204 -- fixed "nice" wrapper around the keyorix binary under test, whose path comes from the operator
 	cmd.Dir = c.Dir
 	cmd.Env = procEnv(c)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -182,7 +182,7 @@ func probeHTTP(base string, res *ProcResult) {
 			continue
 		}
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		res.Bodies[base+path] = strconv.Itoa(resp.StatusCode) + " " + string(b)
 		if path == "/health" {
 			res.Health[base] = resp.StatusCode
