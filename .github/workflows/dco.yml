@@ -32,7 +32,7 @@ jobs:
   # CI-scheduling quick-tier change (both were about to become required in
   # the same PR, which is what surfaced the collision).
   dco-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

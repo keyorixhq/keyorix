@@ -25,7 +25,7 @@ import (
 // column encodes). NOT bumped for pure comment/refactor changes that don't
 // touch what gets written to the database. Every bump must also decide
 // minCompatibleSchemaEpoch below (ADR-101).
-const currentSchemaEpoch = 9
+const currentSchemaEpoch = 10
 
 // schemaEpochMetadataKey is the system_metadata (see models.SystemMetadata)
 // key checkSchemaEpoch/recordSchemaEpoch read and write. #nosec G101 --
@@ -113,6 +113,17 @@ const schemaEpochMetadataKey = "schema_epoch"
 // means "no request id", and a backfill pass of an epoch-9 replica then writes that row
 // with no id, exactly what the row had before. It never reads the column back into
 // anything but the audit row's advisory request_id, which is outside the hash chain.
+//
+// Epoch 10 (projects.name_folded; uniq_projects_name_active rebuilt on it) leaves it at 3,
+// on a release-state argument rather than an additive one. An epoch-3..9 binary inserts and
+// renames projects without writing name_folded, so its rows carry the empty default, a
+// second such live project would be refused as a duplicate of the first, and the LOWER(name)
+// index it relied on is gone: such a binary cannot safely run against this schema. But no
+// released binary sits in that range. Epoch 3 and everything up to 10 belong to the one
+// unreleased release (v0.97.0), and the only released binaries, v0.96.x (epoch <= 2), are
+// already refused by this floor. If a pre-release build in the range has to keep working
+// against a migrated database, raise the floor to 10 instead (and update the floor-3
+// statements in docs/UPGRADING.md and the v0.97 upgrade checklist).
 const minCompatibleSchemaEpoch = 3
 
 // schemaMinCompatibleEpochMetadataKey is the system_metadata key ADR-101's

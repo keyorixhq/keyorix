@@ -75,6 +75,10 @@ func TestVault_GetSecret_MissingDataKey_S22(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+		if strings.HasPrefix(r.URL.Path, "/v1/sys/internal/ui/mounts/") {
+			_, _ = w.Write([]byte(vaultMountInfoV2()))
+			return
+		}
 		// Valid JSON, but no "data" key at all.
 		_, _ = w.Write([]byte(`{"lease_id":"","renewable":false}`))
 	}))

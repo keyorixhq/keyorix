@@ -1,0 +1,1 @@
+TestOffsetPagedQueriesEndInUniqueIDOrder	internal/storage/store	#4022	new guard for offset-paged queries without a unique id tiebreak (INV-STORE-paged-lists-total-order), report-only until its first green nightly on main
