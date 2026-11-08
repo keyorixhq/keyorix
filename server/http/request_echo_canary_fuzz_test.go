@@ -40,7 +40,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/dynamic/dynamictest"
 	"github.com/keyorixhq/keyorix/internal/encryption"
-	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/canary"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -84,6 +83,8 @@ type requestEchoFixture struct {
 	capture    *canary.Capture
 	control    *prometheus.GaugeVec
 	addrN      atomic.Uint64
+
+	captureDir string
 }
 
 func newRequestEchoFixture(tb testing.TB) *requestEchoFixture {
@@ -105,12 +106,8 @@ func newRequestEchoFixture(tb testing.TB) *requestEchoFixture {
 		projectID: w.projAID, envID: w.envAID, routes: listSweepRoutes(tb, w.router),
 		capture: canary.NewCapture(),
 	}
-	tb.Cleanup(fx.capture.InstallLogs())
-	restore, err := fx.capture.InstallStdio(w.tempDir)
-	if err != nil {
-		tb.Fatalf("capture stdio: %v", err)
-	}
-	tb.Cleanup(restore)
+	tb.Cleanup(fx.capture.Uninstall)
+	fx.captureDir = w.tempDir
 	fx.control = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "keyorix_http_canary_control", Help: "Harness control for the metrics capture."}, []string{"v"})
 	if err := prometheus.Register(fx.control); err != nil {
 		tb.Fatalf("register control metric: %v", err)
@@ -489,6 +486,9 @@ func (in requestEchoInput) seed() []byte {
 // runRequestEcho executes one input. plant is the red-proof's planted leak.
 func runRequestEcho(t testing.TB, fx *requestEchoFixture, dir string, in requestEchoInput, allow *canary.Allowlist, wrap func(*requestEchoRun, http.Handler) http.Handler, plant func(*requestEchoRun)) (r *requestEchoRun, invalid string) {
 	t.Helper()
+	if err := fx.capture.InstallOnce(fx.captureDir); err != nil {
+		t.Fatalf("capture: %v", err)
+	}
 	r = fx.newRun(t, dir, in.seed(), allow)
 	if wrap != nil {
 		r.router = wrap(r, r.router)
@@ -498,7 +498,7 @@ func runRequestEcho(t testing.TB, fx *requestEchoFixture, dir string, in request
 		return r, ""
 	}
 	principals := []string{"admin", "outsider", "anon", "garbage"}
-	fuzzutil.Guard(t.Fatalf, "request echo", func() {
+	canary.RunGuarded(t.Fatalf, "request echo", func() {
 		defer func() {
 			if p := recover(); p != nil {
 				msg, ok := p.(echoInvalid)
