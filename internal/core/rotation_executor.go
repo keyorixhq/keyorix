@@ -339,6 +339,13 @@ func (c *KeyorixCore) rotateProjectWaves(ctx context.Context, waves [][]uint, du
 	blocked := map[uint]bool{}
 	for _, wave := range waves {
 		for _, id := range wave {
+			// The tick is over (scheduler lock lost, or shutdown). Every later step
+			// would fail on this context and report secrets that were never tried as
+			// failed, to the audit trail and the alert channels. They are still due,
+			// so the next tick takes them.
+			if ctx.Err() != nil {
+				return failed, rotated
+			}
 			dr := due[id]
 			if depID, isBlocked := lowestBlockedDep(dependsOnInRun[id], blocked); isBlocked {
 				blocked[id] = true
