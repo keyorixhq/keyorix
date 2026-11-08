@@ -84,3 +84,25 @@ INVALID (not negative) and nothing is claimed.
 Core dumps (macOS dumps disabled by default; panics are covered via recovered
 panic text only). Client-side browser logs. Anything outside this process
 other than CLI child stdout/stderr. Non-SQLite backends unless PG DSN is set.
+
+---
+
+## Amendment 2026-11-08 (after review, before any recorded campaign result)
+
+- Stored values. The sweep now creates secrets, a dynamic-secret config and a
+  notification channel through the real API before driving routes. The run is
+  INVALID unless each request returns 2xx and the rows exist; previously no
+  S `value` canary was ever stored, so the at-rest claim was vacuous.
+- Allowed hits are an exact (route, label, surface) list, `sweepWaivers` in
+  server/http/canary_sweep_core_test.go. An open-defect row names its issue and
+  is removed with the fix; a contract row names the documented behaviour. On the
+  log surface a row applies only to the request URI in that request's own access
+  log record. The sweep fails on a row nothing matched.
+- An identifier field or path param (id, token_id, tokenId) is class M.
+- INVALID also covers: a planted-leak self-test failure (now run by the sweep and
+  the fuzz target themselves), any surface that could not be read, and a
+  long-lived session that died during the sweep. Destructive routes are driven
+  by throw-away principals only.
+- gRPC map fields are filled, and methods run in sorted order.
+- CLI: each vector declares whether it must reach the fake servers, and allowed
+  echoes are exact (vector, label, surface) rows.

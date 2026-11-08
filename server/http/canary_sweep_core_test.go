@@ -17,8 +17,10 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,6 +28,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -52,10 +55,10 @@ var sweepSecretKeys = map[string]bool{
 
 var sweepMetaKeys = []string{"name", "description", "email", "username", "display_name", "note", "comment", "reason", "title", "path", "ref", "label", "tag", "id", "type", "project", "environment"}
 
-// sweepDestructive routes would end the admin session, change its password,
-// or purge evidence, silently turning the rest of the sweep into an
-// unauthenticated one. They are driven only as the disposable / outsider /
-// anon / garbage principals.
+// sweepDestructive routes would end a session, change a password, or purge
+// evidence, silently turning the rest of the sweep into an unauthenticated
+// one. The long-lived admin and outsider sessions never drive them: a throw-away
+// principal does (useDisposable), alongside the anon and garbage principals.
 var sweepDestructive = regexp.MustCompile(`(?i)(/auth/logout|/auth/refresh|/auth/change-password|/auth/mfa/|/auth/webauthn/|/admin/impersonate|/auth/end-impersonation|/jobs/purge|/legal-hold|/system/init|/auth/password-reset|/auth/tokens/expired|/audit/migrate-chain-encoding)`)
 
 type sweepReq struct {
@@ -65,6 +68,7 @@ type sweepReq struct {
 	Principal      string
 	Shape          string
 	Route          string
+	RemoteAddr     string
 }
 
 // Repro is the JSON form written into a finding.
@@ -73,9 +77,10 @@ func (r sweepReq) Repro() map[string]any {
 	for k, v := range r.Header {
 		h[k] = strings.Join(v, ",")
 	}
-	// The admin bearer token is replaced: a finding file must not carry a live credential.
-	if _, ok := h["Authorization"]; ok && r.Principal == "admin" {
-		h["Authorization"] = "Bearer <admin-session>"
+	// A session bearer is replaced: a finding file must not carry a live
+	// credential. The anon and garbage principals only ever carry canaries.
+	if _, ok := h["Authorization"]; ok && r.Principal != "anon" && r.Principal != "garbage" {
+		h["Authorization"] = "Bearer <" + r.Principal + "-session>"
 	}
 	return map[string]any{"method": r.Method, "target": r.Target, "headers": h, "body_hex": hex.EncodeToString(r.Body), "principal": r.Principal, "shape": r.Shape}
 }
@@ -91,6 +96,48 @@ type sweepHitRec struct {
 	Status  int            `json:"status,omitempty"`
 	Repro   map[string]any `json:"repro,omitempty"`
 	Count   int            `json:"count"`
+	Waiver  string         `json:"waiver,omitempty"`
+}
+
+// sweepWaiver permits one exact (route, label, surface) hit. Anything not
+// named here is a finding. A row on the log surface applies only to the access
+// log record of the request that carried the canary, and only to the request
+// URI inside that record (accessLogURI), so a handler logging the same value is
+// still caught. Kind is sweepWaiverOpenDefect (Ref names the issue; remove the
+// row when it is fixed) or sweepWaiverContract (the API returns this value to
+// this principal by design). TestCanaryRouteSweep fails on a row no hit used.
+type sweepWaiver struct {
+	ID, Route, Label, Surface, Principal string
+	Kind, Ref, Why                       string
+}
+
+const (
+	sweepWaiverOpenDefect = "open-defect"
+	sweepWaiverContract   = "contract"
+)
+
+var sweepWaivers = []sweepWaiver{
+	{
+		ID: "setup-encoded-slash", Route: "GET /auth/setup/{token}", Label: "token-h", Surface: "log",
+		Kind: sweepWaiverOpenDefect, Ref: "#4045",
+		Why: "redaction stops at an encoded slash; a server-minted token is hex and cannot contain one. Remove when #4045 is fixed.",
+	},
+	{
+		ID: "channel-create-url", Route: "POST /api/v1/notification-channels", Label: "stored-webhook", Surface: "resp-body", Principal: "admin",
+		Kind: sweepWaiverContract, Ref: "#3425",
+		Why: "the create response is the one place the full URL is returned to the admin who supplied it; every other response elides it.",
+	},
+}
+
+// staleWaivers lists the rows no hit used.
+func (s *sweep) staleWaivers() []string {
+	var out []string
+	for _, w := range sweepWaivers {
+		if !s.usedWaivers[w.ID] {
+			out = append(out, w.ID)
+		}
+	}
+	return out
 }
 
 type outCapture struct {
@@ -135,7 +182,6 @@ func (c *outCapture) drain() []byte {
 func (c *outCapture) close() { _ = c.w.Close(); <-c.done; _ = c.r.Close() }
 
 type sweep struct {
-	t       testing.TB
 	w       *canaryWorld
 	seed    uint64
 	sc      *canary.Scanner
@@ -151,6 +197,11 @@ type sweep struct {
 	tmpDir, prevTmp  string
 	hadTmp           bool
 	outsiderTok      string
+	dispN            int
+	usedWaivers      map[string]bool
+	// scanFailures lists every surface the oracle could not read; any entry makes
+	// the run INVALID, because an unread surface would look like a clean one.
+	scanFailures []string
 	// current request context for attribution
 	cur *sweepReq
 }
@@ -167,8 +218,8 @@ func newSweep(t testing.TB, seed uint64) *sweep {
 	prevTmp, hadTmp := os.LookupEnv("TMPDIR")
 	_ = os.Setenv("TMPDIR", tmp)
 	w := buildCanaryWorld(t)
-	s := &sweep{t: t, w: w, tmpDir: tmp, prevTmp: prevTmp, hadTmp: hadTmp, seed: seed, sc: canary.NewScanner(), byLabel: map[string]canary.Canary{}, hits: map[string]*sweepHitRec{},
-		statusN: map[int]int{}, metaSeen: map[string]bool{}, persistedSeen: map[string]bool{}, start: time.Now()}
+	s := &sweep{w: w, tmpDir: tmp, prevTmp: prevTmp, hadTmp: hadTmp, seed: seed, sc: canary.NewScanner(), byLabel: map[string]canary.Canary{}, hits: map[string]*sweepHitRec{},
+		statusN: map[int]int{}, metaSeen: map[string]bool{}, persistedSeen: map[string]bool{}, usedWaivers: map[string]bool{}, start: time.Now()}
 	s.outsiderTok = w.principals[2].token
 	// Secret-class canaries, each in a plain and a hostile-charset shape.
 	for _, l := range []string{"value", "password", "token", "dsn", "apikey", "privkey", "authhdr", "cookie", "query", "url", "code", "secret"} {
@@ -195,7 +246,91 @@ func newSweep(t testing.TB, seed uint64) *sweep {
 		s.stderr = c
 		os.Stderr = c.w
 	}
+	if err := s.seedStoredSecrets(); err != nil {
+		s.close()
+		t.Fatalf("INVALID RUN: %v", err)
+	}
 	return s
+}
+
+// sweepSuccessPaths are the typed requests that really store a secret-class
+// value. The generated shapes only fill strings, so without these every create
+// route is rejected before core and the at-rest scans have nothing to find.
+func (s *sweep) sweepSuccessPaths() []struct {
+	route, label string
+	body         map[string]any
+} {
+	const secrets, dynamic, channels = "POST /api/v1/secrets/", "POST /api/v1/dynamic-secrets/configs", "POST /api/v1/notification-channels"
+	name := func(suffix string) string { return s.byLabel["m-stored-name"].Raw + "-" + suffix }
+	return []struct {
+		route, label string
+		body         map[string]any
+	}{
+		{secrets, "value", map[string]any{"name": name("plain"), "value": s.byLabel["value"].Raw, "project_id": s.w.projAID, "environment_id": s.w.envAID, "type": "password"}},
+		{secrets, "value-h", map[string]any{"name": name("hostile"), "value": s.byLabel["value-h"].Raw, "project_id": s.w.projAID, "environment_id": s.w.envAID, "type": "password"}},
+		{dynamic, "dsn", map[string]any{"name": name("dyn"), "project_id": s.w.projAID, "environment_id": s.w.envAID, "backend_type": "fake", "admin_dsn": "postgres://admin:" + s.byLabel["dsn"].Raw + "@db.internal:5432/app", "default_ttl_seconds": 3600}},
+		{channels, "stored-webhook", map[string]any{"name": name("hook"), "type": "webhook", "enabled": false, "events": "secret.rotated", "url": "https://1.1.1.1/hooks/" + s.byLabel["stored-webhook"].Raw}},
+	}
+}
+
+// seedStoredSecrets drives sweepSuccessPaths through the real router before the
+// route sweep, so every later list, search, export and audit route runs with
+// these values stored and the at-rest scans cover them. A rejected request is an
+// error: the at-rest claim would otherwise be vacuous, as it was when only the
+// fixture's own secrets existed.
+func (s *sweep) seedStoredSecrets() error {
+	s.register(canary.New("m-stored-name", canary.Metadata, s.seed, false))
+	s.register(canary.New("stored-webhook", canary.Secret, s.seed, false))
+	for _, p := range s.sweepSuccessPaths() {
+		b, err := json.Marshal(p.body)
+		if err != nil {
+			return err
+		}
+		method, target, _ := strings.Cut(p.route, " ")
+		h := http.Header{}
+		h.Set("Authorization", "Bearer "+s.w.adminTok)
+		h.Set("Content-Type", "application/json")
+		r := sweepReq{Method: method, Target: target, Header: h, Body: b, Principal: "admin", Shape: "stored-" + p.label, Route: p.route}
+		if code := s.run(r); code < 200 || code > 299 {
+			return fmt.Errorf("success-path %s (%s) returned %d, so the %s canary was never stored", p.route, p.label, code, p.label)
+		}
+	}
+	// Assert the effect, not the status: the rows must exist.
+	var n int64
+	if err := s.w.db.Raw("SELECT COUNT(*) FROM secret_nodes WHERE name LIKE ?", s.byLabel["m-stored-name"].Raw+"-%").Scan(&n).Error; err != nil {
+		return fmt.Errorf("counting stored secrets: %w", err)
+	}
+	if n != 2 {
+		return fmt.Errorf("success-path secrets stored %d rows, want 2", n)
+	}
+	return nil
+}
+
+// sessionLive reports whether a bearer token still authenticates.
+func (s *sweep) sessionLive(tok string) bool {
+	req := httptest.NewRequest("GET", "/api/v1/auth/profile", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	s.w.router.ServeHTTP(rec, req)
+	return rec.Code == http.StatusOK
+}
+
+// failScan records a surface the oracle could not read.
+func (s *sweep) failScan(format string, args ...any) {
+	s.scanFailures = append(s.scanFailures, fmt.Sprintf(format, args...))
+}
+
+// useDisposable points r at a fresh throw-away session, for a destructive route.
+func (s *sweep) useDisposable(r *sweepReq) bool {
+	tok, ok := s.disposable(s.dispN)
+	s.dispN++
+	if !ok {
+		s.failScan("could not create a disposable principal for %s", r.Route)
+		return false
+	}
+	r.Principal = "disposable"
+	r.Header.Set("Authorization", "Bearer "+tok)
+	return true
 }
 
 func (s *sweep) close() {
@@ -233,6 +368,9 @@ func (s *sweep) registerRaw(label, raw string) {
 // shapes are exercised across shapes.
 func (s *sweep) fieldCanary(key string, alt bool) canary.Canary {
 	k := strings.ToLower(key)
+	if sweepIDName.MatchString(key) {
+		return s.byLabel["m-id"]
+	}
 	if sweepSecretKeys[k] || strings.Contains(k, "password") || strings.Contains(k, "secret") || strings.Contains(k, "token") {
 		l := map[string]string{"value": "value", "secret": "secret", "password": "password", "new_password": "password", "current_password": "password",
 			"token": "token", "api_key": "apikey", "apikey": "apikey", "dsn": "dsn", "admin_dsn": "dsn", "connection_string": "dsn",
@@ -258,11 +396,17 @@ func (s *sweep) fieldCanary(key string, alt bool) canary.Canary {
 
 var sweepParam = regexp.MustCompile(`\{[^}]*\}`)
 
+// sweepIDName matches identifier fields and path params (id, token_id, tokenId,
+// leaseID, ids). An identifier names a credential, it is not one, however the
+// rest of its name reads.
+var sweepIDName = regexp.MustCompile(`(?:^|_)[iI][dD][sS]?$|[a-z]I[dD][sS]?$`)
+
 func (s *sweep) path(route string, alt bool) string {
 	return sweepParam.ReplaceAllStringFunc(route, func(p string) string {
 		name := strings.Trim(p, "{}")
 		c := s.fieldCanary(name, alt)
-		if !sweepSecretKeys[strings.ToLower(name)] && !strings.Contains(strings.ToLower(name), "token") {
+		lower := strings.ToLower(name)
+		if c.Class != canary.Secret || (!sweepSecretKeys[lower] && !strings.Contains(lower, "token")) {
 			c = s.byLabel["m-pathparam"]
 		}
 		return url.PathEscape(c.Raw)
@@ -399,7 +543,7 @@ func (s *sweep) do(r sweepReq) (*httptest.ResponseRecorder, bool) {
 		return nil, false
 	}
 	req.Header = r.Header.Clone()
-	req.RemoteAddr = "192.0.2.10:4242"
+	req.RemoteAddr = r.RemoteAddr
 	rec := httptest.NewRecorder()
 	func() {
 		defer func() {
@@ -416,39 +560,99 @@ func (s *sweep) do(r sweepReq) (*httptest.ResponseRecorder, bool) {
 
 func (s *sweep) scan(surface, route string, req *sweepReq, hay []byte, status int) {
 	for _, h := range s.sc.Scan(surface, hay) {
-		if h.Class == canary.Metadata {
-			s.metaSeen[surface+"|"+h.Label] = true
-			continue
-		}
-		key := strings.Join([]string{h.Surface, route, h.Label, h.Variant}, "|")
-		// Known finding F1 class: the value the caller put in the request URL
-		// (query or path) is echoed in the access log. Kept as a separate key so
-		// it can never hide a different leak of the same canary on that route.
-		if h.Surface == "log" && req != nil {
-			if c, ok := s.byLabel[h.Label]; ok && c.Core != "" && strings.Contains(req.Target, c.Core) {
-				key += "|url-echo"
-			}
-		}
-		if rec, ok := s.hits[key]; ok {
-			rec.Count++
-			continue
-		}
-		rec := &sweepHitRec{Key: key, Surface: h.Surface, Route: route, Label: h.Label, Variant: h.Variant, Class: h.Class.String(), Snippet: h.Snippet, Status: status, Count: 1}
-		if req != nil {
-			rec.Repro = req.Repro()
-		}
-		s.hits[key] = rec
+		s.record(h, route, req, status, "")
 	}
 }
 
-// run drives one request and scans the response and the log it produced.
-func (s *sweep) run(r sweepReq) {
+// scanLog scans drained log output one line at a time, so a waiver can tell the
+// access log record of a request from any other line.
+func (s *sweep) scanLog(route string, req *sweepReq, blob []byte, status int) {
+	for line := range bytes.SplitSeq(blob, []byte("\n")) {
+		for _, h := range s.sc.Scan("log", line) {
+			s.record(h, route, req, status, s.waiverFor(h, route, req, line, status))
+		}
+	}
+}
+
+// record files one hit. A waived hit keeps a separate key, so it can never hide
+// an unwaived hit of the same canary on the same route.
+func (s *sweep) record(h canary.Hit, route string, req *sweepReq, status int, waiver string) {
+	if h.Class == canary.Metadata {
+		s.metaSeen[h.Surface+"|"+h.Label] = true
+		return
+	}
+	if waiver == "" && h.Surface != "log" {
+		waiver = s.waiverFor(h, route, req, nil, status)
+	}
+	key := strings.Join([]string{h.Surface, route, h.Label, h.Variant}, "|")
+	if waiver != "" {
+		key += "|waived:" + waiver
+		s.usedWaivers[waiver] = true
+	}
+	if rec, ok := s.hits[key]; ok {
+		rec.Count++
+		return
+	}
+	rec := &sweepHitRec{Key: key, Surface: h.Surface, Route: route, Label: h.Label, Variant: h.Variant, Class: h.Class.String(), Snippet: h.Snippet, Status: status, Count: 1, Waiver: waiver}
+	if req != nil {
+		rec.Repro = req.Repro()
+	}
+	s.hits[key] = rec
+}
+
+// waiverFor returns the id of the row in sweepWaivers that permits h, or "".
+func (s *sweep) waiverFor(h canary.Hit, route string, req *sweepReq, line []byte, status int) string {
+	if h.Class != canary.Secret || req == nil {
+		return ""
+	}
+	for _, w := range sweepWaivers {
+		if w.Route != route || w.Label != h.Label || w.Surface != h.Surface || (w.Principal != "" && w.Principal != req.Principal) {
+			continue
+		}
+		if w.Surface == "log" {
+			c, ok := s.byLabel[h.Label]
+			lo, hi, isAccess := accessLogURI(line, req, status)
+			if !ok || c.Core == "" || !strings.Contains(req.Target, c.Core) || !isAccess || h.Offset < lo || h.Offset >= hi {
+				continue
+			}
+		}
+		return w.ID
+	}
+	return ""
+}
+
+// accessLogURI returns the byte range of the request URI when line is the
+// access log record of req with this exact method, peer address and status
+// (chi's DefaultLogFormatter layout, see server/middleware/logger.go).
+func accessLogURI(line []byte, req *sweepReq, status int) (lo, hi int, ok bool) {
+	re, err := regexp.Compile(`^(?:\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} )?(?:\[[^\]]*\] )?"` + regexp.QuoteMeta(req.Method) +
+		` http://example\.com(/.*) HTTP/1\.1" from ` + regexp.QuoteMeta(req.RemoteAddr) + ` - ` + strconv.Itoa(status) + ` \d+B in \S+$`)
+	if err != nil {
+		return 0, 0, false
+	}
+	m := re.FindSubmatchIndex(line)
+	if m == nil {
+		return 0, 0, false
+	}
+	return m[2], m[3], true
+}
+
+// nextAddr gives each request its own peer address, so per-IP rate limits do not
+// turn the later shapes of a route into 429s that never reach its handler.
+func (s *sweep) nextAddr() string {
+	return fmt.Sprintf("198.18.%d.%d:4242", (s.nreq>>8)&0xff, s.nreq&0xff)
+}
+
+// run drives one request, scans the response and the log it produced, and
+// returns the status (0 when the target could not be parsed).
+func (s *sweep) run(r sweepReq) int {
+	r.RemoteAddr = s.nextAddr()
 	s.cur = &r
 	s.nreq++
 	rec, ok := s.do(r)
 	if !ok {
 		s.statusN[-1]++
-		return
+		return 0
 	}
 	s.statusN[rec.Code]++
 	s.scan("resp-body", r.Route, &r, rec.Body.Bytes(), rec.Code)
@@ -457,7 +661,7 @@ func (s *sweep) run(r sweepReq) {
 		hb.WriteString(k + ": " + strings.Join(v, ", ") + "\n")
 	}
 	s.scan("resp-header", r.Route, &r, []byte(hb.String()), rec.Code)
-	s.scan("log", r.Route, &r, s.w.drainLog(), rec.Code)
+	s.scanLog(r.Route, &r, s.w.drainLog(), rec.Code)
 	if s.stdout != nil {
 		s.scan("stdout", r.Route, &r, s.stdout.drain(), rec.Code)
 	}
@@ -469,6 +673,7 @@ func (s *sweep) run(r sweepReq) {
 	if r.Principal == "admin" || r.Principal == "outsider" {
 		s.harvest(rec.Body.Bytes())
 	}
+	return rec.Code
 }
 
 var sweepTokenRe = regexp.MustCompile(`\bkx_[a-z_]+_[A-Za-z0-9_\-]{12,}`)
@@ -494,6 +699,14 @@ func (s *sweep) scanPersistent(route string) { s.scanPersistentDeep(route, false
 func (s *sweep) scanPersistentDeep(route string, deep bool) {
 	drainAllBackgroundGoroutines()
 	attr := &sweepReq{Route: route, Shape: "after-route"}
+	// Output the route's background work wrote after its last request was scanned.
+	s.scanLog(route, attr, s.w.drainLog(), 0)
+	if s.stdout != nil {
+		s.scan("stdout", route, attr, s.stdout.drain(), 0)
+	}
+	if s.stderr != nil {
+		s.scan("stderr", route, attr, s.stderr.drain(), 0)
+	}
 	// Metrics.
 	rec := httptest.NewRecorder()
 	mreq := httptest.NewRequest("GET", "/metrics", nil)
@@ -501,15 +714,21 @@ func (s *sweep) scanPersistentDeep(route string, deep bool) {
 	s.scan("metrics", route, attr, rec.Body.Bytes(), rec.Code)
 	// DB cells.
 	sqlDB, err := s.w.db.DB()
-	if err == nil {
+	if err != nil {
+		s.failScan("db handle after %s: %v", route, err)
+	} else {
 		s.scanDB(sqlDB, route, attr)
 	}
 	// Raw file + WAL: the cell scan above already covers live rows; the raw
 	// bytes add free-page / WAL remnants, so they are scanned at checkpoints.
 	if deep {
 		for _, p := range []string{s.w.dbPath, s.w.dbPath + "-wal"} {
-			if b, err := os.ReadFile(p); err == nil {
+			b, err := os.ReadFile(p)
+			switch {
+			case err == nil:
 				s.scanPersistentBytes("dbfile:"+filepath.Base(p), route, attr, b)
+			case !errors.Is(err, fs.ErrNotExist): // a WAL exists only between checkpoints
+				s.failScan("raw db read %s: %v", filepath.Base(p), err)
 			}
 		}
 	}
@@ -535,28 +754,42 @@ func (s *sweep) scanPersistentBytes(surface, route string, attr *sweepReq, b []b
 func (s *sweep) scanDB(db *sql.DB, route string, attr *sweepReq) {
 	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
 	if err != nil {
+		s.failScan("list tables: %v", err)
 		return
 	}
 	var tables []string
 	for rows.Next() {
 		var n string
-		_ = rows.Scan(&n)
+		if err := rows.Scan(&n); err != nil {
+			s.failScan("read table name: %v", err)
+			continue
+		}
 		tables = append(tables, n)
+	}
+	if err := rows.Err(); err != nil {
+		s.failScan("list tables: %v", err)
 	}
 	_ = rows.Close()
 	for _, tb := range tables {
 		r2, err := db.Query(`SELECT * FROM "` + strings.ReplaceAll(tb, `"`, `""`) + `"`)
 		if err != nil {
+			s.failScan("select %s: %v", tb, err)
 			continue
 		}
-		cols, _ := r2.Columns()
+		cols, err := r2.Columns()
+		if err != nil {
+			s.failScan("columns %s: %v", tb, err)
+			_ = r2.Close()
+			continue
+		}
 		for r2.Next() {
 			vals := make([]any, len(cols))
 			ptrs := make([]any, len(cols))
 			for i := range vals {
 				ptrs[i] = &vals[i]
 			}
-			if r2.Scan(ptrs...) != nil {
+			if err := r2.Scan(ptrs...); err != nil {
+				s.failScan("scan row of %s: %v", tb, err)
 				break
 			}
 			for i, v := range vals {
@@ -576,28 +809,58 @@ func (s *sweep) scanDB(db *sql.DB, route string, attr *sweepReq) {
 				}
 			}
 		}
+		if err := r2.Err(); err != nil {
+			s.failScan("read rows of %s: %v", tb, err)
+		}
 		_ = r2.Close()
 	}
 }
 
 func (s *sweep) scanTemp(route string, attr *sweepReq) {
-	_ = filepath.WalkDir(s.tmpDir, func(p string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	// A temp file can disappear between the walk and the read; that is not a
+	// blind spot, because the file is gone. Every other failure is one.
+	gone := func(err error) bool { return errors.Is(err, fs.ErrNotExist) }
+	err := filepath.WalkDir(s.tmpDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			if !gone(err) {
+				s.failScan("walk temp %s: %v", p, err)
+			}
+			return nil
+		}
+		if d.IsDir() {
 			return nil
 		}
 		fi, e := d.Info()
-		if e != nil || !fi.Mode().IsRegular() || fi.Size() > sweepMaxFileBytes || fi.Size() == 0 {
+		if e != nil {
+			if !gone(e) {
+				s.failScan("stat temp %s: %v", p, e)
+			}
+			return nil
+		}
+		if !fi.Mode().IsRegular() || fi.Size() == 0 {
 			return nil
 		}
 		if p == s.w.dbPath || p == s.w.dbPath+"-wal" || p == s.w.dbPath+"-shm" {
 			return nil // scanned as dbfile
 		}
-		if b, e := os.ReadFile(p); e == nil {
-			rel, _ := filepath.Rel(s.tmpDir, p)
-			s.scanPersistentBytes("tempfile:"+rel, route, attr, b)
+		if fi.Size() > sweepMaxFileBytes {
+			s.failScan("temp file %s is %d bytes, over the %d scan limit", p, fi.Size(), sweepMaxFileBytes)
+			return nil
 		}
+		b, e := os.ReadFile(p)
+		if e != nil {
+			if !gone(e) {
+				s.failScan("read temp %s: %v", p, e)
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(s.tmpDir, p)
+		s.scanPersistentBytes("tempfile:"+rel, route, attr, b)
 		return nil
 	})
+	if err != nil {
+		s.failScan("walk temp: %v", err)
+	}
 }
 
 // ---- reporting --------------------------------------------------------------

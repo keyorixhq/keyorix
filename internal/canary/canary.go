@@ -262,8 +262,9 @@ func (s *Scanner) Scan(surface string, hay []byte) []Hit {
 }
 
 // snippet returns up to 16 bytes of context on each side of the match with
-// the matched bytes themselves masked to their first 4 characters, so a
-// report never carries a full canary value.
+// the matched bytes themselves masked to their first 4 characters. Only the
+// matched bytes are masked: the context is copied verbatim, so bytes of the
+// same value outside the match, or of a neighbouring value, can appear in it.
 func snippet(hay []byte, off, n int) string {
 	lo := max(off-16, 0)
 	hi := min(off+n+16, len(hay))

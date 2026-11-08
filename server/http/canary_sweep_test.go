@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -36,45 +37,27 @@ func sweepSeed() uint64 {
 
 // TestCanaryRouteSweep is the deterministic campaign (PREREG.md). It fails when
 // any secret-class canary appears on a forbidden surface; CANARY_OUT=<file>
-// writes every finding with its request repro. The planted-leak self-test below
-// must pass in the same run for a clean result to mean anything.
+// writes every finding with its request repro. A failed planted-leak self-test
+// makes the run INVALID, so the self-test runs first, in its own world.
 func TestCanaryRouteSweep(t *testing.T) {
+	runPlantedLeakSelfTest(t)
 	origLog := log.Writer()
 	defer log.SetOutput(origLog)
 	s := newSweep(t, sweepSeed())
 	defer s.close()
 	routes := listSweepRoutes(t, s.w.router)
-	dispN := 0
+	truncated := false
 	if v := os.Getenv("CANARY_MAX_ROUTES"); v != "" {
 		var n int
 		_, _ = fmt.Sscan(v, &n)
+		truncated = n < len(routes)
 		routes = routes[:min(n, len(routes))]
 	}
 	for i, rt := range routes {
 		if rt.Method == "CONNECT" || rt.Method == "TRACE" {
 			continue
 		}
-		principals := []string{"admin", "outsider", "anon", "garbage"}
-		for _, p := range principals {
-			destructive := sweepDestructive.MatchString(rt.Pattern)
-			if destructive && p == "admin" {
-				// Exercised as a throw-away self-service principal instead.
-				for _, r := range s.shapesFor(rt, "admin") {
-					tok, ok := s.disposable(dispN)
-					dispN++
-					if !ok {
-						continue
-					}
-					r.Principal = "disposable"
-					r.Header.Set("Authorization", "Bearer "+tok)
-					s.run(r)
-				}
-				continue
-			}
-			for _, r := range s.shapesFor(rt, p) {
-				s.run(r)
-			}
-		}
+		s.driveRoute(rt)
 		s.scanPersistentDeep(rt.String(), i%40 == 39)
 		if i%50 == 0 {
 			t.Logf("route %d/%d requests=%d findings=%d", i, len(routes), s.nreq, len(s.hits))
@@ -83,6 +66,15 @@ func TestCanaryRouteSweep(t *testing.T) {
 	s.grpcSweep(t)
 	s.scanPersistentDeep("end-of-sweep", true)
 	s.writeFindings(os.Getenv("CANARY_OUT"))
+
+	// Harness sanity: a dead session or an unreadable surface turns the rest of
+	// the sweep into a blind one, which would otherwise look like a clean result.
+	if !s.sessionLive(s.w.adminTok) || !s.sessionLive(s.outsiderTok) {
+		t.Fatalf("INVALID RUN: a long-lived session died during the sweep (admin=%v outsider=%v); later requests were unauthenticated", s.sessionLive(s.w.adminTok), s.sessionLive(s.outsiderTok))
+	}
+	if len(s.scanFailures) > 0 {
+		t.Fatalf("INVALID RUN: %d surfaces could not be read: %s", len(s.scanFailures), strings.Join(s.scanFailures, "; "))
+	}
 
 	// Harness sanity: the metadata control must have been seen on a response
 	// and in the database, otherwise "no secret found" proves nothing.
@@ -94,18 +86,42 @@ func TestCanaryRouteSweep(t *testing.T) {
 	if !sawResp || !sawDB {
 		t.Fatalf("INVALID RUN: metadata control not observed (resp=%v db=%v); the oracle could not see storage or responses", sawResp, sawDB)
 	}
+	// The stored secrets were scanned: their metadata twin reached the DB scan.
+	if !s.metaSeen["db:secret_nodes.name|m-stored-name"] {
+		t.Fatalf("INVALID RUN: the success-path secrets were never seen by the DB scan")
+	}
 	t.Logf("requests=%d status=%v metadata-control-surfaces=%d", s.nreq, s.statusN, len(s.metaSeen))
-	// Known finding F1 is tracked privately with the maintainers; counted and
-	// reported, not gated. Every other surface/shape still fails the run.
-	knownF1 := 0
+	waived := 0
 	for _, f := range s.findings() {
-		if strings.HasSuffix(f.Key, "|url-echo") {
-			knownF1++
+		if f.Waiver != "" {
+			waived++
 			continue
 		}
 		t.Errorf("LEAK candidate: surface=%s route=%s label=%s variant=%s class=%s snippet=%s repro=%v", f.Surface, f.Route, f.Label, f.Variant, f.Class, f.Snippet, f.Repro)
 	}
-	t.Logf("known-F1 findings: %d", knownF1)
+	t.Logf("waived hits: %d", waived)
+	if stale := s.staleWaivers(); !truncated && len(stale) > 0 {
+		t.Errorf("waivers matched nothing, remove the rows: %s", strings.Join(stale, ", "))
+	}
+}
+
+// driveRoute sends every request shape to one route as every principal. On a
+// destructive route the long-lived admin and outsider sessions are replaced by a
+// throw-away principal per request. An unprivileged outsider and a disposable
+// user are the same class of caller, so the outsider slot adds nothing there.
+func (s *sweep) driveRoute(rt sweepRoute) {
+	destructive := sweepDestructive.MatchString(rt.Pattern)
+	for _, p := range []string{"admin", "outsider", "anon", "garbage"} {
+		if destructive && p == "outsider" {
+			continue
+		}
+		for _, r := range s.shapesFor(rt, p) {
+			if destructive && p == "admin" && !s.useDisposable(&r) {
+				continue
+			}
+			s.run(r)
+		}
+	}
 }
 
 // ---- gRPC ---------------------------------------------------------------------
@@ -126,34 +142,10 @@ func (s *sweep) grpcFill(desc protoreflect.MessageDescriptor, alt bool, depth in
 			seenOneof[oo.Name()] = true
 		}
 		if fd.IsMap() {
+			msg.Mutable(fd).Map().Set(s.grpcValue(fd.MapKey(), alt, depth).MapKey(), s.grpcValue(fd.MapValue(), alt, depth))
 			continue
 		}
-		val := func() protoreflect.Value {
-			switch fd.Kind() {
-			case protoreflect.StringKind:
-				return protoreflect.ValueOfString(s.fieldCanary(string(fd.Name()), alt).Raw)
-			case protoreflect.BytesKind:
-				return protoreflect.ValueOfBytes([]byte(s.fieldCanary(string(fd.Name()), alt).Raw))
-			case protoreflect.MessageKind, protoreflect.GroupKind:
-				return protoreflect.ValueOfMessage(s.grpcFill(fd.Message(), alt, depth+1))
-			case protoreflect.BoolKind:
-				return protoreflect.ValueOfBool(true)
-			case protoreflect.EnumKind:
-				if v := fd.Enum().Values(); v.Len() > 1 {
-					return protoreflect.ValueOfEnum(v.Get(1).Number())
-				}
-				return protoreflect.ValueOfEnum(0)
-			case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
-				return protoreflect.ValueOfUint64(1)
-			case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
-				return protoreflect.ValueOfUint32(1)
-			case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
-				return protoreflect.ValueOfInt64(1)
-			case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
-				return protoreflect.ValueOfInt32(1)
-			}
-			return fd.Default()
-		}()
+		val := s.grpcValue(fd, alt, depth)
 		if fd.IsList() {
 			msg.Mutable(fd).List().Append(val)
 		} else {
@@ -161,6 +153,33 @@ func (s *sweep) grpcFill(desc protoreflect.MessageDescriptor, alt bool, depth in
 		}
 	}
 	return msg
+}
+
+func (s *sweep) grpcValue(fd protoreflect.FieldDescriptor, alt bool, depth int) protoreflect.Value {
+	switch fd.Kind() {
+	case protoreflect.StringKind:
+		return protoreflect.ValueOfString(s.fieldCanary(string(fd.Name()), alt).Raw)
+	case protoreflect.BytesKind:
+		return protoreflect.ValueOfBytes([]byte(s.fieldCanary(string(fd.Name()), alt).Raw))
+	case protoreflect.MessageKind, protoreflect.GroupKind:
+		return protoreflect.ValueOfMessage(s.grpcFill(fd.Message(), alt, depth+1))
+	case protoreflect.BoolKind:
+		return protoreflect.ValueOfBool(true)
+	case protoreflect.EnumKind:
+		if v := fd.Enum().Values(); v.Len() > 1 {
+			return protoreflect.ValueOfEnum(v.Get(1).Number())
+		}
+		return protoreflect.ValueOfEnum(0)
+	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+		return protoreflect.ValueOfUint64(1)
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+		return protoreflect.ValueOfUint32(1)
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		return protoreflect.ValueOfInt64(1)
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+		return protoreflect.ValueOfInt32(1)
+	}
+	return fd.Default()
 }
 
 // grpcSweep calls every unary method the live gRPC server registers, as admin,
@@ -187,6 +206,8 @@ func (s *sweep) grpcSweep(t testing.TB) {
 			ms = append(ms, m{svc, mi.Name, md.Input(), md.Output()})
 		}
 	}
+	// GetServiceInfo is a map: sort so a replay with the same seed is the same run.
+	sort.Slice(ms, func(i, j int) bool { return ms[i].svc+"/"+ms[i].name < ms[j].svc+"/"+ms[j].name })
 	n := 0
 	for _, mm := range ms {
 		for _, who := range []string{"admin", "anon", "garbage"} {
@@ -216,7 +237,7 @@ func (s *sweep) grpcSweep(t testing.TB) {
 					}
 					s.scan("grpc-error", route, attr, []byte(d), int(st.Code()))
 				}
-				s.scan("log", route, attr, s.w.drainLog(), 0)
+				s.scanLog(route, attr, s.w.drainLog(), 0)
 				if s.stdout != nil {
 					s.scan("stdout", route, attr, s.stdout.drain(), 0)
 				}
@@ -238,8 +259,14 @@ func (s *sweep) grpcSweep(t testing.TB) {
 // clean TestCanaryRouteSweep: a deliberately leaky wrapper puts a canary, in
 // every encoded variant, on every surface the oracle claims to watch, and the
 // oracle must flag each one. A metadata (class M) canary on the same surfaces
-// must not become a finding, and a clean request must produce none.
+// must not become a finding, and a clean request must produce none. Both the
+// sweep and the fuzz target run it first, so no clean result exists without it.
 func TestCanaryOracle_PlantedLeaksAreDetected(t *testing.T) {
+	runPlantedLeakSelfTest(t)
+}
+
+func runPlantedLeakSelfTest(t *testing.T) {
+	t.Helper()
 	origLog := log.Writer()
 	defer log.SetOutput(origLog)
 	s := newSweep(t, 4242)
