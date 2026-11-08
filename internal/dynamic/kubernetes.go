@@ -362,6 +362,11 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("kubernetes: refusing to follow redirect to %q", netutil.RedactURLHost(req.URL.String()))
 }
 
+// isK8sSuccess reports whether an API server status code is a 2xx. A 3xx that
+// reaches the caller (the client refuses to follow redirects, so this is a
+// redirect without a usable Location) is not a success.
+func isK8sSuccess(code int) bool { return code >= 200 && code < 300 }
+
 // drainAndClose discards any unread response body before closing it, so the
 // underlying connection can be returned to net/http's keep-alive pool instead
 // of being torn down. Every realK8sMinter method below used to defer a bare
@@ -420,7 +425,7 @@ func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", time.Time{}, fmt.Errorf("not authorized (HTTP %d) — the caller needs create on serviceaccounts/token for %s/%s", resp.StatusCode, namespace, serviceAccount)
 	}
-	if resp.StatusCode >= 400 {
+	if !isK8sSuccess(resp.StatusCode) {
 		return "", time.Time{}, fmt.Errorf("TokenRequest returned HTTP %d", resp.StatusCode)
 	}
 
@@ -436,9 +441,14 @@ func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount
 	if out.Status.Token == "" {
 		return "", time.Time{}, fmt.Errorf("TokenRequest returned no token")
 	}
-	var expiry time.Time
-	if out.Status.ExpirationTimestamp != "" {
-		expiry, _ = time.Parse(time.RFC3339, out.Status.ExpirationTimestamp)
+	// A credential without a usable expiry would look non-expiring downstream, so
+	// a missing, unparsable or already-past expirationTimestamp is an error.
+	expiry, err := time.Parse(time.RFC3339, out.Status.ExpirationTimestamp)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("TokenRequest returned a missing or invalid expirationTimestamp")
+	}
+	if !expiry.After(time.Now()) {
+		return "", time.Time{}, fmt.Errorf("TokenRequest returned an expirationTimestamp in the past")
 	}
 	return out.Status.Token, expiry, nil
 }
@@ -481,7 +491,7 @@ func (m *realK8sMinter) createBoundSecret(ctx context.Context, namespace, name s
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", fmt.Errorf("not authorized (HTTP %d) — the caller needs create on secrets in %s (required when revocable is true)", resp.StatusCode, namespace)
 	}
-	if resp.StatusCode >= 400 {
+	if !isK8sSuccess(resp.StatusCode) {
 		return "", fmt.Errorf("create Secret returned HTTP %d", resp.StatusCode)
 	}
 
@@ -522,7 +532,7 @@ func (m *realK8sMinter) deleteBoundSecret(ctx context.Context, namespace, name s
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("not authorized (HTTP %d) — the caller needs delete on secrets in %s (required when revocable is true)", resp.StatusCode, namespace)
 	}
-	if resp.StatusCode >= 400 {
+	if !isK8sSuccess(resp.StatusCode) {
 		return fmt.Errorf("delete Secret returned HTTP %d", resp.StatusCode)
 	}
 	return nil

@@ -1,0 +1,1 @@
+internal/wycheproof	none	-	test-only package: Wycheproof vector suites run against the crypto wrappers (aead, ed25519, kdf, jwt, xmlenc, MAC comparison scan); doc.go only, no shipped code	test-helper

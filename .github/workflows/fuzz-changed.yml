@@ -65,7 +65,7 @@ env:
   FUZZ_SHARDS: 6  # max parallel fuzz jobs
 jobs:
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       count: ${{ steps.plan.outputs.count }}
       shards: ${{ steps.shard.outputs.shards }}
@@ -214,7 +214,7 @@ jobs:
   fuzz:
     needs: plan
     if: needs.plan.outputs.count != '0'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -256,7 +256,7 @@ jobs:
   fuzz-changed:
     needs: [plan, fuzz]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Aggregate shard results
         env:

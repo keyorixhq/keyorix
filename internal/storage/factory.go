@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -355,6 +357,18 @@ func indexExists(db *gorm.DB, indexName string) bool {
 		db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", indexName).Scan(&count)
 	}
 	return count > 0
+}
+
+// indexDefinition returns the CREATE INDEX text the database holds for indexName
+// ("" when there is none): pg_indexes.indexdef on Postgres, sqlite_master.sql on SQLite.
+func indexDefinition(db *gorm.DB, indexName string) string {
+	var def string
+	if db.Dialector.Name() == "postgres" {
+		db.Raw("SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?", indexName).Scan(&def)
+	} else {
+		db.Raw("SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'index' AND name = ?", indexName).Scan(&def)
+	}
+	return def
 }
 
 // warnIfDuplicatesExist checks whether pre-existing rows already violate the
@@ -1640,7 +1654,7 @@ func ensureUserExternalIDIndex(db *gorm.DB) error {
 }
 
 // ensureProjectNameIndex creates a partial, case-insensitive unique index on
-// projects.name scoped to live (non-deleted) rows with a non-empty name (#385).
+// projects.name_folded scoped to live (non-deleted) rows with a non-empty name (#385).
 // Project.Name previously carried only a plain, case-sensitive `uniqueIndex` tag, so
 // "Production"/"production" (and any other case variant) were distinct, both-succeeding
 // rows — and the CLI's project name resolution (resolveProjectID, import.go) resolves by
@@ -1648,20 +1662,46 @@ func ensureUserExternalIDIndex(db *gorm.DB) error {
 // A secrets.write holder could therefore plant a same-name-different-case shadow project
 // the old index didn't block, and a later `keyorix secret import/export --project
 // production` could silently resolve against the shadow project instead of the intended
-// one. The index is on LOWER(name) so it catches every case variant, mirroring
-// ensureUserEmailIndex's treatment of users.email (#117) for the identical
-// shadow-identity class of bug. Scoped to `deleted_at IS NULL` so a soft-deleted
-// project's name is freed for reuse on re-creation, mirroring ensureGroupNameIndex/
-// ensureUserNameIndex; `name <> ”` so any legacy rows with no name recorded don't
-// collide with each other. Idempotent; works on both SQLite and Postgres.
+// one. Scoped to `deleted_at IS NULL` so a soft-deleted project's name is freed for
+// reuse on re-creation, mirroring ensureGroupNameIndex/ensureUserNameIndex; `name <> ”`
+// so any legacy rows with no name recorded don't collide with each other. Idempotent;
+// works on both SQLite and Postgres.
 //
-// Known residual limitation: this closes the case-folding gap but not the
-// Unicode-homoglyph one — "Prοduction" (Greek omicron, U+03BF) still normalizes to a
-// distinct LOWER() value from "production" and would still create a separate row. Full
-// NFKC normalization plus homoglyph/confusable detection is a materially harder problem
-// (Unicode Technical Standard #39) and is intentionally out of scope here.
+// The index is on name_folded (identity.FoldProjectName: NFC + case-fold, computed in
+// Go), not on LOWER(name) as first shipped: SQL LOWER() folds ASCII only on SQLite but
+// follows the database locale on Postgres, so the two backends accepted different sets
+// of names (for example "ÄÖ" and "äö" as two projects on SQLite only). The index keeps
+// its name, uniq_projects_name_active, so the duplicate-name detection is unchanged.
+//
+// Upgrade: adds the name_folded column if it is missing, backfills it (live rows with a
+// collision check, soft-deleted rows without one, since they are outside the index), and
+// only then replaces a legacy LOWER(name) index. If two live projects fold to the same
+// name the upgrade stops with an error naming the folded value and the project ids; no
+// row is renamed, merged or deleted, and nothing is changed until the operator renames
+// one of them (the server cannot start to do it through the API, so the error gives the
+// direct UPDATE).
 func ensureProjectNameIndex(db *gorm.DB) error {
 	const idxName = "uniq_projects_name_active"
+	const liveNamed = "deleted_at IS NULL AND name <> ''"
+	if tableExists(db, "projects") {
+		if !columnExists(db, "projects", "name_folded") {
+			if err := db.Migrator().AddColumn(&models.Project{}, "NameFolded"); err != nil {
+				return fmt.Errorf("failed to add projects.name_folded: %w", err)
+			}
+		}
+		fold := func(raw string) (string, error) { return identity.FoldProjectName(raw), nil }
+		if err := backfillFoldedColumn(db, "projects", "id", "name", "name_folded", liveNamed, fold); err != nil {
+			return fmt.Errorf("%w (project names must be unique ignoring case and Unicode normalization. The server "+
+				"cannot start to rename them itself: with the server stopped, rename one project of each listed group "+
+				"directly, e.g. UPDATE projects SET name = '<new name>' WHERE id = <id>, then start it again; "+
+				"nothing was changed by this check)", err)
+		}
+		// Soft-deleted projects keep a folded name too (RestoreProject brings the row back
+		// under the index), but two deleted rows sharing a name are legitimate.
+		if err := backfillDeletedProjectNames(db); err != nil {
+			return err
+		}
+	}
 	// #490: this index is ADDING name uniqueness for the first time — nothing
 	// enforced it before, so on a pre-existing install two DIFFERENT,
 	// legitimate projects could plausibly share a display name coincidentally.
@@ -1669,14 +1709,44 @@ func ensureProjectNameIndex(db *gorm.DB) error {
 	// project_id foreign keys that this migration does not cascade-delete;
 	// auto-removing one "duplicate" project would silently orphan an entire
 	// project's worth of child data. Fail loud instead.
-	if !indexExists(db, idxName) {
-		if err := warnIfDuplicatesExist(db, "projects", "LOWER(name)", "deleted_at IS NULL AND name <> ''",
-			"rename or archive one of the conflicting projects via the application's project-rename/archive API before upgrading"); err != nil {
-			return err
+	legacy := indexExists(db, idxName) && !strings.Contains(indexDefinition(db, idxName), "name_folded")
+	if !indexExists(db, idxName) || legacy {
+		if tableExists(db, "projects") {
+			if err := warnIfDuplicatesExist(db, "projects", "name_folded", liveNamed,
+				"rename or archive one of the conflicting projects via the application's project-rename/archive API before upgrading"); err != nil {
+				return err
+			}
 		}
 	}
-	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON projects (LOWER(name)) WHERE deleted_at IS NULL AND name <> ''").Error; err != nil {
+	if legacy {
+		if err := db.Exec("DROP INDEX IF EXISTS " + idxName).Error; err != nil {
+			return fmt.Errorf("failed to replace legacy projects name index: %w", err)
+		}
+	}
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON projects (name_folded) WHERE " + liveNamed).Error; err != nil {
 		return fmt.Errorf("failed to create partial projects name index: %w", err)
+	}
+	return nil
+}
+
+// backfillDeletedProjectNames fills projects.name_folded for soft-deleted rows that
+// still have it empty. No collision check: the unique index covers live rows only.
+func backfillDeletedProjectNames(db *gorm.DB) error {
+	type row struct {
+		ID   uint
+		Name string
+	}
+	var rows []row
+	if err := db.Table("projects").Select("id, name").
+		Where("deleted_at IS NOT NULL AND name <> '' AND (name_folded = '' OR name_folded IS NULL)").
+		Scan(&rows).Error; err != nil {
+		return fmt.Errorf("failed to read deleted projects for name_folded backfill: %w", err)
+	}
+	for _, r := range rows {
+		if err := db.Table("projects").Where("id = ?", r.ID).
+			Update("name_folded", identity.FoldProjectName(r.Name)).Error; err != nil {
+			return fmt.Errorf("failed to backfill projects.name_folded for id=%d: %w", r.ID, err)
+		}
 	}
 	return nil
 }

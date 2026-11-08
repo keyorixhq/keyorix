@@ -690,7 +690,7 @@ epoch 7 and "Administrator MFA reset" in section 2 for epoch 8;
 `internal/storage/factory_schema_epoch.go` lists each).
 Once a server of this release has started against a database, a v0.96.x (epoch 2)
 binary refuses to start on it: `database declares a minimum compatible schema
-epoch of 3 (database schema epoch 9)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
+epoch of 3 (database schema epoch 10)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
 database:
 
 - **The v2 audit retention anchor (#3258).** v0.96.x reads it as malformed, so its
@@ -757,7 +757,7 @@ so the rules bind a release that changes a definition. SQLite does not have thes
   [operations/metrics.md](operations/metrics.md)).
 
 Releases before v0.96 (v0.93 to v0.95.x) predate both formats too, and are refused as well,
-by their older check: `database schema epoch 9 is newer than this binary's schema epoch 1`.
+by their older check: `database schema epoch 10 is newer than this binary's schema epoch 1`.
 `internal/storage/factory_schema_epoch_pre3258_refusal_test.go` pins both refusals with
 copies of the released start-up checks, on a fresh database, the real v0.95.0 upgrade
 fixture and a database a v0.96.x server left behind. A real v0.96.3 rollback transcript is
@@ -1445,7 +1445,7 @@ database records a compatibility floor above its own schema epoch (ADR-101).
   both binaries.
 - **Floor raised (v0.96.x → v0.97.0, floor 3, §6q): restore the backup.** The old
   binary refuses with `database declares a minimum compatible schema epoch of 3 (database
-  schema epoch 9)`, and nothing lowers the floor. For v0.97.0, rollback is a restore: a
+  schema epoch 10)`, and nothing lowers the floor. For v0.97.0, rollback is a restore: a
   v0.96.x binary never starts again on a database a v0.97 server has started against. A database written by a binary with a newer epoch but
   without a recorded floor is refused with `database schema epoch N is newer than this
   binary's schema epoch M` (ADR-097).
