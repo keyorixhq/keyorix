@@ -304,11 +304,8 @@ func runScenarios(c *common, scs []Scenario, batch int, rep *Report, progress bo
 				}
 			}
 			for n, o := range outs {
-				for _, so := range o.Steps {
-					if answered(so) {
-						rep.Executed[n]++
-						break
-					}
+				if slices.ContainsFunc(o.Steps, answered) {
+					rep.Executed[n]++
 				}
 			}
 			fs, h := r.Analyse(sc, outs)
