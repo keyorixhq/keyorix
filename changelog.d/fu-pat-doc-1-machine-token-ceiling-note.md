@@ -1,0 +1,2 @@
+### Documentation
+- **A machine token's privilege ceiling is checked at mint time only, by design.** If the user who issued a machine token later loses the authority to issue it, tokens already minted stay valid until revoked or expired (a personal access token whose owner lost the ceiling is refused at use time). Recorded in ADR-042 and `INV-CORE-machine-token-issue-cannot-widen-caller`; re-checking the issuer at use time is noted as an open idea, not planned work.

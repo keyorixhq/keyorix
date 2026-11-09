@@ -243,3 +243,23 @@ authorization call. Unrestricted PATs, sessions and machine tokens are unchanged
   effect, in-scope creates succeed and out-of-scope ones are refused by
   `Authorize`), and a pre-authentication route answers a restricted PAT exactly
   as it answers an unrestricted one.
+
+## Addendum (2026-11-08): machine tokens have a mint-time ceiling only (PAT-SCOPE-TAILS-1 item 4)
+
+Decided by Andrei on 2026-11-08, answering whether a machine token should stop working
+when the user who issued it later loses the authority to issue it. **No: this is by
+design.**
+
+- **Mint time only.** `IssueMachineToken` checks the issuer's privilege ceiling when the
+  token is minted (`INV-CORE-machine-token-issue-cannot-widen-caller`). A machine
+  credential records no issuer; its authority is the machine identity's own roles,
+  re-resolved live at each use. An issuer's later demotion therefore does not revoke or
+  narrow already-minted machine tokens; they stay valid until revoked or expired, and
+  revoking one stays an explicit act.
+- **PATs differ.** A PAT belongs to its owner, so a PAT whose owner has lost the
+  ceiling is refused at use time (`server/http`
+  `pat_owner_lost_ceiling_use_time_test.go`, pinned by PAT-SCOPE-TAILS-1).
+- **Open idea, not a task:** record `issuer_user_id` on the machine credential and
+  re-check the issuer's ceiling at use time. It needs a schema change and a read-path
+  change (a per-request lookup), so it would be its own session and its own decision.
+  Nothing is scheduled.
