@@ -23,6 +23,10 @@ type ifaceFatalSpy struct{ fatal string }
 func (*ifaceFatalSpy) Helper()                     {}
 func (*ifaceFatalSpy) Logf(string, ...any)         {}
 func (s *ifaceFatalSpy) Fatalf(f string, a ...any) { s.fatal = fmt.Sprintf(f, a...); runtime.Goexit() }
+func (s *ifaceFatalSpy) Skipf(f string, a ...any) {
+	s.fatal = "skip: " + fmt.Sprintf(f, a...)
+	runtime.Goexit()
+}
 
 // ifaceRunSpy runs a program on a goroutine (Fatalf ends it with Goexit) and returns
 // what the oracle reported, "" when it stayed silent.

@@ -170,11 +170,14 @@ type ifaceStore interface {
 	GetConnectorProjectBinding(ctx context.Context, connector string) (*models.ConnectorProjectBinding, error)
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 	GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error)
+	ListProjectsWithCounts(ctx context.Context, includeDeleted bool) ([]storage.ProjectWithCounts, error)
+	GetProjectUsageStats(ctx context.Context, projectIDs []uint, windowDays int) ([]storage.ProjectUsageStat, error)
+	GetBillingReport(ctx context.Context, from, to time.Time, projectIDs []uint) (*storage.BillingReport, error)
 }
 
 // ifaceOpModes is the number of modes each op dispatches on, in ifaceOps order.
 var ifaceOpModes = []int{
-	4, 5, 5, 8, 7, 6, 6, 8, 6, 5, 10, 4, 4, 6, 5, 5, 6, 8, 5, 6, 1, 3,
+	4, 5, 5, 8, 7, 6, 6, 8, 6, 5, 10, 4, 4, 6, 5, 5, 6, 8, 5, 6, 1, 3, 3,
 }
 
 // ifaceStep encodes one four-byte step of a program.

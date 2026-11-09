@@ -190,6 +190,8 @@ func ifaceClass(err error) string {
 	}
 	msg := err.Error()
 	switch {
+	case ifaceIsConnectionError(msg):
+		return ifaceConnClass
 	case strings.Contains(msg, "UNIQUE constraint failed"), strings.Contains(msg, "duplicate key value violates unique constraint"):
 		return "unique-violation"
 	case strings.Contains(msg, "NOT NULL constraint failed"), strings.Contains(msg, "violates not-null constraint"):
@@ -198,6 +200,19 @@ func ifaceClass(err error) string {
 		return "too-long"
 	}
 	return "other"
+}
+
+// ifaceConnClass is the error class of a lost connection to Postgres. A program that
+// hits it is abandoned, not compared: a dropped link is not a backend divergence.
+const ifaceConnClass = "infra-connection"
+
+func ifaceIsConnectionError(msg string) bool {
+	for _, s := range []string{"connection refused", "broken pipe", "connection reset", "conn closed", "dial error", "unexpected EOF", "bad connection", "timeout expired", "failed to connect"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // ifaceInstant is the only source of caller-supplied times: whole microseconds around a
@@ -271,6 +286,7 @@ type ifaceT interface {
 	Helper()
 	Logf(format string, args ...any)
 	Fatalf(format string, args ...any)
+	Skipf(format string, args ...any)
 }
 
 // ifaceSide is one backend of a pair.
@@ -287,6 +303,20 @@ type ifaceWorld struct {
 	s, p                 *ifaceSide
 	pgCollateC, pgCtypeC bool
 	wipeTables           []string
+	infraFaults          int
+}
+
+// ifaceMaxInfraFaults is how many programs in a row may lose the connection before the
+// run is stopped, so that a dead backend does not turn a campaign into a silent no-op.
+const ifaceMaxInfraFaults = 50
+
+// noteInfraFault abandons the program after a lost connection; enough in a row is fatal.
+func (w *ifaceWorld) noteInfraFault(t ifaceT, where string) {
+	w.infraFaults++
+	if w.infraFaults > ifaceMaxInfraFaults {
+		t.Fatalf("HARNESS INFRASTRUCTURE FAULT (not a backend divergence): lost Postgres for %d programs in a row (%s)", w.infraFaults, where)
+	}
+	t.Skipf("infrastructure: lost Postgres connection at %s, program abandoned", where)
 }
 
 // newIfaceWorld opens SQLite and, when withPG, PostgreSQL. Both are migrated by the
@@ -434,8 +464,12 @@ func (w *ifaceWorld) reset(t ifaceT, wrap func(side string, ls ifaceStore) iface
 			err = s.db.Exec("DELETE FROM system_metadata WHERE key LIKE 'w4%'").Error
 		}
 		if err != nil {
+			if ifaceIsConnectionError(err.Error()) {
+				w.noteInfraFault(t, "reset "+s.label)
+			}
 			t.Fatalf("HARNESS INFRASTRUCTURE FAULT (not a backend divergence): reset %s: %v", s.label, err)
 		}
+		w.infraFaults = 0
 		var ls ifaceStore = store.NewLocalStorage(s.db)
 		if wrap != nil {
 			ls = wrap(s.label, ls)
@@ -474,6 +508,9 @@ func (e *ifaceExec) both(label string, fn func(*ifaceSide) string) {
 		return
 	}
 	got2 := fn(e.w.p)
+	if strings.Contains(got1, ifaceConnClass) || strings.Contains(got2, ifaceConnClass) {
+		e.w.noteInfraFault(e.t, label)
+	}
 	if got1 == got2 {
 		return
 	}

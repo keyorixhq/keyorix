@@ -36,6 +36,9 @@ func (p opParams) at() time.Time {
 var ifaceRoleScopeWord = []string{"global", "project", "any"}
 
 func (s *ifaceSide) fixtureFatal(e *ifaceExec, kind string, err error) {
+	if ifaceIsConnectionError(err.Error()) {
+		e.w.noteInfraFault(e.t, "fixture "+kind+" on "+s.label)
+	}
 	e.t.Fatalf("HARNESS FIXTURE FAULT (not a divergence): create %s on %s: %v", kind, s.label, err)
 }
 
@@ -191,7 +194,7 @@ var ifaceOps = []func(*ifaceExec, opParams){
 	opEnv, opRole, opPerm, opUserRole, opGroupMember, opGroupRole,
 	opMembership, opSession, opPAT, opSetupToken, opMFA, opSysMeta,
 	opLoginAttempt, opNotification, opChannel, opTemplate, opACL,
-	opShare, opConnector, opAudit, opRegressionExpiryPagination, opRegressionProjectName,
+	opShare, opConnector, opAudit, opRegressionExpiryPagination, opRegressionProjectName, opAggregates,
 }
 
 // Indices of ifaceOps, used by the seeds and the red-proof tests.
@@ -218,6 +221,7 @@ const (
 	opIdxAudit
 	opIdxRegressionExpiryPagination
 	opIdxRegressionProjectName
+	opIdxAggregates
 )
 
 func opEnv(e *ifaceExec, p opParams) {
@@ -242,7 +246,7 @@ func opEnv(e *ifaceExec, p opParams) {
 			out = ifaceClass(s.ls.DeleteEnvironment(e.ctx, id))
 			live, _ := s.ls.ListEnvironmentsByProject(e.ctx, pid)
 			for _, v := range live {
-				e.meta(s, v.ID != id, "deleted environment still in ListEnvironmentsByProject")
+				e.meta(s, out != "ok" || v.ID != id, "deleted environment still in ListEnvironmentsByProject (delete=%s)", out)
 			}
 		case 2: // restore
 			id, ok := s.h.get("env", pick(p.a, 4))
@@ -1242,6 +1246,10 @@ func opAudit(e *ifaceExec, p opParams) {
 			succ := p.a&2 == 0
 			ev := &models.AuditEvent{EventType: ifaceAuditTypes[pick(p.b, 5)], UserID: &uid, IPAddress: p.name2,
 				Success: &succ, Description: p.name, EventTime: ifacePastBase.Add(time.Duration(e.step) * time.Second)}
+			if p.a&4 == 0 {
+				pid := s.project(e, 0)
+				ev.ProjectID = &pid
+			}
 			return "log:" + ifaceClass(s.ls.LogAuditEvent(e.ctx, ev))
 		case 1: // actor search through the folded-contains clause
 			return s.auditWalk(e, &storage.AuditFilter{ActorUsername: &term})
@@ -1330,6 +1338,46 @@ func (s *ifaceSide) auditAscending(e *ifaceExec, start *time.Time) string {
 		out = append(out, fpAudit(s, r))
 	}
 	return fmt.Sprintf("total=%d %s", total, orderedRows(out))
+}
+
+// opAggregates reads the COUNT/GROUP BY report queries. Engine-written instants render
+// as presence only; everything else is a count the contract promises.
+func opAggregates(e *ifaceExec, p opParams) {
+	label := fmt.Sprintf("Aggregates(mode=%d)", p.mode%3)
+	e.both(label, func(s *ifaceSide) string {
+		pid := s.project(e, 0)
+		var ids []uint
+		if p.a&1 != 0 {
+			ids = []uint{pid}
+		}
+		switch p.mode % 3 {
+		case 0: // ORDER BY p.id: creation order, compared in order
+			rows, err := s.ls.ListProjectsWithCounts(e.ctx, p.a&2 != 0)
+			out := make([]string, 0, len(rows))
+			for _, r := range rows {
+				out = append(out, fmt.Sprintf("%q|%q|sec=%d|env=%d|del=%v|hasActivity=%v|hasDeletedAt=%v", r.Name, r.Description, r.SecretCount, r.EnvironmentCount, r.Deleted, r.LastActivity != "", r.DeletedAt != ""))
+			}
+			return ifaceClass(err) + " " + orderedRows(out)
+		case 1:
+			rows, err := s.ls.GetProjectUsageStats(e.ctx, ids, []int{1, 30, 40000}[pick(p.b, 3)])
+			out := make([]string, 0, len(rows))
+			for _, r := range rows {
+				out = append(out, fmt.Sprintf("%q|sec=%d|reads=%d|readers=%d", r.ProjectName, r.SecretCount, r.ReadsInWindow, r.UniqueReaders))
+			}
+			return ifaceClass(err) + " " + sortedRows(out)
+		default:
+			from := p.at()
+			rep, err := s.ls.GetBillingReport(e.ctx, from, from.Add(time.Duration(p.a)*time.Hour), ids)
+			if err != nil {
+				return "err:" + ifaceClass(err)
+			}
+			out := make([]string, 0, len(rep.Projects))
+			for _, r := range rep.Projects {
+				out = append(out, fmt.Sprintf("%q|%d|%d|%d|%d|%d|%d", r.ProjectName, r.SecretCount, r.SecretReads, r.SecretWrites, r.SecretRotations, r.UniqueUsers, r.MachineReads))
+			}
+			return fmt.Sprintf("total=%+v %s", rep.Totals, sortedRows(out))
+		}
+	})
 }
 
 // opRegressionExpiryPagination drives the #4022 shape (equal expirations, offset paging
