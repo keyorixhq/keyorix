@@ -237,12 +237,16 @@ func TestRequestEchoCanarySweep(t *testing.T) {
 	}
 	seen := map[string]string{}
 	statuses := map[int]int{}
+	// One directory per request under a parent t.TempDir: each is removed as soon as
+	// the request ends, because a full sweep would otherwise keep every database copy
+	// on disk until the test finished, and the parent is removed however the test ends.
+	root := t.TempDir()
 	t.Logf("routes: %d", len(fx.routes))
 	for ri := *echoSweepFrom; ri < min(len(fx.routes), *echoSweepTo); ri += step {
 		for pi := range 4 {
 			for sh := range echoShapes {
 				in := requestEchoInput{route: uint16(ri), principal: uint8(pi), shape: uint8(sh)}
-				dir, err := os.MkdirTemp("", "echo-sweep-*")
+				dir, err := os.MkdirTemp(root, "echo-sweep-*")
 				if err != nil {
 					t.Fatal(err)
 				}
