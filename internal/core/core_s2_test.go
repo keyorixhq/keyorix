@@ -84,7 +84,7 @@ func TestRevokeOwnSession_ZeroIDs(t *testing.T) {
 func TestGetProject_Delegated(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetProject", mock.Anything, uint(7)).Return(&models.Project{ID: 7, Name: "web"}, nil)
+	ms.On("GetProject", mock.Anything, uint(7)).Return(&models.Project{ID: 7, Name: "web-app"}, nil)
 	c := NewKeyorixCore(ms)
 	p, err := c.GetProject(context.Background(), 7)
 	require.NoError(t, err)
