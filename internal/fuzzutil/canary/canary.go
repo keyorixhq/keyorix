@@ -258,9 +258,12 @@ func maskedSnippet(data []byte, off, n int) string {
 // Rule permits one kind of hit. An empty field matches anything, so a rule should
 // name every field it can. Origin is the harness's name for what produced the
 // output (a route, an operation or a CLI vector). A Channel ending in "*" matches
-// by prefix. MetadataOnly restricts the rule to Metadata-class canaries.
+// by prefix. MetadataOnly restricts the rule to Metadata-class canaries. A canary
+// whose label starts with DenyLabelPrefix is not covered: it lets a rule permit the
+// caller's own fields while denying a value the caller never sent.
 type Rule struct {
 	ID, Channel, Origin, Label, Why string
+	DenyLabelPrefix                 string
 	MetadataOnly                    bool
 }
 
@@ -287,6 +290,9 @@ func NewAllowlist(rules ...Rule) *Allowlist {
 func (a *Allowlist) Permit(h Hit, origin string) string {
 	for _, r := range a.rules {
 		if r.MetadataOnly && h.Class != Metadata {
+			continue
+		}
+		if r.DenyLabelPrefix != "" && strings.HasPrefix(h.Label, r.DenyLabelPrefix) {
 			continue
 		}
 		if r.matchesChannel(h.Channel) && (r.Origin == "" || r.Origin == origin) && (r.Label == "" || r.Label == h.Label) {
