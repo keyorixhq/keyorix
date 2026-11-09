@@ -27,7 +27,7 @@ func TestResetWorldTables_PostgresRowsAndBurntSequences(t *testing.T) {
 			t.Fatalf("%s: %v", ddl, err)
 		}
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if err := w.db.Exec("INSERT INTO zz_reset_rows (v) VALUES ('x')").Error; err != nil {
 			t.Fatal(err)
 		}
