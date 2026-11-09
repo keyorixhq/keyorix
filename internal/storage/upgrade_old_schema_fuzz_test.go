@@ -101,6 +101,7 @@ type ugManifest struct {
 type ugTemplate struct {
 	once      sync.Once
 	err       error
+	dir       string
 	dbFile    string
 	manifest  ugManifest
 	enc       *encryption.Service
@@ -157,6 +158,7 @@ func (tpl *ugTemplate) build(tag string) error {
 	if err != nil {
 		return err
 	}
+	tpl.dir = tmp
 	tpl.dbFile = filepath.Join(tmp, "template.db")
 	db, err := sql.Open("sqlite", tpl.dbFile)
 	if err != nil {
@@ -182,6 +184,16 @@ func (tpl *ugTemplate) build(tag string) error {
 		return fmt.Errorf("opening test key for %s: %w", tag, err)
 	}
 	return nil
+}
+
+// ugRemoveTemplates deletes the per-process template databases (TestMain calls it).
+func ugRemoveTemplates() {
+	ugTemplates.Range(func(_, v any) bool {
+		if tpl := v.(*ugTemplate); tpl.dir != "" {
+			_ = os.RemoveAll(tpl.dir)
+		}
+		return true
+	})
 }
 
 func ugFold(name string) string {

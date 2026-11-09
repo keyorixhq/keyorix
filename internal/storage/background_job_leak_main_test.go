@@ -21,6 +21,7 @@ import (
 // (KEYORIX_TEST_PG_DSN set): on SQLite no background job starts.
 func TestMain(m *testing.M) {
 	code := m.Run()
+	ugRemoveTemplates()
 	if leaked := store.LiveBackgroundJobs(); len(leaked) > 0 {
 		fmt.Fprintf(os.Stderr, "FAIL: %d storage background job(s) still running after every test returned; the test that built the storage must Close it (createStorageClosedAtCleanup). Started at:\n", len(leaked))
 		for _, stack := range leaked {
