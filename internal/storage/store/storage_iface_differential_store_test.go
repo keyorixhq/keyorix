@@ -193,9 +193,10 @@ func ifaceSeeds(f *testing.F) {
 	for op, modes := range ifaceOpModes {
 		var prog []byte
 		for m := range modes {
-			// A create first (mode 0 of most families) so later modes have a row.
-			prog = append(prog, ifaceStep(op, 0, 1, 1+2)...)
-			prog = append(prog, ifaceStep(op, m, 1, 1+m)...)
+			// A create first (mode 0 of most families) so later modes find a row at
+			// handle 0; a=b=0 selects that row and the same name again.
+			prog = append(prog, ifaceStep(op, 0, 0, 0)...)
+			prog = append(prog, ifaceStep(op, m, 0, 0)...)
 			if len(prog) >= 12*4 {
 				f.Add(slices.Clone(prog), "seedAlpha", "seedBeta")
 				prog = nil
@@ -204,6 +205,8 @@ func ifaceSeeds(f *testing.F) {
 		if prog != nil {
 			f.Add(slices.Clone(prog), "seedAlpha", "seedBeta")
 		}
+		// The same family with a second name and row selection.
+		f.Add(ifaceProgram(ifaceStep(op, 0, 1, 0), ifaceStep(op, 0, 2, 1), ifaceStep(op, 1, 1, 1), ifaceStep(op, 2, 2, 1), ifaceStep(op, 3, 1, 1)), "seedAlpha", "seedBeta")
 	}
 	// The name pool's normalisation and case twins, in each family's unique or name path.
 	for _, op := range []int{opIdxRole, opIdxPerm, opIdxChannel, opIdxTemplate, opIdxPAT, opIdxSysMeta, opIdxRegressionProjectName} {
