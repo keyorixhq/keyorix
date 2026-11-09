@@ -731,7 +731,7 @@ func ugSeeds() [][]byte {
 func FuzzUpgradeFromOldSchema(f *testing.F) {
 	seeds := ugSeeds()
 	if !ugAllSeeds() {
-		seeds = seeds[ugPlainSeed:ugPlainSeed+1]
+		seeds = seeds[ugPlainSeed : ugPlainSeed+1]
 	}
 	for i := range ugSources {
 		for _, s := range seeds {
