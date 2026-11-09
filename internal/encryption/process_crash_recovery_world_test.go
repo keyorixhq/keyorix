@@ -44,6 +44,9 @@ const (
 	pcrashUpdValue = "pcrash-updated-value"
 	pcrashNewRole  = "pcrash-custom-role"
 	pcrashUpdName  = "pcrash-base-0"
+
+	// pcrashWidenBobSQL grants the admin role to a user the fixture never makes admin.
+	pcrashWidenBobSQL = "INSERT INTO user_roles (user_id, role_id, project_id, environment_id) SELECT u.id, r.id, 0, 0 FROM users u, roles r WHERE u.username = 'pcrash-bob' AND r.name = 'admin'"
 )
 
 // pcrashSeed is the fixed part of an install, written once by the "seed" action.
@@ -369,6 +372,25 @@ func runPCrashCoreAction(ctx context.Context, action string) int {
 		if err := inst.db.Exec("DELETE FROM secret_versions WHERE secret_node_id = (SELECT id FROM secret_nodes WHERE name = ?)", pcrashUpdName).Error; err != nil {
 			fmt.Fprintln(os.Stderr, "corrupt:", err)
 			return pcrashExitHarness
+		}
+		return 0
+	}
+	if action == "rerun-noop" {
+		return 0 // Red-proof control: a rerun that completes and changes nothing.
+	}
+	if action == "rerun-refuse" {
+		fmt.Fprintln(os.Stderr, "Error: red-proof refusal")
+		return 1
+	}
+	if action == "rerun-widen" || action == "rerun-refuse-widen" {
+		// Red-proof only: a rerun that grants bob admin, then reports success or a refusal.
+		if err := inst.db.Exec(pcrashWidenBobSQL).Error; err != nil {
+			fmt.Fprintln(os.Stderr, "widen:", err)
+			return pcrashExitHarness
+		}
+		if action == "rerun-refuse-widen" {
+			fmt.Fprintln(os.Stderr, "Error: red-proof refusal")
+			return 1
 		}
 		return 0
 	}

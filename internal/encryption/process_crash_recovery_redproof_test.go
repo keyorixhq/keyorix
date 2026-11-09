@@ -249,7 +249,7 @@ func TestProcessCrashRedProof(t *testing.T) {
 	})
 	t.Run("I4-privilege-widened", func(t *testing.T) {
 		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-			pcrashExecSQL(t, dir, "INSERT INTO user_roles (user_id, role_id, project_id, environment_id) SELECT u.id, r.id, 0, 0 FROM users u, roles r WHERE u.username = 'pcrash-bob' AND r.name = 'admin'")
+			pcrashExecSQL(t, dir, pcrashWidenBobSQL)
 		})
 		t.Run("I3-undecryptable-version", func(t *testing.T) {
 			t.Parallel()
@@ -286,6 +286,40 @@ func TestProcessCrashRedProof(t *testing.T) {
 				pcrashExecSQL(t, dir, "DROP TABLE secret_tags")
 			})
 			pcrashWant(t, v, "I5")
+		if len(v) == 0 || !strings.Contains(v[0], "backup made after a kill") {
+			t.Fatalf("the backup-after-kill oracle did not fire: %v", v)
+		}
+		t.Logf("fired as expected: %s", pcrashTail(v[0]))
+	})
+	for _, c := range []struct{ name, action, want string }{
+		{"I5-rerun-panics", "rerun-panic", "I5"},
+		{"I5-rerun-corrupts", "rerun-corrupt", "I5"},
+		{"I5-completed-rerun-moves-authorization", "rerun-widen", "I5 authorization after a completed"},
+		{"I5-refused-rerun-moves-authorization", "rerun-refuse-widen", "I5 authorization after a refused"},
+		{"control-rerun-completes-unchanged", "rerun-noop", ""},
+		{"control-rerun-refuses-unchanged", "rerun-refuse", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := pcrashCopyTree(w.dir, dir); err != nil {
+				t.Fatal(err)
+			}
+			st, err := w.prepare(dir, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			broken := pcrashOp{name: c.action, after: pcrashSame}
+			cal := w.calibrate(t, pcrashOps[6])
+			after := &pcrashModel{Ledger: st.before.Ledger.clone(), Roles: cal.ref.Roles, Authz: st.before.Authz}
+			m := &pcrashModel{Ledger: st.before.Ledger, Roles: st.before.Roles, Authz: st.before.Authz}
+			v := w.checkRerun(t, broken, dir, pcrashPass, st, after, m)
+			if c.want == "" {
+				if len(v) > 0 {
+					t.Fatalf("control: %v", v)
+				}
+				return
+			}
+			pcrashWant(t, v, c.want)
 		})
 		t.Run("backup-after-kill-control-and-damage", func(t *testing.T) {
 			t.Parallel()

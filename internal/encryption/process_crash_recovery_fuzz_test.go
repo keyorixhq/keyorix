@@ -705,6 +705,16 @@ func (w *pcrashWorld) checkRerun(t *testing.T, op pcrashOp, dir, pass string, st
 	if r.exit == 0 && !reflect.DeepEqual(m.Roles, after.Roles) {
 		return []string{fmt.Sprintf("I5 roles after a completed rerun differ from the after model: %v", m.Roles)}
 	}
+	if r.exit == 0 {
+		if !reflect.DeepEqual(m.Authz, after.Authz) {
+			return []string{fmt.Sprintf("I5 authorization after a completed rerun differs from the after model: %v", pcrashAuthzDiff(m.Authz, after.Authz))}
+		}
+		return nil
+	}
+	authzAllowed := []map[string]bool{st.before.Authz, after.Authz, afterKill.Authz}
+	if !slices.ContainsFunc(authzAllowed, func(a map[string]bool) bool { return reflect.DeepEqual(m.Authz, a) }) {
+		return []string{fmt.Sprintf("I5 authorization after a refused rerun is not an allowed state: vs before %v, vs after %v", pcrashAuthzDiff(m.Authz, st.before.Authz), pcrashAuthzDiff(m.Authz, after.Authz))}
+	}
 	return nil
 }
 
