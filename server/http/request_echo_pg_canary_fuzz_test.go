@@ -472,7 +472,9 @@ func TestRequestEchoPGOracleCatchesWrappingShim(t *testing.T) {
 		})
 	}
 	t.Run("shim-secret-in-body", func(t *testing.T) {
-		wrap := withTracedDetail(func(r *requestEchoRun, w http.ResponseWriter, _ string) { _, _ = w.Write([]byte("db error: " + r.sBody.Raw)) })
+		wrap := withTracedDetail(func(r *requestEchoRun, w http.ResponseWriter, _ string) {
+			_, _ = w.Write([]byte("db error: " + r.sBody.Raw))
+		})
 		r, _, invalid := runRequestEchoPG(t, fx, in, requestEchoRules(), wrap, nil)
 		if invalid != "" {
 			t.Fatal(invalid)
