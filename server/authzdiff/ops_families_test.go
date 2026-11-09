@@ -329,12 +329,8 @@ func familyOps() []opSpec {
 			// the ACL recipient holds project_viewer@P; arg 0 re-sets the same role (no-op).
 			name: "member.setrole", row: "SetProjectMemberRole", targets: projTargets, grantArgs: true, selfMachineGranter: true,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
-				rn, rid := grantRole(fx, a)
-				if rn == "project_viewer" {
-					// documented no-op: the member already holds exactly this role
-					// (SetProjectMemberRole: audited only), so nothing is granted.
-					return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t)}
-				}
+				// The ceiling is judged before the no-op return, so arg 0 carries it too.
+				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}
 			},
 			core: func(ctx context.Context, lg *leg, p *principal, t tgt, a byte) error {
