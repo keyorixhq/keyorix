@@ -536,6 +536,19 @@ func TestOwedAuditOracle_SweepEveryScopedOp(t *testing.T) {
 			owedCalSweepOp(t, op, kinds, nths, owedSweepReusedDrive(t), nil, &accepted, &same, &neverFired, &notSuccess, &multiOwed)
 		})
 	}
+	// The whole grid ran: every op x every audit-path method x ordinal x kind was either
+	// judged without a finding or counted as never fired. Speeding the reset up must not
+	// let a case drop out silently (a case that errors fails its own subtest, so this
+	// is only checked on an otherwise green sweep).
+	wantCases := 0
+	for _, maxNth := range nths {
+		wantCases += maxNth * len(kinds)
+	}
+	wantCases *= len(ops)
+	if !t.Failed() && accepted+neverFired != wantCases {
+		t.Errorf("the sweep evaluated %d cases (%d without finding, %d never fired), the grid has %d (%d ops x %d method/ordinal/kind cells)",
+			accepted+neverFired, accepted, neverFired, wantCases, len(ops), wantCases/max(len(ops), 1))
+	}
 	t.Logf("sweep: %d ops; cases with no finding: %d (of which state == reference: %d, reported errors: %d); fault never fired: %d",
 		len(ops), accepted, same, notSuccess, neverFired)
 	t.Logf("ops owing more than one audit row: %v", multiOwed)

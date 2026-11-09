@@ -22,6 +22,22 @@ var scimSweepOps = []string{
 	"REST DELETE /scim/v2/Users/{id}",
 }
 
+// scimSweepExpectedInputs pins how many inputs the sweep probes per op (call 1..min(count, 5)
+// x 3 kinds over the methods Execute calls) and how many of them fire. A sweep that quietly
+// probes fewer inputs (a reset that changes what Execute calls, a skipped method) fails here
+// instead of passing on less coverage. When an op legitimately changes its storage calls,
+// update the number in the same commit and say why.
+var scimSweepExpectedInputs = map[string]int{
+	"REST PUT /scim/v2/Groups/{id}":    33,
+	"REST PATCH /scim/v2/Groups/{id}":  36,
+	"REST DELETE /scim/v2/Groups/{id}": 51,
+	"REST POST /scim/v2/Groups":        21,
+	"REST POST /scim/v2/Users":         24,
+	"REST PUT /scim/v2/Users/{id}":     66,
+	"REST PATCH /scim/v2/Users/{id}":   60,
+	"REST DELETE /scim/v2/Users/{id}":  63,
+}
+
 // TestSCIMOpsFaultSweep is TestOpFaultSweep for scimSweepOps, cheap enough for the
 // default run: instead of every storage method (7125 inputs per op, minutes), it runs
 // the op once unfaulted, records which storage methods Execute calls and how often, and
@@ -35,6 +51,9 @@ var scimSweepOps = []string{
 // byte of ~300.
 func TestSCIMOpsFaultSweep(t *testing.T) {
 	methods := storageInterfaceMethodNames()
+	if len(scimSweepExpectedInputs) != len(scimSweepOps) {
+		t.Fatalf("scimSweepExpectedInputs pins %d ops, scimSweepOps lists %d", len(scimSweepExpectedInputs), len(scimSweepOps))
+	}
 	ref := buildReusableFaultWorld(t, nil)
 	w := buildReusableFaultWorld(t, nil)
 	for _, key := range scimSweepOps {
@@ -61,6 +80,9 @@ func TestSCIMOpsFaultSweep(t *testing.T) {
 		}
 		if fired == 0 {
 			t.Fatalf("op %q: none of the %d probed inputs fired a fault, the sweep checks nothing", key, total)
+		}
+		if want, ok := scimSweepExpectedInputs[key]; !ok || total != want || fired != want {
+			t.Errorf("op %q: probed %d inputs and %d fired, pinned %d (every probed input must fire; see scimSweepExpectedInputs)", key, total, fired, want)
 		}
 		t.Logf("SWEEP %s: %d of %d probed inputs fired a fault and were checked by the oracles", key, fired, total)
 	}
