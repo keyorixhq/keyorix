@@ -189,7 +189,7 @@ class SyntheticRulesTest(unittest.TestCase):
 
 
 class ConverterTest(unittest.TestCase):
-    EXCERPT = os.path.join(DATA, "faultops-4-excerpt.log")
+    EXCERPT = os.path.join(DATA, "faultops-4-excerpt.txt")
 
     def test_real_log_excerpt_gives_top_level_tests_only(self):
         rows = ltt.convert([f"faultops-4={self.EXCERPT}"])
