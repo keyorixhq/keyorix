@@ -25,7 +25,7 @@ import (
 // operation and the check, and returns the violations.
 func (w *pcrashPGWorld) pcrashPGRedProof(t *testing.T, op pcrashOp, split string, killAt int64, plant func(inst *pcrashPGInst)) []string {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	inst := w.newInstall(t, w.templateDB, w.dir)
 	st, err := w.prepare(inst.dir, 1)
 	if err != nil {
