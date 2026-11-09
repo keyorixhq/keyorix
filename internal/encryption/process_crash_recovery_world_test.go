@@ -129,7 +129,7 @@ func openPCrashInstall(dir, pass string) (_ *pcrashInstall, err error) {
 		return nil, fmt.Errorf("rotation recovery: %w", err)
 	}
 	if err := inst.svc.Initialize(pass); err != nil {
-		return nil, fmt.Errorf("%w: %w", errPCrashKey, err)
+		return nil, fmt.Errorf("key initialization: %w", err)
 	}
 	inst.core = core.NewKeyorixCore(store)
 	inst.core.SetSecretValueEncryptor(inst.svc)
@@ -139,10 +139,6 @@ func openPCrashInstall(dir, pass string) (_ *pcrashInstall, err error) {
 	}
 	return inst, nil
 }
-
-// errPCrashKey marks Initialize refusing the passphrase or the key files, which
-// is how the parent learns a passphrase is not the install's current one.
-var errPCrashKey = errors.New("key initialization refused")
 
 func (i *pcrashInstall) close() {
 	if i.svc != nil {

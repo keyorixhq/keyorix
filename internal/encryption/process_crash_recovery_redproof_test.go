@@ -201,6 +201,49 @@ func TestProcessCrashRedProof(t *testing.T) {
 		t.Run("I3-split-transaction", func(t *testing.T) {
 			t.Parallel()
 			pcrashWant(t, pcrashRedProof(t, w, dek, "rotate-dek-split", 0, nil), "I3")
+		pcrashWant(t, v, "I1")
+	})
+	t.Run("I1-refusal-must-be-the-products", func(t *testing.T) {
+		// A directory in the DEK's place fails in key reconciliation or key
+		// initialization, and is no refusal an operator is told how to resolve.
+		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+			dek := filepath.Join(dir, "keys", "dek.key")
+			if err := os.Remove(dek); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(dek, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		})
+		pcrashWant(t, v, "I1 reopen failed without a documented")
+	})
+	t.Run("control-product-refusals-are-documented", func(t *testing.T) {
+		wrongFirst := update
+		wrongFirst.passes = []string{"pcrash-not-the-passphrase", pcrashPass}
+		if v := pcrashRedProof(t, w, wrongFirst, "", 1, nil); len(v) > 0 {
+			t.Fatalf("a wrong passphrase is a documented refusal: %v", v)
+		}
+		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+			if err := os.Remove(filepath.Join(dir, "keys", "dek.key")); err != nil {
+				t.Fatal(err)
+			}
+		})
+		pcrashWant(t, v, "I1 no passphrase opens")
+		dir := t.TempDir()
+		if err := pcrashCopyTree(w.dir, dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".keyorix-restore-journal.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		o := pcrashOpenGuarded(dir, pcrashPass)
+		if o.err == nil || !pcrashExplicitOpenError(o.err) {
+			t.Fatalf("the restore journal refusal is documented: inst=%v err=%v", o.inst != nil, o.err)
+		}
+	})
+	t.Run("I2-version-row-lost", func(t *testing.T) {
+		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+			pcrashExecSQL(t, dir, "DELETE FROM secret_versions WHERE id = (SELECT MAX(v.id) FROM secret_versions v JOIN secret_nodes n ON n.id = v.secret_node_id WHERE n.name = 'pcrash-base-2')")
 		})
 		t.Run("I1-database-destroyed", func(t *testing.T) {
 			t.Parallel()

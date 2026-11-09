@@ -499,14 +499,23 @@ func pcrashOpenGuarded(dir, pass string) (o pcrashOpened) {
 	return pcrashOpened{inst: inst, err: err}
 }
 
-// pcrashExplicitOpenError reports whether err is a refusal an operator is told
-// how to resolve, as opposed to an unexplained failure to open. The list is the
-// set of refusals with documented recovery steps; anything else fails I1.
+// pcrashDocumentedRefusals is the text of each refusal the product tells an
+// operator how to resolve. Keyed on the product's own wording, never on a wrapper
+// added by openPCrashInstall: those wrap every failure of a step, refusal or not.
+var pcrashDocumentedRefusals = []string{
+	"an interrupted `admin restore` left its journal at",            // restorejournal.RefuseIfPresent
+	"key material is an incomplete set",                             // keyfiles.InspectKeySet
+	"key material does not match the key-set manifest",              // keyfiles.InspectKeySet
+	"key material is incoherent",                                    // keyfiles classifyIntent
+	"failed to unwrap DEK — wrong passphrase or corrupted key file", // KeyManager.unwrapDEK
+}
+
+// pcrashExplicitOpenError reports whether err is one of those refusals, as
+// opposed to an unexplained failure to open; anything else fails I1.
 func pcrashExplicitOpenError(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "admin restore --recover") ||
-		strings.Contains(msg, "key file consistency") ||
-		errors.Is(err, errPCrashKey)
+	return slices.ContainsFunc(pcrashDocumentedRefusals, func(refusal string) bool {
+		return strings.Contains(err.Error(), refusal)
+	})
 }
 
 func pcrashModelEqual(a, b *pcrashModel) bool {
