@@ -171,7 +171,7 @@ func (w *pcrashPGWorld) calibratePG(t *testing.T, op pcrashOp) pcrashPGCalibrati
 		return c
 	}
 	inst := w.newInstall(t, w.templateDB, w.dir)
-	ctx := context.Background()
+	ctx := t.Context()
 	r, err := w.runOp(inst, op, pcrashPass, 0, pcrashPGModeKill, "", true)
 	if err != nil {
 		t.Fatalf("calibrate %s: %v", op.name, err)
@@ -313,7 +313,7 @@ func (w *pcrashPGWorld) pcrashPGJournalRecover(t *testing.T, inst *pcrashPGInst)
 // exec is one input against one operation, returning its violations.
 func (w *pcrashPGWorld) exec(t *testing.T, op pcrashOp, killAt int64, stateRaw uint16, mode string) []string {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	inst := w.newInstall(t, w.templateDB, w.dir)
 	var st pcrashExecState
 	if stateRaw == 0 {
@@ -358,7 +358,7 @@ func (w *pcrashPGWorld) exec(t *testing.T, op pcrashOp, killAt int64, stateRaw u
 // on the clean schema, as the SQLite leg's runPCrashMigrate does.
 func (w *pcrashPGWorld) execMigrate(t *testing.T, killAt int64, mode string, plant func(dbName string)) (violations []string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	want := w.migrateSchema(t)
 	inst := w.newInstall(t, "", w.freshDir)
 	run, err := w.runOp(inst, pcrashOp{name: "migrate-fresh", admin: pcrashMigrateArgs}, pcrashPass, killAt, mode, "", false)
@@ -433,7 +433,7 @@ func (w *pcrashPGWorld) migrateSchema(t *testing.T) string {
 	if run.exit != 0 {
 		t.Fatalf("calibrate migrate: exit %d: %s", run.exit, pcrashTail(pcrashPGScrub(errors.New(run.output), w.srv.password)))
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := w.srv.quiesce(ctx, inst.db); err != nil {
 		t.Fatal(err)
 	}
@@ -592,7 +592,7 @@ func TestProcessCrashSQLiteOutcomes(t *testing.T) {
 	}
 	w := pcrashWorldFor(t)
 	sel := pcrashSelectedOps()
-	ctx := context.Background()
+	ctx := t.Context()
 	began := time.Now()
 	done := pcrashOutcomesDone("sqlite")
 	for _, op := range pcrashOps {
@@ -646,7 +646,7 @@ func TestProcessCrashSQLiteOutcomes(t *testing.T) {
 // It reports whether the known clean-host refusal (issue #4058) happened.
 func (w *pcrashPGWorld) checkBackupAfterKilledRotation(t *testing.T, killAt int64, plant func(dbName string)) (bool, []string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	op := pcrashOps[0]
 	inst := w.newInstall(t, w.templateDB, w.dir)
 	st, err := w.prepare(inst.dir, uint16(killAt))
@@ -717,7 +717,7 @@ func (w *pcrashPGWorld) checkBackupAfterKilledRotation(t *testing.T, killAt int6
 // checkCleanHostRestore is the replacement-host half; see issue #4058.
 func (w *pcrashPGWorld) checkCleanHostRestore(t *testing.T, archive []byte, label string, st pcrashExecState) (bool, []string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	target := w.newInstall(t, w.templateDB, w.dir)
 	if err := os.WriteFile(filepath.Join(target.dir, "post.tar.gz"), archive, 0o600); err != nil {
 		t.Fatal(err)
@@ -774,9 +774,11 @@ func TestProcessCrashPGBackupAfterKilledRotation(t *testing.T) {
 }
 
 func FuzzProcessCrashRecoveryPG(f *testing.F) {
-	for i := range len(pcrashOps) + 1 {
-		f.Add(uint8(i), uint16(3), uint16(i)*7, uint8(i))
-	}
+	// Two seeds only: one secret-update exec costs minutes through a slow link,
+	// and the mutator reaches the other operations from either.
+	// TestProcessCrashPGExhaustive is what covers the kill points.
+	f.Add(uint8(5), uint16(3), uint16(0), uint8(0))
+	f.Add(uint8(5), uint16(3), uint16(0), uint8(3))
 	if os.Getenv(envPCrashPGDSN) == "" {
 		// Seed execs still have to pass; without a server there is nothing to do.
 		f.Skip(envPCrashPGDSN + " not set")
