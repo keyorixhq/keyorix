@@ -285,8 +285,7 @@ func TestUpgradeInterrupted_StopThatNeverFiresIsNotAPass(t *testing.T) {
 // docs/findings/2026-11-09-FINDING-v091-interrupted-upgrade-artifact.md.
 // TestUpgradeInterrupted_KnownIndexGaps_StillOpen pins ugStopWindowDiffs, the
 // tolerated post-stop lines: each row must still show its missing index. It goes
-// red when one is fixed, and the row then has to go; or when a step was inserted
-// before it, in which case the stop positions need re-measuring.
+// red when one is fixed, and the row then has to go.
 func TestUpgradeInterrupted_KnownIndexGaps_StillOpen(t *testing.T) {
 	tpl, err := ugLoadTemplate(ugStopWindowSource)
 	if err != nil {
@@ -297,17 +296,21 @@ func TestUpgradeInterrupted_KnownIndexGaps_StillOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, row := range ugStopWindowDiffs {
-		t.Run(fmt.Sprintf("stop_%d", row.Stop), func(t *testing.T) {
+		t.Run(row.Stop, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "gap.db")
 			if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ugInterruptedMigrate(t, dbPath, row.Stop); err != nil {
+			outcome, err := ugInterruptedMigrateWhen(t, dbPath, func(_ int64, stmt string) bool { return strings.Contains(stmt, row.Stop) })
+			if err != nil {
 				t.Fatal(err)
+			}
+			if !outcome.Fired {
+				t.Fatalf("no statement of the upgrade from %s mentions %s; update ugStopWindowDiffs", ugStopWindowSource, row.Stop)
 			}
 			st, err := NewStorageFactory().CreateStorage(ugLocalConfig(dbPath))
 			if err != nil {
-				t.Fatalf("restart after stop %d: %v", row.Stop, err)
+				t.Fatalf("restart after a stop at %s: %v", row.Stop, err)
 			}
 			if err := ugCloseStorage(st); err != nil {
 				t.Fatal(err)
@@ -321,7 +324,7 @@ func TestUpgradeInterrupted_KnownIndexGaps_StillOpen(t *testing.T) {
 			diff := ugSchemaDiff(fresh, got)
 			for _, line := range row.Lines {
 				if !slices.Contains(diff, line) {
-					t.Errorf("known index gap no longer occurs at stop %d on %s; remove the row from ugStopWindowDiffs: %s", row.Stop, ugStopWindowSource, line)
+					t.Errorf("known index gap no longer occurs after a stop at %s on %s; remove the row from ugStopWindowDiffs: %s", row.Stop, ugStopWindowSource, line)
 				}
 			}
 		})

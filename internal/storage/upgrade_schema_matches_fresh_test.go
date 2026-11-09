@@ -201,37 +201,36 @@ var ugExpectedSchemaDiffs = []struct {
 	}},
 }
 
-// ugStopWindowSource is the source the stop positions in ugStopWindowDiffs are for.
+// ugStopWindowSource is the source the pin on ugStopWindowDiffs runs against.
 const ugStopWindowSource = "v0.93.0"
 
-// ugStopWindowDiffs are the indexes a restart does not repair, each with one stop
-// position (on ugStopWindowSource's bare snapshot) that shows it. Open defect, same
+// ugStopWindowDiffs are the indexes a restart does not repair. Open defect, same
 // shape every time: a step creates a table or column and then its index, gated on
 // the table or column, so a crash between the two skips the index on every later
-// boot. The lines are tolerated only after a stop, where most stop positions do not
-// produce them, so a missing line cannot be judged per exec:
-// TestUpgradeInterrupted_KnownIndexGaps_StillOpen pins each row and fails when one
-// stops occurring. Steps appended to the end of migrateDatabase's list do not move
-// these positions.
+// boot. Stop is the statement to crash at, found by the index name in its SQL so a
+// step added elsewhere in the list does not move it. The lines are tolerated only
+// after a stop, where most stop positions do not produce them, so a missing line
+// cannot be judged per exec: TestUpgradeInterrupted_KnownIndexGaps_StillOpen pins
+// each row and fails when one stops occurring.
 var ugStopWindowDiffs = []struct {
-	Stop  int
+	Stop  string
 	Lines []string
 }{
-	{35, []string{"only in fresh: index login_attempts.idx_login_attempt_reservation_key unique=1 partial=0 on reservation_key"}},
-	{46, []string{"only in fresh: index pending_audit_events.idx_pending_audit_events_created_at unique=0 partial=0 on created_at"}},
-	{54, []string{"only in fresh: index secret_templates.idx_secret_templates_name unique=1 partial=0 on name"}},
-	{56, []string{"only in fresh: index alert_escalation_policies.idx_alert_escalation_policies_name unique=1 partial=0 on name"}},
-	{60, []string{
+	{"idx_login_attempt_reservation_key", []string{"only in fresh: index login_attempts.idx_login_attempt_reservation_key unique=1 partial=0 on reservation_key"}},
+	{"idx_pending_audit_events_created_at", []string{"only in fresh: index pending_audit_events.idx_pending_audit_events_created_at unique=0 partial=0 on created_at"}},
+	{"idx_secret_templates_name", []string{"only in fresh: index secret_templates.idx_secret_templates_name unique=1 partial=0 on name"}},
+	{"idx_alert_escalation_policies_name", []string{"only in fresh: index alert_escalation_policies.idx_alert_escalation_policies_name unique=1 partial=0 on name"}},
+	{"idx_secret_version_comments_secret_id", []string{
 		"only in fresh: index secret_version_comments.idx_secret_version_comments_secret_id unique=0 partial=0 on secret_id",
 		"only in fresh: index secret_version_comments.idx_secret_version_comments_version_id unique=0 partial=0 on version_id",
 	}},
-	{63, []string{
+	{"idx_mfa_stepup_tokens_expires_at", []string{
 		"only in fresh: index mfa_stepup_tokens.idx_mfa_stepup_tokens_expires_at unique=0 partial=0 on expires_at",
 		"only in fresh: index mfa_stepup_tokens.idx_mfa_stepup_tokens_user_id unique=1 partial=0 on user_id",
 	}},
-	{66, []string{"only in fresh: index hygiene_trend_snapshots.idx_hygiene_trend_snapshots_snapshot_date unique=1 partial=0 on snapshot_date"}},
-	{68, []string{"only in fresh: index compliance_posture_snapshots.idx_compliance_posture_snapshots_snapshot_date unique=1 partial=0 on snapshot_date"}},
-	{90, []string{
+	{"idx_hygiene_trend_snapshots_snapshot_date", []string{"only in fresh: index hygiene_trend_snapshots.idx_hygiene_trend_snapshots_snapshot_date unique=1 partial=0 on snapshot_date"}},
+	{"idx_compliance_posture_snapshots_snapshot_date", []string{"only in fresh: index compliance_posture_snapshots.idx_compliance_posture_snapshots_snapshot_date unique=1 partial=0 on snapshot_date"}},
+	{"idx_mfa_reset_requests_expires_at", []string{
 		"only in fresh: index mfa_reset_requests.idx_mfa_reset_requests_expires_at unique=0 partial=0 on expires_at",
 		"only in fresh: index mfa_reset_requests.idx_mfa_reset_requests_status unique=0 partial=0 on status",
 		"only in fresh: index mfa_reset_requests.idx_mfa_reset_requests_target_user_id unique=0 partial=0 on target_user_id",

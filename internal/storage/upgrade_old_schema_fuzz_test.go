@@ -642,6 +642,14 @@ type ugStopOutcome struct {
 // durable, a transaction open at the stop rolls back when the connection closes.
 func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int) (ugStopOutcome, error) {
 	t.Helper()
+	return ugInterruptedMigrateWhen(t, dbPath, func(seen int64, _ string) bool { return seen >= int64(stopAfter) })
+}
+
+// ugInterruptedMigrateWhen is the seam itself: the first write statement for which
+// shouldStop is true fails, and so does every one after it. shouldStop gets the
+// statement's position and its SQL.
+func ugInterruptedMigrateWhen(t testing.TB, dbPath string, shouldStop func(seen int64, stmt string) bool) (ugStopOutcome, error) {
+	t.Helper()
 	gdb, err := openSQLiteGorm(sqliteDSN(dbPath))
 	if err != nil {
 		return ugStopOutcome{}, err
@@ -652,8 +660,11 @@ func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int) (ugStopOut
 	}
 	defer func() { _ = raw.Close() }()
 	var seen atomic.Int64
+	var fired atomic.Bool
 	stop := func(db *gorm.DB) {
-		if seen.Add(1) >= int64(stopAfter) {
+		n := seen.Add(1)
+		if fired.Load() || shouldStop(n, db.Statement.SQL.String()) {
+			fired.Store(true)
 			_ = db.AddError(errUgInterrupted)
 		}
 	}
@@ -683,7 +694,7 @@ func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int) (ugStopOut
 	}
 	return nil
 	migErr := (&DefaultStorageFactory{}).migrateDatabase(gdb)
-	return ugStopOutcome{Writes: seen.Load(), Fired: seen.Load() >= int64(stopAfter), Err: migErr}, nil
+	return ugStopOutcome{Writes: seen.Load(), Fired: fired.Load(), Err: migErr}, nil
 }
 
 // ugAllSeedsEnv makes a plain `go test` run the whole seed set.
