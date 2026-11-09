@@ -125,19 +125,26 @@ if [ -n "$top" ] && cd "$top"; then
       # "<pkg>|<FuzzFunc>" set vs the declared one. The real set comes from
       # `git grep` on HEAD (skipping testdata/, which `go test` ignores)
       # instead of `go test -list '^Fuzz' ./...`, which compiles every test
-      # package in three modules. FuzzXxx behind a build tag would differ.
+      # package in three modules. Build constraints are not evaluated: a
+      # FuzzXxx in a file with a //go:build line (e.g. taintoverlay, which
+      # `go test -list` does not see) counts as present for the stale-entry
+      # direction but is never reported as missing -- CI decides those.
       if ! bash scripts/fuzzing/gen-targets-conf.sh --check >"$fuzz_tmp/gen.txt" 2>&1; then
         cat "$fuzz_tmp/gen.txt" >&2
         fuzz_bad=1
       fi
       git grep --no-color -E '^func Fuzz[A-Za-z0-9_]*\(' HEAD -- '*_test.go' 2>/dev/null \
         | grep -v '/testdata/' \
-        | sed -n 's#^HEAD:\(.*\)/[^/]*_test\.go:func \(Fuzz[A-Za-z0-9_]*\)(.*#\1|\2#p' \
-        | sort -u >"$fuzz_tmp/true.txt" || true
+        | sed -n 's#^HEAD:\(.*\)/\([^/]*_test\.go\):func \(Fuzz[A-Za-z0-9_]*\)(.*#\1|\3|\1/\2#p' >"$fuzz_tmp/all.txt" || true
+      git grep --no-color -l -E '^//go:build' HEAD -- '*_test.go' 2>/dev/null \
+        | sed 's#^HEAD:##' >"$fuzz_tmp/tagged.txt" || true
+      cut -d'|' -f1,2 "$fuzz_tmp/all.txt" | sort -u >"$fuzz_tmp/all_pf.txt"
+      awk -F'|' 'FILENAME == ARGV[1] { t[$0] = 1; next } !($3 in t) { print $1 "|" $2 }' \
+        "$fuzz_tmp/tagged.txt" "$fuzz_tmp/all.txt" | sort -u >"$fuzz_tmp/true.txt"
       cat scripts/fuzzing/targets.d/*.conf \
         | grep -vE '^[[:space:]]*(#|$)' | cut -d'|' -f1,2 | sort -u >"$fuzz_tmp/declared.txt" || true
       fuzz_missing="$(comm -23 "$fuzz_tmp/true.txt" "$fuzz_tmp/declared.txt")"
-      fuzz_stale="$(comm -13 "$fuzz_tmp/true.txt" "$fuzz_tmp/declared.txt")"
+      fuzz_stale="$(comm -13 "$fuzz_tmp/all_pf.txt" "$fuzz_tmp/declared.txt")"
       if [ -n "$fuzz_missing" ]; then
         echo "pre-push: FuzzXxx functions with no entry in scripts/fuzzing/targets.d/ (<pkg>|<func>):" >&2
         printf '%s\n' "$fuzz_missing" | sed 's/^/  /' >&2

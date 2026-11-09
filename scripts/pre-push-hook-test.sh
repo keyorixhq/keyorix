@@ -155,6 +155,14 @@ commit_all "$d" "testdata fuzz"
 run_hook "$d" "$bin_full"
 check "FuzzXxx under testdata" 0 "fuzz targets OK"
 
+# 6b. a FuzzXxx in a //go:build file is never reported as missing (the hook
+# does not evaluate build constraints; CI decides), e.g. taintoverlay files.
+d=$(new_fixture fuzz-tagged)
+printf '//go:build taintoverlay\n\npackage a\n\nimport "testing"\n\nfunc FuzzTainted(f *testing.F) {}\n' >"$d/pkg/a/taint_test.go"
+commit_all "$d" "tagged fuzz"
+run_hook "$d" "$bin_full"
+check "FuzzXxx behind a build tag" 0 "fuzz targets OK"
+
 # 7. new package with no ledger row -> refused; fragment -> accepted.
 d=$(new_fixture ledger-new)
 mkdir -p "$d/pkg/b"
