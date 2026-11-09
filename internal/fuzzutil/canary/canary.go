@@ -3,11 +3,29 @@
 // output channels, and searches any output for the marker in its common encodings
 // and as a fragment of 8 or more bytes.
 //
-// It is imported only from _test.go files, including from the cli module, so it
-// must stay stdlib-only (plus internal/canary, which is stdlib-only too) and must
-// not import "testing". The encodings come from internal/canary; what this package
-// adds is the shorter fragment window, which needs a denser alphabet to stay sound
-// (see coreLen), and the capture of channels.
+// It is imported only from _test.go files, so it must stay stdlib-only (plus
+// internal/canary, which is stdlib-only too) and must not import "testing".
+//
+// It builds on internal/canary rather than replacing it. That package is the
+// matching engine of the PREREG.md oracle and its file is copied into DashDiag,
+// so it stays free of anything one caller needs. This package reuses its Class,
+// Canary and Canary.Variants, and adds what a fuzz target needs and that package
+// does not have:
+//
+//   - New seeds from the fuzz input bytes, where internal/canary.New takes a uint64,
+//     so a saved input replays the same canary.
+//   - The 62-letter core allows a window of MinWindow (8) bytes. internal/canary's
+//     hex core needs its WindowLen of 12 for the same entropy, so it would miss the
+//     shorter fragments; see coreLen.
+//   - Scanner also matches lower-cased and upper-cased forms, and hex and base64 of a
+//     fragment. internal/canary's window pass matches only the verbatim core.
+//   - Rule and Allowlist name the places a canary may appear, Capture records the
+//     process output channels, and DumpSQLite exposes every database column.
+//
+// New and Scanner are written again here instead of shared because the different
+// core and window change their logic throughout, and a parameterised version would
+// have to change the copied file for one caller. The cost is a second, similar scan
+// loop.
 package canary
 
 import (
