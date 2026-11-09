@@ -1,0 +1,1 @@
+internal/fuzzutil/canary	none	-	test-only helper for the secret-canary leak fuzz targets: mints replayable canaries, captures process output channels and scans for them; imported only by *_test.go files, not linked into any shipped binary	test-helper
