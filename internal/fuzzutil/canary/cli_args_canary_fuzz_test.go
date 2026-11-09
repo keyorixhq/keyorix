@@ -39,6 +39,8 @@ import (
 const (
 	cliChanFile = "file:"
 
+	cliBuildTimeout = 10 * time.Minute
+
 	// cliSecretPlaceholder, cliTokenPlaceholder and cliMetaPlaceholder are replaced
 	// with the canaries in a vector's arguments, environment and standard input.
 	cliSecretPlaceholder = "@S@"
@@ -317,15 +319,24 @@ func runCLICanary(t testing.TB, bin string, in cliCanaryInput, allow *canary.All
 // buildCanaryCLI builds the binary from the cli module. The module is outside the
 // repository's go.work, which is why the build has GOWORK=off. Living in the main
 // module keeps this harness out of the CLI's own dependency graph (INV-CLI-01).
+// The timeout detects a hung build and is generous enough for a cold cache on a
+// loaded machine.
 func buildCanaryCLI(tb testing.TB, dir string) string {
 	tb.Helper()
+	if testing.Short() {
+		tb.Skip("builds the CLI")
+	}
+	ctx, cancel := context.WithTimeout(tb.Context(), cliBuildTimeout)
+	defer cancel()
 	bin := filepath.Join(dir, "keyorix")
-	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, ".")
 	cmd.Dir = filepath.Join("..", "..", "..", "cli")
 	cmd.Env = append(os.Environ(), "GOWORK=off")
+	// A killed go build can leave compilers holding the output pipe open.
+	cmd.WaitDelay = 10 * time.Second
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		tb.Fatalf("build: %v\n%s", err, out)
+		tb.Fatalf("build: %v (%v)\n%s", err, ctx.Err(), out)
 	}
 	return bin
 }
