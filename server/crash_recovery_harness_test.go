@@ -70,7 +70,7 @@ func TestRunChild_DeadlineEndsHungChild(t *testing.T) {
 func TestRunChild_RecordsChangeWindow(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker")
-	w := &crashWorld{t: t, bin: fakeServerBin(t, "sleep 0.2\necho a > "+marker+"\nsleep 0.2\necho bb > "+marker)}
+	w := &crashWorld{t: t, bin: fakeServerBin(t, "sleep 0.6\necho a > "+marker+"\nsleep 0.6\necho bb > "+marker)}
 	var win changeWindow
 	_, changes, _, _, err := runChild(w, dir, "unused", []string{"noop"}, &killPlan{kind: "calibrate", window: &win})
 	if err != nil {
@@ -80,7 +80,9 @@ func TestRunChild_RecordsChangeWindow(t *testing.T) {
 	if changes < 2 || win.n != changes {
 		t.Fatalf("changes=%d window.n=%d, want at least 2 and equal", changes, win.n)
 	}
-	if win.first < 150*time.Millisecond || win.last-win.first < 150*time.Millisecond {
+	// The gaps are wide so a poller starved for a few hundred ms on a loaded CI
+	// runner still samples each state; the spans below stay under the sleeps.
+	if win.first < 450*time.Millisecond || win.last-win.first < 450*time.Millisecond {
 		t.Fatalf("window first=%s last=%s does not span the two sleeps", win.first, win.last)
 	}
 }
