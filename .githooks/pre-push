@@ -18,11 +18,27 @@
 # go.work) with its own CI lint job (working-directory: operator) -- handled
 # here as a second, independent pass over just the files under operator/.
 
+#
+# Two cheap merge-queue guards run after the lint (PREPUSH-MQ-GUARDS-1), each
+# only when the diff touches what it checks, each skipped quietly when its tool
+# is missing, each independent of golangci-lint being installed:
+#   - fuzz targets: mirrors CI's fuzz-targets steps (gen-targets-conf.sh --check
+#     and "targets.conf matches the real FuzzXxx functions"), but reads FuzzXxx
+#     declarations with git grep instead of compiling every package with
+#     `go test -list`. Runs when the diff adds/removes/renames a FuzzXxx
+#     function or touches scripts/fuzzing/targets.{conf,d}.
+#   - coverage ledger: runs scripts/check-review-coverage.sh (CI's "Verify every
+#     Go package has an adversarial-review coverage row") on its own, not
+#     check-closures.sh. Runs when the diff adds or removes a Go package
+#     directory of the root module or touches the ledger / its script.
+# Self-check: scripts/pre-push-hook-test.sh.
+
 set -e
 
+lint_available=1
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "pre-push: golangci-lint not found on PATH -- skipping local lint (CI still gates this)" >&2
-  exit 0
+  lint_available=0
 fi
 
 base_ref="origin/main"
@@ -40,9 +56,9 @@ if [ -z "$merge_base" ]; then
   exit 0
 fi
 
-changed="$(git diff --name-only "$merge_base" HEAD -- '*.go' '*.golangci.yml' 'go.mod' 'go.sum' 'operator/go.mod' 'operator/go.sum' 2>/dev/null || true)"
-if [ -z "$changed" ]; then
-  exit 0
+changed=""
+if [ "$lint_available" = 1 ]; then
+  changed="$(git diff --name-only "$merge_base" HEAD -- '*.go' '*.golangci.yml' 'go.mod' 'go.sum' 'operator/go.mod' 'operator/go.sum' 2>/dev/null || true)"
 fi
 
 status=0
@@ -83,6 +99,111 @@ fi
 
 if [ "$status" != 0 ]; then
   echo "pre-push: golangci-lint found issues above -- push refused. Fix them, or run 'git push --no-verify' to bypass (CI still gates this)." >&2
+fi
+
+# --- merge-queue guards (fuzz targets, coverage ledger) ---
+# Both read repo-relative paths; a hook may be started from a subdirectory.
+top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$top" ] && cd "$top"; then
+
+  # fuzz targets: CI's fuzz-targets job (merge queue) fails a round when a
+  # FuzzXxx function has no scripts/fuzzing/targets.d/ entry, an entry names a
+  # function that is gone, or targets.conf is stale against targets.d.
+  fuzz_why=""
+  if git diff --name-only "$merge_base" HEAD -- scripts/fuzzing/targets.conf scripts/fuzzing/targets.d 2>/dev/null | grep -q .; then
+    fuzz_why="scripts/fuzzing/targets.{conf,d} changed"
+  elif git diff -U0 "$merge_base" HEAD -- '*_test.go' 2>/dev/null | grep -qE '^[+-]func Fuzz[A-Za-z0-9_]*\('; then
+    fuzz_why="a FuzzXxx function was added, removed or renamed"
+  fi
+  if [ -n "$fuzz_why" ]; then
+    if [ ! -f scripts/fuzzing/gen-targets-conf.sh ] || [ ! -d scripts/fuzzing/targets.d ]; then
+      echo "pre-push: scripts/fuzzing/targets.d not found -- skipping the fuzz-targets check" >&2
+    else
+      fuzz_tmp="$(mktemp -d)"
+      fuzz_bad=0
+      # Same two comparisons as CI: targets.conf vs targets.d, then the real
+      # "<pkg>|<FuzzFunc>" set vs the declared one. The real set comes from
+      # `git grep` on HEAD (skipping testdata/, which `go test` ignores)
+      # instead of `go test -list '^Fuzz' ./...`, which compiles every test
+      # package in three modules. FuzzXxx behind a build tag would differ.
+      if ! bash scripts/fuzzing/gen-targets-conf.sh --check >"$fuzz_tmp/gen.txt" 2>&1; then
+        cat "$fuzz_tmp/gen.txt" >&2
+        fuzz_bad=1
+      fi
+      git grep --no-color -E '^func Fuzz[A-Za-z0-9_]*\(' HEAD -- '*_test.go' 2>/dev/null \
+        | grep -v '/testdata/' \
+        | sed -n 's#^HEAD:\(.*\)/[^/]*_test\.go:func \(Fuzz[A-Za-z0-9_]*\)(.*#\1|\2#p' \
+        | sort -u >"$fuzz_tmp/true.txt" || true
+      cat scripts/fuzzing/targets.d/*.conf \
+        | grep -vE '^[[:space:]]*(#|$)' | cut -d'|' -f1,2 | sort -u >"$fuzz_tmp/declared.txt" || true
+      fuzz_missing="$(comm -23 "$fuzz_tmp/true.txt" "$fuzz_tmp/declared.txt")"
+      fuzz_stale="$(comm -13 "$fuzz_tmp/true.txt" "$fuzz_tmp/declared.txt")"
+      if [ -n "$fuzz_missing" ]; then
+        echo "pre-push: FuzzXxx functions with no entry in scripts/fuzzing/targets.d/ (<pkg>|<func>):" >&2
+        printf '%s\n' "$fuzz_missing" | sed 's/^/  /' >&2
+        fuzz_bad=1
+      fi
+      if [ -n "$fuzz_stale" ]; then
+        echo "pre-push: scripts/fuzzing/targets.d/ declares FuzzXxx targets that are gone from the tree (<pkg>|<func>):" >&2
+        printf '%s\n' "$fuzz_stale" | sed 's/^/  /' >&2
+        fuzz_bad=1
+      fi
+      fuzz_n="$(grep -c . "$fuzz_tmp/true.txt" || true)"
+      rm -rf "$fuzz_tmp"
+      if [ "$fuzz_bad" = 0 ]; then
+        echo "pre-push: fuzz targets OK ($fuzz_why): $fuzz_n FuzzXxx function(s) match targets.d, targets.conf is current"
+      else
+        echo "pre-push: fuzz targets check failed ($fuzz_why) -- push refused. Fix: add/remove the matching one-file entry in scripts/fuzzing/targets.d/ (see its README.md), then run scripts/fuzzing/gen-targets-conf.sh; or 'git push --no-verify' (CI still gates this)." >&2
+        status=1
+      fi
+    fi
+  fi
+
+  # coverage ledger: CI's adr-numbers job fails a round when a root-module Go
+  # package has no docs/review-coverage row, or a row names a package that is
+  # gone. cli/, operator/, migrate/ and devtools/* are separate modules that
+  # `go list ./...` of the root does not see, so they are ignored here too.
+  ledger_why=""
+  if git diff --name-only "$merge_base" HEAD -- docs/review-coverage.tsv docs/review-coverage.d scripts/check-review-coverage.sh 2>/dev/null | grep -q .; then
+    ledger_why="the coverage ledger or its script changed"
+  else
+    nested_mods="$(git ls-files '*/go.mod' 2>/dev/null | sed 's#/go\.mod$##')"
+    added_dirs="$(git diff --name-only --no-renames --diff-filter=A "$merge_base" HEAD -- '*.go' 2>/dev/null | xargs -n1 dirname 2>/dev/null | sort -u)"
+    deleted_dirs="$(git diff --name-only --no-renames --diff-filter=D "$merge_base" HEAD -- '*.go' 2>/dev/null | xargs -n1 dirname 2>/dev/null | sort -u)"
+    for dir in $added_dirs $deleted_dirs; do
+      case "$dir" in .) continue ;; esac
+      case "/$dir/" in */testdata/*|*/_*|*/.*) continue ;; esac
+      in_nested=0
+      for m in $nested_mods; do
+        case "$dir/" in "$m"/*) in_nested=1 ;; esac
+      done
+      [ "$in_nested" = 1 ] && continue
+      had_go="$(git ls-tree --name-only "$merge_base" "$dir/" 2>/dev/null | grep -c '\.go$' || true)"
+      has_go="$(git ls-tree --name-only HEAD "$dir/" 2>/dev/null | grep -c '\.go$' || true)"
+      if [ "$had_go" = 0 ] && [ "$has_go" != 0 ]; then
+        ledger_why="new Go package $dir"
+        break
+      fi
+      if [ "$had_go" != 0 ] && [ "$has_go" = 0 ]; then
+        ledger_why="Go package $dir removed"
+        break
+      fi
+    done
+  fi
+  if [ -n "$ledger_why" ]; then
+    if [ ! -x scripts/check-review-coverage.sh ] || ! command -v go >/dev/null 2>&1; then
+      echo "pre-push: go or scripts/check-review-coverage.sh not found -- skipping the coverage-ledger check (CI still gates this)" >&2
+    else
+      ledger_start="$(date +%s)"
+      if ledger_out="$(scripts/check-review-coverage.sh 2>&1)"; then
+        echo "pre-push: coverage ledger OK ($ledger_why, $(( $(date +%s) - ledger_start ))s): $(printf '%s\n' "$ledger_out" | grep '^ok:' | head -1)"
+      else
+        printf '%s\n' "$ledger_out" >&2
+        echo "pre-push: coverage-ledger check failed ($ledger_why) -- push refused. Fix: add (or delete) the one-row fragment docs/review-coverage.d/<package with / as __>.tsv (see its README.md); or 'git push --no-verify' (CI still gates this)." >&2
+        status=1
+      fi
+    fi
+  fi
 fi
 
 # --- base-branch check: warn on a push to a branch whose ALREADY-OPEN PR is
