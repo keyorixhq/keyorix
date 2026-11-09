@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -42,16 +43,27 @@ const (
 // pcrashChildResult is what a child that was not killed reports. A killed child
 // reports only the seam label it died at.
 type pcrashChildResult struct {
-	Seams int64  `json:"seams"`
-	Label string `json:"label,omitempty"`
+	Seams  int64    `json:"seams"`
+	Label  string   `json:"label,omitempty"`
+	Labels []string `json:"labels,omitempty"` // every seam in order, on a run that was not told to die
 }
 
-var pcrashSeams atomic.Int64
+var (
+	pcrashSeams    atomic.Int64
+	pcrashLabelsMu sync.Mutex
+	pcrashLabels   []string
+)
 
 // installPCrashSeam makes this process SIGKILL itself at seam killAt.
 func installPCrashSeam(killAt int64, resultPath string) {
 	tick := func(label string) {
-		if pcrashSeams.Add(1) != killAt {
+		n := pcrashSeams.Add(1)
+		if killAt == 0 {
+			pcrashLabelsMu.Lock()
+			pcrashLabels = append(pcrashLabels, label)
+			pcrashLabelsMu.Unlock()
+		}
+		if n != killAt {
 			return
 		}
 		writePCrashResult(resultPath, pcrashChildResult{Seams: killAt, Label: label})
@@ -71,6 +83,13 @@ func installPCrashSeam(killAt int64, resultPath string) {
 		return nil
 	})
 	encryption.SetProcessCrashSeamForTest(tick)
+}
+
+// pcrashDieNow is the SIGKILL a red-proof action delivers at a point of its own
+// choosing; the seam counter plays no part.
+func pcrashDieNow() {
+	_ = syscall.Kill(syscall.Getpid(), syscall.SIGKILL)
+	select {} // the signal is already on its way; nothing may run after this point
 }
 
 func writePCrashResult(path string, r pcrashChildResult) {
@@ -112,6 +131,9 @@ func TestProcessCrashChild(t *testing.T) {
 	default:
 		code = runPCrashCoreAction(context.Background(), action)
 	}
-	writePCrashResult(resultPath, pcrashChildResult{Seams: pcrashSeams.Load()})
+	pcrashLabelsMu.Lock()
+	labels := pcrashLabels
+	pcrashLabelsMu.Unlock()
+	writePCrashResult(resultPath, pcrashChildResult{Seams: pcrashSeams.Load(), Labels: labels})
 	os.Exit(code)
 }

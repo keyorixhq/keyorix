@@ -100,6 +100,7 @@ type pcrashChildRun struct {
 	exit   int
 	seams  int64
 	label  string
+	labels []string // only on a run with no kill point
 	output string
 }
 
@@ -153,7 +154,7 @@ func runPCrashChild(dir, pass, action string, args []string, killAt int64) (pcra
 	if b, err := os.ReadFile(resultFile.Name()); err == nil && len(b) > 0 {
 		var res pcrashChildResult
 		if json.Unmarshal(b, &res) == nil {
-			r.seams, r.label = res.Seams, res.Label
+			r.seams, r.label, r.labels = res.Seams, res.Label, res.Labels
 		}
 	}
 	return r, nil
@@ -640,6 +641,14 @@ func (w *pcrashWorld) checkAfterDeath(t *testing.T, op pcrashOp, dir string, st 
 	}
 	if !reflect.DeepEqual(m.Authz, st.before.Authz) && !reflect.DeepEqual(m.Authz, after.Authz) {
 		v = append(v, fmt.Sprintf("I4 authorization is neither before nor after: vs before %v, vs after %v", pcrashAuthzDiff(m.Authz, st.before.Authz), pcrashAuthzDiff(m.Authz, after.Authz)))
+	}
+	// Each part being allowed on its own is not enough: all three must be the
+	// same side, or a change that spans two commits passes half-applied.
+	if len(v) == 0 && !pcrashModelEqual(m, st.before) && !pcrashModelEqual(m, after) {
+		v = append(v, fmt.Sprintf("I3 state mixes before and after: secrets match before=%v after=%v, roles before=%v after=%v, authorization before=%v after=%v",
+			ledgerBefore, ledgerAfter,
+			reflect.DeepEqual(m.Roles, st.before.Roles), reflect.DeepEqual(m.Roles, after.Roles),
+			reflect.DeepEqual(m.Authz, st.before.Authz), reflect.DeepEqual(m.Authz, after.Authz)))
 	}
 	for _, o := range opened {
 		o.inst.close()

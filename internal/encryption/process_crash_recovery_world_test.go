@@ -337,6 +337,15 @@ func runPCrashSeedAction(ctx context.Context, inst *pcrashInstall) error {
 	return os.WriteFile(pcrashSeedFile, b, 0o600)
 }
 
+func createPCrashRole(ctx context.Context, inst *pcrashInstall, seed pcrashSeed) error {
+	var ids []uint
+	if err := inst.db.Raw("SELECT id FROM permissions WHERE name IN ('secrets.read', 'secrets.write')").Scan(&ids).Error; err != nil {
+		return err
+	}
+	_, _, err := inst.core.CreateRole(ctx, seed.AdminID, pcrashNewRole, "fuzz", ids)
+	return err
+}
+
 // runPCrashCoreAction runs one core-level operation in the working directory.
 func runPCrashCoreAction(ctx context.Context, action string) int {
 	inst, err := openPCrashInstall(".", os.Getenv(envPCrashPass))
@@ -383,9 +392,18 @@ func runPCrashCoreAction(ctx context.Context, action string) int {
 	case "role-revoke":
 		err = c.RemoveUserRoleScoped(ctx, "alice@example.com", "project_viewer", scope)
 	case "role-create":
-		var ids []uint
-		if err = inst.db.Raw("SELECT id FROM permissions WHERE name IN ('secrets.read', 'secrets.write')").Scan(&ids).Error; err == nil {
-			_, _, err = c.CreateRole(ctx, seed.AdminID, pcrashNewRole, "fuzz", ids)
+		err = createPCrashRole(ctx, inst, seed)
+	case "role-mixed", "role-mixed-die-first", "role-mixed-die-between":
+		// Red-proof only: an operation whose two writes are two commits, so a
+		// kill between them leaves roles after and authorization before.
+		if action == "role-mixed-die-first" {
+			pcrashDieNow()
+		}
+		if err = createPCrashRole(ctx, inst, seed); err == nil {
+			if action == "role-mixed-die-between" {
+				pcrashDieNow()
+			}
+			err = c.AssignUserRoleScoped(ctx, "bob@example.com", "editor", scope)
 		}
 	default:
 		fmt.Fprintln(os.Stderr, "unknown action", action)

@@ -227,6 +227,29 @@ func TestProcessCrashRedProof(t *testing.T) {
 				pcrashExecSQL(t, dir, "INSERT INTO roles (name, name_folded, description) VALUES ('pcrash-planted', 'pcrash-planted', 'planted')")
 			})
 			pcrashWant(t, v, "I3")
+		pcrashWant(t, v, "I3")
+	})
+	t.Run("I3-two-passphrases-open", func(t *testing.T) {
+		// A real install cannot be opened by two passphrases on demand, so this
+		// proves only the counting branch: the same passphrase offered twice.
+		twice := update
+		twice.kek = true
+		twice.passes = []string{pcrashPass, pcrashPass}
+		pcrashWant(t, pcrashRedProof(t, w, twice, "", 1, nil), "I3")
+	})
+	t.Run("I3-mixed-roles-after-authorization-before", func(t *testing.T) {
+		mixed := pcrashOp{name: "role-mixed", after: pcrashSame}
+		if v := pcrashRedProof(t, w, mixed, "role-mixed-die-first", 0, nil); len(v) > 0 {
+			t.Fatalf("control: killed before either write is wholly before: %v", v)
+		}
+		if v := pcrashRedProof(t, w, mixed, "", 0, nil); len(v) > 0 {
+			t.Fatalf("control: a completed run is wholly after: %v", v)
+		}
+		pcrashWant(t, pcrashRedProof(t, w, mixed, "role-mixed-die-between", 0, nil), "I3 state mixes before and")
+	})
+	t.Run("I4-privilege-widened", func(t *testing.T) {
+		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+			pcrashExecSQL(t, dir, "INSERT INTO user_roles (user_id, role_id, project_id, environment_id) SELECT u.id, r.id, 0, 0 FROM users u, roles r WHERE u.username = 'pcrash-bob' AND r.name = 'admin'")
 		})
 		t.Run("I3-undecryptable-version", func(t *testing.T) {
 			t.Parallel()
