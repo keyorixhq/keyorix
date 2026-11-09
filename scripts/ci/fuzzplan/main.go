@@ -144,7 +144,7 @@ func packageTargets(pkg string) ([]string, error) {
 // testFiles returns the absolute paths of the test files go test would compile
 // for pkg, internal and external.
 func testFiles(pkg string) ([]string, error) {
-	cmd := exec.Command("go", "list", "-find", "-json=Dir,TestGoFiles,XTestGoFiles", pkg)
+	cmd := exec.Command("go", "list", "-find", "-json=Dir,TestGoFiles,XTestGoFiles", pkg) // #nosec G204 G702 -- CI-only tool: pkg is a changed-package path from the plan job, passed as a single argv entry (no shell)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
