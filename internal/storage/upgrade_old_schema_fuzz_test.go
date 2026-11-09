@@ -38,6 +38,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"flag"
 	"fmt"
 	"math"
 	"os"
@@ -685,6 +686,23 @@ func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int) (ugStopOut
 	return ugStopOutcome{Writes: seen.Load(), Fired: seen.Load() >= int64(stopAfter), Err: migErr}, nil
 }
 
+// ugAllSeedsEnv makes a plain `go test` run the whole seed set.
+const ugAllSeedsEnv = "KEYORIX_UPGRADE_FUZZ_ALL_SEEDS"
+
+// ugPlainSeed is the one ugSeeds entry a plain run uses for each source.
+const ugPlainSeed = 5
+
+// ugAllSeeds reports whether to add every seed: each one is a full upgrade and
+// there are 94 across both targets, so a plain run keeps one per source, and a
+// fuzz run or ugAllSeedsEnv gets them all.
+func ugAllSeeds() bool {
+	if os.Getenv(ugAllSeedsEnv) != "" {
+		return true
+	}
+	fuzzFlag := flag.Lookup("test.fuzz")
+	return fuzzFlag != nil && fuzzFlag.Value.String() != ""
+}
+
 func ugSeeds() [][]byte {
 	seeds := [][]byte{nil, {1}, bytes.Repeat([]byte{7}, 64)}
 	for i := range 6 {
@@ -700,8 +718,12 @@ func ugSeeds() [][]byte {
 // FuzzUpgradeFromOldSchema upgrades generated state on a real old schema with
 // the real startup path. See the file comment for the oracles.
 func FuzzUpgradeFromOldSchema(f *testing.F) {
+	seeds := ugSeeds()
+	if !ugAllSeeds() {
+		seeds = seeds[ugPlainSeed:ugPlainSeed+1]
+	}
 	for i := range ugSources {
-		for _, s := range ugSeeds() {
+		for _, s := range seeds {
 			f.Add(uint8(i), s)
 		}
 	}
@@ -755,6 +777,13 @@ func ugStopChoices(t testing.TB, tag string) int {
 func FuzzUpgradeInterrupted(f *testing.F) {
 	for i := range ugSources {
 		for _, stop := range []uint16{1, 2, 3, 7, 19, 41, 83, 150} {
+	sources := ugSources[ugInterruptibleFrom:]
+	stops := []uint16{1, 2, 3, 7, 19, 41, 83, 150}
+	if !ugAllSeeds() {
+		stops = []uint16{41}
+	}
+	for i := range sources {
+		for _, stop := range stops {
 			f.Add(uint8(i), stop, []byte{byte(i), byte(stop)})
 		}
 	}
