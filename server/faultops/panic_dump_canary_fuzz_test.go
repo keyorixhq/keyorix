@@ -63,6 +63,9 @@ type panicDumpFixture struct {
 	calls   map[string]map[string]int
 
 	captureDir string
+	// newWorld builds one execution's world. The PostgreSQL target reuses a schema
+	// through resetForReuse instead of migrating per world.
+	newWorld func(t *testing.T) *faultWorld
 }
 
 func newPanicDumpFixture(tb testing.TB) *panicDumpFixture {
@@ -72,7 +75,7 @@ func newPanicDumpFixture(tb testing.TB) *panicDumpFixture {
 		tb.Fatal(err)
 	}
 	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
-	fx := &panicDumpFixture{capture: canary.NewCapture(), calls: map[string]map[string]int{}}
+	fx := &panicDumpFixture{capture: canary.NewCapture(), calls: map[string]map[string]int{}, newWorld: func(t *testing.T) *faultWorld { return newFaultWorld(t, nil) }}
 	tb.Cleanup(fx.capture.Uninstall)
 	fx.captureDir = dir
 	fx.control = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "keyorix_panic_canary_control", Help: "Harness control for the metrics capture."}, []string{"v"})
@@ -142,7 +145,7 @@ func (fx *panicDumpFixture) callsFor(t *testing.T, op panicDumpOp) map[string]in
 	if c, ok := fx.calls[op.name]; ok {
 		return c
 	}
-	w := newFaultWorld(t, nil)
+	w := fx.newWorld(t)
 	ctx := context.Background()
 	id, err := createCanarySecret(ctx, w, "panic-dry-"+op.name, "panic-dry-value")
 	if err != nil {
@@ -214,7 +217,7 @@ func runPanicDump(t *testing.T, fx *panicDumpFixture, in panicDumpInput, allow *
 	probe := canary.New("probe", canary.Metadata, in.seed, false)
 	scanner := canary.NewScanner(secretCanary, controlValue, metaName, probe)
 
-	w := newFaultWorld(t, nil)
+	w := fx.newWorld(t)
 	id, err := createCanarySecret(ctx, w, "control-"+metaName.Core, controlValue.Raw)
 	if err != nil {
 		return panicDumpResult{invalid: "INVALID RUN: control secret: " + err.Error()}
