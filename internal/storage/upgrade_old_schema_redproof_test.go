@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -124,9 +125,57 @@ func TestUpgradeOracles_RedProof(t *testing.T) {
 		}
 	})
 
+	t.Run("invariant6_upgrade_missing_an_index", func(t *testing.T) {
+		// What a model index no step creates on an existing table looks like.
+		f := ugRun(t, tag, true, ugRedSeed, 0, ugHooks{afterMigrate: func(db *sql.DB) error {
+			return ugExecStmts(db, "DROP INDEX idx_secret_nodes_classification")
+		}})
+		found := ugAssertFires(t, f, 6)
+		if !strings.Contains(found.Detail, "only in fresh: index secret_nodes.idx_secret_nodes_classification") {
+			t.Fatalf("expected the dropped index to be named: %s", found.Detail)
+		}
+	})
+
+	t.Run("invariant6_upgrade_changed_a_column_type", func(t *testing.T) {
+		// The wrong type for a column that exists: SQLite accepts any type name, and
+		// the fresh-install side names the right one.
+		f := ugRun(t, tag, true, ugRedSeed, 0, ugHooks{afterMigrate: func(db *sql.DB) error {
+			return ugExecStmts(db,
+				"ALTER TABLE projects RENAME COLUMN require_mfa TO require_mfa_old",
+				"ALTER TABLE projects ADD COLUMN require_mfa TIMESTAMP WITH TIME ZONE",
+			)
+		}})
+		found := ugAssertFires(t, f, 6)
+		if !strings.Contains(found.Detail, "projects.require_mfa") {
+			t.Fatalf("expected the changed column to be named: %s", found.Detail)
+		}
+	})
+
+	t.Run("invariant6_expected_difference_disappears", func(t *testing.T) {
+		// Someone fixes a listed difference and leaves its entry behind.
+		f := ugRun(t, tag, true, ugRedSeed, 0, ugHooks{afterMigrate: func(db *sql.DB) error {
+			return ugExecStmts(db, "CREATE INDEX idx_break_glass_activations_reviewed_by ON break_glass_activations (reviewed_by)")
+		}})
+		found := ugAssertFires(t, f, 6)
+		if !strings.Contains(found.Detail, "no longer occurs") || !strings.Contains(found.Detail, "ugExpectedSchemaDiffs") {
+			t.Fatalf("expected the stale-entry finding: %s", found.Detail)
+		}
+	})
+
 	t.Run("invariant5_control_restart_after_a_stop_is_clean", func(t *testing.T) {
 		if f := ugRun(t, tag, true, ugRedSeed, ugRedStop, ugHooks{}); len(f) != 0 {
 			t.Fatalf("a stop the restart can recover from must be clean, got %v", f)
+		}
+	})
+
+	t.Run("invariant5_index_lost_outside_the_known_gaps", func(t *testing.T) {
+		// ugStopWindowDiffs tolerates exact lines only: another lost index still fires.
+		f := ugRun(t, tag, true, ugRedSeed, ugRedStop, ugHooks{afterMigrate: func(db *sql.DB) error {
+			return ugExecStmts(db, "DROP INDEX idx_secret_nodes_classification")
+		}})
+		found := ugAssertFires(t, f, 5)
+		if !strings.Contains(found.Detail, "oracle 6") {
+			t.Fatalf("expected the schema oracle: %s", found.Detail)
 		}
 	})
 
@@ -234,6 +283,58 @@ func TestUpgradeInterrupted_StopThatNeverFiresIsNotAPass(t *testing.T) {
 // the same stop rolls the table back too. The bare result is an artefact of the
 // harness shape, not a production defect; see
 // docs/findings/2026-11-09-FINDING-v091-interrupted-upgrade-artifact.md.
+// TestUpgradeInterrupted_KnownIndexGaps_StillOpen pins ugStopWindowDiffs, the
+// tolerated post-stop lines: each row must still show its missing index. It goes
+// red when one is fixed, and the row then has to go; or when a step was inserted
+// before it, in which case the stop positions need re-measuring.
+func TestUpgradeInterrupted_KnownIndexGaps_StillOpen(t *testing.T) {
+	tpl, err := ugLoadTemplate(ugStopWindowSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := ugFreshSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range ugStopWindowDiffs {
+		t.Run(fmt.Sprintf("stop_%d", row.Stop), func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "gap.db")
+			if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ugInterruptedMigrate(t, dbPath, row.Stop); err != nil {
+				t.Fatal(err)
+			}
+			st, err := NewStorageFactory().CreateStorage(ugLocalConfig(dbPath))
+			if err != nil {
+				t.Fatalf("restart after stop %d: %v", row.Stop, err)
+			}
+			if err := ugCloseStorage(st); err != nil {
+				t.Fatal(err)
+			}
+			raw, _, closeRaw := ugOpenRaw(t, dbPath)
+			defer closeRaw()
+			got, err := ugSchemaOf(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			diff := ugSchemaDiff(fresh, got)
+			for _, line := range row.Lines {
+				if !slices.Contains(diff, line) {
+					t.Errorf("known index gap no longer occurs at stop %d on %s; remove the row from ugStopWindowDiffs: %s", row.Stop, ugStopWindowSource, line)
+				}
+			}
+		})
+	}
+}
+
+// TestUpgradeInterrupted_V091_ColumnNeverAdded pins an open finding and doubles
+// as the red-proof for FuzzUpgradeInterrupted: a v0.91.0 upgrade stopped after
+// the MFA step-up table is created, then restarted, reports success but leaves
+// secret_nodes without owner_machine_identity_id, so every secret read fails.
+// No step adds that column on an existing database; the fresh-install tail only
+// reached it on the first boot because the table's absence kept
+// freshInstallComplete false, and the restart sees the table and returns early.
 //
 // It asserts both halves: the bare path still fires (so the real path's
 // silence is not vacuous) and the real path, same source and same stop, is clean.

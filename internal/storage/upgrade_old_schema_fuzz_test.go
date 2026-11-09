@@ -22,7 +22,9 @@
 //	  migrate-chain-encoding step, so it gets the row count only);
 //	4 a second migration changes nothing, in the schema or in any row;
 //	5 (FuzzUpgradeInterrupted) an upgrade stopped after any write statement
-//	  completes on restart with oracles 1-4 intact.
+//	  completes on restart with oracles 1-4 and 6 intact;
+//	6 the upgraded schema equals a fresh install's, apart from the differences
+//	  listed in upgrade_schema_matches_fresh_test.go.
 //
 // What these do NOT check: Postgres (see the README), machine identities, MFA
 // and SSO state, intended refusals (two names folding together refuse by
@@ -239,7 +241,7 @@ type ugHooks struct {
 // ugRun is one exec. stopAfter == 0 runs the real startup path once;
 // stopAfter > 0 first fail-stops the upgrade after that many write statements.
 // A stop past the last write skips the exec with the reason logged. Oracle 5 is
-// "the restart completed it with 1-4 intact", so after a stop every other oracle's
+// "the restart completed it with the others intact", so after a stop every other oracle's
 // finding is reported as oracle 5 and names the oracle that failed.
 func ugRun(t testing.TB, tag string, chainVerifiable bool, data []byte, stopAfter int, hooks ugHooks) []ugFinding {
 	t.Helper()
@@ -370,10 +372,10 @@ func ugRunStages(t testing.TB, tag string, chainVerifiable bool, data []byte, st
 	c := core.NewKeyorixCore(again)
 	c.SetAuthEncryptor(tpl.enc)
 	c.SetSecretValueEncryptor(tpl.enc)
-	return append(findings, ugCheckOracles(t, tag, chainVerifiable, dbPath, c, tpl, exp, model, preAudit, len(data))...)
+	return append(findings, ugCheckOracles(t, tag, chainVerifiable, dbPath, c, tpl, exp, model, preAudit, len(data), stopAfter)...)
 }
 
-func ugCheckOracles(t testing.TB, tag string, chainVerifiable bool, dbPath string, c *core.KeyorixCore, tpl *ugTemplate, exp *ugExpect, model *ugModel, preAudit int64, probeOffset int) []ugFinding {
+func ugCheckOracles(t testing.TB, tag string, chainVerifiable bool, dbPath string, c *core.KeyorixCore, tpl *ugTemplate, exp *ugExpect, model *ugModel, preAudit int64, probeOffset, stopAfter int) []ugFinding {
 	t.Helper()
 	var out []ugFinding
 	fail := func(inv int, format string, args ...any) {
@@ -488,7 +490,9 @@ func ugCheckOracles(t testing.TB, tag string, chainVerifiable bool, dbPath strin
 			fail(3, "audit chain broken after upgrading from %s: first broken id=%v (%d chained, %d unchained, %d generated)", tag, res.FirstBrokenID, res.ChainedEvents, res.UnchainedEvents, exp.AuditAdded)
 		}
 	}
-	return out
+
+	// Oracle 6: the same schema a fresh install gets, minus the listed differences.
+	return append(out, ugCheckFreshSchema(t, ugSchemaScenario(tag, stopAfter), stopAfter > 0, raw)...)
 }
 
 // ugOpenRaw opens a plain connection for harness-side reads and writes (never
