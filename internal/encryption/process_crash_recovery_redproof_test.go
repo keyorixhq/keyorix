@@ -155,6 +155,46 @@ func pcrashRedProof(t *testing.T, w *pcrashWorld, op pcrashOp, action string, ki
 	return w.checkAfterDeath(t, op, dir, st, after)
 }
 
+// pcrashBackupAtKill kills a DEK rotation at killAt and takes a backup with no
+// restart in between; the archive is post.tar.gz in the returned install.
+func pcrashBackupAtKill(t *testing.T, w *pcrashWorld, killAt int64) (string, pcrashExecState, string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := pcrashCopyTree(w.dir, dir); err != nil {
+		t.Fatalf("copy template: %v", err)
+	}
+	st, err := w.prepare(dir, 0)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	run, err := pcrashOps[0].run(dir, pcrashPass, killAt)
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if !run.killed {
+		t.Fatalf("the rotation was not killed (exit %d): %s", run.exit, pcrashTail(run.output))
+	}
+	b, err := runPCrashChild(dir, pcrashPass, "admin", []string{"backup", "--config", "./keyorix.yaml", "--output", "./post.tar.gz"}, 0)
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	if b.exit != 0 {
+		t.Fatalf("backup after the kill exited %d: %s", b.exit, pcrashTail(b.output))
+	}
+	return dir, st, run.label
+}
+
+// pcrashCleanHostOutcome runs the clean-host check in a subtest of its own, so a
+// skip is reported to the caller instead of ending the caller's test.
+func pcrashCleanHostOutcome(t *testing.T, w *pcrashWorld, dir, label string, st pcrashExecState) (v []string, skipped bool) {
+	t.Helper()
+	t.Run("check", func(t *testing.T) {
+		defer func() { skipped = t.Skipped() }()
+		v = w.checkCleanHostRestore(t, dir, label, st)
+	})
+	return v, skipped
+}
+
 func pcrashExecSQL(t *testing.T, dir, stmt string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "keyorix.db")+"?_pragma=busy_timeout(5000)")
@@ -312,6 +352,17 @@ func TestProcessCrashRedProof(t *testing.T) {
 			twice.kek = true
 			twice.passes = []string{pcrashPass, pcrashPass}
 			pcrashWant(t, pcrashRedProof(t, w, twice, "", 1, nil), "I3")
+		pcrashWant(t, v, "I5")
+	})
+	t.Run("backup-after-kill-control-and-damage", func(t *testing.T) {
+		// After the DEK rename, so dek.key.pending is gone: the control also goes
+		// through the clean-host restore, which #4058 skips while the file exists.
+		killAt := w.seamNamed(t, dek, "sweep:after-rename-dek")
+		if v := w.checkBackupAfterKilledRotation(t, killAt, 0, nil); len(v) > 0 {
+			t.Fatalf("control: an undamaged restore must be clean: %v", v)
+		}
+		v := w.checkBackupAfterKilledRotation(t, killAt, 0, func(target string) {
+			pcrashExecSQL(t, target, "UPDATE secret_versions SET encrypted_value = randomblob(64) WHERE id = (SELECT MAX(id) FROM secret_versions)")
 		})
 		t.Run("I4-privilege-widened", func(t *testing.T) {
 			t.Parallel()
@@ -333,6 +384,49 @@ func TestProcessCrashRedProof(t *testing.T) {
 			t.Fatalf("the backup-after-kill oracle did not fire: %v", v)
 		}
 		t.Logf("fired as expected: %s", pcrashTail(v[0]))
+	})
+	t.Run("clean-host-restore", func(t *testing.T) {
+		// A pending DEK is on disk from here until the rename, and in the backup.
+		killAt := w.seamNamed(t, dek, "sweep:after-sweep-commit")
+		t.Run("control-completed-rotation-restores", func(t *testing.T) {
+			if v := w.checkBackupAfterCompletedRotation(t); len(v) > 0 {
+				t.Fatalf("a backup after a completed rotation must restore on a clean host: %v", v)
+			}
+		})
+		t.Run("4058-skips-while-pending-exists", func(t *testing.T) {
+			dir, st, label := pcrashBackupAtKill(t, w, killAt)
+			v, skipped := pcrashCleanHostOutcome(t, w, dir, label, st)
+			if !skipped {
+				t.Fatalf("#4058 no longer skips (fixed? then remove the skip in checkCleanHostRestore): %v", v)
+			}
+		})
+		t.Run("refusal-without-pending-stays-red", func(t *testing.T) {
+			dir, st, label := pcrashBackupAtKill(t, w, killAt)
+			if err := os.Remove(filepath.Join(dir, "keys", "dek.key.pending")); err != nil {
+				t.Fatal(err)
+			}
+			v, skipped := pcrashCleanHostOutcome(t, w, dir, label, st)
+			if skipped || len(v) == 0 || !strings.Contains(v[0], "refused on a clean host") {
+				t.Fatalf("the refusal must fail once dek.key.pending is gone: skipped=%v v=%v", skipped, v)
+			}
+			t.Logf("fired as expected: %s", pcrashTail(v[0]))
+		})
+		t.Run("other-refusal-with-pending-stays-red", func(t *testing.T) {
+			dir, st, label := pcrashBackupAtKill(t, w, killAt)
+			archive := filepath.Join(dir, "post.tar.gz")
+			info, err := os.Stat(archive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Truncate(archive, info.Size()/2); err != nil {
+				t.Fatal(err)
+			}
+			v, skipped := pcrashCleanHostOutcome(t, w, dir, label, st)
+			if skipped || len(v) == 0 || !strings.Contains(v[0], "refused on a clean host") {
+				t.Fatalf("a different refusal must fail even with dek.key.pending present: skipped=%v v=%v", skipped, v)
+			}
+			t.Logf("fired as expected: %s", pcrashTail(v[0]))
+		})
 	})
 	for _, c := range []struct{ name, action, want string }{
 		{"I5-rerun-panics", "rerun-panic", "I5"},

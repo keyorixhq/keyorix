@@ -198,8 +198,9 @@ func pcrashCopyTree(src, dst string) error {
 
 // pcrashCalibration is a clean run of an operation on the unmodified template.
 type pcrashCalibration struct {
-	seams int64
-	ref   *pcrashModel
+	seams  int64
+	labels []string // seam names in order, labels[n-1] being kill point n
+	ref    *pcrashModel
 }
 
 // pcrashWorld is one test's template install. Fuzz workers each build their own,
@@ -443,9 +444,21 @@ func (w *pcrashWorld) calibrate(t *testing.T, op pcrashOp) pcrashCalibration {
 	if err != nil {
 		t.Fatalf("calibrate %s: observe: %v", op.name, err)
 	}
-	c := pcrashCalibration{seams: r.seams, ref: ref}
+	c := pcrashCalibration{seams: r.seams, labels: r.labels, ref: ref}
 	w.cal[op.name] = c
 	return c
+}
+
+// seamNamed is the kill point of op's first seam called label, on an install
+// the fuzz state added no rows to.
+func (w *pcrashWorld) seamNamed(t *testing.T, op pcrashOp, label string) int64 {
+	t.Helper()
+	cal := w.calibrate(t, op)
+	i := slices.Index(cal.labels, label)
+	if i < 0 {
+		t.Fatalf("%s has no seam named %q: %v", op.name, label, cal.labels)
+	}
+	return int64(i) + 1
 }
 
 // pcrashExecState is what one fuzz input adds to the template and observes.
@@ -868,16 +881,49 @@ func (w *pcrashWorld) checkBackupAfterKilledRotation(t *testing.T, killAt int64,
 	return nil
 }
 
-const envPCrashFindings = "KEYORIX_PCRASH_FINDINGS" // set to fail on the known clean-host refusal
+// pcrashCleanHostRefusal is restore's refusal of an archive whose key-file count
+// differs from the target's (validateKeyFileSetV2).
+const pcrashCleanHostRefusal = "key file(s) but this config"
+
+// checkBackupAfterCompletedRotation is the positive control of the clean-host
+// check: a kill point past the last seam, so a rotation that ran to the end,
+// and a backup that must restore on the same clean host.
+func (w *pcrashWorld) checkBackupAfterCompletedRotation(t *testing.T) []string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := pcrashCopyTree(w.dir, dir); err != nil {
+		t.Fatalf("copy template: %v", err)
+	}
+	// State 0 adds no rows, so the rotation has exactly the calibrated seams.
+	st, err := w.prepare(dir, 0)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	run, err := pcrashOps[0].run(dir, pcrashPass, w.calibrate(t, pcrashOps[0]).seams+1)
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if run.killed || run.exit != 0 {
+		t.Fatalf("control: the rotation must run to the end: killed=%v exit=%d: %s", run.killed, run.exit, pcrashTail(run.output))
+	}
+	b, err := runPCrashChild(dir, pcrashPass, "admin", []string{"backup", "--config", "./keyorix.yaml", "--output", "./post.tar.gz"}, 0)
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	if b.exit != 0 {
+		return []string{fmt.Sprintf("backup after a completed rotation exited %d: %s", b.exit, pcrashTail(b.output))}
+	}
+	return w.checkCleanHostRestore(t, dir, "completed rotation", st)
+}
 
 // checkCleanHostRestore restores the same archive onto an install that never saw
 // the rotation, which is what a restore after losing the machine looks like.
 //
-// KNOWN FINDING: while a killed rotation's .pending key file exists, backup
+// KNOWN FINDING #4058: while a killed rotation's .pending key file exists, backup
 // archives it (keyfiles.Registry) and exits 0, and restore then refuses the
-// archive on a target without that file (validateKeyFileSetV2). Logged, not
-// failed, unless envPCrashFindings is set, so the harness stays usable until
-// that is decided.
+// archive on a target without that file (validateKeyFileSetV2). That one refusal
+// skips, and only while dek.key.pending is still in the data dir; anything else
+// here fails. Remove the skip when #4058 is fixed.
 func (w *pcrashWorld) checkCleanHostRestore(t *testing.T, dir, label string, st pcrashExecState) []string {
 	t.Helper()
 	target := t.TempDir()
@@ -899,15 +945,13 @@ func (w *pcrashWorld) checkCleanHostRestore(t *testing.T, dir, label string, st 
 		return []string{"clean-host restore panicked: " + pcrashTail(r.output)}
 	}
 	if r.exit != 0 {
-		if strings.Contains(r.output, "key file(s) but this config") {
-			t.Logf("finding: clean-host restore refused (killed at %s)", label)
-			if os.Getenv(envPCrashFindings) != "" {
-				return []string{fmt.Sprintf("backup exited 0 but its archive is refused on a clean host (killed at %s): %s", label, pcrashTail(r.output))}
-			}
-			return nil
+		if _, statErr := os.Stat(filepath.Join(dir, "keys", "dek.key.pending")); statErr == nil && strings.Contains(r.output, pcrashCleanHostRefusal) {
+			// #4058. To see the refusal, -v prints this skip message and the kill
+			// point is the subtest name:
+			//   KEYORIX_PCRASH_EXHAUSTIVE=1 go test ./internal/encryption/ -run 'TestProcessCrashBackupAfterKilledRotation/12' -count=1 -v
+			t.Skipf("#4058: backup exited 0 but its archive is refused on a clean host while dek.key.pending is present (killed at %s): %s", label, pcrashTail(r.output))
 		}
-		t.Logf("outcome: clean-host restore refused for another reason (killed at %s): %s", label, pcrashTail(r.output))
-		return nil
+		return []string{fmt.Sprintf("backup exited 0 but its archive is refused on a clean host (killed at %s): %s", label, pcrashTail(r.output))}
 	}
 	t.Logf("outcome: clean-host restore succeeded (killed at %s)", label)
 	o := pcrashOpenGuarded(target, pcrashPass)
@@ -961,6 +1005,12 @@ func TestProcessCrashBackupAfterKilledRotation(t *testing.T) {
 			}
 		})
 	}
+	t.Run("completed-rotation", func(t *testing.T) {
+		t.Parallel()
+		if v := w.checkBackupAfterCompletedRotation(t); len(v) > 0 {
+			t.Errorf("%s", strings.Join(v, "; "))
+		}
+	})
 }
 
 func FuzzProcessCrashRecovery(f *testing.F) {
