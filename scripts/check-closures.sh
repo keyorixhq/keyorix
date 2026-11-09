@@ -47,6 +47,7 @@
 #   ./scripts/check-closures.sh --self-test  # prove the check can go red (and
 #                                             # that it can go green honestly)
 set -euo pipefail
+script_t0=$SECONDS
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/closure-pkg.sh
@@ -359,57 +360,114 @@ if [ "${1:-}" = "--self-test" ]; then
     echo; echo "==> self-test: the check must reject every bad row below, and accept every good one"
     selffail=0
 
+    # Calibration cases are independent sub-invocations of this script, so they
+    # run through a bounded pool (same limit as the package pool, still one at a
+    # time under a shared Postgres DSN). run_case only QUEUES a case; st_flush
+    # waits for the running ones and prints every verdict in queue order, so the
+    # output, messages and exit code are those of the old strictly sequential run.
+    echo "timing: real ledger verified in $((SECONDS - script_t0))s" >&2
+    st_t0=$SECONDS
+    st_dir="$closure_work/selftest"; mkdir "$st_dir"
+    st_n=0; st_done=0; st_running=0; st_oldest=0; st_pids=()
+    case_jobs="$jobs_max"
+
+    # Run one queued case's sub-invocation; its output and exit code go to files.
+    st_case_run() {
+        local base="$1" dsn="$2" out rc
+        set +e
+        if [ "$dsn" = "-" ]; then
+            out=$(CLOSURE_LEDGER="$base.ledger" CLOSURE_LEDGER_D="$base.frags" "$0" 2>&1)
+        elif [ -z "$dsn" ]; then
+            out=$(CLOSURE_LEDGER="$base.ledger" CLOSURE_LEDGER_D="$base.frags" env -u KEYORIX_TEST_PG_DSN "$0" 2>&1)
+        else
+            out=$(CLOSURE_LEDGER="$base.ledger" CLOSURE_LEDGER_D="$base.frags" KEYORIX_TEST_PG_DSN="$dsn" "$0" 2>&1)
+        fi
+        rc=$?
+        set -e
+        printf '%s\n' "$out" > "$base.out"
+        # Written last: its presence means the .out file is complete.
+        printf '%s\n' "$rc" > "$base.rc"
+    }
+
+    # Start "$@" in the background when a pool slot is free (waiting for one
+    # otherwise); with a limit of 1 run it right here.
+    st_spawn() {
+        if [ "$case_jobs" -le 1 ]; then "$@"; return 0; fi
+        if [ "$st_running" -ge "$case_jobs" ]; then
+            if [ "$have_wait_n" = true ]; then
+                wait -n || true
+            else
+                wait "${st_pids[st_oldest]}" || true; st_oldest=$((st_oldest + 1))
+            fi
+            st_running=$((st_running - 1))
+        fi
+        "$@" &
+        st_pids+=("$!")
+        st_running=$((st_running + 1))
+    }
+
     run_case() {
         # $1=description  $2=expected(reject|accept)  $3=row(s), one per line
         # $4=forced KEYORIX_TEST_PG_DSN for this sub-invocation ("" = unset, "-" = inherit ambient)
         # $5..=optional fragment files, each "name.tsv=<content>" — written into a
         #      fresh CLOSURE_LEDGER_D. Always a fresh dir, so the real fragment
         #      directory a wrapper (check-adr-conformance.sh) exported never leaks in.
-        local desc="$1" expect="$2" body="$3" dsn="$4" out rc want
+        local desc="$1" expect="$2" body="$3" dsn="$4" base
         shift 4
-        local tmp; tmp=$(mktemp)
-        local tmpd; tmpd=$(mktemp -d)
-        printf '%s\n' "$body" > "$tmp"
+        base="$st_dir/$st_n"; st_n=$((st_n + 1))
+        mkdir "$base.frags"
+        printf '%s\n' "$body" > "$base.ledger"
         local frag
         for frag in "$@"; do
-            printf '%s\n' "${frag#*=}" > "$tmpd/${frag%%=*}"
+            printf '%s\n' "${frag#*=}" > "$base.frags/${frag%%=*}"
         done
-        set +e
-        if [ "$dsn" = "-" ]; then
-            out=$(CLOSURE_LEDGER="$tmp" CLOSURE_LEDGER_D="$tmpd" "$0" 2>&1)
-        elif [ -z "$dsn" ]; then
-            out=$(CLOSURE_LEDGER="$tmp" CLOSURE_LEDGER_D="$tmpd" env -u KEYORIX_TEST_PG_DSN "$0" 2>&1)
-        else
-            out=$(CLOSURE_LEDGER="$tmp" CLOSURE_LEDGER_D="$tmpd" KEYORIX_TEST_PG_DSN="$dsn" "$0" 2>&1)
-        fi
-        rc=$?
-        set -e
-        rm -rf "$tmp" "$tmpd"
+        printf '%s\n' "$desc" > "$base.desc"
+        printf '%s\n' "$expect" > "$base.expect"
         # Optional: WANT_OUT="<line>\n<line>" (set on the call, e.g.
         # `WANT_OUT=... run_case ...`) names substrings the sub-invocation's
         # output MUST contain, one per line -- for cases whose point is WHAT is
-        # reported, not only whether the run is rejected.
-        while IFS= read -r want; do
-            [ -z "$want" ] && continue
-            if ! grep -qF -- "$want" <<<"$out"; then
-                echo "FAIL: self-test case '$desc' output lacks the required line: $want" >&2
+        # reported, not only whether the run is rejected. Read now: it is a
+        # per-call variable and the verdict is printed later.
+        printf '%s\n' "${WANT_OUT:-}" > "$base.want"
+        st_spawn st_case_run "$base" "$dsn"
+    }
+
+    # Wait for every queued case, then print the verdicts in queue order.
+    st_flush() {
+        local base desc expect out rc want
+        wait
+        st_running=0; st_oldest=0; st_pids=()
+        while [ "$st_done" -lt "$st_n" ]; do
+            base="$st_dir/$st_done"; st_done=$((st_done + 1))
+            desc=$(<"$base.desc"); expect=$(<"$base.expect")
+            if [ ! -f "$base.rc" ]; then
+                echo "FAIL: self-test case '$desc' produced no result (worker killed?)" >&2
+                selffail=1
+                continue
+            fi
+            out=$(<"$base.out"); rc=$(<"$base.rc")
+            while IFS= read -r want; do
+                [ -z "$want" ] && continue
+                if ! grep -qF -- "$want" <<<"$out"; then
+                    echo "FAIL: self-test case '$desc' output lacks the required line: $want" >&2
+                    sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
+                    selffail=1
+                fi
+            done < "$base.want"
+            if [ "$expect" = "reject" ] && [ "$rc" -eq 0 ]; then
+                echo "FAIL: self-test case '$desc' PASSED when it must be REJECTED — the checker" >&2
+                echo "      cannot detect this bad row and is therefore worthless for it." >&2
                 sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
                 selffail=1
+            elif [ "$expect" = "accept" ] && [ "$rc" -ne 0 ]; then
+                echo "FAIL: self-test case '$desc' was REJECTED when it must be ACCEPTED — the" >&2
+                echo "      checker is too strict and will block an honest, correctly-gated row." >&2
+                sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
+                selffail=1
+            else
+                echo "  ok: '$desc' correctly ${expect}ed (exit $rc)"
             fi
-        done <<<"${WANT_OUT:-}"
-        if [ "$expect" = "reject" ] && [ "$rc" -eq 0 ]; then
-            echo "FAIL: self-test case '$desc' PASSED when it must be REJECTED — the checker" >&2
-            echo "      cannot detect this bad row and is therefore worthless for it." >&2
-            sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
-            selffail=1
-        elif [ "$expect" = "accept" ] && [ "$rc" -ne 0 ]; then
-            echo "FAIL: self-test case '$desc' was REJECTED when it must be ACCEPTED — the" >&2
-            echo "      checker is too strict and will block an honest, correctly-gated row." >&2
-            sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
-            selffail=1
-        else
-            echo "  ok: '$desc' correctly ${expect}ed (exit $rc)"
-        fi
+        done
     }
 
     run_case "nonexistent test" "reject" \
@@ -567,17 +625,52 @@ SELF-TEST-3D	./internal/core	TestCheckClosuresSelfTestFixture_SkipsWithoutPGDSN	
     WANT_OUT=$'SELF-TEST-48: proving test TestCheckClosuresSelfTestFixture_FailsWhenAsked FAILED\nok   SELF-TEST-47 -> TestCheckClosuresSelfTestFixture_CLIModulePasses (default-ci)\nok   SELF-TEST-49 -> TestCheckClosuresSelfTestFixture_MigrateModulePasses (default-ci)' \
     run_case "pool of 4: a failing package among passing ones is rejected" "reject" "$multi_fail" ""
 
+    # Queued cases keep their own WANT_OUT and their own verdict: two cases
+    # queued back to back, each with a different required line, both running at
+    # once, must each be checked against ITS output (a late read of WANT_OUT, or
+    # a mix-up of the per-case result files, turns one of them red).
+    WANT_OUT=$'UNVERIFIED-BY-CI SELF-TEST-50 -> queued case one' \
+    run_case "queued case keeps its own required line (one)" "accept" \
+        $'SELF-TEST-50\t-\t-\tmanual\tdeadbeef\t-\tqueued case one' \
+        "-"
+    WANT_OUT=$'UNVERIFIED-BY-CI SELF-TEST-51 -> queued case two' \
+    run_case "queued case keeps its own required line (two)" "accept" \
+        $'SELF-TEST-51\t-\t-\tmanual\tdeadbeef\t-\tqueued case two' \
+        "-"
+    WANT_OUT=$'SELF-TEST-52: verification=manual requires a note' \
+    run_case "queued case keeps its own verdict (rejected next to accepted ones)" "reject" \
+        $'SELF-TEST-52\t-\t-\tmanual\tdeadbeef\t-\t' \
+        "-"
+
     # Same ledger, pool of 1 and pool of 4: identical output (same order, same
     # messages, same exit code). Only deterministic outputs are compared: the
     # passing and the missing-test ledgers print no go test timings.
-    for ledger_name in multi_ok multi_missing; do
-        pool_tmp=$(mktemp); pool_tmpd=$(mktemp -d)
-        printf '%s\n' "${!ledger_name}" > "$pool_tmp"
+    st_pool_run() {
+        local base="$1" jobs="$2" out rc
         set +e
-        pool1=$(CLOSURE_LEDGER="$pool_tmp" CLOSURE_LEDGER_D="$pool_tmpd" CHECK_CLOSURES_JOBS=1 env -u KEYORIX_TEST_PG_DSN "$0" 2>&1); pool1_rc=$?
-        pool4=$(CLOSURE_LEDGER="$pool_tmp" CLOSURE_LEDGER_D="$pool_tmpd" CHECK_CLOSURES_JOBS=4 env -u KEYORIX_TEST_PG_DSN "$0" 2>&1); pool4_rc=$?
+        out=$(CLOSURE_LEDGER="$st_dir/cmp.$3.ledger" CLOSURE_LEDGER_D="$st_dir/cmp.empty" CHECK_CLOSURES_JOBS="$jobs" env -u KEYORIX_TEST_PG_DSN "$0" 2>&1); rc=$?
         set -e
-        rm -rf "$pool_tmp" "$pool_tmpd"
+        printf '%s\n' "$out" > "$base.out"
+        printf '%s\n' "$rc" > "$base.rc"
+    }
+    mkdir "$st_dir/cmp.empty"
+    for ledger_name in multi_ok multi_missing; do
+        printf '%s\n' "${!ledger_name}" > "$st_dir/cmp.$ledger_name.ledger"
+        st_spawn st_pool_run "$st_dir/cmp.$ledger_name.1" 1 "$ledger_name"
+        st_spawn st_pool_run "$st_dir/cmp.$ledger_name.4" 4 "$ledger_name"
+    done
+    # Print the queued cases first (their lines come before the comparison's).
+    st_flush
+    echo "timing: calibration cases and pool comparison runs took $((SECONDS - st_t0))s" >&2
+    for ledger_name in multi_ok multi_missing; do
+        b1="$st_dir/cmp.$ledger_name.1"; b4="$st_dir/cmp.$ledger_name.4"
+        if [ ! -f "$b1.rc" ] || [ ! -f "$b4.rc" ]; then
+            echo "FAIL: self-test case 'pool of 1 vs pool of 4 ($ledger_name)': no result (worker killed?)" >&2
+            selffail=1
+            continue
+        fi
+        pool1=$(<"$b1.out"); pool1_rc=$(<"$b1.rc")
+        pool4=$(<"$b4.out"); pool4_rc=$(<"$b4.rc")
         # Drop the pool banner (it only exists for jobs > 1); everything else must match.
         pool4=$(grep -vF '==> running ' <<<"$pool4" || true)
         if [ "$pool1_rc" -ne "$pool4_rc" ] || [ "$pool1" != "$pool4" ]; then
@@ -594,8 +687,12 @@ SELF-TEST-3D	./internal/core	TestCheckClosuresSelfTestFixture_SkipsWithoutPGDSN	
     CHECK_CLOSURES_JOBS=0 \
     run_case "worker limit 0" "reject" "$multi_ok" ""
 
+    st_flush
+
     # The fragment-shape validator lives in the generator; run its own self-test.
+    st_t0=$SECONDS
     echo; "$REPO_ROOT/scripts/gen-security-closures-tsv.sh" --self-test || selffail=1
+    echo "timing: generator self-test took $((SECONDS - st_t0))s; total $((SECONDS - script_t0))s" >&2
 
     if [ "$selffail" -ne 0 ]; then
         exit 1
