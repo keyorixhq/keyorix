@@ -32,7 +32,7 @@
 // "C-FOO-REVIEW" is a different person than "C-FOO". It records who vouched,
 // and refuses the one shape that is certainly wrong (the author vouching for
 // themself). That is the strongest thing a file can check.
-package core
+package guards
 
 import (
 	"encoding/json"
@@ -81,7 +81,7 @@ var legacyUnreviewedLedgers = map[string]string{
 	"atomicity-exempt.tsv": "#2693: needs an independent review recorded in a docs/atomicity-exempt.reviewed.tsv sidecar",
 }
 
-const exemptLedgerDir = "../../docs"
+const exemptLedgerDir = "../../../docs"
 
 type reviewLedgerRow struct {
 	line     int
@@ -205,7 +205,7 @@ func exemptLedgerProblems(t *testing.T, dir string) []string {
 				t.Logf("NOT under the review rule (legacy): docs/%s — %s", name, why)
 				continue
 			}
-			problems = append(problems, fmt.Sprintf("docs/%s is an exemption ledger not registered in exemptLedgers (internal/core/exempt_ledger_review_test.go): give it added_by/reviewed_by columns or a .reviewed.tsv sidecar and register it", name))
+			problems = append(problems, fmt.Sprintf("docs/%s is an exemption ledger not registered in exemptLedgers (internal/core/guards/exempt_ledger_review_test.go): give it added_by/reviewed_by columns or a .reviewed.tsv sidecar and register it", name))
 			continue
 		}
 		rows, dups := readExemptLedgerRows(t, dir, name, l.keyCols)

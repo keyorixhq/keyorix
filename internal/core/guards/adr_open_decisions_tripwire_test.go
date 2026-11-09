@@ -60,7 +60,7 @@
 // the ADR's Status), and either remove the entry below or push its
 // openedDate/threshold out with a fresh, stated justification for the
 // extension — do not just bump the threshold silently.
-package core
+package guards
 
 import (
 	"fmt"
@@ -152,7 +152,7 @@ func TestADR105_GRPCStepUpPrimitiveStillOpen(t *testing.T) {
 // reserved ranges are a source-level compile-time constraint; that is where
 // the fact lives, and where the next person will be editing.
 func adr105Premise() (stillOpen bool, detail string) {
-	const protoPath = "../../server/proto/keyorix.proto"
+	const protoPath = "../../../server/proto/keyorix.proto"
 	b, err := os.ReadFile(protoPath)
 	if err != nil {
 		// Cannot read the file: report the decision as still open rather
@@ -188,7 +188,7 @@ func adr105Premise() (stillOpen bool, detail string) {
 // docs/adr-110-system-write-scope.md for the review of what remains
 // (26 permSystemWrite gate sites, none of them a storage-relay primitive).
 func adr102Premise() (stillOpen bool, detail string) {
-	const routerGoPath = "../../server/http/router.go"
+	const routerGoPath = "../../../server/http/router.go"
 	b, err := os.ReadFile(routerGoPath)
 	if err != nil {
 		return true, fmt.Sprintf("could not read %s (%v); treating the decision as still open", routerGoPath, err)
@@ -293,7 +293,7 @@ func TestADROpenDecisions_NotExpired(t *testing.T) {
 			continue
 		}
 		guardrules.CheckExpiry(t, guardrules.Expiry{
-			Source:  "internal/core/adr_open_decisions_tripwire_test.go adrOpenDecisionRegistry",
+			Source:  "internal/core/guards/adr_open_decisions_tripwire_test.go adrOpenDecisionRegistry",
 			Key:     d.adr + " open decision",
 			Expires: opened.Add(d.threshold).Format(guardrules.DateLayout),
 			Note:    d.decision + " (resolve it and update the ADR's Status, or extend the threshold with a stated reason)",

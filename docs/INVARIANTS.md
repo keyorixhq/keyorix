@@ -52,7 +52,7 @@ No longer gaps, each guard re-run on 2026-10-30 and green: INV-CLI-11 (reserved
 environment-variable filter in `cli/cmd/run.go`, `cli/cmd/run_env_filter_test.go`) and
 INV-ENCRYPTION-25 (`TestWipeBytesSweep_EveryKeyLocalIsWipedOnEveryReturn`, the `wipeBytes`
 completeness sweep). The sibling `internal/core` gap (INV-CORE-34) has
-`besteffort_callsite_guard_test.go`.
+`internal/core/guards/besteffort_callsite_guard_test.go`.
 
 ## Ledger gaps (informational, not filed as issues)
 

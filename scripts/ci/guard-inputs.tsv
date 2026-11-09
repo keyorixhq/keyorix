@@ -28,7 +28,7 @@ deploy/compose_pins_test.go	CHANGELOG.md	compose image pins are named in CHANGEL
 deploy/demo-hosted/demo_hosted_test.go	deploy/demo-hosted/**,README.md,scripts/demo/seed-demo.sh,!**	walks only its own kit directory (".") plus the root README and the demo seed script
 deploy/security_txt_test.go	docs/security/security.txt	security.txt contents
 internal/config/insecure_settings_aliases_test.go	docs/CONFIGURATION.md	documented insecure-setting aliases
-internal/core/exempt_ledger_review_test.go	docs/*exempt*.tsv,docs/*exempt*.d/**,!docs/**	exemption ledgers (flat files and fragments)
+internal/core/guards/exempt_ledger_review_test.go	docs/*exempt*.tsv,docs/*exempt*.d/**,!docs/**	exemption ledgers (flat files and fragments)
 internal/core/guards/atomicity_guard_test.go	docs/atomicity-exempt.tsv	atomicity exemption ledger
 internal/core/guards/check_then_act_lock_guard_test.go	docs/check-then-act-lock-exempt.tsv,docs/check-then-act-lock-exempt.d/**	check-then-act exemption ledger and fragments
 internal/core/guards/ledger_fragments_test.go	!README.md	fixtures in t.TempDir() only; "README.md" is a fixture name

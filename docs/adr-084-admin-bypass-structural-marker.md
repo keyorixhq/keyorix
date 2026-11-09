@@ -499,7 +499,7 @@ every site twice.
   before writing the entry, because the check only asked whether TIME had
   passed, never whether the underlying claim was still true. Fixed two ways,
   not just reverted: the stale entry itself was removed from
-  `internal/core/adr_open_decisions_tripwire_test.go`'s registry, and the
+  `internal/core/guards/adr_open_decisions_tripwire_test.go`'s registry, and the
   general mechanism was redesigned to check a decision's PREMISE — a live
   code fact — ahead of elapsed time wherever one is expressible.
   `TestADRDecisionRoleSetContainsAdminIsStructural` (same file) is the

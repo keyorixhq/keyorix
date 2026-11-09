@@ -94,7 +94,7 @@
 // TestBestEffortCallSites_ScannerFixture, which plants one violation of each
 // kind in a temp package on every run so the guard cannot pass merely because
 // it finds nothing.
-package core
+package guards
 
 import (
 	"fmt"

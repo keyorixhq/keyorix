@@ -268,7 +268,7 @@ resolved.*
 
 - **Was enforced, no longer needed**: `TestADR102_SystemWriteBlastRadiusStillOpen`
   and its `adrOpenDecisionRegistry` entry
-  (`internal/core/adr_open_decisions_tripwire_test.go`) were removed
+  (`internal/core/guards/adr_open_decisions_tripwire_test.go`) were removed
   2026-09-28 once `adr102Premise` (added the same day, before removal)
   confirmed the `/system` route group itself no longer exists — the
   mechanism did exactly what it was built for: it would have failed loudly

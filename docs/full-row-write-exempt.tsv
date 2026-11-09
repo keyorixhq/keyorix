@@ -19,13 +19,13 @@
 #                derived sweep asserts no production caller remains; the row stays only while
 #                the full-row primitive itself still exists. Names the fixing test.
 #   pending: #N  an open PR fixes this site; the row expires (expires column) and
-#                internal/core/exempt_ledger_review_test.go fails once #N has merged.
+#                internal/core/guards/exempt_ledger_review_test.go fails once #N has merged.
 #   arrives with #N  pre-registered for a site an open PR creates or renames; may match
 #                nothing until #N merges.
 #
 # expires: YYYY-MM-DD (pending/arrives rows only) or -.
 # reviewed_by must be non-empty and differ from added_by
-# (internal/core/exempt_ledger_review_test.go).
+# (internal/core/guards/exempt_ledger_review_test.go).
 #
 # CALLER rows (model column "calls:<LocalStorage method>") belong to
 # TestFullRowWriteGuard_NoUnexemptedCallerOfFullRowWriter

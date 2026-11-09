@@ -1,5 +1,5 @@
 # Review ledger (sidecar) for docs/check-then-act-lock-exempt.tsv, keyed by its
-# first column. Checked by internal/core/exempt_ledger_review_test.go
+# first column. Checked by internal/core/guards/exempt_ledger_review_test.go
 # (TestExemptLedgers_EveryRowIndependentlyReviewed): every row of the ledger needs a
 # row here, and reviewed_by must be non-empty and differ from added_by. Kept as a
 # sidecar, not a new ledger column, so the ledger itself stays as the race-fix PRs
