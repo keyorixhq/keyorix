@@ -126,7 +126,7 @@ var webhookSigningFIPSEnforced = fips140.Enforced
 // validateNotificationsSection rejects, under GODEBUG=fips140=only, an enabled
 // webhook whose signing secret is set but shorter than
 // MinWebhookSigningSecretLen: every signed delivery would fail. Outside that
-// mode nothing is checked, as before.
+// mode such a secret is accepted; ShortSigningSecretWarning reports it at boot.
 func validateNotificationsSection(c *Config) error {
 	wc := &c.Notifications.Webhook
 	if !wc.Enabled || !webhookSigningFIPSEnforced() {
@@ -136,4 +136,20 @@ func validateNotificationsSection(c *Config) error {
 		return fmt.Errorf("notifications.webhook.signing_secret (or KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET) is %d bytes; under GODEBUG=fips140=only it must be at least %d bytes (112 bits)", len(s), MinWebhookSigningSecretLen)
 	}
 	return nil
+}
+
+// ShortSigningSecretWarning returns the line to log at boot for an enabled
+// webhook whose signing secret is set but shorter than
+// MinWebhookSigningSecretLen, naming only the length. It is empty otherwise, and
+// always under GODEBUG=fips140=only, where validateNotificationsSection refuses
+// such a secret instead.
+func (c *NotificationWebhookConfig) ShortSigningSecretWarning() string {
+	if !c.Enabled || webhookSigningFIPSEnforced() {
+		return ""
+	}
+	s := c.GetSigningSecret()
+	if s == "" || len(s) >= MinWebhookSigningSecretLen {
+		return ""
+	}
+	return fmt.Sprintf("WARNING: notifications.webhook.signing_secret (or KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET) is %d bytes, shorter than the %d-byte (112-bit) minimum for an HMAC key. Webhook deliveries are still signed with it, but it is weak and the server will refuse it under GODEBUG=fips140=only: set a random 32-byte value here and on the receiver", len(s), MinWebhookSigningSecretLen)
 }

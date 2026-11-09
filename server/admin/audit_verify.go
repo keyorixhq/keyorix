@@ -165,6 +165,10 @@ func runVerifyAudit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return newExitCodeError(3, err)
 	}
+	// stderr, so --json output on stdout stays parseable.
+	for _, w := range auditverify.CheckpointKeyLenWarnings(opts) {
+		fmt.Fprintln(os.Stderr, w)
+	}
 
 	db, lock, err := openVerifyAuditTarget(cs.cfg, cs.err)
 	if err != nil {

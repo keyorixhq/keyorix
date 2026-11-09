@@ -81,6 +81,9 @@ func wireNotificationChannels(cw *coreWiring) error {
 		}
 		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification webhook channel enabled (endpoint=%s)", netutil.RedactURLHost(wc.Endpoint))
+		if msg := wc.ShortSigningSecretWarning(); msg != "" {
+			log.Print(msg)
+		}
 	}
 	if ec := cfg.Notifications.Email; ec.Enabled {
 		sink, eerr := notifychan.NewEmail(notifychan.EmailConfig{
