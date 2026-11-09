@@ -275,6 +275,29 @@ func TestSelectAffected_DataFileSelectsItsReaders(t *testing.T) {
 	}
 }
 
+// A web/ or cli/ change must not start the four core legs through a test's data:
+// a bare "web" or "cli" in an internal/core test (a project name, a client
+// string) reads as the whole directory to rule 3. Spell such values so they name
+// no top-level directory ("web-app", "keyorix-cli"). A test that really reads
+// web/ or cli/ belongs in internal/core/guards, outside the core legs.
+func TestSelectAffected_WebOrCLIChangeLeavesCoreLegsOut(t *testing.T) {
+	const core = "github.com/keyorixhq/keyorix/internal/core"
+	for _, f := range []string{"web/package.json", "cli/cmd/run.go"} {
+		s := changed(t, f)
+		if s.Mode != "selected" {
+			t.Fatalf("%s: mode=%q (%s), want selected", f, s.Mode, s.Reason)
+		}
+		if why, ok := s.Seeds[core]; ok {
+			t.Errorf("%s selects internal/core: %s", f, why)
+		}
+		for _, leg := range legNames(s) {
+			if strings.HasPrefix(leg, "core-") {
+				t.Errorf("%s starts leg %s", f, leg)
+			}
+		}
+	}
+}
+
 // A file only server tests read (server/admin's docs test reads the
 // self-hosting guide) changes no compiled code of the server binary, so the
 // image smokes stay skipped while server/admin's own leg runs.

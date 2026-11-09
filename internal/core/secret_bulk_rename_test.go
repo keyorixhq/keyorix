@@ -105,7 +105,7 @@ func TestBulkRenameSecrets(t *testing.T) {
 	})
 
 	t.Run("apply renames the secret and audits it", func(t *testing.T) {
-		rep, err := c.BulkRenameSecrets(ctx, p.ID, []SecretRename{{ID: bad, NewName: "DB_PASSWORD"}}, false, "alice", 1, "1.2.3.4", "cli")
+		rep, err := c.BulkRenameSecrets(ctx, p.ID, []SecretRename{{ID: bad, NewName: "DB_PASSWORD"}}, false, "alice", 1, "1.2.3.4", "keyorix-cli")
 		require.NoError(t, err)
 		assert.False(t, rep.DryRun)
 		assert.Equal(t, 1, rep.Renamed)
