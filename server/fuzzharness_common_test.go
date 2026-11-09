@@ -308,6 +308,9 @@ func (p killPlan) due(changes int, elapsed time.Duration) bool {
 type changeWindow struct {
 	n           int
 	first, last time.Duration
+	// onChange, when set, runs on the poller after each recorded change, so a
+	// test can hold the poller still while its child moves on.
+	onChange func()
 }
 
 func (c *changeWindow) observe(at time.Duration) {
@@ -316,6 +319,9 @@ func (c *changeWindow) observe(at time.Duration) {
 	}
 	c.last = at
 	c.n++
+	if c.onChange != nil {
+		c.onChange()
+	}
 }
 
 // endedBySIGKILL reports whether st is a process terminated by SIGKILL.
@@ -346,17 +352,29 @@ func runChild(w *crashWorld, dir, pass string, args []string, plan *killPlan) (k
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	cmd.WaitDelay = fuzzWaitDelay
+	// Before Start, so a change the child makes at once is not in the baseline.
+	last := dirSig(dir)
 	begin := time.Now()
+	sample := func() {
+		if s := dirSig(dir); s != last {
+			last = s
+			changes++
+			if plan != nil && plan.window != nil {
+				plan.window.observe(time.Since(begin))
+			}
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		w.t.Fatalf("start child: %v", err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	last := dirSig(dir)
 	signalled, timedOut := false, false
 	for {
 		select {
 		case err := <-done:
+			// A write just before the exit can fall between two polls.
+			sample()
 			if timedOut {
 				return false, changes, time.Since(begin), buf.String(), fmt.Errorf("%w (%s): %w", errChildDeadline, deadline, err)
 			}
@@ -373,13 +391,7 @@ func runChild(w *crashWorld, dir, pass string, args []string, plan *killPlan) (k
 				signalled = true
 			}
 		}
-		if s := dirSig(dir); s != last {
-			last = s
-			changes++
-			if plan != nil && plan.window != nil {
-				plan.window.observe(time.Since(begin))
-			}
-		}
+		sample()
 		time.Sleep(300 * time.Microsecond)
 	}
 }

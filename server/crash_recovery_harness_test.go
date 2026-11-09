@@ -11,6 +11,9 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -67,16 +70,63 @@ func TestRunChild_DeadlineEndsHungChild(t *testing.T) {
 	}
 }
 
+// waitChildReaped blocks until the process whose pid is in pidFile is gone, then
+// gives runChild's Wait goroutine a moment to deliver the exit. The pause only
+// sharpens the red case: if Wait is slower, the poller just sees the last write
+// in its loop instead.
+func waitChildReaped(t *testing.T, pidFile string) {
+	t.Helper()
+	b, err := os.ReadFile(pidFile) //nolint:gosec // test-generated path
+	if err != nil {
+		t.Errorf("read child pid: %v", err)
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		t.Errorf("child pid %q: %v", b, err)
+		return
+	}
+	for stop := time.Now().Add(20 * time.Second); time.Now().Before(stop); time.Sleep(time.Millisecond) {
+		if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+			time.Sleep(50 * time.Millisecond)
+			return
+		}
+	}
+	t.Errorf("child %d still running after its last write", pid)
+}
+
+// TestRunChild_RecordsChangeWindow pins that the count and the window include
+// every directory change, also one made just before the child exits. Child and
+// poller run in lock step, so scheduling cannot change what is sampled: the
+// first observed change releases the child and then holds the poller until the
+// child has made its last write and exited. Only the sample runChild takes after
+// the exit can see that write.
 func TestRunChild_RecordsChangeWindow(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker")
-	w := &crashWorld{t: t, bin: fakeServerBin(t, "sleep 0.2\necho a > "+marker+"\nsleep 0.2\necho bb > "+marker)}
+	// Outside dir: the handshake files must not count as directory changes.
+	ctl := t.TempDir()
+	pidFile, release := filepath.Join(ctl, "pid"), filepath.Join(ctl, "release")
+	w := &crashWorld{t: t, bin: fakeServerBin(t, "echo $$ > "+pidFile+"\nsleep 0.2\necho a > "+marker+
+		"\nuntil [ -e "+release+" ]; do sleep 0.01; done\nsleep 0.2\necho bb > "+marker)}
 	var win changeWindow
-	_, changes, _, _, err := runChild(w, dir, "unused", []string{"noop"}, &killPlan{kind: "calibrate", window: &win})
+	released := false
+	win.onChange = func() {
+		if released {
+			return
+		}
+		released = true
+		if err := os.WriteFile(release, nil, 0o600); err != nil {
+			t.Errorf("release child: %v", err)
+			return
+		}
+		waitChildReaped(t, pidFile)
+	}
+	// The deadline only ends a child that was never released.
+	_, changes, _, _, err := runChild(w, dir, "unused", []string{"noop"}, &killPlan{kind: "calibrate", deadline: 30 * time.Second, window: &win})
 	if err != nil {
 		t.Fatalf("runChild: %v", err)
 	}
-	// Each `>` is a truncate and then a write, which the poller may see apart.
 	if changes < 2 || win.n != changes {
 		t.Fatalf("changes=%d window.n=%d, want at least 2 and equal", changes, win.n)
 	}
