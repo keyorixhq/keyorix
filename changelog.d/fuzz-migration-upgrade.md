@@ -1,0 +1,2 @@
+### Testing
+- **Skip-version upgrade fuzzers over real old-release databases.** `FuzzUpgradeFromOldSchema` and `FuzzUpgradeInterrupted` (`internal/storage`) upgrade SQLite databases written by v0.91.0 through v0.96.3 with this tree's startup path, on top of generated state, and check that secrets still decrypt, authorization matches the old release, the audit log stays intact, a second migration changes nothing, and an upgrade stopped after any write statement completes on restart. PostgreSQL and sources before v0.91.0 are not covered.
