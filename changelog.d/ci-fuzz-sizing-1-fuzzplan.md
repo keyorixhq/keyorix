@@ -1,0 +1,2 @@
+### Internal
+- **`scripts/ci/fuzzplan`: fast fuzz-target listing and package-aware shard packing.** New helper for the `fuzz-changed` workflow: `list` reads a package's fuzz targets without compiling test binaries, `pack` lays them out over shards so a package is compiled on as few runners as balance allows. The target set a PR gets does not change. The workflow still has to be switched to it (`.github/**` change, proposed separately).
