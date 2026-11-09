@@ -169,8 +169,6 @@ layer agree.
     (`requireAuthorityToReinstateProjectRoles`).
 - **Requester-only.** Access-request withdraw: only the requester
   (`WithdrawAccessRequest`).
-- **Same-role no-op.** `member.setrole` to the role already held is
-  audit-only, so no ceiling applies (`SetProjectMemberRole`).
 - **Baseline grant on user creation.** Every new user receives the
   `system_viewer` baseline, so creating one needs every permission of that
   role at global scope (`CreateUserAudited`, `requireBaselineRoleGrantAuthority`).

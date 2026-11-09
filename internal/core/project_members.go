@@ -72,6 +72,14 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 		return fmt.Errorf("unknown role %q: %w", roleName, err)
 	}
 	scope := Scope{ProjectID: projectID}
+	// The ceiling is judged on roleName before anything about the target is read
+	// (FU-OWNERSHIP-1, see replaceUserRoleSet), so the domain check below never
+	// answers an actor who may not grant it (OWNERSHIP-ORACLE-1, see
+	// addProjectMember), and the no-op below is not a way to confirm a member's
+	// role or, for a machine, an untagged relay's way past roles.assign (#3990).
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, role.ID, scope, actorIsMachine); err != nil {
+		return err
+	}
 	existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
 	if err != nil {
 		return err
@@ -79,20 +87,6 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 	// Only re-run the domain check when this call is establishing NEW project
 	// membership (the user holds no role at this scope yet) — an existing
 	// member changing roles already passed the check when they joined.
-	//
-	// A new member gets exactly roleName, so the ceiling replaceUserRoleSet
-	// judges is known here: judge it before the domain check loads the user
-	// (OWNERSHIP-ORACLE-1, see addProjectMember). A machine actor is judged on
-	// roleName for an existing member too (#3990): a no-op or a narrowing adds
-	// nothing, so replaceUserRoleSet judges no ceiling, and a machine lacking
-	// roles.assign or roleName's permissions (or an untagged relay, see
-	// requireGranterHoldsRolePermissions) could otherwise confirm a membership
-	// or strip a member's other roles.
-	if len(existing) == 0 || actorIsMachine {
-		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, role.ID, scope, actorIsMachine); err != nil {
-			return err
-		}
-	}
 	if len(existing) == 0 {
 		if err := c.domainAllowedForUser(ctx, userID); err != nil {
 			return err

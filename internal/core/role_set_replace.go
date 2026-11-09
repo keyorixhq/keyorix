@@ -59,6 +59,16 @@ type roleSetReplace struct {
 // commits changes nothing and is returned as is.
 func (c *KeyorixCore) replaceUserRoleSet(ctx context.Context, r roleSetReplace) error {
 	r.want = dedupeUints(r.want)
+	// The grant ceiling is the actor's own authority, so it is judged before anything
+	// changes and before the target's roles are read, on EVERY requested role and not
+	// only the additions (FU-OWNERSHIP-1): judged on the additions alone, a no-op or a
+	// narrowing succeeded where the same request for a target not holding the role was
+	// refused, which told the actor what the target held. Commit 2 judges the additions
+	// again under its lock. An actor replacing their own set is also judged on the set
+	// commit 1 leaves, before commit 1 (requireSelfGrantCeilingAfterRemovals, #3684).
+	if err := c.requireGranterHoldsRoleSet(ctx, r, r.want); err != nil {
+		return err
+	}
 	current, err := c.storage.GetUserRoleIDsExact(ctx, r.userID, r.scope)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -71,13 +81,6 @@ func (c *KeyorixCore) replaceUserRoleSet(ctx context.Context, r roleSetReplace) 
 		if err := c.requireScopeValidForRole(ctx, id, r.scope); err != nil {
 			return err
 		}
-	}
-	// The grant ceiling is the actor's own authority, so it is judged before anything
-	// changes; commit 2 judges it again under its lock. An actor replacing their own
-	// set is also judged on the set commit 1 leaves, before commit 1
-	// (requireSelfGrantCeilingAfterRemovals, #3684).
-	if err := c.requireGranterHoldsRoleSet(ctx, r, add); err != nil {
-		return err
 	}
 	removed := []uint{}
 	if len(remove) > 0 {
@@ -138,8 +141,8 @@ func roleSetDiff(current, want []uint) (remove, add []uint) {
 	return remove, add
 }
 
-func (c *KeyorixCore) requireGranterHoldsRoleSet(ctx context.Context, r roleSetReplace, add []uint) error {
-	for _, id := range add {
+func (c *KeyorixCore) requireGranterHoldsRoleSet(ctx context.Context, r roleSetReplace, roleIDs []uint) error {
+	for _, id := range roleIDs {
 		if err := c.requireGranterHoldsRolePermissions(ctx, r.actorID, id, r.scope, r.actorIsMachine); err != nil {
 			return err
 		}

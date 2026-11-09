@@ -6,11 +6,8 @@ package handlers
 // grant the role asked for. With the membership domain allowlist on, the handlers
 // used to answer by target: 404 / 403 "email domain is not on the allowlist" / the
 // ceiling refusal, so the refusal said which user IDs exist and whose email is off
-// the allowlist. Every target now gets the same status and body. The status itself
-// is not asserted here: POST /projects/{id}/members answers a ceiling refusal 403
-// (pinned by TestAddProjectMember_HumanFailingCeilingAnswers403), but /memberships has no
-// ErrPermissionDenied case in its error switch and answers 500 today, which is
-// the error-map owner's to change, not this test's to pin.
+// the allowlist. Every target now gets the same body and status 403 (FU-OWNERSHIP-1:
+// POST /projects/{id}/memberships answered the ceiling refusal 500).
 
 import (
 	"context"
@@ -108,7 +105,7 @@ func TestMemberGrantHandlers_UnauthorizedActorIdenticalAnswer(t *testing.T) {
 		got := map[string]answer{}
 		for label, target := range targets {
 			w := op(target)
-			assert.GreaterOrEqual(t, w.Code, 400, "%s %s: a refused grant must not succeed: %s", name, label, w.Body.String())
+			assert.Equal(t, http.StatusForbidden, w.Code, "%s %s: a refused grant answers 403: %s", name, label, w.Body.String())
 			got[label] = answer{w.Code, w.Body.String()}
 		}
 		want := got["existing user"]
