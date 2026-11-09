@@ -221,10 +221,10 @@ func pcrashWant(t *testing.T, v []string, name string) {
 // TestProcessCrashRedProof needs child processes but is quick, so it runs by default.
 // Each subtest works on its own copy of the template (the calibration cache is
 // locked), so they run in parallel, as TestProcessCrashExhaustive's do.
+// TestProcessCrashRedProof runs in the nightly, not in plain `go test`: see
+// pcrashSkipUnlessRequested.
 func TestProcessCrashRedProof(t *testing.T) {
-	if testing.Short() {
-		t.Skip("spawns real child processes")
-	}
+	pcrashSkipUnlessRequested(t, "show each crash oracle firing")
 	w := pcrashWorldFor(t)
 	dek := pcrashOps[0]
 	update := pcrashOps[5]

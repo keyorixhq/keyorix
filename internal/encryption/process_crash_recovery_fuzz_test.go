@@ -43,6 +43,8 @@ import (
 const (
 	pcrashChildDeadline = 3 * time.Minute
 	envPCrashStats      = "KEYORIX_PCRASH_STATS" // optional dir: one TSV line per exec
+
+	envPCrashExhaustive = "KEYORIX_PCRASH_EXHAUSTIVE" // runs the tests that spawn child processes
 )
 
 // pcrashOp is one operation under test. The after model is the before model
@@ -767,10 +769,18 @@ func pcrashWorldFor(tb testing.TB) *pcrashWorld {
 	return w
 }
 
-func TestProcessCrashCalibration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("spawns real child processes")
+// pcrashSkipUnlessRequested keeps a test that spawns real child processes out of
+// plain `go test` and the race legs; the nightly (.github/workflows/process-crash-nightly.yml)
+// runs the red-proof and calibration, the same shape as KEYORIX_INTERLEAVE_SWEEP.
+func pcrashSkipUnlessRequested(t *testing.T, what string) {
+	t.Helper()
+	if os.Getenv(envPCrashExhaustive) == "" {
+		t.Skipf("set %s=1 to %s", envPCrashExhaustive, what)
 	}
+}
+
+func TestProcessCrashCalibration(t *testing.T) {
+	pcrashSkipUnlessRequested(t, "run a clean calibration of every operation")
 	w := pcrashWorldFor(t)
 	for _, op := range pcrashOps {
 		c := w.calibrate(t, op)
@@ -783,9 +793,7 @@ func TestProcessCrashCalibration(t *testing.T) {
 // TestProcessCrashExhaustive kills every operation at every seam it has, once.
 // It takes minutes, so it runs only when asked for.
 func TestProcessCrashExhaustive(t *testing.T) {
-	if os.Getenv("KEYORIX_PCRASH_EXHAUSTIVE") == "" {
-		t.Skip("set KEYORIX_PCRASH_EXHAUSTIVE=1 to kill every operation at every seam")
-	}
+	pcrashSkipUnlessRequested(t, "kill every operation at every seam")
 	w := pcrashWorldFor(t)
 	for _, op := range pcrashOps {
 		cal := w.calibrate(t, op)
@@ -992,9 +1000,7 @@ func pcrashArchiveNames(path string) []string {
 
 // TestProcessCrashBackupAfterKilledRotation runs that check at every rotation seam.
 func TestProcessCrashBackupAfterKilledRotation(t *testing.T) {
-	if os.Getenv("KEYORIX_PCRASH_EXHAUSTIVE") == "" {
-		t.Skip("set KEYORIX_PCRASH_EXHAUSTIVE=1 to kill a rotation at every seam and back up")
-	}
+	pcrashSkipUnlessRequested(t, "kill a rotation at every seam and back up")
 	w := pcrashWorldFor(t)
 	cal := w.calibrate(t, pcrashOps[0])
 	for killAt := int64(1); killAt <= cal.seams; killAt++ {
