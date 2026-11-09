@@ -26,6 +26,8 @@ package core
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -340,20 +342,18 @@ func sbRender(es []shareElevation) []string {
 func TestAuthorizeSecretsBatch_EqualsPerRow(t *testing.T) {
 	for _, backend := range c4Backends(t) {
 		t.Run(backend, func(t *testing.T) {
+			start := time.Now()
 			sw := sbBuild(t, backend)
 			c := sw.w.core
-			type patCase struct {
-				name string
-				pat  *PATRestriction
-			}
-			pats := []patCase{
+			require.Len(t, sw.users, sbWantPrincipals, "the principal matrix changed size: update sbWant* on purpose")
+			require.Len(t, sw.targets, sbWantTargets, "the secret matrix changed size: update sbWant* on purpose")
+			pats := []sbPatCase{
 				{"no-pat", nil},
 				{"pat-p1", &PATRestriction{ProjectID: sw.p1.ID}},
 				{"pat-write-only", &PATRestriction{Permissions: []string{permSecretsWrite}}},
 				{"pat-env", &PATRestriction{EnvironmentID: sw.e1a.ID}},
 			}
-			var decisions, allowed, denied, elevations, aclOnly, auditRows int
-			var diffs []string
+			var sweeps []sbSweep
 			for ui, u := range sw.users {
 				cases := pats[:1]
 				if ui%9 == 0 {
@@ -361,54 +361,41 @@ func TestAuthorizeSecretsBatch_EqualsPerRow(t *testing.T) {
 				}
 				for _, pc := range cases {
 					for _, perm := range []string{permSecretsRead, permSecretsWrite} {
-						base := context.Background()
-						if pc.pat != nil {
-							base = WithPATRestriction(base, pc.pat)
-						}
-						perCtx, perRec := WithShareElevationRecorder(base)
-						per := make([]bool, len(sw.targets))
-						for i, s := range sw.targets {
-							per[i], _ = c.AuthorizeSecret(perCtx, u.id, s.ID, perm)
-						}
-						batCtx, batRec := WithShareElevationRecorder(base)
-						got, err := c.AuthorizeSecretsBatch(batCtx, u.id, perm, sw.targets)
-						require.NoError(t, err)
-						require.Len(t, got, len(sw.targets))
-
-						perElev, batElev := sbRender(perRec.drain()), sbRender(batRec.drain())
-						for i, s := range sw.targets {
-							decisions++
-							if per[i] {
-								allowed++
-							} else {
-								denied++
-							}
-							if got[s.ID] != per[i] {
-								diffs = append(diffs, fmt.Sprintf("%s / %s / %s on %q: per-row=%v batch=%v", u.label, pc.name, perm, s.Name, per[i], got[s.ID]))
-							}
-						}
-						if fmt.Sprint(perElev) != fmt.Sprint(batElev) {
-							diffs = append(diffs, fmt.Sprintf("%s / %s / %s: share elevations differ\n  per-row: %v\n  batch:   %v", u.label, pc.name, perm, perElev, batElev))
-						}
-						elevations += len(perElev)
-						// A project member whose role grants nothing, on a secret nobody shared,
-						// can only be allowed by an ACL grant (here: on an ancestor 16 levels up).
-						if perm == permSecretsRead && pc.pat == nil && u.label == "member@p1(no perms)/share-group-scoped-p1" {
-							for i, s := range sw.targets {
-								if per[i] && s.Name == "deep|none" {
-									aclOnly++
-								}
-							}
-						}
+						sweeps = append(sweeps, sbSweep{user: u, pat: pc, perm: perm})
 					}
 				}
 			}
+			require.Len(t, sweeps, sbWantSweeps, "the (principal, PAT, permission) matrix changed size: update sbWant* on purpose")
+			built := time.Now()
+
+			// The sweeps only read (a recorder holds every elevation in memory), so
+			// they share the pool. The audit high-water mark checks the one write this
+			// decision path has; it says nothing about other tables, which the path
+			// does not write.
+			auditBefore := sbAuditHighWater(t, sw.w.db)
+			results := sw.runSweeps(t, sweeps)
+			require.Equal(t, auditBefore, sbAuditHighWater(t, sw.w.db), "a recorded sweep wrote an audit row: the sweeps are no longer read-only")
+			compared := time.Now()
+
+			var decisions, allowed, denied, elevations, aclOnly, auditRows, audited int
+			var diffs []string
+			for _, r := range results { // in sweep order, whichever worker ran each
+				require.NoError(t, r.err)
+				decisions += r.decisions
+				allowed += r.allowed
+				denied += r.denied
+				elevations += r.elevations
+				aclOnly += r.aclOnly
+				diffs = append(diffs, r.diffs...)
+			}
 			// Without a request recorder (the GET /shares route has none) a read elevation
-			// is audited at once: per-row and batch must write the same rows.
+			// is audited at once: per-row and batch must write the same rows. These write
+			// and read the rows back by id, so they stay one at a time.
 			for ui, u := range sw.users {
 				if ui%7 != 0 {
 					continue
 				}
+				audited++
 				before := sbAuditHighWater(t, sw.w.db)
 				for _, s := range sw.targets {
 					_, _ = c.AuthorizeSecret(context.Background(), u.id, s.ID, permSecretsRead)
@@ -424,15 +411,138 @@ func TestAuthorizeSecretsBatch_EqualsPerRow(t *testing.T) {
 				auditRows += len(perRows)
 			}
 			require.Empty(t, diffs, "the batch authoriser and the per-row decision differ on %d of %d decisions; first: %v", len(diffs), decisions, firstN(diffs, 15))
+			// The whole cross product ran: a shrunk matrix would otherwise pass quietly.
+			require.Equal(t, sbWantDecisions, decisions, "decisions compared")
+			require.Equal(t, sbWantAuditedPrincipals, audited, "principals audited without a recorder")
 			// The matrix must exercise every outcome, or equality proves little.
 			require.Positive(t, allowed, "no decision allowed: the matrix is vacuous")
 			require.Positive(t, denied, "no decision denied: the matrix is vacuous")
 			require.Positive(t, elevations, "no share elevation recorded: the share term is not exercised")
 			require.Positive(t, auditRows, "no share elevation audited without a recorder: the immediate-audit path is not exercised")
 			require.Positive(t, aclOnly, "no ACL-only allow in the matrix: the ACL term is not exercised")
-			t.Logf("%s: %d decisions equal (%d allowed, %d denied, %d share elevations)", backend, decisions, allowed, denied, elevations)
+			t.Logf("%s: %d decisions equal (%d allowed, %d denied, %d share elevations); build %s, sweeps %s, audit %s", backend, decisions, allowed, denied, elevations,
+				built.Sub(start).Round(time.Millisecond), compared.Sub(built).Round(time.Millisecond), time.Since(compared).Round(time.Millisecond))
 		})
 	}
+}
+
+// sbPatCase is one PAT context the decisions are made under.
+type sbPatCase struct {
+	name string
+	pat  *PATRestriction
+}
+
+// sbSweep is one (principal, PAT context, permission): every target decided per row,
+// then the same targets as one batch.
+type sbSweep struct {
+	user sbUser
+	pat  sbPatCase
+	perm string
+}
+
+type sbSweepResult struct {
+	decisions, allowed, denied, elevations, aclOnly int
+	diffs                                           []string
+	err                                             error
+}
+
+// sbCompareWorkers is how many sweeps run at once. Nearly all of a sweep's time is
+// waiting on one-statement round trips (about 35,000 per-row decisions of several
+// statements each), so a small pool is what makes the test fast. Four matches the
+// standard CI runner.
+const sbCompareWorkers = 4
+
+// The size of the matrix, pinned so it cannot shrink silently. A deliberate change to
+// the role kinds, group kinds, locations or share states updates these.
+const (
+	sbWantPrincipals        = 90    // len(sbRoleKinds) x len(sbGroupKinds)
+	sbWantTargets           = 139   // 12 locations x 11 share states, plus 7 folders
+	sbWantSweeps            = 240   // (10 principals x 4 PAT contexts + 80 x 1) x 2 permissions
+	sbWantDecisions         = 33360 // sbWantSweeps x sbWantTargets
+	sbWantAuditedPrincipals = 13    // every 7th principal
+)
+
+// runSweeps compares every sweep on sbCompareWorkers goroutines and returns the
+// results in sweep order, so the diffs and totals do not depend on scheduling. Each
+// sweep is still decided per row and then as a batch on one goroutine, with its own
+// recorders.
+func (sw *sbWorld) runSweeps(t *testing.T, sweeps []sbSweep) []sbSweepResult {
+	t.Helper()
+	sqlDB, err := sw.w.db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(sbCompareWorkers) // pgOpen caps a pool at 2
+	sqlDB.SetMaxIdleConns(sbCompareWorkers) // or every statement past the idle cap reconnects
+
+	results := make([]sbSweepResult, len(sweeps))
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range sbCompareWorkers {
+		wg.Go(func() {
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(sweeps) {
+					return
+				}
+				results[i] = sw.compareSweep(sweeps[i])
+			}
+		})
+	}
+	wg.Wait()
+	return results
+}
+
+// compareSweep runs off the test goroutine, so it reports a failure in its result
+// instead of calling require.
+func (sw *sbWorld) compareSweep(sweep sbSweep) sbSweepResult {
+	var r sbSweepResult
+	c := sw.w.core
+	u, pc, perm := sweep.user, sweep.pat, sweep.perm
+	base := context.Background()
+	if pc.pat != nil {
+		base = WithPATRestriction(base, pc.pat)
+	}
+	perCtx, perRec := WithShareElevationRecorder(base)
+	per := make([]bool, len(sw.targets))
+	for i, s := range sw.targets {
+		per[i], _ = c.AuthorizeSecret(perCtx, u.id, s.ID, perm)
+	}
+	batCtx, batRec := WithShareElevationRecorder(base)
+	got, err := c.AuthorizeSecretsBatch(batCtx, u.id, perm, sw.targets)
+	if err != nil {
+		r.err = fmt.Errorf("%s / %s / %s: batch: %w", u.label, pc.name, perm, err)
+		return r
+	}
+	if len(got) != len(sw.targets) {
+		r.err = fmt.Errorf("%s / %s / %s: batch decided %d of %d targets", u.label, pc.name, perm, len(got), len(sw.targets))
+		return r
+	}
+
+	perElev, batElev := sbRender(perRec.drain()), sbRender(batRec.drain())
+	for i, s := range sw.targets {
+		r.decisions++
+		if per[i] {
+			r.allowed++
+		} else {
+			r.denied++
+		}
+		if got[s.ID] != per[i] {
+			r.diffs = append(r.diffs, fmt.Sprintf("%s / %s / %s on %q: per-row=%v batch=%v", u.label, pc.name, perm, s.Name, per[i], got[s.ID]))
+		}
+	}
+	if fmt.Sprint(perElev) != fmt.Sprint(batElev) {
+		r.diffs = append(r.diffs, fmt.Sprintf("%s / %s / %s: share elevations differ\n  per-row: %v\n  batch:   %v", u.label, pc.name, perm, perElev, batElev))
+	}
+	r.elevations = len(perElev)
+	// A project member whose role grants nothing, on a secret nobody shared,
+	// can only be allowed by an ACL grant (here: on an ancestor 16 levels up).
+	if perm == permSecretsRead && pc.pat == nil && u.label == "member@p1(no perms)/share-group-scoped-p1" {
+		for i, s := range sw.targets {
+			if per[i] && s.Name == "deep|none" {
+				r.aclOnly++
+			}
+		}
+	}
+	return r
 }
 
 func sbAuditHighWater(t *testing.T, db *gorm.DB) uint {
