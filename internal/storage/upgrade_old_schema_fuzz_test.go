@@ -229,6 +229,8 @@ type ugHooks struct {
 	// BEGIN EXCLUSIVE, a shape no production boot has. Only the red-proof that
 	// documents the artefact sets it; the fuzz target never does.
 	bareInterrupt bool
+	// rerunShim runs extra boots between the two dumps of oracle 4.
+	rerunShim func(t testing.TB, dbPath string)
 	// halfStateAtStop adds what a step that is not crash-safe would have left
 	// behind, on top of the state the stop left, before the restart.
 	halfStateAtStop func(db *sql.DB) error
@@ -329,7 +331,10 @@ func ugRunStages(t testing.TB, tag string, chainVerifiable bool, data []byte, st
 		}
 		return append(findings, ugFinding{inv, fmt.Sprintf("CreateStorage on a %s database (stopAfter=%d): %v", tag, stopAfter, err)})
 	}
-	defer func() { _ = ugCloseStorage(st) }()
+	// The first handle is gone before the second boot, as it is across a restart.
+	if err := ugCloseStorage(st); err != nil {
+		t.Fatalf("closing migrated storage: %v", err)
+	}
 
 	// Oracle 4 comes first: the core reads below legitimately write audit and
 	// read-count rows.
@@ -337,26 +342,20 @@ func ugRunStages(t testing.TB, tag string, chainVerifiable bool, data []byte, st
 	if err != nil {
 		t.Fatalf("dumping migrated database: %v", err)
 	}
-	if hooks.beforeRerun != nil {
-		rerunRaw, _, closeRerun := ugOpenRaw(t, dbPath)
-		if err := hooks.beforeRerun(rerunRaw); err != nil {
-			closeRerun()
-			t.Fatalf("beforeRerun hook: %v", err)
-		}
-		closeRerun()
+	if hooks.rerunShim != nil {
+		hooks.rerunShim(t, dbPath)
 	}
 	again, err := NewStorageFactory().CreateStorage(ugLocalConfig(dbPath))
 	if err != nil {
-		findings = append(findings, ugFinding{4, fmt.Sprintf("second migration failed: %v", err)})
-	} else {
-		_ = ugCloseStorage(again)
-		after, err := ugDumpDB(dbPath)
-		if err != nil {
-			t.Fatalf("dumping re-migrated database: %v", err)
-		}
-		if !bytes.Equal(before, after) {
-			findings = append(findings, ugFinding{4, "second migration changed the database: " + ugFirstDiff(before, after)})
-		}
+		return append(findings, ugFinding{4, fmt.Sprintf("second migration failed: %v", err)})
+	}
+	defer func() { _ = ugCloseStorage(again) }()
+	after, err := ugDumpDB(dbPath)
+	if err != nil {
+		t.Fatalf("dumping re-migrated database: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		findings = append(findings, ugFinding{4, "second migration changed the database: " + ugFirstDiff(before, after)})
 	}
 
 	if hooks.afterMigrate != nil {
@@ -368,7 +367,7 @@ func ugRunStages(t testing.TB, tag string, chainVerifiable bool, data []byte, st
 		closeMut()
 	}
 
-	c := core.NewKeyorixCore(st)
+	c := core.NewKeyorixCore(again)
 	c.SetAuthEncryptor(tpl.enc)
 	c.SetSecretValueEncryptor(tpl.enc)
 	return append(findings, ugCheckOracles(t, tag, chainVerifiable, dbPath, c, tpl, exp, model, preAudit, len(data))...)

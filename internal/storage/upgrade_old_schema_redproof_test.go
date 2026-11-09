@@ -11,7 +11,10 @@ import (
 	"math"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 var ugRedSeed = []byte{1, 0, 1, 2, 0, 3, 1, 2, 1, 1, 0, 2, 3, 3, 2, 1, 0, 1, 2, 3, 1, 1, 2, 0, 3, 4, 5, 1, 2, 2, 1, 7, 9}
@@ -100,13 +103,25 @@ func TestUpgradeOracles_RedProof(t *testing.T) {
 		}
 	})
 
-	t.Run("invariant4_change_during_second_migration", func(t *testing.T) {
-		// A step that is not idempotent looks like this from outside: the bytes after
-		// a re-run differ from the bytes before it.
-		f := ugRun(t, tag, true, ugRedSeed, 0, ugHooks{beforeRerun: func(db *sql.DB) error {
-			return ugExecStmts(db, "UPDATE projects SET description = 'rerun changed me' WHERE id = 1")
+	t.Run("invariant4_control_shimmed_rerun_without_the_step", func(t *testing.T) {
+		f := ugRun(t, tag, true, ugRedSeed, 0, ugHooks{rerunShim: func(t testing.TB, dbPath string) {
+			ugMigrateWithPlantedStep(t, dbPath, "")
 		}})
-		ugAssertFires(t, f, 4)
+		if len(f) != 0 {
+			t.Fatalf("the shim itself must not change the database, got %v", f)
+		}
+	})
+
+	t.Run("invariant4_non_idempotent_step_in_a_real_migration", func(t *testing.T) {
+		// A backfill with no already-done gate: it runs inside the real step list on
+		// every boot and appends each time.
+		f := ugRun(t, tag, true, ugRedSeed, 0, ugHooks{rerunShim: func(t testing.TB, dbPath string) {
+			ugMigrateWithPlantedStep(t, dbPath, "UPDATE projects SET description = description || ' (backfilled)' WHERE id = 1")
+		}})
+		found := ugAssertFires(t, f, 4)
+		if !strings.Contains(found.Detail, "(backfilled)") {
+			t.Fatalf("expected the planted step's own change to be what fired: %s", found.Detail)
+		}
 	})
 
 	t.Run("invariant5_control_restart_after_a_stop_is_clean", func(t *testing.T) {
@@ -124,6 +139,44 @@ func TestUpgradeOracles_RedProof(t *testing.T) {
 		}})
 		ugAssertFires(t, f, 5)
 	})
+}
+
+// ugPlantStepAfter is a statement of the real step list that runs on every boot.
+const ugPlantStepAfter = "idx_secret_nodes_classification"
+
+// ugMigrateWithPlantedStep runs the real migrateDatabase with one extra statement
+// executed right after ugPlantStepAfter, as a step of that list would be. An empty
+// plant still runs the shim, for the control. The anchor must be hit, or the test
+// would silently stop planting anything once that step changes.
+func ugMigrateWithPlantedStep(t testing.TB, dbPath, plant string) {
+	t.Helper()
+	gdb, err := openSQLiteGorm(sqliteDSN(dbPath))
+	if err != nil {
+		t.Fatalf("opening %s: %v", dbPath, err)
+	}
+	raw, err := gdb.DB()
+	if err != nil {
+		t.Fatalf("raw handle: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	var planted atomic.Bool
+	err = gdb.Callback().Raw().After("gorm:raw").Register("ug:plant_step", func(db *gorm.DB) {
+		if db.Error != nil || !strings.Contains(db.Statement.SQL.String(), ugPlantStepAfter) || !planted.CompareAndSwap(false, true) {
+			return
+		}
+		if plant != "" {
+			_ = db.AddError(db.Session(&gorm.Session{NewDB: true}).Exec(plant).Error)
+		}
+	})
+	if err != nil {
+		t.Fatalf("registering the planted step: %v", err)
+	}
+	if err := (&DefaultStorageFactory{}).migrateDatabase(gdb); err != nil {
+		t.Fatalf("migration with the planted step: %v", err)
+	}
+	if !planted.Load() {
+		t.Fatalf("no statement mentioned %s: the anchor of the planted step is gone", ugPlantStepAfter)
+	}
 }
 
 // ugRedStop is a stop every source's upgrade reaches: the snapshot's own early
