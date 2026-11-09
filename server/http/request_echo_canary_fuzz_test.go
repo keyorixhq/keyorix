@@ -56,7 +56,19 @@ const (
 	echoChanReveal  = "reveal"
 
 	echoOriginReveal = "control-reveal"
+
+	// echoShapes is the number of request shapes; shape reduces its input modulo this.
+	echoShapes = 13
+	// echoChannelURLShape sends a valid channel type with the secret canary in url, so
+	// a notification-channel request gets past the type check into the URL validation.
+	// The host is a private literal: the validator refuses it without a DNS lookup, so
+	// a default run stays off the network. It does not reach the resolver's error path,
+	// and it holds no canary in the host; the -canary-echo-channel-dns replay covers both.
+	echoChannelURLShape = 12
 )
+
+// echoChannelRoutes are the routes that run validateNotificationChannel on a request.
+var echoChannelRoutes = []string{"POST /api/v1/notification-channels", "PUT /api/v1/notification-channels/{id}"}
 
 // requestEchoRules is the whole allowlist; requestEchoPermitted adds the two
 // conditions a Rule cannot express. An unknown echo is a finding. The authorised
@@ -90,6 +102,7 @@ type requestEchoFixture struct {
 	addrN      atomic.Uint64
 
 	captureDir string
+	channelURL func(*requestEchoRun) string // replaces echoChannelURLShape's url when set
 }
 
 func newRequestEchoFixture(tb testing.TB) *requestEchoFixture {
@@ -136,8 +149,10 @@ type requestEchoRun struct {
 
 	findings []string
 	status   int
+	respBody string
 
 	adminTok, outsiderTok string
+	channelID             uint // set only for echoChannelURLShape on a /{id} channel route
 }
 
 func (fx *requestEchoFixture) newRun(t testing.TB, dir string, seed []byte, allow *canary.Allowlist) *requestEchoRun {
@@ -265,6 +280,24 @@ func (r *requestEchoRun) prologue() {
 	r.fx.capture.Drain() // the control's own log lines are not the fuzzed request's
 }
 
+// createChannel makes a channel for echoChannelURLShape to update: without one, PUT
+// stops at the 404 and never reaches the URL validation. The IP literal is public, so
+// the validator accepts it without a DNS lookup, and creating a channel sends nothing.
+func (r *requestEchoRun) createChannel() {
+	body := mustJSON(map[string]any{"name": "echo-target-channel", "type": "webhook", "url": "https://8.8.8.8/hook/plain"})
+	rec := r.send(&sweepReq{Method: http.MethodPost, Target: "/api/v1/notification-channels", Header: r.adminHeaders(), Body: body})
+	var decoded struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil || rec.Code/100 != 2 || decoded.Data.ID == 0 {
+		echoFail("INVALID RUN: target channel was not created: HTTP %d %v", rec.Code, err)
+	}
+	r.channelID = decoded.Data.ID
+	r.fx.capture.Drain()
+}
+
 func hasEchoLabel(hits []canary.Hit, label string) bool {
 	return slices.ContainsFunc(hits, func(h canary.Hit) bool { return h.Label == label })
 }
@@ -294,7 +327,7 @@ func mustJSON(v any) []byte {
 // error text, which is where an input is most often quoted back.
 func (r *requestEchoRun) shape(rt sweepRoute, principal string, shape uint8, mut []byte) *sweepReq {
 	target := sweepParam.ReplaceAllStringFunc(rt.Pattern, func(string) string { return url.PathEscape(r.mPath.Raw) })
-	req := &sweepReq{Method: rt.Method, Target: target, Header: http.Header{}, Principal: principal, Shape: fmt.Sprint(shape % 12), Route: rt.String()}
+	req := &sweepReq{Method: rt.Method, Target: target, Header: http.Header{}, Principal: principal, Shape: fmt.Sprint(shape % echoShapes), Route: rt.String()}
 	switch principal {
 	case "admin":
 		req.Header.Set("Authorization", "Bearer "+r.adminTok)
@@ -304,7 +337,7 @@ func (r *requestEchoRun) shape(rt sweepRoute, principal string, shape uint8, mut
 		req.Header.Set("Authorization", "Bearer "+r.sHeader.Raw)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	switch shape % 12 {
+	switch shape % echoShapes {
 	case 0:
 		req.Body = mustJSON(r.bodyObject())
 	case 1: // every value has the wrong type
@@ -349,6 +382,13 @@ func (r *requestEchoRun) shape(rt sweepRoute, principal string, shape uint8, mut
 		req.Header.Set("Origin", "https://"+r.mHeader.Core+".example")
 	case 11: // past the JSON decoder's comfort, under the body limit
 		req.Body = mustJSON(map[string]any{"name": strings.Repeat(r.mBody.Raw, 200), "value": strings.Repeat(r.sBody.Raw, 200)})
+	case echoChannelURLShape:
+		req.Target = sweepParam.ReplaceAllString(rt.Pattern, fmt.Sprint(max(r.channelID, 1)))
+		channelURL := "https://10.0.0.1/hook/" + r.sBody.Raw
+		if r.fx.channelURL != nil {
+			channelURL = r.fx.channelURL(r)
+		}
+		req.Body = mustJSON(map[string]any{"name": r.mBody.Raw, "type": "webhook", "url": channelURL})
 	}
 	if len(mut) > 0 && len(req.Body) > 0 {
 		b := bytes.Clone(req.Body)
@@ -514,19 +554,28 @@ func runRequestEcho(t testing.TB, fx *requestEchoFixture, dir string, in request
 			}
 		}()
 		r.prologue()
+		if in.shape%echoShapes == echoChannelURLShape && strings.Contains(rt.Pattern, "/notification-channels/") {
+			r.createChannel()
+		}
 		req := r.shape(rt, principals[int(in.principal)%len(principals)], in.shape, in.mut)
 		rec := r.send(req)
 		r.status = rec.Code
+		r.respBody = rec.Body.String()
 		r.judgeResponse(req, rec)
 		r.finish(req.Route, plant)
 	})
 	return r, invalid
 }
 
-func addRequestEchoSeeds(f *testing.F) {
+func addRequestEchoSeeds(f *testing.F, fx *requestEchoFixture) {
 	f.Add(uint16(0), uint8(0), uint8(0), []byte(nil))
-	for shape := range 12 {
+	for shape := range echoShapes {
 		f.Add(uint16(shape*23), uint8(shape%4), uint8(shape), []byte(nil))
+	}
+	for _, route := range echoChannelRoutes {
+		if idx := slices.IndexFunc(fx.routes, func(r sweepRoute) bool { return r.String() == route }); idx >= 0 {
+			f.Add(uint16(idx), uint8(0), uint8(echoChannelURLShape), []byte(nil))
+		}
 	}
 	f.Add(uint16(5), uint8(0), uint8(3), []byte{1, 2, 3})
 }
@@ -535,7 +584,7 @@ func addRequestEchoSeeds(f *testing.F) {
 // anywhere, outside requestEchoRules.
 func FuzzHTTPRequestEchoCanary(f *testing.F) {
 	fx := newRequestEchoFixture(f)
-	addRequestEchoSeeds(f)
+	addRequestEchoSeeds(f, fx)
 	f.Fuzz(func(t *testing.T, route uint16, principal, shape uint8, mut []byte) {
 		if len(mut) > 64 {
 			mut = mut[:64]

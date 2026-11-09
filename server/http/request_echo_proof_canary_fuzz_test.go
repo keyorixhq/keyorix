@@ -109,6 +109,76 @@ func TestRequestEchoCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 	})
 }
 
+// runChannelURLShape sends echoChannelURLShape to route as the admin.
+func runChannelURLShape(t *testing.T, fx *requestEchoFixture, route string) *requestEchoRun {
+	t.Helper()
+	idx := slices.IndexFunc(fx.routes, func(r sweepRoute) bool { return r.String() == route })
+	if idx < 0 {
+		t.Fatalf("route %s is not registered", route)
+	}
+	in := requestEchoInput{route: uint16(idx), principal: 0, shape: echoChannelURLShape}
+	r, invalid := runRequestEcho(t, fx, t.TempDir(), in, requestEchoRules(), nil, nil)
+	if invalid != "" {
+		t.Fatal(invalid)
+	}
+	return r
+}
+
+// TestRequestEchoCanaryChannelURLShapeReachesValidation proves the shape gets past
+// the type check on both channel routes: the refusal it asserts comes from the URL
+// validation, which runs after that check.
+func TestRequestEchoCanaryChannelURLShapeReachesValidation(t *testing.T) {
+	fx := newRequestEchoFixture(t)
+	for _, route := range echoChannelRoutes {
+		t.Run(route, func(t *testing.T) {
+			r := runChannelURLShape(t, fx, route)
+			if r.status != http.StatusBadRequest || !strings.Contains(r.respBody, "private/link-local") {
+				t.Fatalf("did not reach the URL validation: status %d body %s", r.status, r.respBody)
+			}
+			if len(r.findings) != 0 {
+				t.Fatalf("findings: %v", r.findings)
+			}
+		})
+	}
+}
+
+var echoChannelDNS = flag.Bool("canary-echo-channel-dns", false, "TestRequestEchoCanaryChannelDNSCandidate: replay the DNS error path through the real resolver")
+
+// TestRequestEchoCanaryChannelDNSCandidate pins an open candidate finding: the
+// resolver's error names the URL's host and validateWebhookURL returns it in the 400,
+// so a canary in the host comes back, while one in the path does not. It passes while
+// that is true and fails once the host stops being quoted, so it gets removed with the
+// fix. It needs -canary-echo-channel-dns because it makes real DNS queries for names
+// under .invalid, which a default run must not do (#1948). It covers the resolver
+// error only, not a host that resolves.
+func TestRequestEchoCanaryChannelDNSCandidate(t *testing.T) {
+	if !*echoChannelDNS {
+		t.Skip("makes real DNS queries; run with -canary-echo-channel-dns")
+	}
+	fx := newRequestEchoFixture(t)
+	for _, route := range echoChannelRoutes {
+		t.Run(route+"/canary-in-host", func(t *testing.T) {
+			fx.channelURL = func(r *requestEchoRun) string { return "https://" + r.sBody.Raw + ".invalid/" }
+			r := runChannelURLShape(t, fx, route)
+			if !slices.ContainsFunc(r.findings, func(s string) bool {
+				return strings.Contains(s, "channel="+echoChanBody+" ") && strings.Contains(s, "label=s-body")
+			}) {
+				t.Fatalf("the host is no longer quoted, so remove this test: status %d body %s findings %v", r.status, r.respBody, r.findings)
+			}
+		})
+		t.Run(route+"/canary-in-path", func(t *testing.T) {
+			fx.channelURL = func(r *requestEchoRun) string { return "https://echo-target.invalid/hook/" + r.sBody.Raw }
+			r := runChannelURLShape(t, fx, route)
+			if !strings.Contains(r.respBody, "could not resolve URL hostname") {
+				t.Fatalf("did not reach the resolver's error path: status %d body %s", r.status, r.respBody)
+			}
+			if len(r.findings) != 0 {
+				t.Fatalf("findings: %v", r.findings)
+			}
+		})
+	}
+}
+
 // TestRequestEchoCanaryEchoRowsAreLive proves each echo row of requestEchoRules is
 // needed and sufficient: its route still echoes when the row is absent, and is clean
 // when it is present. A fix to the echo fails this test, so the row gets removed.
@@ -170,7 +240,7 @@ func TestRequestEchoCanarySweep(t *testing.T) {
 	t.Logf("routes: %d", len(fx.routes))
 	for ri := *echoSweepFrom; ri < min(len(fx.routes), *echoSweepTo); ri += step {
 		for pi := range 4 {
-			for sh := range 12 {
+			for sh := range echoShapes {
 				in := requestEchoInput{route: uint16(ri), principal: uint8(pi), shape: uint8(sh)}
 				dir, err := os.MkdirTemp("", "echo-sweep-*")
 				if err != nil {
