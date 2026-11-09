@@ -93,6 +93,11 @@ type faultWorld struct {
 
 	encryptOnce sync.Once
 	encryptErr  error
+
+	// encKeepTB and keptEncSvc are set only by keepEncryptionAcrossResets
+	// (world_reuse_test.go); nil for every world that did not opt in.
+	encKeepTB  tbLite
+	keptEncSvc *encryption.Service
 }
 
 // ensureEncryption lazily wires ADR-004 encryption into this world's core: a
@@ -112,15 +117,9 @@ type faultWorld struct {
 func (w *faultWorld) ensureEncryption() error {
 	w.t.Helper()
 	w.encryptOnce.Do(func() {
-		encKeyDir, err := os.MkdirTemp("", "faultops-enc-*")
+		encSvc, err := w.encryptionService()
 		if err != nil {
-			w.encryptErr = fmt.Errorf("mkdir encryption key dir: %w", err)
-			return
-		}
-		w.t.Cleanup(func() { _ = os.RemoveAll(encKeyDir) })
-		encSvc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, encKeyDir)
-		if err := encSvc.Initialize("faultops-fixture-passphrase"); err != nil {
-			w.encryptErr = fmt.Errorf("encryption Initialize: %w", err)
+			w.encryptErr = err
 			return
 		}
 		w.core.SetSecretValueEncryptor(encSvc)
@@ -134,6 +133,32 @@ func (w *faultWorld) ensureEncryption() error {
 		}
 	})
 	return w.encryptErr
+}
+
+// encryptionService returns the service ensureEncryption wires into this world's
+// core: the kept one if keepEncryptionAcrossResets opted in and one exists,
+// otherwise a newly initialized one, which is a full PBKDF2 derivation.
+func (w *faultWorld) encryptionService() (*encryption.Service, error) {
+	if w.keptEncSvc != nil {
+		return w.keptEncSvc, nil
+	}
+	encKeyDir, err := os.MkdirTemp("", "faultops-enc-*")
+	if err != nil {
+		return nil, fmt.Errorf("mkdir encryption key dir: %w", err)
+	}
+	var cleanup tbLite = w.t
+	if w.encKeepTB != nil {
+		cleanup = w.encKeepTB
+	}
+	cleanup.Cleanup(func() { _ = os.RemoveAll(encKeyDir) })
+	encSvc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, encKeyDir)
+	if err := encSvc.Initialize("faultops-fixture-passphrase"); err != nil {
+		return nil, fmt.Errorf("encryption Initialize: %w", err)
+	}
+	if w.encKeepTB != nil {
+		w.keptEncSvc = encSvc
+	}
+	return encSvc, nil
 }
 
 // newFaultWorld builds a fresh world with spec armed (nil arms nothing — a pure

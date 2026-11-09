@@ -322,6 +322,23 @@ func withoutLeakedTable(tables []string) []string {
 	return out
 }
 
+// keepEncryptionAcrossResets makes every later resetForReuse of w hand the same
+// initialized encryption service to its new core, instead of deriving a new KEK.
+// That derivation is the bulk of a reset for an op that needs encryption: 600,000
+// PBKDF2 iterations took about 1.3 s under -race in CI, twice per input, 71% of
+// TestMFAResetOpsFaultSweep. Nothing leaks through the kept service: the core only
+// sees ports.EncryptionProvider (encrypt, decrypt, two status reads), it holds no
+// per-iteration state, and every ciphertext is wiped with its table on reset. Each
+// world keeps its own service, so the reference and faulted worlds still have
+// different keys, as fresh worlds do.
+//
+// Opt-in per world, because the default stays "same in-memory state as a fresh
+// world". TestMFAResetSweepReuseMatchesFreshWorlds is the gate for the one caller.
+// tb owns the key directory, so it must outlive every reset of w.
+func (w *faultWorld) keepEncryptionAcrossResets(tb tbLite) {
+	w.encKeepTB = tb
+}
+
 // resetForReuse restores w to the exact same logical starting state a fresh
 // newFaultWorld(t, spec) call would produce, WITHOUT rebuilding the DB
 // connection, schema, REST router, or gRPC server: wipe every table +

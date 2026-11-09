@@ -465,25 +465,15 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 	}
 
 	if filter.Search != nil {
-		pattern := "%" + escapeLike(*filter.Search) + "%"
-		// ILIKE is Postgres-only syntax -- SQLite's query parser rejects it outright
-		// ("near "ILIKE": syntax error"), so GET /api/v1/users/search (and anything
-		// else reaching this filter) 500ed on every SQLite-backed deployment, the
-		// zero-config default (configs/keyorix.yaml.tpl: "storage: type: sqlite").
-		// Found live by SESSION-I's fresh-install API smoke driver. SQLite's plain
-		// LIKE is already case-insensitive for ASCII by default (unlike Postgres's
-		// LIKE, which is case-sensitive -- ILIKE exists there specifically to get
-		// case-insensitivity), so branching the operator by dialect (same
-		// ls.db.Dialector.Name() == "postgres" idiom LockUserForUpdate above already
-		// uses) preserves case-insensitive matching on both backends without a
-		// second, dialect-specific query path.
-		op := "LIKE"
-		if ls.db.Dialector.Name() == "postgres" {
-			op = "ILIKE"
-		}
-		query = query.Where(
-			fmt.Sprintf("username %s ? ESCAPE '\\' OR email %s ? ESCAPE '\\' OR display_name %s ? ESCAPE '\\'", op, op, op),
-			pattern, pattern, pattern)
+		// Case-insensitive (Unicode-aware) on both backends, via the same fold as the
+		// Username and Email filters (foldedContainsClause): plain LIKE folds ASCII
+		// only on SQLite and is case-sensitive on PostgreSQL, and ILIKE does not
+		// exist on SQLite at all. username, email and display_name are OR-ed.
+		dialect := ls.db.Dialector.Name()
+		uCond, uArg := foldedContainsClause(dialect, "username", *filter.Search)
+		eCond, eArg := foldedContainsClause(dialect, "email", *filter.Search)
+		dCond, dArg := foldedContainsClause(dialect, "display_name", *filter.Search)
+		query = query.Where("("+uCond+" OR "+eCond+" OR "+dCond+")", uArg, eArg, dArg)
 	}
 	if filter.Username != nil {
 		// Case-insensitive (Unicode-aware) on both backends: plain LIKE is

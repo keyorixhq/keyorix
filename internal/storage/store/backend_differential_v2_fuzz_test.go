@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"gorm.io/driver/postgres"
@@ -544,15 +543,6 @@ func diffTerm(name, name2 string, a byte) string {
 	return name
 }
 
-func diffASCII(s string) bool {
-	for _, r := range s {
-		if r > unicode.MaxASCII {
-			return false
-		}
-	}
-	return true
-}
-
 func ptrOf[T any](v T) *T { return &v }
 
 func userNameOrNil(u *models.User) string {
@@ -653,12 +643,6 @@ func diffListSecrets(t *testing.T, ctx context.Context, s *diffSide, variant int
 }
 
 func diffListUsers(t *testing.T, ctx context.Context, s *diffSide, variant int, name string, pageSize int) string {
-	// Known divergence D (backend_differential_v2_known_test.go): the free-text Search
-	// filter is LIKE on SQLite and ILIKE on PostgreSQL, so a non-ASCII case-variant
-	// term matches on PostgreSQL only. Named as a follow-up in #4019. Gated to ASCII terms.
-	if variant == 1 && !diffASCII(name) {
-		return "gated:D"
-	}
 	mk := func(page, size int) *storage.UserFilter {
 		fl := &storage.UserFilter{Page: page, PageSize: size}
 		switch variant {

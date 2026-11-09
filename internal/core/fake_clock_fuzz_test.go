@@ -152,6 +152,24 @@ type fkcWorld struct {
 
 func buildFkcWorld(t testing.TB, start time.Time) *fkcWorld {
 	t.Helper()
+	return buildFkcWorldWithEncryption(t, start, newFkcEncryption(t))
+}
+
+// newFkcEncryption is a real key service, initialized with a full PBKDF2 derivation.
+func newFkcEncryption(t testing.TB) *encryption.Service {
+	t.Helper()
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
+	if err := enc.Initialize("fake-clock-fuzz-passphrase"); err != nil {
+		t.Fatalf("encryption.Initialize: %v", err)
+	}
+	return enc
+}
+
+// buildFkcWorldWithEncryption builds a world around an existing key service. The
+// service holds no clock or credential state: the core only encrypts and decrypts
+// through it, and the database it wrote to belongs to this world alone.
+func buildFkcWorldWithEncryption(t testing.TB, start time.Time, enc *encryption.Service) *fkcWorld {
+	t.Helper()
 	if err := i18n.InitializeForTesting(); err != nil {
 		t.Fatalf("i18n.InitializeForTesting: %v", err)
 	}
@@ -165,10 +183,6 @@ func buildFkcWorld(t testing.TB, start time.Time) *fkcWorld {
 	clock := &clockBox{t: start}
 	c := NewKeyorixCore(store.NewLocalStorage(db))
 	c.SetClockForTesting(clock.now)
-	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
-	if err := enc.Initialize("fake-clock-fuzz-passphrase"); err != nil {
-		t.Fatalf("encryption.Initialize: %v", err)
-	}
 	c.SetAuthEncryptor(enc)
 	fake := &dynamictest.FakeEngine{NativeExpiry: true}
 	c.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
@@ -239,12 +253,17 @@ func fkcO4Violation(kind string, issue, expiry time.Time) string {
 	return ""
 }
 
+// fkcMintableInstant reports whether fkcMint attempts a mint at t.
+func fkcMintableInstant(t time.Time) bool {
+	return t.Year() >= 1 && t.Year() < 9999
+}
+
 // fkcMint mints the selected credential at the world's current (start) clock.
 // ok=false with a reason means a CLEAN refusal to mint at this instant (O4 pass).
 func fkcMint(t testing.TB, w *fkcWorld, sel int, ttl time.Duration) (cred fkcCred, issue, expiry time.Time, ok bool, note string) {
 	ctx := context.Background()
 	issue = w.clock.t
-	if issue.Year() < 1 || issue.Year() >= 9999 {
+	if !fkcMintableInstant(issue) {
 		// KNOWN-LIMIT domain, pinned by TestKnownLimit_* below. The production SQLite
 		// dialect cannot scan a stored year >= 10000 back, and the table's only instant
 		// in year 9999 is its last second, so every TTL from it lands in year 10000.
@@ -374,13 +393,16 @@ func TestFakeClockExtremes_Cross(t *testing.T) {
 	}
 	programs := 0
 	defer func() { t.Logf("%d TTLs, %d programs ran", len(ttls), programs) }()
+	// One key service for the whole run: its PBKDF2 derivation dominated the 1.4 s
+	// each program took under -race.
+	enc := newFkcEncryption(t)
 	for si, start := range fakeClockInstants {
 		for cred := range 3 {
 			for _, ttl := range ttls {
 				for kind := range uint8(9) {
-					// A fresh world per program: a credential observed expired (or a lease
-					// renewed) in one program must not leak into the next.
-					w := buildFkcWorld(t, start)
+					// A fresh database, core and clock per program: a credential observed
+					// expired (or a lease renewed) in one program must not leak into the next.
+					w := buildFkcWorldWithEncryption(t, start, enc)
 					c, issue, expiry, ok, _ := fkcMint(t, w, cred, ttl)
 					if !ok {
 						break
@@ -393,6 +415,17 @@ func TestFakeClockExtremes_Cross(t *testing.T) {
 				}
 			}
 		}
+	}
+	// A refused mint breaks out of the kind loop, so without this a cell that stops
+	// minting would silently shrink the cross product.
+	mintable := 0
+	for _, start := range fakeClockInstants {
+		if fkcMintableInstant(start) {
+			mintable++
+		}
+	}
+	if want := mintable * 3 * len(ttls) * 9; programs != want {
+		t.Errorf("%d programs ran, want %d (%d mintable instants x 3 credentials x %d TTLs x 9 step kinds)", programs, want, mintable, len(ttls))
 	}
 }
 

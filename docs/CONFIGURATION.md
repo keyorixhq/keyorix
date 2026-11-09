@@ -108,7 +108,7 @@ Rules (all enforced at startup; the server refuses to start rather than guess):
   refused outright, the others follow `security.enable_file_permission_check`
   like a too-open mode.
   - **Master password (`KEYORIX_MASTER_PASSWORD_FILE`), key-provider KEK
-    (`key_provider.env_var`) and Shamir shares (`shamir_share_env`):** a file that
+    (`key_provider.env_var`) and Shamir shares (`shamir_share_env`, `shamir_share_files`):** a file that
     breaks the rule is **always refused**, in the server, the CLI and every admin
     command alike. There is no override. The check runs on the opened file
     descriptor, so the file cannot be swapped between the check and the read.
