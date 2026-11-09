@@ -219,6 +219,28 @@ type pcrashWorld struct {
 }
 
 func buildPCrashWorld() (_ *pcrashWorld, err error) {
+// pcrashStaleWorldAge is old enough that no run can still be using the directory.
+const pcrashStaleWorldAge = 24 * time.Hour
+
+// removeStalePCrashWorlds clears templates a killed fuzz worker left behind: a
+// process that dies by SIGKILL runs neither a Cleanup nor a deferred remove, so
+// the next run is the only thing that can. Failures only leave them for later.
+func removeStalePCrashWorlds() {
+	for _, pattern := range []string{"pcrash-template-*", "pcrash-fresh-*"} {
+		matches, err := filepath.Glob(filepath.Join(os.TempDir(), pattern))
+		if err != nil {
+			continue
+		}
+		for _, m := range matches {
+			if info, err := os.Lstat(m); err == nil && info.IsDir() && time.Since(info.ModTime()) > pcrashStaleWorldAge {
+				_ = os.RemoveAll(m)
+			}
+		}
+	}
+}
+
+func buildPCrashWorld() (_ *pcrashWorld, err error) {
+	removeStalePCrashWorlds()
 	dir, err := os.MkdirTemp("", "pcrash-template-*")
 	if err != nil {
 		return nil, err
@@ -235,9 +257,20 @@ func buildPCrashWorld() (_ *pcrashWorld, err error) {
 		}
 	}()
 	fresh, err = os.MkdirTemp("", "pcrash-fresh-*")
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	fresh, err := os.MkdirTemp("", "pcrash-fresh-*")
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(fresh)
+		}
+	}()
 	for _, args := range [][]string{
 		{"init", "--dev", "--config", "./keyorix.yaml"},
 		{"encryption", "init", "--config", "./keyorix.yaml"},
