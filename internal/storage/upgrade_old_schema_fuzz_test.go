@@ -37,6 +37,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -96,11 +97,13 @@ type ugManifest struct {
 // ugTemplate is one source release, loaded once per process: PBKDF2 and the SQL
 // replay would otherwise dominate every exec.
 type ugTemplate struct {
-	once     sync.Once
-	err      error
-	dbFile   string
-	manifest ugManifest
-	enc      *encryption.Service
+	once      sync.Once
+	err       error
+	dbFile    string
+	manifest  ugManifest
+	enc       *encryption.Service
+	writeOnce sync.Once
+	writes    int64
 }
 
 var ugTemplates sync.Map
@@ -226,11 +229,31 @@ type ugHooks struct {
 	// BEGIN EXCLUSIVE, a shape no production boot has. Only the red-proof that
 	// documents the artefact sets it; the fuzz target never does.
 	bareInterrupt bool
+	// halfStateAtStop adds what a step that is not crash-safe would have left
+	// behind, on top of the state the stop left, before the restart.
+	halfStateAtStop func(db *sql.DB) error
 }
 
 // ugRun is one exec. stopAfter == 0 runs the real startup path once;
 // stopAfter > 0 first fail-stops the upgrade after that many write statements.
+// A stop past the last write skips the exec with the reason logged. Oracle 5 is
+// "the restart completed it with 1-4 intact", so after a stop every other oracle's
+// finding is reported as oracle 5 and names the oracle that failed.
 func ugRun(t testing.TB, tag string, chainVerifiable bool, data []byte, stopAfter int, hooks ugHooks) []ugFinding {
+	t.Helper()
+	findings := ugRunStages(t, tag, chainVerifiable, data, stopAfter, hooks)
+	if stopAfter == 0 {
+		return findings
+	}
+	for i, f := range findings {
+		if f.Invariant != 5 {
+			findings[i] = ugFinding{5, fmt.Sprintf("restart after a stop at write %d: oracle %d: %s", stopAfter, f.Invariant, f.Detail)}
+		}
+	}
+	return findings
+}
+
+func ugRunStages(t testing.TB, tag string, chainVerifiable bool, data []byte, stopAfter int, hooks ugHooks) []ugFinding {
 	t.Helper()
 	if err := i18n.InitializeForTesting(); err != nil {
 		t.Fatalf("initializing i18n: %v", err)
@@ -272,7 +295,28 @@ func ugRun(t testing.TB, tag string, chainVerifiable bool, data []byte, stopAfte
 	var findings []ugFinding
 	if stopAfter > 0 {
 		if err := ugInterruptedMigrate(t, dbPath, stopAfter, hooks.bareInterrupt); err != nil {
+		outcome, err := ugInterruptedMigrate(t, dbPath, stopAfter)
+		if err != nil {
 			t.Fatalf("interrupted run: %v", err)
+		}
+		if !outcome.Fired {
+			if outcome.Err != nil {
+				return append(findings, ugFinding{5, fmt.Sprintf("upgrade from %s failed on its own after %d writes, before the stop at %d: %v", tag, outcome.Writes, stopAfter, outcome.Err)})
+			}
+			t.Skipf("stop %d is past this upgrade's last write (%d writes from %s): nothing was interrupted", stopAfter, outcome.Writes, tag)
+		}
+		// Not a finding: the restart below is still a real test of what the stop
+		// left. It would mean a step swallowed or re-wrapped the injected failure.
+		if !errors.Is(outcome.Err, errUgInterrupted) {
+			t.Logf("stop %d fired but the upgrade from %s returned %v, not the injected crash", stopAfter, tag, outcome.Err)
+		}
+		if hooks.halfStateAtStop != nil {
+			halfRaw, _, closeHalf := ugOpenRaw(t, dbPath)
+			if err := hooks.halfStateAtStop(halfRaw); err != nil {
+				closeHalf()
+				t.Fatalf("halfStateAtStop hook: %v", err)
+			}
+			closeHalf()
 		}
 	}
 
@@ -568,14 +612,27 @@ var errUgInterrupted = errors.New("upgrade-fuzz: simulated crash")
 // does that (see docs/findings/2026-11-09-FINDING-v091-interrupted-upgrade-artifact.md);
 // it exists only so a red-proof can show what the lock buys.
 func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int, bare bool) error {
+// ugStopOutcome is what one interrupted run actually did. A stop past the last
+// write never fires, and that run has tested nothing about interruption.
+type ugStopOutcome struct {
+	Writes int64 // write statements the upgrade issued, the failed ones included
+	Fired  bool  // the stop statement was reached
+	Err    error // migrateDatabase's own result
+}
+
+// ugInterruptedMigrate runs migrateDatabase with every write-class gorm statement
+// counted, failing the stopAfter'th and every later one -- the persisted state a
+// crash at that statement leaves. Statements that already reached SQLite stay
+// durable, a transaction open at the stop rolls back when the connection closes.
+func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int) (ugStopOutcome, error) {
 	t.Helper()
 	gdb, err := openSQLiteGorm(sqliteDSN(dbPath))
 	if err != nil {
-		return err
+		return ugStopOutcome{}, err
 	}
 	raw, err := gdb.DB()
 	if err != nil {
-		return err
+		return ugStopOutcome{}, err
 	}
 	defer func() { _ = raw.Close() }()
 	var seen atomic.Int64
@@ -591,7 +648,7 @@ func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int, bare bool)
 		gdb.Callback().Delete().Before("gorm:delete").Register("ug:stop_delete", stop),
 	} {
 		if reg != nil {
-			return reg
+			return ugStopOutcome{}, reg
 		}
 	}
 	f := &DefaultStorageFactory{}
@@ -609,6 +666,8 @@ func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int, bare bool)
 		return fmt.Errorf("interrupted migration failed for a reason other than the injected stop: %w", mErr)
 	}
 	return nil
+	migErr := (&DefaultStorageFactory{}).migrateDatabase(gdb)
+	return ugStopOutcome{Writes: seen.Load(), Fired: seen.Load() >= int64(stopAfter), Err: migErr}, nil
 }
 
 func ugSeeds() [][]byte {
@@ -642,6 +701,37 @@ func FuzzUpgradeFromOldSchema(f *testing.F) {
 	})
 }
 
+// ugInterruptibleFrom is the first source whose interrupted upgrade can complete.
+// v0.91.0 predates mfa_step_up_grants and owner_machine_identity_id, and only an
+// uninterrupted first boot adds that column: see
+// TestUpgradeInterrupted_V091_ColumnNeverAdded, the open finding that keeps this
+// source out of the interruption target. It is not exempted anywhere else.
+const ugInterruptibleFrom = 1
+
+// ugStopChoices is how many stop positions to draw from for tag: the write
+// statements its upgrade issues on the bare snapshot, measured once per process,
+// plus a quarter for the extra writes generated rows add in the backfills. Without
+// this most stops land past the end (the upgrades issue 63-93 writes).
+func ugStopChoices(t testing.TB, tag string) int {
+	t.Helper()
+	tpl, err := ugLoadTemplate(tag)
+	if err != nil {
+		t.Fatalf("loading %s snapshot: %v", tag, err)
+	}
+	tpl.writeOnce.Do(func() {
+		dbPath := filepath.Join(t.TempDir(), "count.db")
+		if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
+			t.Fatalf("copying template: %v", err)
+		}
+		outcome, err := ugInterruptedMigrate(t, dbPath, math.MaxInt32)
+		if err != nil || outcome.Err != nil || outcome.Writes == 0 {
+			t.Fatalf("counting %s upgrade writes: %v, %v, %d writes", tag, err, outcome.Err, outcome.Writes)
+		}
+		tpl.writes = outcome.Writes
+	})
+	return int(tpl.writes + tpl.writes/4)
+}
+
 // FuzzUpgradeInterrupted stops the upgrade after a fuzz-chosen write statement
 // and asserts the restart completes it, with every other oracle intact. The
 // interruption goes through the real boot path (withMigrationLock), so every
@@ -659,6 +749,8 @@ func FuzzUpgradeInterrupted(f *testing.F) {
 		}
 		idx := int(sel) % len(ugSources)
 		for _, fnd := range ugRun(t, ugSources[idx], idx >= ugChainFrom, data, int(stop%240)+1, ugHooks{}) {
+		tag := sources[int(sel)%len(sources)]
+		for _, fnd := range ugRun(t, tag, true, data, int(stop)%ugStopChoices(t, tag)+1, ugHooks{}) {
 			t.Error(fnd)
 		}
 	})

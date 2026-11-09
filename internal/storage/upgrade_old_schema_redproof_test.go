@@ -6,7 +6,10 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"math"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -105,6 +108,65 @@ func TestUpgradeOracles_RedProof(t *testing.T) {
 		}})
 		ugAssertFires(t, f, 4)
 	})
+
+	t.Run("invariant5_control_restart_after_a_stop_is_clean", func(t *testing.T) {
+		if f := ugRun(t, tag, true, ugRedSeed, ugRedStop, ugHooks{}); len(f) != 0 {
+			t.Fatalf("a stop the restart can recover from must be clean, got %v", f)
+		}
+	})
+
+	t.Run("invariant5_step_leaves_a_half_state", func(t *testing.T) {
+		// A step that rebuilds a table by moving it aside first, without a
+		// transaction around the move and the rebuild: the crash leaves the table
+		// gone and its rows under another name, and no step looks there.
+		f := ugRun(t, tag, true, ugRedSeed, ugRedStop, ugHooks{halfStateAtStop: func(db *sql.DB) error {
+			return ugExecStmts(db, "ALTER TABLE user_roles RENAME TO user_roles_rebuild")
+		}})
+		ugAssertFires(t, f, 5)
+	})
+}
+
+// ugRedStop is a stop every source's upgrade reaches: the snapshot's own early
+// steps issue more writes than this.
+const ugRedStop = 5
+
+// TestUpgradeInterrupted_StopThatNeverFiresIsNotAPass pins the seam's report:
+// a stop past the last write says so, and ugRun skips rather than passes.
+func TestUpgradeInterrupted_StopThatNeverFiresIsNotAPass(t *testing.T) {
+	const tag = "v0.96.3"
+	tpl, err := ugLoadTemplate(tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomeAt := func(stop int) ugStopOutcome {
+		t.Helper()
+		dbPath := filepath.Join(t.TempDir(), "seam.db")
+		if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
+			t.Fatal(err)
+		}
+		outcome, err := ugInterruptedMigrate(t, dbPath, stop)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return outcome
+	}
+
+	if o := outcomeAt(ugRedStop); !o.Fired || !errors.Is(o.Err, errUgInterrupted) {
+		t.Fatalf("a reachable stop must fire and surface the injected crash, got %+v", o)
+	}
+	if o := outcomeAt(math.MaxInt32); o.Fired || o.Err != nil {
+		t.Fatalf("a stop past the last write must report that it never fired, got %+v", o)
+	}
+
+	var sub *testing.T
+	t.Run("skips", func(t *testing.T) {
+		sub = t
+		ugRun(t, tag, true, nil, math.MaxInt32, ugHooks{})
+		t.Fatal("ugRun went on as if the upgrade had been interrupted")
+	})
+	if !sub.Skipped() {
+		t.Fatal("a run whose stop never fired must be skipped, not passed")
+	}
 }
 
 // TestUpgradeInterrupted_V091_BarePathArtefact is the red-proof for
@@ -129,6 +191,8 @@ func TestUpgradeInterrupted_V091_BarePathArtefact(t *testing.T) {
 	var sawSecretRead bool
 	for _, f := range bare {
 		if f.Invariant == 1 && strings.Contains(f.Detail, "owner_machine_identity_id") {
+	for _, f := range findings {
+		if f.Invariant == 5 && strings.Contains(f.Detail, "oracle 1") && strings.Contains(f.Detail, "owner_machine_identity_id") {
 			sawSecretRead = true
 		}
 	}
