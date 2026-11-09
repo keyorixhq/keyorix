@@ -102,8 +102,7 @@ type ugManifest struct {
 type ugTemplate struct {
 	once      sync.Once
 	err       error
-	dir       string
-	dbFile    string
+	image     []byte // the replayed database, kept in memory: a fuzz worker is killed, so nothing on disk would be cleaned up
 	manifest  ugManifest
 	enc       *encryption.Service
 	writeOnce sync.Once
@@ -141,7 +140,7 @@ func ugLoadTemplate(tag string) (*ugTemplate, error) {
 
 // build replays snapshot.sql into a private file and opens the shared test key.
 // Key material is only needed at Initialize, so its directory does not outlive
-// this call; the replayed database is copied per exec and lives for the process.
+// this call; the replayed database is written out per exec from memory.
 func (tpl *ugTemplate) build(tag string) error {
 	dir := filepath.Join("testdata", "upgrade-snapshots", tag)
 	mb, err := os.ReadFile(filepath.Join(dir, "manifest.json")) // #nosec G304 -- test fixture path
@@ -159,15 +158,21 @@ func (tpl *ugTemplate) build(tag string) error {
 	if err != nil {
 		return err
 	}
-	tpl.dir = tmp
-	tpl.dbFile = filepath.Join(tmp, "template.db")
-	db, err := sql.Open("sqlite", tpl.dbFile)
+	defer func() { _ = os.RemoveAll(tmp) }()
+	dbFile := filepath.Join(tmp, "template.db")
+	db, err := sql.Open("sqlite", dbFile)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
-	if _, err := db.Exec(string(script)); err != nil {
+	_, err = db.Exec(string(script))
+	if closeErr := db.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
 		return fmt.Errorf("replaying %s snapshot: %w", tag, err)
+	}
+	if tpl.image, err = os.ReadFile(dbFile); err != nil { // #nosec G304 -- path built above
+		return err
 	}
 
 	keys, err := os.MkdirTemp("", "keyorix-upgrade-key-*")
@@ -185,16 +190,6 @@ func (tpl *ugTemplate) build(tag string) error {
 		return fmt.Errorf("opening test key for %s: %w", tag, err)
 	}
 	return nil
-}
-
-// ugRemoveTemplates deletes the per-process template databases (TestMain calls it).
-func ugRemoveTemplates() {
-	ugTemplates.Range(func(_, v any) bool {
-		if tpl := v.(*ugTemplate); tpl.dir != "" {
-			_ = os.RemoveAll(tpl.dir)
-		}
-		return true
-	})
 }
 
 func ugFold(name string) string {
@@ -281,8 +276,8 @@ func ugRunStages(t testing.TB, tag string, chainVerifiable bool, data []byte, st
 	}
 	workDir := t.TempDir()
 	dbPath := filepath.Join(workDir, "upgrade.db")
-	if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
-		t.Fatalf("copying template: %v", err)
+	if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
+		t.Fatalf("writing template: %v", err)
 	}
 
 	raw, gdb, closeRaw := ugOpenRaw(t, dbPath)
@@ -768,8 +763,8 @@ func ugStopChoices(t testing.TB, tag string) int {
 	}
 	tpl.writeOnce.Do(func() {
 		dbPath := filepath.Join(t.TempDir(), "count.db")
-		if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
-			t.Fatalf("copying template: %v", err)
+		if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
+			t.Fatalf("writing template: %v", err)
 		}
 		outcome, err := ugInterruptedMigrate(t, dbPath, math.MaxInt32)
 		if err != nil || outcome.Err != nil || outcome.Writes == 0 {

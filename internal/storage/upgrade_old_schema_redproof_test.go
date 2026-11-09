@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -243,7 +244,7 @@ func TestUpgradeInterrupted_StopThatNeverFiresIsNotAPass(t *testing.T) {
 	outcomeAt := func(stop int) ugStopOutcome {
 		t.Helper()
 		dbPath := filepath.Join(t.TempDir(), "seam.db")
-		if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
+		if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		outcome, err := ugInterruptedMigrate(t, dbPath, stop)
@@ -298,7 +299,7 @@ func TestUpgradeInterrupted_KnownIndexGaps_StillOpen(t *testing.T) {
 	for _, row := range ugStopWindowDiffs {
 		t.Run(row.Stop, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "gap.db")
-			if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
+			if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			outcome, err := ugInterruptedMigrateWhen(t, dbPath, func(_ int64, stmt string) bool { return strings.Contains(stmt, row.Stop) })
