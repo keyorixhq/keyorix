@@ -1,0 +1,2 @@
+### Changed
+- **A webhook signing secret or audit checkpoint key under 14 bytes now warns outside `GODEBUG=fips140=only`.** With the webhook channel enabled and a shorter `notifications.webhook.signing_secret` (or `KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET`), the server logs a `WARNING` at boot. `admin verify-audit` prints a `WARNING` to stderr for a `--checkpoint-key-file` or `--previous-checkpoint-key-file` under 14 bytes. Both keep working as before, and the warnings name only the length. Under `GODEBUG=fips140=only` these keys are still refused.

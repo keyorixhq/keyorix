@@ -205,7 +205,9 @@ Configuration is invalid: notifications.webhook.signing_secret (or KEYORIX_NOTIF
 **Cause.** Go's FIPS 140-only mode refuses an HMAC key shorter than 112 bits, and the
 webhook channel signs every payload with HMAC-SHA256 under this secret, so no signed
 delivery could be sent. Only checked when the process runs with `GODEBUG=fips140=only` and
-the webhook channel is enabled; outside that mode any length is accepted, as before.
+the webhook channel is enabled. Outside that mode a shorter secret still works and the server
+logs a `WARNING` at boot; `admin verify-audit` prints the same kind of warning to stderr for a
+checkpoint key file under 14 bytes, and refuses it under `GODEBUG=fips140=only`.
 **Fix.** Set a signing secret of at least 14 bytes (a random 32-byte value is better) in
 `KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET` and the same value on the receiver, then restart.
 **In place:** yes.

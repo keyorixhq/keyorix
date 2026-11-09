@@ -159,26 +159,38 @@ if [ -n "$manual_claims" ]; then
     done <<<"$manual_claims"
 fi
 
-for pkg in $(awk -F'\t' '$4=="default-ci" || $4=="pg-gated" {print $2}' <<<"$rows" | sort -u); do
-    tests=$(awk -F'\t' -v p="$pkg" '($4=="default-ci" || $4=="pg-gated") && $2==p {print $3}' <<<"$rows")
-    pattern=$(paste -sd'|' - <<<"$tests")
-    echo "==> $pkg"
-    # Validated above, so this cannot fail; if it somehow does, fail closed.
-    if ! closure_pkg_resolve "$REPO_ROOT" "$pkg"; then
-        die "$pkg: $CLOSURE_PKG_ERR"
-        continue
-    fi
-    # A package in the cli module runs `go test` inside cli/ (its own go.mod);
-    # a root-module package runs from the repo root exactly as before. The cli
-    # module is not in go.work (the root go.work is `use .`), so it runs with
-    # GOWORK=off like every other cli-module job in ci.yml and the Makefile.
+# Run `go test` for one package into its own files: <base>.out (combined output)
+# and <base>.rc (exit code). Never fails the caller; the verdict is read later,
+# in sorted package order, by closure_eval_pkg.
+#
+# A package in the cli module runs `go test` inside cli/ (its own go.mod); a
+# root-module package runs from the repo root exactly as before. The cli
+# module is not in go.work (the root go.work is `use .`), so it runs with
+# GOWORK=off like every other cli-module job in ci.yml and the Makefile.
+# Each call only reads its arguments, so several can run at once. Every package
+# gets one `go test` process with its own working directory (the package dir),
+# its own t.TempDir() tree and the shared, concurrency-safe Go build cache.
+closure_run_pkg() {
+    local mod_dir="$1" mod_pkg="$2" pattern="$3" base="$4" out rc
     set +e
-    if [ "$CLOSURE_MOD_DIR" = "." ]; then
-        out=$(cd "$REPO_ROOT" && go test -count=1 -v -run "^(${pattern})\$" "$CLOSURE_MOD_PKG" 2>&1); rc=$?
+    if [ "$mod_dir" = "." ]; then
+        out=$(cd "$REPO_ROOT" && go test -count=1 -v -run "^(${pattern})\$" "$mod_pkg" 2>&1); rc=$?
     else
-        out=$(cd "$REPO_ROOT/$CLOSURE_MOD_DIR" && GOWORK=off go test -count=1 -v -run "^(${pattern})\$" "$CLOSURE_MOD_PKG" 2>&1); rc=$?
+        out=$(cd "$REPO_ROOT/$mod_dir" && GOWORK=off go test -count=1 -v -run "^(${pattern})\$" "$mod_pkg" 2>&1); rc=$?
     fi
     set -e
+    printf '%s\n' "$out" > "$base.out"
+    # The .rc file is written last: its presence means the .out file is complete.
+    printf '%s\n' "$rc" > "$base.rc"
+}
+
+# Evaluate one package from the files closure_run_pkg wrote. This is the former
+# loop body, unchanged: same messages, same order, same verdicts.
+closure_eval_pkg() {
+    local pkg="$1" base="$2" out rc tests test claim verification
+    tests=$(awk -F'\t' -v p="$pkg" '($4=="default-ci" || $4=="pg-gated") && $2==p {print $3}' <<<"$rows")
+    out=$(<"$base.out")
+    rc=$(<"$base.rc")
     if [ "$rc" -ne 0 ]; then
         die "$pkg: go test exited $rc"
         # Show the actual failures, not just the head of the log: the first 40
@@ -240,6 +252,107 @@ for pkg in $(awk -F'\t' '$4=="default-ci" || $4=="pg-gated" {print $2}' <<<"$row
             sed -n '1,20p' <<<"$out" | sed 's/^/      /'
         fi
     done <<<"$tests"
+}
+
+# Worker pool size. CHECK_CLOSURES_JOBS=1 is the old strictly sequential run.
+# With KEYORIX_TEST_PG_DSN set the packages' Postgres-backed tests would all
+# share that one database (shared schema, cross-replica tests collide), so the
+# run stays sequential unless CHECK_CLOSURES_PG_PARALLEL=1 says otherwise.
+jobs_max="${CHECK_CLOSURES_JOBS:-4}"
+case "$jobs_max" in
+    ''|*[!0-9]*|0) echo "FAIL: CHECK_CLOSURES_JOBS must be a positive integer (got '$jobs_max')" >&2; exit 1 ;;
+esac
+if [ "$pg_available" = true ] && [ "${CHECK_CLOSURES_PG_PARALLEL:-0}" != 1 ] && [ "$jobs_max" -gt 1 ]; then
+    echo "==> KEYORIX_TEST_PG_DSN is set: running packages one at a time (they share one database)"
+    jobs_max=1
+fi
+
+closure_work=$(mktemp -d)
+closure_pids=()
+closure_cleanup() {
+    local p
+    for p in ${closure_pids[@]+"${closure_pids[@]}"}; do
+        kill "$p" 2>/dev/null || true
+    done
+    rm -rf "$closure_work"
+    if [ -z "${CLOSURE_LEDGER:-}" ]; then rm -f "$LEDGER"; fi
+}
+trap closure_cleanup EXIT
+
+# Phase 1: resolve and build the pattern of every package, in sorted order.
+# Plain indexed arrays (no `declare -A`): macOS /bin/bash is 3.2. Index i is the
+# package's place in sorted order, which is also its evaluation order.
+pk_name=(); pk_pattern=(); pk_moddir=(); pk_modpkg=(); pk_ok=()
+i=0
+# shellcheck disable=SC2013  # package paths are validated ./<dir>/<dir> words
+for pkg in $(awk -F'\t' '$4=="default-ci" || $4=="pg-gated" {print $2}' <<<"$rows" | sort -u); do
+    tests=$(awk -F'\t' -v p="$pkg" '($4=="default-ci" || $4=="pg-gated") && $2==p {print $3}' <<<"$rows")
+    pk_name[i]="$pkg"
+    pk_pattern[i]=$(paste -sd'|' - <<<"$tests")
+    # Validated above, so this cannot fail; if it somehow does, fail closed
+    # (reported in phase 2, in order).
+    if closure_pkg_resolve "$REPO_ROOT" "$pkg"; then
+        pk_ok[i]=1; pk_moddir[i]="$CLOSURE_MOD_DIR"; pk_modpkg[i]="$CLOSURE_MOD_PKG"
+    else
+        pk_ok[i]=0; pk_moddir[i]=""; pk_modpkg[i]=""
+    fi
+    i=$((i + 1))
+done
+npkgs=$i
+
+# Start order only: the packages that took longest in CI go first so the pool
+# does not end on one long tail. Evaluation (phase 2) stays in sorted order.
+heavy_first=" ./server ./internal/core ./internal/config ./server/faultops ./server/http/handlers ./internal/auditverify "
+start_order=()
+for ((i = 0; i < npkgs; i++)); do
+    case "$heavy_first" in *" ${pk_name[i]} "*) start_order+=("$i") ;; esac
+done
+for ((i = 0; i < npkgs; i++)); do
+    case "$heavy_first" in *" ${pk_name[i]} "*) ;; *) start_order+=("$i") ;; esac
+done
+
+# Phase 1b: run them through the pool.
+have_wait_n=false
+if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 3 ]; }; then
+    have_wait_n=true
+fi
+[ "$jobs_max" -le 1 ] || echo "==> running $npkgs package(s), at most $jobs_max at a time"
+running=0; oldest=0
+for i in ${start_order[@]+"${start_order[@]}"}; do
+    [ "${pk_ok[i]}" = 1 ] || continue
+    if [ "$jobs_max" -le 1 ]; then
+        closure_run_pkg "${pk_moddir[i]}" "${pk_modpkg[i]}" "${pk_pattern[i]}" "$closure_work/$i"
+        continue
+    fi
+    if [ "$running" -ge "$jobs_max" ]; then
+        if [ "$have_wait_n" = true ]; then
+            wait -n || true
+        else
+            # No `wait -n`: wait for the oldest job instead.
+            wait "${closure_pids[oldest]}" || true; oldest=$((oldest + 1))
+        fi
+        running=$((running - 1))
+    fi
+    closure_run_pkg "${pk_moddir[i]}" "${pk_modpkg[i]}" "${pk_pattern[i]}" "$closure_work/$i" &
+    closure_pids+=("$!")
+    running=$((running + 1))
+done
+wait
+
+# Phase 2: evaluate in sorted package order, exactly as the old loop did.
+for ((i = 0; i < npkgs; i++)); do
+    pkg="${pk_name[i]}"
+    echo "==> $pkg"
+    if [ "${pk_ok[i]}" != 1 ]; then
+        closure_pkg_resolve "$REPO_ROOT" "$pkg" || true
+        die "$pkg: $CLOSURE_PKG_ERR"
+        continue
+    fi
+    if [ ! -f "$closure_work/$i.rc" ]; then
+        die "$pkg: go test produced no result (worker killed?)"
+        continue
+    fi
+    closure_eval_pkg "$pkg" "$closure_work/$i"
 done
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -436,6 +549,50 @@ SELF-TEST-3D	./internal/core	TestCheckClosuresSelfTestFixture_SkipsWithoutPGDSN	
     run_case "migrate-module row, test does not exist" "reject" \
         'SELF-TEST-28	./migrate/internal/accessplan	TestThisNameDoesNotExistAnywhere	default-ci	deadbeef	-	calibration row' \
         ""
+
+    # Worker-pool cases (CHECK_CLOSURES_JOBS). Three packages (root, cli and
+    # migrate modules) so the pool really has several to run at once.
+    multi_ok=$'SELF-TEST-41\t./internal/core\tTestCheckClosuresSelfTestFixture_AlwaysPasses\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-42\t./cli/internal/securefiles\tTestCheckClosuresSelfTestFixture_CLIModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-43\t./migrate/internal/accessplan\tTestCheckClosuresSelfTestFixture_MigrateModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row'
+    multi_missing=$'SELF-TEST-44\t./cli/internal/securefiles\tTestThisNameDoesNotExistAnywhere\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-45\t./internal/core\tTestCheckClosuresSelfTestFixture_AlwaysPasses\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-46\t./migrate/internal/accessplan\tTestCheckClosuresSelfTestFixture_MigrateModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row'
+    multi_fail=$'SELF-TEST-47\t./cli/internal/securefiles\tTestCheckClosuresSelfTestFixture_CLIModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-48\t./internal/core\tTestCheckClosuresSelfTestFixture_FailsWhenAsked\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-49\t./migrate/internal/accessplan\tTestCheckClosuresSelfTestFixture_MigrateModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row'
+
+    CHECK_CLOSURES_JOBS=4 \
+    run_case "pool of 4: several packages, all passing" "accept" "$multi_ok" ""
+
+    CHECK_CLOSURES_JOBS=4 \
+    WANT_OUT=$'ok   SELF-TEST-45 -> TestCheckClosuresSelfTestFixture_AlwaysPasses (default-ci)\nSELF-TEST-44: proving test TestThisNameDoesNotExistAnywhere DOES NOT EXIST (go test matched nothing, exited 0).\nok   SELF-TEST-46 -> TestCheckClosuresSelfTestFixture_MigrateModulePasses (default-ci)' \
+    run_case "pool of 4: a missing test in one of several packages is still rejected, same message" "reject" "$multi_missing" ""
+
+    CHECK_CLOSURES_JOBS=4 CHECK_CLOSURES_SELFTEST_FAIL=1 \
+    WANT_OUT=$'SELF-TEST-48: proving test TestCheckClosuresSelfTestFixture_FailsWhenAsked FAILED\nok   SELF-TEST-47 -> TestCheckClosuresSelfTestFixture_CLIModulePasses (default-ci)\nok   SELF-TEST-49 -> TestCheckClosuresSelfTestFixture_MigrateModulePasses (default-ci)' \
+    run_case "pool of 4: a failing package among passing ones is rejected" "reject" "$multi_fail" ""
+
+    # Same ledger, pool of 1 and pool of 4: identical output (same order, same
+    # messages, same exit code). Only deterministic outputs are compared: the
+    # passing and the missing-test ledgers print no go test timings.
+    for ledger_name in multi_ok multi_missing; do
+        pool_tmp=$(mktemp); pool_tmpd=$(mktemp -d)
+        printf '%s\n' "${!ledger_name}" > "$pool_tmp"
+        set +e
+        pool1=$(CLOSURE_LEDGER="$pool_tmp" CLOSURE_LEDGER_D="$pool_tmpd" CHECK_CLOSURES_JOBS=1 env -u KEYORIX_TEST_PG_DSN "$0" 2>&1); pool1_rc=$?
+        pool4=$(CLOSURE_LEDGER="$pool_tmp" CLOSURE_LEDGER_D="$pool_tmpd" CHECK_CLOSURES_JOBS=4 env -u KEYORIX_TEST_PG_DSN "$0" 2>&1); pool4_rc=$?
+        set -e
+        rm -rf "$pool_tmp" "$pool_tmpd"
+        # Drop the pool banner (it only exists for jobs > 1); everything else must match.
+        pool4=$(grep -vF '==> running ' <<<"$pool4" || true)
+        if [ "$pool1_rc" -ne "$pool4_rc" ] || [ "$pool1" != "$pool4" ]; then
+            echo "FAIL: self-test case 'pool of 1 vs pool of 4 ($ledger_name)': output or exit code differs" >&2
+            diff <(printf '%s\n' "$pool1") <(printf '%s\n' "$pool4") | sed 's/^/      /' >&2 || true
+            selffail=1
+        else
+            echo "  ok: 'pool of 1 vs pool of 4 ($ledger_name)' identical output and exit code (exit $pool1_rc)"
+        fi
+    done
+
+    CHECK_CLOSURES_JOBS=abc \
+    run_case "worker limit that is not a number" "reject" "$multi_ok" ""
+    CHECK_CLOSURES_JOBS=0 \
+    run_case "worker limit 0" "reject" "$multi_ok" ""
 
     # The fragment-shape validator lives in the generator; run its own self-test.
     echo; "$REPO_ROOT/scripts/gen-security-closures-tsv.sh" --self-test || selffail=1
