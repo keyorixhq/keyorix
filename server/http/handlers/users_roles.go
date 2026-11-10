@@ -313,6 +313,9 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 		if sendPartialMutation(w, err) {
 			return // the removals applied, the additions did not (#3488)
 		}
+		if sendStorageUnavailable(w, err) {
+			return // a grant-ceiling read failed before anything committed (#3938): retry
+		}
 		if sendRoleScopeError(w, err) {
 			return
 		}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -30,6 +31,13 @@ type roleScopeHTTPWorld struct {
 const roleScopeToken = "role-scope-3546-tok"
 
 func newRoleScopeHTTPWorld(t *testing.T) *roleScopeHTTPWorld {
+	t.Helper()
+	return newRoleScopeHTTPWorldOn(t, nil)
+}
+
+// newRoleScopeHTTPWorldOn is newRoleScopeHTTPWorld with the core's storage passed
+// through wrap (nil: the store itself), e.g. to inject a storage fault.
+func newRoleScopeHTTPWorldOn(t *testing.T, wrap func(corestorage.Storage) corestorage.Storage) *roleScopeHTTPWorld {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
@@ -57,7 +65,11 @@ func newRoleScopeHTTPWorld(t *testing.T) *roleScopeHTTPWorld {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1}).Error) // global admin
 	seedSession(t, db, 2, roleScopeToken)
 
-	router, err := NewRouter(&config.Config{}, core.NewKeyorixCore(store.NewLocalStorage(db)))
+	var st corestorage.Storage = store.NewLocalStorage(db)
+	if wrap != nil {
+		st = wrap(st)
+	}
+	router, err := NewRouter(&config.Config{}, core.NewKeyorixCore(st))
 	require.NoError(t, err)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)

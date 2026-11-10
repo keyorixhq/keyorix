@@ -1127,7 +1127,7 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, ac
 	// see that call site's own comment for why the roles.assign baseline does
 	// not apply there.
 	if ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, "roles.assign", scope, actorIsMachine, isSelfMachineGrant, selfMachineID); aerr != nil {
-		return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+		return grantCeilingReadFault("failed to resolve actor authority", aerr)
 	} else if !ok {
 		return permissionDeniedf("cannot grant this role: you do not hold permission %q yourself", "roles.assign")
 	}
@@ -1158,14 +1158,14 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissionsNoBaseline(ctx context.C
 	}
 	perms, err := c.storage.GetRolePermissions(ctx, roleID)
 	if err != nil {
-		return fmt.Errorf("failed to resolve role permissions: %w", err)
+		return grantCeilingReadFault("failed to resolve role permissions", err)
 	}
 	// A /system relay never grants an admin-tier role on the strength of the
 	// relaying credential's own authority -- see WithSystemProxyMachineGranter.
 	if isSelfMachineGrant && isSystemProxyRelayGrant(ctx) {
 		role, rerr := c.storage.GetRole(ctx, roleID)
 		if rerr != nil {
-			return fmt.Errorf("failed to resolve role: %w", rerr)
+			return grantCeilingReadFault("failed to resolve role", rerr)
 		}
 		if isAdminRoleName(role.Name) || roleIsAdminTier(perms) {
 			return permissionDeniedf("cannot grant this role: an admin-tier role cannot be granted through a /system relay credential")
@@ -1174,13 +1174,25 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissionsNoBaseline(ctx context.C
 	for _, p := range perms {
 		ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, p.Name, scope, actorIsMachine, isSelfMachineGrant, selfMachineID)
 		if aerr != nil {
-			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+			return grantCeilingReadFault("failed to resolve actor authority", aerr)
 		}
 		if !ok {
 			return permissionDeniedf("cannot grant this role: you do not hold permission %q yourself", p.Name)
 		}
 	}
 	return nil
+}
+
+// grantCeilingReadFault is a grant-ceiling read that FAILED, as opposed to a
+// refusal (permissionDeniedf): the actor was not judged, so nothing says the
+// retry would be refused. It is ErrStorageReadUnavailable (503 / Unavailable
+// where the transport maps it) and still unwraps to the cause (#3938). A
+// positive not-found stays what it was.
+func grantCeilingReadFault(what string, err error) error {
+	if isPositiveNotFound(err) || errors.Is(err, ErrStorageReadUnavailable) {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return fmt.Errorf("%s: %w", what, &storageReadFault{cause: err})
 }
 
 // checkGranterHoldsPermission resolves whether the granting actor holds

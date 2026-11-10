@@ -71,7 +71,7 @@ func (c *KeyorixCore) replaceUserRoleSet(ctx context.Context, r roleSetReplace) 
 	}
 	current, err := c.storage.GetUserRoleIDsExact(ctx, r.userID, r.scope)
 	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return grantCeilingReadFault(i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	remove, add := roleSetDiff(current, r.want)
 	// #3546: refuse a role the scope is invalid for BEFORE any removal, so the
@@ -164,7 +164,7 @@ func (c *KeyorixCore) requireSelfGrantCeilingAfterRemovals(ctx context.Context, 
 	}
 	current, err := c.storage.GetUserRoleIDsExact(ctx, r.userID, r.scope)
 	if err != nil {
-		return fmt.Errorf("failed to resolve actor authority: %w", err)
+		return grantCeilingReadFault("failed to resolve actor authority", err)
 	}
 	remove, _ := roleSetDiff(current, r.want)
 	remove = slices.DeleteFunc(remove, func(id uint) bool { return !removable(id) })
@@ -173,7 +173,7 @@ func (c *KeyorixCore) requireSelfGrantCeilingAfterRemovals(ctx context.Context, 
 	}
 	grants, err := c.storage.ListUserRoleGrants(ctx, r.userID)
 	if err != nil {
-		return fmt.Errorf("failed to resolve actor authority: %w", err)
+		return grantCeilingReadFault("failed to resolve actor authority", err)
 	}
 	var left []uint
 	for _, g := range grants {
@@ -187,7 +187,7 @@ func (c *KeyorixCore) requireSelfGrantCeilingAfterRemovals(ctx context.Context, 
 	for _, id := range add {
 		perms, err := c.storage.GetRolePermissions(ctx, id)
 		if err != nil {
-			return fmt.Errorf("failed to resolve role permissions: %w", err)
+			return grantCeilingReadFault("failed to resolve role permissions", err)
 		}
 		for _, p := range perms {
 			need = append(need, p.Name)
@@ -196,14 +196,14 @@ func (c *KeyorixCore) requireSelfGrantCeilingAfterRemovals(ctx context.Context, 
 	bypass := false
 	if len(left) > 0 {
 		if bypass, err = c.storage.RoleSetBypassesPermissionChecks(ctx, left); err != nil {
-			return fmt.Errorf("failed to resolve actor authority: %w", err)
+			return grantCeilingReadFault("failed to resolve actor authority", err)
 		}
 	}
 	for _, p := range need {
 		ok := bypass
 		if !ok && len(left) > 0 {
 			if ok, err = c.storage.RoleSetHasPermission(ctx, left, p); err != nil {
-				return fmt.Errorf("failed to resolve actor authority: %w", err)
+				return grantCeilingReadFault("failed to resolve actor authority", err)
 			}
 		}
 		if !ok {

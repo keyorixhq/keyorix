@@ -123,5 +123,7 @@ func TestUpdateUserRoles_DBError_S31(t *testing.T) {
 	r := withChiParamS7(withUserCtxS7(httptest.NewRequest(http.MethodPut, "/api/v1/users/1/roles", body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateUserRoles(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// #3938: the failed read of the user's current roles is a storage fault, so the
+	// answer is the retryable 503 storage_unavailable, not a 500.
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }

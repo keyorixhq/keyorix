@@ -257,6 +257,9 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 			log.Printf("Member role change for %d on project %d partially applied: %v", userID, id, err)
 			return // the other roles were removed, the new one was not granted (#3488)
 		}
+		if sendStorageUnavailable(w, err) {
+			return // a grant-ceiling read failed before anything committed (#3938): retry
+		}
 		if sendRoleScopeError(w, err) {
 			return
 		}
