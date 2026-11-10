@@ -32,8 +32,7 @@ func refusedOptionContext(t *testing.T) context.Context {
 
 func requireForbiddenOption(t *testing.T, err error) {
 	t.Helper()
-	var fe *dsn.ForbiddenOptionError
-	if !errors.As(err, &fe) {
+	if _, ok := errors.AsType[*dsn.ForbiddenOptionError](err); !ok {
 		t.Fatalf("want ForbiddenOptionError, got %v", err)
 	}
 }

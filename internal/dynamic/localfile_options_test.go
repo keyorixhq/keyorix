@@ -189,8 +189,7 @@ func TestMySQLEngineNeverSendsLocalFilesToTheServer(t *testing.T) {
 	defer cancel()
 	d := fmt.Sprintf("root:x@tcp(%s)/db?timeout=3s&allowAllFiles=true", l.Addr())
 	_, _, err = e.Issue(ctx, d, "", time.Minute)
-	var fe *dsn.ForbiddenOptionError
-	if !errors.As(err, &fe) {
+	if _, ok := errors.AsType[*dsn.ForbiddenOptionError](err); !ok {
 		t.Fatalf("want ForbiddenOptionError, got %v", err)
 	}
 	// Revoke connects without allowAllFiles (#3980); that the file still never
