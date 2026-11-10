@@ -107,15 +107,18 @@ func TestRunChild_RecordsChangeWindow(t *testing.T) {
 	// Outside dir: the handshake files must not count as directory changes.
 	ctl := t.TempDir()
 	pidFile, release := filepath.Join(ctl, "pid"), filepath.Join(ctl, "release")
-	w := &crashWorld{t: t, bin: fakeServerBin(t, "echo $$ > "+pidFile+"\nsleep 0.2\necho a > "+marker+
-		"\nuntil [ -e "+release+" ]; do sleep 0.01; done\nsleep 0.2\necho bb > "+marker)}
+	// No sleeps: the child's first write, the release and its last write are
+	// ordered by the handshake file alone, so a slow runner cannot reorder them.
+	w := &crashWorld{t: t, bin: fakeServerBin(t, "echo $$ > "+pidFile+"\necho a > "+marker+
+		"\nuntil [ -e "+release+" ]; do sleep 0.01; done\necho bb > "+marker)}
 	var win changeWindow
-	released := false
+	released, seenAtRelease := false, 0
 	win.onChange = func() {
 		if released {
 			return
 		}
 		released = true
+		seenAtRelease = win.n
 		if err := os.WriteFile(release, nil, 0o600); err != nil {
 			t.Errorf("release child: %v", err)
 			return
@@ -127,11 +130,20 @@ func TestRunChild_RecordsChangeWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runChild: %v", err)
 	}
-	if changes < 2 || win.n != changes {
-		t.Fatalf("changes=%d window.n=%d, want at least 2 and equal", changes, win.n)
+	// Ordering, not wall-clock spans. The poller is held from its first
+	// observation until the child has exited, so it sees exactly two states: one
+	// before the release and the final one taken after the exit.
+	if changes != 2 || win.n != changes {
+		t.Fatalf("changes=%d window.n=%d, want exactly 2 and equal", changes, win.n)
 	}
-	if win.first < 150*time.Millisecond || win.last-win.first < 150*time.Millisecond {
-		t.Fatalf("window first=%s last=%s does not span the two sleeps", win.first, win.last)
+	if seenAtRelease != 1 {
+		t.Fatalf("%d changes recorded when the child was released, want 1", seenAtRelease)
+	}
+	if win.first > win.last {
+		t.Fatalf("window first=%s is after last=%s", win.first, win.last)
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "bb\n" { //nolint:gosec // test-generated path
+		t.Fatalf("marker=%q err=%v, want the write made after the release", got, err)
 	}
 }
 
