@@ -270,24 +270,37 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, actor *interceptors.UserContext, shareID uint, perm string) error {
 	share, err := s.core.Storage().GetShareRecord(ctx, shareID)
 	if err != nil {
-		// A fetch that failed because storage is down is an outage, not "no such share".
-		if core.IsAuthorizeTransient(ctx, err) {
-			return authorizeRefusal(ctx, err, "share not found")
-		}
-		return status.Error(codes.NotFound, "share not found")
+		return shareResolveError(ctx, err)
 	}
 	secret, err := s.core.Storage().GetSecret(ctx, share.SecretID)
 	if err != nil {
-		if core.IsAuthorizeTransient(ctx, err) {
-			return authorizeRefusal(ctx, err, "share not found")
-		}
-		return status.Error(codes.NotFound, "share not found")
+		return shareResolveError(ctx, err)
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
 	if allowed, err := s.core.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
 		return authorizeRefusal(ctx, err, "insufficient permissions for this share")
 	}
 	return enforceProjectMFA(ctx, s.core, actor, scope.ProjectID)
+}
+
+// shareResolveError answers a failed share or secret read in authorizeShareScoped.
+// Only a positive not-found is "share not found". A fetch that failed because
+// storage is down is an authorization outage, and any other read fault (a scan
+// error, a driver error that is not a connection error) is Unavailable too: the
+// share may exist and nothing was done, so NotFound would tell the operator a
+// revoke that never ran had nothing to revoke (#3911; REST answers 503). An absent
+// share is NotFound for every caller, so a fault adds no existence signal.
+func shareResolveError(ctx context.Context, err error) error {
+	if core.IsAuthorizeTransient(ctx, err) {
+		return authorizeRefusal(ctx, err, "share not found")
+	}
+	if errors.Is(err, storage.ErrShareNotFound) {
+		return status.Error(codes.NotFound, "share not found")
+	}
+	if serr, ok := storageUnavailableStatus(core.ReadFault(err)); ok {
+		return serr
+	}
+	return status.Error(codes.NotFound, "share not found")
 }
 
 // mapShareError translates core sharing errors into gRPC status codes.

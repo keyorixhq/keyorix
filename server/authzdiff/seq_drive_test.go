@@ -211,72 +211,47 @@ func TestSeqClientErrorSplit(t *testing.T) {
 	}
 }
 
-// TestSeqKnownOtherIsNarrow: the #4020 tolerance matches only its own two
-// signatures, and any change to a step kind, the model's decision or one leg's
-// outcome or detail falls back to the always-failing O-S:other.
-func TestSeqKnownOtherIsNarrow(t *testing.T) {
-	sigs := map[seqKind]func() map[layer]*legOutcome{
-		skRevoke: func() map[layer]*legOutcome {
-			return map[layer]*legOutcome{
-				layerCore: {NA: "transport-enforced: core leg is state-synced"},
-				layerREST: {Outcome: Denied, Detail: "Not Found"},
-				layerGRPC: {Outcome: Other, Detail: "Internal"},
-			}
-		},
-		skGrant: func() map[layer]*legOutcome {
-			return map[layer]*legOutcome{
-				layerCore: {Outcome: Other, Detail: "untyped-error"},
-				layerREST: {Outcome: Other, Detail: "Conflict"},
-				layerGRPC: {Outcome: Other, Detail: "Internal"},
-			}
-		},
+// TestSeq4020IsFixedWithoutATolerance: the two sequences the #4020 tolerance used
+// to absorb (gRPC answered Internal) now pass on the real legs with no known-open
+// row: a grant repeated in the sequence (fuzzer input) and a revoke of a grant the
+// subject does not hold. gRPC answers the REST-equivalent client codes, so no leg
+// reports a server error.
+func TestSeq4020IsFixedWithoutATolerance(t *testing.T) {
+	if len(knownSeqOthers) != 0 {
+		t.Fatalf("knownSeqOthers has %d rows; the #4020 rows were removed with the fix", len(knownSeqOthers))
 	}
-	type mut func(st *seqStep, o map[layer]*legOutcome, m *Outcome)
-	cases := map[string]mut{
-		"other kind":   func(st *seqStep, _ map[layer]*legOutcome, _ *Outcome) { st.Kind = skGroupAdd },
-		"model denies": func(_ *seqStep, _ map[layer]*legOutcome, m *Outcome) { *m = Denied },
-		"grpc Unknown": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) { o[layerGRPC].Detail = "Unknown" },
-		"grpc allowed": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) {
-			*o[layerGRPC] = legOutcome{Outcome: Allowed, Detail: "OK"}
-		},
-		"rest 500": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) {
-			*o[layerREST] = legOutcome{Outcome: Other, Detail: "Internal Server Error"}
-		},
-		"rest allowed": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) {
-			*o[layerREST] = legOutcome{Outcome: Allowed, Detail: "OK"}
-		},
-		"rest forbidden": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) {
-			*o[layerREST] = legOutcome{Outcome: Denied, Detail: "Forbidden"}
-		},
-		"rest not run": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) { *o[layerREST] = legOutcome{NA: "x"} },
-		"core allowed": func(_ *seqStep, o map[layer]*legOutcome, _ *Outcome) { *o[layerCore] = legOutcome{Outcome: Allowed} },
-	}
-	for kind, sig := range sigs {
-		if !knownSeqOther(seqStep{Kind: kind}, sig(), Allowed, true) {
-			t.Fatalf("%s: the #4020 signature is not matched", seqKindNames[kind])
-		}
-		// the signature without its precondition (a held grant revoked, a missing
-		// one granted) is not the known-open case
-		if knownSeqOther(seqStep{Kind: kind}, sig(), Allowed, false) {
-			t.Errorf("%s: matched the #4020 tolerance without its precondition", seqKindNames[kind])
-		}
-		for name, m := range cases {
-			st, o, want := seqStep{Kind: kind}, sig(), Allowed
-			m(&st, o, &want)
-			if knownSeqOther(st, o, want, true) {
-				t.Errorf("%s/%s: matched the #4020 tolerance", seqKindNames[kind], name)
-			}
+	for name, steps := range map[string][]seqStep{
+		"repeated grant":             decodeSeq([]byte("0220002200")),
+		"revoke of a grant not held": {{skRevoke, pkGlobalAdmin, pkNone, tA, 0, 0}},
+	} {
+		v := seqVerdict(t, steps, nil, nil)
+		if v.fail() || v.kind == seqKnown {
+			t.Errorf("%s: verdict=%d key=%s, want a passing verdict with no tolerance", name, v.kind, v.key)
 		}
 	}
-	// the two signatures do not cross: a revoke with the grant's outcomes, and back
-	if knownSeqOther(seqStep{Kind: skRevoke}, sigs[skGrant](), Allowed, true) || knownSeqOther(seqStep{Kind: skGrant}, sigs[skRevoke](), Allowed, true) {
-		t.Error("one kind matched the other kind's signature")
+
+	// The by-design conflict answer is narrow: only a grant already held on every
+	// leg, answered Conflict / AlreadyExists by both transports.
+	held := map[layer]*legOutcome{
+		layerCore: {Outcome: Other, Detail: "untyped-error"},
+		layerREST: {Outcome: Other, Detail: "Conflict"},
+		layerGRPC: {Outcome: Other, Detail: "AlreadyExists"},
 	}
-	// on the real legs: a grant repeated in the sequence (fuzzer input) is the
-	// known-open signature and nothing else. This fails once #4020 is fixed:
-	// then remove knownSeqOthers.
-	if v := seqVerdict(t, decodeSeq([]byte("0220002200")), nil, nil); v.kind != seqKnown {
-		t.Errorf("repeated grant: verdict=%d key=%s, want the #4020 known-open verdict", v.kind, v.key)
+	if !grantAlreadyHeldConflict(seqStep{Kind: skGrant}, held, true) {
+		t.Fatal("the repeated-grant conflict is not recognised")
+	}
+	if grantAlreadyHeldConflict(seqStep{Kind: skGrant}, held, false) {
+		t.Error("a conflict on a grant that was not already held must stay a finding")
+	}
+	if grantAlreadyHeldConflict(seqStep{Kind: skRevoke}, held, true) {
+		t.Error("only a grant step qualifies")
+	}
+	for l, detail := range map[layer]string{layerREST: "Internal Server Error", layerGRPC: "Internal"} {
+		o := map[layer]*legOutcome{layerCore: held[layerCore], layerREST: held[layerREST], layerGRPC: held[layerGRPC]}
+		o[l] = &legOutcome{Outcome: Other, Detail: detail}
+		if grantAlreadyHeldConflict(seqStep{Kind: skGrant}, o, true) {
+			t.Errorf("%s answering %s must stay a finding", l, detail)
+		}
 	}
 }
 

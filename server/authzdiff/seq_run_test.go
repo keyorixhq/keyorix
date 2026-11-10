@@ -347,7 +347,7 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 			}
 		}
 		known := serverErr && knownSeqOther(st, outs, modelWant, preKnown)
-		if len(other) > 0 {
+		if len(other) > 0 && !(len(allow) == 0 && len(deny) == 0 && grantAlreadyHeldConflict(st, outs, preKnown)) {
 			kind := "O-S:other"
 			switch {
 			case known:
@@ -375,6 +375,26 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 		findings = append(findings, w.probeAll(tb, specs, i, f, stats, st.Kind == skSuspend || st.Kind == skReactivate)...)
 	}
 	return findings
+}
+
+// grantAlreadyHeldConflict reports the by-design answer to a grant the subject
+// already holds on every leg (preKnown): every transport refuses it as a conflict
+// (REST 409, gRPC AlreadyExists, the same since #4020) and core reports its typed
+// refusal. That is not a finding; the step must still leave the state unchanged
+// (mustNotChange holds for it). Any other kind, a leg missing, a different detail
+// or a grant that was not already held stays O-S:other-client.
+func grantAlreadyHeldConflict(st seqStep, outs map[layer]*legOutcome, preKnown bool) bool {
+	if st.Kind != skGrant || !preKnown {
+		return false
+	}
+	want := map[layer]string{layerREST: http.StatusText(http.StatusConflict), layerGRPC: codes.AlreadyExists.String()}
+	for l, detail := range want {
+		if o := outs[l]; o == nil || o.NA != "" || o.Outcome != Other || o.Detail != detail {
+			return false
+		}
+	}
+	o := outs[layerCore]
+	return o != nil && (o.NA != "" || o.Outcome == Other)
 }
 
 // isClientError reports whether a transport's Other answer is the caller's to
@@ -408,23 +428,21 @@ const seqKnownOtherKind = "O-S:known-other-4020"
 // isKnownOpen reports whether a finding class is a known-open tolerance (#4020).
 func isKnownOpen(c string) bool { return classKind(c) == seqKnownOtherKind }
 
-// knownSeqOthers are the known-open O-S:other signatures of #4020: gRPC
-// mapRoleError has no case for storage.ErrRoleNotAssigned or
-// storage.ErrRoleAlreadyAssigned, so RemoveRole of a grant the subject does not
-// hold and AssignRole of one it already holds answer Internal, where REST answers
-// 404 and 409. A row matches only a step of its kind that the model allows, with
-// exactly these outcomes and details on every leg (core nil: the core leg did not
-// run), and only when the #4020 precondition held on the pre-step state of every
-// leg (preKnown: the step's effect was already true before it ran, so the revoked
-// grant was absent and the granted one present). Without it, a revoke of a held
-// grant that does nothing would look like the known no-op. runSeq still requires
-// the state unchanged on every leg. Remove when #4020 is fixed.
-var knownSeqOthers = []struct {
+// knownSeqOthers are known-open O-S:other signatures: a server error on one leg
+// that a filed issue already tracks. A row matches only a step of its kind that
+// the model allows, with exactly its outcomes and details on every leg (core nil:
+// the core leg did not run), and only when the step's effect was already true
+// before it ran on every leg (preKnown). runSeq still requires the state
+// unchanged on every leg. Add a row only with its issue; remove it in the PR
+// that fixes the issue.
+//
+// Empty: the #4020 rows (gRPC RemoveRole of a grant not held and AssignRole of
+// one held answered Internal, REST 404 / 409) were removed when mapRoleError
+// learned storage.ErrRoleNotAssigned / ErrRoleAlreadyAssigned
+// (TestSeq4020IsFixedWithoutATolerance).
+var knownSeqOthers []struct {
 	kind             seqKind
 	core, rest, grpc *legOutcome
-}{
-	{skRevoke, nil, &legOutcome{Outcome: Denied, Detail: "Not Found"}, &legOutcome{Outcome: Other, Detail: "Internal"}},
-	{skGrant, &legOutcome{Outcome: Other, Detail: "untyped-error"}, &legOutcome{Outcome: Other, Detail: "Conflict"}, &legOutcome{Outcome: Other, Detail: "Internal"}},
 }
 
 func knownSeqOther(st seqStep, outs map[layer]*legOutcome, modelWant Outcome, preKnown bool) bool {

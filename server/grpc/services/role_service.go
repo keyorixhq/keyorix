@@ -436,6 +436,12 @@ func mapRoleError(err error) error {
 	// environment is a RoleScopeError (InvalidArgument, above).
 	case errors.Is(err, storage.ErrUserNotFound):
 		return status.Error(codes.NotFound, "user not found")
+	// #4020: RemoveRole of a grant the subject does not hold and AssignRole of
+	// one it already holds, as REST answers them (404 / 409), not Internal.
+	case errors.Is(err, storage.ErrRoleNotAssigned):
+		return status.Error(codes.NotFound, "role not assigned to user")
+	case errors.Is(err, storage.ErrRoleAlreadyAssigned):
+		return status.Error(codes.AlreadyExists, "role already assigned to user")
 	case errors.Is(err, core.ErrRoleNameReserved):
 		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
 	// CreateRole with a permission listed twice: the second grant hits

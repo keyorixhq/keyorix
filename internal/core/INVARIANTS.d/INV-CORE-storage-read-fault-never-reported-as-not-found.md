@@ -30,5 +30,11 @@
   delete folds into its uniform denial (#G14: reporting a fault there only for an existing
   secret would let a caller without access probe existence during a partial outage); the gRPC
   lease lookup answers `PermissionDenied`, not `Unavailable`, to a caller without global
-  permission (the lease scope is unknown when the read faults), and the same fold remains in the
-  other REST scope resolvers (config, share, rotation policy, secret).
+  permission (the lease scope is unknown when the read faults). The REST scope resolvers no
+  longer fold a fault (#3888: 503 for a global holder, the uniform 403 otherwise), and neither do
+  the gRPC ones (#3911): `authorizeScopedTarget` answers `Unavailable` to a global holder and
+  `PermissionDenied` otherwise, and `authorizeShareScoped` answers `Unavailable` for a share or
+  secret read fault and `NotFound` only for a positive not-found (an absent share is `NotFound`
+  for everyone, so a fault adds no existence signal). Guard:
+  `server/grpc/services` `TestShareRPC_NonTransientReadFault_IsUnavailableNotNotFound`,
+  `TestAuthorizeScopedTarget_NonTransientReadFault`.
