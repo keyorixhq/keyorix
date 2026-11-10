@@ -197,6 +197,19 @@ type AuditChainVerification struct {
 	// were NOT verified.
 	Truncated bool
 
+	// LinkBroken is set by the storage walk from the chain start (AfterID ==
+	// 0) with Valid=false when the first failure is a row whose prev_hash does
+	// not link to the preceding row, or an earliest row that does not match the
+	// anchor passed in: the two failures a retention purge that ran during the
+	// walk also produces (#3944). It never makes the verdict valid; the core
+	// layer re-reads the authenticated anchor and, only if a sanctioned purge
+	// moved it forward, walks once more from it.
+	LinkBroken bool
+	// Reanchored is set by the core layer when that second walk ran: the
+	// verdict covers the chain from this anchor, so its PurgedEvents is the
+	// purged count that goes with ChainedEvents.
+	Reanchored *AuditChainAnchor
+
 	// Seals is the number of accepted audit losses (internal/core/audit_seal.go,
 	// `admin audit accept-loss`) the core's walk stepped over; SealReason
 	// describes them. Valid with Seals > 0 means the rows that remain verify
