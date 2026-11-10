@@ -179,6 +179,19 @@ func (p *AuditLossPlan) Describe() []string {
 	return out
 }
 
+// RecordDigest is the digest of the seal record this plan completes or, once
+// AcceptAuditLoss has built it, writes ("" before that). A run that stops part
+// way prints it, so the operator can check the next plan names the same record.
+func (p *AuditLossPlan) RecordDigest() string {
+	if p.Resume {
+		return p.ResumeDigest
+	}
+	if p.seal == nil || len(p.seal.payload) == 0 {
+		return ""
+	}
+	return p.seal.digest()
+}
+
 func shortHash(h string) string {
 	if len(h) > 12 {
 		return h[:12]
