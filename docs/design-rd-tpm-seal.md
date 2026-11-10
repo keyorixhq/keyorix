@@ -135,7 +135,8 @@ like `recover-admin`):
 
 **Reseal** (`admin encryption tpm reseal [--pcr-policy …]`): needs a working unseal now. Used to
 change the policy, to move v1 to v2, or to add a slot. Moving into PCR mode prints the D9 warning
-(old blobs cannot be revoked) and offers the DEK sweep.
+(old blobs cannot be revoked) and offers a new KEK followed by the DEK sweep, default yes (ADR-117
+D17).
 
 **Rotate the recovery code** (`admin encryption tpm recovery-code rotate`): needs a working
 unseal. Writes a new slot and clears the posture flag. Prints the D9 rule for old copies.

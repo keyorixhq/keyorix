@@ -64,7 +64,7 @@ Do not recover on that host: a recovered KEK on a compromised host is a disclose
 | Material | Wraps | Status |
 |---|---|---|
 | Recovery code (256-bit, 52 base32 characters) | the KEK | ADR-117 D3, planned PR A/B |
-| Recovery code held as Shamir K-of-N shares | the same code | Amendment A D11.3, needs approval |
+| Recovery code held as Shamir K-of-N shares | the same code | Amendment A D11.3, approved 2026-11-10 as optional |
 | PQWRAP hybrid escrow slot | the DEK | ADR-117 Decision 4, after #3662 option R ships |
 
 - Shares are produced once, at `init` or at `recovery-code rotate`, with the split primitive in
