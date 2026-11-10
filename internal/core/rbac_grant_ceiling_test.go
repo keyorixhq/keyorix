@@ -18,7 +18,7 @@ func TestAssignUserRole_RequiresActorHoldRolePermissions(t *testing.T) {
 	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.delete", Resource: "secrets", Action: "delete"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 
@@ -40,7 +40,7 @@ func TestAssignUserRole_CannotGrantToThirdPartyEither(t *testing.T) {
 	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.delete", Resource: "secrets", Action: "delete"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 	// attacker DOES hold roles.assign at the project (the gate every grant path
@@ -65,7 +65,7 @@ func TestAssignUserRole_ScopedHolderCannotGrantAtBroaderScope(t *testing.T) {
 	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.delete", Resource: "secrets", Action: "delete"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 	// F6 sweep (2026-09-22): the "holder" role must ALSO bundle roles.assign
@@ -97,7 +97,7 @@ func TestAssignUserRole_HolderMayGrantRoleTheyQualifyFor(t *testing.T) {
 	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
@@ -130,7 +130,7 @@ func TestAssignUserRole_AdminBypassesCeiling(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.delete", Resource: "secrets", Action: "delete"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 
@@ -149,7 +149,7 @@ func TestAssignUserRole_SystemActorBypassesCeiling(t *testing.T) {
 	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.delete", Resource: "secrets", Action: "delete"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 

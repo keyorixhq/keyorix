@@ -3158,7 +3158,7 @@ contractor access. Example: --ttl 4h grants the role for four hours.
 ```sh
 keyorix rbac assign-role --user alice@example.com --role project_developer --project payments
 # Time-bound grant
-keyorix rbac assign-role --user alice@example.com --role admin --project payments --ttl 4h
+keyorix rbac assign-role --user alice@example.com --role project_admin --project payments --ttl 4h
 ```
 
 **Flags:**

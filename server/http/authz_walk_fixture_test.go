@@ -211,7 +211,7 @@ func newAWWorld(t *testing.T, backend string, replicas int) *awWorld {
 
 	// Viewer: a plain user (system_viewer baseline only), and a project viewer of the
 	// canary project.
-	for _, v := range []struct{ name, role string }{{"awviewer", ""}, {"awprojviewer", "viewer"}} {
+	for _, v := range []struct{ name, role string }{{"awviewer", ""}, {"awprojviewer", "project_viewer"}} {
 		u, uerr := c.CreateUser(ctx, &core.CreateUserRequest{Username: v.name, Email: v.name + "@x.io", Password: svPassword})
 		require.NoError(t, uerr)
 		if v.role != "" {
@@ -228,7 +228,7 @@ func newAWWorld(t *testing.T, backend string, replicas int) *awWorld {
 	require.NoError(t, err)
 	w.ids["user"] = victim.ID
 	w.userIDs["victim"] = victim.ID
-	w.must(t, "victim project member", c.AddProjectMember(ctx, sw.adminID, sw.projID, victim.ID, "viewer", false))
+	w.must(t, "victim project member", c.AddProjectMember(ctx, sw.adminID, sw.projID, victim.ID, "project_viewer", false))
 	if vs, _, lerr := c.Login(ctx, &core.LoginRequest{Username: "awvictim", Password: svPassword}); w.must(t, "victim login", lerr) {
 		var s models.Session
 		if w.must(t, "victim session row", db.Where("user_id = ?", victim.ID).First(&s).Error) {
@@ -292,7 +292,7 @@ func newAWWorld(t *testing.T, backend string, replicas int) *awWorld {
 	if b, berr := c.CreateOIDCBinding(ctx, sw.projID, bot.ID, "https://issuer.example.com", "repo:aw/canary", sw.adminID); w.must(t, "oidc binding", berr) {
 		w.ids["binding"] = b.ID
 	}
-	if inv, ierr := c.InviteToProject(ctx, sw.projID, "awinvitee@x.io", "viewer", sw.adminID, 0); w.must(t, "invitation", ierr) {
+	if inv, ierr := c.InviteToProject(ctx, sw.projID, "awinvitee@x.io", "project_viewer", sw.adminID, 0); w.must(t, "invitation", ierr) {
 		w.ids["invitation"] = inv.ID
 	}
 	if ar, aerr := c.RequestSecretAccess(ctx, sec.ID, w.userIDs["awviewer"], "aw canary request"); w.must(t, "secret access request", aerr) {

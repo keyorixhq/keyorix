@@ -149,7 +149,7 @@ func awMintUser(t *testing.T, w *awWorld, seq int, prefix string) (uint, string)
 	u, err := w.a.c.CreateUser(ctx, &core.CreateUserRequest{Username: name, Email: name + "@x.io", Password: svPassword})
 	require.NoError(t, err)
 	// Same standing as the canary viewers: a project member, so a 200 would be a real read.
-	require.NoError(t, w.a.c.AddProjectMember(ctx, w.adminID, w.projID, u.ID, "viewer", false))
+	require.NoError(t, w.a.c.AddProjectMember(ctx, w.adminID, w.projID, u.ID, "project_viewer", false))
 	sess, _, err := w.a.c.Login(ctx, &core.LoginRequest{Username: name, Password: svPassword})
 	require.NoError(t, err)
 	return u.ID, sess.SessionToken

@@ -20,10 +20,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// RoleGrantOutsideScope is one existing user or group grant at a scope its
-// role's assignable scope does not allow.
+// RoleGrantOutsideScope is one existing user, group or machine-identity grant at
+// a scope its role's assignable scope does not allow.
 type RoleGrantOutsideScope struct {
-	PrincipalType   string // "user" or "group"
+	PrincipalType   string // "user", "group" or "machine"
 	PrincipalID     uint
 	RoleName        string
 	AssignableScope string // the role's: project (held globally) or global (held at a project)
@@ -32,8 +32,8 @@ type RoleGrantOutsideScope struct {
 	ExpiresAt       *time.Time // nil = permanent
 }
 
-// ListRoleGrantsOutsideAssignableScope returns every user and group grant the
-// role-scope check would refuse as a new grant on its role and scope alone
+// ListRoleGrantsOutsideAssignableScope returns every user, group and machine
+// grant the role-scope check would refuse as a new grant on its role and scope alone
 // (validateRoleScope; environment existence is not re-checked), expired
 // time-bound rows included (the sweep may not have run yet), sorted by
 // principal type, principal ID, then role. Read-only.
@@ -69,6 +69,21 @@ func (c *KeyorixCore) ListRoleGrantsOutsideAssignableScope(ctx context.Context) 
 	}
 	for _, g := range groupGrants {
 		add("group", g.GroupID, g.RoleID, Scope{ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID}, g.ExpiresAt)
+	}
+	// Machine identities always hold their grants at a project (#3605). A grant
+	// at a deleted project is not listed: it authorizes nothing.
+	projects, err := c.storage.ListProjects(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, p := range projects {
+		machineGrants, err := c.storage.ListProjectMachineRoleAssignments(ctx, p.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		for _, g := range machineGrants {
+			add("machine", g.PrincipalID, g.RoleID, Scope{ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID}, nil)
+		}
 	}
 	slices.SortFunc(out, func(a, b RoleGrantOutsideScope) int {
 		return cmp.Or(cmp.Compare(a.PrincipalType, b.PrincipalType), cmp.Compare(a.PrincipalID, b.PrincipalID),

@@ -253,7 +253,7 @@ func TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal(t *testing.T) {
 	t.Run("TransitionMembership/activate/grant-fault-reverts-the-membership", func(t *testing.T) {
 		f := newFixture(t)
 		u := newUser(t, f, "assignfault-member", 0)
-		st, body, err := httpJSON(ctx, f.w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/memberships", projectID), map[string]any{"user_id": u, "role": "viewer"})
+		st, body, err := httpJSON(ctx, f.w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/memberships", projectID), map[string]any{"user_id": u, "role": "project_viewer"})
 		require.NoError(t, err)
 		require.Equal(t, 2, st/100, string(body))
 		var inv struct {

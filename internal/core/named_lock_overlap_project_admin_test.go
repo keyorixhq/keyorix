@@ -35,7 +35,7 @@ func newOverlapTwoProjectAdminsFixture(t *testing.T) *gorm.DB {
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 9, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "proj_admin"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 11, Name: "viewer"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 11, Name: "viewer", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 10, PermissionID: 1}).Error)
 	for _, u := range []models.User{
 		{ID: 1, Username: "a", IsActive: true, AccountState: core.AccountActive},

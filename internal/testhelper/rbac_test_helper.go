@@ -162,10 +162,18 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 		// flag, not the name — set true here for super_admin/admin exactly
 		// as real bootstrap seeding would, so tests using this helper to
 		// exercise the admin bypass keep working. assignable_scope likewise
-		// (#3546 Phase 2): the built-in's fixed scope, as seeding writes it.
+		// (#3546 Phase 2): the built-in's fixed scope, as seeding writes it,
+		// EXCEPT the legacy names, which this fixture keeps at any. It uses them as
+		// generic roles with their own permission sets, granted per project by
+		// tests about SoD, break-glass and authz. It therefore does NOT show what
+		// a real install does with a legacy role at a project (#3605): that is
+		// TestLegacyRolesGrantedPerProjectAreRefused, on a real bootstrap.
+		scope := models.BuiltinRoleAssignableScopes[role.Name]
+		if _, legacy := models.LegacyRoleProjectReplacement(role.Name); legacy {
+			scope = models.RoleAssignableAny
+		}
 		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, name_folded, description, bypasses_permission_checks, assignable_scope) VALUES (?, ?, ?, ?, ?, ?)",
-			role.ID, role.Name, role.Name, role.Description, role.Name == "super_admin" || role.Name == "admin",
-			models.BuiltinRoleAssignableScopes[role.Name])
+			role.ID, role.Name, role.Name, role.Description, role.Name == "super_admin" || role.Name == "admin", scope)
 	}
 
 	// Create default permissions using raw SQL

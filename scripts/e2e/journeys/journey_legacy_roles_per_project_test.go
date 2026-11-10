@@ -12,15 +12,14 @@ import (
 	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
 
-// TestJourney_LegacyRolesGrantedPerProject drives, with the real CLI against a
-// real server, the per-project grants of the legacy single-tier roles that
-// installs rely on (#3546 Phase 2, ask 3546-phase2-legacy-roles-scope: legacy
-// roles are assignable "any", not "global"): a machine identity gets viewer on
-// project default and admin on project payments, and so does a user. The
-// security fix must not refuse any of them. Two controls show the scope guard
-// is live on the same server: a project role without a project and a system
-// role on a project are refused.
-func TestJourney_LegacyRolesGrantedPerProject(t *testing.T) {
+// TestJourney_LegacyRolesRefusedPerProject drives, with the real CLI against a
+// real server, the per-project grants of the legacy single-tier roles that #3605
+// ended: a machine identity asking for viewer on project default or admin on
+// project payments is refused, and so is a user, and each refusal names the
+// project role to use. The replacement works on the same server, an install-wide
+// grant of a legacy role is still accepted, and two controls show the rest of
+// the scope guard is unchanged.
+func TestJourney_LegacyRolesRefusedPerProject(t *testing.T) {
 	serverBin, cliBin := harness.BuildBinaries(t)
 	s := harness.StartServer(t, serverBin, harness.DBBackend{Name: "sqlite"})
 	t.Cleanup(s.Close)
@@ -32,25 +31,40 @@ func TestJourney_LegacyRolesGrantedPerProject(t *testing.T) {
 	defID := projectID(t, s, adminToken, "default")
 	payID := projectID(t, s, adminToken, "payments")
 
+	requireRefusedNaming := func(replacement string, args ...string) {
+		t.Helper()
+		out := runCLIExpectErr(t, cliBin, aEnv, args...)
+		if !strings.Contains(out, "install-wide") || !strings.Contains(out, replacement) {
+			t.Fatalf("%v should be refused and name %s:\n%s", args, replacement, out)
+		}
+	}
+
 	// Machine identities.
 	runCLI(t, cliBin, aEnv, "machine", "create", "--project", "default", "--name", "legacy-reader", "--type", "service")
 	runCLI(t, cliBin, aEnv, "machine", "create", "--project", "payments", "--name", "legacy-deployer", "--type", "service")
-	runCLI(t, cliBin, aEnv, "machine", "grant-role", "legacy-reader", "--project", "default", "--role", "viewer")
-	runCLI(t, cliBin, aEnv, "machine", "grant-role", "legacy-deployer", "--project", "payments", "--role", "admin")
-	if out := runCLI(t, cliBin, aEnv, "machine", "roles", "legacy-reader", "--project", "default"); !strings.Contains(out, "viewer") {
-		t.Fatalf("machine legacy-reader should hold viewer on default:\n%s", out)
+	requireRefusedNaming("project_viewer", "machine", "grant-role", "legacy-reader", "--project", "default", "--role", "viewer")
+	requireRefusedNaming("project_admin", "machine", "grant-role", "legacy-deployer", "--project", "payments", "--role", "admin")
+	runCLI(t, cliBin, aEnv, "machine", "grant-role", "legacy-reader", "--project", "default", "--role", "project_viewer")
+	runCLI(t, cliBin, aEnv, "machine", "grant-role", "legacy-deployer", "--project", "payments", "--role", "project_admin")
+	if out := runCLI(t, cliBin, aEnv, "machine", "roles", "legacy-reader", "--project", "default"); !strings.Contains(out, "project_viewer") {
+		t.Fatalf("machine legacy-reader should hold project_viewer on default:\n%s", out)
 	}
-	if out := runCLI(t, cliBin, aEnv, "machine", "roles", "legacy-deployer", "--project", "payments"); !strings.Contains(out, "admin") {
-		t.Fatalf("machine legacy-deployer should hold admin on payments:\n%s", out)
+	if out := runCLI(t, cliBin, aEnv, "machine", "roles", "legacy-deployer", "--project", "payments"); !strings.Contains(out, "project_admin") {
+		t.Fatalf("machine legacy-deployer should hold project_admin on payments:\n%s", out)
 	}
 
 	// Users.
 	const email = "legacy-user@example.com"
 	runCLI(t, cliBin, aEnv, "user", "create", "--username", "legacy-user", "--email", email, "--one-time-password")
-	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", email, "--role", "viewer", "--project", "default")
-	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", email, "--role", "admin", "--project", "payments")
-	requireProjectMemberWithRole(t, s, adminToken, defID, email, "viewer")
-	requireProjectMemberWithRole(t, s, adminToken, payID, email, "admin")
+	requireRefusedNaming("project_viewer", "rbac", "assign-role", "--user", email, "--role", "viewer", "--project", "default")
+	requireRefusedNaming("project_admin", "rbac", "assign-role", "--user", email, "--role", "admin", "--project", "payments")
+	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", email, "--role", "project_viewer", "--project", "default")
+	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", email, "--role", "project_admin", "--project", "payments")
+	requireProjectMemberWithRole(t, s, adminToken, defID, email, "project_viewer")
+	requireProjectMemberWithRole(t, s, adminToken, payID, email, "project_admin")
+
+	// An install-wide grant of a legacy role is still accepted.
+	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", email, "--role", "viewer")
 
 	// Controls: the guard still refuses what #3546 refuses.
 	out := runCLIExpectErr(t, cliBin, aEnv, "rbac", "assign-role", "--user", email, "--role", "project_viewer")

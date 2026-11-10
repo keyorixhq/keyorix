@@ -31,19 +31,16 @@ func IsValidRoleAssignableScope(s string) bool { return slices.Contains(RoleAssi
 // upgrade backfill (internal/storage) read, so they cannot disagree.
 //
 // The legacy single-tier roles (admin, editor, viewer, auditor, super_admin)
-// are "any": they are granted per project today (e.g. `machine grant-role
-// --project P --role viewer`, `rbac assign-role --role admin --project P`),
-// and a project grant is narrower than a global one, so restricting them
-// would only break callers. Decided (ask 3546-phase2-legacy-roles-scope,
-// option a): "any", pinned by TestLegacyRolesAreAssignableAnywhere. Tightening
-// them to "global" is a separate, deliberate change with its own UPGRADING
-// note, not part of a security fix.
+// are "global" (#3605, #3588): ADR-021's two tiers are the only model, so a
+// project grant uses a project_* role (LegacyRoleProjectReplacements). Grants of
+// them already held at a project are left in place and listed for replacement
+// (core.ListLegacyRoleProjectGrants). Pinned by TestLegacyRolesAreGlobalOnly.
 var BuiltinRoleAssignableScopes = map[string]string{
-	"super_admin": RoleAssignableAny,
-	"admin":       RoleAssignableAny,
-	"editor":      RoleAssignableAny,
-	"viewer":      RoleAssignableAny,
-	"auditor":     RoleAssignableAny,
+	"super_admin": RoleAssignableGlobal,
+	"admin":       RoleAssignableGlobal,
+	"editor":      RoleAssignableGlobal,
+	"viewer":      RoleAssignableGlobal,
+	"auditor":     RoleAssignableGlobal,
 
 	"system_admin":   RoleAssignableGlobal,
 	"system_auditor": RoleAssignableGlobal,
@@ -54,6 +51,34 @@ var BuiltinRoleAssignableScopes = map[string]string{
 	"project_developer": RoleAssignableProject,
 	"project_viewer":    RoleAssignableProject,
 	"project_auditor":   RoleAssignableProject,
+}
+
+// LegacyRoleProjectReplacements names, for each legacy single-tier role, the
+// project role to grant at a project instead (#3605). super_admin has no project
+// equivalent of its own; project_admin is the highest project tier.
+var LegacyRoleProjectReplacements = map[string]string{
+	"super_admin": "project_admin",
+	"admin":       "project_admin",
+	"editor":      "project_developer",
+	"viewer":      "project_viewer",
+	"auditor":     "project_auditor",
+}
+
+// LegacyRoleProjectReplacement returns the project role that replaces the legacy
+// role name at a project, and false when name is not a legacy role.
+func LegacyRoleProjectReplacement(name string) (string, bool) {
+	replacement, ok := LegacyRoleProjectReplacements[name]
+	return replacement, ok
+}
+
+// LegacyRoleNames returns the legacy single-tier role names, sorted.
+func LegacyRoleNames() []string {
+	names := make([]string, 0, len(LegacyRoleProjectReplacements))
+	for name := range LegacyRoleProjectReplacements {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // DefaultRoleAssignableScope is the scope a role row gets when it is written

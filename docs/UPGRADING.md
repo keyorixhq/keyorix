@@ -1367,10 +1367,9 @@ upgrade) and sets it once:
 `any`** (nothing that worked before breaks). Roles created after the upgrade default to
 `project`.
 
-The legacy roles stay `any` on purpose: they are granted per project today, to machine
-identities and to users (`keyorix machine grant-role <name> --project default --role viewer`,
-`keyorix rbac assign-role --user <email> --role admin --project payments`), and those grants
-keep working, as do install-wide grants of them.
+The legacy roles no longer stay `any` (#3605): they are install-wide only and a new grant of
+one on a project is refused, while grants already held on a project keep working. See the
+upgrade note "The legacy roles can no longer be granted on a project".
 
 What to check:
 
