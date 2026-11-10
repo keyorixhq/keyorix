@@ -14,7 +14,6 @@ package core
 // Skips without KEYORIX_TEST_PG_DSN. Everything happens in w7_* databases.
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"log"
@@ -505,7 +504,7 @@ func TestCorePGProvocationsReachServer(t *testing.T) {
 			t.Errorf("the corpus never made the server raise %s; got %v", code, codes)
 		}
 	}
-	if raw["detail/metadata"] == 0 {
+	if raw["detail/M"] == 0 {
 		t.Errorf("no server DETAIL quoted a canary, so the channel the oracle guards was never put under test; got %v", raw)
 	}
 	if unused := allow.Unused(); len(unused) > 0 {
@@ -513,8 +512,16 @@ func TestCorePGProvocationsReachServer(t *testing.T) {
 	}
 }
 
-// corePGDuplicateProgram makes the server raise a real 23505 with the canary in DETAIL.
-var corePGDuplicateProgram = []byte{byte(corePGW2OpCount + 8), 0, 0}
+// corePGDuplicateProgram makes the server raise a real 23505 with the canary in
+// DETAIL. It is a duplicate-environment create (op kind 10), not a duplicate
+// secret: core.CreateSecret pre-checks name uniqueness at the application layer
+// (internal/core/secrets.go) and returns before any INSERT, so a duplicate secret
+// never reaches the server. CreateEnvironment has no such pre-check and, unlike
+// CreateProject (whose dup error core sanitizes in translateProjectNameError),
+// returns the raw driver error up to the caller, so a shim-planted value reaches
+// the op-error channel. Flag 6 selects the bare-canary name variant so the first
+// create succeeds and only the duplicate fails.
+var corePGDuplicateProgram = []byte{byte(corePGW2OpCount + 10), 0, 6}
 
 const corePGShimName = "w7:pg-error-quoting-shim"
 
@@ -544,7 +551,11 @@ func corePGShim(failingValue func(*corePGRun) string) func(*corePGRun) {
 // a real PostgreSQL failure; the shims live in this test only.
 func TestCorePGCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 	fx := newCorePGFixture(t, "")
-	shim := func(val func(*corePGRun) string) func(*corePGRun) {
+	// The cleanup is registered on the SUBTEST's t (passed in), not the outer t:
+	// registering on the outer t would defer every removal to the end of the whole
+	// test, leaving the shim installed through "shim-removed-control-is-silent-again"
+	// and making that clean run report the previous shim's planted leak.
+	shim := func(t *testing.T, val func(*corePGRun) string) func(*corePGRun) {
 		return func(r *corePGRun) {
 			corePGShim(val)(r)
 			t.Cleanup(func() { _ = r.world.DB.Callback().Create().Remove(corePGShimName) })
@@ -572,13 +583,13 @@ func TestCorePGCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 		if r.sqlstates["23505"] == 0 {
 			t.Fatalf("the provocation did not reach the server: %v", r.sqlstates)
 		}
-		if r.rawFields["detail/metadata"] == 0 {
+		if r.rawFields["detail/M"] == 0 {
 			t.Fatalf("the provocation did not put a canary in DETAIL: %v", r.rawFields)
 		}
 	})
 	t.Run("shim-quoting-a-stored-column-is-reported", func(t *testing.T) {
 		// A stored- canary is a value the caller did not send.
-		r, invalid := runCorePGProgram(t, fx, t.TempDir(), corePGDuplicateProgram, corePGCanaryAllow(), nil, shim(func(r *corePGRun) string {
+		r, invalid := runCorePGProgram(t, fx, t.TempDir(), corePGDuplicateProgram, corePGCanaryAllow(), nil, shim(t, func(r *corePGRun) string {
 			for _, c := range r.scanner.Canaries() {
 				if strings.HasPrefix(c.Label, "stored-desc") {
 					return c.Raw
@@ -590,7 +601,7 @@ func TestCorePGCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 		expectFinding(t, r, invalid, "channel=op-error ")
 	})
 	t.Run("shim-quoting-a-secret-value-is-reported", func(t *testing.T) {
-		r, invalid := runCorePGProgram(t, fx, t.TempDir(), corePGDuplicateProgram, corePGCanaryAllow(), nil, shim(func(r *corePGRun) string { return r.controlValue.Raw }))
+		r, invalid := runCorePGProgram(t, fx, t.TempDir(), corePGDuplicateProgram, corePGCanaryAllow(), nil, shim(t, func(r *corePGRun) string { return r.controlValue.Raw }))
 		expectFinding(t, r, invalid, "channel=op-error ")
 	})
 	t.Run("shim-removed-control-is-silent-again", func(t *testing.T) {
@@ -639,8 +650,24 @@ func TestCorePGCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 }
 
 // TestCorePGSerializationFailureNoCanary drives a concurrent pair to a real 40001
-// under SERIALIZABLE and judges what comes back. The product itself runs at READ
-// COMMITTED, so this is the path of a server configured otherwise.
+// under SERIALIZABLE and checks that the serialization-failure error text carries no
+// canary even when the rows being written do.
+//
+// No product operation reaches a 40001, so this cannot be driven through core:
+//   - UpdateSecret with a Value inserts a new secret_versions row, so a concurrent
+//     pair collides on the version unique index (23505) before SSI can act.
+//   - A description-only UpdateSecret reads the row OUTSIDE its write transaction, so
+//     the transaction's snapshot is taken at the UPDATE itself — after the other
+//     writer has committed — and the write succeeds cleanly with no conflict.
+//   - The product runs exclusively at READ COMMITTED; 40001 never arises there.
+//
+// This test therefore drives the 40001 directly at the driver, over the world's
+// traced native pool (opened with default_transaction_isolation = serializable), with
+// two transactions that each read the seeded row and then write it: the read-write
+// dependency makes SERIALIZABLE abort the second writer. It proves the harness records
+// a serialization failure and that PostgreSQL's 40001 message quotes no value, so the
+// oracle's channels stay clean. It is a driver-level capability check, not a claim
+// that the product can produce a 40001.
 func TestCorePGSerializationFailureNoCanary(t *testing.T) {
 	fx := newCorePGFixture(t, "serializable")
 	r, invalid := runCorePGProgram(t, fx, t.TempDir(), nil, corePGCanaryAllow(), nil, nil)
@@ -649,47 +676,69 @@ func TestCorePGSerializationFailureNoCanary(t *testing.T) {
 	}
 	r.world.Tracer.Drain()
 	id := r.secrets[1]
-	update := func() (any, error) {
-		desc := r.meta("desc")
-		s, err := r.c.UpdateSecret(r.ctx, &UpdateSecretRequest{ID: id, Value: r.value(), Description: &desc, UpdatedBy: "canary-admin", UserID: coreCanaryAdminID})
-		return s, err
+	// Canaries written into the rows the pair touches; registered so the scan below
+	// would catch either one if the 40001 error quoted it.
+	descA := r.meta("serial-a")
+	descB := r.meta("serial-b")
+
+	ctx := r.ctx
+	ca, err := r.world.Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire A: %v", err)
 	}
-	reached, release := r.world.Tracer.PauseOn(`UPDATE "secret_nodes"`)
-	defer release()
-	type result struct {
-		s   any
-		err error
+	defer ca.Release()
+	cb, err := r.world.Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire B: %v", err)
 	}
-	a := make(chan result, 1)
-	go func() {
-		s, err := update()
-		a <- result{s, err}
-	}()
-	<-reached
-	s, err := update()
-	r.observe("pg-serial-b", s, err)
-	release()
-	got := <-a
-	var v any
-	if got.err == nil {
-		v = got.s
+	defer cb.Release()
+
+	// Both pool connections default to SERIALIZABLE (set in pgcanary.Open).
+	txA, err := ca.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin A: %v", err)
 	}
-	r.observe("pg-serial-a", v, got.err)
+	defer func() { _ = txA.Rollback(ctx) }()
+	txB, err := cb.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin B: %v", err)
+	}
+	defer func() { _ = txB.Rollback(ctx) }()
+
+	var scratch string
+	if err := txA.QueryRow(ctx, `SELECT description FROM secret_nodes WHERE id = $1`, id).Scan(&scratch); err != nil {
+		t.Fatalf("read A: %v", err)
+	}
+	if err := txB.QueryRow(ctx, `SELECT description FROM secret_nodes WHERE id = $1`, id).Scan(&scratch); err != nil {
+		t.Fatalf("read B: %v", err)
+	}
+	if _, err := txA.Exec(ctx, `UPDATE secret_nodes SET description = $1 WHERE id = $2`, descA, id); err != nil {
+		t.Fatalf("write A: %v", err)
+	}
+	if err := txA.Commit(ctx); err != nil {
+		t.Fatalf("commit A: %v", err)
+	}
+	// B now writes a row A has already modified and committed: SERIALIZABLE aborts it.
+	_, bWriteErr := txB.Exec(ctx, `UPDATE secret_nodes SET description = $1 WHERE id = $2`, descB, id)
+	bCommitErr := txB.Commit(ctx)
+
 	entries := r.world.Tracer.Drain()
 	codes := map[string]int{}
-	var buf bytes.Buffer
 	for _, e := range entries {
 		codes[e.SQLState]++
-		buf.WriteString(e.Message + "\n" + e.Detail + "\n")
 	}
-	t.Logf("SQLSTATEs across the pair: %v", codes)
+	t.Logf("SQLSTATEs across the pair: %v (B write err: %v, B commit err: %v)", codes, bWriteErr, bCommitErr)
 	if codes["40001"] == 0 {
 		t.Fatalf("the pair did not produce a serialization failure: %v", codes)
 	}
+	// The serialization-failure error must not quote either written value. Scan the
+	// raw driver fields (message, detail, hint, where, text) the tracer recorded.
+	for _, o := range pgcanary.RawOutputs(entries) {
+		if hits := r.scanner.Scan(o.Channel, o.Data); len(hits) != 0 {
+			t.Fatalf("the serialization failure quoted a canary on %s: %v", o.Channel, hits)
+		}
+	}
 	if len(r.findings) != 0 {
 		t.Fatalf("serialization failure surfaced a canary:\n%s", strings.Join(r.findings, "\n"))
-	}
-	if hits := r.scanner.Scan("pg-raw", buf.Bytes()); len(hits) != 0 {
-		t.Logf("canaries in the raw server error: %v", hits)
 	}
 }
