@@ -87,6 +87,21 @@ test.describe('least-privilege user (alice)', () => {
         await expect(page.getByTestId('stat-card-total-secrets-value')).toHaveText('5');
     });
 
+    // #3739. A project_viewer holds neither secrets.write nor secrets.delete (the permissions the
+    // server checks on POST/PUT/DELETE /projects), so the Projects page lists the project but offers
+    // no New Project, edit or delete.
+    test('the Projects page lists the project without New Project, edit or delete', async ({ page }) => {
+        await page.goto('/projects');
+        await settle(page);
+        const main = page.locator('main');
+        await expect(main.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
+        const row = main.getByRole('button').filter({ hasText: PROJECT_NAME as string }).first();
+        await expect(row).toBeVisible();
+        await expect(main.getByRole('button', { name: /new project/i })).toHaveCount(0);
+        await expect(row.getByTitle('Edit project')).toHaveCount(0);
+        await expect(row.getByTitle('Delete project')).toHaveCount(0);
+    });
+
     test('the secrets list opens on the environment that has secrets and offers no write actions', async ({ page }) => {
         const pid = await projectId(page);
         // No ?env= on purpose: the default must be an environment with secrets, not an empty production.
@@ -243,6 +258,16 @@ test.describe('admin keeps every control (positive control)', () => {
         await settle(page);
         await page.getByRole('row').filter({ hasText: /e2e-/ }).first().getByTitle('View').click();
         await expect(page.getByTestId('add-dependency-form')).toBeVisible();
+    });
+
+    test('the Projects page offers New Project, edit and delete (positive control, #3739)', async ({ page }) => {
+        await page.goto('/projects');
+        await settle(page);
+        const main = page.locator('main');
+        await expect(main.getByRole('button', { name: /new project/i })).toBeVisible();
+        const row = main.getByRole('button').filter({ hasText: PROJECT_NAME as string }).first();
+        await expect(row.getByTitle('Edit project')).toBeVisible();
+        await expect(row.getByTitle('Delete project')).toBeVisible();
     });
 
     test('Billing is not offered on a community build and nothing 403s while the shell loads', async ({ page }) => {
