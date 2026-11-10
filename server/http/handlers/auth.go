@@ -1014,7 +1014,8 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		if sendStorageUnavailable(w, err) || sendAuditUnavailable(w, err) {
 			return
 		}
-		if errors.Is(err, core.ErrSessionNotFound) {
+		// ErrValidation: a machine principal has no user id and so owns no sessions.
+		if errors.Is(err, core.ErrSessionNotFound) || errors.Is(err, core.ErrValidation) {
 			sendError(w, "NotFound", "Session not found", http.StatusNotFound, nil)
 			return
 		}

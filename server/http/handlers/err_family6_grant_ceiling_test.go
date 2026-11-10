@@ -123,7 +123,7 @@ func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
 		IsActive: true, AccountState: "active",
 	})
 	require.NoError(t, err)
-	grp := &models.Group{Name: "fam6-grant-group", NameFolded: "fam6-grant-group", }
+	grp := &models.Group{Name: "fam6-grant-group", NameFolded: "fam6-grant-group"}
 	require.NoError(t, fw.db.Create(grp).Error)
 	require.NoError(t, fw.db.Create(&models.GroupRole{GroupID: grp.ID, RoleID: powerful.ID, ProjectID: proj.ID}).Error)
 
