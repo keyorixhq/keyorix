@@ -6,3 +6,4 @@ jit_access.go
 bulk_access_requests.go
 env_without_project_grants.go
 global_project_role_grants.go
+legacy_role_project_grants.go
