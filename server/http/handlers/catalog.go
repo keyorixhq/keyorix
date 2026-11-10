@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -196,7 +197,10 @@ func (h *CatalogHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 	}
 	project, err := h.coreService.GetProject(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, storage.ErrProjectNotFound) {
 			sendError(w, "NotFound", "Project not found", http.StatusNotFound, nil)
 			return
 		}
