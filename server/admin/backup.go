@@ -30,6 +30,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/keyorixhq/keyorix/internal/backupfmt"
@@ -100,6 +101,10 @@ files changed during the backup, it fails and leaves no archive. Pass
 --exclusive for the stronger (but availability-costing) guarantee of also
 holding the exclusive lock, e.g. before a major upgrade; that needs the
 server stopped.
+
+A backup is refused, with no archive written, while a key rotation's .pending
+staging file exists: such an archive could not be restored on another host.
+Start the server once so boot recovery completes the rotation, then back up.
 
 --output must not already exist: each backup is a distinct, timestamped
 artifact. Store it OFF this host -- a backup that never leaves the machine
@@ -231,6 +236,12 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	// An interrupted restore's key files and data may not match: a backup of
 	// them would carry the mismatch into every later restore.
 	if err := restorejournal.RefuseIfPresent(cfg); err != nil {
+		return err
+	}
+	// Before the passphrase and the locks: an interrupted rotate-kek can leave a
+	// key set no passphrase opens yet, and this is the error that explains it.
+	// readKeyFilesForBackup checks again under the key lock.
+	if err := refusePendingKeyRotation(cfg); err != nil {
 		return err
 	}
 
@@ -593,10 +604,48 @@ func readKeyFile(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// refusePendingKeyRotation fails the backup while a ".pending" rotation-staging
+// file exists (#4058). keyfiles.Registry would add it to the archive, and
+// `admin restore` compares the archive's key files with its target's, so the
+// archive would be refused on any host without the same leftover: found only
+// when the backup is needed. The file is left in place: after a committed DEK
+// rotation it is the only copy of the new DEK.
+//
+// The salt advice is separate because boot does not always remove that file
+// (keyfiles.ReconcileKeySet): a server that started has proved the active set
+// opens, so a staging salt still there afterwards is unused.
+func refusePendingKeyRotation(cfg *config.Config) error {
+	pending, err := keyfiles.PendingRotationFiles(&cfg.Storage.Encryption, ".")
+	if err != nil {
+		return fmt.Errorf("could not tell whether a key rotation is pending, so the backup was not taken: %w", err)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	paths := make([]string, len(pending))
+	saltAdvice := ""
+	for i, p := range pending {
+		paths[i] = p.Path
+		if p.Salt {
+			saltAdvice = fmt.Sprintf(" After an interrupted rotate-kek the start may need the new passphrase, and if it is refused, follow the "+
+				"recovery it prints. If the server started and %s is still there, the rotation never changed the active keys: delete that "+
+				"file, as the start's log says.", p.Path)
+		}
+	}
+	return fmt.Errorf("backup refused: a key rotation is running or was interrupted (found %s). An archive taken now would include "+
+		"that staging file and `admin restore` would refuse it on any other host, so no archive was written and no key file was changed. "+
+		"If a rotation is running, wait for it to finish. Otherwise start the server once so boot recovery completes the rotation, "+
+		"then back up again.%s Never delete a DEK's .pending file by hand: it can be the only copy of the new DEK",
+		strings.Join(paths, ", "), saltAdvice)
+}
+
 // readKeyFilesForBackup reads every file internal/keyfiles.Registry
 // enumerates and computes its checksum -- unchanged from v1 (design §1: no
 // new subcommands or UX for key-material handling).
 func readKeyFilesForBackup(cfg *config.Config) ([]backupfmt.KeyFileEntry, [][]byte, error) {
+	if err := refusePendingKeyRotation(cfg); err != nil {
+		return nil, nil, err
+	}
 	specs, err := keyfiles.Registry(&cfg.Storage.Encryption, ".")
 	if err != nil {
 		return nil, nil, fmt.Errorf("build key-file registry: %w", err)
