@@ -74,6 +74,13 @@ func (s *roleScopesFaultStub) ResolveUserPermissionAt(ctx context.Context, userI
 	return corestorage.ComposeUserPermissionAt(ctx, s, userID, scope, permission)
 }
 
+// GetUserScopedRoleSets (#4025, the admin-rank ceiling's target read) reads
+// through this stub's own GetUserRoleScopes and GetUserRoleIDsAt, so the
+// ceiling still meets failRoleScopesNth and failRoleIDsAt.
+func (s *roleScopesFaultStub) GetUserScopedRoleSets(ctx context.Context, userID uint) (map[corestorage.Scope][]uint, error) {
+	return corestorage.ComposeUserScopedRoleSets(ctx, s, userID)
+}
+
 func (s *roleScopesFaultStub) recorded() []roleScopesCall {
 	s.mu.Lock()
 	defer s.mu.Unlock()

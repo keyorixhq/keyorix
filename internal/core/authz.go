@@ -10,10 +10,12 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"slices"
 	"strings"
@@ -817,16 +819,22 @@ func (c *KeyorixCore) RequireMachinePrivilegeCeiling(ctx context.Context, actorT
 // admin-equivalent permissions but no bypass flag; this catches a canonical
 // bypass role with the flag but no enumerated permissions. Neither alone is
 // sufficient — both are checked.
+//
+// #4025: the target's roles at every scope come from ONE read
+// (GetUserScopedRoleSets), not a scope list followed by a read per scope. Those
+// reads each saw their own moment, so a grant another administrator moved
+// between two scopes during the evaluation was seen at neither, and the target
+// looked as if it held nothing there.
 func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, actorID, targetID uint, action string) error {
-	scopes, err := c.storage.GetUserRoleScopes(ctx, targetID)
+	roleSets, err := c.storage.GetUserScopedRoleSets(ctx, targetID)
 	if err != nil {
 		return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)
 	}
+	scopes := slices.SortedFunc(maps.Keys(roleSets), func(a, b Scope) int {
+		return cmp.Or(cmp.Compare(a.ProjectID, b.ProjectID), cmp.Compare(a.EnvironmentID, b.EnvironmentID))
+	})
 	for _, scope := range scopes {
-		targetRoleIDs, err := c.scopedRoleIDs(ctx, targetID, scope)
-		if err != nil {
-			return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)
-		}
+		targetRoleIDs := roleSets[scope]
 		targetBypasses, err := c.roleSetContainsAdmin(ctx, targetRoleIDs)
 		if err != nil {
 			return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)

@@ -98,6 +98,7 @@ type StoreHooks struct {
 	GetUserPermissions                        func(next storage.Storage, ctx context.Context, userID uint) ([]*storage.Permission, error)
 	GetUserRoleIDsAt                          func(next storage.Storage, ctx context.Context, userID uint, scope storage.Scope) ([]uint, error)
 	GetUserRoleScopes                         func(next storage.Storage, ctx context.Context, userID uint) ([]storage.Scope, error)
+	GetUserScopedRoleSets                     func(next storage.Storage, ctx context.Context, userID uint) (map[storage.Scope][]uint, error)
 	GetUserRoles                              func(next storage.Storage, ctx context.Context, userID uint) ([]*models.Role, error)
 	GetWebAuthnCredentialByCredID             func(next storage.Storage, ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error)
 	LastUserRoleManagementActivity            func(next storage.Storage, ctx context.Context, projectID uint, since time.Time) (map[uint]time.Time, error)

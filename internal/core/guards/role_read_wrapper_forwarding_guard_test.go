@@ -39,9 +39,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// GetUserScopedRoleSets (#4025) is the admin-rank ceiling's one-statement read
+// of a target's roles at every scope, fed by the scope list and per-scope reads.
 var roleReadFeeds = map[string][]string{
-	"GetUserRoleIDsAt":                {"ResolveUserPermissionAt"},
-	"GetUserGroupRoleIDsAt":           {"ResolveUserPermissionAt"},
+	"GetUserRoleIDsAt":                {"ResolveUserPermissionAt", "GetUserScopedRoleSets"},
+	"GetUserGroupRoleIDsAt":           {"ResolveUserPermissionAt", "GetUserScopedRoleSets"},
+	"GetUserRoleScopes":               {"GetUserScopedRoleSets"},
 	"RoleSetBypassesPermissionChecks": {"ResolveUserPermissionAt"},
 	"RoleSetHasPermission":            {"ResolveUserPermissionAt", "ResolveMachinePermissionAt"},
 	"GetMachineRoleIDsAt":             {"ResolveMachinePermissionAt"},
@@ -137,8 +140,8 @@ func TestRoleReadWrappersForwardTheCombinedRoleRead(t *testing.T) {
 
 	require.Empty(t, roleReadForwardingViolations(t, files),
 		"a type that overrides a per-statement role read must also override the combined read it feeds "+
-			"(forward it to storage.ComposeUserPermissionAt / ComposeMachinePermissionAt over itself), "+
-			"or Authorize never meets the override")
+			"(forward it to storage.ComposeUserPermissionAt / ComposeMachinePermissionAt / "+
+			"ComposeUserScopedRoleSets over itself), or the decision never meets the override")
 }
 
 // Calibration: the checker flags a wrapper missing the combined method, and
@@ -154,6 +157,7 @@ func (s m) ResolveUserPermissionAt() {}
 	got := roleReadForwardingViolations(t, map[string][]byte{"a/x.go": bad})
 	require.Equal(t, []string{
 		"a: m overrides RoleSetHasPermission but not ResolveMachinePermissionAt",
+		"a: w overrides GetUserGroupRoleIDsAt but not GetUserScopedRoleSets",
 		"a: w overrides GetUserGroupRoleIDsAt but not ResolveUserPermissionAt",
 	}, got)
 
@@ -163,6 +167,7 @@ func (s *w) GetUserGroupRoleIDsAt() {}
 `)
 	goodForward := []byte(`package x
 func (s *w) ResolveUserPermissionAt() {}
+func (s *w) GetUserScopedRoleSets() {}
 `)
 	require.Empty(t, roleReadForwardingViolations(t, map[string][]byte{"a/x.go": good, "a/y.go": goodForward}),
 		"methods of one type are collected across the files of its package")

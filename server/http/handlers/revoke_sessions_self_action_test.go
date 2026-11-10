@@ -32,12 +32,13 @@ func setupUserHandlerTest(t *testing.T) *UserHandler {
 	require.NoError(t, err)
 	// S1 (CLI-split inventory #2012): RevokeUserSessions now calls the
 	// admin-rank ceiling (requireAdminRankCeilingForTarget), which reads
-	// role/permission tables via GetUserRoleScopes -- migrate them too, or
-	// that read 500s on a table that doesn't exist and the ceiling helper
-	// (which treats ANY resolution error as a refusal) masks it as 403.
+	// role/permission tables via GetUserScopedRoleSets (which also joins
+	// projects/environments) -- migrate them too, or that read 500s on a
+	// table that doesn't exist and the ceiling helper (which treats ANY
+	// resolution error as a refusal) masks it as 403.
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{},
 		&models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
-		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{}))
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "admin@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "target", Email: "target@test.com"}).Error)

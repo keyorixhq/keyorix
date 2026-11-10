@@ -58,11 +58,13 @@ var byDesignSeedCases = []struct {
 		oracle: "c",
 	},
 	{
+		// The seed was written for call #2; since #4025 the ceiling reads
+		// GetUserScopedRoleSets, so the enrichment read it targets is call #1.
 		seed: "3093_grpc_updateuser_getuserrolescopes_nth2_error",
-		op:   "GRPC keyorix.v1.UserService.UpdateUser", method: "GetUserRoleScopes", nth: 2, kind: faultstorage.KindError,
-		rule: "nonLoadBearingAuthzRead grpc_userservice_updateuser_getuserrolescopes_2",
+		op:   "GRPC keyorix.v1.UserService.UpdateUser", method: "GetUserRoleScopes", nth: 1, kind: faultstorage.KindError,
+		rule: "nonLoadBearingAuthzRead grpc_userservice_updateuser_getuserrolescopes_1",
 		remove: func(*testing.T) func() {
-			return withoutNonLoadBearingAuthzRead("GRPC keyorix.v1.UserService.UpdateUser", "GetUserRoleScopes", 2)
+			return withoutNonLoadBearingAuthzRead("GRPC keyorix.v1.UserService.UpdateUser", "GetUserRoleScopes", 1)
 		},
 		oracle: "c",
 	},
@@ -116,7 +118,8 @@ func TestByDesignSeeds_AcceptedOnlyThroughTheirRule(t *testing.T) {
 
 // TestNonLoadBearingAuthzRead_GRPCUserServiceRowsAreExact: the #3093 rows
 // match their traced (op, method, nth) and nothing next to it. UpdateUser's
-// call #1 is the admin-rank ceiling read and must stay load-bearing.
+// admin-rank ceiling read (GetUserScopedRoleSets since #4025) must stay
+// load-bearing.
 func TestNonLoadBearingAuthzRead_GRPCUserServiceRowsAreExact(t *testing.T) {
 	t.Parallel()
 	const create, update, m = "GRPC keyorix.v1.UserService.CreateUser", "GRPC keyorix.v1.UserService.UpdateUser", "GetUserRoleScopes"
@@ -126,10 +129,10 @@ func TestNonLoadBearingAuthzRead_GRPCUserServiceRowsAreExact(t *testing.T) {
 		want       bool
 	}{
 		{create, m, 1, true},
-		{update, m, 2, true},
-		{update, m, 1, false}, // the ceiling read
+		{update, m, 1, true},
+		{update, "GetUserScopedRoleSets", 1, false}, // the ceiling read
 		{create, m, 2, false},
-		{update, m, 3, false},
+		{update, m, 2, false},
 		{create, "GetUserPermissions", 1, false},
 		{"REST POST /api/v1/users/", m, 1, false},
 		{"GRPC keyorix.v1.UserService.GetUser", m, 1, false},

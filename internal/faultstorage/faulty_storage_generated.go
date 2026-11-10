@@ -3975,6 +3975,23 @@ func (w *FaultyStorage) GetUserRoles(ctx context.Context, userID uint) ([]*model
 	return w.real.GetUserRoles(ctx, userID)
 }
 
+func (w *FaultyStorage) GetUserScopedRoleSets(ctx context.Context, userID uint) (map[storage.Scope][]uint, error) {
+	fire, kind, injected := w.check("GetUserScopedRoleSets")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 map[storage.Scope][]uint
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.GetUserScopedRoleSets(ctx, userID)
+			return rv1, injected
+		}
+	}
+	return w.real.GetUserScopedRoleSets(ctx, userID)
+}
+
 func (w *FaultyStorage) GetUsernamesByIDs(ctx context.Context, ids []uint) (map[uint]string, error) {
 	fire, kind, injected := w.check("GetUsernamesByIDs")
 	if fire {

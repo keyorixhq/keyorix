@@ -253,6 +253,13 @@ func (m *MockStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, sc
 	return v, a.Error(1)
 }
 
+// GetUserScopedRoleSets composes over the mock's per-statement reads, so a test
+// that sets expectations on GetUserRoleScopes / GetUserRoleIDsAt /
+// GetUserGroupRoleIDsAt still drives the decision.
+func (m *MockStorage) GetUserScopedRoleSets(ctx context.Context, userID uint) (map[storage.Scope][]uint, error) {
+	return storage.ComposeUserScopedRoleSets(ctx, m, userID)
+}
+
 func (m *MockStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]storage.Scope, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {

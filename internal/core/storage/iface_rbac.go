@@ -191,6 +191,14 @@ type RBACStore interface {
 	// enumerate every scope the target actually has a grant at, then evaluate
 	// GetUserRoleIDsAt/GetUserGroupRoleIDsAt (via scopedRoleIDs) per scope.
 	GetUserRoleScopes(ctx context.Context, userID uint) ([]Scope, error)
+	// GetUserScopedRoleSets returns, for every scope GetUserRoleScopes reports,
+	// the role IDs userID holds there (GetUserRoleIDsAt ∪ GetUserGroupRoleIDsAt),
+	// read in ONE statement, so it is a single consistent snapshot even under
+	// READ COMMITTED (#4025). The per-scope reads could each see a different
+	// moment: a grant moved between two scopes during an evaluation was seen at
+	// neither. ComposeUserScopedRoleSets is the per-statement reference, and the
+	// forwarding target of a wrapper that overrides one of those reads.
+	GetUserScopedRoleSets(ctx context.Context, userID uint) (map[Scope][]uint, error)
 	// GetUserRoleScopesByUserIDs is the batch form of GetUserRoleScopes (LIST-ENDPOINTS-1):
 	// the same distinct live scopes per user, keyed by user id; a user with no live role is absent.
 	GetUserRoleScopesByUserIDs(ctx context.Context, userIDs []uint) (map[uint][]Scope, error)

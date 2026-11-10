@@ -69,7 +69,7 @@ func (hs *HookStore) WithTransaction(ctx context.Context, fn func(storage.Storag
 	})
 }
 
-// The three combined reads below are hand-written, not plain hook-or-delegate. Each
+// The four combined reads below are hand-written, not plain hook-or-delegate. Each
 // is served by the store in ONE statement that never calls the per-statement reads a
 // test usually overrides, so a hook on one of those would be bypassed silently
 // (PERF-FIX-6 role reads, PERF-FIX-7 session cache hit: see
@@ -99,6 +99,17 @@ func (hs *HookStore) ResolveMachinePermissionAt(ctx context.Context, machineID u
 		return storage.ComposeMachinePermissionAt(ctx, hs, machineID, scope, permission)
 	}
 	return hs.Storage.ResolveMachinePermissionAt(ctx, machineID, scope, permission)
+}
+
+// GetUserScopedRoleSets implements storage.Storage; see the comment above.
+func (hs *HookStore) GetUserScopedRoleSets(ctx context.Context, userID uint) (map[storage.Scope][]uint, error) {
+	if hk := hs.h.GetUserScopedRoleSets; hk != nil {
+		return hk(hs.Storage, ctx, userID)
+	}
+	if hs.h.GetUserRoleScopes != nil || hs.h.GetUserRoleIDsAt != nil || hs.h.GetUserGroupRoleIDsAt != nil {
+		return storage.ComposeUserScopedRoleSets(ctx, hs, userID)
+	}
+	return hs.Storage.GetUserScopedRoleSets(ctx, userID)
 }
 
 // GetSessionAuthLiveness implements storage.Storage; see the comment above.
