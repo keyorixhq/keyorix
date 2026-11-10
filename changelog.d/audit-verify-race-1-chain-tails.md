@@ -1,0 +1,2 @@
+### Fixed
+- **A retention purge landing just after the audit walk no longer reports a valid chain as broken.** The row count that follows the online verification walk now fails only when the table holds more rows than the walk accounted for, so a purge that lowers the count is not reported as tampering. Rows with id 0, a NULL id or a duplicated id still read broken (#3944).

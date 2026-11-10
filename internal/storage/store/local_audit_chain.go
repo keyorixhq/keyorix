@@ -1069,9 +1069,16 @@ func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage
 // accept an explicit id 0, so such a row would sit in the table unverified.
 // One COUNT per walk, not per batch (auditRowsInWalkRange). The offline
 // verifier makes the same check (INV-AUDITVERIFY-every-row-walked).
+//
+// Only a surplus breaks the walk (#3944). The walk and the COUNT are separate
+// statements with no shared snapshot, so a retention purge can remove rows
+// already walked before the COUNT runs; rows outside the walk are the only
+// thing that raises it. A purge that exactly offsets a stray row hides it from
+// this walk only: the row stays in the table and the next walk reports it. A
+// row deleted outside a purge breaks the hash links of the next walk.
 func (ls *LocalStorage) auditRowsOutsideWalk(ctx context.Context, seg storage.AuditChainSegment, lastID uint, walked int, result *storage.AuditChainVerification) (broke bool, err error) {
 	held, want, err := auditRowsInWalkRange(ls.db.WithContext(ctx), seg.AfterID, lastID, walked)
-	if err != nil || held == want {
+	if err != nil || held <= want {
 		return false, err
 	}
 	brokenChain(result, lastID, auditRowsOutsideWalkReason(held, want, lastID))
@@ -1345,7 +1352,11 @@ func refuseIfAuditChainBroken(tx *gorm.DB, anchor *storage.AuditChainAnchor) err
 
 // refuseIfAuditRowsOutsideWalk is the pre-flight's twin of auditRowsOutsideWalk:
 // an id 0, NULL or duplicated id row is outside the walk, so the re-encode
-// would leave it outside the rewritten chain instead of refusing.
+// would leave it outside the rewritten chain instead of refusing. Unlike the
+// online walk (#3944), any mismatch refuses, a deficit included: the pre-flight
+// holds the advisory lock DeleteAuditLogsBefore takes on Postgres and reads in
+// one transaction on SQLite, so no sanctioned purge can land between the walk
+// and this COUNT. A lower count here is a delete nothing sanctioned.
 func refuseIfAuditRowsOutsideWalk(tx *gorm.DB, lastID uint, walked int) error {
 	held, want, err := auditRowsInWalkRange(tx, 0, lastID, walked)
 	if err != nil || held == want {
