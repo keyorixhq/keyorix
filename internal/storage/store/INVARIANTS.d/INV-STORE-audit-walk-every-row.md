@@ -3,11 +3,12 @@
   (`id > lastID`) never visits an id 0 row (SQLite `INTEGER PRIMARY KEY` and PostgreSQL
   `bigserial` both accept an explicit `id = 0`), a NULL id, or a second row under an id a batch
   ended on (a schema edited to drop the primary key). So after the walk, one COUNT (per walk,
-  not per batch) of the rows it should have visited must equal the rows it did visit:
+  not per batch) of the rows it should have visited must not exceed the rows it did visit (a
+  retention purge landing after the walk can only lower it, #3944):
   - from the chain start, `id IS NULL OR id <= lastID`;
   - for a pinned segment (the incremental request-time tail check and every rolling-cycle
     segment after the first), `id IS NULL OR id < 1 OR (id >= AfterID AND id <= lastID)`,
-    which must equal the rows walked plus the seed row. Counting only the rows after the seed
+    which must not exceed the rows walked plus the seed row. Counting only the rows after the seed
     left an id 0 row reading valid on GET /audit/verify and gRPC VerifyAuditChain until the
     rolling cycle next walked from the chain start, and a second row under the seed's id
     outside every walk (AUDIT-VERIFY-ONLINE-1).
@@ -20,6 +21,9 @@
   valid), `TestVerifyAuditChainSegment_RowsNoWalkReachesAreNotValid` (pinned segments: id 0,
   a negative id, NULL id, a second row under the seed's id),
   `TestMigrateAuditChainEncoding_RefusesRowsOutsideTheWalk`,
+  `TestVerifyAuditChain_PurgeBetweenWalkAndCountStaysValid` (and `_Postgres`),
+  `TestVerifyAuditChain_RowsOutsideTheWalkOutnumberingAPurgeStayBroken`,
+  `TestMigrateAuditChainEncoding_PreflightCountToleratesDeletes` (and `_Postgres`),
   `TestVerifyAuditChain_IDZeroRowNotValid_Postgres` and
   `TestVerifyAuditChainSegment_IDZeroRowNotValid_Postgres` (pg-gated), internal/core
   `TestIncrementalVerify_IDZeroRowCaughtByNextRequest` (and `_Postgres`),
