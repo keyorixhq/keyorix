@@ -1,0 +1,1 @@
+internal/docsdrift/gitattributes_union_test.go	.gitattributes,docs/atomicity-exempt.tsv,docs/besteffort-exempt.tsv,docs/child-parent-liveness-exempt.tsv,docs/full-row-write-exempt.tsv,docs/state-map/class-overrides.tsv	merge=union attribute against the five ledgers it lists

@@ -1,0 +1,1 @@
+scripts/demo/check_state_test.go	scripts/demo/check.sh,scripts/demo/lib.sh,!scripts/demo/**	copies only check.sh and lib.sh into a temp root and runs check.sh there; no other demo script is read

@@ -1,0 +1,1 @@
+migrate/internal/accessplan/smt_model_export_test.go	docs/formal/smt/cases/**/*.json	RD-SMT-FIX-1 (#3658): TestSMTModels_MatchAccessplanOnRealPolicies reads the SMT case input/model JSON under docs/formal/smt/cases

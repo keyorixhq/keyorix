@@ -1,0 +1,1 @@
+ADR-112-A1-FAST-AUDIT-SQLITE-SERVER-REFUSES	./server	TestAuditDurability_SQLiteRefusesStandardEndToEnd	default-ci	pending	-	the real built server binary, and admin validate/diagnose, exit non-zero with the named refusal on a SQLite config set to audit_durability: standard or insecure_audit_skip_durable_sync: true; the same config before the one-line edit works

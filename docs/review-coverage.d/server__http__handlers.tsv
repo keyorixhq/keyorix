@@ -1,0 +1,1 @@
+server/http/handlers	full-adversarial	baseline-2026-08-07/baseline/http-handlers-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/http-handlers-findings.json — 3 findings: clientSafe() sanitization skipped on project_members.go/secret_acl_handler.go/secrets_extend_expiring.go	-

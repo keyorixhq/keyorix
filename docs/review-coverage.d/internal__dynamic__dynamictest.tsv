@@ -1,0 +1,1 @@
+internal/dynamic/dynamictest	none	-	FakeEngine (in-memory ports.DynamicBackendEngine), moved out of internal/dynamic's production engine.go so a test-only fake is never linked into a production build (coordinator family-check: FakeEngine is not, and must never become, a member registered by any production factory); no logic beyond recording calls	test-helper

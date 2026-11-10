@@ -1,0 +1,1 @@
+internal/core/guards/errtext_classification_guard_test.go	!operator/**/*.go	scans the core family's non-test .go files and everything under server/; operator/ Go is not walked

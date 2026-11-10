@@ -1,0 +1,1 @@
+server/admin/docs_commands_test.go	QUICK_START.md,INSTALL-WITH-AI.md,docs/CONFIGURATION.md,docs/configuration.d/*.md,docs/SELF_HOSTING.md,docs/AIRGAP_RUNBOOK.md,docs/operator/*.md,!operator/**,!docs/**	documented server admin commands; "operator" names docs/operator only

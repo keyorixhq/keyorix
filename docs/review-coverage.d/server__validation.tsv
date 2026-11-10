@@ -1,0 +1,1 @@
+server/validation	full-adversarial	findings-server/validation.json (2026-08-08)	keyorix-private/adversarial-review/findings-server/validation.json — HIGH: gRPC services bypass the `identifier` anti-homograph guard entirely (validator.go:440) + 4 MEDIUM/LOW	-

@@ -1,0 +1,1 @@
+ADR-112-A1-FAST-AUDIT-NO-SQLITE-NORMAL-BRANCH	./internal/storage	TestSQLiteDSN_SynchronousIsAlwaysFULL	default-ci	pending	-	the SQLite DSN builder says _synchronous=FULL unconditionally and contains no NORMAL branch, and the setting may not change any other pragma either (#436 foreign keys, #465 busy timeout and WAL, #1996 BEGIN IMMEDIATE all still present)

@@ -1,0 +1,1 @@
+cli/cmd/docs_test.go	docs/cli-reference.md,docs/man/keyorix.1,!docs/**	generated CLI reference and man page

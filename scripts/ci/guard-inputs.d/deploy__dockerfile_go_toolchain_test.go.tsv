@@ -1,0 +1,1 @@
+deploy/dockerfile_go_toolchain_test.go	**/Dockerfile*,go.mod,!**	every Dockerfile's golang tag against go.mod's toolchain

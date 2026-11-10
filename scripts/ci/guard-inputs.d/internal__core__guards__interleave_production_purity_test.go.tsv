@@ -1,0 +1,1 @@
+internal/core/guards/interleave_production_purity_test.go	operator/**/*.go,!operator/go.mod	repo-root walk

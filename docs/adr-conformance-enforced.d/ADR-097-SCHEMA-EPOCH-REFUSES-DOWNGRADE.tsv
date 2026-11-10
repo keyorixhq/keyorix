@@ -1,0 +1,1 @@
+ADR-097-SCHEMA-EPOCH-REFUSES-DOWNGRADE	./internal/storage	TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart	default-ci	pre-existing	-	an older binary refuses to start against a database migrated by a newer schema epoch

@@ -1,0 +1,1 @@
+internal/docsdrift/kek_derived_wording_test.go	**/*.go,docs/**/*.md,server/proto/keyorix.proto,server/http/handlers/openapi.yaml,!**	#3862: DEK-wording scan of non-test Go (main module only; cli/ and operator/ are skipped as separate modules), docs/ Markdown except ADRs, the proto and openapi.yaml; other Markdown is not read

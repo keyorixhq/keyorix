@@ -1,0 +1,1 @@
+ADR-112-A1-FAST-AUDIT-NO-ENV-VAR	./internal/config	TestAuditDurability_NotSettableFromTheEnvironment	default-ci	pending	-	no KEYORIX_* environment variable names audit durability anywhere in the main module, and a config naming neither key gets the backend default (strict on SQLite)

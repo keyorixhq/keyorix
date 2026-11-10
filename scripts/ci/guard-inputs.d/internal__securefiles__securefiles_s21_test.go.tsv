@@ -1,0 +1,1 @@
+internal/securefiles/securefiles_s21_test.go	!internal/**	t.TempDir() fixtures only

@@ -1,0 +1,1 @@
+server/faultops	none	-	PR #1969: fuzzing/fault-injection test harness (FuzzStorageFaultOperations) that drives real REST/system/gRPC calls against FaultyStorage-wrapped storage as its atomicity/panic-safety oracle. All files are *_test.go — no non-test source in the package, zero non-test callers.	test-helper

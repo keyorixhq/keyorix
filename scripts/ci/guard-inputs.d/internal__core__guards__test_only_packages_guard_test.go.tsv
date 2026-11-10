@@ -1,0 +1,1 @@
+internal/core/guards/test_only_packages_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files for imports of test-only packages; operator/ included

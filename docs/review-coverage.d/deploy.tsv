@@ -1,0 +1,1 @@
+deploy	none	-	test-only package: deploy/compose_pins_test.go checks docker-compose.yml image pins against the latest release (no non-test Go code)	test-helper

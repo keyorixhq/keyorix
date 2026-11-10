@@ -1,0 +1,1 @@
+ADR-095-SQLITE-MIGRATION-LOCK-IN-DB	./internal/storage	TestSQLiteMigrationLock_CrossProcess_SerializedBySQLiteItself	default-ci	pending	2505	two OS processes migrating the same SQLite file (via a symlinked path, or with the sidecar lock deleted) are serialized by SQLite BEGIN EXCLUSIVE, exactly one performs the fresh install, and the schema ends intact

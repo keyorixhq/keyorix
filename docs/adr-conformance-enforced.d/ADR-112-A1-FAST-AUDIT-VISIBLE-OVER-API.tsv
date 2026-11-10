@@ -1,0 +1,1 @@
+ADR-112-A1-FAST-AUDIT-VISIBLE-OVER-API	./server/http/handlers	TestMakeSystemInfoHandler_ReportsEffectiveAuditDurability	default-ci	pending	-	GET /system/info's security.audit_durability carries the EFFECTIVE level: standard for a default PostgreSQL install, strict when set or on SQLite, the deprecated alias's mapping otherwise (ADR-112 Amendment 3)

@@ -1,0 +1,1 @@
+ADR-091-MACHINE-NEVER-GLOBAL-SCOPE	./internal/core	TestAssignMachineRole_GlobalScopeRejected	default-ci	pre-existing	-	a machine identity can never be granted a role at global scope

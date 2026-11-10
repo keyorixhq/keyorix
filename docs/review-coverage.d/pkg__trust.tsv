@@ -1,0 +1,1 @@
+pkg/trust	full-adversarial	baseline-2026-08-07/baseline/trust-findings.json (2026-08-07); moved from internal/trust by #2076 (2026-09-25)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/trust-findings.json — MEDIUM: purpose-isolation is registration-convention only, not cryptographically enforced, plus 3 lower-severity findings; no logic changes from the move	-

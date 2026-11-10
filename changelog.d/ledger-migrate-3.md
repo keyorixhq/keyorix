@@ -1,0 +1,2 @@
+### Changed
+- **Shared ledger rows moved into one-row fragments.** The 280 existing rows of `docs/adr-conformance-enforced.tsv` (49), `docs/review-coverage.tsv` (68), `docs/check-then-act-lock-exempt.tsv` (31) and `scripts/ci/guard-inputs.tsv` (132) now live as one file each in the sibling `<name>.d/` directories (`scripts/ledgers/migrate-to-fragments.sh`, rows moved byte-for-byte). The flat files keep only their header comments, so two PRs that add or edit ledger rows no longer conflict on one shared file.

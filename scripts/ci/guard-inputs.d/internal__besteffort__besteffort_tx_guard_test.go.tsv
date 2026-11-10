@@ -1,0 +1,1 @@
+internal/besteffort/besteffort_tx_guard_test.go	operator/**/*.go,!operator/go.mod	walks every .go file from the repo root

@@ -1,0 +1,1 @@
+configs/template_keys_read_test.go	configs/dev.yaml,configs/test.yaml,!operator/**,!web/**,!demo/**,!**/*.yaml	reads configs/dev.yaml and test.yaml and every non-test .go file of the root module; skips operator/, web/ and cli/, so other yaml and operator Go are not read

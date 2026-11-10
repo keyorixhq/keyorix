@@ -1,0 +1,1 @@
+internal/encryption	full-adversarial	baseline-2026-08-07/baseline/encryption-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/encryption-findings.json — MEDIUM (migrate-provider missing exclusive key lock vs rotate/rotate-kek siblings), LOW (DEK never wiped on Shutdown)	-

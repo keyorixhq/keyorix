@@ -1,0 +1,1 @@
+server/faultops/oracle_d_pure_read_by_design_test.go	!server/**/*.md	globs *_test.go in named package dirs only

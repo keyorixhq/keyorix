@@ -1,0 +1,1 @@
+server/proto/pb	structural-only	findings-gaps/proto-pb.json (2026-08-08)	keyorix-private/adversarial-review/findings-gaps/proto-pb.json — {"files_reviewed":2,"findings":0} confirming generated status; .gitattributes marks server/proto/pb/*.pb.go linguist-generated=true; server/proto/pb/generated_code_test.go:TestEveryFileIsGenerated	-

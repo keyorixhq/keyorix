@@ -1,0 +1,1 @@
+internal/config/lock_loss_metrics_test.go	!operator/**/*.go	walks internal/ and server/ only; operator/ Go is not read

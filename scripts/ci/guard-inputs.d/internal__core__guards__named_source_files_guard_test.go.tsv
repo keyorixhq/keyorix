@@ -1,0 +1,1 @@
+internal/core/guards/named_source_files_guard_test.go	!operator/**/*.go	reads _test.go files under internal/core and its family dirs; operator/ is not walked

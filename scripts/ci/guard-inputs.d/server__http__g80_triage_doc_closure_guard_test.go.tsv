@@ -1,0 +1,1 @@
+server/http/g80_triage_doc_closure_guard_test.go	!server/**/*.md	reads the cited Go files only

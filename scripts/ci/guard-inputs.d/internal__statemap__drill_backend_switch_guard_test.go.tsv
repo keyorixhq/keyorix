@@ -1,0 +1,1 @@
+internal/statemap/drill_backend_switch_guard_test.go	scripts/drills/**/*.md,scripts/drills/**/*.sh	reads the drill scripts and README to check each backend switch has a Postgres branch and the README coverage table

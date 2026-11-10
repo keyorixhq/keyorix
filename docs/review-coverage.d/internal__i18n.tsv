@@ -1,0 +1,1 @@
+internal/i18n	full-adversarial	baseline-2026-08-07/baseline/i18n-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/i18n-findings.json — well-evidenced zero: traced path-traversal (none possible, go:embed-only) and format-string injection through go-i18n v2.6.0's message_template.go	-
