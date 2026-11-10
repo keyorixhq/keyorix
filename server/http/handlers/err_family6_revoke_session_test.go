@@ -8,6 +8,7 @@ package handlers
 // and anything else to 500.
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
 func TestErrFamily6_Item2_RevokeOwnSession(t *testing.T) {
@@ -43,6 +45,14 @@ func TestErrFamily6_Item2_RevokeOwnSession(t *testing.T) {
 	t.Run("not found and not mine are the same 404", func(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, revoke("9999999").Code)
 		assert.Equal(t, http.StatusNotFound, revoke(suID(theirs.ID)).Code)
+	})
+	t.Run("a machine principal owns no session: 404, not 500", func(t *testing.T) {
+		r := suReq(http.MethodDelete, "", map[string]string{"id": suID(mine.ID)})
+		machine := &customMiddleware.UserContext{UserID: 0}
+		r = r.WithContext(context.WithValue(r.Context(), customMiddleware.GetUserContextKey(), machine))
+		w := httptest.NewRecorder()
+		authH.RevokeSession(w, r)
+		assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 	})
 	t.Run("a read fault whose text says not found is 503", func(t *testing.T) {
 		armFamily6(fw, "GetSessionByID")

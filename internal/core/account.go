@@ -704,7 +704,7 @@ const EventSessionRevoked = "session.revoked"
 
 func (c *KeyorixCore) RevokeOwnSession(ctx context.Context, userID, sessionID uint) error {
 	if userID == 0 || sessionID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user and session IDs are required")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user and session IDs are required")
 	}
 	notFound := fmt.Sprintf("%s: session not found", i18n.T("ErrorNotFound", nil))
 	session, err := c.storage.GetSessionByID(ctx, sessionID)
