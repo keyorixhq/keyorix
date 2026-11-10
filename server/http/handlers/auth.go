@@ -1011,10 +1011,15 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.RevokeOwnSession(r.Context(), userCtx.UserID, uint(id)); err != nil {
-		if sendStorageUnavailable(w, err) {
+		if sendStorageUnavailable(w, err) || sendAuditUnavailable(w, err) {
 			return
 		}
-		sendError(w, "NotFound", "Session not found", http.StatusNotFound, nil)
+		if errors.Is(err, core.ErrSessionNotFound) {
+			sendError(w, "NotFound", "Session not found", http.StatusNotFound, nil)
+			return
+		}
+		log.Printf("Error revoking session %d: %v", id, err)
+		sendError(w, "InternalError", "Failed to revoke session", http.StatusInternalServerError, nil)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

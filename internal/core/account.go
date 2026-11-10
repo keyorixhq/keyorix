@@ -710,10 +710,10 @@ func (c *KeyorixCore) RevokeOwnSession(ctx context.Context, userID, sessionID ui
 	session, err := c.storage.GetSessionByID(ctx, sessionID)
 	if err != nil {
 		// A read FAULT is a retry answer, not proof the session is gone.
-		return classifyReadError(err, notFound)
+		return classifyReadErrorAs(err, ErrSessionNotFound, notFound)
 	}
 	if session.UserID != userID {
-		return errors.New(notFound)
+		return notFoundAs(ErrSessionNotFound, notFound)
 	}
 	// AUDIT-TX-3: a revocation: its row is owed from the delete's transaction and
 	// appended after the eviction below, so the audit log never delays the logout.
