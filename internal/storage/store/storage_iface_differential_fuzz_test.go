@@ -480,21 +480,38 @@ func (w *ifaceWorld) reset(t ifaceT, wrap func(side string, ls ifaceStore) iface
 		}
 		var err error
 		if s.label == "postgres" {
-			// One statement, one round trip.
-			quoted := make([]string, 0, len(w.wipeTables))
-			for _, n := range w.wipeTables {
-				quoted = append(quoted, `"`+n+`"`)
-			}
-			err = s.db.Exec("TRUNCATE TABLE " + strings.Join(quoted, ", ") + " RESTART IDENTITY").Error
+			// DELETE inside one transaction, not TRUNCATE. TRUNCATE takes an ACCESS
+			// EXCLUSIVE lock and rewrites a file for every table; on this shared
+			// fsync-on server, with the other sessions' clones contending for the
+			// same disk, that made each reset take seconds and throttled the
+			// differential to ~1 exec/s (a worker could even look hung). These
+			// tables are short-lived and near-empty after a <=14-step program, so
+			// DELETE is far cheaper. SET LOCAL session_replication_role = replica
+			// drops FK triggers for the wipe only — it is transaction-scoped and
+			// reverts at COMMIT, so the pooled connection never carries it into a
+			// program's own queries — which lets the tables be emptied in any order.
+			// Row ids are never compared (they render as per-program handles), so
+			// not resetting the identity sequences is immaterial.
+			err = s.db.Transaction(func(tx *gorm.DB) error {
+				if e := tx.Exec("SET LOCAL session_replication_role = replica").Error; e != nil {
+					return e
+				}
+				for _, n := range w.wipeTables {
+					if e := tx.Exec(`DELETE FROM "` + n + `"`).Error; e != nil {
+						return e
+					}
+				}
+				return tx.Exec("DELETE FROM system_metadata WHERE key LIKE 'w4%'").Error
+			})
 		} else {
 			for _, n := range w.wipeTables {
 				if err = s.db.Exec(`DELETE FROM "` + n + `"`).Error; err != nil {
 					break
 				}
 			}
-		}
-		if err == nil {
-			err = s.db.Exec("DELETE FROM system_metadata WHERE key LIKE 'w4%'").Error
+			if err == nil {
+				err = s.db.Exec("DELETE FROM system_metadata WHERE key LIKE 'w4%'").Error
+			}
 		}
 		if err != nil {
 			if ifaceIsConnectionError(err.Error()) {
