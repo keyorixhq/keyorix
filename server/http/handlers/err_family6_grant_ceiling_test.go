@@ -69,11 +69,11 @@ func TestGrantCeilingTextScanCalibration(t *testing.T) {
 func f(err error) bool { return strings.Contains(err.Error(), "cannot grant this role") }`
 	const now = `package p
 func f(err error) bool { return errors.Is(err, core.ErrPermissionDenied) }`
-	assert.Len(t, grantCeilingTextMatches(t, "old.go", old), 1)
-	assert.Empty(t, grantCeilingTextMatches(t, "now.go", now))
+	assert.Len(t, grantCeilingTextMatches(t, "old", old), 1)
+	assert.Empty(t, grantCeilingTextMatches(t, "now", now))
 }
 
-// TestEveryGrantRouteMapsTheCeilingRefusalTo403 drives each handler that grants a role
+// TestEveryGrantRouteMapsTheCeilingRefusalTo403 drives each handler that grants a role (eight routes)
 // as an actor who holds roles.assign but not the permissions of the role it grants.
 // Core refuses (core.ErrPermissionDenied); every route must answer 403, never 500/400.
 func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
@@ -127,6 +127,9 @@ func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
 	require.NoError(t, fw.db.Create(grp).Error)
 	require.NoError(t, fw.db.Create(&models.GroupRole{GroupID: grp.ID, RoleID: powerful.ID, ProjectID: proj.ID}).Error)
 
+	machine, err := fw.cs.CreateMachineIdentity(ctx, proj.ID, "fam6-grant-machine", "service", "", "", fw.admin.ID, 0)
+	require.NoError(t, err)
+
 	cat := NewCatalogHandler(fw.cs)
 	users, err := NewUserHandler(fw.cs)
 	require.NoError(t, err)
@@ -168,6 +171,11 @@ func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
 		{"PUT /projects/{id}/members/{userId}", func() *httptest.ResponseRecorder {
 			w := httptest.NewRecorder()
 			cat.UpdateProjectMember(w, suReq(http.MethodPut, `{"role":"fam6-powerful"}`, map[string]string{"id": pid, "userId": tid}))
+			return w
+		}},
+		{"POST /projects/{id}/machine-identities/{machineId}/roles", func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			cat.GrantMachineRole(w, suReq(http.MethodPost, `{"role_id":`+rid+`}`, map[string]string{"id": pid, "machineId": suID(machine.ID)}))
 			return w
 		}},
 		{"PUT /users/{id}/roles", func() *httptest.ResponseRecorder {

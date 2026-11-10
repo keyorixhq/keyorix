@@ -81,7 +81,7 @@ func typedMark() error     { return markPermissionDenied(fmt.Errorf("cannot gran
 func unrelated() error     { return fmt.Errorf("cannot grant this share") }
 `
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "calibration.go", src, 0)
+	file, err := parser.ParseFile(fset, "calibration", src, 0)
 	require.NoError(t, err)
 	bad := untypedGrantCeilingRefusals(fset, file)
 	require.Len(t, bad, 2, "only the fmt.Errorf and errors.New spellings are untyped: %v", bad)
