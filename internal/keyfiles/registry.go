@@ -170,13 +170,8 @@ func Registry(enc *config.EncryptionConfig, baseDir string) ([]securefiles.FileP
 	if err := add("DEK", enc.DEKPath, true); err != nil {
 		return nil, err
 	}
-	if enc.SaltPath != "" {
-		if err := add("KEK salt rotation-staging", enc.SaltPath+".pending", false); err != nil {
-			return nil, err
-		}
-	}
-	if enc.DEKPath != "" {
-		if err := add("DEK rotation-staging", enc.DEKPath+".pending", false); err != nil {
+	for _, s := range rotationStaging(enc) {
+		if err := add(s.label, s.path, false); err != nil {
 			return nil, err
 		}
 	}

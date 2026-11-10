@@ -1,0 +1,2 @@
+### Fixed
+- **`admin backup` is refused while a key rotation is pending.** After a killed `rotate` or `rotate-kek`, the backup exited 0 and archived the `.pending` staging file, and `admin restore` then refused that archive on any clean host (#4058). The backup now fails with no archive written and names the fix: start the server once so boot recovery completes the rotation, then back up again. A `kek.salt.pending` still present after a successful start is unused and can be deleted, as the start's log says. Backup scripts see a non-zero exit in this state.
