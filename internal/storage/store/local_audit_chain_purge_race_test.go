@@ -122,12 +122,16 @@ func TestVerifyAuditChain_StrayRowOffsetByAPurgeIsCaughtByTheNextWalk(t *testing
 	assertWalkNotValid(t, ls)
 }
 
-func testMigratePreflightPurge(t *testing.T, chain func(*testing.T, int) (*LocalStorage, []*models.AuditEvent)) {
-	t.Run("a delete in the window is not a refusal", func(t *testing.T) {
+// The migration's pre-flight excludes the retention purge (same advisory lock
+// on Postgres, one transaction on SQLite), so unlike the online walk it has no
+// race to tolerate: a delete inside its window is an unsanctioned one.
+func testMigratePreflightDelete(t *testing.T, chain func(*testing.T, int) (*LocalStorage, []*models.AuditEvent)) {
+	t.Run("a delete in the window is a refusal", func(t *testing.T) {
 		ls, rows := chain(t, 6)
 		deleteRowAfterFirstBatch(t, ls, rows[0].ID)
 		_, err := ls.MigrateAuditChainEncoding(context.Background(), true, nil)
-		require.NoError(t, err)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "outside the chain", "the count refused, not a hash link")
 	})
 	t.Run("rows outside the walk still refuse", func(t *testing.T) {
 		ls, rows := chain(t, 6)
@@ -140,10 +144,10 @@ func testMigratePreflightPurge(t *testing.T, chain func(*testing.T, int) (*Local
 	})
 }
 
-func TestMigrateAuditChainEncoding_PreflightCountToleratesDeletes(t *testing.T) {
-	testMigratePreflightPurge(t, segmentChain)
+func TestMigrateAuditChainEncoding_PreflightCountRefusesDeletes(t *testing.T) {
+	testMigratePreflightDelete(t, segmentChain)
 }
 
-func TestMigrateAuditChainEncoding_PreflightCountToleratesDeletes_Postgres(t *testing.T) {
-	testMigratePreflightPurge(t, pgSegmentChain)
+func TestMigrateAuditChainEncoding_PreflightCountRefusesDeletes_Postgres(t *testing.T) {
+	testMigratePreflightDelete(t, pgSegmentChain)
 }

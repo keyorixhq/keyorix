@@ -1352,11 +1352,14 @@ func refuseIfAuditChainBroken(tx *gorm.DB, anchor *storage.AuditChainAnchor) err
 
 // refuseIfAuditRowsOutsideWalk is the pre-flight's twin of auditRowsOutsideWalk:
 // an id 0, NULL or duplicated id row is outside the walk, so the re-encode
-// would leave it outside the rewritten chain instead of refusing. Only a
-// surplus refuses, the same rule as auditRowsOutsideWalk (#3944).
+// would leave it outside the rewritten chain instead of refusing. Unlike the
+// online walk (#3944), any mismatch refuses, a deficit included: the pre-flight
+// holds the advisory lock DeleteAuditLogsBefore takes on Postgres and reads in
+// one transaction on SQLite, so no sanctioned purge can land between the walk
+// and this COUNT. A lower count here is a delete nothing sanctioned.
 func refuseIfAuditRowsOutsideWalk(tx *gorm.DB, lastID uint, walked int) error {
 	held, want, err := auditRowsInWalkRange(tx, 0, lastID, walked)
-	if err != nil || held <= want {
+	if err != nil || held == want {
 		return err
 	}
 	return fmt.Errorf("refusing to re-encode the audit chain: %s. Investigate before migrating",

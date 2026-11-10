@@ -14,7 +14,9 @@
     outside every walk (AUDIT-VERIFY-ONLINE-1).
 
   Otherwise the walk reads broken ("outside the chain"). `MigrateAuditChainEncoding`'s
-  pre-flight walk makes the same count from the chain start and refuses to re-encode. This is the online twin of
+  pre-flight walk makes the same count from the chain start and refuses to re-encode on any
+  mismatch, a deficit included: it excludes the retention purge (the same advisory lock on
+  PostgreSQL, one transaction on SQLite), so a lower count there is an unsanctioned delete. This is the online twin of
   INV-AUDITVERIFY-every-row-walked. Why: #3808. Guard:
   `TestVerifyAuditChain_RowsOutsideTheWalkAreNotValid` (SQLite: id 0, id 0 on an empty chain,
   NULL id, duplicate id on a batch boundary, a pinned segment, and an intact chain staying
@@ -23,7 +25,7 @@
   `TestMigrateAuditChainEncoding_RefusesRowsOutsideTheWalk`,
   `TestVerifyAuditChain_PurgeBetweenWalkAndCountStaysValid` (and `_Postgres`),
   `TestVerifyAuditChain_RowsOutsideTheWalkOutnumberingAPurgeStayBroken`,
-  `TestMigrateAuditChainEncoding_PreflightCountToleratesDeletes` (and `_Postgres`),
+  `TestMigrateAuditChainEncoding_PreflightCountRefusesDeletes` (and `_Postgres`),
   `TestVerifyAuditChain_IDZeroRowNotValid_Postgres` and
   `TestVerifyAuditChainSegment_IDZeroRowNotValid_Postgres` (pg-gated), internal/core
   `TestIncrementalVerify_IDZeroRowCaughtByNextRequest` (and `_Postgres`),
