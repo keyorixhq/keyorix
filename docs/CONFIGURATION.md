@@ -686,6 +686,19 @@ often what a commit waits for, so a commit can be considerably faster.
   `fsync` is allowed before enabling the option. The shipped Helm chart and systemd units use the
   container runtime's `RuntimeDefault` profile or no syscall filter, and `RuntimeDefault` permits
   `fdatasync`, so they need no change.
+- **Why the gain exists, and what removes it:** after a checkpoint that completed, SQLite rewinds
+  the write-ahead log and overwrites it in place, so most commits write into space the file already
+  has. Only a commit that grows the file has to pay for the file-size update, and `fdatasync` does
+  not skip that update (the size is metadata needed to read the data back). What it skips is the
+  timestamp-only update, which is the cost every in-place commit would otherwise carry. Anything that
+  makes commits extend the file again takes most of the gain away: a `journal_size_limit` (the
+  `_pragma=journal_size_limit(...)` DSN parameter or `PRAGMA journal_size_limit`), or truncating the
+  WAL after checkpoints (`PRAGMA wal_checkpoint(TRUNCATE)`). Keyorix does not set `journal_size_limit`
+  by default; if you supply one in the database path, it is passed through unchanged, so leave it
+  unset when you enable `fdatasync`.
+- **Tests that want the old fail-fast behaviour:** a test that relied on a second writer being
+  refused at once by the shared cache should give `BeginTx` a context with a short deadline, rather
+  than expect the driver to fail the transaction on its own.
 
 In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
 pre-exist. The Postgres backend is unaffected too.
