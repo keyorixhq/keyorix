@@ -239,7 +239,7 @@ func (e *PostgresEngine) Issue(ctx context.Context, adminDSN, creationTemplate s
 // failure is reported so the lease is marked revoke_failed rather than silently
 // left active.
 func (e *PostgresEngine) Revoke(ctx context.Context, adminDSN, roleName string) error {
-	conn, err := dialPostgres(ctx, adminDSN, e.allowPrivateNetwork)
+	conn, err := dialPostgres(ctx, postgresRevokeDSN(adminDSN), e.allowPrivateNetwork)
 	if err != nil {
 		return err
 	}

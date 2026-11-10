@@ -126,12 +126,7 @@ func rogueRead(c net.Conn) ([]byte, error) {
 	return b, err
 }
 
-func rogueMySQL(l net.Listener, want string, got chan<- string) {
-	c, err := l.Accept()
-	if err != nil {
-		return
-	}
-	defer func() { _ = c.Close() }()
+func rogueHandshake(c net.Conn) {
 	hs := []byte{10}
 	hs = append(hs, []byte("5.7.0-rogue\x00")...)
 	hs = append(hs, 1, 0, 0, 0)
@@ -144,6 +139,15 @@ func rogueMySQL(l net.Listener, want string, got chan<- string) {
 	rogueWrite(c, 0, hs)
 	_, _ = rogueRead(c)
 	rogueWrite(c, 2, []byte{0, 0, 0, 2, 0, 0, 0})
+}
+
+func rogueMySQL(l net.Listener, want string, got chan<- string) {
+	c, err := l.Accept()
+	if err != nil {
+		return
+	}
+	defer func() { _ = c.Close() }()
+	rogueHandshake(c)
 	for {
 		p, err := rogueRead(c)
 		if err != nil {
@@ -189,9 +193,8 @@ func TestMySQLEngineNeverSendsLocalFilesToTheServer(t *testing.T) {
 	if !errors.As(err, &fe) {
 		t.Fatalf("want ForbiddenOptionError, got %v", err)
 	}
-	if err := e.Revoke(ctx, d, "kx_dyn_x"); !errors.As(err, &fe) {
-		t.Fatalf("Revoke: want ForbiddenOptionError, got %v", err)
-	}
+	// Revoke connects without allowAllFiles (#3980); that the file still never
+	// reaches the server is TestMySQLRevoke_StoredConfigWithAllowAllFiles.
 	select {
 	case s := <-got:
 		t.Fatalf("rogue server received %q; the engine must not even connect", s)

@@ -107,7 +107,7 @@ func (e *MongoEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	client, err := connectMongo(ctx, adminDSN, e.allowPrivateNetwork, e.allowInsecureTransport)
+	client, err := connectMongo(ctx, mongoRevokeURI(adminDSN), e.allowPrivateNetwork, e.allowInsecureTransport)
 	if err != nil {
 		return err
 	}

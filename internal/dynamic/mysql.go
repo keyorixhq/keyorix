@@ -119,7 +119,7 @@ func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	db, err := openMySQL(ctx, adminDSN, e.allowPrivateNetwork)
+	db, err := openMySQL(ctx, mysqlRevokeDSN(adminDSN), e.allowPrivateNetwork)
 	if err != nil {
 		return err
 	}

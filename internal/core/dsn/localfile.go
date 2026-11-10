@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -44,6 +45,11 @@ var localFileOptions = map[string][]string{
 		"tlscertificatefile", "tlsprivatekeyfile",
 	},
 	"postgres": {"sslrootcert", "sslcert", "sslkey", "passfile", "servicefile", "service"},
+}
+
+// LocalFileOptions returns the option keys refused for backendType, lower case.
+func LocalFileOptions(backendType string) []string {
+	return slices.Clone(localFileOptions[backendType])
 }
 
 // ambientCredentialMechanisms lists, per backend type, option values that make
