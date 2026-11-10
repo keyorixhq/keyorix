@@ -55,15 +55,16 @@ Do not recover on that host: a recovered KEK on a compromised host is a disclose
 1. Keep the host off the network. Preserve the TPM event log and the PCR values from `status` as
    evidence.
 2. On known-good hardware: restore the data directory and run `tpm recover` there.
-3. Then `recovery-code rotate`, an ADR-010 DEK sweep (D9: the old wraps cannot be revoked), and a
-   rotation of every secret the old host could have read (incident runbook).
+3. Then `reseal --new-kek` followed by an ADR-010 DEK sweep, in that order (ADR-117 D17: the sweep
+   alone leaves the current DEK under the disclosed KEK), `recovery-code rotate`, and a rotation of
+   every secret the old host could have read (incident runbook).
 
 ## 3. Offline recovery material
 
 | Material | Wraps | Status |
 |---|---|---|
 | Recovery code (256-bit, 52 base32 characters) | the KEK | ADR-117 D3, planned PR A/B |
-| Recovery code held as Shamir K-of-N shares | the same code | Amendment A D11.3, needs approval |
+| Recovery code held as Shamir K-of-N shares | the same code | Amendment A D11.3, approved 2026-11-10 as optional |
 | PQWRAP hybrid escrow slot | the DEK | ADR-117 Decision 4, after #3662 option R ships |
 
 - Shares are produced once, at `init` or at `recovery-code rotate`, with the split primitive in
@@ -79,8 +80,9 @@ Do not recover on that host: a recovered KEK on a compromised host is a disclose
 ## 4. Fail-closed rules the implementation must keep
 
 - No automatic downgrade: not from `signed-uki`, `pcrlock` or `secure-boot` to `none`, and not to
-  another provider. The existing `AllowWeakerFallback` rules are unchanged (TPMK-7 in the threat
-  model).
+  another provider. A `tpm` provider with a mode other than `none` is the only provider in its
+  chain, and `insecure_allow_weaker_kek_fallback` does not lift that (ADR-117 D16). The existing
+  `AllowWeakerFallback` rules are unchanged for `none` (TPMK-7 in the threat model).
 - A missing or unparsable UKI public key, signature JSON or pcrlock NV index is a refusal with a
   named file. It is never "seal or unseal without policy".
 - `init` in a signed mode verifies once, before it reports success, that the current boot
