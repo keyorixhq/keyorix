@@ -695,7 +695,9 @@ often what a commit waits for, so a commit can be considerably faster.
   `_pragma=journal_size_limit(...)` DSN parameter or `PRAGMA journal_size_limit`), or truncating the
   WAL after checkpoints (`PRAGMA wal_checkpoint(TRUNCATE)`). Keyorix does not set `journal_size_limit`
   by default; if you supply one in the database path, it is passed through unchanged, so leave it
-  unset when you enable `fdatasync`.
+  unset when you enable `fdatasync`. How much a commit gains scales with how expensive a sync is on
+  your storage (the filesystem, the journal mode, the device), so the effect can be large on one
+  system and negligible on another. `fsync` stays the default.
 - **Tests that want the old fail-fast behaviour:** a test that relied on a second writer being
   refused at once by the shared cache should give `BeginTx` a context with a short deadline, rather
   than expect the driver to fail the transaction on its own.
