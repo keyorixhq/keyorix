@@ -313,7 +313,7 @@ func runPCrashSeedAction(ctx context.Context, inst *pcrashInstall) error {
 		seed.Users[name] = u.ID
 	}
 	scope := core.Scope{ProjectID: project.ID}
-	if err := c.AssignUserRoleScoped(ctx, "alice@example.com", "viewer", scope); err != nil {
+	if err := c.AssignUserRoleScoped(ctx, "alice@example.com", "project_viewer", scope); err != nil {
 		return fmt.Errorf("grant alice: %w", err)
 	}
 	if err := c.AssignUserRoleScoped(ctx, "carol@example.com", "editor", scope); err != nil {
@@ -381,7 +381,7 @@ func runPCrashCoreAction(ctx context.Context, action string) int {
 	case "role-grant":
 		err = c.AssignUserRoleScoped(ctx, "bob@example.com", "editor", scope)
 	case "role-revoke":
-		err = c.RemoveUserRoleScoped(ctx, "alice@example.com", "viewer", scope)
+		err = c.RemoveUserRoleScoped(ctx, "alice@example.com", "project_viewer", scope)
 	case "role-create":
 		var ids []uint
 		if err = inst.db.Raw("SELECT id FROM permissions WHERE name IN ('secrets.read', 'secrets.write')").Scan(&ids).Error; err == nil {
