@@ -59,6 +59,19 @@ const detail = {
     ],
 };
 
+// useCan is the session's permission union; these tests drive the controls, so the default
+// is a session that holds everything. The permission-gating tests flip canState.
+const canState = vi.hoisted(() => ({
+    admin: true,
+    writeSecrets: true,
+    deleteSecrets: true,
+    readAudit: true,
+    manageMembers: true,
+}));
+vi.mock('../../../features/auth/useCan', () => ({
+    useCan: () => ({ ...canState }),
+}));
+
 describe('ProjectAccessReviewCampaigns', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -361,5 +374,36 @@ describe('ProjectAccessReviewCampaigns', () => {
         render(<ProjectAccessReviewCampaigns projectId={2} />);
         fireEvent.click(screen.getByText('Open'));
         expect(screen.getByText('Action failed.')).toBeInTheDocument();
+    });
+});
+
+describe('ProjectAccessReviewCampaigns — permission gating (roles.assign)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUseCampaign.mockReturnValue({ data: detail, isLoading: false });
+        mockUseCampaigns.mockReturnValue({ data: campaigns, isLoading: false });
+        Object.assign(canState, { manageMembers: true });
+    });
+
+    it('offers Open, Attest, Revoke and Close to a session that holds roles.assign', () => {
+        render(<ProjectAccessReviewCampaigns projectId={2} />);
+        expect(screen.getByPlaceholderText('Campaign name')).toBeInTheDocument();
+        fireEvent.click(screen.getByText('Review'));
+        expect(screen.getByText('Attest')).toBeInTheDocument();
+        expect(screen.getByText('Revoke')).toBeInTheDocument();
+        expect(screen.getByText('Close anyway')).toBeInTheDocument();
+    });
+
+    it('hides Open, Attest, Revoke and Close without roles.assign but keeps the campaign readable', () => {
+        canState.manageMembers = false;
+        render(<ProjectAccessReviewCampaigns projectId={2} />);
+        expect(screen.queryByPlaceholderText('Campaign name')).not.toBeInTheDocument();
+        expect(screen.queryByText('Open')).not.toBeInTheDocument();
+        fireEvent.click(screen.getByText('Review'));
+        expect(screen.getByText(/alice/)).toBeInTheDocument();
+        expect(screen.queryByText('Attest')).not.toBeInTheDocument();
+        expect(screen.queryByText('Revoke')).not.toBeInTheDocument();
+        expect(screen.queryByText('Close anyway')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /download csv/i })).toBeInTheDocument();
     });
 });

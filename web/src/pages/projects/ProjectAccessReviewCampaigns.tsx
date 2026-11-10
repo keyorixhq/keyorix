@@ -14,6 +14,7 @@ import {
     useCloseCampaign,
 } from '../../features/projects/api';
 import { CampaignProgress, AccessReviewItem } from '../../services/projects';
+import { useCan } from '../../features/auth/useCan';
 import { apiClient } from '../../services/client';
 import { triggerBlobDownload, parseServerDate } from '../../utils';
 
@@ -59,6 +60,9 @@ const decisionStyle = (d: string): React.CSSProperties => {
  * evidence record.
  */
 export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => {
+    // Open / attest / revoke / close are all roles.assign in the project (server router); the
+    // union is coarse (see useCan) and the server still enforces the real scope.
+    const canDecide = useCan().manageMembers;
     const { data: campaigns = [], isLoading } = useAccessReviewCampaigns(projectId);
     const openCampaign = useOpenCampaign(projectId);
 
@@ -124,7 +128,12 @@ export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => 
                             </button>
                         </div>
                         {selectedId === campaign.id && (
-                            <CampaignDetail projectId={projectId} campaignId={campaign.id} onError={onError} />
+                            <CampaignDetail
+                                projectId={projectId}
+                                campaignId={campaign.id}
+                                onError={onError}
+                                canDecide={canDecide}
+                            />
                         )}
                     </li>
                 ))}
@@ -144,29 +153,31 @@ export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => 
                         decide each grant, then close it as the audit evidence the review happened.
                     </p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                    <input
-                        value={newName}
-                        onChange={(e) => setNewName(e.target.value)}
-                        placeholder="Campaign name"
-                        className="rounded-lg px-2.5 py-1.5 text-sm outline-hidden w-44"
-                        style={{
-                            backgroundColor: 'var(--bg-app)',
-                            border: '1px solid var(--border)',
-                            color: 'var(--text-primary)',
-                        }}
-                    />
-                    <button
-                        type="button"
-                        onClick={handleOpen}
-                        disabled={openCampaign.isPending}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
-                    >
-                        <PlusIcon className="h-4 w-4" />
-                        Open
-                    </button>
-                </div>
+                {canDecide && (
+                    <div className="flex items-center gap-2 shrink-0">
+                        <input
+                            value={newName}
+                            onChange={(e) => setNewName(e.target.value)}
+                            placeholder="Campaign name"
+                            className="rounded-lg px-2.5 py-1.5 text-sm outline-hidden w-44"
+                            style={{
+                                backgroundColor: 'var(--bg-app)',
+                                border: '1px solid var(--border)',
+                                color: 'var(--text-primary)',
+                            }}
+                        />
+                        <button
+                            type="button"
+                            onClick={handleOpen}
+                            disabled={openCampaign.isPending}
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+                            style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                        >
+                            <PlusIcon className="h-4 w-4" />
+                            Open
+                        </button>
+                    </div>
+                )}
             </div>
 
             {error && (
@@ -204,6 +215,7 @@ interface DetailProps {
     projectId: number;
     campaignId: number;
     onError: (err: any) => void;
+    canDecide: boolean;
 }
 
 const itemDetail = (it: AccessReviewItem) => {
@@ -211,7 +223,7 @@ const itemDetail = (it: AccessReviewItem) => {
     return it.source === 'role' ? `Role: ${it.roleName || '—'}` : secretLabel;
 };
 
-const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError }) => {
+const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError, canDecide }) => {
     const { data, isLoading } = useAccessReviewCampaign(projectId, campaignId);
     const decide = useDecideCampaignItem(projectId, campaignId);
     const close = useCloseCampaign(projectId);
@@ -275,7 +287,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                                         {info.dormant ? ' · dormant' : ''}
                                     </p>
                                 </div>
-                                {open && it.decision === 'pending' && (
+                                {canDecide && open && it.decision === 'pending' && (
                                     <div className="flex items-center gap-1.5 shrink-0">
                                         <button
                                             type="button"
@@ -343,7 +355,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                     <ArrowDownTrayIcon className="h-3.5 w-3.5" />
                     {csvBusy ? 'Exporting…' : 'Download CSV'}
                 </button>
-                {open && (
+                {canDecide && open && (
                     <div className="ml-auto flex items-center gap-2">
                         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                             {pending > 0 ? `${pending} item(s) still pending` : 'All items decided'}

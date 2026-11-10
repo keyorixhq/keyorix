@@ -9,6 +9,7 @@ import {
     ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
 import { useProject, useProjectEnvironments, useRestoreEnvironment, PROJECT_KEYS } from '../../features/projects/api';
+import { useCan, type Can } from '../../features/auth/useCan';
 import { FreezeProjectModal } from '../../features/projects/FreezeProjectModal';
 import { apiClient } from '../../services/client';
 import { triggerBlobDownload } from '../../utils';
@@ -139,6 +140,7 @@ interface RenderSecuritySectionProps {
     requireMfa: boolean;
     setRequireMfa: (v: boolean) => void;
     handleSaveMfa: () => void;
+    canSave: boolean;
 }
 
 function renderSecuritySection({
@@ -146,6 +148,7 @@ function renderSecuritySection({
     requireMfa,
     setRequireMfa,
     handleSaveMfa,
+    canSave,
 }: RenderSecuritySectionProps): React.ReactNode {
     return (
         <section>
@@ -171,6 +174,7 @@ function renderSecuritySection({
                         id="project-require-mfa"
                         type="checkbox"
                         checked={requireMfa}
+                        disabled={!canSave}
                         onChange={(e) => setRequireMfa(e.target.checked)}
                         aria-describedby="project-require-mfa-description"
                         className="mt-0.5 h-4 w-4 rounded-sm cursor-pointer"
@@ -190,11 +194,13 @@ function renderSecuritySection({
                         </span>
                     </label>
                 </div>
-                <div className="flex justify-end">
-                    <Button onClick={handleSaveMfa} disabled={mfaMutation.isPending}>
-                        {mfaMutation.isPending ? 'Saving…' : 'Save'}
-                    </Button>
-                </div>
+                {canSave && (
+                    <div className="flex justify-end">
+                        <Button onClick={handleSaveMfa} disabled={mfaMutation.isPending}>
+                            {mfaMutation.isPending ? 'Saving…' : 'Save'}
+                        </Button>
+                    </div>
+                )}
             </div>
         </section>
     );
@@ -208,6 +214,7 @@ interface RenderEnvListProps {
     handlePromote: (env: Env) => void;
     setDeleteEnvError: (err: string) => void;
     setEnvToDelete: (env: Env) => void;
+    can: Can;
 }
 
 function renderEnvList({
@@ -218,6 +225,7 @@ function renderEnvList({
     handlePromote,
     setDeleteEnvError,
     setEnvToDelete,
+    can,
 }: RenderEnvListProps): React.ReactNode {
     if (envsLoading) {
         return (
@@ -251,7 +259,7 @@ function renderEnvList({
                             </span>
                             {envStatusBadge(env.deleted, isDefault)}
                         </div>
-                        {env.deleted ? (
+                        {env.deleted && !can.manageMembers ? null : env.deleted ? (
                             <button
                                 type="button"
                                 onClick={() => restoreEnvMutation.mutate(env.id)}
@@ -265,29 +273,33 @@ function renderEnvList({
                             </button>
                         ) : (
                             <div className="flex items-center gap-1">
-                                <button
-                                    type="button"
-                                    onClick={() => handlePromote(env)}
-                                    disabled={promoteEnvMutation.isPending}
-                                    className="flex items-center gap-1 px-1.5 py-1 rounded-sm text-xs opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
-                                    style={{ color: 'var(--accent)' }}
-                                    title="Promote — copy every secret in this environment into another"
-                                >
-                                    <ArrowUpOnSquareIcon className="h-4 w-4" />
-                                    Promote
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setDeleteEnvError('');
-                                        setEnvToDelete(env);
-                                    }}
-                                    className="p-1.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
-                                    style={{ color: 'var(--error)' }}
-                                    title="Delete environment"
-                                >
-                                    <TrashIcon className="h-4 w-4" />
-                                </button>
+                                {can.writeSecrets && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handlePromote(env)}
+                                        disabled={promoteEnvMutation.isPending}
+                                        className="flex items-center gap-1 px-1.5 py-1 rounded-sm text-xs opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                                        style={{ color: 'var(--accent)' }}
+                                        title="Promote — copy every secret in this environment into another"
+                                    >
+                                        <ArrowUpOnSquareIcon className="h-4 w-4" />
+                                        Promote
+                                    </button>
+                                )}
+                                {can.deleteSecrets && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setDeleteEnvError('');
+                                            setEnvToDelete(env);
+                                        }}
+                                        className="p-1.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
+                                        style={{ color: 'var(--error)' }}
+                                        title="Delete environment"
+                                    >
+                                        <TrashIcon className="h-4 w-4" />
+                                    </button>
+                                )}
                             </div>
                         )}
                     </li>
@@ -351,6 +363,7 @@ interface RenderOrphanedSecretsSectionProps {
     };
     reassignMsg: string;
     setReassignMsg: (m: string) => void;
+    canReassign: boolean;
 }
 
 function renderOrphanedSecretsSection({
@@ -359,6 +372,7 @@ function renderOrphanedSecretsSection({
     reassignOwnerMutation,
     reassignMsg,
     setReassignMsg,
+    canReassign,
 }: RenderOrphanedSecretsSectionProps): React.ReactNode {
     if (orphanedSecrets.length === 0) return null;
     return (
@@ -408,29 +422,31 @@ function renderOrphanedSecretsSection({
                     ))}
                 </ul>
                 {/* Bulk re-home, one action per distinct former owner. */}
-                <div className="border-t px-4 py-3 space-y-2" style={{ borderColor: 'var(--border)' }}>
-                    {orphanedOwners.map((ownerId) => (
-                        <button
-                            key={ownerId}
-                            type="button"
-                            disabled={reassignOwnerMutation.isPending}
-                            onClick={() => {
-                                const input = window.prompt(
-                                    `Reassign all secrets from former owner #${ownerId} to which user ID?`
-                                );
-                                const to = Number(input);
-                                if (!input || !Number.isInteger(to) || to <= 0) return;
-                                setReassignMsg('');
-                                reassignOwnerMutation.mutate({ from: ownerId, to });
-                            }}
-                            className="flex items-center gap-1 text-sm font-medium disabled:opacity-50"
-                            style={{ color: 'var(--accent)' }}
-                        >
-                            <ArrowPathIcon className="h-4 w-4" />
-                            Reassign all from former owner #{ownerId}…
-                        </button>
-                    ))}
-                </div>
+                {canReassign && (
+                    <div className="border-t px-4 py-3 space-y-2" style={{ borderColor: 'var(--border)' }}>
+                        {orphanedOwners.map((ownerId) => (
+                            <button
+                                key={ownerId}
+                                type="button"
+                                disabled={reassignOwnerMutation.isPending}
+                                onClick={() => {
+                                    const input = window.prompt(
+                                        `Reassign all secrets from former owner #${ownerId} to which user ID?`
+                                    );
+                                    const to = Number(input);
+                                    if (!input || !Number.isInteger(to) || to <= 0) return;
+                                    setReassignMsg('');
+                                    reassignOwnerMutation.mutate({ from: ownerId, to });
+                                }}
+                                className="flex items-center gap-1 text-sm font-medium disabled:opacity-50"
+                                style={{ color: 'var(--accent)' }}
+                            >
+                                <ArrowPathIcon className="h-4 w-4" />
+                                Reassign all from former owner #{ownerId}…
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
         </section>
     );
@@ -441,6 +457,7 @@ interface RenderExpiringSecretsSectionProps {
     extendExpiringMutation: { isPending: boolean; mutate: () => void };
     extendMsg: string;
     setExtendMsg: (m: string) => void;
+    canExtend: boolean;
 }
 
 function renderExpiringSecretsSection({
@@ -448,6 +465,7 @@ function renderExpiringSecretsSection({
     extendExpiringMutation,
     extendMsg,
     setExtendMsg,
+    canExtend,
 }: RenderExpiringSecretsSectionProps): React.ReactNode {
     if (expiringSecrets.length === 0) return null;
     return (
@@ -456,18 +474,20 @@ function renderExpiringSecretsSection({
                 <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                     Expiring secrets
                 </h2>
-                <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                        setExtendMsg('');
-                        extendExpiringMutation.mutate();
-                    }}
-                    disabled={extendExpiringMutation.isPending}
-                >
-                    <ArrowPathIcon className="h-4 w-4 mr-1" />
-                    {extendExpiringMutation.isPending ? 'Renewing…' : 'Extend all (90d)'}
-                </Button>
+                {canExtend && (
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                            setExtendMsg('');
+                            extendExpiringMutation.mutate();
+                        }}
+                        disabled={extendExpiringMutation.isPending}
+                    >
+                        <ArrowPathIcon className="h-4 w-4 mr-1" />
+                        {extendExpiringMutation.isPending ? 'Renewing…' : 'Extend all (90d)'}
+                    </Button>
+                )}
             </div>
             <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                 Secrets expiring soon or already expired — renew or rotate them before they lapse.
@@ -521,6 +541,7 @@ interface RenderNamingViolationsSectionProps {
     pendingRenames: Array<{ id: number; new_name: string }>;
     bulkRenameMutation: { isPending: boolean; mutate: (renames: Array<{ id: number; new_name: string }>) => void };
     bulkRenameMsg: string;
+    canRename: boolean;
 }
 
 function renderNamingViolationsSection({
@@ -530,6 +551,7 @@ function renderNamingViolationsSection({
     pendingRenames,
     bulkRenameMutation,
     bulkRenameMsg,
+    canRename,
 }: RenderNamingViolationsSectionProps): React.ReactNode {
     if (nameViolations.length === 0) return null;
     return (
@@ -559,6 +581,7 @@ function renderNamingViolationsSection({
                                     <input
                                         type="text"
                                         aria-label={`New name for ${v.name}`}
+                                        disabled={!canRename}
                                         className="text-sm px-2 py-1 rounded-sm border w-56"
                                         style={{
                                             borderColor: 'var(--border)',
@@ -579,18 +602,20 @@ function renderNamingViolationsSection({
                     ))}
                 </ul>
             </div>
-            <div className="flex items-center gap-3 mt-3">
-                <Button
-                    variant="secondary"
-                    disabled={pendingRenames.length === 0 || bulkRenameMutation.isPending}
-                    onClick={() => bulkRenameMutation.mutate(pendingRenames)}
-                >
-                    {bulkRenameMutation.isPending ? 'Renaming…' : `Apply renames (${pendingRenames.length})`}
-                </Button>
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    Edit a name above, then apply. Names that still don't conform are skipped.
-                </span>
-            </div>
+            {canRename && (
+                <div className="flex items-center gap-3 mt-3">
+                    <Button
+                        variant="secondary"
+                        disabled={pendingRenames.length === 0 || bulkRenameMutation.isPending}
+                        onClick={() => bulkRenameMutation.mutate(pendingRenames)}
+                    >
+                        {bulkRenameMutation.isPending ? 'Renaming…' : `Apply renames (${pendingRenames.length})`}
+                    </Button>
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        Edit a name above, then apply. Names that still don't conform are skipped.
+                    </span>
+                </div>
+            )}
             {bulkRenameMsg && (
                 <div className="mt-3">
                     <Alert
@@ -607,11 +632,13 @@ function renderNamingViolationsSection({
 interface RenderRecycleBinSectionProps {
     deletedSecrets: DeletedSecret[];
     restoreSecretMutation: { isPending: boolean; mutate: (id: number) => void };
+    canRestore: boolean;
 }
 
 function renderRecycleBinSection({
     deletedSecrets,
     restoreSecretMutation,
+    canRestore,
 }: RenderRecycleBinSectionProps): React.ReactNode {
     return (
         <section>
@@ -649,17 +676,19 @@ function renderRecycleBinSection({
                                             : ''}
                                     </span>
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={() => restoreSecretMutation.mutate(s.id)}
-                                    disabled={restoreSecretMutation.isPending}
-                                    className="flex items-center gap-1 p-1.5 rounded-sm text-sm transition-opacity disabled:opacity-50"
-                                    style={{ color: 'var(--accent)' }}
-                                    title="Restore secret"
-                                >
-                                    <ArrowPathIcon className="h-4 w-4" />
-                                    Restore
-                                </button>
+                                {canRestore && (
+                                    <button
+                                        type="button"
+                                        onClick={() => restoreSecretMutation.mutate(s.id)}
+                                        disabled={restoreSecretMutation.isPending}
+                                        className="flex items-center gap-1 p-1.5 rounded-sm text-sm transition-opacity disabled:opacity-50"
+                                        style={{ color: 'var(--accent)' }}
+                                        title="Restore secret"
+                                    >
+                                        <ArrowPathIcon className="h-4 w-4" />
+                                        Restore
+                                    </button>
+                                )}
                             </li>
                         ))}
                     </ul>
@@ -726,6 +755,7 @@ interface RenderGeneralSectionProps {
     setDescription: (v: string) => void;
     nameError: string;
     handleSave: () => void;
+    canSave: boolean;
 }
 
 function renderGeneralSection({
@@ -736,6 +766,7 @@ function renderGeneralSection({
     setDescription,
     nameError,
     handleSave,
+    canSave,
 }: RenderGeneralSectionProps): React.ReactNode {
     return (
         <section>
@@ -763,6 +794,7 @@ function renderGeneralSection({
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
+                        disabled={!canSave}
                         className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
                         style={{
                             backgroundColor: 'var(--bg-app)',
@@ -790,6 +822,7 @@ function renderGeneralSection({
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         placeholder="Optional"
+                        disabled={!canSave}
                         className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
                         style={{
                             backgroundColor: 'var(--bg-app)',
@@ -798,11 +831,13 @@ function renderGeneralSection({
                         }}
                     />
                 </div>
-                <div className="flex justify-end">
-                    <Button onClick={handleSave} disabled={updateMutation.isPending}>
-                        {updateMutation.isPending ? 'Saving…' : 'Save'}
-                    </Button>
-                </div>
+                {canSave && (
+                    <div className="flex justify-end">
+                        <Button onClick={handleSave} disabled={updateMutation.isPending}>
+                            {updateMutation.isPending ? 'Saving…' : 'Save'}
+                        </Button>
+                    </div>
+                )}
             </div>
         </section>
     );
@@ -822,6 +857,7 @@ interface RenderEnvironmentsSectionProps {
     setNewEnvName: (v: string) => void;
     setAddEnvError: (v: string) => void;
     addEnvMutation: { isPending: boolean; mutate: (name: string) => void };
+    can: Can;
 }
 
 function renderEnvironmentsSection({
@@ -838,6 +874,7 @@ function renderEnvironmentsSection({
     setNewEnvName,
     setAddEnvError,
     addEnvMutation,
+    can,
 }: RenderEnvironmentsSectionProps): React.ReactNode {
     return (
         <section>
@@ -861,49 +898,53 @@ function renderEnvironmentsSection({
                     handlePromote,
                     setDeleteEnvError,
                     setEnvToDelete,
+                    can,
                 })}
 
                 {/* Add environment */}
-                <div className="border-t px-4 py-3" style={{ borderColor: 'var(--border)' }}>
-                    {promoteMsg && (
-                        <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-                            {promoteMsg}
-                        </p>
-                    )}
-                    {addEnvError && (
-                        <p className="text-xs mb-2" style={{ color: 'var(--error)' }}>
-                            {addEnvError}
-                        </p>
-                    )}
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={newEnvName}
-                            onChange={(e) => {
-                                setNewEnvName(e.target.value);
-                                setAddEnvError('');
-                            }}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && newEnvName.trim()) addEnvMutation.mutate(newEnvName.trim());
-                            }}
-                            placeholder="New environment name…"
-                            className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-hidden focus:ring-2 focus:ring-blue-500"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                color: 'var(--text-primary)',
-                                borderColor: 'var(--border)',
-                            }}
-                        />
-                        <Button
-                            size="sm"
-                            onClick={() => newEnvName.trim() && addEnvMutation.mutate(newEnvName.trim())}
-                            disabled={!newEnvName.trim() || addEnvMutation.isPending}
-                        >
-                            <PlusIcon className="h-4 w-4 mr-1" />
-                            Add
-                        </Button>
+                {can.writeSecrets && (
+                    <div className="border-t px-4 py-3" style={{ borderColor: 'var(--border)' }}>
+                        {promoteMsg && (
+                            <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+                                {promoteMsg}
+                            </p>
+                        )}
+                        {addEnvError && (
+                            <p className="text-xs mb-2" style={{ color: 'var(--error)' }}>
+                                {addEnvError}
+                            </p>
+                        )}
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={newEnvName}
+                                onChange={(e) => {
+                                    setNewEnvName(e.target.value);
+                                    setAddEnvError('');
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && newEnvName.trim())
+                                        addEnvMutation.mutate(newEnvName.trim());
+                                }}
+                                placeholder="New environment name…"
+                                className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-hidden focus:ring-2 focus:ring-blue-500"
+                                style={{
+                                    backgroundColor: 'var(--bg-app)',
+                                    color: 'var(--text-primary)',
+                                    borderColor: 'var(--border)',
+                                }}
+                            />
+                            <Button
+                                size="sm"
+                                onClick={() => newEnvName.trim() && addEnvMutation.mutate(newEnvName.trim())}
+                                disabled={!newEnvName.trim() || addEnvMutation.isPending}
+                            >
+                                <PlusIcon className="h-4 w-4 mr-1" />
+                                Add
+                            </Button>
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
         </section>
     );
@@ -1108,6 +1149,11 @@ function renderDeleteProjectModal({
 export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectId }) => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
+    // Coarse show/hide from the session's permission union (see useCan); the server still
+    // enforces the real scope. Names are the ones the routes check: project update, bulk
+    // and incident actions are secrets.write, deletes secrets.delete, MFA setting, env/owner
+    // restore and reassign roles.assign.
+    const can = useCan();
     const { data: project, isLoading: projectLoading } = useProject(projectId);
     // Include soft-deleted environments here so they can be restored.
     const { data: environments = [], isLoading: envsLoading } = useProjectEnvironments(projectId, true);
@@ -1425,9 +1471,16 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                 setDescription,
                 nameError,
                 handleSave,
+                canSave: can.writeSecrets,
             })}
 
-            {renderSecuritySection({ mfaMutation, requireMfa, setRequireMfa, handleSaveMfa })}
+            {renderSecuritySection({
+                mfaMutation,
+                requireMfa,
+                setRequireMfa,
+                handleSaveMfa,
+                canSave: can.manageMembers,
+            })}
 
             {/* ── Environments ── */}
             {renderEnvironmentsSection({
@@ -1444,24 +1497,26 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                 setNewEnvName,
                 setAddEnvError,
                 addEnvMutation,
+                can,
             })}
 
             {/* ── Compliance ── */}
             {renderComplianceSection({ inventoryMsg, inventoryBusy, handleExportInventory })}
 
             {/* ── Incident response ── */}
-            {renderIncidentResponseSection({
-                suspendAllMutation,
-                resumeAllMutation,
-                freezeMsg,
-                setFreezeMsg,
-                onOpenFreeze: () => {
-                    suspendAllMutation.reset();
-                    setFreezeOpen(true);
-                },
-            })}
+            {can.writeSecrets &&
+                renderIncidentResponseSection({
+                    suspendAllMutation,
+                    resumeAllMutation,
+                    freezeMsg,
+                    setFreezeMsg,
+                    onOpenFreeze: () => {
+                        suspendAllMutation.reset();
+                        setFreezeOpen(true);
+                    },
+                })}
             <FreezeProjectModal
-                isOpen={freezeOpen}
+                isOpen={freezeOpen && can.writeSecrets}
                 pending={suspendAllMutation.isPending}
                 error={suspendAllMutation.error}
                 onClose={() => setFreezeOpen(false)}
@@ -1475,6 +1530,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                 reassignOwnerMutation,
                 reassignMsg,
                 setReassignMsg,
+                canReassign: can.manageMembers,
             })}
 
             {/* ── Expiring secrets ── (only when present) */}
@@ -1483,6 +1539,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                 extendExpiringMutation,
                 extendMsg,
                 setExtendMsg,
+                canExtend: can.writeSecrets,
             })}
 
             {/* ── Naming-policy violations ── (only when the policy flags existing names) */}
@@ -1493,13 +1550,14 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                 pendingRenames,
                 bulkRenameMutation,
                 bulkRenameMsg,
+                canRename: can.writeSecrets,
             })}
 
             {/* ── Recycle bin ── */}
-            {renderRecycleBinSection({ deletedSecrets, restoreSecretMutation })}
+            {renderRecycleBinSection({ deletedSecrets, restoreSecretMutation, canRestore: can.writeSecrets })}
 
             {/* ── Danger zone ── */}
-            {renderDangerZoneSection({ onOpenDeleteModal: () => setShowDeleteModal(true) })}
+            {can.deleteSecrets && renderDangerZoneSection({ onOpenDeleteModal: () => setShowDeleteModal(true) })}
 
             {/* ── Delete environment modal ── */}
             {renderDeleteEnvironmentModal({

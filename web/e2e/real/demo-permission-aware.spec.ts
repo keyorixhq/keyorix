@@ -95,7 +95,10 @@ test.describe('least-privilege user (alice)', () => {
         await settle(page);
         const main = page.locator('main');
         await expect(main.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
-        const row = main.getByRole('button').filter({ hasText: PROJECT_NAME as string }).first();
+        const row = main
+            .getByRole('button')
+            .filter({ hasText: PROJECT_NAME as string })
+            .first();
         await expect(row).toBeVisible();
         await expect(main.getByRole('button', { name: /new project/i })).toHaveCount(0);
         await expect(row.getByTitle('Edit project')).toHaveCount(0);
@@ -265,7 +268,10 @@ test.describe('admin keeps every control (positive control)', () => {
         await settle(page);
         const main = page.locator('main');
         await expect(main.getByRole('button', { name: /new project/i })).toBeVisible();
-        const row = main.getByRole('button').filter({ hasText: PROJECT_NAME as string }).first();
+        const row = main
+            .getByRole('button')
+            .filter({ hasText: PROJECT_NAME as string })
+            .first();
         await expect(row.getByTitle('Edit project')).toBeVisible();
         await expect(row.getByTitle('Delete project')).toBeVisible();
     });

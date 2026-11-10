@@ -78,6 +78,19 @@ beforeEach(() => {
     mockUseRestoreEnvironment.mockReturnValue({ mutate: mockRestoreEnvMutate, isPending: false });
 });
 
+// useCan is the session's permission union; these tests drive the controls, so the default
+// is a session that holds everything. The permission-gating tests flip canState.
+const canState = vi.hoisted(() => ({
+    admin: true,
+    writeSecrets: true,
+    deleteSecrets: true,
+    readAudit: true,
+    manageMembers: true,
+}));
+vi.mock('../../../features/auth/useCan', () => ({
+    useCan: () => ({ ...canState }),
+}));
+
 describe('ProjectSettingsTab — promote environment', () => {
     beforeEach(() => {
         mockPost.mockReset();
@@ -1300,5 +1313,66 @@ describe('ProjectSettingsTab — loading state', () => {
         expect(screen.queryByText('General')).not.toBeInTheDocument();
         expect(screen.queryByText('Security')).not.toBeInTheDocument();
         expect(screen.queryByText('Environments')).not.toBeInTheDocument();
+    });
+});
+
+describe('ProjectSettingsTab — permission gating', () => {
+    beforeEach(() => {
+        mockPost.mockReset();
+        mockGet.mockReset();
+        mockGet.mockResolvedValue({ data: { data: {} } });
+        mockUseProjectEnvironments.mockReturnValue({
+            data: [...defaultEnvironments, { id: 4, name: 'qa', deleted: true }],
+            isLoading: false,
+        });
+        Object.assign(canState, {
+            admin: true,
+            writeSecrets: true,
+            deleteSecrets: true,
+            readAudit: true,
+            manageMembers: true,
+        });
+    });
+
+    it('offers every control to a session that holds the permissions (positive control)', () => {
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(screen.getAllByTitle(/Promote/i).length).toBeGreaterThan(0);
+        expect(screen.getAllByTitle('Delete environment').length).toBeGreaterThan(0);
+        expect(screen.getByTitle('Restore environment')).toBeInTheDocument();
+        expect(screen.getByPlaceholderText('New environment name…')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Freeze all secrets' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Delete Project' })).toBeInTheDocument();
+        expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(2);
+    });
+
+    it('hides the secrets.write controls: Add environment, Promote, Freeze/Resume, General Save', () => {
+        canState.writeSecrets = false;
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(screen.queryByPlaceholderText('New environment name…')).not.toBeInTheDocument();
+        expect(screen.queryByTitle(/Promote/i)).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Freeze all secrets' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Resume all' })).not.toBeInTheDocument();
+        expect(screen.getByLabelText(/Project name/)).toBeDisabled();
+        // Only the MFA Save (roles.assign) is left.
+        expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1);
+        // The controls that need the other permissions stay.
+        expect(screen.getAllByTitle('Delete environment').length).toBeGreaterThan(0);
+    });
+
+    it('hides Delete environment and Delete Project without secrets.delete', () => {
+        canState.deleteSecrets = false;
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(screen.queryByTitle('Delete environment')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Delete Project' })).not.toBeInTheDocument();
+        expect(screen.getAllByTitle(/Promote/i).length).toBeGreaterThan(0);
+    });
+
+    it('hides Restore environment and the MFA Save without roles.assign', () => {
+        canState.manageMembers = false;
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(screen.queryByTitle('Restore environment')).not.toBeInTheDocument();
+        expect(screen.getByLabelText(/Require MFA for this project/)).toBeDisabled();
+        expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1);
+        expect(screen.getAllByTitle(/Promote/i).length).toBeGreaterThan(0);
     });
 });
