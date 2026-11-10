@@ -36,6 +36,9 @@ const (
 	envPCrashPGDSN      = "KEYORIX_TEST_PG_DSN"
 	pcrashPGDBPrefix    = "w5_"
 	pcrashPGQuiesceWait = 60 * time.Second
+	// A migrate or restore makes hundreds of round trips, each 170 ms or more
+	// through a remote tunnel, so the SQLite leg's 3-minute limit is too short.
+	pcrashPGChildDeadline = 8 * time.Minute
 )
 
 var pcrashPGNameOK = regexp.MustCompile(`^w5_[a-z0-9_]+$`)
@@ -192,12 +195,15 @@ type pcrashPGWorld struct {
 	pgMigDB string
 	// prepared is the observed template state, kept so an exec with stateRaw 0
 	// spends no extra 100-second reopen building it (see prepareCached).
-	prepared *pcrashExecState
+	prepared  *pcrashExecState
+	buildStep int
 }
+
+const pcrashPGBuildSteps = 6
 
 // run spawns a PG child; it mirrors runPCrashChild with the seam's own environment.
 func (w *pcrashPGWorld) run(dir, pass, action string, args []string, killAt int64, mode, split string, trace bool) (pcrashPGRun, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), pcrashChildDeadline)
+	ctx, cancel := context.WithTimeout(context.Background(), pcrashPGChildDeadline)
 	defer cancel()
 	bin, err := os.Executable()
 	if err != nil {
@@ -275,6 +281,10 @@ func buildPCrashPGWorld(tb testing.TB) *pcrashPGWorld {
 	keep := *pcrashFlagWorld != ""
 	if keep {
 		if w, ok := loadPCrashPGWorld(tb, srv); ok {
+			if w.buildStep >= pcrashPGBuildSteps {
+				return w
+			}
+			w.finishBuild(tb) // a run that hit its time budget left a partial build
 			return w
 		}
 	}
@@ -311,31 +321,51 @@ func buildPCrashPGWorld(tb testing.TB) *pcrashPGWorld {
 		freshDir:    fresh,
 		pgCal:       map[string]pcrashPGCalibration{},
 	}
-	// init with --storage-type postgres writes a config and stops, because it
-	// has no connection yet; the DSN is added and init runs again to finish.
-	w.runBuild(tb, dir, "admin", []string{"init", "--dev", "--storage-type", "postgres", "--config", "./keyorix.yaml"})
-	w.yamlText = w.withDSN(tb, dir, name)
-	w.runBuild(tb, dir, "admin", []string{"init", "--dev", "--config", "./keyorix.yaml"})
-	w.runBuild(tb, dir, "admin", []string{"encryption", "init", "--config", "./keyorix.yaml"})
-	if err := pcrashCopyTree(dir, fresh); err != nil {
-		tb.Fatal(err)
-	}
-	w.runBuild(tb, dir, "admin", pcrashMigrateArgs)
-	w.runBuild(tb, dir, "seed", nil)
-	w.runBuild(tb, dir, "admin", []string{"backup", "--config", "./keyorix.yaml", "--output", "./archive.tar.gz"})
-	if err := os.WriteFile(filepath.Join(dir, "newpass"), []byte(pcrashPass2), 0o600); err != nil {
-		tb.Fatal(err)
-	}
-	seed, err := readPCrashSeed(dir)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	w.seed = seed
-	if err := srv.quiesce(ctx, name); err != nil {
-		tb.Fatal(err)
-	}
-	w.save(tb)
+	w.finishBuild(tb)
 	return w
+}
+
+// finishBuild runs the template's remaining steps, saving after each so a run
+// stopped by its time budget resumes at the next step instead of starting over.
+func (w *pcrashPGWorld) finishBuild(tb testing.TB) {
+	tb.Helper()
+	dir := w.dir
+	for w.buildStep < pcrashPGBuildSteps {
+		switch w.buildStep {
+		case 0:
+			// init with --storage-type postgres writes a config and stops, because
+			// it has no connection yet; the DSN is added and init runs again.
+			w.runBuild(tb, dir, "admin", []string{"init", "--dev", "--storage-type", "postgres", "--config", "./keyorix.yaml"})
+			w.yamlText = w.withDSN(tb, dir, w.templateDB)
+		case 1:
+			w.runBuild(tb, dir, "admin", []string{"init", "--dev", "--config", "./keyorix.yaml"})
+		case 2:
+			w.runBuild(tb, dir, "admin", []string{"encryption", "init", "--config", "./keyorix.yaml"})
+			if err := pcrashCopyTree(dir, w.freshDir); err != nil {
+				tb.Fatal(err)
+			}
+		case 3:
+			w.runBuild(tb, dir, "admin", pcrashMigrateArgs)
+		case 4:
+			w.runBuild(tb, dir, "seed", nil)
+		case 5:
+			_ = os.Remove(filepath.Join(dir, "archive.tar.gz")) // a stopped earlier attempt's partial file
+			w.runBuild(tb, dir, "admin", []string{"backup", "--config", "./keyorix.yaml", "--output", "./archive.tar.gz"})
+			if err := os.WriteFile(filepath.Join(dir, "newpass"), []byte(pcrashPass2), 0o600); err != nil {
+				tb.Fatal(err)
+			}
+			seed, err := readPCrashSeed(dir)
+			if err != nil {
+				tb.Fatal(err)
+			}
+			w.seed = seed
+			if err := w.srv.quiesce(context.Background(), w.templateDB); err != nil {
+				tb.Fatal(err)
+			}
+		}
+		w.buildStep++
+		w.save(tb)
+	}
 }
 
 // pcrashPGTransient reports whether output names a dropped connection to the
@@ -386,6 +416,7 @@ type pcrashPGWorldFile struct {
 	MigSchema                    string
 	Before                       *pcrashModel
 	Cipher                       map[uint][]byte
+	BuildStep                    int
 }
 
 func pcrashPGWorldPath() string { return filepath.Join(*pcrashFlagWorld, "world.json") }
@@ -396,7 +427,7 @@ func (w *pcrashPGWorld) save(tb testing.TB) {
 	if *pcrashFlagWorld == "" {
 		return
 	}
-	f := pcrashPGWorldFile{TemplateDB: w.templateDB, Dir: w.dir, Fresh: w.freshDir, YAML: w.yamlText, Seed: w.seed, Cal: map[string]pcrashPGCalFile{}}
+	f := pcrashPGWorldFile{TemplateDB: w.templateDB, Dir: w.dir, Fresh: w.freshDir, YAML: w.yamlText, Seed: w.seed, Cal: map[string]pcrashPGCalFile{}, BuildStep: w.buildStep}
 	for name, c := range w.pgCal {
 		f.Cal[name] = pcrashPGCalFile{Seams: c.seams, Trace: c.trace, Ref: c.ref}
 	}
@@ -446,7 +477,7 @@ func loadPCrashPGWorld(tb testing.TB, srv *pcrashPGServer) (*pcrashPGWorld, bool
 	}
 	w := &pcrashPGWorld{
 		pcrashWorld: &pcrashWorld{dir: f.Dir, fresh: f.Fresh, seed: f.Seed, cal: map[string]pcrashCalibration{}},
-		srv:         srv, templateDB: f.TemplateDB, yamlText: f.YAML, freshDir: f.Fresh, pgCal: map[string]pcrashPGCalibration{},
+		srv:         srv, templateDB: f.TemplateDB, yamlText: f.YAML, freshDir: f.Fresh, pgCal: map[string]pcrashPGCalibration{}, buildStep: f.BuildStep,
 	}
 	for name, c := range f.Cal {
 		w.pgCal[name] = pcrashPGCalibration{seams: c.Seams, trace: c.Trace, ref: c.Ref}

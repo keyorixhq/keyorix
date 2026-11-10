@@ -283,17 +283,25 @@ func TestPCrashPGKillPoints(t *testing.T) {
 		"sql:pre:update:a", "sql:pre:update:a", "sql:pre:update:a", "sql:pre:commit", "sql:acked:commit",
 		"file:manifest:write", "sweep:after", "sql:pre:ddl:create:index", "sql:pre:ddl:create:index", "sql:pre:ddl:create:index",
 	}
-	got := pcrashPGKillPoints(trace, pcrashPGModeKill, 0)
+	got := pcrashPGKillPoints(trace, pcrashPGModeKill, 0, false)
 	want := []int64{1, 3, 4, 5, 6, 7, 8, 10}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("kill mode: got %v want %v", got, want)
 	}
-	got = pcrashPGKillPoints(trace, pcrashPGModeCut, 0)
+	got = pcrashPGKillPoints(trace, pcrashPGModeCut, 0, false)
 	if want := []int64{1, 4, 5}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("cut mode: got %v want %v", got, want)
 	}
-	got = pcrashPGKillPoints(trace, pcrashPGModeKill, 2)
+	got = pcrashPGKillPoints(trace, pcrashPGModeKill, 2, false)
 	if len(got) != 6 || !slices.Contains(got, 6) || !slices.Contains(got, 7) {
 		t.Fatalf("maxper keeps essential seams only: %v", got)
+	}
+	// The startup schema pass and its marker commit are not the operation's seams.
+	withPrologue := []string{
+		"sql:pre:ddl:create:index", "sql:pre:ddl:create:unique", "sql:pre:insert:system_metadata", "sql:pre:commit", "sql:acked:commit",
+		"sql:pre:update:a", "sql:pre:commit", "sql:acked:commit",
+	}
+	if got, want := pcrashPGKillPoints(withPrologue, pcrashPGModeKill, 0, true), []int64{6, 7, 8}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("skipDDL: got %v want %v", got, want)
 	}
 }
