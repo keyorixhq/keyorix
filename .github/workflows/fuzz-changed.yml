@@ -42,9 +42,11 @@
 #     test-only dependency plans 0 extra targets from this tier.
 name: fuzz-changed
 #
-# Execution: the planned targets are split round-robin across up to FUZZ_SHARDS
-# parallel jobs (matrix). Each target still gets the full FUZZTIME; only the
-# wall-clock changes (a 27-target PR went from ~45 min serial to ~1/6 of that).
+# Execution: scripts/ci/fuzzplan packs the planned targets into at most
+# FUZZ_SHARDS parallel jobs (matrix), keeping a package's targets on one runner
+# when that does not cost balance, because every package a shard touches costs
+# one instrumented compile. Small plans use fewer shards. Each target still gets
+# the full FUZZTIME.
 # A final `fuzz-changed` job aggregates the shards so the check keeps one name.
 on:
   pull_request:
@@ -63,6 +65,7 @@ concurrency:
 env:
   FUZZTIME: 90s   # per fuzz target
   FUZZ_SHARDS: 6  # max parallel fuzz jobs
+  FUZZ_MAX_SHARD_SECONDS: 480  # open another shard (up to FUZZ_SHARDS) above this estimated work per shard
 jobs:
   plan:
     runs-on: ubuntu-24.04
@@ -83,6 +86,8 @@ jobs:
         run: |
           set -euo pipefail
           base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
+          fuzzplan="$RUNNER_TEMP/fuzzplan"
+          go build -o "$fuzzplan" ./scripts/ci/fuzzplan
 
           dep_changed=0
           if git diff --name-only "$base"...HEAD | grep -qE '^(go\.mod|go\.sum)$'; then
@@ -93,22 +98,13 @@ jobs:
             prod_go_changed=1
           fi
 
-          # emit "pkg|FuncName" for every real fuzz target in a package dir ($1 = ./dir)
-          # `grep || true`: a changed package with NO fuzz targets (e.g. a production-code
-          # fix touching server/ or a CLI pkg) makes grep match nothing and exit 1, which
-          # under `set -o pipefail` would kill the whole planning step. Tolerate it — such a
-          # package simply contributes no targets.
+          # emit "pkg|FuncName" for every real fuzz target in a package dir ($1 = ./dir).
+          # fuzzplan reads the test files instead of compiling them; a dir it cannot
+          # resolve (a `//go:build ignore` tool, the separate ./cli module) contributes
+          # nothing and is logged. It exits non-zero only on bad usage or a failed
+          # write, which must fail this step.
           emit_all_in_pkg() {
-            # Capture first so a package that cannot be listed at all -- e.g. a dir whose only
-            # .go file is `//go:build ignore` (a dev tool like scripts/fuzzing/autofuzzgen), or
-            # a genuine build error caught loudly by build-and-test/lint -- contributes nothing
-            # instead of killing this planning step under `set -o pipefail`. `local out=$(...)`
-            # would mask the failure via the `local` builtin's own status, so assign separately.
-            local out
-            out="$(go test -list '^Fuzz' "$1" 2>/dev/null)" || return 0
-            printf '%s\n' "$out" | { grep '^Fuzz' || true; } | while IFS= read -r fn; do
-              printf '%s|%s\n' "$1" "$fn"
-            done
+            "$fuzzplan" list "$1"
           }
 
           # list_modules_at ref: the resolved module graph (`go list -m all`) as of
@@ -147,7 +143,7 @@ jobs:
                   # targets defined in this file, intersected with real listed targets
                   defined="$(grep -oE '^func +Fuzz[A-Za-z0-9_]+' "$f" | awk '{print $2}' | sort -u || true)"
                   [ -n "$defined" ] || continue
-                  listed="$(go test -list '^Fuzz' "$d" 2>/dev/null | grep '^Fuzz' | sort -u || true)"
+                  listed="$("$fuzzplan" list "$d" | cut -d'|' -f2 | sort -u)"
                   comm -12 <(printf '%s\n' "$defined") <(printf '%s\n' "$listed") \
                     | while IFS= read -r fn; do printf '%s|%s\n' "$d" "$fn"; done
                 done >> "$plan_file"
@@ -201,13 +197,8 @@ jobs:
           PLAN: ${{ steps.plan.outputs.plan }}
         run: |
           set -euo pipefail
-          count="$(printf '%s\n' "$PLAN" | grep -c . || true)"
-          n=$(( count < FUZZ_SHARDS ? count : FUZZ_SHARDS ))
-          if [ "$n" -lt 1 ]; then echo 'shards=[]' >> "$GITHUB_OUTPUT"; exit 0; fi
-          shards="$(printf '%s\n' "$PLAN" | grep . | jq -R -s -c --argjson n "$n" '
-            split("\n") | map(select(length > 0)) | to_entries
-            | group_by(.key % $n)
-            | map({id: (.[0].key % $n), targets: (map(.value) | join(" "))})')"
+          shards="$(printf '%s\n' "$PLAN" | "$RUNNER_TEMP/fuzzplan" pack \
+            -shards "$FUZZ_SHARDS" -max-shard-seconds "$FUZZ_MAX_SHARD_SECONDS")"
           echo "Shards: $shards"
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
 
