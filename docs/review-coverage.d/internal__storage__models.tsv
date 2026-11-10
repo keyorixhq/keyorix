@@ -1,0 +1,1 @@
+internal/storage/models	full-adversarial	baseline-2026-08-07/baseline/storage-models-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/storage-models-findings.json — HIGH: cross-project group-share tenant-isolation bug in CheckGroupPermissions/GetUserGroups, full review_notes tracing model->core->store	-

@@ -1,0 +1,1 @@
+internal/docsdrift/demo_cli_commands_test.go	demo/**/*.sh,demo/**/*.md,docs/cli-reference.md,internal/docsdrift/testdata/demo_cli_exemptions.tsv,!**	keyorix commands and flags in demo/**/*.sh and demo/**/*.md against docs/cli-reference.md, plus its exemption table; nothing else is walked

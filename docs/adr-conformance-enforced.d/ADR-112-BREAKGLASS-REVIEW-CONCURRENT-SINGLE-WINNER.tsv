@@ -1,0 +1,1 @@
+ADR-112-BREAKGLASS-REVIEW-CONCURRENT-SINGLE-WINNER	./internal/core	TestReviewBreakGlassActivation_Postgres_ConcurrentReviewsExactlyOneWins	pg-gated	pending	2461	under real concurrent Postgres connections, exactly one of N racing review submissions for the same activation wins

@@ -1,0 +1,1 @@
+internal/core/guards/clock_seam_guard_test.go	operator/**/*.go	walks every non-test .go file; skips web/.github/... not operator/

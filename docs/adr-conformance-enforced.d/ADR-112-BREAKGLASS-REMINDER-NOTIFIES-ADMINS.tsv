@@ -1,0 +1,1 @@
+ADR-112-BREAKGLASS-REMINDER-NOTIFIES-ADMINS	./internal/core	TestRunBreakGlassReviewReminder_NotifiesAdmins	default-ci	pending	2461	the periodic overdue-review reminder actively notifies each affected project's approver-role admins, not only a log line and an audit event -- #2461 round 2, Andrei's decision item (b)

@@ -1,0 +1,1 @@
+server/admin/quickstart_commands_test.go	QUICK_START.md,INSTALL-WITH-AI.md,docs/install/offline-install.sh,!server/**/*.md	quick-start commands; server/entrypoint.sh is read, server/ Markdown is not

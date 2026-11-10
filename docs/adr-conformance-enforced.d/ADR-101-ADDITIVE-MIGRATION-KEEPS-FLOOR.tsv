@@ -1,0 +1,1 @@
+ADR-101-ADDITIVE-MIGRATION-KEEPS-FLOOR	./internal/storage	TestSchemaEpochFloor_AdditiveMigrationDoesNotRaiseFloor	default-ci	pending	2502	an additive-safe migration does not raise the compatibility floor, and a breaking one does

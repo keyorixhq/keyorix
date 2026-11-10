@@ -1,0 +1,1 @@
+internal/backupfmt	targeted	Session P pre-release review (2026-09-29)	backup v2 archive format (writer, manifest, extraction, transactional load): reviewed by Session P before release; found and fixed a CRITICAL tar-slip in ExtractArchive (fix + tarslip_test.go land in #2270, later in this same PR chain); json:"-" field-drop fixed in #2288	-

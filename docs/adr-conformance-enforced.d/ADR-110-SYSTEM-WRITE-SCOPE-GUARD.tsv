@@ -1,0 +1,1 @@
+ADR-110-SYSTEM-WRITE-SCOPE-GUARD	./server/http	TestSystemWriteRouteAllowlistCoversEveryGateSite	default-ci	pending	-	ADR-102's open system.write blast-radius decision is resolved by ADR-110 (deletion + reviewed per-route scope); every system.write gate site must appear in the reviewed allowlist, replacing ADR-102's age-based tripwire

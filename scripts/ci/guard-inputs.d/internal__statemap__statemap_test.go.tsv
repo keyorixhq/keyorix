@@ -1,0 +1,1 @@
+internal/statemap/statemap_test.go	!cli/**/*.md,!internal/**/*.md	"cli"/"internal" name Go packages here; no Markdown is read

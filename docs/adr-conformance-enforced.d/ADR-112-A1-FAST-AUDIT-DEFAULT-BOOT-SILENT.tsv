@@ -1,0 +1,1 @@
+ADR-112-A1-FAST-AUDIT-DEFAULT-BOOT-SILENT	./server	TestAuditDurability_SQLiteDefaultBootIsStrict	default-ci	pending	-	a default SQLite install boots strict and logs one INFO line saying so, admin validate reports strict, the deprecated key is never mentioned, no per-start audit-durability event is written, and verify-audit is VALID

@@ -1,0 +1,1 @@
+deploy/demo-hosted/demo_hosted_test.go	deploy/demo-hosted/**,README.md,scripts/demo/seed-demo.sh,!**	walks only its own kit directory (".") plus the root README and the demo seed script

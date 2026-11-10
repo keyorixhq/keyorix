@@ -1,0 +1,1 @@
+internal/testutil/pgpriv/replication_role_guard_test.go	!operator/**,!scripts/**/*.txt	repo-root walk reading only *_test.go files; skips nested modules (go.mod) and testdata

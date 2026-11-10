@@ -1,0 +1,1 @@
+internal/core/guards/ledger_fragments_test.go	!README.md	fixtures in t.TempDir() only; "README.md" is a fixture name

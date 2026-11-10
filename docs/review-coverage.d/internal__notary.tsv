@@ -1,0 +1,1 @@
+internal/notary	full-adversarial	baseline-2026-08-07/baseline/notary-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/notary-findings.json — HIGH: Anchor() panics on malformed TSA response, empirically reproduced via go test -overlay with an 11-byte payload; internal/notary/notary_s17_test.go covers the sibling VerifyReceipt recover()	-

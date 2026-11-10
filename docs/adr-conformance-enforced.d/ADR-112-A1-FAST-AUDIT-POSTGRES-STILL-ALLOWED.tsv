@@ -1,0 +1,1 @@
+ADR-112-A1-FAST-AUDIT-POSTGRES-STILL-ALLOWED	./internal/config	TestConfigValidate_AllowsBothAuditDurabilityLevelsOnPostgres	default-ci	pending	-	both audit_durability levels validate on postgres/postgresql, so a mutation that rejected standard unconditionally cannot hide behind the SQLite refusal test

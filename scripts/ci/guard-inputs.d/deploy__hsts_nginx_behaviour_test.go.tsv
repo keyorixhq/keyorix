@@ -1,0 +1,1 @@
+deploy/hsts_nginx_behaviour_test.go	web/nginx.conf,web/nginx-hsts.conf,web/keyorix-backend.conf,web/docker-entrypoint.d/**	nginx configs and the HSTS entrypoint hook (runs nginx in Docker when available)

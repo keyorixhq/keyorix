@@ -1,0 +1,1 @@
+cmd/keyorix-k8s-sync	full-adversarial	baseline-2026-08-07 mini-batch 4 (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/cmd-k8s-sync-findings.json — well-evidenced zero: env-var-only credentials, real CA-pinned in-cluster TLS, distroless non-root	-

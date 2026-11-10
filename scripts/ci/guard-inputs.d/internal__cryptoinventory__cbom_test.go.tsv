@@ -1,0 +1,1 @@
+internal/cryptoinventory/cbom_test.go	internal/cryptoinventory/testdata/**,!LICENSE	the vendored CycloneDX schema under its own testdata/cyclonedx-1.6 (with its LICENSE); the root LICENSE is not read

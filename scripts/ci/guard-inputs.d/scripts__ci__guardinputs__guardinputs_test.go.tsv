@@ -1,0 +1,1 @@
+scripts/ci/guardinputs/guardinputs_test.go	**	the map checker reads every test file, ci.yml and the tracked file list (a deleted or renamed input makes a row dead), so it runs on every change

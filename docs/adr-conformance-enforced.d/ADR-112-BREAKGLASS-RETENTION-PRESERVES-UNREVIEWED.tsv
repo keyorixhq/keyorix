@@ -1,0 +1,1 @@
+ADR-112-BREAKGLASS-RETENTION-PRESERVES-UNREVIEWED	./internal/storage/store	TestDeleteExpiredBreakGlassBefore_SkipsUnreviewed	default-ci	pending	2461	retention purge never hard-deletes a concluded, unreviewed activation no matter how old, so the posture deviation it represents cannot be silently erased by the passage of time before anyone reviews it

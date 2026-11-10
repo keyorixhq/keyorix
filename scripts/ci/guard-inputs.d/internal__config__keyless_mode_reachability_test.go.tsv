@@ -1,0 +1,1 @@
+internal/config/keyless_mode_reachability_test.go	!operator/**	skips cli/ and operator/

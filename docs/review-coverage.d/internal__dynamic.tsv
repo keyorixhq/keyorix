@@ -1,0 +1,1 @@
+internal/dynamic	full-adversarial	REMEDIATION-STATUS.md G48 (PR #1442, DNS-rebinding SSRF fix)	internal/dynamic/dynamic_s2_test.go:TestPostgresEngine_Issue_DialTimeRefusesDNSRebind, TestMySQLEngine_Issue_DialTimeRefusesDNSRebind; keyorix-private/adversarial-review/REMEDIATION-STATUS.md:119; also findings-core/core-dynamic-secrets.json covers awssts.go (medium, open)	-

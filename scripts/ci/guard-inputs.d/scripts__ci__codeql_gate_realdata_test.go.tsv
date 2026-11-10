@@ -1,0 +1,1 @@
+scripts/ci/codeql_gate_realdata_test.go	scripts/ci/codeql-gate.sh,scripts/ci/testdata/codeql/**,!demo/app.js	the gate script against recorded SARIF in testdata/codeql; demo/app.js is a finding location inside the recorded data, not a file read

@@ -1,0 +1,1 @@
+internal/threatmodelcheck/evidence_test.go	**/*.go,**/*.md,**/*.tsv,**/*.yaml,**/*.yml,**/*.sh,**/*.sql,**/*.proto,**/*.json,**/*.toml	threat-model evidence: every cited path (pathExts) must exist, every cited test must exist in a *_test.go

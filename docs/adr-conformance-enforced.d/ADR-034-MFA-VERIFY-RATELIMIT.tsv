@@ -1,0 +1,1 @@
+ADR-034-MFA-VERIFY-RATELIMIT	./server/http/handlers	TestVerifyMFA_RateLimited_S13B	default-ci	pre-existing	-	/auth/mfa/verify shares the cluster-wide DB-backed login rate limiter (ADR-040), not unlimited

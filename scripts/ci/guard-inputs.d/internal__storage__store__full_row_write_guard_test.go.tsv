@@ -1,0 +1,1 @@
+internal/storage/store/full_row_write_guard_test.go	docs/full-row-write-exempt.tsv,!operator/**	exemption ledger; walks internal/storage/store and internal/core only

@@ -1,0 +1,1 @@
+internal/bundle	full-adversarial	baseline-2026-08-07/baseline/bundle-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/bundle-findings.json — MEDIUM: bundle.go:648 readNamedEntry() never checks tar header declared Size before decompressing, pre-auth decompression-bomb DoS against `bundle verify`/`bundle import`; 2 lower findings	-

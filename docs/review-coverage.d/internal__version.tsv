@@ -1,0 +1,1 @@
+internal/version	none	-	keyorix-private/adversarial-review/targets/never-reviewed.txt:9 lists internal/version explicitly as "low risk," never assigned to any review batch; package itself is two build-injected string vars (Version, Commit) with zero logic	main-wiring

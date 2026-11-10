@@ -1,0 +1,1 @@
+internal/core/guards/second_factor_clearer_callers_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files for DeleteMFAForUser / DeleteWebAuthnCredential callers; operator/ included
