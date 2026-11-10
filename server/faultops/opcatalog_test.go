@@ -293,7 +293,7 @@ func createSecretNamedForFuzz(ctx context.Context, w *faultWorld, name string) (
 	return decoded.Data.ID, nil
 }
 
-// addProjectMemberForFuzz adds userID to projectID as a "viewer" (seeded by
+// addProjectMemberForFuzz adds userID to projectID as a "project_viewer" (seeded by
 // every BootstrapSystem call, see defaultRoles in internal/core/auth_bootstrap.go)
 // — setup for operations whose core function requires the target/recipient to
 // be a live project member (secret ACL grant, secret share) before it will
@@ -301,7 +301,7 @@ func createSecretNamedForFuzz(ctx context.Context, w *faultWorld, name string) (
 // other callers rely on.
 func addProjectMemberForFuzz(ctx context.Context, w *faultWorld, projectID, userID uint) error {
 	st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/members", projectID), map[string]any{
-		"user_id": userID, "role": "viewer",
+		"user_id": userID, "role": "project_viewer",
 	})
 	if err != nil {
 		return err
@@ -2256,7 +2256,7 @@ var opCatalog = []operation{
 		Key: "REST POST /api/v1/projects/{id}/invitations",
 		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/invitations", map[string]any{
-				"email": "fuzz-b15-invitee@example.com", "role": "viewer",
+				"email": "fuzz-b15-invitee@example.com", "role": "project_viewer",
 			})
 			if err != nil {
 				return opResult{}, err
@@ -2269,7 +2269,7 @@ var opCatalog = []operation{
 		Key: "REST DELETE /api/v1/projects/{id}/invitations/{invitationId}",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/invitations", map[string]any{
-				"email": "fuzz-b15-revoke@example.com", "role": "viewer",
+				"email": "fuzz-b15-revoke@example.com", "role": "project_viewer",
 			})
 			if err != nil {
 				return nil, err
@@ -2316,7 +2316,7 @@ var opCatalog = []operation{
 		Key: "REST POST /api/v1/projects/{id}/access-requests",
 		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
-				"suggested_role": "viewer", "reason": "fuzz",
+				"suggested_role": "project_viewer", "reason": "fuzz",
 			})
 			if err != nil {
 				return opResult{}, err
@@ -2331,7 +2331,7 @@ var opCatalog = []operation{
 		Key: "REST POST /api/v1/projects/{id}/access-requests/{requestId}/withdraw",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
-				"suggested_role": "viewer", "reason": "fuzz withdraw",
+				"suggested_role": "project_viewer", "reason": "fuzz withdraw",
 			})
 			if err != nil {
 				return nil, err
@@ -2376,7 +2376,7 @@ var opCatalog = []operation{
 				return nil, err
 			}
 			st, body, err := httpJSONAs(ctx, w, token, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
-				"suggested_role": "viewer", "reason": "fuzz resolve",
+				"suggested_role": "project_viewer", "reason": "fuzz resolve",
 			})
 			if err != nil {
 				return nil, err
@@ -2399,7 +2399,7 @@ var opCatalog = []operation{
 		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
 			reqID := state.(uint)
 			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/projects/1/access-requests/%d", reqID), map[string]any{
-				"action": "approve", "granted_role": "viewer",
+				"action": "approve", "granted_role": "project_viewer",
 			})
 			if err != nil {
 				return opResult{}, err
@@ -2861,7 +2861,7 @@ var opCatalog = []operation{
 		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
 			userID := state.(uint)
 			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/projects/1/members/%d", userID), map[string]any{
-				"role": "viewer",
+				"role": "project_viewer",
 			})
 			if err != nil {
 				return opResult{}, err
@@ -2880,7 +2880,7 @@ var opCatalog = []operation{
 		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
 			userID := state.(uint)
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/memberships", map[string]any{
-				"user_id": userID, "role": "viewer",
+				"user_id": userID, "role": "project_viewer",
 			})
 			if err != nil {
 				return opResult{}, err
@@ -2899,7 +2899,7 @@ var opCatalog = []operation{
 				return nil, err
 			}
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/memberships", map[string]any{
-				"user_id": userID, "role": "viewer",
+				"user_id": userID, "role": "project_viewer",
 			})
 			if err != nil {
 				return nil, err
@@ -4121,7 +4121,7 @@ var opCatalog = []operation{
 				return nil, err
 			}
 			st, body, err := httpJSONAs(ctx, w, token, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
-				"suggested_role": "viewer", "reason": "fuzz bulk approve",
+				"suggested_role": "project_viewer", "reason": "fuzz bulk approve",
 			})
 			if err != nil {
 				return nil, err
@@ -4180,7 +4180,7 @@ var opCatalog = []operation{
 		Key: "REST POST /api/v1/access-requests/bulk-reject",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
-				"suggested_role": "viewer", "reason": "fuzz bulk reject",
+				"suggested_role": "project_viewer", "reason": "fuzz bulk reject",
 			})
 			if err != nil {
 				return nil, err
@@ -4251,7 +4251,7 @@ var opCatalog = []operation{
 		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
 			userID := state.(uint)
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/members", map[string]any{
-				"user_id": userID, "role": "viewer",
+				"user_id": userID, "role": "project_viewer",
 			})
 			if err != nil {
 				return opResult{}, err

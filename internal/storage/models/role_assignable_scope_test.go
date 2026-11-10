@@ -9,7 +9,7 @@ func TestRoleBeforeCreate_FillsOnlyAnUnsetAssignableScope(t *testing.T) {
 	}{
 		{Role{Name: "system_admin"}, RoleAssignableGlobal},
 		{Role{Name: "project_viewer"}, RoleAssignableProject},
-		{Role{Name: "viewer"}, RoleAssignableAny},
+		{Role{Name: "viewer"}, RoleAssignableGlobal},
 		{Role{Name: "deployers"}, RoleAssignableProject}, // a custom role: fail closed
 		{Role{Name: "deployers", AssignableScope: RoleAssignableAny}, RoleAssignableAny},
 		{Role{Name: "system_admin", AssignableScope: RoleAssignableAny}, RoleAssignableAny}, // explicit wins

@@ -1,11 +1,13 @@
 - **INV-CORE-role-grant-scope-valid-for-role** No role grant (user, group or machine identity)
   is written at a scope its role's `AssignableScope` does not allow: a `project` role
   (`project_*` built-ins, and every new custom role by default) never at the global scope
-  (project 0), a `global` role (`system_*`, `alert_operator`) never at a project, and an
+  (project 0), a `global` role (`system_*`, `alert_operator`, and since #3605 the legacy
+  `admin`/`editor`/`viewer`/`auditor`/`super_admin`) never at a project, and an
   environment scope always names its own project's environment (`{0, X}` and `{P, env of Q}`
   are refused). The role's stored scope decides (`models.EffectiveRoleAssignableScope`), never
   its name; built-in scopes come from one table (`models.BuiltinRoleAssignableScopes`), read by
-  first-boot seeding and the one-time epoch-7 backfill (existing custom roles = `any`).
+  first-boot seeding and the one-time epoch-7 backfill (existing custom roles = `any`); the
+  legacy roles of an existing database are moved to `global` by `tightenLegacyRolesToGlobal`.
   Enforced in core at every storage grant write (`requireScopeValidForRole`,
   `role_scope_guard.go`), so every transport is covered; every handler/RPC that calls a core
   method able to return the refusal maps `ErrRoleScopeInvalid` to HTTP 400 / gRPC
@@ -16,7 +18,8 @@
   `TestRoleService_UpdateRole_ConcurrentNarrowingIsKept`,
   `TestUpdateRole_KeepScopeSurvivesANarrowingBetweenCommits`). Grants written before #3546 are not changed; the startup notice
   (`server/wire_global_project_roles.go`) lists every grant outside its role's scope and every
-  pending invitation that can no longer be accepted. Why: #3546 (DEMO-WALK-4: a group grant of
+  pending invitation that can no longer be accepted, and `admin validate --posture` lists the
+  per-project legacy grants with their replacement (`TestExistingLegacyProjectGrantsKeepWorkingAndAreListed`). Why: #3546 (DEMO-WALK-4: a group grant of
   project_developer with no project_id applied in every project).
   Guard: `role_scope_guard_registry_test.go` `TestEveryRoleGrantWriteChecksRoleScope` (AST:
   every function calling a storage grant writer calls the check or has a reasoned exemption;

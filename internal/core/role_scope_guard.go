@@ -86,6 +86,10 @@ func validateRoleScope(role *models.Role, scope Scope) error {
 		}
 	case models.RoleAssignableGlobal:
 		if scope.ProjectID != 0 {
+			if replacement, ok := models.LegacyRoleProjectReplacement(role.Name); ok {
+				return &RoleScopeError{ClientMessage: fmt.Sprintf(
+					"role %s is install-wide and can no longer be granted on a project; grant %s on the project instead", role.Name, replacement)}
+			}
 			return &RoleScopeError{ClientMessage: fmt.Sprintf(
 				"role %s is install-wide; grant it without project_id and environment_id", role.Name)}
 		}

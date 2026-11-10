@@ -152,7 +152,7 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 3, Name: "p3"}).Error) // a scoped grant needs a live projects row (#2795)
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 	seedRolesAssignGrant(t, db, 5, 100, 100, core.Scope{ProjectID: 3})
@@ -182,7 +182,7 @@ func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
 		&models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{}, &models.User{},
 	))
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 8, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
 	// #169: AssignPermissionToRole now requires the actor already hold the permission
 	// being bundled — make actor 5 a global admin so the bypass applies.

@@ -202,7 +202,7 @@ func TestAssignMachineRole_Success(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	machine := &models.MachineIdentity{ID: 1, ProjectID: 5, Name: "ci-runner", State: MachineActive}
-	role := &models.Role{ID: 2, Name: "viewer"} // non-admin role → requireAuthorityForRole returns nil
+	role := &models.Role{ID: 2, Name: "project_viewer"} // non-admin role → requireAuthorityForRole returns nil
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(machine, nil)
 	ms.On("GetRole", mock.Anything, uint(2)).Return(role, nil)
 	// ListSoDPolicies: smart stub returns nil if not mocked.

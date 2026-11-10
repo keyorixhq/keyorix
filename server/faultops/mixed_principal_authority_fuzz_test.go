@@ -358,7 +358,7 @@ func buildM1Principals(ctx context.Context, w *faultWorld, mw *m1World) ([]princ
 	if err != nil {
 		return nil, err
 	}
-	editorRole, err := w.faulty.GetRoleByName(ctx, "editor")
+	editorRole, err := w.faulty.GetRoleByName(ctx, "project_developer")
 	if err != nil {
 		return nil, fmt.Errorf("GetRoleByName(editor): %w", err)
 	}

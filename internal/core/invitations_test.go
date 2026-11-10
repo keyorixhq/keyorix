@@ -316,23 +316,23 @@ func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
 	c := newInviteCore(store)
 	ctx := context.Background()
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
-		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "admin", State: AccessRequestPending,
+		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_admin", State: AccessRequestPending,
 	}, nil)
 	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	stubAdminRoleLookups(store, ctx)
-	// Approver 9 holds the admin role (id 2) at the project.
+	// Approver 9 holds an admin-tier role (id 2) at the project.
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{2}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{2}).Return(true, nil)
 	store.On("GetRole", mock.Anything, uint(2)).Return(&models.Role{ID: 2, Name: "test-role-2", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
-	store.On("AssignRole", ctx, uint(2), uint(2), storage.Scope{ProjectID: 1}).Return(nil)
+	store.On("AssignRole", ctx, uint(2), uint(4), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 	store.On("ListAccessRequestApprovals", ctx, uint(3)).Return([]*models.AccessRequestApproval{}, nil)
 	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
 	allowNotifications(store)
 
-	out, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "admin", 0)
+	out, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "project_admin", 0)
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestApproved, out.State)
 }

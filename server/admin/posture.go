@@ -129,10 +129,11 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 			return err
 		}
 		collectBreakGlassReviewPosture(ctx, cfg, coreService, report)
+		collectLegacyRoleGrantsPosture(ctx, cfg, coreService, report)
 		return nil
 	})
 	if dbErr != nil {
-		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the require-MFA, SSO-only, admin-MFA and break-glass review checks and the enable_file_permission_check grace-period check were NOT evaluated: %v", dbErr))
+		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the require-MFA, SSO-only, admin-MFA, break-glass review and legacy role grant checks and the enable_file_permission_check grace-period check were NOT evaluated: %v", dbErr))
 	}
 	collectInsecureSettingsPosture(cfg, explicit, report)
 	collectStartupValidationStatePosture(cfg, fileGraceKnown, fileEnforcedSince, report)

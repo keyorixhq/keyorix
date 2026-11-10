@@ -73,6 +73,30 @@ func alterRoleFlags(db *gorm.DB, exec func(string) error) error {
 			return fmt.Errorf("failed to add roles.assignable_scope: %w", err)
 		}
 	}
+	return tightenLegacyRolesToGlobal(db)
+}
+
+// tightenLegacyRolesToGlobal moves the legacy built-in roles of a database whose
+// assignable_scope column already exists (written as any by the epoch-7 backfill)
+// to global (#3605). Without it only a fresh install would refuse them at a
+// project: the backfill is gated on the column's absence and role seeding runs at
+// first boot only.
+//
+// Idempotent and run on every boot, so a backup restored from before this change
+// is tightened too. A built-in role's scope cannot be changed through the API
+// (core.UpdateRole refuses built-ins), so this never undoes an admin's choice. It
+// changes no grant. No schema change, so no epoch bump (ADR-101): an older binary
+// reads the same column and refuses the same grants.
+func tightenLegacyRolesToGlobal(db *gorm.DB) error {
+	if !tableExists(db, "roles") || !columnExists(db, "roles", "assignable_scope") {
+		return nil
+	}
+	err := db.Model(&models.Role{}).
+		Where("name IN ? AND assignable_scope <> ?", models.LegacyRoleNames(), models.RoleAssignableGlobal).
+		Update("assignable_scope", models.RoleAssignableGlobal).Error
+	if err != nil {
+		return fmt.Errorf("failed to tighten the legacy roles' assignable scope: %w", err)
+	}
 	return nil
 }
 
