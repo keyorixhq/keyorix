@@ -118,11 +118,6 @@ const (
 
 var sweepWaivers = []sweepWaiver{
 	{
-		ID: "setup-encoded-slash", Route: "GET /auth/setup/{token}", Label: "token-h", Surface: "log",
-		Kind: sweepWaiverOpenDefect, Ref: "#4045",
-		Why: "redaction stops at an encoded slash; a server-minted token is hex and cannot contain one. Remove when #4045 is fixed.",
-	},
-	{
 		ID: "channel-create-url", Route: "POST /api/v1/notification-channels", Label: "stored-webhook", Surface: "resp-body", Principal: "admin",
 		Kind: sweepWaiverContract, Ref: "#3425",
 		Why: "the create response is the one place the full URL is returned to the admin who supplied it; every other response elides it.",
