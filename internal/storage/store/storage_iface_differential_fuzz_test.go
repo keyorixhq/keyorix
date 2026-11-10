@@ -15,6 +15,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -293,8 +294,14 @@ type ifaceT interface {
 type ifaceSide struct {
 	label string
 	db    *gorm.DB
-	ls    ifaceStore
-	h     *ifaceHandles
+	// lockDB is the dedicated pool WithNamedLock pins its advisory-lock session
+	// on (postgres only, via SetNamedLockDB), kept off the request pool db so a
+	// pinned lock session cannot starve the nested query of a connection — see
+	// newIfaceWorld for why the request pool alone is not enough. nil on sqlite,
+	// whose WithNamedLock uses an in-process mutex and pins no connection.
+	lockDB *sql.DB
+	ls     ifaceStore
+	h      *ifaceHandles
 }
 
 // ifaceWorld is the migrated pair of backends a target runs against. pg is nil for the
@@ -352,16 +359,42 @@ func newIfaceWorld(tb testing.TB, withPG bool) *ifaceWorld {
 		if err != nil {
 			tb.Fatalf("open pg clone: %v", err)
 		}
+		// The request pool must hold more than one connection. WithNamedLock
+		// (DeleteEnvironment, DeleteRole, ...) pins one connection for its
+		// advisory-lock session for the whole critical section, then runs the
+		// method's own queries, which need a connection of their own; at
+		// SetMaxOpenConns(1) the nested query waits forever for the single
+		// connection the lock session holds (NAMEDLOCK-POOL-1). Production never
+		// hits this because it gives WithNamedLock a pool of its own
+		// (SetNamedLockDB); the harness mirrors that below and keeps the request
+		// pool small but >1. sqlite stays at one connection (modernc single
+		// writer); its WithNamedLock pins no connection.
 		if p, e := pdb.DB(); e == nil {
-			p.SetMaxOpenConns(1)
+			p.SetMaxOpenConns(4)
+			p.SetMaxIdleConns(4)
 			tb.Cleanup(func() { _ = p.Close() })
 		}
+		// A separate pool for the advisory-lock sessions, as the storage factory
+		// wires in production (factory_postgres.go, NamedLockPoolSize). Pinned
+		// lock sessions never come off the request pool, so no hold-and-wait
+		// between a lock session and the nested queries it guards.
+		lockGorm, lerr := gorm.Open(postgres.Open(clone), &gorm.Config{Logger: logger.Discard, SkipDefaultTransaction: true})
+		if lerr != nil {
+			tb.Fatalf("open pg named-lock pool: %v", lerr)
+		}
+		lockSQL, lerr := lockGorm.DB()
+		if lerr != nil {
+			tb.Fatalf("pg named-lock pool handle: %v", lerr)
+		}
+		lockSQL.SetMaxOpenConns(8) // matches production NamedLockPoolSize
+		lockSQL.SetMaxIdleConns(2)
+		tb.Cleanup(func() { _ = lockSQL.Close() })
 		var coll, ctype string
 		if err := pdb.Raw("SELECT datcollate, datctype FROM pg_database WHERE datname = current_database()").Row().Scan(&coll, &ctype); err != nil {
 			tb.Fatalf("read pg collation: %v", err)
 		}
 		w.pgCollateC, w.pgCtypeC = coll == "C" || coll == "POSIX", ctype == "C" || ctype == "POSIX"
-		w.p = &ifaceSide{label: "postgres", db: pdb}
+		w.p = &ifaceSide{label: "postgres", db: pdb, lockDB: lockSQL}
 	}
 	if w.wipeTables, err = ifaceTablesToWipe(sdb, pdb); err != nil {
 		tb.Fatalf("list wipe tables: %v", err)
@@ -470,7 +503,13 @@ func (w *ifaceWorld) reset(t ifaceT, wrap func(side string, ls ifaceStore) iface
 			t.Fatalf("HARNESS INFRASTRUCTURE FAULT (not a backend divergence): reset %s: %v", s.label, err)
 		}
 		w.infraFaults = 0
-		var ls ifaceStore = store.NewLocalStorage(s.db)
+		concrete := store.NewLocalStorage(s.db)
+		if s.lockDB != nil {
+			// Postgres: advisory-lock sessions come off their own pool, not the
+			// request pool, so a pinned lock never starves a nested query.
+			concrete.SetNamedLockDB(s.lockDB)
+		}
+		var ls ifaceStore = concrete
 		if wrap != nil {
 			ls = wrap(s.label, ls)
 		}
