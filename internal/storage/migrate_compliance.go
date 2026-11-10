@@ -39,6 +39,12 @@ func createBreakGlassActivations(db *gorm.DB, breakGlassExists bool) error {
 			}
 		}
 	}
+	// ReviewedBy is `gorm:"index"`, but the column loop above adds only the
+	// column: a database first installed before v0.96 never got the index a
+	// fresh install's AutoMigrate creates (#4091). Idempotent on both.
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_break_glass_activations_reviewed_by ON break_glass_activations (reviewed_by)").Error; err != nil {
+		return fmt.Errorf("failed to index break_glass_activations.reviewed_by: %w", err)
+	}
 	// Enforce at most one ACTIVE break-glass activation per (project, user), even
 	// under a race — see ensureBreakGlassActiveIndex. Runs whether the table was just
 	// created above or already existed on an older DB (additive, idempotent).
