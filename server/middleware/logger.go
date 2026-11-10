@@ -20,7 +20,16 @@ import (
 // …/invite/<tok>, …/password-reset/<tok>) so a future look-alike route is
 // covered too, and is a no-op for paths that don't match (e.g. the no-token
 // POST /auth/password-reset).
-var sensitiveURIPattern = regexp.MustCompile(`(?i)^(/(?:api/v1/)?auth/(?:setup|invite|password-reset)/)[^/?]+`)
+//
+// The credential is everything after the prefix up to the query string, not just
+// up to the next '/': none of these routes has a sub-path, and the access log
+// sees the percent-DECODED path, in which an encoded separator (%2F) inside the
+// token has become a '/'. Stopping there logged the tail of the token (#4045).
+var sensitiveURIPattern = regexp.MustCompile(`(?i)^(/(?:api/v1/)?auth/(?:setup|invite|password-reset)/)[^?]+`)
+
+// sensitivePathPattern is sensitiveURIPattern for a bare path, where a '?' is a
+// character of the (decoded) token and not the start of a query string.
+var sensitivePathPattern = regexp.MustCompile(`(?is)^(/(?:api/v1/)?auth/(?:setup|invite|password-reset)/).+`)
 
 // sensitiveQueryPattern matches paths whose query-string parameters carry secret
 // identifiers — /secrets/value and /secrets/by-name accept a ?ref= or ?name=
@@ -65,10 +74,13 @@ func redactSensitiveURI(uri string) string {
 // left RequestURI's raw, still-encoded form unmatched by sensitiveURIPattern —
 // a redaction bypass. Matching against the decoded path closes it.
 func decodedRequestURI(r *http.Request) string {
+	// The path is redacted before the query is appended: a %3F in a token decodes
+	// to '?', which redactSensitiveURI would otherwise take for the query start.
+	path := sensitivePathPattern.ReplaceAllString(r.URL.Path, "${1}[REDACTED]")
 	if r.URL.RawQuery == "" {
-		return r.URL.Path
+		return path
 	}
-	return r.URL.Path + "?" + r.URL.RawQuery
+	return path + "?" + r.URL.RawQuery
 }
 
 // logSafeRequestURI is the single canonicalizing function fix_shape (#G29)

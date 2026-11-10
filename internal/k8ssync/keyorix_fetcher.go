@@ -474,10 +474,21 @@ func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out any) erro
 		Data json.RawMessage `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&env); err != nil {
+		var syn *json.SyntaxError
+		var typ *json.UnmarshalTypeError
+		if errors.As(err, &syn) || errors.As(err, &typ) {
+			return errors.New("decode response: malformed JSON")
+		}
 		return fmt.Errorf("decode response: %w", err)
 	}
 	if env.Data == nil {
 		return fmt.Errorf("empty data in response")
 	}
-	return json.Unmarshal(env.Data, out)
+	// The decoders' own error texts embed the offending input (time.Time reports
+	// `parsing time "<value>"`, json reports the bad number or character), so the
+	// server's bytes would reach the error and the logs. Report a fixed message (#4062).
+	if err := json.Unmarshal(env.Data, out); err != nil {
+		return errors.New("decode response: data does not have the expected shape")
+	}
+	return nil
 }

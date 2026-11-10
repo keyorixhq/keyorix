@@ -36,6 +36,16 @@ func TestCanarySweepWaiver_OnlyTheAccessRecordURI(t *testing.T) {
 	s := newSweep(t, 7)
 	defer s.close()
 
+	// No production row waives a log hit any more (the setup-encoded-slash row
+	// was removed with #4045's fix), so install the row this test exercises for
+	// its duration only.
+	origWaivers := sweepWaivers
+	defer func() { sweepWaivers = origWaivers }()
+	sweepWaivers = append(append([]sweepWaiver(nil), origWaivers...), sweepWaiver{
+		ID: "test-log-row", Route: "GET /auth/setup/{token}", Label: "token-h", Surface: "log",
+		Kind: sweepWaiverOpenDefect, Ref: "#4045", Why: "test-only row: exercises the access-record URI matching.",
+	})
+
 	const route, addr, status = "GET /auth/setup/{token}", "198.18.0.9:4242", 404
 	c := s.byLabel["token-h"]
 	req := sweepReq{Method: "GET", Route: route, Target: "/auth/setup/" + url.PathEscape(c.Raw), Principal: "anon", RemoteAddr: addr}
