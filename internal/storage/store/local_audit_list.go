@@ -250,7 +250,22 @@ func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 		// starts with "<resource_type>." so "secret" catches "secret.read",
 		// "secret.created", etc. escapeLIKE prevents a caller-supplied
 		// resource_type containing % or _ from matching unintended event types.
-		q = q.Where(`event_type LIKE ? ESCAPE '\'`, escapeLIKE(*f.ResourceType)+".%")
+		// LIKE folds ASCII case on SQLite and nothing on Postgres, so the term
+		// is lowercased first (#4090): event types are lowercase ASCII.
+		q = q.Where(`event_type LIKE ? ESCAPE '\'`, escapeLIKE(lowerASCII(*f.ResourceType))+".%")
 	}
 	return q
+}
+
+// lowerASCII folds A-Z only, the folding SQLite's LIKE applies. strings.ToLower
+// would also map non-ASCII letters onto ASCII ones (the Kelvin sign onto "k"),
+// widening the match on both backends.
+func lowerASCII(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
