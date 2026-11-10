@@ -1,0 +1,918 @@
+{
+ "source_tag": "v0.96.3",
+ "passphrase": "upgrade-fuzz-passphrase-v1",
+ "generator": "testdata/upgrade-snapshots-pg/generator",
+ "backend": "postgres",
+ "model_seeds": 3,
+ "model_probes": 148,
+ "secrets": [
+  {
+   "id": 1,
+   "project_id": 1,
+   "versions": [
+    {
+     "version": 1,
+     "value": "snapshot-value-v0.96.3-0-v1"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "project_id": 2,
+   "versions": [
+    {
+     "version": 1,
+     "value": "snapshot-value-v0.96.3-1-v1"
+    },
+    {
+     "version": 2,
+     "value": "snapshot-value-v0.96.3-1-v2"
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "project_id": 1,
+   "versions": [
+    {
+     "version": 1,
+     "value": "snapshot-value-v0.96.3-2-v1"
+    },
+    {
+     "version": 2,
+     "value": "snapshot-value-v0.96.3-2-v2"
+    },
+    {
+     "version": 3,
+     "value": "snapshot-value-v0.96.3-2-v3"
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "project_id": 2,
+   "versions": [
+    {
+     "version": 1,
+     "value": "snapshot-value-v0.96.3-3-v1"
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "project_id": 1,
+   "versions": [
+    {
+     "version": 1,
+     "value": "snapshot-value-v0.96.3-4-v1"
+    },
+    {
+     "version": 2,
+     "value": "snapshot-value-v0.96.3-4-v2"
+    }
+   ]
+  }
+ ],
+ "verdicts": [
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 0,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 1,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 2,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 3,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 4,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 5,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 6,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 7,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 0,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 1,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 2,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 3,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 4,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 5,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 6,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 7,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 0,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 1,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 2,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 3,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 4,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 5,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 6,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 7,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 0,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 1,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 2,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 3,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 4,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 5,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 6,
+   "allow": true
+  },
+  {
+   "user": 1,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 7,
+   "allow": true
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 0,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 1,
+   "allow": true
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 2,
+   "allow": true
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 3,
+   "allow": true
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 4,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 5,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 6,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 7,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 0,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 1,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 2,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 3,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 4,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 5,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 6,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 7,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 0,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 1,
+   "allow": true
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 2,
+   "allow": true
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 3,
+   "allow": true
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 4,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 5,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 6,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 7,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 0,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 1,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 2,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 3,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 4,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 5,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 6,
+   "allow": false
+  },
+  {
+   "user": 2,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 7,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 0,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 0,
+   "allow": true
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 1,
+   "allow": true
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 2,
+   "allow": true
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 1,
+   "env": 3,
+   "allow": true
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 4,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 5,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 6,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.read",
+   "project": 2,
+   "env": 7,
+   "allow": true
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 0,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 1,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 2,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 1,
+   "env": 3,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 4,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 5,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 6,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "secrets.write",
+   "project": 2,
+   "env": 7,
+   "allow": true
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 0,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 1,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 2,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 1,
+   "env": 3,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 4,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 5,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 6,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "audit.read",
+   "project": 2,
+   "env": 7,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 0,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 1,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 2,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 1,
+   "env": 3,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 0,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 4,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 5,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 6,
+   "allow": false
+  },
+  {
+   "user": 3,
+   "perm": "roles.assign",
+   "project": 2,
+   "env": 7,
+   "allow": false
+  }
+ ]
+}

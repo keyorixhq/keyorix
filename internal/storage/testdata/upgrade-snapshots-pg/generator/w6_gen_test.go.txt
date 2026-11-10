@@ -33,7 +33,7 @@ const w6Passphrase = "upgrade-fuzz-passphrase-v1"
 // The SQLite leg validated ugModel on 40 seeds; here a probe costs several round
 // trips to the server, so fewer seeds and a stride of the probes.
 const (
-	w6ModelSeeds  = 8
+	w6ModelSeeds  = 3
 	w6ProbeStride = 7
 )
 

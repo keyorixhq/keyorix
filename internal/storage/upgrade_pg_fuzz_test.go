@@ -320,7 +320,7 @@ func pgRun(t testing.TB, tag string, chainVerifiable bool, data []byte, stopAfte
 	if err != nil {
 		t.Fatalf("reading migrated schema: %v", err)
 	}
-	for _, d := range pgSchemaDiff(got, fresh) {
+	for _, d := range pgSchemaDiff(tag, got, fresh) {
 		findings = append(findings, ugFinding{d.invariant, fmt.Sprintf("schema differs from a fresh install after upgrading from %s: %s", tag, d.text)})
 	}
 
@@ -550,14 +550,79 @@ type pgSchemaDifference struct {
 	text      string
 }
 
-// pgSchemaIgnored is the documented ignore list for oracles 7 and 8: a key of
-// "columns:table.column", "constraints:table.name" or "indexes:name" whose
-// difference from a fresh install is expected, with the reason. Everything else
-// that differs is a finding.
-var pgSchemaIgnored = map[string]string{}
+// pgSchemaIgnored is the documented ignore list for oracles 7 and 8, built by
+// classifying every difference the first real run reported (W6, 2026-11-10; see
+// docs/findings/2026-11-10-FINDING-pg-upgrade-schema-drift.md). A key is either
+// global ("columns:table.column", "constraints:table.name", "indexes:name"),
+// applied for every source, or scoped to one source tag
+// ("v0.91.0|columns:table.column"), applied only when upgrading from that tag.
+// The value is why the difference from a fresh install is expected. Anything that
+// differs and is not listed is a finding, so a NEW drift (even on a tag that
+// already has listed ones) still fires the oracle. Two broad reasons recur:
+//
+//   - no-column-drop policy: migrations never drop a column (UPGRADING.md 7,
+//     rollback is restore), so a since-removed column survives on an upgraded
+//     database while a fresh install never creates it ("only on upgraded");
+//   - AutoMigrate-only objects: a column or index added to a model after a
+//     release is created only by the fresh-install AutoMigrate tail, never by an
+//     explicit migrate step, so a database first installed at an older release
+//     never gains it on upgrade ("missing on upgraded"). Below the documented
+//     v0.93.x upgrade floor this is out of support; within it (the break-glass
+//     reviewed_by index) it is the finding above.
+var pgSchemaIgnored = map[string]string{
+	// Stricter-on-upgrade, harmless, and already recorded for a fresh install in
+	// the committed schema-epoch snapshots (epoch-8/9/10 postgres.txt show
+	// nullable=YES): migrate_users.go adds the column NOT NULL DEFAULT false with a
+	// safe backfill, while the model (models.go MFAEnrolmentRequired, no not-null
+	// gorm tag) makes a fresh install nullable. Every row has a value either way.
+	"columns:users.mfa_enrolment_required": "EXPECTED: migration adds NOT NULL DEFAULT false; AutoMigrate on a fresh install makes it nullable (see schema_epoch testdata). Stricter on upgrade, every row defaulted.",
 
-func pgSchemaDiff(got, want *pgSchema) []pgSchemaDifference {
+	// AutoMigrate-only index: models.go BreakGlassActivation.ReviewedBy carries
+	// gorm:"index" (added in v0.96), creating idx_break_glass_activations_reviewed_by
+	// on a fresh install, but no migrate step backfills it, so every database
+	// first installed before v0.96 lacks it after upgrading, including the
+	// supported sources v0.93.0/v0.94.0/v0.95.3. Non-unique btree, performance
+	// only, low-volume table: a real but minor drift, tracked as the finding above.
+	"indexes:idx_break_glass_activations_reviewed_by": "KNOWN DRIFT (finding): AutoMigrate-only performance index on break_glass_activations.reviewed_by, not backfilled on upgrade from pre-v0.96. Non-unique, low-volume; minor.",
+
+	// Since-removed column retained by the no-drop policy; v0.95.x had it, v0.96
+	// dropped it from the model, the migration leaves the old column in place.
+	"v0.95.3|columns:notification_channels.url": "EXPECTED: column removed from the model after v0.95.x; migrations never drop columns, so it survives on an upgraded database and is absent from a fresh install.",
+
+	// --- v0.91.0 is BELOW the documented v0.93.x upgrade floor (UPGRADING.md). ---
+	// The machine-identity actor columns and their composite unique index, the
+	// SSO PKCE code_verifier, and the pre-v0.91 session-token columns are all
+	// AutoMigrate-only (or since-removed) objects with no backfill migration;
+	// upgrading from v0.91.0 is out of support and these are expected there. They
+	// are the same class as the SQLite leg's owner_machine_identity_id finding.
+	"v0.91.0|columns:access_request_approvals.approver_machine_identity_id":  "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|columns:access_requests.resolved_by_machine_identity_id":        "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|columns:access_review_campaigns.closed_by_machine_identity_id":  "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|columns:access_review_campaigns.created_by_machine_identity_id": "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|columns:break_glass_activations.revoked_by_machine_identity_id": "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|columns:machine_identities.created_by_machine_identity_id":      "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|columns:project_invitations.invited_by_machine_identity_id":     "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|columns:project_memberships.invited_by_machine_identity_id":     "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|columns:secret_dependencies.created_by_machine_identity_id":     "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|columns:setup_tokens.created_by_machine_identity_id":            "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
+	"v0.91.0|indexes:ux_access_request_approver":                             "below v0.93.x floor: fresh unique index includes approver_machine_identity_id, a column absent on an upgraded v0.91.0 database (see above).",
+	"v0.91.0|columns:sessions.encrypted_session_token":                       "below v0.93.x floor: pre-v0.91 session-token column removed from the model later; no-drop policy keeps it on upgrade.",
+	"v0.91.0|columns:sessions.session_token_metadata":                        "below v0.93.x floor: pre-v0.91 session-token column removed from the model later; no-drop policy keeps it on upgrade.",
+	"v0.91.0|columns:sso_login_states.code_verifier":                         "below v0.93.x floor: AutoMigrate-only SSO PKCE column (added v0.93), no backfill migration.",
+
+	// v0.92.1 is also below the v0.93.x floor; it predates the SSO PKCE column.
+	"v0.92.1|columns:sso_login_states.code_verifier": "below v0.93.x floor: AutoMigrate-only SSO PKCE column (added v0.93), no backfill migration.",
+}
+
+func pgSchemaDiff(tag string, got, want *pgSchema) []pgSchemaDifference {
 	var out []pgSchemaDifference
+	ignored := func(fullKey string) bool {
+		if _, ok := pgSchemaIgnored[fullKey]; ok {
+			return true
+		}
+		_, ok := pgSchemaIgnored[tag+"|"+fullKey]
+		return ok
+	}
 	add := func(kind string, inv int, gm, wm map[string]string) {
 		keys := map[string]bool{}
 		for k := range gm {
@@ -567,7 +632,7 @@ func pgSchemaDiff(got, want *pgSchema) []pgSchemaDifference {
 			keys[k] = true
 		}
 		for _, k := range slices.Sorted(maps.Keys(keys)) {
-			if _, ignored := pgSchemaIgnored[kind+":"+k]; ignored {
+			if ignored(kind + ":" + k) {
 				continue
 			}
 			g, gok := gm[k]

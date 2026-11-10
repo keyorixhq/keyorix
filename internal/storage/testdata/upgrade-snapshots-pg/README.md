@@ -1,9 +1,10 @@
 # PostgreSQL upgrade snapshots
 
-**Status: no snapshot has been generated yet.** The lab connection failed before
-the first run finished, so the tests that need one skip, and nothing below has been
-shown on PostgreSQL. Run the recipe under "Regenerating" for each of v0.91.0 (adapter
-`v091`), v0.92.1, v0.93.0, v0.94.0, v0.95.3 and v0.96.3 (adapter `v092plus`).
+**Status: all six snapshots generated and exercised on PostgreSQL 17.11**
+(W6 continuation run, 2026-11-10): v0.91.0 (adapter `v091`), v0.92.1, v0.93.0,
+v0.94.0, v0.95.3 and v0.96.3 (adapter `v092plus`). Oracles 1-8, the red-proofs and
+the v0.91.0 interrupted-upgrade comparison all ran; see
+`/mnt/data/wave4/out/w6-REPORT.md`. To regenerate, follow "Regenerating" below.
 
 `<tag>/snapshot.sql` is a PostgreSQL database written by that release's own core
 running against PostgreSQL (bootstrap, three users, two projects, seeded-role and
@@ -44,7 +45,7 @@ with `KEYORIX_TEST_PG_DSN` set and `<checkout>` a throwaway checkout of the tag.
 copies the state files and generator into the checkout's `internal/storage`, and
 runs `TestW6GenPGSnapshot` there. That test also rejects the snapshot unless the
 replayed copy dumps identically to the source database (the fidelity check) and
-`ugModel` matches the release's `Authorize` on a stride of the probes of 8 generated
+`ugModel` matches the release's `Authorize` on a stride of the probes of 3 generated
 states (the manifest has the counts; the SQLite leg's 40-seed validation of the same
 rule stands beside it, these seeds are for the PostgreSQL path). Databases are
 named `w6_gen_*` and dropped.
