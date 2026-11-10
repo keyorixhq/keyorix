@@ -2554,7 +2554,9 @@ type ListUsersRequest struct {
 	Search         *string                `protobuf:"bytes,3,opt,name=search,proto3,oneof" json:"search,omitempty"`
 	IsActive       *bool                  `protobuf:"varint,4,opt,name=is_active,json=isActive,proto3,oneof" json:"is_active,omitempty"`
 	IncludeDeleted bool                   `protobuf:"varint,5,opt,name=include_deleted,json=includeDeleted,proto3" json:"include_deleted,omitempty"`
-	// "inactive" = users with no login in the last 30 days.
+	// "inactive" = users with no login in the last 30+ days. An account that has
+	// never logged in counts as inactive once it is 30+ days old (judged by its
+	// creation date), not before.
 	Filter        *string `protobuf:"bytes,6,opt,name=filter,proto3,oneof" json:"filter,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
