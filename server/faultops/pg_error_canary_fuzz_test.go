@@ -255,26 +255,41 @@ func runGRPCPGError(t *testing.T, fx *pgErrFixture, in pgErrInput, shim func(*fa
 	fx.capture.Drain()
 	fx.world.Tracer.Drain()
 
-	req := &pb.CreateSecretRequest{Value: secret.Raw, ProjectId: uint32(fx.projectID), EnvironmentId: uint32(fx.envID), Type: "generic"}
-	switch in.kind % pgErrKinds {
-	case 0: // a duplicate key: 23505 with the name in DETAIL
-		req.Name = name.Raw
-	case 1: // past the index size limit
-		req.Name = strings.Repeat(otherName.Raw, 80)
-	case 2: // the hostile wrapper
-		req.Name = "p\"'\\%" + otherName.Raw
-	case 3: // an unknown project id: a foreign key if it gets that far
-		req.Name = otherName.Raw
-		req.ProjectId = 4294967
-	case 4: // the value canary under a name that also fails
-		req.Name = name.Raw
-		req.Value = strings.Repeat(secret.Raw, 400)
-	}
-	_, err = client.CreateSecret(w.grpcCtx, req)
 	status := ""
-	if err != nil {
-		status = err.Error()
-		res.grpcCode = strings.SplitN(status, " ", 2)[0]
+	if in.kind%pgErrKinds == 0 {
+		// A duplicate key: 23505 with the name in DETAIL. It must be a PROJECT, not a
+		// secret: core.CreateSecret pre-checks the name at the application layer and
+		// returns before any INSERT, so a duplicate secret never reaches the server.
+		// Project names are enforced only by the unique index. That index is
+		// case-folded, but the canary's core is lower-case hex, so the scanner still
+		// matches it in the (folded) DETAIL.
+		pc := pb.NewProjectServiceClient(w.grpcConn)
+		if _, err := pc.CreateProject(w.grpcCtx, &pb.CreateProjectRequest{Name: name.Raw}); err != nil {
+			res.invalid = "INVALID RUN: seed project: " + err.Error()
+			return res
+		}
+		if _, err := pc.CreateProject(w.grpcCtx, &pb.CreateProjectRequest{Name: name.Raw}); err != nil {
+			status = err.Error()
+			res.grpcCode = strings.SplitN(status, " ", 2)[0]
+		}
+	} else {
+		req := &pb.CreateSecretRequest{Value: secret.Raw, ProjectId: uint32(fx.projectID), EnvironmentId: uint32(fx.envID), Type: "generic"}
+		switch in.kind % pgErrKinds {
+		case 1: // past the index size limit
+			req.Name = strings.Repeat(otherName.Raw, 80)
+		case 2: // the hostile wrapper
+			req.Name = "p\"'\\%" + otherName.Raw
+		case 3: // an unknown project id: a foreign key if it gets that far
+			req.Name = otherName.Raw
+			req.ProjectId = 4294967
+		case 4: // the value canary under a name that also fails
+			req.Name = name.Raw
+			req.Value = strings.Repeat(secret.Raw, 400)
+		}
+		if _, err := client.CreateSecret(w.grpcCtx, req); err != nil {
+			status = err.Error()
+			res.grpcCode = strings.SplitN(status, " ", 2)[0]
+		}
 	}
 	if shim != nil {
 		status += shim(w, secret.Raw)
@@ -438,7 +453,7 @@ func TestCLIAgainstPGCanary(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"duplicate-name", []string{"secret", "create", "--name", "@M@", "--from-file", "-"}},
+		{"duplicate-name", []string{"project", "create", "--name", "@M@"}},
 		{"over-long-name", []string{"secret", "create", "--name", "@L@", "--from-file", "-"}},
 		{"hostile-name", []string{"secret", "create", "--name", "p\"'\\%@M@", "--from-file", "-"}},
 		{"unknown-project", []string{"secret", "create", "--name", "@M@", "--project-id", "4294967", "--from-file", "-"}},
@@ -451,9 +466,12 @@ func TestCLIAgainstPGCanary(t *testing.T) {
 			meta := canary.New("meta", canary.Metadata, []byte(v.name), false)
 			control := canary.New("control", canary.Secret, []byte(v.name), false)
 			scanner := canary.NewScanner(secret, meta, control)
-			client := pb.NewSecretServiceClient(w.grpcConn)
 			if v.name == "duplicate-name" {
-				if _, err := client.CreateSecret(w.grpcCtx, &pb.CreateSecretRequest{Name: meta.Raw, Value: control.Raw, ProjectId: uint32(fx.projectID), EnvironmentId: uint32(fx.envID), Type: "generic"}); err != nil {
+				// Seed a project named after the metadata canary so the CLI's own
+				// `project create` collides on the unique index: a real 23505 the API
+				// then returns. A duplicate SECRET would be pre-checked by core before
+				// any INSERT and never reach the server (see runGRPCPGError kind 0).
+				if _, err := pb.NewProjectServiceClient(w.grpcConn).CreateProject(w.grpcCtx, &pb.CreateProjectRequest{Name: meta.Raw}); err != nil {
 					t.Fatalf("INVALID RUN: seed: %v", err)
 				}
 			}

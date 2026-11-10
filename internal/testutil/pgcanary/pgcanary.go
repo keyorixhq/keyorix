@@ -397,12 +397,21 @@ func (w *World) Reset() error {
 // through to_jsonb, so a bytea cell is searched as hex, which the scanner matches. A
 // table that cannot be read fails the whole dump; a column that cannot be read must
 // not look like a clean one.
+//
+// Tables are re-listed from the catalogue at dump time, not reused from Snapshot's
+// list: a leak that writes into a table created after the snapshot (the raw-file
+// scan's SQLite equivalent would have caught it in the file) must not be invisible
+// here.
 func (w *World) Dump() ([]canary.Output, error) {
 	if len(w.tables) == 0 {
 		return nil, errors.New("pgcanary: Dump before Snapshot")
 	}
-	parts := make([]string, 0, len(w.tables))
-	for _, t := range w.tables {
+	var tables []string
+	if err := w.DB.Raw(`SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`).Scan(&tables).Error; err != nil {
+		return nil, fmt.Errorf("dump: list tables: %w", err)
+	}
+	parts := make([]string, 0, len(tables))
+	for _, t := range tables {
 		parts = append(parts, fmt.Sprintf("SELECT %s AS t, to_jsonb(x)::text AS j FROM public.%s x", quoteLiteral(t), ident(t)))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), resetTimeout)

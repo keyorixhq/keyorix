@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"gorm.io/gorm/clause"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -46,6 +47,28 @@ const (
 type requestEchoPGFixture struct {
 	*requestEchoFixture
 	world *pgcanary.World
+}
+
+// requestEchoPGRules is requestEchoRules plus the echoes the PostgreSQL-specific
+// shapes provoke that the SQLite corpus never reached. Both are request echoes of the
+// caller's OWN non-secret secret-name (metadata), the same informational class as
+// issue #4059 — not a disclosure of a stored value or of another principal's data.
+//
+// pgShape case 0 puts a real NUL byte in the secret name. core rejects the name in
+// validation, BEFORE any database call, and the rejected name is quoted back to the
+// caller who sent it:
+//   - in the 400 response body ("invalid name \"<name>\""), and
+//   - in the server's validation log line.
+//
+// Only the name (label m-body, class Metadata) is echoed; the secret VALUE (s-body,
+// class Secret) never appears, so these stay MetadataOnly and are scoped to the one
+// origin. Names are non-secret by design (see the meta-db rule). See the W7 report for
+// the full classification.
+func requestEchoPGRules() *canary.Allowlist {
+	return requestEchoRules().With(
+		canary.Rule{ID: "echo-pg-invalid-secret-name-body", Channel: echoChanBody, Origin: "POST /api/v1/secrets/", Label: "m-body", MetadataOnly: true, DenyLabelPrefix: "stored-", Why: "a secret name rejected in validation (e.g. a NUL byte) is quoted in the 400 body: a request echo of the caller's own non-secret name, same class as #4059"},
+		canary.Rule{ID: "echo-pg-invalid-secret-name-log", Channel: canary.ChannelLog, Origin: "POST /api/v1/secrets/", Label: "m-body", MetadataOnly: true, DenyLabelPrefix: "stored-", Why: "the same rejected secret name is written to the validation log line; names are non-secret metadata (stored in plaintext by design)"},
+	)
 }
 
 func newRequestEchoPGFixture(tb testing.TB) *requestEchoPGFixture {
@@ -177,8 +200,18 @@ func (r *requestEchoRun) pgShape(rt sweepRoute, principal string, shape uint8, m
 		req.Body = []byte(`{"name":"` + r.mBody.Raw + "\xff\xfe" + `","value":"` + r.sBody.Raw + "\xc3\x28" + `","type":"password"}`)
 	case 2: // past the index size limit
 		req.Body = mustJSON(map[string]any{"name": strings.Repeat(r.mBody.Raw, 80), "value": strings.Repeat(r.sBody.Raw, 80), "description": strings.Repeat(r.mBody.Raw, 3000), "type": "password", "project_id": r.fx.projectID, "environment_id": r.fx.envID})
-	case 3: // the control secret's name: a duplicate key on create
-		req.Body = mustJSON(map[string]any{"name": r.controlName.Raw, "value": r.sBody.Raw, "description": r.mBody.Raw, "type": "password", "project_id": r.fx.projectID, "environment_id": r.fx.envID})
+	case 3: // a real duplicate key on create, with the canary name in the server's DETAIL
+		// core.CreateSecret pre-checks secret-name uniqueness and returns before any
+		// INSERT, so a duplicate secret never reaches the server. CreateEnvironment is
+		// not pre-checked. Seed an environment named after the control-name canary
+		// (directly, so the seed itself is not the provocation) and then POST a
+		// duplicate through the API: the unique index fires a 23505 whose DETAIL quotes
+		// the canary. The seed is reset to the snapshot before every execution.
+		seed := &models.Environment{Name: r.controlName.Raw, ProjectID: r.fx.projectID}
+		_ = r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(seed).Error
+		req.Method = http.MethodPost
+		req.Target = fmt.Sprintf("/api/v1/projects/%d/environments", r.fx.projectID)
+		req.Body = mustJSON(map[string]any{"name": r.controlName.Raw})
 	case 4: // integers past every integer type
 		req.Body = []byte(`{"name":"` + r.mBody.Raw + `","value":"` + r.sBody.Raw + `","project_id":99999999999999999999,"environment_id":-99999999999999999999}`)
 	case 5: // a NUL in every query parameter and the path
@@ -352,7 +385,7 @@ func FuzzHTTPPGRequestEchoCanary(f *testing.F) {
 		if len(mut) > 64 {
 			mut = mut[:64]
 		}
-		r, _, invalid := runRequestEchoPG(t, fx, requestEchoInput{route, principal, shape, mut}, requestEchoRules(), nil, nil)
+		r, _, invalid := runRequestEchoPG(t, fx, requestEchoInput{route, principal, shape, mut}, requestEchoPGRules(), nil, nil)
 		if invalid != "" {
 			t.Fatal(invalid)
 		}
@@ -373,7 +406,7 @@ func TestRequestEchoPGProvocationsReachServer(t *testing.T) {
 	raw := map[string]int{}
 	statusByShape := map[string]int{}
 	for _, in := range fx.echoPGDirected() {
-		r, ev, invalid := runRequestEchoPG(t, fx, in, requestEchoRules(), nil, nil)
+		r, ev, invalid := runRequestEchoPG(t, fx, in, requestEchoPGRules(), nil, nil)
 		if invalid != "" {
 			t.Fatalf("input %+v: %s", in, invalid)
 		}
@@ -396,7 +429,7 @@ func TestRequestEchoPGProvocationsReachServer(t *testing.T) {
 			t.Errorf("the corpus never made the server raise %s; got %v", code, codes)
 		}
 	}
-	if raw["detail/metadata"] == 0 {
+	if raw["detail/M"] == 0 {
 		t.Errorf("no server DETAIL quoted a canary, so the oracle's channel was never under test: %v", raw)
 	}
 }
@@ -423,7 +456,10 @@ func TestRequestEchoPGOracleCatchesWrappingShim(t *testing.T) {
 		return func(r *requestEchoRun, h http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				h.ServeHTTP(w, req)
-				if req.Method != http.MethodPost {
+				// Only the duplicate-environment request produces the 23505 this shim
+				// wraps; the prologue's secret POST (and any other POST) must not trip
+				// the "no 23505" guard.
+				if req.Method != http.MethodPost || !strings.Contains(req.URL.Path, "/environments") {
 					return
 				}
 				var detail string
@@ -441,14 +477,14 @@ func TestRequestEchoPGOracleCatchesWrappingShim(t *testing.T) {
 	}
 
 	t.Run("control-is-silent", func(t *testing.T) {
-		r, ev, invalid := runRequestEchoPG(t, fx, in, requestEchoRules(), nil, nil)
+		r, ev, invalid := runRequestEchoPG(t, fx, in, requestEchoPGRules(), nil, nil)
 		if invalid != "" {
 			t.Fatal(invalid)
 		}
 		if len(r.findings) != 0 {
 			t.Fatalf("clean run reported: %v", r.findings)
 		}
-		if ev.codes["23505"] == 0 || ev.rawFields["detail/metadata"] == 0 {
+		if ev.codes["23505"] == 0 || ev.rawFields["detail/M"] == 0 {
 			t.Fatalf("no real duplicate-key failure with a canary in DETAIL: codes %v raw %v", ev.codes, ev.rawFields)
 		}
 	})
@@ -461,7 +497,7 @@ func TestRequestEchoPGOracleCatchesWrappingShim(t *testing.T) {
 		{"log", canary.ChannelLog, func(_ *requestEchoRun, _ http.ResponseWriter, d string) { log.Print("db error: " + d) }},
 	} {
 		t.Run("shim-"+tc.name, func(t *testing.T) {
-			r, _, invalid := runRequestEchoPG(t, fx, in, requestEchoRules(), withTracedDetail(tc.use), nil)
+			r, _, invalid := runRequestEchoPG(t, fx, in, requestEchoPGRules(), withTracedDetail(tc.use), nil)
 			if invalid != "" {
 				t.Fatal(invalid)
 			}
@@ -475,7 +511,7 @@ func TestRequestEchoPGOracleCatchesWrappingShim(t *testing.T) {
 		wrap := withTracedDetail(func(r *requestEchoRun, w http.ResponseWriter, _ string) {
 			_, _ = w.Write([]byte("db error: " + r.sBody.Raw))
 		})
-		r, _, invalid := runRequestEchoPG(t, fx, in, requestEchoRules(), wrap, nil)
+		r, _, invalid := runRequestEchoPG(t, fx, in, requestEchoPGRules(), wrap, nil)
 		if invalid != "" {
 			t.Fatal(invalid)
 		}

@@ -286,6 +286,15 @@ func NewAllowlist(rules ...Rule) *Allowlist {
 	return &Allowlist{rules: rules, used: map[string]bool{}}
 }
 
+// With returns a new allowlist holding the receiver's rules followed by extra ones,
+// so a backend-specific target can extend a shared base without reconstructing it.
+func (a *Allowlist) With(rules ...Rule) *Allowlist {
+	combined := make([]Rule, 0, len(a.rules)+len(rules))
+	combined = append(combined, a.rules...)
+	combined = append(combined, rules...)
+	return NewAllowlist(combined...)
+}
+
 // Permit returns the matching rule's ID, recording that it was used, or "".
 func (a *Allowlist) Permit(h Hit, origin string) string {
 	for _, r := range a.rules {
