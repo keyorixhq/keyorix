@@ -1,0 +1,2 @@
+### Internal
+- **CI: refreshed the `internal/core` and `server/faultops` rows of `scripts/ci-test-weights.tsv` after the fault-sweep speed-ups (#4052, #4053).** Regenerated with `scripts/ci/gen-test-weights.py` from the nine core/faultops leg logs of verbose run 42713304560 on main 07b613d81; every other package's rows are unchanged. The shard packing now expects `TestMFAResetOpsFaultSweep` at 267 s and `TestFakeClockExtremes_Cross` at 694 s instead of 1346 s and 1498 s, so the faultops legs pack to about 9.1 min each instead of one 22 min leg beside four 13.5 min legs.
