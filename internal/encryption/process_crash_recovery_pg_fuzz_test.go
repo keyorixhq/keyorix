@@ -226,7 +226,35 @@ func (w *pcrashPGWorld) prepareCached(t *testing.T) pcrashExecState {
 // labels: every key-file seam, every COMMIT and acknowledged commit, and the first
 // and last statement of each run of identical statements. maxPer thins only the
 // statements in between, evenly, when it is set.
-func pcrashPGKillPoints(trace []string, mode string, maxPer int) []int64 {
+//
+// With skipDDL it leaves out every run of DDL and the marker commit that ends it:
+// each process startup runs the same idempotent schema pass (CreateStorage), so
+// those seams belong to migration, which migrate-fresh sweeps, and not to the
+// operation. Seams in those runs are not killed at, on any other operation.
+func pcrashPGKillPoints(trace []string, mode string, maxPer int, skipDDL bool) []int64 {
+	skip := make([]bool, len(trace))
+	if skipDDL {
+		for i := 0; i < len(trace); {
+			if !strings.HasPrefix(trace[i], "sql:pre:ddl:") {
+				i++
+				continue
+			}
+			j := i
+			for j < len(trace) && strings.HasPrefix(trace[j], "sql:pre:ddl:") {
+				j++
+			}
+			for k := j; k < len(trace) && strings.HasPrefix(trace[k], "sql:"); k++ {
+				if strings.HasPrefix(trace[k], "sql:acked:") {
+					j = k + 1
+					break
+				}
+			}
+			for x := i; x < j; x++ {
+				skip[x] = true
+			}
+			i = j
+		}
+	}
 	essential := func(i int) bool {
 		l := trace[i]
 		if !strings.HasPrefix(l, "sql:") {
@@ -237,6 +265,7 @@ func pcrashPGKillPoints(trace []string, mode string, maxPer int) []int64 {
 	var must, rest []int64
 	for i := range trace {
 		switch {
+		case skip[i]:
 		case essential(i):
 			must = append(must, int64(i+1))
 		case !strings.HasPrefix(trace[i], "sql:"):
@@ -248,7 +277,7 @@ func pcrashPGKillPoints(trace []string, mode string, maxPer int) []int64 {
 		// A cut at every commit is the variant's purpose; add one statement inside
 		// a transaction, the first write that is not a commit.
 		for i, l := range trace {
-			if strings.HasPrefix(l, "sql:pre:") && !strings.Contains(l, "commit") {
+			if !skip[i] && strings.HasPrefix(l, "sql:pre:") && !strings.Contains(l, "commit") {
 				rest = append(rest, int64(i+1))
 				break
 			}
@@ -558,9 +587,9 @@ func TestProcessCrashPGExhaustive(t *testing.T) {
 		var kills []int64
 		if name == "migrate-fresh" {
 			w.migrateSeams(t)
-			kills = pcrashPGKillPoints(w.pgMig.trace, mode, *pcrashFlagMaxPer)
+			kills = pcrashPGKillPoints(w.pgMig.trace, mode, *pcrashFlagMaxPer, false)
 		} else {
-			kills = pcrashPGKillPoints(w.calibratePG(t, byName[name]).trace, mode, *pcrashFlagMaxPer)
+			kills = pcrashPGKillPoints(w.calibratePG(t, byName[name]).trace, mode, *pcrashFlagMaxPer, true)
 		}
 		t.Logf("%s: %d kill points in mode %s", name, len(kills), mode)
 		for _, killAt := range kills {
