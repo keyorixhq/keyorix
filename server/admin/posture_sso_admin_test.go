@@ -85,6 +85,11 @@ func TestCollectSSOOnlyAdminPosture(t *testing.T) {
 		report := ssoOnlyAdminReport(t, adminSpec{"local-root", ""})
 		assert.Empty(t, report.warnings)
 	})
+	t.Run("two local admins do not warn", func(t *testing.T) {
+		report := ssoOnlyAdminReport(t, adminSpec{"local-a", ""}, adminSpec{"local-b", ""})
+		assert.Empty(t, report.warnings)
+		assert.Empty(t, report.deviations)
+	})
 	t.Run("no administrator at all does not warn", func(t *testing.T) {
 		report := ssoOnlyAdminReport(t)
 		assert.Empty(t, report.warnings)
