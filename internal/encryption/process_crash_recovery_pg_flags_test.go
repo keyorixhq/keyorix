@@ -17,4 +17,5 @@ var (
 	pcrashFlagWorld         = flag.String("pcrash.world", "", "directory that keeps the template install and calibrations between runs")
 	pcrashFlagBudget        = flag.Duration("pcrash.budget", 0, "start no new exec this long after the sweep began (0: no limit)")
 	pcrashFlagMaxPer        = flag.Int("pcrash.maxper", 0, "cap the non-essential kill points per operation, evenly spaced (0: keep all)")
+	pcrashFlagPhased        = flag.Bool("pcrash.phased", false, "split each exec over two runs, keeping its install under -pcrash.world")
 )
