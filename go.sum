@@ -108,8 +108,8 @@ github.com/crewjam/saml v0.5.2/go.mod h1:l8lz5HQx4DBy+G4Z1eeO5+UTgOTvIl3zUnfPsZl
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/digitorus/pkcs7 v0.0.0-20260914070511-d678ea5ea03f h1:LBDTasGDT7gkpSl3tIq+V4Yy0nr+l+ZmI6VN9MY9FU0=
-github.com/digitorus/pkcs7 v0.0.0-20260914070511-d678ea5ea03f/go.mod h1:OQvyvldkvDCxGsUPLSibXqM4B/Pz5RaXQP4CPo5LXs4=
+github.com/digitorus/pkcs7 v0.0.0-20261104113855-bd33e0b11a3d h1:zRbNjE5OBSUVILPJOWzW/tKcZHmUCYv67X/dhMNj75I=
+github.com/digitorus/pkcs7 v0.0.0-20261104113855-bd33e0b11a3d/go.mod h1:OQvyvldkvDCxGsUPLSibXqM4B/Pz5RaXQP4CPo5LXs4=
 github.com/digitorus/timestamp v0.0.0-20260914073129-b4b58b92aa51 h1:C5oJXjXaNiSSCs4b+yXP3JmMGKgJhuIakXD0UdjhB2k=
 github.com/digitorus/timestamp v0.0.0-20260914073129-b4b58b92aa51/go.mod h1:UbWLJjUt4ChMltkeZK0SKTUViVg4839mnQmyH8QWH+Y=
 github.com/dlclark/regexp2 v1.11.0 h1:G/nrcoOa7ZXlpoa/91N3X7mM3r8eIlMBBJZvsz/mxKI=
