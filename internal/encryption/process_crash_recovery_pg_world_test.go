@@ -371,7 +371,7 @@ func (w *pcrashPGWorld) finishBuild(tb testing.TB) {
 // pcrashPGTransient reports whether output names a dropped connection to the
 // server (the SSH tunnel, or the shared server), not anything the command did.
 func pcrashPGTransient(output string) bool {
-	for _, s := range []string{"unexpected EOF", "connection reset", "broken pipe", "connection refused", "server closed the connection"} {
+	for _, s := range []string{"unexpected EOF", "connection reset", "broken pipe", "connection refused", "server closed the connection", "bad connection"} {
 		if strings.Contains(output, s) {
 			return true
 		}
@@ -552,7 +552,7 @@ func (w *pcrashPGWorld) newInstall(t *testing.T, templateDB, srcDir string) *pcr
 	return inst
 }
 
-var pcrashPGGenerated = regexp.MustCompile(`^w5_[te]_[0-9]+_[0-9]+$`)
+var pcrashPGGenerated = regexp.MustCompile(`^w5_[tep]_[0-9]+_[0-9]+$`)
 
 // TestProcessCrashPGDropLeftovers removes databases a killed test run left
 // behind. It drops only names matching the exact pattern pcrashPGName generates.

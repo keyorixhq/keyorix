@@ -22,6 +22,7 @@ package encryption_test
 // client (quiesce waits for that); and fsync or power loss, as in the SQLite leg.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -86,24 +87,19 @@ func pcrashClassify(ctx context.Context, w *pcrashWorld, op pcrashOp, dir string
 	if op.kek {
 		passes = []string{pcrashPass, pcrashPass2}
 	}
-	working := ""
+	// One open only: through a remote tunnel each one costs about 100 seconds.
+	working, o := "", pcrashOpened{}
 	for _, p := range passes {
-		o := pcrashOpenGuarded(dir, p)
+		o = pcrashOpenGuarded(dir, p)
 		if o.pnc != nil {
 			return "refused:panic"
 		}
-		if o.err != nil {
-			continue
+		if o.err == nil {
+			working = p
+			break
 		}
-		working = p
-		o.inst.close()
-		break
 	}
 	if working == "" {
-		return "refused"
-	}
-	o := pcrashOpenGuarded(dir, working)
-	if o.pnc != nil || o.err != nil {
 		return "refused"
 	}
 	defer o.inst.close()
@@ -342,7 +338,6 @@ func (w *pcrashPGWorld) pcrashPGJournalRecover(t *testing.T, inst *pcrashPGInst)
 // exec is one input against one operation, returning its violations.
 func (w *pcrashPGWorld) exec(t *testing.T, op pcrashOp, killAt int64, stateRaw uint16, mode string) []string {
 	t.Helper()
-	ctx := t.Context()
 	inst := w.newInstall(t, w.templateDB, w.dir)
 	var st pcrashExecState
 	if stateRaw == 0 {
@@ -353,34 +348,58 @@ func (w *pcrashPGWorld) exec(t *testing.T, op pcrashOp, killAt int64, stateRaw u
 			t.Fatalf("prepare: %v", err)
 		}
 	}
+	after := w.afterModel(t, op, st)
+	d, v := w.die(t, inst, op, killAt, mode, st, after)
+	if len(v) > 0 {
+		pcrashOutcome{backend: "postgres", op: op.name, mode: mode, killAt: killAt, label: d.label, state: "refused"}.record(v)
+		return v
+	}
+	v = w.checkAfterDeath(t, op, inst.dir, st, after)
+	pcrashOutcome{backend: "postgres", op: op.name, mode: mode, killAt: killAt, label: d.label, state: d.state, pending: d.pending}.record(v)
+	return v
+}
+
+func (w *pcrashPGWorld) afterModel(t *testing.T, op pcrashOp, st pcrashExecState) *pcrashModel {
+	t.Helper()
 	cal := w.calibratePG(t, op)
-	after := &pcrashModel{Ledger: op.after(st.before.Ledger, w.seed.Ledger), Roles: cal.ref.Roles, Authz: cal.ref.Authz}
+	return &pcrashModel{Ledger: op.after(st.before.Ledger, w.seed.Ledger), Roles: cal.ref.Roles, Authz: cal.ref.Authz}
+}
+
+// pcrashPGDeath is what is known about an exec once its operation has died.
+type pcrashPGDeath struct {
+	label, state string
+	pending      bool
+}
+
+// die runs op to its seam and classifies what the death left, up to the point
+// where the oracles start. Violations returned here end the exec.
+func (w *pcrashPGWorld) die(t *testing.T, inst *pcrashPGInst, op pcrashOp, killAt int64, mode string, st pcrashExecState, after *pcrashModel) (pcrashPGDeath, []string) {
+	t.Helper()
+	ctx := t.Context()
 	run, err := w.runOp(inst, op, pcrashPass, killAt, mode, "", false)
 	if err != nil {
 		t.Fatalf("run %s: %v", op.name, err)
 	}
+	d := pcrashPGDeath{label: cmp.Or(run.label, "clean-run")}
 	if err := w.srv.quiesce(ctx, inst.db); err != nil {
 		t.Fatal(err)
 	}
 	if v := w.pcrashPGJournalRecover(t, inst); len(v) > 0 {
-		return v
+		return d, v
 	}
 	pcrashRecordStat(op.name+"-pg-"+mode, killAt, run.pcrashChildRun)
 	if mode == pcrashPGModeKill && !run.killed && run.exit != 0 {
-		return []string{fmt.Sprintf("the operation failed without being killed (exit %d): %s", run.exit, pcrashTail(pcrashPGScrub(errors.New(run.output), w.srv.password)))}
+		if pcrashPGTransient(run.output) {
+			t.Skipf("the link to the server dropped during the operation, not a seam: %s", pcrashTail(pcrashPGScrub(errors.New(run.output), w.srv.password)))
+		}
+		return d, []string{fmt.Sprintf("the operation failed without being killed (exit %d): %s", run.exit, pcrashTail(pcrashPGScrub(errors.New(run.output), w.srv.password)))}
 	}
 	if run.panicked() {
-		return []string{fmt.Sprintf("I1 the operation panicked after a cut connection: %s", pcrashTail(pcrashPGScrub(errors.New(run.output), w.srv.password)))}
+		return d, []string{fmt.Sprintf("I1 the operation panicked after a cut connection: %s", pcrashTail(pcrashPGScrub(errors.New(run.output), w.srv.password)))}
 	}
-	pending := pcrashFindFile(inst.dir, "dek.key.pending") != ""
-	state := pcrashClassify(ctx, w.pcrashWorld, op, inst.dir, st, after)
-	v := w.checkAfterDeath(t, op, inst.dir, st, after)
-	label := run.label
-	if label == "" {
-		label = "clean-run"
-	}
-	pcrashOutcome{backend: "postgres", op: op.name, mode: mode, killAt: killAt, label: label, state: state, pending: pending}.record(v)
-	return v
+	d.pending = pcrashFindFile(inst.dir, "dek.key.pending") != ""
+	d.state = pcrashClassify(ctx, w.pcrashWorld, op, inst.dir, st, after)
+	return d, nil
 }
 
 // execMigrate kills a fresh-install migration and requires the rerun to converge
@@ -599,6 +618,10 @@ func TestProcessCrashPGExhaustive(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", name, killAt), func(t *testing.T) {
 				start(t)
 				var v []string
+				if *pcrashFlagPhased && name != "migrate-fresh" {
+					w.execPhased(t, byName[name], killAt, mode, began)
+					return
+				}
 				if name == "migrate-fresh" {
 					v = w.execMigrate(t, killAt, mode, nil)
 				} else {
