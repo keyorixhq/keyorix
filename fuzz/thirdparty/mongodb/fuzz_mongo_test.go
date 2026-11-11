@@ -143,6 +143,14 @@ func buildFuzzReply(opSel, lenMode byte, body []byte, responseTo int32) []byte {
 	default:
 		opcode = int32(opSel) // garbage opcode
 	}
+	// Defensive host-safety clamp: an OP_REPLY numberReturned (int32 at body offset
+	// 16: responseFlags[4] cursorID[8] startingFrom[4] numberReturned[4]) could, if
+	// the driver pre-sizes a document slice from it, drive a huge allocation. Cap it.
+	if opcode == opReply && len(body) >= 20 {
+		if binary.LittleEndian.Uint32(body[16:20]) > maxWireLen {
+			binary.LittleEndian.PutUint32(body[16:20], maxWireLen)
+		}
+	}
 	full := wireHeader(responseTo, opcode, body)
 	switch lenMode % 4 {
 	case 0:
