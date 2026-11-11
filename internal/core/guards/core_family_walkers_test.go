@@ -41,6 +41,8 @@ import (
 var dirListingAllowlist = map[string]string{
 	"internal/core/guards/besteffort_callsite_guard_test.go:beScanDir": "lists a synthetic fixture dir or a mutated copy of " +
 		"the family; the real scan is beScanCore (srcpath.CoreFamilyGoFiles)",
+	"internal/core/secret_ops_canary_fuzz_test.go:opEvidence": "lists the evidence directory the target itself just had " +
+		"ExportComplianceEvidence write into a temp dir, to scan each file for canaries; not core sources",
 	"internal/core/cross_replica_forced_interleaving_test.go:g5SeedFile":      "fuzz seed files under testdata/fuzz-pending",
 	"internal/core/cross_replica_forced_interleaving_test.go:g5PendingIssues": "fuzz seed dirs under testdata/fuzz-pending",
 	"internal/core/guards/exempt_ledger_review_test.go:discoverExemptLedgers": "ledger *.tsv files under docs/",
