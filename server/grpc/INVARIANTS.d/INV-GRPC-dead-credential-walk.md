@@ -11,7 +11,10 @@
   tolerated effect is the owner notification an expired PAT triggers (`sideEffectTables`). Why:
   the completeness test covers a missing credential only; revocation/expiry/suspension are checked
   in three separate places (session, PAT, machine) and each could drop its check unnoticed.
-  Guard: `authz_walk_dead_credential_test.go:TestEveryGRPCMethodRejectsDeadCredential` (SQLite, and
-  Postgres when `KEYORIX_TEST_PG_DSN` is set). Not covered: the HTTP bearer cache (gRPC has none),
+  Guard: `authz_walk_dead_credential_test.go:deadWalkGroup`, run as four top-level tests
+  `TestEveryGRPCMethodRejectsDeadCredential_G0..G3` (SQLite, and Postgres when
+  `KEYORIX_TEST_PG_DSN` is set; each on a world of its own so CI can place them on different legs),
+  with `authz_walk_dead_credential_groups_test.go:TestDeadWalkGroups_PartitionTheCases` proving every
+  (state, cold|warm) case is walked by exactly one group. Not covered: the HTTP bearer cache (gRPC has none),
   a credential that dies while a stream is already open.
 <!-- section: Interceptor chain (`server/grpc/interceptors`) -->
