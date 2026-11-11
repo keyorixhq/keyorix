@@ -100,7 +100,8 @@ const ActivePill: React.FC<{ active: boolean }> = ({ active }) => (
 export function RotationPoliciesPage() {
     // ── modal / form state ────────────────────────────────────────────────────
     const [showCreate, setShowCreate] = React.useState(false);
-    // PUT/DELETE /rotation-policies/{id} are secrets.write (not secrets.delete) in the router;
+    // PUT/DELETE /rotation-policies/{id} are secrets.write (not secrets.delete) in the router, and
+    // POST /rotation-policies checks secrets.write in the handler (no route middleware);
     // coarse show/hide, the server enforces the real scope.
     const canWrite = useCan().writeSecrets;
     const [editing, setEditing] = React.useState<RotationPolicy | null>(null);
@@ -273,10 +274,12 @@ export function RotationPoliciesPage() {
                         Define how often secrets must be rotated per environment
                     </p>
                 </div>
-                <Button onClick={openCreate} className="flex items-center">
-                    <PlusIcon className="h-4 w-4 mr-2" />
-                    New Policy
-                </Button>
+                {canWrite && (
+                    <Button onClick={openCreate} className="flex items-center">
+                        <PlusIcon className="h-4 w-4 mr-2" />
+                        New Policy
+                    </Button>
+                )}
             </div>
 
             {/* ── Evaluation panel ─────────────────────────────────────────── */}
@@ -376,12 +379,16 @@ export function RotationPoliciesPage() {
                                 No rotation policies yet
                             </h3>
                             <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>
-                                Create your first policy to start tracking secret rotation hygiene.
+                                {canWrite
+                                    ? 'Create your first policy to start tracking secret rotation hygiene.'
+                                    : 'Ask someone who can write secrets to create the first policy.'}
                             </p>
-                            <Button onClick={openCreate} className="inline-flex items-center">
-                                <PlusIcon className="h-4 w-4 mr-2" />
-                                New Policy
-                            </Button>
+                            {canWrite && (
+                                <Button onClick={openCreate} className="inline-flex items-center">
+                                    <PlusIcon className="h-4 w-4 mr-2" />
+                                    New Policy
+                                </Button>
+                            )}
                         </div>
                     ) : (
                         <div className="overflow-x-auto">
