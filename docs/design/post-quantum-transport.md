@@ -12,7 +12,7 @@ TLS, so the exposure that matters first is the key exchange, not the certificate
 ## Decision
 
 Rely on the hybrid group **X25519MLKEM768** that Go's `crypto/tls` offers and prefers by
-default (Go 1.24+; Keyorix builds with Go 1.27.3), and do three things around it:
+default (Go 1.24+; Keyorix builds with Go 1.27.4), and do three things around it:
 
 1. **Do not interfere.** No listener or Keyorix-built client sets `CurvePreferences`;
    no image, chart or compose file sets `GODEBUG=tlsmlkem=0`. Tests fail if a listener does.
