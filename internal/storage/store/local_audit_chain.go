@@ -982,22 +982,12 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context, anchor *storage.Au
 // starting at a row whose prev_hash names a deleted predecessor, and one
 // between the caller's anchor read and the first batch leaves an earliest row
 // the anchor does not name (#3944). Both read exactly like a row deleted
-// outside a purge, so the verdict stays broken; LinkBroken marks it so that
-// the core layer, which can authenticate a re-read anchor, can tell whether a
+// outside a purge, so the verdict stays broken; LinkBroken marks it (chain-
+// start walks only; the anchor check runs only on those) so that the core
+// layer, which can authenticate a re-read anchor, can tell whether a
 // sanctioned purge moved the anchor and walk again from it.
 func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage.AuditChainSegment) (*storage.AuditChainVerification, error) {
-	result, linkBroke, err := ls.walkAuditChainSegment(ctx, seg)
-	if result != nil && linkBroke && seg.AfterID == 0 {
-		result.LinkBroken = true
-	}
-	return result, err
-}
-
-// walkAuditChainSegment is VerifyAuditChainSegment's walk. linkBroke reports
-// a broken verdict that a purge during the walk also produces: a row whose
-// prev_hash does not link, or an earliest row that does not match seg.Anchor.
-func (ls *LocalStorage) walkAuditChainSegment(ctx context.Context, seg storage.AuditChainSegment) (result *storage.AuditChainVerification, linkBroke bool, err error) {
-	result = &storage.AuditChainVerification{Valid: true}
+	result := &storage.AuditChainVerification{Valid: true}
 
 	prevHash := auditGenesisHash
 	started := false
@@ -1009,7 +999,7 @@ func (ls *LocalStorage) walkAuditChainSegment(ctx context.Context, seg storage.A
 	if seg.AfterID > 0 {
 		broke, err := ls.pinAuditChainSeed(ctx, seg, result)
 		if err != nil || broke {
-			return result, false, err
+			return result, err
 		}
 		prevHash, started, lastID, headID = seg.SeedHash, true, seg.AfterID, seg.AfterID
 	}
@@ -1028,14 +1018,14 @@ func (ls *LocalStorage) walkAuditChainSegment(ctx context.Context, seg storage.A
 			// The row cap is reached: report whether anything was left unwalked.
 			var next []uint
 			if err := q.Model(&models.AuditEvent{}).Order("id ASC").Limit(1).Pluck("id", &next).Error; err != nil {
-				return nil, false, err
+				return nil, err
 			}
 			result.Truncated = len(next) > 0
 			break
 		}
 		var batch []*models.AuditEvent
 		if err := q.Order("id ASC").Limit(limit).Find(&batch).Error; err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		if len(batch) == 0 {
 			break
@@ -1047,7 +1037,8 @@ func (ls *LocalStorage) walkAuditChainSegment(ctx context.Context, seg storage.A
 					head.PrevHash != anchor.PrevHash || head.EntryHash != anchor.EntryHash {
 					brokenChain(result, head.ID,
 						"earliest surviving audit row does not match the last retention re-anchor (rows removed outside a sanctioned purge, or the re-anchor is stale)")
-					return result, true, nil
+					result.LinkBroken = true
+					return result, nil
 				}
 				// The anchor authenticates head's prev_hash as a legitimate chain
 				// position established before its predecessors were purged — seed
@@ -1058,7 +1049,8 @@ func (ls *LocalStorage) walkAuditChainSegment(ctx context.Context, seg storage.A
 		}
 		newPrev, newHead, newStarted, broke := verifyBatchEvents(batch, prevHash, started, result)
 		if broke {
-			return result, result.Reason == auditLinkMismatchReason, nil
+			result.LinkBroken = seg.AfterID == 0 && result.Reason == auditLinkMismatchReason
+			return result, nil
 		}
 		prevHash, started = newPrev, newStarted
 		if newHead != 0 {
@@ -1071,7 +1063,7 @@ func (ls *LocalStorage) walkAuditChainSegment(ctx context.Context, seg storage.A
 		}
 	}
 	if broke, err := ls.auditRowsOutsideWalk(ctx, seg, lastID, walked, result); err != nil || broke {
-		return result, false, err
+		return result, err
 	}
 
 	// Record the verified head so an external monitor can anchor on it and detect
@@ -1079,7 +1071,7 @@ func (ls *LocalStorage) walkAuditChainSegment(ctx context.Context, seg storage.A
 	// passes). prevHash holds the last chained entry_hash, or genesis if none.
 	result.HeadHash = prevHash
 	result.HeadID = headID
-	return result, false, nil
+	return result, nil
 }
 
 // auditRowsOutsideWalk checks that the walk visited every row in its range
