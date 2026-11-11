@@ -316,7 +316,7 @@ func runPCrashSeedAction(ctx context.Context, inst *pcrashInstall) error {
 	if err := c.AssignUserRoleScoped(ctx, "alice@example.com", "project_viewer", scope); err != nil {
 		return fmt.Errorf("grant alice: %w", err)
 	}
-	if err := c.AssignUserRoleScoped(ctx, "carol@example.com", "editor", scope); err != nil {
+	if err := c.AssignUserRoleScoped(ctx, "carol@example.com", "project_developer", scope); err != nil {
 		return fmt.Errorf("grant carol: %w", err)
 	}
 	for n := range 3 {
@@ -379,7 +379,7 @@ func runPCrashCoreAction(ctx context.Context, action string) int {
 			_, err = c.UpdateSecret(ctx, &core.UpdateSecretRequest{ID: id, Value: []byte(pcrashUpdValue), UpdatedBy: pcrashAdmin, UserID: seed.AdminID})
 		}
 	case "role-grant":
-		err = c.AssignUserRoleScoped(ctx, "bob@example.com", "editor", scope)
+		err = c.AssignUserRoleScoped(ctx, "bob@example.com", "project_developer", scope)
 	case "role-revoke":
 		err = c.RemoveUserRoleScoped(ctx, "alice@example.com", "project_viewer", scope)
 	case "role-create":
