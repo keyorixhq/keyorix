@@ -60,7 +60,7 @@ func TestRequestEchoCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 		{"response-body", echoChanBody, wrapWrite(func(r *requestEchoRun, w http.ResponseWriter) { _, _ = w.Write([]byte(r.sBody.Raw)) }), nil},
 		{"response-header", echoChanHeader, wrapWrite(func(r *requestEchoRun, w http.ResponseWriter) { w.Header().Set("X-Leak", r.sBody.Core) }), nil},
 		{"stdlib-log", canary.ChannelLog, wrapWrite(func(r *requestEchoRun, _ http.ResponseWriter) { log.Print(r.sBody.Raw) }), nil},
-		{"stdout", canary.ChannelStdout, wrapWrite(func(r *requestEchoRun, _ http.ResponseWriter) { fmt.Fprintln(os.Stdout, r.sBody.Raw) }), nil},
+		{"stdout", canary.ChannelStdout, wrapWrite(func(r *requestEchoRun, _ http.ResponseWriter) { _, _ = fmt.Fprintln(os.Stdout, r.sBody.Raw) }), nil},
 		{"stderr", canary.ChannelStderr, wrapWrite(func(r *requestEchoRun, _ http.ResponseWriter) { fmt.Fprintln(os.Stderr, r.sBody.Raw) }), nil},
 		{"metric-label", echoChanMetrics, nil, func(r *requestEchoRun) { r.fx.control.WithLabelValues(r.sBody.Raw).Set(1) }},
 		{"db-cell", canary.ChannelDBPrefix + "redproof.x", nil, plantRow},

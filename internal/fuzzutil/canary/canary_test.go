@@ -153,7 +153,7 @@ func TestAllowlistMatchesExactlyAndTracksUse(t *testing.T) {
 
 func TestCaptureDrainsAndScans(t *testing.T) {
 	c := NewCapture()
-	fmt.Fprint(c.Writer("a"), "one")
+	_, _ = fmt.Fprint(c.Writer("a"), "one")
 	c.Record("b", []byte("two"))
 	got := c.Drain()
 	if len(got) != 2 || got[0].Channel != "a" || string(got[0].Data) != "one" || got[1].Channel != "b" {
@@ -186,10 +186,10 @@ func TestInstallStdioSeesEveryWriteWithoutWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restore()
-	fmt.Fprint(os.Stdout, "out-1")
+	_, _ = fmt.Fprint(os.Stdout, "out-1")
 	fmt.Fprint(os.Stderr, "err-1")
 	first := c.Drain()
-	fmt.Fprint(os.Stdout, "out-2")
+	_, _ = fmt.Fprint(os.Stdout, "out-2")
 	second := c.Drain()
 	if len(first) != 2 || string(first[0].Data) != "err-1" || string(first[1].Data) != "out-1" {
 		t.Fatalf("first drain: %+v", first)

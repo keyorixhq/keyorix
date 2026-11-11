@@ -519,7 +519,7 @@ func (r *coreCanaryRun) finish(leak coreCanaryLeak) {
 	r.requireHit(coreChanReveal, v, r.controlValue, "the reveal of the control secret")
 
 	log.Print(r.captureProbe.Raw)
-	fmt.Fprintln(os.Stdout, r.captureProbe.Raw)
+	_, _ = fmt.Fprintln(os.Stdout, r.captureProbe.Raw)
 	fmt.Fprintln(os.Stderr, r.captureProbe.Raw)
 	r.fx.controlMetric.WithLabelValues(r.captureProbe.Raw).Set(1)
 
@@ -721,7 +721,7 @@ func TestCoreCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 	}{
 		{"stdlib-log", canary.ChannelLog, func(_ *coreCanaryRun, v string) { log.Print("oops " + v) }},
 		{"slog", canary.ChannelSlog, func(_ *coreCanaryRun, v string) { slog.Info("oops", "v", v) }},
-		{"stdout", canary.ChannelStdout, func(_ *coreCanaryRun, v string) { fmt.Fprintln(os.Stdout, v) }},
+		{"stdout", canary.ChannelStdout, func(_ *coreCanaryRun, v string) { _, _ = fmt.Fprintln(os.Stdout, v) }},
 		{"stderr", canary.ChannelStderr, func(_ *coreCanaryRun, v string) { fmt.Fprintln(os.Stderr, v) }},
 		{"error-string", coreChanError, func(r *coreCanaryRun, v string) { r.observe("planted", nil, fmt.Errorf("wrapped: %s", v)) }},
 		{"driver-error-through-core", coreChanError, func(r *coreCanaryRun, v string) {

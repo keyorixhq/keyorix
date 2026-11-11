@@ -35,7 +35,7 @@ func sqliteTables(db *sql.DB) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list tables: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var tables []string
 	for rows.Next() {
 		var name string
@@ -48,11 +48,11 @@ func sqliteTables(db *sql.DB) ([]string, error) {
 }
 
 func dumpTable(db *sql.DB, table string) ([]Output, error) {
-	rows, err := db.Query(`SELECT * FROM "` + strings.ReplaceAll(table, `"`, `""`) + `"`) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- the identifier comes from sqlite_master in a test helper and identifiers cannot be bound
+	rows, err := db.Query(`SELECT * FROM "` + strings.ReplaceAll(table, `"`, `""`) + `"`) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query, go.lang.security.audit.sqli.gosql-sqli.gosql-sqli -- the identifier comes from sqlite_master in a test helper and identifiers cannot be bound
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, err

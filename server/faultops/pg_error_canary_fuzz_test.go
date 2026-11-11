@@ -321,7 +321,7 @@ func runGRPCPGError(t *testing.T, fx *pgErrFixture, in pgErrInput, shim func(*fa
 	}
 	// Controls: each capture proves it can still show a canary.
 	log.Print(probe.Raw)
-	fmt.Fprintln(os.Stdout, probe.Raw)
+	_, _ = fmt.Fprintln(os.Stdout, probe.Raw)
 	fmt.Fprintln(os.Stderr, probe.Raw)
 	fx.control.WithLabelValues(probe.Raw).Set(1)
 	outputs := fx.capture.Drain()

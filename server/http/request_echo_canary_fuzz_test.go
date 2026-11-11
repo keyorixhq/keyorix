@@ -54,8 +54,6 @@ const (
 	echoChanMetrics = "metrics"
 	echoChanRawDB   = "raw-db-file"
 	echoChanReveal  = "reveal"
-
-	echoOriginReveal = "control-reveal"
 )
 
 // requestEchoRules is the whole allowlist; requestEchoPermitted adds the two
@@ -429,7 +427,7 @@ func (r *requestEchoRun) finish(origin string, plant func(*requestEchoRun)) {
 		drainAllBackgroundGoroutines()
 	}
 	log.Print(r.probe.Raw)
-	fmt.Fprintln(os.Stdout, r.probe.Raw)
+	_, _ = fmt.Fprintln(os.Stdout, r.probe.Raw)
 	fmt.Fprintln(os.Stderr, r.probe.Raw)
 	r.fx.control.WithLabelValues(r.probe.Raw).Set(1)
 	outputs := r.fx.capture.Drain()
