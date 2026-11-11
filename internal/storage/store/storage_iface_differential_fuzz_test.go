@@ -36,6 +36,7 @@ import (
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
@@ -370,6 +371,8 @@ func newIfaceWorld(tb testing.TB, withPG bool) *ifaceWorld {
 		if err != nil {
 			tb.Fatalf("open pg clone: %v", err)
 		}
+		// reset wipes the PG world under SET LOCAL session_replication_role.
+		pgpriv.RequireReplicationRolePrivilege(tb, pdb)
 		// The request pool must hold more than one connection. WithNamedLock
 		// (DeleteEnvironment, DeleteRole, ...) pins one connection for its
 		// advisory-lock session for the whole critical section, then runs the
