@@ -6,7 +6,7 @@
   span the database and the key files. Guard:
   `process_crash_recovery_fuzz_test.go:FuzzProcessCrashRecovery`, `:TestProcessCrashExhaustive`
   (on request), `process_crash_recovery_redproof_test.go:TestProcessCrashRedProof`. **Not
-  covered**: SQLite only; SIGKILL leaves the page cache to the kernel, so nothing here tests
+  covered**: the SQLite leg only (the PostgreSQL leg, process_crash_recovery_pg_fuzz_test.go, states its own coverage); SIGKILL leaves the page cache to the kernel, so nothing here tests
   fsync or power loss; the harness copies the server boot order by hand, and a drift between
   the two is not detected.
 <!-- section: Crash consistency (write-pending → rename → fsync) -->
