@@ -657,7 +657,7 @@ func pgTableNames(db *sql.DB) ([]string, error) {
 // pgSnapshotSQL writes the whole of db's current schema as a script that recreates
 // it exactly when replayed. The generator emits it; pgDumpDB over the replayed
 // copy compared to pgDumpDB over the source is its fidelity check.
-func pgSnapshotSQL(db *sql.DB) (string, error) {
+func pgSnapshotSQL(db *sql.DB) (string, error) { //nolint:unused // used by the regeneration template generator/w6_gen_test.go.txt
 	var w strings.Builder
 	stmt := func(s string) { w.WriteString(s); w.WriteString(pgStmtSep) }
 
@@ -779,7 +779,7 @@ func pgSnapshotSQL(db *sql.DB) (string, error) {
 
 // pgRowOrder sorts on every column so the script is byte-stable however the
 // heap happens to be laid out.
-func pgRowOrder(cols []string) string {
+func pgRowOrder(cols []string) string { //nolint:unused // used by the regeneration template generator/w6_gen_test.go.txt
 	q := make([]string, len(cols))
 	for i, c := range cols {
 		q[i] = `"` + c + `"`
@@ -812,13 +812,13 @@ func pgQueryRows(db *sql.DB, q string, n int) ([][]string, error) {
 	return out, rows.Err()
 }
 
-type pgSeqValue struct {
+type pgSeqValue struct { //nolint:unused // used by the regeneration template generator/w6_gen_test.go.txt
 	name   string
 	val    int64
 	called bool
 }
 
-func pgSeqValues(db *sql.DB) ([]pgSeqValue, error) {
+func pgSeqValues(db *sql.DB) ([]pgSeqValue, error) { //nolint:unused // used by the regeneration template generator/w6_gen_test.go.txt
 	names, err := pgQueryRows(db, `SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND relkind = 'S' ORDER BY 1`, 1)
 	if err != nil {
 		return nil, err
@@ -836,7 +836,7 @@ func pgSeqValues(db *sql.DB) ([]pgSeqValue, error) {
 
 // pgReplaySnapshot replays a pgSnapshotSQL script in one transaction, so a bad
 // script leaves nothing behind.
-func pgReplaySnapshot(db *sql.DB, script string) error {
+func pgReplaySnapshot(db *sql.DB, script string) error { //nolint:unused // used by the regeneration template generator/w6_gen_test.go.txt
 	tx, err := db.Begin()
 	if err != nil {
 		return err
