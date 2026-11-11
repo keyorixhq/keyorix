@@ -1,1 +1,0 @@
-TestGlobalHandlerFlagMatchesRouter	server/authzdiff	#4017	new guard over the handlers package source and matrix.json routes, report-only until its first green nightly on main
