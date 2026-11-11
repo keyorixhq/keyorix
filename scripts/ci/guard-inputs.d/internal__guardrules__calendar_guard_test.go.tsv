@@ -1,1 +1,1 @@
-internal/guardrules/calendar_guard_test.go	operator/**/*.go,docs/guard-rollout.d/*.tsv	repo-root walk over _test.go files (all modules); also reads every docs/guard-rollout.d row
+internal/guardrules/calendar_guard_test.go	operator/**/*.go,docs/guard-rollout.d/*	repo-root walk over _test.go files (all modules); also reads every docs/guard-rollout.d row (glob is the whole directory so it matches README.md while no row is listed)
