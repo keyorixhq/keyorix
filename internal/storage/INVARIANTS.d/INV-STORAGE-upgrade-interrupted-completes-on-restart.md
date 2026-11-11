@@ -11,4 +11,4 @@
   never fires is skipped with its reason, never passed
   (`TestUpgradeInterrupted_StopThatNeverFiresIsNotAPass`). **Not
   covered**: the stop is fail-stop at the gorm statement layer (no torn write inside SQLite);
-  PostgreSQL in this target.
+  PostgreSQL (the FuzzUpgradePG* targets cover it with their own oracles, see upgrade_pg_fuzz_test.go).

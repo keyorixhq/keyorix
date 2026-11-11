@@ -8,4 +8,4 @@
   listed difference that stops occurring, which is also a failure so an entry cannot outlive what it
   records. **Open**: `ugStopWindowDiffs` are unique and plain indexes a crash between creating a table
   or column and its index loses for good; `TestUpgradeInterrupted_KnownIndexGaps_StillOpen` pins them.
-  **Not covered**: column order, triggers, the WHERE text of partial indexes, PostgreSQL in this target.
+  **Not covered**: column order, triggers, the WHERE text of partial indexes, PostgreSQL (the FuzzUpgradePG* targets cover it with their own oracles, see upgrade_pg_fuzz_test.go).

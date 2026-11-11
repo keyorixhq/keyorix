@@ -4,5 +4,5 @@
   re-encrypts anything, so a step that rebuilds or rewrites `secret_nodes` / `secret_versions` must
   not disturb the ciphertext or the ids its AAD binds. Guard: `internal/storage`
   `FuzzUpgradeFromOldSchema`, `FuzzUpgradeInterrupted`, red-proved by
-  `TestUpgradeOracles_RedProof/invariant1_*`. **Not covered**: PostgreSQL in this target; sources
+  `TestUpgradeOracles_RedProof/invariant1_*`. **Not covered**: PostgreSQL (the FuzzUpgradePG* targets cover it with their own oracles, see upgrade_pg_fuzz_test.go); sources
   before v0.91.0; per-release key-file formats (every snapshot was written under one test key).

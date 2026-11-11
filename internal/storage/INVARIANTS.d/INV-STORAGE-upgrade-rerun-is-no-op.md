@@ -3,4 +3,4 @@
   its whole step list on every boot, so a step that is not idempotent keeps changing data on each
   restart. Guard: `internal/storage` `FuzzUpgradeFromOldSchema`, `FuzzUpgradeInterrupted`, red-proved
   by `TestUpgradeOracles_RedProof/invariant4_*`. **Not covered**: WAL state (a rerun that only
-  checkpoints reads as no change), PostgreSQL in this target.
+  checkpoints reads as no change), PostgreSQL (the FuzzUpgradePG* targets cover it with their own oracles, see upgrade_pg_fuzz_test.go).
