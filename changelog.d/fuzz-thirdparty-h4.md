@@ -1,0 +1,2 @@
+### Testing
+- **Deeper hostile-server fuzzing of the pgx and MySQL clients.** `FuzzPgxHostileQuery` drives pgx/v5 query, prepared, COPY and multi-result operations against a fake server whose post-handshake byte stream is the fuzz input, and the MySQL harness gains the prepared-statement binary protocol, multi-result sets and the compressed protocol. Oracles (no panic or hang, allocation budget, the admin password never in errors or decoded values) are pinned red/green. Layout and oracle limits: `fuzz/thirdparty/README.md`.
