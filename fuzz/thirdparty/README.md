@@ -63,7 +63,24 @@ hits a CONFIRMED, already-minimised go-sql-driver bug site (see
 `knownLibPanicSites`); any other panic still fails the run as a novel finding.
 This lets the fuzzer explore past the two known DoS panics instead of drowning in
 them. The confirmed bugs each have a deterministic reproducer test
-(`TestMySQL_*_Reproducer`). pgx has no allowlist — it produced no crashes.
+(`TestMySQL_*_Reproducer`).
 
-See `/mnt/data/wave4/out/h2-REPORT.md` for findings, reproducers and the
-Keyorix-reachability verdict for each.
+## pgx query path (session n4)
+
+`FuzzPgxHostileQuery` (`pgx/query_pgx_test.go`) completes a fixed valid startup,
+then streams fuzz-controlled backend messages while the client runs one of
+eight operations (simple / exec-mode / cached-prepared Query, Exec, CopyTo,
+CopyFrom, multi-result Exec, typed scans). Oracles: no panic/hang, a TotalAlloc
+budget (`allocBudget`), canary never in an error, decoded value or notice.
+`clampStream` caps every declared length (framed or raw) at 8 MiB. Its pgx
+allowlist (`knownPgxPanicSites`) holds one confirmed site, PGX-1
+(`(*baseRows).Values` on a DataRow shorter than its RowDescription, reproducer
+`TestPgxValues_ShortDataRow_Reproducer`). Any other panic still fails the run
+(`TestPgxQuery_AllowlistStillSurfacesNovelPanics`).
+
+```
+nice -n 10 go test ./fuzz/thirdparty/pgx/ -run '^$' -fuzz '^FuzzPgxHostileQuery$' -fuzztime=540s -parallel 2
+```
+
+See `/mnt/data/wave4/out/h2-REPORT.md` and `/Users/abeshkov/proj/wave4/out/n4-REPORT.md`
+for findings, reproducers and the Keyorix-reachability verdict for each.
