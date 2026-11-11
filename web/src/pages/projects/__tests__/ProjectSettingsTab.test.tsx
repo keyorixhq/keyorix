@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ALL_CAN } from '../../../test/can';
 import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { ProjectSettingsTab } from '../ProjectSettingsTab';
 import { ROUTES } from '../../../constants';
@@ -89,7 +90,7 @@ const canState = vi.hoisted(() => ({
     readRoles: true,
 }));
 vi.mock('../../../features/auth/useCan', () => ({
-    useCan: () => ({ ...canState }),
+    useCan: () => ({ ...ALL_CAN, ...canState }),
 }));
 
 describe('ProjectSettingsTab — promote environment', () => {
