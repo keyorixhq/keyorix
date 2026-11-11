@@ -1,26 +1,29 @@
-// Hostile-SERVER fuzz harness for jackc/pgx/v5 (PostgreSQL), the driver Keyorix uses
-// to mint/revoke dynamic DB credentials (internal/dynamic/postgres.go) and rotate role
-// passwords (internal/rotation/postgres.go) against an OPERATOR-CONFIGURED target.
+// Hostile-SERVER fuzz harnesses for jackc/pgx/v5 (PostgreSQL).
 //
-// Threat model: the target PostgreSQL server is attacker-controlled and replies with
-// hostile wire bytes. Keyorix's real call sequence is ConnectConfig (startup+auth
-// handshake) then conn.Exec (simple query, no args: CREATE/DROP/ALTER ROLE) and —
-// for rotation's parameterized ALTER and any Query-with-args — the extended protocol.
+// Two harness families coexist in this file:
 //
-// Oracles (sound only):
-//   - No panic escapes pgx's documented error path. pgx.ConnectConfig / conn.Exec /
-//     conn.Query return (conn,error)/(result,error); a panic is a defect.
-//   - Bounded time: each call completes within a context deadline; a hostile reply that
-//     hangs the driver past it is a defect (timeout, not deadlock).
-//   - Bounded memory is approximated by Go's own alloc behaviour under -fuzz (an
-//     unbounded alloc trips the fuzzing OOM/limit); not asserted numerically here.
+// h6 (FuzzPgxHandshake / FuzzPgxSimpleQueryResponse / FuzzPgxExtendedResponse):
 //
-// What these oracles do NOT verify: stated in the PR description, not fuzzed here.
+//	Attack the full call sequence Keyorix uses against an operator-configured
+//	target (ConnectConfig + conn.Exec + conn.Query), metered by the resguard
+//	resource layer. Uses the hostile-server infrastructure package.
+//
+// h2 (FuzzPgxHostileServer):
+//
+//	Canary-focused harness: drives ConnectConfig against a fully fuzz-controlled
+//	server whose every post-startup byte comes from the fuzz input. Oracles:
+//	(a) no panic / no hang (watchdog), (b) canary password never in error,
+//	(c) echo class expected, (d) ignored-read-error.
+//	Each oracle pinned red/green in oracle_pgx_test.go.
 package pgxhostile
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
+	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +32,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
 )
+
+// ---- h6: infrastructure (hostile-package-based) ------------------------------------
 
 const capBytes = 1 << 20 // refuse client messages longer than 1 MiB in the harness server
 
@@ -207,5 +212,168 @@ func FuzzPgxExtendedResponse(f *testing.F) {
 	probe, budget, haveBudget := pgxResguardProbe(f, pgxBudgetExtended)
 	f.Fuzz(func(t *testing.T, server []byte) {
 		measurePgx(t, probe, budget, haveBudget, server, drivePgxExtended)
+	})
+}
+
+// ---- h2: canary-focused hostile-server harness (buildScript encoding) ---------------
+
+// canaryPassword is the client-side secret. The hostile server never learns it
+// (pgx only sends it after an auth request, and even then the server discards
+// everything the client writes), so it must never surface in any pgx error.
+const canaryPassword = "s3cr3t-canary-pw-9f3a2b1c"
+
+// maxServerBody caps the message-body length the fake server may *declare*. It
+// exists purely to protect this shared host: pgx allocates the declared body
+// length up front (pgproto3 chunkreader.Next -> iobufpool.Get(n)), so an
+// uncapped fuzzer could drive ~1 GiB allocations per iteration. 8 MiB is large
+// enough to make the amplification visible yet safe to allocate repeatedly.
+const maxServerBody = 8 << 20
+
+// hangBudget bounds a single ConnectConfig+Ping. ConnectConfig itself is given a
+// 2s context; the watchdog at hangBudget only fires on a parser that ignores
+// context cancellation entirely (a true infinite loop).
+const hangBudget = 6 * time.Second
+
+// claimTable maps a 3-bit selector to the number of body bytes the server
+// DECLARES beyond what it actually sends. Non-zero entries force pgx to expect
+// more bytes than arrive (truncation / up-front allocation). All capped by
+// maxServerBody downstream.
+var claimTable = [8]int{0, 0, 1, 16, 4096, 1 << 16, 1 << 20, 4 << 20}
+
+// frame renders one backend message: type byte, big-endian int32 length
+// (declaredBody+4, i.e. INCLUDING the 4 length bytes), then the payload actually
+// transmitted. declaredBody may exceed len(payload) to simulate a short/hostile
+// server.
+func frame(typ byte, payload []byte, declaredBody int) []byte {
+	out := make([]byte, 5+len(payload))
+	out[0] = typ
+	binary.BigEndian.PutUint32(out[1:5], uint32(declaredBody+4))
+	copy(out[5:], payload)
+	return out
+}
+
+// buildScript decodes the fuzz input into a list of byte blobs the server writes
+// to the client, in order, then closes the connection. The encoding:
+//
+//	op byte: bits 0-1 = action, bits 2-4 = claim selector (for action 0/3)
+//	 action 0 or 3: framed message -> [typ:1][plen:2 BE][payload:plen]
+//	 action 1:      raw bytes      -> [plen:2 BE][bytes:plen]  (unframed garbage)
+//	 action 2:      stop (close)
+func buildScript(in []byte) [][]byte {
+	r := in
+	var out [][]byte
+	for len(r) >= 1 {
+		op := r[0]
+		r = r[1:]
+		switch op & 0x03 {
+		case 2:
+			return out
+		case 1:
+			if len(r) < 2 {
+				return out
+			}
+			plen := int(binary.BigEndian.Uint16(r[:2]))
+			r = r[2:]
+			if plen > len(r) {
+				plen = len(r)
+			}
+			out = append(out, append([]byte(nil), r[:plen]...))
+			r = r[plen:]
+		default: // 0 or 3: framed message
+			if len(r) < 3 {
+				return out
+			}
+			typ := r[0]
+			plen := int(binary.BigEndian.Uint16(r[1:3]))
+			r = r[3:]
+			if plen > len(r) {
+				plen = len(r)
+			}
+			payload := r[:plen]
+			r = r[plen:]
+			declared := len(payload) + claimTable[(op>>2)&0x07]
+			if declared > maxServerBody {
+				declared = maxServerBody
+			}
+			out = append(out, frame(typ, payload, declared))
+		}
+	}
+	return out
+}
+
+// serveOnce accepts exactly one connection, drains everything the client sends
+// (so the client's writes never block on a full socket buffer), writes every
+// scripted blob, then closes. Any accept/write error is ignored: the client
+// seeing a closed connection is a legitimate hostile-server outcome.
+func serveOnce(ln net.Listener, writes [][]byte) {
+	c, err := ln.Accept()
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	go io.Copy(io.Discard, c) //nolint:errcheck // draining; errors are expected on close
+	for _, w := range writes {
+		if _, err := c.Write(w); err != nil {
+			return
+		}
+	}
+}
+
+// runHostile is the shared driver used by both the fuzz target and the explicit
+// oracle tests. It decodes the script into server writes, drives pgx against the
+// resulting hostile server, and returns the error pgx produced (nil on a
+// successful connect).
+func runHostile(t *testing.T, script []byte) (connectErr error) {
+	t.Helper()
+	writes := buildScript(script)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("cannot listen on loopback: %v", err)
+	}
+	defer ln.Close()
+	go serveOnce(ln, writes)
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	dsn := fmt.Sprintf("postgres://canaryuser:%s@127.0.0.1:%d/postgres?sslmode=disable", canaryPassword, port)
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		// A fixed, well-formed DSN must always parse; a failure here is a harness bug.
+		t.Fatalf("harness: ParseConfig failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-done:
+		case <-time.After(hangBudget):
+			panic("pgx ConnectConfig did not return within hang budget (possible infinite loop)")
+		}
+	}()
+	conn, cerr := pgx.ConnectConfig(ctx, cfg)
+	if cerr == nil && conn != nil {
+		_ = conn.Ping(ctx)
+		_ = conn.Close(ctx)
+	}
+	close(done)
+	return cerr
+}
+
+func FuzzPgxHostileServer(f *testing.F) {
+	for _, seed := range pgxSeeds() {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, script []byte) {
+		cerr := runHostile(t, script)
+
+		// Oracle (b): the canary password must never appear in a pgx error.
+		if cerr != nil && strings.Contains(cerr.Error(), canaryPassword) {
+			t.Fatalf("CANARY LEAK: client password appeared in pgx error: %q", cerr.Error())
+		}
+		// Oracles (a) panic/hang are enforced by Go's crash recovery and the
+		// watchdog panic above. Oracle (c): server text inside an error is
+		// expected echo and is deliberately not treated as a failure here.
 	})
 }
