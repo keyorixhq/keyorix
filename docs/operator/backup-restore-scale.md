@@ -31,8 +31,9 @@ fixed batches), so their peak memory does not depend on how many rows a table ha
 `scale-check.sh` measures at three sizes: peak resident memory at the largest size should be
 within the noise of the smallest. With two or more sizes the script fails when a leg's peak at
 the largest size is out of proportion to the smallest, and
-`KEYORIX_SCALE_TESTS=1 go test ./server/admin -run TestScale_` runs it as a Go test (set
-`KEYORIX_SCALE_PG_DSN_FILE` to also cover both PostgreSQL directions). If you see memory growing
+`go test ./server/admin -run TestScale_` runs it as a Go test (it is opt-in and can also cover
+both PostgreSQL directions; the switches are listed in the header of
+`server/admin/backup_restore_scale_test.go`). If you see memory growing
 with the database, that is a bug: report it with the command and the table sizes.
 
 Disk is what grows. A restore unpacks the archive into a staging directory under `$TMPDIR`
