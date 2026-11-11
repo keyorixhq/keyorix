@@ -214,12 +214,23 @@ type pcrashWorld struct {
 	migSchema string
 }
 
-func buildPCrashWorld() (*pcrashWorld, error) {
+func buildPCrashWorld() (_ *pcrashWorld, err error) {
 	dir, err := os.MkdirTemp("", "pcrash-template-*")
 	if err != nil {
 		return nil, err
 	}
-	fresh, err := os.MkdirTemp("", "pcrash-fresh-*")
+	var fresh string
+	// pcrashWorldFor removes the directories of a built world; a failed build
+	// removes its own.
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+			if fresh != "" {
+				_ = os.RemoveAll(fresh)
+			}
+		}
+	}()
+	fresh, err = os.MkdirTemp("", "pcrash-fresh-*")
 	if err != nil {
 		return nil, err
 	}

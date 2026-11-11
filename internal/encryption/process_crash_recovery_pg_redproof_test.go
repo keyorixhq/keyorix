@@ -181,20 +181,6 @@ func (w *pcrashPGWorld) firstSQLSeam(t *testing.T, op pcrashOp) int64 {
 	return 0
 }
 
-// rotateFileSeam is the first key-file seam of a DEK rotation, the kill point
-// the backup check uses (the SQLite leg picks one the same way).
-func (w *pcrashPGWorld) rotateFileSeam(t *testing.T) int64 {
-	t.Helper()
-	cal := w.calibratePG(t, pcrashOps[0])
-	for i, l := range cal.trace {
-		if strings.HasPrefix(l, "file:") {
-			return int64(i + 1)
-		}
-	}
-	t.Fatalf("no file seam in rotate-dek: %v", cal.trace)
-	return 0
-}
-
 // TestProcessCrashPGBackendComparison reads the outcome files the two sweeps
 // write and compares them at the kill points both backends share: every key-file
 // seam, and the last database commit before each key-file seam. A difference
