@@ -73,7 +73,8 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   most column alterations are literal `ALTER TABLE <name>` DDL keyed by table name while
   `AutoMigrate` is keyed by model type, and whether a given `AutoMigrate` is unsafe depends on
   run-time existence flags, so a static check would certify only the few `Migrator().AddColumn`
-  sites. The one ordering rule that can be checked is guarded separately by
+  sites. The snapshot ordering of the `tableExists` calls written directly in `migrateDatabase`
+  (not those inside the steps) is guarded separately by
   `INV-STORAGE-migration-existence-snapshot-before-create`.
 
 ## Composite-key / index migrations

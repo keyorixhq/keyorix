@@ -25,7 +25,9 @@ import (
 // transitively: `f()`, `x.f()`), and requires that in migrateDatabase's body
 // the last tableExists call comes before the first such call.
 //
-// What it does not check: that a new step is appended at the END of the list
+// What it does not check: tableExists calls inside the migrate_<domain>.go
+// steps themselves (only calls written directly in migrateDatabase's body are
+// ordered), that a new step is appended at the END of the list
 // (any new step is at the end by construction), that a step's own flag
 // parameter came from the snapshot, calls made through function values, or the
 // INV-STORAGE-07 rule itself (see that invariant for why it has no guard).

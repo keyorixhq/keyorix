@@ -1,7 +1,7 @@
 ### Testing
 
 - New AST guard `TestEveryDirectMachineGrantEntryTagsSelfGranter` (report-only on pull requests for now): every HTTP handler and gRPC method that reaches the role-grant ceiling must tag the context with `WithSelfMachineGranter` on the machine-actor branch.
-- New guard `TestMigrateDatabase_ExistenceSnapshotPrecedesEveryTableCreation`: every `tableExists` query in `migrateDatabase` runs before any table-creating `AutoMigrate`.
+- New guard `TestMigrateDatabase_ExistenceSnapshotPrecedesEveryTableCreation`: every `tableExists` call written directly in `migrateDatabase` (not those inside the migration steps) runs before any table-creating `AutoMigrate`.
 - Invariant index recounted; stale gRPC "Ledger gap" note removed.
 
 ### Fixed
