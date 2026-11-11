@@ -6,9 +6,11 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +77,85 @@ func (c *KeyorixCore) ListLegacyRoleProjectGrants(ctx context.Context) ([]Legacy
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// LegacyRoleAccessRequest is a pending access request whose SuggestedRole is a
+// legacy role. Approving it with that role is refused (#3605); the approver
+// picks the GrantedRole, and Replacement is the project role to pick. User and
+// Project are "" when the name cannot be resolved.
+type LegacyRoleAccessRequest struct {
+	RequestID     uint
+	ProjectID     uint
+	Project       string
+	UserID        uint
+	User          string // the requester's email
+	SuggestedRole string
+	Replacement   string
+}
+
+// ListPendingAccessRequestsWithLegacyRole returns the pending project-role access
+// requests that suggest a legacy role, in request id order. A request past its TTL
+// is skipped (approving it is refused as expired anyway), as is one at a project
+// that no longer exists. Read-only: nothing is resolved or edited.
+func (c *KeyorixCore) ListPendingAccessRequestsWithLegacyRole(ctx context.Context) ([]LegacyRoleAccessRequest, error) {
+	projects, err := c.storage.ListProjects(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	now := c.now()
+	var out []LegacyRoleAccessRequest
+	for _, p := range projects {
+		reqs, err := c.storage.ListAccessRequests(ctx, p.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		for _, r := range reqs {
+			if r.State != AccessRequestPending || r.SecretID != nil || (r.ExpiresAt != nil && now.After(*r.ExpiresAt)) {
+				continue
+			}
+			replacement, ok := models.LegacyRoleProjectReplacement(r.SuggestedRole)
+			if !ok {
+				continue
+			}
+			item := LegacyRoleAccessRequest{RequestID: r.ID, ProjectID: p.ID, Project: p.Name, UserID: r.UserID,
+				SuggestedRole: r.SuggestedRole, Replacement: replacement}
+			if u, err := c.storage.GetUser(ctx, r.UserID); err == nil && u != nil {
+				item.User = u.Email
+			}
+			out = append(out, item)
+		}
+	}
+	slices.SortFunc(out, func(a, b LegacyRoleAccessRequest) int { return cmp.Compare(a.RequestID, b.RequestID) })
+	return out, nil
+}
+
+// LegacyRoleAccessRequestReport renders the pending requests as lines, a heading
+// and then one line per request; nil when there are none. limit > 0 names at most
+// limit requests; 0 names all of them. It only names the requests: it changes none.
+func LegacyRoleAccessRequestReport(reqs []LegacyRoleAccessRequest, limit int) []string {
+	if len(reqs) == 0 {
+		return nil
+	}
+	lines := []string{fmt.Sprintf("%d pending access request(s) suggest a legacy role (%s). Approving one with that role is refused since #3605 "+
+		"and the requests were left as they are: approve each with the project role instead (a request under M-of-N approval has a fixed role "+
+		"and must be made again).", len(reqs), strings.Join(models.LegacyRoleNames(), ", "))}
+	for i, r := range reqs {
+		if limit > 0 && i == limit {
+			lines = append(lines, fmt.Sprintf("... and %d more (keyorix-server admin validate --posture lists all of them)", len(reqs)-i))
+			break
+		}
+		who := displayName(r.User)
+		if who == "" {
+			who = fmt.Sprintf("id %d", r.UserID)
+		}
+		where := displayName(r.Project)
+		if where == "" {
+			where = fmt.Sprintf("id %d", r.ProjectID)
+		}
+		lines = append(lines, fmt.Sprintf("access request %d: user %s asks for %s on project %s; approve it as %s instead",
+			r.RequestID, who, displayName(r.SuggestedRole), where, r.Replacement))
+	}
+	return lines
 }
 
 // legacyGrantPrincipalName resolves the name the CLI addresses a principal by.

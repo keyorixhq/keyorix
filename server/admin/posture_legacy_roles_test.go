@@ -14,9 +14,15 @@ import (
 
 type fakeLegacyRoleGrantLister struct {
 	grants      []core.LegacyRoleProjectGrant
+	requests    []core.LegacyRoleAccessRequest
 	invitations []core.InvitationOutsideScope
 	grantsErr   error
+	requestsErr error
 	invErr      error
+}
+
+func (f fakeLegacyRoleGrantLister) ListPendingAccessRequestsWithLegacyRole(context.Context) ([]core.LegacyRoleAccessRequest, error) {
+	return f.requests, f.requestsErr
 }
 
 func (f fakeLegacyRoleGrantLister) ListLegacyRoleProjectGrants(context.Context) ([]core.LegacyRoleProjectGrant, error) {
@@ -50,6 +56,23 @@ func TestCollectLegacyRoleGrantsPosture(t *testing.T) {
 	assert.Contains(t, report.warnings[2], "invite with project_viewer instead")
 }
 
+// TestCollectLegacyRoleGrantsPosture_PendingAccessRequests: a pending request that
+// suggests a legacy role is a warning with its own heading and request id, never
+// a deviation (nothing is broken: the approver picks a project role).
+func TestCollectLegacyRoleGrantsPosture_PendingAccessRequests(t *testing.T) {
+	report := &postureReport{}
+	collectLegacyRoleGrantsPosture(context.Background(), &config.Config{}, fakeLegacyRoleGrantLister{
+		requests: []core.LegacyRoleAccessRequest{{RequestID: 12, ProjectID: 2, Project: "payments", UserID: 3,
+			User: "a@example.com", SuggestedRole: "editor", Replacement: "project_developer"}},
+	}, report)
+
+	assert.Empty(t, report.deviations)
+	require.Len(t, report.warnings, 2, "%v", report.warnings)
+	assert.Contains(t, report.warnings[0], "1 pending access request(s) suggest a legacy role")
+	assert.Contains(t, report.warnings[1], "access request 12: user a@example.com asks for editor on project payments")
+	assert.Contains(t, report.warnings[1], "approve it as project_developer instead")
+}
+
 // TestCollectLegacyRoleGrantsPosture_LegacyEmergencyRole: a legacy emergency role
 // fails every activation, so it is a deviation that names the fix; disabled
 // break-glass, or a project role, is not reported.
@@ -81,6 +104,7 @@ func TestCollectLegacyRoleGrantsPosture_NoGrantsNoWarning(t *testing.T) {
 func TestCollectLegacyRoleGrantsPosture_ReadFailureIsNotClean(t *testing.T) {
 	for name, lister := range map[string]fakeLegacyRoleGrantLister{
 		"grants":      {grantsErr: errors.New("boom")},
+		"requests":    {requestsErr: errors.New("boom")},
 		"invitations": {invErr: errors.New("boom")},
 	} {
 		t.Run(name, func(t *testing.T) {
