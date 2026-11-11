@@ -3,3 +3,4 @@
 
 ### Fixed
 - **Machine-token lifetime is bounded on both transports.** `expires_in_days` below 0 used to mint a token that never expires, and a huge value overflowed the expiry computation. HTTP and gRPC `IssueMachineToken` now share one core check (`core.MachineTokenExpiresAt`): 0 or omitted still means never expires, a negative value or one above 36500 days is `400` / `InvalidArgument` and mints nothing.
+- **A personal access token cannot be created already expired.** `POST /api/v1/auth/tokens` accepted an `expires_at` in the past and issued (and showed once) a token that could never be used. Core `CreateOwnPAT` now refuses an expiry at or before now with a validation error (`400`), so every caller is covered; an omitted `expires_at` still creates a non-expiring token.
