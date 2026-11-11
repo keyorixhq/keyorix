@@ -130,6 +130,24 @@ func newVaultClient(vaultURL string) (*azsecrets.Client, error) {
 	})
 }
 
+// newVerifyingVaultClient builds a client with the PRODUCTION-DEFAULT
+// challenge-resource verification ENABLED (DisableChallengeResourceVerification
+// unset = false), matching Keyorix's configuration. Used by the repro that
+// demonstrates AZURE-1 is reachable even under verification.
+func newVerifyingVaultClient(vaultURL string) (*azsecrets.Client, error) {
+	return azsecrets.NewClient(vaultURL, fakeCred{}, &azsecrets.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			Transport: httpClient(),
+			Retry: policy.RetryOptions{
+				MaxRetries:    2,
+				TryTimeout:    3 * time.Second,
+				RetryDelay:    time.Millisecond,
+				MaxRetryDelay: 2 * time.Millisecond,
+			},
+		},
+	})
+}
+
 // --- oracle machinery (mirrors the AWS harness) ---
 
 type oracleResult struct {
