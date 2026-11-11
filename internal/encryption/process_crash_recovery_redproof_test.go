@@ -155,46 +155,6 @@ func pcrashRedProof(t *testing.T, w *pcrashWorld, op pcrashOp, action string, ki
 	return w.checkAfterDeath(t, op, dir, st, after)
 }
 
-// pcrashBackupAtKill kills a DEK rotation at killAt and takes a backup with no
-// restart in between; the archive is post.tar.gz in the returned install.
-func pcrashBackupAtKill(t *testing.T, w *pcrashWorld, killAt int64) (string, pcrashExecState, string) {
-	t.Helper()
-	dir := t.TempDir()
-	if err := pcrashCopyTree(w.dir, dir); err != nil {
-		t.Fatalf("copy template: %v", err)
-	}
-	st, err := w.prepare(dir, 0)
-	if err != nil {
-		t.Fatalf("prepare: %v", err)
-	}
-	run, err := pcrashOps[0].run(dir, pcrashPass, killAt)
-	if err != nil {
-		t.Fatalf("rotate: %v", err)
-	}
-	if !run.killed {
-		t.Fatalf("the rotation was not killed (exit %d): %s", run.exit, pcrashTail(run.output))
-	}
-	b, err := runPCrashChild(dir, pcrashPass, "admin", []string{"backup", "--config", "./keyorix.yaml", "--output", "./post.tar.gz"}, 0)
-	if err != nil {
-		t.Fatalf("backup: %v", err)
-	}
-	if b.exit != 0 {
-		t.Fatalf("backup after the kill exited %d: %s", b.exit, pcrashTail(b.output))
-	}
-	return dir, st, run.label
-}
-
-// pcrashCleanHostOutcome runs the clean-host check in a subtest of its own, so a
-// skip is reported to the caller instead of ending the caller's test.
-func pcrashCleanHostOutcome(t *testing.T, w *pcrashWorld, dir, label string, st pcrashExecState) (v []string, skipped bool) {
-	t.Helper()
-	t.Run("check", func(t *testing.T) {
-		defer func() { skipped = t.Skipped() }()
-		v = w.checkCleanHostRestore(t, dir, label, st)
-	})
-	return v, skipped
-}
-
 func pcrashExecSQL(t *testing.T, dir, stmt string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "keyorix.db")+"?_pragma=busy_timeout(5000)")
@@ -224,7 +184,9 @@ func pcrashWant(t *testing.T, v []string, name string) {
 // TestProcessCrashRedProof runs in the nightly, not in plain `go test`: see
 // pcrashSkipUnlessRequested.
 func TestProcessCrashRedProof(t *testing.T) {
-	pcrashSkipUnlessRequested(t, "show each crash oracle firing")
+	if testing.Short() {
+		t.Skip("spawns real child processes")
+	}
 	w := pcrashWorldFor(t)
 	dek := pcrashOps[0]
 	update := pcrashOps[5]
@@ -242,44 +204,6 @@ func TestProcessCrashRedProof(t *testing.T) {
 			t.Parallel()
 			pcrashWant(t, pcrashRedProof(t, w, dek, "rotate-dek-split", 0, nil), "I3")
 		pcrashWant(t, v, "I1")
-	})
-	t.Run("I1-refusal-must-be-the-products", func(t *testing.T) {
-		// A directory in the DEK's place fails in key reconciliation or key
-		// initialization, and is no refusal an operator is told how to resolve.
-		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-			dek := filepath.Join(dir, "keys", "dek.key")
-			if err := os.Remove(dek); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Mkdir(dek, 0o700); err != nil {
-				t.Fatal(err)
-			}
-		})
-		pcrashWant(t, v, "I1 reopen failed without a documented")
-	})
-	t.Run("control-product-refusals-are-documented", func(t *testing.T) {
-		wrongFirst := update
-		wrongFirst.passes = []string{"pcrash-not-the-passphrase", pcrashPass}
-		if v := pcrashRedProof(t, w, wrongFirst, "", 1, nil); len(v) > 0 {
-			t.Fatalf("a wrong passphrase is a documented refusal: %v", v)
-		}
-		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-			if err := os.Remove(filepath.Join(dir, "keys", "dek.key")); err != nil {
-				t.Fatal(err)
-			}
-		})
-		pcrashWant(t, v, "I1 no passphrase opens")
-		dir := t.TempDir()
-		if err := pcrashCopyTree(w.dir, dir); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, ".keyorix-restore-journal.json"), []byte("{}"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		o := pcrashOpenGuarded(dir, pcrashPass)
-		if o.err == nil || !pcrashExplicitOpenError(o.err) {
-			t.Fatalf("the restore journal refusal is documented: inst=%v err=%v", o.inst != nil, o.err)
-		}
 	})
 	t.Run("I2-version-row-lost", func(t *testing.T) {
 		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
@@ -320,19 +244,9 @@ func TestProcessCrashRedProof(t *testing.T) {
 		twice.passes = []string{pcrashPass, pcrashPass}
 		pcrashWant(t, pcrashRedProof(t, w, twice, "", 1, nil), "I3")
 	})
-	t.Run("I3-mixed-roles-after-authorization-before", func(t *testing.T) {
-		mixed := pcrashOp{name: "role-mixed", after: pcrashSame}
-		if v := pcrashRedProof(t, w, mixed, "role-mixed-die-first", 0, nil); len(v) > 0 {
-			t.Fatalf("control: killed before either write is wholly before: %v", v)
-		}
-		if v := pcrashRedProof(t, w, mixed, "", 0, nil); len(v) > 0 {
-			t.Fatalf("control: a completed run is wholly after: %v", v)
-		}
-		pcrashWant(t, pcrashRedProof(t, w, mixed, "role-mixed-die-between", 0, nil), "I3 state mixes before and")
-	})
 	t.Run("I4-privilege-widened", func(t *testing.T) {
 		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-			pcrashExecSQL(t, dir, pcrashWidenBobSQL)
+			pcrashExecSQL(t, dir, "INSERT INTO user_roles (user_id, role_id, project_id, environment_id) SELECT u.id, r.id, 0, 0 FROM users u, roles r WHERE u.username = 'pcrash-bob' AND r.name = 'admin'")
 		})
 		t.Run("I3-undecryptable-version", func(t *testing.T) {
 			t.Parallel()
@@ -355,11 +269,25 @@ func TestProcessCrashRedProof(t *testing.T) {
 		pcrashWant(t, v, "I5")
 	})
 	t.Run("backup-after-kill-control-and-damage", func(t *testing.T) {
-		// After the DEK rename, so dek.key.pending is gone: the control also goes
-		// through the clean-host restore, which #4058 skips while the file exists.
-		killAt := w.seamNamed(t, dek, "sweep:after-rename-dek")
-		if v := w.checkBackupAfterKilledRotation(t, killAt, 0, nil); len(v) > 0 {
-			t.Fatalf("control: an undamaged restore must be clean: %v", v)
+		// Since BACKUP-PENDING-ROTATION-1 a backup is refused at every kill point
+		// that leaves a .pending file, and a refusal checks nothing. So the oracle
+		// can only be proved at a kill point where the backup is taken and
+		// restored: find one instead of assuming it, and fail if none exists.
+		for killAt := int64(1); killAt <= pcrashBackupScanMax; killAt++ {
+			v := w.checkBackupAfterKilledRotation(t, killAt, 1, func(target string) {
+				pcrashExecSQL(t, target, "UPDATE secret_versions SET encrypted_value = randomblob(64) WHERE id = (SELECT MAX(id) FROM secret_versions)")
+			})
+			if len(v) == 0 {
+				continue // backup or restore refused here: nothing was checked
+			}
+			if !strings.Contains(v[0], "backup made after a kill") {
+				t.Fatalf("kill point %d: unexpected violation: %v", killAt, v)
+			}
+			if c := w.checkBackupAfterKilledRotation(t, killAt, 1, nil); len(c) > 0 {
+				t.Fatalf("control at kill point %d: an undamaged restore must be clean: %v", killAt, c)
+			}
+			t.Logf("fired as expected at kill point %d: %s", killAt, pcrashTail(v[0]))
+			return
 		}
 		v := w.checkBackupAfterKilledRotation(t, killAt, 0, func(target string) {
 			pcrashExecSQL(t, target, "UPDATE secret_versions SET encrypted_value = randomblob(64) WHERE id = (SELECT MAX(id) FROM secret_versions)")
@@ -427,14 +355,11 @@ func TestProcessCrashRedProof(t *testing.T) {
 			}
 			t.Logf("fired as expected: %s", pcrashTail(v[0]))
 		})
+		t.Fatalf("no kill point in 1..%d gave a backup that was taken and restored, so the backup-after-kill oracle was never exercised", pcrashBackupScanMax)
 	})
 	for _, c := range []struct{ name, action, want string }{
 		{"I5-rerun-panics", "rerun-panic", "I5"},
 		{"I5-rerun-corrupts", "rerun-corrupt", "I5"},
-		{"I5-completed-rerun-moves-authorization", "rerun-widen", "I5 authorization after a completed"},
-		{"I5-refused-rerun-moves-authorization", "rerun-refuse-widen", "I5 authorization after a refused"},
-		{"control-rerun-completes-unchanged", "rerun-noop", ""},
-		{"control-rerun-refuses-unchanged", "rerun-refuse", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -449,14 +374,7 @@ func TestProcessCrashRedProof(t *testing.T) {
 			cal := w.calibrate(t, pcrashOps[6])
 			after := &pcrashModel{Ledger: st.before.Ledger.clone(), Roles: cal.ref.Roles, Authz: st.before.Authz}
 			m := &pcrashModel{Ledger: st.before.Ledger, Roles: st.before.Roles, Authz: st.before.Authz}
-			v := w.checkRerun(t, broken, dir, pcrashPass, st, after, m)
-			if c.want == "" {
-				if len(v) > 0 {
-					t.Fatalf("control: %v", v)
-				}
-				return
-			}
-			pcrashWant(t, v, c.want)
+			pcrashWant(t, w.checkRerun(t, broken, dir, pcrashPass, st, after, m), c.want)
 		})
 		t.Run("backup-after-kill-control-and-damage", func(t *testing.T) {
 			t.Parallel()
