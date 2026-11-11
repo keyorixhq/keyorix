@@ -9,6 +9,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -90,6 +91,11 @@ func (c *KeyorixCore) CreateOIDCBinding(ctx context.Context, projectID, machineI
 		return nil, validationErrorf("issuer and subject are required")
 	}
 	if err := c.requireAdminAuthorityAt(ctx, actorID, 0); err != nil {
+		// Only the refusal is a permission denial; a failure to resolve the actor's
+		// roles stays a storage error.
+		if errors.Is(err, errAdminAuthorityRequired) {
+			return nil, permissionDeniedf("binding an OIDC subject requires install-wide admin authority: %w", err)
+		}
 		return nil, fmt.Errorf("binding an OIDC subject requires install-wide admin authority: %w", err)
 	}
 	// Surface operator typos early: a binding to an issuer Keyorix doesn't trust

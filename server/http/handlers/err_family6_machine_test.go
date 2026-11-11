@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -184,4 +185,35 @@ func TestErrFamily6_Item4_DynamicSecretRefusalsAreClassifiedBySentinel(t *testin
 	require.True(t, fw.faulty.Fired())
 	requireFold503(t, w, "GetProject fault")
 	fw.faulty.Arm(nil)
+}
+
+// TestErrFamily6_Item4_OIDCBindingWithoutGlobalAdminIs403 drives POST .../oidc-bindings as
+// an actor who is admin of the machine's project but holds no install-wide admin role
+// (#127: the (issuer, subject) namespace is global). Core refuses with
+// errAdminAuthorityRequired; the route must answer 403 (main gave 400 by text, the
+// sentinel migration gave 500) and must write no binding.
+func TestErrFamily6_Item4_OIDCBindingWithoutGlobalAdminIs403(t *testing.T) {
+	fw := newFoldWorld(t)
+	ctx := t.Context()
+	cat := NewCatalogHandler(fw.cs)
+
+	proj := &models.Project{Name: "fam6-oa-proj"}
+	require.NoError(t, fw.db.Create(proj).Error)
+	m, err := fw.cs.CreateMachineIdentity(ctx, proj.ID, "fam6-oa-machine", "service", "", "", fw.admin.ID, 0)
+	require.NoError(t, err)
+
+	// Move the actor's bypass role from global scope to the machine's project only.
+	require.NoError(t, fw.db.Exec("DELETE FROM user_roles").Error)
+	var bypass models.Role
+	require.NoError(t, fw.db.Where("name = ?", "fold-bypass").First(&bypass).Error)
+	require.NoError(t, fw.local.AssignRole(ctx, fw.admin.ID, bypass.ID, corestorage.Scope{ProjectID: proj.ID}))
+
+	w := httptest.NewRecorder()
+	cat.CreateOIDCBinding(w, suReq(http.MethodPost, `{"issuer":"https://issuer.example","subject":"victim-sub"}`,
+		map[string]string{"id": suID(proj.ID), "machineId": suID(m.ID)}))
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+
+	var n int64
+	require.NoError(t, fw.db.Model(&models.MachineIdentityOIDCBinding{}).Count(&n).Error)
+	assert.Zero(t, n, "a refused binding must not be written")
 }
