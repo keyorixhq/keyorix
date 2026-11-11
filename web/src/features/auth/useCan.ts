@@ -21,9 +21,9 @@ export const PERM = {
 export interface Can {
     /** Install administrator (user directory, system settings). */
     admin: boolean;
-    /** Create / edit / rotate / share / suspend / copy a secret. */
+    /** Create / edit / rotate / share / suspend / copy a secret, hand over its ownership. */
     writeSecrets: boolean;
-    /** Delete a secret or hand over its ownership. */
+    /** Delete a secret. */
     deleteSecrets: boolean;
     /** Read the audit log. */
     readAudit: boolean;
