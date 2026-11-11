@@ -1,0 +1,1 @@
+RD-PQTLS-1-GRPC-LISTENER-NEGOTIATES-X25519MLKEM768	./server/grpc	TestNewServer_TLS_NegotiatesX25519MLKEM768	default-ci	pending	-	RD-PQTLS-1: the gRPC TLS listener keeps Go default groups and negotiates hybrid X25519MLKEM768 (gRPC twin of the HTTP row; INV-GRPC-pq-key-exchange)

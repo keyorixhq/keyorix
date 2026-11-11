@@ -2507,7 +2507,7 @@ type ListUsersParams struct {
 	IsActive       *bool   `form:"is_active,omitempty" json:"is_active,omitempty"`
 	IncludeDeleted *bool   `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
 
-	// Filter Set to `inactive` for users whose last login is more than 30 days ago; an account that has never logged in counts once it is 30+ days old (judged by creation date).
+	// Filter Set to `inactive` for users with no login in the last 30+ days. An account that has never logged in counts as inactive once it is 30+ days old (judged by its creation date), not before.
 	Filter *ListUsersParamsFilter `form:"filter,omitempty" json:"filter,omitempty"`
 }
 

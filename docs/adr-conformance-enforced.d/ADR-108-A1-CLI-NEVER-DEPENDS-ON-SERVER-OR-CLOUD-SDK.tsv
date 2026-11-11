@@ -1,0 +1,1 @@
+ADR-108-A1-CLI-NEVER-DEPENDS-ON-SERVER-OR-CLOUD-SDK	./cli/internal/depguard	TestNoServerOrCloudSDKDependencies	default-ci	pending	-	ADR-108 Decision A1/A3: the cli module graph (real go list -deps) never includes internal/core, internal/storage, internal/config, server/, internal/crypto, internal/encryption or a cloud SDK (INV-CLI-01, INV-CLI-03)

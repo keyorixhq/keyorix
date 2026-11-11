@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ShieldCheckIcon, CheckIcon, NoSymbolIcon } from '@heroicons/react/24/outline';
 import { useAccessReview, useAttestAccessReview, useRevokeAccessReview } from '../../features/projects/api';
+import { useCan } from '../../features/auth/useCan';
 import { AccessReviewEntry, AccessReviewDecision } from '../../services/projects';
 import { ProjectAccessReviewCampaigns, lastUsedInfo } from './ProjectAccessReviewCampaigns';
 
@@ -47,6 +48,8 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
     const entries = report?.entries ?? [];
     const degraded = report?.degraded === true;
     const degradedReasons = report?.degradedReasons ?? [];
+    // Revoke is roles.assign in the project; Attest is roles.read (no useCan field, left as is).
+    const canRevoke = useCan().manageMembers;
     const attest = useAttestAccessReview(projectId);
     const revoke = useRevokeAccessReview(projectId);
 
@@ -91,7 +94,7 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
                     const confirming = confirmKey === key;
                     const principal =
                         e.principalType === 'user' && e.email ? `${e.principalName} (${e.email})` : e.principalName;
-                    const revocable = e.source !== 'owner';
+                    const revocable = canRevoke && e.source !== 'owner';
                     return (
                         <li key={key} className="flex items-center gap-3 px-4 py-3">
                             <span
