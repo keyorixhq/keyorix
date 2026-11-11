@@ -484,18 +484,6 @@ func (w *pcrashWorld) calibrate(t *testing.T, op pcrashOp) pcrashCalibration {
 	return c
 }
 
-// seamNamed is the kill point of op's first seam called label, on an install
-// the fuzz state added no rows to.
-func (w *pcrashWorld) seamNamed(t *testing.T, op pcrashOp, label string) int64 {
-	t.Helper()
-	cal := w.calibrate(t, op)
-	i := slices.Index(cal.labels, label)
-	if i < 0 {
-		t.Fatalf("%s has no seam named %q: %v", op.name, label, cal.labels)
-	}
-	return int64(i) + 1
-}
-
 // pcrashExecState is what one fuzz input adds to the template and observes.
 type pcrashExecState struct {
 	before *pcrashModel
