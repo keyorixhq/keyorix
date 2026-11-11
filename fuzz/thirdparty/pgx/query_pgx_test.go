@@ -104,7 +104,7 @@ func runHostileQuery(t *testing.T, in []byte) (*queryOutcome, uint64) {
 		op = queryOp(int(in[0]) % int(numQueryOps))
 		in = in[1:]
 	}
-	writes := append(handshakeOK(), buildScript(in)...)
+	writes := append(handshakeOK(), clampStream(buildScript(in)))
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -151,6 +151,32 @@ func runHostileQuery(t *testing.T, in []byte) (*queryOutcome, uint64) {
 
 	runtime.ReadMemStats(&ms)
 	return out, ms.TotalAlloc - before
+}
+
+// clampStream joins the scripted writes into the one byte stream the client
+// will parse and walks it as pgproto3 frames, lowering any declared length
+// above maxServerBody+4 to maxServerBody+4. buildScript caps framed messages
+// only; a raw blob (action 1) can carry any 5-byte header, and the first fuzz
+// run found that 6 raw bytes ('0' 0x30303030) make pgx allocate its declared
+// 808 MB body up front: h2 Finding 3 at its real ~1 GiB ceiling
+// (pgproto3 maxMessageBodyLen). That is characterised, so the clamp keeps the
+// laptop safe while every other shape (short, negative, < 4, truncated
+// lengths) reaches the client unchanged. Does NOT verify behaviour between
+// maxServerBody and pgx's real ceiling.
+func clampStream(writes [][]byte) []byte {
+	s := bytes.Join(writes, nil)
+	for pos := 0; pos+5 <= len(s); {
+		l := binary.BigEndian.Uint32(s[pos+1 : pos+5])
+		if l > maxServerBody+4 && l < 1<<31 {
+			l = maxServerBody + 4
+			binary.BigEndian.PutUint32(s[pos+1:pos+5], l)
+		}
+		if l < 4 || l >= 1<<31 {
+			break // invalid length: the client errors here, nothing after it is parsed
+		}
+		pos += 1 + int(l)
+	}
+	return s
 }
 
 // serveQuery is serveOnce for the query path. serveOnce closes as soon as its

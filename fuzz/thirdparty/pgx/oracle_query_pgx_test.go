@@ -1,6 +1,7 @@
 package pgxfuzz
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -104,6 +105,21 @@ func TestPgxQuery_TruncatedDataRow_Oracle(t *testing.T) {
 		if o.opErr != nil || !strings.Contains(o.rendered.String(), "partial") {
 			t.Fatalf("green control failed: err=%v rendered=%q", o.opErr, o.rendered.String())
 		}
+	}
+}
+
+// TestPgxQuery_ClampStream: the raw-blob header that drove an 808 MB
+// allocation is lowered to the cap (so the run stays under allocBudget), and a
+// valid stream passes through byte-for-byte.
+func TestPgxQuery_ClampStream(t *testing.T) {
+	raw := []byte("010000000") // the fuzzer's original input
+	_, alloc := runHostileQuery(t, raw)
+	if alloc > allocBudget {
+		t.Fatalf("clamp did not hold: %d bytes", alloc)
+	}
+	valid := buildScript(pgxQuerySeeds()[0][1:])
+	if got := clampStream(valid); !bytes.Equal(got, bytes.Join(valid, nil)) {
+		t.Fatal("clampStream altered a valid stream")
 	}
 }
 
