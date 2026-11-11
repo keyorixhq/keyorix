@@ -324,12 +324,42 @@ func checkQueryCanary(in []byte, o *queryOutcome) string {
 	return ""
 }
 
+// knownPgxPanicSites lists CONFIRMED pgx/v5 v5.11.0 panics that already have a
+// deterministic reproducer (repro_query_pgx_test.go). The fuzz target swallows
+// a panic only when its stack contains one of these exact frames, so the
+// fuzzer keeps exploring past them; any other panic fails the run.
+// TestPgxQuery_AllowlistStillSurfacesNovelPanics proves a different panic is
+// not swallowed.
+var knownPgxPanicSites = []string{
+	// PGX-1: (*baseRows).Values indexes rows.values[i] for every field
+	// description without a length check (rows.go:322).
+	"github.com/jackc/pgx/v5.(*baseRows).Values(",
+}
+
+// classifyPanic returns "" when stack hits a known site, else a failure text.
+func classifyPanic(val any, stack string) string {
+	for _, site := range knownPgxPanicSites {
+		if strings.Contains(stack, site) {
+			return ""
+		}
+	}
+	return fmt.Sprintf("NEW panic (not a known pgx bug site): %v\n%s", val, stack)
+}
+
 func FuzzPgxHostileQuery(f *testing.F) {
 	for _, seed := range pgxQuerySeeds() {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, in []byte) {
-		o, alloc := runHostileQuery(t, in)
+		var o *queryOutcome
+		var alloc uint64
+		val, stack := recoverStack(func() { o, alloc = runHostileQuery(t, in) })
+		if val != nil {
+			if msg := classifyPanic(val, stack); msg != "" {
+				t.Fatal(msg)
+			}
+			return // confirmed library bug with a reproducer test
+		}
 		if leak := checkQueryCanary(in, o); leak != "" {
 			t.Fatalf("CANARY LEAK: %s", leak)
 		}
