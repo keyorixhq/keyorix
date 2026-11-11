@@ -77,17 +77,16 @@ var secretLookupFuncs = map[string]int{
 // one of those slots, so its secretEnvNames (reached through
 // ValidateSecretSources / EnforceSecretFilePermissions) covers them.
 var dynamicSecretNameSites = map[string]string{
-	"internal/config/config.go":               "SecretEnvVars, SSO providers, auto_rotation dsn_env, connect vault token_env, key_provider env_var/shamir_share_env (secretEnvNames)",
-	"internal/config/configured_secrets.go":   "secretEnvNames",
-	"internal/config/secret_snapshot.go":      "secretEnvNames (snapshotSecrets, SecretFilePermissionProblems)",
-	"internal/config/secret_lookup.go":        "LookupSecretEnv: the name its server callers pass (the bootstrap token, connect vault token_env)",
-	"internal/config/config_auto_rotation.go": "auto_rotation backend dsn_env",
-	"internal/config/config_sso.go":           "SSO provider client secret",
-	"server/wire_backend_rotation.go":         "connect vault token_env (default VAULT_TOKEN)",
-	"internal/crypto/raw_providers.go":        "key_provider env_var",
-	"internal/crypto/shamir_provider.go":      "key_provider shamir_share_env",
-	"internal/encryptionops/dek.go":           "key_provider env_var",
-	"internal/crypto/passphrase.go":           "the caller's passphrase variable (constants discovered at the ResolvePassphrase call sites)",
+	"internal/config/config.go":             "SecretEnvVars, SSO providers, auto_rotation dsn_env, connect vault token_env, key_provider env_var/shamir_share_env (secretEnvNames)",
+	"internal/config/configured_secrets.go": "secretEnvNames",
+	"internal/config/secret_snapshot.go":    "secretEnvNames (snapshotSecrets, SecretFilePermissionProblems)",
+	"internal/config/secret_lookup.go":      "LookupSecretEnv: the name its server callers pass (the bootstrap token, connect vault token_env)",
+	"internal/config/config_sso.go":         "SSO provider client secret",
+	"server/wire_backend_rotation.go":       "connect vault token_env (default VAULT_TOKEN)",
+	"internal/crypto/raw_providers.go":      "key_provider env_var",
+	"internal/crypto/shamir_provider.go":    "key_provider shamir_share_env",
+	"internal/encryptionops/dek.go":         "key_provider env_var",
+	"internal/crypto/passphrase.go":         "the caller's passphrase variable (constants discovered at the ResolvePassphrase call sites)",
 }
 
 // sentinelConfig fills every operator-named secret slot, and returns the
