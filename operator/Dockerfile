@@ -1,6 +1,6 @@
 # Build stage. Build context is the operator/ module directory (a separate Go module
 # from the main repo, so controller-runtime/client-go stay out of the server build).
-FROM golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
+FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS builder
 RUN apk add --no-cache git
 WORKDIR /app
 COPY go.mod go.sum ./
