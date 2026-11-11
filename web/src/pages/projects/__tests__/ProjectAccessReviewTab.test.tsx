@@ -67,6 +67,7 @@ const canState = vi.hoisted(() => ({
     deleteSecrets: true,
     readAudit: true,
     manageMembers: true,
+    readRoles: true,
 }));
 vi.mock('../../../features/auth/useCan', () => ({
     useCan: () => ({ ...canState }),
@@ -371,5 +372,27 @@ describe('ProjectAccessReviewTab — Revoke gating (roles.assign)', () => {
         render(<ProjectAccessReviewTab projectId={1} />);
         expect(screen.queryByTitle('Remove this access')).not.toBeInTheDocument();
         expect(screen.getAllByText('Attest').length).toBeGreaterThan(0);
+    });
+});
+
+describe('ProjectAccessReviewTab — Attest gating (roles.read)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report(entries) });
+        Object.assign(canState, { admin: true, manageMembers: true, readRoles: true });
+    });
+
+    it('an admin sees Attest on every grant', () => {
+        render(<ProjectAccessReviewTab projectId={1} />);
+        expect(screen.getAllByRole('button', { name: 'Attest' })).toHaveLength(entries.length);
+    });
+
+    it('a viewer without roles.read sees the grants but no Attest button', () => {
+        Object.assign(canState, { admin: false, manageMembers: false, readRoles: false });
+        render(<ProjectAccessReviewTab projectId={1} />);
+        // the list still renders, so the absence below is not vacuous
+        expect(screen.getByText(/alice \(alice@x.io\)/)).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Attest' })).not.toBeInTheDocument();
+        expect(screen.queryByTitle('Remove this access')).not.toBeInTheDocument();
     });
 });
