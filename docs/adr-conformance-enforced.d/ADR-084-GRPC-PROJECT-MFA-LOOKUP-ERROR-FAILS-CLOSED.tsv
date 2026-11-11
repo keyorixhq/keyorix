@@ -1,0 +1,1 @@
+ADR-084-GRPC-PROJECT-MFA-LOOKUP-ERROR-FAILS-CLOSED	./server/grpc/services	TestEnforceProjectMFA_LookalikeNotFoundErrorDenies	default-ci	pending	-	ADR-084 (#G17 precedent): enforceProjectMFA returns codes.Internal for any ProjectRequiresMFA error that is not the project-not-found sentinel, never "not blocked" (INV-MW-project-mfa-gate-sentinel-only gRPC twin)
