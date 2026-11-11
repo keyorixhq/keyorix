@@ -14,7 +14,7 @@ silently removing it.
 
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
-| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 153 | 152 | 1 |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 153 | 153 | 0 |
 | `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 43 | 40 | 3 |
 | `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 75 | 75 | 0 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 44 | 44 | 0 |
@@ -31,7 +31,7 @@ silently removing it.
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
-| **Total** | | **509** | **502** | **7** |
+| **Total** | | **509** | **503** | **6** |
 
 ## Highest-priority UNGUARDED gaps
 
