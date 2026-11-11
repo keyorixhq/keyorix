@@ -33,8 +33,6 @@ func (p opParams) at() time.Time {
 	return base.Add(p.instant.offset).In(ifaceZones[p.instant.zone%len(ifaceZones)])
 }
 
-var ifaceRoleScopeWord = []string{"global", "project", "any"}
-
 func (s *ifaceSide) fixtureFatal(e *ifaceExec, kind string, err error) {
 	if ifaceIsConnectionError(err.Error()) {
 		e.w.noteInfraFault(e.t, "fixture "+kind+" on "+s.label)

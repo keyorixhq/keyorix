@@ -138,15 +138,30 @@ var ifaceConstructionDiffs = []struct{ ID, Why, Where string }{
 	{"INT64-RANGE", "A uint id above math.MaxInt64 fails differently in each driver.", "handles and boundary ids stay below 2^63"},
 }
 
+// TestIfaceConstructionDiffs_WellFormed keeps the table above readable: every entry names
+// itself, says why, and says which code enforces it.
+func TestIfaceConstructionDiffs_WellFormed(t *testing.T) {
+	seen := map[string]bool{}
+	for _, d := range ifaceConstructionDiffs {
+		if d.ID == "" || d.Why == "" || d.Where == "" {
+			t.Errorf("incomplete construction diff: %+v", d)
+		}
+		if seen[d.ID] {
+			t.Errorf("duplicate construction diff %q", d.ID)
+		}
+		seen[d.ID] = true
+	}
+}
+
 // ifaceRuleHits counts accepted differences per rule, per process, for the run log.
 var ifaceRuleHits = map[string]int{}
 
 func labelHasNonASCIIAfter(label, marker string) bool {
-	i := strings.Index(label, marker)
-	if i < 0 {
+	_, rest, ok := strings.Cut(label, marker)
+	if !ok {
 		return false
 	}
-	return strings.IndexFunc(label[i+len(marker):], func(r rune) bool { return r > unicode.MaxASCII }) >= 0
+	return strings.IndexFunc(rest, func(r rune) bool { return r > unicode.MaxASCII }) >= 0
 }
 
 // sameRows reports whether two rendered lists hold the same rows in any order.
@@ -232,10 +247,6 @@ var ifaceOffsets = []time.Duration{
 	time.Microsecond, time.Millisecond, time.Second, 48 * time.Hour, 720 * time.Hour,
 }
 
-func (i ifaceInstant) time() time.Time {
-	return diffAuditBaseTime.Add(i.offset).In(ifaceZones[i.zone%len(ifaceZones)])
-}
-
 func fpTime(t *time.Time) string {
 	if t == nil {
 		return "nil"
@@ -246,7 +257,7 @@ func fpTime(t *time.Time) string {
 // ifaceStringPool extends V2's pool with normalisation twins, quoting and whitespace.
 var ifaceStringPool = append(append([]string{}, diffNamePool...),
 	"café", "café", "CAFÉ", "ẞ", "ſ", "ı",
-	"o'brien", `quo"te`, "semi;colon", "tab\there", "new\nline", "​zw",
+	"o'brien", `quo"te`, "semi;colon", "tab\there", "new\nline", "\u200bzw",
 	"SELECT", "%", "_", `\`, "system", "SYSTEM", "sys",
 	strings.Repeat("z", 2000),
 )
