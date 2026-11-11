@@ -1,0 +1,1 @@
+ADR-066-ALLOWLIST-IGNORES-SPOOFED-FORWARDED-HEADERS	./server/middleware	TestPATCIDRAllowlist_ClientIPMiddleware_RejectsSpoofedHeader	default-ci	pending	-	ADR-066: the allowlist source IP is never a client-supplied X-Forwarded-For/X-Real-IP unless the TCP peer is a configured trusted proxy (INV-MW-18)

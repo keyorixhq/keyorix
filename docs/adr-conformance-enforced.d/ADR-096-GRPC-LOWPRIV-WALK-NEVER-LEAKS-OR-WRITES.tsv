@@ -1,0 +1,1 @@
+ADR-096-GRPC-LOWPRIV-WALK-NEVER-LEAKS-OR-WRITES	./server/grpc	TestEveryGRPCMethodRejectsLowPrivilegeCaller	default-ci	pending	-	ADR-096 Amendment 1: every registered RPC called by a credentialed low-privilege caller is denied/NotFound/empty, never Internal/Unknown, never leaks a canary and changes no table (INV-GRPC-lowpriv-method-walk)
