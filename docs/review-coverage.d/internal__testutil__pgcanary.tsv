@@ -1,0 +1,1 @@
+internal/testutil/pgcanary	none	-	test-only PostgreSQL world for the canary-leak fuzz targets: clones a migrated database per run, snapshots and resets seeded state, dumps every table for the leak scan and records server and driver errors; imported only by *_test.go files, not linked into any shipped binary	test-helper
