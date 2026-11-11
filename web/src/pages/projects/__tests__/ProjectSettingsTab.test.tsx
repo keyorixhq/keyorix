@@ -86,6 +86,7 @@ const canState = vi.hoisted(() => ({
     deleteSecrets: true,
     readAudit: true,
     manageMembers: true,
+    readRoles: true,
 }));
 vi.mock('../../../features/auth/useCan', () => ({
     useCan: () => ({ ...canState }),
@@ -1320,7 +1321,27 @@ describe('ProjectSettingsTab — permission gating', () => {
     beforeEach(() => {
         mockPost.mockReset();
         mockGet.mockReset();
-        mockGet.mockResolvedValue({ data: { data: {} } });
+        // Seed the data the alert-style sections need, so they render and their controls can be asserted.
+        mockGet.mockImplementation((url: string) => {
+            const payload: Record<string, unknown> = {
+                '/secrets/expiring': { expiring: [{ id: 9, name: 'db', type: 'password', expired: true }] },
+                '/secrets/name-conformance': {
+                    policy_enabled: true,
+                    total_secrets: 1,
+                    violations: [{ id: 8, name: 'db-pass', type: 'password', reason: 'bad pattern' }],
+                },
+                '/secrets/orphaned': {
+                    orphaned: [
+                        { id: 21, name: 'legacy-key', type: 'apiKey', classification: 'internal', owner_id: 99 },
+                    ],
+                },
+                '/secrets/deleted': {
+                    deleted: [{ id: 31, name: 'old-token', type: 'apiKey', deleted_at: '2025-01-01T00:00:00Z' }],
+                },
+            };
+            const key = Object.keys(payload).find((k) => url.includes(k));
+            return Promise.resolve({ data: { data: key ? payload[key] : {} } });
+        });
         mockUseProjectEnvironments.mockReturnValue({
             data: [...defaultEnvironments, { id: 4, name: 'qa', deleted: true }],
             isLoading: false,
@@ -1331,7 +1352,57 @@ describe('ProjectSettingsTab — permission gating', () => {
             deleteSecrets: true,
             readAudit: true,
             manageMembers: true,
+            readRoles: true,
         });
+    });
+
+    it('shows Extend all, Apply renames, Restore secret and Reassign owner to a permitted session', async () => {
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(await screen.findByRole('button', { name: /extend all/i })).toBeInTheDocument();
+        expect(await screen.findByRole('button', { name: /apply renames/i })).toBeInTheDocument();
+        expect(await screen.findByTitle('Restore secret')).toBeInTheDocument();
+        expect(await screen.findByText(/reassign all from former owner #99/i)).toBeInTheDocument();
+        expect(screen.getByLabelText('New name for db-pass')).toBeEnabled();
+    });
+
+    it('hides Extend all, Apply renames and Restore secret, and disables the rename inputs, for a viewer', async () => {
+        Object.assign(canState, {
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            readAudit: false,
+            manageMembers: false,
+            readRoles: false,
+        });
+        render(<ProjectSettingsTab projectId={1} />);
+        // Wait for every seeded section to render, then assert the controls are absent.
+        expect(await screen.findByText('db')).toBeInTheDocument();
+        expect(await screen.findByText('old-token')).toBeInTheDocument();
+        expect(await screen.findByText('legacy-key')).toBeInTheDocument();
+        expect(screen.getByLabelText('New name for db-pass')).toBeDisabled();
+        expect(screen.queryByRole('button', { name: /extend all/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /apply renames/i })).not.toBeInTheDocument();
+        expect(screen.queryByTitle('Restore secret')).not.toBeInTheDocument();
+        expect(screen.queryByText(/reassign all from former owner/i)).not.toBeInTheDocument();
+    });
+
+    it('gates Extend all, Apply renames and Restore on secrets.write alone', async () => {
+        canState.writeSecrets = false;
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(await screen.findByText('old-token')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /extend all/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /apply renames/i })).not.toBeInTheDocument();
+        expect(screen.queryByTitle('Restore secret')).not.toBeInTheDocument();
+        // Reassign owner needs roles.assign, which this session keeps.
+        expect(screen.getByText(/reassign all from former owner #99/i)).toBeInTheDocument();
+    });
+
+    it('gates Reassign owner on roles.assign alone', async () => {
+        canState.manageMembers = false;
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(await screen.findByText('legacy-key')).toBeInTheDocument();
+        expect(screen.queryByText(/reassign all from former owner/i)).not.toBeInTheDocument();
+        expect(await screen.findByRole('button', { name: /extend all/i })).toBeInTheDocument();
     });
 
     it('offers every control to a session that holds the permissions (positive control)', () => {
