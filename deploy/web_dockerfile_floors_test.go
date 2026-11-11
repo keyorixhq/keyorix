@@ -97,7 +97,7 @@ func apkUpgradeArgs(dockerfile string) [][]string {
 	for _, line := range apkUpgradeRunRE.FindAllString(joined, -1) {
 		_, after, _ := strings.Cut(line, "--upgrade")
 		var args []string
-		for _, f := range strings.Fields(after) {
+		for f := range strings.FieldsSeq(after) {
 			if !strings.HasPrefix(f, "-") {
 				args = append(args, f)
 			}
