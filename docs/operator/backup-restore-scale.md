@@ -29,8 +29,11 @@ pending a run on the e2e VM.
 `admin backup`, `admin restore` and `admin verify-audit` read and write tables row by row (or in
 fixed batches), so their peak memory does not depend on how many rows a table has. This is what
 `scale-check.sh` measures at three sizes: peak resident memory at the largest size should be
-within the noise of the smallest. If you see memory growing with the database, that is a bug:
-report it with the command and the table sizes.
+within the noise of the smallest. With two or more sizes the script fails when a leg's peak at
+the largest size is out of proportion to the smallest, and
+`KEYORIX_SCALE_TESTS=1 go test ./server/admin -run TestScale_` runs it as a Go test (set
+`KEYORIX_SCALE_PG_DSN_FILE` to also cover both PostgreSQL directions). If you see memory growing
+with the database, that is a bug: report it with the command and the table sizes.
 
 Disk is what grows. A restore unpacks the archive into a staging directory under `$TMPDIR`
 before it loads anything, so `$TMPDIR` needs room for the archive's uncompressed contents (the
