@@ -537,7 +537,9 @@ message ListUsersRequest {
   optional string search = 3;
   optional bool is_active = 4;
   bool include_deleted = 5;
-  // "inactive" = users with no login in the last 30 days.
+  // "inactive" = users with no login in the last 30+ days. An account that has
+  // never logged in counts as inactive once it is 30+ days old (judged by its
+  // creation date), not before.
   optional string filter = 6;
 }
 

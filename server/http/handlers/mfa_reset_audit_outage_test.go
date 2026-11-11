@@ -72,3 +72,41 @@ func TestApproveMFAReset_AuditOutage_SharedAuditUnavailable503(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.MFAResetStatusPending, r.Status)
 }
+
+// The request side of the same contract (#3858): a request whose audit row the audit
+// log refuses answers 503 audit_unavailable through sendMFAResetError, and no request
+// row is left behind.
+func TestRequestMFAReset_AuditOutage_SharedAuditUnavailable503(t *testing.T) {
+	w := newMFAResetHandlerWorld(t)
+	old := defaultUserHandler
+	t.Cleanup(func() { defaultUserHandler = old })
+	ctx := context.Background()
+
+	// Call 1 is requireReauth's best-effort mfa.reauth_verified row; call 2 is the
+	// first row of the request's own transaction.
+	faulty := faultstorage.NewFaultyStorage(w.st, &faultstorage.FaultSpec{
+		Method: "LogAuditEvent", NthCall: 2, Kind: faultstorage.KindError, Err: errors.New("injected: audit log refused the row"),
+	})
+	cs := core.NewKeyorixCore(faulty)
+	cs.SetAuthEncryptor(w.enc)
+	uh, err := NewUserHandler(cs)
+	require.NoError(t, err)
+	defaultUserHandler = uh
+
+	rec := w.call(t, w.a, RequestMFAReset, http.MethodPost, "/api/v1/mfa-reset-requests", "",
+		fmt.Sprintf(`{"user":"target","reason":"lost phone","verified_by":"video","code":%q}`, w.code(t, w.a.ID)))
+	require.True(t, faulty.Fired(), "the request's audit write was never reached")
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	assert.Equal(t, strconv.Itoa(auditUnavailableRetryAfterSeconds), rec.Header().Get("Retry-After"))
+	var body struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, auditUnavailableCode, body.Error)
+	assert.Equal(t, core.MutationAuditUnavailableMessage, body.Message)
+
+	pending, err := w.st.ListMFAResetRequests(ctx, true)
+	require.NoError(t, err)
+	assert.Empty(t, pending, "a request was recorded although the audit log refused the rows")
+}
