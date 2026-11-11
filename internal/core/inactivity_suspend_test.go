@@ -31,6 +31,7 @@ func stubSuspendCall(store *MockStorage, ctx context.Context, userID uint) {
 	// none. Every caller of this helper expects SuspendUser to SUCCEED, so the
 	// fixture target here holds no role scopes.
 	store.On("GetUserRoleScopes", ctx, userID).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, userID).Return(nil, nil)
 	store.On("SetAccountState", ctx, userID, AccountSuspended, mock.Anything).Return(nil)
 	store.On("ListSessionTokenHashesForUser", ctx, userID).Return([]string{}, nil)
 	// H-2: ALL state transitions collect PAT hashes for cache eviction.
@@ -229,6 +230,7 @@ func TestSuspendInactiveUsers_SuspendError(t *testing.T) {
 	// S1 (CLI-split inventory #2012): the admin-rank ceiling runs before the
 	// GetUser error below is ever reached.
 	store.On("GetUserRoleScopes", ctx, uint(8)).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(8)).Return(nil, nil)
 	// GetUser (via LockUserForUpdate) returns error — simulates a suspend failure.
 	store.On("GetUser", ctx, uint(8)).Return(nil, errors.New("lock failed"))
 

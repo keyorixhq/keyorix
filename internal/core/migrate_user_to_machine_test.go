@@ -33,6 +33,7 @@ func TestMigrateUserToMachine(t *testing.T) {
 		// ceiling first (actorID 9 != target 7) — the migrated user holds no
 		// role scopes, so it passes trivially.
 		store.On("GetUserRoleScopes", ctx, uint(7)).Return([]Scope{}, nil)
+		store.On("ListUserRoleGrants", ctx, uint(7)).Return(nil, nil)
 		store.On("GetUserRoleIDsAt", ctx, uint(7), Scope{}).Return([]uint{}, nil)
 		store.On("GetUserGroupRoleIDsAt", ctx, uint(7), Scope{}).Return([]uint{}, nil)
 		store.On("GetUser", ctx, uint(7)).

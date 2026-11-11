@@ -46,6 +46,7 @@ func TestStartImpersonation_Success(t *testing.T) {
 	// The target-rank guard discovers every scope the target holds a role at (it
 	// holds none here), so no per-scope admin comparison ever runs.
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(2)).Return(nil, nil)
 	store.On("CreateSession", ctx, mock.MatchedBy(func(s *models.Session) bool {
 		return s.UserID == 2 && s.ImpersonatedBy != nil && *s.ImpersonatedBy == 1 &&
 			s.ImpersonationStartedAt != nil
@@ -142,6 +143,7 @@ func TestStartImpersonation_AllowsSessionAuth(t *testing.T) {
 	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin"}, nil)
 	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "alice", IsActive: true, AccountState: AccountActive}, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(2)).Return(nil, nil)
 	store.On("CreateSession", ctx, mock.Anything).Return(&models.Session{ID: 1, UserID: 2, SessionToken: "tok"}, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
@@ -186,14 +188,13 @@ func TestStartImpersonation_RejectsAdminTargetForNonAdminCaller(t *testing.T) {
 	// Target (id 2) holds the admin role globally; caller (id 1) holds nothing.
 	store.On("GetRoleByName", ctx, mock.Anything).Return(&models.Role{ID: 7, Name: "admin"}, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{{}}, nil)
-	store.On("GetUserRoleIDsAt", ctx, uint(2), mock.Anything).Return([]uint{7}, nil)
-	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), mock.Anything).Return([]uint{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(2)).Return([]storage.UserRoleGrant{{RoleID: 7}}, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 	// S1 sweep (CLI-split inventory #2012): this fixture's "admin" role
-	// deliberately does NOT carry BypassesPermissionChecks — the ceiling's
-	// new bypass check must resolve false here so the (unaffected) #G05
-	// permission-comparison path below still runs.
+	// deliberately does NOT carry BypassesPermissionChecks (the grant above has
+	// Bypass false) — the ceiling's bypass check must resolve false here so the
+	// (unaffected) #G05 permission-comparison path below still runs.
 	store.On("RoleSetBypassesPermissionChecks", ctx, mock.Anything).Return(false, nil)
 	// #G05: the ceiling now compares the target's ACTUAL bundled permissions
 	// (not the "admin" role name itself) against what the caller can exercise.
@@ -229,12 +230,11 @@ func TestStartImpersonation_RejectsProjectScopedAdminTargetForNonAdminCaller(t *
 	store.On("GetRoleByName", ctx, mock.Anything).Return(&models.Role{ID: 8, Name: "project_admin"}, nil)
 	// This fixture's project_admin role does NOT carry BypassesPermissionChecks
 	// (unlike TestStartImpersonation_AllowsProjectScopedAdminTargetForSameScopeAdminCaller's
-	// role 8) — the ceiling's bypass check must resolve false so the
-	// #G05 permission-comparison path below is what actually refuses.
-	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{8}).Return(false, nil)
+	// role 8; the target's grant has Bypass false) — the ceiling's bypass check
+	// must resolve false so the #G05 permission-comparison path below is what
+	// actually refuses.
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{projScope}, nil)
-	store.On("GetUserRoleIDsAt", ctx, uint(2), projScope).Return([]uint{8}, nil)
-	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), projScope).Return([]uint{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(2)).Return([]storage.UserRoleGrant{{RoleID: 8, ProjectID: 7}}, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(1), projScope).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), projScope).Return([]uint{}, nil)
 	store.On("GetRolePermissions", ctx, uint(8)).Return([]*models.Permission{{Name: "roles.assign"}}, nil)
@@ -259,11 +259,11 @@ func TestStartImpersonation_AllowsProjectScopedAdminTargetForSameScopeAdminCalle
 	projScope := Scope{ProjectID: 7}
 	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "other-proj-admin"}, nil)
 	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "proj-admin", IsActive: true, AccountState: AccountActive}, nil)
-	// ADR-084: role 8 (project_admin) bypasses via the structural flag now.
+	// ADR-084: role 8 (project_admin) bypasses via the structural flag now (the
+	// target's grant carries it; the caller's role set is asked for it).
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{8}).Return(true, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{projScope}, nil)
-	store.On("GetUserRoleIDsAt", ctx, uint(2), projScope).Return([]uint{8}, nil)
-	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), projScope).Return([]uint{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(2)).Return([]storage.UserRoleGrant{{RoleID: 8, ProjectID: 7, Bypass: true}}, nil)
 	// Caller also holds project_admin at the SAME project scope.
 	store.On("GetUserRoleIDsAt", ctx, uint(1), projScope).Return([]uint{8}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), projScope).Return([]uint{}, nil)
@@ -297,8 +297,7 @@ func TestStartImpersonation_RejectsCustomAdminTierRoleTargetForNonAdminCaller(t 
 	// role-NAME check would have skipped this scope the same way.
 	store.On("RoleSetBypassesPermissionChecks", ctx, mock.Anything).Return(false, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{{}}, nil)
-	store.On("GetUserRoleIDsAt", ctx, uint(2), mock.Anything).Return([]uint{9}, nil)
-	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), mock.Anything).Return([]uint{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(2)).Return([]storage.UserRoleGrant{{RoleID: 9}}, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 	store.On("GetRolePermissions", ctx, uint(9)).Return([]*models.Permission{{Name: "system.write"}}, nil)
@@ -352,6 +351,7 @@ func TestReauthorizeImpersonation_StillAuthorized(t *testing.T) {
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{5}).Return(false, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{5}, "users.impersonate").Return(true, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(2)).Return(nil, nil)
 	err := c.ReauthorizeImpersonation(ctx, 1, 2)
 	require.NoError(t, err)
 }
@@ -457,6 +457,7 @@ func stillAuthorizedCeilingMocks(store *MockStorage, ctx context.Context) {
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{5}).Return(false, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{5}, "users.impersonate").Return(true, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(2)).Return(nil, nil)
 }
 
 func TestReauthorizeImpersonation_AdminReadFault_IsUnavailableNotVerdict(t *testing.T) {
