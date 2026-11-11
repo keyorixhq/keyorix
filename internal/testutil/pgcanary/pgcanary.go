@@ -420,7 +420,7 @@ func (w *World) Dump() ([]canary.Output, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dump: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	cells := map[string][]byte{}
 	for rows.Next() {
 		var t, j string

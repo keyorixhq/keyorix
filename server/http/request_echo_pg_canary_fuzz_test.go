@@ -250,7 +250,7 @@ func (r *requestEchoRun) finishPG(world *pgcanary.World, origin string, plant fu
 		drainAllBackgroundGoroutines()
 	}
 	log.Print(r.probe.Raw)
-	fmt.Fprintln(os.Stdout, r.probe.Raw)
+	_, _ = fmt.Fprintln(os.Stdout, r.probe.Raw)
 	fmt.Fprintln(os.Stderr, r.probe.Raw)
 	r.fx.control.WithLabelValues(r.probe.Raw).Set(1)
 	outputs := r.fx.capture.Drain()

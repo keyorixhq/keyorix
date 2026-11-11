@@ -277,7 +277,7 @@ func runPanicDump(t *testing.T, fx *panicDumpFixture, in panicDumpInput, allow *
 
 	// Controls: each capture proves it can still show a canary after the panic.
 	log.Print(probe.Raw)
-	fmt.Fprintln(os.Stdout, probe.Raw)
+	_, _ = fmt.Fprintln(os.Stdout, probe.Raw)
 	fmt.Fprintln(os.Stderr, probe.Raw)
 	fx.control.WithLabelValues(probe.Raw).Set(1)
 	after := fx.capture.Drain()
@@ -378,7 +378,7 @@ func TestPanicDumpCanaryOracle(t *testing.T) {
 		plant      *panicDumpPlant
 	}{
 		{"panic-value-in-the-log", canary.ChannelLog, &panicDumpPlant{panicErr: func(v string) error { return fmt.Errorf("storage: %s", v) }}},
-		{"stdout", canary.ChannelStdout, &panicDumpPlant{after: func(_ *faultWorld, _ *panicDumpFixture, v string) { fmt.Fprintln(os.Stdout, v) }}},
+		{"stdout", canary.ChannelStdout, &panicDumpPlant{after: func(_ *faultWorld, _ *panicDumpFixture, v string) { _, _ = fmt.Fprintln(os.Stdout, v) }}},
 		{"stderr", canary.ChannelStderr, &panicDumpPlant{after: func(_ *faultWorld, _ *panicDumpFixture, v string) { fmt.Fprintln(os.Stderr, v) }}},
 		{"response", panicChanResponse, &panicDumpPlant{response: func(v string) string { return v }}},
 		{"metric-label", panicChanMetrics, &panicDumpPlant{after: func(_ *faultWorld, fx *panicDumpFixture, v string) { fx.control.WithLabelValues(v).Set(1) }}},

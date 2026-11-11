@@ -55,8 +55,6 @@ const (
 	echoChanRawDB   = "raw-db-file"
 	echoChanReveal  = "reveal"
 
-	echoOriginReveal = "control-reveal"
-
 	// echoShapes is the number of request shapes; shape reduces its input modulo this.
 	echoShapes = 13
 	// echoChannelURLShape sends a valid channel type with the secret canary in url, so
@@ -469,7 +467,7 @@ func (r *requestEchoRun) finish(origin string, plant func(*requestEchoRun)) {
 		drainAllBackgroundGoroutines()
 	}
 	log.Print(r.probe.Raw)
-	fmt.Fprintln(os.Stdout, r.probe.Raw)
+	_, _ = fmt.Fprintln(os.Stdout, r.probe.Raw)
 	fmt.Fprintln(os.Stderr, r.probe.Raw)
 	r.fx.control.WithLabelValues(r.probe.Raw).Set(1)
 	outputs := r.fx.capture.Drain()
