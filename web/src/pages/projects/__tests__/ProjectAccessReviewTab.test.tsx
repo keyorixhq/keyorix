@@ -59,6 +59,19 @@ const report = (list: unknown[], extra: { degraded?: boolean; degradedReasons?: 
     ...extra,
 });
 
+// useCan is the session's permission union; these tests drive the controls, so the default
+// is a session that holds everything. The permission-gating tests flip canState.
+const canState = vi.hoisted(() => ({
+    admin: true,
+    writeSecrets: true,
+    deleteSecrets: true,
+    readAudit: true,
+    manageMembers: true,
+}));
+vi.mock('../../../features/auth/useCan', () => ({
+    useCan: () => ({ ...canState }),
+}));
+
 describe('ProjectAccessReviewTab', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -338,5 +351,25 @@ describe('ProjectAccessReviewTab', () => {
         // Confirmation state is cleared, so the row is back to a plain Revoke button.
         expect(screen.getByText('Revoke')).toBeInTheDocument();
         expect(screen.queryByText('Confirm')).not.toBeInTheDocument();
+    });
+});
+
+describe('ProjectAccessReviewTab — Revoke gating (roles.assign)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report(entries) });
+        Object.assign(canState, { manageMembers: true });
+    });
+
+    it('offers Revoke on a non-owner grant to a session that holds roles.assign', () => {
+        render(<ProjectAccessReviewTab projectId={1} />);
+        expect(screen.getAllByTitle('Remove this access').length).toBeGreaterThan(0);
+    });
+
+    it('hides Revoke without roles.assign and leaves Attest (roles.read) alone', () => {
+        canState.manageMembers = false;
+        render(<ProjectAccessReviewTab projectId={1} />);
+        expect(screen.queryByTitle('Remove this access')).not.toBeInTheDocument();
+        expect(screen.getAllByText('Attest').length).toBeGreaterThan(0);
     });
 });
