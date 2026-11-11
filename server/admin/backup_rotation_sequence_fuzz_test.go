@@ -422,6 +422,43 @@ func (h *seqHost) cleanHostVerify(archive string) {
 	chdirTest(t, h.dir)
 }
 
+// cleanHostTry restores archive onto a fresh host and reports, without
+// asserting, whether the restore succeeded and whether every ledger secret
+// decrypted. Used by the red-proofs to observe the oracle's verdict on a
+// planted defect vs a silent control.
+func (h *seqHost) cleanHostTry(archive string) (restoreOK, decrypts bool) {
+	t := h.t
+	dstDir, dstDBOrDSN := h.freshCleanTarget()
+	chdirTest(t, dstDir)
+	configPathFlag = h.writeConfig(dstDir, dstDBOrDSN)
+	restoreInput = archive
+	restoreOverwriteExisting = false
+	restoreAllowRollback = true
+	restoreMaxEntryBytes = 0
+	restoreMaxTotalBytes = 0
+	defer chdirTest(t, h.dir)
+	if _, err := captureStdout(t, func() error { return runAdminRestore(nil, nil) }); err != nil {
+		return false, false
+	}
+	svc := encryption.NewService(h.encCfg(), dstDir)
+	if err := svc.AcquireExclusiveKeyLock(); err != nil {
+		return true, false
+	}
+	defer svc.Shutdown()
+	if err := svc.ReconcileKeySet(); err != nil {
+		return true, false
+	}
+	if err := svc.RecoverInterruptedRotation(nil); err != nil {
+		return true, false
+	}
+	if err := svc.Initialize(h.pass); err != nil {
+		return true, false
+	}
+	dstDB := openGormFromCurrentConfig(t)
+	_, allOK := decryptAllWith(t, svc, dstDB, h.ledger)
+	return true, allOK
+}
+
 // runSequence decodes data into an op sequence and applies it, enforcing the
 // oracles after each op.
 func runSequence(t *testing.T, pg bool, base string, data []byte) {
