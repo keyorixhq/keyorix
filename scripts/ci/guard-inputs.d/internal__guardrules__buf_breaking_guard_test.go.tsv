@@ -1,0 +1,1 @@
+internal/guardrules/buf_breaking_guard_test.go	Makefile,.github/workflows/**,scripts/ci/**,!operator/**/*.go,!operator/**/Makefile	scans the Makefile, workflows and scripts/ci for a buf breaking invocation (ADR-105 conformance row says it is not run in CI); the operator/ paths are only estimated, it does not read them
