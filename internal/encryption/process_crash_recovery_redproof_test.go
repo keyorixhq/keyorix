@@ -248,17 +248,27 @@ func TestProcessCrashRedProof(t *testing.T) {
 		pcrashWant(t, v, "I5")
 	})
 	t.Run("backup-after-kill-control-and-damage", func(t *testing.T) {
-		const killAt = 12 // mid-rotation; any kill point that leaves the backup succeeding works
-		if v := w.checkBackupAfterKilledRotation(t, killAt, 1, nil); len(v) > 0 {
-			t.Fatalf("control: an undamaged restore must be clean: %v", v)
+		// Since BACKUP-PENDING-ROTATION-1 a backup is refused at every kill point
+		// that leaves a .pending file, and a refusal checks nothing. So the oracle
+		// can only be proved at a kill point where the backup is taken and
+		// restored: find one instead of assuming it, and fail if none exists.
+		for killAt := int64(1); killAt <= pcrashBackupScanMax; killAt++ {
+			v := w.checkBackupAfterKilledRotation(t, killAt, 1, func(target string) {
+				pcrashExecSQL(t, target, "UPDATE secret_versions SET encrypted_value = randomblob(64) WHERE id = (SELECT MAX(id) FROM secret_versions)")
+			})
+			if len(v) == 0 {
+				continue // backup or restore refused here: nothing was checked
+			}
+			if !strings.Contains(v[0], "backup made after a kill") {
+				t.Fatalf("kill point %d: unexpected violation: %v", killAt, v)
+			}
+			if c := w.checkBackupAfterKilledRotation(t, killAt, 1, nil); len(c) > 0 {
+				t.Fatalf("control at kill point %d: an undamaged restore must be clean: %v", killAt, c)
+			}
+			t.Logf("fired as expected at kill point %d: %s", killAt, pcrashTail(v[0]))
+			return
 		}
-		v := w.checkBackupAfterKilledRotation(t, killAt, 1, func(target string) {
-			pcrashExecSQL(t, target, "UPDATE secret_versions SET encrypted_value = randomblob(64) WHERE id = (SELECT MAX(id) FROM secret_versions)")
-		})
-		if len(v) == 0 || !strings.Contains(v[0], "backup made after a kill") {
-			t.Fatalf("the backup-after-kill oracle did not fire: %v", v)
-		}
-		t.Logf("fired as expected: %s", pcrashTail(v[0]))
+		t.Fatalf("no kill point in 1..%d gave a backup that was taken and restored, so the backup-after-kill oracle was never exercised", pcrashBackupScanMax)
 	})
 	for _, c := range []struct{ name, action, want string }{
 		{"I5-rerun-panics", "rerun-panic", "I5"},
@@ -281,3 +291,7 @@ func TestProcessCrashRedProof(t *testing.T) {
 		})
 	}
 }
+
+// pcrashBackupScanMax bounds the search for a kill point whose backup is not
+// refused; a kill point past the last seam lets the rotation finish.
+const pcrashBackupScanMax = 60

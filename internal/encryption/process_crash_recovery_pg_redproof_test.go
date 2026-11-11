@@ -127,17 +127,26 @@ func TestProcessCrashPGRedProof(t *testing.T) {
 		pcrashWant(t, v, "I5")
 	})
 	t.Run("backup-after-kill-control-and-damage", func(t *testing.T) {
-		killAt := w.rotateFileSeam(t)
-		if refused, v := w.checkBackupAfterKilledRotation(t, killAt, nil); len(v) > 0 {
-			t.Fatalf("control: an undamaged restore must be clean (refused=%v): %v", refused, v)
+		// A backup is refused at every kill point that leaves a .pending file
+		// (BACKUP-PENDING-ROTATION-1), and a refusal checks nothing: find a kill
+		// point where the backup is taken and restored, and fail if none exists.
+		for killAt := int64(1); killAt <= pcrashBackupScanMax; killAt++ {
+			_, v := w.checkBackupAfterKilledRotation(t, killAt, func(dbName string) {
+				w.execSQL(t, dbName, "UPDATE secret_versions SET encrypted_value = decode(repeat('ab', 64), 'hex') WHERE id = (SELECT MAX(id) FROM secret_versions)")
+			})
+			if len(v) == 0 {
+				continue
+			}
+			if !strings.Contains(v[0], "backup made after a kill") {
+				t.Fatalf("kill point %d: unexpected violation: %v", killAt, v)
+			}
+			if refused, c := w.checkBackupAfterKilledRotation(t, killAt, nil); len(c) > 0 {
+				t.Fatalf("control at kill point %d: an undamaged restore must be clean (refused=%v): %v", killAt, refused, c)
+			}
+			t.Logf("fired as expected at kill point %d: %s", killAt, pcrashTail(v[0]))
+			return
 		}
-		_, v := w.checkBackupAfterKilledRotation(t, killAt, func(dbName string) {
-			w.execSQL(t, dbName, "UPDATE secret_versions SET encrypted_value = decode(repeat('ab', 64), 'hex') WHERE id = (SELECT MAX(id) FROM secret_versions)")
-		})
-		if len(v) == 0 || !strings.Contains(v[0], "backup made after a kill") {
-			t.Fatalf("the backup-after-kill oracle did not fire: %v", v)
-		}
-		t.Logf("fired as expected: %s", pcrashTail(v[0]))
+		t.Fatalf("no kill point in 1..%d gave a backup that was taken and restored, so the backup-after-kill oracle was never exercised", pcrashBackupScanMax)
 	})
 	for _, c := range []struct{ name, action, want string }{
 		{"I5-rerun-panics", "rerun-panic", "I5"},
