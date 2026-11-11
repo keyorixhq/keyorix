@@ -9,8 +9,10 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -98,18 +100,18 @@ func (c *KeyorixCore) legacyGrantPrincipalName(ctx context.Context, principalTyp
 // Describe names the grant, for example "user a@example.com holds viewer on
 // project payments".
 func (g LegacyRoleProjectGrant) Describe() string {
-	who := g.Principal
+	who := displayName(g.Principal)
 	if who == "" {
 		who = fmt.Sprintf("id %d", g.PrincipalID)
 	}
-	where := g.Project
+	where := displayName(g.Project)
 	if where == "" {
 		where = fmt.Sprintf("id %d (deleted or not readable)", g.ProjectID)
 	}
-	s := fmt.Sprintf("%s %s holds %s on project %s", g.PrincipalType, who, g.RoleName, where)
+	s := fmt.Sprintf("%s %s holds %s on project %s", g.PrincipalType, who, displayName(g.RoleName), where)
 	if g.EnvironmentID != 0 {
 		if g.Environment != "" {
-			s += ", environment " + g.Environment
+			s += ", environment " + displayName(g.Environment)
 		} else {
 			s += fmt.Sprintf(", environment id %d", g.EnvironmentID)
 		}
@@ -128,7 +130,10 @@ func (g LegacyRoleProjectGrant) ReplaceHint() string {
 	if g.Project == "" {
 		return instead + " if the project is restored; a grant at a deleted project authorizes nothing"
 	}
-	if g.Principal == "" || (g.EnvironmentID != 0 && g.Environment == "") {
+	if g.Principal == "" || (g.EnvironmentID != 0 && g.Environment == "") ||
+		needsEscaping(g.Principal) || needsEscaping(g.Project) || needsEscaping(g.Environment) || needsEscaping(g.RoleName) {
+		// A name with a control character cannot be pasted into a command, and
+		// dropping the character would address a different principal.
 		return instead + " through the API, using the IDs above"
 	}
 	if g.PrincipalType == "machine" && g.EnvironmentID != 0 {
@@ -161,6 +166,24 @@ func (g LegacyRoleProjectGrant) cliCommands() (grant, remove string) {
 		return fmt.Sprintf("keyorix rbac assign-role --user %s --role %s%s", who, g.Replacement, scope),
 			fmt.Sprintf("keyorix rbac remove-role --user %s --role %s%s", who, g.RoleName, scope)
 	}
+}
+
+// needsEscaping reports whether s holds a character that is not printable (a
+// newline, an ESC, another C0/C1 control, a line separator), which must never
+// reach a startup or posture line as it is.
+func needsEscaping(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0
+}
+
+// displayName renders a database name for a startup or upgrade-check line: as it
+// is, unless it holds a non-printable character, in which case it is Go-quoted so
+// the characters show as \n or \x1b[ instead of acting. Unlike stripping, two
+// different names never render the same.
+func displayName(s string) string {
+	if needsEscaping(s) {
+		return strconv.Quote(s)
+	}
+	return s
 }
 
 // shellSafeArg matches a value that needs no quoting in a POSIX shell.
