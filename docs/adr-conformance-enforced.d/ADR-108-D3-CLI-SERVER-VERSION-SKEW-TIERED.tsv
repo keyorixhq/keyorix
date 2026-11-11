@@ -1,0 +1,1 @@
+ADR-108-D3-CLI-SERVER-VERSION-SKEW-TIERED	./cli/internal/skew	TestCheck	default-ci	pending	-	ADR-108 Decision 3: same major warns, different major or below the server minimum_cli_version floor refuses, a server predating the skew fields only warns (INV-CLI-09)

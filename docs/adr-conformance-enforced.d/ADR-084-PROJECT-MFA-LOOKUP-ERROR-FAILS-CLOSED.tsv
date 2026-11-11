@@ -1,0 +1,1 @@
+ADR-084-PROJECT-MFA-LOOKUP-ERROR-FAILS-CLOSED	./server/middleware	TestProjectMFABlocked_LookalikeNotFoundErrorDenies	default-ci	pending	-	ADR-084 (#G17 precedent): a ProjectRequiresMFA lookup error other than the definitive project-not-found sentinel denies; it never reads as not-blocked (INV-MW-project-mfa-gate-sentinel-only)

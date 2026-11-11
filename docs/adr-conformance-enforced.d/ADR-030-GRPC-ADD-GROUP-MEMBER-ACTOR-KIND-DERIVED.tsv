@@ -1,0 +1,1 @@
+ADR-030-GRPC-ADD-GROUP-MEMBER-ACTOR-KIND-DERIVED	./server/grpc/services	TestGroupService_AddGroupMember_MachineActorMissingRolePermissionsBlocked	default-ci	pending	-	ADR-030: GroupService.AddGroupMember derives actorIsMachine from the authenticated actor, not a hardcoded false, so a machine with only roles.assign cannot add a member to a more privileged group (INV-GRPCSVC-04)
