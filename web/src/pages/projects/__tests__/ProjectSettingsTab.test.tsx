@@ -1353,10 +1353,25 @@ describe('ProjectSettingsTab — permission gating', () => {
         expect(screen.queryByRole('button', { name: 'Freeze all secrets' })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Resume all' })).not.toBeInTheDocument();
         expect(screen.getByLabelText(/Project name/)).toBeDisabled();
-        // Only the MFA Save (roles.assign) is left.
-        expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1);
+        // The MFA Save needs secrets.write too (route) on top of roles.assign (handler): none left.
+        expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
         // The controls that need the other permissions stay.
         expect(screen.getAllByTitle('Delete environment').length).toBeGreaterThan(0);
+    });
+
+    it('hides the MFA Save from a custom role with roles.assign but without secrets.write', () => {
+        Object.assign(canState, { admin: false, writeSecrets: false, manageMembers: true });
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(screen.getByLabelText(/Require MFA for this project/)).toBeDisabled();
+        expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    });
+
+    it('hides the MFA Save from a custom role with secrets.write but without roles.assign', () => {
+        Object.assign(canState, { admin: false, writeSecrets: true, manageMembers: false });
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(screen.getByLabelText(/Require MFA for this project/)).toBeDisabled();
+        // Only the General Save is left.
+        expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1);
     });
 
     it('hides Delete environment and Delete Project without secrets.delete', () => {
