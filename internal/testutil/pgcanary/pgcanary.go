@@ -44,9 +44,11 @@ import (
 )
 
 const (
-	// DSNEnv names the server. A run without it skips: this package never falls back
-	// to SQLite, because the point of it is PostgreSQL's error text.
-	DSNEnv = "KEYORIX_TEST_PG_DSN"
+	// PGDSNEnv names the server. A run without it skips: this package never falls back
+	// to SQLite, because the point of it is PostgreSQL's error text. It is not called
+	// DSNEnv: server's secret-file guard resolves a selector by its field name
+	// module-wide, so a const of that name would hide config's DSNEnv lookup site.
+	PGDSNEnv = "KEYORIX_TEST_PG_DSN"
 
 	// Prefix starts the name of every database this package creates.
 	Prefix = "w7_"
@@ -225,13 +227,13 @@ type World struct {
 // database also scopes pgdsn's advisory locks to this harness.
 func baseDSN(tb testing.TB) string {
 	tb.Helper()
-	dsn := os.Getenv(DSNEnv)
+	dsn := os.Getenv(PGDSNEnv)
 	if dsn == "" {
-		tb.Skipf("%s not set: the PostgreSQL canary targets need a server", DSNEnv)
+		tb.Skipf("%s not set: the PostgreSQL canary targets need a server", PGDSNEnv)
 	}
 	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
-		tb.Fatalf("connect to %s: %v", DSNEnv, err)
+		tb.Fatalf("connect to %s: %v", PGDSNEnv, err)
 	}
 	if sqlDB, e := admin.DB(); e == nil {
 		defer func() { _ = sqlDB.Close() }()
@@ -472,9 +474,9 @@ func (w *World) ServerLogSettings() (map[string]string, error) {
 // on the server by a killed run. It refuses to touch any other name.
 func SweepStale(tb testing.TB) []string {
 	tb.Helper()
-	dsn := os.Getenv(DSNEnv)
+	dsn := os.Getenv(PGDSNEnv)
 	if dsn == "" {
-		tb.Skipf("%s not set", DSNEnv)
+		tb.Skipf("%s not set", PGDSNEnv)
 	}
 	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
