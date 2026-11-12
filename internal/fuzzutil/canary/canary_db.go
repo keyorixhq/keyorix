@@ -48,7 +48,9 @@ func sqliteTables(db *sql.DB) ([]string, error) {
 }
 
 func dumpTable(db *sql.DB, table string) ([]Output, error) {
-	rows, err := db.Query(`SELECT * FROM "` + strings.ReplaceAll(table, `"`, `""`) + `"`) // #nosec G202 -- table name from sqlite_master, quoted as an identifier; identifiers cannot be bound // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query, go.lang.security.audit.sqli.gosql-sqli.gosql-sqli -- the identifier comes from sqlite_master in a test helper and identifiers cannot be bound
+	// The identifier comes from sqlite_master in a test helper and identifiers cannot be bound.
+	// nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query, go.lang.security.audit.sqli.gosql-sqli.gosql-sqli
+	rows, err := db.Query(`SELECT * FROM "` + strings.ReplaceAll(table, `"`, `""`) + `"`) // #nosec G202 -- table name from sqlite_master, quoted as an identifier
 	if err != nil {
 		return nil, err
 	}
