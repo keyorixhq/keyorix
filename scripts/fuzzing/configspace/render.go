@@ -1,7 +1,7 @@
 package configspace
 
 import (
-	"crypto/sha1" // #nosec G505 -- non-cryptographic, derives stable canary markers
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -71,8 +71,10 @@ func freePort() int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// canaryFor derives a stable, case-unique marker; the hash is an ID, not a security
+// boundary.
 func canaryFor(caseID, name string) string {
-	h := sha1.Sum([]byte(caseID + "/" + name)) // #nosec G401
+	h := sha256.Sum256([]byte(caseID + "/" + name))
 	return "cnry_" + name + "_" + hex.EncodeToString(h[:6])
 }
 

@@ -1,7 +1,7 @@
 package configspace
 
 import (
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- deterministic seeded covering-array generator, reproducibility is the point; nothing security-sensitive
 )
 
 // Pairwise builds a covering array of strength 2: every value of every parameter

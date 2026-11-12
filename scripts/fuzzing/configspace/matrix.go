@@ -2,7 +2,7 @@ package configspace
 
 import (
 	"fmt"
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- deterministic seeded mutation-row generator, reproducibility is the point; nothing security-sensitive
 )
 
 // valueKey identifies one value of one parameter.

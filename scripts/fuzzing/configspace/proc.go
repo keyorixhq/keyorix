@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -136,7 +138,7 @@ poll:
 			base := m[2] + "://" + m[3]
 			base = strings.SplitN(base, " ", 2)[0]
 			res.Listening = append(res.Listening, base)
-			probeHTTP(base, &res)
+			probeHTTP(c, base, &res)
 		} else {
 			res.Listening = append(res.Listening, "grpc://"+m[4])
 		}
@@ -170,8 +172,70 @@ func exitInfo(err error) (int, string) {
 	return -1, err.Error()
 }
 
-func probeHTTP(base string, res *ProcResult) {
-	cl := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} // #nosec G402 -- local probe of a self-signed test server
+// pinnedRoots returns a pool of the certificates the case's server can present: every
+// PEM certificate under <dir>/certs (the self-signed one admin init generated for the
+// template, copied into the case) plus the configured server.http.tls.cert_file. The
+// probe trusts only these, so it verifies the chain and the "localhost" name instead
+// of skipping verification.
+func pinnedRoots(c *Case) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	var files []string
+	if m, err := filepath.Glob(filepath.Join(c.Dir, "certs", "*.crt")); err == nil {
+		files = append(files, m...)
+	}
+	if v, ok := GetPath(c.Doc, "server.http.tls.cert_file"); ok {
+		if s, _ := v.(string); s != "" {
+			if !filepath.IsAbs(s) {
+				s = filepath.Join(c.Dir, s)
+			}
+			files = append(files, s)
+		}
+	}
+	n := 0
+	for _, f := range files {
+		b, err := os.ReadFile(f) // #nosec G304 -- certificate files inside the case's own private temp dir
+		if err == nil && pool.AppendCertsFromPEM(b) {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("no PEM certificate found under %s/certs or at the configured cert_file", c.Dir)
+	}
+	return pool, nil
+}
+
+// probeTLSConfig pins the case's own certificates for an https listener. ServerName is
+// "localhost" because admin init always puts that name in the certificate and the logged
+// listen address may be a wildcard (0.0.0.0, [::]) that no certificate names.
+func probeTLSConfig(c *Case) (*tls.Config, error) {
+	roots, err := pinnedRoots(c)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{RootCAs: roots, ServerName: "localhost", MinVersion: tls.VersionTLS12}, nil
+}
+
+// probeHTTP fetches the unauthenticated endpoints of one listener. For https it trusts
+// only the case's pinned certificates (probeTLSConfig) with a TLS 1.2 floor.
+//
+// What it does NOT verify: that the server refuses TLS below 1.2 (the client never
+// offers it), or which cipher suites the server permits; posture predicate P18 covers
+// the configured floor and ciphers in process. A harness that cannot load any pinned
+// certificate records "ERR harness: ..." and health 0 for that listener, so the failure
+// surfaces as an I6 finding instead of being skipped silently.
+func probeHTTP(c *Case, base string, res *ProcResult) {
+	tr := &http.Transport{}
+	if strings.HasPrefix(base, "https://") {
+		tc, err := probeTLSConfig(c)
+		if err != nil {
+			res.Bodies[base+"/health"] = "ERR harness: " + err.Error()
+			res.Health[base] = 0
+			return
+		}
+		tr.TLSClientConfig = tc
+	}
+	defer tr.CloseIdleConnections()
+	cl := &http.Client{Timeout: 5 * time.Second, Transport: tr}
 	for _, path := range []string{"/health", "/api/v1/system/info", "/metrics"} {
 		resp, err := cl.Get(base + path)
 		if err != nil {
