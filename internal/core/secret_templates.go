@@ -128,7 +128,9 @@ func (c *KeyorixCore) CreateSecretTemplate(ctx context.Context, req *CreateSecre
 func (c *KeyorixCore) GetSecretTemplate(ctx context.Context, id uint) (*models.SecretTemplate, error) {
 	tmpl, err := c.storage.GetSecretTemplate(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get secret template: %w", err)
+		// A missing template matches storage.ErrSecretTemplateNotFound; a read fault
+		// matches ErrStorageReadUnavailable and is never reported as a missing template.
+		return nil, classifyReadErrorAs(err, storage.ErrSecretTemplateNotFound, storage.ErrSecretTemplateNotFound.Error())
 	}
 	return tmpl, nil
 }

@@ -60,11 +60,14 @@ func TestMachineRoleEnvironmentCheck_EnvironmentLookalikeErrorIsAStorageFailure(
 	err := fc.requireEnvironmentInProject(ctx, Scope{ProjectID: w.p1, EnvironmentID: w.e1})
 	require.True(t, fs.Fired(), "precondition: the environment check must hit the injected fault")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to verify target environment", "a storage failure must not read as a validation refusal")
+	assert.ErrorIs(t, err, ErrStorageReadUnavailable, "a storage failure is the retryable fault")
+	assert.NotErrorIs(t, err, ErrValidation, "a storage failure must not read as a validation refusal")
+	assert.NotErrorIs(t, err, ErrMachineIdentityNotFound, "a storage failure must not read as a missing environment")
 
 	err = c.requireEnvironmentInProject(ctx, Scope{ProjectID: w.p1, EnvironmentID: 99999})
 	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "failed to verify", "a genuinely missing environment is a validation refusal")
+	assert.ErrorIs(t, err, ErrMachineIdentityNotFound, "a genuinely missing environment is the not-found refusal")
+	assert.NotErrorIs(t, err, ErrStorageReadUnavailable)
 }
 
 func TestListEnvironmentWithoutProjectGrants_EnvironmentLookalikeErrorFails(t *testing.T) {
