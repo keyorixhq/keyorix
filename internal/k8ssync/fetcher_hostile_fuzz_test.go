@@ -132,69 +132,103 @@ func FuzzKeyorixFetcherHostileServer(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, prog []byte) {
-		p := hostile.Decode(prog)
-		obs := &fetchObs{}
-		h := hostile.New(hostile.Config{
-			Routes: fetcherHostileRoutes(obs), Program: p,
-			Credentials: []string{hostileFetchToken}, RequestCeiling: 64,
-		})
+		h := runFetcherHostile(hostile.Decode(prog), fetcherKnown)
 		defer h.Close()
-		fe := NewKeyorixFetcher(h.URL(), hostileFetchToken, 7)
-
-		var val []byte
-		err := h.Run("KeyorixFetcher.FetchWithExpiry", func(ctx context.Context) error {
-			var e error
-			val, _, e = fe.FetchWithExpiry(ctx, "prod/db-pass")
-			return e
-		})
-		if p.Pristine() && (err != nil || string(val) != hostileFetchValue) {
-			h.Violate("O6 LIVENESS: pristine fetch returned %q, %v (unmatched: %v)", val, err, h.Unmatched())
-		}
-		if err == nil {
-			envBody, ek := h.Delivery("envs", func(b []byte) bool { _, ok := strictFetchEnv(b, "prod"); return ok })
-			_, lk := h.Delivery("list", func(b []byte) bool { _, ok := strictFetchListID(b, "db-pass"); return ok })
-			valBody, vk := h.Delivery("value", func(b []byte) bool { _, ok := strictFetchValue(b); return ok })
-			wantEnv, envOK := strictFetchEnv(envBody, "prod")
-			want, valOK := strictFetchValue(valBody)
-
-			// The id the fetcher read must be the FIRST id the delivered list
-			// pages assign to the name.
-			wantID := ""
-			for _, rec := range h.Served("list") {
-				if id, ok := strictFetchListID(rec.Seen, "db-pass"); ok && rec.Complete && rec.Status == 200 {
-					wantID = id
-					break
-				}
-			}
-			obs.mu.Lock()
-			gotIDs := append([]string(nil), obs.valueIDs...)
-			listEnvs := append([]string(nil), obs.listEnvID...)
-			obs.mu.Unlock()
-
-			switch {
-			case (ek == "status" || lk == "status" || vk == "status") && servedAll2xx(h):
-				// 2xx other than 200 accepted by design: nothing further to assert.
-			case ek == "status" || lk == "status" || vk == "status":
-				h.Violate("O5/bad-status-accepted: fetch succeeded (%q) on a response whose final HTTP status was not 200 (env=%q list=%q value=%q)", val, ek, lk, vk)
-			case ek == "bad" || lk == "bad" || vk == "bad":
-				h.Violate("O5/incomplete: fetch succeeded (%q) although a consumed exchange was incomplete, redirected or non-200 (env=%q list=%q value=%q)", val, ek, lk, vk)
-			case hostile.HasDuplicateKeys(envBody) || hostile.HasDuplicateKeys(valBody) || listHasDup(h):
-				// duplicate member names: no single correct reading (RFC 8259)
-			case !valOK:
-				h.Violate("O5/empty-value: fetch succeeded with %q but the delivered value response has no non-empty data.value", val)
-			case string(val) != want:
-				h.Violate("O5/value: fetch returned %q, strict decoder %q", val, want)
-			case !envOK || (len(listEnvs) > 0 && listEnvs[0] != wantEnv):
-				h.Violate("O5/environment: list scoped to environment_id %v, strict environment id %q (valid=%v)", listEnvs, wantEnv, envOK)
-			case wantID == "" || len(gotIDs) == 0 || gotIDs[len(gotIDs)-1] != wantID:
-				h.Violate("O5/secret-id: value read from id %v, strict first match in delivered list %q", gotIDs, wantID)
-			}
-			if ek == "transport" || lk == "transport" || vk == "transport" {
-				h.Violate("O5/transport-error-ignored: fetch succeeded although a response ended in a transport/framing/gzip error after the full JSON value")
-			}
-		}
 		h.Finish(t.Fatalf)
 	})
+}
+
+// fetcherKnown lists this target's triaged, still-open findings (hostile.Known;
+// issue-ready text in the m32 report). Each has a reproducer test below.
+var fetcherKnown = []hostile.Known{{
+	// HARDENING: getJSON decodes ONE JSON value with json.Decoder and then
+	// drainAndClose discards the rest, so a transport/integrity error that
+	// surfaces only after the complete value (corrupt gzip CRC, declared
+	// Content-Length longer than sent, unterminated chunked body) is never seen.
+	// The value itself was delivered completely.
+	ID:     "HK-FETCHER-TRAILING-TRANSPORT-ERROR",
+	Class:  "HARDENING",
+	Prefix: "O5/transport-error-ignored: fetch succeeded",
+	// Input e16ff2665a232884: route=envs enc=gzip-corrupt.
+	Repro: hostile.Program{Route: 0, Enc: 3},
+}}
+
+// TestFetcherHostileKnownFindingsReproduce replays every fetcherKnown entry
+// with the entry NOT applied; it goes red when a finding is fixed.
+func TestFetcherHostileKnownFindingsReproduce(t *testing.T) {
+	for _, k := range fetcherKnown {
+		t.Run(k.ID, func(t *testing.T) {
+			h := runFetcherHostile(k.Repro, nil)
+			defer h.Close()
+			hostile.RequireKnownReproduces(t, k, h)
+		})
+	}
+}
+
+// runFetcherHostile runs one program against the real fetcher and applies the
+// target's oracles; the caller calls Finish (fuzz) or Evaluate (reproducer).
+func runFetcherHostile(p hostile.Program, known []hostile.Known) *hostile.Harness {
+	obs := &fetchObs{}
+	h := hostile.New(hostile.Config{
+		Routes: fetcherHostileRoutes(obs), Program: p,
+		Credentials: []string{hostileFetchToken}, RequestCeiling: 64,
+		Known: known,
+	})
+	fe := NewKeyorixFetcher(h.URL(), hostileFetchToken, 7)
+
+	var val []byte
+	err := h.Run("KeyorixFetcher.FetchWithExpiry", func(ctx context.Context) error {
+		var e error
+		val, _, e = fe.FetchWithExpiry(ctx, "prod/db-pass")
+		return e
+	})
+	if p.Pristine() && (err != nil || string(val) != hostileFetchValue) {
+		h.Violate("O6 LIVENESS: pristine fetch returned %q, %v (unmatched: %v)", val, err, h.Unmatched())
+	}
+	if err == nil {
+		envBody, ek := h.Delivery("envs", func(b []byte) bool { _, ok := strictFetchEnv(b, "prod"); return ok })
+		_, lk := h.Delivery("list", func(b []byte) bool { _, ok := strictFetchListID(b, "db-pass"); return ok })
+		valBody, vk := h.Delivery("value", func(b []byte) bool { _, ok := strictFetchValue(b); return ok })
+		wantEnv, envOK := strictFetchEnv(envBody, "prod")
+		want, valOK := strictFetchValue(valBody)
+
+		// The id the fetcher read must be the FIRST id the delivered list
+		// pages assign to the name.
+		wantID := ""
+		for _, rec := range h.Served("list") {
+			if id, ok := strictFetchListID(rec.Seen, "db-pass"); ok && rec.Complete && rec.Status == 200 {
+				wantID = id
+				break
+			}
+		}
+		obs.mu.Lock()
+		gotIDs := append([]string(nil), obs.valueIDs...)
+		listEnvs := append([]string(nil), obs.listEnvID...)
+		obs.mu.Unlock()
+
+		switch {
+		case (ek == "status" || lk == "status" || vk == "status") && servedAll2xx(h):
+			// 2xx other than 200 accepted by design: nothing further to assert.
+		case ek == "status" || lk == "status" || vk == "status":
+			h.Violate("O5/bad-status-accepted: fetch succeeded (%q) on a response whose final HTTP status was not 200 (env=%q list=%q value=%q)", val, ek, lk, vk)
+		case ek == "bad" || lk == "bad" || vk == "bad":
+			h.Violate("O5/incomplete: fetch succeeded (%q) although a consumed exchange was incomplete, redirected or non-200 (env=%q list=%q value=%q)", val, ek, lk, vk)
+		case hostile.HasDuplicateKeys(envBody) || hostile.HasDuplicateKeys(valBody) || listHasDup(h):
+			// duplicate member names: no single correct reading (RFC 8259)
+		case !valOK:
+			h.Violate("O5/empty-value: fetch succeeded with %q but the delivered value response has no non-empty data.value", val)
+		case string(val) != want:
+			h.Violate("O5/value: fetch returned %q, strict decoder %q", val, want)
+		case !envOK || (len(listEnvs) > 0 && listEnvs[0] != wantEnv):
+			h.Violate("O5/environment: list scoped to environment_id %v, strict environment id %q (valid=%v)", listEnvs, wantEnv, envOK)
+		case wantID == "" || len(gotIDs) == 0 || gotIDs[len(gotIDs)-1] != wantID:
+			h.Violate("O5/secret-id: value read from id %v, strict first match in delivered list %q", gotIDs, wantID)
+		}
+		if ek == "transport" || lk == "transport" || vk == "transport" {
+			h.Violate("O5/transport-error-ignored: fetch succeeded although a response ended in a transport/framing/gzip error after the full JSON value")
+		}
+	}
+	return h
 }
 
 func listHasDup(h *hostile.Harness) bool {

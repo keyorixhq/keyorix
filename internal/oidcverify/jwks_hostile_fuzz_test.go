@@ -137,63 +137,102 @@ func FuzzJWKSHostileIdP(f *testing.F) {
 	}
 
 	a, b := hostileKeys()
-	valid := hostileJWKS(&a.PublicKey)
 
 	f.Fuzz(func(t *testing.T, prog []byte) {
-		p := hostile.Decode(prog)
-		h := hostile.New(hostile.Config{
-			Routes: []hostile.Route{{Name: "jwks", Method: "GET", Prefix: "/jwks", Valid: func(int, *http.Request) hostile.Resp {
-				return hostile.Resp{Status: 200, CT: "application/json", Body: valid}
-			}}},
-			Program: p, AllowRedirect: true, RequestCeiling: 3,
-		})
+		h := runJWKSHostile(t, a, b, hostile.Decode(prog), jwksKnown)
 		defer h.Close()
-
-		res, err := NewHTTPJWKSResolver(map[string]string{hostileIssuer: h.URL() + "/jwks"})
-		if err != nil {
-			t.Fatalf("resolver: %v", err)
-		}
-		v, err := NewOIDCVerifier([]OIDCTrustedIssuer{{Issuer: hostileIssuer, Audiences: []string{hostileAud}}}, res)
-		if err != nil {
-			t.Fatalf("verifier: %v", err)
-		}
-
-		var iss, sub string
-		errA := h.Run("OIDCVerifier.Verify(legit token)", func(ctx context.Context) error {
-			var e error
-			iss, sub, e = v.Verify(ctx, hostileToken(a))
-			return e
-		})
-		if p.Pristine() && (errA != nil || iss != hostileIssuer || sub != "alice") {
-			h.Violate("O6 LIVENESS: pristine Verify returned %q %q %v", iss, sub, errA)
-		}
-		if errA == nil {
-			body, kind := h.Delivery("jwks", func(b []byte) bool { return strictJWKSHasKey(b, &a.PublicKey) })
-			switch {
-			case kind == "status":
-				h.Violate("O5/bad-status-accepted: a token verified against a JWKS response whose final HTTP status was not 200")
-			case kind == "bad":
-				h.Violate("O5/incomplete: a token verified against a JWKS exchange whose content was incomplete, redirected away or non-200")
-			case kind == "transport":
-				h.Violate("O5/transport-error-ignored: a token verified although the JWKS response ended in a transport/framing/gzip error after the full JSON value")
-			case hostile.HasDuplicateKeys(body):
-				// duplicate member names: no single correct reading (RFC 8259)
-			case !strictJWKSHasKey(body, &a.PublicKey):
-				h.Violate("O5/jwks-key: token verified but the delivered JWKS does not (strictly) publish the signing key under kid %q; delivered %d bytes", hostileKid, len(body))
-			case iss != hostileIssuer || sub != "alice":
-				h.Violate("O5/identity: verified identity %q %q differs from the token", iss, sub)
-			}
-		}
-
-		var fiss, fsub string
-		errB := h.Run("OIDCVerifier.Verify(attacker-signed token)", func(ctx context.Context) error {
-			var e error
-			fiss, fsub, e = v.Verify(ctx, hostileToken(b))
-			return e
-		})
-		if errB == nil {
-			h.Violate("O5/FORGED-IDENTITY: a token signed by an attacker key verified as %q %q", fiss, fsub)
-		}
 		h.Finish(t.Fatalf)
 	})
+}
+
+// jwksKnown lists this target's triaged, still-open findings (hostile.Known;
+// issue-ready text in the m32 report). Each has a reproducer test below.
+var jwksKnown = []hostile.Known{{
+	// HARDENING (H-006): the JWKS fetch decodes ONE JSON value and never reads
+	// to EOF, so a transport/integrity error after the complete key set
+	// (corrupt gzip CRC, short body against Content-Length, huge or
+	// unterminated chunk) is never seen. Delivery has already checked that the
+	// delivered key set strictly publishes the signing key.
+	ID:     "HK-JWKS-TRAILING-TRANSPORT-ERROR",
+	Class:  "HARDENING",
+	Prefix: "O5/transport-error-ignored: a token verified",
+	// Input 8bcc40bd3cf4ff3f: enc=gzip-corrupt.
+	Repro: hostile.Program{Enc: 3},
+}}
+
+// TestJWKSHostileKnownFindingsReproduce replays every jwksKnown entry with the
+// entry NOT applied; it goes red when a finding is fixed.
+func TestJWKSHostileKnownFindingsReproduce(t *testing.T) {
+	a, b := hostileKeys()
+	for _, k := range jwksKnown {
+		t.Run(k.ID, func(t *testing.T) {
+			h := runJWKSHostile(t, a, b, k.Repro, nil)
+			defer h.Close()
+			hostile.RequireKnownReproduces(t, k, h)
+		})
+	}
+}
+
+// runJWKSHostile runs one program (legit token signed by a, forged by b)
+// against the real resolver and verifier and applies the target's oracles;
+// the caller calls Finish (fuzz) or Evaluate (reproducer).
+func runJWKSHostile(t testing.TB, a, b *rsa.PrivateKey, p hostile.Program, known []hostile.Known) *hostile.Harness {
+	t.Helper()
+	valid := hostileJWKS(&a.PublicKey)
+	h := hostile.New(hostile.Config{
+		Routes: []hostile.Route{{Name: "jwks", Method: "GET", Prefix: "/jwks", Valid: func(int, *http.Request) hostile.Resp {
+			return hostile.Resp{Status: 200, CT: "application/json", Body: valid}
+		}}},
+		Program: p, AllowRedirect: true, RequestCeiling: 3,
+		Known: known,
+	})
+
+	res, err := NewHTTPJWKSResolver(map[string]string{hostileIssuer: h.URL() + "/jwks"})
+	if err != nil {
+		h.Close()
+		t.Fatalf("resolver: %v", err)
+	}
+	v, err := NewOIDCVerifier([]OIDCTrustedIssuer{{Issuer: hostileIssuer, Audiences: []string{hostileAud}}}, res)
+	if err != nil {
+		h.Close()
+		t.Fatalf("verifier: %v", err)
+	}
+
+	var iss, sub string
+	errA := h.Run("OIDCVerifier.Verify(legit token)", func(ctx context.Context) error {
+		var e error
+		iss, sub, e = v.Verify(ctx, hostileToken(a))
+		return e
+	})
+	if p.Pristine() && (errA != nil || iss != hostileIssuer || sub != "alice") {
+		h.Violate("O6 LIVENESS: pristine Verify returned %q %q %v", iss, sub, errA)
+	}
+	if errA == nil {
+		body, kind := h.Delivery("jwks", func(b []byte) bool { return strictJWKSHasKey(b, &a.PublicKey) })
+		switch {
+		case kind == "status":
+			h.Violate("O5/bad-status-accepted: a token verified against a JWKS response whose final HTTP status was not 200")
+		case kind == "bad":
+			h.Violate("O5/incomplete: a token verified against a JWKS exchange whose content was incomplete, redirected away or non-200")
+		case kind == "transport":
+			h.Violate("O5/transport-error-ignored: a token verified although the JWKS response ended in a transport/framing/gzip error after the full JSON value")
+		case hostile.HasDuplicateKeys(body):
+			// duplicate member names: no single correct reading (RFC 8259)
+		case !strictJWKSHasKey(body, &a.PublicKey):
+			h.Violate("O5/jwks-key: token verified but the delivered JWKS does not (strictly) publish the signing key under kid %q; delivered %d bytes", hostileKid, len(body))
+		case iss != hostileIssuer || sub != "alice":
+			h.Violate("O5/identity: verified identity %q %q differs from the token", iss, sub)
+		}
+	}
+
+	var fiss, fsub string
+	errB := h.Run("OIDCVerifier.Verify(attacker-signed token)", func(ctx context.Context) error {
+		var e error
+		fiss, fsub, e = v.Verify(ctx, hostileToken(b))
+		return e
+	})
+	if errB == nil {
+		h.Violate("O5/FORGED-IDENTITY: a token signed by an attacker key verified as %q %q", fiss, fsub)
+	}
+	return h
 }

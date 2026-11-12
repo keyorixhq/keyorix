@@ -95,67 +95,123 @@ func FuzzK8sTokenRequestHostileAPI(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, prog []byte) {
-		p := hostile.Decode(prog)
-		h := hostile.New(hostile.Config{
-			Routes: k8sHostileRoutes(), Program: p, TLS: true,
-			Credentials: []string{hostileK8sBearer}, RequestCeiling: 5,
-		})
+		h := runK8sHostile(hostile.Decode(prog), k8sKnown)
 		defer h.Close()
-		dsn, _ := json.Marshal(map[string]any{
-			"namespace": "ns", "service_account": "sa", "revocable": true,
-			"api_server": h.URL(), "ca_cert": h.CAPEM(), "token": hostileK8sBearer,
-		})
-		var e KubernetesEngine
-
-		var cred Credential
-		var label string
-		err := h.Run("KubernetesEngine.Issue", func(ctx context.Context) error {
-			var ie error
-			cred, label, ie = e.Issue(ctx, string(dsn), "", 10*time.Minute)
-			return ie
-		})
-		if p.Pristine() && (err != nil || cred.Fields["token"] != hostileK8sToken) {
-			h.Violate("O6 LIVENESS: pristine Issue returned %v %v (unmatched: %v)", cred.Fields, err, h.Unmatched())
-		}
-		if err == nil {
-			uidSeen, uk := h.Delivery("secret", strictK8sUID, 200, 201)
-			tokSeen, tk := h.Delivery("token", func(b []byte) bool { _, _, _, ok := strictK8sToken(b); return ok }, 200, 201)
-			tok, exp, expOK, tokOK := strictK8sToken(tokSeen)
-			switch {
-			case uk == "status" || tk == "status":
-				h.Violate("O5/bad-status-accepted: Issue succeeded on a bound-Secret/TokenRequest response whose final HTTP status was not 200/201 (secret=%q token=%q)", uk, tk)
-			case uk == "bad" || tk == "bad":
-				h.Violate("O5/incomplete: Issue succeeded although the bound-Secret or TokenRequest exchange was incomplete, redirected or had a non-200 status")
-			case hostile.HasDuplicateKeys(tokSeen) || hostile.HasDuplicateKeys(uidSeen):
-				// duplicate member names: no single correct reading (RFC 8259)
-			case !strictK8sUID(uidSeen):
-				h.Violate("O5/uid: Issue succeeded with a bound-Secret response that has no uid")
-			case !tokOK:
-				h.Violate("O5/empty-token: Issue succeeded but the delivered TokenRequest has no token (credential %q)", cred.Fields["token"])
-			case cred.Fields["token"] != tok:
-				h.Violate("O5/token-value: Issue returned token %q, strict decoder %q", cred.Fields["token"], tok)
-			case !expOK && cred.Fields["expiration"] == "":
-				h.Violate("O5/expiry-dropped: Issue succeeded with a token that carries no usable expirationTimestamp; the credential is returned with no expiration")
-			case expOK && cred.Fields["expiration"] != exp.UTC().Format(time.RFC3339):
-				h.Violate("O5/expiry-value: expiration %q vs strict %q", cred.Fields["expiration"], exp)
-			}
-			if uk == "transport" || tk == "transport" {
-				h.Violate("O5/transport-error-ignored: Issue succeeded although a response ended in a transport/framing/gzip error after the full JSON value")
-			}
-		}
-		if label != "" {
-			rerr := h.Run("KubernetesEngine.Revoke", func(ctx context.Context) error {
-				return e.Revoke(ctx, string(dsn), label)
-			})
-			if rerr == nil {
-				recs := h.Served("secretdel")
-				if len(recs) == 0 {
-					h.Violate("O5/revoke-no-request: Revoke reported success without contacting the API server")
-				} else if last := recs[len(recs)-1]; last.Status != 200 && last.Status != 202 && last.Status != 404 {
-					h.Violate("O5/revoke-status: Revoke reported success on final HTTP status %d", last.Status)
-				}
-			}
-		}
 		h.Finish(t.Fatalf)
 	})
+}
+
+// k8sKnown lists this target's triaged, still-open findings (hostile.Known;
+// issue-ready text in the m32 report). Each has a reproducer test below.
+var k8sKnown = []hostile.Known{{
+	// EXPECTED-DIFFERENCE: isK8sSuccess (kubernetes.go) deliberately accepts
+	// any 2xx; the API server answers create/TokenRequest with 201. Only the
+	// sub-tag is suppressed: the exchange was complete and every value check
+	// (uid, token, expiry) agreed with the strict decoders.
+	ID:     "HK-K8S-ANY-2XX",
+	Class:  "EXPECTED-DIFFERENCE",
+	Prefix: "O5/bad-status-accepted/2xx-valid-body: Issue",
+	// Input fa27efe2ea8f6ef4: route=token status=206.
+	Repro: hostile.Program{Route: 0, Status: 5},
+}}
+
+// TestK8sHostileKnownFindingsReproduce replays every k8sKnown entry with the
+// entry NOT applied; it goes red when a finding is fixed.
+func TestK8sHostileKnownFindingsReproduce(t *testing.T) {
+	for _, k := range k8sKnown {
+		t.Run(k.ID, func(t *testing.T) {
+			h := runK8sHostile(k.Repro, nil)
+			defer h.Close()
+			hostile.RequireKnownReproduces(t, k, h)
+		})
+	}
+}
+
+// runK8sHostile runs one program against KubernetesEngine.Issue/Revoke and
+// applies the target's oracles; the caller calls Finish or Evaluate.
+func runK8sHostile(p hostile.Program, known []hostile.Known) *hostile.Harness {
+	h := hostile.New(hostile.Config{
+		Routes: k8sHostileRoutes(), Program: p, TLS: true,
+		Credentials: []string{hostileK8sBearer}, RequestCeiling: 5,
+		Known: known,
+	})
+	dsn, _ := json.Marshal(map[string]any{
+		"namespace": "ns", "service_account": "sa", "revocable": true,
+		"api_server": h.URL(), "ca_cert": h.CAPEM(), "token": hostileK8sBearer,
+	})
+	var e KubernetesEngine
+
+	var cred Credential
+	var label string
+	err := h.Run("KubernetesEngine.Issue", func(ctx context.Context) error {
+		var ie error
+		cred, label, ie = e.Issue(ctx, string(dsn), "", 10*time.Minute)
+		return ie
+	})
+	if p.Pristine() && (err != nil || cred.Fields["token"] != hostileK8sToken) {
+		h.Violate("O6 LIVENESS: pristine Issue returned %v %v (unmatched: %v)", cred.Fields, err, h.Unmatched())
+	}
+	if err == nil {
+		tokContent := func(b []byte) bool { _, _, _, ok := strictK8sToken(b); return ok }
+		uidSeen, uk := h.Delivery("secret", strictK8sUID, 200, 201)
+		tokSeen, tk := h.Delivery("token", tokContent, 200, 201)
+		// A final 2xx other than 200/201 is still O5/bad-status-accepted; when
+		// both exchanges are otherwise complete and every value check below
+		// passes it carries the /2xx-valid-body sub-tag (isK8sSuccess accepts
+		// any 2xx by design), so a known entry can name exactly that.
+		other2xx := false
+		if uk == "status" || tk == "status" {
+			u2, uk2 := h.Delivery("secret", strictK8sUID, hostile.Status2xx...)
+			t2, tk2 := h.Delivery("token", tokContent, hostile.Status2xx...)
+			if uk2 != "status" && uk2 != "bad" && tk2 != "status" && tk2 != "bad" {
+				uidSeen, uk, tokSeen, tk, other2xx = u2, uk2, t2, tk2, true
+			}
+		}
+		tok, exp, expOK, tokOK := strictK8sToken(tokSeen)
+		valueOK := false
+		switch {
+		case uk == "status" || tk == "status":
+			h.Violate("O5/bad-status-accepted: Issue succeeded on a bound-Secret/TokenRequest response whose final HTTP status was not 200/201 (secret=%q token=%q)", uk, tk)
+		case uk == "bad" || tk == "bad":
+			h.Violate("O5/incomplete: Issue succeeded although the bound-Secret or TokenRequest exchange was incomplete, redirected or had a non-200 status")
+		case hostile.HasDuplicateKeys(tokSeen) || hostile.HasDuplicateKeys(uidSeen):
+			// duplicate member names: no single correct reading (RFC 8259)
+		case !strictK8sUID(uidSeen):
+			h.Violate("O5/uid: Issue succeeded with a bound-Secret response that has no uid")
+		case !tokOK:
+			h.Violate("O5/empty-token: Issue succeeded but the delivered TokenRequest has no token (credential %q)", cred.Fields["token"])
+		case cred.Fields["token"] != tok:
+			h.Violate("O5/token-value: Issue returned token %q, strict decoder %q", cred.Fields["token"], tok)
+		case !expOK && cred.Fields["expiration"] == "":
+			h.Violate("O5/expiry-dropped: Issue succeeded with a token that carries no usable expirationTimestamp; the credential is returned with no expiration")
+		case expOK && cred.Fields["expiration"] != exp.UTC().Format(time.RFC3339):
+			h.Violate("O5/expiry-value: expiration %q vs strict %q", cred.Fields["expiration"], exp)
+		default:
+			valueOK = true
+		}
+		if other2xx {
+			if valueOK && uk == "" && tk == "" {
+				h.Violate("O5/bad-status-accepted/2xx-valid-body: Issue succeeded on a final 2xx other than 200/201 with complete bodies the strict decoders agree with")
+			} else {
+				h.Violate("O5/bad-status-accepted: Issue succeeded on a bound-Secret/TokenRequest response whose final HTTP status was not 200/201 (secret=%q token=%q)", uk, tk)
+			}
+		}
+		if uk == "transport" || tk == "transport" {
+			h.Violate("O5/transport-error-ignored: Issue succeeded although a response ended in a transport/framing/gzip error after the full JSON value")
+		}
+	}
+	if label != "" {
+		rerr := h.Run("KubernetesEngine.Revoke", func(ctx context.Context) error {
+			return e.Revoke(ctx, string(dsn), label)
+		})
+		if rerr == nil {
+			recs := h.Served("secretdel")
+			if len(recs) == 0 {
+				h.Violate("O5/revoke-no-request: Revoke reported success without contacting the API server")
+			} else if last := recs[len(recs)-1]; last.Status != 200 && last.Status != 202 && last.Status != 404 {
+				h.Violate("O5/revoke-status: Revoke reported success on final HTTP status %d", last.Status)
+			}
+		}
+	}
+	return h
 }

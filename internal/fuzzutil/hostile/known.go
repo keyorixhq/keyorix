@@ -63,6 +63,17 @@ func (h *Harness) known(v string) string {
 	return ""
 }
 
+// Status2xx is every 2xx status, for a target that splits "accepted a 2xx the
+// backend never sends, with an otherwise valid body" from other status
+// acceptance (O5/bad-status-accepted/2xx-valid-body).
+var Status2xx = func() []int {
+	s := make([]int, 0, 100)
+	for c := 200; c < 300; c++ {
+		s = append(s, c)
+	}
+	return s
+}()
+
 // Errors returns the text of every error a Run call returned so far.
 func (h *Harness) Errors() []string {
 	h.mu.Lock()
