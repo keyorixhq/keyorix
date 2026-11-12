@@ -12,26 +12,32 @@ package wirefuzz
 //	(1) LIVENESS/BOUNDED — the whole exchange must not panic the server process
 //	    (an unrecovered panic in the framing goroutine crashes `go test`, failing
 //	    the fuzz), must finish within a 10s watchdog, and must not blow a fixed heap-
-//	    allocation cap. DOES NOT verify: CPU, goroutine/fd leaks, or that the server
-//	    stays healthy for a SUBSEQUENT connection (a single-connection check); nor
-//	    does it distinguish a graceful GOAWAY from a silent drop.
+//	    allocation cap (evalAlloc). DOES NOT verify: CPU, goroutine/fd leaks; nor does
+//	    it distinguish a graceful GOAWAY from a silent drop.
 //
-//	(2) AUTHZ/LEAK INVARIANCE — a seeded secret's plaintext must never appear in any
-//	    bytes the server returns on this connection unless an authorizing credential
-//	    was present in a HEADERS frame on the wire. DOES NOT verify: positive
-//	    reachability, protobuf-field-level correctness, or leaks that are not the
-//	    literal seeded plaintext (e.g. an encrypted blob).
+//	(2) AUTHZ/LEAK INVARIANCE, PER STREAM — a seeded secret's plaintext must never
+//	    appear on a stream unless the credential sent on THAT stream's HEADERS is
+//	    authorized to read it (evalH2Leak). The driver keeps the connection open until
+//	    the response is complete (no half-close: see oracles_test.go), and it can send
+//	    a properly length-prefixed GetSecretRequest for either secret on the last
+//	    opened stream, so an authorized read and a cross-tenant read are both
+//	    reachable; TestAntiVacuity_HTTP2 proves it. DOES NOT verify: protobuf-field
+//	    correctness, or leaks that are not the literal seeded plaintext (e.g. an
+//	    encrypted blob).
+//
+//	(3) POST-ABUSE HEALTH — a fresh HTTP/2 connection must still be served a real
+//	    (unauthenticated) RPC after the abusive frame sequence.
 //
 // NOT AN ORACLE HERE: the HTTP/1 "N requests ⇒ at most N handler invocations"
 // smuggling count. HTTP/2 stream multiplexing is managed by the grpc transport, not
 // a recording middleware we can wrap, so this target is a robustness + leak fuzzer,
 // not a request-count smuggling detector. That gap is stated in the report.
 //
-// RED-PROOFS: scripts/fuzzing/wire-redproof (scratch, never committed).
+// RED-PROOFS: oracle_redproof_test.go (predicates, planted-leak twin) and
+// anti_vacuity_test.go (TestAntiVacuity_HTTP2: the driver reaches an authorized read).
 
 import (
 	"bytes"
-	"runtime"
 	"testing"
 	"time"
 
@@ -50,33 +56,29 @@ func FuzzWireHTTP2(f *testing.F) {
 	f.Add([]byte{4, 0, 0})       // SETTINGS abuse
 	f.Add([]byte{5, 0, 0})       // PRIORITY cycle
 	f.Add([]byte{6, 0, 0})       // WINDOW_UPDATE storm
+	// Authorized-path seeds: HEADERS(admin|reader, GetSecretValue, stream left open) then a
+	// valid GetSecretRequest for secret A / B on that stream.
+	f.Add([]byte{1, 0, 2, 0, 1, 1, 1, 0}) // admin reads A
+	f.Add([]byte{1, 0, 2, 0, 1, 1, 1, 1}) // admin reads B
+	f.Add([]byte{1, 0, 3, 0, 1, 1, 1, 1}) // reader reads B (must be denied)
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		http1Mu.Lock() // serialize: shared seeded world
 		defer http1Mu.Unlock()
 
-		runtime.GC()
-		var m0 runtime.MemStats
-		runtime.ReadMemStats(&m0)
-
-		resp, sentCred, timedOut := h2Drive(w, data, 10*time.Second)
-
-		var m1 runtime.MemStats
-		runtime.ReadMemStats(&m1)
+		var res *h2Result
+		var timedOut bool
+		delta := measureAlloc(func() { res, timedOut = h2Drive(w, data, 10*time.Second) })
 
 		if timedOut {
 			t.Fatalf("HANG: HTTP/2 exchange exceeded watchdog for %d-byte input", len(data))
 		}
-		const allocCap = 512 << 20
-		if d := heapDelta(m0, m1); d > allocCap {
-			t.Fatalf("UNBOUNDED ALLOC: heap grew %d bytes for %d-byte HTTP/2 input (cap %d)", d, len(data), allocCap)
+		if v := evalAlloc(delta); v != "" {
+			t.Fatalf("%s for %d-byte HTTP/2 input", v, len(data))
 		}
-		if bytes.Contains(resp, []byte(w.s.valB)) && !sentCred.admin {
-			t.Fatalf("LEAK: secret B plaintext in HTTP/2 response without admin credential\nresp=%q", truncate(resp, 800))
-		}
-		if bytes.Contains(resp, []byte(w.s.valA)) && !sentCred.admin && !sentCred.reader {
-			t.Fatalf("LEAK: secret A plaintext in HTTP/2 response without an authorizing credential\nresp=%q", truncate(resp, 800))
+		if v := evalH2Leak(res, w.s.valA, w.s.valB); v != "" {
+			t.Fatalf("%s\nresp=%q", v, truncate(res.all(), 800))
 		}
 		// POST-ABUSE HEALTH — a fresh HTTP/2 connection must still be served after the
 		// abusive frame sequence (closes the single-connection gap).
@@ -86,26 +88,17 @@ func FuzzWireHTTP2(f *testing.F) {
 	})
 }
 
-type credsSent struct {
-	admin  bool
-	reader bool
-}
-
 // h2Drive performs the preface+SETTINGS handshake and then emits a fuzz-controlled
-// frame sequence, reading whatever the server returns under the watchdog. It returns
-// the raw response bytes, which credentials it put on the wire, and whether the
-// watchdog fired.
-func h2Drive(w *grpcWorld, data []byte, watchdog time.Duration) (resp []byte, sent credsSent, timedOut bool) {
-	type result struct {
-		b    []byte
-		sent credsSent
-	}
-	ch := make(chan result, 1)
+// frame sequence, reading whatever the server returns (per stream) under the watchdog.
+// It returns the per-stream response, the credential sent on each stream, and whether
+// the watchdog fired. It never half-closes before reading (see oracles_test.go).
+func h2Drive(w *grpcWorld, data []byte, watchdog time.Duration) (res *h2Result, timedOut bool) {
+	ch := make(chan *h2Result, 1)
 	go func() {
-		var sent credsSent
+		res := newH2Result()
 		conn, fr, err := h2Handshake(w.addr)
 		if err != nil {
-			ch <- result{nil, sent}
+			ch <- res
 			return
 		}
 		defer func() { _ = conn.Close() }()
@@ -113,19 +106,30 @@ func h2Drive(w *grpcWorld, data []byte, watchdog time.Duration) (resp []byte, se
 
 		rd := &byteReader{data: data}
 		streamID := uint32(1)
+		var lastOpen uint32 // the most recently OPENED stream (DATA must target it, not the next idle id)
+		open := map[uint32]bool{}
 		nFrames := int(rd.u8()%8) + 1
 		for range nFrames {
 			switch rd.u8() % 8 {
 			case 0: // well-formed-ish HEADERS to a secret method, maybe with a credential
 				authHdr, s := h2PickCred(w, rd)
-				sent.admin = sent.admin || s.admin
-				sent.reader = sent.reader || s.reader
+				res.creds[streamID] = s
 				method := []string{methodGetSecretValue, methodGetSecret, methodListSecrets}[rd.u8()%3]
 				hb := encodeHeaders(grpcRequestHeaders(method, "127.0.0.1", authHdr))
 				_ = fr.WriteHeaders(http2.HeadersFrameParam{StreamID: streamID, BlockFragment: hb, EndHeaders: true, EndStream: rd.u8()%2 == 0})
+				open[streamID], lastOpen = true, streamID
 				streamID += 2
-			case 1: // DATA frame (possibly on a half-open or idle stream; wrong length semantics)
-				_ = fr.WriteData(streamID, rd.u8()%2 == 0, bytes.Repeat([]byte{rd.u8()}, int(rd.u8())))
+			case 1: // DATA frame: junk (wrong length semantics) or a valid GetSecretRequest for A/B
+				target := lastOpen
+				if target == 0 {
+					target = streamID // nothing opened yet: DATA on an idle stream is itself an abuse shape
+				}
+				if rd.u8()%2 == 1 {
+					id := []uint32{w.s.idA, w.s.idB}[rd.u8()%2]
+					_ = fr.WriteData(target, true, validGRPCMessage(id))
+				} else {
+					_ = fr.WriteData(target, rd.u8()%2 == 0, bytes.Repeat([]byte{rd.u8()}, int(rd.u8())))
+				}
 			case 2: // RST_STREAM flood
 				for range int(rd.u8()%32) + 1 {
 					_ = fr.WriteRSTStream(streamID, http2.ErrCode(rd.u8()))
@@ -136,6 +140,7 @@ func h2Drive(w *grpcWorld, data []byte, watchdog time.Duration) (resp []byte, se
 				mid := len(hb) / 2
 				_ = fr.WriteHeaders(http2.HeadersFrameParam{StreamID: streamID, BlockFragment: hb[:mid], EndHeaders: false})
 				_ = fr.WriteContinuation(streamID, true, hb[mid:])
+				open[streamID], lastOpen = true, streamID
 				streamID += 2
 			case 4: // SETTINGS abuse (extreme values)
 				_ = fr.WriteSettings(
@@ -155,13 +160,14 @@ func h2Drive(w *grpcWorld, data []byte, watchdog time.Duration) (resp []byte, se
 			}
 		}
 		_ = fr.WriteSettingsAck()
-		ch <- result{drainConn(conn), sent}
+		readH2(conn, fr, open, res)
+		ch <- res
 	}()
 	select {
 	case r := <-ch:
-		return r.b, r.sent, false
+		return r, false
 	case <-time.After(watchdog + 2*time.Second):
-		return nil, credsSent{}, true
+		return newH2Result(), true
 	}
 }
 

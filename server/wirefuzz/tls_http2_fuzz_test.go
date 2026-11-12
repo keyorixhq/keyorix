@@ -15,19 +15,24 @@ package wirefuzz
 //
 // ORACLES (and what each does NOT verify):
 //
-//	(1) LIVENESS/BOUNDED — no server panic, 10s watchdog, 512 MiB heap-delta cap.
-//	    DOES NOT verify: CPU, goroutine/fd leaks (beyond the post-abuse health probe).
-//	(2) AUTHZ/LEAK INVARIANCE — a seeded secret's plaintext appears in returned bytes
-//	    only if an authorizing credential rode a HEADERS frame. DOES NOT verify: positive
-//	    reachability, or a non-literal (e.g. encrypted) leak.
-//	(3) POST-ABUSE HEALTH — a fresh TLS+h2 connection is still served afterwards.
+//	(1) LIVENESS/BOUNDED — no server panic, 10s watchdog, 512 MiB heap-delta cap
+//	    (evalAlloc). DOES NOT verify: CPU, goroutine/fd leaks (beyond the post-abuse
+//	    health probe).
+//	(2) AUTHZ/LEAK INVARIANCE, PER STREAM — a seeded secret's plaintext appears on a
+//	    stream only if the credential sent on THAT stream's HEADERS is authorized to
+//	    read it (evalH2Leak). The driver keeps the connection open until the response
+//	    is complete (no half-close: see oracles_test.go), so an authorized read and a
+//	    cross-tenant read are both reachable (TestAntiVacuity_HTTP2TLS). DOES NOT
+//	    verify: a non-literal (e.g. encrypted) leak.
+//	(3) POST-ABUSE HEALTH — a fresh TLS+h2 connection is still served a real GET
+//	    /health afterwards.
 //
 // NOT AN ORACLE HERE: the HTTP/1 handler-count smuggling check (HTTP/2 stream muxing is
 // inside net/http's h2 server, not a wrappable middleware — same limitation as
 // FuzzWireHTTP2).
 //
-// RED/GREEN proof: TestRedProof_TLSALPNReachability (h2 is actually negotiated and a
-// request reaches the router) and TestRedProof_TLSHealthProbe.
+// RED/GREEN proof: TestRedProof_TLSALPNReachability (h2 is actually negotiated),
+// TestRedProof_TLSHealthProbe, the planted-leak twin and TestAntiVacuity_HTTP2TLS.
 
 import (
 	"bytes"
@@ -39,7 +44,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"runtime"
 	"testing"
 	"time"
 
@@ -102,6 +106,13 @@ func buildTLSWireWorld(tb testing.TB) *tlsWireWorld {
 	if err != nil {
 		tb.Fatalf("router: %v", err)
 	}
+	return serveTLSHandler(tb, router, s)
+}
+
+// serveTLSHandler serves h over TLS+ALPN h2 on loopback. The red twin plants a leaky
+// handler here and drives it through the same tlsH2Drive and oracles as the real router.
+func serveTLSHandler(tb testing.TB, h http.Handler, s *seededStack) *tlsWireWorld {
+	tb.Helper()
 	serverCfg, clientCfg := inMemoryTLSConfig(tb)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -109,7 +120,7 @@ func buildTLSWireWorld(tb testing.TB) *tlsWireWorld {
 		tb.Fatalf("listen: %v", err)
 	}
 	srv := &http.Server{
-		Handler:           router,
+		Handler:           h,
 		ReadHeaderTimeout: wireReadHeaderTimeout,
 		ReadTimeout:       wireReadTimeout,
 		IdleTimeout:       wireIdleTimeout,
@@ -163,20 +174,18 @@ func FuzzWireHTTP2TLS(f *testing.F) {
 	f.Add([]byte{2, 0, 0, 2, 0}) // RST flood
 	f.Add([]byte{3, 0, 0})       // CONTINUATION chain
 	f.Add([]byte{4, 0, 0})       // SETTINGS abuse
+	f.Add([]byte{0, 0, 2, 1})    // admin GET secret A (authorized read)
+	f.Add([]byte{0, 0, 3, 2})    // reader GET secret B (must be denied)
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		http1Mu.Lock()
 		defer http1Mu.Unlock()
 
-		runtime.GC()
-		var m0 runtime.MemStats
-		runtime.ReadMemStats(&m0)
-
-		resp, sent, proto, timedOut := tlsH2Drive(w, data, 10*time.Second)
-
-		var m1 runtime.MemStats
-		runtime.ReadMemStats(&m1)
+		var res *h2Result
+		var proto string
+		var timedOut bool
+		delta := measureAlloc(func() { res, proto, timedOut = tlsH2Drive(w, data, 10*time.Second) })
 
 		if timedOut {
 			t.Fatalf("HANG: TLS HTTP/2 exchange exceeded watchdog for %d-byte input", len(data))
@@ -186,15 +195,11 @@ func FuzzWireHTTP2TLS(f *testing.F) {
 			// the whole target would be vacuous. Fail loudly rather than pass quietly.
 			t.Fatalf("ALPN negotiated %q, not h2 — the HTTP/2-on-HTTP-listener surface is not being reached", proto)
 		}
-		const allocCap = 512 << 20
-		if d := heapDelta(m0, m1); d > allocCap {
-			t.Fatalf("UNBOUNDED ALLOC: heap grew %d bytes for %d-byte TLS HTTP/2 input (cap %d)", d, len(data), allocCap)
+		if v := evalAlloc(delta); v != "" {
+			t.Fatalf("%s for %d-byte TLS HTTP/2 input", v, len(data))
 		}
-		if bytes.Contains(resp, []byte(w.s.valB)) && !sent.admin {
-			t.Fatalf("LEAK: secret B plaintext in TLS HTTP/2 response without admin credential\nresp=%q", truncate(resp, 800))
-		}
-		if bytes.Contains(resp, []byte(w.s.valA)) && !sent.admin && !sent.reader {
-			t.Fatalf("LEAK: secret A plaintext in TLS HTTP/2 response without an authorizing credential\nresp=%q", truncate(resp, 800))
+		if v := evalH2Leak(res, w.s.valA, w.s.valB); v != "" {
+			t.Fatalf("%s\nresp=%q", v, truncate(res.all(), 800))
 		}
 		if err := tlsH2HealthProbe(w.addr, w.clientCfg); err != nil {
 			t.Fatalf("POST-ABUSE HEALTH: TLS HTTP/2 listener did not serve a fresh connection after %d-byte input: %v", len(data), err)
@@ -206,47 +211,52 @@ func FuzzWireHTTP2TLS(f *testing.F) {
 // sequence against the REST router, and reads what the server returns. Returns the raw
 // response bytes, which credentials were on the wire, the negotiated ALPN protocol, and
 // whether the watchdog fired.
-func tlsH2Drive(w *tlsWireWorld, data []byte, watchdog time.Duration) (resp []byte, sent credsSent, proto string, timedOut bool) {
+func tlsH2Drive(w *tlsWireWorld, data []byte, watchdog time.Duration) (res *h2Result, proto string, timedOut bool) {
 	type result struct {
-		b     []byte
-		sent  credsSent
+		res   *h2Result
 		proto string
 	}
 	ch := make(chan result, 1)
 	go func() {
-		var sent credsSent
+		res := newH2Result()
 		conn, negotiated, err := tlsH2Dial(w.addr, w.clientCfg)
 		if err != nil {
-			ch <- result{nil, sent, ""}
+			ch <- result{res, ""}
 			return
 		}
 		defer func() { _ = conn.Close() }()
 		_ = conn.SetDeadline(time.Now().Add(watchdog))
 		if _, err := conn.Write([]byte(http2.ClientPreface)); err != nil {
-			ch <- result{nil, sent, negotiated}
+			ch <- result{res, negotiated}
 			return
 		}
-		fr := http2.NewFramer(conn, conn)
+		fr := newH2Framer(conn)
 		if err := fr.WriteSettings(); err != nil {
-			ch <- result{nil, sent, negotiated}
+			ch <- result{res, negotiated}
 			return
 		}
 
 		rd := &byteReader{data: data}
 		streamID := uint32(1)
+		var lastOpen uint32
+		open := map[uint32]bool{}
 		nFrames := int(rd.u8()%8) + 1
 		for range nFrames {
 			switch rd.u8() % 6 {
 			case 0: // well-formed REST request to a secret/health path, maybe with a cred
 				authHdr, s := tlsPickCred(w, rd)
-				sent.admin = sent.admin || s.admin
-				sent.reader = sent.reader || s.reader
+				res.creds[streamID] = s
 				path := tlsPickPath(w, rd)
 				hb := encodeHeaders(restRequestHeaders(path, "127.0.0.1", authHdr))
 				_ = fr.WriteHeaders(http2.HeadersFrameParam{StreamID: streamID, BlockFragment: hb, EndHeaders: true, EndStream: true})
+				open[streamID], lastOpen = true, streamID
 				streamID += 2
-			case 1: // DATA on a GET stream (illegal: body on a no-body method)
-				_ = fr.WriteData(streamID, rd.u8()%2 == 0, bytes.Repeat([]byte{rd.u8()}, int(rd.u8())))
+			case 1: // DATA on a GET stream (illegal: body on a no-body method), on the last OPENED stream
+				target := lastOpen
+				if target == 0 {
+					target = streamID
+				}
+				_ = fr.WriteData(target, rd.u8()%2 == 0, bytes.Repeat([]byte{rd.u8()}, int(rd.u8())))
 			case 2: // RST_STREAM flood
 				for range int(rd.u8()%32) + 1 {
 					_ = fr.WriteRSTStream(streamID, http2.ErrCode(rd.u8()))
@@ -256,6 +266,7 @@ func tlsH2Drive(w *tlsWireWorld, data []byte, watchdog time.Duration) (resp []by
 				mid := len(hb) / 2
 				_ = fr.WriteHeaders(http2.HeadersFrameParam{StreamID: streamID, BlockFragment: hb[:mid], EndHeaders: false})
 				_ = fr.WriteContinuation(streamID, true, hb[mid:])
+				open[streamID], lastOpen = true, streamID
 				streamID += 2
 			case 4: // SETTINGS abuse
 				_ = fr.WriteSettings(
@@ -267,20 +278,14 @@ func tlsH2Drive(w *tlsWireWorld, data []byte, watchdog time.Duration) (resp []by
 			}
 		}
 		_ = fr.WriteSettingsAck()
-
-		if tc, ok := conn.NetConn().(*net.TCPConn); ok {
-			_ = tc.CloseWrite()
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		var buf bytes.Buffer
-		_, _ = buf.ReadFrom(conn)
-		ch <- result{buf.Bytes(), sent, negotiated}
+		readH2(conn, fr, open, res)
+		ch <- result{res, negotiated}
 	}()
 	select {
 	case r := <-ch:
-		return r.b, r.sent, r.proto, false
+		return r.res, r.proto, false
 	case <-time.After(watchdog + 2*time.Second):
-		return nil, credsSent{}, "", true
+		return newH2Result(), "", true
 	}
 }
 
@@ -310,8 +315,9 @@ func tlsPickPath(w *tlsWireWorld, rd *byteReader) string {
 }
 
 // tlsH2HealthProbe opens a FRESH TLS+h2 connection, confirms ALPN selected h2, and
-// requires the server to emit its own (non-ack) SETTINGS frame — proof the listener
-// still serves a later clean client after the abusive exchange.
+// requires the server to answer a real GET /health with a :status — proof the listener
+// still serves a later clean client after the abusive exchange, not merely that it
+// accepts connections and sends SETTINGS.
 func tlsH2HealthProbe(addr string, cfg *tls.Config) error {
 	conn, proto, err := tlsH2Dial(addr, cfg)
 	if err != nil {
@@ -325,19 +331,11 @@ func tlsH2HealthProbe(addr string, cfg *tls.Config) error {
 	if _, err := conn.Write([]byte(http2.ClientPreface)); err != nil {
 		return err
 	}
-	fr := http2.NewFramer(conn, conn)
+	fr := newH2Framer(conn)
 	if err := fr.WriteSettings(); err != nil {
 		return err
 	}
-	for {
-		fRaw, err := fr.ReadFrame()
-		if err != nil {
-			return err
-		}
-		if sf, ok := fRaw.(*http2.SettingsFrame); ok && !sf.IsAck() {
-			return nil
-		}
-	}
+	return h2ProbeRequest(conn, fr, restRequestHeaders("/health", "127.0.0.1", ""), nil, ":status")
 }
 
 type alpnError struct{ got string }

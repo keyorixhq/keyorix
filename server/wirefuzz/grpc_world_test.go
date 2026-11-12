@@ -19,9 +19,12 @@ import (
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	keyorixgrpc "github.com/keyorixhq/keyorix/server/grpc"
+	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
 // Real gRPC method paths (unauthenticated callers must be rejected before any
@@ -46,6 +49,13 @@ func buildGRPCWorld(tb testing.TB) *grpcWorld {
 	if err != nil {
 		tb.Fatalf("grpc NewServer: %v", err)
 	}
+	return serveGRPC(tb, gsrv, s)
+}
+
+// serveGRPC serves gsrv on a loopback listener. The red twins use it to put a PLANTED
+// (deliberately leaky) gRPC server behind the same drivers and oracles the real one has.
+func serveGRPC(tb testing.TB, gsrv *grpc.Server, s *seededStack) *grpcWorld {
+	tb.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		tb.Fatalf("listen: %v", err)
@@ -68,7 +78,7 @@ func h2Handshake(addr string) (net.Conn, *http2.Framer, error) {
 		_ = conn.Close()
 		return nil, nil, err
 	}
-	fr := http2.NewFramer(conn, conn)
+	fr := newH2Framer(conn)
 	if err := fr.WriteSettings(); err != nil {
 		_ = conn.Close()
 		return nil, nil, err
@@ -76,20 +86,15 @@ func h2Handshake(addr string) (net.Conn, *http2.Framer, error) {
 	return conn, fr, nil
 }
 
-// drainConn half-closes the write side (a FIN makes the server flush its GOAWAY and
-// close, giving a prompt EOF instead of blocking on the full watchdog) and reads
-// whatever the server returned under a short, fixed deadline. The outer per-exec
-// watchdog in the drive functions still bounds the whole exchange for a true hang;
-// this deadline only keeps throughput sane on the common case where the server holds
-// the HTTP/2 connection open after our frames.
-func drainConn(conn net.Conn) []byte {
-	if tc, ok := conn.(*net.TCPConn); ok {
-		_ = tc.CloseWrite()
+// validGRPCMessage is a properly length-prefixed GetSecretRequest{Id: id}: the only
+// body shape that lets GetSecretValue reach the secret (the junk payloads the fuzzers
+// also send can never decode to a real secret id).
+func validGRPCMessage(id uint32) []byte {
+	body, err := proto.Marshal(&pb.GetSecretRequest{Id: id})
+	if err != nil {
+		panic(err) // a fixed message type cannot fail to marshal
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(conn)
-	return buf.Bytes()
+	return grpcMessage(0, uint32(len(body)), body)
 }
 
 // encodeHeaders HPACK-encodes a header list into a single HEADERS block.

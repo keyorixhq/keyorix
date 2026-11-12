@@ -34,9 +34,12 @@ import (
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// Connection-level limits mirror the production REST listener (server/http_server.go).
-// The wire harness pins them so an input that would be rejected by a slowloris/body
-// cap in production is rejected identically here.
+// Connection-level limits mirror the production REST listener. They are COPIES of the
+// unexported constants httpReadHeaderTimeout, httpReadTimeout, httpIdleTimeout and
+// httpMaxHeaderBytes in server/http_server.go (HARDEN-HTTP-1 owns those limits), so
+// they can drift: if a limit there changes, update it here. httpWriteTimeout is
+// deliberately NOT mirrored: it is RequestTimeout+15s, far above any exchange here,
+// and a short copy would cut off the very responses the oracles must read.
 const (
 	wireReadHeaderTimeout = 10 * time.Second
 	wireReadTimeout       = 15 * time.Second
@@ -65,8 +68,10 @@ type handlerHit struct {
 // is set by the Authentication middleware INSIDE NewRouter, downstream of here, and
 // its context does not propagate back out). The `principal` field is therefore the
 // principal the request PRESENTS on the wire, resolved independently against the
-// same store — not the server's own decision. Principal confusion is caught by the
-// authorization-invariance oracle (response divergence), not by reading this field.
+// same store — not the server's own decision. The HTTP/1 leak oracle pairs the i-th
+// response with hits[i].principal (requests on one connection are answered in order),
+// so a secret in the response to a request that presented no / a lesser credential is
+// caught per request, not per connection (evalHTTP1Oracles).
 type recorder struct {
 	mu   sync.Mutex
 	hits []handlerHit
@@ -121,6 +126,17 @@ func (s *statusWriter) Write(b []byte) (int, error) {
 	return s.ResponseWriter.Write(b)
 }
 
+// Unwrap lets http.ResponseController (flush, deadlines, hijack) reach the real
+// writer, as it does in production where nothing hides the underlying type.
+func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// Flush keeps streaming handlers behaving as in production.
+func (s *statusWriter) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // wireWorld is the running stack under test.
 type wireWorld struct {
 	addr     string // 127.0.0.1:<port> of the live HTTP listener
@@ -155,6 +171,8 @@ type seededStack struct {
 	valA     string
 	refB     string
 	valB     string
+	idA      uint32 // secret ids, for the gRPC GetSecretRequest bodies
+	idB      uint32
 }
 
 // resolveToken labels a bearer token against the two seeded sessions.
@@ -276,6 +294,7 @@ func seedCore(tb testing.TB) *seededStack {
 		adminTok: adminSess.SessionToken, readTok: readerSess.SessionToken,
 		refA: "proja/prod/sa", valA: "VALUE-A-9f3c1",
 		refB: "projb/prod/sb", valB: "VALUE-B-6b28e",
+		idA: uint32(sA.ID), idB: uint32(sB.ID),
 	}
 }
 
