@@ -1501,7 +1501,7 @@ describe('SecretDetailView permission-aware controls (DEMO-UI-1)', () => {
         expect(screen.getByPlaceholderText('No description.')).toHaveAttribute('readonly');
     });
 
-    it('a writer sees the write actions; Delete and Transfer follow secrets.delete', () => {
+    it('a writer sees the write actions and Transfer (secrets.write); Delete follows secrets.delete', () => {
         canState.value = { ...canState.value, admin: false, deleteSecrets: false };
         render(<SecretDetailView secret={makeSecret()} />);
         const actions = within(screen.getByTestId('secret-actions'));
@@ -1509,7 +1509,19 @@ describe('SecretDetailView permission-aware controls (DEMO-UI-1)', () => {
             expect(actions.getByRole('button', { name }), String(name)).toBeInTheDocument();
         }
         expect(actions.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument();
+        expect(screen.getByText('Transfer ownership')).toBeInTheDocument();
+    });
+
+    it('Transfer follows secrets.write, not secrets.delete: a deleter without write does not see it', () => {
+        canState.value = { ...canState.value, admin: false, writeSecrets: false, deleteSecrets: true };
+        render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.queryByText('Transfer ownership')).not.toBeInTheDocument();
+    });
+
+    it('an admin sees Transfer', () => {
+        canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('Transfer ownership')).toBeInTheDocument();
     });
 });
 

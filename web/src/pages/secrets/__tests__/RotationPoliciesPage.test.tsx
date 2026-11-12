@@ -664,3 +664,38 @@ describe('RotationPoliciesPage — Edit/Delete gating (secrets.write)', () => {
         expect(within(row).queryByTitle('Delete')).not.toBeInTheDocument();
     });
 });
+
+describe('RotationPoliciesPage — New Policy gating (secrets.write)', () => {
+    beforeEach(() => {
+        Object.assign(canState, { writeSecrets: true });
+    });
+
+    it('offers New Policy in the header and the empty state to a session that holds secrets.write', () => {
+        render(<RotationPoliciesPage />);
+        expect(screen.getAllByRole('button', { name: /New Policy/i })).toHaveLength(2);
+    });
+
+    it('offers New Policy in the header when policies exist', () => {
+        envListMock.mockResolvedValue(envFixture);
+        policiesState.policies = policiesFixture;
+        render(<RotationPoliciesPage />);
+        expect(screen.getAllByRole('button', { name: /New Policy/i })).toHaveLength(1);
+    });
+
+    it('hides New Policy without secrets.write, in the header and the empty state', () => {
+        canState.writeSecrets = false;
+        render(<RotationPoliciesPage />);
+        // the page still renders, so the absence below is not vacuous
+        expect(screen.getByText('No rotation policies yet')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /New Policy/i })).not.toBeInTheDocument();
+    });
+
+    it('hides New Policy without secrets.write when policies exist', () => {
+        canState.writeSecrets = false;
+        envListMock.mockResolvedValue(envFixture);
+        policiesState.policies = policiesFixture;
+        render(<RotationPoliciesPage />);
+        expect(screen.getByText('DB Rotation Policy')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /New Policy/i })).not.toBeInTheDocument();
+    });
+});

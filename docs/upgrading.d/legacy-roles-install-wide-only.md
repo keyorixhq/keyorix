@@ -35,7 +35,8 @@ whose role is fixed, must be made again.
 and they keep authorizing exactly as before. Removing them, and setting a role set that keeps them, still
 work. The first start of this version (or the first `keyorix-server admin` command, which migrates
 too) sets the five roles to `global`, whichever older version you come from; it changes no grant,
-adds no schema and leaves the schema epoch and its floor alone.
+adds no schema and leaves the schema epoch and its floor alone. That start logs one line, `storage: tightened
+assignable_scope of N legacy role row(s) from any to global`, and only when it changed a row.
 
 **How to find what to replace.** With the server stopped, as for every posture check:
 
@@ -44,8 +45,10 @@ keyorix-server admin validate --posture
 ```
 
 The `WARN` section lists every existing per-project grant of a legacy role (user, group or machine
-identity, role, project), the exact commands to replace it, and pending invitations that can no longer
-be accepted. It does not count toward the exit code. A check that could not read the database reports
+identity, role, project), the exact commands to replace it, pending access requests that suggest a legacy
+role (request id, requester, project and the project role to approve it as) and pending invitations that
+can no longer be accepted. A name that holds a newline or another control character is shown quoted, and
+gets no copy-and-paste command. It does not count toward the exit code. A check that could not read the database reports
 a deviation instead of an empty list. The same list appears as a `WARNING` at every server start
 (the first 50 grants). Grant the project role first and remove the legacy grant second, so access is
 never interrupted. A time-bound grant needs `--ttl` on the replacement to stay time-bound.
