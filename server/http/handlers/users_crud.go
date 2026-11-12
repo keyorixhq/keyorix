@@ -212,7 +212,8 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		switch {
 		case errors.Is(err, core.ErrUserAlreadyExists):
 			sendError(w, "ConflictError", errUserAlreadyExists, http.StatusConflict, nil)
-		case strings.Contains(err.Error(), "cannot grant this role"):
+		case errors.Is(err, core.ErrPermissionDenied):
+			// The grant ceiling (a role the actor cannot grant): a refusal, not a fault.
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		case strings.Contains(err.Error(), "unknown role"), strings.Contains(err.Error(), "unknown project"),
 			strings.Contains(err.Error(), "each project assignment"),

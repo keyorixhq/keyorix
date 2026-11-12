@@ -194,9 +194,15 @@ func (c *KeyorixCore) ListProjectsWithCounts(ctx context.Context, includeDeleted
 	return c.storage.ListProjectsWithCounts(ctx, includeDeleted)
 }
 
-// GetProject returns a single project by ID.
+// GetProject returns a single project by ID. A missing (or soft-deleted) project
+// matches storage.ErrProjectNotFound; a storage read fault matches
+// ErrStorageReadUnavailable and is never reported as a missing project.
 func (c *KeyorixCore) GetProject(ctx context.Context, id uint) (*models.Project, error) {
-	return c.storage.GetProject(ctx, id)
+	project, err := c.storage.GetProject(ctx, id)
+	if err != nil {
+		return nil, classifyReadErrorAs(err, storage.ErrProjectNotFound, i18n.T("ErrorNotFound", nil))
+	}
+	return project, nil
 }
 
 // UpdateProject updates an existing project's name and description, and — when

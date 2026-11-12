@@ -93,7 +93,8 @@ func writeSCIMWriteError(w http.ResponseWriter, r *http.Request, what string, er
 		return
 	}
 	c := classifySCIMError(err)
-	log.Printf("SCIM %s failed (HTTP %d, request %s): %v", what, c.status, chimw.GetReqID(r.Context()), err)
+	// StorageReadFaultDetail: a typed storage read fault renders as a fixed sentence, the operator log needs the cause.
+	log.Printf("SCIM %s failed (HTTP %d, request %s): %s", what, c.status, chimw.GetReqID(r.Context()), core.StorageReadFaultDetail(err))
 	detail := c.detail
 	if detail == "" {
 		detail = clientSafe(err)
