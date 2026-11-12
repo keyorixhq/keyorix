@@ -2,8 +2,6 @@ package core
 
 import (
 	"time"
-
-	"github.com/stretchr/testify/require"
 )
 
 // beforeAMayBlock is beforeA for a race whose fix is a lock that replica B's
@@ -15,10 +13,9 @@ import (
 // will run once A releases). The caller must call waitB after A's operation
 // returns, before reading B's result.
 //
-// The lock-wait probe counts every backend in the database, so a parallel
-// test's waiter can make the hook return before B has reached the lock. That
-// only means B may run later than A's write, never inside A's window, so it
-// can make a red run green by chance but cannot make a fixed run red.
+// The lock-wait probe counts only the fixture's own backends (application_name),
+// so a parallel test's or another package's waiter cannot make the hook return
+// before B has reached the lock and hide a red run.
 func (f *ctaReview) beforeAMayBlock(kind, table string, concurrent func()) (fired func() bool, waitB func()) {
 	f.t.Helper()
 	done := make(chan struct{})
@@ -36,11 +33,7 @@ func (f *ctaReview) beforeAMayBlock(kind, table string, concurrent func()) (fire
 				return
 			default:
 			}
-			var waiting int64
-			require.NoError(f.t, f.setupDB.Raw(
-				"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").
-				Scan(&waiting).Error)
-			if waiting > 0 {
+			if f.lockWaiters() > 0 {
 				return
 			}
 			time.Sleep(10 * time.Millisecond)

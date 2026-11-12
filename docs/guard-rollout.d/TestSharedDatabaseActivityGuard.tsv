@@ -1,0 +1,1 @@
+TestSharedDatabaseActivityGuard	internal/testutil/pgdsn	#4121	flags internal/core/audit_long_reader_snapshot_test.go:162, which #4113 (open) owns and fixes; delete this row after #4113 merges
