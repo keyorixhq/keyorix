@@ -49,8 +49,8 @@ func sqliteTables(db *sql.DB) ([]string, error) {
 
 func dumpTable(db *sql.DB, table string) ([]Output, error) {
 	// The identifier comes from sqlite_master in a test helper and identifiers cannot be bound.
-	// nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query, go.lang.security.audit.sqli.gosql-sqli.gosql-sqli
-	rows, err := db.Query(`SELECT * FROM "` + strings.ReplaceAll(table, `"`, `""`) + `"`) // #nosec G202 -- table name from sqlite_master, quoted as an identifier
+	// Suppressions sit on the query line itself: that is the line the alerts anchor to.
+	rows, err := db.Query(`SELECT * FROM "` + strings.ReplaceAll(table, `"`, `""`) + `"`) // #nosec G202 -- table name from sqlite_master, quoted as an identifier // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query, go.lang.security.audit.sqli.gosql-sqli.gosql-sqli
 	if err != nil {
 		return nil, err
 	}
