@@ -54,6 +54,22 @@ func dialPostgres(ctx context.Context, adminDSN string, allowPrivateNetwork bool
 	if err != nil {
 		return nil, err
 	}
+	return connectPostgres(ctx, cfg, allowPrivateNetwork)
+}
+
+// dialPostgresForRevoke is dialPostgres for Revoke only: the options that make
+// pgx read a server file are removed first (parsePostgresRevokeDSN, #3980), so a
+// config stored before #3952 can still drop the roles it issued.
+func dialPostgresForRevoke(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (*pgx.Conn, error) {
+	cfg, removed, err := parsePostgresRevokeDSN(adminDSN)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := connectPostgres(ctx, cfg, allowPrivateNetwork)
+	return conn, revokeStrippedError(removed, slices.Contains(removed, "sslrootcert"), err)
+}
+
+func connectPostgres(ctx context.Context, cfg *pgx.ConnConfig, allowPrivateNetwork bool) (*pgx.Conn, error) {
 	if !allowPrivateNetwork {
 		cfg.LookupFunc = func(ctx context.Context, host string) ([]string, error) {
 			addrs, err := dialResolve(ctx, host)
@@ -238,8 +254,11 @@ func (e *PostgresEngine) Issue(ctx context.Context, adminDSN, creationTemplate s
 // drops the role. Each step is best-effort except the final DROP ROLE, whose
 // failure is reported so the lease is marked revoke_failed rather than silently
 // left active.
+//
+// It connects through dialPostgresForRevoke: an admin_dsn option Issue refuses
+// for reading a server file is removed instead of refused (#3980).
 func (e *PostgresEngine) Revoke(ctx context.Context, adminDSN, roleName string) error {
-	conn, err := dialPostgres(ctx, adminDSN, e.allowPrivateNetwork)
+	conn, err := dialPostgresForRevoke(ctx, adminDSN, e.allowPrivateNetwork)
 	if err != nil {
 		return err
 	}
