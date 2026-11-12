@@ -25,12 +25,12 @@
 // that fuzzer covers netutil's two tiers, siem, internal/core's channel guard,
 // the connect/jwks dialer and the admin-DSN guard — every webhook-tier sibling
 // EXCEPT evidencesink, whose isDisallowedIP has no exported seam and lives in
-// this package. evidencesink is precisely the webhook-tier guard that does NOT
-// decode embedded IPv4 (FINDING F1). The harness also measures the webhook tier
-// against the FULL netutil reference, which surfaces the CGNAT gap every
-// webhook-tier guard shares (FINDING F2) — a divergence core's fuzzer does not
-// assert because it compares each guard only to its own raw-form verdict, not
-// to the stricter netutil reference.
+// this package. evidencesink was precisely the webhook-tier guard that did NOT
+// decode embedded IPv4 (FINDING F1, fixed on this branch). The harness also
+// measures the webhook tier against the FULL netutil reference, which surfaced
+// the CGNAT gap every webhook-tier guard shared (FINDING F2, fixed on this
+// branch) — a divergence core's fuzzer does not assert because it compares each
+// guard only to its own raw-form verdict, not to the stricter netutil reference.
 //
 // ORACLE: no webhook-tier guard may ALLOW what webhookTierReference FORBIDS,
 // except the one documented exception (loopback). A new, undocumented
@@ -209,21 +209,19 @@ func TestEgressParity_EvidencesinkDirectFormMatchesSiblings(t *testing.T) {
 	}
 }
 
-// TestEgressParity_EvidencesinkEmbeddedIPv4Gap is QUARANTINED and RED by
-// design — FINDING F1. evidencesink.isDisallowedIP does NOT decode embedded
-// IPv4, so a NAT64 / NAT64-local / IPv4-compatible / 6to4 / Teredo encoding of
-// a private, link-local or IMDS IPv4 is ALLOWED by evidencesink while the
-// netutil reference AND the sibling siem guard both REFUSE it. Reachable at
-// dial time (webhook.go:85-93 wires isDisallowedIP into a netutil.Dialer with
-// the lookupIPAddr resolver): in a DNS64/NAT64 IPv6-only deployment, or via DNS
-// rebinding, a hostname resolving to 64:ff9b::a9fe:a9fe exfiltrates the full
-// compliance evidence pack + bearer token to cloud IMDS.
+// TestEgressParity_EvidencesinkEmbeddedIPv4Gap is the GREEN regression guard for
+// FINDING F1 (fixed in this branch). evidencesink.isDisallowedIP now delegates to
+// netutil.IsPrivateOrLinkLocalExceptLoopback, which decodes every embedded-IPv4
+// encoding (NAT64 well-known/local-use, IPv4-compatible, 6to4, Teredo), so a
+// NAT64/6to4/Teredo/IPv4-compatible encoding of a private, link-local or IMDS
+// IPv4 is now REFUSED by evidencesink, in lockstep with the netutil reference and
+// the sibling siem guard. Before the fix this test was quarantined red and
+// reported 25 bypasses; it is now an active assertion that no such bypass exists.
+// Reachable at dial time (webhook.go:85-93 wires isDisallowedIP into a
+// netutil.Dialer with the lookupIPAddr resolver).
 //
 // Uses only vectors siem itself refuses (so F1 is isolated from F2/CGNAT).
-// Remove the t.Skip to reproduce. Fix: decode netutil.EmbeddedIPv4 in
-// isDisallowedIP (webhook.go:181), matching forwarder.go:82-90.
 func TestEgressParity_EvidencesinkEmbeddedIPv4Gap(t *testing.T) {
-	t.Skip("QUARANTINED red test — FINDING F1 (evidencesink.isDisallowedIP omits the embedded-IPv4 decode siem/notifychan/core-channel/netutil all apply). Remove this Skip to reproduce. See .scratch/v7-REPORT.md.")
 	var bypasses []string
 	for _, v := range vectors {
 		raw := net.IPv4(v.a, v.b, v.c, v.d)
@@ -245,20 +243,17 @@ func TestEgressParity_EvidencesinkEmbeddedIPv4Gap(t *testing.T) {
 	}
 }
 
-// TestEgressParity_WebhookTierCGNATGap is QUARANTINED and RED by design —
-// FINDING F2. Every webhook-tier guard (evidencesink, siem, notifychan,
-// core-channel) classifies with stdlib ip.IsPrivate(), which excludes RFC-6598
-// shared address space (100.64.0.0/10). The netutil reference refuses that
-// range (dialer.go:184 "shared address space (RFC 6598)"), and Alibaba Cloud's
-// instance-metadata endpoint lives at 100.100.100.200 inside it — so a webhook
-// endpoint resolving into 100.64/10 reaches cloud IMDS where the reference, and
-// the guards' own stated anti-IMDS purpose, say it must not.
-//
-// Remove the t.Skip to reproduce. Proposed fix: classify via
-// netutil.IsPrivateOrLinkLocal (then re-permit loopback) instead of bare
-// stdlib IsPrivate/IsLinkLocal, in all four webhook-tier guards.
+// TestEgressParity_WebhookTierCGNATGap is the GREEN regression guard for FINDING
+// F2 (fixed in this branch). Every webhook-tier guard (evidencesink, siem,
+// notifychan, core-channel) used to classify with stdlib ip.IsPrivate(), which
+// excludes RFC-6598 shared address space (100.64.0.0/10) — so Alibaba Cloud's
+// instance-metadata endpoint at 100.100.100.200 was reachable. The guards now
+// delegate to the netutil predicates (IsPrivateOrLinkLocalExceptLoopback for the
+// webhook tier, IsPrivateOrLinkLocal for the core channel), whose canonical CIDR
+// set includes 100.64/10, so the webhook tier refuses it exactly as the netutil
+// reference does. Before the fix this test was quarantined red and reported the
+// evidencesink+siem CGNAT divergences; it is now an active assertion.
 func TestEgressParity_WebhookTierCGNATGap(t *testing.T) {
-	t.Skip("QUARANTINED red test — FINDING F2 (webhook-tier guards use stdlib IsPrivate, missing RFC-6598 CGNAT 100.64/10; Alibaba IMDS 100.100.100.200 reachable). Remove this Skip to reproduce. See .scratch/v7-REPORT.md.")
 	var gaps []string
 	for _, v := range vectors {
 		raw := net.IPv4(v.a, v.b, v.c, v.d)
@@ -374,8 +369,14 @@ func TestEgressParity_OracleSoundness_RedProof(t *testing.T) {
 	if !oracleFindsEncodingGap(scratchGuardNoDecode) {
 		t.Fatalf("HOLE DID NOT FIRE: oracle missed a guard that drops the embedded-IPv4 decode — oracle is blind")
 	}
-	if !oracleFindsEncodingGap(isDisallowedIP) {
-		t.Fatalf("expected the oracle to flag evidencesink.isDisallowedIP (the real gap F1)")
+	// The planted scratch hole (above) proves the oracle is not blind. The real
+	// evidencesink.isDisallowedIP is now FIXED (F1): it delegates to
+	// netutil.IsPrivateOrLinkLocalExceptLoopback, which decodes every embedded
+	// IPv4 form, so it must have NO encoding gap. Before the fix this asserted the
+	// opposite (the gap was present); flipping it is the green half of the F1
+	// red→green proof, not an assertion adjusted to match broken behaviour.
+	if oracleFindsEncodingGap(isDisallowedIP) {
+		t.Fatalf("REGRESSION: evidencesink.isDisallowedIP has an embedded-IPv4 decode gap again (F1 reopened)")
 	}
 }
 
