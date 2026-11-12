@@ -310,13 +310,19 @@ func initializeAdminDatabase(cfg *config.Config) error {
 	// O_EXCL makes the create atomic: no TOCTOU window between stat and open.
 	// If the file already exists, OpenFile returns an error we treat as "ok".
 	file, err := os.OpenFile(dbPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	state := "created"
 	if err == nil {
 		if cerr := file.Close(); cerr != nil {
 			return fmt.Errorf("failed to close database file: %w", cerr)
 		}
-	} else if !os.IsExist(err) {
+	} else if os.IsExist(err) {
+		state = "already present"
+	} else {
 		return fmt.Errorf("failed to create database file: %w", err)
 	}
+	// Say which backend init set up, so an operator who meant PostgreSQL sees it
+	// at once (#3523) instead of finding the file afterwards.
+	fmt.Printf("Database: SQLite (storage.type %q), file %s %s (run 'keyorix-server admin migrate' to create the schema)\n", cfg.Storage.Type, dbPath, state)
 	return nil
 }
 

@@ -161,15 +161,15 @@ func TestSecretTemplateList_StorageError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// TestSecretTemplateGet_StorageError exercises the internal-error branch in
-// Get — the storage returns an error that is NOT a "not found" message, so the
-// handler must return 500 rather than 404.
+// TestSecretTemplateGet_StorageError exercises the fault branch in Get — the
+// storage returns an error that is NOT the typed not-found, so the handler must
+// answer the family's 503 (storage_unavailable) rather than 404.
 func TestSecretTemplateGet_StorageError(t *testing.T) {
 	h := newFailingSTHandler(t, failingSecretTemplateStore{failGet: true})
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.Get(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // TestSecretTemplateUpdate_StorageError exercises the default branch in

@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -408,11 +409,15 @@ func (h *ShareHandler) GetSharingStatusWithIndicators(w http.ResponseWriter, r *
 	status, err := h.coreService.GetSecretSharingStatusWithIndicators(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
 		log.Printf("Error getting sharing status: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		switch {
+		case errors.Is(err, storage.ErrSecretNotFound):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), "permission") {
+		case errors.Is(err, core.ErrPermissionDenied):
 			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
-		} else {
+		default:
 			h.sendError(w, "InternalError", "Failed to get sharing status", http.StatusInternalServerError, nil)
 		}
 		return

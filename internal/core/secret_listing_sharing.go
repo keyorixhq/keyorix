@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -72,14 +73,17 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 
+	// A missing secret matches storage.ErrSecretNotFound; a read fault in any of the
+	// reads below matches ErrStorageReadUnavailable and is never reported as a missing
+	// secret (the HTTP handler answers 404 / 503 by sentinel, not by message text).
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
-		return nil, err
+		return nil, classifyReadErrorAs(err, storage.ErrSecretNotFound, i18n.T("ErrorSecretNotFound", nil))
 	}
 
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, classifyReadError(err, i18n.T("ErrorNotFound", nil))
 	}
 	// Expired (time-bound) shares no longer authorize, so the reported sharing
 	// status must not count or display them — keep it consistent with enforcement.
@@ -99,7 +103,7 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 	// (and the full recipient list below) forever.
 	isOwner, err := c.requireLiveOwnerAuthority(ctx, secret, userID)
 	if err != nil {
-		return nil, err
+		return nil, classifyReadError(err, i18n.T("ErrorNotFound", nil))
 	}
 	userPermission := ""
 	if !isOwner {
@@ -110,7 +114,7 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 			}
 		}
 		if userPermission == "" {
-			return nil, fmt.Errorf("user does not have permission to access this secret")
+			return nil, permissionDeniedf("user does not have permission to access this secret")
 		}
 	}
 
