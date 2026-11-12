@@ -19,19 +19,20 @@
 // reopen the store.
 //
 // ORACLES (each with what it does NOT verify in its runner's doc comment):
-//   (a) after ANY interleaving or kill the store OPENS, or fails with a documented
-//       TYPED error — never a panic / non-zero crash.  [klOracleReopenAndDecrypt]
-//   (b) every ACKNOWLEDGED write decrypts to exactly its recorded plaintext; an
-//       unacknowledged (killed) write may be present or absent but never corrupt.
-//       [klModel + klOracleReopenAndDecrypt]
-//   (c) a restore of a (possibly pending-rotation) backup either starts or fails
-//       with a documented error, and never yields undecryptable acknowledged
-//       secrets.  [klStepRestore + klOracleReopenAndDecrypt over the restore dir]
-//   (d) no manual hand-repair (#4105): after the documented recovery command the
-//       store is fully usable.  [klStepKillRotate -> klStepRecover]
-//   (e) the lock: two concurrent rotations never both proceed, and a killed holder
-//       never leaves a lock that blocks forever.  [klStepConcurrentRotate,
-//       klStepKillLockHolder]
+//
+//	(a) after ANY interleaving or kill the store OPENS, or fails with a documented
+//	    TYPED error — never a panic / non-zero crash.  [klOracleReopenAndDecrypt]
+//	(b) every ACKNOWLEDGED write decrypts to exactly its recorded plaintext; an
+//	    unacknowledged (killed) write may be present or absent but never corrupt.
+//	    [klModel + klOracleReopenAndDecrypt]
+//	(c) a restore of a (possibly pending-rotation) backup either starts or fails
+//	    with a documented error, and never yields undecryptable acknowledged
+//	    secrets.  [klStepRestore + klOracleReopenAndDecrypt over the restore dir]
+//	(d) no manual hand-repair (#4105): after the documented recovery command the
+//	    store is fully usable.  [klStepKillRotate -> klStepRecover]
+//	(e) the lock: two concurrent rotations never both proceed, and a killed holder
+//	    never leaves a lock that blocks forever.  [klStepConcurrentRotate,
+//	    klStepKillLockHolder]
 //
 // Backends: SQLite always; PostgreSQL when KEYORIX_TEST_PG_DSN is set (databases
 // named v3_*, dropped on cleanup).
@@ -72,19 +73,19 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	klEnvChild      = "KL_CHILD"        // "1" => this process is a child helper
-	klEnvOp         = "KL_OP"           // the operation to run
-	klEnvCfg        = "KL_CFG"          // config path (loadConfig reads configPathFlag)
-	klEnvDir        = "KL_DIR"          // world dir (key files resolved relative to CWD)
-	klEnvResult     = "KL_RESULT"       // path to write the JSON klResult to
-	klEnvProjID     = "KL_PROJ"         // create: target project id
-	klEnvEnvID      = "KL_ENV"          // create: target environment id
-	klEnvNodeID     = "KL_NODE"         // update/delete: target secret node id
-	klEnvName       = "KL_NAME"         // create: secret name
-	klEnvValueFile  = "KL_VALUE_FILE"   // create/update: file holding the plaintext bytes
-	klEnvArchive    = "KL_ARCHIVE"      // backup/restore: archive path
-	klEnvRestoreDir = "KL_RESTORE_DIR"  // restore: target dir
-	klEnvHoldMS     = "KL_HOLD_MS"      // holdlock: ms to sleep while holding the lock
+	klEnvChild      = "KL_CHILD"       // "1" => this process is a child helper
+	klEnvOp         = "KL_OP"          // the operation to run
+	klEnvCfg        = "KL_CFG"         // config path (loadConfig reads configPathFlag)
+	klEnvDir        = "KL_DIR"         // world dir (key files resolved relative to CWD)
+	klEnvResult     = "KL_RESULT"      // path to write the JSON klResult to
+	klEnvProjID     = "KL_PROJ"        // create: target project id
+	klEnvEnvID      = "KL_ENV"         // create: target environment id
+	klEnvNodeID     = "KL_NODE"        // update/delete: target secret node id
+	klEnvName       = "KL_NAME"        // create: secret name
+	klEnvValueFile  = "KL_VALUE_FILE"  // create/update: file holding the plaintext bytes
+	klEnvArchive    = "KL_ARCHIVE"     // backup/restore: archive path
+	klEnvRestoreDir = "KL_RESTORE_DIR" // restore: target dir
+	klEnvHoldMS     = "KL_HOLD_MS"     // holdlock: ms to sleep while holding the lock
 	klMasterPassEnv = "KEYORIX_MASTER_PASSWORD"
 	klErrExit       = 87 // child exits non-zero only on an UNEXPECTED, un-writable-result crash
 )

@@ -68,12 +68,12 @@ func FuzzKeyLifecycleProcess(f *testing.F) {
 // child); the thorough fixed matrix is TestKeyLifecycleProcessReplay.
 func klSeedPrograms() [][]byte {
 	return [][]byte{
-		{0, 0, 0, 5, 0, 0, 6, 0, 0},       // create, backup, restore
-		{0, 0, 0, 3, 0, 0, 10, 0, 0},      // create, rotate_dek, reopen
+		{0, 0, 0, 5, 0, 0, 6, 0, 0},          // create, backup, restore
+		{0, 0, 0, 3, 0, 0, 10, 0, 0},         // create, rotate_dek, reopen
 		{0, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0}, // create, rotate_kek, backup, restore
-		{0, 0, 0, 7, 0, 5, 10, 0, 0},      // create, kill_rotate(+recover), reopen
-		{0, 0, 0, 8, 0, 0},                // create, concurrent_rotate
-		{0, 0, 0, 9, 0, 0},                // create, kill_lockholder
+		{0, 0, 0, 7, 0, 5, 10, 0, 0},         // create, kill_rotate(+recover), reopen
+		{0, 0, 0, 8, 0, 0},                   // create, concurrent_rotate
+		{0, 0, 0, 9, 0, 0},                   // create, kill_lockholder
 		{},
 		{255, 255, 255},
 	}
@@ -227,6 +227,7 @@ func TestKLRedProof_ViolationGate(t *testing.T) {
 //     REFUSED with lock-held (the two never both proceed);
 //   - release: after the holder is SIGKILLed, a rotation SUCCEEDS again (a killed
 //     holder never blocks forever).
+//
 // The free-vs-held contrast is the watched proof the lock-held assertion is not
 // vacuous: a regression making the exclusive lock a no-op would make the held-case
 // rotation succeed, which the fire-case assertion would catch.

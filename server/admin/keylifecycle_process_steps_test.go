@@ -37,10 +37,11 @@ type klBackup struct {
 
 // klOracleReopenAndDecrypt opens the store at dir/cfg in-process (the parent holds
 // no handle between steps) and verifies:
-//   (a) encryption Initialize succeeds, OR fails with a DOCUMENTED typed error
-//       (never a panic / unexpected error); and
-//   (b) every known write still present in secret_versions decrypts to its exact
-//       recorded plaintext under `passphrase`.
+//
+//	(a) encryption Initialize succeeds, OR fails with a DOCUMENTED typed error
+//	    (never a panic / unexpected error); and
+//	(b) every known write still present in secret_versions decrypts to its exact
+//	    recorded plaintext under `passphrase`.
 //
 // It does NOT verify: versions this harness never created; versions whose secret
 // was deleted/purged (their row may be gone — oracle (b) only covers surviving
