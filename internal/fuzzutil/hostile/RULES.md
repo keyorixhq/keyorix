@@ -159,9 +159,9 @@ finding; findings that were reclassified are in the private findings log.
     hit is printed as `HOSTILE-KNOWN[<id>]`, and any other violation in the
     same run is still reported. Each entry has a reproducer test
     (`RequireKnownReproduces`) that goes red when the finding is fixed. This is
-    the reviewed in-repo form of `KX_HOSTILE_ALLOW`; entries carry low-severity
-    (HARDENING) findings only. Anything security-relevant stays in the private
-    findings log, as above.
+    the reviewed in-repo form of `KX_HOSTILE_ALLOW`; entries carry only
+    low-severity HARDENING or EXPECTED-DIFFERENCE findings. Anything
+    security-relevant stays in the private findings log, as above.
 11. Webhook O8 ceiling 4 -> 12 (harness bug fix). The ceiling counts HTTP
     requests, but the target declares same-host redirects as permitted
     (`AllowRedirect`), and the sink declares `maxAttempts` (4) attempts of up
