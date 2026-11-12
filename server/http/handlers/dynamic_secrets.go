@@ -68,6 +68,21 @@ func dynamicSecretClientMessage(err error, op string) string {
 	return clientSafe(err)
 }
 
+// dynamicSecretStatus is the HTTP status for a failed dynamic-secret operation, by
+// sentinel: 404 for a config, lease, project or environment that is not there
+// (core.ErrDynamicSecretNotFound), 400 for a refused input (core.ErrValidation), and the
+// route's own fallback (400 for config writes, 502 for backend calls) for the rest.
+func dynamicSecretStatus(err error, fallback int) int {
+	switch {
+	case errors.Is(err, core.ErrDynamicSecretNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, core.ErrValidation):
+		return http.StatusBadRequest
+	default:
+		return fallback
+	}
+}
+
 // DynamicSecretHandler handles dynamic-secrets HTTP requests.
 type DynamicSecretHandler struct {
 	coreService *core.KeyorixCore
@@ -157,7 +172,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		msg := dynamicSecretClientMessage(err, "Error creating dynamic-secret config")
-		sendError(w, "Error", msg, http.StatusBadRequest, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadRequest), nil)
 		return
 	}
 	// Never echo the admin DSN ciphertext back.
@@ -218,7 +233,7 @@ func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error issuing dynamic-secret lease for config %d", cfg.ID))
-		sendError(w, "Error", msg, http.StatusBadGateway, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadGateway), nil)
 		return
 	}
 	sendSuccess(w, lease, "Credential issued — it is shown once and will auto-revoke at expiry.")
@@ -259,7 +274,7 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error revoking dynamic-secret lease %q", leaseID))
-		sendError(w, "Error", msg, http.StatusBadGateway, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadGateway), nil)
 		return
 	}
 	sendSuccess(w, map[string]any{"lease_id": leaseID, "status": "revoked"}, "Lease revoked.")
@@ -286,7 +301,7 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error renewing dynamic-secret lease %q", leaseID))
-		sendError(w, "Error", msg, http.StatusBadGateway, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadGateway), nil)
 		return
 	}
 	sendSuccess(w, map[string]any{"lease_id": leaseID, "expires_at": newExpiry}, "Lease renewed.")
@@ -306,7 +321,7 @@ func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Re
 	revoked, failed, err := h.coreService.RevokeLeasesForConfig(r.Context(), cfg.ID, userCtx.UserID, "bulk")
 	if err != nil {
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error revoking all dynamic-secret leases for config %d", cfg.ID))
-		sendError(w, "Error", msg, http.StatusBadGateway, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadGateway), nil)
 		return
 	}
 	sendSuccess(w, map[string]any{
@@ -338,7 +353,7 @@ func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Req
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error classifying dynamic-secret config %d", cfg.ID))
-		sendError(w, "Error", msg, http.StatusBadRequest, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadRequest), nil)
 		return
 	}
 	sendSuccess(w, sanitizeConfig(updated), "Classification updated.")
@@ -371,7 +386,7 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error setting enabled state for dynamic-secret config %d", cfg.ID))
-		sendError(w, "Error", msg, http.StatusBadRequest, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadRequest), nil)
 		return
 	}
 	sendSuccess(w, sanitizeConfig(updated), "Config enabled state updated.")

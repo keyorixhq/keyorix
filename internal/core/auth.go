@@ -440,6 +440,10 @@ func (c *KeyorixCore) RecordLogin(ctx context.Context, userID uint) error {
 // (a genuine double-click, two tabs, or a client retry) already deleted it.
 // Either way this is a caller-facing 401, never a 500: the token is not
 // valid, which is an ordinary authentication outcome, not a server fault.
+//
+// RevokeOwnSession (DELETE /auth/sessions/{id}) also returns it, for a session id that
+// does not exist or belongs to another user; that route answers it 404 (the status is
+// the transport's choice, the sentinel only says "no such session for this caller").
 var ErrSessionNotFound = errors.New("session not found")
 
 // Logout invalidates the session identified by token.
