@@ -239,7 +239,7 @@ func (w *klWorld) klStepKillRotate(delayArg byte) {
 // lock, a second rotation must be REFUSED (lock-held) — the two never both proceed.
 func (w *klWorld) klStepConcurrentRotate() {
 	holdResult := filepath.Join(w.t.TempDir(), "hold.json")
-	hold := w.klStartChild("holdlock", w.dir, w.cfgPath, holdResult, map[string]string{klEnvHoldMS: "2000"})
+	hold := w.klStartChild("holdlock", w.dir, w.cfgPath, holdResult, map[string]string{klEnvHoldMS: "1200"})
 	require.NoError(w.t, hold.Start())
 	defer func() { _ = hold.Wait() }()
 	w.klWaitLockAcquired(holdResult, hold)
@@ -258,7 +258,7 @@ func (w *klWorld) klStepConcurrentRotate() {
 // (flock releases on process exit).
 func (w *klWorld) klStepKillLockHolder() {
 	holdResult := filepath.Join(w.t.TempDir(), "hold.json")
-	hold := w.klStartChild("holdlock", w.dir, w.cfgPath, holdResult, map[string]string{klEnvHoldMS: "10000"})
+	hold := w.klStartChild("holdlock", w.dir, w.cfgPath, holdResult, map[string]string{klEnvHoldMS: "4000"})
 	require.NoError(w.t, hold.Start())
 	w.klWaitLockAcquired(holdResult, hold)
 	_ = hold.Process.Signal(syscall.SIGKILL)
@@ -335,7 +335,13 @@ func klLoadConfigAt(t *testing.T, dir, cfgPath string) *config.Config {
 // ---------------------------------------------------------------------------
 
 // klMaxSteps bounds a program so one fuzz input's child-process count stays sane.
-const klMaxSteps = 14
+// Each step forks a REAL child (storage + migration + 600k-iteration PBKDF2), so
+// a single exec's wall time is ~klMaxSteps child spawns. On the loaded shared host
+// a 14-step program occasionally exceeded Go fuzzing's worker-liveness window and
+// the coordinator killed the worker ("exit status 2") — a false crasher that
+// replayed green 4/4 in isolation (see the report's triage, KL-1/ARTIFACT). 10
+// keeps worst-case exec time well under that window without weakening any oracle.
+const klMaxSteps = 10
 
 // klRunProgram sets up a fresh world for backend and drives program as a sequence
 // of lifecycle steps, running the per-step oracle after each. 3 bytes/step:
