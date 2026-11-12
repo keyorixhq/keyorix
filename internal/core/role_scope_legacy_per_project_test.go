@@ -118,6 +118,50 @@ func TestExistingLegacyProjectGrantsKeepWorkingAndAreListed(t *testing.T) {
 	ok, err := c.Authorize(ctx, w.userID, permSecretsRead, inP1)
 	require.NoError(t, err)
 	require.True(t, ok, "an existing per-project grant of a legacy role keeps working")
+
+	// The machine and group grants the fixture lists decide like the project role
+	// that replaces them: allowed inside the grant, refused in another project and
+	// at install scope. A group grant authorizes through a member.
+	t.Run("machine viewer at project", func(t *testing.T) {
+		inP2 := Scope{ProjectID: w.p2}
+		for _, tc := range []struct {
+			name  string
+			perm  string
+			scope Scope
+			want  bool
+		}{
+			{"read inside the project", permSecretsRead, inP1, true},
+			{"read in another project", permSecretsRead, inP2, false},
+			{"read at global scope", permSecretsRead, Scope{}, false},
+			{"write inside the project (viewer is read-only)", permSecretsWrite, inP1, false},
+		} {
+			got, err := c.AuthorizePrincipal(ctx, ActorTypeMachine, m.ID, tc.perm, tc.scope)
+			require.NoError(t, err, tc.name)
+			require.Equal(t, tc.want, got, tc.name)
+		}
+	})
+	t.Run("group editor at environment", func(t *testing.T) {
+		bob, err := c.CreateUser(ctx, &CreateUserRequest{Username: "bob", Email: "bob@example.com", DisplayName: "Bob", Password: "Correct-Horse-Battery-9"})
+		require.NoError(t, err)
+		require.NoError(t, c.storage.AddUserToGroup(ctx, bob.ID, w.groupID, 0))
+		inE2 := Scope{ProjectID: w.p2, EnvironmentID: w.e2}
+		for _, tc := range []struct {
+			name  string
+			perm  string
+			scope Scope
+			want  bool
+		}{
+			{"read inside the environment", permSecretsRead, inE1, true},
+			{"write inside the environment", permSecretsWrite, inE1, true},
+			{"read in another project's environment", permSecretsRead, inE2, false},
+			{"read at the other project", permSecretsRead, Scope{ProjectID: w.p2}, false},
+			{"read at global scope", permSecretsRead, Scope{}, false},
+		} {
+			got, err := c.AuthorizePrincipal(ctx, ActorTypeUser, bob.ID, tc.perm, tc.scope)
+			require.NoError(t, err, tc.name)
+			require.Equal(t, tc.want, got, tc.name)
+		}
+	})
 	before := w.grantRows(t)
 
 	got, err := c.ListLegacyRoleProjectGrants(ctx)

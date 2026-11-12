@@ -6,10 +6,8 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -259,9 +257,8 @@ func runGroupDelete(cmd *cobra.Command, args []string) error {
 // (case-insensitive). Anything else -- including a blank line -- is treated as
 // "no", so an accidental Enter never confirms a destructive action.
 func confirmYesNo(prompt string) bool {
-	reader := bufio.NewReader(os.Stdin)
 	fmt.Printf("%s (yes/no): ", prompt)
-	input, _ := reader.ReadString('\n')
+	input, _ := stdinReader().ReadString('\n')
 	input = strings.TrimSpace(strings.ToLower(input))
 	return input == "yes" || input == "y"
 }

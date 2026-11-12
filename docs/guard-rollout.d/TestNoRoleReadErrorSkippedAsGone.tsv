@@ -1,1 +1,0 @@
-TestNoRoleReadErrorSkippedAsGone	internal/core/guards	#4004	new guard for the GetRole-error-then-continue class (#3988), report-only until its first green nightly on main

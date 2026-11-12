@@ -57,6 +57,14 @@ func wireGlobalProjectRoleGrantsNotice(cw *coreWiring) error {
 			log.Print("WARNING: " + line)
 		}
 	}
+	legacyRequests, err := cw.core.ListPendingAccessRequestsWithLegacyRole(ctx)
+	if err != nil {
+		log.Printf("legacy role access request check: %v (continuing; the check did not run)", err)
+	} else {
+		for _, line := range core.LegacyRoleAccessRequestReport(legacyRequests, maxGlobalProjectRoleGrantLines) {
+			log.Print("WARNING: " + line)
+		}
+	}
 	invs, err := cw.core.ListPendingInvitationsOutsideAssignableScope(ctx)
 	if err != nil {
 		log.Printf("pending invitation scope check: %v (continuing; the check did not run)", err)

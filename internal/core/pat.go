@@ -38,6 +38,11 @@ const (
 	EventPATRevoked = "pat.revoked"
 )
 
+// ErrPATExpiresInPast refuses a PAT whose expires_at is not after now: it would be
+// issued already expired and shown once, a credential that can never be used. It
+// wraps ErrInvalidInput so every transport answers it as a validation error (400).
+var ErrPATExpiresInPast = fmt.Errorf("%w: expires_at must be in the future", ErrInvalidInput)
+
 // CreatePATResult carries the freshly created token plus its one-time plaintext.
 // The plaintext is never persisted and never returned again.
 type CreatePATResult struct {
@@ -46,7 +51,8 @@ type CreatePATResult struct {
 }
 
 // CreateOwnPAT generates a new personal access token for the caller. expiresAt may
-// be nil for a non-expiring token. scopes, when non-empty, is a least-privilege
+// be nil for a non-expiring token; otherwise it must be after now
+// (ErrPATExpiresInPast). scopes, when non-empty, is a least-privilege
 // permission allowlist (ADR-042); projectScope/environmentScope, when non-zero,
 // confine the token to a single project / environment. All only ever NARROW the
 // token below its owner — they are enforced at request time as a filter
@@ -65,6 +71,11 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 	}
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("%s: token name is required", i18n.T("ErrorValidation", nil))
+	}
+	// nil = never expires; an expiry at or before now is refused here, in core, so
+	// every caller is covered, not only the HTTP handler.
+	if expiresAt != nil && !expiresAt.After(c.now()) {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrPATExpiresInPast)
 	}
 
 	scopesJSON, err := encodePATScopes(scopes)

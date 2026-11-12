@@ -262,7 +262,9 @@ const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
                     </select>
                 </label>
             </div>
-            {can.deleteSecrets && (
+            {/* POST /secrets/{id}/transfer-ownership is secrets.write in the router (not secrets.delete);
+                core then requires the actor to be the live owner, which the server enforces. */}
+            {can.writeSecrets && (
                 <div className="mt-2">
                     <TransferOwnership secretId={secret.id} currentOwner={secret.owner} />
                 </div>

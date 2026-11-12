@@ -227,12 +227,12 @@ func TestCreateUserWithAssignments_BlocksNewSoDViolationAcrossGrantSet(t *testin
 	require.NoError(t, err)
 
 	// The global system role is "viewer" (secrets.read) and the lone project
-	// assignment is "editor" (secrets.write) — together, in one atomic call, they
+	// assignment is "project_developer" (secrets.write) — together, in one atomic call, they
 	// complete the policy for a user who a moment ago didn't exist at all. Project 1
 	// ("default") is already seeded by testhelper.seedTestData.
 	_, err = h.CoreService.CreateUserWithAssignments(ctx, &core.CreateUserRequest{
 		Username: "grace", Email: "grace@test.com", DisplayName: "Grace", Password: "Sup3rS3cret!Pass",
-	}, "viewer", []core.ProjectAssignment{{ProjectID: 1, Role: "editor"}}, 0, false)
+	}, "viewer", []core.ProjectAssignment{{ProjectID: 1, Role: "project_developer"}}, 0, false)
 	require.Error(t, err, "the combined grant set must be refused for completing an SoD policy")
 	assert.Contains(t, err.Error(), "separation-of-duties")
 
@@ -256,7 +256,7 @@ func TestCreateUserWithAssignments_AllowsNonViolatingGrantSet(t *testing.T) {
 	// Project 1 ("default") is already seeded by testhelper.seedTestData.
 	created, err := h.CoreService.CreateUserWithAssignments(ctx, &core.CreateUserRequest{
 		Username: "heidi", Email: "heidi@test.com", DisplayName: "Heidi", Password: "Sup3rS3cret!Pass",
-	}, "viewer", []core.ProjectAssignment{{ProjectID: 1, Role: "auditor"}}, 0, false)
+	}, "viewer", []core.ProjectAssignment{{ProjectID: 1, Role: "project_auditor"}}, 0, false)
 	require.NoError(t, err, "a non-violating grant set must succeed unimpeded")
 	assert.NotZero(t, created.ID)
 }
@@ -275,15 +275,15 @@ func TestActivateBreakGlass_NotBlockedBySoD(t *testing.T) {
 	ctx := context.Background()
 
 	h.CoreService.SetBreakGlassPolicy(core.BreakGlassPolicy{
-		Enabled: true, EmergencyRole: "editor", DefaultTTL: 4 * time.Hour, MaxTTL: 24 * time.Hour,
+		Enabled: true, EmergencyRole: "project_developer", DefaultTTL: 4 * time.Hour, MaxTTL: 24 * time.Hour,
 	})
 
 	const proj = uint(2)
 	h.CreateTestUser(t, "ivan", 16)
 	pid := proj
-	h.AssignUserRole(t, 16, 4, &pid) // viewer at the project → secrets.read
+	h.AssignUserRole(t, 16, testhelper.RoleProjectViewer, &pid) // project_viewer at the project → secrets.read
 
-	// This policy would ordinarily block granting "editor" (secrets.write) to a
+	// This policy would ordinarily block granting "project_developer" (secrets.write) to a
 	// principal who already holds secrets.read.
 	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
@@ -295,7 +295,7 @@ func TestActivateBreakGlass_NotBlockedBySoD(t *testing.T) {
 
 	ids, gerr := h.Storage.GetUserRoleIDsAt(ctx, 16, storage.Scope{ProjectID: proj})
 	require.NoError(t, gerr)
-	assert.Contains(t, ids, uint(3), "the emergency role was actually granted despite the SoD policy")
+	assert.Contains(t, ids, testhelper.RoleProjectDeveloper, "the emergency role was actually granted despite the SoD policy")
 }
 
 // A principal who already holds an admin permission-bypass role is out of scope

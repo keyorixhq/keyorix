@@ -15,19 +15,22 @@ export const PERM = {
     secretsDelete: 'secrets.delete',
     auditRead: 'audit.read',
     rolesAssign: 'roles.assign',
+    rolesRead: 'roles.read',
 } as const;
 
 export interface Can {
     /** Install administrator (user directory, system settings). */
     admin: boolean;
-    /** Create / edit / rotate / share / suspend / copy a secret. */
+    /** Create / edit / rotate / share / suspend / copy a secret, hand over its ownership. */
     writeSecrets: boolean;
-    /** Delete a secret or hand over its ownership. */
+    /** Delete a secret. */
     deleteSecrets: boolean;
     /** Read the audit log. */
     readAudit: boolean;
     /** Add, re-role or remove project members. */
     manageMembers: boolean;
+    /** Read role and access-review data; attesting an access-review grant needs it. */
+    readRoles: boolean;
 }
 
 export function useCan(): Can {
@@ -39,5 +42,6 @@ export function useCan(): Can {
         deleteSecrets: has(PERM.secretsDelete),
         readAudit: has(PERM.auditRead),
         manageMembers: has(PERM.rolesAssign),
+        readRoles: has(PERM.rolesRead),
     };
 }

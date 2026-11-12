@@ -127,21 +127,21 @@ func TestApproveAccessRequestWithExpiry_TimeBound(t *testing.T) {
 	h.AssignUserRole(t, 1, 2, nil)
 
 	created, err := h.Storage.CreateAccessRequest(ctx, &models.AccessRequest{
-		ProjectID: proj, UserID: 10, SuggestedRole: "editor", State: core.AccessRequestPending,
+		ProjectID: proj, UserID: 10, SuggestedRole: "project_developer", State: core.AccessRequestPending,
 	})
 	require.NoError(t, err)
 
-	_, err = h.CoreService.ApproveAccessRequestWithExpiry(ctx, proj, created.ID, 1, 0, "editor", time.Hour)
+	_, err = h.CoreService.ApproveAccessRequestWithExpiry(ctx, proj, created.ID, 1, 0, "project_developer", time.Hour)
 	require.NoError(t, err)
 
 	// The grant is active now (within the TTL window).
 	ids, err := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: proj})
 	require.NoError(t, err)
-	assert.Contains(t, ids, uint(3), "the time-bound editor grant authorizes within its window")
+	assert.Contains(t, ids, testhelper.RoleProjectDeveloper, "the time-bound project_developer grant authorizes within its window")
 
 	// The stored grant carries an expiry ~1h out.
 	var ur models.UserRole
-	require.NoError(t, h.DB.Where("user_id = ? AND role_id = ? AND project_id = ?", 10, 3, proj).First(&ur).Error)
+	require.NoError(t, h.DB.Where("user_id = ? AND role_id = ? AND project_id = ?", 10, testhelper.RoleProjectDeveloper, proj).First(&ur).Error)
 	require.NotNil(t, ur.ExpiresAt, "the grant is time-bound, not permanent")
 	assert.WithinDuration(t, time.Now().Add(time.Hour), *ur.ExpiresAt, 2*time.Minute)
 }
@@ -163,14 +163,14 @@ func TestApproveAccessRequest_PermanentByDefault(t *testing.T) {
 	h.AssignUserRole(t, 1, 2, nil)
 
 	created, err := h.Storage.CreateAccessRequest(ctx, &models.AccessRequest{
-		ProjectID: proj, UserID: 10, SuggestedRole: "editor", State: core.AccessRequestPending,
+		ProjectID: proj, UserID: 10, SuggestedRole: "project_developer", State: core.AccessRequestPending,
 	})
 	require.NoError(t, err)
 
-	_, err = h.CoreService.ApproveAccessRequestWithExpiry(ctx, proj, created.ID, 1, 0, "editor", 0)
+	_, err = h.CoreService.ApproveAccessRequestWithExpiry(ctx, proj, created.ID, 1, 0, "project_developer", 0)
 	require.NoError(t, err)
 
 	var ur models.UserRole
-	require.NoError(t, h.DB.Where("user_id = ? AND role_id = ? AND project_id = ?", 10, 3, proj).First(&ur).Error)
+	require.NoError(t, h.DB.Where("user_id = ? AND role_id = ? AND project_id = ?", 10, testhelper.RoleProjectDeveloper, proj).First(&ur).Error)
 	assert.Nil(t, ur.ExpiresAt, "default approval is permanent")
 }

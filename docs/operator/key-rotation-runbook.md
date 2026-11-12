@@ -261,7 +261,13 @@ that applies. Stop the server and copy the key directory aside before you change
 `admin backup` is refused while `<dek_path>.pending` or `<salt_path>.pending` exists, because
 `admin restore` would refuse that archive on any other host. Start the server once, then back
 up again. A `<salt_path>.pending` still there after a successful start was never used: the
-start's log says so, and you can delete it. Never delete `<dek_path>.pending` by hand.
+start's log says so. Check that no `rotate-kek` is running, move it out of the key directory,
+back up, and delete the moved copy once that backup and a server start have succeeded; until
+then `admin validate --posture` reports `backups are refused: key-rotation staging file
+present`. Never delete `<dek_path>.pending` by hand. On PostgreSQL with several key directories
+the backup is also refused from a directory whose DEK is not the database's (`dek.epoch`), for
+example after another directory's rotation committed its sweep: finish the rotation there and
+distribute the new key set first ([multi-replica-keys.md](../multi-replica-keys.md)).
 
 If the target provider cannot open `dek.key` (the KMS key is gone, the shares are lost), the
 backup is the only copy under a KEK you still have. Restore it by rename, server stopped:

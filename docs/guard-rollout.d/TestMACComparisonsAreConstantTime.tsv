@@ -1,1 +1,0 @@
-TestMACComparisonsAreConstantTime	internal/wycheproof	#4038	new guard for non-constant-time comparisons of MAC, signature and tag values in 17 crypto-adjacent packages, report-only until its first green nightly on main
