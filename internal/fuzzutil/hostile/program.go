@@ -157,15 +157,34 @@ func clone(n *Node) *Node {
 	return c
 }
 
+// maxMutatedBody caps the (estimated) size of a mutated JSON body. Ops compose
+// multiplicatively (a 4 MB string copied into a 60000-element list), and the
+// harness builds the body inside the call under test, so an uncapped program
+// made the harness's own allocations read as the connector's (O4, webhook
+// input 38e9be5f2bd5c91b: 379 MB allocated, 0 bytes written) or exhausted the
+// host. RULES.md amendment 12.
+const maxMutatedBody = 8 << 20
+
 // MutateBody applies the program's JSON ops and truncation to a valid body.
 // A body that is not JSON passes through the ops untouched (only truncation
-// applies).
+// applies). An op that would take the tree past maxMutatedBody, and every op
+// after it, is dropped; bodies under the cap are unaffected.
 func (p Program) MutateBody(valid []byte) []byte {
 	out := valid
 	if len(p.Ops) > 0 {
 		if root, err := ParseJSON(valid); err == nil {
-			for _, o := range p.Ops {
-				applyOp(&root, o)
+			for i, o := range p.Ops {
+				if !applyOp(&root, o) {
+					break // refused unapplied: the tree is still the one before o
+				}
+				if root.approxSize(maxMutatedBody) > maxMutatedBody {
+					// Rebuild from the ops before this one; no clone per op needed.
+					root, _ = ParseJSON(valid)
+					for _, o := range p.Ops[:i] {
+						applyOp(&root, o)
+					}
+					break
+				}
 			}
 			out = root.Marshal()
 		}
@@ -176,9 +195,11 @@ func (p Program) MutateBody(valid []byte) []byte {
 	return out
 }
 
-func applyOp(root **Node, o Op) {
+// applyOp applies o to the tree. It returns false, leaving the tree unchanged,
+// only for an op that would allocate past maxMutatedBody while being built.
+func applyOp(root **Node, o Op) bool {
 	if *root == nil {
-		return
+		return true
 	}
 	all := (*root).refs()
 	r := all[int(o.A)%len(all)]
@@ -239,6 +260,15 @@ func applyOp(root **Node, o Op) {
 		r.set(root, &Node{K: w.K, S: w.S})
 	case 7: // oversized list / object
 		cnt := listSizes[b%len(listSizes)]
+		item := n
+		if n.K == KArr && len(n.Kids) > 0 {
+			item = n.Kids[0]
+		}
+		if cnt*(item.approxSize(maxMutatedBody)+1) > maxMutatedBody {
+			// Building it would allocate past the cap before MutateBody could
+			// drop it: refuse it unapplied.
+			return false
+		}
 		switch {
 		case n.K == KArr && len(n.Kids) > 0:
 			first := n.Kids[0]
@@ -308,6 +338,7 @@ func applyOp(root **Node, o Op) {
 		src := all[b%len(all)]
 		r.set(root, clone(src.n))
 	}
+	return true
 }
 
 // Encode is the inverse of Decode for programs built in code (seed corpus).

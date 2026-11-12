@@ -171,3 +171,14 @@ finding; findings that were reclassified are in the private findings log.
     declared bounds. Not verified: that 4 x 3 is a sensible bound (that is a
     product decision); that a redirect the sink refused is not retried (it is,
     see the report).
+12. Mutated JSON bodies are capped at an estimated 8 MiB (harness bug fix).
+    Ops compose multiplicatively and the harness builds the body inside the
+    call under test, so its own allocations counted against the connector's
+    O4 budget (webhook input 38e9be5f2bd5c91b: 379 MB allocated while the
+    server wrote 0 bytes; the webhook never reads the body). An op that would
+    take the tree past the cap, and every op after it, is dropped; list growth
+    is refused before it is built. The largest single huge string (4.3 MB)
+    still gets through. Coverage given up: no mutated JSON body above ~8 MiB
+    is served, so a connector read limit above 8 MiB (the largest is 10 MiB)
+    is no longer exceeded by a JSON program; the gzip bomb still exercises
+    decompressed size past every limit.

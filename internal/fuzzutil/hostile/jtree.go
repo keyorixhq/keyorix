@@ -138,6 +138,39 @@ func (n *Node) write(b *bytes.Buffer) {
 	}
 }
 
+// approxSize estimates the serialised length of n, stopping as soon as it
+// exceeds limit (it then returns some value > limit), so it costs at most
+// O(limit) steps however large the tree would serialise. String escapes are
+// not counted, so the real length can be larger (at most 6x, \u00XX).
+func (n *Node) approxSize(limit int) int {
+	if n == nil {
+		return 0
+	}
+	total := 0
+	var walk func(n *Node) bool
+	walk = func(n *Node) bool {
+		switch n.K {
+		case KNull:
+			total += 4
+		case KStr:
+			total += len(n.S) + 2
+		default:
+			total += len(n.S) + 1
+		}
+		for i, c := range n.Kids {
+			if n.K == KObj {
+				total += len(n.Keys[i]) + 3
+			}
+			if total > limit || !walk(c) {
+				return false
+			}
+		}
+		return total <= limit
+	}
+	walk(n)
+	return total
+}
+
 // ref locates a node: parent==nil means the root.
 type ref struct {
 	parent *Node

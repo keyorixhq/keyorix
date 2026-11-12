@@ -7,9 +7,11 @@ package hostile
 // a success that rests on no response at all.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -176,6 +178,29 @@ func TestNoResponseReplayIsNotConsumed(t *testing.T) {
 	}
 	if vs := h.Evaluate(); len(vs) != 0 {
 		t.Fatalf("a transport replay after a no-response close must not be a violation: %v", vs)
+	}
+}
+
+// TestMutateBodyCapped: the webhook program 38e9be5f2bd5c91b (two 1.1 MB
+// strings, then the root copied into a 100-element list) must not make the
+// harness allocate hundreds of MB, while the largest single huge string (4.3
+// MB) still gets through untouched.
+func TestMutateBodyCapped(t *testing.T) {
+	valid := []byte(`{"ok":true}`)
+	p := Program{Ops: []Op{{34, 34, 34}, {34, 34, 34}, {67, 0, 0}}}
+	var m0, m1 runtime.MemStats
+	runtime.ReadMemStats(&m0)
+	out := p.MutateBody(valid)
+	runtime.ReadMemStats(&m1)
+	if len(out) > 6*maxMutatedBody {
+		t.Fatalf("mutated body %d bytes, cap %d", len(out), maxMutatedBody)
+	}
+	if d := m1.TotalAlloc - m0.TotalAlloc; d > 128<<20 {
+		t.Fatalf("MutateBody allocated %d bytes for one program", d)
+	}
+	big := Program{Ops: []Op{{4, 0, 3}}}.MutateBody(valid)
+	if !bytes.Contains(big, bytes.Repeat([]byte("A"), hugeSizes[3])) {
+		t.Fatalf("the cap must not drop the largest huge-string op (%d bytes); body %d bytes", hugeSizes[3], len(big))
 	}
 }
 
