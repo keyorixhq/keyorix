@@ -616,7 +616,7 @@ func permutations(n, split int, hb bool) [][]int {
 			out = append(out, cp)
 			return
 		}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if used[i] {
 				continue
 			}
@@ -625,7 +625,7 @@ func permutations(n, split int, hb bool) [][]int {
 				// group-1 indices (<split) are already in cur.
 				if i >= split {
 					ready := true
-					for j := 0; j < split; j++ {
+					for j := range split {
 						if !used[j] {
 							ready = false
 							break
@@ -771,7 +771,7 @@ func checkPostReturnVisibility(prog schedProgram, observed []opResult) error {
 	}
 	g1, g2 := prog.split, len(prog.ops)
 	revokedG1, deletedG1, roleRevokedG1 := false, false, false
-	for i := 0; i < g1; i++ {
+	for i := range g1 {
 		if observed[i].class != clOK {
 			continue
 		}
@@ -797,7 +797,7 @@ func checkPostReturnVisibility(prog schedProgram, observed []opResult) error {
 	// assertion does not hold — oracle 1 (serial equivalence) already judges this
 	// case. Mirror the g2HasGrant skip for the in-group-1 re-grant.
 	g1HasGrant := false
-	for i := 0; i < g1; i++ {
+	for i := range g1 {
 		if prog.ops[i].kind == opGrantRole {
 			g1HasGrant = true
 		}
@@ -888,7 +888,7 @@ func checkAuditChain(t *testing.T, w *schedWorld, baselineUnchained int64) (chai
 func expectedSyncAudits(prog schedProgram, observed []opResult) (count int64, countable bool) {
 	switch prog.domain {
 	case dmPAT, dmRole, dmAudit:
-		countable = true
+		// synchronously audited domains: counted below
 	default:
 		return 0, false
 	}
