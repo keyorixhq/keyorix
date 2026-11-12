@@ -113,6 +113,19 @@ var k8sKnown = []hostile.Known{{
 	Prefix: "O5/bad-status-accepted/2xx-valid-body: Issue",
 	// Input fa27efe2ea8f6ef4: route=token status=206.
 	Repro: hostile.Program{Route: 0, Status: 5},
+}, {
+	// EXPECTED-DIFFERENCE: Revoke uses the same any-2xx rule for the Secret
+	// DELETE; the API server answers 200 or 202. A server that answers 2xx
+	// without deleting can do so with 200 as well, so 204 adds nothing.
+	ID:     "HK-K8S-REVOKE-ANY-2XX",
+	Class:  "EXPECTED-DIFFERENCE",
+	Prefix: "O5/revoke-status: Revoke reported success on final HTTP status ",
+	When: func(h *hostile.Harness) bool {
+		recs := h.Served("secretdel")
+		return len(recs) > 0 && recs[len(recs)-1].Status >= 200 && recs[len(recs)-1].Status < 300
+	},
+	// Input 36084bde8e5e5c64: route=secretdel status=204.
+	Repro: hostile.Program{Route: 2, Status: 4},
 }}
 
 // TestK8sHostileKnownFindingsReproduce replays every k8sKnown entry with the
