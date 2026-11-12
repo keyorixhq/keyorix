@@ -26,6 +26,10 @@ import (
 // finish it. Its value is the new key version, for the recovery log line. Not secret.
 const dekRotationPromotePendingKey = "dek_rotation.promote_pending"
 
+// DEKRotationPromotePendingMetadataKey is dekRotationPromotePendingKey for
+// callers outside the package (`admin backup` refuses on it, #4104).
+const DEKRotationPromotePendingMetadataKey = dekRotationPromotePendingKey
+
 // RotateDEKWithSweep performs a true DEK rotation with a full re-encryption
 // sweep of all DEK-encrypted database rows (ADR-010).
 //

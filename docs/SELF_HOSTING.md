@@ -323,6 +323,26 @@ database to itself: stop the server, run `keyorix-server admin backup
 --output <path>`, start it again. A backup beside a live SQLite server is
 refused rather than taken inconsistently.
 
+**When `admin backup` is refused.** A backup either restores and decrypts, or is
+refused with a non-zero exit, no archive written and no key file changed:
+
+- *A key rotation is running or was interrupted (found `<file>.pending`)*: wait for
+  a running rotation, otherwise start the server once so boot recovery finishes
+  it, then back up. Never delete a DEK's `.pending` file: it can be the only copy
+  of the new DEK. A `kek.salt.pending` that is still there after a server start
+  succeeded is unused (the start proved the active key set opens without it, and
+  its log says the file can be deleted): check that no `admin encryption rotate-kek`
+  is running, move the file out of the key directory, back up, and delete the moved
+  copy once that backup and a server start have succeeded. Until then
+  `admin validate --posture` reports `backups are refused: key-rotation staging
+  file present` and exits non-zero, so a cron'd backup that stops is visible there.
+- *A DEK rotation committed its re-encryption sweep, but this key directory holds a
+  different `dek.key`* (Postgres, several key directories, `key_dir_lock: database`):
+  another key directory rotated the DEK and its new key set has not reached this
+  one. Finish the rotation in the key directory that holds `dek.key.pending`,
+  distribute the new key set to every replica
+  ([multi-replica-keys.md](multi-replica-keys.md), crash table), then back up.
+
 **Restore** (with the *same* `KEYORIX_MASTER_PASSWORD` and the same storage
 config the backup was taken from). `admin restore` always takes this
 database's own exclusive lock and refuses if a live server already holds it
