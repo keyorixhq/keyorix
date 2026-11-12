@@ -80,6 +80,32 @@ func TestMySQLQ2_ShortBinaryRowNullBitmap_Reproducer(t *testing.T) {
 	}
 }
 
+// MYSQL-Q3: handleOkPacket (packets.go:692) reads the 2-byte server_status
+// field as readStatus(data[1+n+m : 1+n+m+2]) — where n, m are the byte widths of
+// the preceding affected-rows and last-insert-id length-encoded integers — with
+// NO check that the packet is long enough. A hostile server replying to
+// COM_QUERY (or COM_STMT_EXECUTE) with a 3-byte OK result-set header
+// (0x00 indicator, affected-rows=0, last-insert-id=0, then NOTHING where the
+// status must be) crashes the client with "slice bounds out of range". Found by
+// FuzzMySQLHostileQuery (seed a95d513e77559128). Reachable through database/sql
+// on any query path.
+func TestMySQLQ3_ShortOKStatus_Reproducer(t *testing.T) {
+	// opTextQuery -> the response group is the COM_QUERY result-set header.
+	// A 3-byte OK body: iOK, affected-rows (0), last-insert-id (0); the two
+	// status bytes that must follow are absent.
+	in := cat([]byte{byte(opTextQuery)}, encQPkt(1, []byte{0x00, 0x00, 0x00}))
+	for i := range 3 {
+		val, stack := reproQueryPanic(t, in)
+		if val == nil {
+			t.Fatalf("replay %d: expected panic in handleOkPacket (server_status); the driver may have added the length guard (remove MYSQL-Q3 from knownQueryPanicSites)", i)
+		}
+		if !strings.Contains(fmt.Sprint(val), "slice bounds out of range") ||
+			!strings.Contains(stack, "handleOkPacket") {
+			t.Fatalf("replay %d: unexpected panic %v\n%s", i, val, stack)
+		}
+	}
+}
+
 // TestMySQLQuery_AllowlistStillSurfacesNovelPanics: the allowlist swallows the
 // real MYSQL-Q1/Q2 stacks (green) but NOT a panic from any other site (red), so
 // a third, unknown result-set panic would still fail the fuzz run.

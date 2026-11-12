@@ -413,6 +413,13 @@ var knownQueryPanicSites = []string{
 	// and each fixed-width column read (data[pos:pos+N]) likewise. A binary row
 	// packet shorter than the bitmap its declared column count requires panics.
 	"mysql.(*binaryRows).readRow",
+	// MYSQL-Q3: handleOkPacket reads the server_status field as
+	// readStatus(data[1+n+m : 1+n+m+2]) with no length guard (packets.go:692),
+	// after two length-encoded integers (affected-rows, last-insert-id). A
+	// result-set header / auth-result OK packet too short for the status field
+	// panics. Reached via readResultSetHeaderPacket on every query path (text
+	// COM_QUERY, binary COM_STMT_EXECUTE) and on ExecContext.
+	"mysql.(*okHandler).handleOkPacket",
 }
 
 func classifyQueryPanic(val any, stack string) string {
