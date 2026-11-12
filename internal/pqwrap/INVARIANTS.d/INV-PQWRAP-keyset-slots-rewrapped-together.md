@@ -5,8 +5,9 @@
   public key stored in it and in the same order, in the same file; there is no writer that
   leaves one slot on an old DEK. Boot cannot detect a stale hybrid slot under a valid MAC (the
   server holds no escrow private key), which is why this has to hold for every writer. Why:
-  pq-key-wrapping.md §7 "DEK rotation and the hybrid slots", §8. Guard (codec level):
+  pq-key-wrapping.md §7 "DEK rotation and the hybrid slots", §8. Guard: (codec level)
   `TestSealKeyset_DEKRotationRewrapsEverySlot`, `TestRekeyKeyset_KeepsHybridSlotsByteForByte`,
   `TestSameRecipients`. The same rule at the `RotateDEKWithSweep` level (design tests 1-3) is
-  its own invariant, `INV-PQWRAP-keyset-dek-rotation-rewraps-every-slot`, UNGUARDED (#3758).
+  its own invariant, `INV-PQWRAP-keyset-dek-rotation-rewraps-every-slot`, which has no guard
+  yet (#3758).
 <!-- section: Keyset -->

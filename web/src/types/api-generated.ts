@@ -4672,7 +4672,7 @@ export interface paths {
         };
         /**
          * Dashboard summary statistics
-         * @description The caller's own home dashboard (secret/share counts, expiring secrets). Requires the universal system.read baseline (every real principal holds it). The deployment-wide aggregate fields (activeUsers, auditEvents30d, auditLogins30d, auditSecretReads30d, failedAuthAttempts24h (failed password/SSO logins only), failedSecondFactors24h (refused TOTP, recovery code or passkey: mfa.failed + webauthn.failed), refusedSecretReads24h (refused secret reads: authorization denials), inactiveUsers) and the full recentActivity feed are additionally scoped to audit.read — a baseline-only caller gets zeroed aggregates and an activity feed limited to their own events.
+         * @description The caller's own home dashboard (secret/share counts, expiring secrets). Requires the universal system.read baseline (every real principal holds it). The deployment-wide aggregate fields (activeUsers, auditEvents30d, auditLogins30d, auditSecretReads30d, failedAuthAttempts24h (failed password/SSO logins only), failedSecondFactors24h (refused TOTP, recovery code or passkey: mfa.failed + webauthn.failed), refusedSecretReads24h (refused secret reads: authorization denials), inactiveUsers (users whose last login, or whose creation time if they never logged in, is more than 30 days ago)) and the full recentActivity feed are additionally scoped to audit.read — a baseline-only caller gets zeroed aggregates and an activity feed limited to their own events.
          */
         get: operations["getDashboardStats"];
         put?: never;
@@ -8197,7 +8197,20 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
-            403: components["responses"]["Error"];
+            /** @description The caller lacks roles.assign at this project, the user's email domain is not allowed, or the privilege ceiling refused the grant: the actor's own permissions at this project must include every permission `role` bundles. The ceiling applies to a machine-identity token the same way, judged against the machine's own roles, so a machine whose roles do not cover `role` gets this 403; one whose roles do is allowed (201). Same error envelope as components/responses/Error. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        success?: boolean;
+                        code?: number;
+                        error?: string;
+                        message?: string;
+                    };
+                };
+            };
             409: components["responses"]["Error"];
         };
     };
@@ -8688,6 +8701,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     listAccessRequests: {
@@ -12262,6 +12276,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     evaluateRotationPolicies: {
@@ -12505,6 +12520,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     searchUsers: {
@@ -13321,6 +13337,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             503: components["responses"]["AuditUnavailable"];
@@ -14588,7 +14605,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data: totalSecrets, sharedSecrets, secretsSharedWithMe, activeUsers, auditEvents30d, auditLogins30d, auditSecretReads30d, failedAuthAttempts24h (failed password/SSO logins only), failedSecondFactors24h (refused TOTP, recovery code or passkey: mfa.failed + webauthn.failed), refusedSecretReads24h (refused secret reads: authorization denials), inactiveUsers; optional trend objects (totalSecretsTrend/sharedSecretsTrend/sharedWithMeTrend, each {value, isPositive}), expiringSecrets[] (id, name, environment, expiresAt, daysLeft, expired), and recentActivity[] (id, type, secretName, timestamp, actor). */
+            /** @description Envelope {data, message}. data: totalSecrets, sharedSecrets, secretsSharedWithMe, activeUsers, auditEvents30d, auditLogins30d, auditSecretReads30d, failedAuthAttempts24h (failed password/SSO logins only), failedSecondFactors24h (refused TOTP, recovery code or passkey: mfa.failed + webauthn.failed), refusedSecretReads24h (refused secret reads: authorization denials), inactiveUsers (users whose last login, or whose creation time if they never logged in, is more than 30 days ago); optional trend objects (totalSecretsTrend/sharedSecretsTrend/sharedWithMeTrend, each {value, isPositive}), expiringSecrets[] (id, name, environment, expiresAt, daysLeft, expired), and recentActivity[] (id, type, secretName, timestamp, actor). */
             200: {
                 headers: {
                     [name: string]: unknown;

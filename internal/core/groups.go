@@ -62,7 +62,9 @@ func (c *KeyorixCore) GetGroup(ctx context.Context, id uint) (*models.Group, err
 	}
 	group, err := c.storage.GetGroup(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		// A missing group matches storage.ErrGroupNotFound; a read fault matches
+		// ErrStorageReadUnavailable and is never reported as a missing group.
+		return nil, classifyReadErrorAs(err, storage.ErrGroupNotFound, i18n.T("ErrorGroupNotFound", nil))
 	}
 	return group, nil
 }

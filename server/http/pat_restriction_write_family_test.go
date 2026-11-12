@@ -245,8 +245,7 @@ func allowedBulkRevokeOwnExpiredPATs(t *testing.T, w *patGuardWorld) {
 	for _, o := range patGuardOwners {
 		uid := w.userID(t, o.username)
 		for _, persona := range patGuardRestrictedPersonas {
-			_, err := w.core.CreateOwnPAT(ctx, uid, "g3-expired-"+persona, &past, nil, 0, 0, nil)
-			require.NoError(t, err)
+			createExpiredOwnPATForTest(t, w.core, ctx, uid, "g3-expired-"+persona, past)
 			expired, err := w.core.ListExpiredOwnPATs(ctx, uid)
 			require.NoError(t, err)
 			require.NotEmpty(t, expired, "fixture: an expired PAT to revoke")

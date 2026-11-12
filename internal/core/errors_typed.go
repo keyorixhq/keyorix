@@ -51,10 +51,10 @@ func validationErrorf(format string, a ...any) error {
 	return validationError(fmt.Errorf(format, a...))
 }
 
-// ErrMachineIdentityNotFound is matched (errors.Is) by every "the machine identity or
-// token this call names does not exist" refusal of the machine-identity and
-// machine-token paths, including a project or machine mismatch (reported as not found
-// so an id in another project cannot be probed). The gRPC mapper answers it NotFound by
+// ErrMachineIdentityNotFound is matched (errors.Is) by every "the machine identity,
+// token, OIDC binding or role-binding environment this call names does not exist"
+// refusal of the machine-identity and machine-token paths, including a project or
+// machine mismatch (reported as not found so an id in another project cannot be probed). The gRPC mapper answers it NotFound by
 // sentinel. A storage read FAULT is never this error: it is ErrStorageReadUnavailable.
 var ErrMachineIdentityNotFound = errors.New("machine identity or token not found")
 

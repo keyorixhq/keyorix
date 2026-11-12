@@ -129,8 +129,11 @@ func (h *GroupHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	g, err := h.coreService.GetGroup(r.Context(), uint(id))
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error getting group: %v", err)
-		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
+		if errors.Is(err, storage.ErrGroupNotFound) {
 			sendError(w, "NotFound", errGroupNotFound, http.StatusNotFound, nil)
 			return
 		}

@@ -24,10 +24,11 @@
   All three global probes (`handleScopeResolutionError`, render, `canSystemWrite`) go through
   `middleware.AuthorizedAtGlobalScope` (ADR-096's one shared decision), which returns the
   lookup error instead of folding it into "not authorized" (AUTHZ-OUTAGE-TAILS-1), so each
-  caller handles the error. Three further in-handler `roles.assign` / `secrets.write`
-  checks still answer 403 on an outage (`catalog.go` `UpdateProject`, `invitations.go`
-  `CreateGlobalInvitation`, `rotation_policies_handler.go` `Create`); they are named, with
-  the reason, in `authorizeOutageExempt` and tracked in a follow-up issue. The human-principal
+  caller handles the error. The three in-handler `roles.assign` / `secrets.write` checks that
+  once answered 403 on an outage (`catalog.go` `UpdateProject`, `invitations.go`
+  `CreateGlobalInvitation`, `rotation_policies_handler.go` `Create`) route through
+  `refuseUnlessAuthorized` too (#3948), so `authorizeOutageExempt` is empty and the family
+  guard fails a stale entry. The human-principal
   scoped listing in `ListSecrets` does not refuse on a failed check: it falls back to the
   caller's owned and ACL-granted secrets, so it is outside this invariant (it answers 5xx if
   that read fails too). The handler

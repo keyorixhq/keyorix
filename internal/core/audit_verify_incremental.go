@@ -717,7 +717,11 @@ func (c *KeyorixCore) advanceAuditRollingCycle(ctx context.Context, res *AuditVe
 	} else {
 		seg.AfterID, seg.SeedHash = cyc.SeedID, cyc.SeedHash
 	}
-	w, err := c.walkAuditChain(ctx, seg)
+	walk := c.walkAuditChain
+	if seg.AfterID == 0 {
+		walk = c.walkAuditChainRacingPurge
+	}
+	w, err := walk(ctx, seg)
 	if err != nil {
 		return fmt.Errorf("failed to verify audit chain segment: %w", err)
 	}

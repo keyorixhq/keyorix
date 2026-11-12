@@ -18543,6 +18543,7 @@ type AssignRoleToGroupResponse struct {
 	}
 	JSON400 *Error
 	JSON401 *Error
+	JSON403 *Error
 	JSON404 *Error
 	JSON409 *Error
 	JSON503 *AuditUnavailable
@@ -20892,6 +20893,7 @@ type CreateRotationPolicyResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
+	JSON503 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -22864,6 +22866,7 @@ type CreateUserResponse struct {
 	JSON400      *Error
 	JSON401      *Error
 	JSON409      *Error
+	JSON503      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -29138,6 +29141,13 @@ func ParseAssignRoleToGroupResponse(rsp *http.Response) (*AssignRoleToGroupRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -33223,6 +33233,13 @@ func ParseCreateRotationPolicyResponse(rsp *http.Response) (*CreateRotationPolic
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -36732,6 +36749,13 @@ func ParseCreateUserResponse(rsp *http.Response) (*CreateUserResponse, error) {
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

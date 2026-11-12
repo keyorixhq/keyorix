@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"crypto/x509"
 	"encoding/json"
@@ -469,8 +468,7 @@ func offerOldServerURLMigration() string {
 
 func promptLine(prompt string) (string, error) {
 	fmt.Fprint(os.Stderr, prompt)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
+	line, err := stdinReader().ReadString('\n')
 	if err != nil {
 		return "", err
 	}
