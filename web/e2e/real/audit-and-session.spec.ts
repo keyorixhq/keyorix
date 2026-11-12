@@ -82,9 +82,14 @@ test("the audit log shows create/rotate/delete operations on a real secret, and 
     await expect(page.getByText(`Rotate ${secretName}`)).not.toBeVisible({ timeout: 10_000 });
 
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
-    await expect(page.getByText('Delete Secret')).toBeVisible();
-    await page.getByRole('button', { name: 'Delete', exact: true }).click();
-    await expect(page.getByText('Delete Secret')).not.toBeVisible({ timeout: 10_000 });
+    // Scoped to the dialog: the detail header's own "Delete" button would otherwise match the
+    // second click too (strict-mode violation), and getByText('Delete Secret') is a substring match.
+    const deleteDialog = page.getByRole('dialog', { name: 'Delete Secret', exact: true });
+    await expect(deleteDialog, 'the delete confirmation dialog must open').toBeVisible();
+    await deleteDialog.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect(deleteDialog, 'the delete confirmation dialog must close once the delete succeeds').toBeHidden({
+        timeout: 10_000,
+    });
 
     // ── The audit log reflects all three operations on this exact secret ───
     await page.goto('/audit');

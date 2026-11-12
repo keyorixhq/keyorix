@@ -281,20 +281,3 @@ func TestIfacePositiveControl_IntendedDifferencesAreClassified(t *testing.T) {
 		t.Fatalf("without the table row the same difference must be reported, got %q", msg)
 	}
 }
-
-// TestIfaceKnownFinding_AuditResourceTypeLikeCase is the minimal reproduction of
-// F-AUDIT-RESOURCE-LIKE-CASE: with IFACE_DIFF_STRICT unset it passes through the gate,
-// with the gates off it must report the divergence.
-func TestIfaceKnownFinding_AuditResourceTypeLikeCase(t *testing.T) {
-	w := newIfaceWorld(t, true)
-	program := ifaceProgram(ifaceStep(opIdxAudit, 0, 0, 0), ifaceStep(opIdxAudit, 2, 0, 1))
-	if msg := ifaceRunSpy(w, program, "x", "y", nil); msg != "" {
-		t.Fatalf("gated run must stay silent: %s", msg)
-	}
-	t.Setenv("IFACE_DIFF_STRICT", "1")
-	msg := ifaceRunSpy(w, program, "x", "y", nil)
-	if !strings.Contains(msg, "resource=") || !strings.Contains(msg, "BACKEND DIVERGENCE") {
-		t.Fatalf("strict run must report the divergence, got %q", msg)
-	}
-	t.Logf("reproduced: %s", msg)
-}

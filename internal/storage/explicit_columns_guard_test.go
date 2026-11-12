@@ -45,6 +45,14 @@ func TestNoStarSelectInProductionSQL(t *testing.T) {
 			"internal/storage/sqlitedialect/migrator.go", "FROM PRAGMA_index_list",
 			"SQLite's own table-valued pragma, not an application table: a migration adding a column to one of ours cannot change its shape.",
 		},
+		{
+			"internal/fuzzutil/canary/canary_db.go", "SELECT * FROM",
+			"Test helper that dumps every column of every table so a canary in any column is found; naming columns would hide a new one. Not reachable from server code.",
+		},
+		{
+			"internal/testutil/pgcanary/pgcanary.go", "SELECT * FROM",
+			"Test helper that restores a table from its same-shape snapshot copy (INSERT ... SELECT * from the snapshot of that very table); the column set is identical by construction. Not reachable from server code.",
+		},
 	}
 
 	root := filepath.Join("..", "..")

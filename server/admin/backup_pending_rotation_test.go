@@ -93,9 +93,9 @@ func TestAdminBackup_RefusedWhileARotationIsPending(t *testing.T) {
 			sqliteBackupSource(t)
 			stderr := requireRefusedAndUntouched(t, plantStagingFiles(t, c.files...))
 			if c.saltAdvice {
-				require.Contains(t, stderr, "delete that file")
+				require.Contains(t, stderr, "move it out of the key directory")
 			} else {
-				require.NotContains(t, stderr, "delete that file",
+				require.NotContains(t, stderr, "move it out of the key directory",
 					"only an unused staging salt may ever be suggested for deletion")
 			}
 		})

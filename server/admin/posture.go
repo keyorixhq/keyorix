@@ -94,6 +94,7 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 	// missing database file is still reported as the problem it is.
 	collectFilePermissionPosture(cfg, configPath, report)
 	collectKeyFileSetPosture(cfg, report)
+	collectBackupRefusalPosture(cfg, report)
 	collectTLSPosture(cfg, report)
 	collectDatabaseTLSPosture(cfg, report)
 	collectKEKAgePosture(cfg, report)
