@@ -214,6 +214,11 @@ var approveRaceDeleters = []approveRaceDeleter{
 		// The soft delete is GORM's Delete callback family even though it emits an UPDATE.
 		syncFunction: "DeleteSecret", syncKind: "delete", syncTable: "secret_nodes",
 	},
+	{
+		name: "DeleteProject", del: (*approveRaceWorld).deleteProject, restore: (*approveRaceWorld).restoreProject,
+		// The cascade soft-deletes the project's secrets with a bulk Update on secret_nodes.
+		syncFunction: "DeleteProject", syncKind: "update", syncTable: "secret_nodes",
+	},
 }
 
 // runDeleteInApprovalWindow forces the bad interleaving: the whole delete commits
