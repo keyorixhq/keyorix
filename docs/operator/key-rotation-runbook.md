@@ -258,6 +258,17 @@ that applies. Stop the server and copy the key directory aside before you change
 | `<salt_path>.pending and <dek_path>.pending exist: a rotate-kek was interrupted before it replaced ...` | `rotate-kek` was killed before it touched `dek.key`, which is still under the previous passphrase. | Do not rename either file. Start with the **previous** passphrase (the next key writer or start resolves the leftovers) and re-run `rotate-kek`. |
 | `<dek_path>.migrate-backup.<...> is the newest migrate-provider backup` | `migrate-provider` was killed after the re-wrap, or finished and `storage.encryption.key_provider` was not updated. `dek.key` is under the target provider; the backup is the same DEK under the previous one. | Set `storage.encryption.key_provider` to the provider you migrated to (the one `migrate-provider` printed) and start. To go back, run `keyorix-server admin encryption migrate-provider --to-type <previous provider> --confirm` from there. Keep the backup until the server starts; then `migrate-provider cleanup`. |
 
+`admin backup` is refused while `<dek_path>.pending` or `<salt_path>.pending` exists, because
+`admin restore` would refuse that archive on any other host. Start the server once, then back
+up again. A `<salt_path>.pending` still there after a successful start was never used: the
+start's log says so. Check that no `rotate-kek` is running, move it out of the key directory,
+back up, and delete the moved copy once that backup and a server start have succeeded; until
+then `admin validate --posture` reports `backups are refused: key-rotation staging file
+present`. Never delete `<dek_path>.pending` by hand. On PostgreSQL with several key directories
+the backup is also refused from a directory whose DEK is not the database's (`dek.epoch`), for
+example after another directory's rotation committed its sweep: finish the rotation there and
+distribute the new key set first ([multi-replica-keys.md](../multi-replica-keys.md)).
+
 If the target provider cannot open `dek.key` (the KMS key is gone, the shares are lost), the
 backup is the only copy under a KEK you still have. Restore it by rename, server stopped:
 `cp -p <backup> <dek_path>.restoring && mv <dek_path>.restoring <dek_path>`. The key-set

@@ -47,6 +47,7 @@
 #   ./scripts/check-closures.sh --self-test  # prove the check can go red (and
 #                                             # that it can go green honestly)
 set -euo pipefail
+script_t0=$SECONDS
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/closure-pkg.sh
@@ -159,26 +160,38 @@ if [ -n "$manual_claims" ]; then
     done <<<"$manual_claims"
 fi
 
-for pkg in $(awk -F'\t' '$4=="default-ci" || $4=="pg-gated" {print $2}' <<<"$rows" | sort -u); do
-    tests=$(awk -F'\t' -v p="$pkg" '($4=="default-ci" || $4=="pg-gated") && $2==p {print $3}' <<<"$rows")
-    pattern=$(paste -sd'|' - <<<"$tests")
-    echo "==> $pkg"
-    # Validated above, so this cannot fail; if it somehow does, fail closed.
-    if ! closure_pkg_resolve "$REPO_ROOT" "$pkg"; then
-        die "$pkg: $CLOSURE_PKG_ERR"
-        continue
-    fi
-    # A package in the cli module runs `go test` inside cli/ (its own go.mod);
-    # a root-module package runs from the repo root exactly as before. The cli
-    # module is not in go.work (the root go.work is `use .`), so it runs with
-    # GOWORK=off like every other cli-module job in ci.yml and the Makefile.
+# Run `go test` for one package into its own files: <base>.out (combined output)
+# and <base>.rc (exit code). Never fails the caller; the verdict is read later,
+# in sorted package order, by closure_eval_pkg.
+#
+# A package in the cli module runs `go test` inside cli/ (its own go.mod); a
+# root-module package runs from the repo root exactly as before. The cli
+# module is not in go.work (the root go.work is `use .`), so it runs with
+# GOWORK=off like every other cli-module job in ci.yml and the Makefile.
+# Each call only reads its arguments, so several can run at once. Every package
+# gets one `go test` process with its own working directory (the package dir),
+# its own t.TempDir() tree and the shared, concurrency-safe Go build cache.
+closure_run_pkg() {
+    local mod_dir="$1" mod_pkg="$2" pattern="$3" base="$4" out rc
     set +e
-    if [ "$CLOSURE_MOD_DIR" = "." ]; then
-        out=$(cd "$REPO_ROOT" && go test -count=1 -v -run "^(${pattern})\$" "$CLOSURE_MOD_PKG" 2>&1); rc=$?
+    if [ "$mod_dir" = "." ]; then
+        out=$(cd "$REPO_ROOT" && go test -count=1 -v -run "^(${pattern})\$" "$mod_pkg" 2>&1); rc=$?
     else
-        out=$(cd "$REPO_ROOT/$CLOSURE_MOD_DIR" && GOWORK=off go test -count=1 -v -run "^(${pattern})\$" "$CLOSURE_MOD_PKG" 2>&1); rc=$?
+        out=$(cd "$REPO_ROOT/$mod_dir" && GOWORK=off go test -count=1 -v -run "^(${pattern})\$" "$mod_pkg" 2>&1); rc=$?
     fi
     set -e
+    printf '%s\n' "$out" > "$base.out"
+    # The .rc file is written last: its presence means the .out file is complete.
+    printf '%s\n' "$rc" > "$base.rc"
+}
+
+# Evaluate one package from the files closure_run_pkg wrote. This is the former
+# loop body, unchanged: same messages, same order, same verdicts.
+closure_eval_pkg() {
+    local pkg="$1" base="$2" out rc tests test claim verification
+    tests=$(awk -F'\t' -v p="$pkg" '($4=="default-ci" || $4=="pg-gated") && $2==p {print $3}' <<<"$rows")
+    out=$(<"$base.out")
+    rc=$(<"$base.rc")
     if [ "$rc" -ne 0 ]; then
         die "$pkg: go test exited $rc"
         # Show the actual failures, not just the head of the log: the first 40
@@ -240,11 +253,158 @@ for pkg in $(awk -F'\t' '$4=="default-ci" || $4=="pg-gated" {print $2}' <<<"$row
             sed -n '1,20p' <<<"$out" | sed 's/^/      /'
         fi
     done <<<"$tests"
+}
+
+# Worker pool size. CHECK_CLOSURES_JOBS=1 is the old strictly sequential run.
+# With KEYORIX_TEST_PG_DSN set the packages' Postgres-backed tests would all
+# share that one database (shared schema, cross-replica tests collide), so the
+# run stays sequential unless CHECK_CLOSURES_PG_PARALLEL=1 says otherwise.
+jobs_max="${CHECK_CLOSURES_JOBS:-4}"
+case "$jobs_max" in
+    ''|*[!0-9]*|0) echo "FAIL: CHECK_CLOSURES_JOBS must be a positive integer (got '$jobs_max')" >&2; exit 1 ;;
+esac
+if [ "$pg_available" = true ] && [ "${CHECK_CLOSURES_PG_PARALLEL:-0}" != 1 ] && [ "$jobs_max" -gt 1 ]; then
+    echo "==> KEYORIX_TEST_PG_DSN is set: running packages one at a time (they share one database)"
+    jobs_max=1
+fi
+
+closure_work=$(mktemp -d)
+closure_pids=()
+closure_cleanup() {
+    local p
+    for p in ${closure_pids[@]+"${closure_pids[@]}"}; do
+        kill "$p" 2>/dev/null || true
+    done
+    rm -rf "$closure_work"
+    if [ -z "${CLOSURE_LEDGER:-}" ]; then rm -f "$LEDGER"; fi
+}
+trap closure_cleanup EXIT
+
+# Phase 1: resolve and build the pattern of every package, in sorted order.
+# Plain indexed arrays (no `declare -A`): macOS /bin/bash is 3.2. Index i is the
+# package's place in sorted order, which is also its evaluation order.
+pk_name=(); pk_pattern=(); pk_moddir=(); pk_modpkg=(); pk_ok=()
+i=0
+# shellcheck disable=SC2013  # package paths are validated ./<dir>/<dir> words
+for pkg in $(awk -F'\t' '$4=="default-ci" || $4=="pg-gated" {print $2}' <<<"$rows" | sort -u); do
+    tests=$(awk -F'\t' -v p="$pkg" '($4=="default-ci" || $4=="pg-gated") && $2==p {print $3}' <<<"$rows")
+    pk_name[i]="$pkg"
+    pk_pattern[i]=$(paste -sd'|' - <<<"$tests")
+    # Validated above, so this cannot fail; if it somehow does, fail closed
+    # (reported in phase 2, in order).
+    if closure_pkg_resolve "$REPO_ROOT" "$pkg"; then
+        pk_ok[i]=1; pk_moddir[i]="$CLOSURE_MOD_DIR"; pk_modpkg[i]="$CLOSURE_MOD_PKG"
+    else
+        pk_ok[i]=0; pk_moddir[i]=""; pk_modpkg[i]=""
+    fi
+    i=$((i + 1))
+done
+npkgs=$i
+
+# Start order only: the packages that took longest in CI go first so the pool
+# does not end on one long tail. Evaluation (phase 2) stays in sorted order.
+heavy_first=" ./server ./internal/core ./internal/config ./server/faultops ./server/http/handlers ./internal/auditverify "
+start_order=()
+for ((i = 0; i < npkgs; i++)); do
+    case "$heavy_first" in *" ${pk_name[i]} "*) start_order+=("$i") ;; esac
+done
+for ((i = 0; i < npkgs; i++)); do
+    case "$heavy_first" in *" ${pk_name[i]} "*) ;; *) start_order+=("$i") ;; esac
+done
+
+# Phase 1b: run them through the pool.
+have_wait_n=false
+if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 3 ]; }; then
+    have_wait_n=true
+fi
+[ "$jobs_max" -le 1 ] || echo "==> running $npkgs package(s), at most $jobs_max at a time"
+running=0; oldest=0
+for i in ${start_order[@]+"${start_order[@]}"}; do
+    [ "${pk_ok[i]}" = 1 ] || continue
+    if [ "$jobs_max" -le 1 ]; then
+        closure_run_pkg "${pk_moddir[i]}" "${pk_modpkg[i]}" "${pk_pattern[i]}" "$closure_work/$i"
+        continue
+    fi
+    if [ "$running" -ge "$jobs_max" ]; then
+        if [ "$have_wait_n" = true ]; then
+            wait -n || true
+        else
+            # No `wait -n`: wait for the oldest job instead.
+            wait "${closure_pids[oldest]}" || true; oldest=$((oldest + 1))
+        fi
+        running=$((running - 1))
+    fi
+    closure_run_pkg "${pk_moddir[i]}" "${pk_modpkg[i]}" "${pk_pattern[i]}" "$closure_work/$i" &
+    closure_pids+=("$!")
+    running=$((running + 1))
+done
+wait
+
+# Phase 2: evaluate in sorted package order, exactly as the old loop did.
+for ((i = 0; i < npkgs; i++)); do
+    pkg="${pk_name[i]}"
+    echo "==> $pkg"
+    if [ "${pk_ok[i]}" != 1 ]; then
+        closure_pkg_resolve "$REPO_ROOT" "$pkg" || true
+        die "$pkg: $CLOSURE_PKG_ERR"
+        continue
+    fi
+    if [ ! -f "$closure_work/$i.rc" ]; then
+        die "$pkg: go test produced no result (worker killed?)"
+        continue
+    fi
+    closure_eval_pkg "$pkg" "$closure_work/$i"
 done
 
 if [ "${1:-}" = "--self-test" ]; then
     echo; echo "==> self-test: the check must reject every bad row below, and accept every good one"
     selffail=0
+
+    # Calibration cases are independent sub-invocations of this script, so they
+    # run through a bounded pool (same limit as the package pool, still one at a
+    # time under a shared Postgres DSN). run_case only QUEUES a case; st_flush
+    # waits for the running ones and prints every verdict in queue order, so the
+    # output, messages and exit code are those of the old strictly sequential run.
+    echo "timing: real ledger verified in $((SECONDS - script_t0))s" >&2
+    st_t0=$SECONDS
+    st_dir="$closure_work/selftest"; mkdir "$st_dir"
+    st_n=0; st_done=0; st_running=0; st_oldest=0; st_pids=()
+    case_jobs="$jobs_max"
+
+    # Run one queued case's sub-invocation; its output and exit code go to files.
+    st_case_run() {
+        local base="$1" dsn="$2" out rc
+        set +e
+        if [ "$dsn" = "-" ]; then
+            out=$(CLOSURE_LEDGER="$base.ledger" CLOSURE_LEDGER_D="$base.frags" "$0" 2>&1)
+        elif [ -z "$dsn" ]; then
+            out=$(CLOSURE_LEDGER="$base.ledger" CLOSURE_LEDGER_D="$base.frags" env -u KEYORIX_TEST_PG_DSN "$0" 2>&1)
+        else
+            out=$(CLOSURE_LEDGER="$base.ledger" CLOSURE_LEDGER_D="$base.frags" KEYORIX_TEST_PG_DSN="$dsn" "$0" 2>&1)
+        fi
+        rc=$?
+        set -e
+        printf '%s\n' "$out" > "$base.out"
+        # Written last: its presence means the .out file is complete.
+        printf '%s\n' "$rc" > "$base.rc"
+    }
+
+    # Start "$@" in the background when a pool slot is free (waiting for one
+    # otherwise); with a limit of 1 run it right here.
+    st_spawn() {
+        if [ "$case_jobs" -le 1 ]; then "$@"; return 0; fi
+        if [ "$st_running" -ge "$case_jobs" ]; then
+            if [ "$have_wait_n" = true ]; then
+                wait -n || true
+            else
+                wait "${st_pids[st_oldest]}" || true; st_oldest=$((st_oldest + 1))
+            fi
+            st_running=$((st_running - 1))
+        fi
+        "$@" &
+        st_pids+=("$!")
+        st_running=$((st_running + 1))
+    }
 
     run_case() {
         # $1=description  $2=expected(reject|accept)  $3=row(s), one per line
@@ -252,51 +412,62 @@ if [ "${1:-}" = "--self-test" ]; then
         # $5..=optional fragment files, each "name.tsv=<content>" — written into a
         #      fresh CLOSURE_LEDGER_D. Always a fresh dir, so the real fragment
         #      directory a wrapper (check-adr-conformance.sh) exported never leaks in.
-        local desc="$1" expect="$2" body="$3" dsn="$4" out rc want
+        local desc="$1" expect="$2" body="$3" dsn="$4" base
         shift 4
-        local tmp; tmp=$(mktemp)
-        local tmpd; tmpd=$(mktemp -d)
-        printf '%s\n' "$body" > "$tmp"
+        base="$st_dir/$st_n"; st_n=$((st_n + 1))
+        mkdir "$base.frags"
+        printf '%s\n' "$body" > "$base.ledger"
         local frag
         for frag in "$@"; do
-            printf '%s\n' "${frag#*=}" > "$tmpd/${frag%%=*}"
+            printf '%s\n' "${frag#*=}" > "$base.frags/${frag%%=*}"
         done
-        set +e
-        if [ "$dsn" = "-" ]; then
-            out=$(CLOSURE_LEDGER="$tmp" CLOSURE_LEDGER_D="$tmpd" "$0" 2>&1)
-        elif [ -z "$dsn" ]; then
-            out=$(CLOSURE_LEDGER="$tmp" CLOSURE_LEDGER_D="$tmpd" env -u KEYORIX_TEST_PG_DSN "$0" 2>&1)
-        else
-            out=$(CLOSURE_LEDGER="$tmp" CLOSURE_LEDGER_D="$tmpd" KEYORIX_TEST_PG_DSN="$dsn" "$0" 2>&1)
-        fi
-        rc=$?
-        set -e
-        rm -rf "$tmp" "$tmpd"
+        printf '%s\n' "$desc" > "$base.desc"
+        printf '%s\n' "$expect" > "$base.expect"
         # Optional: WANT_OUT="<line>\n<line>" (set on the call, e.g.
         # `WANT_OUT=... run_case ...`) names substrings the sub-invocation's
         # output MUST contain, one per line -- for cases whose point is WHAT is
-        # reported, not only whether the run is rejected.
-        while IFS= read -r want; do
-            [ -z "$want" ] && continue
-            if ! grep -qF -- "$want" <<<"$out"; then
-                echo "FAIL: self-test case '$desc' output lacks the required line: $want" >&2
+        # reported, not only whether the run is rejected. Read now: it is a
+        # per-call variable and the verdict is printed later.
+        printf '%s\n' "${WANT_OUT:-}" > "$base.want"
+        st_spawn st_case_run "$base" "$dsn"
+    }
+
+    # Wait for every queued case, then print the verdicts in queue order.
+    st_flush() {
+        local base desc expect out rc want
+        wait
+        st_running=0; st_oldest=0; st_pids=()
+        while [ "$st_done" -lt "$st_n" ]; do
+            base="$st_dir/$st_done"; st_done=$((st_done + 1))
+            desc=$(<"$base.desc"); expect=$(<"$base.expect")
+            if [ ! -f "$base.rc" ]; then
+                echo "FAIL: self-test case '$desc' produced no result (worker killed?)" >&2
+                selffail=1
+                continue
+            fi
+            out=$(<"$base.out"); rc=$(<"$base.rc")
+            while IFS= read -r want; do
+                [ -z "$want" ] && continue
+                if ! grep -qF -- "$want" <<<"$out"; then
+                    echo "FAIL: self-test case '$desc' output lacks the required line: $want" >&2
+                    sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
+                    selffail=1
+                fi
+            done < "$base.want"
+            if [ "$expect" = "reject" ] && [ "$rc" -eq 0 ]; then
+                echo "FAIL: self-test case '$desc' PASSED when it must be REJECTED — the checker" >&2
+                echo "      cannot detect this bad row and is therefore worthless for it." >&2
                 sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
                 selffail=1
+            elif [ "$expect" = "accept" ] && [ "$rc" -ne 0 ]; then
+                echo "FAIL: self-test case '$desc' was REJECTED when it must be ACCEPTED — the" >&2
+                echo "      checker is too strict and will block an honest, correctly-gated row." >&2
+                sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
+                selffail=1
+            else
+                echo "  ok: '$desc' correctly ${expect}ed (exit $rc)"
             fi
-        done <<<"${WANT_OUT:-}"
-        if [ "$expect" = "reject" ] && [ "$rc" -eq 0 ]; then
-            echo "FAIL: self-test case '$desc' PASSED when it must be REJECTED — the checker" >&2
-            echo "      cannot detect this bad row and is therefore worthless for it." >&2
-            sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
-            selffail=1
-        elif [ "$expect" = "accept" ] && [ "$rc" -ne 0 ]; then
-            echo "FAIL: self-test case '$desc' was REJECTED when it must be ACCEPTED — the" >&2
-            echo "      checker is too strict and will block an honest, correctly-gated row." >&2
-            sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
-            selffail=1
-        else
-            echo "  ok: '$desc' correctly ${expect}ed (exit $rc)"
-        fi
+        done
     }
 
     run_case "nonexistent test" "reject" \
@@ -437,8 +608,91 @@ SELF-TEST-3D	./internal/core	TestCheckClosuresSelfTestFixture_SkipsWithoutPGDSN	
         'SELF-TEST-28	./migrate/internal/accessplan	TestThisNameDoesNotExistAnywhere	default-ci	deadbeef	-	calibration row' \
         ""
 
+    # Worker-pool cases (CHECK_CLOSURES_JOBS). Three packages (root, cli and
+    # migrate modules) so the pool really has several to run at once.
+    multi_ok=$'SELF-TEST-41\t./internal/core\tTestCheckClosuresSelfTestFixture_AlwaysPasses\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-42\t./cli/internal/securefiles\tTestCheckClosuresSelfTestFixture_CLIModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-43\t./migrate/internal/accessplan\tTestCheckClosuresSelfTestFixture_MigrateModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row'
+    multi_missing=$'SELF-TEST-44\t./cli/internal/securefiles\tTestThisNameDoesNotExistAnywhere\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-45\t./internal/core\tTestCheckClosuresSelfTestFixture_AlwaysPasses\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-46\t./migrate/internal/accessplan\tTestCheckClosuresSelfTestFixture_MigrateModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row'
+    multi_fail=$'SELF-TEST-47\t./cli/internal/securefiles\tTestCheckClosuresSelfTestFixture_CLIModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-48\t./internal/core\tTestCheckClosuresSelfTestFixture_FailsWhenAsked\tdefault-ci\tdeadbeef\t-\tcalibration row\nSELF-TEST-49\t./migrate/internal/accessplan\tTestCheckClosuresSelfTestFixture_MigrateModulePasses\tdefault-ci\tdeadbeef\t-\tcalibration row'
+
+    CHECK_CLOSURES_JOBS=4 \
+    run_case "pool of 4: several packages, all passing" "accept" "$multi_ok" ""
+
+    CHECK_CLOSURES_JOBS=4 \
+    WANT_OUT=$'ok   SELF-TEST-45 -> TestCheckClosuresSelfTestFixture_AlwaysPasses (default-ci)\nSELF-TEST-44: proving test TestThisNameDoesNotExistAnywhere DOES NOT EXIST (go test matched nothing, exited 0).\nok   SELF-TEST-46 -> TestCheckClosuresSelfTestFixture_MigrateModulePasses (default-ci)' \
+    run_case "pool of 4: a missing test in one of several packages is still rejected, same message" "reject" "$multi_missing" ""
+
+    CHECK_CLOSURES_JOBS=4 CHECK_CLOSURES_SELFTEST_FAIL=1 \
+    WANT_OUT=$'SELF-TEST-48: proving test TestCheckClosuresSelfTestFixture_FailsWhenAsked FAILED\nok   SELF-TEST-47 -> TestCheckClosuresSelfTestFixture_CLIModulePasses (default-ci)\nok   SELF-TEST-49 -> TestCheckClosuresSelfTestFixture_MigrateModulePasses (default-ci)' \
+    run_case "pool of 4: a failing package among passing ones is rejected" "reject" "$multi_fail" ""
+
+    # Queued cases keep their own WANT_OUT and their own verdict: two cases
+    # queued back to back, each with a different required line, both running at
+    # once, must each be checked against ITS output (a late read of WANT_OUT, or
+    # a mix-up of the per-case result files, turns one of them red).
+    WANT_OUT=$'UNVERIFIED-BY-CI SELF-TEST-50 -> queued case one' \
+    run_case "queued case keeps its own required line (one)" "accept" \
+        $'SELF-TEST-50\t-\t-\tmanual\tdeadbeef\t-\tqueued case one' \
+        "-"
+    WANT_OUT=$'UNVERIFIED-BY-CI SELF-TEST-51 -> queued case two' \
+    run_case "queued case keeps its own required line (two)" "accept" \
+        $'SELF-TEST-51\t-\t-\tmanual\tdeadbeef\t-\tqueued case two' \
+        "-"
+    WANT_OUT=$'SELF-TEST-52: verification=manual requires a note' \
+    run_case "queued case keeps its own verdict (rejected next to accepted ones)" "reject" \
+        $'SELF-TEST-52\t-\t-\tmanual\tdeadbeef\t-\t' \
+        "-"
+
+    # Same ledger, pool of 1 and pool of 4: identical output (same order, same
+    # messages, same exit code). Only deterministic outputs are compared: the
+    # passing and the missing-test ledgers print no go test timings.
+    st_pool_run() {
+        local base="$1" jobs="$2" out rc
+        set +e
+        out=$(CLOSURE_LEDGER="$st_dir/cmp.$3.ledger" CLOSURE_LEDGER_D="$st_dir/cmp.empty" CHECK_CLOSURES_JOBS="$jobs" env -u KEYORIX_TEST_PG_DSN "$0" 2>&1); rc=$?
+        set -e
+        printf '%s\n' "$out" > "$base.out"
+        printf '%s\n' "$rc" > "$base.rc"
+    }
+    mkdir "$st_dir/cmp.empty"
+    for ledger_name in multi_ok multi_missing; do
+        printf '%s\n' "${!ledger_name}" > "$st_dir/cmp.$ledger_name.ledger"
+        st_spawn st_pool_run "$st_dir/cmp.$ledger_name.1" 1 "$ledger_name"
+        st_spawn st_pool_run "$st_dir/cmp.$ledger_name.4" 4 "$ledger_name"
+    done
+    # Print the queued cases first (their lines come before the comparison's).
+    st_flush
+    echo "timing: calibration cases and pool comparison runs took $((SECONDS - st_t0))s" >&2
+    for ledger_name in multi_ok multi_missing; do
+        b1="$st_dir/cmp.$ledger_name.1"; b4="$st_dir/cmp.$ledger_name.4"
+        if [ ! -f "$b1.rc" ] || [ ! -f "$b4.rc" ]; then
+            echo "FAIL: self-test case 'pool of 1 vs pool of 4 ($ledger_name)': no result (worker killed?)" >&2
+            selffail=1
+            continue
+        fi
+        pool1=$(<"$b1.out"); pool1_rc=$(<"$b1.rc")
+        pool4=$(<"$b4.out"); pool4_rc=$(<"$b4.rc")
+        # Drop the pool banner (it only exists for jobs > 1); everything else must match.
+        pool4=$(grep -vF '==> running ' <<<"$pool4" || true)
+        if [ "$pool1_rc" -ne "$pool4_rc" ] || [ "$pool1" != "$pool4" ]; then
+            echo "FAIL: self-test case 'pool of 1 vs pool of 4 ($ledger_name)': output or exit code differs" >&2
+            diff <(printf '%s\n' "$pool1") <(printf '%s\n' "$pool4") | sed 's/^/      /' >&2 || true
+            selffail=1
+        else
+            echo "  ok: 'pool of 1 vs pool of 4 ($ledger_name)' identical output and exit code (exit $pool1_rc)"
+        fi
+    done
+
+    CHECK_CLOSURES_JOBS=abc \
+    run_case "worker limit that is not a number" "reject" "$multi_ok" ""
+    CHECK_CLOSURES_JOBS=0 \
+    run_case "worker limit 0" "reject" "$multi_ok" ""
+
+    st_flush
+
     # The fragment-shape validator lives in the generator; run its own self-test.
+    st_t0=$SECONDS
     echo; "$REPO_ROOT/scripts/gen-security-closures-tsv.sh" --self-test || selffail=1
+    echo "timing: generator self-test took $((SECONDS - st_t0))s; total $((SECONDS - script_t0))s" >&2
 
     if [ "$selffail" -ne 0 ]; then
         exit 1

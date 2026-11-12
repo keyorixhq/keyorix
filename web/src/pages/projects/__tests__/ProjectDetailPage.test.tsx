@@ -71,6 +71,19 @@ beforeEach(() => {
     projectQuery = { data: baseProject, isLoading: false, isError: false };
 });
 
+// useCan is the session's permission union; these tests drive the controls, so the default
+// is a session that holds everything. The permission-gating tests flip canState.
+const canState = vi.hoisted(() => ({
+    admin: true,
+    writeSecrets: true,
+    deleteSecrets: true,
+    readAudit: true,
+    manageMembers: true,
+}));
+vi.mock('../../../features/auth/useCan', () => ({
+    useCan: () => ({ ...canState }),
+}));
+
 describe('ProjectDetailPage — loading state', () => {
     it('renders a loading skeleton and no header while the project is fetching', () => {
         projectQuery = { data: undefined, isLoading: true, isError: false };
@@ -209,5 +222,23 @@ describe('ProjectDetailPage — project id parsing', () => {
         renderPage('/projects/42/secrets');
         expect(useProjectMock).toHaveBeenCalledWith(42);
         expect(screen.getByText('secrets tab stub (42)')).toBeInTheDocument();
+    });
+});
+
+describe('ProjectDetailPage — Edit gating (secrets.write)', () => {
+    beforeEach(() => {
+        Object.assign(canState, { writeSecrets: true });
+    });
+
+    it('offers Edit to a session that holds secrets.write', () => {
+        renderPage();
+        expect(screen.getByTitle('Edit project')).toBeInTheDocument();
+    });
+
+    it('hides Edit without secrets.write', () => {
+        canState.writeSecrets = false;
+        renderPage();
+        expect(screen.getByRole('heading', { name: 'Payments Platform' })).toBeInTheDocument();
+        expect(screen.queryByTitle('Edit project')).not.toBeInTheDocument();
     });
 });

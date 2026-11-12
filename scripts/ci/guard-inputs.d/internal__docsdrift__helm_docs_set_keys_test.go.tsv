@@ -1,0 +1,1 @@
+internal/docsdrift/helm_docs_set_keys_test.go	README.md,deploy/helm/keyorix/README.md,docs/**/*.md,deploy/helm/keyorix/values.yaml,!**	documented `--set` chart keys (README.md, the chart README, every .md under docs/) against deploy/helm/keyorix/values.yaml; nothing else is walked

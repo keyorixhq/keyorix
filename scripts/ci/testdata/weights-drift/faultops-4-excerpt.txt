@@ -1,0 +1,7 @@
+test-suite (faultops-4, 3300, coverage_faultops4.out)	UNKNOWN STEP	2026-11-08T21:06:55.1369054Z === RUN   TestMFAResetOpsFaultSweep/REST_POST_/api/v1/mfa-reset-requests/d900420000
+test-suite (faultops-4, 3300, coverage_faultops4.out)	UNKNOWN STEP	2026-11-08T21:06:55.1372810Z     zz_mfa_reset_ops_sweep_test.go:37: input=d900420000 -> op="REST POST /api/v1/mfa-reset-requests" fault=(method=CreateMFAResetRequest, NthCall=1, kind=error) principal=admin (bootstrapped)
+test-suite (faultops-4, 3300, coverage_faultops4.out)	UNKNOWN STEP	2026-11-08T21:29:18.5558085Z --- PASS: TestMFAResetOpsFaultSweep (1346.28s)
+test-suite (faultops-4, 3300, coverage_faultops4.out)	UNKNOWN STEP	2026-11-08T21:29:18.5559482Z     --- PASS: TestMFAResetOpsFaultSweep/REST_POST_/api/v1/mfa-reset-requests/d900420000 (3.85s)
+test-suite (faultops-4, 3300, coverage_faultops4.out)	UNKNOWN STEP	2026-11-08T21:29:18.5560876Z     --- PASS: TestMFAResetOpsFaultSweep/REST_POST_/api/v1/mfa-reset-requests/d900420001 (3.67s)
+test-suite (faultops-4, 3300, coverage_faultops4.out)	UNKNOWN STEP	2026-11-08T21:29:18.5562223Z     --- PASS: TestMFAResetOpsFaultSweep/REST_POST_/api/v1/mfa-reset-requests/d900420002 (3.73s)
+test-suite (faultops-4, 3300, coverage_faultops4.out)	UNKNOWN STEP	2026-11-08T21:29:18.5563590Z     --- PASS: TestMFAResetOpsFaultSweep/REST_POST_/api/v1/mfa-reset-requests/d900460000 (3.73s)

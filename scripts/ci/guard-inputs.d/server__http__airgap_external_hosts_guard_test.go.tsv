@@ -1,0 +1,1 @@
+server/http/airgap_external_hosts_guard_test.go	web/index.html,web/src/**/*.css,web/public/**,server/webui/dist/**,!operator/**	the served markup it scans for external hosts: the web entry page, the CSS and public assets, the embedded dist (web/dist is untracked build output; operator/ is not read)

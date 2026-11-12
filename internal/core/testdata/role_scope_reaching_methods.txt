@@ -19,6 +19,7 @@ InviteGlobalWithLink
 InviteMember
 InviteToProject
 InviteToProjectWithLink
+ListLegacyRoleProjectGrants
 ListPendingInvitationsOutsideAssignableScope
 ListRoleGrantsOutsideAssignableScope
 ReconcileUserBaselineRoles

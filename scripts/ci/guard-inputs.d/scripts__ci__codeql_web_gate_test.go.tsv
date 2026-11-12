@@ -1,0 +1,1 @@
+scripts/ci/codeql_web_gate_test.go	.github/workflows/codeql.yml,!web/**,!README.md,!docs/**/*.md,!scripts/ci/codeql-gate.sh,!scripts/ci/select-affected.py	codeql.yml's filter step; web/, docs, README and script paths are fake changed-file inputs in its tables

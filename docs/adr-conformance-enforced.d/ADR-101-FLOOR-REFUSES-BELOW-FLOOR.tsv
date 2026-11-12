@@ -1,0 +1,1 @@
+ADR-101-FLOOR-REFUSES-BELOW-FLOOR	./internal/storage	TestSchemaEpochFloor_RefusesOutsideSupportedRange	default-ci	pending	2502	a binary below the recorded minCompatibleEpoch floor (or facing a newer epoch with no floor recorded, or a corrupt floor) refuses to start before any migration step

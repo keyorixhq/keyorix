@@ -141,6 +141,75 @@ func TestSelectAffected_TestutilTestFileIsATestSeed(t *testing.T) {
 	}
 }
 
+// CI-FULL-DATA-1: data files that guard tests read sit under scripts/ci/ and
+// internal/testutil/ but are not code, so they no longer force the full suite.
+// Each is exempt only because its reader is selected another way (see
+// DATA_EXEMPT_EXACT in select-affected.py). Every path below is split into two
+// literals, like leafTest is joined from pieces: rule 3 reads this file's
+// literals, and one that spelled a basename (README.md) or a top-level
+// directory ("scripts") would select scripts/ci for every unrelated change to
+// such a file.
+const (
+	guardInputsLegacy   = "scripts/ci/guard-" + "inputs.tsv"
+	guardInputsFragment = "scripts/ci/guard-" + "inputs.d/zz__fixture_test.go.tsv"
+	sqliteAllowlist     = "internal/testutil/sqlitetest/driver_import_" + "allowlist.tsv"
+)
+
+func TestSelectAffected_GuardDataFilesAreNotFull(t *testing.T) {
+	const mod = "github.com/keyorixhq/keyorix/"
+	for _, tc := range []struct {
+		file   string
+		reader string // a package that must be among the seeds
+		legs   []string
+	}{
+		{guardInputsLegacy, "scripts/ci/guardinputs", []string{"root-4"}},
+		{guardInputsFragment, "scripts/ci/guardinputs", []string{"root-4"}},
+		{sqliteAllowlist, "internal/testutil/sqlitetest", []string{"root-2", "root-4"}},
+	} {
+		s := changed(t, tc.file)
+		if s.Mode != "selected" {
+			t.Errorf("%s changed: mode=%q (%s), want selected", tc.file, s.Mode, s.Reason)
+			continue
+		}
+		if _, ok := s.Seeds[mod+tc.reader]; !ok {
+			t.Errorf("%s changed: seeds=%v, want its reader %s among them", tc.file, s.Seeds, tc.reader)
+		}
+		if got := legNames(s); !slices.Equal(got, tc.legs) {
+			t.Errorf("%s changed: legs=%v, want %v", tc.file, got, tc.legs)
+		}
+	}
+}
+
+// The exemption is closed: it names three kinds of file, nothing around them.
+// A guard-inputs.d file that LoadMap does not read (README, a subdirectory),
+// the other scripts/ci/** files and the non-test testutil files stay FULL, and
+// an exempt file never hides a real FULL trigger next to it.
+func TestSelectAffected_GuardDataExemptionIsNotWidened(t *testing.T) {
+	for _, f := range []string{
+		"scripts/ci/guard-" + "inputs.d/READ" + "ME.md",      // LoadMap reads *.tsv only
+		"scripts/ci/guard-" + "inputs.d/sub/zz__ignored.tsv", // LoadMap does not descend
+		"scripts/ci/global-" + "guards.txt",
+		"scripts/ci/run-input-" + "guards.sh",
+		"scripts/ci/tool-" + "versions.env",
+		"scripts/ci/guardinputs/main" + ".go",
+		"internal/testutil/sqlitetest/testdata/zz__fixture" + ".tsv",
+		"internal/testutil/sqlitetest/sqlitetest" + ".go",
+	} {
+		if s := changed(t, leafTest, f); s.Mode != "full" {
+			t.Errorf("%s changed: mode=%q, want full (not one of the exempt data files)", f, s.Mode)
+		}
+	}
+	for _, trigger := range []string{
+		"scripts/ci/select-affected" + ".py",
+		"go" + ".mod",
+		"internal/testutil/sqlitetest/sqlitetest" + ".go",
+	} {
+		if s := changed(t, guardInputsLegacy, guardInputsFragment, sqliteAllowlist, trigger); s.Mode != "full" {
+			t.Errorf("exempt data files + %s: mode=%q, want full", trigger, s.Mode)
+		}
+	}
+}
+
 func TestSelectAffected_GitFailureFallsBackToFull(t *testing.T) {
 	s := runSelect(t, "--base", "0000000000000000000000000000000000000000", "--head", "HEAD")
 	if s.Mode != "full" {
@@ -203,6 +272,29 @@ func TestSelectAffected_DataFileSelectsItsReaders(t *testing.T) {
 	s := changed(t, "docs/full-row-write-exempt.tsv")
 	if _, ok := s.Legs["storage-store-1"]; !ok {
 		t.Errorf("storage-store-1 not selected for its guard's ledger; legs=%v seeds=%v", legNames(s), s.Seeds)
+	}
+}
+
+// A web/ or cli/ change must not start the four core legs through a test's data:
+// a bare "web" or "cli" in an internal/core test (a project name, a client
+// string) reads as the whole directory to rule 3. Spell such values so they name
+// no top-level directory ("web-app", "keyorix-cli"). A test that really reads
+// web/ or cli/ belongs in internal/core/guards, outside the core legs.
+func TestSelectAffected_WebOrCLIChangeLeavesCoreLegsOut(t *testing.T) {
+	const core = "github.com/keyorixhq/keyorix/internal/core"
+	for _, f := range []string{"web/package.json", "cli/cmd/run.go"} {
+		s := changed(t, f)
+		if s.Mode != "selected" {
+			t.Fatalf("%s: mode=%q (%s), want selected", f, s.Mode, s.Reason)
+		}
+		if why, ok := s.Seeds[core]; ok {
+			t.Errorf("%s selects internal/core: %s", f, why)
+		}
+		for _, leg := range legNames(s) {
+			if strings.HasPrefix(leg, "core-") {
+				t.Errorf("%s starts leg %s", f, leg)
+			}
+		}
 	}
 }
 

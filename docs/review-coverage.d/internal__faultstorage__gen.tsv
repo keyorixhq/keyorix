@@ -1,0 +1,1 @@
+internal/faultstorage/gen	none	-	PR #1969: go:generate code generator that produces faulty_storage_generated.go from the storage.Storage interface source; not part of any runtime path, only main.go, output is checked in and reviewed alongside internal/faultstorage.	test-helper

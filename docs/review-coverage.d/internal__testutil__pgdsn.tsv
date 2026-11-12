@@ -1,0 +1,1 @@
+internal/testutil/pgdsn	none	-	PR #1973: test-only helper (PGSearchPathDSN) that formats a schema-scoped search_path onto a KEYORIX_TEST_PG_DSN base DSN, keyword/value or URL form; no production caller, only *_test.go files in core/store/server/http import it	test-helper

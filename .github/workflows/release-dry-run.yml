@@ -24,7 +24,7 @@ on:
       - web/package.json
       - web/pnpm-lock.yaml
   schedule:
-    # Same weekly-reminder shape as govulncheck-scheduled.yml/osv-scanner.yml:
+    # Same weekly-reminder shape as osv-scanner.yml:
     # a release can start failing with no PR touching any of the paths above
     # (a base image going away, a registry rate-limit change, an upstream
     # tool's behavior shifting under a floating installer step).
@@ -51,7 +51,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
 
       # `make release` depends on populate-webui-dist (pnpm install + build of
       # web/) same as release.yml's own build-and-release job -- see that

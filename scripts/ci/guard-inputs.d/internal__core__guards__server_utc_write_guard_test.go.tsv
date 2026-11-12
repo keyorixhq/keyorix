@@ -1,0 +1,1 @@
+internal/core/guards/server_utc_write_guard_test.go	!operator/**	walks server/ and the store/handler trees; operator/ is not walked

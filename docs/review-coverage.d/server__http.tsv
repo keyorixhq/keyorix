@@ -1,0 +1,1 @@
+server/http	full-adversarial	baseline-2026-08-07/baseline/http-handlers-findings.json (router.go in file scope) + landed fix-regression tests in server/http/	server/http/wire_actor_identity_forgery_guard_test.go:TestNoUnjustifiedActorIdentityForgery; server/http/raw_storage_bypass_guard_test.go:TestNoUnjustifiedRawStorageBypass	-

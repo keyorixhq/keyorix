@@ -280,8 +280,42 @@ func resetWorldTables(db *gorm.DB, backend string) error {
 		if len(tables) == 0 {
 			return nil
 		}
-		stmt := "TRUNCATE TABLE " + strings.Join(tables, ", ") + " RESTART IDENTITY CASCADE" // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- tables comes from pg_tables (this connection's own migrated schema), never fuzzer/external input
-		if err := db.Exec(stmt).Error; err != nil {
+		// TRUNCATE costs per table (a new relfile each), about 0.2 s for the whole
+		// schema, and an iteration touches a handful of tables. So truncate only the
+		// tables that hold a row (one EXISTS probe per table, one round trip), and
+		// restart every sequence that has handed out a value, since a rolled-back
+		// insert burns a serial value in a table that is empty again.
+		probes := make([]string, len(tables))
+		for i, tbl := range tables {
+			q := `"` + tbl + `"`
+			probes[i] = "SELECT '" + tbl + "' AS t WHERE EXISTS (SELECT 1 FROM " + q + ")" // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- tbl comes from pg_tables (this connection's own migrated schema), never fuzzer/external input
+		}
+		var dirty []string
+		if err := db.Raw(strings.Join(probes, " UNION ALL ")).Scan(&dirty).Error; err != nil {
+			return fmt.Errorf("probe postgres tables for rows: %w", err)
+		}
+		var usedSeqs []string
+		if err := db.Raw(`SELECT '"' || sequencename || '"' FROM pg_sequences WHERE schemaname = current_schema() AND last_value IS NOT NULL`).Scan(&usedSeqs).Error; err != nil {
+			return fmt.Errorf("list used postgres sequences: %w", err)
+		}
+		var stmts []string
+		if len(dirty) > 0 {
+			stmts = append(stmts, `TRUNCATE TABLE "`+strings.Join(dirty, `", "`)+`" RESTART IDENTITY CASCADE`) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- dirty comes from pg_tables (this connection's own migrated schema), never fuzzer/external input
+		}
+		for _, seq := range usedSeqs {
+			stmts = append(stmts, "ALTER SEQUENCE "+seq+" RESTART") // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- seq comes from pg_sequences (this connection's own migrated schema), never fuzzer/external input
+		}
+		if len(stmts) == 0 {
+			return nil
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			for _, stmt := range stmts {
+				if err := tx.Exec(stmt).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
 			return fmt.Errorf("truncate postgres tables: %w", err)
 		}
 		return nil
@@ -320,6 +354,23 @@ func withoutLeakedTable(tables []string) []string {
 		out = append(out, tbl)
 	}
 	return out
+}
+
+// keepEncryptionAcrossResets makes every later resetForReuse of w hand the same
+// initialized encryption service to its new core, instead of deriving a new KEK.
+// That derivation is the bulk of a reset for an op that needs encryption: 600,000
+// PBKDF2 iterations took about 1.3 s under -race in CI, twice per input, 71% of
+// TestMFAResetOpsFaultSweep. Nothing leaks through the kept service: the core only
+// sees ports.EncryptionProvider (encrypt, decrypt, two status reads), it holds no
+// per-iteration state, and every ciphertext is wiped with its table on reset. Each
+// world keeps its own service, so the reference and faulted worlds still have
+// different keys, as fresh worlds do.
+//
+// Opt-in per world, because the default stays "same in-memory state as a fresh
+// world". TestMFAResetSweepReuseMatchesFreshWorlds is the gate for the one caller.
+// tb owns the key directory, so it must outlive every reset of w.
+func (w *faultWorld) keepEncryptionAcrossResets(tb tbLite) {
+	w.encKeepTB = tb
 }
 
 // resetForReuse restores w to the exact same logical starting state a fresh

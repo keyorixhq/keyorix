@@ -41,7 +41,7 @@
 # <added_by> / <reviewed_by>
 #            the session/PR that added the row, and a DIFFERENT one that
 #            checked its claim. Enforced by
-#            internal/core/exempt_ledger_review_test.go
+#            internal/core/guards/exempt_ledger_review_test.go
 #            (TestExemptLedgers_EveryRowIndependentlyReviewed), which registers
 #            this ledger with addedByCol=3 / reviewedByCol=4. An author cannot
 #            vouch for their own exemption.

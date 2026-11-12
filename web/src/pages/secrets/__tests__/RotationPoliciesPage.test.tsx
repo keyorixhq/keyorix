@@ -137,6 +137,19 @@ beforeEach(() => {
     projListMock.mockResolvedValue([]);
 });
 
+// useCan is the session's permission union; these tests drive the controls, so the default
+// is a session that holds everything. The permission-gating tests flip canState.
+const canState = vi.hoisted(() => ({
+    admin: true,
+    writeSecrets: true,
+    deleteSecrets: true,
+    readAudit: true,
+    manageMembers: true,
+}));
+vi.mock('../../../features/auth/useCan', () => ({
+    useCan: () => ({ ...canState }),
+}));
+
 describe('RotationPoliciesPage — policies list', () => {
     it('shows a loading indicator while policies are loading', () => {
         policiesState.isLoading = true;
@@ -624,5 +637,65 @@ describe('RotationPoliciesPage — delete policy', () => {
         fireEvent.click(within(row).getByTitle('Delete'));
 
         expect(screen.getByText('An unexpected error occurred')).toBeInTheDocument();
+    });
+});
+
+describe('RotationPoliciesPage — Edit/Delete gating (secrets.write)', () => {
+    beforeEach(() => {
+        Object.assign(canState, { writeSecrets: true });
+    });
+
+    it('offers Edit and Delete on a row to a session that holds secrets.write', () => {
+        envListMock.mockResolvedValue(envFixture);
+        policiesState.policies = policiesFixture;
+        render(<RotationPoliciesPage />);
+        const row = screen.getByText('DB Rotation Policy').closest('tr')!;
+        expect(within(row).getByTitle('Edit')).toBeInTheDocument();
+        expect(within(row).getByTitle('Delete')).toBeInTheDocument();
+    });
+
+    it('hides Edit and Delete without secrets.write but still lists the policy', () => {
+        canState.writeSecrets = false;
+        envListMock.mockResolvedValue(envFixture);
+        policiesState.policies = policiesFixture;
+        render(<RotationPoliciesPage />);
+        const row = screen.getByText('DB Rotation Policy').closest('tr')!;
+        expect(within(row).queryByTitle('Edit')).not.toBeInTheDocument();
+        expect(within(row).queryByTitle('Delete')).not.toBeInTheDocument();
+    });
+});
+
+describe('RotationPoliciesPage — New Policy gating (secrets.write)', () => {
+    beforeEach(() => {
+        Object.assign(canState, { writeSecrets: true });
+    });
+
+    it('offers New Policy in the header and the empty state to a session that holds secrets.write', () => {
+        render(<RotationPoliciesPage />);
+        expect(screen.getAllByRole('button', { name: /New Policy/i })).toHaveLength(2);
+    });
+
+    it('offers New Policy in the header when policies exist', () => {
+        envListMock.mockResolvedValue(envFixture);
+        policiesState.policies = policiesFixture;
+        render(<RotationPoliciesPage />);
+        expect(screen.getAllByRole('button', { name: /New Policy/i })).toHaveLength(1);
+    });
+
+    it('hides New Policy without secrets.write, in the header and the empty state', () => {
+        canState.writeSecrets = false;
+        render(<RotationPoliciesPage />);
+        // the page still renders, so the absence below is not vacuous
+        expect(screen.getByText('No rotation policies yet')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /New Policy/i })).not.toBeInTheDocument();
+    });
+
+    it('hides New Policy without secrets.write when policies exist', () => {
+        canState.writeSecrets = false;
+        envListMock.mockResolvedValue(envFixture);
+        policiesState.policies = policiesFixture;
+        render(<RotationPoliciesPage />);
+        expect(screen.getByText('DB Rotation Policy')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /New Policy/i })).not.toBeInTheDocument();
     });
 });

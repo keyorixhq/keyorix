@@ -120,21 +120,23 @@ today's first-boot behaviour for `pcr_policy: none` only):
 3. Policy session salted to the SRK, `EncryptOut`, PolicyPCR, Unseal (`TPM_RC_POLICY_FAIL` gives
    `boot-state-changed`; read the PCRs and print the diff against `values_at_seal`).
 4. `validateKEK`, check `kek_id`, return. No fallback beyond the existing `AllowWeakerFallback`
-   rules.
+   rules, and none at all under a PCR policy (ADR-117 D16).
 
 **Recover** (`admin encryption tpm recover`, an offline host command run as the service user,
 like `recover-admin`):
 1. Read the code from the TTY (or `--recovery-code-file`). Open the slot. Check `kek_id`.
    Trial-unwrap `dek.key`.
-2. Reseal the same KEK to the current TPM and PCR state. Write v2 atomically, keeping the same
-   slot.
-3. Write the audit event `encryption.tpm_recovery_used` and set the sticky posture flag. Print
-   "rotate the recovery code now".
-4. A failure at any step changes nothing on disk.
+2. Reseal the same KEK to the current TPM and PCR state, without replacing the blob yet.
+3. Write the audit event `encryption.tpm_recovery_used` with `--authorized-by` and `--reason`
+   (ADR-117 D15). If it cannot be written, stop here.
+4. Write v2 atomically, keeping the same slot. Set the sticky posture flag. Print "rotate the
+   recovery code now".
+5. A failure before step 4 leaves the blob byte-identical.
 
 **Reseal** (`admin encryption tpm reseal [--pcr-policy …]`): needs a working unseal now. Used to
 change the policy, to move v1 to v2, or to add a slot. Moving into PCR mode prints the D9 warning
-(old blobs cannot be revoked) and offers the DEK sweep.
+(old blobs cannot be revoked) and offers a new KEK followed by the DEK sweep, default yes (ADR-117
+D17).
 
 **Rotate the recovery code** (`admin encryption tpm recovery-code rotate`): needs a working
 unseal. Writes a new slot and clears the posture flag. Prints the D9 rule for old copies.

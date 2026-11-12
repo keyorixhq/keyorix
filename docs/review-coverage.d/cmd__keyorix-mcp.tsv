@@ -1,0 +1,1 @@
+cmd/keyorix-mcp	full-adversarial	baseline-2026-08-07, two independent passes (batch 2 "mcp" + mini-batch 8 "cmd-mcp")	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/cmd-mcp-findings.json — well-evidenced zero: env-var-only credential intake, TLS/redirect-downgrade guard, stdio-only trust boundary, distroless Dockerfile	-

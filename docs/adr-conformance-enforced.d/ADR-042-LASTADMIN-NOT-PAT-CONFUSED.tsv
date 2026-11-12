@@ -1,0 +1,1 @@
+ADR-042-LASTADMIN-NOT-PAT-CONFUSED	./internal/core	TestGuardLastAdminDeactivation_NotFooledByActingCallersPATRestriction	default-ci	pending	-	guardLastAdminDeactivation asks about the TARGET's admin status, not the acting caller's PAT restriction

@@ -1,0 +1,1 @@
+cmd/validate-translations	full-adversarial	baseline-2026-08-07/baseline/cmd-validate-translations-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/cmd-validate-translations-findings.json — 1 MEDIUM finding (double base-dir join breaks every real invocation), confirmed by agent actually running the tool	-

@@ -27,7 +27,11 @@ made more conservative because this one gates main):
    script and the guard runner); scripts/ci-test-legs.sh or
    scripts/ci-test-quick.py (leg definitions); a generated-code input (*.proto,
    buf*.yaml, a generator program directory named gen or *gen, or a .go file
-   with a //go:generate line at either end of the diff).
+   with a //go:generate line at either end of the diff). Exempt, being data
+   that guard tests read and not code (DATA_EXEMPT_EXACT says why each reader
+   is covered): scripts/ci/guard-inputs.tsv, scripts/ci/guard-inputs.d/*.tsv and
+   internal/testutil/sqlitetest/driver_import_allowlist.tsv. They go through
+   rules 2-5 like any other file.
 2. Otherwise every changed file is mapped to the root-module package whose
    directory is its nearest ancestor (so testdata/, embedded files and other
    non-Go files in a package directory select that package). It is a CODE
@@ -81,6 +85,24 @@ FULL_EXACT = {
     "buf.gen.yaml",
     "buf.work.yaml",
 }
+# Data files that sit under a FULL_PREFIXES directory but are read by guard
+# tests, not compiled or run (CI-FULL-DATA-1). Each is exempt from rule 1 only
+# because its reader is covered another way, and the list is closed: no other
+# scripts/ci/** or internal/testutil/** file is exempt.
+#   scripts/ci/guard-inputs.tsv, scripts/ci/guard-inputs.d/<row>.tsv: read by
+#     scripts/ci/guardinputs (LoadMap: the legacy file plus every direct *.tsv
+#     child of the fragment directory; a README.md or a subdirectory is not
+#     read, so those stay FULL). decide() seeds that package for them.
+#   internal/testutil/sqlitetest/driver_import_allowlist.tsv: read by
+#     TestNoNewDriverSqliteTestImports in the same package, which rule 2 selects
+#     (the file is not embedded, so a test seed) and which repo-guards runs on
+#     every PR (rule 5: the test imports go/parser and walks the tree).
+DATA_EXEMPT_EXACT = {
+    "scripts/ci/guard-inputs.tsv",
+    "internal/testutil/sqlitetest/driver_import_allowlist.tsv",
+}
+GUARD_INPUTS_FRAGMENT = re.compile(r"^scripts/ci/guard-inputs\.d/[^/]+\.tsv$")
+GUARDINPUTS_PKG = MODULE + "/scripts/ci/guardinputs"
 GENERATOR_DIR = re.compile(r"(^|/)[a-z0-9_-]*gen/")
 # Separate Go modules: their files never belong to a root-module package.
 OTHER_MODULES = ("cli/", "operator/", "migrate/", "devtools/vacuum/")
@@ -129,13 +151,19 @@ def is_testutil_test_file(f):
     return f.startswith("internal/testutil/") and f.endswith("_test.go")
 
 
+def is_guard_data_file(f):
+    """A data file read by a guard test whose reader is covered by rules 2/3/5
+    (see DATA_EXEMPT_EXACT), not a helper or a CI script."""
+    return f in DATA_EXEMPT_EXACT or bool(GUARD_INPUTS_FRAGMENT.match(f))
+
+
 def full_reason(changed, base, head):
     for f in changed:
         if os.path.basename(f) in FULL_BASENAMES:
             return f"{f} changed (dependency graph)"
         if f in FULL_EXACT:
             return f"{f} changed (CI selection/leg definition or generated-code input)"
-        if f.startswith(FULL_PREFIXES) and not is_testutil_test_file(f):
+        if f.startswith(FULL_PREFIXES) and not is_testutil_test_file(f) and not is_guard_data_file(f):
             return f"{f} changed (shared test helpers or CI scripts)"
         if f.endswith(".proto"):
             return f"{f} changed (generated-code input)"
@@ -426,6 +454,13 @@ def decide(base, head, changed=None):
     # ledger or its checker must select that leg.
     if any(f.startswith("docs/security-closures.d/") or f == "scripts/check-closures.sh" for f in changed):
         seed(MODULE + "/internal/core", False, "security-closure ledger or checker changed (closures-pg proves pg-gated rows when core-1 runs)")
+
+    # guard-inputs ledger: guardinputs.LoadMap finds the fragments through a
+    # directory name it computes (FragmentDir), so no literal names a fragment
+    # and rule 3 cannot see its reader. Name the reader here. A test seed: the
+    # ledger is data, nothing imports it.
+    if any(f == "scripts/ci/guard-inputs.tsv" or GUARD_INPUTS_FRAGMENT.match(f) for f in changed):
+        seed(GUARDINPUTS_PKG, False, "guard-inputs ledger changed (guardinputs tests load the map and its fragments)")
 
     seeds = code_seeds | test_seeds
     affected = set(seeds)

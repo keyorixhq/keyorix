@@ -24,3 +24,12 @@
   not against whoever holds the target's tokens); a user caller authenticated by a CIDR-only restricted PAT;
   and the user path's non-admin branch, which requires only `roles.assign` and not that the
   actor holds what the target holds (INV-CORE-01 follow-up issue).
+  **Mint-time ceiling only (by design, Andrei 2026-11-08, PAT-SCOPE-TAILS-1 item 4):** the
+  privilege ceiling above is checked when the token is minted and never again. A machine
+  credential records no issuer; its authority is the machine identity's own roles,
+  re-resolved live at each use. If the user (or machine) that issued it later loses the
+  authority to issue it, already-minted machine tokens stay valid until revoked or
+  expired. This differs from a PAT, whose owner's lost ceiling is refused at use time
+  (`server/http` `pat_owner_lost_ceiling_use_time_test.go`). Open idea, not a task:
+  record `issuer_user_id` on the credential and re-check the issuer's ceiling at use time
+  (a schema and read-path change, its own session); see the ADR-042 addendum of 2026-11-08.

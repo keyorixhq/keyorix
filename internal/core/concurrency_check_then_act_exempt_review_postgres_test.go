@@ -48,6 +48,7 @@ import (
 	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 // ctaReview is one test's two-replica Postgres fixture: a bootstrapped admin
@@ -70,12 +71,30 @@ type ctaReview struct {
 	adminID   uint
 	projectID uint
 	envID     uint
+	// appName tags every Postgres connection of the fixture (empty on SQLite),
+	// so lockWaiters counts this fixture's backends and not those of a parallel
+	// test or another package on the same database.
+	appName string
 }
 
 func newCTAReview(t *testing.T) *ctaReview {
 	t.Helper()
-	dsn := pgIsolatedSchemaDSN(t, pgTestDSN(t))
-	return newCTAReviewOn(t, func() *gorm.DB { return pgOpen(t, dsn) })
+	appName := pgdsn.UniqueApplicationName("kx_cta")
+	dsn := pgdsn.WithApplicationName(pgIsolatedSchemaDSN(t, pgTestDSN(t)), appName)
+	f := newCTAReviewOn(t, func() *gorm.DB { return pgOpen(t, dsn) })
+	f.appName = appName
+	return f
+}
+
+// lockWaiters is the number of this fixture's backends waiting on a lock. Only
+// meaningful on Postgres.
+func (f *ctaReview) lockWaiters() int64 {
+	f.t.Helper()
+	var n int64
+	require.NoError(f.t, f.setupDB.Raw(
+		"SELECT count(*) FROM pg_stat_activity WHERE application_name = ? AND wait_event_type = 'Lock'", f.appName).
+		Scan(&n).Error)
+	return n
 }
 
 // newCTAReviewOn builds the fixture over any backend: open must return a NEW,
@@ -1015,11 +1034,7 @@ func TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres(t *testing.T) 
 				return
 			default:
 			}
-			var waiting int64
-			require.NoError(t, f.setupDB.Raw(
-				"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").
-				Scan(&waiting).Error)
-			if waiting > 0 {
+			if f.lockWaiters() > 0 {
 				return
 			}
 			time.Sleep(10 * time.Millisecond)

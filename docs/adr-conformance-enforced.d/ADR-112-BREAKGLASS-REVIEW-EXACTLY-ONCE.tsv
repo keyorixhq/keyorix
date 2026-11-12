@@ -1,0 +1,1 @@
+ADR-112-BREAKGLASS-REVIEW-EXACTLY-ONCE	./internal/storage/store	TestReviewBreakGlassActivation_SecondAttemptIsRefused	default-ci	pending	2461	a break-glass activation can be reviewed exactly once; a second attempt is refused, not a silent overwrite

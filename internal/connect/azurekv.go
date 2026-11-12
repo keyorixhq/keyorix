@@ -14,6 +14,7 @@ package connect
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -113,6 +114,14 @@ func (c *AzureKeyVaultConnector) GetSecret(ctx context.Context, ref string) (str
 	}
 	out, err := cl.GetSecret(ctx, name, version, nil)
 	if err != nil {
+		// A 2xx other than 200 is not rewritten by errorBodyScrubRoundTripper (it only
+		// scrubs error statuses), so azcore's ResponseError text would carry the
+		// response headers and body verbatim. Report a fixed message and the status
+		// code only (#4061).
+		var re *azcore.ResponseError
+		if errors.As(err, &re) && re.StatusCode >= 200 && re.StatusCode < 300 {
+			return "", fmt.Errorf("azure-key-vault: get %q: unexpected success status %d", ref, re.StatusCode)
+		}
 		return "", fmt.Errorf("azure-key-vault: get %q: %w", ref, err)
 	}
 	// Value != nil alone is not "has a value" -- same shape as the AWS Secrets

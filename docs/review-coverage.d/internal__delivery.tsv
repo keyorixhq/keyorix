@@ -1,0 +1,1 @@
+internal/delivery	full-adversarial	baseline-2026-08-07/baseline/delivery-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/delivery-findings.json — well-evidenced zero: review_notes empirically trace CRLF-injection defenses through vendored go-mail v0.8.1 and stdlib net/textproto DotWriter, verified with a standalone throwaway Go program	-

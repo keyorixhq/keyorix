@@ -1,0 +1,1 @@
+ADR-097-SCHEMA-EPOCH-CORRUPT-FAILS-CLOSED	./internal/storage	TestSchemaEpoch_CorruptValue_CreateStorageRefusesBoot	default-ci	pending	2501	a corrupt (non-integer) schema_epoch refuses boot via CreateStorage, across value shapes a lenient parser would accept, and leaves the database untouched

@@ -120,7 +120,13 @@ func (c *VaultConnector) CheckTokenTTL(ctx context.Context) (ttlSeconds int, ren
 		return 0, false, fmt.Errorf("vault: token TTL lookup failed: %w", netutil.RedactErrorURLs(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, vaultMaxResponseBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, vaultMaxResponseBytes))
+	if err != nil {
+		// A body that dies mid-read can still hold a complete "ttl": 0 prefix, which
+		// would pass for a never-expiring root token (#4063). The read error carries
+		// no body text; the status line is not repeated here.
+		return 0, false, fmt.Errorf("vault: token lookup read failed: %w", netutil.RedactErrorURLs(err))
+	}
 	if resp.StatusCode != http.StatusOK {
 		return 0, false, fmt.Errorf("vault: token lookup returned %d", resp.StatusCode)
 	}

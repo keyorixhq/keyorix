@@ -1,0 +1,1 @@
+internal/securefiles	full-adversarial	baseline-2026-08-07/baseline/securefiles-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/securefiles-findings.json — HIGH: SecureDeleteFile follows symlinks, unlike every sibling primitive in the same file which uses O_NOFOLLOW	-

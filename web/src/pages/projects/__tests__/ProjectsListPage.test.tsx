@@ -544,15 +544,33 @@ describe('ProjectsListPage XSS regression (WEB track backlog item 3)', () => {
 });
 
 describe('ProjectsListPage permission gating', () => {
-    it('hides New Project, edit and delete for a read-only session', () => {
+    // One test per control: each isolates its permission by holding the other one, so a
+    // control wired to the wrong permission fails here.
+    it('hides New Project without secrets.write', () => {
         canState.writeSecrets = false;
-        canState.deleteSecrets = false;
+        canState.deleteSecrets = true;
         hookState.projects = [makeProject({ name: 'alpha' })];
         render(<ProjectsListPage />);
         expect(screen.getByText('alpha')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: /new project/i })).not.toBeInTheDocument();
+    });
+
+    it('hides the per-row edit icon without secrets.write', () => {
+        canState.writeSecrets = false;
+        canState.deleteSecrets = true;
+        hookState.projects = [makeProject({ name: 'alpha' })];
+        render(<ProjectsListPage />);
         expect(screen.queryByTitle('Edit project')).not.toBeInTheDocument();
+        expect(screen.getByTitle('Delete project')).toBeInTheDocument();
+    });
+
+    it('hides the per-row delete icon without secrets.delete', () => {
+        canState.writeSecrets = true;
+        canState.deleteSecrets = false;
+        hookState.projects = [makeProject({ name: 'alpha' })];
+        render(<ProjectsListPage />);
         expect(screen.queryByTitle('Delete project')).not.toBeInTheDocument();
+        expect(screen.getByTitle('Edit project')).toBeInTheDocument();
     });
 
     it('shows New Project, edit and delete for a session that holds the permissions', () => {

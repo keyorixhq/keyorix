@@ -97,7 +97,7 @@ func LoadExemptions(path, pkgPrefix string) (map[Key]Exemption, error) {
 
 // exemptRowColumns is the full row width: key, guard, reason, added_by,
 // reviewed_by. The last two are consumed by
-// internal/core/exempt_ledger_review_test.go, not here -- that test is what
+// internal/core/guards/exempt_ledger_review_test.go, not here -- that test is what
 // enforces "a different session vouched for this claim". This loader only
 // insists they EXIST, so a row cannot be added in a shape that test would skip.
 const exemptRowColumns = 5

@@ -12,6 +12,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -129,6 +130,42 @@ func TestWireGlobalProjectRoleGrantsNotice_LogsLegacyGrants(t *testing.T) {
 	var after int64
 	require.NoError(t, db.Model(&models.UserRole{}).Count(&after).Error)
 	require.Equal(t, before, after, "the check is read-only")
+}
+
+// TestWireGlobalProjectRoleGrantsNotice_LegacyRolesAtProject (#3605): a
+// per-project grant of a legacy role, to a user or a machine identity, gets the
+// notice that names its replacement and not the generic one, and is left alone.
+func TestWireGlobalProjectRoleGrantsNotice_LegacyRolesAtProject(t *testing.T) {
+	// The grants name a user and a machine with no row, which reads as not found.
+	i18n.ResetForTesting()
+	t.Cleanup(i18n.ResetForTesting)
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, kxstorage.MigrateExisting(db))
+	require.NoError(t, db.Create(&models.Role{ID: 20, Name: "viewer", NameFolded: "viewer",
+		AssignableScope: models.BuiltinRoleAssignableScopes["viewer"]}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "payments", NameFolded: "payments"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 20, ProjectID: 2}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 20}).Error) // install-wide: valid
+	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: 4, RoleID: 20, ProjectID: 2}).Error)
+
+	cw := &coreWiring{cfg: &config.Config{}, core: core.NewKeyorixCore(store.NewLocalStorage(db))}
+	var stepErr error
+	out := captureLogs(func() { stepErr = wireGlobalProjectRoleGrantsNotice(cw) })
+	require.NoError(t, stepErr)
+	t.Logf("startup notice:\n%s", out)
+	require.Contains(t, out, "WARNING: 2 existing per-project grant(s) of a legacy role")
+	require.Contains(t, out, "user id 3 holds viewer on project payments; replace with project_viewer")
+	require.Contains(t, out, "machine id 4 holds viewer on project payments; replace with project_viewer")
+	require.NotContains(t, out, "at a scope their role does not allow", "a legacy grant must not be reported twice")
+	require.NotContains(t, out, "id 5", "an install-wide grant of a legacy role is valid")
+	var kept int64
+	require.NoError(t, db.Model(&models.MachineIdentityRole{}).Count(&kept).Error)
+	require.Equal(t, int64(1), kept, "the check is read-only")
 }
 
 // TestWireGlobalProjectRoleGrantsNotice_LogsEnvironmentWithoutProjectGrants

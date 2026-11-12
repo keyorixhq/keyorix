@@ -49,9 +49,9 @@ func TestValidateRoleScope(t *testing.T) {
 		// Phase 2: an install-wide role is refused at a project.
 		{builtin("system_admin"), project, true},
 		{builtin("system_viewer"), Scope{ProjectID: 3, EnvironmentID: 4}, true},
-		// Legacy roles are any: granted per project today.
+		// Legacy roles are install-wide only since #3605.
 		{builtin("admin"), global, false},
-		{builtin("viewer"), project, false},
+		{builtin("viewer"), project, true},
 		{builtin("system_viewer"), Scope{EnvironmentID: 4}, true},
 		{builtin("admin"), Scope{EnvironmentID: 4}, true},
 		// Custom roles: the stored scope decides, never the name.
@@ -326,11 +326,8 @@ func runRoleScopeEntryPoints(t *testing.T, c *KeyorixCore) {
 	require.NoError(t, c.AssignRoleToGroup(ctx, w.adminID, w.groupID, legacyAdmin.ID, Scope{}, false))
 	require.Contains(t, w.grantRows(t), fmtGrant("group", w.groupID, w.projectDeveloper.ID, w.p1, 0))
 	require.Contains(t, w.grantRows(t), fmtGrant("user", w.userID, w.projectDeveloper.ID, w.p1, w.e1))
-	// Phase 2 positive controls: a legacy role (any) at a project, a custom
-	// role at its own scope, and a widened custom role at both.
-	viewer, err := c.storage.GetRoleByName(ctx, "viewer")
-	require.NoError(t, err)
-	require.NoError(t, c.AssignUserRole(ctx, w.adminID, w.userID, viewer.ID, Scope{ProjectID: w.p1}, false))
+	// Phase 2 positive controls: a custom role at its own scope, and a widened
+	// custom role at both.
 	require.NoError(t, c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.customProject.ID, Scope{ProjectID: w.p2}, false))
 	require.NoError(t, c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.customAny.ID, Scope{}, false))
 	require.NoError(t, c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.customAny.ID, Scope{ProjectID: w.p1}, false))

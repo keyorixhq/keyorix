@@ -1,0 +1,1 @@
+ADR-101-FLOOR-NEVER-LOWERED	./internal/storage	TestSchemaEpochFloor_RecordNeverLowersEpochOrFloor	default-ci	pending	2502	recordSchemaEpoch never lowers a recorded schema epoch or compatibility floor

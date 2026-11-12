@@ -483,7 +483,7 @@ J3_NS="${NS_PREFIX}-j3"
 log "J3: installing the operator (namespace-scoped default) in $J3_NS"
 kubectl delete namespace "$J3_NS" --wait=true --ignore-not-found >/dev/null 2>&1 || true
 kx machine create --name k8s-e2e-operator --project default --type k8s --description "k8s-e2e run.sh" >/dev/null
-kx machine grant-role k8s-e2e-operator --project default --role viewer >/dev/null
+kx machine grant-role k8s-e2e-operator --project default --role project_viewer >/dev/null
 OPERATOR_TOKEN="$(kx machine token issue k8s-e2e-operator --name run-sh --project default | awk '/^Token:/{print $2}')"
 [ -n "$OPERATOR_TOKEN" ] || fail "issuing the operator's machine token failed"
 
@@ -529,7 +529,7 @@ log "J4: installing the k8s-sync agent in $J4_NS"
 kubectl delete namespace "$J4_NS" --wait=true --ignore-not-found >/dev/null 2>&1 || true
 kubectl create namespace "$J4_NS" >/dev/null
 kx machine create --name k8s-e2e-sync --project default --type k8s --description "k8s-e2e run.sh" >/dev/null
-kx machine grant-role k8s-e2e-sync --project default --role viewer >/dev/null
+kx machine grant-role k8s-e2e-sync --project default --role project_viewer >/dev/null
 SYNC_TOKEN="$(kx machine token issue k8s-e2e-sync --name run-sh --project default | awk '/^Token:/{print $2}')"
 [ -n "$SYNC_TOKEN" ] || fail "issuing the k8s-sync machine token failed"
 kubectl_token_secret "$J4_NS" keyorix-sync-token "$SYNC_TOKEN"
@@ -597,7 +597,7 @@ helm install external-secrets external-secrets/external-secrets -n "$J5_NS" --cr
     --wait --timeout 120s >/dev/null
 
 kx machine create --name k8s-e2e-eso --project default --type other --description "k8s-e2e run.sh" >/dev/null
-kx machine grant-role k8s-e2e-eso --project default --role viewer >/dev/null
+kx machine grant-role k8s-e2e-eso --project default --role project_viewer >/dev/null
 ESO_TOKEN="$(kx machine token issue k8s-e2e-eso --name run-sh --project default | awk '/^Token:/{print $2}')"
 [ -n "$ESO_TOKEN" ] || fail "issuing the ESO machine token failed"
 kubectl_token_secret "$J5_NS" keyorix-machine-token "$ESO_TOKEN"

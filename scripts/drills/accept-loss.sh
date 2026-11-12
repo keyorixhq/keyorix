@@ -20,7 +20,10 @@
 #      writes nothing on --confirm alone (#3803) and completes it only with --resume-seal
 #      naming the record digest the plan printed; the next server start completes the key
 #      change; SEALED;
-#   8. (AUDIT-SEAL-TAILS-1 finding 1) the seal record is garbled and rotate-kek runs again: the
+#   8. (#4092) an acceptance whose event write fails part way (a database trigger refuses it) exits
+#      non-zero and names the record digest; a --confirm-only re-run and a wrong digest write
+#      nothing; the named digest completes it; SEALED;
+#   9. (AUDIT-SEAL-TAILS-1 finding 1) the seal record is garbled and rotate-kek runs again: the
 #      key change completes but the audit transition stops with "cannot be trusted" and signs
 #      no high-water mark or checkpoint.
 #
@@ -303,7 +306,67 @@ grep -q 'audit key transition to key version .* completed' <<<"$out" || fail "th
 ok "server start completed the key transition"
 offline 4
 
-step "8. garbled seal record during rotate-kek (finding 1)"
+step "8. an acceptance that stops part way names its record digest (#4092)"
+# A real failure of the in-chain event write (a database trigger that refuses the acceptance event):
+# the --confirm run exits non-zero and its error names the record it was writing. The habitual
+# re-run on --confirm alone writes nothing and offers the same digest; a wrong digest writes
+# nothing; only the named digest completes the acceptance.
+srv_start "$I" "$P"
+for _ in 1 2 3 4 5 6; do login_admin "$I" "$P"; done
+cli "$I" "$P" audit checkpoint >/dev/null || fail "audit checkpoint failed"
+srv_stop "$I"
+GAP4="$(db_query "SELECT MAX(id) FROM audit_events")"
+GAP4=$((GAP4 - 3))
+db_exec "DELETE FROM audit_events WHERE id = $GAP4" >/dev/null
+offline 1
+common4=(--operator drill-oncall --reason "DRILL-4: row $GAP4 deleted" --evidence-sha256 "$EVIDENCE")
+CRASH_RE='--resume-seal ([0-9a-f]{64})'
+if [ "$DRILL_BACKEND" = "postgres" ]; then
+    db_exec 'CREATE FUNCTION drill_crash_fn() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RAISE EXCEPTION '"'injected crash'"'; END $f$; CREATE TRIGGER drill_crash BEFORE INSERT ON audit_events FOR EACH ROW WHEN (NEW.event_type = '"'system.audit_loss_accepted'"') EXECUTE FUNCTION drill_crash_fn()' >/dev/null
+    drop_crash() { db_exec 'DROP TRIGGER drill_crash ON audit_events; DROP FUNCTION drill_crash_fn()' >/dev/null; }
+else
+    db_exec "CREATE TRIGGER drill_crash BEFORE INSERT ON audit_events WHEN NEW.event_type = 'system.audit_loss_accepted' BEGIN SELECT RAISE(ABORT, 'injected crash'); END" >/dev/null
+    drop_crash() { db_exec "DROP TRIGGER drill_crash" >/dev/null; }
+fi
+if inst_admin "$I" audit accept-loss --first-broken-id $((GAP4 + 1)) "${common4[@]}" --confirm >"$DRILL_DIR/al4-crash.log" 2>&1; then
+    drop_crash
+    cat "$DRILL_DIR/al4-crash.log" >&2; fail "accept-loss reported success although its event write was refused"
+fi
+if ! [[ "$(cat "$DRILL_DIR/al4-crash.log")" =~ $CRASH_RE ]]; then
+    drop_crash
+    cat "$DRILL_DIR/al4-crash.log" >&2; fail "the failed acceptance does not name the record digest to resume with (#4092)"
+fi
+CRASH="${BASH_REMATCH[1]}"
+grep -q "without --confirm" "$DRILL_DIR/al4-crash.log" || { drop_crash; cat "$DRILL_DIR/al4-crash.log" >&2; fail "the failed acceptance does not say to re-run without --confirm first"; }
+drop_crash
+ok "stopped part way: exit non-zero, the error names record digest ${CRASH:0:16}..."
+offline 1
+EV4="$(db_query "SELECT COUNT(*) FROM audit_events")"
+CP4="$(db_query "SELECT COUNT(*) FROM audit_checkpoints")"
+# The habitual re-run: --confirm alone. Nothing is written and the plan offers the digest the crash named.
+if inst_admin "$I" audit accept-loss "${common4[@]}" --confirm >"$DRILL_DIR/al4-habit.log" 2>&1; then
+    cat "$DRILL_DIR/al4-habit.log" >&2; fail "a re-run on --confirm alone completed the unfinished acceptance (#3803)"
+fi
+grep -q "nothing was written" "$DRILL_DIR/al4-habit.log" || { cat "$DRILL_DIR/al4-habit.log" >&2; fail "the --confirm-only re-run did not say that nothing was written"; }
+grep -q -- "--resume-seal $CRASH" "$DRILL_DIR/al4-habit.log" || { cat "$DRILL_DIR/al4-habit.log" >&2; fail "the plan does not offer the digest the crash named"; }
+[ "$(db_query "SELECT COUNT(*) FROM audit_events")" = "$EV4" ] || fail "the refused re-run appended an audit event"
+[ "$(db_query "SELECT COUNT(*) FROM audit_checkpoints")" = "$CP4" ] || fail "the refused re-run wrote a checkpoint"
+ok "--confirm alone: refused, nothing written, plan offers the crash's digest"
+# A well-formed digest that names no record: refused, nothing written.
+WRONG="$(printf '%064d' 0)"
+if inst_admin "$I" audit accept-loss "${common4[@]}" --resume-seal "$WRONG" --confirm >"$DRILL_DIR/al4-wrong.log" 2>&1; then
+    cat "$DRILL_DIR/al4-wrong.log" >&2; fail "a resume with a wrong --resume-seal digest completed"
+fi
+[ "$(db_query "SELECT COUNT(*) FROM audit_events")" = "$EV4" ] || fail "the wrong-digest resume appended an audit event"
+[ "$(db_query "SELECT COUNT(*) FROM audit_checkpoints")" = "$CP4" ] || fail "the wrong-digest resume wrote a checkpoint"
+ok "wrong --resume-seal digest: refused, nothing written"
+inst_admin "$I" audit accept-loss "${common4[@]}" --resume-seal "$CRASH" --confirm >"$DRILL_DIR/al4-resume.log" 2>&1 \
+    || { cat "$DRILL_DIR/al4-resume.log" >&2; fail "the resume with the digest the crash named failed (#4092)"; }
+grep -q "Accepted: seal #.*record $CRASH" "$DRILL_DIR/al4-resume.log" || { cat "$DRILL_DIR/al4-resume.log" >&2; fail "the resume did not complete the record the crash named"; }
+ok "resumed with the crash's digest: $(grep -m1 'Accepted:' "$DRILL_DIR/al4-resume.log")"
+offline 4
+
+step "9. garbled seal record during rotate-kek (finding 1)"
 db_exec "UPDATE system_metadata SET value = 'garbage' WHERE \"key\" = 'audit_seals'" >/dev/null
 HW1="$(meta audit_checkpoint_highwater)"
 CPN="$(db_query "SELECT COUNT(*) FROM audit_checkpoints")"

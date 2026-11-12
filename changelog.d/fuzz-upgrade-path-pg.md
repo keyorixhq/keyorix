@@ -1,0 +1,2 @@
+### Testing
+- **Skip-version upgrade fuzzers for SQLite and PostgreSQL.** `FuzzUpgradeFromOldSchema` and `FuzzUpgradeInterrupted` (and their `PG` variants, PG-gated) start from real snapshots of releases v0.91.0 to v0.96.3, apply the migrations (also interrupted midway), and check that secrets still decrypt, authorization is unchanged, the audit chain is intact and the schema matches a fresh install. Findings are in `docs/findings/`; the v0.91.0 interrupted-upgrade artifact is reproducible only on the unlocked path.

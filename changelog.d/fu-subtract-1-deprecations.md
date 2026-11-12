@@ -1,0 +1,2 @@
+### Deprecated
+- **`--by` on `keyorix user delete`, `suspend`, `reactivate`, `force-password-reset`, `revoke-sessions` and `resend-setup-link` is deprecated and no longer required.** It was never sent to the server (the acting admin is always your session). Passing it still works and prints a deprecation notice, as for `user create --by`; drop it from scripts. The flag is deleted after one minor release.

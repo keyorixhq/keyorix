@@ -5,6 +5,8 @@ package storage
 
 import (
 	"fmt"
+	"log"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -72,6 +74,42 @@ func alterRoleFlags(db *gorm.DB, exec func(string) error) error {
 		}); err != nil {
 			return fmt.Errorf("failed to add roles.assignable_scope: %w", err)
 		}
+	}
+	return tightenLegacyRolesToGlobal(db)
+}
+
+// tightenLegacyRolesToGlobal moves the legacy built-in roles of a database whose
+// assignable_scope column already exists (written as any by the epoch-7 backfill)
+// to global (#3605). Without it only a fresh install would refuse them at a
+// project: the backfill is gated on the column's absence and role seeding runs at
+// first boot only.
+//
+// Idempotent and run on every boot, so a backup restored from before this change
+// is tightened too. A built-in role's scope cannot be changed through the API
+// (core.UpdateRole refuses built-ins), so this never undoes an admin's choice. It
+// changes no grant. No schema change, so no epoch bump (ADR-101): an older binary
+// reads the same column and refuses the same grants.
+func tightenLegacyRolesToGlobal(db *gorm.DB) error {
+	if !tableExists(db, "roles") || !columnExists(db, "roles", "assignable_scope") {
+		return nil
+	}
+	// The move writes no audit row, so a boot that does it says so once. The
+	// previous scopes are read first so the line can name them.
+	loose := func() *gorm.DB {
+		return db.Model(&models.Role{}).Where("name IN ? AND assignable_scope <> ?", models.LegacyRoleNames(), models.RoleAssignableGlobal)
+	}
+	var previous []string
+	if err := loose().Distinct().Order("assignable_scope").Pluck("assignable_scope", &previous).Error; err != nil {
+		return fmt.Errorf("failed to tighten the legacy roles' assignable scope: %w", err)
+	}
+	res := loose().Update("assignable_scope", models.RoleAssignableGlobal)
+	if res.Error != nil {
+		return fmt.Errorf("failed to tighten the legacy roles' assignable scope: %w", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("storage: tightened assignable_scope of %d legacy role row(s) from %s to %s (#3605); "+
+			"no grant was changed, grants already held at a project keep working",
+			res.RowsAffected, strings.Join(previous, "/"), models.RoleAssignableGlobal)
 	}
 	return nil
 }

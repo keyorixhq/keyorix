@@ -301,9 +301,11 @@ after the break is not notarised: decide soon.
      `verify-audit --anchor <that file>` checks it later (below).
    - It writes the seal record, **one** `system.audit_loss_accepted` event, a fresh checkpoint
      and high-water mark of what survives, and the verification state, in that order. If it stops
-     part way the chain reads broken until the acceptance is completed. Run the command again
+     part way the chain reads broken until the acceptance is completed. Its error prints the
+     record digest it was writing (`--resume-seal <digest>`). Run the command again
      **without** `--confirm`: the resume plan says when the seal was recorded, by whom and why,
-     and prints the record digest. Complete it only if you started that acceptance yourself,
+     and prints the record digest, which must be the one the error printed. If you no longer
+     have the error, take the digest from the plan. Complete it only if you started that acceptance yourself,
      with `--resume-seal <that digest> --confirm`. A resume never writes without
      `--resume-seal`, even with `--confirm` (it exits 1 with "nothing was written"), so a
      habitual re-run cannot complete a record you did not read. A resume of a seal you did not
@@ -384,7 +386,7 @@ after the break is not notarised: decide soon.
 
   | Rolled back to | SQLite, witness file untouched | PostgreSQL, or SQLite with the witness rolled back too |
   |---|---|---|
-  | Part way through a completed acceptance (record and event kept, later rows cut) | Detected if any row certified after the seal is gone: the witness, signed under the seal, certifies it and the resume is refused. Rows written after the last checkpoint were never certified and are not detected | Not detected by the database: it reads as an acceptance that stopped part way. The plan offers to resume it, but nothing is written until you name its record with `--resume-seal <digest>`, so read the plan's "recorded ... by ..." line first |
+  | Part way through a completed acceptance (record and event kept, later rows cut) | Detected if any row certified after the seal is gone: the witness, signed under the seal, certifies it and the resume is refused. Rows written after the last checkpoint were never certified and are not detected | Not detected by the database: it reads as an acceptance that stopped part way. The plan offers to resume it, but nothing is written until you name its record with `--resume-seal <digest>` (the digest is in the plan, run without `--confirm`, and in the error of a run that stopped part way), so read the plan's "recorded ... by ..." line first. A digest from an error you did not see yourself proves nothing |
   | Before a completed acceptance (record and event gone) | Detected: the witness is signed under a seal list the database no longer holds and the plan is refused as a rollback | Not detected: it reads as a fresh, unsealed loss, and a new acceptance would record it again |
   | Before the last checkpoint, no acceptance involved | Not raised by the running server, which does not read the witness (only `admin restore` and `accept-loss` do). `accept-loss` counts the witness, so naming its missing head as a truncation measures and records the cut rows | Not detected |
 

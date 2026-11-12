@@ -1,1 +1,0 @@
-TestTargetLookupsFollowActorAuthorization	internal/core/guards	#3977	new guard (OWNERSHIP-ORACLE-1): a target-user lookup in core must follow the actor authorization in the same function; report-only until its first green nightly on main

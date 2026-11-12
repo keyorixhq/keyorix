@@ -30,3 +30,4 @@ internal-rotation-quote__FuzzMySQLQuoteString.conf	low
 internal-saml__FuzzSAMLMetadata.conf	low
 pkg-bundleverify__FuzzBundleVerify.conf	low
 pkg-bundleverify__FuzzComponentPathContainment.conf	low
+server-http__FuzzCanaryRouteSweep.conf	high

@@ -1,0 +1,1 @@
+internal/testutil/pgdsn/shared_database_lock_guard_test.go	!operator/**	walks internal/ and server/

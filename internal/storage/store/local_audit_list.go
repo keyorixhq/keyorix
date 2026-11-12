@@ -156,6 +156,19 @@ func countAuditLogs(db *gorm.DB, base func() *gorm.DB, mode storage.AuditCountMo
 
 // applyAuditFilter adds every AuditFilter predicate to q. Paging, ordering and
 // the cursor are applied by the caller.
+//
+// Text-filter parity between SQLite and PostgreSQL (AUDIT-SEARCH-PARITY-1,
+// #4090), checked per filter and pinned by local_audit_filter_case_parity_test.go
+// and local_audit_exact_filter_parity_test.go:
+//   - ActorUsername: same on both, folded with foldedContainsClause (Unicode
+//     case-insensitive, by design).
+//   - ResourceType: was different (LIKE), fixed: case-sensitive on both.
+//   - Action, Actions, IPAddress, RequestID, ActorType: "=" / IN on a plain
+//     column, byte-wise and so case-sensitive on both. Same, no fix needed.
+//   - ProjectID, UserID, SecretID, Success, ids and times: not text.
+//
+// There is no free-text filter in this function. Keep any new text predicate on
+// one of these three shapes; a bare LIKE is never case-consistent.
 func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 	if f.ProjectID != nil {
 		q = q.Where("project_id = ?", *f.ProjectID)
@@ -210,26 +223,29 @@ func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 		// escapeLIKE sanitises % and _ in the caller-supplied username so
 		// a value like "admin%" doesn't turn into a wildcard prefix scan
 		// covering all usernames (#r124 LIKE injection).
-		// LOWER on both sides: LIKE is case-insensitive (ASCII) on SQLite but
-		// case-sensitive on Postgres, so without it the same search returned
-		// different rows per backend.
+		// Matched with foldedContainsClause (Unicode-aware case folding on both
+		// backends): LIKE is case-insensitive (ASCII only) on SQLite but
+		// case-sensitive on Postgres, and LOWER() is ASCII-only on SQLite, so the
+		// same search returned different rows per backend.
 		// A machine-identity row stores no user_id: its actor is
 		// machine_identity_id, named by machine_identities.name (the name the
 		// ACTOR column shows, storage.AuditActorName, #3150), so the term also
 		// matches that table (#3736). Machine identities have no soft-delete
 		// column; a revoked one keeps its name, as in the displayed actor.
-		cond := `(user_id IN (SELECT id FROM users WHERE LOWER(username) LIKE LOWER(?) ESCAPE '\' AND deleted_at IS NULL)` +
-			` OR machine_identity_id IN (SELECT id FROM machine_identities WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\'))`
-		if q.Dialector.Name() == "postgres" {
+		dialect := q.Dialector.Name()
+		uCond, uArg := foldedContainsClause(dialect, "username", *f.ActorUsername)
+		mCond, mArg := foldedContainsClause(dialect, "name", *f.ActorUsername)
+		cond := `(user_id IN (SELECT id FROM users WHERE ` + uCond + ` AND deleted_at IS NULL)` +
+			` OR machine_identity_id IN (SELECT id FROM machine_identities WHERE ` + mCond + `))`
+		if dialect == "postgres" {
 			// Same set, but ARRAY(subquery) is evaluated once (an InitPlan): Postgres
 			// turns a plain IN (subquery) into a semi-join and then sorts the join
 			// output, losing the newest-first index walk (pinned by
 			// TestAuditListQueries_UseTheirIndexes_Postgres).
-			cond = `(user_id = ANY(ARRAY(SELECT id FROM users WHERE LOWER(username) LIKE LOWER(?) ESCAPE '\' AND deleted_at IS NULL))` +
-				` OR machine_identity_id = ANY(ARRAY(SELECT id FROM machine_identities WHERE LOWER(name) LIKE LOWER(?) ESCAPE '\')))`
+			cond = `(user_id = ANY(ARRAY(SELECT id FROM users WHERE ` + uCond + ` AND deleted_at IS NULL))` +
+				` OR machine_identity_id = ANY(ARRAY(SELECT id FROM machine_identities WHERE ` + mCond + `)))`
 		}
-		pattern := "%" + escapeLIKE(*f.ActorUsername) + "%"
-		args := []any{pattern, pattern}
+		args := []any{uArg, mArg}
 		// Rows of kind "system" are displayed with actor "system" (#2951), so a
 		// term that is part of "system" (ASCII case-insensitive, e.g. "sys") also
 		// finds exactly those rows: the same rule as actor_type=system
@@ -245,9 +261,32 @@ func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 	if f.ResourceType != nil {
 		// event_type is "resource_type.action" — match rows whose event_type
 		// starts with "<resource_type>." so "secret" catches "secret.read",
-		// "secret.created", etc. escapeLIKE prevents a caller-supplied
-		// resource_type containing % or _ from matching unintended event types.
-		q = q.Where(`event_type LIKE ? ESCAPE '\'`, escapeLIKE(*f.ResourceType)+".%")
+		// "secret.created", etc.
+		//
+		// The match is CASE-SENSITIVE on both backends (#4090): event types are
+		// lower-case constants, so a differently cased value is a caller error
+		// and matches nothing. A bare LIKE cannot give that: it is ASCII
+		// case-insensitive on SQLite and case-sensitive on PostgreSQL. So SQLite
+		// uses GLOB (always case-sensitive, no PRAGMA case_sensitive_like) and
+		// PostgreSQL keeps LIKE (always case-sensitive). Both compare the bare
+		// column against a literal prefix, so no function call hides event_type
+		// from its index. The term is escaped for its operator so a
+		// caller-supplied %, _ (LIKE) or *, ?, [ (GLOB) stays literal.
+		if q.Dialector.Name() == "postgres" {
+			q = q.Where(`event_type LIKE ? ESCAPE '\'`, escapeLIKE(*f.ResourceType)+".%")
+		} else {
+			q = q.Where(`event_type GLOB ?`, escapeGLOB(*f.ResourceType)+".*")
+		}
 	}
 	return q
+}
+
+// escapeGLOB makes s literal inside a SQLite GLOB pattern. GLOB has no escape
+// character: a metacharacter is made literal by putting it in a one-character
+// class. "]" outside a class is already literal.
+func escapeGLOB(s string) string {
+	s = strings.ReplaceAll(s, "[", "[[]")
+	s = strings.ReplaceAll(s, "*", "[*]")
+	s = strings.ReplaceAll(s, "?", "[?]")
+	return s
 }

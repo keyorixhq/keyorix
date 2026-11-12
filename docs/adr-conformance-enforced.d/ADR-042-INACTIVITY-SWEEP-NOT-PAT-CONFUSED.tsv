@@ -1,0 +1,1 @@
+ADR-042-INACTIVITY-SWEEP-NOT-PAT-CONFUSED	./internal/core	TestSuspendInactiveUsers_NotFooledByCallersPATRestriction	default-ci	pending	-	SuspendInactiveUsers' admin-skip check is immune to the triggering caller's own PAT restriction

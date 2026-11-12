@@ -3158,7 +3158,7 @@ contractor access. Example: --ttl 4h grants the role for four hours.
 ```sh
 keyorix rbac assign-role --user alice@example.com --role project_developer --project payments
 # Time-bound grant
-keyorix rbac assign-role --user alice@example.com --role admin --project payments --ttl 4h
+keyorix rbac assign-role --user alice@example.com --role project_admin --project payments --ttl 4h
 ```
 
 **Flags:**
@@ -6044,7 +6044,6 @@ keyorix user delete --id 12
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--by` | `string` | — | Acting admin email (required; unused in this REST-only CLI -- kept for flag compatibility) |
 | `--force` | — | — | Skip the confirmation prompt |
 | `--id` | `uint` | — | User ID (required) |
 
@@ -6067,7 +6066,6 @@ keyorix user force-password-reset --id 12
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--by` | `string` | — | Acting admin email (required; unused in this REST-only CLI -- kept for flag compatibility) |
 | `--id` | `uint` | — | Target user ID (required) |
 
 ## `keyorix user get`
@@ -6127,7 +6125,6 @@ keyorix user reactivate --id 12
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--by` | `string` | — | Acting admin email (required; unused in this REST-only CLI -- kept for flag compatibility) |
 | `--id` | `uint` | — | Target user ID (required) |
 
 ## `keyorix user reissue-one-time-password`
@@ -6175,7 +6172,6 @@ keyorix user resend-setup-link --id 12
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--by` | `string` | — | Acting admin email (required; unused in this REST-only CLI -- kept for flag compatibility) |
 | `--id` | `uint` | — | Target user ID (required) |
 
 ## `keyorix user revoke-sessions`
@@ -6198,7 +6194,6 @@ keyorix user revoke-sessions --id 12
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--by` | `string` | — | Acting admin email (required; unused in this REST-only CLI -- kept for flag compatibility) |
 | `--id` | `uint` | — | Target user ID (required) |
 
 ## `keyorix user suspend`
@@ -6219,7 +6214,6 @@ keyorix user suspend --id 12
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--by` | `string` | — | Acting admin email (required; unused in this REST-only CLI -- kept for flag compatibility) |
 | `--id` | `uint` | — | Target user ID (required) |
 
 ## `keyorix user suspend-inactive`

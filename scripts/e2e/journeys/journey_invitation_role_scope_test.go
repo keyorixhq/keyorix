@@ -25,8 +25,9 @@ import (
 //   - A project invitation takes a role that may be granted on a project. A role that
 //     is install-wide only (system_admin, system_viewer) is refused with 400 and NOTHING
 //     is created: no pending invitation is left behind to block a corrected retry.
-//   - project_viewer (project tier) and the legacy viewer / admin (assignable "any",
-//     ask 3546-phase2-legacy-roles-scope) are accepted with 201.
+//   - project_viewer (project tier) is accepted with 201. The legacy viewer / admin are
+//     install-wide only since #3605: refused with 400, naming the project role to use,
+//     and nothing is created.
 //   - A global invitation takes an install-wide role. A project-tier role there would
 //     apply in no project, so it is refused with 400 and nothing is created either.
 //
@@ -121,11 +122,19 @@ func runInvitationRoleScope(t *testing.T, s *harness.Server, globalInvites globa
 				map[string]string{"email": email, "role": "project_viewer"}, http.StatusCreated)
 		}
 
-		for _, role := range []string{"project_viewer", "viewer", "admin"} {
-			email := role + "-ok@example.com"
-			restExpect(t, s, adminToken, http.MethodPost, projectInvites,
-				map[string]string{"email": email, "role": role}, http.StatusCreated)
-			requireInvitationWithRole(t, s, adminToken, projectInvites, email, role)
+		const accepted = "project_viewer-ok@example.com"
+		restExpect(t, s, adminToken, http.MethodPost, projectInvites,
+			map[string]string{"email": accepted, "role": "project_viewer"}, http.StatusCreated)
+		requireInvitationWithRole(t, s, adminToken, projectInvites, accepted, "project_viewer")
+
+		for role, replacement := range map[string]string{"viewer": "project_viewer", "admin": "project_admin"} {
+			email := role + "-legacy@example.com"
+			env := restCall(t, s, adminToken, http.MethodPost, projectInvites,
+				map[string]string{"email": email, "role": role})
+			if env.StatusCode != http.StatusBadRequest || !strings.Contains(string(env.Raw), replacement) {
+				t.Fatalf("legacy role %s on a project invitation: want 400 naming %s, got %d: %s", role, replacement, env.StatusCode, env.Raw)
+			}
+			requireNoInvitationFor(t, s, adminToken, projectInvites, email)
 		}
 	})
 

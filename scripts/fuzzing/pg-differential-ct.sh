@@ -21,11 +21,11 @@ HOSTNAME_CT="${HOSTNAME_CT:-keyorix-pgdiff}"
 TEMPLATE="${TEMPLATE:-local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst}"
 STORAGE="${STORAGE:-local-hdd}"
 DISK_GB="${DISK_GB:-25}"
-GO_VERSION="${GO_VERSION:-1.27.3}" # must match go.mod's toolchain line (checked below)
+GO_VERSION="${GO_VERSION:-1.27.4}" # must match go.mod's toolchain line (checked below)
 # SHA-256 of go${GO_VERSION}.linux-amd64.tar.gz as published at go.dev/dl. Pinned for the
 # default version; a different GO_VERSION must come with its own GO_SHA256.
-GO_SHA256_1_27_3=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
-if [ "$GO_VERSION" = "1.27.3" ]; then GO_SHA256="${GO_SHA256:-$GO_SHA256_1_27_3}"; fi
+GO_SHA256_1_27_4=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
+if [ "$GO_VERSION" = "1.27.4" ]; then GO_SHA256="${GO_SHA256:-$GO_SHA256_1_27_4}"; fi
 GO_SHA256="${GO_SHA256:-}"
 PG_PASSWORD="${PG_PASSWORD:-difffuzz}"
 

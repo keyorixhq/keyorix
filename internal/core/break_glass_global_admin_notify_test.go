@@ -21,7 +21,7 @@ import (
 )
 
 // seedBreakGlassActor returns a project plus a project-viewer actor ready to
-// activate break-glass with the "editor" emergency role.
+// activate break-glass with the "project_developer" emergency role.
 func seedBreakGlassActor(t *testing.T, c *KeyorixCore, st *store.LocalStorage) (projectID, actorID uint) {
 	t.Helper()
 	ctx := context.Background()
@@ -32,7 +32,7 @@ func seedBreakGlassActor(t *testing.T, c *KeyorixCore, st *store.LocalStorage) (
 	viewer, err := st.GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, actor.ID, viewer.ID, storage.Scope{ProjectID: proj.ID}))
-	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "editor", DefaultTTL: time.Hour, MaxTTL: time.Hour})
+	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour})
 	return proj.ID, actor.ID
 }
 

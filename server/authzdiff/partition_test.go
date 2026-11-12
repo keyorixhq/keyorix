@@ -28,10 +28,6 @@ import (
 //     established on; known-03 is limited to two ops, one target and one
 //     principal. Not detected: a core leg that allows while every present
 //     transport denies (see below).
-//   - Core refuses what the model allows (known-06): machine principal on
-//     member.add / member.setrole, core denies, REST denies or returns
-//     400/500. Not detected: an over-denial by core or REST on those ops for
-//     that principal.
 //   - Core returns a refusal or error the model does not map (known-07,
 //     known-08, known-09): core denies with ErrPermissionDenied (known-07) or
 //     returns an untyped error (known-08, known-09), and the model denies
@@ -83,10 +79,6 @@ func explain(r *caseResult) string {
 	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
 		return "known-04"
 
-	case (r.Op == "member.add" || r.Op == "member.setrole") && pk == pkMachine && r.Model == Allowed &&
-		is(core, Denied) && (is(rest, Denied) || restBadStatus) && !transportAllowsDenied:
-		return "known-06"
-
 	case is(core, Denied) && core.Detail == "ErrPermissionDenied" && restBadStatus && modelDenies && !transportAllowsDenied:
 		return "known-07"
 
@@ -103,7 +95,7 @@ func explain(r *caseResult) string {
 
 // waiverIDs is every bucket explain can return other than "unexplained".
 // TestWaiverIDsMatchExplain keeps it in step with explain's source.
-var waiverIDs = []string{"known-02", "known-03", "known-04", "known-06", "known-07", "known-08", "known-09"}
+var waiverIDs = []string{"known-02", "known-03", "known-04", "known-07", "known-08", "known-09"}
 
 func needsExplaining(r *caseResult) bool {
 	for _, c := range r.Classes {

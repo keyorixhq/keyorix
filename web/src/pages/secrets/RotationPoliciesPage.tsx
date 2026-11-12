@@ -9,6 +9,7 @@ import {
     PencilIcon,
     TrashIcon,
 } from '@heroicons/react/24/outline';
+import { useCan } from '../../features/auth/useCan';
 import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
@@ -99,6 +100,10 @@ const ActivePill: React.FC<{ active: boolean }> = ({ active }) => (
 export function RotationPoliciesPage() {
     // ── modal / form state ────────────────────────────────────────────────────
     const [showCreate, setShowCreate] = React.useState(false);
+    // PUT/DELETE /rotation-policies/{id} are secrets.write (not secrets.delete) in the router, and
+    // POST /rotation-policies checks secrets.write in the handler (no route middleware);
+    // coarse show/hide, the server enforces the real scope.
+    const canWrite = useCan().writeSecrets;
     const [editing, setEditing] = React.useState<RotationPolicy | null>(null);
     const [deleting, setDeleting] = React.useState<RotationPolicy | null>(null);
 
@@ -269,10 +274,12 @@ export function RotationPoliciesPage() {
                         Define how often secrets must be rotated per environment
                     </p>
                 </div>
-                <Button onClick={openCreate} className="flex items-center">
-                    <PlusIcon className="h-4 w-4 mr-2" />
-                    New Policy
-                </Button>
+                {canWrite && (
+                    <Button onClick={openCreate} className="flex items-center">
+                        <PlusIcon className="h-4 w-4 mr-2" />
+                        New Policy
+                    </Button>
+                )}
             </div>
 
             {/* ── Evaluation panel ─────────────────────────────────────────── */}
@@ -372,12 +379,16 @@ export function RotationPoliciesPage() {
                                 No rotation policies yet
                             </h3>
                             <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>
-                                Create your first policy to start tracking secret rotation hygiene.
+                                {canWrite
+                                    ? 'Create your first policy to start tracking secret rotation hygiene.'
+                                    : 'Ask someone who can write secrets to create the first policy.'}
                             </p>
-                            <Button onClick={openCreate} className="inline-flex items-center">
-                                <PlusIcon className="h-4 w-4 mr-2" />
-                                New Policy
-                            </Button>
+                            {canWrite && (
+                                <Button onClick={openCreate} className="inline-flex items-center">
+                                    <PlusIcon className="h-4 w-4 mr-2" />
+                                    New Policy
+                                </Button>
+                            )}
                         </div>
                     ) : (
                         <div className="overflow-x-auto">
@@ -412,6 +423,7 @@ export function RotationPoliciesPage() {
                                             projMap={projMap}
                                             onEdit={openEdit}
                                             onDelete={setDeleting}
+                                            canWrite={canWrite}
                                         />
                                     ))}
                                 </tbody>
@@ -708,9 +720,10 @@ interface PolicyRowProps {
     projMap: Record<number, string>;
     onEdit: (p: RotationPolicy) => void;
     onDelete: (p: RotationPolicy) => void;
+    canWrite: boolean;
 }
 
-const PolicyRow: React.FC<PolicyRowProps> = ({ policy, envMap, projMap, onEdit, onDelete }) => {
+const PolicyRow: React.FC<PolicyRowProps> = ({ policy, envMap, projMap, onEdit, onDelete, canWrite }) => {
     const envName = policy.environment_id ? (envMap[policy.environment_id] ?? `#${policy.environment_id}`) : '—';
     const projName = policy.project_id ? (projMap[policy.project_id] ?? `#${policy.project_id}`) : '—';
     const scopeLabel = policy.scope === 'environment' ? `Environment: ${envName}` : `Project: ${projName}`;
@@ -744,18 +757,22 @@ const PolicyRow: React.FC<PolicyRowProps> = ({ policy, envMap, projMap, onEdit, 
             </td>
             <td className="px-6 py-4 whitespace-nowrap text-right">
                 <div className="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="sm" onClick={() => onEdit(policy)} title="Edit">
-                        <PencilIcon className="h-4 w-4" />
-                    </Button>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => onDelete(policy)}
-                        title="Delete"
-                        style={{ color: '#ef4444' }}
-                    >
-                        <TrashIcon className="h-4 w-4" />
-                    </Button>
+                    {canWrite && (
+                        <>
+                            <Button variant="ghost" size="sm" onClick={() => onEdit(policy)} title="Edit">
+                                <PencilIcon className="h-4 w-4" />
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => onDelete(policy)}
+                                title="Delete"
+                                style={{ color: '#ef4444' }}
+                            >
+                                <TrashIcon className="h-4 w-4" />
+                            </Button>
+                        </>
+                    )}
                 </div>
             </td>
         </tr>

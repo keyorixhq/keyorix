@@ -87,6 +87,24 @@ test.describe('least-privilege user (alice)', () => {
         await expect(page.getByTestId('stat-card-total-secrets-value')).toHaveText('5');
     });
 
+    // #3739. A project_viewer holds neither secrets.write nor secrets.delete (the permissions the
+    // server checks on POST/PUT/DELETE /projects), so the Projects page lists the project but offers
+    // no New Project, edit or delete.
+    test('the Projects page lists the project without New Project, edit or delete', async ({ page }) => {
+        await page.goto('/projects');
+        await settle(page);
+        const main = page.locator('main');
+        await expect(main.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
+        const row = main
+            .getByRole('button')
+            .filter({ hasText: PROJECT_NAME as string })
+            .first();
+        await expect(row).toBeVisible();
+        await expect(main.getByRole('button', { name: /new project/i })).toHaveCount(0);
+        await expect(row.getByTitle('Edit project')).toHaveCount(0);
+        await expect(row.getByTitle('Delete project')).toHaveCount(0);
+    });
+
     test('the secrets list opens on the environment that has secrets and offers no write actions', async ({ page }) => {
         const pid = await projectId(page);
         // No ?env= on purpose: the default must be an environment with secrets, not an empty production.
@@ -124,6 +142,34 @@ test.describe('least-privilege user (alice)', () => {
             await expect(actions.getByRole('button', { name }), String(name)).toHaveCount(0);
         }
         await expect(page.getByText('Transfer ownership')).toHaveCount(0);
+    });
+
+    // WEB-GATING-TAILS-2. POST /secrets/{id}/transfer-ownership is secrets.write at the router; a
+    // project_viewer holds only secrets.read, so the open secret renders (header, versions) without
+    // the Transfer control. Its own test so a regression names the control.
+    test('an open secret does not offer Transfer ownership', async ({ page }) => {
+        const pid = await projectId(page);
+        await page.goto(`/projects/${pid}/secrets`);
+        await settle(page);
+        await page.getByRole('row').filter({ hasText: /e2e-/ }).first().getByTitle('View').click();
+        await expect(page.getByTestId('secret-header')).toBeVisible();
+        await expect(page.getByText('Transfer ownership')).toHaveCount(0);
+    });
+
+    // WEB-GATING-TAILS-2. Attest is roles.read in the project (router; the handler adds no check).
+    // alice holds neither roles.read nor roles.assign (system_viewer is system.read only,
+    // project_viewer is secrets.read + users.read), so the tab renders but offers no Attest or Revoke.
+    // The server also refuses her the review list itself (GET is roles.read); the button must not
+    // be there either way.
+    test('the Access Review tab offers no Attest or Revoke', async ({ page }) => {
+        const pid = await projectId(page);
+        await page.goto(`/projects/${pid}/access-review`);
+        await settle(page);
+        const main = page.locator('main');
+        await expect(main.getByRole('heading', { name: 'Access Review', exact: true })).toBeVisible();
+        await expect(main.getByRole('button', { name: 'Attest', exact: true })).toHaveCount(0);
+        await expect(main.getByTitle('Remove this access')).toHaveCount(0);
+        expect(await main.innerText()).not.toMatch(RAW_AXIOS);
     });
 
     // #3142. The dependency graph is readable (secrets.read) but declaring/removing an edge is
@@ -243,6 +289,38 @@ test.describe('admin keeps every control (positive control)', () => {
         await settle(page);
         await page.getByRole('row').filter({ hasText: /e2e-/ }).first().getByTitle('View').click();
         await expect(page.getByTestId('add-dependency-form')).toBeVisible();
+    });
+
+    // WEB-GATING-TAILS-2 positive controls: without them "Transfer / Attest is absent" would also
+    // pass on a page that rendered nothing.
+    test('an open secret offers Transfer ownership (positive control)', async ({ page }) => {
+        await page.goto('/secrets');
+        await settle(page);
+        await page.getByRole('row').filter({ hasText: /e2e-/ }).first().getByTitle('View').click();
+        await expect(page.getByTestId('secret-header')).toBeVisible();
+        await expect(page.getByText('Transfer ownership')).toBeVisible();
+    });
+
+    test('the Access Review tab offers Attest on a grant (positive control)', async ({ page }) => {
+        const pid = await projectId(page);
+        await page.goto(`/projects/${pid}/access-review`);
+        await settle(page);
+        const main = page.locator('main');
+        await expect(main.getByRole('heading', { name: 'Access Review', exact: true })).toBeVisible();
+        await expect(main.getByRole('button', { name: 'Attest', exact: true }).first()).toBeVisible();
+    });
+
+    test('the Projects page offers New Project, edit and delete (positive control, #3739)', async ({ page }) => {
+        await page.goto('/projects');
+        await settle(page);
+        const main = page.locator('main');
+        await expect(main.getByRole('button', { name: /new project/i })).toBeVisible();
+        const row = main
+            .getByRole('button')
+            .filter({ hasText: PROJECT_NAME as string })
+            .first();
+        await expect(row.getByTitle('Edit project')).toBeVisible();
+        await expect(row.getByTitle('Delete project')).toBeVisible();
     });
 
     test('Billing is not offered on a community build and nothing 403s while the shell loads', async ({ page }) => {

@@ -1,0 +1,1 @@
+ADR-112-BREAKGLASS-UNREVIEWED-GAPS-THE-CONTROL	./internal/core	TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation	default-ci	pending	2461	the "emergency-access" compliance control reports a real Gap when any activation is unreviewed past the window, not merely an informational count in Detail -- #2461 round 2, Andrei's decision item (b)

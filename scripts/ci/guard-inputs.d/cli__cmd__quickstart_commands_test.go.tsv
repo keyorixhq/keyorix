@@ -1,0 +1,1 @@
+cli/cmd/quickstart_commands_test.go	QUICK_START.md,INSTALL-WITH-AI.md,!cli/**/*.md	commands in QUICK_START.md and INSTALL-WITH-AI.md resolve; cli/ Markdown is not read

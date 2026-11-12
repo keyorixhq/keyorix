@@ -37,7 +37,8 @@ func setupUserHandlerTest(t *testing.T) *UserHandler {
 	// (which treats ANY resolution error as a refusal) masks it as 403.
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{},
 		&models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
-		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{})) // the ceiling's grant listing joins both (#4025)
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "admin@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "target", Email: "target@test.com"}).Error)

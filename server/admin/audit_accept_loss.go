@@ -67,11 +67,13 @@ It prints what it will accept and writes nothing without --confirm. With --confi
 it writes, in this order: the seal record, ONE in-chain system.audit_loss_accepted
 event, a fresh checkpoint and high-water mark of what survives, and the
 verification state. If it stops part way, the chain reads broken until the
-acceptance is completed: run the command again without --confirm, read the plan
-(it says when the unfinished seal was recorded, by whom and why, and prints its
-record digest), and only if you started that acceptance complete it with
---resume-seal <digest> --confirm. A resume never writes without --resume-seal: a
-seal you did not just run is a rollback of the database until proven otherwise.
+acceptance is completed: the error prints the record digest, so run the command
+again without --confirm, read the plan (it says when the unfinished seal was
+recorded, by whom and why, and prints the same digest), and only if you started
+that acceptance complete it with --resume-seal <digest> --confirm. If you no longer
+have the error, the plan is where to get the digest. A resume never writes without
+--resume-seal: a seal you did not just run is a rollback of the database until
+proven otherwise.
 
 Afterwards every view reports the chain as "sealed": not_proven until a full
 verification completes, then sealed (online status, posture, evidence pack;
@@ -172,6 +174,16 @@ func acceptLossRequest() (core.AuditLossRequest, error) {
 	return req, nil
 }
 
+// acceptLossApplyError says how to finish after a failed apply. digest is the
+// record the run was writing ("" when it never built one).
+func acceptLossApplyError(err error, digest string) error {
+	next := "then complete it with the --resume-seal it prints"
+	if digest != "" {
+		next = fmt.Sprintf("check that it shows record digest %s, then complete it with --resume-seal %s --confirm", digest, digest)
+	}
+	return fmt.Errorf("%w (if part of it was written, the chain reads broken until the acceptance is completed: run this command again without --confirm, read the plan, %s)", err, next)
+}
+
 // acceptLoss plans, prints and (with --confirm) writes the seal.
 func acceptLoss(ctx context.Context, cfg *config.Config, store corestorage.Storage, key []byte, kid string, req core.AuditLossRequest) error {
 	if ctx == nil {
@@ -203,7 +215,7 @@ func acceptLoss(ctx context.Context, cfg *config.Config, store corestorage.Stora
 	fmt.Fprintln(os.Stderr, "Writing the seal record, the audit event, a fresh checkpoint and the verification state...")
 	res, err := c.AcceptAuditLoss(ctx, plan)
 	if err != nil {
-		return fmt.Errorf("%w (if part of it was written, the chain reads broken until the acceptance is completed: run this command again without --confirm, read the plan, then complete it with the --resume-seal it prints)", err)
+		return acceptLossApplyError(err, plan.RecordDigest())
 	}
 	fmt.Printf("Accepted: seal #%d (record %s). New checkpoint #%d certifies %d events through #%d.\n",
 		res.Seq, res.Digest, res.Checkpoint.ID, res.Checkpoint.ChainedEvents, res.Checkpoint.HeadID)

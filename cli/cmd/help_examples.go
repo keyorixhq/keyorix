@@ -196,7 +196,7 @@ keyorix project use payments`,
 
 	"rbac assign-role": `keyorix rbac assign-role --user alice@example.com --role project_developer --project payments
 # Time-bound grant
-keyorix rbac assign-role --user alice@example.com --role admin --project payments --ttl 4h`,
+keyorix rbac assign-role --user alice@example.com --role project_admin --project payments --ttl 4h`,
 	"rbac assign-role-to-group":   `keyorix rbac assign-role-to-group --group platform-team --role project_developer --project payments`,
 	"rbac audit-logs":             `keyorix rbac audit-logs --limit 20`,
 	"rbac check-permission":       `keyorix rbac check-permission --user alice@example.com --permission secrets.read`,

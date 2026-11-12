@@ -1,0 +1,1 @@
+internal/verifierflip	none	-	PR #4012 (fuzz/verifier-bitflip): deterministic mutation engine and per-verifier targets that flip bits in valid artifacts and require rejection; test-only, never linked into a shipped binary, no auth or storage decisions; self-tested by selftest_test.go	test-helper

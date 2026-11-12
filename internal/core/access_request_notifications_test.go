@@ -133,7 +133,7 @@ func TestActivateBreakGlass_NotifiesProjectAdmins(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, actor.ID, viewerRole.ID, storage.Scope{ProjectID: proj.ID}))
 
-	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "editor", DefaultTTL: time.Hour, MaxTTL: time.Hour})
+	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour})
 
 	_, err = c.ActivateBreakGlass(ctx, proj.ID, actor.ID, "prod incident #42", "")
 	require.NoError(t, err)
@@ -142,5 +142,5 @@ func TestActivateBreakGlass_NotifiesProjectAdmins(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, notes, 1, "the project's admin approvers must be alerted of the break-glass activation")
 	assert.Equal(t, EventBreakGlassActivated, notes[0].Type)
-	assert.Contains(t, notes[0].Message, "editor")
+	assert.Contains(t, notes[0].Message, "project_developer")
 }

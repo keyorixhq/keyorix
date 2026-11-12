@@ -1,0 +1,1 @@
+internal/evidencesink	full-adversarial	baseline-2026-08-07/baseline/evidencesink-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/evidencesink-findings.json — HIGH: webhook.go SSRF guard validates hostname once at construction, long-lived client never re-validates at dial time (DNS-rebinding TOCTOU)	-

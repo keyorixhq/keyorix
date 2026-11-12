@@ -1,0 +1,1 @@
+scripts/ci/govulncheck_exceptions_test.go	operator/**/*.go,**/*.sh,scripts/**/*.tsv,docs/govulncheck-exceptions.d/*.tsv	docs/govulncheck-exceptions.d/*.tsv (its own exception rows); TestGovulncheckCheckScript runs check-govulncheck-test.sh; TestGovulncheckExceptionsMitigationTestsExist walks the repo root over every _test.go file (all modules) for the named mitigation tests

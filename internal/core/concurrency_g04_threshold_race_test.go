@@ -187,7 +187,7 @@ func newDualControlFixture(t *testing.T, dbFile string) (c *core.KeyorixCore, db
 		&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.Notification{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 20, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 20, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "requester"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "approver-existing"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 3, Username: "approver-a"}).Error)

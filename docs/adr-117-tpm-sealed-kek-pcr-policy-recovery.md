@@ -3,12 +3,13 @@
 **Status:** Proposed (2026-10-23). Andrei approved it as Proposed on 2026-10-23, with the answers
 recorded under "Decisions (Andrei, 2026-10-23)" below, so the implementation sessions (PR A and
 PR B of the design note) may start. It is not Accepted, and no production key path changes before
-the implementation PRs merge. **Amendment A (2026-10-27, RD-TIER-ADR117-1, Proposed, not yet
-approved):** D10 to D13 below. Signed PCR policy is preferred over raw PCR binding, plus the update
-and recovery flow, the fail-closed principle and the claims-vs-evidence table. Until Andrei
-approves the amendment, D2 and Decision 2 stand as written, except D10.5 (the default chain and
-its Secure Boot condition), which Andrei resolved 2026-10-28; see open question 2 below.
-**Date:** 2026-10-23 (amended 2026-10-27)
+the implementation PRs merge. **Amendment A (2026-10-27, RD-TIER-ADR117-1; Andrei approved it as
+Proposed on 2026-11-10):** D10 to D13 below. Signed PCR policy is preferred over raw PCR binding,
+plus the update and recovery flow, the fail-closed principle and the claims-vs-evidence table.
+**Addendum (2026-11-10, TPM-ADR117-AMEND-1; Andrei approved it as Proposed the same day):** D14 to
+D17 at the end: policy distribution and cut-off, recovery authority, no fallback, and a correction
+to D9. Neither is Accepted.
+**Date:** 2026-10-23 (amended 2026-10-27, 2026-11-10)
 **Session:** RD-TPM-SEAL-1, against origin/main `760e92e32`.
 **Design note:** [design-rd-tpm-seal.md](design-rd-tpm-seal.md) (formats, flows, CLI, test plan,
 implementation plan). **Threat model:**
@@ -74,7 +75,7 @@ in use.
   turn every routine update into a recovery event. A custom list is allowed with a warning.
 - When Secure Boot is off, `secure-boot` mode refuses to seal unless the operator explicitly allows
   it, because binding to "Secure Boot disabled" proves very little.
-- *Amendment A:* D10 proposes ranking a signed policy (`signed-uki`, `pcrlock`) above `secure-boot`.
+- *Amendment A:* D10 ranks a signed policy (`signed-uki`, `pcrlock`) above `secure-boot`.
   Under D10, raw PCR 7 becomes the fallback for hosts without a UKI PCR signature or a pcrlock
   policy.
 
@@ -141,7 +142,8 @@ A v1 blob (`{public, private}`) keeps unsealing as today. Moving to v2 is only t
 The prototype confirms that the two TPM response codes come out of go-tpm and can be told apart
 with `errors.Is(err, tpm2.TPMRCPolicyFail)` / `tpm2.TPMRCIntegrity`. "Another TPM" and "this TPM
 after Clear" both give `TPM_RC_INTEGRITY`, and the design does not pretend to separate them. No
-class falls back to another provider unless the existing `AllowWeakerFallback` rules allow it.
+class falls back to another provider unless the existing `AllowWeakerFallback` rules allow it
+(*Addendum 2026-11-10, D16: never under a mode other than `none`*).
 
 ### D6. Loud alerting without a running server
 
@@ -181,14 +183,14 @@ PCR check, and `rotate-kek` re-wraps the **same** DEK. `admin encryption tpm res
 secure-boot` therefore prints this and offers `admin encryption rotate` (ADR-010 DEK sweep)
 interactively, default yes on a TTY, never silently; `--no-dek-rotate` skips it (Decision 6). The
 runbook recommends the sweep for installs whose old backups are not under the same protection. The same rule applies after rotating a recovery code. General statement: **a DEK is
-only as protected as the weakest wrap of it that was ever written.**
+only as protected as the weakest wrap of it that was ever written.** (*Addendum 2026-11-10, D17:
+the sweep alone does not cut off an old blob; it needs a new KEK first, and that is what the
+default-yes prompt now runs.*)
 
 ## Amendment A (2026-10-27): signed PCR policy, update and recovery flow, claims
 
-Session RD-TIER-ADR117-1, against origin/main `6144d535f`. Status: **Proposed**. Andrei has not
-approved the amendment as a whole (open questions 1 and 3 below remain); he resolved open
-question 2, D10.5's default chain and its Secure Boot condition, on 2026-10-28 (asks listed in the
-session report). It changes no code. The step-by-step operator
+Session RD-TIER-ADR117-1, against origin/main `6144d535f`. Status: **Proposed**, approved as
+Proposed on 2026-11-10; the open questions below are resolved. It changes no code. The step-by-step operator
 procedures are in [design/tpm-signed-pcr-policy.md](design/tpm-signed-pcr-policy.md).
 
 ### Sources read for this amendment
@@ -330,11 +332,12 @@ The full procedures are in the design note. The decisions:
    (`internal/crypto/shamir.go`, used by `encryption shamir-split`). The shares are recombined
    only on the offline host during `tpm recover`. The check that a recombination is right must
    come from outside the shares (the #429 lesson in `shamir_provider.go`). Here the slot's GCM tag
-   and the `kek_id` check (D4) do that. This option is design only, and it needs Andrei to
-   approve it.
+   and the `kek_id` check (D4) do that. This option is design only. Andrei approved it on
+   2026-11-10 as optional custody, never the default.
 4. **Fail closed.** No mode, class or flag falls back to a weaker policy (`signed-uki` to
    `secure-boot` to `none`) or to another provider, beyond the existing `AllowWeakerFallback`
-   rules, which stay off by default and audited. A missing signature file, a missing pcrlock NV
+   rules, which stay off by default and audited (*Addendum 2026-11-10, D16: that exception does
+   not apply under a mode other than `none`*). A missing signature file, a missing pcrlock NV
    index or an unreadable public key is a refusal, never "seal without policy". Recovery is only
    the explicit, offline, audited command. The server never recovers on its own. The D10.5 chain
    is evaluated once, at `init`; `reseal` and `recover` use the mode recorded in config/the blob,
@@ -474,17 +477,121 @@ chosen; the obligations below follow from those options and bind the implementat
    `--no-dek-rotate` skips it.** *Reason:* old v1 blobs in backups still unseal on the same TPM
    without PCR checks, and `rotate-kek` keeps the same DEK (D9). *Obligations:* `reseal` prints
    the D9 statement whenever the sweep is skipped, and never runs the sweep without the prompt
-   or an explicit flag.
+   or an explicit flag. *Amended 2026-11-10 (D17, Andrei): the default-yes prompt runs a new KEK
+   and then the sweep, not the sweep alone.*
 
-## Open questions for Amendment A (NEEDS ANDREI; status stays Proposed)
+## Open questions for Amendment A (resolved 2026-11-10; status stays Proposed)
 
-1. **Approve Amendment A (D10 to D13) as Proposed?** Recommended: yes. PR A of the design note
-   then builds `secure-boot` first as already planned and leaves room for `signed-uki` and
-   `pcrlock` in the blob v2 `pcr_policy` object. A later PR adds them after a lab host with a
-   signed UKI exists.
+1. **Approve Amendment A (D10 to D13) as Proposed?** **Resolved 2026-11-10, Andrei: yes.** PR A of
+   the design note then builds `secure-boot` first as already planned and leaves room for
+   `signed-uki` and `pcrlock` in the blob v2 `pcr_policy` object. A later PR adds them after a lab
+   host with a signed UKI exists.
 2. **Default chain for new installs (D10.5, replaces Decision 2):** `signed-uki` → `pcrlock` →
    `secure-boot` → `none`. **Resolved 2026-10-28, Andrei: yes**, with `signed-uki` conditioned on
    Secure Boot being on (D10.2/D10.5) so it cannot be reached by turning Secure Boot off.
-3. **Shamir K-of-N custody of the recovery code (D11.3).** Recommended: allow it as an option for
-   offline custody, never as the default. It reuses the existing Shamir code, with the
-   check kept outside the shares.
+3. **Shamir K-of-N custody of the recovery code (D11.3).** **Resolved 2026-11-10, Andrei: allowed
+   as an option for offline custody, never as the default,** including for regulated deployments.
+   It reuses the existing Shamir code, with the check kept outside the shares.
+
+## Addendum (2026-11-10): signed-policy distribution, recovery authority, no fallback (TPM-ADR117-AMEND-1)
+
+Status: **Proposed**, approved as Proposed on 2026-11-10; no code. Against origin/main `9c4cf42be`. Amendment A
+already prefers a signed policy over raw PCRs (D10, on Flatcar's documented breakage, [S1]) and
+defines the update and refusal procedures (D11). This addendum decides only what those leave open
+and corrects two statements. Where it differs from the text above, it wins.
+
+[S1], [S3] and [S4] were re-read on 2026-11-10, and the Flatcar quotes are still on the page. New
+sources, read the same day:
+
+| Tag | Source |
+|---|---|
+| [S6] | ukify(1), <https://www.freedesktop.org/software/systemd/man/latest/ukify.html> |
+| [S7] | systemd-stub(7), <https://www.freedesktop.org/software/systemd/man/latest/systemd-stub.html> |
+
+### D14. How a new signed policy arrives, and when the old one stops being accepted
+
+| Mode and change | How it is distributed | When the old policy stops being accepted |
+|---|---|---|
+| `signed-uki`, same key | In the new UKI's `.pcrsig`, through the OS update channel. systemd-stub exposes it as `/run/systemd/tpm2-pcr-signature.json` and `tpm2-pcr-public-key.pem` ([S7]; settles the D10.1 path `[VERIFY]`) | **Never.** PolicyAuthorize accepts whatever the key signed, and [S3] documents no revocation. Only a key rotation or a dbx/SBAT revocation of the old binary ends it |
+| `signed-uki`, new key | A transition UKI signed by both keys (rule 2) | When `reseal` replaces the blob |
+| `pcrlock` | The host's `make-policy` rewrites the NV index ([S4]) | When the NV index is rewritten. [S4] does not state this; it follows from PolicyAuthorizeNV reading the index at unseal [VERIFY in the lab] |
+| `secure-boot`, `custom` | Nothing to distribute: the digest is fixed in the object | When `recover` or `reseal` writes a new object |
+
+1. Keyorix ships and caches no signatures. A missing file is a refusal (D11.4), including on a host
+   without the tmpfiles copy that puts it under `/run/systemd` ([S7] says "typically").
+2. **Key rotation needs no recovery if the order holds.** Boot a UKI signed by both keys (ukify
+   merges them into one `.pcrsig`, [S3], [S6]). Run `admin encryption tpm reseal --pcr-public-key
+   <new.pem>`. The key is given explicitly because `.pcrpkey` holds one key, and [S3] and [S6]
+   disagree on which one a two-key build embeds. `reseal` refuses unless the new key signed the
+   current PCR 11, unseals once under it, replaces the blob atomically and records both key
+   fingerprints in `encryption.tpm_resealed`. Booting a new-key-only UKI first is a refusal, then
+   a recovery; `status` predicts it (D11.1).
+3. No date-based expiry or grace period. A software date check is not TPM-enforced, so root could
+   skip it. The only overlap is the dual-signed UKI.
+4. Per host only: a `tpm` blob cannot be shared between nodes (`docs/multi-replica-keys.md`), so
+   there is no fleet-wide cut-over.
+5. These cut-offs apply to the **live blob**. Old copies are covered by D17.
+
+### D15. Recovery: who may authorise it, and how it is audited
+
+1. Material is unchanged: the recovery code by default, the PQWRAP escrow slot as the alternative
+   (D3, Decision 4), and Shamir shares if approved (D11.3). The operator's steps are D11.2.
+2. **What the software enforces:** a shell on the host as the service user, plus the code or K
+   shares. An offline command cannot verify a person, and Keyorix does not claim to.
+3. **Who may authorise:** the deployment's security owner, who names the code's custodians at
+   `init`. Where separation of duties is required, the person doing the update must not hold the
+   whole code. This is policy in prose, deliberately not enforced; K-of-N custody is the only form
+   a mechanism enforces.
+4. `tpm recover` requires non-empty `--authorized-by` and `--reason`. Both go into
+   `encryption.tpm_recovery_used` with the OS user, the class and the PCR diff, and are labelled
+   self-asserted. Each use notifies all admins, as `recover-admin` does (ADR-108).
+5. **Audit before commit** (corrects the order in design §5). Validate the code and `kek_id`, trial
+   unwrap, write the audit event, and only then replace the blob. If the event cannot be written,
+   recovery aborts with nothing changed, and there is no flag to skip it. A crash between the two
+   steps over-reports a recovery, which is the safe direction.
+6. Limit: a wrong code recovers no KEK, so failed attempts reach stderr and the host journal only,
+   not the audit chain.
+
+### D16. Fail closed: what the server does when the policy does not match
+
+1. For every D5 class under a mode other than `none`, the server prints the classified error,
+   exits non-zero and does not open a listener. It serves nothing in a degraded mode and retries
+   only on restart.
+2. It never falls back to an unsealed key: it does not mint one, read a software copy, unseal
+   without the policy, or open the recovery slot. Only `tpm recover` opens the slot.
+3. **Corrects D5 and D11.4, which excepted `AllowWeakerFallback`.** `MultiKeyProvider.KEK` tries
+   the next provider on nearly any error, and `DetectFallbackDowngrade` only gates a drop in tier.
+   So `tpm` to a KMS (same tier) passes with no flag, `tpm` to `file` passes with
+   `insecure_allow_weaker_kek_fallback`, and either would serve the KEK after a boot-state refusal.
+   Therefore a `tpm` provider with a mode other than `none` must be the **only** provider, with no
+   `fallbacks` and in no position of another chain. Violating this is a startup error that the
+   insecure flag does not lift. The check also reads the mode recorded in the blob, so removing
+   `pcr_policy` from the config does not lift it. `tpm-unavailable` is included, because an
+   attacker can hide the device. `pcr_policy: none` chains are unchanged.
+
+### D17. Correction to D9: a DEK sweep alone does not cut off an old blob
+
+`reseal` and `recover` keep the same KEK, and the ADR-010 sweep wraps its new DEK under the current
+KEK. An old blob that still opens on this TPM therefore returns a KEK that unwraps the **current**
+`dek.key`, even after the sweep. D9, Decision 6, D11.2(c) and the signing-key-compromise risk row
+overstate what the sweep achieves.
+
+A full cut-off is a **new KEK, then the sweep**, in that order, so that the new DEK is never
+wrapped under the old KEK. It is planned as `reseal --new-kek` over the existing
+`RewrapDEKWithProvider` path, with the audit key transition (#3648) and a new recovery slot. It is
+required whenever the old KEK or blob is treated as exposed (an unexplained refusal, a compromised
+signing key). It is the default-yes prompt on entering PCR mode (Decision 6 as amended) and is
+offered on a routine signing-key rotation. When it is skipped, `reseal` prints that only the live
+blob was cut off.
+
+### Decisions (Andrei, 2026-11-10)
+
+Andrei chose the recommended option for each question. Status stays Proposed.
+
+1. **D14 to D17 and Amendment A: approved as Proposed.**
+2. **Entering PCR mode: the default-yes prompt runs a new KEK, then the sweep.** *Reason:* the sweep
+   alone leaves the v1 blob able to reach the current DEK. *Obligation:* amends Decision 6.
+3. **Recovery authority: K-of-N stays optional, also for regulated deployments.** Possession plus
+   self-asserted names is accepted, and the limit in D15.2 and D15.3 must be documented.
+4. **Rollback floor for same-key `signed-uki`: not now.** No TPM NV counter. Deployments that need
+   old UKIs to stop unsealing use one signing key per release line, or `pcrlock`.

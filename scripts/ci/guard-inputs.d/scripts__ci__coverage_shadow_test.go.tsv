@@ -1,0 +1,1 @@
+scripts/ci/coverage_shadow_test.go	scripts/ci/coverage-shadow.py,scripts/ci/coverage_shadow_unittest.py,scripts/ci/select-affected.py,scripts/ci/declrefs/**	the lever-C shadow script's unit tests (they also load select-affected.py's helpers and build scripts/ci/declrefs)

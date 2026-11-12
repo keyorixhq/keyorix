@@ -1,0 +1,1 @@
+internal/core/guards/exempt_ledger_review_test.go	docs/*exempt*.tsv,docs/*exempt*.d/**,!docs/**	exemption ledgers (flat files and fragments)

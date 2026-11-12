@@ -104,6 +104,13 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 	if err != nil {
 		return nil, err
 	}
+	// A section whose read fails only marks the pack degraded, so a tick cancelled
+	// part-way through collection (scheduler lock lost, or shutdown) still gets here
+	// with a signed pack that is missing sections only because of the cancellation.
+	// Nothing was delivered yet: stop, and the next tick exports a complete one.
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("evidence export: cancelled during collection, nothing delivered: %w", context.Cause(ctx))
+	}
 
 	res := &EvidenceExportResult{
 		Bytes:           len(data),

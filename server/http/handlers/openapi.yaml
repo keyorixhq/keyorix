@@ -1635,6 +1635,22 @@ paths:
           description: "Envelope {data=null, message='Member added'}."
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '403':
+          description: >-
+            The caller lacks roles.assign at this project, the user's email domain is not allowed, or the
+            privilege ceiling refused the grant: the actor's own permissions at this project must include every
+            permission `role` bundles. The ceiling applies to a machine-identity token the same way, judged
+            against the machine's own roles, so a machine whose roles do not cover `role` gets this 403; one
+            whose roles do is allowed (201). Same error envelope as components/responses/Error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: {type: boolean}
+                  code: {type: integer}
+                  error: {type: string}
+                  message: {type: string}
         '409': {$ref: '#/components/responses/Error'}
 
   /api/v1/projects/{id}/members/{userId}:
@@ -1739,6 +1755,7 @@ paths:
           description: "Envelope {data, message='Member invited'}. data.membership is the created membership object."
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
 
   /api/v1/projects/{id}/memberships/{membershipId}:
@@ -5470,7 +5487,7 @@ paths:
         - {name: email, in: query, schema: {type: string}}
         - {name: is_active, in: query, schema: {type: boolean}}
         - {name: include_deleted, in: query, schema: {type: boolean}}
-        - {name: filter, in: query, description: "Set to `inactive` for users whose last login is more than 30 days ago; an account that has never logged in counts once it is 30+ days old (judged by creation date).", schema: {type: string, enum: [inactive]}}
+        - {name: filter, in: query, description: "Set to `inactive` for users with no login in the last 30+ days. An account that has never logged in counts as inactive once it is 30+ days old (judged by its creation date), not before.", schema: {type: string, enum: [inactive]}}
       responses:
         '200':
           description: "Envelope `data` has `users[]` (each with id, username, email, display_name, project_count, active_project_count), `page`, `page_size`, `total`, `total_pages`."

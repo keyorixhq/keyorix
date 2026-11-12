@@ -10,14 +10,14 @@ package store_test
 // F-1 (ListSecrets search), F-2 and F-3 (ListUsers Username/Email filters) were pinned here
 // first and are fixed by #4019; their gates and tests are gone. B (project-name uniqueness
 // and lookup on non-ASCII case) is fixed by #4027 (projects.name_folded); its gate and test
-// are gone too. Class C is not pinned here:
+// are gone too. D (ListUsers Search) is fixed by #4023, which removed its gate and test; its
+// regression tests are TestListUsers_SearchUnicodeCase_{SQLite,Postgres}. Class C is not pinned here:
 // its fix (#4022) merges before this harness and carries its own PostgreSQL regression test.
 
 import (
 	"context"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -47,51 +47,4 @@ func TestBackendDifferentialKnownDifference_A_EmptyValueNilness(t *testing.T) {
 		t.Fatalf("FIXED: A no longer differs (sqlite nil=%v postgres nil=%v); drop normalisation 7 in diffVersionFP and this test", isNil["sqlite"], isNil["postgres"])
 	}
 	t.Logf("A still differs: empty value reads back nil on sqlite=%v, on postgres=%v", isNil["sqlite"], isNil["postgres"])
-}
-
-// diffRequireUnicodeLower skips a pin whose divergence only exists when PostgreSQL's
-// LOWER() folds non-ASCII letters, which depends on the database collation (en_US.UTF-8
-// does, C/POSIX does not). On a C-collation database B and D cannot be observed, and the
-// pin would otherwise report a false "FIXED". It checks the behaviour itself, not the
-// collation name, so any provider that folds counts.
-func diffRequireUnicodeLower(t *testing.T, s *diffSide) {
-	t.Helper()
-	var folds bool
-	if err := s.db.Raw("SELECT LOWER('ÄÖ') = 'äö'").Scan(&folds).Error; err != nil {
-		t.Fatalf("probe LOWER() on %s: %v", s.label, err)
-	}
-	if !folds {
-		var coll string
-		_ = s.db.Raw("SELECT datcollate FROM pg_database WHERE datname = current_database()").Scan(&coll).Error
-		t.Skipf("PostgreSQL LOWER() does not fold non-ASCII on this database (datcollate=%q): the divergence cannot be observed here, so a pass would be a false FIXED", coll)
-	}
-}
-
-// D: ListUsers{Search} is `LIKE` on SQLite and `ILIKE` on PostgreSQL, so a non-ASCII case
-// variant ("ÄÖ" for user "äö") matches on PostgreSQL only. Same family as the #4019 fixes;
-// #4019 names it as a follow-up. Reachable: display_name (and an IdP-provisioned email)
-// accepts any Unicode and the admin user search (users.read) passes the term straight
-// through; usernames are ASCII-only. Keyorix bug, low (search results differ by backend;
-// no authorization decision uses Search). Trace in the doc's class D section.
-func TestBackendDifferentialKnownFinding_D_UserSearchUnicodeCase(t *testing.T) {
-	w := newDiffWorld(t, "diffv2known_")
-	w.reset(t)
-	diffRequireUnicodeLower(t, w.p)
-	ctx := context.Background()
-	got := map[string]int64{}
-	for _, s := range []*diffSide{w.s, w.p} {
-		u := &models.User{Username: "äö", UsernameFolded: "äö", Email: "x@x.io", EmailFolded: "x@x.io", IsActive: true}
-		if _, err := s.ls.CreateUser(ctx, u); err != nil {
-			t.Fatalf("%s CreateUser: %v", s.label, err)
-		}
-		_, total, err := s.ls.ListUsers(ctx, &storage.UserFilter{Search: ptrOf("ÄÖ"), Page: 1, PageSize: 10})
-		if err != nil {
-			t.Fatalf("%s ListUsers: %v", s.label, err)
-		}
-		got[s.label] = total
-	}
-	if got["sqlite"] == got["postgres"] {
-		t.Fatalf("FIXED: D no longer diverges (sqlite=%d postgres=%d); remove gate D in diffListUsers and this test", got["sqlite"], got["postgres"])
-	}
-	t.Logf("D still reproduces: sqlite found %d, postgres found %d", got["sqlite"], got["postgres"])
 }

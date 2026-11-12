@@ -1,0 +1,1 @@
+server/pq_transport_guard_test.go	operator/**/*.go,!**/*.md	repo-root walk over every non-Markdown, non-test file; reads operator/ Go, skips Markdown

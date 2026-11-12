@@ -1,0 +1,1 @@
+ADR-066-ALLOWLIST-ENFORCED-OVER-GRPC	./server/grpc/interceptors	TestAuthInterceptor_PATNetworkAllowlistOverGRPC	default-ci	pending	-	ADR-066: the PAT CIDR allowlist is enforced by the gRPC auth interceptor on the peer address, so it cannot be bypassed by switching from HTTP to gRPC

@@ -153,7 +153,6 @@ root_base() {
 root_1_pkgs() {
   cat <<'EOF'
 github.com/keyorixhq/keyorix/internal/crypto
-github.com/keyorixhq/keyorix/server/grpc
 github.com/keyorixhq/keyorix/internal/testhelper
 github.com/keyorixhq/keyorix/pkg/bundleverify
 github.com/keyorixhq/keyorix/internal/rotation
@@ -277,12 +276,24 @@ admin_pkg() {
   echo "github.com/keyorixhq/keyorix/server/admin"
 }
 
+# grpc_pkg: server/grpc, split out of root-1 into test-name shards (2026-11-11,
+# CI-GRPC-SHARD-1). It was root-1's whole critical path: 1315 s of root-1's
+# 23.1 min on ci.yml run 42817600261 (main d36d24dee), the next root-1 package
+# ~100 s. Three tests were 1206 s of it (TestEveryGRPCMethodRejectsDeadCredential
+# 748 s, TestEveryRoleGrantRPCRefusesEnvironmentWithoutProject 247 s,
+# TestEveryGRPCMethodRejectsLowPrivilegeCaller 165 s); the dead-credential walk is
+# now four tests _G0.._G3 (server/grpc authz_walk_dead_credential_groups_test.go,
+# same recipe as server/http's CI-HTTP-SPLIT-1), so the packer can spread it.
+grpc_pkg() {
+  echo "github.com/keyorixhq/keyorix/server/grpc"
+}
+
 # root_4_pkgs: the dynamic catch-all -- every root_base() package not pinned
 # to root-1/2/3/core/storage-store/encryption/faultops/admin above, so a newly
 # added package always lands somewhere (root-4) rather than silently running nowhere.
 root_4_pkgs() {
   local pinned
-  pinned=$(cat <(root_1_pkgs) <(root_2_pkgs) <(server_pkg) <(core_pkgs) <(storage_store_pkgs) <(encryption_pkgs) <(faultops_pkgs) <(admin_pkg) | sort -u)
+  pinned=$(cat <(root_1_pkgs) <(root_2_pkgs) <(server_pkg) <(core_pkgs) <(storage_store_pkgs) <(encryption_pkgs) <(faultops_pkgs) <(admin_pkg) <(grpc_pkg) | sort -u)
   comm -23 <(root_base | sort -u) <(echo "$pinned")
 }
 
@@ -352,6 +363,9 @@ http_pkg() {
 # has a leg nearly to itself, and more legs only add fixed cost), admin new
 # (server/admin out of root-4, see admin_pkg), core keeps 4 shards without the
 # check-closures preload.
+# CI-GRPC-SHARD-1 (2026-11-11): grpc new, 3 shards (server/grpc out of root-1, see
+# grpc_pkg): the packer puts ~437 s of tests on each (2 shards: 655 s; 4: 298-363 s
+# for a whole extra runner), against root-1's 23.1 min before.
 # This table, ci.yml's matrix and assert_matrix_consistent move together.
 sharded_legs() {
   cat <<'EOF'
@@ -362,6 +376,7 @@ handlers|handlers_pkg|2|-
 encryption|encryption_pkgs|2|-
 faultops|faultops_pkgs|5|-
 admin|admin_pkg|2|-
+grpc|grpc_pkg|3|-
 storage-store|storage_store_pkgs|1|-
 EOF
 }

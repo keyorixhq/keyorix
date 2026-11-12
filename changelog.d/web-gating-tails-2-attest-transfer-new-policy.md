@@ -1,0 +1,3 @@
+### Fixed
+
+- Web: three more controls now follow the permission the server checks. The per-grant **Attest** button on the project Access Review tab is offered only with `roles.read` (it was shown to every role and ended in a refusal). **Transfer ownership** on an open secret follows `secrets.write` like its route, instead of `secrets.delete`, so a writer who may transfer a secret sees it and a user who can only delete does not. **New Policy** on Rotation Policies (header and empty state) needs `secrets.write`, which the create handler checks. The real-backend permission spec gains the Attest and Transfer cases for a `project_viewer`, with admin positive controls.

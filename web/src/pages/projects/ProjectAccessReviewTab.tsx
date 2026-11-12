@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ShieldCheckIcon, CheckIcon, NoSymbolIcon } from '@heroicons/react/24/outline';
 import { useAccessReview, useAttestAccessReview, useRevokeAccessReview } from '../../features/projects/api';
+import { useCan } from '../../features/auth/useCan';
 import { AccessReviewEntry, AccessReviewDecision } from '../../services/projects';
 import { ProjectAccessReviewCampaigns, lastUsedInfo } from './ProjectAccessReviewCampaigns';
 
@@ -47,6 +48,10 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
     const entries = report?.entries ?? [];
     const degraded = report?.degraded === true;
     const degradedReasons = report?.degradedReasons ?? [];
+    // Revoke is roles.assign in the project; Attest is roles.read (router and core both check it).
+    const can = useCan();
+    const canRevoke = can.manageMembers;
+    const canAttest = can.readRoles;
     const attest = useAttestAccessReview(projectId);
     const revoke = useRevokeAccessReview(projectId);
 
@@ -91,7 +96,7 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
                     const confirming = confirmKey === key;
                     const principal =
                         e.principalType === 'user' && e.email ? `${e.principalName} (${e.email})` : e.principalName;
-                    const revocable = e.source !== 'owner';
+                    const revocable = canRevoke && e.source !== 'owner';
                     return (
                         <li key={key} className="flex items-center gap-3 px-4 py-3">
                             <span
@@ -147,19 +152,21 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
                                         Attested
                                     </span>
                                 ) : (
-                                    <button
-                                        type="button"
-                                        onClick={() => handleAttest(e)}
-                                        disabled={attest.isPending}
-                                        className="px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
-                                        style={{
-                                            border: '1px solid var(--border)',
-                                            color: 'var(--text-secondary)',
-                                        }}
-                                        title="Certify this access was reviewed and kept"
-                                    >
-                                        Attest
-                                    </button>
+                                    canAttest && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleAttest(e)}
+                                            disabled={attest.isPending}
+                                            className="px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
+                                            style={{
+                                                border: '1px solid var(--border)',
+                                                color: 'var(--text-secondary)',
+                                            }}
+                                            title="Certify this access was reviewed and kept"
+                                        >
+                                            Attest
+                                        </button>
+                                    )
                                 )}
                                 {revocable &&
                                     (confirming ? (

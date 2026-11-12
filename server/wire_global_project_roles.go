@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // maxGlobalProjectRoleGrantLines bounds how many grants (and invitations) the
@@ -35,8 +37,32 @@ func wireGlobalProjectRoleGrantsNotice(cw *coreWiring) error {
 	if err != nil {
 		log.Printf("role grant scope check: %v (continuing; the check did not run)", err)
 	} else {
+		// A legacy role at a project has its own notice below, which names the
+		// replacement.
+		grants = slices.DeleteFunc(grants, core.RoleGrantOutsideScope.IsLegacyRoleAtProject)
 		for _, line := range roleGrantsOutsideScopeNotice(grants) {
 			log.Print(line)
+		}
+	}
+	if cw.cfg.BreakGlass.Enabled {
+		if line := core.LegacyEmergencyRoleWarning(cw.cfg.BreakGlass.EmergencyRole); line != "" {
+			log.Print("WARNING: " + line)
+		}
+	}
+	legacyGrants, err := cw.core.ListLegacyRoleProjectGrants(ctx)
+	if err != nil {
+		log.Printf("legacy role grant check: %v (continuing; the check did not run)", err)
+	} else {
+		for _, line := range core.LegacyRoleProjectGrantReport(legacyGrants, maxGlobalProjectRoleGrantLines) {
+			log.Print("WARNING: " + line)
+		}
+	}
+	legacyRequests, err := cw.core.ListPendingAccessRequestsWithLegacyRole(ctx)
+	if err != nil {
+		log.Printf("legacy role access request check: %v (continuing; the check did not run)", err)
+	} else {
+		for _, line := range core.LegacyRoleAccessRequestReport(legacyRequests, maxGlobalProjectRoleGrantLines) {
+			log.Print("WARNING: " + line)
 		}
 	}
 	invs, err := cw.core.ListPendingInvitationsOutsideAssignableScope(ctx)
@@ -128,7 +154,11 @@ func invitationsOutsideScopeNotice(invs []core.InvitationOutsideScope) []string 
 		if inv.ProjectID != 0 {
 			where = fmt.Sprintf("at project_id=%d", inv.ProjectID)
 		}
-		lines = append(lines, fmt.Sprintf("WARNING:   invitation %d grants %s %s", inv.InvitationID, inv.RoleName, where))
+		instead := ""
+		if replacement, ok := models.LegacyRoleProjectReplacement(inv.RoleName); ok && inv.ProjectID != 0 {
+			instead = "; invite with " + replacement + " instead"
+		}
+		lines = append(lines, fmt.Sprintf("WARNING:   invitation %d grants %s %s%s", inv.InvitationID, inv.RoleName, where, instead))
 	}
 	return lines
 }

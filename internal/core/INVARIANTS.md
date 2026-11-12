@@ -142,7 +142,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-CORE-18** `bypasses_permission_checks` is a structural, non-name-based column on
   `models.Role` resolved via `storage.RoleSetBypassesPermissionChecks` — never a hardcoded
   role-name list. Why: ADR-084. Guard:
-  `adr_open_decisions_tripwire_test.go:TestADRDecisionRoleSetContainsAdminIsStructural`.
+  `guards/adr_open_decisions_tripwire_test.go:TestADRDecisionRoleSetContainsAdminIsStructural`.
 - **INV-CORE-19** `roleSetContainsAdmin` fails closed on a genuine storage error, never
   swallows it. Why: ADR-084 "Verification". Guard: `role_set_contains_admin_error_test.go`.
 - **INV-CORE-20** There is exactly ONE authority on "which roles confer administrative
@@ -280,13 +280,13 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `auth_bootstrap.go:469`, `break_glass.go:439`, `catalog.go:278,641`,
   `classification_gate.go:484`, `machine_identities.go:272`, `secret_dependencies.go:366`,
   `service.go:662`, `users.go:222,264`. Structural completeness (INVARIANT-GUARDS-1):
-  `besteffort_callsite_guard_test.go:TestBestEffortCallSites_EveryCallProtectedOrAllowlisted` —
+  `guards/besteffort_callsite_guard_test.go:TestBestEffortCallSites_EveryCallProtectedOrAllowlisted` —
   an AST sweep over `internal/core` non-test files that establishes the best-effort set (functions
   that recover their own panic, callees that are the single statement of a `besteffort.Run`
   closure, and the seeds named above) and requires every call to a member to be inside a
   `besteffort.Run`/`goSafe` closure, in a function with a top-level recovering defer, or to a
   self-recovering callee, else to carry a reviewed row
-  (`besteffort_callsite_allow_entry_<slug>_test.go`). Its doc comment lists the recognised call forms
+  (`guards/besteffort_callsite_allow_entry_<slug>_test.go`). Its doc comment lists the recognised call forms
   and what it does NOT see (multi-hop `c.storage.X(...)`, nested defers, transitive protection,
   subpackages). Red proof is a permanent test: `TestBestEffortCallSites_MutationKillsRecoverWrapper`
   breaks one recover wrapper in a copy and requires the guard to report the callers;

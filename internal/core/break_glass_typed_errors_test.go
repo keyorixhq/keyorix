@@ -41,7 +41,7 @@ func TestActivateBreakGlass_RefusalsAreSentinelsWithUnchangedText(t *testing.T) 
 	// (the "permission denied" prefix is kept for the 403 mapping).
 	assert.EqualError(t, err, "permission denied: "+errBreakGlassDisabled)
 
-	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "editor", DefaultTTL: time.Hour, MaxTTL: time.Hour})
+	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour})
 
 	_, err = c.ActivateBreakGlass(ctx, 0, member.ID, just, "")
 	require.ErrorIs(t, err, ErrBreakGlassInvalidRequest)
@@ -81,7 +81,7 @@ func TestRevokeBreakGlass_RefusalsAreSentinelsWithUnchangedText(t *testing.T) {
 	viewer, err := st.GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, member.ID, viewer.ID, storage.Scope{ProjectID: proj.ID}))
-	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "editor", DefaultTTL: time.Hour, MaxTTL: time.Hour})
+	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour})
 	act, err := c.ActivateBreakGlass(ctx, proj.ID, member.ID, "prod incident, database is down", "")
 	require.NoError(t, err)
 
@@ -127,7 +127,7 @@ func TestActivateBreakGlass_RoleLookupDBFailureIsInternalNotInvalidRequest(t *te
 	viewer, err := st.GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, member.ID, viewer.ID, storage.Scope{ProjectID: proj.ID}))
-	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "editor", DefaultTTL: time.Hour, MaxTTL: time.Hour})
+	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour})
 
 	dbErr := errors.New("pq: connection refused (driver detail)")
 	c.storage = getRoleByNameErrStub(c.storage, dbErr)
@@ -135,6 +135,6 @@ func TestActivateBreakGlass_RoleLookupDBFailureIsInternalNotInvalidRequest(t *te
 	_, err = c.ActivateBreakGlass(ctx, proj.ID, member.ID, "prod incident, database is down", "")
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrBreakGlassInvalidRequest), "a DB failure must not be classed as a client error")
-	assert.NotContains(t, err.Error(), "editor", "the emergency role name must not appear in the error")
+	assert.NotContains(t, err.Error(), "project_developer", "the emergency role name must not appear in the error")
 	assert.ErrorIs(t, err, dbErr, "the underlying error stays reachable for logging")
 }

@@ -1,0 +1,1 @@
+internal/storage/migrate_timestamp_guard_test.go	!operator/**	walks only non-test Go files under internal/storage (#3440); its input globs are the default Go-job selection

@@ -17,7 +17,7 @@
 #   PARENT-IS-SELF-RESTORE  an un-delete inside the parent's own restore transaction.
 #   UNSAFE-OPEN  a real race; the issue tracks the fix. Remove the row when it lands.
 #   pending: #N  an open PR fixes this site (expires; fails once #N has merged, see
-#                internal/core/exempt_ledger_review_test.go).
+#                internal/core/guards/exempt_ledger_review_test.go).
 #   arrives with #N  pre-registered for a site an open PR creates or renames.
 #
 # expires: YYYY-MM-DD (pending/arrives rows only) or -.

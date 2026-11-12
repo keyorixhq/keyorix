@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useParams, useNavigate, Routes, Route, Navigate, useLocation } from 'react-router';
 import { ChevronRightIcon, FolderIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
+import { useCan } from '../../features/auth/useCan';
 import { useProject } from '../../features/projects/api';
 import { ProjectSecretsTab } from './ProjectSecretsTab';
 import { ProjectMembersTab } from './ProjectMembersTab';
@@ -85,6 +86,8 @@ export const ProjectDetailPage: React.FC = () => {
     const { data: project, isLoading, isError } = useProject(projectId);
     const recordAccess = useProjectMruStore((s) => s.recordAccess);
     const [editing, setEditing] = useState(false);
+    // PUT /projects/{id} is secrets.write; coarse show/hide, the server enforces the scope.
+    const canEdit = useCan().writeSecrets;
 
     // Record this project as recently accessed once it loads (drives the
     // sidebar switcher's Recent ordering — ADR-018). Captures both
@@ -141,20 +144,22 @@ export const ProjectDetailPage: React.FC = () => {
                         </p>
                     )}
                 </div>
-                <button
-                    type="button"
-                    onClick={() => setEditing(true)}
-                    className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors shrink-0"
-                    style={{
-                        color: 'var(--text-secondary)',
-                        backgroundColor: 'var(--bg-subtle)',
-                        border: '1px solid var(--border)',
-                    }}
-                    title="Edit project"
-                >
-                    <PencilSquareIcon className="h-4 w-4" />
-                    Edit
-                </button>
+                {canEdit && (
+                    <button
+                        type="button"
+                        onClick={() => setEditing(true)}
+                        className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors shrink-0"
+                        style={{
+                            color: 'var(--text-secondary)',
+                            backgroundColor: 'var(--bg-subtle)',
+                            border: '1px solid var(--border)',
+                        }}
+                        title="Edit project"
+                    >
+                        <PencilSquareIcon className="h-4 w-4" />
+                        Edit
+                    </button>
+                )}
             </div>
 
             <TabNav projectId={projectId} />
@@ -170,7 +175,7 @@ export const ProjectDetailPage: React.FC = () => {
                 <Route path="*" element={<Navigate to={`/projects/${projectId}`} replace />} />
             </Routes>
 
-            {editing && <EditProjectModal project={project} onClose={() => setEditing(false)} />}
+            {editing && canEdit && <EditProjectModal project={project} onClose={() => setEditing(false)} />}
         </div>
     );
 };

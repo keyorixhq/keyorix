@@ -1,0 +1,1 @@
+ADR-066-ALLOWLIST-EVALUATED-ON-CACHE-HIT	./server/middleware	TestCacheHit_NetworkAllowlist_EvaluatedAgainstFreshRestriction	default-ci	pending	-	ADR-066: the token CIDR allowlist is checked per request against the freshly-refreshed restriction, including HTTP cache hits (INV-MW-06)
