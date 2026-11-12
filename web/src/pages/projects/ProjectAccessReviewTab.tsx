@@ -48,8 +48,10 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
     const entries = report?.entries ?? [];
     const degraded = report?.degraded === true;
     const degradedReasons = report?.degradedReasons ?? [];
-    // Revoke is roles.assign in the project; Attest is roles.read (no useCan field, left as is).
-    const canRevoke = useCan().manageMembers;
+    // Revoke is roles.assign in the project; Attest is roles.read (router and core both check it).
+    const can = useCan();
+    const canRevoke = can.manageMembers;
+    const canAttest = can.readRoles;
     const attest = useAttestAccessReview(projectId);
     const revoke = useRevokeAccessReview(projectId);
 
@@ -150,19 +152,21 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
                                         Attested
                                     </span>
                                 ) : (
-                                    <button
-                                        type="button"
-                                        onClick={() => handleAttest(e)}
-                                        disabled={attest.isPending}
-                                        className="px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
-                                        style={{
-                                            border: '1px solid var(--border)',
-                                            color: 'var(--text-secondary)',
-                                        }}
-                                        title="Certify this access was reviewed and kept"
-                                    >
-                                        Attest
-                                    </button>
+                                    canAttest && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleAttest(e)}
+                                            disabled={attest.isPending}
+                                            className="px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
+                                            style={{
+                                                border: '1px solid var(--border)',
+                                                color: 'var(--text-secondary)',
+                                            }}
+                                            title="Certify this access was reviewed and kept"
+                                        >
+                                            Attest
+                                        </button>
+                                    )
                                 )}
                                 {revocable &&
                                     (confirming ? (

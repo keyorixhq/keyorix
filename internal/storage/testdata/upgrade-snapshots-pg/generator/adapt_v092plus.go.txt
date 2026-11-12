@@ -1,0 +1,34 @@
+// The per-tag API differences, for v0.92.1 through v0.96.3.
+package storage
+
+import (
+	"context"
+
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/identity"
+)
+
+func w6AssignUserRole(c *core.KeyorixCore, ctx context.Context, actor, user, role uint, s core.Scope) error {
+	return c.AssignUserRole(ctx, actor, user, role, s, false)
+}
+
+func w6AssignGroupRole(c *core.KeyorixCore, ctx context.Context, actor, group, role uint, s core.Scope) error {
+	return c.AssignRoleToGroup(ctx, actor, group, role, s, false)
+}
+
+func w6AddGlobal(c *core.KeyorixCore, ctx context.Context, actor, user, group uint) error {
+	return c.AddUserToGroupGlobal(ctx, actor, false, user, group)
+}
+
+func w6Rotate(c *core.KeyorixCore, ctx context.Context, id uint, val []byte, actor uint) error {
+	_, err := c.RotateSecret(ctx, id, val, actor, "admin")
+	return err
+}
+
+func w6Fold(name string) string {
+	f, err := identity.NewFoldedName(name)
+	if err != nil {
+		return ""
+	}
+	return f.Folded()
+}

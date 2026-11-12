@@ -119,9 +119,14 @@ func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	db, err := openMySQL(ctx, adminDSN, e.allowPrivateNetwork)
+	// allowAllFiles, which Issue refuses, is removed instead (#3980).
+	cfg, removed, err := parseMySQLRevokeDSN(adminDSN)
 	if err != nil {
 		return err
+	}
+	db, err := openMySQLConfig(ctx, cfg, e.allowPrivateNetwork)
+	if err != nil {
+		return revokeStrippedError(removed, false, err)
 	}
 	defer func() { _ = db.Close() }()
 
@@ -158,6 +163,10 @@ func openMySQL(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (
 	if err != nil {
 		return nil, fmt.Errorf("invalid mysql admin DSN: %w", err)
 	}
+	return openMySQLConfig(ctx, cfg, allowPrivateNetwork)
+}
+
+func openMySQLConfig(ctx context.Context, cfg *mysql.Config, allowPrivateNetwork bool) (*sql.DB, error) {
 	// Belt and braces behind the textual check: whatever the parser made of the
 	// DSN, never let the remote server request a local file (LOCAL INFILE).
 	if cfg.AllowAllFiles {

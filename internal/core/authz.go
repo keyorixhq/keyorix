@@ -817,20 +817,19 @@ func (c *KeyorixCore) RequireMachinePrivilegeCeiling(ctx context.Context, actorT
 // admin-equivalent permissions but no bypass flag; this catches a canonical
 // bypass role with the flag but no enumerated permissions. Neither alone is
 // sufficient — both are checked.
+//
+// #4025: the target's role set comes from ONE read (targetRoleSnapshot), never
+// from a scope listing followed by a per-scope re-read: between those reads a
+// concurrent grant move (remove at scope A, add at scope B, one commit by
+// another administrator) made the check discover A, then find nothing at A, and
+// allow an actor who does not outrank the target. See targetRoleSnapshot.
 func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, actorID, targetID uint, action string) error {
-	scopes, err := c.storage.GetUserRoleScopes(ctx, targetID)
+	scopes, grants, err := c.targetRoleSnapshot(ctx, targetID)
 	if err != nil {
 		return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)
 	}
 	for _, scope := range scopes {
-		targetRoleIDs, err := c.scopedRoleIDs(ctx, targetID, scope)
-		if err != nil {
-			return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)
-		}
-		targetBypasses, err := c.roleSetContainsAdmin(ctx, targetRoleIDs)
-		if err != nil {
-			return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)
-		}
+		targetRoleIDs, targetBypasses := roleGrantsAt(grants, scope)
 		if targetBypasses {
 			actorRoleIDs, err := c.scopedRoleIDs(ctx, actorID, scope)
 			if err != nil {
@@ -866,6 +865,67 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 		}
 	}
 	return nil
+}
+
+// targetRoleSnapshot reads the target's role grants for
+// requireEqualOrGreaterAdminAuthority (#4025). The grants come from ONE
+// statement (ListUserRoleGrants: direct and group grants, each with its scope
+// and the role's ADR-084 bypass flag), so the role set at every scope is
+// derived from one consistent state and a concurrent move is seen either
+// before or after, never half-applied. A transaction instead was not used:
+// grant writers serialize on different locks (the last-admin, project-admin
+// and separation-of-duties guards), on Postgres a READ COMMITTED transaction
+// still takes a fresh snapshot per statement, and on SQLite it would turn a
+// read-only check into a write transaction.
+//
+// The scopes checked are GetUserRoleScopes' (the scope discovery this check
+// always used) plus the scope of every snapshot grant. Without a concurrent
+// write the two agree except that GetUserRoleScopes also lists scopes of
+// grants on a deleted project or environment, where the old per-scope read
+// still evaluated the target's other grants; keeping that listing keeps the
+// verdict unchanged. A grant moved between the two reads is still checked,
+// because its scope comes from the snapshot itself. GetUserRoleScopes is read
+// first so that a fault on it is still the first resolution failure
+// (INV-CORE-04).
+func (c *KeyorixCore) targetRoleSnapshot(ctx context.Context, targetID uint) ([]Scope, []storage.UserRoleGrant, error) {
+	discovered, err := c.storage.GetUserRoleScopes(ctx, targetID)
+	if err != nil {
+		return nil, nil, err
+	}
+	grants, err := c.storage.ListUserRoleGrants(ctx, targetID)
+	if err != nil {
+		return nil, nil, err
+	}
+	scopes := make([]Scope, 0, len(discovered)+len(grants))
+	seen := make(map[Scope]bool, cap(scopes))
+	add := func(s Scope) {
+		if !seen[s] {
+			seen[s] = true
+			scopes = append(scopes, s)
+		}
+	}
+	for _, s := range discovered {
+		add(s)
+	}
+	for _, g := range grants {
+		add(Scope{ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID})
+	}
+	return scopes, grants, nil
+}
+
+// roleGrantsAt is the role set the grants confer at scope (UserRoleGrant.AppliesAt,
+// the same rows scopedRoleIDs reads there) and whether any of those roles bypasses
+// permission checks (what roleSetContainsAdmin answers for that set).
+func roleGrantsAt(grants []storage.UserRoleGrant, scope Scope) ([]uint, bool) {
+	var ids []uint
+	bypass := false
+	for _, g := range grants {
+		if g.AppliesAt(scope) {
+			ids = append(ids, g.RoleID)
+			bypass = bypass || g.Bypass
+		}
+	}
+	return dedupeUints(ids), bypass
 }
 
 // requireAdminRankCeilingForTarget is the shared entry point every

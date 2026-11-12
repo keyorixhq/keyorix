@@ -8197,7 +8197,20 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
-            403: components["responses"]["Error"];
+            /** @description The caller lacks roles.assign at this project, the user's email domain is not allowed, or the privilege ceiling refused the grant: the actor's own permissions at this project must include every permission `role` bundles. The ceiling applies to a machine-identity token the same way, judged against the machine's own roles, so a machine whose roles do not cover `role` gets this 403; one whose roles do is allowed (201). Same error envelope as components/responses/Error. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        success?: boolean;
+                        code?: number;
+                        error?: string;
+                        message?: string;
+                    };
+                };
+            };
             409: components["responses"]["Error"];
         };
     };
@@ -12434,7 +12447,7 @@ export interface operations {
                 email?: string;
                 is_active?: boolean;
                 include_deleted?: boolean;
-                /** @description Set to `inactive` for users whose last login is more than 30 days ago; an account that has never logged in counts once it is 30+ days old (judged by creation date). */
+                /** @description Set to `inactive` for users with no login in the last 30+ days. An account that has never logged in counts as inactive once it is 30+ days old (judged by its creation date), not before. */
                 filter?: "inactive";
             };
             header?: never;

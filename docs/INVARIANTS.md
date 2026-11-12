@@ -14,24 +14,24 @@ silently removing it.
 
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
-| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 135 | 134 | 1 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 43 | 40 | 3 |
-| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 69 | 69 | 0 |
-| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 40 | 40 | 0 |
-| `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 20 | 20 | 0 |
-| `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 33 | 33 | 0 |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 153 | 153 | 0 |
+| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 44 | 41 | 3 |
+| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 75 | 75 | 0 |
+| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 44 | 44 | 0 |
+| `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 21 | 21 | 0 |
+| `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 37 | 37 | 0 |
 | `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 40 | 39 | 1 |
 | `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 20 | 20 | 0 |
-| `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 9 | 9 | 0 |
+| `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 10 | 10 | 0 |
 | `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 19 | 19 | 0 |
 | `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 11 | 11 | 0 |
-| `internal/solewriter` | [internal/solewriter/INVARIANTS.md](../internal/solewriter/INVARIANTS.md) | 16 | 16 | 0 |
-| `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 7 | 2 |
+| `internal/solewriter` | [internal/solewriter/INVARIANTS.md](../internal/solewriter/INVARIANTS.md) | 17 | 17 | 0 |
+| `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 8 | 1 |
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
-| `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 2 | 2 | 0 |
+| `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
-| **Total** | | **472** | **465** | **7** |
+| **Total** | | **510** | **505** | **5** |
 
 ## Highest-priority UNGUARDED gaps
 
@@ -56,11 +56,13 @@ completeness sweep). The sibling `internal/core` gap (INV-CORE-34) has
 
 ## Ledger gaps (informational, not filed as issues)
 
-`docs/adr-conformance-enforced.tsv` has zero rows for `server/middleware`, `server/grpc`,
-`server/grpc/interceptors`, or `cli`, despite real, currently-passing tests enforcing several
-properties documented in those packages' files. Seeding rows for these is a low-effort
-follow-up distinct from the UNGUARDED gaps above (those have no test at all; these have a test
-but no ledger entry).
+Seeded 2026-11-11 (LEDGER-SEED-1): `docs/adr-conformance-enforced.d/` now holds rows for
+`server/middleware` (5), `server/grpc` + `interceptors` + `services` (7) and `cli` (2), each
+re-run before it was transcribed. Only invariants whose guard also enforces a property an ADR
+states got a row; the rest of those packages' guarded invariants (CSRF, cookie attributes,
+security headers, body cap, rate limits, the interceptor chain, the `run` env filter, ...)
+state no ADR property and stay guarded by their tests alone. That is a deliberate scope, not a
+ledger gap.
 
 ## Maintaining this index
 
@@ -70,7 +72,7 @@ but no ledger entry).
   that matches neither the package-row nor the Total pattern (it would otherwise be left out
   of the sums). It does not check a row against its package's files or that the linked file
   exists. When two PRs both change a row, keep ONE row with the current counts.
-- Package-count and guarded/unguarded totals above are a snapshot (re-counted 2026-10-30,
+- Package-count and guarded/unguarded totals above are a snapshot (re-counted 2026-11-11,
   including `INVARIANTS.d/` fragments, which are one invariant per file). They drift as
   invariants are added, closed, or re-guarded — re-derive by
   counting `- **INV-<PKG>-NN` bullets per file plus the `INVARIANTS.d/` fragments, and per

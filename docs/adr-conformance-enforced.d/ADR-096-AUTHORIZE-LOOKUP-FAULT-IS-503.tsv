@@ -1,0 +1,1 @@
+ADR-096-AUTHORIZE-LOOKUP-FAULT-IS-503	./server/middleware	TestAuthorizeLookupFault_Is503ThenRecovers	default-ci	pending	-	ADR-096: a transient authorization lookup error is answered 503, not folded into a 403/404 denial (INV-MW-authorize-lookup-error-is-503)

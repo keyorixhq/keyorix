@@ -5,14 +5,27 @@ name: govulncheck (scheduled)
 # Go, a new entry could land in the vulnerability database (vuln.go.dev) for
 # a symbol our code already calls, and nothing would notice until the next
 # incidental Go change. This closes that gap the same way osv-scanner.yml
-# already does for its own (different) database: a weekly, schedule-only run
-# of the identical check.
+# already does for its own (different) database: a schedule-only run of the
+# identical check, every 3 hours.
 on:
   schedule:
-    # Matches osv-scanner.yml's own cadence exactly (same rationale, same
-    # slot) -- one weekly reminder-class scan schedule for this repo, not two
-    # different ones to keep track of.
-    - cron: '19 17 * * 5'
+    # Every 3 hours (minute 17: off the round minute, clear of the other
+    # scheduled slots). Vulnerability DB entries land at any time of day, not
+    # on a weekly rhythm: GO-2026-6859 (stdlib net/http, reachable through
+    # CompleteSAML -> PostFormValue) was published 2026-11-11 02:51Z and went
+    # unnoticed for ~10 h under the old weekly (Friday) cadence, until a
+    # merge-queue build tripped over it. A security product should find that
+    # itself within hours.
+    #
+    # osv-scanner.yml deliberately keeps its own weekly cadence: a different
+    # database with a different feed and a much heavier run (a reusable
+    # workflow that uploads SARIF), so it does not share this reason.
+    #
+    # Cost: the job is cheap (cached govulncheck binary; the last scheduled
+    # runs took ~2 min wall clock end to end, govulncheck job plus alert job),
+    # so 8 runs/day is roughly 25 runner-minutes/day (Linux, per-job rounding
+    # up to whole minutes).
+    - cron: '17 */3 * * *'
   workflow_dispatch: {}
 
 permissions: {}
@@ -28,7 +41,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
 
       - name: Cache govulncheck binary
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -61,7 +74,11 @@ jobs:
           scripts/ci/check-govulncheck.sh
 
   # Before 2026-09-28 a red scheduled run alerted nobody. Same one-issue-per-
-  # job mechanism as e2e-nightly.yml.
+  # job mechanism as e2e-nightly.yml. This job runs every 3 hours, so repeated
+  # reds must not become 8 comments a day: failure-issue.sh updates the one
+  # open issue, and FAILURE_ISSUE_MIN_COMMENT_HOURS limits its "Failed again"
+  # comments to at most one per 24 h (the issue opens on the first red and
+  # closes on the first green).
   alert:
     needs: [govulncheck]
     if: always() && github.ref == 'refs/heads/main'
@@ -74,5 +91,6 @@ jobs:
       - name: Open, update or close the alert issue
         env:
           GH_TOKEN: ${{ github.token }}
+          FAILURE_ISSUE_MIN_COMMENT_HOURS: '24'
           OUTCOME: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
         run: ./scripts/ci/failure-issue.sh "$OUTCOME" "Scheduled govulncheck is failing"

@@ -57,6 +57,20 @@ func errUnsupportedExportFormatf(format string) error {
 	return storage.Typed(ErrUnsupportedExportFormat, fmt.Sprintf("unsupported export format %q: must be csv or json", format), nil)
 }
 
+// ErrRotatedValueStoredSecretDeleted: a backend-bound rotation stored its new
+// version, then found the secret deleted when it wrote the rotation stamp
+// (#2873). The version stays (it may be the only record of the rotated
+// upstream credential) and a restore serves it as latest. The error also
+// matches storage.ErrSecretNotFound, so handlers still answer 404.
+var ErrRotatedValueStoredSecretDeleted = errors.New("rotated value stored, but the secret was deleted concurrently")
+
+func errRotatedValueStoredSecretDeleted(id uint, versionNumber int) error {
+	return storage.Typed(ErrRotatedValueStoredSecretDeleted,
+		fmt.Sprintf("%s: secret %d was deleted during its rotation; the rotated value was stored as version %d but last_rotated_at was not updated (restore the secret to serve it)",
+			i18n.T("ErrorSecretNotFound", nil), id, versionNumber),
+		errSecretNotFoundText())
+}
+
 // errSecretNotFoundText is the not-found refusal for a secret that a write
 // matched no row of (it was deleted between the read and the write). It renders
 // the translated i18n text exactly as before and matches
