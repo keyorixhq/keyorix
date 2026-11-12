@@ -940,16 +940,16 @@ func seedCorpus(f *testing.F) {
 	// A spread of domains, op counts, HB on/off. The decoder is total, so any
 	// bytes are valid; these just prime coverage.
 	seeds := [][]byte{
-		{dmPAT, 1, 1, 0, 0, 1, 2, 0},                 // validate || revoke (RACE)
-		{dmPAT, 1, 0, 1, 0, 0, 1, 0},                 // revoke -> validate (HB)
-		{dmSecret, 2, 1, 1, 1, 2, 2, 0, 1, 0},        // update(1) || delete (RACE)
-		{dmSecret, 2, 0, 4, 0, 1, 0, 0, 2},           // delete -> read (HB)
-		{dmSecret, 1, 1, 1, 1, 1, 2},                 // update || update
-		{dmRole, 1, 1, 2, 0, 0, 1, 0},                // authorize || revoke (RACE)
-		{dmRole, 1, 0, 2, 0, 0, 0, 0},                // revoke -> authorize (HB)
-		{dmRole, 2, 1, 1, 0, 2, 0, 0, 0, 0, 0},       // grant || revoke
-		{dmAudit, 2, 0, 0, 0, 0, 0, 0, 0},            // 4 concurrent audited revokes
-		{dmAudit, 1, 0, 0, 0, 0, 0},                  // 3 concurrent audited revokes
+		{dmPAT, 1, 1, 0, 0, 1, 2, 0},           // validate || revoke (RACE)
+		{dmPAT, 1, 0, 1, 0, 0, 1, 0},           // revoke -> validate (HB)
+		{dmSecret, 2, 1, 1, 1, 2, 2, 0, 1, 0},  // update(1) || delete (RACE)
+		{dmSecret, 2, 0, 4, 0, 1, 0, 0, 2},     // delete -> read (HB)
+		{dmSecret, 1, 1, 1, 1, 1, 2},           // update || update
+		{dmRole, 1, 1, 2, 0, 0, 1, 0},          // authorize || revoke (RACE)
+		{dmRole, 1, 0, 2, 0, 0, 0, 0},          // revoke -> authorize (HB)
+		{dmRole, 2, 1, 1, 0, 2, 0, 0, 0, 0, 0}, // grant || revoke
+		{dmAudit, 2, 0, 0, 0, 0, 0, 0, 0},      // 4 concurrent audited revokes
+		{dmAudit, 1, 0, 0, 0, 0, 0},            // 3 concurrent audited revokes
 	}
 	for _, s := range seeds {
 		f.Add(s)
