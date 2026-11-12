@@ -1,0 +1,1 @@
+fuzz/thirdparty/pgx	none	-	Test-only hostile-server fuzz harness for the pgx v5 handshake and query reply parser (fake server, oracles for panic/hang/alloc/truncation); no production code, nothing linked into a build	test-helper

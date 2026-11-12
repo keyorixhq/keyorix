@@ -1,0 +1,1 @@
+fuzz/thirdparty/mongodb	none	-	Test-only hostile-server fuzz harness for the mongo-driver v2 reply parser (fake server, oracles for panic/hang/alloc/truncation); no production code, nothing linked into a build	test-helper
