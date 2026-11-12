@@ -105,7 +105,10 @@ func multiRowPGStore(t *testing.T) *LocalStorage {
 	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
-	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), &gorm.Config{Logger: logger.Discard})
+	// The pool is tagged (application_name) so a test that waits on or kills a
+	// backend of this store can tell it from another package's on the same database.
+	tagged := pgdsn.WithApplicationName(pgdsn.PGSearchPathDSN(dsn, schema), pgdsn.UniqueApplicationName("kx_audit_mr"))
+	db, err := gorm.Open(postgres.Open(tagged), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if sqlDB, e := db.DB(); e == nil {
