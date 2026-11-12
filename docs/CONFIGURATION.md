@@ -1545,6 +1545,32 @@ per-config opt-in rather than a silent new requirement. See
   to operators today even though Keyorix cannot do it per-lease without affecting
   every other concurrent lease on the same identity.
 
+#### Revoking leases of a config whose `admin_dsn` names a server file
+
+An `admin_dsn` option that makes the driver read a file on the Keyorix server (or
+use its ambient credentials) is refused when a config is created, and again when a
+stored config issues or renews (#3952). A config stored before that release can
+still carry such an option. Its leases still revoke, by hand and through the expiry
+sweep: `Revoke` removes the option and connects with what is left, and never reads
+the named file (#3980). Issue from such a config keeps failing.
+
+| Backend | Option | What `Revoke` does |
+|---|---|---|
+| `postgres` | `sslcert`, `sslkey` (with `sslpassword`) | Removed: no client certificate is presented. A target that requires one refuses the login, and the lease stays `revoke_failed`. |
+| `postgres` | `passfile` | Removed: the `admin_dsn` must contain the admin password anyway. |
+| `postgres` | `sslrootcert` | Replaced by `sslrootcert=system`: the target's certificate is checked against the system trust store with `verify-full`, never with less checking than the stored DSN asked for, and without a plaintext fallback. A target signed by a private CA fails the TLS handshake; the lease stays `revoke_failed` and the error names `sslrootcert`. |
+| `postgres` | `service`, `servicefile` | Refused: they take the target itself from a server file. The lease stays `revoke_failed` with the option in its error. |
+| `mysql` | `allowAllFiles` | Removed: the driver refuses every `LOCAL INFILE` request. |
+| `mongodb` | `tlsCAFile`, `sslCertificateAuthorityFile` | Removed, with `tls=true`: system trust store. A target signed by a private CA fails the TLS handshake; the lease stays `revoke_failed` and the error names the option. |
+| `mongodb` | `tlsCertificateKeyFile`, `sslClientCertificateKeyFile`, `tlsCertificateFile`, `tlsPrivateKeyFile` | Removed, with `tls=true`: no client certificate is presented. |
+| `mongodb` | `authMechanism=MONGODB-AWS`, `MONGODB-OIDC`, `GSSAPI` | Refused: they change who authenticates. |
+
+At startup the server logs a `WARNING: dynamic secrets:` line with the number of
+such configs and their live (`active` or `revoke_failed`) leases, then one line per
+config. A stored `admin_dsn` cannot be edited: create a replacement config whose
+DSN names no server file, and drop by hand the roles of any lease that stays
+`revoke_failed` (MongoDB and MySQL users have no expiry of their own).
+
 ---
 
 ## oidc
