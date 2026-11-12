@@ -41,6 +41,7 @@ import (
 	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgpriv"
 )
 
 const (
@@ -278,6 +279,9 @@ func Open(tb testing.TB, purpose, isolation string) *World {
 	if err != nil {
 		tb.Fatalf("open %s: %v", pgdsn.DatabaseName(dsn), err)
 	}
+	// Reset restores the snapshot under session_replication_role = replica, so every
+	// target needs the privilege: skip on a role without it (fail under CI=true).
+	pgpriv.RequireReplicationRolePrivilege(tb, db)
 	pc, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		tb.Fatalf("parse pool config: %v", err)
@@ -471,7 +475,9 @@ func (w *World) ServerLogSettings() (map[string]string, error) {
 }
 
 // SweepStale drops every database of this harness (name starting with Prefix) left
-// on the server by a killed run. It refuses to touch any other name.
+// on the server by a killed run. It refuses to touch any other name, but it cannot
+// tell a stale database from another session's live one: run it only as an operator
+// tool on a server nobody else is testing against.
 func SweepStale(tb testing.TB) []string {
 	tb.Helper()
 	dsn := os.Getenv(PGDSNEnv)

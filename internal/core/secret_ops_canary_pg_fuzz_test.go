@@ -632,6 +632,11 @@ func TestCorePGCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 		}},
 	} {
 		t.Run("channel-"+tc.name, func(t *testing.T) {
+			if tc.name == "db-cell" {
+				// Reset truncates only the snapshot's tables, so the table the leak creates
+				// would keep its row and make every later run report db:w7_redproof.
+				t.Cleanup(func() { _ = fx.world.DB.Exec("DROP TABLE IF EXISTS w7_redproof").Error })
+			}
 			r, invalid := runCorePGProgram(t, fx, t.TempDir(), []byte{0, 0, 0}, corePGCanaryAllow(), tc.leak, nil)
 			expectFinding(t, r, invalid, "channel="+tc.want+" ")
 		})
@@ -642,8 +647,13 @@ func TestCorePGCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 			r, invalid := runCorePGProgram(t, fx, t.TempDir(), []byte{0, 0, 0}, corePGCanaryAllow(), func(r *coreCanaryRun, _ string) {
 				log.Print("x ", string(canaryVariantOf(r.controlValue, v.Name)), " y")
 			}, nil)
-			if invalid != "" || len(r.findings) == 0 {
-				t.Errorf("encoding %s not reported (invalid=%q findings=%d)", v.Name, invalid, len(r.findings))
+			// The finding must come from the log channel: any other finding (a stale row,
+			// say) would make the variant look detected without the scanner having
+			// matched the encoded log line.
+			if invalid != "" || !slices.ContainsFunc(r.findings, func(f string) bool {
+				return strings.Contains(f, "channel="+canary.ChannelLog+" ")
+			}) {
+				t.Errorf("encoding %s not reported on the log channel (invalid=%q findings=%v)", v.Name, invalid, r.findings)
 			}
 		}
 	})
