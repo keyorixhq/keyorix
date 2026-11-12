@@ -2,10 +2,8 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -181,9 +179,8 @@ func init() {
 }
 
 func confirmSecretFolderDeletion(prompt string) bool {
-	reader := bufio.NewReader(os.Stdin)
 	fmt.Printf("%s (yes/no): ", prompt)
-	input, _ := reader.ReadString('\n')
+	input, _ := stdinReader().ReadString('\n')
 	input = strings.TrimSpace(strings.ToLower(input))
 	return input == "yes" || input == "y"
 }

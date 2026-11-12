@@ -18,6 +18,8 @@ const schedLockDynamicSweep int64 = 0x4B455953_44594E53 // "KEYSDYNS"
 // Start the dynamic-secrets auto-revoke sweeper (ADR-035) — opt-in. Revokes
 // every active lease past its expiry so credentials don't outlive their TTL.
 func startDynamicSecretSweepScheduler(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) {
+	// #3980: configs stored before #3952 with a refused admin_dsn option.
+	warnRefusedDynamicAdminDSNs(ctx, coreService)
 	if cfg.DynamicSecrets.SweepEnabled {
 		interval := cfg.DynamicSecrets.GetSweepInterval()
 		log.Printf("Dynamic-secrets auto-revoke sweeper enabled: every %s", interval)

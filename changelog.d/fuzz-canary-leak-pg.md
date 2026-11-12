@@ -1,0 +1,2 @@
+### Testing
+- **Canary leak fuzz targets for PostgreSQL.** Plant a canary secret and assert it never appears in errors, logs, stdout/stderr, metrics, DB error DETAIL, gRPC status or HTTP bodies/headers, across core, HTTP, gRPC, panic-dump and CLI paths. The PostgreSQL-backed targets skip without `KEYORIX_TEST_PG_DSN`, or when the role may not `SET session_replication_role` (they fail under `CI=true`); the SQLite-backed targets run in the default test run.
