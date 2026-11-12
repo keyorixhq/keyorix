@@ -95,7 +95,11 @@ test.describe('least-privilege user (alice): Settings, Access Review, Rotation P
         await page.goto('/secrets/rotation');
         await settle(page);
         const main = page.locator('main');
-        await expect(main.getByRole('heading', { name: 'Rotation Policies', exact: true })).toBeVisible();
+        // GET /rotation-policies needs a deployment-wide secrets.read (no ?project_id= scope is sent), which
+        // this persona only holds per project, so the page shows its refusal card instead of the list and
+        // heading (ui-route-walk.spec.ts asserts the same). Assert that state, so the absences below are
+        // not an empty page; the admin test below proves the controls render when the page loads.
+        await expect(main.getByText('Failed to load rotation policies')).toBeVisible();
         await expect(main.getByRole('button', { name: /new policy/i })).toHaveCount(0);
         await expect(main.getByTitle('Edit', { exact: true })).toHaveCount(0);
         await expect(main.getByTitle('Delete', { exact: true })).toHaveCount(0);
