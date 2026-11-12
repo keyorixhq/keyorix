@@ -265,12 +265,12 @@ func TestAuthInterceptor_MachineTokenAuthenticatesAndUsesMachineRBAC(t *testing.
 	// hold roles.assign at the target project scope before it can mint a token —
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2 := uint(2)
-	h.AssignUserRole(t, 1, 2, &proj2)
+	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2)
 	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(tok.PlainToken, "kx_machine_"))
 	// Grant the machine viewer (secrets.read) in project 2 only.
-	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, 4, core.Scope{ProjectID: 2}, 1, false))
+	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, testhelper.RoleProjectViewer, core.Scope{ProjectID: 2}, 1, false))
 
 	var captured context.Context
 	interceptor := AuthInterceptor(h.CoreService, false)
@@ -372,7 +372,7 @@ func TestAuthInterceptor_MachineTokenNetworkAllowlistOverGRPC(t *testing.T) {
 		AllowedCIDRs: []string{"10.0.0.0/8"},
 	})
 	require.NoError(t, err)
-	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, 4, core.Scope{ProjectID: 2}, 1, false))
+	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, testhelper.RoleProjectViewer, core.Scope{ProjectID: 2}, 1, false))
 
 	interceptor := AuthInterceptor(h.CoreService, false)
 

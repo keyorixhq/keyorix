@@ -42,6 +42,14 @@
 #   SCALE_FACTORS      size multipliers, default "1 4 16"
 #   SCALE_BASE_AUDIT   audit events at factor 1 (default 150000); the other tables scale
 #                      with it: secrets /50 (x3 versions), access logs /2, users /300, shares /150
+#   SCALE_BASE_SECRETS secrets at factor 1 (default SCALE_BASE_AUDIT/50), each with 3 versions
+#   SCALE_RSS_SLACK_MB headroom of the memory assertion (default 64); see "Memory assertion"
+#   MIGRATE_PG_DSN_FILE optional: without it the PostgreSQL legs are skipped (loudly)
+#
+# Memory assertion: with two or more size factors whose row counts differ by at least 2x, the run FAILS
+# if the peak RSS of any backup, restore or verify-audit leg at the largest size exceeds
+# max(2 x the smallest size's peak, smallest + SCALE_RSS_SLACK_MB). A table loaded whole into memory grows
+# with the row count and trips it; noise does not. With a single factor nothing is asserted.
 #   SCALE_MODE         measure (default) | kill | all
 #   SCALE_OUT          results directory (default: <repo>/.scratch/scale)
 #   DRILL_KEEP=1       keep the work area (the script always deletes the big files itself)
@@ -52,9 +60,14 @@ set -euo pipefail
 # shellcheck source=../drills/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../drills/lib.sh"
 
-: "${MIGRATE_PG_DSN_FILE:?set MIGRATE_PG_DSN_FILE to a file holding the URL of an EMPTY PostgreSQL database}"
 SCALE_FACTORS="${SCALE_FACTORS:-1 4 16}"
 SCALE_BASE_AUDIT="${SCALE_BASE_AUDIT:-150000}"
+SCALE_BASE_SECRETS="${SCALE_BASE_SECRETS:-$((SCALE_BASE_AUDIT / 50))}"
+SCALE_RSS_SLACK_MB="${SCALE_RSS_SLACK_MB:-64}"
+# The PostgreSQL legs run only when an EMPTY database is named; without one the SQLite legs still run
+# (and say so), so a SQLite-only host can still prove backup/restore memory is bounded.
+HAVE_PG=0
+if [ -n "${MIGRATE_PG_DSN_FILE:-}" ]; then HAVE_PG=1; fi
 SCALE_MODE="${SCALE_MODE:-measure}"
 SCALE_OUT="${SCALE_OUT:-$DRILL_REPO_ROOT/.scratch/scale}"
 mkdir -p "$SCALE_OUT"
@@ -83,9 +96,9 @@ meas() {
 }
 
 run_size() {
-    local f="$1" src="src$1" ba="$SCALE_BASE_AUDIT"
-    step "size ${f}x: $((ba * f)) audit events, $((ba * f / 50)) secrets x3 versions, $((ba * f / 2)) access-log rows, $((ba * f / 300)) users, $((ba * f / 150)) shares"
-    seed_source "$src" "$((ba * f))" "$((ba * f / 50))" "$((ba * f / 2))" "$((ba * f / 300))" "$((ba * f / 150))"
+    local f="$1" src="src$1" ba="$SCALE_BASE_AUDIT" bs="$SCALE_BASE_SECRETS"
+    step "size ${f}x: $((ba * f)) audit events, $((bs * f)) secrets x3 versions, $((ba * f / 2)) access-log rows, $((ba * f / 300)) users, $((ba * f / 150)) shares"
+    seed_source "$src" "$((ba * f))" "$((bs * f))" "$((ba * f / 2))" "$((ba * f / 300))" "$((ba * f / 150))"
     local amax="$SRC_AUDIT_MAX" rows="$SRC_ROWS" sums="$DRILL_DIR/$src.sums"
 
     meas "$f" "$rows" "verify-audit sqlite source" "$src" verify-audit; need_ok "verify-audit on the source"
@@ -101,6 +114,12 @@ run_size() {
     meas "$f" "$rows" "verify-audit sqlite target" "tgt-sq$f" verify-audit; need_ok "verify-audit on the SQLite target"
     compare "$sums" "tgt-sq$f" "$amax"
     drop_big "tgt-sq$f"
+
+    if [ "$HAVE_PG" != 1 ]; then
+        drill_skip postgres "MIGRATE_PG_DSN_FILE not set: the SQLite -> PostgreSQL and PostgreSQL -> SQLite legs"
+        rm -f "$arc"; drop_big "$src"
+        return 0
+    fi
 
     # SQLite -> PostgreSQL
     target "tgt-pg$f" postgres "$src"; on_pg
@@ -122,11 +141,43 @@ run_size() {
     on_sqlite; drop_big "$src"
 }
 
+# assert_bounded_memory: see "Memory assertion" in the header. Reads results.tsv; every row of a leg
+# (backup / restore / verify-audit) is compared between the smallest and the largest size.
+assert_bounded_memory() {
+    local nsizes lo hi lo_rows hi_rows leg lo_rss hi_rss limit twice bad=0
+    nsizes="$(awk -F'\t' 'NR>1 {print $1}' "$RESULTS" | sort -un | wc -l | tr -d ' ')"
+    if [ "$nsizes" -lt 2 ]; then
+        echo "    memory assertion not applied: one size factor only (use SCALE_FACTORS=\"1 5\" for a growth check)"
+        return 0
+    fi
+    lo="$(awk -F'\t' 'NR>1 {print $1}' "$RESULTS" | sort -un | head -n 1)"
+    hi="$(awk -F'\t' 'NR>1 {print $1}' "$RESULTS" | sort -un | tail -n 1)"
+    lo_rows="$(awk -F'\t' -v s="$lo" 'NR>1 && $1==s {print $2; exit}' "$RESULTS")"
+    hi_rows="$(awk -F'\t' -v s="$hi" 'NR>1 && $1==s {print $2; exit}' "$RESULTS")"
+    [ "$((hi_rows))" -ge "$((2 * lo_rows))" ] || fail "memory assertion: the largest size ($hi_rows rows) is not 2x the smallest ($lo_rows rows)"
+    while IFS= read -r leg; do
+        lo_rss="$(awk -F'\t' -v s="$lo" -v l="$leg" 'NR>1 && $1==s && $3==l {print $5}' "$RESULTS")"
+        hi_rss="$(awk -F'\t' -v s="$hi" -v l="$leg" 'NR>1 && $1==s && $3==l {print $5}' "$RESULTS")"
+        { [ -n "$lo_rss" ] && [ -n "$hi_rss" ]; } || continue
+        twice=$((2 * lo_rss))
+        limit=$((lo_rss + SCALE_RSS_SLACK_MB))
+        [ "$twice" -gt "$limit" ] && limit="$twice"
+        if [ "$hi_rss" -gt "$limit" ]; then
+            echo "    GROWTH: $leg: ${lo_rss} MB at $lo_rows rows -> ${hi_rss} MB at $hi_rows rows (limit ${limit} MB)" >&2
+            bad=1
+        else
+            ok "$leg: ${lo_rss} MB at $lo_rows rows, ${hi_rss} MB at $hi_rows rows (limit ${limit} MB)"
+        fi
+    done < <(awk -F'\t' 'NR>1 && $3!="archive bytes" {print $3}' "$RESULTS" | sort -u)
+    [ "$bad" = 0 ] || fail "peak memory grows with the number of rows (a table is probably loaded whole into memory)"
+}
+
 if [ "$SCALE_MODE" = measure ] || [ "$SCALE_MODE" = all ]; then
     printf 'size\trows\tleg\twall_s\tmaxrss_mb\texit\n' >"$RESULTS"
     for f in $SCALE_FACTORS; do run_size "$f"; done
     step "results ($RESULTS)"
     column -t -s "$(printf '\t')" "$RESULTS"
+    assert_bounded_memory
 fi
 
 if [ "$SCALE_MODE" = kill ] || [ "$SCALE_MODE" = all ]; then

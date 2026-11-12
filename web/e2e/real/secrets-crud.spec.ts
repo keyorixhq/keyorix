@@ -37,6 +37,27 @@ async function realLogin(page: Page) {
     await page.waitForURL('/dashboard', { timeout: 15_000 });
 }
 
+// settled returns read()'s value once it has been identical for `polls` consecutive reads, using
+// expect.poll's retry loop instead of a fixed sleep. It is for baselines taken before an action
+// ("how many Read rows are there now?"): a single read while a panel is still loading
+// under-counts, and the later "+1" assertion then fails for a reason unrelated to the product.
+async function settled<T>(read: () => Promise<T>, polls = 3, timeout = 15_000): Promise<T> {
+    let last: T | undefined;
+    let same = 0;
+    await expect
+        .poll(
+            async () => {
+                const v = await read();
+                same = v === last ? same + 1 : 1;
+                last = v;
+                return same;
+            },
+            { intervals: [250, 500, 1_000], timeout, message: 'value never settled before the action under test' }
+        )
+        .toBeGreaterThanOrEqual(polls);
+    return last as T;
+}
+
 // createProjectEnvAndSecret drives the UI through project creation, an
 // explicit custom environment, and a secret in it -- shared setup for both
 // tests below. Returns the project's base URL and the created secret's name.
@@ -180,9 +201,15 @@ test('secrets lifecycle: project/env creation, reveal gating, update, delete, re
 
     // ── Delete, then restore from the project's recycle bin ─────────────────
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
-    await expect(page.getByText('Delete Secret')).toBeVisible();
-    await page.getByRole('button', { name: 'Delete', exact: true }).click();
-    await expect(page.getByText('Delete Secret')).not.toBeVisible({ timeout: 10_000 });
+    // Scope the confirm click to the dialog: the detail header also has a "Delete" button, and
+    // an unscoped second getByRole('button', 'Delete') is a strict-mode violation for as long as
+    // the background is not yet aria-hidden by the modal.
+    const deleteDialog = page.getByRole('dialog', { name: 'Delete Secret', exact: true });
+    await expect(deleteDialog, 'the delete confirmation dialog must open').toBeVisible();
+    await deleteDialog.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect(deleteDialog, 'the delete confirmation dialog must close once the delete succeeds').toBeHidden({
+        timeout: 10_000,
+    });
     await expect(page.getByRole('row', { name: new RegExp(secretName) })).toHaveCount(0);
 
     await page.goto(`${projectUrl}/settings`);
@@ -192,13 +219,24 @@ test('secrets lifecycle: project/env creation, reveal gating, update, delete, re
     // right after page.goto, and a strict-mode violation (two matches) throws immediately
     // instead of being retried. Target the heading by role; the recycleRow wait below is what
     // actually covers the query finishing.
-    await expect(page.getByRole('heading', { name: 'Recycle bin', exact: true })).toBeVisible();
-    const recycleRow = page.locator('li', { hasText: secretName });
-    await expect(recycleRow).toBeVisible({ timeout: 10_000 });
+    // #2823: every locator below is scoped to the Recycle bin section (the settings page has
+    // other lists), and each assertion carries a message naming the condition it checks, so a
+    // failure says "deleted secret never appeared in the recycle bin" rather than a bare
+    // locator timeout.
+    const recycleBin = page.locator('section').filter({
+        has: page.getByRole('heading', { name: 'Recycle bin', exact: true }),
+    });
+    await expect(recycleBin, 'the Recycle bin section must render on project settings').toBeVisible();
+    const recycleRow = recycleBin.getByRole('listitem').filter({ hasText: secretName });
+    await expect(recycleRow, `deleted secret ${secretName} must appear in the Recycle bin`).toHaveCount(1, {
+        timeout: 15_000,
+    });
     // RETENTION-1: the recycle bin shows the server's real purge date for the secret.
-    await expect(recycleRow).toContainText('restorable until');
-    await recycleRow.getByRole('button', { name: 'Restore' }).click();
-    await expect(recycleRow).toHaveCount(0, { timeout: 10_000 });
+    await expect(recycleRow, 'the recycled secret must show its server purge date').toContainText('restorable until');
+    await recycleRow.getByRole('button', { name: 'Restore', exact: true }).click();
+    await expect(recycleRow, `restored secret ${secretName} must leave the Recycle bin`).toHaveCount(0, {
+        timeout: 15_000,
+    });
 
     await page.goto(`${projectUrl}/secrets?env=${envName}`);
     await expect(page.getByRole('row', { name: new RegExp(secretName) })).toBeVisible({ timeout: 10_000 });
@@ -321,8 +359,8 @@ test('secret detail History and Recent access update after rotate and reveal, wi
     await expect(recent.getByText(/^Rotated/)).toHaveCount(0);
     // (A row reads "Read · <ip>"; the panel subtitle "Reads of this secret…" must not count as a row.)
     // Opening the view may already log reads; what matters is that Reveal adds one without a refresh.
-    const readsBefore = await recent.getByText(/^Read( ·|$)/).count();
-    const historyReadsBefore = await history.getByText('Read', { exact: true }).count();
+    const readsBefore = await settled(() => recent.getByText(/^Read( ·|$)/).count());
+    const historyReadsBefore = await settled(() => history.getByText('Read', { exact: true }).count());
     await page.getByRole('button', { name: 'Reveal', exact: true }).click();
     await expect(page.getByText(`rotated-${unique}`, { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(recent.getByText(/^Read( ·|$)/)).toHaveCount(readsBefore + 1, { timeout: 10_000 });
@@ -361,8 +399,7 @@ test('one Reveal click writes exactly one secret.read audit event (#3141)', asyn
         return (await res.json()).data.total as number;
     };
     // Let anything opening the view triggered settle, then take the baseline.
-    await page.waitForTimeout(2_000);
-    const before = await countReads();
+    const before = await settled(countReads);
 
     let valueRequests = 0;
     page.on('request', (req) => {
@@ -371,15 +408,12 @@ test('one Reveal click writes exactly one secret.read audit event (#3141)', asyn
     await page.getByRole('button', { name: 'Reveal', exact: true }).click();
     await expect(page.locator('body')).toContainText(`value-${unique}`, { timeout: 10_000 });
 
-    // Poll until the count has held steady for 3 consecutive seconds (max 20s).
-    let last = -1;
-    let steady = 0;
-    for (let i = 0; i < 20 && steady < 3; i++) {
-        await page.waitForTimeout(1_000);
-        const n = await countReads();
-        steady = n === last ? steady + 1 : 0;
-        last = n;
-    }
+    // secret.read is written by a detached goroutine, so first wait for the count to move at all,
+    // then for it to hold steady: a second (duplicate) event would land inside that window.
+    await expect
+        .poll(countReads, { timeout: 20_000, message: 'Reveal never produced a secret.read audit event' })
+        .toBeGreaterThan(before);
+    const last = await settled(countReads, 4, 20_000);
     expect(valueRequests, 'the web must send exactly one include_value GET per Reveal click').toBe(1);
     expect(last - before, 'one Reveal click must write exactly one secret.read').toBe(1);
 });

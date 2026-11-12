@@ -156,6 +156,19 @@ func countAuditLogs(db *gorm.DB, base func() *gorm.DB, mode storage.AuditCountMo
 
 // applyAuditFilter adds every AuditFilter predicate to q. Paging, ordering and
 // the cursor are applied by the caller.
+//
+// Text-filter parity between SQLite and PostgreSQL (AUDIT-SEARCH-PARITY-1,
+// #4090), checked per filter and pinned by local_audit_filter_case_parity_test.go
+// and local_audit_exact_filter_parity_test.go:
+//   - ActorUsername: same on both, folded with foldedContainsClause (Unicode
+//     case-insensitive, by design).
+//   - ResourceType: was different (LIKE), fixed: case-sensitive on both.
+//   - Action, Actions, IPAddress, RequestID, ActorType: "=" / IN on a plain
+//     column, byte-wise and so case-sensitive on both. Same, no fix needed.
+//   - ProjectID, UserID, SecretID, Success, ids and times: not text.
+//
+// There is no free-text filter in this function. Keep any new text predicate on
+// one of these three shapes; a bare LIKE is never case-consistent.
 func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 	if f.ProjectID != nil {
 		q = q.Where("project_id = ?", *f.ProjectID)
@@ -248,24 +261,32 @@ func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 	if f.ResourceType != nil {
 		// event_type is "resource_type.action" — match rows whose event_type
 		// starts with "<resource_type>." so "secret" catches "secret.read",
-		// "secret.created", etc. escapeLIKE prevents a caller-supplied
-		// resource_type containing % or _ from matching unintended event types.
-		// LIKE folds ASCII case on SQLite and nothing on Postgres, so the term
-		// is lowercased first (#4090): event types are lowercase ASCII.
-		q = q.Where(`event_type LIKE ? ESCAPE '\'`, escapeLIKE(lowerASCII(*f.ResourceType))+".%")
+		// "secret.created", etc.
+		//
+		// The match is CASE-SENSITIVE on both backends (#4090): event types are
+		// lower-case constants, so a differently cased value is a caller error
+		// and matches nothing. A bare LIKE cannot give that: it is ASCII
+		// case-insensitive on SQLite and case-sensitive on PostgreSQL. So SQLite
+		// uses GLOB (always case-sensitive, no PRAGMA case_sensitive_like) and
+		// PostgreSQL keeps LIKE (always case-sensitive). Both compare the bare
+		// column against a literal prefix, so no function call hides event_type
+		// from its index. The term is escaped for its operator so a
+		// caller-supplied %, _ (LIKE) or *, ?, [ (GLOB) stays literal.
+		if q.Dialector.Name() == "postgres" {
+			q = q.Where(`event_type LIKE ? ESCAPE '\'`, escapeLIKE(*f.ResourceType)+".%")
+		} else {
+			q = q.Where(`event_type GLOB ?`, escapeGLOB(*f.ResourceType)+".*")
+		}
 	}
 	return q
 }
 
-// lowerASCII folds A-Z only, the folding SQLite's LIKE applies. strings.ToLower
-// would also map non-ASCII letters onto ASCII ones (the Kelvin sign onto "k"),
-// widening the match on both backends.
-func lowerASCII(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + ('a' - 'A')
-		}
-	}
-	return string(b)
+// escapeGLOB makes s literal inside a SQLite GLOB pattern. GLOB has no escape
+// character: a metacharacter is made literal by putting it in a one-character
+// class. "]" outside a class is already literal.
+func escapeGLOB(s string) string {
+	s = strings.ReplaceAll(s, "[", "[[]")
+	s = strings.ReplaceAll(s, "*", "[*]")
+	s = strings.ReplaceAll(s, "?", "[?]")
+	return s
 }

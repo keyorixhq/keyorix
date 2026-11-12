@@ -290,7 +290,9 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	// unwrapManifestKey's own doc comment for the race this closes.
 	var keyEntries []backupfmt.KeyFileEntry
 	var keyBlobs [][]byte
-	manifestKey, err := unwrapManifestKey(cfg, ".", backupPassphraseSource, func() error {
+	// dekFingerprint is the DEK these key files open to, checked against the
+	// database's DEK epoch below (refuseBackupDEKBehindDatabase, #4104).
+	manifestKey, dekFingerprint, err := unwrapManifestKeyAndDEK(cfg, ".", passphraseFrom(backupPassphraseSource), func() error {
 		var kerr error
 		keyEntries, keyBlobs, kerr = readKeyFilesForBackup(cfg)
 		return kerr
@@ -310,7 +312,7 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 		// Held until every read below -- the key files AND the database
 		// snapshot -- is done; see liveKeyMaterial's doc comment.
 		defer release()
-		keyEntries, keyBlobs, manifestKey, err = liveKeyMaterial(cfg, backupPassphraseSource)
+		keyEntries, keyBlobs, manifestKey, dekFingerprint, err = liveKeyMaterial(cfg, backupPassphraseSource)
 		liveServer = err == nil
 	}
 	if err != nil {
@@ -369,6 +371,10 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("read audit high-water mark: %w", err)
 	}
 	// Before the archive file exists: a refusal must leave nothing behind.
+	// Read through the same snapshot as the rows the archive will hold.
+	if err := refuseBackupDEKBehindDatabase(readDB, dekFingerprint); err != nil {
+		return err
+	}
 	if err := refuseUnmigratedLegacyNotificationURLs(readDB); err != nil {
 		return err
 	}
@@ -518,12 +524,24 @@ func unwrapManifestKey(cfg *config.Config, baseDir string, passphraseSource cryp
 }
 
 func unwrapManifestKeyWith(cfg *config.Config, baseDir string, resolve masterPassphrase, onLocked func() error) ([]byte, error) {
+	key, _, err := unwrapManifestKeyFingerprint(cfg, baseDir, resolve, onLocked, false)
+	return key, err
+}
+
+// unwrapManifestKeyAndDEK is unwrapManifestKeyWith that also returns the
+// fingerprint of the DEK the key files open to (Service.DEKFingerprint, the
+// value a PostgreSQL database's dek.epoch row names for it; not key material).
+func unwrapManifestKeyAndDEK(cfg *config.Config, baseDir string, resolve masterPassphrase, onLocked func() error) ([]byte, string, error) {
+	return unwrapManifestKeyFingerprint(cfg, baseDir, resolve, onLocked, true)
+}
+
+func unwrapManifestKeyFingerprint(cfg *config.Config, baseDir string, resolve masterPassphrase, onLocked func() error, fingerprint bool) ([]byte, string, error) {
 	providerType := cfg.Storage.Encryption.KeyProvider.Type
 	var passphrase string
 	if providerType == "" || providerType == "password" {
 		passphraseBytes, err := resolve()
 		if err != nil {
-			return nil, fmt.Errorf("no master passphrase available (%w); set KEYORIX_MASTER_PASSWORD, pass "+
+			return nil, "", fmt.Errorf("no master passphrase available (%w); set KEYORIX_MASTER_PASSWORD, pass "+
 				"--passphrase-fd/--passphrase-file/--passphrase-stdin, or configure storage.encryption.key_provider "+
 				"(file/env/aws-kms)", err)
 		}
@@ -533,23 +551,30 @@ func unwrapManifestKeyWith(cfg *config.Config, baseDir string, resolve masterPas
 
 	svc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 	if err := svc.AcquireExclusiveKeyLock(); err != nil {
-		return nil, fmt.Errorf("failed to acquire the encryption key lock: %w", encryption.WithLockContentionHint(err, "another process is using this key directory"))
+		return nil, "", fmt.Errorf("failed to acquire the encryption key lock: %w", encryption.WithLockContentionHint(err, "another process is using this key directory"))
 	}
 	defer svc.Shutdown()
 
 	if err := svc.Initialize(passphrase); err != nil {
-		return nil, fmt.Errorf("failed to derive/verify the KEK: %w", err)
+		return nil, "", fmt.Errorf("failed to derive/verify the KEK: %w", err)
 	}
 	key, _, ok := svc.BackupManifestKey()
 	if !ok {
-		return nil, fmt.Errorf("backup-manifest signing key unavailable (encryption not enabled?)")
+		return nil, "", fmt.Errorf("backup-manifest signing key unavailable (encryption not enabled?)")
 	}
 	if onLocked != nil {
 		if err := onLocked(); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
-	return key, nil
+	if !fingerprint {
+		return key, "", nil
+	}
+	fp, err := svc.DEKFingerprint()
+	if err != nil {
+		return nil, "", fmt.Errorf("fingerprint this key directory's DEK: %w", err)
+	}
+	return key, fp, nil
 }
 
 // preflightBackupFreeSpace implements design §7.4 for `admin backup`: refuse
@@ -613,7 +638,12 @@ func readKeyFile(path string) ([]byte, error) {
 //
 // The salt advice is separate because boot does not always remove that file
 // (keyfiles.ReconcileKeySet): a server that started has proved the active set
-// opens, so a staging salt still there afterwards is unused.
+// opens, so a staging salt still there afterwards is unused (#4105). The DEK's
+// staging file is never suggested for removal.
+//
+// The refusal runs before storage is opened, so it writes no audit event: the
+// error (non-zero exit) and `admin validate --posture` (collectBackupRefusalPosture)
+// are where it shows.
 func refusePendingKeyRotation(cfg *config.Config) error {
 	pending, err := keyfiles.PendingRotationFiles(&cfg.Storage.Encryption, ".")
 	if err != nil {
@@ -627,17 +657,30 @@ func refusePendingKeyRotation(cfg *config.Config) error {
 	for i, p := range pending {
 		paths[i] = p.Path
 		if p.Salt {
-			saltAdvice = fmt.Sprintf(" After an interrupted rotate-kek the start may need the new passphrase, and if it is refused, follow the "+
-				"recovery it prints. If the server started and %s is still there, the rotation never changed the active keys: delete that "+
-				"file, as the start's log says.", p.Path)
+			saltAdvice = fmt.Sprintf(" %[1]s is the KEK salt's staging file. After an interrupted rotate-kek the start may need it and the "+
+				"new passphrase, and if it is refused, follow the recovery it prints. A server start that succeeds and leaves %[1]s in "+
+				"place (its log says the file \"can be deleted\") has proved that the active key set opens without it: the rotation never "+
+				"changed the active keys, and every backup is refused until the file is gone. To remove it safely, check that no "+
+				"`admin encryption rotate-kek` is running, move it out of the key directory (mv %[1]s <a directory outside the key "+
+				"directory>), back up again, and delete the moved copy once that backup and a server start have succeeded.", p.Path)
 		}
 	}
-	return fmt.Errorf("backup refused: a key rotation is running or was interrupted (found %s). An archive taken now would include "+
-		"that staging file and `admin restore` would refuse it on any other host, so no archive was written and no key file was changed. "+
-		"If a rotation is running, wait for it to finish. Otherwise start the server once so boot recovery completes the rotation, "+
-		"then back up again.%s Never delete a DEK's .pending file by hand: it can be the only copy of the new DEK",
-		strings.Join(paths, ", "), saltAdvice)
+	return &pendingRotationRefusal{paths: paths, msg: fmt.Sprintf("backup refused: a key rotation is running or was interrupted (found %s). "+
+		"An archive taken now would include that staging file and `admin restore` would refuse it on any other host, so no archive was "+
+		"written and no key file was changed. If a rotation is running, wait for it to finish. Otherwise start the server once so boot "+
+		"recovery completes the rotation, then back up again.%s Never delete a DEK's .pending file by hand: it can be the only copy of the "+
+		"new DEK. `admin validate --posture` reports this state until it is resolved",
+		strings.Join(paths, ", "), saltAdvice)}
 }
+
+// pendingRotationRefusal is refusePendingKeyRotation's refusal while staging
+// files are present (not a failed check).
+type pendingRotationRefusal struct {
+	paths []string
+	msg   string
+}
+
+func (e *pendingRotationRefusal) Error() string { return e.msg }
 
 // readKeyFilesForBackup reads every file internal/keyfiles.Registry
 // enumerates and computes its checksum -- unchanged from v1 (design §1: no
@@ -699,17 +742,18 @@ func readAuditHighWater(gdb *gorm.DB) (string, error) {
 // The caller must hold the key-file rewrite lock in shared mode
 // (Service.AcquireKeyFileReadLock) across this call AND the database
 // snapshot read, so no rotation can rewrite these files -- or commit a
-// re-encryption sweep -- in between. A live server itself never rewrites
+// re-encryption sweep -- in between. It also returns the staged DEK's
+// fingerprint (unwrapManifestKeyAndDEK), the same bytes as the live one's. A live server itself never rewrites
 // key files after startup; verifyKeyFilesUnchanged re-checks the set after
 // the database read for any writer that does not take that lock.
-func liveKeyMaterial(cfg *config.Config, src crypto.PassphraseSource) ([]backupfmt.KeyFileEntry, [][]byte, []byte, error) {
+func liveKeyMaterial(cfg *config.Config, src crypto.PassphraseSource) ([]backupfmt.KeyFileEntry, [][]byte, []byte, string, error) {
 	entries, blobs, err := readKeyFilesForBackup(cfg)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	stagingDir, err := os.MkdirTemp("", "keyorix-admin-backup-keys-*")
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create key staging directory: %w", err)
+		return nil, nil, nil, "", fmt.Errorf("create key staging directory: %w", err)
 	}
 	defer os.RemoveAll(stagingDir) //nolint:errcheck
 	stagedCfg := *cfg
@@ -717,17 +761,17 @@ func liveKeyMaterial(cfg *config.Config, src crypto.PassphraseSource) ([]backupf
 	for i, e := range entries {
 		dest := stagedKeyPath(stagingDir, e.OriginalPath)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
-			return nil, nil, nil, fmt.Errorf("stage key file %q: %w", e.OriginalPath, err)
+			return nil, nil, nil, "", fmt.Errorf("stage key file %q: %w", e.OriginalPath, err)
 		}
 		if err := os.WriteFile(dest, blobs[i], 0o600); err != nil {
-			return nil, nil, nil, fmt.Errorf("stage key file %q: %w", e.OriginalPath, err)
+			return nil, nil, nil, "", fmt.Errorf("stage key file %q: %w", e.OriginalPath, err)
 		}
 	}
-	key, err := unwrapManifestKey(&stagedCfg, stagingDir, src, nil)
+	key, fingerprint, err := unwrapManifestKeyAndDEK(&stagedCfg, stagingDir, passphraseFrom(src), nil)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
-	return entries, blobs, key, nil
+	return entries, blobs, key, fingerprint, nil
 }
 
 // stagedKeyPath mirrors a live key-file path under stagingDir: a relative
