@@ -420,6 +420,15 @@ var knownQueryPanicSites = []string{
 	// panics. Reached via readResultSetHeaderPacket on every query path (text
 	// COM_QUERY, binary COM_STMT_EXECUTE) and on ExecContext.
 	"mysql.(*okHandler).handleOkPacket",
+	// MYSQL-Q4: readColumns advances pos through a column-definition packet's
+	// length-encoded string fields and then slices data[pos:] for the next field
+	// (packets.go:743 and siblings) with no check that pos <= len(data). Because
+	// readLengthEncodedInteger returns n=1 on an EMPTY slice (utils.go:567), a
+	// field landing exactly at the packet end skips one byte PAST it without an
+	// error, so the next data[pos:] is out of range. A short column-definition
+	// packet panics. Reached by readColumns on the text COM_QUERY result columns
+	// and the binary COM_STMT_EXECUTE result columns.
+	"mysql.(*mysqlConn).readColumns",
 }
 
 func classifyQueryPanic(val any, stack string) string {

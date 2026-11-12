@@ -106,6 +106,34 @@ func TestMySQLQ3_ShortOKStatus_Reproducer(t *testing.T) {
 	}
 }
 
+// MYSQL-Q4: readColumns (packets.go:743 and sibling slices) walks a
+// column-definition packet's length-encoded string fields (catalog, database,
+// table, …) and slices data[pos:] for each without checking pos <= len(data).
+// readLengthEncodedInteger returns n=1 on an EMPTY input (utils.go:567), so a
+// field landing exactly at the packet end advances pos one byte PAST the end
+// with no error, and the next field's data[pos:] is out of range. A hostile
+// server replying to COM_QUERY with a result-set header declaring one column
+// and then a 1-byte column-definition packet crashes the client with
+// "slice bounds out of range". Found by FuzzMySQLHostileQuery (seed
+// 6a1555e85d9b3e67).
+func TestMySQLQ4_ShortColumnDef_Reproducer(t *testing.T) {
+	// opTextQuery: result header says 1 column, then a 1-byte col-def packet.
+	in := cat([]byte{byte(opTextQuery)},
+		encQPkt(1, resultHeaderBody(1)),
+		encQPkt(2, []byte{0x00}),
+	)
+	for i := range 3 {
+		val, stack := reproQueryPanic(t, in)
+		if val == nil {
+			t.Fatalf("replay %d: expected panic in readColumns; the driver may have added the length guard (remove MYSQL-Q4 from knownQueryPanicSites)", i)
+		}
+		if !strings.Contains(fmt.Sprint(val), "slice bounds out of range") ||
+			!strings.Contains(stack, "readColumns") {
+			t.Fatalf("replay %d: unexpected panic %v\n%s", i, val, stack)
+		}
+	}
+}
+
 // TestMySQLQuery_AllowlistStillSurfacesNovelPanics: the allowlist swallows the
 // real MYSQL-Q1/Q2 stacks (green) but NOT a panic from any other site (red), so
 // a third, unknown result-set panic would still fail the fuzz run.
