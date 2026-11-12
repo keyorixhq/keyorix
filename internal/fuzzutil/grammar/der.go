@@ -183,25 +183,32 @@ func base128(v uint32) []byte {
 // form; pad>0 forces the long form widened to pad octets (non-minimal, a BER/DER
 // violation used as a mutation).
 func encodeLen(n int, pad uint8) []byte {
+	// A length is never negative; clamp so the unsigned conversions below are
+	// provably in range.
+	if n < 0 {
+		n = 0
+	}
+	u := uint64(n)
 	if pad == 0 {
-		if n < 0x80 {
-			return []byte{byte(n)}
+		if u < 0x80 {
+			return []byte{byte(u & 0x7f)}
 		}
 		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], uint64(n))
+		binary.BigEndian.PutUint64(b[:], u)
 		i := 0
 		for i < 8 && b[i] == 0 {
 			i++
 		}
 		body := b[i:]
-		return append([]byte{0x80 | byte(len(body))}, body...)
+		// len(body) is 1..8, so the low 7 bits hold it exactly.
+		return append([]byte{0x80 | byte(len(body)&0x7f)}, body...)
 	}
 	// Forced long form, pad octets wide (clamped to 1..8).
 	width := min(max(int(pad), 1), 8)
 	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], uint64(n))
+	binary.BigEndian.PutUint64(b[:], u)
 	body := b[8-width:]
-	return append([]byte{0x80 | byte(width)}, body...)
+	return append([]byte{0x80 | byte(width&0x7f)}, body...)
 }
 
 // Depth returns the maximum nesting depth of the tree (a leaf is depth 1). Used
