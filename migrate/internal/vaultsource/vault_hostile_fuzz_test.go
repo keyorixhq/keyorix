@@ -20,10 +20,13 @@ package vaultsource_test
 //     Entry.Value is the imported value, NOT a leak. Does NOT capture a private (non-slog)
 //     logger (vaultsource has none today) and does NOT scan the eventual report rendering
 //     (covered by the cmd-level target).
-//   - O8 BOUNDED-REQUESTS/(a): one Walk of a one-leaf tree must stay within a small request
-//     ceiling. A hostile LIST that fans out (oversized keys array) is the tripwire. Does NOT
-//     test unbounded recursion DEPTH — the harness's own Valid tree must terminate for O6, so
-//     that distinct risk is covered by TestVaultSourceWalk_UnboundedDepth below, not here.
+//   - O8 BOUNDED-REQUESTS/(a): the walk stays within a large runaway/infinite-loop backstop;
+//     a hostile LIST legitimately fans out to one READ per key, so a small ceiling is the wrong
+//     oracle here (genuine DoS is caught by O2/O4 instead). Does NOT test unbounded recursion
+//     DEPTH — the harness's own Valid tree must terminate for O6, so a Vault that returns a
+//     folder key at every level (an unbounded-depth DoS, `Walk` has no depth cap) cannot be
+//     exercised through this pristine-must-succeed harness; it is noted as an open hardening
+//     item in the campaign report, not asserted here.
 //   - O9 SSRF-ISH/(c): the client declares it never follows redirects (CheckRedirect =
 //     ErrUseLastResponse); the sentinel internal-address server must receive zero requests.
 //     Loopback sentinel: this tests redirect policy, not address filtering.
@@ -98,13 +101,13 @@ func strictVaultV2Secret(body []byte) (string, bool) {
 func FuzzVaultSourceHostileWalk(f *testing.F) {
 	f.Add([]byte{})
 	for _, p := range []hostile.Program{
-		{Route: 0, Ops: []hostile.Op{{Code: 2, A: 2, B: 1}}}, // mount version -> number
-		{Route: 1, Ops: []hostile.Op{{Code: 7, A: 2, B: 1}}}, // oversized LIST keys (fan-out)
+		{Route: 0, Ops: []hostile.Op{{Code: 2, A: 2, B: 1}}},  // mount version -> number
+		{Route: 1, Ops: []hostile.Op{{Code: 7, A: 2, B: 1}}},  // oversized LIST keys (fan-out)
 		{Route: 1, Ops: []hostile.Op{{Code: 6, A: 2, B: 11}}}, // key -> "../../etc/passwd"
 		{Route: 2, Ops: []hostile.Op{{Code: 0, A: 2}}},        // read data -> null
-		{Route: 2, Frame: 3},                                 // read cl-too-short (truncated)
-		{Route: 2, Fault: 2},                                 // read rst-mid-body
-		{Route: 2, Enc: 2},                                   // read gzip bomb
+		{Route: 2, Frame: 3}, // read cl-too-short (truncated)
+		{Route: 2, Fault: 2}, // read rst-mid-body
+		{Route: 2, Enc: 2},   // read gzip bomb
 		{Route: 2, Ops: []hostile.Op{{Code: 4, A: 3, B: 3}}}, // huge value string
 		{Route: 2, Ops: []hostile.Op{{Code: 5, A: 2, B: 3}}}, // deep nesting
 		// NOTE: the read-redirect program ({Route:2, Redir:1}) is deliberately NOT seeded —

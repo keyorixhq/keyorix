@@ -99,10 +99,10 @@ func FuzzAWSSourceHostileEndpoint(f *testing.F) {
 		{Occ: 1, Ops: []hostile.Op{{Code: 4, A: 2, B: 2}}}, // huge string value
 		{Occ: 1, Ops: []hostile.Op{{Code: 7, A: 1, B: 0}}}, // oversized SecretList
 		{Occ: 2, Ops: []hostile.Op{{Code: 12, A: 1}}},      // canary into GetSecretValue
-		{Occ: 1, Frame: 3},                                 // truncated
-		{Occ: 1, Fault: 2},                                 // rst mid-body
-		{Occ: 1, Enc: 2},                                   // gzip bomb
-		{Occ: 1, Status: 16},                               // 500 on everything
+		{Occ: 1, Frame: 3},   // truncated
+		{Occ: 1, Fault: 2},   // rst mid-body
+		{Occ: 1, Enc: 2},     // gzip bomb
+		{Occ: 1, Status: 16}, // 500 on everything
 	} {
 		f.Add(hostile.Encode(p))
 	}

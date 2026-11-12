@@ -64,12 +64,12 @@ func FuzzHealthscanHostileVault(f *testing.F) {
 		{Ops: []hostile.Op{{Code: 7, A: 3, B: 1}}}, // oversized keys list
 		{Ops: []hostile.Op{{Code: 4, A: 2, B: 2}}}, // huge string
 		{Ops: []hostile.Op{{Code: 5, A: 1, B: 3}}}, // deep nesting
-		{Enc: 2},                                   // gzip bomb
-		{Frame: 3},                                 // truncated
-		{Fault: 2},                                 // rst mid-body
-		{Redir: 1},                                 // redirect to attacker
-		{Status: 12},                               // 403 on everything
-		{CT: 7},                                     // application/jsonx content type
+		{Enc: 2},     // gzip bomb
+		{Frame: 3},   // truncated
+		{Fault: 2},   // rst mid-body
+		{Redir: 1},   // redirect to attacker
+		{Status: 12}, // 403 on everything
+		{CT: 7},      // application/jsonx content type
 	} {
 		f.Add(hostile.Encode(p))
 	}
