@@ -218,7 +218,7 @@ const (
 	osPrincAnon        = 0 // no Authorization header
 	osPrincGarbage     = 1 // invalid bearer token
 	osPrincNoRole      = 2 // authenticated, zero grants
-	osPrincViewer      = 3 // secrets.read at global scope
+	osPrincViewer      = 3 // secrets.read at project A scope
 	osPrincProjAdminA  = 4 // read+write+delete scoped to project A
 	osPrincGlobalAdmin = 5 // bootstrap admin
 	osPrincMachine     = 6 // machine token, project-A reader role
