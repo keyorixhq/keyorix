@@ -46,6 +46,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -262,9 +263,7 @@ func klChildEnv(op, dir, cfgPath, resultFile, passphrase string, extra map[strin
 		klEnvResult:     resultFile,
 		klMasterPassEnv: passphrase,
 	}
-	for k, v := range extra {
-		set[k] = v // extra wins (e.g. a restore's archive-time passphrase override)
-	}
+	maps.Copy(set, extra) // extra wins (e.g. a restore's archive-time passphrase override)
 	for k, v := range set {
 		base = append(base, k+"="+v)
 	}
@@ -308,7 +307,7 @@ func (w *klWorld) klRunChildIn(op, workDir, cfgPath string, extra map[string]str
 	select {
 	case <-ctx.Done():
 		_ = cmd.Process.Kill()
-		<-done
+		<-done //nolint:errcheck // channel receive; the wait error is replaced by the timeout error
 		waitErr = fmt.Errorf("child %q timed out after %s", op, klChildTimeout)
 	case waitErr = <-done:
 	}
