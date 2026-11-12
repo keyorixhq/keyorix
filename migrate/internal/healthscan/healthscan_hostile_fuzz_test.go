@@ -120,6 +120,20 @@ func FuzzHealthscanHostileVault(f *testing.F) {
 			}
 		}
 
+		// SSRF (cross-origin): the authoritative signal that a redirect was FOLLOWED to another
+		// host is a hit on the sentinel internal-address server — healthscan must never produce
+		// one (httpsafe.RefuseRedirect). Tagged "SSRF-CROSS-ORIGIN" (not "O9") on purpose: the
+		// harness's own O9 self-loop heuristic counts total requests to a route as redirect
+		// hops, which false-positives on this WHOLE-SUITE target (22 independent per-check
+		// requests to one catch-all route > the 12-hop bound) even though records show every
+		// 307 with followed=false — see campaign report ARTIFACT A2. That generic O9 is
+		// suppressed for this target with KX_HOSTILE_ALLOW=O9; this explicit cross-origin check
+		// (independent of the self-loop bound) keeps the real SSRF signal live, and the precise
+		// redirect-refusal policy is additionally covered by the vaultsource target's single-call O9.
+		if h.AttackerHits() > 0 {
+			h.Violate("SSRF-CROSS-ORIGIN: healthscan sent %d request(s) to the sentinel internal address", h.AttackerHits())
+		}
+
 		h.Finish(t.Fatalf)
 	})
 }

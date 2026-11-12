@@ -78,10 +78,13 @@ func FuzzSplitJSONObject(f *testing.F) {
 			totalOut += len(fld.Key) + len(fld.Value)
 		}
 
-		// BOUNDED: exploded output cannot exceed the input it was decoded from by more
-		// than a small constant factor (JSON unescaping only shrinks or keeps length;
-		// keys/values are substrings of the decoded input).
-		if totalOut > 2*len(data)+16 {
+		// BOUNDED: exploded output cannot exceed the input by more than a small constant
+		// factor — no unbounded amplification. The factor is 3, not 1: encoding/json replaces
+		// each invalid-UTF-8 byte in a decoded string (and map key) with U+FFFD (3 bytes), so a
+		// key/value of raw 0xC2 bytes expands 1->3. That is a bounded constant expansion, not an
+		// amplification bug; the 3x+64 ceiling is the correct bound (an earlier 2x+16 was a
+		// miscalibrated oracle — see campaign report, ARTIFACT A1).
+		if totalOut > 3*len(data)+64 {
 			t.Fatalf("Object output %d bytes from %d input bytes (amplification) for %q", totalOut, len(data), data)
 		}
 	})
