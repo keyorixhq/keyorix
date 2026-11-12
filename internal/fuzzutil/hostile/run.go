@@ -200,6 +200,9 @@ func (h *Harness) Run(label string, fn func(ctx context.Context) error) error {
 	}
 
 	if r.err != nil {
+		h.mu.Lock()
+		h.errs = append(h.errs, r.err.Error())
+		h.mu.Unlock()
 		h.CheckLeak(label, r.err.Error())
 	}
 	return r.err
@@ -247,8 +250,8 @@ func (h *Harness) Finish(fatalf func(format string, args ...any)) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if n := h.Requests(); n > h.cfg.RequestCeiling {
-		h.Violate("O8 UNBOUNDED-RETRIES: %d backend requests for one call (ceiling %d)", n, h.cfg.RequestCeiling)
+	if n, r := h.Requests(), h.replayed(); n-r > h.cfg.RequestCeiling {
+		h.Violate("O8 UNBOUNDED-RETRIES: %d backend requests for one call (ceiling %d, %d transport replays not counted)", n, h.cfg.RequestCeiling, r)
 	}
 	if n := h.AttackerHits(); n > 0 {
 		h.mu.Lock()
@@ -280,15 +283,43 @@ func (h *Harness) Finish(fatalf func(format string, args ...any)) {
 	}
 }
 
-// unallowed filters out violations whose tag prefix is listed in the
-// KX_HOSTILE_ALLOW environment variable (comma separated, e.g. "O5/empty,O8").
-// A campaign sets it ONLY for classes already triaged and logged as findings, so
-// the native fuzzer (which stops at the first failure) can keep exploring; every
+// replayed counts exchanges that wrote no response byte (Served.NoResponse)
+// and were followed by another exchange on the same route: net/http replays an
+// idempotent request once in that case, so it is not the connector retrying.
+// At most ONE such exchange per route is discounted, so a loop that keeps
+// retrying against a backend that always closes still exceeds the ceiling.
+// It does NOT check that the follow-up came from net/http rather than from the
+// connector's own retry loop.
+func (h *Harness) replayed() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	last := map[string]int{}
+	for i, s := range h.served {
+		last[s.Route] = i
+	}
+	counted := map[string]bool{}
+	for i, s := range h.served {
+		if s.NoResponse && i < last[s.Route] {
+			counted[s.Route] = true
+		}
+	}
+	return len(counted)
+}
+
+// unallowed filters out violations matched by one of the target's Known
+// entries, and violations whose tag prefix is listed in the KX_HOSTILE_ALLOW
+// environment variable (comma separated, e.g. "O5/empty,O8"). A campaign sets
+// the variable ONLY for classes already triaged and logged as findings, so the
+// native fuzzer (which stops at the first failure) can keep exploring; every
 // suppressed hit is still printed to stderr as HOSTILE-KNOWN.
 func (h *Harness) unallowed() []string {
 	allow := strings.Split(os.Getenv("KX_HOSTILE_ALLOW"), ",")
 	var out []string
 	for _, v := range h.Violations() {
+		if id := h.known(v); id != "" {
+			h.reportKnown(id, v)
+			continue
+		}
 		known := false
 		for _, a := range allow {
 			if a = strings.TrimSpace(a); a != "" && strings.HasPrefix(v, a) {

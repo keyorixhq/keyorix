@@ -142,3 +142,32 @@ finding; findings that were reclassified are in the private findings log.
    pristine run has no injected delay, so a deadline there measures the
    scheduler. Faulted programs keep 500 ms; their oracles are one-directional
    (a starved call turns into an error, which is fail-closed, not a finding).
+9. No-response replay (harness bug fix). An exchange closed before a single
+   response byte (fault `accept-close`, `Served.NoResponse`) that is followed by
+   another exchange on the same route is not a consumed response: net/http
+   replays an idempotent request on a reused connection in exactly that case,
+   without telling its caller. `Delivery`/`Intact` skip it, and O8 discounts at
+   most one such exchange per route. The LAST exchange of a route is never
+   skipped, so a success resting on no response still fails O5, and a retry
+   loop against an always-closing backend still fails O8 (both checked in
+   `known_selftest_test.go`, with red proofs). Found as a Vault `O5/incomplete`
+   on `fault=accept-close` (input f11e126cb1ecdb99), where the connector itself
+   never retries.
+10. `Config.Known`: a target may list triaged, still-open findings with a stable
+    ID. A violation is suppressed only when its text starts with the entry's
+    Prefix and the optional ErrContains/When narrowing holds; every suppressed
+    hit is printed as `HOSTILE-KNOWN[<id>]`, and any other violation in the
+    same run is still reported. Each entry has a reproducer test
+    (`RequireKnownReproduces`) that goes red when the finding is fixed. This is
+    the reviewed in-repo form of `KX_HOSTILE_ALLOW`; entries carry low-severity
+    (HARDENING) findings only. Anything security-relevant stays in the private
+    findings log, as above.
+11. Webhook O8 ceiling 4 -> 12 (harness bug fix). The ceiling counts HTTP
+    requests, but the target declares same-host redirects as permitted
+    (`AllowRedirect`), and the sink declares `maxAttempts` (4) attempts of up
+    to `maxRedirectHops` (3) requests each. The ceiling is now that product,
+    taken from the constants. Input 2ab4f73abe7a5198 (`occ=1 status=599
+    redirect=same-origin-once-307`, 8 requests) is legal behaviour under both
+    declared bounds. Not verified: that 4 x 3 is a sensible bound (that is a
+    product decision); that a redirect the sink refused is not retried (it is,
+    see the report).

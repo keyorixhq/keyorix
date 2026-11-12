@@ -56,6 +56,11 @@ type Served struct {
 	Redirect int    // 1-based redirect kind sent, 0 none
 	Followed bool   // this request is the follow-up of a same-origin redirect
 	Wire     int    // bytes written to the connection
+	// NoResponse: the connection was closed before a single response byte was
+	// written (fault accept-close), so the client cannot have consumed anything
+	// from this exchange. net/http replays an idempotent request in exactly this
+	// case on a reused connection without telling its caller.
+	NoResponse bool
 }
 
 type plan struct {
@@ -210,6 +215,8 @@ type Config struct {
 	Retries bool
 	// Credentials the connector sends; they must not leak (O7).
 	Credentials []string
+	// Known lists the target's triaged, still-open findings (see Known).
+	Known []Known
 }
 
 // Harness is one hostile backend plus the oracles' bookkeeping for one input.
@@ -227,6 +234,7 @@ type Harness struct {
 	conns    []net.Conn
 	unmatch  []string
 	viol     []string
+	errs     []string
 	logs     *logCapture
 	total    atomic.Int32
 	attHits  atomic.Int32
@@ -320,9 +328,12 @@ func (h *Harness) Intact(route string, okStatus ...int) ([]byte, bool) {
 	}
 	var last Served
 	got := false
-	for _, s := range recs {
+	for i, s := range recs {
 		if s.Redirect != 0 && h.cfg.AllowRedirect {
 			continue // the redirect response itself; the follow-up is judged below
+		}
+		if s.NoResponse && i < len(recs)-1 {
+			continue // nothing reached the client; replayed below (see Delivery)
 		}
 		if !s.Complete || s.Redirect != 0 || (s.Followed && !h.cfg.AllowRedirect) {
 			return nil, false
@@ -369,8 +380,14 @@ func (h *Harness) Delivery(route string, contentOK func(seen []byte) bool, okSta
 		}
 	}
 	got := false
-	for _, s := range recs {
+	for i, s := range recs {
 		if s.Redirect != 0 && h.cfg.AllowRedirect {
+			continue
+		}
+		if s.NoResponse && i < len(recs)-1 {
+			// Nothing reached the client and a later exchange on this route exists:
+			// a (transport-level) retry, not a consumed response. The LAST exchange
+			// is never skipped, so a success that rests on no response still fails.
 			continue
 		}
 		if s.Redirect != 0 || (s.Followed && !h.cfg.AllowRedirect) {
@@ -484,6 +501,7 @@ func (h *Harness) handle(w http.ResponseWriter, r *http.Request) {
 	if pl.fault == "accept-close" || pl.fault == "garbage" || pl.fault == "tls-alert" || pl.fault == "partial-headers-hang" {
 		rec.Status = 0
 	}
+	rec.NoResponse = pl.fault == "accept-close"
 	if pl.fault == "" && pl.frame == "" {
 		rec.Wire = len(pl.wire)
 		h.record(rec)

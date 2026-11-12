@@ -37,7 +37,9 @@ func FuzzWebhookHostileReceiver(f *testing.F) {
 				return hostile.Resp{Status: 200, CT: "application/json", Body: []byte(`{"ok":true}`)}
 			}}},
 			Program: p, AllowRedirect: true, Retries: true, // same-host redirects are permitted by refuseRedirect
-			Credentials: []string{hostileHookToken}, RequestCeiling: maxAttempts,
+			// Declared bound: maxAttempts attempts of up to maxRedirectHops requests
+			// each (RULES.md amendment 11).
+			Credentials: []string{hostileHookToken}, RequestCeiling: maxAttempts * maxRedirectHops,
 		})
 		defer h.Close()
 		w, err := newWebhook(WebhookConfig{
