@@ -84,3 +84,30 @@ nice -n 10 go test ./fuzz/thirdparty/pgx/ -run '^$' -fuzz '^FuzzPgxHostileQuery$
 
 See `/mnt/data/wave4/out/h2-REPORT.md` and `/Users/abeshkov/proj/wave4/out/n4-REPORT.md`
 for findings, reproducers and the Keyorix-reachability verdict for each.
+
+## mysql result-set path (session h5)
+
+`FuzzMySQLHostileQuery` (`mysql/query_mysql_test.go`) extends the mysql harness
+PAST the handshake. The fake server completes a fixed valid handshake +
+`mysql_native_password` auth, then replies to the client's `COM_QUERY` /
+`COM_STMT_PREPARE` / `COM_STMT_EXECUTE` with fuzz-controlled response **groups**
+(it withholds the next group until the client sends its next command, so
+`database/sql` never trips `ErrBusyBuffer`). It drives three public-API ops:
+a text query, a binary prepared-statement query (`"… WHERE user = ?"`, the exact
+path `internal/dynamic` `killUserConnections` takes on a revoke) and an exec.
+Oracles: no panic/hang, a `TotalAlloc` budget, canary never in an error or
+decoded value, truncated row must error.
+
+Its allowlist (`knownQueryPanicSites`) holds **seven** confirmed v1.10.1 panic
+sites — all one root cause: the result-set parser does no length validation
+before slicing server-controlled packets (`readPrepareResultPacket`,
+`binaryRows.readRow` NULL bitmap, `handleOkPacket`, `readColumns`,
+`readLengthEncodedInteger`, `textRows.readRow`, `handleErrorPacket`). Each has a
+deterministic reproducer (`TestMySQLQ{1..7}_*_Reproducer`) and the allowlist is
+proven to still surface a novel panic (`TestMySQLQuery_AllowlistStillSurfacesNovelPanics`).
+The class is pervasive — a new offset surfaces on most passes — which is itself
+the finding; see `/mnt/data/wave4/out/wm-REPORT.md`.
+
+```
+nice -n 10 go test ./fuzz/thirdparty/mysql/ -run '^$' -fuzz '^FuzzMySQLHostileQuery$' -fuzztime=540s -parallel 2 -cpu 2
+```
