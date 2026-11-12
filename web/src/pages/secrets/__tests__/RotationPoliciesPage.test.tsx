@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ALL_CAN } from '../../../test/can';
 import { render, screen, fireEvent, within, waitFor, act } from '../../../test/test-utils';
 import { RotationPoliciesPage } from '../RotationPoliciesPage';
 
@@ -147,7 +148,7 @@ const canState = vi.hoisted(() => ({
     manageMembers: true,
 }));
 vi.mock('../../../features/auth/useCan', () => ({
-    useCan: () => ({ ...canState }),
+    useCan: () => ({ ...ALL_CAN, ...canState }),
 }));
 
 describe('RotationPoliciesPage — policies list', () => {

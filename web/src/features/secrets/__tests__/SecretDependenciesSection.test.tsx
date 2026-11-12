@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NO_CAN } from '../../../test/can';
 import { render, screen, fireEvent } from '../../../test/test-utils';
 import { Secret } from '../../../types';
 
@@ -19,7 +20,7 @@ vi.mock('../api', () => ({
 
 // What the signed-in user may do (see auth/useCan.ts). Existing cases assume a writer.
 const canState = vi.hoisted(() => ({
-    value: { admin: false, writeSecrets: true, deleteSecrets: false, readAudit: false, manageMembers: false },
+    value: {} as Record<string, boolean>,
 }));
 vi.mock('../../auth/useCan', () => ({ useCan: () => canState.value }));
 
@@ -48,13 +49,7 @@ describe('SecretDependenciesSection', () => {
         depsData = { secret_id: 1, depends_on: [], dependents: [] };
         impactData = { secret_id: 1, secret_name: 'app-token', affected: [] };
         listData = { data: [], total: 0, page: 1, pageSize: 20, totalPages: 1 };
-        canState.value = {
-            admin: false,
-            writeSecrets: true,
-            deleteSecrets: false,
-            readAudit: false,
-            manageMembers: false,
-        };
+        canState.value = { ...NO_CAN, writeSecrets: true };
     });
 
     it('a read-only user sees the graph but no Add form and no Remove buttons (#3142)', () => {
