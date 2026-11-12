@@ -1106,6 +1106,15 @@ var osKnownUndeclared5xx = []struct {
 	// leaks). Surfaced on princ=5 (global admin); principal-independent. See report
 	// finding OPENAPI-STATEFUL-5.
 	{id: "OPENAPI-STATEFUL-5", opID: "resumeSecret", princ: -1, code: 500, reason: "resume of a suspended secret whose ENVIRONMENT was deleted returns core 'environment not found' mapped to 500, not 404 (the sibling deleted-project case IS mapped to 404). secrets_suspend.go:73."},
+	// OPENAPI-STATEFUL-7: StartImpersonation's handler switch (admin_impersonation.go:92-99)
+	// maps only "yourself"->400 and storage.ErrUserNotFound->404; every OTHER core refusal
+	// falls through to the default 500 branch. For an interactive admin session that includes
+	// "cannot impersonate a suspended or inactive user" (impersonation.go:107, a pre-mint,
+	// fully fail-closed refusal of a target that cannot log in), "impersonation ceiling
+	// exceeded" (line 262), and "admin not found" (line 84). A legitimate semantic refusal
+	// becomes an undeclared 500 instead of a 403/409. No session is minted; nothing leaks.
+	// Fix: classify these as 403 (authority/credential refusal) / 409 (target-state refusal).
+	{id: "OPENAPI-STATEFUL-7", opID: "startImpersonation", princ: -1, code: 500, reason: "core impersonation refusal (suspended/inactive target, ceiling-exceeded, admin-not-found) falls through the handler switch to an undeclared 500 instead of 403/409. admin_impersonation.go:97."},
 }
 
 // --- Oracle 2: response conformance ----------------------------------------
