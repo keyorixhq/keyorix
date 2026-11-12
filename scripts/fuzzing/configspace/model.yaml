@@ -937,6 +937,14 @@ conflicts:
   - id: C19
     when: {storage.type: [sqlite, local, $absent], storage.database.path: [$absent, $empty]}
     names: [path, storage.type]
+  # C20, C21: added 2026-11-12 after triage (RULES.md amendment of that date): both are
+  # refused by Validate with a message naming the option, the model did not list them.
+  - id: C20
+    when: {storage.database.pooler: [pgbouncer-session, pgbouncer-transaction], storage.type: [sqlite, local, $absent]}
+    names: [pooler]
+  - id: C21
+    when: {server.http.tls.enabled: [true], server.http.tls.auto_cert: [true], server.http.tls.domains: [$absent, "[]"]}
+    names: [auto_cert, domains]
   - id: C15
     when: {security.require_transport_tls: [true], server.http.enabled: [true, $absent], server.http.tls.enabled: [false, $absent]}
     names: [require_transport_tls]

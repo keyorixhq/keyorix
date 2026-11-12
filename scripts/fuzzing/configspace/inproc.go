@@ -138,9 +138,17 @@ func lastSeg(p string) string {
 	return p
 }
 
-// tokensFor returns strings that a refusal caused by the parameter should mention.
+// tokensFor returns strings that a refusal caused by the parameter should mention. A
+// plural compound key also counts in the singular ("rp_origin" for rp_origins), the
+// form an error about one entry uses (RULES.md amendment 2026-11-12). A message that
+// names only the file path or value the operator wrote does not count.
 func tokensFor(p *Param) []string {
 	t := []string{p.Path, lastSeg(p.Path)}
+	if s := lastSeg(p.Path); strings.Contains(s, "_") {
+		if one, ok := strings.CutSuffix(s, "s"); ok {
+			t = append(t, one)
+		}
+	}
 	if p.Kind != KindYAML {
 		t = append(t, strings.TrimPrefix(p.Path, "--"))
 	}
@@ -205,8 +213,15 @@ func CheckInProc(m *Model, c *Case, r InProcResult) []Finding {
 			add("I2", "S2", "conflict-accepted:"+cf.ID, "contradictory combination accepted ("+cf.ID+")", fmt.Sprint(cf.When))
 		}
 		fs = append(fs, fidelity(m, c, r)...)
-		// I3(a): a posture predicate holds although no weakening key is written.
+		// I3(a): a posture predicate holds although no weakening key is written. A case
+		// that triggers a process-level-only conflict (C15) is refused by the boot, so
+		// its posture is never reached; the process stage checks that refusal
+		// (proc-conflict-started). RULES.md amendment 2026-11-12.
+		bootRefuses := len(live) < len(conflicts)
 		for _, id := range r.Posture {
+			if bootRefuses {
+				break
+			}
 			rule := m.PostureRule(id)
 			explicit := false
 			for _, k := range rule.Explicit {

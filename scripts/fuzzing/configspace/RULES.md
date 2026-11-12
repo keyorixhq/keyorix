@@ -163,3 +163,13 @@ only predicate precision):
   login-lockout warning instead.
 - Process stage adds, for each inline-secret option, one case with the file-based
   twin removed, so the inline secret is actually in effect when I4 is checked.
+
+2026-11-12 (after triage of the first campaign; no rule is relaxed):
+
+- I3(a) is not applied in-process to a case that triggers a process-level-only
+  conflict (C15): the boot refuses it, so the posture is never reached. The process
+  stage still reports such a case if it starts.
+- I2(c): a plural compound key also counts as named in the singular form.
+- Model: conflicts C20 and C21 added (refused by Validate, previously unmodelled).
+- Triaged findings of class HARDENING or lower are listed in `known.tsv` and tagged,
+  never dropped. Configuration findings of a more serious class are triaged privately.

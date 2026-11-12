@@ -23,6 +23,8 @@ type RunOptions struct {
 	ProcInvalid int
 	Seed        int64
 	Log         func(format string, a ...any)
+	// Known is the triaged-findings table; nil means the embedded known.tsv.
+	Known []KnownFinding
 }
 
 // Summary is the aggregate of a run (no finding details).
@@ -34,6 +36,8 @@ type Summary struct {
 	ProcRun, ProcStarted, ProcRefused, ProcCrash       int
 	Findings                                           map[string]int // "I3/S1" -> unique count
 	Unique                                             int
+	Known, Novel                                       int      // Unique split by known.tsv match
+	KnownUnseen                                        []string // known.tsv rows of an executed stage no finding matched
 	DeferredToBoot                                     int
 	Elapsed                                            time.Duration
 }
@@ -48,6 +52,8 @@ type UniqueFinding struct {
 	Minimal   []string `json:"minimal,omitempty"`
 	// MinAssign is the minimised assignment (param id -> value index), for replay.
 	MinAssign map[string]int `json:"min_assign,omitempty"`
+	// Known is the known.tsv row this finding matches; empty for a novel finding.
+	Known string `json:"known,omitempty"`
 }
 
 type runState struct {
@@ -93,6 +99,13 @@ func Run(o RunOptions) (Summary, error) {
 	}
 	if err := os.MkdirAll(o.Work, 0o700); err != nil {
 		return Summary{}, err
+	}
+	if o.Known == nil {
+		k, err := ParseKnown(o.Model, knownTSV)
+		if err != nil {
+			return Summary{}, err
+		}
+		o.Known = k
 	}
 	r := &runState{o: o, cases: map[string]*Case{}, soloOK: map[string]bool{}, soloPost: map[string][]string{}, procOut: map[string]string{}}
 	r.sum.Findings = map[string]int{}
@@ -330,11 +343,13 @@ func (r *runState) procCaseOK(c *Case) bool { r.procCase(c); return true }
 func (r *runState) finish() (Summary, error) {
 	uniq := map[string]*UniqueFinding{}
 	var order []string
+	deferred := map[string]bool{}
 	for _, f := range r.findings {
 		// A value Load+Validate accept but the boot refuses is a late refusal, not an
 		// accepted invalid value (RULES.md I2a asks for a non-zero exit).
 		if f.Stage == "inproc" && strings.HasPrefix(f.Key, "invalid-accepted:") && r.refusedAtBoot(f) {
 			r.Deferred++
+			deferred[f.Key] = true
 			continue
 		}
 		k := f.Inv + "|" + f.Stage + "|" + f.Key
@@ -350,10 +365,22 @@ func (r *runState) finish() (Summary, error) {
 		}
 	}
 	sort.Strings(order)
+	matched := map[string]bool{}
 	for _, k := range order {
 		u := uniq[k]
 		r.confirm(u)
 		r.sum.Findings[u.Inv+"/"+u.Sev]++
+		if u.Known = matchKnown(r.o.Known, u); u.Known != "" {
+			matched[u.Known] = true
+			r.sum.Known++
+		} else {
+			r.sum.Novel++
+		}
+	}
+	for _, k := range r.o.Known {
+		if !matched[k.ID] && !deferred[k.Key] && (k.Stage == "inproc" || r.o.Bin != "") {
+			r.sum.KnownUnseen = append(r.sum.KnownUnseen, k.ID)
+		}
 	}
 	r.sum.Unique = len(order)
 	r.sum.DeferredToBoot = r.Deferred
