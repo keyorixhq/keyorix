@@ -158,7 +158,7 @@ func TestEgressParity_NetutilReferenceIsEncodingRobust(t *testing.T) {
 	for _, v := range vectors {
 		raw := net.IPv4(v.a, v.b, v.c, v.d)
 		want := webhookTierReference(raw)
-		for enc := byte(0); enc < encodingKinds-1; enc++ {
+		for enc := range byte(encodingKinds - 1) {
 			ip, s := buildLiteral(enc, v.a, v.b, v.c, v.d)
 			if ip == nil {
 				t.Fatalf("%s enc %d: %q did not parse", v.name, enc, s)
@@ -178,7 +178,7 @@ func TestEgressParity_NetutilReferenceIsEncodingRobust(t *testing.T) {
 func TestEgressParity_SiemIsEncodingRobust(t *testing.T) {
 	for _, v := range vectors {
 		raw := siem.DialDisallowed(net.IPv4(v.a, v.b, v.c, v.d))
-		for enc := byte(0); enc < encodingKinds-1; enc++ {
+		for enc := range byte(encodingKinds - 1) {
 			ip, s := buildLiteral(enc, v.a, v.b, v.c, v.d)
 			if ip == nil {
 				continue
@@ -432,4 +432,18 @@ func FuzzEgressGuardParity(f *testing.F) {
 			t.Fatalf("IsLinkLocal encoding parity: %s=%v want %v", s, got, want)
 		}
 	})
+}
+
+// TestDocumentedExceptionsAreComplete keeps the intentional-difference table honest:
+// every entry names the guard, the difference, the reason and a code reference, so an
+// exception cannot be added as a bare allowance.
+func TestDocumentedExceptionsAreComplete(t *testing.T) {
+	if len(documentedExceptions) == 0 {
+		t.Fatal("documentedExceptions is empty; the loopback exception must stay documented")
+	}
+	for i, e := range documentedExceptions {
+		if e.guard == "" || e.diff == "" || e.reason == "" || e.ref == "" {
+			t.Errorf("documentedExceptions[%d] has an empty field: %+v", i, e)
+		}
+	}
 }
