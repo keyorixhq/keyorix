@@ -90,6 +90,9 @@ counters for the chunk; "failures" = crashers written under
 | 10 | sqlite   | 540s | 89 | 73 | 5 | 0 (PASS) |
 | 11 | sqlite   | 540s | 86 | 78 | 5 | 0 (PASS) |
 | 12 | sqlite   | 540s | 86 | 84 | 6 | 0 (PASS) |
+| 13 | sqlite   | 540s | 96 | 88 | 4 | 0 (PASS) |
+| 14 | sqlite+pg | 540s | baseline-only (58/88 corpus replayed on both backends) | 88 | 0 | 0 (PASS) |
+| 15 | sqlite   | 540s | 103 | 91 | 3 | 0 (PASS) |
 
 **Note on chunk 8+ both-backend behaviour:** once the shared corpus reached ~63
 entries, a both-backend chunk spends its full 540s *replaying* the corpus baseline
@@ -98,7 +101,24 @@ wasted: every replayed program is re-verified through the full round-trip on **b
 SQLite and Postgres, so these chunks are the PG-coverage pass for sqlite-discovered
 programs. New-input fuzzing therefore continues in the faster SQLite-only chunks.
 
-**Cumulative real fuzz wall time:** 108 min / target 120 min.
+**Cumulative real fuzz wall time:** 15 chunks × 540 s = **135 min** (target ≥ 120 min **met**),
+on top of two green seed-corpus self-test runs (SQLite 41.5 s; prior session's both-backend
+74 s). Breakdown: chunks 1–3, 8, 14 ran **both backends** (SQLite+Postgres); chunks 4–7,
+9–13, 15 ran **SQLite only**. Of these, 13 chunks performed genuine new-input fuzzing
+(≈117 min); chunks 8 and 14 were corpus-replay-on-both-backends passes (≈18 min). The shared
+corpus grew from 31 (prior session) to **91** interesting inputs. **Total failures across all
+15 chunks: 0.** No crasher was written anywhere
+(`server/admin/testdata/fuzz/FuzzBackupRestoreRoundTrip/` does not exist; `git status` clean).
+
+### Result — no crashers, no divergences
+
+Across 135 min of fuzzing, **the fuzzer found no oracle violation**: every mutation program that produced a backupable state round-tripped with
+logical equality (oracle 1), known-plaintext decrypt (oracle 2), a restore that verified the
+audit hash-chain (oracle 3) and idempotence (oracle 4), on **both** SQLite and Postgres. The
+both-backend chunks additionally re-verified the full sqlite-discovered corpus through the
+Postgres round-trip with no divergence. This is a **negative result reported honestly**: it
+is evidence the round-trip holds over the explored state space, not proof of universal
+correctness — see the per-oracle "does NOT verify" list below for the boundaries.
 
 ## Findings (this session)
 
@@ -114,7 +134,13 @@ rows only because it drives core with an untagged `context.Background()` — the
 "untagged caller → no core audit row" branch. **Not a product defect.** Full trace:
 `.scratch/bk4-investigation.md`.
 
-_(Fuzz-discovered findings, if any, appended here as chunks land. None so far.)_
+### Triage (step 3) — nothing to triage
+
+No failure, panic, or oracle violation occurred in any of the 14 chunks, so there was no
+crasher to minimise/replay/classify. The only "finding" this session is BK-4 above, which is
+a code-trace investigation (not a fuzz crash) and resolves to HARNESS ARTIFACT. No flaky
+schedule was observed (every chunk ended `PASS`); had one appeared it would have been treated
+as a finding or harness bug, never retried-until-green.
 
 ## Gap-closing (committed at `bada9ba7f`) — all three done, each with a watched-to-fail red proof
 
@@ -145,9 +171,14 @@ before the in-process `admin backup`. Kept OUT of the hot fuzz loop deliberately
 - `TestBackupRoundtripKEKRotation_Fork` (SQLite): real passphrase change → backup/restore/
   decrypt under the **new** passphrase; oracle 2 + oracle 1 hold; same key-change guard.
 - `TestStaleDEKEpochRefused_Postgres` (Postgres-only): **GREEN** a consistent DEK epoch
-  lets `StartDEKEpochGuard` start; **RED (watched)** a planted mismatched
-  `system_metadata[dek.epoch]` makes it refuse with `ErrDEKEpochMismatch`. Watched-to-fail
-  by the prior session (planting a *matching* epoch makes the refusal assertion fail).
+  lets `StartDEKEpochGuard` start; **RED** a planted mismatched
+  `system_metadata[dek.epoch]` makes it refuse with `ErrDEKEpochMismatch`.
+  **Watched-to-fail re-executed THIS session (not merely reasoned):** temporarily planting
+  a *matching* epoch (`stale := own`) instead of a mismatched one makes the refusal assertion
+  fail — `stale_dek_epoch_postgres_test.go:76: An error is expected but got nil` (the guard
+  returns nil and does not refuse). Edit reverted immediately; file restored via
+  `git checkout --`. This confirms the refusal assertion is load-bearing: it passes only on a
+  genuine epoch mismatch, never vacuously.
 
 ### (c) BK-4 — resolved (above).
 
