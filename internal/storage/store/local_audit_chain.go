@@ -976,6 +976,16 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context, anchor *storage.Au
 // incremental verification modes (docs/specs/audit-incremental-verification.md).
 // The zero segment is exactly VerifyAuditChain(ctx, nil). See the
 // storage.Storage interface doc for the contract.
+//
+// A retention purge can run while the walk does (the walk holds no audit
+// lock). One that removes rows past the walk's cursor leaves the next batch
+// starting at a row whose prev_hash names a deleted predecessor, and one
+// between the caller's anchor read and the first batch leaves an earliest row
+// the anchor does not name (#3944). Both read exactly like a row deleted
+// outside a purge, so the verdict stays broken; LinkBroken marks it (chain-
+// start walks only; the anchor check runs only on those) so that the core
+// layer, which can authenticate a re-read anchor, can tell whether a
+// sanctioned purge moved the anchor and walk again from it.
 func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage.AuditChainSegment) (*storage.AuditChainVerification, error) {
 	result := &storage.AuditChainVerification{Valid: true}
 
@@ -1027,6 +1037,7 @@ func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage
 					head.PrevHash != anchor.PrevHash || head.EntryHash != anchor.EntryHash {
 					brokenChain(result, head.ID,
 						"earliest surviving audit row does not match the last retention re-anchor (rows removed outside a sanctioned purge, or the re-anchor is stale)")
+					result.LinkBroken = true
 					return result, nil
 				}
 				// The anchor authenticates head's prev_hash as a legitimate chain
@@ -1038,6 +1049,7 @@ func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage
 		}
 		newPrev, newHead, newStarted, broke := verifyBatchEvents(batch, prevHash, started, result)
 		if broke {
+			result.LinkBroken = seg.AfterID == 0 && result.Reason == auditLinkMismatchReason
 			return result, nil
 		}
 		prevHash, started = newPrev, newStarted
@@ -1370,6 +1382,10 @@ func refuseIfAuditRowsOutsideWalk(tx *gorm.DB, lastID uint, walked int) error {
 // transaction to roll back after computing (but never persisting) its result.
 var errAuditMigrationDryRun = errors.New("audit chain migration dry run")
 
+// auditLinkMismatchReason is the verdict for a row whose prev_hash is not the
+// preceding row's entry_hash.
+const auditLinkMismatchReason = "prev_hash does not link to the preceding event (row inserted, deleted, or reordered)"
+
 // verifyBatchEvents processes one page of audit events against the running hash chain.
 // Returns the new prevHash, the last verified headID, the updated started flag, and
 // whether a chain break was detected (in which case result is already marked broken).
@@ -1387,7 +1403,7 @@ func verifyBatchEvents(batch []*models.AuditEvent, prevHash string, started bool
 			return prevHash, headID, started, true
 		}
 		if e.PrevHash != prevHash {
-			brokenChain(result, e.ID, "prev_hash does not link to the preceding event (row inserted, deleted, or reordered)")
+			brokenChain(result, e.ID, auditLinkMismatchReason)
 			return prevHash, headID, started, true
 		}
 		if computeAuditEntryHash(e, e.PrevHash) != e.EntryHash {

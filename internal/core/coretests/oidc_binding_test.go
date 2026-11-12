@@ -38,6 +38,7 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 		_, err := c.CreateOIDCBinding(ctx, 1, 5, "https://idp.test", "system:serviceaccount:victim:ci", 2)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "admin authority")
+		require.ErrorIs(t, err, core.ErrPermissionDenied, "the refusal is typed, so REST answers 403")
 		store.AssertNotCalled(t, "CreateOIDCBinding", mock.Anything, mock.Anything)
 	})
 

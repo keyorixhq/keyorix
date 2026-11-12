@@ -77,17 +77,16 @@ func TestGetProject_DBErrorSanitizedInResponseButLoggedForOperators(t *testing.T
 	h.GetProject(w, req)
 
 	// --- Client-facing half: the raw DB error must NOT reach the response. ---
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A storage read fault is the family's 503 (CORE-ERR-FAMILY-6), with the fixed sentence.
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	msg, _ := resp["message"].(string)
-	assert.NotEmpty(t, msg)
-	assert.NotEqual(t, rawErr.Error(), msg)
+	assert.Equal(t, core.StorageReadUnavailableMessage, msg)
 	assert.NotContains(t, w.Body.String(), "sql:")
 	assert.NotContains(t, w.Body.String(), "database is closed")
-	assert.Equal(t, clientSafe(rawErr), msg)
 
 	// --- Server-side half: the ORIGINAL error must still reach the operator log. ---
-	assert.Contains(t, logBuf.String(), rawErr.Error(),
+	assert.Contains(t, logBuf.String(), core.StorageReadFaultDetail(rawErr),
 		"the raw error must still be logged server-side for operators to debug")
 }

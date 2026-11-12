@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -90,11 +91,24 @@ func TestGetSecretTemplate_Found(t *testing.T) {
 func TestGetSecretTemplate_NotFound(t *testing.T) {
 	t.Parallel()
 	c, m := newCoreWithMock()
-	m.On("GetSecretTemplate", context.Background(), uint(99)).Return(nil, errors.New("secret template not found"))
+	m.On("GetSecretTemplate", context.Background(), uint(99)).Return(nil, storage.NotFound(storage.ErrSecretTemplateNotFound, "secret template not found", nil))
 
 	_, err := c.GetSecretTemplate(context.Background(), 99)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.ErrorIs(t, err, storage.ErrSecretTemplateNotFound)
+	assert.NotErrorIs(t, err, ErrStorageReadUnavailable)
+}
+
+// A read fault whose text says "not found" is a fault, not a missing template
+// (CORE-ERR-FAMILY-6 item 1): only the typed sentinel is a positive not-found.
+func TestGetSecretTemplate_FaultWithNotFoundTextIsNotNotFound(t *testing.T) {
+	t.Parallel()
+	c, m := newCoreWithMock()
+	m.On("GetSecretTemplate", context.Background(), uint(99)).Return(nil, errors.New("driver: pool lookup: not found"))
+
+	_, err := c.GetSecretTemplate(context.Background(), 99)
+	assert.ErrorIs(t, err, ErrStorageReadUnavailable)
+	assert.NotErrorIs(t, err, storage.ErrSecretTemplateNotFound)
 }
 
 // ---------- GetSecretTemplateByName ----------
