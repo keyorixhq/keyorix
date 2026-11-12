@@ -132,3 +132,26 @@ cleanly) — a stack-exhaustion DoS at attacker-chosen depth. See
 ```
 nice -n 10 go test ./fuzz/thirdparty/redis/ -run '^$' -fuzz '^FuzzRedisReply$' -fuzztime=540s -parallel 2 -cpu 2
 ```
+
+## mongo-driver v2 wire parser (session h5, h1 follow-up)
+
+`FuzzMongoReply` (`mongodb/hostile_mongo_test.go`) attacks mongo-driver/v2
+v2.9.2's wire parser — h1's open lead. A fake server completes the connect
+handshake (the initial OP_QUERY `isMaster` is answered with an **OP_REPLY**
+hello; the follow-up OP_MSG `hello` with an OP_MSG hello — getting this shape
+right, and accepting the driver's separate monitoring + operation connections in
+an accept loop, is what makes the handshake succeed) and then streams a
+fuzz-controlled wire reply (opcode-onward) as the answer to a marker
+`RunCommand`. That drives OP_MSG (kind-0/kind-1 sections, checksum & moreToCome
+flags), OP_COMPRESSED (wrapper lengths), and cursor-batch decode. Oracles: no
+panic/hang, bounded alloc (reply capped at 64 KiB, OP_COMPRESSED
+`uncompressedSize` clamped), canary, truncation. The client is credential-free
+(the SCRAM auth path cannot be faked without the password, so it is not fuzzed).
+
+Result: no new defect — the v2.9.2 driver bounds-checks and returns `malformed
+wire message` errors on hostile section/length shapes. See
+`/mnt/data/wave4/out/wm-REPORT.md`.
+
+```
+nice -n 10 go test ./fuzz/thirdparty/mongodb/ -run '^$' -fuzz '^FuzzMongoReply$' -fuzztime=540s -parallel 2 -cpu 2
+```
