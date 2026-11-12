@@ -89,6 +89,9 @@ func newPCrashPGServer(tb testing.TB) *pcrashPGServer {
 
 // pcrashPGScrub removes the password from an error so a log can never carry it.
 func pcrashPGScrub(err error, password string) string {
+	if err == nil {
+		return "<nil>"
+	}
 	msg := err.Error()
 	if password != "" {
 		msg = strings.ReplaceAll(msg, password, "<password>")
