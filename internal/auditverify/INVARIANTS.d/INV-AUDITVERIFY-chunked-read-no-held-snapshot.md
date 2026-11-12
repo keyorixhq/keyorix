@@ -8,7 +8,8 @@
   `BatchSize` gives the same `Result` as one batch covering the whole table.
   Guard: `internal/core/audit_long_reader_snapshot_test.go`
   (`TestAuditLongReaders_OfflineVerifyDoesNotHoldOneSnapshot`: 300k rows, concurrent writer,
-  SQLite WAL checkpoint progress and PostgreSQL snapshot age; calibrated by
+  SQLite WAL checkpoint progress and, on PostgreSQL, the snapshot-holding transactions of the
+  verifier's own connections (`application_name`), counted per probe; calibrated by
   `TestAuditLongReaders_CalibrationHeldSnapshotIsReportedPinned`) and
   `internal/core/audit_chunked_walk_differential_test.go`
   (`TestAuditChunkedWalk_SameVerdictAsWholeChainWalk_SQLite`/`_Postgres`: batch sizes 1, 7 and
