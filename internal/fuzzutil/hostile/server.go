@@ -409,7 +409,10 @@ func (h *Harness) Delivery(route string, contentOK func(seen []byte) bool, okSta
 			return nil, "status"
 		}
 		if !s.Complete {
-			if !contentOK(s.Seen) {
+			// A whole JSON document with duplicate member names has no single
+			// reading for contentOK (RULES.md amendment 2), but it did arrive
+			// whole: HasDuplicateKeys is true only for a fully parsed document.
+			if !contentOK(s.Seen) && !HasDuplicateKeys(s.Seen) {
 				return nil, "bad"
 			}
 			kind = "transport"

@@ -195,3 +195,12 @@ finding; findings that were reclassified are in the private findings log.
     bodies carries this sub-tag. Any other status acceptance is still plain
     `O5/bad-status-accepted`. The fetcher previously skipped all value checks
     on such a 2xx; it no longer does.
+15. Amendment 2 applied consistently in `Delivery` (harness bug fix). For an
+    exchange whose transport ended in error after the body, `Delivery` asks
+    the target's strict decoder whether the content arrived whole; for a
+    document with duplicate member names that decoder has no single reading,
+    so a whole body read as "bad" (`O5/incomplete`, fetcher input
+    d7813a4141213b37), although the same body on a clean exchange is exempt.
+    A fully parsed duplicate-key document now counts as whole, so the exchange
+    is reported as `O5/transport-error-ignored` like any other; a body cut
+    off mid-way is still "bad" (selftest in both directions, red proof).

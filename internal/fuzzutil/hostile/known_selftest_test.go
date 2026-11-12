@@ -204,6 +204,36 @@ func TestMutateBodyCapped(t *testing.T) {
 	}
 }
 
+// TestDeliveryDuplicateKeysAfterWholeBody: a whole document with duplicate
+// member names followed by a transport error is "transport" (the content
+// arrived), not "bad", even though the strict decoder has no single reading of
+// it (fetcher input d7813a4141213b37). One cut off mid-body is still "bad".
+func TestDeliveryDuplicateKeysAfterWholeBody(t *testing.T) {
+	dupNull := []Op{{3, 1, 0}} // repeat "value" with null after it
+	for _, tc := range []struct {
+		name string
+		p    Program
+		want string
+	}{
+		{"gzip-corrupt", Program{Enc: 1 + slices.Index(encodings, "gzip-corrupt"), Ops: dupNull}, "transport"},
+		{"rst-mid-body", Program{Fault: 1 + slices.Index(faults, "rst-mid-body"), Ops: dupNull}, "bad"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := New(Config{Routes: toyRoutes(), Program: tc.p, CallTimeout: time.Second})
+			defer h.Close()
+			_, _, _ = fetch(context.Background(), &http.Client{CheckRedirect: refuse}, h.URL()+"/secret", 1<<20)
+			recs := h.Served("secret")
+			if len(recs) != 1 || recs[0].Complete || !strings.Contains(string(h.cfg.Program.MutateBody(toyRoutes()[0].Valid(1, nil).Body)), `"value":null`) {
+				t.Fatalf("premise: one incomplete exchange of a duplicate-key body; served %+v", recs)
+			}
+			_, kind := h.Delivery("secret", func(b []byte) bool { _, _, ok := strict(b); return ok })
+			if kind != tc.want {
+				t.Fatalf("Delivery kind %q, want %q", kind, tc.want)
+			}
+		})
+	}
+}
+
 // pRetriesForever retries a failed fetch far past any ceiling.
 func pRetriesForever(ctx context.Context, base string) (string, error) {
 	tr := &http.Transport{}
