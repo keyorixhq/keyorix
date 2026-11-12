@@ -41,19 +41,34 @@ func vaultHostileRoutes() []hostile.Route {
 
 // strictVaultMountVersion: documented shape data.options.version = "1"|"2";
 // a KV v1 mount may report options null. Anything that is not a JSON object
-// with an object-or-null data.options is rejected.
+// with an object-or-null data.options is rejected. The "version" member is
+// matched exactly (RFC 8259 names are case-sensitive): struct decoding folds
+// case, so {"VERSION":"2"} read as v2 while the connector, which looks
+// "version" up by its exact name, reads the documented default v1 (input
+// 4bbbff823d4680f1; same fix as the Azure decoder in ae8fa1d4c). Not changed
+// here: "data" and "options" are still case-folded, as the connector's own
+// struct decoding does, so the two agree there and neither follows RFC 8259.
 func strictVaultMountVersion(body []byte) (int, bool) {
 	var d struct {
 		Data *struct {
-			Options *struct {
-				Version *string `json:"version"`
-			} `json:"options"`
+			Options *map[string]json.RawMessage `json:"options"`
 		} `json:"data"`
 	}
 	if json.Unmarshal(body, &d) != nil || d.Data == nil {
 		return 0, false
 	}
-	if d.Data.Options != nil && d.Data.Options.Version != nil && *d.Data.Options.Version == "2" {
+	if d.Data.Options == nil || *d.Data.Options == nil {
+		return 1, true
+	}
+	raw, ok := (*d.Data.Options)["version"]
+	if !ok {
+		return 1, true
+	}
+	var v *string
+	if json.Unmarshal(raw, &v) != nil {
+		return 0, false
+	}
+	if v != nil && *v == "2" {
 		return 2, true
 	}
 	return 1, true
