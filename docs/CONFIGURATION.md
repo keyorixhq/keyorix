@@ -698,6 +698,17 @@ often what a commit waits for, so a commit can be considerably faster.
   unset when you enable `fdatasync`. How much a commit gains scales with how expensive a sync is on
   your storage (the filesystem, the journal mode, the device), so the effect can be large on one
   system and negligible on another. `fsync` stays the default.
+
+  The only place the server itself truncates the WAL is the one-off
+  `PRAGMA wal_checkpoint(TRUNCATE)` that `keyorix-server admin restore` runs on the staged database
+  before it is swapped in; normal operation never does, so a running server keeps overwriting in
+  place unless you add a `journal_size_limit` or truncate the WAL yourself.
+- **Measure on your hardware, and what the evidence covers:** this page gives no timings, because a
+  figure from one machine says little about yours. Enable `fdatasync` only after you have compared
+  commit latency with it off and on, on the target storage and filesystem, under your own write
+  pattern. The evidence behind the option is limited to ext4, and the power-cut test above models
+  one fault only (writes dropped at the cut). Nothing here shows the same result on xfs, on other
+  filesystems or against a real drive's volatile write cache.
 - **Tests that want the old fail-fast behaviour:** a test that relied on a second writer being
   refused at once by the shared cache should give `BeginTx` a context with a short deadline, rather
   than expect the driver to fail the transaction on its own.
