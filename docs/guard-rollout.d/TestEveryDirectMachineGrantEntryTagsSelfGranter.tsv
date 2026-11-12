@@ -1,0 +1,1 @@
+TestEveryDirectMachineGrantEntryTagsSelfGranter	server/http	#4115	new AST guard for INV-CORE-direct-machine-grant-handlers-tag-self-granter, report-only until its first green nightly on main

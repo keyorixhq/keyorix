@@ -34,6 +34,7 @@ func TestSuspendUser_HardFailsWhenBackendCannotPersistAccountState(t *testing.T)
 	// scopes, so the ceiling passes trivially, unchanged from this test's
 	// original expectations.
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, uint(2)).Return(nil, nil)
 	// guardLastAdminDeactivation (#G02) runs first — fixture user holds no
 	// roles, so IsGlobalAdmin resolves false and the guard is a no-op.
 	store.On("GetUserRoleIDsAt", ctx, uint(2), Scope{}).Return([]uint{}, nil)

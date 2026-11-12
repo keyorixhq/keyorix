@@ -1,1 +1,0 @@
-TestEveryExpiryAssignmentAndColumnWriteInCoreIsUTC	internal/core/guards	#3961	widens TestEveryUnhookedExpiryWriteInCoreIsUTC to assignments and Update/UpdateColumn/Updates(map) writes of *ExpiresAt, Expiration, last_used_at, last_seen_at (GUARD-PROMOTE-2); report-only until its first green nightly on main

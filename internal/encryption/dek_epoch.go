@@ -74,6 +74,9 @@ const DEKEpochMetadataKey = dekEpochKey
 // fingerprint after it is the DEK being rotated away from.
 const dekEpochRotatingPrefix = "rotating:"
 
+// DEKEpochRotatingPrefix is dekEpochRotatingPrefix for callers outside the package.
+const DEKEpochRotatingPrefix = dekEpochRotatingPrefix
+
 // Timing of the fence. dekEpochFenceWait must exceed dekEpochMaxStaleness: a
 // replica that last confirmed the epoch just before the fence committed can
 // keep encrypting for up to dekEpochMaxStaleness; the rest is grace for an

@@ -68,6 +68,7 @@ func TestResendAccountSetupLink(t *testing.T) {
 		// passes the ceiling trivially, matching every subtest's existing
 		// success/failure expectations unchanged.
 		ms.On("GetUserRoleScopes", ctx, uid).Return([]Scope{}, nil)
+		ms.On("ListUserRoleGrants", ctx, uid).Return(nil, nil)
 		return c, ms
 	}
 	user := func() *models.User {

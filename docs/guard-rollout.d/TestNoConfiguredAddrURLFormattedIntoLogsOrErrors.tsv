@@ -1,1 +1,0 @@
-TestNoConfiguredAddrURLFormattedIntoLogsOrErrors	internal/urlleakguard	#3947	widened urlleakguard: addr/address names that are parsed as URLs (CRYPTO-TAILS-3), report-only until its first green nightly on main

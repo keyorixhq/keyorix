@@ -1,0 +1,1 @@
+internal/config/direct_env_read_guard_test.go	operator/**/*.go	walks the repository root for non-test .go files (operator/ included; skips web/, testdata, internal/config, internal/secretenv)

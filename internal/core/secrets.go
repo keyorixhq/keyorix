@@ -813,7 +813,8 @@ func (c *KeyorixCore) rotateSecret(ctx context.Context, id uint, newValue []byte
 			return nil
 		}
 	}
-	if err := c.storeNextSecretVersion(ctx, secret, newValue, inTx); err != nil {
+	versionNumber, err := c.storeNextSecretVersion(ctx, secret, newValue, inTx)
+	if err != nil {
 		return nil, fmt.Errorf("failed to store rotated secret: %w", err)
 	}
 	sink.Flush(c)
@@ -825,6 +826,13 @@ func (c *KeyorixCore) rotateSecret(ctx context.Context, id uint, newValue []byte
 	}
 	if !oneTx {
 		if err := updateRotationStamp(ctx, c.storage, secret.ID, stamp); err != nil {
+			// #2873: a delete that committed after GetSecret leaves the version
+			// stored (see above for why it stays) and matches the stamp to no row.
+			// Say that, instead of a bare "not found" that reads as "nothing
+			// happened".
+			if errors.Is(err, storage.ErrSecretNotFound) {
+				return nil, errRotatedValueStoredSecretDeleted(secret.ID, versionNumber)
+			}
 			return nil, err
 		}
 	}

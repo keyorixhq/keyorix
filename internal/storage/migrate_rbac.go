@@ -5,6 +5,8 @@ package storage
 
 import (
 	"fmt"
+	"log"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -91,11 +93,23 @@ func tightenLegacyRolesToGlobal(db *gorm.DB) error {
 	if !tableExists(db, "roles") || !columnExists(db, "roles", "assignable_scope") {
 		return nil
 	}
-	err := db.Model(&models.Role{}).
-		Where("name IN ? AND assignable_scope <> ?", models.LegacyRoleNames(), models.RoleAssignableGlobal).
-		Update("assignable_scope", models.RoleAssignableGlobal).Error
-	if err != nil {
+	// The move writes no audit row, so a boot that does it says so once. The
+	// previous scopes are read first so the line can name them.
+	loose := func() *gorm.DB {
+		return db.Model(&models.Role{}).Where("name IN ? AND assignable_scope <> ?", models.LegacyRoleNames(), models.RoleAssignableGlobal)
+	}
+	var previous []string
+	if err := loose().Distinct().Order("assignable_scope").Pluck("assignable_scope", &previous).Error; err != nil {
 		return fmt.Errorf("failed to tighten the legacy roles' assignable scope: %w", err)
+	}
+	res := loose().Update("assignable_scope", models.RoleAssignableGlobal)
+	if res.Error != nil {
+		return fmt.Errorf("failed to tighten the legacy roles' assignable scope: %w", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("storage: tightened assignable_scope of %d legacy role row(s) from %s to %s (#3605); "+
+			"no grant was changed, grants already held at a project keep working",
+			res.RowsAffected, strings.Join(previous, "/"), models.RoleAssignableGlobal)
 	}
 	return nil
 }

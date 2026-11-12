@@ -1,0 +1,379 @@
+// Snapshot generator for the Postgres upgrade leg. Not compiled here (.txt under
+// testdata); regen.sh copies it into internal/storage of a checkout of an old release, with the
+// shared state file, and runs it against that release's own core on Postgres.
+// Output: <W6_OUT>/snapshot.sql and <W6_OUT>/manifest.json. See ../README.md.
+package storage
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+const w6Passphrase = "upgrade-fuzz-passphrase-v1"
+
+// The SQLite leg validated ugModel on 40 seeds; here a probe costs several round
+// trips to the server, so fewer seeds and a stride of the probes.
+const (
+	w6ModelSeeds  = 3
+	w6ProbeStride = 7
+)
+
+type w6Verdict struct {
+	User    uint   `json:"user"`
+	Perm    string `json:"perm"`
+	Project uint   `json:"project"`
+	Env     uint   `json:"env"`
+	Allow   bool   `json:"allow"`
+}
+
+type w6Version struct {
+	Version int    `json:"version"`
+	Value   string `json:"value"`
+}
+
+type w6Secret struct {
+	ID        uint        `json:"id"`
+	ProjectID uint        `json:"project_id"`
+	Versions  []w6Version `json:"versions"`
+}
+
+type w6Manifest struct {
+	SourceTag   string      `json:"source_tag"`
+	Passphrase  string      `json:"passphrase"`
+	Generator   string      `json:"generator"`
+	Backend     string      `json:"backend"`
+	ModelSeeds  int         `json:"model_seeds"`
+	ModelProbes int         `json:"model_probes"`
+	Secrets     []w6Secret  `json:"secrets"`
+	Verdicts    []w6Verdict `json:"verdicts"`
+}
+
+var w6Word = regexp.MustCompile(`[^a-z0-9_]+`)
+
+func w6DSN(base, db string) string {
+	if strings.HasPrefix(base, "postgres://") || strings.HasPrefix(base, "postgresql://") {
+		u, err := url.Parse(base)
+		if err != nil {
+			panic(err)
+		}
+		u.Path = "/" + db
+		return u.String()
+	}
+	re := regexp.MustCompile(`dbname=\S+`)
+	if re.MatchString(base) {
+		return re.ReplaceAllString(base, "dbname="+db)
+	}
+	return base + " dbname=" + db
+}
+
+func w6Copy(t *testing.T, src, dst string) {
+	t.Helper()
+	b, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func w6Config(dsn string) *config.Config {
+	return &config.Config{Storage: config.StorageConfig{
+		Type:       "postgres",
+		Database:   config.DatabaseConfig{DSN: dsn},
+		Encryption: config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"},
+	}}
+}
+
+func w6Close(st corestorage.Storage) {
+	if c, ok := st.(interface{ Close() error }); ok {
+		_ = c.Close()
+	}
+}
+
+// w6Open opens a plain handle for one database.
+func w6Open(t *testing.T, dsn string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(2)
+	return db
+}
+
+func w6Exec(t *testing.T, db *sql.DB, q string) {
+	t.Helper()
+	if _, err := db.Exec(q); err != nil {
+		t.Fatalf("%s: %v", q, err)
+	}
+}
+
+func TestW6GenPGSnapshot(t *testing.T) {
+	// w6_gen.conf (three lines: tag, output directory, key directory) sits next to
+	// this file in the checkout; regen.sh writes it.
+	confText, err := os.ReadFile("w6_gen.conf")
+	if err != nil {
+		t.Skip("w6_gen.conf missing; regen.sh writes it")
+	}
+	conf := strings.Fields(string(confText))
+	base := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if len(conf) != 3 || base == "" {
+		t.Fatal("w6_gen.conf must hold tag, output dir, key dir and KEYORIX_TEST_PG_DSN must be set")
+	}
+	tag, out, keys := conf[0], conf[1], conf[2]
+	if err := i18n.InitializeForTesting(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	slug := w6Word.ReplaceAllString(strings.ToLower(tag), "_")
+	name := "w6_gen_" + slug
+	admin := w6Open(t, base)
+	defer func() { _ = admin.Close() }()
+	w6Exec(t, admin, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+	w6Exec(t, admin, "CREATE DATABASE "+name)
+	defer func() { w6Exec(t, admin, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)") }()
+	dsn := w6DSN(base, name)
+
+	keyDir := t.TempDir()
+	for _, f := range []string{"dek.key", "kek.salt"} {
+		w6Copy(t, filepath.Join(keys, f), filepath.Join(keyDir, f))
+	}
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, keyDir)
+	if err := enc.Initialize(w6Passphrase); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := NewStorageFactory().CreateStorage(w6Config(dsn))
+	if err != nil {
+		t.Fatalf("old release's own CreateStorage on Postgres: %v", err)
+	}
+	c := core.NewKeyorixCore(st)
+	c.SetAuthEncryptor(enc)
+	c.SetSecretValueEncryptor(enc)
+	c.SetBootstrapToken("w6-bootstrap-token")
+	res, err := c.BootstrapSystem(ctx, &core.BootstrapRequest{Username: "admin", Email: "admin@example.com", Password: "W6-Initial-Password-1!", DisplayName: "Admin", Token: "w6-bootstrap-token"})
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	adminID := res.User.ID
+	alice, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "alice", Email: "alice@example.com", DisplayName: "Alice", Password: "W6-Initial-Password-1!"})
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	bob, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "bob", Email: "bob@example.com", DisplayName: "Bob", Password: "W6-Initial-Password-1!"})
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	second, err := c.CreateProject(ctx, "second", "second project")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	prod2, err := c.CreateEnvironment(ctx, second.ID, "prod2")
+	if err != nil {
+		t.Fatalf("create env: %v", err)
+	}
+	raw := w6Open(t, dsn)
+	defer func() { _ = raw.Close() }()
+	roleID := func(n string) uint {
+		var id uint
+		if err := raw.QueryRow("SELECT id FROM roles WHERE name = $1", n).Scan(&id); err != nil {
+			t.Fatalf("role %s: %v", n, err)
+		}
+		return id
+	}
+	if err := w6AssignUserRole(c, ctx, adminID, alice.ID, roleID("viewer"), core.Scope{ProjectID: 1}); err != nil {
+		t.Fatalf("assign alice: %v", err)
+	}
+	if err := w6AssignUserRole(c, ctx, adminID, bob.ID, roleID("editor"), core.Scope{ProjectID: second.ID, EnvironmentID: prod2.ID}); err != nil {
+		t.Fatalf("assign bob: %v", err)
+	}
+	g, err := c.CreateGroup(ctx, adminID, &core.CreateGroupRequest{Name: "ops-team", Description: "snapshot group"})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if err := w6AddGlobal(c, ctx, adminID, bob.ID, g.ID); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	if err := w6AssignGroupRole(c, ctx, adminID, g.ID, roleID("project_viewer"), core.Scope{ProjectID: 1}); err != nil {
+		t.Fatalf("assign group: %v", err)
+	}
+
+	mf := w6Manifest{SourceTag: tag, Passphrase: w6Passphrase, Generator: "testdata/upgrade-snapshots-pg/generator", Backend: "postgres"}
+	envByIdx := []struct{ p, e uint }{{1, 1}, {second.ID, prod2.ID}}
+	versions := []int{1, 2, 3, 1, 2}
+	for i, nv := range versions {
+		pe := envByIdx[i%2]
+		val := fmt.Sprintf("snapshot-value-%s-%d-v1", tag, i)
+		sn, err := c.CreateSecret(ctx, &core.CreateSecretRequest{Name: fmt.Sprintf("snapshot-secret-%d", i), Value: []byte(val), ProjectID: pe.p, EnvironmentID: pe.e, Type: "generic", CreatedBy: "admin", OwnerID: adminID})
+		if err != nil {
+			t.Fatalf("create secret %d: %v", i, err)
+		}
+		s := w6Secret{ID: sn.ID, ProjectID: pe.p, Versions: []w6Version{{1, val}}}
+		for v := 2; v <= nv; v++ {
+			val := fmt.Sprintf("snapshot-value-%s-%d-v%d", tag, i, v)
+			if err := w6Rotate(c, ctx, sn.ID, []byte(val), adminID); err != nil {
+				t.Fatalf("rotate secret %d: %v", i, err)
+			}
+			s.Versions = append(s.Versions, w6Version{v, val})
+		}
+		mf.Secrets = append(mf.Secrets, s)
+	}
+	for i := range 12 {
+		one := adminID
+		p := uint(1)
+		if err := st.LogAuditEvent(ctx, &models.AuditEvent{EventType: "snapshot.seed", UserID: &one, ProjectID: &p, Description: fmt.Sprintf("seed-%d", i)}); err != nil {
+			t.Fatalf("audit seed: %v", err)
+		}
+	}
+
+	// The old binary's own verdicts over the base state.
+	model, err := pgBuildModel(raw)
+	if err != nil {
+		t.Fatalf("building model: %v", err)
+	}
+	for _, u := range model.Users {
+		for _, p := range ugProbePerms {
+			for _, s := range model.Scopes {
+				allow, err := c.Authorize(ctx, u, p, core.Scope{ProjectID: s[0], EnvironmentID: s[1]})
+				if err != nil {
+					t.Fatalf("authorize: %v", err)
+				}
+				mf.Verdicts = append(mf.Verdicts, w6Verdict{u, p, s[0], s[1], allow})
+			}
+		}
+	}
+	w6Close(st)
+
+	script, err := pgSnapshotSQL(raw)
+	if err != nil {
+		t.Fatalf("writing snapshot: %v", err)
+	}
+	src, err := pgDumpDB(raw)
+	if err != nil {
+		t.Fatalf("dumping source: %v", err)
+	}
+	_ = raw.Close()
+
+	// Fidelity: replaying the script must recreate the database exactly.
+	replayName := name + "_replay"
+	w6Exec(t, admin, "DROP DATABASE IF EXISTS "+replayName+" WITH (FORCE)")
+	w6Exec(t, admin, "CREATE DATABASE "+replayName)
+	defer func() { w6Exec(t, admin, "DROP DATABASE IF EXISTS "+replayName+" WITH (FORCE)") }()
+	rr := w6Open(t, w6DSN(base, replayName))
+	if err := pgReplaySnapshot(rr, script); err != nil {
+		_ = rr.Close()
+		t.Fatalf("replaying snapshot: %v", err)
+	}
+	got, err := pgDumpDB(rr)
+	_ = rr.Close()
+	if err != nil {
+		t.Fatalf("dumping replay: %v", err)
+	}
+	if string(got) != string(src) {
+		t.Fatalf("snapshot is not faithful: %s", w6FirstDiff(string(src), string(got)))
+	}
+
+	// The generator model must agree with this release's Authorize on generated
+	// states before the snapshot is accepted.
+	cfg := ugConfig{Fold: w6Fold}
+	probeCount := 0
+	seed := []byte{1}
+	for i := range w6ModelSeeds {
+		t.Logf("model seed %d at %s", i, time.Now().Format("15:04:05"))
+		h := sha256.Sum256(seed)
+		seed = h[:]
+		copyName := fmt.Sprintf("%s_c%d", name, i)
+		w6Exec(t, admin, "DROP DATABASE IF EXISTS "+copyName+" WITH (FORCE)")
+		w6Exec(t, admin, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"+name+"' AND pid <> pg_backend_pid()")
+		w6Exec(t, admin, "CREATE DATABASE "+copyName+" TEMPLATE "+name)
+		cdsn := w6DSN(base, copyName)
+		cr := w6Open(t, cdsn)
+		if _, err := pgApplyState(cr, seed, cfg); err != nil {
+			t.Fatalf("seed %d: pgApplyState: %v", i, err)
+		}
+		m, err := pgBuildModel(cr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cst, err := NewStorageFactory().CreateStorage(w6Config(cdsn))
+		if err != nil {
+			t.Fatalf("seed %d: reopening: %v", i, err)
+		}
+		cc := core.NewKeyorixCore(cst)
+		for _, u := range m.Users {
+			for _, p := range ugProbePerms {
+				for _, s := range m.Scopes {
+					// A stride of the probes: each is several round trips over the tunnel.
+					// Every probe of the base state above is always checked.
+					if probeCount++; probeCount%w6ProbeStride != 0 {
+						continue
+					}
+					mf.ModelProbes++
+					got, err := cc.Authorize(ctx, u, p, core.Scope{ProjectID: s[0], EnvironmentID: s[1]})
+					if err != nil {
+						t.Fatalf("seed %d: authorize: %v", i, err)
+					}
+					if want := m.Decide(u, p, s[0], s[1]); got != want {
+						t.Fatalf("seed %d: model disagrees with %s Authorize u=%d %s %v: model %v, binary %v", i, tag, u, p, s, want, got)
+					}
+				}
+			}
+		}
+		w6Close(cst)
+		_ = cr.Close()
+		w6Exec(t, admin, "DROP DATABASE IF EXISTS "+copyName+" WITH (FORCE)")
+		mf.ModelSeeds++
+	}
+
+	if err := os.MkdirAll(out, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "snapshot.sql"), []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mb, err := json.MarshalIndent(mf, "", " ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "manifest.json"), append(mb, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%s: %d verdicts, %d model probes over %d seeds, faithful snapshot written", tag, len(mf.Verdicts), mf.ModelProbes, mf.ModelSeeds)
+}
+
+func w6FirstDiff(a, b string) string {
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := range max(len(al), len(bl)) {
+		var x, y string
+		if i < len(al) {
+			x = al[i]
+		}
+		if i < len(bl) {
+			y = bl[i]
+		}
+		if x != y {
+			return fmt.Sprintf("line %d: %.200q != %.200q", i, x, y)
+		}
+	}
+	return "same lines"
+}

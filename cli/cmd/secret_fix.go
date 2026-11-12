@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,8 +92,7 @@ func runSecretFix(_ *cobra.Command, args []string) error {
 
 	if fixInteractive {
 		fmt.Print("Apply these changes? (y/n): ")
-		reader := bufio.NewReader(os.Stdin)
-		answer, _ := reader.ReadString('\n')
+		answer, _ := stdinReader().ReadString('\n')
 		answer = strings.TrimSpace(strings.ToLower(answer))
 		if answer != "y" && answer != "yes" {
 			fmt.Println("Cancelled.")

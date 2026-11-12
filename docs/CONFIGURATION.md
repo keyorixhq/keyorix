@@ -698,6 +698,17 @@ often what a commit waits for, so a commit can be considerably faster.
   unset when you enable `fdatasync`. How much a commit gains scales with how expensive a sync is on
   your storage (the filesystem, the journal mode, the device), so the effect can be large on one
   system and negligible on another. `fsync` stays the default.
+
+  The only place the server itself truncates the WAL is the one-off
+  `PRAGMA wal_checkpoint(TRUNCATE)` that `keyorix-server admin restore` runs on the staged database
+  before it is swapped in; normal operation never does, so a running server keeps overwriting in
+  place unless you add a `journal_size_limit` or truncate the WAL yourself.
+- **Measure on your hardware, and what the evidence covers:** this page gives no timings, because a
+  figure from one machine says little about yours. Enable `fdatasync` only after you have compared
+  commit latency with it off and on, on the target storage and filesystem, under your own write
+  pattern. The evidence behind the option is limited to ext4, and the power-cut test above models
+  one fault only (writes dropped at the cut). Nothing here shows the same result on xfs, on other
+  filesystems or against a real drive's volatile write cache.
 - **Tests that want the old fail-fast behaviour:** a test that relied on a second writer being
   refused at once by the shared cache should give `BeginTx` a context with a short deadline, rather
   than expect the driver to fail the transaction on its own.
@@ -1544,6 +1555,32 @@ per-config opt-in rather than a silent new requirement. See
   credential, or service account that the lease was minted from. That is available
   to operators today even though Keyorix cannot do it per-lease without affecting
   every other concurrent lease on the same identity.
+
+#### Revoking leases of a config whose `admin_dsn` names a server file
+
+An `admin_dsn` option that makes the driver read a file on the Keyorix server (or
+use its ambient credentials) is refused when a config is created, and again when a
+stored config issues or renews (#3952). A config stored before that release can
+still carry such an option. Its leases still revoke, by hand and through the expiry
+sweep: `Revoke` removes the option and connects with what is left, and never reads
+the named file (#3980). Issue from such a config keeps failing.
+
+| Backend | Option | What `Revoke` does |
+|---|---|---|
+| `postgres` | `sslcert`, `sslkey` (with `sslpassword`) | Removed: no client certificate is presented. A target that requires one refuses the login, and the lease stays `revoke_failed`. |
+| `postgres` | `passfile` | Removed: the `admin_dsn` must contain the admin password anyway. |
+| `postgres` | `sslrootcert` | Replaced by `sslrootcert=system`: the target's certificate is checked against the system trust store with `verify-full`, never with less checking than the stored DSN asked for, and without a plaintext fallback. A target signed by a private CA fails the TLS handshake; the lease stays `revoke_failed` and the error names `sslrootcert`. |
+| `postgres` | `service`, `servicefile` | Refused: they take the target itself from a server file. The lease stays `revoke_failed` with the option in its error. |
+| `mysql` | `allowAllFiles` | Removed: the driver refuses every `LOCAL INFILE` request. |
+| `mongodb` | `tlsCAFile`, `sslCertificateAuthorityFile` | Removed, with `tls=true`: system trust store. A target signed by a private CA fails the TLS handshake; the lease stays `revoke_failed` and the error names the option. |
+| `mongodb` | `tlsCertificateKeyFile`, `sslClientCertificateKeyFile`, `tlsCertificateFile`, `tlsPrivateKeyFile` | Removed, with `tls=true`: no client certificate is presented. |
+| `mongodb` | `authMechanism=MONGODB-AWS`, `MONGODB-OIDC`, `GSSAPI` | Refused: they change who authenticates. |
+
+At startup the server logs a `WARNING: dynamic secrets:` line with the number of
+such configs and their live (`active` or `revoke_failed`) leases, then one line per
+config. A stored `admin_dsn` cannot be edited: create a replacement config whose
+DSN names no server file, and drop by hand the roles of any lease that stays
+`revoke_failed` (MongoDB and MySQL users have no expiry of their own).
 
 ---
 
