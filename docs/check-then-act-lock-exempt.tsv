@@ -1,3 +1,11 @@
+# NEW ROWS GO TO docs/check-then-act-lock-exempt.d/ (one fragment file per function,
+# e.g. KeyorixCore.GrantSecretACL.tsv, see its README.md), never here: all existing rows
+# were moved there byte-for-byte by scripts/ledgers/migrate-to-fragments.sh, so this file
+# now holds only comments (the "rows stay in this flat file" remark in the dedup note
+# below is historical). The reader takes this file PLUS every fragment. A new row also
+# needs its line in docs/check-then-act-lock-exempt.reviewed.tsv, naming a reviewer other
+# than whoever added it (TestExemptLedgers_EveryRowIndependentlyReviewed).
+#
 # CURRENT STATE NOTE (RACE-2659-1, #2852, 2026-10-05) — read before the review text below.
 #
 # The "13 genuine races" the review block reports is its ORIGINAL count, not the current

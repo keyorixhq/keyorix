@@ -4,7 +4,7 @@ Helpers used by CI workflows, or run locally next to them.
 
 | Script | Run by | What it does |
 |---|---|---|
-| `failure-issue.sh` | scheduled workflows | Opens one GitHub issue per failing scheduled job, comments on repeat failures, and closes the issue when the job goes green. |
+| `failure-issue.sh` | scheduled workflows | Opens one GitHub issue per failing scheduled job, comments on repeat failures (at most once per N hours when `FAILURE_ISSUE_MIN_COMMENT_HOURS=N`, used by the 3-hourly govulncheck run), and closes the issue when the job goes green. |
 | `check-bug-origin-block.sh` | CI (`ci.yml`) | Checks that a `fix(...)` PR has filled in its "Bug origin" block (Introduced-by, Detected-by, Class, Severity). |
 | `precheck-open-prs.sh` | the merge coordinator, **locally** | Rebases each listed open PR onto current `main` in a throwaway worktree and runs the checks that tend to fail only inside the merge queue. |
 | `select-affected.py` | CI (`ci.yml`: `select`, on merge_group) | Merge-queue selection: from the entry's diff against `merge_group.base_sha`, the affected root-module packages (changed + importers), the test-suite legs that run, and the path gates of the heavy jobs. Full suite on go.mod/go.sum, `internal/testutil/**`, `ci.yml`, `scripts/ci/**`, the leg definitions or a generated-code input, and on any error; the three guard data files `scripts/ci/guard-inputs.tsv`, `scripts/ci/guard-inputs.d/*.tsv` and `internal/testutil/sqlitetest/driver_import_allowlist.tsv` are exempt (their readers are selected by rule 2/3 or run by `repo-guards`; `DATA_EXEMPT_EXACT` in the script says how). Pinned by `select_affected_test.go`. |

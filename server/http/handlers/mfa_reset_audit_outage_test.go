@@ -53,6 +53,7 @@ func TestApproveMFAReset_AuditOutage_SharedAuditUnavailable503(t *testing.T) {
 	rec = w.call(t, w.b, ApproveMFAReset, http.MethodPost, "/api/v1/mfa-reset-requests/"+id+"/approve", id,
 		fmt.Sprintf(`{"code":%q}`, w.code(t, w.b.ID)))
 	require.True(t, faulty.Fired(), "the approval's audit write was never reached")
+	requireOneAuditRowBeforeFaultedTx(t, faulty)
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
 	assert.Equal(t, strconv.Itoa(auditUnavailableRetryAfterSeconds), rec.Header().Get("Retry-After"))
 	var body struct {
@@ -96,6 +97,7 @@ func TestRequestMFAReset_AuditOutage_SharedAuditUnavailable503(t *testing.T) {
 	rec := w.call(t, w.a, RequestMFAReset, http.MethodPost, "/api/v1/mfa-reset-requests", "",
 		fmt.Sprintf(`{"user":"target","reason":"lost phone","verified_by":"video","code":%q}`, w.code(t, w.a.ID)))
 	require.True(t, faulty.Fired(), "the request's audit write was never reached")
+	requireOneAuditRowBeforeFaultedTx(t, faulty)
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
 	assert.Equal(t, strconv.Itoa(auditUnavailableRetryAfterSeconds), rec.Header().Get("Retry-After"))
 	var body struct {
@@ -109,4 +111,34 @@ func TestRequestMFAReset_AuditOutage_SharedAuditUnavailable503(t *testing.T) {
 	pending, err := w.st.ListMFAResetRequests(ctx, true)
 	require.NoError(t, err)
 	assert.Empty(t, pending, "a request was recorded although the audit log refused the rows")
+}
+
+// requireOneAuditRowBeforeFaultedTx makes the NthCall: 2 assumption explicit. The
+// fault counts LogAuditEvent calls, so it only lands on the operation's own first
+// audit row if requireReauth wrote exactly one row (outside any transaction) first.
+// From the wrapper's call log: exactly one LogAuditEvent precedes the first
+// WithTransaction, and the fired record is a LogAuditEvent inside that
+// transaction. A change in the reauth row count fails here with this message
+// instead of a misleading 503/500 mismatch further down.
+func requireOneAuditRowBeforeFaultedTx(t *testing.T, faulty *faultstorage.FaultyStorage) {
+	t.Helper()
+	var before, firstTx, firedAt int
+	firedMethod := ""
+	for i, rec := range faulty.Calls() {
+		if rec.Method == "WithTransaction" && firstTx == 0 {
+			firstTx = i + 1
+		}
+		if rec.Fired {
+			firedAt, firedMethod = i+1, rec.Method
+		}
+		if rec.Method == "LogAuditEvent" && firstTx == 0 {
+			before++
+		}
+	}
+	require.NotZero(t, firstTx, "the operation never opened its transaction; call log: %v", faulty.Calls())
+	require.Equal(t, 1, before,
+		"NthCall: 2 assumes requireReauth writes exactly one audit row before the operation's transaction; %d were written first (call log: %v)", before, faulty.Calls())
+	require.Equal(t, "LogAuditEvent", firedMethod, "the fault fired on %q, not on an audit row (call log: %v)", firedMethod, faulty.Calls())
+	require.Greater(t, firedAt, firstTx,
+		"the faulted audit row was written before the operation's transaction opened, so it is not the operation's own first row (call log: %v)", faulty.Calls())
 }

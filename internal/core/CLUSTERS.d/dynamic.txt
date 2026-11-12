@@ -1,3 +1,4 @@
 # dynamic: dynamic secrets and leases
 # One glob per line, matched against the file name (README.md).
 dynamic_secrets.go
+dynamic_secrets_refused_dsn.go

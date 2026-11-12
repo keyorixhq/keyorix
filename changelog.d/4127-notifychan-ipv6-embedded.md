@@ -1,0 +1,2 @@
+### Security
+- **The webhook and Slack/Teams notification sinks (`internal/notifychan`) now refuse IPv6 encodings of a private or link-local IPv4 address, and the unspecified address.** `https://[64:ff9b::a9fe:a9fe]/` (NAT64) and `https://[::a9fe:a9fe]/` (IPv4-compatible) both stand for cloud IMDS `169.254.169.254` and were accepted at construction and at dial time, as were `0.0.0.0`, `0.x.y.z` and `[::]`, which connect to the local host. Loopback (including `[::1]`) is still permitted as a development target. (#3427)

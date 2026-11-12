@@ -64,6 +64,8 @@ var dirListingAllowlist = map[string]string{
 	"internal/core/guards/package_stays_light_guard_test.go:TestGuardsPackageStaysLight": "this guards package's own files",
 	"internal/core/guards/rotation_executor_registry_exhaustiveness_test.go:discoverRotationExecutorConstructors": "internal/rotation " +
 		"(and a synthetic dir), not core",
+	"internal/core/secret_ops_canary_fuzz_test.go:opEvidence": "lists the compliance-evidence export directory the " +
+		"test itself just wrote under its temp dir, not core sources",
 }
 
 var dirListingFuncs = map[string]bool{"ReadDir": true, "Glob": true, "ParseDir": true, "Readdir": true, "Readdirnames": true}
