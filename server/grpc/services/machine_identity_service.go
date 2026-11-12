@@ -173,7 +173,7 @@ func (s *MachineIdentityGRPCService) IssueMachineToken(ctx context.Context, req 
 	}
 	expiresAt, err := core.MachineTokenExpiresAt(int64(req.GetExpiresInDays()), time.Now())
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, status.Error(codes.InvalidArgument, err.Error()) // nosemgrep: keyorix-raw-error-to-client -- MachineTokenExpiresAt returns only a fixed ErrInvalidInput message built from the MaxMachineTokenLifetimeDays constant, never backend/driver text
 	}
 	if user.ActorKind() == core.ActorTypeMachine {
 		// A directly authenticated machine acting as itself: core evaluates the
