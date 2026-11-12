@@ -126,9 +126,7 @@ func (n *DERNode) Encode() []byte {
 	}
 
 	declared := len(content) + n.Mut.LenDelta
-	if declared < 0 {
-		declared = 0
-	}
+	declared = max(declared, 0)
 	out = append(out, encodeLen(declared, n.Mut.NonMinimalLen)...)
 	out = append(out, content...)
 	if n.Mut.ExtraEOC {
@@ -199,13 +197,7 @@ func encodeLen(n int, pad uint8) []byte {
 		return append([]byte{0x80 | byte(len(body))}, body...)
 	}
 	// Forced long form, pad octets wide (clamped to 1..8).
-	width := int(pad)
-	if width < 1 {
-		width = 1
-	}
-	if width > 8 {
-		width = 8
-	}
+	width := min(max(int(pad), 1), 8)
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], uint64(n))
 	body := b[8-width:]
