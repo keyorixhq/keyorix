@@ -134,6 +134,13 @@ func parsePostgresAdminDSN(adminDSN string) (*pgx.ConnConfig, error) {
 		return nil, errAmbientPostgresPassword
 	}
 
+	// pgx v5.13.0 keeps sslcert/sslkey (and the default ~/.postgresql/postgresql.crt,
+	// PGSSLCERT, PGSSLKEY) in a private loader that it installs as
+	// GetClientCertificate at connect time whenever the TLS config has no
+	// certificate. Emptying the TLS config below is therefore not enough; the
+	// cert mode must be "disable" so the loader is never installed (also covers
+	// every fallback and the cancel-request path).
+	cfg.SSLCertMode = "disable"
 	dropClientCerts(cfg.TLSConfig)
 	for _, fb := range cfg.Fallbacks {
 		dropClientCerts(fb.TLSConfig)
