@@ -191,7 +191,7 @@ func TestRedProof_GRPCHealthProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	h2s := &http2.Server{}
+	h2s := &http2.Server{} //nolint:staticcheck // SA1019: a bare framer-level h2 server is the point; http.Server would hide the SETTINGS frame the probe reads
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -200,7 +200,7 @@ func TestRedProof_GRPCHealthProbe(t *testing.T) {
 			if err != nil {
 				return
 			}
-			go h2s.ServeConn(c, &http2.ServeConnOpts{
+			go h2s.ServeConn(c, &http2.ServeConnOpts{ //nolint:staticcheck // SA1019: see above
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 			})
 		}

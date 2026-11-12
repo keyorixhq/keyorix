@@ -289,8 +289,8 @@ func count2xxResponses(resp []byte) int {
 }
 
 func firstHeaderBlock(resp []byte) []byte {
-	if i := bytes.Index(resp, []byte("\r\n\r\n")); i >= 0 {
-		return resp[:i]
+	if head, _, found := bytes.Cut(resp, []byte("\r\n\r\n")); found {
+		return head
 	}
 	return resp
 }

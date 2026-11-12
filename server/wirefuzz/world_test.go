@@ -18,7 +18,6 @@ import (
 	"net"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -71,14 +70,12 @@ type handlerHit struct {
 type recorder struct {
 	mu   sync.Mutex
 	hits []handlerHit
-	n    atomic.Int64
 	// resolve maps a bearer token to a principal label using the seeded store.
 	resolve func(authHdr string) string
 }
 
 func (rec *recorder) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rec.n.Add(1)
 		sw := &statusWriter{ResponseWriter: w, status: 200}
 		auth := r.Header.Get("Authorization")
 		next.ServeHTTP(sw, r)
@@ -95,10 +92,7 @@ func (rec *recorder) reset() {
 	rec.mu.Lock()
 	rec.hits = rec.hits[:0]
 	rec.mu.Unlock()
-	rec.n.Store(0)
 }
-
-func (rec *recorder) count() int { return int(rec.n.Load()) }
 
 func (rec *recorder) snapshot() []handlerHit {
 	rec.mu.Lock()
