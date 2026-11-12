@@ -31,6 +31,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -53,20 +54,33 @@ const (
 	rotateDeleteHoldBeforeStamp   = "before-stamp"
 )
 
+const (
+	rotateDeleteOpRotate   = "rotate"
+	rotateDeleteOpRollback = "rollback"
+	rotateDeleteOpUpdate   = "update"
+)
+
 type rotateDeleteCase struct {
 	name     string
+	op       string
 	backend  string
 	holdAt   string
 	sqliteOK bool
-	// stored: the rotated value must survive as version 2 and the error must
-	// say it was stored; otherwise nothing may be stored.
+	// stored: the new value must survive as the next version and the error
+	// must say it was stored; otherwise nothing may be stored.
 	stored bool
 }
 
 var rotateDeleteCases = []rotateDeleteCase{
-	{name: "backend/delete-between-version-and-stamp", backend: "pg", holdAt: rotateDeleteHoldBeforeStamp, sqliteOK: true, stored: true},
-	{name: "backend/delete-before-version-write", backend: "pg", holdAt: rotateDeleteHoldBeforeVersion, sqliteOK: true, stored: true},
-	{name: "no-backend/delete-inside-version-tx", backend: "", holdAt: rotateDeleteHoldBeforeStamp, sqliteOK: false, stored: false},
+	{name: "rotate/backend/delete-between-version-and-stamp", op: rotateDeleteOpRotate, backend: "pg", holdAt: rotateDeleteHoldBeforeStamp, sqliteOK: true, stored: true},
+	{name: "rotate/backend/delete-before-version-write", op: rotateDeleteOpRotate, backend: "pg", holdAt: rotateDeleteHoldBeforeVersion, sqliteOK: true, stored: true},
+	{name: "rotate/no-backend/delete-inside-version-tx", op: rotateDeleteOpRotate, backend: "", holdAt: rotateDeleteHoldBeforeStamp},
+	// Item 4 sweep: the other two writers of a new version after reading the
+	// parent. Both commit the version with a row update that matches no row of
+	// a deleted secret, in one transaction, so nothing is stored. A rollback is
+	// one transaction even for a backend-bound secret (no upstream change).
+	{name: "rollback/backend/delete-inside-version-tx", op: rotateDeleteOpRollback, backend: "pg", holdAt: rotateDeleteHoldBeforeStamp},
+	{name: "update-value/delete-inside-version-tx", op: rotateDeleteOpUpdate, backend: "", holdAt: rotateDeleteHoldBeforeStamp},
 }
 
 // rotateDeleteHold pauses the first matching storage call of replica A once.
@@ -100,7 +114,7 @@ func (h *rotateDeleteHold) wrap(inner storage.Storage, at string) storage.Storag
 	return hooked(inner, hooks)
 }
 
-func seedRotateDeleteSecret(t *testing.T, db *gorm.DB, backend string) uint {
+func seedRotateDeleteSecret(t *testing.T, db *gorm.DB, backend string, versions int) uint {
 	t.Helper()
 	p := models.Project{Name: "rotate-orphan"}
 	require.NoError(t, db.Create(&p).Error)
@@ -111,18 +125,24 @@ func seedRotateDeleteSecret(t *testing.T, db *gorm.DB, backend string) uint {
 		Type: "password", Classification: "internal", RotationBackend: backend, RotationRef: "app_svc",
 	}
 	require.NoError(t, db.Create(&s).Error)
-	require.NoError(t, db.Create(&models.SecretVersion{
-		SecretNodeID: s.ID, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: time.Now(),
-	}).Error)
+	for n := 1; n <= versions; n++ {
+		require.NoError(t, db.Create(&models.SecretVersion{
+			SecretNodeID: s.ID, VersionNumber: n, EncryptedValue: fmt.Appendf(nil, "orig-%d", n), EncryptionMetadata: []byte("{}"), CreatedAt: time.Now(),
+		}).Error)
+	}
 	return s.ID
 }
 
-// runRotateDeleteInterleaving drives one case: A = RotateSecret on stA (held),
-// B = DeleteSecret on stB, both over the same database.
+// runRotateDeleteInterleaving drives one case: A = the version-writing op on
+// stA (held), B = DeleteSecret on stB, both over the same database.
 func runRotateDeleteInterleaving(t *testing.T, tc rotateDeleteCase, db *gorm.DB, stA, stB storage.Storage) {
 	t.Helper()
 	ctx := context.Background()
-	id := seedRotateDeleteSecret(t, db, tc.backend)
+	seeded := 1
+	if tc.op == rotateDeleteOpRollback {
+		seeded = 2 // something to roll back to
+	}
+	id := seedRotateDeleteSecret(t, db, tc.backend, seeded)
 
 	hold := &rotateDeleteHold{secretID: id, blocked: make(chan struct{}), release: make(chan struct{})}
 	hold.arm.Store(true)
@@ -134,15 +154,22 @@ func runRotateDeleteInterleaving(t *testing.T, tc rotateDeleteCase, db *gorm.DB,
 	doneA := make(chan struct{})
 	go func() {
 		defer close(doneA)
-		_, rotErr = coreA.RotateSecret(ctx, id, []byte(rotated), 0, "system:auto-rotation")
+		switch tc.op {
+		case rotateDeleteOpRotate:
+			_, rotErr = coreA.RotateSecret(ctx, id, []byte(rotated), 0, "system:auto-rotation")
+		case rotateDeleteOpRollback:
+			_, rotErr = coreA.RollbackSecret(ctx, id, 1, 1, "operator")
+		case rotateDeleteOpUpdate:
+			_, rotErr = coreA.UpdateSecret(ctx, &UpdateSecretRequest{ID: id, Value: []byte(rotated), UpdatedBy: "operator"})
+		}
 	}()
 
 	select {
 	case <-hold.blocked:
 	case <-doneA:
-		t.Fatalf("RotateSecret returned before reaching the hold point %q: %v", tc.holdAt, rotErr)
+		t.Fatalf("%s returned before reaching the hold point %q: %v", tc.op, tc.holdAt, rotErr)
 	case <-time.After(30 * time.Second):
-		t.Fatalf("RotateSecret never reached the hold point %q", tc.holdAt)
+		t.Fatalf("%s never reached the hold point %q", tc.op, tc.holdAt)
 	}
 
 	// B: the delete commits while A is parked.
@@ -152,7 +179,7 @@ func runRotateDeleteInterleaving(t *testing.T, tc rotateDeleteCase, db *gorm.DB,
 	select {
 	case <-doneA:
 	case <-time.After(30 * time.Second):
-		t.Fatal("RotateSecret did not finish after release")
+		t.Fatalf("%s did not finish after release", tc.op)
 	}
 
 	// The error A returned.
@@ -164,14 +191,14 @@ func runRotateDeleteInterleaving(t *testing.T, tc rotateDeleteCase, db *gorm.DB,
 	require.NoError(t, db.Where("secret_node_id = ?", id).Order("version_number").Find(&versions).Error)
 
 	if !tc.stored {
-		assert.Len(t, versions, 1, "a one-transaction rotation must roll its version back when the stamp finds the secret deleted")
+		assert.Len(t, versions, seeded, "a one-transaction version write must roll back when its row update finds the secret deleted")
 		assert.NotContains(t, rotErr.Error(), "stored", "nothing was stored, so the error must not say a value was")
 		assert.NotErrorIs(t, rotErr, ErrRotatedValueStoredSecretDeleted)
 		return
 	}
 
-	require.Len(t, versions, 2, "a backend-bound rotation keeps its version: it may be the only record of the live upstream value")
-	assert.Equal(t, rotated, string(versions[1].EncryptedValue))
+	require.Len(t, versions, seeded+1, "a backend-bound rotation keeps its version: it may be the only record of the live upstream value")
+	assert.Equal(t, rotated, string(versions[seeded].EncryptedValue))
 	assert.ErrorIs(t, rotErr, ErrRotatedValueStoredSecretDeleted, "classifiable without matching the message text")
 	assert.Contains(t, rotErr.Error(), "stored as version 2",
 		"the caller must learn the rotated value WAS stored (and which version) even though the secret was deleted underneath (#2873)")
