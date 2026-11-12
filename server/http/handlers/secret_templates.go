@@ -12,6 +12,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -101,7 +103,10 @@ func (h *SecretTemplateHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	tmpl, err := h.coreService.GetSecretTemplate(r.Context(), uint(id))
 	if err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, storage.ErrSecretTemplateNotFound) {
 			sendError(w, "NotFound", errSecretTemplateNotFound, http.StatusNotFound, nil)
 			return
 		}

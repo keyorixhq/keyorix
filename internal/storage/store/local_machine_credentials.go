@@ -191,7 +191,7 @@ func (ls *LocalStorage) AssignMachineRole(ctx context.Context, machineID, roleID
 		Where("machine_identity_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
 			machineID, roleID, scope.ProjectID, scope.EnvironmentID).First(&existing).Error
 	if err == nil {
-		return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
+		return storage.Typed(storage.ErrRoleAlreadyAssigned, i18n.T("ErrorRoleAlreadyAssigned", nil), nil)
 	}
 	if err != gorm.ErrRecordNotFound {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
@@ -216,7 +216,7 @@ func (ls *LocalStorage) RemoveMachineRole(ctx context.Context, machineID, roleID
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorRoleNotAssigned", nil))
+		return storage.Typed(storage.ErrRoleNotAssigned, i18n.T("ErrorRoleNotAssigned", nil), nil)
 	}
 	return nil
 }
@@ -316,6 +316,9 @@ func (ls *LocalStorage) GetMachineRoleScopes(ctx context.Context, machineID uint
 
 func (ls *LocalStorage) CreateOIDCBinding(ctx context.Context, b *models.MachineIdentityOIDCBinding) (*models.MachineIdentityOIDCBinding, error) {
 	if err := ls.db.WithContext(ctx).Create(b).Error; err != nil {
+		if isUniqueViolation(err) {
+			return nil, storage.Typed(storage.ErrOIDCBindingAlreadyBound, i18n.T("ErrorStorageFailed", nil), err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return b, nil

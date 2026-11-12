@@ -6,11 +6,9 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -139,18 +137,11 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
 	m, err := h.coreService.CreateMachineIdentity(auditCtx, id, body.Name, body.IdentityType, body.Description, body.Classification, actor.UserID, machineID(r))
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		if strings.Contains(msg, "invalid identity_type") || strings.Contains(msg, "required") {
-			status = http.StatusBadRequest
-		} else {
-			log.Printf("Error creating machine identity for project %d: %v", id, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error creating machine identity for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	// sendCreated, not WriteHeader+sendSuccess -- see CreatePAT's comment
@@ -191,21 +182,11 @@ func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Req
 
 	m, err := h.coreService.MigrateUserToMachine(r.Context(), body.Username, id, body.IdentityType, body.Name, actor.UserID, machineID(r), !body.KeepUser)
 	if err != nil {
-		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, errNotFound):
-			status = http.StatusNotFound
-		case strings.Contains(msg, "required") || strings.Contains(msg, "invalid identity_type"):
-			status = http.StatusBadRequest
-		default:
-			log.Printf("Error migrating user %q to machine identity in project %d: %v", body.Username, id, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error migrating user %q to machine identity in project %d: %v", body.Username, id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendCreated(w, map[string]any{"machine_identity": m}, "User migrated to machine identity")
@@ -240,21 +221,11 @@ func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *htt
 	}
 	m, err := h.coreService.TransitionMachineIdentity(r.Context(), projectID, uint(machineID), to, actor.UserID)
 	if err != nil {
-		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, errNotFound):
-			status = http.StatusNotFound
-		case strings.Contains(msg, "cannot transition"):
-			status = http.StatusConflict
-		default:
-			log.Printf("Error transitioning machine identity %d in project %d: %v", machineID, projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error transitioning machine identity %d in project %d: %v", machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	// Suspending or revoking the identity must reject its tokens immediately, not after
@@ -328,24 +299,11 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 			log.Printf("Rotation of machine token for machine %d in project %d partially applied: %v", machineID, projectID, err)
 			return
 		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case errors.Is(err, core.ErrMachinePrivilegeCeilingDenied):
-			// A refusal by the privilege ceiling, not a fault.
-			sendError(w, "Forbidden", "access denied", http.StatusForbidden, nil)
+		if sendMachineRefusal(w, err) {
 			return
-		case strings.Contains(msg, errNotFound):
-			status = http.StatusNotFound
-		case strings.Contains(msg, "replace_credential_id"):
-			status = http.StatusNotFound
-		case strings.Contains(msg, "must be active"):
-			status = http.StatusConflict
-		default:
-			log.Printf("Error issuing machine token for machine %d in project %d: %v", machineID, projectID, err)
-			msg = clientSafe(err)
 		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error issuing machine token for machine %d in project %d: %v", machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	// PAT-006: evict the replaced credential from the auth cache so it stops
@@ -432,18 +390,11 @@ func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Reque
 	}
 	tokenHash, err := h.coreService.RevokeMachineToken(r.Context(), uint(projectID), uint(machineID), uint(tokenID), actor.UserID)
 	if err != nil {
-		if sendStorageUnavailable(w, err) {
+		if sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		if strings.Contains(msg, errNotFound) {
-			status = http.StatusNotFound
-		} else {
-			log.Printf("Error revoking machine token %d for machine %d in project %d: %v", tokenID, machineID, projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error revoking machine token %d for machine %d in project %d: %v", tokenID, machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	// Evict the auth cache so the revoked token stops authenticating immediately.
@@ -467,22 +418,11 @@ func (h *CatalogHandler) ClassifyMachineIdentity(w http.ResponseWriter, r *http.
 	}
 	m, err := h.coreService.ClassifyMachineIdentity(r.Context(), projectID, machineID, body.Classification, actor.UserID)
 	if err != nil {
-		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
-		status := http.StatusBadRequest
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, errNotFound):
-			status = http.StatusNotFound
-		case strings.Contains(msg, "classification must be"):
-			// keep 400, msg is the deliberate validation message
-		default:
-			status = http.StatusInternalServerError
-			log.Printf("Error classifying machine identity %d in project %d: %v", machineID, projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error classifying machine identity %d in project %d: %v", machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]any{"machine_identity": m}, "Classification updated")
@@ -509,22 +449,11 @@ func (h *CatalogHandler) ClassifyMachineToken(w http.ResponseWriter, r *http.Req
 	}
 	cred, err := h.coreService.ClassifyMachineToken(r.Context(), projectID, machineID, uint(tokenID), body.Classification, actor.UserID)
 	if err != nil {
-		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
-		status := http.StatusBadRequest
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, errNotFound):
-			status = http.StatusNotFound
-		case strings.Contains(msg, "classification must be"):
-			// keep 400, msg is the deliberate validation message
-		default:
-			status = http.StatusInternalServerError
-			log.Printf("Error classifying machine token %d for machine %d in project %d: %v", tokenID, machineID, projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error classifying machine token %d for machine %d in project %d: %v", tokenID, machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]any{
@@ -622,20 +551,11 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 		if sendRoleScopeError(w, err) {
 			return
 		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, errNotFound):
-			status = http.StatusNotFound
-		case strings.Contains(msg, "already") || strings.Contains(msg, "not assigned"):
-			status = http.StatusConflict
-		case strings.Contains(msg, "does not belong to project"):
-			status = http.StatusBadRequest
-		default:
-			log.Printf("Error changing machine role for machine %d in project %d: %v", machineID, projectID, err)
-			msg = clientSafe(err)
+		if sendMachineRefusal(w, err) {
+			return
 		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error changing machine role for machine %d in project %d: %v", machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	verb := "granted"
@@ -659,9 +579,7 @@ func (h *CatalogHandler) ListMachineRoles(w http.ResponseWriter, r *http.Request
 		if sendStorageUnavailable(w, err) {
 			return
 		}
-		msg := err.Error()
-		if strings.Contains(msg, errNotFound) {
-			sendError(w, "NotFound", clientSafe(err), http.StatusNotFound, nil)
+		if sendMachineRefusal(w, err) {
 			return
 		}
 		log.Printf("Error listing machine roles for machine %d in project %d: %v", machineID, projectID, err)
@@ -695,23 +613,11 @@ func (h *CatalogHandler) CreateOIDCBinding(w http.ResponseWriter, r *http.Reques
 	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
 	b, err := h.coreService.CreateOIDCBinding(auditCtx, projectID, machineID, body.Issuer, body.Subject, actor.UserID)
 	if err != nil {
-		if sendStorageUnavailable(w, err) {
+		if sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, errNotFound):
-			status = http.StatusNotFound
-		case strings.Contains(msg, "required"):
-			status = http.StatusBadRequest
-		case strings.Contains(msg, "already bound"):
-			status = http.StatusConflict
-		default:
-			log.Printf("Error creating OIDC binding for machine %d in project %d: %v", machineID, projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error creating OIDC binding for machine %d in project %d: %v", machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	// sendCreated, not WriteHeader+sendSuccess -- see CreatePAT's comment
@@ -727,18 +633,11 @@ func (h *CatalogHandler) ListOIDCBindings(w http.ResponseWriter, r *http.Request
 	}
 	bindings, err := h.coreService.ListOIDCBindings(r.Context(), projectID, machineID)
 	if err != nil {
-		if sendStorageUnavailable(w, err) {
+		if sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		if strings.Contains(msg, errNotFound) {
-			status = http.StatusNotFound
-		} else {
-			log.Printf("Error listing OIDC bindings for machine %d in project %d: %v", machineID, projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error listing OIDC bindings for machine %d in project %d: %v", machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	out := make([]map[string]any, 0, len(bindings))
@@ -760,18 +659,11 @@ func (h *CatalogHandler) DeleteOIDCBinding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := h.coreService.DeleteOIDCBinding(r.Context(), projectID, machineID, uint(bindingID), actor.UserID); err != nil {
-		if sendStorageUnavailable(w, err) {
+		if sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		if strings.Contains(msg, errNotFound) {
-			status = http.StatusNotFound
-		} else {
-			log.Printf("Error deleting OIDC binding %d for machine %d in project %d: %v", bindingID, machineID, projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		log.Printf("Error deleting OIDC binding %d for machine %d in project %d: %v", bindingID, machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, nil, "OIDC binding removed")

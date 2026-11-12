@@ -570,7 +570,7 @@ func TestSecretTemplateGet_StorageError(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
 
 func TestSecretTemplateUpdate_StorageError(t *testing.T) {
