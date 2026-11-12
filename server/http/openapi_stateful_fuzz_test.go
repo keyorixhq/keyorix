@@ -1115,6 +1115,17 @@ var osKnownUndeclared5xx = []struct {
 	// becomes an undeclared 500 instead of a 403/409. No session is minted; nothing leaks.
 	// Fix: classify these as 403 (authority/credential refusal) / 409 (target-state refusal).
 	{id: "OPENAPI-STATEFUL-7", opID: "startImpersonation", princ: -1, code: 500, reason: "core impersonation refusal (suspended/inactive target, ceiling-exceeded, admin-not-found) falls through the handler switch to an undeclared 500 instead of 403/409. admin_impersonation.go:97."},
+	// OPENAPI-STATEFUL-8: RevokeProjectAccessReview (project_members.go:111-126) revoking a
+	// grant whose underlying ROLE is not assigned (already revoked, or removed earlier in the
+	// sequence) gets core error "Storage operation failed: Role not assigned" from plan.write
+	// (the role removal). The handler switch maps only "required"/"unknown access-review
+	// source"/"ownership cannot be revoked"->400 and ErrAccessReviewNotFound->404; the
+	// "role not assigned" storage error matches none, so it defaults to an undeclared 500.
+	// Semantically this IS the grant-not-found / already-revoked case and should be 404 (or an
+	// idempotent 200/204). Fail-closed (nothing changes). Confirmed root cause via the handler's
+	// own log.Printf: "Error revoking access-review grant for project 2: Storage operation
+	// failed: Role not assigned: role not assigned".
+	{id: "OPENAPI-STATEFUL-8", opID: "revokeProjectAccessReview", princ: -1, code: 500, reason: "revoke of an access-review grant whose role is not assigned returns core 'Role not assigned' (storage), unmapped by the handler switch -> undeclared 500 instead of 404/idempotent. project_members.go:122."},
 }
 
 // --- Oracle 2: response conformance ----------------------------------------
