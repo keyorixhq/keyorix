@@ -183,6 +183,27 @@ func TestMySQLQ6_ShortEOFTextRow_Reproducer(t *testing.T) {
 	}
 }
 
+// MYSQL-Q7: handleErrorPacket (packets.go:596) reads the error number as
+// binary.LittleEndian.Uint16(data[1:3]) with no length guard (and the SQL-state
+// data[4:9] likewise). A hostile server replying with a 1-byte ERR packet (just
+// the 0xff indicator) crashes the client with "slice bounds out of range". Found
+// by FuzzMySQLHostileQuery (seed 2dd43b2982921b41). ERR packets are the
+// universal error channel, so this is reachable on every command path.
+func TestMySQLQ7_ShortErrorPacket_Reproducer(t *testing.T) {
+	// opTextQuery: result-set header is a 1-byte ERR packet (0xff only).
+	in := cat([]byte{byte(opTextQuery)}, encQPkt(1, []byte{0xff}))
+	for i := range 3 {
+		val, stack := reproQueryPanic(t, in)
+		if val == nil {
+			t.Fatalf("replay %d: expected panic in handleErrorPacket; the driver may have added the length guard (remove MYSQL-Q7 from knownQueryPanicSites)", i)
+		}
+		if !strings.Contains(fmt.Sprint(val), "slice bounds out of range") ||
+			!strings.Contains(stack, "handleErrorPacket") {
+			t.Fatalf("replay %d: unexpected panic %v\n%s", i, val, stack)
+		}
+	}
+}
+
 // TestMySQLQuery_AllowlistStillSurfacesNovelPanics: the allowlist swallows the
 // real MYSQL-Q1/Q2 stacks (green) but NOT a panic from any other site (red), so
 // a third, unknown result-set panic would still fail the fuzz run.

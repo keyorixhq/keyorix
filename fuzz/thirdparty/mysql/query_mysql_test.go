@@ -442,6 +442,13 @@ var knownQueryPanicSites = []string{
 	// (packets.go:829) with no length guard. A text result row of a single 0xFE
 	// byte panics. Same class as MYSQL-Q2's EOF branch, but on the text path.
 	"mysql.(*textRows).readRow",
+	// MYSQL-Q7: handleErrorPacket reads the error number as
+	// binary.LittleEndian.Uint16(data[1:3]) (packets.go:596), the SQL-state as
+	// data[4:9] and the message as data[pos:], all with no length guard. A short
+	// ERR packet (0xff and fewer than 3 bytes) panics. Reached from every
+	// response reader (readResultSetHeaderPacket, readRow, readPrepareResultPacket,
+	// the handshake) the moment the server sends a malformed ERR.
+	"mysql.(*mysqlConn).handleErrorPacket",
 }
 
 func classifyQueryPanic(val any, stack string) string {
