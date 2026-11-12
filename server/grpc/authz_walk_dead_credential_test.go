@@ -34,6 +34,10 @@ package grpc_test
 // gRPC invalid-token limiter is process-global and allows 10 failures per IP;
 // see uniquePeerListener.
 //
+// The walk runs as TestEveryGRPCMethodRejectsDeadCredential_G0..G3, each taking a
+// quarter of the (state, cold|warm) cases through deadWalkGroup; see
+// authz_walk_dead_credential_groups_test.go (CI-GRPC-SHARD-1).
+//
 // What this does NOT cover: the HTTP bearer cache (this transport has none);
 // credentials whose state changes DURING a long-lived stream (INV-GRPC re-auth
 // on streams); other transports' revocation paths.
@@ -231,7 +235,9 @@ func (w *walkWorld) method(t *testing.T, key string) walkMethod {
 	return walkMethod{}
 }
 
-func TestEveryGRPCMethodRejectsDeadCredential(t *testing.T) {
+// deadWalkGroup walks the cases (dead state x cold/warm) whose deadCaseGroup is
+// group, on a world of its own per backend; see authz_walk_dead_credential_groups_test.go.
+func deadWalkGroup(t *testing.T, group int) {
 	forEachWalkBackend(t, func(t *testing.T, w *walkWorld) {
 		drain := func() {
 			core.DrainBackgroundGoroutines()
@@ -245,8 +251,13 @@ func TestEveryGRPCMethodRejectsDeadCredential(t *testing.T) {
 
 		violations := map[string]bool{}
 		calls := 0
-		for _, st := range deadStates {
+		cases := 0
+		for si, st := range deadStates {
 			for _, warm := range []bool{false, true} {
+				if deadCaseGroup(si, warm) != group {
+					continue
+				}
+				cases++
 				temp := "cold"
 				if warm {
 					temp = "warm"
@@ -305,7 +316,12 @@ func TestEveryGRPCMethodRejectsDeadCredential(t *testing.T) {
 				}
 			}
 		}
-		t.Logf("[%s] dead-credential walk: %d states x cold/warm x %d methods = %d calls", w.backend, len(deadStates), len(w.methods), calls)
+		// Non-vacuity: this group walked every one of its cases against every method.
+		// The groups partition the cases (TestDeadWalkGroups_PartitionTheCases), so the
+		// calls of all deadWalkGroups groups add up to len(deadStates) x 2 x methods.
+		require.NotZero(t, cases, "group %d has no case", group)
+		require.Equal(t, cases*len(w.methods), calls, "group %d: every case must call every method", group)
+		t.Logf("[%s] dead-credential walk group %d/%d: %d of %d cases x %d methods = %d calls", w.backend, group, deadWalkGroups, cases, len(deadStates)*2, len(w.methods), calls)
 
 		out := make([]string, 0, len(violations))
 		for v := range violations {
