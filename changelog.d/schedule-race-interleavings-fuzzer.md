@@ -15,3 +15,14 @@
   `TestScheduleInterleavings_Postgres` replays the two-writer schedules against a
   real Postgres pool (`KEYORIX_TEST_PG_DSN`) where goroutine-per-op gets genuine
   DB-level write concurrency. Target registered in `scripts/fuzzing/targets.d/`.
+- **Oracle 2 soundness fix (schedule-race fuzzer).** The post-return-visibility
+  oracle's role branch flagged `authorize=true` whenever group 1 revoked the role
+  and group 2 did not re-grant it — but missed the case where group 1 *itself*
+  contains a `grantRole` concurrent with the revoke. Such a grant can legally
+  commit last, leaving the role held, so `authorize=true` is serializable (oracle 1
+  accepts it). The branch now also skips when group 1 contains a grant, mirroring
+  the existing group-2 skip. Regression seed
+  `testdata/fuzz/FuzzScheduleInterleavings/b78054a10a72fe74` plus a self-test case
+  lock it in; red/green-proved (reverting the guard re-fails both). No production
+  code changed — this was a false positive in the fuzz oracle, not a Keyorix
+  defect.

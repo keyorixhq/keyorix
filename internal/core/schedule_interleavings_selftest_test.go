@@ -117,4 +117,23 @@ func TestOracle2_PostReturnVisibility_RedGreen(t *testing.T) {
 	if err := checkPostReturnVisibility(progRole, greenRole); err != nil {
 		t.Fatalf("GREEN (authorize false after role revoke) should pass: %v", err)
 	}
+
+	// Role, in-group-1 re-grant: HB, group1 = revokeRole(ok) + grantRole(ok)
+	// (concurrent, no HB edge between them), group2 = authorize. Because a legal
+	// serialization runs the grant last, the role may legitimately be HELD at the
+	// boundary, so authorize=true MUST NOT be flagged (oracle 1 judges this case).
+	// This is the regression guard for the FuzzScheduleInterleavings/b78054a10a72fe74
+	// false positive: without the g1HasGrant skip this outcome was wrongly rejected.
+	progRegrant := schedProgram{domain: dmRole, hb: true, split: 2, ops: []schedOp{
+		{kind: opRevokeRole}, {kind: opGrantRole}, {kind: opAuthorize},
+	}}
+	regrantTrue := []opResult{{class: clOK}, {class: clOK}, {class: clAuthzTrue}}
+	if err := checkPostReturnVisibility(progRegrant, regrantTrue); err != nil {
+		t.Fatalf("GREEN (authorize true after revoke+concurrent regrant in group 1) should pass: %v", err)
+	}
+	// And authorize=false is equally legal for the same program (revoke runs last).
+	regrantFalse := []opResult{{class: clOK}, {class: clOK}, {class: clAuthzFalse}}
+	if err := checkPostReturnVisibility(progRegrant, regrantFalse); err != nil {
+		t.Fatalf("GREEN (authorize false after revoke+concurrent regrant in group 1) should pass: %v", err)
+	}
 }

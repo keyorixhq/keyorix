@@ -760,7 +760,10 @@ func (w *schedWorld) readFinalState(ctx context.Context, domain int) modelState 
 //
 // Does NOT verify: visibility WITHOUT a happens-before edge (RACE mode is out of
 // scope here — that is oracle 1's job); the non-monotone re-grant case for roles
-// (if group 2 contains a grant, the strict denial is intentionally skipped);
+// (if group 2 contains a grant, OR group 1 itself also contains a grant of the
+// same role, the strict denial is intentionally skipped — a grant concurrent with
+// the revoke in group 1 can commit last, legitimately leaving the role held, so
+// authorize=true is then serializable and oracle 1, not oracle 2, is the judge);
 // anything cross-process.
 func checkPostReturnVisibility(prog schedProgram, observed []opResult) error {
 	if !prog.hb || prog.domain == dmAudit {
@@ -787,6 +790,18 @@ func checkPostReturnVisibility(prog schedProgram, observed []opResult) error {
 			g2HasGrant = true
 		}
 	}
+	// A grantRole in group 1 is concurrent with the revokeRole(s) there (no HB
+	// edge among group-1 ops): some legal serialization runs the grant last and
+	// leaves the role HELD at the group-1/group-2 boundary. The role is therefore
+	// not unambiguously revoked, so the strict "revoke denies the next decision"
+	// assertion does not hold — oracle 1 (serial equivalence) already judges this
+	// case. Mirror the g2HasGrant skip for the in-group-1 re-grant.
+	g1HasGrant := false
+	for i := 0; i < g1; i++ {
+		if prog.ops[i].kind == opGrantRole {
+			g1HasGrant = true
+		}
+	}
 	for i := g1; i < g2; i++ {
 		o := observed[i]
 		switch prog.ops[i].kind {
@@ -806,7 +821,7 @@ func checkPostReturnVisibility(prog schedProgram, observed []opResult) error {
 					prog, fmtResults(observed))
 			}
 		case opAuthorize:
-			if roleRevokedG1 && !g2HasGrant && o.class == clAuthzTrue {
+			if roleRevokedG1 && !g1HasGrant && !g2HasGrant && o.class == clAuthzTrue {
 				return fmt.Errorf("ORACLE2 VIOLATION: authorize=true after the role's Revoke had returned.\nprog=%+v\nobserved=%s",
 					prog, fmtResults(observed))
 			}
