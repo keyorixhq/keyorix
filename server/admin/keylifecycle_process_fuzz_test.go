@@ -39,6 +39,17 @@ func klBackends(t *testing.T) []struct{ name, pgBase string } {
 // counts are low and the value is depth-per-exec (arbitrary lifecycle interleavings
 // driven through the real cross-process lock), exactly what the in-process backup
 // fuzzer could not reach.
+//
+// SQLite-ONLY by design. A full 10-step program forks ~10 PBKDF2-heavy children;
+// on SQLite that is ~4 s/exec (safely inside Go fuzzing's worker-liveness window),
+// but on Postgres each exec costs ~2x and a single exec was measured at ~103 s
+// (deterministic replay, GREEN), which exceeds that window and makes the fuzz
+// coordinator kill the worker ("exit status 2") — a false crasher, not an oracle
+// failure (report triage KL-1/KL-2, ARTIFACT). Postgres is therefore covered by
+// TestKeyLifecycleProcessReplay (both backends, under the package timeout, not the
+// coordinator) and TestKeyLifecycleProcessCorpusPostgres, NOT by this live fuzz
+// target. The seed-corpus pass under a plain `go test` is unaffected (it runs
+// without the coordinator); it stays SQLite-only here for parity with the fuzzer.
 func FuzzKeyLifecycleProcess(f *testing.F) {
 	for _, seed := range klSeedPrograms() {
 		f.Add(seed)
@@ -48,9 +59,7 @@ func FuzzKeyLifecycleProcess(f *testing.F) {
 			t.Skip("child process must not re-enter the fuzzer")
 		}
 		require.NoError(t, i18n.InitializeForTesting())
-		for _, b := range klBackends(t) {
-			klRunProgram(t, b.name, b.pgBase, program)
-		}
+		klRunProgram(t, "sqlite", "", program)
 	})
 }
 
@@ -96,6 +105,36 @@ func TestKeyLifecycleProcessReplay(t *testing.T) {
 				klRunProgram(t, b.name, b.pgBase, tc.program)
 			})
 		}
+	}
+}
+
+// TestKeyLifecycleProcessCorpusPostgres replays representative lifecycle programs
+// — including a long, rotation-and-kill-heavy one the SQLite fuzzer explores — on
+// Postgres (skipped without KEYORIX_TEST_PG_DSN). It runs under the package test
+// timeout, NOT Go fuzzing's per-exec worker-liveness window, so the ~100 s/exec
+// cost of a full program on Postgres cannot produce a coordinator-kill false
+// crasher (see FuzzKeyLifecycleProcess's doc comment). This is the honest Postgres
+// depth coverage the SQLite-only fuzz target does not provide. Runs with -timeout
+// 20m in CI's pg leg.
+func TestKeyLifecycleProcessCorpusPostgres(t *testing.T) {
+	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("KEYORIX_TEST_PG_DSN not set")
+	}
+	require.NoError(t, i18n.InitializeForTesting())
+	programs := []struct {
+		name    string
+		program []byte
+	}{
+		// create, kill_rotate(+recover), reopen, update, delete, rotate_kek, backup, restore
+		{"kill_rotate_then_mixed", []byte{0, 0, 0, 7, 0, 7, 10, 0, 0, 1, 0, 0, 2, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0}},
+		// create, concurrent_rotate, create, kill_lockholder, rotate_dek, backup, restore
+		{"lock_contention_then_rotate", []byte{0, 0, 0, 8, 0, 0, 0, 1, 0, 9, 0, 0, 3, 0, 0, 5, 0, 0, 6, 0, 0}},
+	}
+	for _, tc := range programs {
+		t.Run(tc.name, func(t *testing.T) {
+			klRunProgram(t, "postgres", dsn, tc.program)
+		})
 	}
 }
 
