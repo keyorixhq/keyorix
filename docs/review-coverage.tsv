@@ -1,3 +1,8 @@
+# NEW ROWS GO TO docs/review-coverage.d/ (one fragment file per package, named with
+# / replaced by __, e.g. internal__core.tsv, see its README.md), never here: this file
+# holds only comments, and the reader takes it PLUS every fragment. Do not edit this
+# file to add a row.
+#
 # Adversarial-review coverage ledger. Verified by scripts/check-review-coverage.sh,
 # which derives the package set from `go list ./...` at run time and fails if
 # any package has no row, or if any row names a package that no longer exists.

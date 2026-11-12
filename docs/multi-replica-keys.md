@@ -305,7 +305,7 @@ deployed through Helm yet.
 |---|---|---|
 | 1–2 | nothing changed | start again; scale back up if needed |
 | 3, before the sweep commits | the database is under the old DEK (one transaction, rolled back); `ws` may hold `data.key.pending` | run a key writer in `ws` again (`upgrade-aad` changes nothing else; or `rotate --confirm`): its crash recovery discards the uncommitted pending file. Or start over. Replicas on `keyorix-keys-1` start normally. |
-| 3, after the sweep committed, before the rename | rows, epoch and redo marker under the **new** DEK; `ws/data.key.pending` is the **only copy** of it | do not delete `ws`, do not unpack over it (refused). Run `keyorix-server admin encryption upgrade-aad` in `ws`: its crash recovery promotes the pending DEK. Then step 4. Replicas started meanwhile with `keyorix-keys-1` are refused (epoch) and leave the rotation's redo marker alone (`INV-ENCRYPTION-redo-marker-kept-for-the-pending-keydir`; before HA-SECRET-KEYS-1 such a start removed it and the next recovery in `ws` discarded the new DEK). |
+| 3, after the sweep committed, before the rename | rows, epoch and redo marker under the **new** DEK; `ws/data.key.pending` is the **only copy** of it | do not delete `ws`, do not unpack over it (refused). Run `keyorix-server admin encryption upgrade-aad` in `ws`: its crash recovery promotes the pending DEK. Then step 4. Replicas started meanwhile with `keyorix-keys-1` are refused (epoch) and leave the rotation's redo marker alone (`INV-ENCRYPTION-redo-marker-kept-for-the-pending-keydir`; before HA-SECRET-KEYS-1 such a start removed it and the next recovery in `ws` discarded the new DEK). `keyorix-server admin backup` from any key directory that still holds the old key set is refused ("a DEK rotation committed its re-encryption sweep"), with no archive written and no key file changed: its archive would restore, but no server could start on it and nothing in it would decrypt (#4104). Finish the rotation in `ws`, distribute the new key set (steps 4–5), then back up. In `ws` itself the backup is refused on `data.key.pending`. |
 | 3, after the rename | `ws/data.key` is the new DEK | step 4 (`export` refuses while a `.pending` file is present) |
 | 4 | `ws` holds the new key set; the Secret may not exist yet | run `export` / `kubectl create` again (`--out` refuses an existing file: choose a new name) |
 | 5 | some pods on each Secret | pods on `keyorix-keys-1` are refused (epoch); finish the `helm upgrade`. A `helm rollback` to the old revision points at the old Secret and is refused the same way: never a stale write |
@@ -325,6 +325,15 @@ the `keyorix.io/dek-fingerprint` annotation of the key Secret it needs. Keep eve
 manifest as long as a database backup that needs it is retained. `keyorix-server admin backup`
 archives the key files next to the database; in Secret mode prefer the separation above, or treat
 that archive as key material too.
+
+`admin backup` refuses (non-zero exit, no archive written, no key file changed) while its key
+directory holds a rotation's `.pending` staging file, and on PostgreSQL while its DEK is not the
+one the database's `dek.epoch` names, which is the state of every non-rotating key directory after a
+rotation's sweep committed and before the new key set is distributed. A leftover
+`kek.salt.pending` that a successful server start left in place is unused; `admin validate
+--posture` reports any of these local staging files as `backups are refused: key-rotation staging
+file present` until it is resolved. Remedies: `docs/SELF_HOSTING.md`, "When `admin backup` is
+refused".
 
 ## Verification
 

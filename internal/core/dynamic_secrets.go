@@ -797,6 +797,11 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 		lease.Status = "revoke_failed"
 		log.Printf("failed to revoke dynamic secret lease %s: %s", lease.LeaseID, ports.SanitizeErrorMessage(rerr))
 		lease.RevokeError = "backend revoke failed — see server audit log for details"
+		// #3980: an admin_dsn option revoke cannot strip is the whole reason, and
+		// ForbiddenOptionError names only the option, so it is safe to store.
+		if fe, ok := errors.AsType[*dsn.ForbiddenOptionError](rerr); ok {
+			lease.RevokeError = "backend revoke refused: " + fe.Error()
+		}
 		// Deliberately NOT stamping RevokedAt here: the target drop failed, so the
 		// credential is still live. Stamping it would make the audit trail / API
 		// falsely claim the role was dropped at this time, even though it wasn't —

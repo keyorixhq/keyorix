@@ -187,14 +187,27 @@ func TestMySQLEngineNeverSendsLocalFilesToTheServer(t *testing.T) {
 	_, _, err = e.Issue(ctx, d, "", time.Minute)
 	var fe *dsn.ForbiddenOptionError
 	if !errors.As(err, &fe) {
-		t.Fatalf("want ForbiddenOptionError, got %v", err)
-	}
-	if err := e.Revoke(ctx, d, "kx_dyn_x"); !errors.As(err, &fe) {
-		t.Fatalf("Revoke: want ForbiddenOptionError, got %v", err)
+		t.Fatalf("Issue: want ForbiddenOptionError, got %v", err)
 	}
 	select {
 	case s := <-got:
-		t.Fatalf("rogue server received %q; the engine must not even connect", s)
+		t.Fatalf("rogue server received %q; Issue must not even connect", s)
 	case <-time.After(500 * time.Millisecond):
+	}
+
+	// Revoke removes allowAllFiles instead of refusing it (#3980), so it does
+	// connect: the driver must then refuse the server's LOCAL INFILE request.
+	// interpolateParams sends the processlist query as COM_QUERY, which the
+	// rogue answers with the request.
+	if err := e.Revoke(ctx, d+"&interpolateParams=true", "kx_dyn_x"); errors.As(err, &fe) {
+		t.Fatalf("Revoke: want allowAllFiles stripped, got %v", err)
+	}
+	select {
+	case s := <-got:
+		if strings.Contains(s, "s3cr3t") {
+			t.Fatalf("rogue server received the local file through Revoke: %q", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Revoke never reached the rogue server's LOCAL INFILE request; the test proves nothing")
 	}
 }

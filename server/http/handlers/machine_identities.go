@@ -266,10 +266,10 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 	if !mustDecodeBody(w, r, &body) {
 		return
 	}
-	var expiresAt *time.Time
-	if body.ExpiresInDays > 0 {
-		t := time.Now().AddDate(0, 0, body.ExpiresInDays)
-		expiresAt = &t
+	expiresAt, err := core.MachineTokenExpiresAt(int64(body.ExpiresInDays), time.Now())
+	if err != nil {
+		sendError(w, "InvalidParameter", err.Error(), http.StatusBadRequest, nil)
+		return
 	}
 	// #2545, extended to machine credentials: a client-asserted origin is recorded as a
 	// labelled note on the audit event, never as attribution.

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"strings"
@@ -84,8 +83,7 @@ func runMachineRevoke(cmd *cobra.Command, args []string) error {
 
 	if !machineRevokeForce {
 		fmt.Printf("Revoking %q is permanent — the machine identity cannot be reactivated afterward.\nType the machine identity name to confirm: ", derefStr(m.Name))
-		reader := bufio.NewReader(cmd.InOrStdin())
-		input, _ := reader.ReadString('\n')
+		input, _ := promptInput(cmd.InOrStdin()).ReadString('\n')
 		if strings.TrimSpace(input) != derefStr(m.Name) {
 			fmt.Println("Name mismatch — revoke aborted.")
 			return nil

@@ -85,10 +85,10 @@ func toSCIMUser(u *models.User) map[string]any {
 
 // scimUserPayload is the subset of the SCIM User schema we consume.
 type scimUserPayload struct {
-	UserName    string `json:"userName"`
-	ExternalID  string `json:"externalId"`
-	DisplayName string `json:"displayName"`
-	Active      *bool  `json:"active"`
+	UserName    string   `json:"userName"`
+	ExternalID  string   `json:"externalId"`
+	DisplayName string   `json:"displayName"`
+	Active      scimBool `json:"active"` // tolerant: JSON bool or "true"/"false" (scim_bool.go)
 	Name        *struct {
 		Formatted string `json:"formatted"`
 	} `json:"name"`
@@ -240,7 +240,7 @@ func (h *SCIMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var p scimUserPayload
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		scimError(w, http.StatusBadRequest, "invalid SCIM payload")
+		writeSCIMDecodeError(w, err, "invalid SCIM payload")
 		return
 	}
 	if p.UserName == "" {
@@ -248,8 +248,8 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	active := true
-	if p.Active != nil {
-		active = *p.Active
+	if a := p.Active.ptr(); a != nil {
+		active = *a
 	}
 	user, err := h.coreService.ProvisionSCIMUser(r.Context(), 0, p.UserName, p.displayName(), p.primaryEmail(), p.ExternalID, active)
 	if err != nil {
@@ -274,12 +274,12 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	}
 	var p scimUserPayload
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		scimError(w, http.StatusBadRequest, "invalid SCIM payload")
+		writeSCIMDecodeError(w, err, "invalid SCIM payload")
 		return
 	}
 	dn := p.displayName()
 	email := p.primaryEmail()
-	user, err := h.coreService.UpdateSCIMUser(r.Context(), 0, id, &dn, &email, p.Active)
+	user, err := h.coreService.UpdateSCIMUser(r.Context(), 0, id, &dn, &email, p.Active.ptr())
 	if err != nil {
 		writeSCIMWriteError(w, r, fmt.Sprintf("replacing SCIM user %d", id), err)
 		return
@@ -287,29 +287,46 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	writeSCIM(w, http.StatusOK, toSCIMUser(user))
 }
 
-func parseSCIMUserPatchOp(path string, value json.RawMessage) (active *bool, displayName *string) {
+// parseSCIMUserPatchOp reads one replace/add operation. Attribute names are matched
+// case-insensitively (RFC 7643 §2.1). An `active` that is present but not a boolean
+// (parseSCIMBool) is an error the caller answers 400, never a silent no-op; every
+// other attribute keeps the documented tolerance (an unknown path or an undecodable
+// displayName is ignored).
+func parseSCIMUserPatchOp(path string, value json.RawMessage) (active *bool, displayName *string, err error) {
 	switch strings.ToLower(strings.TrimSpace(path)) {
 	case "active":
-		var b bool
-		if json.Unmarshal(value, &b) == nil {
-			active = &b
+		b, perr := parseSCIMBool(value)
+		if perr != nil {
+			return nil, nil, perr
 		}
+		active = &b
 	case "displayname":
 		var s string
 		if json.Unmarshal(value, &s) == nil {
 			displayName = &s
 		}
 	case "": // no path → value is an object of attributes
-		var obj struct {
-			Active      *bool   `json:"active"`
-			DisplayName *string `json:"displayName"`
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(value, &obj) != nil {
+			return nil, nil, nil
 		}
-		if json.Unmarshal(value, &obj) == nil {
-			active = obj.Active
-			displayName = obj.DisplayName
+		for k, v := range obj {
+			switch strings.ToLower(k) {
+			case "active":
+				b, perr := parseSCIMBool(v)
+				if perr != nil {
+					return nil, nil, perr
+				}
+				active = &b
+			case "displayname":
+				var s string
+				if json.Unmarshal(v, &s) == nil {
+					displayName = &s
+				}
+			}
 		}
 	}
-	return active, displayName
+	return active, displayName, nil
 }
 
 // scimPatch is a minimal SCIM PatchOp body.
@@ -323,7 +340,9 @@ type scimPatch struct {
 
 // PatchUser handles PATCH /scim/v2/Users/{id} — applies replace operations. The IdP
 // uses this chiefly to flip `active` (deactivate/reactivate); displayName is also
-// honoured. Other paths are accepted as no-ops so a provisioning run doesn't fail.
+// honoured. Other paths are accepted as no-ops so a provisioning run doesn't fail, but
+// an `active` that is present and not a boolean is a 400 invalidValue (scim_bool.go):
+// a deactivation the server could not read must never look applied to the IdP.
 func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := scimID(w, r)
 	if !ok {
@@ -340,7 +359,11 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(op.Op, "replace") && !strings.EqualFold(op.Op, "add") {
 			continue
 		}
-		a, dn := parseSCIMUserPatchOp(op.Path, op.Value)
+		a, dn, perr := parseSCIMUserPatchOp(op.Path, op.Value)
+		if perr != nil {
+			writeSCIMDecodeError(w, perr, "invalid SCIM patch")
+			return
+		}
 		if a != nil {
 			active = a
 		}

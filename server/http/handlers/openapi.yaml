@@ -1635,7 +1635,22 @@ paths:
           description: "Envelope {data=null, message='Member added'}."
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
+        '403':
+          description: >-
+            The caller lacks roles.assign at this project, the user's email domain is not allowed, or the
+            privilege ceiling refused the grant: the actor's own permissions at this project must include every
+            permission `role` bundles. The ceiling applies to a machine-identity token the same way, judged
+            against the machine's own roles, so a machine whose roles do not cover `role` gets this 403; one
+            whose roles do is allowed (201). Same error envelope as components/responses/Error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: {type: boolean}
+                  code: {type: integer}
+                  error: {type: string}
+                  message: {type: string}
         '409': {$ref: '#/components/responses/Error'}
 
   /api/v1/projects/{id}/members/{userId}:

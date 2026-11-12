@@ -390,6 +390,12 @@ func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID,
 	// its audit row commit together (fail closed).
 	if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		ok, uerr := tx.UpdateAccessRequest(ctx, req)
+		if storage.IsSecretNotFound(uerr) {
+			// The secret was deleted after the GetSecret above (CORE-ACTOR-RACE-1): the
+			// storage write re-checks it under a lock and rolled the approval back, so
+			// the delete's sweep cannot have missed it.
+			return fmt.Errorf("cannot approve: secret %d no longer exists", *req.SecretID)
+		}
 		if uerr != nil {
 			return fmt.Errorf("failed to update access request: %w", uerr)
 		}

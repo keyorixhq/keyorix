@@ -15,9 +15,16 @@
 // walk without progress is under half of the walk.
 //
 // PostgreSQL: a long snapshot holds back the xmin horizon (vacuum cannot remove
-// dead rows, on every table). The probe reads pg_stat_activity for backends that
-// hold a snapshot (backend_xmin set) and records the age of their transaction.
-// The property: no snapshot lived for half of the walk.
+// dead rows, on every table). Every connection of the env (the store's pool,
+// the verifier, the calibration's reader) carries its own application_name, and
+// the probe reads pg_stat_activity for those backends only that hold a snapshot
+// (backend_xmin set), recording each one as (pid, xact_start): one identity per
+// transaction. The property: no one transaction was seen holding a snapshot in
+// half of the walk's probes. Only the env's own backends count: CI runs
+// internal/core and internal/storage in parallel on ONE database, and a snapshot
+// held by another package's test or an autovacuum worker there was reported as
+// the walk's own (AUDIT-LONGREADER-PG-1). The verdict counts probes, not wall
+// time, so a slow runner stretches the walk and every batch alike.
 //
 // Both run while a writer commits continuously, on a 300k-row chained audit
 // table, the database opened as production opens it (SQLite through the storage
@@ -31,6 +38,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,8 +78,26 @@ type longReaderSample struct {
 	at time.Time
 	// SQLite: the PASSIVE checkpoint result and the WAL file size.
 	log, ckpt, walBytes int64
-	// Postgres: the oldest snapshot-holding transaction of another backend.
+	// Postgres: the env's own snapshot-holding transactions (other than the
+	// probe's), one "pid@xact_start" identity each, and the oldest one's age.
+	snapshots      []string
 	oldestSnapshot time.Duration
+}
+
+// pgLongReaderAppNames numbers the application_name of each Postgres env.
+var pgLongReaderAppNames atomic.Int64
+
+// pgWithApplicationName returns dsn with application_name set, in either DSN
+// form KEYORIX_TEST_PG_DSN may take (URL or keyword/value).
+func pgWithApplicationName(dsn, name string) string {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		return dsn + sep + "application_name=" + url.QueryEscape(name)
+	}
+	return dsn + " application_name=" + name
 }
 
 // newFactorySQLiteLongReaderEnv opens a file-backed SQLite store through the
@@ -136,7 +162,8 @@ func newFactorySQLiteLongReaderEnv(t *testing.T) *longReaderEnv {
 func newPostgresLongReaderEnv(t *testing.T) *longReaderEnv {
 	t.Helper()
 	base := pgTestDSN(t)
-	dsn := pgIsolatedSchemaDSN(t, base)
+	appName := fmt.Sprintf("kx_long_reader_%d_%d", os.Getpid(), pgLongReaderAppNames.Add(1))
+	dsn := pgWithApplicationName(pgIsolatedSchemaDSN(t, base), appName)
 	db := pgOpen(t, dsn)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -158,14 +185,23 @@ func newPostgresLongReaderEnv(t *testing.T) *longReaderEnv {
 			return vdb
 		},
 		probe: func() (longReaderSample, bool) {
-			var secs float64
-			if err := probe.Raw(`SELECT COALESCE(MAX(EXTRACT(EPOCH FROM clock_timestamp() - xact_start)), 0)
+			var rows []struct {
+				Identity string
+				Secs     float64
+			}
+			if err := probe.Raw(`SELECT pid::text || '@' || xact_start::text AS identity,
+					EXTRACT(EPOCH FROM clock_timestamp() - xact_start)::float8 AS secs
 				FROM pg_stat_activity
-				WHERE datname = current_database() AND pid <> pg_backend_pid()
-				  AND backend_xmin IS NOT NULL AND xact_start IS NOT NULL`).Scan(&secs).Error; err != nil {
+				WHERE application_name = ? AND pid <> pg_backend_pid()
+				  AND backend_xmin IS NOT NULL AND xact_start IS NOT NULL`, appName).Scan(&rows).Error; err != nil {
 				return longReaderSample{}, false
 			}
-			return longReaderSample{at: time.Now(), oldestSnapshot: time.Duration(secs * float64(time.Second))}, true
+			s := longReaderSample{at: time.Now()}
+			for _, r := range rows {
+				s.snapshots = append(s.snapshots, r.Identity)
+				s.oldestSnapshot = max(s.oldestSnapshot, time.Duration(r.Secs*float64(time.Second)))
+			}
+			return s, true
 		},
 		holdSnapshot: func(t *testing.T) func() {
 			reader := pgOpen(t, dsn)
@@ -247,8 +283,11 @@ type longReaderObservation struct {
 	progress      int
 	longestPinned time.Duration
 	maxWALBytes   int64
-	// Postgres: the oldest snapshot any other backend held during the walk.
-	oldestSnapshot time.Duration
+	// Postgres: how many distinct transactions of the env were seen holding a
+	// snapshot, how many probes saw the most-seen one, and the oldest snapshot's
+	// age (logged only: the verdict counts probes).
+	snapshotTxs, mostSeenSnapshotProbes int
+	oldestSnapshot                      time.Duration
 }
 
 // observeDuringWalk runs walk while a writer commits through env.db and the
@@ -306,11 +345,16 @@ func observeDuringWalk(t *testing.T, env *longReaderEnv, walk func(ctx context.C
 
 	obs.walk, obs.writes = end.Sub(start), writes.Load()-writesBefore
 	lastProgress := start
+	seenBy := map[string]int{} // snapshot identity -> probes that saw it
 	for _, s := range samples {
 		if s.at.Before(start) || s.at.After(end) {
 			continue
 		}
 		obs.probes++
+		for _, id := range s.snapshots {
+			seenBy[id]++
+			obs.mostSeenSnapshotProbes = max(obs.mostSeenSnapshotProbes, seenBy[id])
+		}
 		obs.oldestSnapshot = max(obs.oldestSnapshot, s.oldestSnapshot)
 		obs.maxWALBytes = max(obs.maxWALBytes, s.walBytes)
 		if s.log > 0 && s.ckpt == s.log {
@@ -320,6 +364,7 @@ func observeDuringWalk(t *testing.T, env *longReaderEnv, walk func(ctx context.C
 		}
 	}
 	obs.longestPinned = max(obs.longestPinned, end.Sub(lastProgress))
+	obs.snapshotTxs = len(seenBy)
 	lastCommit := start
 	for _, at := range commits {
 		if at.Before(start) || at.After(end) {
@@ -329,8 +374,9 @@ func observeDuringWalk(t *testing.T, env *longReaderEnv, walk func(ctx context.C
 		lastCommit = at
 	}
 	obs.longestWriterStall = max(obs.longestWriterStall, end.Sub(lastCommit))
-	t.Logf("%s walk %s: %d probes, %d concurrent commits, longest writer stall %s; sqlite: %d with full checkpoint progress, longest stretch without %s, max WAL %d bytes; postgres: oldest snapshot %s",
-		obs.backend, obs.walk, obs.probes, obs.writes, obs.longestWriterStall, obs.progress, obs.longestPinned, obs.maxWALBytes, obs.oldestSnapshot)
+	t.Logf("%s walk %s: %d probes, %d concurrent commits, longest writer stall %s; sqlite: %d with full checkpoint progress, longest stretch without %s, max WAL %d bytes; postgres: %d snapshot-holding transactions of the env, the most-seen one in %d probes, oldest snapshot %s",
+		obs.backend, obs.walk, obs.probes, obs.writes, obs.longestWriterStall, obs.progress, obs.longestPinned, obs.maxWALBytes,
+		obs.snapshotTxs, obs.mostSeenSnapshotProbes, obs.oldestSnapshot)
 	require.Positive(t, obs.writes, "the writer committed during the walk")
 	require.Positive(t, obs.probes, "the probe ran during the walk")
 	return obs
@@ -340,8 +386,9 @@ func observeDuringWalk(t *testing.T, env *longReaderEnv, walk func(ctx context.C
 // and why.
 func (o longReaderObservation) pinned() (bool, string) {
 	if o.backend == "postgres" {
-		return o.oldestSnapshot >= o.walk/2, fmt.Sprintf(
-			"a snapshot lived for %s of a %s walk (%d probes, %d concurrent commits)", o.oldestSnapshot, o.walk, o.probes, o.writes)
+		return 2*o.mostSeenSnapshotProbes >= o.probes, fmt.Sprintf(
+			"one transaction held a snapshot in %d of the walk's %d probes (%d snapshot-holding transactions seen, oldest snapshot %s of a %s walk, %d concurrent commits)",
+			o.mostSeenSnapshotProbes, o.probes, o.snapshotTxs, o.oldestSnapshot, o.walk, o.writes)
 	}
 	return o.longestPinned >= o.walk/2, fmt.Sprintf(
 		"for %s of a %s walk no PASSIVE checkpoint could backfill the whole WAL (%d probes, %d concurrent commits, max WAL %d bytes)",
@@ -352,6 +399,10 @@ func requireNotPinned(t *testing.T, obs longReaderObservation, what string) {
 	t.Helper()
 	pinned, why := obs.pinned()
 	require.False(t, pinned, "%s held one read snapshot across its walk: %s", what, why)
+	if obs.backend == "postgres" {
+		// Not vacuous: the application_name filter matched the env's own backends.
+		require.Positive(t, obs.snapshotTxs, "%s: the probe never saw a statement of the env's own connections: %s", what, why)
+	}
 	require.Less(t, obs.longestWriterStall, obs.walk/2,
 		"%s blocked the concurrent writer for %s of a %s walk (%d commits): it must read, not hold the write lock",
 		what, obs.longestWriterStall, obs.walk, obs.writes)
@@ -414,6 +465,73 @@ func TestAuditLongReaders_RollingRewalkDoesNotHoldOneSnapshot(t *testing.T) {
 			requireNotPinned(t, obs, "the audit_checkpoint tick's rolling re-walk")
 		})
 	}
+}
+
+// newRollingRewalkPostgresEnv is the rolling re-walk test's Postgres setup: a
+// 300k-row chain, one signed checkpoint at its head, incremental verification
+// on, so the next tick re-walks the whole chain in one segment.
+func newRollingRewalkPostgresEnv(t *testing.T) *longReaderEnv {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("builds a 300k-row audit table")
+	}
+	env := newPostgresLongReaderEnv(t)
+	buildSyntheticAuditChain(t, env.db, longReaderAuditRows)
+	env.c.SetAuditIncrementalVerification(24*time.Hour, 1)
+	_, written, err := env.c.WriteAuditCheckpoint(context.Background())
+	require.NoError(t, err)
+	require.True(t, written)
+	return env
+}
+
+// TestAuditLongReaders_ForeignSnapshotIsNotTheWalks_Postgres: a snapshot held
+// for the whole walk by a backend that is not the env's (another package's
+// test on the same database, as CI runs internal/core and internal/storage in
+// parallel on one) is not reported as the rolling re-walk's own. This was the
+// nightly's "a snapshot lived for 3.26s of a 3.92s walk" on an unchanged
+// chunked walk (AUDIT-LONGREADER-PG-1).
+func TestAuditLongReaders_ForeignSnapshotIsNotTheWalks_Postgres(t *testing.T) {
+	env := newRollingRewalkPostgresEnv(t)
+	foreign := pgOpen(t, pgTestDSN(t)) // same database, no env application_name
+	var res *AuditVerifyTickResult
+	obs := observeDuringWalk(t, env, func(ctx context.Context) error {
+		tx := foreign.Begin(&sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+		require.NoError(t, tx.Error)
+		defer tx.Rollback()
+		var one int
+		require.NoError(t, tx.Raw("SELECT 1").Scan(&one).Error)
+		var err error
+		res, err = env.c.RunAuditVerificationTick(ctx)
+		return err
+	})
+	require.True(t, res.CycleCompleted, "the tick re-walked the whole chain")
+	requireNotPinned(t, obs, "the audit_checkpoint tick's rolling re-walk (beside a foreign snapshot)")
+}
+
+// TestAuditLongReaders_MutationOneSnapshotTickIsReportedPinned_Postgres: the
+// mutation INV-CORE-audit-walk-chunked-read forbids, the same tick run on a
+// store whose every read shares one REPEATABLE READ transaction (the walk
+// wrapped in one snapshot), is reported as pinned by the probe and verdict
+// the rolling re-walk test uses. Without this the identity-count verdict
+// could pass because it cannot see the walk's own snapshot.
+func TestAuditLongReaders_MutationOneSnapshotTickIsReportedPinned_Postgres(t *testing.T) {
+	env := newRollingRewalkPostgresEnv(t)
+	var res *AuditVerifyTickResult
+	obs := observeDuringWalk(t, env, func(ctx context.Context) error {
+		tx := env.db.Begin(&sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+		require.NoError(t, tx.Error)
+		defer tx.Rollback()
+		mut := NewKeyorixCore(store.NewLocalStorage(tx))
+		mut.SetAuditCheckpointKey([]byte("reanchor-test-key-32-bytes-long"), "v1")
+		mut.SetAuditIncrementalVerification(24*time.Hour, 1)
+		var err error
+		res, err = mut.RunAuditVerificationTick(ctx)
+		return err
+	})
+	require.True(t, res.CycleCompleted, "the one-snapshot tick re-walked the whole chain")
+	require.EqualValues(t, longReaderAuditRows, res.VerifiedThrough)
+	pinned, why := obs.pinned()
+	require.True(t, pinned, "a tick that walks inside one snapshot must be reported as pinned: %s", why)
 }
 
 // TestAuditLongReaders_OfflineVerifyDoesNotHoldOneSnapshot: `admin verify-audit`

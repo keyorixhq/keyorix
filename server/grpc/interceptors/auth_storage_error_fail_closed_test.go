@@ -21,6 +21,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -64,10 +65,10 @@ func TestAuthInterceptor_CredentialLookupStorageError_FailsClosed(t *testing.T) 
 				m, err := h.CoreService.CreateMachineIdentity(ctxBg, 2, "ci-bot-cfc", "service", "", "", 1, 0)
 				require.NoError(t, err)
 				proj2 := uint(2)
-				h.AssignUserRole(t, 1, 2, &proj2)
+				h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2)
 				tok, err := h.CoreService.IssueMachineToken(ctxBg, 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok-cfc"})
 				require.NoError(t, err)
-				require.NoError(t, h.CoreService.AssignMachineRole(ctxBg, m.ID, 4, core.Scope{ProjectID: 2}, 1, false))
+				require.NoError(t, h.CoreService.AssignMachineRole(ctxBg, m.ID, testhelper.RoleProjectViewer, core.Scope{ProjectID: 2}, 1, false))
 				return tok.PlainToken, func() {
 					require.NoError(t, h.DB.Model(&models.MachineIdentityCredential{}).Where("machine_identity_id = ?", m.ID).Update("revoked", true).Error)
 				}
