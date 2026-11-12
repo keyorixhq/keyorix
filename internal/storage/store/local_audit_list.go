@@ -156,6 +156,19 @@ func countAuditLogs(db *gorm.DB, base func() *gorm.DB, mode storage.AuditCountMo
 
 // applyAuditFilter adds every AuditFilter predicate to q. Paging, ordering and
 // the cursor are applied by the caller.
+//
+// Text-filter parity between SQLite and PostgreSQL (AUDIT-SEARCH-PARITY-1,
+// #4090), checked per filter and pinned by local_audit_filter_case_parity_test.go
+// and local_audit_exact_filter_parity_test.go:
+//   - ActorUsername: same on both, folded with foldedContainsClause (Unicode
+//     case-insensitive, by design).
+//   - ResourceType: was different (LIKE), fixed: case-sensitive on both.
+//   - Action, Actions, IPAddress, RequestID, ActorType: "=" / IN on a plain
+//     column, byte-wise and so case-sensitive on both. Same, no fix needed.
+//   - ProjectID, UserID, SecretID, Success, ids and times: not text.
+//
+// There is no free-text filter in this function. Keep any new text predicate on
+// one of these three shapes; a bare LIKE is never case-consistent.
 func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 	if f.ProjectID != nil {
 		q = q.Where("project_id = ?", *f.ProjectID)
