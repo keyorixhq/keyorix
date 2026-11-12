@@ -179,6 +179,16 @@ func runVault(cmd *cobra.Command, _ []string) error {
 		if e.Field != "" {
 			humanPath += "#" + e.Field
 		}
+		if name == "" {
+			// The source path/key normalised to an empty Keyorix name (only separators/control
+			// chars); skip it with a reason rather than creating a secret under an empty name.
+			skippedItems = append(skippedItems, plan.Item{
+				Entry:   plan.Entry{SourceKind: "vault", Path: humanPath},
+				Outcome: plan.Skip,
+				Reason:  emptyDerivedNameSkipReason,
+			})
+			continue
+		}
 		version := ""
 		if e.Version != 0 {
 			version = strconv.Itoa(e.Version)

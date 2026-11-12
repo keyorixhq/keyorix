@@ -105,6 +105,48 @@ func (n *Node) Marshal() []byte {
 	return b.Bytes()
 }
 
+// size returns an approximate marshaled length of the tree WITHOUT allocating the output. It is
+// used only to detect a pathological tree (e.g. a multi-megabyte string cloned thousands of times
+// by the oversized-list op) before Marshal would build a multi-gigabyte buffer in-process. Each
+// loop bails out as soon as the running total passes stopAt, so a 60000×4.3MB array is measured in
+// a handful of iterations rather than fully. The estimate undercounts (it ignores per-string JSON
+// escaping) but that only makes the >cap gate conservative, which is what the caller wants.
+func (n *Node) size(stopAt int64) int64 {
+	if n == nil {
+		return 0
+	}
+	switch n.K {
+	case KNull:
+		return 4
+	case KBool, KNum, KRaw:
+		return int64(len(n.S))
+	case KStr:
+		return int64(len(n.S)) + 2
+	case KArr:
+		total := int64(2)
+		for _, c := range n.Kids {
+			total += c.size(stopAt) + 1
+			if total > stopAt {
+				return total
+			}
+		}
+		return total
+	case KObj:
+		total := int64(2)
+		for i, c := range n.Kids {
+			total += c.size(stopAt) + 2
+			if i < len(n.Keys) {
+				total += int64(len(n.Keys[i]))
+			}
+			if total > stopAt {
+				return total
+			}
+		}
+		return total
+	}
+	return 0
+}
+
 func (n *Node) write(b *bytes.Buffer) {
 	switch n.K {
 	case KNull:

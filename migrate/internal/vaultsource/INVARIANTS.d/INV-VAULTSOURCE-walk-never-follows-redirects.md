@@ -8,6 +8,6 @@
   `FuzzVaultSourceHostileWalk` — its hostile server injects redirects (to a sentinel internal
   address and self-loops) and the target asserts the sentinel receives zero requests and no
   served record is `Followed` (vault_hostile_fuzz_test.go, via the harness O9 oracle).
-  NOTE: this covers redirect *following* only. A separate, still-open defect (campaign FINDING
-  F3) is that a 3xx response that is NOT followed still has its body parsed as the secret —
-  that is a fail-closed gap in `doRawRead`/`do`, tracked as a product fix, not asserted here.
+  NOTE: this covers redirect *following* only. The companion rule — a 3xx that is NOT followed
+  must also never have its body parsed as the secret — is a separate invariant,
+  [[INV-VAULTSOURCE-non-2xx-read-is-an-error]] (campaign FINDING F3, now fixed).

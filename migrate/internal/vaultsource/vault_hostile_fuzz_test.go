@@ -24,9 +24,9 @@ package vaultsource_test
 //     a hostile LIST legitimately fans out to one READ per key, so a small ceiling is the wrong
 //     oracle here (genuine DoS is caught by O2/O4 instead). Does NOT test unbounded recursion
 //     DEPTH — the harness's own Valid tree must terminate for O6, so a Vault that returns a
-//     folder key at every level (an unbounded-depth DoS, `Walk` has no depth cap) cannot be
-//     exercised through this pristine-must-succeed harness; it is noted as an open hardening
-//     item in the campaign report, not asserted here.
+//     folder key at every level cannot be exercised through this pristine-must-succeed harness.
+//     Walk's depth cap (maxWalkDepth, campaign FINDING F4) is covered precisely by the
+//     deterministic TestWalk_DepthCapped instead.
 //   - O9 SSRF-ISH/(c): the client declares it never follows redirects (CheckRedirect =
 //     ErrUseLastResponse); the sentinel internal-address server must receive zero requests.
 //     Loopback sentinel: this tests redirect policy, not address filtering.
@@ -39,7 +39,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
@@ -48,8 +47,6 @@ import (
 )
 
 const hostileVaultToken = "kx-hostile-vault-token-77c1"
-
-func migrateFuzzStrict() bool { return os.Getenv("KX_MIGRATE_FUZZ_STRICT") == "1" }
 
 // vaultHostileRoutes serves a terminating one-leaf KV v2 tree under mount "secret":
 // mount-version=2, LIST root -> ["db"], READ secret/data/db -> {"password": <canary>}.
@@ -110,12 +107,12 @@ func FuzzVaultSourceHostileWalk(f *testing.F) {
 		{Route: 2, Enc: 2},   // read gzip bomb
 		{Route: 2, Ops: []hostile.Op{{Code: 4, A: 3, B: 3}}}, // huge value string
 		{Route: 2, Ops: []hostile.Op{{Code: 5, A: 2, B: 3}}}, // deep nesting
-		// NOTE: the read-redirect program ({Route:2, Redir:1}) is deliberately NOT seeded —
-		// it trips O5 by exposing FINDING F3 (a 3xx read body is parsed as the secret), a
-		// production defect out of scope to fix here. Keeping it out of the auto-run corpus
-		// keeps `go test` green; a real -fuzz run re-finds it in seconds (reproducer saved at
-		// .scratch/findings/F3-vault-redirect-body.repro.txt). Use KX_HOSTILE_ALLOW=O5 to let
-		// a campaign explore past it for other bugs (the harness still prints HOSTILE-KNOWN).
+		// FINDING F3 (FIXED): a READ answered with a 3xx the client refuses to follow must be an
+		// error, not an import. This seed used to trip O5 (the 302 body was parsed as the secret);
+		// now vaultsource rejects any non-200/404 READ status, so Walk errors and imports nothing.
+		// Seeded in the default corpus so `go test` exercises the fixed path directly. See
+		// INV-VAULTSOURCE-non-2xx-read-is-an-error and TestWalk_RedirectReadBodyIsNotImported.
+		{Route: 2, Redir: 1}, // read served as a 302 redirect (not followed, body not parsed)
 	} {
 		f.Add(hostile.Encode(p))
 	}
@@ -131,6 +128,16 @@ func FuzzVaultSourceHostileWalk(f *testing.F) {
 			// caught by O2 (no-hang) and O4 (bounded alloc). The mount-lookup redundancy is a
 			// separate, precise check below (FINDING F2).
 			RequestCeiling: 200000,
+			// Go's net/http.Transport transparently retries an idempotent GET that received NO
+			// response bytes (e.g. a server that accepts then closes the connection before writing
+			// anything). vaultsource issues plain GETs, so a network-fault first attempt is
+			// re-sent by the stdlib and the SECOND, complete exchange is the one the client
+			// actually parses. Retries makes the O5 delivery oracle judge that final exchange
+			// (RULES.md amendment #4), not the retried-away attempt — the final exchange is still
+			// fully checked for complete delivery, accepted status, and a matching body, so this
+			// does not weaken the oracle. Without it, an accept-close+redirect-shaped program is a
+			// harness-calibration false positive (campaign artifact A5), not a product defect.
+			Retries: true,
 		})
 		defer h.Close()
 
@@ -189,22 +196,13 @@ func FuzzVaultSourceHostileWalk(f *testing.F) {
 			}
 		}
 
-		// FINDING F2 (DEFECT, performance; report-only by default, fatal under
-		// KX_MIGRATE_FUZZ_STRICT=1). resolveKVMountVersion's per-mount cache never hits —
-		// it is keyed by Vault's reported mount path ("secret/") but looked up with
-		// mount-relative KV paths ("db", "nested/key") that never carry that prefix — so every
-		// list() AND every read() does a redundant sys/internal/ui/mounts round-trip. For a
-		// single-mount client the walk should resolve the mount version exactly once; the
-		// observed count is (#folders listed + #leaves read). We assert "resolved more than
-		// once" only when the walk actually read at least one leaf, so the signal is the dead
-		// cache, not an empty walk.
-		if mountHits, reads := len(h.Served("mount")), len(h.Served("read")); reads >= 1 && mountHits > 1 {
-			msg := "FINDING F2: resolveKVMountVersion resolved the mount version %d times for %d read(s) (cache never hits; one round-trip expected)"
-			if migrateFuzzStrict() {
-				h.Violate(msg, mountHits, reads)
-			} else {
-				t.Logf("KNOWN "+msg, mountHits, reads)
-			}
+		// FINDING F2 (FIXED): resolveKVMountVersion's per-client cache now holds a single mount
+		// version (a Client targets exactly one mount), so a whole Walk resolves it at most once
+		// instead of once per list() AND once per read(). This is now a default guard: the mount
+		// endpoint must be hit at most once per Walk. See INV-VAULTSOURCE-mount-version-resolved-once
+		// and TestWalk_ResolvesMountVersionOnce.
+		if mountHits := len(h.Served("mount")); mountHits > 1 {
+			h.Violate("FINDING F2: resolveKVMountVersion resolved the mount version %d times in one Walk (the per-client cache must hit; exactly one round-trip expected)", mountHits)
 		}
 
 		h.Finish(t.Fatalf)

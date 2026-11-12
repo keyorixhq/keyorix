@@ -9,48 +9,25 @@ package cmd
 // un-trimmed shape, or a control character would reach the target mapping malformed (task
 // oracle (c)).
 //
-// Two oracle tiers, deliberately separated:
+// All oracles below are fatal by default (campaign FINDING F1 is fixed, so production upholds
+// them). The doc comment promises path separators / spaces / colons collapse to '-', control
+// characters are dropped, repeated '-' collapse, surrounding '-' are trimmed, and the function
+// is a fixed point. Output must therefore contain no '/', '\\', ' ', ':', no "--", no
+// leading/trailing '-', no control character, and sanitizing it again must not change it. A
+// violation is a real DEFECT. These checks do NOT verify the Keyorix server then accepts the
+// name (server concern).
 //
-//   - CONTRACT (always fatal; production upholds it, so the committed target is green). The
-//     doc comment promises path separators / spaces / colons collapse to '-', repeated '-'
-//     collapse, surrounding '-' are trimmed. Output must contain no '/', '\\', ' ', ':', no
-//     "--", and no leading/trailing '-'. A violation is a real DEFECT. Does NOT verify the
-//     Keyorix server then accepts the name (server concern).
-//
-//   - STRICT-(c) (report-only by default; fatal only under KX_MIGRATE_FUZZ_STRICT=1). The task
-//     oracle (c) also asks that no control character or empty segment reach the target mapping,
-//     and import idempotency (d) wants the normaliser to be a fixed point. The real code does
-//     NOT currently uphold these (see FINDING F1 in the campaign report: sanitizeSecretName
-//     "0\v/" -> "0\v", a derived Keyorix name ending in a vertical-tab control char; and an
-//     all-separator input normalises to ""). Fixing that is a production change, out of scope
-//     for this fuzzing task, so these checks are report-only by default — keeping the committed
-//     target and unit CI green while the finding stays machine-reproducible on demand:
-//         KX_MIGRATE_FUZZ_STRICT=1 go test ./cmd -run FuzzSanitizeSecretName
-//     This mirrors the hostile harness's own KX_HOSTILE_ALLOW "known, triaged, keep exploring"
-//     convention (internal/hostile/RULES.md). The check is NOT weakened — it still fires, loudly
-//     logged — it is gated so one already-triaged, can't-fix-here class does not permanently red
-//     every run and hide the next, different bug.
+// Note on empty results: sanitizeSecretName MAY legitimately return "" for a degenerate input
+// made entirely of separators/control characters (e.g. "---"). That is not a function-level
+// defect — the call sites skip such an entry with a reported reason rather than sending an empty
+// name to the API (see emptyDerivedNameSkipReason, TestSanitizeSecretName_EmptyDerivedNameIsSkipped).
 
 import (
-	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"unicode"
 )
-
-func migrateFuzzStrict() bool { return os.Getenv("KX_MIGRATE_FUZZ_STRICT") == "1" }
-
-// reportC records a strict oracle-(c) observation: fatal under KX_MIGRATE_FUZZ_STRICT=1,
-// a logged KNOWN line otherwise.
-func reportC(t *testing.T, class, format string, args ...any) {
-	t.Helper()
-	if migrateFuzzStrict() {
-		t.Fatalf("STRICT-(c) "+class+": "+format, args...)
-		return
-	}
-	t.Logf("KNOWN STRICT-(c) "+class+": "+format, args...)
-}
 
 func FuzzSanitizeSecretName(f *testing.F) {
 	for _, s := range []string{
@@ -77,7 +54,7 @@ func FuzzSanitizeSecretName(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		out := sanitizeSecretName(s)
 
-		// CONTRACT (oracle c, always fatal): no separator survives, no doubled or edge '-'.
+		// No separator survives, no doubled or edge '-'.
 		for _, bad := range []string{"/", "\\", " ", ":"} {
 			if strings.Contains(out, bad) {
 				t.Fatalf("sanitizeSecretName(%q) = %q still contains separator %q", s, out, bad)
@@ -90,20 +67,17 @@ func FuzzSanitizeSecretName(f *testing.F) {
 			t.Fatalf("sanitizeSecretName(%q) = %q has an untrimmed edge '-'", s, out)
 		}
 
-		// STRICT-(c): no control character may reach the derived name.
+		// No control character may reach the derived name (task oracle (c)).
 		for _, r := range out {
 			if unicode.IsControl(r) {
-				reportC(t, "controlchar", "sanitizeSecretName(%q) = %q carries control char %s into the Keyorix secret name", s, out, strconv.QuoteRune(r))
-				break
+				t.Fatalf("sanitizeSecretName(%q) = %q carries control char %s into the Keyorix secret name", s, out, strconv.QuoteRune(r))
 			}
 		}
-		// STRICT-(c): a non-empty source must not normalise to an empty target name.
-		if strings.TrimSpace(s) != "" && out == "" {
-			reportC(t, "empty", "sanitizeSecretName(%q) = %q: a non-empty source produced an empty target name", s, out)
-		}
-		// STRICT-(d precondition): a second pass must not change the result.
+
+		// The function is a fixed point: a second pass must not change the result (idempotency,
+		// task oracle (d)).
 		if again := sanitizeSecretName(out); again != out {
-			reportC(t, "idempotent", "sanitizeSecretName not a fixed point: %q -> %q -> %q", s, out, again)
+			t.Fatalf("sanitizeSecretName not a fixed point: %q -> %q -> %q", s, out, again)
 		}
 	})
 }

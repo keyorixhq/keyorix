@@ -128,13 +128,14 @@ func runAWS(cmd *cobra.Command, _ []string) error {
 	if locatorRegion == "" {
 		locatorRegion = "default"
 	}
-	planEntries := buildCloudPlanEntries("aws", cloudEntries, func(e cloudentry.Entry) string {
+	planEntries, nameSkipped := buildCloudPlanEntries("aws", cloudEntries, func(e cloudentry.Entry) string {
 		field := e.Field
 		if field == "" {
 			field = "value"
 		}
 		return plan.SourceID("aws-secrets-manager", locatorRegion, e.RawName, field)
 	})
+	skippedItems = append(skippedItems, nameSkipped...)
 
 	unique, collided := splitIntraBatchNameCollisions(planEntries)
 	built, err := plan.BuildPlan(ctx, tgt, unique)

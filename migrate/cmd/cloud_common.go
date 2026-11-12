@@ -18,12 +18,25 @@ import (
 // sanitizeSecretName(RawName + "-" + Field) when the source exploded a JSON object. Shared by
 // cmd/aws.go, cmd/azure.go, and cmd/gcp.go since the mapping is identical for all three cloud
 // sources — one function and one collision test, not three near-duplicate copies.
-func buildCloudPlanEntries(sourceKind string, entries []cloudentry.Entry, sourceID func(cloudentry.Entry) string) []plan.Entry {
+//
+// An entry whose name normalises to "" (a RawName/Field made entirely of separators/control
+// characters) is returned as a Skip item, not a plan.Entry, so an empty name never reaches the
+// create-secret API — mirroring cmd/vault.go's own empty-name handling (campaign FINDING F1).
+func buildCloudPlanEntries(sourceKind string, entries []cloudentry.Entry, sourceID func(cloudentry.Entry) string) ([]plan.Entry, []plan.Item) {
 	out := make([]plan.Entry, 0, len(entries))
+	var skipped []plan.Item
 	for _, e := range entries {
 		name := sanitizeSecretName(e.RawName)
 		if e.Field != "" {
 			name = sanitizeSecretName(e.RawName + "-" + e.Field)
+		}
+		if name == "" {
+			skipped = append(skipped, plan.Item{
+				Entry:   plan.Entry{SourceKind: sourceKind, Path: e.Locator},
+				Outcome: plan.Skip,
+				Reason:  emptyDerivedNameSkipReason,
+			})
+			continue
 		}
 		out = append(out, plan.Entry{
 			SourceKind:      sourceKind,
@@ -36,7 +49,7 @@ func buildCloudPlanEntries(sourceKind string, entries []cloudentry.Entry, source
 			SourceCreatedAt: e.CreatedAt,
 		})
 	}
-	return out
+	return out, skipped
 }
 
 // splitIntraBatchNameCollisions separates entries whose target Name is claimed by exactly one

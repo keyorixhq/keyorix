@@ -160,6 +160,16 @@ func clone(n *Node) *Node {
 // MutateBody applies the program's JSON ops and truncation to a valid body.
 // A body that is not JSON passes through the ops untouched (only truncation
 // applies).
+// bodyBuildCap bounds the JSON body MutateBody will build in-process. The oversized-list and
+// huge-string ops can describe a tree that marshals to many gigabytes (e.g. a 4.3MB string cloned
+// 60000×); building that buffer would only OOM the in-process fake server — no production endpoint
+// sends it, and every real client here caps its own read far below this (vaultsource/httpsafe read
+// at most 10MB via io.LimitReader). 32MB is >3× that client cap, so the "body larger than the
+// client will read" case is still exercised, while the rig cannot build a multi-GB body. Beyond
+// the cap MutateBody leaves the pristine body in place rather than allocating the giant buffer.
+// (Campaign artifacts A4/A6: an in-process server body-build that inflated the client's O4 budget.)
+const bodyBuildCap = 32 << 20 // 32MB
+
 func (p Program) MutateBody(valid []byte) []byte {
 	out := valid
 	if len(p.Ops) > 0 {
@@ -167,7 +177,11 @@ func (p Program) MutateBody(valid []byte) []byte {
 			for _, o := range p.Ops {
 				applyOp(&root, o)
 			}
-			out = root.Marshal()
+			if root.size(bodyBuildCap) <= bodyBuildCap {
+				out = root.Marshal()
+			}
+			// else: the mutated tree would marshal past bodyBuildCap; keep the pristine body
+			// rather than build a multi-GB buffer in-process (see bodyBuildCap).
 		}
 	}
 	if p.Trunc > 0 {
@@ -202,7 +216,9 @@ func applyOp(root **Node, o Op) {
 		case 4:
 			r.set(root, &Node{K: KBool, S: "true"})
 		case 5:
-			r.set(root, &Node{K: KStr, S: string((&Node{K: n.K, S: n.S, Keys: n.Keys, Kids: n.Kids}).Marshal())})
+			if n.size(bodyBuildCap) <= bodyBuildCap {
+				r.set(root, &Node{K: KStr, S: string((&Node{K: n.K, S: n.S, Keys: n.Keys, Kids: n.Kids}).Marshal())})
+			}
 		}
 	case 3: // duplicate key with a different value, before or after
 		if r.parent != nil && r.parent.K == KObj {
@@ -227,6 +243,9 @@ func applyOp(root **Node, o Op) {
 	case 4: // huge string
 		r.set(root, &Node{K: KStr, S: strings.Repeat("A", hugeSizes[b%len(hugeSizes)])})
 	case 5: // deep nesting
+		if n.size(bodyBuildCap) > bodyBuildCap {
+			return // subtree already oversized; don't marshal it into a giant string (see bodyBuildCap)
+		}
 		d := deepSizes[b%len(deepSizes)]
 		inner := string(n.Marshal())
 		open, cls := "[", "]"
