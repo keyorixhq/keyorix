@@ -158,6 +158,31 @@ func TestMySQLQ5_ShortLenEncInteger_Reproducer(t *testing.T) {
 	}
 }
 
+// MYSQL-Q6: textRows.readRow (packets.go:829) treats a text result row that
+// begins with 0xFE as a trailing EOF packet and reads a 2-byte status field as
+// readStatus(data[3:]) with no length guard. A hostile server that sends a valid
+// result-set header + column definition + column-EOF, then a result row of a
+// single 0xFE byte, crashes the client with "slice bounds out of range". Found
+// by FuzzMySQLHostileQuery (seed 22ed320fe8f7aae5).
+func TestMySQLQ6_ShortEOFTextRow_Reproducer(t *testing.T) {
+	in := cat([]byte{byte(opTextQuery)},
+		encQPkt(1, resultHeaderBody(1)),
+		encQPkt(2, columnDefBody("c", fieldTypeStringType)),
+		encQPkt(3, eofBody()),
+		encQPkt(4, []byte{0xfe}), // short EOF-marked row
+	)
+	for i := range 3 {
+		val, stack := reproQueryPanic(t, in)
+		if val == nil {
+			t.Fatalf("replay %d: expected panic in textRows.readRow; the driver may have added the length guard (remove MYSQL-Q6 from knownQueryPanicSites)", i)
+		}
+		if !strings.Contains(fmt.Sprint(val), "slice bounds out of range") ||
+			!strings.Contains(stack, "(*textRows).readRow") {
+			t.Fatalf("replay %d: unexpected panic %v\n%s", i, val, stack)
+		}
+	}
+}
+
 // TestMySQLQuery_AllowlistStillSurfacesNovelPanics: the allowlist swallows the
 // real MYSQL-Q1/Q2 stacks (green) but NOT a panic from any other site (red), so
 // a third, unknown result-set panic would still fail the fuzz run.

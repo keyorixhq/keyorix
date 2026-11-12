@@ -437,6 +437,11 @@ var knownQueryPanicSites = []string{
 	// panics "index out of range". The helper is on the hot path of every
 	// length-encoded field; a panic anywhere inside it is this one root cause.
 	"mysql.readLengthEncodedInteger",
+	// MYSQL-Q6: textRows.readRow treats a row packet beginning with 0xFE as a
+	// trailing EOF packet and reads its status as readStatus(data[3:])
+	// (packets.go:829) with no length guard. A text result row of a single 0xFE
+	// byte panics. Same class as MYSQL-Q2's EOF branch, but on the text path.
+	"mysql.(*textRows).readRow",
 }
 
 func classifyQueryPanic(val any, stack string) string {
