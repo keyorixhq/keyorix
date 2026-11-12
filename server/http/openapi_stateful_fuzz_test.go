@@ -21,17 +21,32 @@ package http
 //
 // Phase 1: SQLite-backed, CI-runnable. The Postgres backend is reachable by swapping the
 // core's DB exactly as the sibling fuzzers do (not wired here to keep the harness single-
-// backend and fast). See /mnt/data/wave4/out/wa-REPORT.md for the design write-up and the
-// red/green proofs of every oracle.
+// backend and fast). The known undeclared-5xx defects (OPENAPI-STATEFUL-1..8) are tracked
+// in https://github.com/keyorixhq/keyorix/issues/4132.
+//
+// Oracle 1 is NOT a strict gate by default: a well-formed request that returns an undeclared
+// 5xx is only t.Logf'd as a candidate unless KEYORIX_OSF_STRICT=1, and the entries in
+// osKnownUndeclared5xx waive real, still-unfixed bugs (all tracked in #4132). Oracles 2-5
+// are always fatal.
+//
+// Development switches (environment variables, never files in the working tree):
+//   KEYORIX_OSF_ONLY=<operationId>  restrict the fuzzed op set to one operation
+//   KEYORIX_OSF_SWEEP=1             log findings (deduplicated) instead of failing
+//   KEYORIX_OSF_STRICT=1            make a well-formed undeclared 5xx fatal
+//   KEYORIX_OSF_FINDINGS=<path>     where sweep mode appends findings
+//                                   (default: <os.TempDir()>/osf_findings.log)
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -54,7 +69,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
-	"path/filepath"
 )
 
 // osSpecPath resolves openapi.yaml relative to the repo root (not the test's working
@@ -73,15 +87,15 @@ type osOp struct {
 	op           *openapi3.Operation
 	opID         string
 	requiresAuth bool
-	collection   string            // last non-param path segment (where created ids bind)
-	pathParams   []osPathParam     // in declaration order
+	collection   string        // last non-param path segment (where created ids bind)
+	pathParams   []osPathParam // in declaration order
 	queryParams  []*openapi3.Parameter
 }
 
 type osPathParam struct {
-	name    string
+	name      string
 	preceding string // path segment immediately before {name}
-	schema  *openapi3.SchemaRef
+	schema    *openapi3.SchemaRef
 }
 
 var (
@@ -113,22 +127,18 @@ func osLoadSpec(tb testing.TB) {
 		}
 		osSpec, osRouter = doc, r
 		osOps = osEnumerate(doc)
-		// Dev aid (red-proof determinism): a sentinel at <repo>/.scratch/osf_only whose
-		// content is an operationId restricts the fuzzed op set to that one op, so a planted
-		// fault in its handler is exercised without interference from other ops. Inert when
-		// the sentinel is absent (the committed harness never has it).
-		if b, err := os.ReadFile(filepath.Join(srcpath.RepoRoot(), ".scratch", "osf_only")); err == nil {
-			only := strings.TrimSpace(string(b))
-			if only != "" {
-				filtered := osOps[:0:0]
-				for _, o := range osOps {
-					if o.opID == only {
-						filtered = append(filtered, o)
-					}
+		// Dev aid (red-proof determinism): KEYORIX_OSF_ONLY=<operationId> restricts the fuzzed
+		// op set to that one op, so a planted fault in its handler is exercised without
+		// interference from other ops. Inert when unset.
+		if only := strings.TrimSpace(os.Getenv("KEYORIX_OSF_ONLY")); only != "" {
+			filtered := osOps[:0:0]
+			for _, o := range osOps {
+				if o.opID == only {
+					filtered = append(filtered, o)
 				}
-				if len(filtered) > 0 {
-					osOps = filtered
-				}
+			}
+			if len(filtered) > 0 {
+				osOps = filtered
 			}
 		}
 	})
@@ -159,9 +169,9 @@ func osEnumerate(doc *openapi3.T) []osOp {
 				}
 			}
 			// collection = last non-param segment
-			for i := len(segs) - 1; i >= 0; i-- {
-				if !strings.HasPrefix(segs[i], "{") {
-					o.collection = segs[i]
+			for _, seg := range slices.Backward(segs) {
+				if !strings.HasPrefix(seg, "{") {
+					o.collection = seg
 					break
 				}
 			}
@@ -205,15 +215,15 @@ func osEnumerate(doc *openapi3.T) []osOp {
 // ---------------------------------------------------------------------------
 
 const (
-	osPrincAnon       = 0 // no Authorization header
-	osPrincGarbage    = 1 // invalid bearer token
-	osPrincNoRole     = 2 // authenticated, zero grants
-	osPrincViewer     = 3 // secrets.read at global scope
-	osPrincProjAdminA = 4 // read+write+delete scoped to project A
-	osPrincGlobalAdmin= 5 // bootstrap admin
-	osPrincMachine    = 6 // machine token, project-A reader role
-	osPrincExpired    = 7 // a grant that has already expired
-	osNumPrincipals   = 8
+	osPrincAnon        = 0 // no Authorization header
+	osPrincGarbage     = 1 // invalid bearer token
+	osPrincNoRole      = 2 // authenticated, zero grants
+	osPrincViewer      = 3 // secrets.read at global scope
+	osPrincProjAdminA  = 4 // read+write+delete scoped to project A
+	osPrincGlobalAdmin = 5 // bootstrap admin
+	osPrincMachine     = 6 // machine token, project-A reader role
+	osPrincExpired     = 7 // a grant that has already expired
+	osNumPrincipals    = 8
 )
 
 // osCanary is planted as the value of a seeded secret. Oracle 4 asserts it never appears
@@ -452,10 +462,8 @@ func (s *osState) add(coll string, id uint) {
 	if id == 0 || coll == "" {
 		return
 	}
-	for _, e := range s.pools[coll] {
-		if e == id {
-			return
-		}
+	if slices.Contains(s.pools[coll], id) {
+		return
 	}
 	if len(s.pools[coll]) < 64 {
 		s.pools[coll] = append(s.pools[coll], id)
@@ -577,9 +585,7 @@ func (w *osWorld) osGenJSON(st *osState, ref *openapi3.SchemaRef, name string, m
 		for _, sub := range s.AllOf {
 			if v, ok := w.osGenJSON(st, sub, name, mode, depth+1, rd); ok {
 				if m, isMap := v.(map[string]any); isMap {
-					for k, vv := range m {
-						merged[k] = vv
-					}
+					maps.Copy(merged, m)
 				}
 			}
 		}
@@ -634,7 +640,7 @@ func (w *osWorld) osGenJSON(st *osState, ref *openapi3.SchemaRef, name string, m
 	case "array":
 		n := rd.intn(3)
 		arr := make([]any, 0, n)
-		for i := 0; i < n; i++ {
+		for range n {
 			if v, ok := w.osGenJSON(st, s.Items, name, mode, depth+1, rd); ok {
 				arr = append(arr, v)
 			}
@@ -766,7 +772,7 @@ var osConformanceExceptions = map[string]string{
 	// non-nullable {type: string} — while OTHER last_used_at definitions in the same spec
 	// (openapi.yaml:8610, :8653) ARE nullable:true. Real response-conformance mismatch; the
 	// schema should mark the field nullable (or the handler should omit it). Excepted here so
-	// the committed harness stays green while the fix is pending. See report OPENAPI-STATEFUL-4.
+	// the committed harness stays green while the fix is pending. See #4132 (OPENAPI-STATEFUL-4).
 	"patHygiene": "FINDING OPENAPI-STATEFUL-4: 200 body returns last_used_at:null but the declared schema is non-nullable {type:string} (inconsistent with the nullable variants elsewhere in the spec)",
 }
 
@@ -826,8 +832,7 @@ func osHeaderHas(rec *httptest.ResponseRecorder, s string) bool {
 // Iteration
 // ---------------------------------------------------------------------------
 
-// osSweep, when true (a one-off enumeration run, gated by a sentinel file at
-// <repo>/.scratch/osf_sweep), downgrades every oracle's t.Fatalf to a deduplicated t.Logf
+// osSweep, when true (a one-off enumeration run, gated by KEYORIX_OSF_SWEEP=1), downgrades every oracle's t.Fatalf to a deduplicated t.Logf
 // so a single run can enumerate the COMPLETE set of findings across all operations instead
 // of halting on the first. The committed harness runs with osSweep=false (fatal), so a new
 // finding (regression) halts as intended; the sweep is a development aid to populate the
@@ -839,18 +844,42 @@ var (
 )
 
 func osInitSweep() {
-	if _, err := os.Stat(filepath.Join(srcpath.RepoRoot(), ".scratch", "osf_sweep")); err == nil {
-		osSweep = true
-	}
-	// osStrict (sentinel .scratch/osf_strict) makes a well-formed-request undeclared 500
+	osSweep = os.Getenv("KEYORIX_OSF_SWEEP") == "1"
+	// osStrict (KEYORIX_OSF_STRICT=1) makes a well-formed-request undeclared 500
 	// FATAL rather than a deduplicated candidate. OFF by default: oracle 1 surfaced a broad
 	// PRE-EXISTING error-classification class (handlers blanket-map core not-found/validation/
-	// constraint errors to an undeclared 500 — see report OPENAPI-STATEFUL-1..3), so the
+	// constraint errors to an undeclared 500 — issue #4132, OPENAPI-STATEFUL-1..3), so the
 	// committed target logs those as candidates and stays runnable end-to-end for the rig
 	// instead of halting in <1 min on a known bug. Strict mode is used by the oracle-1
 	// red-proof and is available to gate once the class is fixed. Oracles 2-5 are always fatal.
-	if _, err := os.Stat(filepath.Join(srcpath.RepoRoot(), ".scratch", "osf_strict")); err == nil {
-		osStrict = true
+	osStrict = os.Getenv("KEYORIX_OSF_STRICT") == "1"
+}
+
+// osFindingsPath is where sweep mode appends findings: KEYORIX_OSF_FINDINGS, else a file in
+// the OS temp dir (never inside the repo working tree).
+func osFindingsPath() string {
+	if p := os.Getenv("KEYORIX_OSF_FINDINGS"); p != "" {
+		return p
+	}
+	return filepath.Join(os.TempDir(), "osf_findings.log")
+}
+
+// osAppendFinding appends one line to the sweep findings file and logs (rather than
+// silently drops) a failure to do so.
+func osAppendFinding(t *testing.T, format string, args ...any) {
+	t.Helper()
+	osSweepMu.Lock()
+	defer osSweepMu.Unlock()
+	f, err := os.OpenFile(osFindingsPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Logf("sweep: cannot open findings file: %v", err)
+		return
+	}
+	if _, err := fmt.Fprintf(f, format+"\n", args...); err != nil {
+		t.Logf("sweep: cannot write findings file: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Logf("sweep: cannot close findings file: %v", err)
 	}
 }
 
@@ -858,22 +887,14 @@ var osSweepMu sync.Mutex
 
 // osReport fails (normal) or deduplicated-appends-to-file (sweep) a finding keyed by `key`.
 // In sweep mode the fuzzer does not fail, so t.Logf would never surface; findings are
-// appended to <repo>/.scratch/osf_findings.log instead (deduped by key).
+// appended to osFindingsPath() instead (deduped by key).
 func osReport(t *testing.T, key, format string, args ...any) {
 	t.Helper()
 	if osSweep {
 		if _, seen := osSweepSeen.LoadOrStore(key, struct{}{}); seen {
 			return
 		}
-		osSweepMu.Lock()
-		defer osSweepMu.Unlock()
-		f, err := os.OpenFile(filepath.Join(srcpath.RepoRoot(), ".scratch", "osf_findings.log"),
-			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return
-		}
-		defer f.Close()
-		fmt.Fprintf(f, "[%s] "+format+"\n", append([]any{key}, args...)...)
+		osAppendFinding(t, "[%s] "+format, append([]any{key}, args...)...)
 		return
 	}
 	t.Fatalf(format, args...)
@@ -939,7 +960,7 @@ func osRunIteration(t *testing.T, w *osWorld, program []byte) {
 	st := w.newState()
 	numSteps := 1 + rd.intn(12)
 
-	for step := 0; step < numSteps; step++ {
+	for range numSteps {
 		opIdx := rd.u16() % len(osOps)
 		o := &osOps[opIdx]
 		modeByte := rd.byte()
@@ -1028,19 +1049,13 @@ func osOracleNo5xx(t *testing.T, w *osWorld, o *osOp, princ, mode int, req *http
 	}
 	kind := "malformed-input robustness"
 	if wellFormed {
-		kind = "well-formed request → undeclared 5xx (error-classification class; see report)"
+		kind = "well-formed request → undeclared 5xx (error-classification class; see #4132)"
 	}
 	key := fmt.Sprintf("cand5xx|%s|%d", o.opID, rec.Code)
 	if _, seen := osCandidate5xx.LoadOrStore(key, struct{}{}); !seen {
 		if osSweep {
-			osSweepMu.Lock()
-			if f, err := os.OpenFile(filepath.Join(srcpath.RepoRoot(), ".scratch", "osf_findings.log"),
-				os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-				fmt.Fprintf(f, "[%s] NO-5XX CANDIDATE (%s): %s %s op=%s code=%d body=%s\n",
-					key, kind, req.Method, req.URL.Path, o.opID, rec.Code, osTrunc(rec.Body.String()))
-				f.Close()
-			}
-			osSweepMu.Unlock()
+			osAppendFinding(t, "[%s] NO-5XX CANDIDATE (%s): %s %s op=%s code=%d body=%s",
+				key, kind, req.Method, req.URL.Path, o.opID, rec.Code, osTrunc(rec.Body.String()))
 		} else {
 			t.Logf("NO-5XX CANDIDATE (%s): %s %s op=%s code=%d body=%s",
 				kind, req.Method, req.URL.Path, o.opID, rec.Code, osTrunc(rec.Body.String()))
@@ -1050,7 +1065,7 @@ func osOracleNo5xx(t *testing.T, w *osWorld, o *osOp, princ, mode int, req *http
 
 // osKnownUndeclared5xx documents undeclared-5xx FINDINGS this fuzzer has already surfaced
 // and that are reported (not fixed, per the no-production-change rule) in
-// /mnt/data/wave4/out/wa-REPORT.md. Each entry is a real bug: it keeps the committed target
+// https://github.com/keyorixhq/keyorix/issues/4132. Each entry is a real bug: it keeps the committed target
 // green for the rig while the fix is pending. princ<0 matches any principal.
 var osKnownUndeclared5xx = []struct {
 	id           string
@@ -1067,7 +1082,7 @@ var osKnownUndeclared5xx = []struct {
 		princ:        osPrincMachine,
 		code:         500,
 		pathContains: "/api/v1/secrets/",
-		reason: "CLASS: secret sub-resource handlers (confirmed: getSecretAccessLog, getSecretCertificate) thread userCtx.UserID — which is 0 for a machine-token principal — into a user-scoped permission check (checkSecretPermission) that rejects userID==0 with a 'user ID is required' VALIDATION error. The handler classifies that neither as not-found nor permission-refusal, so it becomes an undeclared 500 instead of a handled 403/200. Fail-closed (no leak). See report finding OPENAPI-STATEFUL-1.",
+		reason:       "CLASS: secret sub-resource handlers (confirmed: getSecretAccessLog, getSecretCertificate) thread userCtx.UserID — which is 0 for a machine-token principal — into a user-scoped permission check (checkSecretPermission) that rejects userID==0 with a 'user ID is required' VALIDATION error. The handler classifies that neither as not-found nor permission-refusal, so it becomes an undeclared 500 instead of a handled 403/200. Fail-closed (no leak). See #4132 (OPENAPI-STATEFUL-1).",
 	},
 	{
 		id:           "OPENAPI-STATEFUL-2",
@@ -1075,15 +1090,15 @@ var osKnownUndeclared5xx = []struct {
 		princ:        -1,
 		code:         500,
 		pathContains: "/machine-identities",
-		reason: "CLASS: machine-identity/token handlers (confirmed: createMachineIdentity, issueMachineToken — invalid `classification` value; listMachineTokens — machine identity not found / cross-project) surface core VALIDATION and NOT-FOUND errors as undeclared 500 instead of 400/404. The handlers classify core errors by incomplete substring matching ('invalid identity_type'/'required' only) or do not map a not-found to 404. See report finding OPENAPI-STATEFUL-2.",
+		reason:       "CLASS: machine-identity/token handlers (confirmed: createMachineIdentity, issueMachineToken — invalid `classification` value; listMachineTokens — machine identity not found / cross-project) surface core VALIDATION and NOT-FOUND errors as undeclared 500 instead of 400/404. The handlers classify core errors by incomplete substring matching ('invalid identity_type'/'required' only) or do not map a not-found to 404. See #4132 (OPENAPI-STATEFUL-2).",
 	},
 	// OPENAPI-STATEFUL-3 (CLASS): generic-CRUD handlers blanket-map ANY core error to an
 	// undeclared 500 instead of the appropriate 4xx. The clearest example is GetProjectStats:
 	// `stats, err := GetProjectStats(id); if err != nil { 500 }` — a not-found project id
 	// (e.g. one deleted earlier in the sequence) yields 500, never 404. The fuzzer observed
 	// the same shape (not-found / duplicate-name constraint / boundary input → 500) on each op
-	// below; the list is observed-via-fuzzing, likely non-exhaustive. See report finding
-	// OPENAPI-STATEFUL-3.
+	// below; the list is observed-via-fuzzing, likely non-exhaustive. See #4132
+	// (OPENAPI-STATEFUL-3).
 	{id: "OPENAPI-STATEFUL-3", opID: "getProjectStats", princ: -1, code: 500, reason: "not-found/compute error blanket-mapped to 500 (project_stats.go:35)"},
 	{id: "OPENAPI-STATEFUL-3", opID: "deleteProject", princ: -1, code: 500, reason: "project-with-dependencies / not-found blanket-mapped to 500"},
 	{id: "OPENAPI-STATEFUL-3", opID: "updateProject", princ: -1, code: 500, reason: "duplicate-name constraint / not-found blanket-mapped to 500"},
@@ -1103,8 +1118,8 @@ var osKnownUndeclared5xx = []struct {
 	// IsProjectNotFound, so the handler's else-branch returns an undeclared 500 "Failed to
 	// resume secret" on a WELL-FORMED request. Directly parallel to — and the same fix as —
 	// the project case the handler already handles. Fail-closed (resume refused; nothing
-	// leaks). Surfaced on princ=5 (global admin); principal-independent. See report
-	// finding OPENAPI-STATEFUL-5.
+	// leaks). Surfaced on princ=5 (global admin); principal-independent. See #4132
+	// (OPENAPI-STATEFUL-5).
 	{id: "OPENAPI-STATEFUL-5", opID: "resumeSecret", princ: -1, code: 500, reason: "resume of a suspended secret whose ENVIRONMENT was deleted returns core 'environment not found' mapped to 500, not 404 (the sibling deleted-project case IS mapped to 404). secrets_suspend.go:73."},
 	// OPENAPI-STATEFUL-7: StartImpersonation's handler switch (admin_impersonation.go:92-99)
 	// maps only "yourself"->400 and storage.ErrUserNotFound->404; every OTHER core refusal
