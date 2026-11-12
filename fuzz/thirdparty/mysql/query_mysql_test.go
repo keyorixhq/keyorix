@@ -429,6 +429,14 @@ var knownQueryPanicSites = []string{
 	// packet panics. Reached by readColumns on the text COM_QUERY result columns
 	// and the binary COM_STMT_EXECUTE result columns.
 	"mysql.(*mysqlConn).readColumns",
+	// MYSQL-Q5: readLengthEncodedInteger (utils.go:578/582/586) reads the
+	// trailing bytes of a multi-byte length prefix — 0xfc:b[1:3], 0xfd:b[1:4],
+	// 0xfe:b[1:9] — with no check that the slice is long enough. A result-set
+	// header packet of a single 0xfe byte (not matched by the iOK/iERR/
+	// iLocalInFile fast paths in readResultSetHeaderPacket) reaches this and
+	// panics "index out of range". The helper is on the hot path of every
+	// length-encoded field; a panic anywhere inside it is this one root cause.
+	"mysql.readLengthEncodedInteger",
 }
 
 func classifyQueryPanic(val any, stack string) string {

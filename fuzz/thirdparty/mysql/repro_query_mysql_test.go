@@ -134,6 +134,30 @@ func TestMySQLQ4_ShortColumnDef_Reproducer(t *testing.T) {
 	}
 }
 
+// MYSQL-Q5: readLengthEncodedInteger (utils.go:578/582/586) decodes a multi-
+// byte length prefix — 0xfc (2 bytes), 0xfd (3 bytes), 0xfe (8 bytes) — by
+// slicing b[1:] and reading the fixed width with no bounds check. A hostile
+// server replying to COM_QUERY with a result-set header consisting of a single
+// 0xfe byte (which readResultSetHeaderPacket does not match against its iOK /
+// iERR / iLocalInFile fast paths, so it is treated as a length-encoded column
+// count) crashes the client with "index out of range". Found by
+// FuzzMySQLHostileQuery (seed ba58c9e4b1c02c55).
+func TestMySQLQ5_ShortLenEncInteger_Reproducer(t *testing.T) {
+	// opTextQuery: a 1-byte result-set header 0xfe -> readLengthEncodedInteger
+	// reads 8 trailing bytes that are not there.
+	in := cat([]byte{byte(opTextQuery)}, encQPkt(1, []byte{0xfe}))
+	for i := range 3 {
+		val, stack := reproQueryPanic(t, in)
+		if val == nil {
+			t.Fatalf("replay %d: expected panic in readLengthEncodedInteger; the driver may have added the length guard (remove MYSQL-Q5 from knownQueryPanicSites)", i)
+		}
+		if !strings.Contains(fmt.Sprint(val), "index out of range") ||
+			!strings.Contains(stack, "readLengthEncodedInteger") {
+			t.Fatalf("replay %d: unexpected panic %v\n%s", i, val, stack)
+		}
+	}
+}
+
 // TestMySQLQuery_AllowlistStillSurfacesNovelPanics: the allowlist swallows the
 // real MYSQL-Q1/Q2 stacks (green) but NOT a panic from any other site (red), so
 // a third, unknown result-set panic would still fail the fuzz run.
