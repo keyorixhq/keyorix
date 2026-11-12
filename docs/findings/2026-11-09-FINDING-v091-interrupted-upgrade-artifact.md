@@ -8,11 +8,12 @@ HARDENING note below.
 The SQLite leg of the upgrade fuzzer (branch `fuzz/migration-upgrade`, report w3)
 recorded a DEFECT: an upgrade from v0.91.0 stopped at write statement 34 or later
 leaves `secret_nodes` without `owner_machine_identity_id`, and every secret read then
-fails permanently. Pinned by `TestUpgradeInterrupted_V091_ColumnNeverAdded`.
+fails permanently. It was pinned as a defect by a test, since replaced by
+`TestUpgradeInterrupted_V091_BarePathArtefact`.
 
 ## What this leg found
 
-That test's interruption calls `migrateDatabase` directly on an autocommit
+That test's interruption called `migrateDatabase` directly on an autocommit
 connection (`ugInterruptedMigrate`). No production boot does. `createLocalStorage`
 runs the migration through `withMigrationLock`, which holds one `BEGIN EXCLUSIVE`
 transaction across the whole of it (`withSQLiteInDBMigrationLock`,
@@ -31,7 +32,7 @@ bare `migrateDatabase` path reproduces the exact SQLite defect on PostgreSQL too
 fail-stop callbacks at statements 34, 41 and 200. It asserts the stop was reached
 (the migration returned the injected error and at least that many statements were
 seen), restarts through `CreateStorage`, and reads a secret. It passes, while
-`TestUpgradeInterrupted_V091_ColumnNeverAdded` still passes on the bare path.
+`TestUpgradeInterrupted_V091_BarePathArtefact` asserts the bare path still reproduces it.
 
 Replayed 3 times on the same tree, same result.
 
@@ -83,9 +84,10 @@ is what keeps that gate honest. If `migrateDatabase` is ever called outside the 
 or a step is moved out of the transaction, the defect becomes real. v0.91.0 is also
 below the documented v0.93.x upgrade floor.
 
-## Effect on the existing test
+## Effect on the harness (done)
 
-`TestUpgradeInterrupted_V091_ColumnNeverAdded` and `ugInterruptibleFrom = 1` describe
-a production defect that the real path does not have. `ugRun` should interrupt
-through `withMigrationLock` so v0.91.0 can rejoin `FuzzUpgradeInterrupted`. Left
-unchanged here (new files only); a decision for the maintainer.
+`ugInterruptedMigrate` now interrupts `migrateSQLite` through `withMigrationLock`,
+the call `createLocalStorage` makes, so `FuzzUpgradeInterrupted` covers v0.91.0 and
+`ugInterruptibleFrom` is gone. The bare path survives only as the red-proof option
+`ugHooks.bareInterrupt`; `TestUpgradeInterrupted_V091_BarePathArtefact` records that
+it fires and that the real path, same source and stop, is clean.

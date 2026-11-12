@@ -107,31 +107,39 @@ func TestUpgradeOracles_RedProof(t *testing.T) {
 	})
 }
 
-// TestUpgradeInterrupted_V091_ColumnNeverAdded pins an open finding and doubles
-// as the red-proof for FuzzUpgradeInterrupted: a v0.91.0 upgrade stopped after
-// the MFA step-up table is created, then restarted, reports success but leaves
-// secret_nodes without owner_machine_identity_id, so every secret read fails.
-// No step adds that column on an existing database; the fresh-install tail only
-// reached it on the first boot because the table's absence kept
-// freshInstallComplete false, and the restart sees the table and returns early.
+// TestUpgradeInterrupted_V091_BarePathArtefact is the red-proof for
+// FuzzUpgradeInterrupted's real-path interruption, and records why v0.91.0 is
+// not exempted from it. A v0.91.0 upgrade stopped after the MFA step-up table
+// is created, on the bare path (migrateDatabase on an autocommit connection, no
+// withMigrationLock), keeps that table but never gets
+// secret_nodes.owner_machine_identity_id: the fresh-install tail that adds it is
+// gated on the table's absence, so the restart returns early and every secret
+// read fails. No production boot takes the bare path: createLocalStorage runs
+// the migration inside withMigrationLock's one BEGIN EXCLUSIVE transaction, so
+// the same stop rolls the table back too. The bare result is an artefact of the
+// harness shape, not a production defect; see
+// docs/findings/2026-11-09-FINDING-v091-interrupted-upgrade-artifact.md.
 //
-// It asserts the defect as it stands. When the migration is fixed this test will
-// fail: delete it and set ugInterruptibleFrom to 0, which puts v0.91.0 back into
-// the interruption target.
-func TestUpgradeInterrupted_V091_ColumnNeverAdded(t *testing.T) {
-	findings := ugRun(t, "v0.91.0", false, nil, 41, ugHooks{})
+// It asserts both halves: the bare path still fires (so the real path's
+// silence is not vacuous) and the real path, same source and same stop, is clean.
+func TestUpgradeInterrupted_V091_BarePathArtefact(t *testing.T) {
+	const tag, stop = "v0.91.0", 41
+
+	bare := ugRun(t, tag, false, nil, stop, ugHooks{bareInterrupt: true})
 	var sawSecretRead bool
-	for _, f := range findings {
+	for _, f := range bare {
 		if f.Invariant == 1 && strings.Contains(f.Detail, "owner_machine_identity_id") {
 			sawSecretRead = true
 		}
 	}
 	if !sawSecretRead {
-		t.Fatalf("the v0.91.0 interrupted-upgrade defect is gone (or moved); update the harness. Findings: %v", findings)
+		t.Fatalf("the bare-path interruption no longer reproduces the artefact, so the real-path comparison proves nothing; update the harness. Findings: %v", bare)
 	}
 
-	// The uninterrupted path from the same source is what stays healthy.
-	if f := ugRun(t, "v0.91.0", false, nil, 0, ugHooks{}); len(f) != 0 {
+	if f := ugRun(t, tag, false, nil, stop, ugHooks{}); len(f) != 0 {
+		t.Fatalf("real-path interrupted v0.91.0 upgrade must recover cleanly, got %v", f)
+	}
+	if f := ugRun(t, tag, false, nil, 0, ugHooks{}); len(f) != 0 {
 		t.Fatalf("uninterrupted v0.91.0 upgrade must be clean, got %v", f)
 	}
 }

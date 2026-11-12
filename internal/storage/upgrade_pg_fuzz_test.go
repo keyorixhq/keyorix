@@ -460,7 +460,7 @@ var errPGInterrupted = errors.New("upgrade-pg-fuzz: simulated crash")
 //
 // bare=false is the path a real boot takes (withMigrationLockPooled's one
 // transaction around migratePostgres). bare=true calls migrateDatabase directly,
-// with no outer transaction: the shape of the SQLite leg's ugInterruptedMigrate,
+// with no outer transaction: the shape of the SQLite leg's ugInterruptedMigrate bare option,
 // kept to compare the two legs. That shape is not reachable in production: every
 // real caller of migrateDatabase on Postgres goes through the lock.
 func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, bare bool) (bool, error) {
@@ -690,8 +690,9 @@ func pgFreshInstallSchema(t testing.TB, base string) (*pgSchema, error) {
 
 func pgSeeds() [][]byte { return ugSeeds()[:5] } // fewer than the SQLite leg: each exec is a server round trip budget
 
-// pgInterruptibleFrom mirrors ugInterruptibleFrom: this leg interrupts every
-// source, because on PostgreSQL the real path is one transaction (oracle 6).
+// pgInterruptibleFrom is 0: this leg interrupts every source, because on
+// PostgreSQL the real path is one transaction (oracle 6). The SQLite leg does the
+// same since its interruption also goes through withMigrationLock.
 const pgInterruptibleFrom = 0
 
 // FuzzUpgradePGFromOldSchema upgrades generated state on a real old PostgreSQL

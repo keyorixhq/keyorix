@@ -22,7 +22,7 @@ the manifest. Regenerating a snapshot must keep that key.
 
 | tag | notes |
 |---|---|
-| v0.91.0 | pre-epoch and pre-#1642; audit chain is the pre-#1452 encoding, so only the row count is checked; excluded from `FuzzUpgradeInterrupted` (open finding) |
+| v0.91.0 | pre-epoch and pre-#1642; audit chain is the pre-#1452 encoding, so only the row count is checked; included in `FuzzUpgradeInterrupted` (its interruption runs the real locked boot path) |
 | v0.92.1 | oldest source on HEAD's chain encoding |
 | v0.93.0, v0.94.0, v0.95.3, v0.96.3 | releases inside the documented upgrade range |
 

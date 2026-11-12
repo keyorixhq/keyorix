@@ -222,6 +222,10 @@ type ugHooks struct {
 	afterGenerate func(db *sql.DB) error
 	afterMigrate  func(db *sql.DB) error
 	beforeRerun   func(db *sql.DB) error
+	// bareInterrupt interrupts migrateSQLite outside withMigrationLock's
+	// BEGIN EXCLUSIVE, a shape no production boot has. Only the red-proof that
+	// documents the artefact sets it; the fuzz target never does.
+	bareInterrupt bool
 }
 
 // ugRun is one exec. stopAfter == 0 runs the real startup path once;
@@ -267,7 +271,7 @@ func ugRun(t testing.TB, tag string, chainVerifiable bool, data []byte, stopAfte
 
 	var findings []ugFinding
 	if stopAfter > 0 {
-		if err := ugInterruptedMigrate(t, dbPath, stopAfter); err != nil {
+		if err := ugInterruptedMigrate(t, dbPath, stopAfter, hooks.bareInterrupt); err != nil {
 			t.Fatalf("interrupted run: %v", err)
 		}
 	}
@@ -553,11 +557,17 @@ func ugFirstDiff(a, b []byte) string {
 // errUgInterrupted is the fail-stop error the interruption seam injects.
 var errUgInterrupted = errors.New("upgrade-fuzz: simulated crash")
 
-// ugInterruptedMigrate runs migrateDatabase with every write-class gorm statement
-// counted, failing the stopAfter'th and every later one -- the persisted state a
-// crash at that statement leaves. Statements that already reached SQLite stay
-// durable, a transaction open at the stop rolls back when the connection closes.
-func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int) error {
+// ugInterruptedMigrate runs the real boot migration (migrateSQLite inside
+// withMigrationLock, the call createLocalStorage makes) with every write-class
+// gorm statement counted, failing the stopAfter'th and every later one -- the
+// persisted state a crash at that statement leaves. The lock's BEGIN EXCLUSIVE
+// transaction is open at the stop and rolls back when the connection closes.
+//
+// bare skips the lock and calls migrateDatabase on an autocommit connection:
+// statements that already reached SQLite then stay durable. No production boot
+// does that (see docs/findings/2026-11-09-FINDING-v091-interrupted-upgrade-artifact.md);
+// it exists only so a red-proof can show what the lock buys.
+func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int, bare bool) error {
 	t.Helper()
 	gdb, err := openSQLiteGorm(sqliteDSN(dbPath))
 	if err != nil {
@@ -584,9 +594,20 @@ func ugInterruptedMigrate(t testing.TB, dbPath string, stopAfter int) error {
 			return reg
 		}
 	}
-	// migrateDatabase's own return value is expected to be errUgInterrupted-shaped;
-	// whatever it reports here is overtaken by the restart that follows.
-	_ = (&DefaultStorageFactory{}).migrateDatabase(gdb)
+	f := &DefaultStorageFactory{}
+	var mErr error
+	if bare {
+		mErr = f.migrateDatabase(gdb)
+	} else {
+		mErr = withMigrationLock(gdb, false, dbPath, f.migrateSQLite)
+	}
+	// A stop that was reached surfaces as errUgInterrupted. A stop beyond the
+	// migration's last write statement is not reached and the migration simply
+	// completes; the restart that follows is then a plain second boot. Any other
+	// error is a harness or migration failure, not an interruption.
+	if mErr != nil && !errors.Is(mErr, errUgInterrupted) {
+		return fmt.Errorf("interrupted migration failed for a reason other than the injected stop: %w", mErr)
+	}
 	return nil
 }
 
@@ -621,18 +642,13 @@ func FuzzUpgradeFromOldSchema(f *testing.F) {
 	})
 }
 
-// ugInterruptibleFrom is the first source whose interrupted upgrade can complete.
-// v0.91.0 predates mfa_step_up_grants and owner_machine_identity_id, and only an
-// uninterrupted first boot adds that column: see
-// TestUpgradeInterrupted_V091_ColumnNeverAdded, the open finding that keeps this
-// source out of the interruption target. It is not exempted anywhere else.
-const ugInterruptibleFrom = 1
-
 // FuzzUpgradeInterrupted stops the upgrade after a fuzz-chosen write statement
-// and asserts the restart completes it, with every other oracle intact.
+// and asserts the restart completes it, with every other oracle intact. The
+// interruption goes through the real boot path (withMigrationLock), so every
+// source is covered, v0.91.0 included: its apparent "column never added" defect
+// only exists outside that lock (TestUpgradeInterrupted_V091_BarePathArtefact).
 func FuzzUpgradeInterrupted(f *testing.F) {
-	sources := ugSources[ugInterruptibleFrom:]
-	for i := range sources {
+	for i := range ugSources {
 		for _, stop := range []uint16{1, 2, 3, 7, 19, 41, 83, 150} {
 			f.Add(uint8(i), stop, []byte{byte(i), byte(stop)})
 		}
@@ -641,8 +657,8 @@ func FuzzUpgradeInterrupted(f *testing.F) {
 		if len(data) > 400 {
 			t.Skip("over the generator's useful input size")
 		}
-		tag := sources[int(sel)%len(sources)]
-		for _, fnd := range ugRun(t, tag, true, data, int(stop%240)+1, ugHooks{}) {
+		idx := int(sel) % len(ugSources)
+		for _, fnd := range ugRun(t, ugSources[idx], idx >= ugChainFrom, data, int(stop%240)+1, ugHooks{}) {
 			t.Error(fnd)
 		}
 	})

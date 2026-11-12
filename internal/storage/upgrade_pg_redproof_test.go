@@ -3,9 +3,10 @@
 // baseline as the control. No production code is altered: every break edits only
 // the scratch database of that one run.
 //
-// Also the v0.91.0 interrupted-upgrade comparison: the SQLite leg's open finding
-// (TestUpgradeInterrupted_V091_ColumnNeverAdded) re-checked on PostgreSQL, through
-// the real locked path and through the bare migrateDatabase path that test uses.
+// Also the v0.91.0 interrupted-upgrade comparison: the SQLite leg's bare-path
+// artefact (TestUpgradeInterrupted_V091_BarePathArtefact) re-checked on
+// PostgreSQL, through the real locked path and through the bare migrateDatabase
+// path.
 package storage
 
 import (
@@ -118,11 +119,11 @@ func TestUpgradePGInterrupted_AtomicityOracle_RedProof(t *testing.T) {
 	t.Logf("real path findings at stop=%d: %v", stop, real)
 }
 
-// TestUpgradeInterrupted_V091_SQLite_RealPath: the SQLite defect
-// TestUpgradeInterrupted_V091_ColumnNeverAdded pins was reached by calling
+// TestUpgradeInterrupted_V091_SQLite_RealPath: the SQLite artefact
+// TestUpgradeInterrupted_V091_BarePathArtefact records was reached by calling
 // migrateDatabase directly, outside withMigrationLock's BEGIN EXCLUSIVE. This
-// test takes the real path: if it passes while that test also passes, the
-// finding is an artefact of the bypass, not a production defect.
+// test takes the real path at three stops with its own callbacks, independent of
+// the fuzz harness's ugInterruptedMigrate.
 func TestUpgradeInterrupted_V091_SQLite_RealPath(t *testing.T) {
 	if err := i18n.InitializeForTesting(); err != nil {
 		t.Fatal(err)
