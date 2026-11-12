@@ -28,10 +28,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -159,9 +161,9 @@ func osEnumerate(doc *openapi3.T) []osOp {
 				}
 			}
 			// collection = last non-param segment
-			for i := len(segs) - 1; i >= 0; i-- {
-				if !strings.HasPrefix(segs[i], "{") {
-					o.collection = segs[i]
+			for _, seg := range slices.Backward(segs) {
+				if !strings.HasPrefix(seg, "{") {
+					o.collection = seg
 					break
 				}
 			}
@@ -452,10 +454,8 @@ func (s *osState) add(coll string, id uint) {
 	if id == 0 || coll == "" {
 		return
 	}
-	for _, e := range s.pools[coll] {
-		if e == id {
-			return
-		}
+	if slices.Contains(s.pools[coll], id) {
+		return
 	}
 	if len(s.pools[coll]) < 64 {
 		s.pools[coll] = append(s.pools[coll], id)
@@ -577,9 +577,7 @@ func (w *osWorld) osGenJSON(st *osState, ref *openapi3.SchemaRef, name string, m
 		for _, sub := range s.AllOf {
 			if v, ok := w.osGenJSON(st, sub, name, mode, depth+1, rd); ok {
 				if m, isMap := v.(map[string]any); isMap {
-					for k, vv := range m {
-						merged[k] = vv
-					}
+					maps.Copy(merged, m)
 				}
 			}
 		}
@@ -634,7 +632,7 @@ func (w *osWorld) osGenJSON(st *osState, ref *openapi3.SchemaRef, name string, m
 	case "array":
 		n := rd.intn(3)
 		arr := make([]any, 0, n)
-		for i := 0; i < n; i++ {
+		for range n {
 			if v, ok := w.osGenJSON(st, s.Items, name, mode, depth+1, rd); ok {
 				arr = append(arr, v)
 			}
@@ -872,8 +870,8 @@ func osReport(t *testing.T, key, format string, args ...any) {
 		if err != nil {
 			return
 		}
-		defer f.Close()
-		fmt.Fprintf(f, "[%s] "+format+"\n", append([]any{key}, args...)...)
+		defer func() { _ = f.Close() }()
+		_, _ = fmt.Fprintf(f, "[%s] "+format+"\n", append([]any{key}, args...)...)
 		return
 	}
 	t.Fatalf(format, args...)
@@ -939,7 +937,7 @@ func osRunIteration(t *testing.T, w *osWorld, program []byte) {
 	st := w.newState()
 	numSteps := 1 + rd.intn(12)
 
-	for step := 0; step < numSteps; step++ {
+	for range numSteps {
 		opIdx := rd.u16() % len(osOps)
 		o := &osOps[opIdx]
 		modeByte := rd.byte()
@@ -1036,9 +1034,9 @@ func osOracleNo5xx(t *testing.T, w *osWorld, o *osOp, princ, mode int, req *http
 			osSweepMu.Lock()
 			if f, err := os.OpenFile(filepath.Join(srcpath.RepoRoot(), ".scratch", "osf_findings.log"),
 				os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-				fmt.Fprintf(f, "[%s] NO-5XX CANDIDATE (%s): %s %s op=%s code=%d body=%s\n",
+				_, _ = fmt.Fprintf(f, "[%s] NO-5XX CANDIDATE (%s): %s %s op=%s code=%d body=%s\n",
 					key, kind, req.Method, req.URL.Path, o.opID, rec.Code, osTrunc(rec.Body.String()))
-				f.Close()
+				_ = f.Close()
 			}
 			osSweepMu.Unlock()
 		} else {
