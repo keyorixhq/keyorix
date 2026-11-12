@@ -250,6 +250,7 @@ func TestUpdateUser_UsernameRetrievalError(t *testing.T) {
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	// S1 (CLI-split inventory #2012): the admin-rank ceiling runs before GetUser.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	// Username check returns a non-ErrUserNotFound error → retrieval failed.
 	ms.On("GetUserByUsername", mock.Anything, "newname").Return(nil, errors.New("db timeout"))
@@ -265,6 +266,7 @@ func TestUpdateUser_EmailRetrievalError(t *testing.T) {
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	// S1 (CLI-split inventory #2012): the admin-rank ceiling runs before GetUser.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	// Email check returns a non-ErrUserNotFound error.
 	ms.On("GetUserByEmail", mock.Anything, "new@x.com").Return(nil, errors.New("db timeout"))
@@ -470,6 +472,7 @@ func TestUpdateUser_EmailSameAsCurrentSkipsCheck(t *testing.T) {
 	// (ActorID unset -> 0, target 1) -- the fixture target holds no role
 	// scopes, so it passes trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), false).Return(true, nil)
