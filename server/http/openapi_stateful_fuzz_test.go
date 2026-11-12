@@ -29,6 +29,11 @@ package http
 // osKnownUndeclared5xx waive real, still-unfixed bugs (all tracked in #4132). Oracles 2-5
 // are always fatal.
 //
+// World survival: destructive operations would otherwise erode the shared world (canary secret
+// deleted, sessions logged out or refreshed away). After every iteration osRestoreWorld runs
+// osFixturesIntact (openapi_stateful_fixtures_test.go) and rebuilds the world when it fails;
+// a refreshed token from authRefresh is adopted. Rebuilds are counted (osWorldRebuilds).
+//
 // Development switches (environment variables, never files in the working tree):
 //   KEYORIX_OSF_ONLY=<operationId>  restrict the fuzzed op set to one operation
 //   KEYORIX_OSF_SWEEP=1             log findings (deduplicated) instead of failing
@@ -51,6 +56,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -375,13 +381,13 @@ func osBuildWorld(f testing.TB) *osWorld {
 		if res, terr := c.IssueMachineToken(ctx, pA.ID, m.ID, admin.ID, core.IssueMachineTokenParams{Name: "osmach"}); terr == nil && res != nil {
 			machineTok = res.PlainToken
 			if aerr := c.AssignMachineRole(ctx, m.ID, viewerRole.ID, core.Scope{ProjectID: pA.ID}, 0, false); aerr != nil {
-				f.Logf("assign machine role: %v", aerr)
+				f.Fatalf("assign machine role: %v", aerr)
 			}
 		} else {
-			f.Logf("issue machine token: %v", terr)
+			f.Fatalf("issue machine token: %v", terr)
 		}
 	} else {
-		f.Logf("create machine identity: %v", merr)
+		f.Fatalf("create machine identity: %v", merr)
 	}
 
 	w.tokens[osPrincAnon] = ""
@@ -650,7 +656,10 @@ func (w *osWorld) osGenJSON(st *osState, ref *openapi3.SchemaRef, name string, m
 			return rd.u16(), true // violating: number where string expected
 		}
 		if s.Format == "date-time" {
-			return time.Now().UTC().Format(time.RFC3339), true
+			// Deterministic in the input bytes (no wall clock), so a corpus entry replays
+			// the same request on every run. Always in the future (2031-2038).
+			base := time.Date(2035, 1, 1, 0, 0, 0, 0, time.UTC)
+			return base.Add(time.Duration(rd.u16()-32768) * time.Hour).Format(time.RFC3339), true
 		}
 		return osSampleString(name, mode, rd), true
 	case "integer":
@@ -789,6 +798,11 @@ var osKnownUndeclaredSuccessStatus = map[string]string{
 	// api-generated.ts) would not model 201. Fail-closed, no security impact. Fix: declare 201
 	// in the spec (or change the handler to 200 to match the 200-returning sibling creates).
 	"createSecretTemplate|201": "FINDING OPENAPI-STATEFUL-6: handler returns 201 (sendCreated) but the spec declares only 200 for POST /api/v1/secret-templates",
+	// OPENAPI-STATEFUL-9: same class as -6. Surfaced once the world survives iterations (a
+	// successful createFolder needs a live project/environment, which the destroyed world no
+	// longer had): POST /api/v1/folders returns 201 but openapi.yaml declares only 200.
+	// Fail-closed, no security impact. Fix: declare 201 in the spec (or return 200). See #4132.
+	"createFolder|201": "FINDING OPENAPI-STATEFUL-9: handler returns 201 but the spec declares only 200 for POST /api/v1/folders",
 }
 
 // osDeclaresStatus reports whether the operation declares the given status code (exact or
@@ -985,6 +999,51 @@ func osRunIteration(t *testing.T, w *osWorld, program []byte) {
 		osOracleIdempotentRead(t, w, o, princ, req, rec)
 
 		osBindResponse(st, o, rec, targetID)
+		osAdoptRefreshedToken(w, o, princ, rec)
+	}
+	osRestoreWorld(t, w)
+}
+
+// osAdoptRefreshedToken keeps a principal usable across authRefresh: the endpoint invalidates
+// the presented token and returns its replacement in data.token. Discarding it (as the first
+// version did) left that principal 401 for every later step.
+func osAdoptRefreshedToken(w *osWorld, o *osOp, princ int, rec *httptest.ResponseRecorder) {
+	if o.opID != "authRefresh" || rec.Code != http.StatusOK || princ < osPrincNoRole {
+		return
+	}
+	var body struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err == nil && body.Data.Token != "" {
+		w.tokens[princ] = body.Data.Token
+	}
+}
+
+// osWorldRebuilds counts how often a destroyed world had to be rebuilt in this process.
+var osWorldRebuilds atomic.Int64
+
+// osRestoreWorld runs after every iteration. The destructive operations in the spec (project
+// and secret deletion, role/grant removal, logout, ...) otherwise erode the shared world until
+// the canary secret is gone and every user session is 401, which makes oracle 4 and every
+// authenticated-principal path vacuous. When osFixturesIntact reports damage the whole world
+// is rebuilt in place on a fresh in-memory database and the old one is closed (so memory stays
+// bounded). The rebuild is logged, never silent.
+func osRestoreWorld(t *testing.T, w *osWorld) {
+	t.Helper()
+	err := osFixturesIntact(w)
+	if err == nil {
+		return
+	}
+	n := osWorldRebuilds.Add(1)
+	if n == 1 || n%500 == 0 {
+		t.Logf("FIXTURES: world damaged (%v); rebuilding (rebuild #%d in this process)", err, n)
+	}
+	old := w.db
+	*w = *osBuildWorld(t)
+	if sqlDB, e := old.DB(); e == nil {
+		_ = sqlDB.Close()
 	}
 }
 

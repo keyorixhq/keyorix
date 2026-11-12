@@ -10,5 +10,8 @@
   idempotent reads — each documenting what it does NOT verify. Added its
   `scripts/fuzzing/targets.d/` entry. Oracle 1 (undeclared 5xx) is not yet a strict gate: a
   well-formed request that returns an undeclared 5xx is only logged as a candidate unless
-  `KEYORIX_OSF_STRICT=1`, and the known instances (OPENAPI-STATEFUL-1..8, real unfixed bugs)
-  are waived via an exception list tracked in #4132. Oracles 2-5 are always fatal.
+  `KEYORIX_OSF_STRICT=1`, and the known instances (OPENAPI-STATEFUL-1..9, real unfixed bugs)
+  are waived via an exception list tracked in #4132. Oracles 2-5 are always fatal. After every
+  iteration the seeded world (projects, canary secret, grants, session tokens) is checked and
+  rebuilt if a destructive operation damaged it, so the canary and authenticated-principal
+  oracles keep running against a live world.

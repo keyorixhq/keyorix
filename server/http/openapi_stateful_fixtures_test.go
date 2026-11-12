@@ -81,7 +81,7 @@ func osFixturesIntact(w *osWorld) error {
 
 	for p := osPrincNoRole; p < osNumPrincipals; p++ {
 		if w.tokens[p] == "" {
-			continue // machine token could not be issued at build time (logged there)
+			return fmt.Errorf("principal %d has no token", p)
 		}
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
 		req.Header.Set("Authorization", "Bearer "+w.tokens[p])
