@@ -36,12 +36,12 @@ import (
 func FuzzWireGRPCFraming(f *testing.F) {
 	w := buildGRPCWorld(f)
 
-	f.Add([]byte{0, 0, 0, 0})       // one empty message, no cred
-	f.Add([]byte{1, 0, 0, 0})       // compressed flag set, no encoding header
-	f.Add([]byte{2, 0, 0, 0})       // huge declared length (DoS pre-alloc probe)
-	f.Add([]byte{3, 0, 0, 0})       // truncated message
-	f.Add([]byte{4, 0, 0, 0})       // multiple messages + trailing junk
-	f.Add([]byte{0, 2, 0, 0})       // with admin credential
+	f.Add([]byte{0, 0, 0, 0}) // one empty message, no cred
+	f.Add([]byte{1, 0, 0, 0}) // compressed flag set, no encoding header
+	f.Add([]byte{2, 0, 0, 0}) // huge declared length (DoS pre-alloc probe)
+	f.Add([]byte{3, 0, 0, 0}) // truncated message
+	f.Add([]byte{4, 0, 0, 0}) // multiple messages + trailing junk
+	f.Add([]byte{0, 2, 0, 0}) // with admin credential
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -69,6 +69,11 @@ func FuzzWireGRPCFraming(f *testing.F) {
 		}
 		if bytes.Contains(resp, []byte(w.s.valA)) && !sent.admin && !sent.reader {
 			t.Fatalf("LEAK: secret A plaintext in gRPC response without an authorizing credential\nresp=%q", truncate(resp, 800))
+		}
+		// POST-ABUSE HEALTH — a fresh HTTP/2 connection must still be served after the
+		// malformed gRPC message framing (closes the single-connection gap).
+		if err := grpcHealthProbe(w.addr); err != nil {
+			t.Fatalf("POST-ABUSE HEALTH: gRPC listener did not serve a fresh HTTP/2 connection after %d-byte input: %v", len(data), err)
 		}
 	})
 }

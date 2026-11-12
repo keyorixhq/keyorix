@@ -78,6 +78,11 @@ func FuzzWireHTTP2(f *testing.F) {
 		if bytes.Contains(resp, []byte(w.s.valA)) && !sentCred.admin && !sentCred.reader {
 			t.Fatalf("LEAK: secret A plaintext in HTTP/2 response without an authorizing credential\nresp=%q", truncate(resp, 800))
 		}
+		// POST-ABUSE HEALTH — a fresh HTTP/2 connection must still be served after the
+		// abusive frame sequence (closes the single-connection gap).
+		if err := grpcHealthProbe(w.addr); err != nil {
+			t.Fatalf("POST-ABUSE HEALTH: gRPC listener did not serve a fresh HTTP/2 connection after %d-byte input: %v", len(data), err)
+		}
 	})
 }
 

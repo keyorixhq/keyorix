@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 // --- Per-oracle predicate red/green (fast, no network) ---------------------------
@@ -144,5 +146,136 @@ func TestRedProof_EndToEnd_Leak(t *testing.T) {
 	gs2.wire, gs2.topLevel = wire, 1
 	if v := evalHTTP1Oracles(gs2, resp2, w.rec.snapshot(), 0, w.valA, w.valB); v != "" {
 		t.Fatalf("GREEN FAILED: oracle fired against the real stack for an unauthenticated /secrets read: %s\nresp=%q", v, truncate(resp2, 400))
+	}
+}
+
+// --- Post-abuse health probes red/green ------------------------------------------
+
+// TestRedProof_HTTPHealthProbe watches httpHealthProbe return nil against a live
+// HTTP/1.1 listener (GREEN) and a non-nil error once that listener is closed (RED) —
+// the "server stopped serving a later clean request" condition the probe exists to
+// detect. A minimal 200-returning handler stands in for the real router: the probe
+// asserts the listener SERVES a response, not what the body says.
+func TestRedProof_HTTPHealthProbe(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+		ReadHeaderTimeout: wireReadHeaderTimeout,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	addr := ln.Addr().String()
+
+	// GREEN: live listener serves /health.
+	if err := httpHealthProbe(addr); err != nil {
+		t.Fatalf("GREEN FAILED: probe errored against a live listener: %v", err)
+	}
+	// RED: once the server is closed, a fresh connection is refused.
+	if err := srv.Close(); err != nil {
+		t.Fatalf("close server: %v", err)
+	}
+	if err := httpHealthProbe(addr); err == nil {
+		t.Fatal("RED FAILED: health probe passed against a closed listener")
+	}
+}
+
+// TestRedProof_GRPCHealthProbe watches grpcHealthProbe return nil against a live
+// HTTP/2 listener that emits its SETTINGS frame (GREEN) and a non-nil error once the
+// listener is closed (RED). A bare x/net/http2 server stands in for grpc-go: both send
+// the server SETTINGS frame on connect, which is the exact liveness signal the probe
+// reads.
+func TestRedProof_GRPCHealthProbe(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	h2s := &http2.Server{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go h2s.ServeConn(c, &http2.ServeConnOpts{
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+			})
+		}
+	}()
+	addr := ln.Addr().String()
+
+	// GREEN: live HTTP/2 listener sends its SETTINGS frame.
+	if err := grpcHealthProbe(addr); err != nil {
+		t.Fatalf("GREEN FAILED: gRPC probe errored against a live HTTP/2 listener: %v", err)
+	}
+	// RED: closed listener refuses a fresh connection.
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	<-done
+	if err := grpcHealthProbe(addr); err == nil {
+		t.Fatal("RED FAILED: gRPC health probe passed against a closed listener")
+	}
+}
+
+// --- TLS + ALPN HTTP/2-on-the-HTTP-listener reachability -------------------------
+
+// TestRedProof_TLSALPNReachability proves the FuzzWireHTTP2TLS target is NOT vacuous:
+// the TLS listener actually negotiates ALPN "h2" (GREEN), and a well-formed HTTP/2
+// request to /health over that connection reaches net/http's HTTP/2 server and returns
+// a real response (a server SETTINGS frame + a HEADERS response for the stream). It
+// also asserts the vacuity guard fires: an h2-less client (ALPN "http/1.1" only) does
+// NOT negotiate h2, which the driver would flag.
+func TestRedProof_TLSALPNReachability(t *testing.T) {
+	w := buildTLSWireWorld(t)
+
+	// GREEN: an h2 client negotiates h2 and the probe (SETTINGS round-trip) succeeds.
+	conn, proto, err := tlsH2Dial(w.addr, w.clientCfg)
+	if err != nil {
+		t.Fatalf("GREEN FAILED: TLS dial: %v", err)
+	}
+	_ = conn.Close()
+	if proto != "h2" {
+		t.Fatalf("GREEN FAILED: ALPN negotiated %q, expected h2 — HTTP/2-on-the-HTTP-listener is NOT reached", proto)
+	}
+	if err := tlsH2HealthProbe(w.addr, w.clientCfg); err != nil {
+		t.Fatalf("GREEN FAILED: h2 health probe over TLS errored: %v", err)
+	}
+
+	// The vacuity guard: a client that offers only http/1.1 must NOT get h2. If it did,
+	// the driver's proto!="h2" check would be meaningless.
+	h1Cfg := w.clientCfg.Clone()
+	h1Cfg.NextProtos = []string{"http/1.1"}
+	conn2, proto2, err := tlsH2Dial(w.addr, h1Cfg)
+	if err != nil {
+		t.Fatalf("http/1.1 dial: %v", err)
+	}
+	_ = conn2.Close()
+	if proto2 == "h2" {
+		t.Fatal("vacuity guard FAILED: server negotiated h2 for an http/1.1-only client")
+	}
+}
+
+// TestRedProof_TLSHealthProbe watches tlsH2HealthProbe return nil against the live TLS
+// listener (GREEN) and a non-nil error once it is closed (RED).
+func TestRedProof_TLSHealthProbe(t *testing.T) {
+	w := buildTLSWireWorld(t)
+	if err := tlsH2HealthProbe(w.addr, w.clientCfg); err != nil {
+		t.Fatalf("GREEN FAILED: TLS health probe errored against a live listener: %v", err)
+	}
+	// RED: a closed listener (dial to a now-dead port) must error. We cannot reach the
+	// cleanup's srv.Close() early without the handle, so dial a definitely-closed port
+	// on loopback by grabbing and releasing one.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	deadAddr := ln.Addr().String()
+	_ = ln.Close() // port now refuses connections
+	if err := tlsH2HealthProbe(deadAddr, w.clientCfg); err == nil {
+		t.Fatal("RED FAILED: TLS health probe passed against a closed port")
 	}
 }

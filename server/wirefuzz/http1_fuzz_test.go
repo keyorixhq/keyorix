@@ -196,7 +196,7 @@ func genOneHTTP1(w *wireWorld, rd *byteReader, b *bytes.Buffer) (injects bool) {
 	default: // chunked with a chunk extension + a correctly-placed trailer
 		b.WriteString("Transfer-Encoding: chunked\r\nTrailer: X-Trailer\r\n\r\n")
 		writeChunk(b, payload, ";ext=1")
-		b.WriteString("0\r\n")           // last-chunk
+		b.WriteString("0\r\n")            // last-chunk
 		b.WriteString("X-Trailer: t\r\n") // trailer part (before the final CRLF)
 		b.WriteString("\r\n")
 	}
@@ -298,13 +298,13 @@ func firstHeaderBlock(resp []byte) []byte {
 func FuzzWireHTTP1(f *testing.F) {
 	w := buildWireWorld(f)
 
-	f.Add([]byte{0, 1, 0, 0, 0, 0}) // GET /health
-	f.Add([]byte{0, 0, 0, 2, 3, 1}) // GET secret with admin token, CL body
-	f.Add([]byte{0, 0, 0, 0, 0, 3}) // CL.TE smuggle
-	f.Add([]byte{0, 0, 0, 0, 0, 4}) // TE.CL smuggle
-	f.Add([]byte{0, 0, 0, 0, 0, 5}) // TE.TE smuggle
-	f.Add([]byte{0, 0, 2, 0, 0, 0}) // duplicate Host
-	f.Add([]byte{0, 1, 0, 0, 2, 0}) // header-injection reflect payload
+	f.Add([]byte{0, 1, 0, 0, 0, 0})                               // GET /health
+	f.Add([]byte{0, 0, 0, 2, 3, 1})                               // GET secret with admin token, CL body
+	f.Add([]byte{0, 0, 0, 0, 0, 3})                               // CL.TE smuggle
+	f.Add([]byte{0, 0, 0, 0, 0, 4})                               // TE.CL smuggle
+	f.Add([]byte{0, 0, 0, 0, 0, 5})                               // TE.TE smuggle
+	f.Add([]byte{0, 0, 2, 0, 0, 0})                               // duplicate Host
+	f.Add([]byte{0, 1, 0, 0, 2, 0})                               // header-injection reflect payload
 	f.Add([]byte{2, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0}) // pipelined 3 requests
 	f.Add([]byte{})
 
@@ -333,6 +333,12 @@ func FuzzWireHTTP1(f *testing.F) {
 		hits := w.rec.snapshot()
 		if v := evalHTTP1Oracles(gs, resp, hits, heapDelta(m0, m1), w.valA, w.valB); v != "" {
 			t.Fatalf("%s\nwire=%q\nhits=%+v\nresp=%q", v, truncate(gs.wire, 1200), hits, truncate(resp, 1200))
+		}
+		// (5) POST-ABUSE HEALTH — the abusive input must not break the listener for a
+		// later clean client on a FRESH connection (closes the single-connection gap).
+		if err := httpHealthProbe(w.addr); err != nil {
+			t.Fatalf("POST-ABUSE HEALTH: server did not serve a later clean /health after %d-byte wire: %v\nwire=%q",
+				len(gs.wire), err, truncate(gs.wire, 800))
 		}
 	})
 }
