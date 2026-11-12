@@ -107,6 +107,10 @@ func registerFoldedReadException(key, reason string) {
 	foldedReadExceptions[key] = reason
 }
 
+// No row is registered today (CORE-ERR-FAMILY-6 classified the last two). Referencing the
+// hook keeps it compiled and `unused`-clean until the next deferred fold needs a row.
+var _ = registerFoldedReadException
+
 type foldedRead struct {
 	File, Func, Callee string
 	Line               int
