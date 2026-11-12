@@ -10,25 +10,22 @@
   permission the target role bundles, including `roles.assign` at the scope, can never grant
   that role AS ITSELF through that entry point, no matter its actual authority. Found missing at
   `server/http/handlers/project_members.go`'s `AddProjectMember`/`UpdateProjectMember`
-  (authzdiff cross-layer differential harness waiver known-06, historical name D6) — the harness's
-  own cross-layer comparison flagged it because core's `AddProjectMember`/`SetProjectMemberRole`
-  apply no such actor-kind-specific restriction themselves; only these two HTTP handlers'
-  omission of the tag did. The same shape was fixed earlier, independently, at
-  `AddGroupMember` (`server/http/handlers/groups_members.go:91`). Current known-complete call-site
-  inventory tagging correctly: `groups_members.go:91`, `project_members.go:186` and `:247`,
-  `rbac.go:498`/`707`/`830`, `machine_identities.go:600`, `project_memberships.go:165`,
-  `users_crud.go:181`, and the gRPC equivalents `group_service.go:177`, `role_service.go:243`,
-  `user_service.go:126` — derived by `grep -rn "WithSelfMachineGranter(ctx" --include=*.go` and
-  reasoning about each call site's handler, not generated.
-  Guard: targeted regression tests per fixed call site, not a repo-wide scan —
-  `groups_members_machine_ceiling_test.go`'s `TestAddGroupMember_MachineActor*` pair and this
-  fix's `server/http/handlers/project_members_machine_ceiling_test.go`'s four
-  `TestAddProjectMember_MachineActor*`/`TestUpdateProjectMember_MachineActor*` tests: each proves
-  a machine actor lacking sufficient permission is refused and a machine actor holding sufficient
-  permission is allowed. UNGUARDED as a class: no registry/AST-derived test enumerates every HTTP
-  handler or gRPC method that reaches `requireGranterHoldsRolePermissions` with a machine-capable
-  actor and asserts the tag is present (the existing `TestEveryDirectRoleGrantChecksAuthority`,
-  `server/http/role_grant_authority_guard_test.go`, guards a different shape — a handler bypassing
-  the ceiling call entirely via a direct `.Storage().Create*/Update*`, not a handler that calls the
-  ceiling but omits this tag) — a new direct-grant handler added for a machine-capable route
-  without the tag would silently fail closed rather than being caught by CI.
+  (authzdiff cross-layer differential harness waiver known-06, historical name D6) and, when the
+  guard below was first written, at `users_roles.go`'s `UpdateUserRoles`. The same shape was
+  fixed earlier, independently, at `AddGroupMember`
+  (`server/http/handlers/groups_members.go`). A core function that tags for itself
+  (`WithSelfMachineGranter` inside `internal/core`, as invitations and membership lifecycle do)
+  needs no handler-side tag.
+  Guard: `TestEveryDirectMachineGrantEntryTagsSelfGranter`
+  (`server/http/machine_self_granter_tag_guard_test.go`). It derives the set of core functions
+  reaching the ceiling from the `internal/core` call graph, takes every router-registered HTTP
+  handler and every exported `server/grpc/services` method that reaches one, and requires a
+  `WithSelfMachineGranter` call (directly or through a same-package helper such as
+  `creationGrantCtx`) before the first such call, plus that every tag call sits under an `if`
+  on the machine actor kind. The call forms it recognises, and the ones it is blind to (method
+  values passed without a call, flow-insensitive ordering), are stated in the file's doc comment;
+  `TestMachineSelfGranterGuardDetectsOmittedTag` proves it goes red on a handler that omits the
+  tag, tags after the call, or tags outside the machine branch. The per-site tests
+  (`groups_members_machine_ceiling_test.go`, `project_members_machine_ceiling_test.go`,
+  `users_roles_machine_ceiling_test.go`) prove the allow and refuse behaviour end to end.
+  Report-only until its `docs/guard-rollout.d/` row is deleted.
