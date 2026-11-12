@@ -188,3 +188,10 @@ finding; findings that were reclassified are in the private findings log.
     requests) reported O4 at 289,613,520 bytes, which is 12 x the 24.1 MB one
     build allocates, while the server wrote 2 KB. Bodies are byte-identical to
     before; only the rebuilds are gone.
+14. `O5/bad-status-accepted/2xx-valid-body` (tightening). The AWS SM,
+    Kubernetes and fetcher targets judge a success on a final 2xx that is
+    not in their documented set (200, or 200/201) like a documented one: every
+    value check still runs, and a success that passes all of them on complete
+    bodies carries this sub-tag. Any other status acceptance is still plain
+    `O5/bad-status-accepted`. The fetcher previously skipped all value checks
+    on such a 2xx; it no longer does.

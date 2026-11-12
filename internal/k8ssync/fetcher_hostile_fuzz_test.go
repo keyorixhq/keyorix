@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -151,6 +152,15 @@ var fetcherKnown = []hostile.Known{{
 	Prefix: "O5/transport-error-ignored: fetch succeeded",
 	// Input e16ff2665a232884: route=envs enc=gzip-corrupt.
 	Repro: hostile.Program{Route: 0, Enc: 3},
+}, {
+	// EXPECTED-DIFFERENCE: getJSON accepts any 2xx (keyorix_fetcher.go), the
+	// Keyorix server answers these GETs with 200. Only the sub-tag is
+	// suppressed: every value check passed on complete bodies.
+	ID:     "HK-FETCHER-ANY-2XX",
+	Class:  "EXPECTED-DIFFERENCE",
+	Prefix: "O5/bad-status-accepted/2xx-valid-body: fetch",
+	// Directed: route=value status=206.
+	Repro: hostile.Program{Route: 2, Status: 5},
 }}
 
 // TestFetcherHostileKnownFindingsReproduce replays every fetcherKnown entry
@@ -186,9 +196,24 @@ func runFetcherHostile(p hostile.Program, known []hostile.Known) *hostile.Harnes
 		h.Violate("O6 LIVENESS: pristine fetch returned %q, %v (unmatched: %v)", val, err, h.Unmatched())
 	}
 	if err == nil {
-		envBody, ek := h.Delivery("envs", func(b []byte) bool { _, ok := strictFetchEnv(b, "prod"); return ok })
-		_, lk := h.Delivery("list", func(b []byte) bool { _, ok := strictFetchListID(b, "db-pass"); return ok })
-		valBody, vk := h.Delivery("value", func(b []byte) bool { _, ok := strictFetchValue(b); return ok })
+		envOKFn := func(b []byte) bool { _, ok := strictFetchEnv(b, "prod"); return ok }
+		listOKFn := func(b []byte) bool { _, ok := strictFetchListID(b, "db-pass"); return ok }
+		valOKFn := func(b []byte) bool { _, ok := strictFetchValue(b); return ok }
+		envBody, ek := h.Delivery("envs", envOKFn)
+		_, lk := h.Delivery("list", listOKFn)
+		valBody, vk := h.Delivery("value", valOKFn)
+		// The fetcher accepts any 2xx by design. A final 2xx other than 200 used
+		// to skip every value check below; it is now judged like a 200, and a
+		// success that passes them all is tagged /2xx-valid-body (a Known entry
+		// names exactly that).
+		other2xx := false
+		okStatus := []int{200}
+		if (ek == "status" || lk == "status" || vk == "status") && servedAll2xx(h) {
+			e2, ek2 := h.Delivery("envs", envOKFn, hostile.Status2xx...)
+			_, lk2 := h.Delivery("list", listOKFn, hostile.Status2xx...)
+			v2, vk2 := h.Delivery("value", valOKFn, hostile.Status2xx...)
+			envBody, ek, lk, valBody, vk, other2xx, okStatus = e2, ek2, lk2, v2, vk2, true, hostile.Status2xx
+		}
 		wantEnv, envOK := strictFetchEnv(envBody, "prod")
 		want, valOK := strictFetchValue(valBody)
 
@@ -199,7 +224,7 @@ func runFetcherHostile(p hostile.Program, known []hostile.Known) *hostile.Harnes
 			// Not rec.Complete: a page whose whole content arrived before a
 			// trailing transport error (O5/transport-error-ignored, reported
 			// separately) was delivered; Seen holds only what the client could read.
-			if id, ok := strictFetchListID(rec.Seen, "db-pass"); ok && rec.Status == 200 {
+			if id, ok := strictFetchListID(rec.Seen, "db-pass"); ok && slices.Contains(okStatus, rec.Status) {
 				wantID = id
 				break
 			}
@@ -209,9 +234,8 @@ func runFetcherHostile(p hostile.Program, known []hostile.Known) *hostile.Harnes
 		listEnvs := append([]string(nil), obs.listEnvID...)
 		obs.mu.Unlock()
 
+		valueOK := false
 		switch {
-		case (ek == "status" || lk == "status" || vk == "status") && servedAll2xx(h):
-			// 2xx other than 200 accepted by design: nothing further to assert.
 		case ek == "status" || lk == "status" || vk == "status":
 			h.Violate("O5/bad-status-accepted: fetch succeeded (%q) on a response whose final HTTP status was not 200 (env=%q list=%q value=%q)", val, ek, lk, vk)
 		case ek == "bad" || lk == "bad" || vk == "bad":
@@ -226,6 +250,11 @@ func runFetcherHostile(p hostile.Program, known []hostile.Known) *hostile.Harnes
 			h.Violate("O5/environment: list scoped to environment_id %v, strict environment id %q (valid=%v)", listEnvs, wantEnv, envOK)
 		case wantID == "" || len(gotIDs) == 0 || gotIDs[len(gotIDs)-1] != wantID:
 			h.Violate("O5/secret-id: value read from id %v, strict first match in delivered list %q", gotIDs, wantID)
+		default:
+			valueOK = true
+		}
+		if other2xx && valueOK && ek == "" && lk == "" && vk == "" {
+			h.Violate("O5/bad-status-accepted/2xx-valid-body: fetch succeeded (%q) on a final 2xx other than 200 with complete bodies the strict decoders agree with", val)
 		}
 		if ek == "transport" || lk == "transport" || vk == "transport" {
 			h.Violate("O5/transport-error-ignored: fetch succeeded although a response ended in a transport/framing/gzip error after the full JSON value")
