@@ -166,11 +166,13 @@ func runRotateDeleteInterleaving(t *testing.T, tc rotateDeleteCase, db *gorm.DB,
 	if !tc.stored {
 		assert.Len(t, versions, 1, "a one-transaction rotation must roll its version back when the stamp finds the secret deleted")
 		assert.NotContains(t, rotErr.Error(), "stored", "nothing was stored, so the error must not say a value was")
+		assert.NotErrorIs(t, rotErr, ErrRotatedValueStoredSecretDeleted)
 		return
 	}
 
 	require.Len(t, versions, 2, "a backend-bound rotation keeps its version: it may be the only record of the live upstream value")
 	assert.Equal(t, rotated, string(versions[1].EncryptedValue))
+	assert.ErrorIs(t, rotErr, ErrRotatedValueStoredSecretDeleted, "classifiable without matching the message text")
 	assert.Contains(t, rotErr.Error(), "stored as version 2",
 		"the caller must learn the rotated value WAS stored (and which version) even though the secret was deleted underneath (#2873)")
 
@@ -208,4 +210,46 @@ func TestRotateSecret_ConcurrentDelete_Interleavings_CrossReplicaPostgres(t *tes
 			runRotateDeleteInterleaving(t, tc, dbA, store.NewLocalStorage(dbA), store.NewLocalStorage(dbB))
 		})
 	}
+}
+
+// TestRunAutoRotation_SecretDeletedDuringRotation_AuditsStoredNotDrift: the
+// auto-rotation driver's audit for the #2873 interleaving. The backend rotated
+// upstream and the new value WAS stored; only the stamp found the secret
+// deleted. The audit must say the value was stored, not report DRIFT ("storing
+// the new value failed"), which would send an operator to reconcile a
+// credential Keyorix already holds.
+func TestRunAutoRotation_SecretDeletedDuringRotation_AuditsStoredNotDrift(t *testing.T) {
+	fake := &fakeExecutor{name: "pg"}
+	c, db, fixed := backendPolicyCore(t, fake)
+	require.NoError(t, db.AutoMigrate(&models.ShareRecord{}, &models.SecretACL{}, &models.AccessRequest{}))
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour))
+	var armed atomic.Bool
+	armed.Store(true)
+	c.storage = hooked(c.storage, &storeHooks{
+		UpdateSecretFields: func(next storage.Storage, ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
+			if armed.CompareAndSwap(true, false) {
+				// A concurrent DeleteSecret commits between the version write and the stamp.
+				require.NoError(t, next.DeleteSecret(ctx, id))
+			}
+			return next.UpdateSecretFields(ctx, id, f)
+		},
+	})
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "the secret was deleted under the rotation: not a clean success")
+	require.True(t, fake.called)
+
+	var versions []models.SecretVersion
+	require.NoError(t, db.Where("secret_node_id = ?", 1).Order("version_number").Find(&versions).Error)
+	require.Len(t, versions, 2, "the rotated value is stored")
+	assert.Equal(t, fake.gotVal, string(versions[1].EncryptedValue))
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretAutoRotated).Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.NotContains(t, events[0].Description, "DRIFT", "the value was stored: this is not drift")
+	assert.Contains(t, events[0].Description, "new value was stored")
+	assert.Contains(t, events[0].Description, "deleted during the rotation")
+	assert.Contains(t, events[0].Description, "version 2")
 }
