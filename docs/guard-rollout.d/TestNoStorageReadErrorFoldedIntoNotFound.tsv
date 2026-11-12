@@ -1,1 +1,0 @@
-TestNoStorageReadErrorFoldedIntoNotFound	internal/core/guards	#3888	widened to server/middleware scope resolvers (STORAGE-ERR-CLASS-3), to the ErrSecretRefNotFound verdict (STORAGE-ERR-CLASS-4) and to the server/http/handlers + server/grpc/services pre-checks (STORAGE-ERR-CLASS-5), report-only until its first green nightly on main
