@@ -26,3 +26,9 @@
   lock it in; red/green-proved (reverting the guard re-fails both). No production
   code changed — this was a false positive in the fuzz oracle, not a Keyorix
   defect.
+- **Postgres replay repetition is now configurable (schedule-race fuzzer).**
+  `TestScheduleInterleavings_Postgres` reads `KEYORIX_SCHED_PG_REPS` (default 25
+  reps/program) so the replay can be soaked at a higher repetition count to widen
+  the set of real Postgres interleavings each two-writer/HB program is observed
+  under. Confirmed green at 250 reps/program (2250 total replays, all oracles
+  green). Test-only; no production code changed.

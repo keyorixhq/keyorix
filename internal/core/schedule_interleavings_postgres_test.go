@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,15 @@ func TestScheduleInterleavings_Postgres(t *testing.T) {
 		{domain: dmAudit, split: 1, ops: []schedOp{{kind: opAuditMutate}, {kind: opAuditMutate}, {kind: opAuditMutate}, {kind: opAuditMutate}}},
 	}
 
-	const repsPerProg = 25
+	// repsPerProg defaults to 25 but can be raised for a longer soak via
+	// KEYORIX_SCHED_PG_REPS (the fuzzing campaign drives it to a few thousand to
+	// widen the set of Postgres interleavings each program is observed under).
+	repsPerProg := 25
+	if v := os.Getenv("KEYORIX_SCHED_PG_REPS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			repsPerProg = n
+		}
+	}
 	rep := 0
 	for pi, base := range progs {
 		for r := 0; r < repsPerProg; r++ {
