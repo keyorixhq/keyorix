@@ -69,7 +69,13 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   `information_schema` checks). Why: ADR-078, which itself states this is enforced only
   procedurally — by ~15 commented call sites in `factory.go` and its `migrate_<domain>.go` steps, not structurally. UNGUARDED by
   design, documented as such; do not add a structural guard without first reading ADR-078's
-  own reasoning for why it declined one.
+  own reasoning for why it declined one. No mechanical guard is feasible for the rule itself:
+  most column alterations are literal `ALTER TABLE <name>` DDL keyed by table name while
+  `AutoMigrate` is keyed by model type, and whether a given `AutoMigrate` is unsafe depends on
+  run-time existence flags, so a static check would certify only the few `Migrator().AddColumn`
+  sites. The snapshot ordering of the `tableExists` calls written directly in `migrateDatabase`
+  (not those inside the steps) is guarded separately by
+  `INV-STORAGE-migration-existence-snapshot-before-create`.
 
 ## Composite-key / index migrations
 
