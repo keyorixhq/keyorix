@@ -128,7 +128,7 @@ poll:
 	if !res.Started {
 		res.TimedOut = true
 		_ = cmd.Process.Signal(syscall.SIGKILL)
-		<-done
+		<-done //nolint:errcheck // killed on purpose: the wait error is the kill
 		res.Log = buf.String()
 		return res
 	}
@@ -150,7 +150,7 @@ poll:
 		res.ShutdownOK = res.Exit == 0
 	case <-time.After(stopWait):
 		_ = syscall.Kill(pid, syscall.SIGKILL)
-		<-done
+		<-done //nolint:errcheck // killed on purpose: the wait error is the kill
 		res.TimedOut = true
 	}
 	res.Log = buf.String()
