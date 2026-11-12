@@ -73,15 +73,15 @@ type osOp struct {
 	op           *openapi3.Operation
 	opID         string
 	requiresAuth bool
-	collection   string            // last non-param path segment (where created ids bind)
-	pathParams   []osPathParam     // in declaration order
+	collection   string        // last non-param path segment (where created ids bind)
+	pathParams   []osPathParam // in declaration order
 	queryParams  []*openapi3.Parameter
 }
 
 type osPathParam struct {
-	name    string
+	name      string
 	preceding string // path segment immediately before {name}
-	schema  *openapi3.SchemaRef
+	schema    *openapi3.SchemaRef
 }
 
 var (
@@ -205,15 +205,15 @@ func osEnumerate(doc *openapi3.T) []osOp {
 // ---------------------------------------------------------------------------
 
 const (
-	osPrincAnon       = 0 // no Authorization header
-	osPrincGarbage    = 1 // invalid bearer token
-	osPrincNoRole     = 2 // authenticated, zero grants
-	osPrincViewer     = 3 // secrets.read at global scope
-	osPrincProjAdminA = 4 // read+write+delete scoped to project A
-	osPrincGlobalAdmin= 5 // bootstrap admin
-	osPrincMachine    = 6 // machine token, project-A reader role
-	osPrincExpired    = 7 // a grant that has already expired
-	osNumPrincipals   = 8
+	osPrincAnon        = 0 // no Authorization header
+	osPrincGarbage     = 1 // invalid bearer token
+	osPrincNoRole      = 2 // authenticated, zero grants
+	osPrincViewer      = 3 // secrets.read at global scope
+	osPrincProjAdminA  = 4 // read+write+delete scoped to project A
+	osPrincGlobalAdmin = 5 // bootstrap admin
+	osPrincMachine     = 6 // machine token, project-A reader role
+	osPrincExpired     = 7 // a grant that has already expired
+	osNumPrincipals    = 8
 )
 
 // osCanary is planted as the value of a seeded secret. Oracle 4 asserts it never appears
@@ -1067,7 +1067,7 @@ var osKnownUndeclared5xx = []struct {
 		princ:        osPrincMachine,
 		code:         500,
 		pathContains: "/api/v1/secrets/",
-		reason: "CLASS: secret sub-resource handlers (confirmed: getSecretAccessLog, getSecretCertificate) thread userCtx.UserID — which is 0 for a machine-token principal — into a user-scoped permission check (checkSecretPermission) that rejects userID==0 with a 'user ID is required' VALIDATION error. The handler classifies that neither as not-found nor permission-refusal, so it becomes an undeclared 500 instead of a handled 403/200. Fail-closed (no leak). See report finding OPENAPI-STATEFUL-1.",
+		reason:       "CLASS: secret sub-resource handlers (confirmed: getSecretAccessLog, getSecretCertificate) thread userCtx.UserID — which is 0 for a machine-token principal — into a user-scoped permission check (checkSecretPermission) that rejects userID==0 with a 'user ID is required' VALIDATION error. The handler classifies that neither as not-found nor permission-refusal, so it becomes an undeclared 500 instead of a handled 403/200. Fail-closed (no leak). See report finding OPENAPI-STATEFUL-1.",
 	},
 	{
 		id:           "OPENAPI-STATEFUL-2",
@@ -1075,7 +1075,7 @@ var osKnownUndeclared5xx = []struct {
 		princ:        -1,
 		code:         500,
 		pathContains: "/machine-identities",
-		reason: "CLASS: machine-identity/token handlers (confirmed: createMachineIdentity, issueMachineToken — invalid `classification` value; listMachineTokens — machine identity not found / cross-project) surface core VALIDATION and NOT-FOUND errors as undeclared 500 instead of 400/404. The handlers classify core errors by incomplete substring matching ('invalid identity_type'/'required' only) or do not map a not-found to 404. See report finding OPENAPI-STATEFUL-2.",
+		reason:       "CLASS: machine-identity/token handlers (confirmed: createMachineIdentity, issueMachineToken — invalid `classification` value; listMachineTokens — machine identity not found / cross-project) surface core VALIDATION and NOT-FOUND errors as undeclared 500 instead of 400/404. The handlers classify core errors by incomplete substring matching ('invalid identity_type'/'required' only) or do not map a not-found to 404. See report finding OPENAPI-STATEFUL-2.",
 	},
 	// OPENAPI-STATEFUL-3 (CLASS): generic-CRUD handlers blanket-map ANY core error to an
 	// undeclared 500 instead of the appropriate 4xx. The clearest example is GetProjectStats:
