@@ -508,7 +508,7 @@ jobs:
           # a sharded package (sharded_legs in scripts/ci-test-legs.sh, more
           # than one shard) changes only with its test files, the leg table or
           # the weights file.
-          relevant shard_layout_relevant '^(internal/core|internal/encryption|server|server/http|server/http/handlers|server/faultops|server/admin)/[^/]*_test\.go$|^scripts/ci-test-legs\.sh$|^scripts/ci-test-weights\.tsv$|(^|/)go\.(mod|sum|work|work\.sum)$'
+          relevant shard_layout_relevant '^(internal/core|internal/encryption|server|server/http|server/http/handlers|server/faultops|server/admin|server/grpc)/[^/]*_test\.go$|^scripts/ci-test-legs\.sh$|^scripts/ci-test-weights\.tsv$|(^|/)go\.(mod|sum|work|work\.sum)$'
 
           if [ -z "$changed" ] || echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
@@ -1365,6 +1365,22 @@ jobs:
           - leg: admin-2
             timeout: 1800
             coverage-file: coverage_admin2.out
+          # server/grpc out of root-1 into three test-name shards (2026-11-11,
+          # CI-GRPC-SHARD-1): 1315 s of root-1's 23.1 min on run 42817600261, root-1
+          # the slowest leg of the round. Its dead-credential walk (748 s) is now
+          # four tests _G0.._G3, so the weighted pack spreads ~1315 s of tests as
+          # ~437 s per leg (predicted by weighted_shard_assignment from
+          # scripts/ci-test-weights.tsv), ~12 min with the fixed leg cost. See
+          # grpc_pkg in scripts/ci-test-legs.sh.
+          - leg: grpc-1
+            timeout: 1800
+            coverage-file: coverage_grpc1.out
+          - leg: grpc-2
+            timeout: 1800
+            coverage-file: coverage_grpc2.out
+          - leg: grpc-3
+            timeout: 1800
+            coverage-file: coverage_grpc3.out
           # handlers (server/http/handlers, one package, 167 test files, 5151
           # top-level tests, all already t.Parallel()) measured at 911s in CI
           # -- vs. 15s wall / 37s summed-per-test locally without -race. That
@@ -1604,8 +1620,8 @@ jobs:
               run_filter=$(leg_run_filter "$leg")
               pkgs=./server/http
               ;;
-            core-*|server-*|admin-*)
-              # $pkgs stays as pkgs_for_leg gave it (internal/core, ./server, server/admin).
+            core-*|server-*|admin-*|grpc-*)
+              # $pkgs stays as pkgs_for_leg gave it (internal/core, ./server, server/admin, server/grpc).
               run_filter=$(leg_run_filter "$leg")
               ;;
             encryption-*)
@@ -2080,7 +2096,7 @@ jobs:
           # floor). The coverage_storage_store*.out files below are included: they are THIS
           # leg's own new file, and omitting it would just be reproducing that
           # same gap in new code rather than inheriting an unrelated one.
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_faultops4.out coverage_faultops5.out coverage_admin1.out coverage_admin2.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_faultops4.out coverage_faultops5.out coverage_admin1.out coverage_admin2.out coverage_grpc1.out coverage_grpc2.out coverage_grpc3.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)

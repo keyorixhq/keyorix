@@ -9,19 +9,8 @@ package guards
 //
 // STORAGE-ERR-CLASS-2 classified catalog.go, classification_gate.go, users.go,
 // secret_copy_environment.go, invitations.go and membership_lifecycle.go. The rows left:
-// dynamic_secrets.go's RenewLease, CreateDynamicSecretConfig and IssueLease are the rows left
-// (requireLiveProjectAndEnvironment and machine_token.go's requireEnvironmentInProject are
-// classified: CORE-ERR-FAMILY-6 item 4).
+// No rows are left: dynamic_secrets.go was classified by d4ea188c7, and machine_token.go's
+// requireEnvironmentInProject and dynamic_secrets.go's requireLiveProjectAndEnvironment by
+// CORE-ERR-FAMILY-6 item 4.
 // AUTH-ENDPOINT-OUTAGE-1 classified setup_consume.go:completeInvitationAccept (a read
 // fault is ErrSetupPostVerdict + ErrStorageReadUnavailable).
-
-func init() {
-	const why = "grant/create/renew path: the fold refuses the operation (fail closed), nothing is applied; classify as a fault in a follow-up"
-	for _, key := range []string{
-		"dynamic_secrets.go:RenewLease",
-		"dynamic_secrets.go:CreateDynamicSecretConfig",
-		"dynamic_secrets.go:IssueLease",
-	} {
-		registerFoldedReadException(key, why)
-	}
-}
