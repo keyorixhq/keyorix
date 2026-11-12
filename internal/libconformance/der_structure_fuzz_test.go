@@ -55,12 +55,12 @@ import (
 func FuzzDERStructure(f *testing.F) {
 	// Seeds are grammar-encoded control bytes (decoded by grammar.DecodeDER), not
 	// raw DER — the whole point is that the engine mutates these choices.
-	f.Add([]byte{0x00})                   // minimal random tree
-	f.Add([]byte{0x01, 0x00, 0x20})       // deep chain, modest depth
-	f.Add([]byte{0x01, 0x10, 0x00})       // deep chain, large depth (nesting lever)
-	f.Add([]byte{0x02, 0x04, 0x00})       // wide siblings
+	f.Add([]byte{0x00})                               // minimal random tree
+	f.Add([]byte{0x01, 0x00, 0x20})                   // deep chain, modest depth
+	f.Add([]byte{0x01, 0x10, 0x00})                   // deep chain, large depth (nesting lever)
+	f.Add([]byte{0x02, 0x04, 0x00})                   // wide siblings
 	f.Add([]byte{0x00, 0x30, 0x03, 0x02, 0x01, 0x01}) // random tree w/ content
-	f.Add([]byte{0x00, 0x10, 0x11, 0x08}) // random tree w/ non-minimal-len mutation set
+	f.Add([]byte{0x00, 0x10, 0x11, 0x08})             // random tree w/ non-minimal-len mutation set
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		der := grammar.DecodeDER(data).Encode()

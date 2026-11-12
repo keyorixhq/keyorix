@@ -35,9 +35,9 @@ import (
 // pins the fixed pkcs7, so this must pass today and only fires if a future bump
 // reintroduces the amplification.
 func FuzzDERPKCS7BoundedWork(f *testing.F) {
-	f.Add([]byte{0x00})             // minimal random tree
-	f.Add([]byte{0x01, 0x08, 0x00}) // deep nesting chain
-	f.Add([]byte{0x02, 0x04, 0x00}) // wide siblings
+	f.Add([]byte{0x00})                         // minimal random tree
+	f.Add([]byte{0x01, 0x08, 0x00})             // deep nesting chain
+	f.Add([]byte{0x02, 0x04, 0x00})             // wide siblings
 	f.Add([]byte{0x00, 0x30, 0x11, 0x08, 0x20}) // random tree with length mutations
 	f.Add([]byte{})
 

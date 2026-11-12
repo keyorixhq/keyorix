@@ -278,14 +278,14 @@ func FuzzSAMLXMLGrammar(f *testing.F) {
 	}
 
 	// Seeds: grammar control bytes decoded by grammar.DecodeSAMLFragment.
-	f.Add([]byte{0, 0})       // shape 0, empty fragment
-	f.Add([]byte{0, 1, 5, 5}) // correctly-namespaced sibling
-	f.Add([]byte{0, 2, 7, 9}) // foreign-namespace NameID look-alike
-	f.Add([]byte{0, 3, 3, 4}) // prefix-rebound NameID
+	f.Add([]byte{0, 0})                // shape 0, empty fragment
+	f.Add([]byte{0, 1, 5, 5})          // correctly-namespaced sibling
+	f.Add([]byte{0, 2, 7, 9})          // foreign-namespace NameID look-alike
+	f.Add([]byte{0, 3, 3, 4})          // prefix-rebound NameID
 	f.Add([]byte{0, 4, 1, 0x08, 0x00}) // bounded-work flood (deep XML chain)
-	f.Add([]byte{1, 2, 2})    // shape 1 (no Subject), foreign NameID
-	f.Add([]byte{2, 0})       // shape 2 (no Conditions)
-	f.Add([]byte{3, 0})       // shape 3 (no SubjectConfirmationData)
+	f.Add([]byte{1, 2, 2})             // shape 1 (no Subject), foreign NameID
+	f.Add([]byte{2, 0})                // shape 2 (no Conditions)
+	f.Add([]byte{3, 0})                // shape 3 (no SubjectConfirmationData)
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		fragment, shape := grammar.DecodeSAMLFragment(data)
