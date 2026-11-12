@@ -126,6 +126,16 @@ var k8sKnown = []hostile.Known{{
 	},
 	// Input 36084bde8e5e5c64: route=secretdel status=204.
 	Repro: hostile.Program{Route: 2, Status: 4},
+}, {
+	// HARDENING: the bound-Secret create and the TokenRequest decode ONE JSON
+	// value (kubernetes.go, json.NewDecoder(...).Decode) and drainAndClose
+	// discards the rest, so a transport/integrity error after the complete
+	// value is never seen. Same class as HK-FETCHER/HK-JWKS-TRAILING-*.
+	ID:     "HK-K8S-TRAILING-TRANSPORT-ERROR",
+	Class:  "HARDENING",
+	Prefix: "O5/transport-error-ignored: Issue succeeded",
+	// Input 5848f4454dc550cb: route=token frame=cl-too-long.
+	Repro: hostile.Program{Route: 0, Frame: 1},
 }}
 
 // TestK8sHostileKnownFindingsReproduce replays every k8sKnown entry with the
