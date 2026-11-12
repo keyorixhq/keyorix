@@ -638,7 +638,12 @@ func readKeyFile(path string) ([]byte, error) {
 //
 // The salt advice is separate because boot does not always remove that file
 // (keyfiles.ReconcileKeySet): a server that started has proved the active set
-// opens, so a staging salt still there afterwards is unused.
+// opens, so a staging salt still there afterwards is unused (#4105). The DEK's
+// staging file is never suggested for removal.
+//
+// The refusal runs before storage is opened, so it writes no audit event: the
+// error (non-zero exit) and `admin validate --posture` (collectBackupRefusalPosture)
+// are where it shows.
 func refusePendingKeyRotation(cfg *config.Config) error {
 	pending, err := keyfiles.PendingRotationFiles(&cfg.Storage.Encryption, ".")
 	if err != nil {
@@ -652,17 +657,30 @@ func refusePendingKeyRotation(cfg *config.Config) error {
 	for i, p := range pending {
 		paths[i] = p.Path
 		if p.Salt {
-			saltAdvice = fmt.Sprintf(" After an interrupted rotate-kek the start may need the new passphrase, and if it is refused, follow the "+
-				"recovery it prints. If the server started and %s is still there, the rotation never changed the active keys: delete that "+
-				"file, as the start's log says.", p.Path)
+			saltAdvice = fmt.Sprintf(" %[1]s is the KEK salt's staging file. After an interrupted rotate-kek the start may need it and the "+
+				"new passphrase, and if it is refused, follow the recovery it prints. A server start that succeeds and leaves %[1]s in "+
+				"place (its log says the file \"can be deleted\") has proved that the active key set opens without it: the rotation never "+
+				"changed the active keys, and every backup is refused until the file is gone. To remove it safely, check that no "+
+				"`admin encryption rotate-kek` is running, move it out of the key directory (mv %[1]s <a directory outside the key "+
+				"directory>), back up again, and delete the moved copy once that backup and a server start have succeeded.", p.Path)
 		}
 	}
-	return fmt.Errorf("backup refused: a key rotation is running or was interrupted (found %s). An archive taken now would include "+
-		"that staging file and `admin restore` would refuse it on any other host, so no archive was written and no key file was changed. "+
-		"If a rotation is running, wait for it to finish. Otherwise start the server once so boot recovery completes the rotation, "+
-		"then back up again.%s Never delete a DEK's .pending file by hand: it can be the only copy of the new DEK",
-		strings.Join(paths, ", "), saltAdvice)
+	return &pendingRotationRefusal{paths: paths, msg: fmt.Sprintf("backup refused: a key rotation is running or was interrupted (found %s). "+
+		"An archive taken now would include that staging file and `admin restore` would refuse it on any other host, so no archive was "+
+		"written and no key file was changed. If a rotation is running, wait for it to finish. Otherwise start the server once so boot "+
+		"recovery completes the rotation, then back up again.%s Never delete a DEK's .pending file by hand: it can be the only copy of the "+
+		"new DEK. `admin validate --posture` reports this state until it is resolved",
+		strings.Join(paths, ", "), saltAdvice)}
 }
+
+// pendingRotationRefusal is refusePendingKeyRotation's refusal while staging
+// files are present (not a failed check).
+type pendingRotationRefusal struct {
+	paths []string
+	msg   string
+}
+
+func (e *pendingRotationRefusal) Error() string { return e.msg }
 
 // readKeyFilesForBackup reads every file internal/keyfiles.Registry
 // enumerates and computes its checksum -- unchanged from v1 (design §1: no
