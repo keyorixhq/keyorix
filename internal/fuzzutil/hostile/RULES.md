@@ -182,3 +182,9 @@ finding; findings that were reclassified are in the private findings log.
     is served, so a connector read limit above 8 MiB (the largest is 10 MiB)
     is no longer exceeded by a JSON program; the gzip bomb still exercises
     decompressed size past every limit.
+13. The mutated body is built once per valid body per Harness (harness bug
+    fix). With `occ=1` every request rebuilt it inside the call under test:
+    webhook input 0e24d7c1f647b37a (60000-element list, self-loop-307, 12
+    requests) reported O4 at 289,613,520 bytes, which is 12 x the 24.1 MB one
+    build allocates, while the server wrote 2 KB. Bodies are byte-identical to
+    before; only the rebuilds are gone.

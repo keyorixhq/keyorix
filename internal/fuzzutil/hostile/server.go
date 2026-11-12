@@ -109,15 +109,20 @@ func gz(b []byte) []byte {
 // redirect to it changes the host name but still reaches the sentinel.
 func crossHost(u string) string { return strings.Replace(u, "127.0.0.1", "localhost", 1) }
 
-// buildPlan applies the program (when active) to the valid response.
-func buildPlan(valid Resp, p Program, active bool, selfURL, attackerURL string, followed bool) plan {
+// buildPlan applies the program (when active) to the valid response. mutate,
+// when set, replaces p.MutateBody (the Harness passes a memoised one).
+func buildPlan(valid Resp, p Program, active bool, selfURL, attackerURL string, followed bool, mutate func([]byte) []byte) plan {
 	pl := plan{status: valid.Status, ct: valid.CT, complete: true, hdrs: valid.Headers}
 	if pl.status == 0 {
 		pl.status = 200
 	}
 	body := valid.Body
 	if active {
-		body = p.MutateBody(body)
+		if mutate != nil {
+			body = mutate(body)
+		} else {
+			body = p.MutateBody(body)
+		}
 		if p.Status > 0 {
 			pl.status = statuses[p.Status-1]
 		}
@@ -235,6 +240,7 @@ type Harness struct {
 	unmatch  []string
 	viol     []string
 	errs     []string
+	mutated  map[string][]byte
 	logs     *logCapture
 	total    atomic.Int32
 	attHits  atomic.Int32
@@ -256,7 +262,7 @@ func New(cfg Config) *Harness {
 	if cfg.Program.Enc == 2 {
 		bombBytes() // pre-build outside any timed region
 	}
-	h := &Harness{cfg: cfg, done: make(chan struct{}), counts: map[string]int{}, hops: map[string]int{}}
+	h := &Harness{cfg: cfg, done: make(chan struct{}), counts: map[string]int{}, hops: map[string]int{}, mutated: map[string][]byte{}}
 	h.before, h.fd0 = census(), fdCount()
 	h.attacker = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.attHits.Add(1)
@@ -463,7 +469,7 @@ func (h *Harness) handle(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
 	if rt.Pass != nil {
 		if resp, ok := rt.Pass(r); ok {
-			h.writePlain(w, buildPlan(resp, Program{}, false, "", "", false))
+			h.writePlain(w, buildPlan(resp, Program{}, false, "", "", false, nil))
 			return
 		}
 	}
@@ -494,7 +500,7 @@ func (h *Harness) handle(w http.ResponseWriter, r *http.Request) {
 		scheme = "https"
 	}
 	self := scheme + "://" + r.Host + r.URL.RequestURI()
-	pl := buildPlan(valid, p, active, self, h.attacker.URL, followed)
+	pl := buildPlan(valid, p, active, self, h.attacker.URL, followed, h.mutateOnce)
 
 	rec := Served{Route: rt.Name, N: n, Active: active, Pristine: !active, Status: pl.status,
 		Seen: pl.seen, Complete: pl.complete, Redirect: pl.redirect, Followed: followed}
@@ -510,6 +516,22 @@ func (h *Harness) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	h.record(rec)
 	h.writeRaw(w, pl)
+}
+
+// mutateOnce is Program.MutateBody memoised per valid body for the life of the
+// Harness. The body is built inside the call under test, so with occ=1 and a
+// redirect loop the harness's own rebuilds (12 x ~24 MB for a 60000-element
+// list) counted against the connector's O4 budget (webhook input
+// 0e24d7c1f647b37a). Callers must not modify the returned slice.
+func (h *Harness) mutateOnce(valid []byte) []byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if b, ok := h.mutated[string(valid)]; ok {
+		return b
+	}
+	b := h.cfg.Program.MutateBody(valid)
+	h.mutated[string(valid)] = b
+	return b
 }
 
 func (h *Harness) record(s Served) {
