@@ -39,12 +39,12 @@ func lenstr(s string) []byte {
 // warning-count(2). readPrepareResultPacket slices data[1:5]/[5:7]/[7:9] with NO
 // length guard — a body shorter than 9 bytes panics it (see the reproducer).
 func prepareOKBody(columnCount, paramCount uint16) []byte {
-	b := []byte{0x00}                            // iOK indicator
-	b = append(b, 0x01, 0x00, 0x00, 0x00)        // statement id = 1
-	b = le16(b, columnCount)                      // column count
-	b = le16(b, paramCount)                        // param count
-	b = append(b, 0x00)                           // reserved
-	b = le16(b, 0x0000)                           // warning count
+	b := []byte{0x00}                     // iOK indicator
+	b = append(b, 0x01, 0x00, 0x00, 0x00) // statement id = 1
+	b = le16(b, columnCount)              // column count
+	b = le16(b, paramCount)               // param count
+	b = append(b, 0x00)                   // reserved
+	b = le16(b, 0x0000)                   // warning count
 	return b
 }
 
@@ -54,18 +54,18 @@ func prepareOKBody(columnCount, paramCount uint16) []byte {
 // length(4), fieldType(1), flags(2), decimals(1).
 func columnDefBody(name string, ft byte) []byte {
 	var b []byte
-	b = append(b, lenstr("def")...) // catalog
-	b = append(b, lenstr("")...)    // database
-	b = append(b, lenstr("")...)    // table
-	b = append(b, lenstr("")...)    // org_table
-	b = append(b, lenstr(name)...)  // name
-	b = append(b, lenstr("")...)    // org_name
-	b = append(b, 0x0c)             // filler / length-of-fixed-fields
-	b = append(b, 0x21, 0x00)       // charset utf8_general_ci + collation
+	b = append(b, lenstr("def")...)       // catalog
+	b = append(b, lenstr("")...)          // database
+	b = append(b, lenstr("")...)          // table
+	b = append(b, lenstr("")...)          // org_table
+	b = append(b, lenstr(name)...)        // name
+	b = append(b, lenstr("")...)          // org_name
+	b = append(b, 0x0c)                   // filler / length-of-fixed-fields
+	b = append(b, 0x21, 0x00)             // charset utf8_general_ci + collation
 	b = append(b, 0x00, 0x00, 0x00, 0x00) // column length
-	b = append(b, ft)               // field type
-	b = append(b, 0x00, 0x00)       // flags
-	b = append(b, 0x00)             // decimals
+	b = append(b, ft)                     // field type
+	b = append(b, 0x00, 0x00)             // flags
+	b = append(b, 0x00)                   // decimals
 	return b
 }
 

@@ -47,20 +47,18 @@ func recoverStack(fn func()) (val any, stack string) {
 	return nil, ""
 }
 
-// PGX-1: (*baseRows).Values indexes rows.values[i] for every field
-// description without checking that the DataRow carried that many values.
-// Scan and ScanRow DO check ("number of field descriptions must equal number of
-// values", rows.go:262/394); Values does not (rows.go:321-322). The green
-// control below shows Scan on the identical exchange returns that error.
-func TestPgxValues_ShortDataRow_Reproducer(t *testing.T) {
+// PGX-1 (fixed in pgx v5.13.0, #4124): (*baseRows).Values indexed
+// rows.values[i] for every field description without checking that the DataRow
+// carried that many values, so a short row panicked. Scan and ScanRow always
+// checked ("number of field descriptions must equal number of values"). This
+// test now pins the fix: the short row must no longer panic. The green control
+// below shows Scan on the identical exchange returns the mismatch error.
+func TestPgxValues_ShortDataRow_NoPanic(t *testing.T) {
 	for i := range 3 {
 		in := append([]byte{byte(opSimpleQuery)}, shortRowScript()...)
 		val, stack := recoverStack(func() { runHostileQuery(t, in) })
-		if val == nil {
-			t.Fatalf("replay %d: expected panic in (*baseRows).Values; pgx may have fixed PGX-1 (remove it from knownPgxPanicSites)", i)
-		}
-		if !strings.Contains(fmt.Sprint(val), "index out of range") || !strings.Contains(stack, "(*baseRows).Values") {
-			t.Fatalf("replay %d: unexpected panic %v\n%s", i, val, stack)
+		if val != nil {
+			t.Fatalf("replay %d: short DataRow panics again (PGX-1 regressed): %v\n%s", i, val, stack)
 		}
 	}
 	// Green control: Scan on the same exchange reports the mismatch as an error.
@@ -143,20 +141,12 @@ func runStdlibQuery(t *testing.T, script []byte) string {
 	return s.String
 }
 
-// TestPgxQuery_AllowlistStillSurfacesNovelPanics: the allowlist swallows the
-// real PGX-1 stack (green) but not a panic raised from any other site (red), so
-// a third, unknown panic site would still fail the fuzz run.
+// TestPgxQuery_AllowlistStillSurfacesNovelPanics: a panic raised from a site
+// not on the allowlist is never swallowed, so an unknown panic site still fails
+// the fuzz run (the allowlist is empty since PGX-1 was fixed upstream).
 func TestPgxQuery_AllowlistStillSurfacesNovelPanics(t *testing.T) {
-	in := append([]byte{byte(opSimpleQuery)}, shortRowScript()...)
-	val, stack := recoverStack(func() { runHostileQuery(t, in) })
-	if val == nil {
-		t.Fatal("PGX-1 reproducer did not panic")
-	}
-	if msg := classifyPanic(val, stack); msg != "" {
-		t.Fatalf("known PGX-1 stack not recognised: %s", msg)
-	}
 	var idx []int
-	val, stack = recoverStack(func() { _ = idx[len(in)] })
+	val, stack := recoverStack(func() { _ = idx[1] })
 	if val == nil {
 		t.Fatal("planted panic did not fire")
 	}

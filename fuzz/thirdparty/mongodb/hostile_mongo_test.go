@@ -57,7 +57,7 @@ const (
 	// bounded read cannot be driven to OOM on this shared host; section/document
 	// length lies then operate within that bounded buffer (where an unguarded
 	// slice is a finding, not an allocation).
-	maxMongoReply = 64 << 10
+	maxMongoReply    = 64 << 10
 	mongoAllocBudget = 96 << 20
 	mongoHangBudget  = 6 * time.Second
 	opMSG            = 2013
@@ -93,7 +93,7 @@ func frameFuzzReply(responseTo int32, fuzzBody []byte, wantTruncate bool) []byte
 	// Wire header is [messageLength:4][requestID:4][responseTo:4][opcode:4…]; the
 	// fuzz body supplies the opcode onward, so the header prefix is 12 bytes.
 	hdr := make([]byte, 12)
-	binary.LittleEndian.PutUint32(hdr[4:8], 0)                  // requestID
+	binary.LittleEndian.PutUint32(hdr[4:8], 0)                   // requestID
 	binary.LittleEndian.PutUint32(hdr[8:12], uint32(responseTo)) // responseTo
 	msg := append(hdr, fuzzBody...)
 	total := len(msg)

@@ -36,11 +36,11 @@ func helloDoc() []byte {
 func opMsgReply(responseTo int32, body []byte) []byte {
 	const opMsg = 2013
 	out := make([]byte, 16)
-	binary.LittleEndian.PutUint32(out[4:8], 0)                 // requestID
+	binary.LittleEndian.PutUint32(out[4:8], 0) // requestID
 	binary.LittleEndian.PutUint32(out[8:12], uint32(responseTo))
 	binary.LittleEndian.PutUint32(out[12:16], opMsg)
 	out = binary.LittleEndian.AppendUint32(out, 0) // flagBits
-	out = append(out, 0x00)                         // section kind 0: body
+	out = append(out, 0x00)                        // section kind 0: body
 	out = append(out, body...)
 	binary.LittleEndian.PutUint32(out[0:4], uint32(len(out))) // messageLength
 	return out
@@ -53,10 +53,10 @@ func opReplyReply(responseTo int32, body []byte) []byte {
 	out := make([]byte, 16)
 	binary.LittleEndian.PutUint32(out[8:12], uint32(responseTo))
 	binary.LittleEndian.PutUint32(out[12:16], opReply)
-	out = binary.LittleEndian.AppendUint32(out, 0)  // responseFlags
-	out = binary.LittleEndian.AppendUint64(out, 0)  // cursorID
-	out = binary.LittleEndian.AppendUint32(out, 0)  // startingFrom
-	out = binary.LittleEndian.AppendUint32(out, 1)  // numberReturned
+	out = binary.LittleEndian.AppendUint32(out, 0) // responseFlags
+	out = binary.LittleEndian.AppendUint64(out, 0) // cursorID
+	out = binary.LittleEndian.AppendUint32(out, 0) // startingFrom
+	out = binary.LittleEndian.AppendUint32(out, 1) // numberReturned
 	out = append(out, body...)
 	binary.LittleEndian.PutUint32(out[0:4], uint32(len(out)))
 	return out

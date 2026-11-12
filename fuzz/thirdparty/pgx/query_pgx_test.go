@@ -350,17 +350,14 @@ func checkQueryCanary(in []byte, o *queryOutcome) string {
 	return ""
 }
 
-// knownPgxPanicSites lists CONFIRMED pgx/v5 v5.11.0 panics that already have a
+// knownPgxPanicSites lists CONFIRMED pgx/v5 panics that already have a
 // deterministic reproducer (repro_query_pgx_test.go). The fuzz target swallows
 // a panic only when its stack contains one of these exact frames, so the
 // fuzzer keeps exploring past them; any other panic fails the run.
 // TestPgxQuery_AllowlistStillSurfacesNovelPanics proves a different panic is
-// not swallowed.
-var knownPgxPanicSites = []string{
-	// PGX-1: (*baseRows).Values indexes rows.values[i] for every field
-	// description without a length check (rows.go:322).
-	"github.com/jackc/pgx/v5.(*baseRows).Values(",
-}
+// not swallowed. Empty since pgx v5.13.0 fixed PGX-1 ((*baseRows).Values
+// indexed rows.values[i] without a length check, v5.11.0 rows.go:322).
+var knownPgxPanicSites = []string{}
 
 // classifyPanic returns "" when stack hits a known site, else a failure text.
 func classifyPanic(val any, stack string) string {
