@@ -89,6 +89,25 @@ var plants = []plant{
 		op:             "group.delete",
 		minUnexplained: 20,
 	},
+	{
+		// V5: removes ReassignOwnedSecrets' own roles.assign@project gate — the
+		// exact #G10 regression (the function once had "no independent
+		// authorization of its own", and the per-secret continue-on-error below
+		// masks every denial as a silent (0, nil) success). With the gate gone the
+		// core leg returns no error for any principal that passes input
+		// validation, so it over-allows everyone the model denies (REST keeps its
+		// router gate, so only the core leg diverges).
+		name: "reassign-owner-core-gate-removed",
+		file: "internal/core/secret_reassign_owner.go",
+		anchor: "\tif allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, Scope{ProjectID: projectID}); err != nil {\n" +
+			"\t\treturn 0, fmt.Errorf(\"%s: %w\", i18n.T(\"ErrorRetrievalFailed\", nil), err)\n" +
+			"\t} else if !allowed {\n" +
+			"\t\treturn 0, permissionDeniedf(\"%s: %s\", i18n.T(\"ErrorPermissionDenied\", nil), \"not authorized to reassign secrets in this project\")\n" +
+			"\t}\n",
+		repl:           "\t_ = actorKind // PLANT: core roles.assign@project gate removed\n",
+		op:             "secret.reassign.owner",
+		minUnexplained: 10,
+	},
 }
 
 func TestPlantsAreDetected(t *testing.T) {

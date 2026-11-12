@@ -11,9 +11,9 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | invitations | 4 | 4 | 0 | 0 |
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
-| secrets | 43 | 29 | 10 | 10 |
+| secrets | 43 | 30 | 10 | 10 |
 | other | 127 | 19 | 21 | 9 |
-| **total** | **211** | **89** | **46** | **34** |
+| **total** | **211** | **90** | **46** | **34** |
 
 ## groups
 
@@ -119,7 +119,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-rename` — design: bulk secret operation outside the initially bound secret set; not bound
 - [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-rotate` — design: bulk secret operation outside the initially bound secret set; not bound
 - [x] `REST POST /api/v1/projects/{id}/secrets/extend-expiring` — secret.extend.expiring
-- [ ] `REST POST /api/v1/projects/{id}/secrets/reassign-owner` — design: bulk secret operation outside the initially bound secret set; not bound
+- [x] `REST POST /api/v1/projects/{id}/secrets/reassign-owner` — secret.reassign.owner
 - [ ] `REST POST /api/v1/projects/{id}/secrets/render` — fixture: needs a template referencing secrets
 - [ ] `REST POST /api/v1/projects/{id}/secrets/resume-all` — design: bulk secret operation outside the initially bound secret set; not bound
 - [ ] `REST POST /api/v1/projects/{id}/secrets/suspend-all` — design: bulk secret operation outside the initially bound secret set; not bound
