@@ -196,7 +196,10 @@ func runFetcherHostile(p hostile.Program, known []hostile.Known) *hostile.Harnes
 		// pages assign to the name.
 		wantID := ""
 		for _, rec := range h.Served("list") {
-			if id, ok := strictFetchListID(rec.Seen, "db-pass"); ok && rec.Complete && rec.Status == 200 {
+			// Not rec.Complete: a page whose whole content arrived before a
+			// trailing transport error (O5/transport-error-ignored, reported
+			// separately) was delivered; Seen holds only what the client could read.
+			if id, ok := strictFetchListID(rec.Seen, "db-pass"); ok && rec.Status == 200 {
 				wantID = id
 				break
 			}
