@@ -31,7 +31,8 @@
 //
 // It reports through guardrules.Rollout (docs/guard-rollout.d). The red proof is
 // TestMachineActorArgumentGuard_Calibration, which runs the same scan over the
-// fixtures in testdata/machineactor and does not go through Rollout.
+// planted fixtures below (written to a temp dir, so no repo-walking guard ever
+// scans them) and does not go through Rollout.
 package guards
 
 import (
@@ -40,7 +41,6 @@ import (
 	"go/token"
 	"go/types"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -89,23 +89,16 @@ type machineActorMethod struct {
 	Arity int
 }
 
-// coreMachineActorMethods derives the family from the *KeyorixCore methods in dir.
-func coreMachineActorMethods(t testing.TB, dir string) map[string]machineActorMethod {
+// coreMachineActorMethods derives the family from the *KeyorixCore methods in the
+// core family's sources (coreFamilySources, ADR-121 R5).
+func coreMachineActorMethods(t testing.TB) map[string]machineActorMethod {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read %s: %v", dir, err)
-	}
 	fset := token.NewFileSet()
 	out := map[string]machineActorMethod{}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		f, perr := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+	for _, path := range coreFamilySources(t) {
+		f, perr := parser.ParseFile(fset, path, nil, 0)
 		if perr != nil {
-			t.Fatalf("parse %s: %v", name, perr)
+			t.Fatalf("parse %s: %v", path, perr)
 		}
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
@@ -326,7 +319,7 @@ func badMachineActorCallSites(sites []machineActorCallSite) []string {
 func TestEveryMachineActorArgumentIsTheRequestActor(t *testing.T) {
 	g := guardrules.Rollout(t)
 	repo := srcpath.RepoRoot()
-	family := coreMachineActorMethods(t, filepath.Join(repo, "internal", "core"))
+	family := coreMachineActorMethods(t)
 	sites := scanMachineActorCallSites(t, filepath.Join(repo, "server", "http", "handlers"), family)
 
 	// The premise: the scope is in the family and reached from a handler.
@@ -358,8 +351,9 @@ func TestEveryMachineActorArgumentIsTheRequestActor(t *testing.T) {
 // Calibration pair: planted red sites are each reported, planted green sites (every
 // recognised form) none. Not routed through Rollout, so it stays blocking.
 func TestMachineActorArgumentGuard_Calibration(t *testing.T) {
-	family := coreMachineActorMethods(t, filepath.Join(srcpath.RepoRoot(), "internal", "core"))
-	fixtures := filepath.Join(srcpath.PkgDir(), "testdata", "machineactor")
+	family := coreMachineActorMethods(t)
+	fixtures := t.TempDir()
+	writeTree(t, fixtures, map[string]string{"bad/handler.go": machineActorBadFixture, "good/handler.go": machineActorGoodFixture})
 
 	bad := badMachineActorCallSites(scanMachineActorCallSites(t, filepath.Join(fixtures, "bad"), family))
 	want := []string{
@@ -382,3 +376,92 @@ func TestMachineActorArgumentGuard_Calibration(t *testing.T) {
 		t.Fatalf("planted green sites were reported: %q", extra)
 	}
 }
+
+// machineActorBadFixture is the planted red tree: every method passes something
+// other than the request's machine actor. Parsed only, never compiled.
+const machineActorBadFixture = `package fixture
+
+func (h *FixtureHandler) addMemberConstant(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	_ = h.coreService.AddProjectMember(r.Context(), userCtx.UserID, 1, 2, "viewer", false)
+}
+
+func (h *FixtureHandler) addMemberWrongField(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	_ = h.coreService.AddProjectMember(r.Context(), userCtx.UserID, 1, 2, "viewer", userCtx.IsAdmin)
+}
+
+func (h *FixtureHandler) setRoleHumanKind(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	_ = h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, 1, 2, "viewer", userCtx.ActorKind() == core.ActorTypeUser)
+}
+
+func (h *FixtureHandler) assignOverwritten(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	isMachine := userCtx.ActorKind() == core.ActorTypeMachine
+	isMachine = false
+	_ = h.coreService.AssignUserRole(r.Context(), userCtx.UserID, 2, 3, core.Scope{}, isMachine)
+}
+
+func (h *FixtureHandler) groupMemberLocalFalse(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	isMachine := false
+	_ = h.coreService.AddUserToGroup(r.Context(), userCtx.UserID, isMachine, 2, 3, 0)
+}
+
+func (h *FixtureHandler) rejectZeroMachine(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	_, _ = h.coreService.RejectSecretAccessRequest(r.Context(), 7, userCtx.UserID, 0, "no")
+}
+
+// A storage method sharing a family name but not its arity is not a call site.
+func (h *FixtureHandler) storageSameName(w http.ResponseWriter, r *http.Request) {
+	_ = h.storage.AddProjectMember(r.Context(), 1, 2)
+}
+`
+
+// machineActorGoodFixture is the planted green tree: one call per recognised form.
+const machineActorGoodFixture = `package fixture
+
+func (h *FixtureHandler) addMemberActorKind(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	_ = h.coreService.AddProjectMember(r.Context(), userCtx.UserID, 1, 2, "viewer", userCtx.ActorKind() == core.ActorTypeMachine)
+}
+
+func (h *FixtureHandler) setRoleReversedOperands(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	_ = h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, 1, 2, "viewer", (core.ActorTypeMachine == userCtx.ActorKind()))
+}
+
+func (h *FixtureHandler) groupMemberHelper(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	_ = h.coreService.AddUserToGroup(r.Context(), userCtx.UserID, isMachineActor(r), 2, 3, 0)
+}
+
+func (h *FixtureHandler) assignLocalCopy(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	kind := userCtx.ActorKind() == core.ActorTypeMachine
+	isMachine := kind
+	_ = h.coreService.AssignUserRole(r.Context(), userCtx.UserID, 2, 3, core.Scope{}, isMachine)
+}
+
+func (h *FixtureHandler) createUserGrantCtx(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	ctx, isMachine := creationGrantCtx(r, userCtx)
+	_, _ = h.coreService.CreateUserAudited(ctx, nil, userCtx.UserID, isMachine)
+}
+
+func (h *FixtureHandler) rejectDerefMachineID(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	var approverMachineID uint
+	if actor.MachineIdentityID != nil {
+		approverMachineID = *actor.MachineIdentityID
+	}
+	_, _ = h.coreService.RejectSecretAccessRequest(r.Context(), 7, actor.UserID, approverMachineID, "no")
+}
+
+func (h *FixtureHandler) approveHelperMachineID(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	_, _ = h.coreService.ApproveAccessRequestWithExpiry(r.Context(), 1, 2, actor.UserID, machineID(r), "viewer", 0)
+}
+`
