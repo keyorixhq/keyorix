@@ -747,7 +747,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 				deactivate.IsActive = false
 				deactivate.UpdatedAt = user.UpdatedAt
 				write, desc := &deactivate, "deactivated user %d (%s)"
-				if remainder = userIdentityChanges(req, locked); !remainder {
+				if remainder = userIdentityChanges(user, locked, setUsername, setEmail); !remainder {
 					if req.DisplayName != "" {
 						deactivate.DisplayName = req.DisplayName
 					}
@@ -909,12 +909,14 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 			if lerr != nil {
 				return lerr
 			}
-			// Only the fields the request sets: the rest stay as stored.
+			// Only the fields the request changes: the rest stay as stored. A field the
+			// request merely echoes is the unlocked read's value, which a concurrent
+			// rename may have replaced since (REVIEW-4138-DEEP-1 F2).
 			next := *locked
-			if req.Username != "" {
+			if setUsername {
 				next.Username, next.UsernameFolded = user.Username, user.UsernameFolded
 			}
-			if req.Email != "" {
+			if setEmail {
 				next.Email, next.EmailFolded = user.Email, user.EmailFolded
 			}
 			if req.DisplayName != "" {
@@ -939,11 +941,13 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	return updated, nil
 }
 
-// userIdentityChanges reports whether req changes the username or the email the stored
-// row has (cur, read on the row lock): the part of an update that can widen access (a
-// reset link goes to the new address).
-func userIdentityChanges(req *UpdateUserRequest, cur *models.User) bool {
-	return (req.Username != "" && req.Username != cur.Username) || (req.Email != "" && req.Email != cur.Email)
+// userIdentityChanges reports whether the request changes the username or the email the
+// stored row has (cur, read on the row lock): the part of an update that can widen access
+// (a reset link goes to the new address). want is the unlocked read with the request
+// applied; setUsername/setEmail say which of its fields the request changes. A field the
+// request only echoes is not a change, even if a concurrent rename has since replaced it.
+func userIdentityChanges(want, cur *models.User, setUsername, setEmail bool) bool {
+	return (setUsername && want.Username != cur.Username) || (setEmail && want.Email != cur.Email)
 }
 
 // EventUserDeleted/EventUserRestored are audited on the admin delete/restore path

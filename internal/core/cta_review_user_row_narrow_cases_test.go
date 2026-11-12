@@ -18,6 +18,7 @@
 package core
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -64,6 +65,10 @@ type userRowNarrowWriter struct {
 	// window right before A's write) unless a case says otherwise.
 	unlockedReads int
 	run           func(f *ctaReview, target *models.User) error
+	// only, when set, limits the writer to these competitors.
+	only []string
+	// check, when set, asserts the writer's own effect beyond the display name.
+	check func(t *testing.T, after *models.User)
 }
 
 // userRowNarrowCompetitor is replica B's operation and what must survive it.
@@ -97,6 +102,22 @@ func userRowNarrowWriters() []userRowNarrowWriter {
 			_, err := f.coreA.UpdateOwnProfile(f.ctx, u.ID, "renamed", u.Email, "")
 			return err
 		}},
+		// The resend-every-field shape plus a deactivation: UpdateUser's mixed
+		// deactivate+identity split (REVIEW-4138-DEEP-1 F2). Only against the
+		// identity competitors: the password, suspension and MFA writers interact
+		// with deactivation differently.
+		{name: "AdminDeactivateEchoAllFields", unlockedReads: 1,
+			only: []string{"AdminChangesEmail", "AdminChangesUsername"},
+			run: func(f *ctaReview, u *models.User) error {
+				inactive := false
+				_, err := f.coreA.UpdateUser(f.ctx, &UpdateUserRequest{
+					ID: u.ID, ActorID: f.adminID, Username: u.Username, Email: u.Email, DisplayName: "renamed", IsActive: &inactive,
+				})
+				return err
+			},
+			check: func(t *testing.T, after *models.User) {
+				assert.False(t, after.IsActive, "A's deactivation must be persisted")
+			}},
 	}
 }
 
@@ -159,6 +180,9 @@ func runUserRowNarrowMatrix(t *testing.T, newFixture func(t *testing.T) *ctaRevi
 				// the request's explicit value, not a stale one.
 				continue
 			}
+			if w.only != nil && !slices.Contains(w.only, c.name) {
+				continue
+			}
 			t.Run(w.name+"_vs_"+c.name, func(t *testing.T) {
 				f := newFixture(t)
 				runUserRowNarrowCase(t, f, w, c, w.unlockedReads)
@@ -187,6 +211,9 @@ func runUserRowNarrowCase(t *testing.T, f *ctaReview, w userRowNarrowWriter, c u
 	var after models.User
 	require.NoError(t, f.setupDB.First(&after, target.ID).Error)
 	assert.Equal(t, "renamed", after.DisplayName, "A's own change must be persisted")
+	if w.check != nil {
+		w.check(t, &after)
+	}
 	c.survive(t, &before, &after)
 }
 

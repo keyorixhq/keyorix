@@ -12,7 +12,9 @@
   changed between the two reads (#2653/#2654 residue, FIX-USER-ROW-NARROW-1).
   Guard: `cta_review_user_row_narrow_sqlite_test.go` `TestUserRowNarrow_*` (default CI; every
   admin/self-service writer against password change, suspension, MFA enable, email and
-  username change, plus the re-auth-read case and the deactivation conflict), their Postgres
+  username change, a deactivating resend-every-field edit (the deactivate+identity split's
+  remainder) against the email and username change, plus the re-auth-read case and the
+  deactivation conflict), their Postgres
   twins `TestCTAReview_UserRowNarrow_*` (pg-gated), and
   `guards/user_profile_column_scoped_guard_test.go:TestUpdateUserWrites_AreBuiltFromALockedRead`.
   **Not covered**: the structural guard counts locked reads against writes; it does not prove
