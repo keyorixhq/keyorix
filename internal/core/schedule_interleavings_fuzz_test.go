@@ -225,11 +225,18 @@ func domainKinds(domain int) []int {
 type schedWorld struct {
 	c       *KeyorixCore
 	st      *store.LocalStorage
+	db      *gorm.DB
 	backend string
 	adminID uint
 	projID  uint
 	envID   uint
 	viewer  uint
+
+	// uniq distinguishes fixtures created in the SAME store across reps (the
+	// Postgres path reuses one bootstrapped store and seeds fresh entities per
+	// rep instead of truncating tables). Empty for the fresh-per-iteration
+	// SQLite fuzz loop.
+	uniq string
 
 	// per-domain fixture handles
 	patPlain string
@@ -238,6 +245,8 @@ type schedWorld struct {
 	carolID  uint
 	auditPAT []patHandle // for dmAudit: one PAT per op
 }
+
+func (w *schedWorld) nm(base string) string { return base + w.uniq }
 
 type patHandle struct {
 	plain string
@@ -258,7 +267,7 @@ func mustBootstrap(tb testing.TB, db *gorm.DB, backend string) *schedWorld {
 		Token: "test-bootstrap-token",
 	})
 	require.NoError(tb, err)
-	w := &schedWorld{c: c, st: st, backend: backend, adminID: res.User.ID, projID: res.Project.ID}
+	w := &schedWorld{c: c, st: st, db: db, backend: backend, adminID: res.User.ID, projID: res.Project.ID}
 	if len(res.Environments) > 0 {
 		w.envID = res.Environments[0].ID
 	}
@@ -286,16 +295,17 @@ func newSQLiteWorld(tb testing.TB) *schedWorld {
 // seedFixture builds the per-domain starting state. Returns the number of
 // goroutine operations supported (for dmAudit we need one PAT per op).
 func (w *schedWorld) seedFixture(ctx context.Context, prog schedProgram) {
+	w.auditPAT = nil
 	switch prog.domain {
 	case dmPAT:
-		pr, err := w.c.CreateOwnPAT(ctx, w.adminID, "pat-fixture", nil, nil, 0, 0, nil)
+		pr, err := w.c.CreateOwnPAT(ctx, w.adminID, w.nm("pat-fixture"), nil, nil, 0, 0, nil)
 		if err != nil {
 			panic(fmt.Sprintf("seed PAT: %v", err))
 		}
 		w.patPlain, w.patID = pr.PlainToken, pr.Token.ID
 	case dmSecret:
 		sec, err := w.c.CreateSecret(ctx, &CreateSecretRequest{
-			Name: "sched-secret", Value: []byte("v0"), ProjectID: w.projID, EnvironmentID: w.envID,
+			Name: w.nm("sched-secret"), Value: []byte("v0"), ProjectID: w.projID, EnvironmentID: w.envID,
 			Type: "generic", CreatedBy: "admin", OwnerID: w.adminID,
 		})
 		if err != nil {
@@ -304,7 +314,8 @@ func (w *schedWorld) seedFixture(ctx context.Context, prog schedProgram) {
 		w.secretID = sec.ID
 	case dmRole:
 		u, err := w.c.CreateUser(ctx, &CreateUserRequest{
-			Username: "carol", Email: "carol@example.com", Password: "StrongPassphrase2026!", DisplayName: "C Person",
+			Username: w.nm("carol"), Email: w.nm("carol") + "@example.com",
+			Password: "StrongPassphrase2026!", DisplayName: "C Person",
 		})
 		if err != nil {
 			panic(fmt.Sprintf("seed user: %v", err))
@@ -315,7 +326,7 @@ func (w *schedWorld) seedFixture(ctx context.Context, prog schedProgram) {
 		}
 	case dmAudit:
 		for i := range prog.ops {
-			pr, err := w.c.CreateOwnPAT(ctx, w.adminID, fmt.Sprintf("audit-pat-%d", i), nil, nil, 0, 0, nil)
+			pr, err := w.c.CreateOwnPAT(ctx, w.adminID, fmt.Sprintf("audit-pat-%s-%d", w.uniq, i), nil, nil, 0, 0, nil)
 			if err != nil {
 				panic(fmt.Sprintf("seed audit PAT: %v", err))
 			}
@@ -431,14 +442,19 @@ func runSchedule(t *testing.T, w *schedWorld, prog schedProgram) []opResult {
 	var pmu sync.Mutex
 
 	start := make([]chan struct{}, n)
+	opDone := make([]chan struct{}, n) // closed by each goroutine AFTER it stores its result
 	for i := range start {
 		start[i] = make(chan struct{})
+		opDone[i] = make(chan struct{})
 	}
 	var wg sync.WaitGroup
 	wg.Add(n)
 	for i := range prog.ops {
 		go func(idx int) {
 			defer wg.Done()
+			// opDone is closed on BOTH the normal and the panic path, so an HB
+			// group-1 panic cannot wedge the group-2 release below.
+			defer close(opDone[idx])
 			defer func() {
 				if r := recover(); r != nil {
 					pmu.Lock()
@@ -450,6 +466,9 @@ func runSchedule(t *testing.T, w *schedWorld, prog schedProgram) []opResult {
 			for k := 0; k < prog.ops[idx].delay; k++ {
 				runtime.Gosched()
 			}
+			// The write to results[idx] happens-before close(opDone[idx]); every
+			// reader either waits on opDone[idx] (HB sequencing) or on wg.Wait()
+			// (final read), so there is no unsynchronised access to results.
 			results[idx] = w.execOp(ctx, prog, idx)
 		}(i)
 	}
@@ -457,13 +476,15 @@ func runSchedule(t *testing.T, w *schedWorld, prog schedProgram) []opResult {
 	done := make(chan struct{})
 	go func() {
 		if prog.hb && prog.domain != dmAudit {
-			// Deterministic group sequencing: release group-1 starts, wait until
-			// every group-1 goroutine has recorded a result (i.e. its real call
-			// RETURNED), then release group 2. This is the happens-before edge.
+			// Deterministic group sequencing: release group-1 starts, wait (via
+			// their done channels — a real happens-before edge) until every
+			// group-1 op has RETURNED, then release group 2.
 			for i := 0; i < prog.split; i++ {
 				close(start[i])
 			}
-			waitResults(results, 0, prog.split)
+			for i := 0; i < prog.split; i++ {
+				<-opDone[i]
+			}
 			for i := prog.split; i < n; i++ {
 				close(start[i])
 			}
@@ -488,25 +509,6 @@ func runSchedule(t *testing.T, w *schedWorld, prog schedProgram) []opResult {
 		t.Fatalf("PANIC in op goroutine(s): %v", panics)
 	}
 	return results
-}
-
-// waitResults spins until results[lo:hi] are all populated (a goroutine writes
-// its slot last, after the real call returns). Bounded by the outer watchdog.
-func waitResults(results []opResult, lo, hi int) {
-	for {
-		all := true
-		for i := lo; i < hi; i++ {
-			if results[i].class == clUnknown {
-				all = false
-				break
-			}
-		}
-		if all {
-			return
-		}
-		runtime.Gosched()
-		time.Sleep(50 * time.Microsecond)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -852,16 +854,16 @@ func (w *schedWorld) drainAudit(t *testing.T) (chained, unchained int64, valid b
 //
 // Does NOT verify: the CONTENT of audit rows, actor attribution, or ordering
 // relative to wall-clock — only that the SHA-256 prev/entry chain is intact.
-func checkAuditChain(t *testing.T, w *schedWorld, baselineUnchained int64) (chainedNow int64) {
+func checkAuditChain(t *testing.T, w *schedWorld, baselineUnchained int64) (chainedNow int64, err error) {
 	chained, unchained, valid := w.drainAudit(t)
 	if !valid {
-		t.Fatalf("ORACLE3 VIOLATION: audit chain does not verify after concurrent appends")
+		return chained, fmt.Errorf("ORACLE3 VIOLATION: audit chain does not verify after concurrent appends")
 	}
 	if unchained != baselineUnchained {
-		t.Fatalf("ORACLE3 VIOLATION: %d event(s) escaped the hash chain (unchained baseline=%d now=%d)",
+		return chained, fmt.Errorf("ORACLE3 VIOLATION: %d event(s) escaped the hash chain (unchained baseline=%d now=%d)",
 			unchained-baselineUnchained, baselineUnchained, unchained)
 	}
-	return chained
+	return chained, nil
 }
 
 // expectedSyncAudits counts the audit events a run is REQUIRED to have appended
@@ -898,17 +900,21 @@ func expectedSyncAudits(prog schedProgram, observed []opResult) (count int64, co
 // asserts exactly one new chained event per successful synchronously-audited
 // operation. For the secret domain only the integrity half runs (see
 // expectedSyncAudits).
-func checkAuditCountAndChain(t *testing.T, w *schedWorld, prog schedProgram, observed []opResult, baselineChained, baselineUnchained int64) {
-	chainedNow := checkAuditChain(t, w, baselineUnchained)
+func checkAuditCountAndChain(t *testing.T, w *schedWorld, prog schedProgram, observed []opResult, baselineChained, baselineUnchained int64) error {
+	chainedNow, err := checkAuditChain(t, w, baselineUnchained)
+	if err != nil {
+		return err
+	}
 	want, countable := expectedSyncAudits(prog, observed)
 	if !countable {
-		return
+		return nil
 	}
 	got := chainedNow - baselineChained
 	if got != want {
-		t.Fatalf("ORACLE3 VIOLATION: expected exactly %d new audit event(s) (one per successful op) but chain gained %d.\nprog=%+v\nobserved=%s",
+		return fmt.Errorf("ORACLE3 VIOLATION: expected exactly %d new audit event(s) (one per successful op) but chain gained %d.\nprog=%+v\nobserved=%s",
 			want, got, prog, fmtResults(observed))
 	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -946,24 +952,31 @@ func FuzzScheduleInterleavings(f *testing.F) {
 		prog := decodeProgram(data)
 		w := newSQLiteWorld(t)
 		defer func() { _ = w.st.Close() }()
-		ctx := context.Background()
-
-		// Baseline audit counts BEFORE the fixture, so fixture mutations don't
-		// skew the per-op count. Fixture then runs single-threaded.
-		baseC, baseU, _ := w.drainAudit(t)
-		w.seedFixture(ctx, prog)
-		// Re-baseline after the (single-threaded, deterministic) fixture.
-		baseC, baseU, _ = w.drainAudit(t)
-
-		observed := runSchedule(t, w, prog) // oracle 4 (deadlock/panic) inside
-		final := w.readFinalState(ctx, prog.domain)
-
-		if err := checkSerialEquivalence(prog, observed, final); err != nil { // oracle 1
-			t.Fatal(err)
-		}
-		if err := checkPostReturnVisibility(prog, observed); err != nil { // oracle 2
-			t.Fatal(err)
-		}
-		checkAuditCountAndChain(t, w, prog, observed, baseC, baseU) // oracle 3
+		runAndCheck(t, w, prog)
 	})
+}
+
+// runAndCheck seeds the per-domain fixture (single-threaded), runs the
+// concurrent schedule, then applies all four oracles. Shared by the SQLite fuzz
+// loop and the Postgres replay test. The caller sets w.uniq when reusing one
+// store across reps.
+func runAndCheck(t *testing.T, w *schedWorld, prog schedProgram) {
+	ctx := context.Background()
+	w.seedFixture(ctx, prog)
+	// Baseline audit counts AFTER the (single-threaded, deterministic) fixture,
+	// so only the concurrent schedule's own events are counted.
+	baseC, baseU, _ := w.drainAudit(t)
+
+	observed := runSchedule(t, w, prog) // oracle 4 (deadlock/panic) inside
+	final := w.readFinalState(ctx, prog.domain)
+
+	if err := checkSerialEquivalence(prog, observed, final); err != nil { // oracle 1
+		t.Fatal(err)
+	}
+	if err := checkPostReturnVisibility(prog, observed); err != nil { // oracle 2
+		t.Fatal(err)
+	}
+	if err := checkAuditCountAndChain(t, w, prog, observed, baseC, baseU); err != nil { // oracle 3
+		t.Fatal(err)
+	}
 }
