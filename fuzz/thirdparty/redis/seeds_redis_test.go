@@ -76,11 +76,11 @@ func clampRESP(in []byte) []byte {
 
 // --- RESP builders (used by seeds and oracle tests) ---
 
-func respStatus(s string) []byte    { return []byte("+" + s + "\r\n") }
-func respError(s string) []byte     { return []byte("-" + s + "\r\n") }
-func respInt(n int) []byte          { return []byte(itoa(":", n)) }
-func respNull() []byte              { return []byte("_\r\n") }
-func respDouble(s string) []byte    { return []byte("," + s + "\r\n") }
+func respStatus(s string) []byte { return []byte("+" + s + "\r\n") }
+func respError(s string) []byte  { return []byte("-" + s + "\r\n") }
+func respInt(n int) []byte       { return []byte(itoa(":", n)) }
+func respNull() []byte           { return []byte("_\r\n") }
+func respDouble(s string) []byte { return []byte("," + s + "\r\n") }
 func respBool(b bool) []byte {
 	if b {
 		return []byte("#t\r\n")
@@ -143,7 +143,7 @@ func cat(parts ...[]byte) []byte {
 // nestedArray builds `*1\r\n` repeated depth times, then a terminal int.
 func nestedArray(depth int) []byte {
 	var out []byte
-	for i := 0; i < depth; i++ {
+	for range depth {
 		out = append(out, respAgg('*', 1)...)
 	}
 	out = append(out, respInt(1)...)

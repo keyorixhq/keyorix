@@ -110,7 +110,7 @@ func TestMongo_HandshakeSpike(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	hello := helloDoc()
 	go func() {
 		for {
@@ -119,7 +119,7 @@ func TestMongo_HandshakeSpike(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				for {
 					reqID, opcode, body, ok := readWireMessage(c)
 					if !ok {
@@ -140,7 +140,7 @@ func TestMongo_HandshakeSpike(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer client.Disconnect(context.Background())
+	defer func() { _ = client.Disconnect(context.Background()) }()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	err = client.Ping(ctx, nil)

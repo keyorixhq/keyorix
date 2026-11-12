@@ -113,7 +113,7 @@ func serveMongo(ln net.Listener, fuzzReply []byte) {
 			return
 		}
 		go func(c net.Conn) {
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			for {
 				reqID, opcode, body, ok := readWireMessage(c)
 				if !ok {
@@ -148,7 +148,7 @@ func runHostileMongo(t *testing.T, in []byte) (*mongoOutcome, uint64) {
 	if err != nil {
 		t.Skipf("cannot listen on loopback: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go serveMongo(ln, reply)
 
 	opts := options.Client().ApplyURI("mongodb://" + ln.Addr().String() +
@@ -157,7 +157,7 @@ func runHostileMongo(t *testing.T, in []byte) (*mongoOutcome, uint64) {
 	if err != nil {
 		t.Fatalf("harness: connect: %v", err)
 	}
-	defer client.Disconnect(context.Background())
+	defer func() { _ = client.Disconnect(context.Background()) }()
 
 	out := &mongoOutcome{}
 	var ms runtime.MemStats

@@ -69,7 +69,7 @@ func TestPgxValues_ShortDataRow_Reproducer(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot listen on loopback: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go serveQuery(ln, append(handshakeOK(), buildScript(in[1:])...))
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
@@ -77,7 +77,7 @@ func TestPgxValues_ShortDataRow_Reproducer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 	var a, b string
 	err = conn.QueryRow(ctx, "select", pgx.QueryExecModeSimpleProtocol).Scan(&a, &b)
 	if err == nil || !strings.Contains(err.Error(), "number of field descriptions must equal number of values") {
@@ -119,7 +119,7 @@ func runStdlibQuery(t *testing.T, script []byte) string {
 	if err != nil {
 		t.Skipf("cannot listen on loopback: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go serveQuery(ln, append(handshakeOK(), buildScript(script)...))
 	cfg, err := pgx.ParseConfig(fmt.Sprintf("postgres://u:%s@%s/db?sslmode=disable", canaryPassword, ln.Addr()))
 	if err != nil {
@@ -127,7 +127,7 @@ func runStdlibQuery(t *testing.T, script []byte) string {
 	}
 	cfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	db := stdlib.OpenDB(*cfg)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
@@ -135,7 +135,7 @@ func runStdlibQuery(t *testing.T, script []byte) string {
 	if err != nil {
 		return "err:" + err.Error()
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var s sql.NullString
 	if rows.Next() {
 		_ = rows.Scan(&s)

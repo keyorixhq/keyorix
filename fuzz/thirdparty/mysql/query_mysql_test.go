@@ -142,10 +142,7 @@ func buildQueryGroups(in []byte) [][]byte {
 			}
 			payload := r[:plen]
 			r = r[plen:]
-			declared := len(payload) + claimTable[(op>>2)&0x07]
-			if declared > maxServerBody {
-				declared = maxServerBody
-			}
+			declared := min(len(payload)+claimTable[(op>>2)&0x07], maxServerBody)
 			cur = append(cur, mysqlFrame(seq, payload, declared)...)
 		}
 		pkts++
@@ -219,7 +216,7 @@ func readCommand(c net.Conn, d time.Duration) {
 }
 
 func (s *queryServer) serve(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	// 1. server-first handshake (seq 0), fixed valid.
 	hs := mysqlHandshake("mysql_native_password", fixedScramble)
 	_ = c.SetWriteDeadline(time.Now().Add(time.Second))
@@ -288,7 +285,7 @@ func runHostileQuery(t *testing.T, in []byte) (*queryOutcome, uint64) {
 	db := sql.OpenDB(connector)
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(0)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	out := &queryOutcome{}
 	var ms runtime.MemStats
@@ -357,7 +354,7 @@ const canaryUser = "canaryuser"
 // can inspect it, and returns rows.Err(). Each value is scanned into a
 // sql.RawBytes-free interface so decoded content (not a pointer) is rendered.
 func renderSQLRows(rows *sql.Rows, w *strings.Builder) error {
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	cols, err := rows.Columns()
 	if err != nil {
 		return err
@@ -470,8 +467,7 @@ func FuzzMySQLHostileQuery(f *testing.F) {
 		if errors.Is(o.err, errLibraryHang) {
 			t.Fatalf("HANG: driver did not return even after the server force-closed all sockets")
 		}
-		var pe *panicErr
-		if errors.As(o.err, &pe) {
+		if pe, ok := errors.AsType[*panicErr](o.err); ok {
 			if msg := classifyQueryPanic(pe.val, pe.stack); msg != "" {
 				t.Fatal(msg)
 			}

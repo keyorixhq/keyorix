@@ -110,7 +110,7 @@ func runHostileQuery(t *testing.T, in []byte) (*queryOutcome, uint64) {
 	if err != nil {
 		t.Skipf("cannot listen on loopback: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go serveQuery(ln, writes)
 
 	out := &queryOutcome{}
@@ -191,7 +191,7 @@ func serveQuery(ln net.Listener, writes [][]byte) {
 	if err != nil {
 		return
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(queryWait + time.Second))
 	var hdr [4]byte
 	if _, err := io.ReadFull(c, hdr[:]); err != nil {
@@ -244,15 +244,15 @@ const (
 func renderRows(rows pgx.Rows, w io.Writer) error {
 	defer rows.Close()
 	for rows.Next() {
-		fmt.Fprintf(w, "%#v|", rows.FieldDescriptions())
+		_, _ = fmt.Fprintf(w, "%#v|", rows.FieldDescriptions())
 		vals, err := rows.Values()
 		if err != nil {
-			fmt.Fprintf(w, "valerr:%v|", err)
+			_, _ = fmt.Fprintf(w, "valerr:%v|", err)
 			continue
 		}
-		fmt.Fprintf(w, "%#v|", vals)
+		_, _ = fmt.Fprintf(w, "%#v|", vals)
 	}
-	fmt.Fprintf(w, "%s|", rows.CommandTag().String())
+	_, _ = fmt.Fprintf(w, "%s|", rows.CommandTag().String())
 	return rows.Err()
 }
 
@@ -274,7 +274,7 @@ func typedScanAll(m *pgtype.Map, fds []pgconn.FieldDescription, raw [][]byte, w 
 			err := m.Scan(fd.DataTypeOID, fd.Format, raw[i], d)
 			// Render the pointee, not the pointer: the canary oracle must see
 			// the decoded content.
-			fmt.Fprintf(w, "%v %#v|", err, reflect.ValueOf(d).Elem().Interface())
+			_, _ = fmt.Fprintf(w, "%v %#v|", err, reflect.ValueOf(d).Elem().Interface())
 		}
 	}
 }
@@ -301,21 +301,21 @@ func driveOp(ctx context.Context, conn *pgx.Conn, op queryOp, w io.Writer) error
 		return renderRows(rows, w)
 	case opSimpleExec:
 		tag, err := conn.Exec(ctx, "create role x", pgx.QueryExecModeSimpleProtocol)
-		fmt.Fprintf(w, "%s|", tag.String())
+		_, _ = fmt.Fprintf(w, "%s|", tag.String())
 		return err
 	case opCopyTo:
 		var buf bytes.Buffer
 		tag, err := conn.PgConn().CopyTo(ctx, &buf, "copy t to stdout")
-		fmt.Fprintf(w, "%s|%q|", tag.String(), buf.Bytes())
+		_, _ = fmt.Fprintf(w, "%s|%q|", tag.String(), buf.Bytes())
 		return err
 	case opCopyFrom:
 		tag, err := conn.PgConn().CopyFrom(ctx, strings.NewReader("1\tabc\n2\tdef\n"), "copy t from stdin")
-		fmt.Fprintf(w, "%s|", tag.String())
+		_, _ = fmt.Fprintf(w, "%s|", tag.String())
 		return err
 	case opMultiResult:
 		results, err := conn.PgConn().Exec(ctx, "select 1; select 2; select 3").ReadAll()
 		for _, r := range results {
-			fmt.Fprintf(w, "%#v|%q|%s|%v|", r.FieldDescriptions, r.Rows, r.CommandTag.String(), r.Err)
+			_, _ = fmt.Fprintf(w, "%#v|%q|%s|%v|", r.FieldDescriptions, r.Rows, r.CommandTag.String(), r.Err)
 		}
 		return err
 	case opTypedScan:

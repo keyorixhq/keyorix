@@ -17,8 +17,7 @@ import (
 func TestMySQLQuery_SeedsAreGreen(t *testing.T) {
 	for i, s := range mysqlQuerySeeds() {
 		o, alloc := runHostileQuery(t, s)
-		var pe *panicErr
-		if errors.As(o.err, &pe) {
+		if pe, ok := errors.AsType[*panicErr](o.err); ok {
 			t.Fatalf("seed %d: panicked (seed layout bug): %v\n%s", i, pe.val, pe.stack)
 		}
 		if errors.Is(o.err, errLibraryHang) {
@@ -91,8 +90,7 @@ func TestMySQLQuery_TruncatedRow_Oracle(t *testing.T) {
 		if o.err == nil {
 			t.Fatalf("truncated row produced success; rendered=%q", o.rendered.String())
 		}
-		var pe *panicErr
-		if errors.As(o.err, &pe) {
+		if pe, ok := errors.AsType[*panicErr](o.err); ok {
 			t.Fatalf("truncated row panicked instead of erroring: %v\n%s", pe.val, pe.stack)
 		}
 

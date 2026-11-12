@@ -17,7 +17,7 @@ import (
 
 // runExecCapture drives one ExecContext against a hostile server, capturing all
 // bytes the client sends. cfgMut may mutate the driver config (e.g. AllowAllFiles).
-func runExecCapture(t *testing.T, script []byte, query string, cfgMut func(*mysql.Config)) (err error, clientBytes []byte) {
+func runExecCapture(t *testing.T, script []byte, query string, cfgMut func(*mysql.Config)) (clientBytes []byte, err error) {
 	t.Helper()
 	ln, lerr := net.Listen("tcp", "127.0.0.1:0")
 	if lerr != nil {
@@ -38,11 +38,11 @@ func runExecCapture(t *testing.T, script []byte, query string, cfgMut func(*mysq
 	db := sql.OpenDB(connector)
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(0)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_, err = db.ExecContext(ctx, query)
-	return err, cap.bytes()
+	return cap.bytes(), err
 }
 
 // reproPanic runs script against a hostile server and returns the recovered
@@ -64,7 +64,7 @@ func reproPanic(t *testing.T, script []byte) (recovered any) {
 		t.Fatalf("harness: NewConnector: %v", cerr)
 	}
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = db.PingContext(ctx)
@@ -89,7 +89,7 @@ func TestMySQL_AuthSwitchShortScramble_Reproducer(t *testing.T) {
 		encClose(),
 	)
 	// Replay 3 times for stability.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		rec := reproPanic(t, script)
 		if rec == nil {
 			t.Fatalf("run %d: expected a panic from auth.go:310 (authData[:20]); driver did not panic "+
@@ -115,7 +115,7 @@ func TestMySQL_ShortHandshake_Reproducer(t *testing.T) {
 	// immediate NUL terminating the server-version string. pos lands past the
 	// 2-byte packet and data[pos:pos+8] panics.
 	script := cat(encPkt(0, []byte{0x0a, 0x00}), encClose())
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		rec := reproPanic(t, script)
 		if rec == nil {
 			t.Fatalf("run %d: expected a panic from packets.go:209 (data[pos:pos+8]); driver did not panic "+
@@ -232,7 +232,7 @@ func TestMySQL_LocalInfile_Guard(t *testing.T) {
 	)
 
 	// Default: AllowAllFiles=false -> must refuse, never read the file.
-	err, client := runExecCapture(t, script, "SELECT 1", nil)
+	client, err := runExecCapture(t, script, "SELECT 1", nil)
 	if err == nil {
 		t.Fatalf("default guard: expected a refusal error for an unregistered LOCAL INFILE, got nil")
 	}
@@ -245,7 +245,7 @@ func TestMySQL_LocalInfile_Guard(t *testing.T) {
 
 	// Positive control: AllowAllFiles=true -> the driver DOES read and ship the
 	// file, proving the capture can detect a read (guard is load-bearing).
-	_, client2 := runExecCapture(t, script, "SELECT 1", func(c *mysql.Config) {
+	client2, _ := runExecCapture(t, script, "SELECT 1", func(c *mysql.Config) {
 		c.AllowAllFiles = true
 	})
 	if !strings.Contains(string(client2), fileCanary) {

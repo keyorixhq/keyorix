@@ -19,8 +19,7 @@ import (
 func reproQueryPanic(t *testing.T, in []byte) (any, string) {
 	t.Helper()
 	o, _ := runHostileQuery(t, in)
-	var pe *panicErr
-	if errors.As(o.err, &pe) {
+	if pe, ok := errors.AsType[*panicErr](o.err); ok {
 		return pe.val, pe.stack
 	}
 	return nil, ""

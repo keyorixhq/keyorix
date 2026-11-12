@@ -137,10 +137,7 @@ func buildScript(in []byte) [][]byte {
 			}
 			payload := r[:plen]
 			r = r[plen:]
-			declared := len(payload) + claimTable[(op>>2)&0x07]
-			if declared > maxServerBody {
-				declared = maxServerBody
-			}
+			declared := min(len(payload)+claimTable[(op>>2)&0x07], maxServerBody)
 			out = append(out, frame(typ, payload, declared))
 		}
 	}
@@ -156,7 +153,7 @@ func serveOnce(ln net.Listener, writes [][]byte) {
 	if err != nil {
 		return
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	go io.Copy(io.Discard, c) //nolint:errcheck // draining; errors are expected on close
 	for _, w := range writes {
 		if _, err := c.Write(w); err != nil {
@@ -176,7 +173,7 @@ func runHostile(t *testing.T, script []byte) (connectErr error) {
 	if err != nil {
 		t.Skipf("cannot listen on loopback: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go serveOnce(ln, writes)
 
 	port := ln.Addr().(*net.TCPAddr).Port

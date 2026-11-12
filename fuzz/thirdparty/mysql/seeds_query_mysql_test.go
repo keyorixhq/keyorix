@@ -109,13 +109,6 @@ func binaryRowBody(numCols int, values ...[]byte) []byte {
 // binStringVal encodes a length-encoded-string binary value.
 func binStringVal(s string) []byte { return lenstr(s) }
 
-// binLongVal encodes a 4-byte little-endian fieldTypeLong binary value.
-func binLongVal(v uint32) []byte {
-	var t [4]byte
-	binary.LittleEndian.PutUint32(t[:], v)
-	return t[:]
-}
-
 // --- query-path group encoding (see buildQueryGroups in query_mysql_test.go) ---
 //
 // Encoding mirrors the handshake harness's buildScript: a stream of ops, each
@@ -170,7 +163,6 @@ func prepareGroup(columnCount, paramCount uint16) []byte {
 	}
 	if columnCount > 0 {
 		parts = append(parts, encQPkt(seq, eofBody()))
-		seq++
 	}
 	return cat(parts...)
 }

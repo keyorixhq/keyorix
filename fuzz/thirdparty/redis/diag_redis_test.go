@@ -18,14 +18,14 @@ func TestRedis_ConnectSequence_Diag(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	go func() {
 		c, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		buf := make([]byte, 4096)
 		for {
 			_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
@@ -56,7 +56,7 @@ func TestRedis_ConnectSequence_Diag(t *testing.T) {
 		MaxRetries:      -1,
 	}
 	client := redis.NewClient(opt)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	res := client.Do(ctx, "PING")

@@ -131,10 +131,7 @@ func buildScript(in []byte) [][]byte {
 			}
 			payload := r[:plen]
 			r = r[plen:]
-			declared := len(payload) + claimTable[(op>>2)&0x07]
-			if declared > maxServerBody {
-				declared = maxServerBody
-			}
+			declared := min(len(payload)+claimTable[(op>>2)&0x07], maxServerBody)
 			out = append(out, mysqlFrame(seq, payload, declared))
 		}
 		if len(out) >= maxWrites {
@@ -228,7 +225,7 @@ func (s *fakeServer) shutdown() {
 }
 
 func (s *fakeServer) serveConn(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	writes, cap, hold := s.writes, s.cap, s.hold
 	var tmp [8192]byte
 	for i, w := range writes {
@@ -246,10 +243,7 @@ func (s *fakeServer) serveConn(c net.Conn) {
 	// Drain/capture whatever the client sends after the last scripted packet
 	// (e.g. LOCAL INFILE content, or a final command) until it closes or hold
 	// elapses.
-	deadline := 40 * time.Millisecond
-	if hold > deadline {
-		deadline = hold
-	}
+	deadline := max(hold, 40*time.Millisecond)
 	_ = c.SetReadDeadline(time.Now().Add(deadline))
 	for {
 		n, err := c.Read(tmp[:])
@@ -391,8 +385,7 @@ func FuzzMySQLHostileServer(f *testing.F) {
 		if errors.Is(err, errLibraryHang) {
 			t.Fatalf("HANG: driver did not return even after the server force-closed all sockets")
 		}
-		var pe *panicErr
-		if errors.As(err, &pe) {
+		if pe, ok := errors.AsType[*panicErr](err); ok {
 			for _, site := range knownLibPanicSites {
 				if strings.Contains(pe.stack, site) {
 					return // confirmed library bug, already reported (see reproducer tests)

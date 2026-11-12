@@ -100,7 +100,7 @@ func runMongoTruncation(t *testing.T, fuzzBody []byte, truncate bool) error {
 	if err != nil {
 		t.Skip(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	hello := helloDoc()
 	go func() {
 		for {
@@ -109,7 +109,7 @@ func runMongoTruncation(t *testing.T, fuzzBody []byte, truncate bool) error {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				for {
 					reqID, opcode, body, ok := readWireMessage(c)
 					if !ok {
@@ -134,7 +134,7 @@ func runMongoTruncation(t *testing.T, fuzzBody []byte, truncate bool) error {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer client.Disconnect(context.Background())
+	defer func() { _ = client.Disconnect(context.Background()) }()
 	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()
 	var res bson.M

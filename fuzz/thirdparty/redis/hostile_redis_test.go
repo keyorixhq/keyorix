@@ -66,7 +66,7 @@ func serveHostileReply(ln net.Listener, reply []byte) {
 	if err != nil {
 		return
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	buf := make([]byte, 8192)
 	for {
 		_ = c.SetReadDeadline(time.Now().Add(time.Second))
@@ -118,7 +118,7 @@ func runHostileRedis(t *testing.T, in []byte) (*redisOutcome, uint64) {
 	if err != nil {
 		t.Skipf("cannot listen on loopback: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go serveHostileReply(ln, reply)
 
 	opt := &redis.Options{
@@ -134,7 +134,7 @@ func runHostileRedis(t *testing.T, in []byte) (*redisOutcome, uint64) {
 		PoolSize:        1,
 	}
 	client := redis.NewClient(opt)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	out := &redisOutcome{}
 	var ms runtime.MemStats
