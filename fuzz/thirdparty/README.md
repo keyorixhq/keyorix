@@ -111,3 +111,24 @@ the finding; see `/mnt/data/wave4/out/wm-REPORT.md`.
 ```
 nice -n 10 go test ./fuzz/thirdparty/mysql/ -run '^$' -fuzz '^FuzzMySQLHostileQuery$' -fuzztime=540s -parallel 2 -cpu 2
 ```
+
+## go-redis reply parser (session h5, h1 follow-up)
+
+`FuzzRedisReply` (`redis/hostile_redis_test.go`) attacks redis/go-redis/v9's
+`internal/proto` RESP3 reply parser — h1's open lead. A fake server satisfies the
+connect handshake (`-ERR` to HELLO → RESP2 fallback, `+OK` to legacy AUTH) and
+streams a fuzz-controlled command-reply byte stream as the answer to the client's
+generic `Do` (the recursive `ReadReply` path, which is what `ACL SETUSER` /
+`ACL DELUSER` use — `client.Ping` uses the non-recursive single-line path).
+Oracles: no panic/hang, a `TotalAlloc` budget, canary never in an error or
+decoded value, truncated reply must error; `clampRESP` caps lengths at 4 KiB and
+the reply at 32 KiB for host safety.
+
+`TestRedis_NestedRecursion_Characterise` documents **REDIS-1**: the aggregate
+parser recurses once per nesting level with no depth guard (parses depth 6000
+cleanly) — a stack-exhaustion DoS at attacker-chosen depth. See
+`/mnt/data/wave4/out/wm-REPORT.md`.
+
+```
+nice -n 10 go test ./fuzz/thirdparty/redis/ -run '^$' -fuzz '^FuzzRedisReply$' -fuzztime=540s -parallel 2 -cpu 2
+```
