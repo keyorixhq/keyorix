@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -49,7 +48,7 @@ func runSecretRender(_ *cobra.Command, args []string) error {
 			return fmt.Errorf("read template: %w", err)
 		}
 	} else {
-		tmpl, err = io.ReadAll(os.Stdin)
+		tmpl, err = io.ReadAll(sharedStdin{})
 		if err != nil {
 			return fmt.Errorf("read template from stdin: %w", err)
 		}

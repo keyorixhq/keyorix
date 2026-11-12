@@ -105,7 +105,9 @@ func isVersionConflict(err error) bool {
 // rotation backend, or a rollback) the timestamp write too, so only a backend-bound
 // rotation still keeps the split described above. A version is never stored without
 // its audit row and a failed inTx stores nothing.
-func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models.SecretNode, value []byte, inTx func(tx storage.Storage) error) error {
+//
+// It returns the version number it stored.
+func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models.SecretNode, value []byte, inTx func(tx storage.Storage) error) (int, error) {
 	var lastErr error
 	for range maxRotateVersionAttempts {
 		latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
@@ -117,7 +119,7 @@ func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models
 			// No versions yet - version 1 is correct.
 		default:
 			// A real read failure, not "no versions yet" - don't guess.
-			return err
+			return 0, err
 		}
 		if inTx == nil {
 			lastErr = c.storeSecretVersion(ctx, c.storage, secret, value, nextVersionNumber)
@@ -130,15 +132,15 @@ func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models
 			})
 		}
 		if lastErr == nil {
-			return nil
+			return nextVersionNumber, nil
 		}
 		if !isVersionConflict(lastErr) {
-			return lastErr
+			return 0, lastErr
 		}
 		// Lost the race to another concurrent rotation of the same secret — re-read the
 		// now-current latest version and retry.
 	}
-	return fmt.Errorf("%w (exceeded %d attempts): %v", ErrSecretVersionContentionExhausted, maxRotateVersionAttempts, lastErr)
+	return 0, fmt.Errorf("%w (exceeded %d attempts): %v", ErrSecretVersionContentionExhausted, maxRotateVersionAttempts, lastErr)
 }
 
 // updateSecretWithNewVersion resolves the next version number, then stores that

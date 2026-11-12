@@ -9,6 +9,10 @@
 #   success: close the open issue with this exact title (if any), with a
 #            comment linking the green run. Third arg is ignored.
 #
+# Optional env FAILURE_ISSUE_MIN_COMMENT_HOURS=N: on a repeat failure, comment
+# only if the issue was created or last commented on at least N hours ago (for
+# schedules that run many times a day). Default 0 = comment every time.
+#
 # Needs GH_TOKEN with issues: write, plus GITHUB_REPOSITORY, GITHUB_SERVER_URL
 # and GITHUB_RUN_ID (all set by Actions). No external service and no secrets:
 # GitHub's own notifications (email / mobile push) deliver the alert.
@@ -41,6 +45,19 @@ if [ "$outcome" = "failure" ]; then
 
 ${detail}"
 	if [ -n "$existing" ]; then
+		# Optional throttle for frequent schedules (govulncheck-scheduled runs
+		# every 3 h): skip the comment when the issue was created or last
+		# commented on less than FAILURE_ISSUE_MIN_COMMENT_HOURS ago. Unset or
+		# 0 keeps the old behaviour (comment on every failure).
+		min_hours="${FAILURE_ISSUE_MIN_COMMENT_HOURS:-0}"
+		if [ "$min_hours" != "0" ]; then
+			age_s=$(gh issue view "$existing" --repo "$repo" --json createdAt,comments |
+				jq -r '([.createdAt] + [.comments[].createdAt] | max | fromdateiso8601) as $t | (now - $t) | floor')
+			if [ "$age_s" -lt $((min_hours * 3600)) ]; then
+				echo "#${existing} touched ${age_s}s ago (< ${min_hours}h); not commenting again"
+				exit 0
+			fi
+		fi
 		gh issue comment "$existing" --repo "$repo" --body "Failed again: ${run_url}${detail_block}"
 		echo "commented on #${existing}"
 	else

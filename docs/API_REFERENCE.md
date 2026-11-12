@@ -114,6 +114,11 @@ Filter by it with `request_id=<id>` on `GET /api/v1/audit/logs` and
 query a time window (`start_time`/`end_time`, `since`/`until`, `--since`) when
 the audit trail is large.
 
+`resource_type` on `GET /api/v1/audit/search` (and `keyorix audit search
+--resource-type`) selects the events whose type starts with `<resource_type>.`
+and is matched case-sensitively on every database: event types are lower-case,
+so `secret` matches `secret.read` while `Secret` and `SECRET` match nothing.
+
 **`request_id` is not covered by the audit hash chain.** It is advisory: anyone
 with write access to the database can set, change or clear it and
 `admin verify-audit` will not notice. After finding rows by request id, confirm

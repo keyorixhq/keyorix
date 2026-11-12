@@ -33,6 +33,17 @@ const (
 	permUsersWrite    = "users.write"
 )
 
+// Role IDs of the ADR-021 project roles the fixture seeds next to the legacy
+// roles (1 super_admin, 2 admin, 3 editor, 4 viewer, 5 auditor, 6
+// system_viewer). The legacy roles are install-wide only; a grant at a project
+// uses one of these.
+const (
+	RoleProjectAdmin     uint = 7
+	RoleProjectDeveloper uint = 8
+	RoleProjectViewer    uint = 9
+	RoleProjectAuditor   uint = 10
+)
+
 type testContextKey string
 
 const (
@@ -153,27 +164,26 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 		{4, "viewer", "Read-only access to secrets in assigned projects"},
 		{5, "auditor", "Can view audit logs and system information"},
 		{6, "system_viewer", "Minimal install baseline (ADR-021)"},
+		{RoleProjectAdmin, "project_admin", "Full control within a project"},
+		{RoleProjectDeveloper, "project_developer", "Read, write and delete secrets in a project"},
+		{RoleProjectViewer, "project_viewer", "Read-only access to a project's secrets"},
+		{RoleProjectAuditor, "project_auditor", "Read-only access to a project's secrets plus its audit log"},
 	}
 
 	for _, role := range roles {
 		// name_folded is NOT NULL (#1642); every seeded role name here is
 		// already pure-lowercase ASCII, so it's its own folded form.
 		// ADR-084: bypasses_permission_checks is the structural admin-bypass
-		// flag, not the name — set true here for super_admin/admin exactly
-		// as real bootstrap seeding would, so tests using this helper to
+		// flag, not the name — set true here for super_admin/admin/project_admin
+		// exactly as real bootstrap seeding would, so tests using this helper to
 		// exercise the admin bypass keep working. assignable_scope likewise
-		// (#3546 Phase 2): the built-in's fixed scope, as seeding writes it,
-		// EXCEPT the legacy names, which this fixture keeps at any. It uses them as
-		// generic roles with their own permission sets, granted per project by
-		// tests about SoD, break-glass and authz. It therefore does NOT show what
-		// a real install does with a legacy role at a project (#3605): that is
-		// TestLegacyRolesGrantedPerProjectAreRefused, on a real bootstrap.
-		scope := models.BuiltinRoleAssignableScopes[role.Name]
-		if _, legacy := models.LegacyRoleProjectReplacement(role.Name); legacy {
-			scope = models.RoleAssignableAny
-		}
+		// (#3546 Phase 2): the built-in's fixed scope, as seeding writes it. The
+		// legacy names are install-wide only (#3605, LEGACY-ROLES-GLOBAL-1), so a
+		// test that grants a role at a project through a core grant path uses a
+		// project_* role (RoleProject*), as a real install must.
+		bypass := role.Name == "super_admin" || role.Name == "admin" || role.Name == "project_admin"
 		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, name_folded, description, bypasses_permission_checks, assignable_scope) VALUES (?, ?, ?, ?, ?, ?)",
-			role.ID, role.Name, role.Name, role.Description, role.Name == "super_admin" || role.Name == "admin", scope)
+			role.ID, role.Name, role.Name, role.Description, bypass, models.BuiltinRoleAssignableScopes[role.Name])
 	}
 
 	// Create default permissions using raw SQL
@@ -242,6 +252,13 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 		"viewer":        {permSecretsRead, permUsersRead},
 		"auditor":       {permAuditRead, permAuditAdmin, permSystemRead, permUsersRead, permRolesRead},
 		"system_viewer": {permSystemRead},
+		// ADR-021 project roles: the bundles real bootstrap seeds (internal/core
+		// defaultRoles).
+		"project_admin": {permSecretsRead, permSecretsWrite, permSecretsDelete,
+			permUsersRead, permRolesRead, permRolesAssign, permAuditRead},
+		"project_developer": {permSecretsRead, permSecretsWrite, permSecretsDelete, permUsersRead},
+		"project_viewer":    {permSecretsRead, permUsersRead},
+		"project_auditor":   {permSecretsRead, permUsersRead, permAuditRead},
 	}
 
 	for roleName, permNames := range rolePermissions {

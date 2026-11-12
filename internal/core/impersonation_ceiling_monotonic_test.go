@@ -68,6 +68,7 @@ func TestCachedImpersonationCeiling_RealClockRetainsMonotonicReading(t *testing.
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{5}).Return(false, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{5}, "users.impersonate").Return(true, nil)
 	store.On("GetUserRoleScopes", ctx, targetID).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, targetID).Return(nil, nil)
 
 	require.NoError(t, c.ReauthorizeImpersonation(ctx, adminID, targetID))
 
@@ -110,6 +111,7 @@ func TestCachedImpersonationCeiling_TTLExpiryUsesGenuineElapsedTime(t *testing.T
 	store.On("GetUserGroupRoleIDsAt", ctx, adminID, Scope{}).Return([]uint{}, nil)
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{5}).Return(false, nil)
 	store.On("GetUserRoleScopes", ctx, targetID).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, targetID).Return(nil, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{5}, "users.impersonate").Return(true, nil).Once()
 
 	// Populate the cache with an ALLOW verdict.
@@ -163,6 +165,7 @@ func TestCachedImpersonationCeiling_DefaultClockRetainsMonotonicReading(t *testi
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{5}).Return(false, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{5}, "users.impersonate").Return(true, nil)
 	store.On("GetUserRoleScopes", ctx, targetID).Return([]Scope{}, nil)
+	store.On("ListUserRoleGrants", ctx, targetID).Return(nil, nil)
 
 	require.NoError(t, c.ReauthorizeImpersonation(ctx, adminID, targetID))
 

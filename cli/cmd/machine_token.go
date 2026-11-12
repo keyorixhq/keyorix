@@ -2,7 +2,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -239,8 +238,7 @@ func runMachineTokenRevoke(cmd *cobra.Command, args []string) error {
 
 	if !machineTokenRevokeForce {
 		fmt.Printf("Revoke token %d? [y/N]: ", tokenID)
-		reader := bufio.NewReader(cmd.InOrStdin())
-		input, _ := reader.ReadString('\n')
+		input, _ := promptInput(cmd.InOrStdin()).ReadString('\n')
 		if strings.ToLower(strings.TrimSpace(input)) != "y" {
 			fmt.Println("Revoke aborted.")
 			return nil

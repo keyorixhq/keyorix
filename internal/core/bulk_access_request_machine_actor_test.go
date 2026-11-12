@@ -52,12 +52,13 @@ import (
 )
 
 const (
-	// Seeded by RBACTestHelper: role 2 "admin" bundles roles.assign plus every
-	// permission "editor" (role 3) bundles, so a machine granted it clears the
-	// ceiling for an editor grant. Role 3 "editor" bundles secrets.read,
-	// secrets.write and users.read but NOT roles.assign.
-	bulkAdminRoleID  = uint(2)
-	bulkEditorRoleID = uint(3)
+	// Seeded by RBACTestHelper: project_admin bundles roles.assign plus every
+	// permission project_developer bundles, so a machine granted it clears the
+	// ceiling for a project_developer grant. project_developer bundles
+	// secrets.read, secrets.write, secrets.delete and users.read but NOT
+	// roles.assign.
+	bulkAdminRoleID  = testhelper.RoleProjectAdmin
+	bulkEditorRoleID = testhelper.RoleProjectDeveloper
 	// Machine identity IDs. No MachineIdentity row is needed — the ceiling
 	// resolves a machine's authority through machine_identity_roles
 	// (GetMachineRoleIDsAt), the same shape dual_control_external_test.go uses.
@@ -68,7 +69,7 @@ const (
 )
 
 // newBulkMachineApproverWorld builds a real-storage install with one pending
-// access request (project 2, requester 10, suggested role "editor") and returns
+// access request (project 2, requester 10, suggested role "project_developer") and returns
 // the helper plus the request ID.
 func newBulkMachineApproverWorld(t *testing.T) (*testhelper.RBACTestHelper, uint) {
 	t.Helper()
@@ -81,7 +82,7 @@ func newBulkMachineApproverWorld(t *testing.T) (*testhelper.RBACTestHelper, uint
 	// and the maker-cannot-be-checker guard compares approverID to req.UserID.
 	h.CreateTestUser(t, "alice", bulkRequesterID)
 	req, err := h.Storage.CreateAccessRequest(ctx, &models.AccessRequest{
-		ProjectID: bulkProjectID, UserID: bulkRequesterID, SuggestedRole: "editor", State: "pending",
+		ProjectID: bulkProjectID, UserID: bulkRequesterID, SuggestedRole: "project_developer", State: "pending",
 	})
 	require.NoError(t, err)
 	return h, req.ID
@@ -130,7 +131,7 @@ func TestBulkApprove_MachineApproverMissingPermission_RefusedByCeiling(t *testin
 	ctx := context.Background()
 
 	// "assigner-only" bundles roles.assign and nothing else: enough to reach the
-	// endpoint and pass the per-item authorization, not enough to grant "editor".
+	// endpoint and pass the per-item authorization, not enough to grant "project_developer".
 	h.CreateTestRole(t, "assigner-only", "roles.assign and nothing else", 98)
 	h.ExecuteRawSQL(t, `INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
 		SELECT r.id, p.id FROM roles r, permissions p WHERE r.name = ? AND p.name = ?`,
