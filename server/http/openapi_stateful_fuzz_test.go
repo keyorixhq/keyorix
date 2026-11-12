@@ -240,11 +240,10 @@ type osWorld struct {
 	seedPools map[string][]uint       // resource collection -> ids seeded at build time
 }
 
-func osBuildWorld(f *testing.F) *osWorld {
+// osBuildWorld builds one seeded world. The caller initialises i18n (once per process) so a
+// world can be rebuilt mid-run when an iteration destroys its fixtures (osRestoreWorld).
+func osBuildWorld(f testing.TB) *osWorld {
 	f.Helper()
-	if err := i18n.InitializeForTesting(); err != nil {
-		f.Fatalf("i18n: %v", err)
-	}
 	db := fuzzworld.OpenSQLite(f, sqlitetest.DSN("osfuzz_"), 1)
 	fuzzworld.Bootstrap(f, db)
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
@@ -1382,11 +1381,14 @@ func osTrunc(s string) string {
 func FuzzOpenAPIStateful(f *testing.F) {
 	osInitSweep()
 	osLoadSpec(f)
+	if err := i18n.InitializeForTesting(); err != nil {
+		f.Fatalf("i18n: %v", err)
+	}
+	f.Cleanup(i18n.ResetForTesting)
 	w := osBuildWorld(f)
 	if osSweep {
 		f.Log("FuzzOpenAPIStateful: SWEEP mode — oracle findings are logged (deduped), not fatal")
 	}
-	f.Cleanup(i18n.ResetForTesting)
 
 	// Seeds: a mix of principals and simple op sequences. Byte 0 selects the principal;
 	// bytes thereafter drive step count, op selection (u16), per-step mode, and args.
