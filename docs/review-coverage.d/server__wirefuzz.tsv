@@ -1,0 +1,1 @@
+server/wirefuzz	none	-	Test-only wire-protocol fuzz harness (raw bytes to the production HTTP/1.1 parser, the HTTP/2 framer and gRPC framing on loopback listeners; smuggling, authz-invariance and health oracles, red/green proven); no production code, nothing linked into a build	test-helper
