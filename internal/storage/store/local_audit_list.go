@@ -248,9 +248,32 @@ func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 	if f.ResourceType != nil {
 		// event_type is "resource_type.action" — match rows whose event_type
 		// starts with "<resource_type>." so "secret" catches "secret.read",
-		// "secret.created", etc. escapeLIKE prevents a caller-supplied
-		// resource_type containing % or _ from matching unintended event types.
-		q = q.Where(`event_type LIKE ? ESCAPE '\'`, escapeLIKE(*f.ResourceType)+".%")
+		// "secret.created", etc.
+		//
+		// The match is CASE-SENSITIVE on both backends (#4090): event types are
+		// lower-case constants, so a differently cased value is a caller error
+		// and matches nothing. A bare LIKE cannot give that: it is ASCII
+		// case-insensitive on SQLite and case-sensitive on PostgreSQL. So SQLite
+		// uses GLOB (always case-sensitive, no PRAGMA case_sensitive_like) and
+		// PostgreSQL keeps LIKE (always case-sensitive). Both compare the bare
+		// column against a literal prefix, so no function call hides event_type
+		// from its index. The term is escaped for its operator so a
+		// caller-supplied %, _ (LIKE) or *, ?, [ (GLOB) stays literal.
+		if q.Dialector.Name() == "postgres" {
+			q = q.Where(`event_type LIKE ? ESCAPE '\'`, escapeLIKE(*f.ResourceType)+".%")
+		} else {
+			q = q.Where(`event_type GLOB ?`, escapeGLOB(*f.ResourceType)+".*")
+		}
 	}
 	return q
+}
+
+// escapeGLOB makes s literal inside a SQLite GLOB pattern. GLOB has no escape
+// character: a metacharacter is made literal by putting it in a one-character
+// class. "]" outside a class is already literal.
+func escapeGLOB(s string) string {
+	s = strings.ReplaceAll(s, "[", "[[]")
+	s = strings.ReplaceAll(s, "*", "[*]")
+	s = strings.ReplaceAll(s, "?", "[?]")
+	return s
 }
