@@ -14,5 +14,4 @@
   file-state sequences against a stdlib-loader differential: a cert/key mismatch is never
   served and the previous good pair is always retained on a bad reload). Not covered: an
   open gRPC connection keeps its certificate until `max_connection_age` recycles it; and
-  rotation is detected by mtime, so an mtime-preserving replacement is served stale (see
-  the HARDENING note in the V4 report).
+  rotation is detected by mtime, so an mtime-preserving replacement is served stale (#4146).

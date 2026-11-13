@@ -29,9 +29,13 @@ package tlsreload
 //     internal/tlsreload's documented behaviour: "if it does not load ... the
 //     previous pair keeps being served" (package doc, reloadLocked).
 //
-// What this does NOT verify: it does not exercise permission-denied reads (the
-// host runs these tests as root, which bypasses mode bits, so a chmod-000 state
-// would not fail-closed and is deliberately omitted rather than silently pass);
+// What this does NOT verify: it does not exercise permission-denied reads (a
+// chmod-000 state is omitted because it would not fail closed when the tests
+// run as root, e.g. in a container, which bypasses mode bits; rather than skip
+// conditionally it is left out everywhere); it only generates ECDSA P-256 pairs,
+// so the RSA pairs the server tests use are not covered by oracle B; its
+// differential reference calls the same tls.LoadX509KeyPair the Reloader does,
+// so it checks the keep-old/mtime logic, not the loader itself;
 // it does not test the 30s CheckInterval timing window (it pins the interval to
 // 0 to make the differential exact); it does not assert TLS protocol-version
 // floors (that lives in the listener's tls.Config, not the Reloader — see the
@@ -43,9 +47,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"math/big"
 	"os"
@@ -59,7 +65,7 @@ import (
 // is served back.
 type poolPair struct {
 	serial  int64
-	keyFP   string // hex of the marshalled EC private key — distinguishes keys
+	keyFP   string // SHA-256 of the marshalled EC private key — distinguishes keys
 	certPEM []byte
 	keyPEM  []byte
 }
@@ -112,14 +118,8 @@ func buildPool(t testing.TB) []poolPair {
 }
 
 func fingerprint(b []byte) string {
-	const hexdigits = "0123456789abcdef"
-	out := make([]byte, 0, 16)
-	// A short, cheap fingerprint: first 8 bytes is plenty to tell distinct
-	// P-256 keys apart for this harness.
-	for i := 0; i < len(b) && i < 8; i++ {
-		out = append(out, hexdigits[b[i]>>4], hexdigits[b[i]&0xf])
-	}
-	return string(out)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // servedIdentity reads the certificate the Reloader would serve and returns its
