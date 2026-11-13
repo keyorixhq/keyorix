@@ -119,7 +119,7 @@ func FuzzDSNHostsCoverDriverHosts(f *testing.F) {
 					if strings.Contains(host, ",") {
 						// "%2C" decodes to one host name containing a comma (never an IP
 						// literal); require every comma-separated part to be covered instead.
-						for _, part := range strings.Split(host, ",") {
+						for part := range strings.SplitSeq(host, ",") {
 							check("mongo", part)
 						}
 						continue

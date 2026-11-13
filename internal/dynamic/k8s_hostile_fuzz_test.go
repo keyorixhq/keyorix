@@ -215,7 +215,7 @@ func runK8sHostile(p hostile.Program, known []hostile.Known) *hostile.Harness {
 			valueOK = true
 		}
 		if other2xx {
-			if valueOK && uk == "" && tk == "" {
+			if valueOK && (uk == "" || uk == "transport") && (tk == "" || tk == "transport") {
 				h.Violate("O5/bad-status-accepted/2xx-valid-body: Issue succeeded on a final 2xx other than 200/201 with complete bodies the strict decoders agree with")
 			} else {
 				h.Violate("O5/bad-status-accepted: Issue succeeded on a bound-Secret/TokenRequest response whose final HTTP status was not 200/201 (secret=%q token=%q)", uk, tk)
