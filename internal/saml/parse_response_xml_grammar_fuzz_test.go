@@ -180,8 +180,11 @@ func FuzzSAMLXMLGrammar(f *testing.F) {
 		case 2:
 			conditions = ""
 		}
-		assertionXML := fmt.Sprintf(`<saml:Assertion xmlns:saml="%s" ID="_xg1" IssueInstant="%s" Version="2.0"><saml:Issuer>%s</saml:Issuer>%s%s</saml:Assertion>`,
-			samlNS, now.Format(time.RFC3339), idpEntityID, subject, conditions)
+		// crewjam/saml >= 0.6 rejects an assertion without an AuthnStatement
+		// (saml-profiles 4.1.4.2), so the control fixture must carry one.
+		authn := fmt.Sprintf(`<saml:AuthnStatement AuthnInstant="%s"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Password</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement>`, now.Format(time.RFC3339))
+		assertionXML := fmt.Sprintf(`<saml:Assertion xmlns:saml="%s" ID="_xg1" IssueInstant="%s" Version="2.0"><saml:Issuer>%s</saml:Issuer>%s%s%s</saml:Assertion>`,
+			samlNS, now.Format(time.RFC3339), idpEntityID, subject, conditions, authn)
 
 		doc := etree.NewDocument()
 		if err := doc.ReadFromString(assertionXML); err != nil {
