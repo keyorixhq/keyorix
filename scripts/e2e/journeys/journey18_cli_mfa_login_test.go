@@ -137,6 +137,46 @@ func TestJourney_CLILoginWithMFA(t *testing.T) {
 			t.Fatalf("expected the server's own rejection reason in the output:\n%s", out)
 		}
 	})
+
+	// CLIENT-TOKEN-FILE-1 item 4: the scripted shape, `printf 'user\npw' | keyorix login`.
+	// Username and password come from the pipe; the second factor cannot (the CLI refuses
+	// to read it from a non-terminal stdin), so it comes from KEYORIX_MFA_CODE. A recovery
+	// code is used so the step does not wait for the next TOTP window (the TOTP step of
+	// subtest 2 is already burned).
+
+	t.Run("6. piped username and password, last line without a newline, plus KEYORIX_MFA_CODE", func(t *testing.T) {
+		stdin := adminUser + "\n" + adminPw // printf %s: no trailing newline
+		out := runCLIWithStdinOK(t, cliBin, withEnv(loginEnv, "KEYORIX_MFA_CODE="+recoveryCodes[1]), stdin,
+			"login", "--server", s.BaseURL)
+		if !strings.Contains(out, "Logged in to") {
+			t.Fatalf("expected a successful piped login, got:\n%s", out)
+		}
+		if strings.Contains(out, "EOF") || strings.Contains(out, adminPw) || strings.Contains(out, recoveryCodes[1]) {
+			t.Fatalf("a piped login must not fail with EOF or echo a secret:\n%s", out)
+		}
+		out = runCLI(t, cliBin, loginEnv, "project", "list")
+		if strings.Contains(out, "no server configured") || strings.Contains(out, "401") {
+			t.Fatalf("the session the piped login stored is not usable:\n%s", out)
+		}
+		assertCredentialFileHasNoCode(t, s.Dir, recoveryCodes[1])
+	})
+
+	t.Run("7. a second factor on the pipe is not read: the error names KEYORIX_MFA_CODE", func(t *testing.T) {
+		// Three piped lines, the way a 2FA script might write them. The CLI uses the first
+		// two and refuses the third as a source (no terminal), before any verify request, so
+		// no recovery code is spent and the error is not "HTTP 200" or "EOF".
+		stdin := adminUser + "\n" + adminPw + "\n" + recoveryCodes[2] + "\n"
+		out := runCLIWithStdinExpectErr(t, cliBin, loginEnv, stdin, "login", "--server", s.BaseURL)
+		if strings.Contains(out, "HTTP 200") || strings.Contains(out, "EOF") {
+			t.Fatalf("regression: a piped login with no KEYORIX_MFA_CODE must name it, got:\n%s", out)
+		}
+		if !strings.Contains(out, "KEYORIX_MFA_CODE") {
+			t.Fatalf("expected the error to name KEYORIX_MFA_CODE:\n%s", out)
+		}
+		if strings.Contains(out, recoveryCodes[2]) || strings.Contains(out, adminPw) {
+			t.Fatalf("the error echoed a piped secret:\n%s", out)
+		}
+	})
 }
 
 // ── MFA enrolment through the public API (what the web UI calls) ───────────
