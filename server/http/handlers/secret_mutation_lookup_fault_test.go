@@ -5,8 +5,7 @@ package handlers
 // DescribeSecret, MoveSecret) answer a storage outage of that permission lookup 503 +
 // Retry-After with the gates' fixed text, not 403 "access denied" (the gRPC twins did
 // so already through core.WithAuthorizeFaultRecorder / mapSecretMutationError). A real
-// denial keeps its 403, and nothing is cached: the retry succeeds once the fault clears
-// for a caller who is allowed.
+// denial keeps its 403. Not driven here: a retry after the fault clears.
 //
 // The fault is injected on the permission lookup itself (ResolveUserPermissionAt) for a
 // caller who is neither owner nor sharee, so core's RBAC fallback is the read that fails.

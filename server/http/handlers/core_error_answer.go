@@ -44,7 +44,9 @@ var coreErrorCodes = map[errclass.Class]string{
 
 // coreErrorDefaultText is the client text of a class when the call site passes none.
 // InvalidInput shows the error's own text: core words its validation refusals for the
-// caller (the field and the bound) and never echoes caller input (CORE-ERR-FAMILY-7).
+// caller (the field and the bound; CORE-ERR-FAMILY-7). A few texts quote the rejected
+// value (`invalid classification %q`, `unknown access-review source %q`, `tag %q`),
+// JSON-encoded in the body like any text.
 // Every other class is fixed: a not-found or conflict wrapped with %w can carry a
 // driver message in its text, and Internal is clientSafe by rule
 // (TestNoRawErrorTextOnServerErrors).
