@@ -1,0 +1,1 @@
+TestNoDirectBufioOverStdin_AdminAndScripts	server/admin	#4151	extends the #4151 stdin guard to server/admin/recover_admin.go, server/admin/testhook.go and scripts/analysis/remote_storage_classify.go (three known bufio-over-os.Stdin sites), report-only until the owners move them to a shared reader
