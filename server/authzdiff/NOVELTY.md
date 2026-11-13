@@ -302,3 +302,39 @@ supports "no measurable effect of the feedback in this harness at this
 budget", not "the feedback helps" and not a proof of harm. The earlier
 conclusion that tuple feedback adds little over plain edge coverage here is
 unchanged.
+
+## Replication (2026-11-08), pre-registered, 96 + 96 runs of the rare plant
+
+The 10-repeat run above could not separate 4 of 10 from 5 of 10, so a larger replication
+was frozen before its first counted run (rule: an effect larger than 20 percentage points
+is excluded if the 95% Newcombe interval lies inside plus or minus 20 points).
+
+Design: two hosts, 6 concurrent runs each, 300 s per run, one worker per run
+(`GOMAXPROCS=1`), run only in quiet windows. 212 runs counted, none flagged. Per host:
+48 plain-coverage (P) and 48 tuple-feedback (T) runs of the rare plant, 3 + 3 of the clean
+condition, 2 + 2 of the common plant.
+
+| Quantity | Result |
+|---|---|
+| Controls | clean 0 of 12 finds; common plant found in 8 of 8 |
+| Rare plant, P | 36 of 96 (37.5%) |
+| Rare plant, T | 33 of 96 (34.4%) |
+| T minus P | -3.1 points, 95% CI -16.4 to +10.3 (Newcombe); Fisher p = 0.76, for information only |
+| Executions per run (median) | P 208, T 207.5 |
+| Time to first find among finds (median) | P 120 s, T 142 s |
+
+Verdict by the registered rule: no effect larger than 20 points. That is a bound, not a
+proof of "no effect". The two hosts moved in opposite directions (P 20/48 against T 12/48
+on one, P 16/48 against T 21/48 on the other), which is consistent with noise at 48 runs
+per cell; that comparison was not pre-registered and is not tested.
+
+Harness property worth knowing: more than half of the finds the harness logged did not stop
+the Go engine (P 21 of 36, T 18 of 33). Counting only engine failures gives 15 of 96 for
+both arms. The primary outcome is therefore the harness log, as registered.
+
+Limits: one target, one planted defect, a 300 s budget, one worker per run and about 208
+executions per run. Nothing here speaks to other targets or to much longer runs.
+
+Conclusion: the hypothesis that decision-tuple feedback finds authorization defects sooner
+than plain edge coverage is not supported. This PR is kept as the record of a negative
+result; it changes no existing fuzz target, CI job or campaign.
