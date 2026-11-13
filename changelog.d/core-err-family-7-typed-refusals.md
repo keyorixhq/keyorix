@@ -5,3 +5,6 @@
 
 ### Security
 - **Three 400 responses no longer quote the caller's input (#4059).** `GET /auth/sso/{provider}/login` (unauthenticated) for an unknown provider, `POST /api/v1/notification-channels` with an invalid `type`, and `GET /api/v1/secrets/{id}/access-log/export` with an unsupported `format` answered a 400 that quoted the rejected value back. They answer fixed messages now (`unknown SSO provider`, `invalid notification channel type: must be one of webhook, slack, teams, email`, `unsupported export format: must be csv or json`); the fix is in core, so gRPC and every other caller get the same text. The request-echo canary harness no longer allowlists these three echoes and fails if one comes back.
+
+### Internal
+- **gRPC logs keep the driver cause of a storage fault.** A core storage read fault renders as the fixed "storage temporarily unavailable, please retry"; its cause is only in the error chain. The gRPC user, share, project and group services answered such a fault Internal from their error mappers' default branch and logged nothing, so the operator never saw why (REST logs it since #4077). Those branches now log the error with the driver cause (`core.StorageReadFaultDetail`, keeping the outer text such as what a partial update already committed); the existing user/share log lines do the same. The answer to the client is unchanged.
