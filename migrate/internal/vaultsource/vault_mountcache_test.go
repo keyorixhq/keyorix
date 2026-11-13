@@ -15,12 +15,12 @@ import (
 // TestWalk_ResolvesMountVersionOnce walks a small multi-leaf KV v2 tree (root -> a, b, c/; c ->
 // d) and asserts the client hit sys/internal/ui/mounts exactly once across the whole walk.
 func TestWalk_ResolvesMountVersionOnce(t *testing.T) {
-	var mountHits int64
+	var mountHits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v1/sys/internal/ui/mounts"):
-			atomic.AddInt64(&mountHits, 1)
+			mountHits.Add(1)
 			_, _ = w.Write([]byte(`{"data":{"path":"secret/","options":{"version":"2"}}}`))
 		case strings.HasPrefix(r.URL.Path, "/v1/secret/metadata"):
 			sub := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/secret/metadata"), "/")
@@ -51,7 +51,7 @@ func TestWalk_ResolvesMountVersionOnce(t *testing.T) {
 	if len(entries) != 3 { // a, b, c/d
 		t.Fatalf("Walk returned %d entries, want 3 (a, b, c/d)", len(entries))
 	}
-	if got := atomic.LoadInt64(&mountHits); got != 1 {
+	if got := mountHits.Load(); got != 1 {
 		t.Fatalf("Walk resolved the mount version %d times; want exactly 1 (the per-client cache must hit)", got)
 	}
 }
