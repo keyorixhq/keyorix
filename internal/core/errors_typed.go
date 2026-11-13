@@ -64,6 +64,20 @@ var ErrMachineIdentityNotFound = errors.New("machine identity or token not found
 // FAULT is never this error: it is ErrStorageReadUnavailable.
 var ErrDynamicSecretNotFound = errors.New("dynamic-secret config or lease not found")
 
+// ErrDynamicSecretPrecondition is matched (errors.Is) by every refusal of a lease
+// issue/renew/revoke that the state of the config, the lease or the server prevents: a
+// disabled config, a lease that is no longer active or has expired, the active-lease
+// limit, a backend whose TTL needs the disabled sweeper, a self-expiring credential that
+// cannot be renewed, a renewal the max-TTL ceiling stops. Its text is core's own (it names
+// no driver or storage detail), so a transport may show it. REST answers it 409, gRPC
+// FailedPrecondition. A backend or driver failure is never this error.
+var ErrDynamicSecretPrecondition = errors.New("dynamic-secret operation refused by the config or lease state")
+
+// dynamicPreconditionf is fmt.Errorf whose result matches ErrDynamicSecretPrecondition.
+func dynamicPreconditionf(format string, a ...any) error {
+	return refuseAs(ErrDynamicSecretPrecondition, fmt.Errorf(format, a...))
+}
+
 // classifyReadErrorAs is classifyReadError whose not-found answer also matches sentinel:
 // a positive not-found keeps the caller's text, anything else is a storage fault.
 func classifyReadErrorAs(err, sentinel error, notFound string) error {

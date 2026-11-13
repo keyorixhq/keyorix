@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -21,36 +20,13 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// isSafeDynamicSecretError reports whether msg is one of the small set of
-// deliberately-crafted, safe messages core's dynamic-secret lease functions
-// (IssueLease/RevokeLease/RenewLease/RevokeLeasesForConfig) produce without
-// wrapping a lower-layer error. Everything else wraps (via %w) the actual
-// backend operation's error — issuing/revoking a credential against the
-// target database/cloud engine — which can carry connection detail (host,
-// driver wording) that must not reach the client verbatim (backlog #116).
-func isSafeDynamicSecretError(msg string) bool {
-	for _, safe := range []string{
-		"config not found",
-		"lease not found",
-		"lease is not active",
-		"lease has expired; issue a new lease instead",
-		"cannot issue from the",
-		"active-lease limit reached",
-		"mints self-expiring credentials that cannot be renewed",
-		"unsupported backend",
-	} {
-		if strings.Contains(msg, safe) {
-			return true
-		}
-	}
-	return false
-}
-
 // dynamicSecretClientMessage is the message an API caller gets for a failed dynamic-secret
 // operation, and logs op's failure server-side. The egress policy's refusal of a
 // private-network target is a deliberate, safe message (what was refused, which setting
-// allows it); the allowlisted core messages pass through; anything else is masked, because
-// it can carry driver, storage or connection detail (backlog #116).
+// allows it); core's typed not-found and lease-state refusals (core.ErrDynamicSecretNotFound,
+// core.ErrDynamicSecretPrecondition) carry only core's own text and pass through; anything
+// else is masked, because it can carry driver, storage or connection detail (backlog #116).
+// Classified by sentinel, never by the message text (CORE-ERR-FAMILY-7).
 func dynamicSecretClientMessage(err error, op string) string {
 	if refused, ok := errors.AsType[*core.DynamicSecretTargetRefusedError](err); ok {
 		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(refused)) // server-side only; the client gets ClientMessage()
@@ -63,9 +39,8 @@ func dynamicSecretClientMessage(err error, op string) string {
 		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(forbidden))
 		return forbidden.Error() // names only the option the caller wrote
 	}
-	msg := err.Error()
-	if isSafeDynamicSecretError(msg) {
-		return msg
+	if errors.Is(err, core.ErrDynamicSecretNotFound) || errors.Is(err, core.ErrDynamicSecretPrecondition) {
+		return err.Error()
 	}
 	log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(err))
 	return clientSafe(err)
@@ -74,14 +49,17 @@ func dynamicSecretClientMessage(err error, op string) string {
 // dynamicSecretStatus is the HTTP status for a failed dynamic-secret operation, by
 // sentinel: 404 for a config, lease, project or environment that is not there
 // (core.ErrDynamicSecretNotFound), 400 for a refused input (core.ErrValidation), 403 for
-// an authorization refusal (core.ErrPermissionDenied), and the route's own fallback (400
-// for config writes, 502 for backend calls) for the rest.
+// an authorization refusal (core.ErrPermissionDenied), 409 for a lease operation the
+// config or lease state refuses (core.ErrDynamicSecretPrecondition), and the route's own
+// fallback (400 for config writes, 502 for backend calls) for the rest.
 func dynamicSecretStatus(err error, fallback int) int {
 	switch {
 	case errors.Is(err, core.ErrDynamicSecretNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, core.ErrPermissionDenied):
 		return http.StatusForbidden
+	case errors.Is(err, core.ErrDynamicSecretPrecondition):
+		return http.StatusConflict
 	case errors.Is(err, core.ErrValidation):
 		return http.StatusBadRequest
 	default:
