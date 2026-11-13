@@ -20,7 +20,7 @@ var defaultPostureTSV string
 // defaultPostureSet parses defaultPostureTSV into {id: true}.
 func defaultPostureSet() map[string]bool {
 	out := map[string]bool{}
-	for _, line := range strings.Split(defaultPostureTSV, "\n") {
+	for line := range strings.SplitSeq(defaultPostureTSV, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
