@@ -85,15 +85,6 @@ var awssmKnown = []hostile.Known{{
 	ErrContains: "deserialization failed",
 	// Input 828b725a61403e37: the whole 200 body is the canary JSON string.
 	Repro: hostile.Program{Route: 48, Ops: []hostile.Op{{Code: 57}}},
-}, {
-	// EXPECTED-DIFFERENCE: the smithy awsJson1_1 client treats every 2xx as
-	// success; Secrets Manager only sends 200. Only the sub-tag is suppressed:
-	// the body was complete and the strict decoder returns the same value.
-	ID:     "HK-AWSSM-ANY-2XX",
-	Class:  "EXPECTED-DIFFERENCE",
-	Prefix: "O5/bad-status-accepted/2xx-valid-body: GetSecret",
-	// Input 38e0af3f2466b371: status=206 on the only exchange.
-	Repro: hostile.Program{Route: 48, Status: 5},
 }}
 
 // runAWSSMHostile runs one program against the real SDK client and applies
