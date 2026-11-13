@@ -104,6 +104,13 @@ func wrapLockOpenError(dir, lockPath string, err error) error {
 			return &KeyDirMissingError{Dir: dir, Err: err}
 		}
 	}
+	if errors.Is(err, fs.ErrPermission) {
+		// Not contention either: name the directory and what to fix.
+		if abs, aerr := filepath.Abs(dir); aerr == nil {
+			dir = abs
+		}
+		return fmt.Errorf("open DEK lock file in key directory %s: %w — the directory and its dek.lock must be readable and writable by the user running this command (fix the owner or mode, 0700)", dir, err)
+	}
 	if lockPath != "" {
 		return fmt.Errorf("open DEK lock file %s: %w", lockPath, err)
 	}

@@ -1,6 +1,7 @@
 package encryptionops
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,5 +50,33 @@ func TestInitLocalKeyOpService_LockContentionKeepsTheLiveServerHint(t *testing.T
 	}
 	if strings.Contains(err.Error(), "does not exist") {
 		t.Errorf("contention is not a missing directory: %q", err)
+	}
+}
+
+// An unwritable key directory is neither contention nor missing: the message
+// names the directory and says what to fix, and does not blame a live server.
+func TestInitLocalKeyOpService_UnwritableKeyDirNamesTheDirNotAServer(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory modes")
+	}
+	base := t.TempDir()
+	keys := filepath.Join(base, "keys")
+	if err := os.Mkdir(keys, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(keys, 0o700) })
+	cfg := testConfig(true)
+	cfg.Storage.Encryption.DEKPath = "keys/dek.key"
+	cfg.Storage.Encryption.SaltPath = "keys/kek.salt"
+
+	_, err := InitLocalKeyOpService(cfg, base, "pw-for-the-test-0123456789", true)
+	if err == nil {
+		t.Fatal("init with an unwritable key directory must fail")
+	}
+	if !strings.Contains(err.Error(), "key directory "+keys) || !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("error = %q, want the key directory path and the permission cause", err)
+	}
+	if strings.Contains(err.Error(), "live server") {
+		t.Errorf("an unwritable directory must not blame a live server: %q", err)
 	}
 }
