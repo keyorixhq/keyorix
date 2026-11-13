@@ -790,6 +790,12 @@ var osKnownUndeclaredSuccessStatus = map[string]string{
 	// api-generated.ts) would not model 201. Fail-closed, no security impact. Fix: declare 201
 	// in the spec (or change the handler to 200 to match the 200-returning sibling creates).
 	"createSecretTemplate|201": "FINDING OPENAPI-STATEFUL-6: handler returns 201 (sendCreated) but the spec declares only 200 for POST /api/v1/secret-templates",
+	// Same class as OPENAPI-STATEFUL-6: createFolder's handler returns 201 Created
+	// (folders_handler.go; TestCreateFolder_HappyPath asserts http.StatusCreated) but
+	// openapi.yaml declares ONLY 200 for POST /api/v1/folders. Found by a shard of the
+	// per-PR fuzz job on an unrelated branch. Fail-closed, no security impact. Fix: declare
+	// 201 in the spec; then delete this entry.
+	"createFolder|201": "FINDING OPENAPI-STATEFUL-6 (same class): handler returns 201 but the spec declares only 200 for POST /api/v1/folders",
 }
 
 // osDeclaresStatus reports whether the operation declares the given status code (exact or
