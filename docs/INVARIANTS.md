@@ -34,6 +34,12 @@ silently removing it.
 | `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |
 | **Total** | | **511** | **506** | **5** |
 
+Separate module, not counted in the table above: the reusable differential-fuzzing kit
+[`fuzz/diffkit/INVARIANTS.md`](../fuzz/diffkit/INVARIANTS.md) lives in the standalone `fuzz/`
+module (built with `GOWORK=off`, like `cli/` and `operator/`). Its invariants
+(`INV-FUZZDIFF-*`) are guarded by that module's own package tests and are deliberately
+excluded from the counts table, which tracks production packages only.
+
 ## Highest-priority UNGUARDED gaps
 
 One UNGUARDED item is flagged as materially more important than the rest, and one guarded

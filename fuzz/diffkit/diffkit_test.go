@@ -112,7 +112,7 @@ func TestCompare(t *testing.T) {
 			wantDiver: true,
 		},
 		{
-			name: "documented difference suppresses the divergence",
+			name:  "documented difference suppresses the divergence",
 			impls: []Impl[int, int]{evenImpl{"strict"}, evenOrThreeImpl{"loose"}},
 			diffs: []DocumentedDiff{{
 				ID:     "loose-accepts-multiples-of-three",
