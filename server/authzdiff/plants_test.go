@@ -117,11 +117,11 @@ var plants = []plant{
 		// user who passes input validation, and REST — which has no gate of its own
 		// on this route — over-allows the same non-members, so both legs allow what
 		// the memberOnly model rule denies.
-		name:   "breakglass-activate-membership-gate-removed",
-		file:   "internal/core/break_glass.go",
-		anchor: "\tif !affiliated {\n\t\treturn nil, refuseBreakGlass(fmt.Sprintf(\"%s: %s\", i18n.T(\"ErrorPermissionDenied\", nil), \"break-glass is available only to members of the project\"), ErrBreakGlassNotProjectMember, ErrPermissionDenied)\n\t}\n",
-		repl:   "\t_ = affiliated // PLANT: break-glass membership gate removed\n",
-		op:     "breakglass.activate",
+		name:           "breakglass-activate-membership-gate-removed",
+		file:           "internal/core/break_glass.go",
+		anchor:         "\tif !affiliated {\n\t\treturn nil, refuseBreakGlass(fmt.Sprintf(\"%s: %s\", i18n.T(\"ErrorPermissionDenied\", nil), \"break-glass is available only to members of the project\"), ErrBreakGlassNotProjectMember, ErrPermissionDenied)\n\t}\n",
+		repl:           "\t_ = affiliated // PLANT: break-glass membership gate removed\n",
+		op:             "breakglass.activate",
 		minUnexplained: 10,
 	},
 }
