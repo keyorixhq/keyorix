@@ -96,29 +96,26 @@ var plants = append([]plant{
 // red without it. Each replacement restores the pre-fix behaviour of the
 // current code (not a historical copy of the file), and its floor is set
 // below the count measured at introduction (AUTHZDIFF-TAILS-1).
+//
+// Not planted: #3983 (the system_viewer baseline ceiling on user creation).
+// Every fixture user is created holding that baseline, so no principal can
+// tell the check's absence apart; a custom principal without the baseline
+// would be needed first.
 var fixRegressionPlants = []plant{
 	{
-		// #3983: user creation without the system_viewer baseline ceiling.
-		name: "fix-3983-baseline-ceiling-removed",
-		file: "internal/core/users.go",
-		anchor: "\tif err := c.requireBaselineRoleGrantAuthority(ctx, actorID, actorIsMachine); err != nil {\n" +
-			"\t\treturn nil, err\n\t}\n\treturn c.createUser(ctx, req, &actorID)\n",
-		repl:           "\t_ = actorIsMachine // PLANT: #3983 reverted\n\treturn c.createUser(ctx, req, &actorID)\n",
-		op:             "user.create",
-		minUnexplained: 10,
-	},
-	{
 		// #3986: REST AddProjectMember no longer tags a machine actor as its own
-		// granter, so core refuses every machine (an over-denial).
+		// granter, so core refuses every machine (an over-denial; 6 cases at
+		// introduction: machines holding every permission the grant needs).
 		name:           "fix-3986-member-add-self-granter-tag-removed",
 		file:           "server/http/handlers/project_members.go",
-		anchor:         "\t\t// cross-layer differential harness waiver known-06, historical name D6).\n\t\tctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())\n",
-		repl:           "\t\t// PLANT: #3986 reverted\n",
+		anchor:         "\t\tctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())\n\t}\n\tif err := h.coreService.AddProjectMember(",
+		repl:           "\t\t// PLANT: #3986 reverted\n\t}\n\tif err := h.coreService.AddProjectMember(",
 		op:             "member.add",
-		minUnexplained: 10,
+		minUnexplained: 5,
 	},
 	{
-		// #3987: gRPC DeleteUser without the /users route group's read gate.
+		// #3987: gRPC DeleteUser without the /users route group's read gate
+		// (26 cases at introduction: users.delete without users.read, globally).
 		name: "fix-3987-user-read-gate-removed",
 		file: "server/grpc/services/user_service.go",
 		anchor: "\tif err := authorizeGlobalMutation(ctx, s.core, actor, \"users.read\", \"users.delete\"); err != nil {\n" +
@@ -126,12 +123,13 @@ var fixRegressionPlants = []plant{
 		repl: "\tif err := authorizeGlobal(ctx, s.core, actor, \"users.delete\"); err != nil { // PLANT: #3987 reverted\n" +
 			"\t\treturn nil, err\n\t}\n",
 		op:             "user.delete",
-		minUnexplained: 10,
+		minUnexplained: 20,
 	},
 	{
 		// #3990 (and FU-OWNERSHIP-1, which made the check unconditional): a
 		// role set on an existing member is not judged against the granter
-		// ceiling, so a machine without roleName's permissions passes.
+		// ceiling, so a machine without roleName's permissions passes (250
+		// cases at introduction).
 		name: "fix-3990-setrole-ceiling-removed",
 		file: "internal/core/project_members.go",
 		anchor: "\t// role or, for a machine, an untagged relay's way past roles.assign (#3990).\n" +
@@ -139,18 +137,20 @@ var fixRegressionPlants = []plant{
 			"\t\treturn err\n\t}\n",
 		repl:           "\t// PLANT: #3990 reverted\n",
 		op:             "member.setrole",
-		minUnexplained: 10,
+		minUnexplained: 100,
 	},
 	{
 		// #3993: a machine issuing a token for a peer is not held to the
-		// peer's permissions.
+		// peer's permissions. Only 2 cases at introduction (a machine holding
+		// roles.assign@A but not every permission of the target machine's
+		// role), hence the floor of 2.
 		name: "fix-3993-machine-target-ceiling-removed",
 		file: "internal/core/authz.go",
 		anchor: "\tif actorType == ActorTypeMachine && machineID != 0 {\n" +
 			"\t\treturn c.requireMachineActorHoldsTargetPermissions(ctx, principalID, machineID)\n\t}\n",
 		repl:           "\t// PLANT: #3993 reverted\n",
 		op:             "machine.token.issue",
-		minUnexplained: 10,
+		minUnexplained: 2,
 	},
 }
 
