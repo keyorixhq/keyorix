@@ -87,8 +87,16 @@ func (c *KeyorixCore) AlertNewAnomalies(ctx context.Context) (int, error) {
 			p := projectID
 			pid = &p
 		}
-		c.writeAuditEventFull(ctx, EventAnomalyDetected, nil, sid, pid, a.IPAddress,
-			fmt.Sprintf("anomaly (%s, %s): %s", a.AlertType, a.Severity, a.Description))
+		// The detector raised this, not the accessor: actor system / type system on
+		// every path (a scheduler pass and an admin's on-demand run alike), with the
+		// real accessor named in the description (#4187). Without the tag a request-
+		// context run stored type user, no user id and the accessor's IP, which the
+		// audit view shows as actor "unknown".
+		desc := fmt.Sprintf("anomaly (%s, %s): %s", a.AlertType, a.Severity, a.Description)
+		if a.AccessedBy != "" {
+			desc += fmt.Sprintf(" [accessor: %s]", a.AccessedBy)
+		}
+		c.writeAuditEventFull(WithActorType(ctx, ActorTypeSystem), EventAnomalyDetected, nil, sid, pid, a.IPAddress, desc)
 
 		// In-app: alert the project's approver-role members. The audit/SIEM event
 		// above is already durable regardless, so this is a detection-latency gap
