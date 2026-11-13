@@ -221,7 +221,7 @@ func audContains(aud any, want string) bool {
 // strictJSON decodes exactly one JSON value and rejects trailing data, matching
 // encoding/json's one-value contract that golang-jwt also relies on.
 func strictJSON(data []byte, v any) error {
-	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec := json.NewDecoder(strings.NewReader(string(data))) // nosemgrep: keyorix-unbounded-json-decoder -- data is an in-memory []byte (a decoded JWT header/claims segment already held by the fuzz harness), not a network or stdin stream; the fuzz input size is capped by the fuzzing engine
 	if err := dec.Decode(v); err != nil {
 		return err
 	}
