@@ -40,17 +40,41 @@ func (e *tokenSourceError) Unwrap() error { return e.err }
 // variables), so a script or a Kubernetes Secret volume need not put the token in the
 // environment.
 func resolveServerAndToken(store *credstore.FileStore) (serverURL, token string, err error) {
+	serverURL, token, _, err = resolveServerAndTokenSource(store)
+	return serverURL, token, err
+}
+
+// Where a resolved token came from, as the words `keyorix doctor` prints after "token from".
+const (
+	tokenSourceNone      = ""
+	tokenSourceEnv       = "KEYORIX_TOKEN"
+	tokenSourceEnvFile   = "KEYORIX_TOKEN_FILE"
+	tokenSourceCredsFile = "the credentials file"
+)
+
+// resolveServerAndTokenSource is resolveServerAndToken that also says where the token came
+// from (one of the tokenSource* constants). It is the single place that knows which of
+// KEYORIX_TOKEN, KEYORIX_TOKEN_FILE and the credentials file supplied the token, so a
+// command that reports the source (doctor) cannot disagree with the one that uses it.
+func resolveServerAndTokenSource(store *credstore.FileStore) (serverURL, token, source string, err error) {
 	serverURL = os.Getenv("KEYORIX_SERVER")
-	token, _, terr := lookupSecretEnv("KEYORIX_TOKEN")
+	token, found, terr := lookupSecretEnv("KEYORIX_TOKEN")
 	if terr != nil {
 		if _, isExit := errors.AsType[*exitError](terr); !isExit {
 			terr = withExitCode(exitAuth, fmt.Errorf("%w. Next step: fix the file, or unset KEYORIX_TOKEN_FILE", terr))
 		}
-		return "", "", &tokenSourceError{terr}
+		return "", "", tokenSourceNone, &tokenSourceError{terr}
+	}
+	if found {
+		// lookupSecretEnv refuses both forms set, so at most one of them names the source.
+		source = tokenSourceEnv
+		if os.Getenv(tokenSourceEnvFile) != "" {
+			source = tokenSourceEnvFile
+		}
 	}
 
 	if serverURL != "" && token != "" {
-		return serverURL, token, nil
+		return serverURL, token, source, nil
 	}
 
 	creds, loadErr := store.Load()
@@ -59,19 +83,22 @@ func resolveServerAndToken(store *credstore.FileStore) (serverURL, token string,
 	}
 	if token == "" {
 		token = creds.Token
+		if token != "" {
+			source = tokenSourceCredsFile
+		}
 	}
 	if serverURL == "" {
 		// A missing credentials file is the ordinary "never logged in" case: say so
 		// plainly. Any other failure (wrong permissions, a symlink, bad YAML) is a
 		// problem with the file, and its message says how to fix it.
 		if loadErr != nil && !errors.Is(loadErr, fs.ErrNotExist) {
-			return "", "", withExitCode(exitAuth, fmt.Errorf("not logged in: %w. Next step: fix the credentials file, "+
+			return "", "", tokenSourceNone, withExitCode(exitAuth, fmt.Errorf("not logged in: %w. Next step: fix the credentials file, "+
 				"or run `keyorix login --server <url>` (or set KEYORIX_SERVER and KEYORIX_TOKEN)", loadErr))
 		}
-		return "", "", withExitCode(exitAuth, errors.New("not logged in: no server is configured. "+
+		return "", "", tokenSourceNone, withExitCode(exitAuth, errors.New("not logged in: no server is configured. "+
 			"Next step: run `keyorix login --server <url>` (or set KEYORIX_SERVER and KEYORIX_TOKEN)"))
 	}
-	return serverURL, token, nil
+	return serverURL, token, source, nil
 }
 
 // caFileFlag is the global --ca-file flag (root.go).
