@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
@@ -489,6 +490,29 @@ const EventSessionReuseDetected = "auth.session_reuse_detected" // #nosec G101 -
 // keep the slot, so a valid token is never cheaper than a wrong one.
 var ErrRefreshNotEvaluated = errors.New("session refresh not evaluated: storage lookup failed")
 
+// refreshStorageCall runs one storage call RefreshSession (or its reuse
+// revocation) makes, with a panic turned into an error (#3968), so the call
+// takes exactly the path its error takes: a GetSessionAny panic is
+// ErrRefreshNotEvaluated (pre-verdict, the per-IP slot goes back), a GetUser
+// panic is ErrStorageReadUnavailable (post-verdict, slot kept, 503), and a
+// write panic is the wrong-token refusal (post-verdict, slot kept). Before, the
+// panic unwound to the Recovery 500 and kept the slot whatever the call, and a
+// panic in the family hash listing skipped the family revocation itself.
+//
+// The panic value is formatted with %v, never wrapped, so a payload that
+// happens to be a not-found error cannot steer the caller's classification:
+// a panic is never a definitive "no such session/user".
+func refreshStorageCall(method string, fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: session refresh storage call %s panicked; answering it like its error: %v\n%s",
+				method, r, debug.Stack())
+			err = fmt.Errorf("%s panicked: %v", method, r)
+		}
+	}()
+	return fn()
+}
+
 // RefreshSession rotates an existing session to a new token with a fresh access
 // window. The access window may have lapsed — that is the normal silent-refresh
 // case — but refresh is refused once the session's absolute ceiling is reached, so
@@ -503,7 +527,13 @@ var ErrRefreshNotEvaluated = errors.New("session refresh not evaluated: storage 
 // ordinary expiry and the whole session family (every session descended from the
 // same login) is revoked, not just the one replayed row.
 func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models.Session, error) {
-	old, err := c.storage.GetSessionAny(ctx, token)
+	// Every storage call here goes through refreshStorageCall: a panic takes its
+	// error's path, so the slot rule below holds for the panic kind too (#3968).
+	var old *models.Session
+	err := refreshStorageCall("GetSessionAny", func() (err error) {
+		old, err = c.storage.GetSessionAny(ctx, token)
+		return err
+	})
 	if err != nil {
 		if !storage.IsSessionNotFound(err) {
 			return nil, fmt.Errorf("%w: reading the session: %w", ErrRefreshNotEvaluated, err)
@@ -532,7 +562,7 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	}
 	if old.AbsoluteExpiresAt != nil && !now.Before(*old.AbsoluteExpiresAt) {
 		// Past the hard ceiling — re-authentication required, not another refresh.
-		_ = c.storage.DeleteSession(ctx, old.ID)
+		_ = refreshStorageCall("DeleteSession", func() error { return c.storage.DeleteSession(ctx, old.ID) })
 		return nil, fmt.Errorf("session lifetime exceeded; re-authentication required")
 	}
 	// An impersonation session must not be refreshable. /auth/refresh is public (any
@@ -549,7 +579,11 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	// entry point: without re-checking here, an account deactivated (IsActive=false)
 	// or suspended after issuance could keep minting fresh, self-renewing sessions
 	// indefinitely. Mirror the gate and drop the now-invalid session.
-	user, err := c.storage.GetUser(ctx, old.UserID)
+	var user *models.User
+	err = refreshStorageCall("GetUser", func() (err error) {
+		user, err = c.storage.GetUser(ctx, old.UserID)
+		return err
+	})
 	if err != nil {
 		if !isPositiveNotFound(err) {
 			// POST-verdict: GetSessionAny matched a live token and the reuse, ceiling
@@ -565,7 +599,7 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		return nil, fmt.Errorf("user not found")
 	}
 	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
-		_ = c.storage.DeleteSession(ctx, old.ID)
+		_ = refreshStorageCall("DeleteSession", func() error { return c.storage.DeleteSession(ctx, old.ID) })
 		return nil, fmt.Errorf("account is not active")
 	}
 	newToken, err := generateSecureToken()
@@ -606,7 +640,12 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	if session.SetupOnly && !old.SetupOnly {
 		capSetupSession(session, now)
 	}
-	created, won, err := c.storage.RotateSession(ctx, old.ID, session, now)
+	var created *models.Session
+	var won bool
+	err = refreshStorageCall("RotateSession", func() (err error) {
+		created, won, err = c.storage.RotateSession(ctx, old.ID, session, now)
+		return err
+	})
 	if err != nil {
 		// RotateSession is one transaction, so a rotation that committed despite
 		// the error has both retired the old row and written the new one. Failing
@@ -705,14 +744,22 @@ func (c *KeyorixCore) handleSessionReuse(ctx context.Context, old *models.Sessio
 		fmt.Sprintf("refresh attempted with an already-rotated session token for user %d", old.UserID))
 	if old.FamilyID == "" {
 		// Legacy row predating FamilyID — fall back to revoking just this one row.
-		if err := c.storage.DeleteSession(ctx, old.ID); err != nil {
+		if err := refreshStorageCall("DeleteSession", func() error { return c.storage.DeleteSession(ctx, old.ID) }); err != nil {
 			c.writeAuditEventFailed(ctx, EventSessionReuseFamilyRevokeFailed, &uid, nil, old.IPAddress,
 				fmt.Sprintf("FAILED to revoke the reused session (legacy row, no family) for user %d: %v — the session may still be live, investigate immediately", old.UserID, err))
 		}
 		return
 	}
-	hashes, herr := c.storage.ListSessionTokenHashesByFamily(ctx, old.FamilyID)
-	derr := c.storage.DeleteSessionsByFamily(ctx, old.FamilyID)
+	// A panic in either call takes its error's path (refreshStorageCall, #3968):
+	// above all, a panicking hash listing must not skip the revocation below.
+	var hashes []string
+	herr := refreshStorageCall("ListSessionTokenHashesByFamily", func() (err error) {
+		hashes, err = c.storage.ListSessionTokenHashesByFamily(ctx, old.FamilyID)
+		return err
+	})
+	derr := refreshStorageCall("DeleteSessionsByFamily", func() error {
+		return c.storage.DeleteSessionsByFamily(ctx, old.FamilyID)
+	})
 	if derr != nil {
 		c.writeAuditEventFailed(ctx, EventSessionReuseFamilyRevokeFailed, &uid, nil, old.IPAddress,
 			fmt.Sprintf("FAILED to revoke session family %q for user %d after reuse was detected: %v — the family may still be live, investigate immediately", old.FamilyID, old.UserID, derr))
