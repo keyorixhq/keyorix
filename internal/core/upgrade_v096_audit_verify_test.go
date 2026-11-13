@@ -21,8 +21,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -124,4 +124,24 @@ func TestUpgradeFromV096_AuditVerifyProvenAtFirstTick(t *testing.T) {
 		Update("created_at", c.now().Add(-time.Hour)).Error)
 	assert.Equal(t, 23*time.Hour, c.AuditCheckpointFirstTickDelay(ctx, day),
 		"with a full verification recorded, a restart defers the tick as before")
+}
+
+// The early first tick never turns a damaged v0.96.3 chain into a pass: a row
+// below the v0.96.3 checkpoint head edited before the upgrade (no hash
+// rewritten) reads not_proven before the tick, as above, and broken after it,
+// naming the row.
+func TestUpgradeFromV096_TamperedChainBrokenAtFirstTick(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c, db, _ := openV096AuditFixture(t)
+	tamperDescription(t, db, 10)
+
+	r := incrVerify(t, c)
+	assert.Equal(t, AuditVerifyStatusNotProven, r.Status, "row 10 is below the checkpoint head: only a full walk can see it")
+
+	_, _ = c.RunAuditVerificationTick(ctx)
+	r = incrVerify(t, c)
+	assert.Equal(t, AuditVerifyStatusBroken, r.Status)
+	require.NotNil(t, r.FirstBrokenID)
+	assert.Equal(t, uint(10), *r.FirstBrokenID)
 }
