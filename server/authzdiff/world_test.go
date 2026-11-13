@@ -543,18 +543,12 @@ func newLeg(tb testing.TB, l layer) *leg {
 	tb.Helper()
 	b, fx := template(tb)
 	legsCreated.Add(1)
-	// Each leg owns its directory and is released by close() as soon as its
-	// case ends — NOT at the end of the (parallel) op subtest, which would let
-	// thousands of database copies accumulate on disk at once.
-	dir, err := os.MkdirTemp("", "authzdiff-leg-")
-	if err != nil {
-		tb.Fatalf("leg dir: %v", err)
-	}
-	path := filepath.Join(dir, "leg.db")
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		tb.Fatalf("clone: %v", err)
-	}
-	db := fuzzworld.OpenSQLite(tb, path, 1)
+	// Each leg owns a private in-memory database restored from the template
+	// image (nothing touches the disk: a file copy per leg wrote ~1 MB x
+	// 166k legs per sweep) and is released by close() as soon as its case
+	// ends — NOT at the end of the (parallel) op subtest, which would let
+	// thousands of database copies accumulate at once.
+	db := fuzzworld.OpenSQLiteFromImage(tb, b)
 	ls := store.NewLocalStorage(db)
 	c := newCore(ls)
 	lg := &leg{db: db, ls: ls, c: c, fx: fx}
@@ -562,7 +556,6 @@ func newLeg(tb testing.TB, l layer) *leg {
 		if s, e := db.DB(); e == nil {
 			_ = s.Close()
 		}
-		_ = os.RemoveAll(dir)
 	})
 	// Deliberately NO tb.Cleanup(lg.close) fallback: a cleanup closure keeps the
 	// whole leg (router, core, DB handle) reachable until the op subtest ends,
