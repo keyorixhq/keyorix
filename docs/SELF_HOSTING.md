@@ -336,6 +336,9 @@ refused with a non-zero exit, no archive written and no key file changed:
   copy once that backup and a server start have succeeded. Until then
   `admin validate --posture` reports `backups are refused: key-rotation staging
   file present` and exits non-zero, so a cron'd backup that stops is visible there.
+  The refused backup itself exits with status **4** (every other failure exits 1)
+  and prints one stderr line a cron wrapper can match:
+  `keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="<files>"`.
 - *A DEK rotation committed its re-encryption sweep, but this key directory holds a
   different `dek.key`* (Postgres, several key directories, `key_dir_lock: database`):
   another key directory rotated the DEK and its new key set has not reached this
