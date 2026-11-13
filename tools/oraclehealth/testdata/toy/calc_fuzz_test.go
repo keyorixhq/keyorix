@@ -18,7 +18,7 @@ func FuzzWeak(f *testing.F) {
 }
 
 // FuzzStrong is the strong oracle: it recomputes the maximum with an
-// independent reference expression (untouched by the mutator, which only
+// independent reference (the builtin max, untouched by the mutator, which only
 // rewrites non-test .go files) and demands exact agreement. The min mutant
 // fails this on the very first seed, so it is KILLED.
 func FuzzStrong(f *testing.F) {
@@ -26,10 +26,7 @@ func FuzzStrong(f *testing.F) {
 	f.Add(-3, 7)
 	f.Fuzz(func(t *testing.T, a, b int) {
 		got := Max(a, b)
-		want := a
-		if b > want {
-			want = b
-		}
+		want := max(a, b)
 		if got != want {
 			t.Fatalf("Max(%d,%d)=%d want %d", a, b, got, want)
 		}
