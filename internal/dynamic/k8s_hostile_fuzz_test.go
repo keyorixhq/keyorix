@@ -199,6 +199,8 @@ func runK8sHostile(p hostile.Program, known []hostile.Known) *hostile.Harness {
 			h.Violate("O5/incomplete: Issue succeeded although the bound-Secret or TokenRequest exchange was incomplete, redirected or had a non-200 status")
 		case hostile.HasDuplicateKeys(tokSeen) || hostile.HasDuplicateKeys(uidSeen):
 			// duplicate member names: no single correct reading (RFC 8259)
+			// not a value disagreement, so the 2xx-valid-body sub-tag below still applies
+			valueOK = true
 		case !strictK8sUID(uidSeen):
 			h.Violate("O5/uid: Issue succeeded with a bound-Secret response that has no uid")
 		case !tokOK:
