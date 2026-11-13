@@ -235,7 +235,7 @@ func TestAlertNewAnomalies_PrincipalBreadthNotifiesProjectAdmins(t *testing.T) {
 	const adminID = uint(30)
 	projectID := uint(1)
 	require.NoError(t, h.DB.Create(&models.User{ID: adminID, Username: "admin30", Email: "admin30@x"}).Error)
-	h.AssignUserRole(t, adminID, 2, &projectID) // role 2 = "admin" (an approver role)
+	h.AssignUserRole(t, adminID, testhelper.RoleProjectAdmin, &projectID) // role 2 = "admin" (an approver role)
 
 	var secrets []models.SecretNode
 	for i := uint(910); i < 916; i++ {

@@ -128,8 +128,8 @@ func TestHasPermissionByEmail_ScopeRestrictedAssignment_DeletedProjectStopsAutho
 	ctx := context.Background()
 
 	h.CreateTestUser(t, "kate", 24)
-	projID := uint(2)                   // "production" project, seeded by the helper
-	h.AssignUserRole(t, 24, 3, &projID) // editor, scoped to project 2 → secrets.write
+	projID := uint(2)                                                 // "production" project, seeded by the helper
+	h.AssignUserRole(t, 24, testhelper.RoleProjectDeveloper, &projID) // developer, scoped to project 2 → secrets.write
 
 	ok, err := h.CoreService.HasPermissionByEmail(ctx, "kate@test.com", "secrets", "write")
 	require.NoError(t, err)
@@ -173,7 +173,7 @@ func TestHasPermissionByEmail_ProjectScopedGrant_HasAccessAtGrantedScope(t *test
 	projStaging := uint(3) // "staging", seeded by the helper
 
 	h.CreateTestUser(t, "mona", 26)
-	h.AssignUserRole(t, 26, 3, &projStaging) // editor, scoped to project 3 only → secrets.write
+	h.AssignUserRole(t, 26, testhelper.RoleProjectDeveloper, &projStaging) // developer, scoped to project 3 only → secrets.write
 
 	ok, err := h.CoreService.HasPermissionByEmail(ctx, "mona@test.com", "secrets", "write")
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestHasPermissionByEmail_ProjectScopedGrant_DifferentProjectNotAuthorized(t
 	projProduction := uint(2) // "production", seeded by the helper
 
 	user := h.CreateTestUser(t, "nate", 27)
-	h.AssignUserRole(t, 27, 3, &projStaging) // editor, scoped to project 3 only → secrets.write
+	h.AssignUserRole(t, 27, testhelper.RoleProjectDeveloper, &projStaging) // developer, scoped to project 3 only → secrets.write
 
 	// HasPermissionByEmail (the CLI diagnostic) correctly reports access — the
 	// user's own scope (project 3) does grant it.
@@ -226,7 +226,7 @@ func TestHasPermissionByEmail_ProjectScopedAdminBypass(t *testing.T) {
 	projProduction := uint(2) // "production", seeded by the helper
 
 	h.CreateTestUser(t, "olga", 28)
-	h.AssignUserRole(t, 28, 2, &projProduction) // admin, scoped to project 2 only
+	h.AssignUserRole(t, 28, testhelper.RoleProjectAdmin, &projProduction) // project admin, scoped to project 2 only
 
 	// "connect.read" is not in the seeded "admin" role's role_permissions set —
 	// only the admin-role bypass in Authorize() can grant it.
