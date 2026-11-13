@@ -52,7 +52,7 @@ func mapDynamicError(err error) error {
 	case errors.Is(err, core.ErrDynamicSecretPrecondition):
 		// The config or lease state refuses the call (disabled config, lease not active
 		// or expired, active-lease limit, ...). Core's own text, no driver detail.
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, err.Error()) // nosemgrep: keyorix-raw-error-to-client -- matched by errors.Is(core.ErrDynamicSecretPrecondition), built only by core's dynamicPreconditionf from core's own words (no driver/storage text); REST sends the same text with its 409
 	default:
 		// Issue/renew/revoke reach the target database; surface backend trouble as Unavailable.
 		return status.Error(codes.Unavailable, "dynamic-secret backend operation failed")
