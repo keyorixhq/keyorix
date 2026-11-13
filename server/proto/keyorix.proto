@@ -1293,6 +1293,11 @@ service DynamicSecretService {
   // authority, egress policy, refused driver options). The DSN is never returned.
   rpc UpdateConfigAdminDSN(UpdateDynamicConfigAdminDSNRequest) returns (DynamicSecretConfig);
 
+  // List a project's configs whose stored admin DSN names an option refused since
+  // #3952 (the ones UpdateConfigAdminDSN fixes). Read-only; names and option names
+  // only, never a DSN. Needs dynamic-secret admin authority on the project.
+  rpc ListConfigsWithRefusedAdminDSN(ListRefusedAdminDSNConfigsRequest) returns (ListRefusedAdminDSNConfigsResponse);
+
   // Issue a short-lived credential. The username/password are returned ONCE.
   rpc IssueLease(IssueLeaseRequest) returns (IssuedCredential);
 
@@ -1378,6 +1383,25 @@ message ClassifyDynamicConfigRequest {
 message UpdateDynamicConfigAdminDSNRequest {
   uint32 id = 1;
   string admin_dsn = 2; // encrypted at rest, never echoed back
+}
+
+message ListRefusedAdminDSNConfigsRequest {
+  uint32 project_id = 1;
+}
+
+message RefusedAdminDSNConfig {
+  uint32 id = 1;
+  string name = 2;
+  uint32 project_id = 3;
+  uint32 environment_id = 4;
+  string backend_type = 5;
+  repeated string refused_options = 6; // option names only
+  uint32 live_leases = 7; // active and revoke_failed leases
+}
+
+message ListRefusedAdminDSNConfigsResponse {
+  repeated RefusedAdminDSNConfig configs = 1;
+  uint32 unreadable = 2; // configs whose admin DSN could not be decrypted, not checked
 }
 
 message IssueLeaseRequest {

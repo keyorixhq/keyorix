@@ -113,3 +113,64 @@ func TestDynamicSecretUpdateAdminDSN_REST(t *testing.T) {
 		assert.NotEqual(t, before, f.storedAdminDSNEnc(t), "the stored DSN changed")
 	})
 }
+
+func (f *dynSecret403Fixture) getRefused(t *testing.T, token string, projectID uint) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/v1/dynamic-secrets/configs/refused-admin-dsn?project_id=%d", f.serverURL, projectID), nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(resp.Body)
+	return resp.StatusCode, buf.String()
+}
+
+// TestDynamicSecretRefusedAdminDSNList_REST (item 2): a config stored with a
+// refused option is listed by name and option names, and gone once its DSN is
+// replaced; only an admin on the project gets the list.
+func TestDynamicSecretRefusedAdminDSNList_REST(t *testing.T) {
+	f := newDynSecret403Fixture(t)
+	writer := f.projectWriterToken(t)
+	ctx := context.Background()
+	cfg, err := f.core.GetDynamicSecretConfig(ctx, f.configID)
+	require.NoError(t, err)
+	// Store a pre-#3952 DSN directly (encryption is off in this fixture).
+	legacy := "postgres://admin:" + httpADSNSecret + "@203.0.113.10/app?sslrootcert=/etc/keyorix/ca.pem&sslkey=/etc/keyorix/k.pem"
+	require.NoError(t, f.core.Storage().SetDynamicSecretConfigAdminDSN(ctx, cfg.ID, []byte(legacy), nil))
+
+	status, body := f.getRefused(t, f.adminToken, cfg.ProjectID)
+	require.Equal(t, http.StatusOK, status, body)
+	assert.NotContains(t, body, httpADSNSecret)
+	assert.NotContains(t, body, "/etc/keyorix", "option names only")
+	var got struct {
+		Data struct {
+			Configs []struct {
+				ID             uint     `json:"id"`
+				Name           string   `json:"name"`
+				RefusedOptions []string `json:"refused_options"`
+			} `json:"configs"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Len(t, got.Data.Configs, 1, body)
+	assert.Equal(t, cfg.ID, got.Data.Configs[0].ID)
+	assert.Equal(t, cfg.Name, got.Data.Configs[0].Name)
+	assert.Equal(t, []string{"sslrootcert", "sslkey"}, got.Data.Configs[0].RefusedOptions)
+
+	for name, token := range map[string]string{"project writer": writer, "other project": f.limitedToken} {
+		status, body := f.getRefused(t, token, cfg.ProjectID)
+		require.Equal(t, http.StatusForbidden, status, "%s: %s", name, body)
+		assert.NotContains(t, body, cfg.Name)
+	}
+	status, _ = f.getRefused(t, f.adminToken, 0)
+	require.Equal(t, http.StatusBadRequest, status)
+
+	status, body = f.patchAdminDSN(t, f.adminToken, "postgres://admin:"+httpADSNSecret+"@203.0.113.10/app")
+	require.Equal(t, http.StatusOK, status, body)
+	status, body = f.getRefused(t, f.adminToken, cfg.ProjectID)
+	require.Equal(t, http.StatusOK, status, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	assert.Empty(t, got.Data.Configs, "nothing left to fix: %s", body)
+}

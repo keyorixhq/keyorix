@@ -14,7 +14,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
@@ -75,4 +78,32 @@ func TestUpdateConfigAdminDSN_GRPC(t *testing.T) {
 		assert.NotEqual(t, before, storedAdminDSNEnc(t, svc, cfg.GetId()), "the stored DSN changed")
 		assert.NotContains(t, string(storedAdminDSNEnc(t, svc, cfg.GetId())), grpcADSNSecret, "stored encrypted")
 	})
+}
+
+// TestListConfigsWithRefusedAdminDSN_GRPC (item 2).
+func TestListConfigsWithRefusedAdminDSN_GRPC(t *testing.T) {
+	svc := newDynamicTestRig(t)
+	keys := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
+	require.NoError(t, keys.Initialize("adsn-list-passphrase"))
+	svc.core.SetAuthEncryptor(keys)
+	owner := authCtx(1, "owner")
+	cfg, err := svc.CreateConfig(owner, dynamicCreateReq("adsn-grpc-list"))
+	require.NoError(t, err)
+	// Store a pre-#3952 DSN the way an old server did, past create's check.
+	legacy := "postgres://admin:" + grpcADSNSecret + "@localhost/db?tlsCAFile=/x&sslrootcert=/etc/keyorix/ca.pem"
+	enc, meta, err := keys.EncryptSecretWithAAD([]byte(legacy), ports.DynamicSecretConfigAAD(uint(cfg.GetId()), uint(cfg.GetProjectId()), uint(cfg.GetEnvironmentId())))
+	require.NoError(t, err)
+	require.NoError(t, svc.core.Storage().SetDynamicSecretConfigAdminDSN(context.Background(), uint(cfg.GetId()), enc, meta))
+
+	resp, err := svc.ListConfigsWithRefusedAdminDSN(owner, &pb.ListRefusedAdminDSNConfigsRequest{ProjectId: 1})
+	require.NoError(t, err)
+	require.Len(t, resp.GetConfigs(), 1)
+	assert.Equal(t, cfg.GetId(), resp.GetConfigs()[0].GetId())
+	assert.Equal(t, []string{"sslrootcert"}, resp.GetConfigs()[0].GetRefusedOptions(), "tlsCAFile is not a postgres option")
+	assert.NotContains(t, resp.String(), grpcADSNSecret)
+
+	_, err = svc.ListConfigsWithRefusedAdminDSN(authCtx(3, "writer-only"), &pb.ListRefusedAdminDSNConfigsRequest{ProjectId: 1})
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "%v", err)
+	_, err = svc.ListConfigsWithRefusedAdminDSN(owner, &pb.ListRefusedAdminDSNConfigsRequest{})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }

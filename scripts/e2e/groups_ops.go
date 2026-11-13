@@ -153,6 +153,8 @@ func groupDynamicSecrets(ctx *smokeCtx) {
 	// DYNAMIC-ADMIN-DSN-1: replace the stored admin DSN in place (same checks as create).
 	c.callExpect("PATCH", "PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn", dc+"/admin-dsn",
 		map[string]string{"admin_dsn": "postgres://user:pass2@e2e-smoke-unreachable.invalid:5432/db"}, 200)
+	c.callExpect("GET", "GET /api/v1/dynamic-secrets/configs/refused-admin-dsn",
+		fmt.Sprintf("/api/v1/dynamic-secrets/configs/refused-admin-dsn?project_id=%d", ctx.projectID), nil, 200)
 	c.callExpect("GET", "GET /api/v1/dynamic-secrets/configs/{id}/leases", dc+"/leases", nil, 200)
 	c.callExpect("POST", "POST /api/v1/dynamic-secrets/configs/{id}/revoke-all", dc+"/revoke-all", nil, 200)
 }

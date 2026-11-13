@@ -916,6 +916,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			leaseScope := customMiddleware.ScopeFromDynamicSecretLeaseParam("leaseID")
 			r.Post("/configs", dynamicSecretHandler.CreateConfig)
 			r.Get("/configs", dynamicSecretHandler.ListConfigs)
+			r.Get("/configs/refused-admin-dsn", dynamicSecretHandler.ListConfigsWithRefusedAdminDSN)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, configScope)).Get("/configs/{id}", dynamicSecretHandler.GetConfig)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Patch("/configs/{id}/classification", dynamicSecretHandler.ClassifyConfig)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Patch("/configs/{id}/enabled", dynamicSecretHandler.SetConfigEnabled)

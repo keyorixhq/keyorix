@@ -201,7 +201,7 @@ func (b *syncBuffer) String() string {
 }
 
 // TestDynamicSecrets_UpdateAdminDSN_DSNNeverLeaves drives every outcome of an
-// update, then looks for the DSN's password where it must
+// update and of the refused-DSN listing, then looks for the DSN's password where it must
 // not be: the process log, every audit row, every returned error, and the
 // config row's columns in clear. Not parallel: it captures the global logger.
 func TestDynamicSecrets_UpdateAdminDSN_DSNNeverLeaves(t *testing.T) {
@@ -228,6 +228,11 @@ func TestDynamicSecrets_UpdateAdminDSN_DSNNeverLeaves(t *testing.T) {
 		for _, err := range errs[:len(errs)-1] {
 			require.Error(t, err, "precondition: every other update is refused")
 		}
+		rep, err := w.core.ListProjectConfigsWithRefusedAdminDSN(w.ctx, w.f.adminID, w.f.projectID)
+		require.NoError(t, err)
+		assert.NotContains(t, fmt.Sprintf("%+v", rep), adsnSecret, "the refused-DSN listing carries the DSN")
+		_, err = w.core.ListProjectConfigsWithRefusedAdminDSN(w.ctx, w.developer.ID, w.f.projectID)
+		errs = append(errs, err)
 
 		for _, err := range errs {
 			if err != nil {

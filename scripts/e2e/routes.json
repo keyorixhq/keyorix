@@ -36,7 +36,7 @@
     "gate_perms": [
       "permSystemRead"
     ],
-    "router_go_line": 1356
+    "router_go_line": 1357
   },
   {
     "method": "PUT",
@@ -49,7 +49,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1357
+    "router_go_line": 1358
   },
   {
     "method": "GET",
@@ -62,7 +62,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1300
+    "router_go_line": 1301
   },
   {
     "method": "POST",
@@ -72,7 +72,7 @@
     "gate_fns": [
       "RequirePermission"
     ],
-    "router_go_line": 1015
+    "router_go_line": 1016
   },
   {
     "method": "POST",
@@ -85,7 +85,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1325
+    "router_go_line": 1326
   },
   {
     "method": "POST",
@@ -98,7 +98,7 @@
     "gate_perms": [
       "permAlertsWrite"
     ],
-    "router_go_line": 1340
+    "router_go_line": 1341
   },
   {
     "method": "POST",
@@ -111,7 +111,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1330
+    "router_go_line": 1331
   },
   {
     "method": "POST",
@@ -124,7 +124,7 @@
     "gate_perms": [
       "permAlertsWrite"
     ],
-    "router_go_line": 1327
+    "router_go_line": 1328
   },
   {
     "method": "POST",
@@ -137,7 +137,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1350
+    "router_go_line": 1351
   },
   {
     "method": "POST",
@@ -150,7 +150,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1333
+    "router_go_line": 1334
   },
   {
     "method": "POST",
@@ -163,7 +163,7 @@
     "gate_perms": [
       "permAlertsWrite"
     ],
-    "router_go_line": 1337
+    "router_go_line": 1338
   },
   {
     "method": "POST",
@@ -176,7 +176,7 @@
     "gate_perms": [
       "permAlertsWrite"
     ],
-    "router_go_line": 1326
+    "router_go_line": 1327
   },
   {
     "method": "POST",
@@ -189,7 +189,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1344
+    "router_go_line": 1345
   },
   {
     "method": "POST",
@@ -202,7 +202,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1348
+    "router_go_line": 1349
   },
   {
     "method": "POST",
@@ -215,7 +215,7 @@
     "gate_perms": [
       "permAlertsWrite"
     ],
-    "router_go_line": 1345
+    "router_go_line": 1346
   },
   {
     "method": "GET",
@@ -228,7 +228,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1167
+    "router_go_line": 1168
   },
   {
     "method": "GET",
@@ -241,7 +241,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1291
+    "router_go_line": 1292
   },
   {
     "method": "GET",
@@ -320,7 +320,7 @@
       "permAuditRead",
       "permSystemRead"
     ],
-    "router_go_line": 1154
+    "router_go_line": 1155
   },
   {
     "method": "POST",
@@ -334,7 +334,7 @@
       "permAuditRead",
       "permSystemWrite"
     ],
-    "router_go_line": 1158
+    "router_go_line": 1159
   },
   {
     "method": "POST",
@@ -348,7 +348,7 @@
       "permAuditRead",
       "permSystemWrite"
     ],
-    "router_go_line": 1146
+    "router_go_line": 1147
   },
   {
     "method": "GET",
@@ -362,7 +362,7 @@
       "permAuditRead",
       "permSystemRead"
     ],
-    "router_go_line": 1137
+    "router_go_line": 1138
   },
   {
     "method": "GET",
@@ -376,7 +376,7 @@
       "permAuditRead",
       "permSystemRead"
     ],
-    "router_go_line": 1138
+    "router_go_line": 1139
   },
   {
     "method": "GET",
@@ -389,7 +389,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1126
+    "router_go_line": 1127
   },
   {
     "method": "POST",
@@ -403,7 +403,7 @@
       "permAuditRead",
       "permSystemWrite"
     ],
-    "router_go_line": 1150
+    "router_go_line": 1151
   },
   {
     "method": "GET",
@@ -416,7 +416,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1139
+    "router_go_line": 1140
   },
   {
     "method": "GET",
@@ -429,7 +429,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1140
+    "router_go_line": 1141
   },
   {
     "method": "GET",
@@ -442,7 +442,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1127
+    "router_go_line": 1128
   },
   {
     "method": "GET",
@@ -455,7 +455,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1141
+    "router_go_line": 1142
   },
   {
     "method": "GET",
@@ -468,7 +468,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1143
+    "router_go_line": 1144
   },
   {
     "method": "POST",
@@ -642,7 +642,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1208
+    "router_go_line": 1209
   },
   {
     "method": "GET",
@@ -655,7 +655,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1211
+    "router_go_line": 1212
   },
   {
     "method": "GET",
@@ -668,7 +668,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1199
+    "router_go_line": 1200
   },
   {
     "method": "GET",
@@ -681,7 +681,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1216
+    "router_go_line": 1217
   },
   {
     "method": "GET",
@@ -694,7 +694,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1219
+    "router_go_line": 1220
   },
   {
     "method": "POST",
@@ -707,7 +707,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1228
+    "router_go_line": 1229
   },
   {
     "method": "GET",
@@ -720,7 +720,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1245
+    "router_go_line": 1246
   },
   {
     "method": "POST",
@@ -733,7 +733,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1247
+    "router_go_line": 1248
   },
   {
     "method": "GET",
@@ -746,7 +746,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1252
+    "router_go_line": 1253
   },
   {
     "method": "GET",
@@ -759,7 +759,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1253
+    "router_go_line": 1254
   },
   {
     "method": "GET",
@@ -772,7 +772,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1258
+    "router_go_line": 1259
   },
   {
     "method": "GET",
@@ -785,7 +785,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1201
+    "router_go_line": 1202
   },
   {
     "method": "GET",
@@ -798,7 +798,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1206
+    "router_go_line": 1207
   },
   {
     "method": "GET",
@@ -811,7 +811,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1232
+    "router_go_line": 1233
   },
   {
     "method": "POST",
@@ -824,7 +824,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1231
+    "router_go_line": 1232
   },
   {
     "method": "GET",
@@ -927,6 +927,13 @@
   },
   {
     "method": "GET",
+    "pattern": "/api/v1/dynamic-secrets/configs/refused-admin-dsn",
+    "feature_group": "dynamic-secrets",
+    "gated": false,
+    "router_go_line": 919
+  },
+  {
+    "method": "GET",
     "pattern": "/api/v1/dynamic-secrets/configs/{id}",
     "feature_group": "dynamic-secrets",
     "gated": true,
@@ -936,7 +943,7 @@
     "gate_perms": [
       "permSecretsRead"
     ],
-    "router_go_line": 919
+    "router_go_line": 920
   },
   {
     "method": "PATCH",
@@ -949,7 +956,7 @@
     "gate_perms": [
       "permSecretsWrite"
     ],
-    "router_go_line": 922
+    "router_go_line": 923
   },
   {
     "method": "PATCH",
@@ -962,7 +969,7 @@
     "gate_perms": [
       "permSecretsWrite"
     ],
-    "router_go_line": 920
+    "router_go_line": 921
   },
   {
     "method": "PATCH",
@@ -975,7 +982,7 @@
     "gate_perms": [
       "permSecretsWrite"
     ],
-    "router_go_line": 921
+    "router_go_line": 922
   },
   {
     "method": "POST",
@@ -988,7 +995,7 @@
     "gate_perms": [
       "permSecretsWrite"
     ],
-    "router_go_line": 923
+    "router_go_line": 924
   },
   {
     "method": "GET",
@@ -1001,7 +1008,7 @@
     "gate_perms": [
       "permSecretsRead"
     ],
-    "router_go_line": 924
+    "router_go_line": 925
   },
   {
     "method": "POST",
@@ -1014,7 +1021,7 @@
     "gate_perms": [
       "permSecretsWrite"
     ],
-    "router_go_line": 925
+    "router_go_line": 926
   },
   {
     "method": "POST",
@@ -1027,7 +1034,7 @@
     "gate_perms": [
       "permSecretsWrite"
     ],
-    "router_go_line": 926
+    "router_go_line": 927
   },
   {
     "method": "POST",
@@ -1040,7 +1047,7 @@
     "gate_perms": [
       "permSecretsWrite"
     ],
-    "router_go_line": 927
+    "router_go_line": 928
   },
   {
     "method": "GET",
@@ -1106,7 +1113,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 1021
+    "router_go_line": 1022
   },
   {
     "method": "POST",
@@ -1120,10 +1127,37 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 1024
+    "router_go_line": 1025
   },
   {
     "method": "DELETE",
+    "pattern": "/api/v1/groups/{id}",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 1028
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/groups/{id}",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 1026
+  },
+  {
+    "method": "PUT",
     "pattern": "/api/v1/groups/{id}",
     "feature_group": "groups",
     "gated": true,
@@ -1138,33 +1172,6 @@
   },
   {
     "method": "GET",
-    "pattern": "/api/v1/groups/{id}",
-    "feature_group": "groups",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permUsersRead"
-    ],
-    "router_go_line": 1025
-  },
-  {
-    "method": "PUT",
-    "pattern": "/api/v1/groups/{id}",
-    "feature_group": "groups",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permUsersRead",
-      "permUsersWrite"
-    ],
-    "router_go_line": 1026
-  },
-  {
-    "method": "GET",
     "pattern": "/api/v1/groups/{id}/members",
     "feature_group": "groups",
     "gated": true,
@@ -1174,7 +1181,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 1032
+    "router_go_line": 1033
   },
   {
     "method": "POST",
@@ -1188,7 +1195,7 @@
       "permRolesAssign",
       "permUsersRead"
     ],
-    "router_go_line": 1042
+    "router_go_line": 1043
   },
   {
     "method": "DELETE",
@@ -1202,7 +1209,7 @@
       "permRolesAssign",
       "permUsersRead"
     ],
-    "router_go_line": 1043
+    "router_go_line": 1044
   },
   {
     "method": "POST",
@@ -1216,7 +1223,7 @@
       "permRolesAssign",
       "permUsersRead"
     ],
-    "router_go_line": 1031
+    "router_go_line": 1032
   },
   {
     "method": "GET",
@@ -1230,7 +1237,7 @@
       "permRolesRead",
       "permUsersRead"
     ],
-    "router_go_line": 1051
+    "router_go_line": 1052
   },
   {
     "method": "POST",
@@ -1244,7 +1251,7 @@
       "permRolesAssign",
       "permUsersRead"
     ],
-    "router_go_line": 1052
+    "router_go_line": 1053
   },
   {
     "method": "DELETE",
@@ -1258,7 +1265,7 @@
       "permRolesAssign",
       "permUsersRead"
     ],
-    "router_go_line": 1053
+    "router_go_line": 1054
   },
   {
     "method": "GET",
@@ -1272,7 +1279,7 @@
       "permSecretsRead",
       "permUsersRead"
     ],
-    "router_go_line": 1035
+    "router_go_line": 1036
   },
   {
     "method": "GET",
@@ -1286,7 +1293,7 @@
       "permSecretsRead",
       "permUsersRead"
     ],
-    "router_go_line": 1038
+    "router_go_line": 1039
   },
   {
     "method": "GET",
@@ -1299,7 +1306,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1190
+    "router_go_line": 1191
   },
   {
     "method": "POST",
@@ -1325,7 +1332,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1238
+    "router_go_line": 1239
   },
   {
     "method": "GET",
@@ -1338,7 +1345,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1236
+    "router_go_line": 1237
   },
   {
     "method": "POST",
@@ -1351,7 +1358,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1237
+    "router_go_line": 1238
   },
   {
     "method": "GET",
@@ -1364,7 +1371,7 @@
     "gate_perms": [
       "permSystemRead"
     ],
-    "router_go_line": 1170
+    "router_go_line": 1171
   },
   {
     "method": "GET",
@@ -1377,7 +1384,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1185
+    "router_go_line": 1186
   },
   {
     "method": "GET",
@@ -1390,7 +1397,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1186
+    "router_go_line": 1187
   },
   {
     "method": "GET",
@@ -1403,23 +1410,10 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1181
+    "router_go_line": 1182
   },
   {
     "method": "GET",
-    "pattern": "/api/v1/mfa-reset-requests",
-    "feature_group": "mfa-reset-requests",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permUsersWrite"
-    ],
-    "router_go_line": 1268
-  },
-  {
-    "method": "POST",
     "pattern": "/api/v1/mfa-reset-requests",
     "feature_group": "mfa-reset-requests",
     "gated": true,
@@ -1433,7 +1427,7 @@
   },
   {
     "method": "POST",
-    "pattern": "/api/v1/mfa-reset-requests/{id}/approve",
+    "pattern": "/api/v1/mfa-reset-requests",
     "feature_group": "mfa-reset-requests",
     "gated": true,
     "gate_fns": [
@@ -1446,7 +1440,7 @@
   },
   {
     "method": "POST",
-    "pattern": "/api/v1/mfa-reset-requests/{id}/cancel",
+    "pattern": "/api/v1/mfa-reset-requests/{id}/approve",
     "feature_group": "mfa-reset-requests",
     "gated": true,
     "gate_fns": [
@@ -1456,6 +1450,19 @@
       "permUsersWrite"
     ],
     "router_go_line": 1271
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/mfa-reset-requests/{id}/cancel",
+    "feature_group": "mfa-reset-requests",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersWrite"
+    ],
+    "router_go_line": 1272
   },
   {
     "method": "GET",
@@ -1580,7 +1587,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1177
+    "router_go_line": 1178
   },
   {
     "method": "GET",
@@ -1593,7 +1600,7 @@
     "gate_perms": [
       "permRolesRead"
     ],
-    "router_go_line": 1088
+    "router_go_line": 1089
   },
   {
     "method": "GET",
@@ -1606,7 +1613,7 @@
     "gate_perms": [
       "permRolesRead"
     ],
-    "router_go_line": 1095
+    "router_go_line": 1096
   },
   {
     "method": "GET",
@@ -2568,7 +2575,7 @@
     "gate_perms": [
       "permRolesRead"
     ],
-    "router_go_line": 1083
+    "router_go_line": 1084
   },
   {
     "method": "GET",
@@ -2620,7 +2627,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1262
+    "router_go_line": 1263
   },
   {
     "method": "POST",
@@ -2633,7 +2640,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1263
+    "router_go_line": 1264
   },
   {
     "method": "DELETE",
@@ -2646,7 +2653,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1265
+    "router_go_line": 1266
   },
   {
     "method": "POST",
@@ -2659,7 +2666,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1264
+    "router_go_line": 1265
   },
   {
     "method": "GET",
@@ -2672,7 +2679,7 @@
     "gate_perms": [
       "permRolesRead"
     ],
-    "router_go_line": 1059
+    "router_go_line": 1060
   },
   {
     "method": "POST",
@@ -2686,7 +2693,7 @@
       "permRolesRead",
       "permRolesWrite"
     ],
-    "router_go_line": 1060
+    "router_go_line": 1061
   },
   {
     "method": "GET",
@@ -2699,10 +2706,37 @@
     "gate_perms": [
       "permRolesRead"
     ],
-    "router_go_line": 1070
+    "router_go_line": 1071
   },
   {
     "method": "DELETE",
+    "pattern": "/api/v1/roles/{id}",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead",
+      "permRolesWrite"
+    ],
+    "router_go_line": 1074
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/roles/{id}",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 1072
+  },
+  {
+    "method": "PUT",
     "pattern": "/api/v1/roles/{id}",
     "feature_group": "roles",
     "gated": true,
@@ -2717,33 +2751,6 @@
   },
   {
     "method": "GET",
-    "pattern": "/api/v1/roles/{id}",
-    "feature_group": "roles",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permRolesRead"
-    ],
-    "router_go_line": 1071
-  },
-  {
-    "method": "PUT",
-    "pattern": "/api/v1/roles/{id}",
-    "feature_group": "roles",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permRolesRead",
-      "permRolesWrite"
-    ],
-    "router_go_line": 1072
-  },
-  {
-    "method": "GET",
     "pattern": "/api/v1/roles/{id}/permissions",
     "feature_group": "roles",
     "gated": true,
@@ -2753,7 +2760,7 @@
     "gate_perms": [
       "permRolesRead"
     ],
-    "router_go_line": 1074
+    "router_go_line": 1075
   },
   {
     "method": "POST",
@@ -2767,7 +2774,7 @@
       "permRolesRead",
       "permRolesWrite"
     ],
-    "router_go_line": 1075
+    "router_go_line": 1076
   },
   {
     "method": "DELETE",
@@ -2781,7 +2788,7 @@
       "permRolesRead",
       "permRolesWrite"
     ],
-    "router_go_line": 1076
+    "router_go_line": 1077
   },
   {
     "method": "GET",
@@ -3813,7 +3820,7 @@
     "gate_perms": [
       "permSystemRead"
     ],
-    "router_go_line": 1277
+    "router_go_line": 1278
   },
   {
     "method": "POST",
@@ -3826,7 +3833,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1278
+    "router_go_line": 1279
   },
   {
     "method": "DELETE",
@@ -3839,7 +3846,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1279
+    "router_go_line": 1280
   },
   {
     "method": "GET",
@@ -3852,7 +3859,7 @@
     "gate_perms": [
       "permAuditRead"
     ],
-    "router_go_line": 1280
+    "router_go_line": 1281
   },
   {
     "method": "GET",
@@ -3917,7 +3924,7 @@
     "gate_perms": [
       "permRolesAssign"
     ],
-    "router_go_line": 1119
+    "router_go_line": 1120
   },
   {
     "method": "POST",
@@ -3930,7 +3937,7 @@
     "gate_perms": [
       "permRolesAssign"
     ],
-    "router_go_line": 1118
+    "router_go_line": 1119
   },
   {
     "method": "GET",
@@ -3943,7 +3950,7 @@
     "gate_perms": [
       "permRolesAssign"
     ],
-    "router_go_line": 1120
+    "router_go_line": 1121
   },
   {
     "method": "GET",
@@ -3956,7 +3963,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 933
+    "router_go_line": 934
   },
   {
     "method": "POST",
@@ -3970,7 +3977,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 938
+    "router_go_line": 939
   },
   {
     "method": "GET",
@@ -3983,7 +3990,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 949
+    "router_go_line": 950
   },
   {
     "method": "GET",
@@ -3996,7 +4003,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 957
+    "router_go_line": 958
   },
   {
     "method": "GET",
@@ -4009,7 +4016,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 956
+    "router_go_line": 957
   },
   {
     "method": "GET",
@@ -4022,7 +4029,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 939
+    "router_go_line": 940
   },
   {
     "method": "GET",
@@ -4035,7 +4042,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 941
+    "router_go_line": 942
   },
   {
     "method": "DELETE",
@@ -4048,7 +4055,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 966
+    "router_go_line": 967
   },
   {
     "method": "GET",
@@ -4061,7 +4068,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 958
+    "router_go_line": 959
   },
   {
     "method": "PUT",
@@ -4075,7 +4082,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 962
+    "router_go_line": 963
   },
   {
     "method": "GET",
@@ -4088,7 +4095,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 997
+    "router_go_line": 998
   },
   {
     "method": "GET",
@@ -4101,7 +4108,7 @@
     "gate_perms": [
       "permUsersRead"
     ],
-    "router_go_line": 992
+    "router_go_line": 993
   },
   {
     "method": "POST",
@@ -4115,7 +4122,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 973
+    "router_go_line": 974
   },
   {
     "method": "POST",
@@ -4129,7 +4136,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 980
+    "router_go_line": 981
   },
   {
     "method": "POST",
@@ -4143,7 +4150,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 974
+    "router_go_line": 975
   },
   {
     "method": "POST",
@@ -4157,7 +4164,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 976
+    "router_go_line": 977
   },
   {
     "method": "POST",
@@ -4171,7 +4178,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 967
+    "router_go_line": 968
   },
   {
     "method": "POST",
@@ -4185,7 +4192,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 970
+    "router_go_line": 971
   },
   {
     "method": "GET",
@@ -4199,7 +4206,7 @@
       "permRolesRead",
       "permUsersRead"
     ],
-    "router_go_line": 988
+    "router_go_line": 989
   },
   {
     "method": "PUT",
@@ -4213,7 +4220,7 @@
       "permRolesAssign",
       "permUsersRead"
     ],
-    "router_go_line": 995
+    "router_go_line": 996
   },
   {
     "method": "GET",
@@ -4227,7 +4234,7 @@
       "permSecretsRead",
       "permUsersRead"
     ],
-    "router_go_line": 1010
+    "router_go_line": 1011
   },
   {
     "method": "POST",
@@ -4241,7 +4248,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 972
+    "router_go_line": 973
   },
   {
     "method": "POST",
@@ -4255,7 +4262,7 @@
       "permUsersRead",
       "permUsersWrite"
     ],
-    "router_go_line": 968
+    "router_go_line": 969
   },
   {
     "method": "GET",
@@ -4402,7 +4409,7 @@
     "pattern": "/openapi.yaml",
     "feature_group": "root",
     "gated": false,
-    "router_go_line": 1368
+    "router_go_line": 1369
   },
   {
     "method": "GET",
@@ -4560,7 +4567,7 @@
     "pattern": "/swagger/",
     "feature_group": "root",
     "gated": false,
-    "router_go_line": 1367
+    "router_go_line": 1368
   },
   {
     "method": "POST",

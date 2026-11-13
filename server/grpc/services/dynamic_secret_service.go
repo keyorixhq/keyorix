@@ -197,6 +197,31 @@ func (s *DynamicSecretGRPCService) UpdateConfigAdminDSN(ctx context.Context, req
 	return dynamicConfigToProto(cfg), nil
 }
 
+func (s *DynamicSecretGRPCService) ListConfigsWithRefusedAdminDSN(ctx context.Context, req *pb.ListRefusedAdminDSNConfigsRequest) (*pb.ListRefusedAdminDSNConfigsResponse, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetProjectId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+		return nil, err
+	}
+	rep, err := s.core.ListProjectConfigsWithRefusedAdminDSN(ctx, user.PrincipalID(), uint(req.GetProjectId()))
+	if err != nil {
+		return nil, mapDynamicError(err)
+	}
+	out := &pb.ListRefusedAdminDSNConfigsResponse{Unreadable: intToU32(rep.Unreadable)}
+	for _, c := range rep.Configs {
+		out.Configs = append(out.Configs, &pb.RefusedAdminDSNConfig{
+			Id: uintToU32(c.ConfigID), Name: c.Name, ProjectId: uintToU32(c.ProjectID), EnvironmentId: uintToU32(c.EnvironmentID),
+			BackendType: c.BackendType, RefusedOptions: c.Options, LiveLeases: intToU32(c.LiveLeases),
+		})
+	}
+	return out, nil
+}
+
 func (s *DynamicSecretGRPCService) IssueLease(ctx context.Context, req *pb.IssueLeaseRequest) (*pb.IssuedCredential, error) {
 	user, err := requireUser(ctx)
 	if err != nil {
