@@ -11,8 +11,10 @@
 # This is NOT wired into CI or any workflow: it recompiles a package per mutant and
 # fuzzes each one, which is too heavy for the per-PR path. It is a nightly / on-demand
 # job. Runtime on pve01 (nice -n 10, GOMAXPROCS=2, -parallel 2, serial mutants): the
-# three targets at fuzztime=15s / max=10 take ~10-13 min wall, plus a one-time ~1 min
-# module copy — comfortably inside one nightly slot. Measure a fresh run with `time`.
+# four baseline targets at fuzztime=15s / max=10, plus the one-time module copy, measured
+# ~4-5 min wall with a warm cache (killed mutants fail on the seed corpus in ~2s; only the
+# allowlisted/surviving mutants spend the full budget). Cold-cache upper bound ~12 min —
+# comfortably inside one nightly slot. Measure a fresh run with `time`.
 #
 # Usage:
 #   scripts/fuzzing/oracle-health.sh                 # run + compare against baseline

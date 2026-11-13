@@ -133,11 +133,12 @@ scripts/fuzzing/oracle-health.sh --record   # re-measure and rewrite the baselin
 ```
 
 - **Runtime (pve01, `nice -n 10`, `GOMAXPROCS=2`, `-parallel 2`, serial mutants):** the
-  three targets at `fuzztime=15s / max=10` plus the one module copy measured **~137 s
-  (~2.3 min)** wall with a warm build cache — killed mutants fail on the seed corpus in
-  a second or two, so only the allowlisted/surviving mutants spend the full budget. A
-  cold cache adds the one-time package+dependency compile (upper bound ~10 min). Either
-  way it fits comfortably in one nightly slot.
+  three original targets at `fuzztime=15s / max=10` plus the one module copy measured
+  **~137 s (~2.3 min)** wall with a warm build cache — killed mutants fail on the seed
+  corpus in a second or two, so only the allowlisted/surviving mutants spend the full
+  budget. The 4th target (`FuzzOIDCVerifierClaims`, per-iteration RSA keygen) adds ~1–2 min,
+  so the full four-target run is ~4–5 min warm (cold-cache upper bound ~12 min). Either way
+  it fits comfortably in one nightly slot.
 - **Not wired into CI** on purpose: it recompiles a package per mutant and fuzzes each,
   far too heavy for the per-PR path. Run it nightly or on demand. The comparison logic
   is unit-tested (`baseline_test.go`: a baseline above the measured value fails, equal
