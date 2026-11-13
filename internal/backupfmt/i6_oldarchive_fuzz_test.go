@@ -52,8 +52,10 @@ import (
 //   - the HMAC manifest-signature gate (VerifyManifestSignature): deriving the
 //     real archive's signing key needs the KEK-unwrap machinery that lives in
 //     server/admin; the signature gate is fuzzed independently in
-//     manifest_sign_fuzz_test.go and exercised end to end by
-//     server/admin TestI6RestoreOldVersion. This target isolates the
+//     manifest_sign_fuzz_test.go. End to end, server/admin
+//     TestI6RestoreOldVersion exercises only its ACCEPT path on the real
+//     archive, and TestI6RestoreOldVersion_CorruptFailsClosed/manifest-tamper
+//     its REFUSE path on one tampered manifest. This target isolates the
 //     extract+load integrity layer.
 //   - the "no key material written" property (dek.key/kek.salt): LoadArchive
 //     never writes key files -- that happens only in the full admin command, so

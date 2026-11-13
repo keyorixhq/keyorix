@@ -41,8 +41,12 @@
 package admin
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -250,14 +254,23 @@ func i6AssertRestored(t *testing.T, gdb *gorm.DB, exp i6Expected) {
 // counterpart to FuzzI6OldArchiveMutation, which fuzzes the broad mutation space
 // at the backupfmt extract+load layer (where no key files are written at all).
 //
-// Does NOT verify: that the error MESSAGE is specific to each corruption kind
-// (only that it is non-nil and the target is untouched); message specificity is
-// covered by the extract/manifest unit tests in internal/backupfmt.
+// Most shapes are refused at extraction, before any key staging, so their
+// no-key-material check is only meaningful as a floor. "manifest-tamper" is the
+// case that gets PAST extraction (a correctly packed archive whose signed
+// MANIFEST.json had one byte of created_at changed): it reaches KEK unwrap and
+// the manifest-signature gate, and must be refused there with nothing written.
+//
+// Does NOT verify: that the error MESSAGE is specific to each extraction-stage
+// corruption kind (only that it is non-nil and the target is untouched);
+// message specificity is covered by the extract/manifest unit tests in
+// internal/backupfmt. Only manifest-tamper asserts its message.
 func TestI6RestoreOldVersion_CorruptFailsClosed(t *testing.T) {
 	wd, err := os.Getwd()
 	require.NoError(t, err)
 	orig, err := os.ReadFile(filepath.Join(wd, "testdata", "i6-oldversions", "v0.96.3", "backup.tar.gz"))
 	require.NoError(t, err)
+
+	tampered := i6TamperManifestCreatedAt(t, orig)
 
 	cases := []struct {
 		name    string
@@ -285,7 +298,10 @@ func TestI6RestoreOldVersion_CorruptFailsClosed(t *testing.T) {
 			out[0] ^= 0xFF
 			return out
 		}},
+		{"manifest-tamper", func([]byte) []byte { return tampered }},
 	}
+	// Cases that must be refused with a specific message (absent = any error).
+	wantErr := map[string]string{"manifest-tamper": "manifest signature is invalid"}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -306,6 +322,9 @@ func TestI6RestoreOldVersion_CorruptFailsClosed(t *testing.T) {
 
 			out, rErr := captureStdout(t, func() error { return runAdminRestore(nil, nil) })
 			require.Error(t, rErr, "corrupt archive %q must be refused; output:\n%s", tc.name, out)
+			if want, ok := wantErr[tc.name]; ok {
+				require.ErrorContains(t, rErr, want)
+			}
 
 			// No partial state: no database, no key material installed.
 			for _, name := range []string{"secrets.db", "dek.key", "kek.salt"} {
@@ -318,6 +337,54 @@ func TestI6RestoreOldVersion_CorruptFailsClosed(t *testing.T) {
 }
 
 const i6FixturePassphrase = "i6-fixture-pass-7777"
+
+// i6TamperManifestCreatedAt re-packs the archive with the last digit of
+// MANIFEST.json's created_at changed and every other entry byte-identical. The
+// result is a well-formed gzip/tar whose per-entry sha256 pins all still hold,
+// so ExtractArchive accepts it and only the HMAC manifest signature can refuse it.
+func i6TamperManifestCreatedAt(t *testing.T, archive []byte) []byte {
+	t.Helper()
+	zr, err := gzip.NewReader(bytes.NewReader(archive))
+	require.NoError(t, err)
+	tr := tar.NewReader(zr)
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	tamperedManifest := false
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		data, err := io.ReadAll(tr)
+		require.NoError(t, err)
+		if hdr.Name == "MANIFEST.json" {
+			var m map[string]any
+			require.NoError(t, json.Unmarshal(data, &m))
+			ts, ok := m["created_at"].(string)
+			require.True(t, ok && len(ts) > 2 && ts[len(ts)-1] == 'Z', "fixture manifest has no UTC created_at string")
+			last := ts[len(ts)-2] // the digit before the trailing "Z"
+			flipped := byte('0')
+			if last == '0' {
+				flipped = '1'
+			}
+			old := []byte(`"created_at": "` + ts + `"`)
+			require.Equal(t, 1, bytes.Count(data, old), "created_at must appear exactly once in MANIFEST.json")
+			repl := []byte(`"created_at": "` + ts[:len(ts)-2] + string(flipped) + `Z"`)
+			data = bytes.Replace(data, old, repl, 1)
+			tamperedManifest = true
+		}
+		hdr.Size = int64(len(data))
+		require.NoError(t, tw.WriteHeader(hdr))
+		_, err = tw.Write(data)
+		require.NoError(t, err)
+	}
+	require.True(t, tamperedManifest, "fixture archive has no MANIFEST.json")
+	require.NoError(t, tw.Close())
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
+}
 
 func uniqueSecretIDs(secrets []i6SecretRecord) map[uint]struct{} {
 	ids := make(map[uint]struct{}, len(secrets))

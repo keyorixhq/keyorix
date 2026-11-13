@@ -11,8 +11,10 @@
   (`internal/backupfmt/i6_oldarchive_fuzz_test.go`: seeded with the real v0.96.3 archive,
   asserts extract-refuse / load-rollback-empty / successful-load-equals-baseline on every
   mutation) and `TestI6RestoreOldVersion_CorruptFailsClosed`
-  (`server/admin`: full command, six corruption shapes, asserts no database and no key
-  material written).
+  (`server/admin`: full command, seven corruption shapes, asserts no database and no key
+  material written; six are refused at extraction, and `manifest-tamper` (a well-packed archive
+  with one signed manifest byte changed) gets past extraction and KEK unwrap and is refused by
+  the manifest-signature gate).
   **Not covered by FuzzI6OldArchiveMutation**: the HMAC manifest-signature gate
   (`VerifyManifestSignature`, covered by `manifest_sign_fuzz_test.go`) and the per-exec 64 KiB
   / 2000-row harness caps mean row-count/decompression amplification shapes are bounded out,
