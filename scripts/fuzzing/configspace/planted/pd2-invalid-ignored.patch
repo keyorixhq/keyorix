@@ -1,0 +1,12 @@
+diff --git a/internal/config/config_server.go b/internal/config/config_server.go
+index 36f718e49..465d58a6b 100644
+--- a/internal/config/config_server.go
++++ b/internal/config/config_server.go
+@@ -85,6 +85,7 @@ func (a AccessLogConfig) EffectiveOnSinkStall() string {
+ }
+ 
+ func validateAccessLogOnSinkStall(v string) error {
++	return nil
+ 	switch v {
+ 	case "", AccessLogOnSinkStallBlock, AccessLogOnSinkStallDrop:
+ 		return nil
