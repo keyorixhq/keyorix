@@ -258,6 +258,17 @@ func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 		}
 		q = q.Where(cond, args...)
 	}
+	if f.ExcludeSystemJobEvents {
+		// admin_job.* rows of kind "system" are scheduler heartbeats (#4184). Same
+		// case-sensitive prefix match per backend as ResourceType below, and the
+		// shared system-kind rule so the display and the filter cannot drift.
+		sysCond, sysArgs := storage.AuditSystemActorWhere()
+		prefix := `event_type LIKE 'admin\_job.%' ESCAPE '\'`
+		if q.Dialector.Name() != "postgres" {
+			prefix = `event_type GLOB 'admin_job.*'`
+		}
+		q = q.Where("NOT ("+prefix+" AND "+sysCond+")", sysArgs...)
+	}
 	if f.ResourceType != nil {
 		// event_type is "resource_type.action" — match rows whose event_type
 		// starts with "<resource_type>." so "secret" catches "secret.read",
