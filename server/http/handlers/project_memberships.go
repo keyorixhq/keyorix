@@ -179,6 +179,11 @@ func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Req
 		case errors.Is(err, core.ErrMembershipTargetNotFound), corestorage.IsUserNotFound(err),
 			corestorage.IsProjectNotFound(err), corestorage.IsRoleNotFound(err):
 			status = http.StatusNotFound
+		case isPermissionRefusal(err):
+			// Activating a membership grants its role: the grant ceiling
+			// (requireGranterHoldsRolePermissions) refuses with ErrPermissionDenied, a 403,
+			// never a 500 (#3979 family, TestEveryGrantingHandlerMapsPermissionDenied).
+			status = http.StatusForbidden
 		case strings.Contains(msg, "cannot transition"):
 			status = http.StatusConflict
 		default:
