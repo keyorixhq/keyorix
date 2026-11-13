@@ -21,3 +21,4 @@ target	package	funcs	fuzztime	max	seed	kill_rate	tolerance
 FuzzIPv4EmbeddingSSRFParity	internal/netutil	IsPrivateOrLinkLocal,embeddedIPv4,matchesCIDRsWithEmbedded,inCIDRs	15s	10	1	100	10
 FuzzAEADTamperRoundTrip	internal/encryption/aead	Encrypt,Decrypt,EncryptWithAAD,DecryptWithAAD,seal,open,SerializeEncryptedData,DeserializeEncryptedData	15s	10	1	100	10
 FuzzComponentPathContainment	pkg/bundleverify	cleanComponentPath,isUnsafeCleanComponentPath	15s	10	1	100	10
+FuzzOIDCVerifierClaims	internal/oidcverify	VerifyWithExpiry,Verify,TrustsIssuer,effectiveNow	15s	10	1	100	10
