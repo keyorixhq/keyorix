@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -466,10 +467,14 @@ func offerOldServerURLMigration() string {
 	return ""
 }
 
+// promptLine reads one line from the shared stdin reader, without its line ending. A final
+// line with no newline (`printf %s pw | keyorix login`) is a line: ReadString returns its
+// bytes together with io.EOF, and they are accepted. EOF is reported only when no byte was
+// read; any other read error is reported as is.
 func promptLine(prompt string) (string, error) {
 	fmt.Fprint(os.Stderr, prompt)
 	line, err := stdinReader().ReadString('\n')
-	if err != nil {
+	if err != nil && (line == "" || !errors.Is(err, io.EOF)) {
 		return "", err
 	}
 	return strings.TrimRight(line, "\r\n"), nil

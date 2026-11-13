@@ -32,7 +32,9 @@ silently removing it.
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |
-| **Total** | | **511** | **506** | **5** |
+| `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 2 | 2 | 0 |
+| `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 4 | 4 | 0 |
+| **Total** | | **517** | **512** | **5** |
 
 Separate module, not counted in the table above: the reusable differential-fuzzing kit
 [`fuzzkit/diffkit/INVARIANTS.md`](../fuzzkit/diffkit/INVARIANTS.md) lives in the standalone `fuzzkit/`
