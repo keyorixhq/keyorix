@@ -183,7 +183,7 @@ func diffMutate(signed []byte, op uint8, off uint16, blob []byte) []byte {
 
 // addDiffSeeds bootstraps the corpus with one representative input per mutation op.
 func addDiffSeeds(f *testing.F) {
-	for op := 0; op < diffNumOps; op++ {
+	for op := range diffNumOps {
 		f.Add(uint8(op), uint16(0), []byte("x"))
 	}
 	f.Add(uint8(13), uint16(16), []byte("<saml:NameID>z</saml:NameID>"))

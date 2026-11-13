@@ -48,7 +48,7 @@ func hostileXML(depth, width, attrs int, mode uint8) []byte {
 	case 2:
 		b.WriteString("<z")
 		for i := range attrs {
-			b.WriteString(fmt.Sprintf(` a%d="v"`, i))
+			fmt.Fprintf(&b, ` a%d="v"`, i)
 		}
 		b.WriteString("/>")
 	case 3:

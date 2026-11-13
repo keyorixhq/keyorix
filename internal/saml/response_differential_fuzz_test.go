@@ -19,8 +19,9 @@ package saml
 // "Keyorix must never accept a response goxmldsig cannot validate a signature for".
 // The reverse (crewjam accepts, Keyorix rejects) is over-strict and only counted.
 //
-// See .scratch/sd1-REPORT.md (uncommitted, private) for the full design, the
-// red-proof evidence, and the per-oracle "what this does NOT verify" sections.
+// Limits: the references are compared on the accept/reject decision and on the
+// extracted identity only; a reference rejecting for a non-security reason is not
+// counted as a finding.
 
 import (
 	"crypto/x509"
