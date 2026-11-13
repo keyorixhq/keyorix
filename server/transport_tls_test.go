@@ -22,7 +22,7 @@ import (
 // writeSelfSignedCert generates a throwaway self-signed cert/key pair under dir and
 // returns their paths, for exercising the non-AutoCert TLS config-building path
 // without a real CA.
-func writeSelfSignedCert(t *testing.T, dir string) (certFile, keyFile string) {
+func writeSelfSignedCert(t testing.TB, dir string) (certFile, keyFile string) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

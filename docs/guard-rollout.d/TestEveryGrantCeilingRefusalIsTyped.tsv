@@ -1,1 +1,0 @@
-TestEveryGrantCeilingRefusalIsTyped	internal/core	#4077	new sibling of TestEveryErrorPermissionDeniedRefusalIsTyped for the English-worded grant-ceiling refusal (CORE-ERR-FAMILY-6), report-only until its first green nightly on main
