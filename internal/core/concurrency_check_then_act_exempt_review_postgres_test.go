@@ -681,11 +681,14 @@ func TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres(t *testing.T) 
 	f := newCTAReview(t)
 	target := f.user("cta-suspendee", "project_viewer")
 
+	// After A's unlocked GetUser, not before A's UPDATE: A now holds the row lock
+	// there (FIX-USER-ROW-NARROW-1), so B run from that hook would deadlock on it.
 	var errB error
-	fired := f.beforeA("update", "users", func() { errB = f.coreB.SuspendUser(f.ctx, f.adminID, target.ID) })
+	fired := false
+	f.afterAUnlockedUserRead(target.ID, 1, func() { fired = true; errB = f.coreB.SuspendUser(f.ctx, f.adminID, target.ID) })
 	_, errA := f.coreA.UpdateUser(f.ctx, &UpdateUserRequest{ID: target.ID, ActorID: f.adminID, DisplayName: "renamed"})
 	t.Logf("UpdateUser (A) err=%v, SuspendUser (B) err=%v", errA, errB)
-	require.True(t, fired(), "the hook must have interleaved B's SuspendUser before A's user UPDATE")
+	require.True(t, fired, "the hook must have interleaved B's SuspendUser between A's read and A's write")
 	require.NoError(t, errB, "the suspension itself reported success")
 
 	var got models.User
@@ -715,13 +718,16 @@ func TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres(t *te
 	var before models.User
 	require.NoError(t, f.setupDB.First(&before, victim.ID).Error)
 
+	// Hook point: see the test above.
 	var errB error
-	fired := f.beforeA("update", "users", func() {
+	fired := false
+	f.afterAUnlockedUserRead(victim.ID, 1, func() {
+		fired = true
 		errB = f.coreB.ChangePassword(f.ctx, victim.ID, "UserPass123!xyz-long-enough", "NewUserPass456!abc-long-enough", "")
 	})
 	_, errA := f.coreA.UpdateOwnProfile(f.ctx, victim.ID, "stale-session-rename", "", "")
 	t.Logf("UpdateOwnProfile (A) err=%v, ChangePassword (B) err=%v", errA, errB)
-	require.True(t, fired(), "the hook must have interleaved B's ChangePassword before A's user UPDATE")
+	require.True(t, fired, "the hook must have interleaved B's ChangePassword between A's read and A's write")
 	require.NoError(t, errB, "the password change itself reported success")
 
 	var got models.User
