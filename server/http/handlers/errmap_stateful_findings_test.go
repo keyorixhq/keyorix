@@ -24,15 +24,14 @@ import (
 )
 
 type errmapWorld struct {
-	cs                         *core.KeyorixCore
-	db                         *gorm.DB
-	projectA, projectB         uint
-	envA                       uint
-	suspendedSecret            uint
-	machineB                   uint // a machine identity in project B
-	machineByActor             uint // a machine identity in project A created by the acting admin
-	viewerUser                 uint
-	viewerRole, projectAdmRole uint
+	cs                     *core.KeyorixCore
+	db                     *gorm.DB
+	projectA, projectB     uint
+	envA                   uint
+	suspendedSecret        uint
+	machineB               uint // a machine identity in project B
+	machineByActor         uint // a machine identity in project A created by the acting admin
+	viewerUser, viewerRole uint
 }
 
 func seedErrmapWorld(t *testing.T, cs *core.KeyorixCore, db *gorm.DB) errmapWorld {
@@ -179,7 +178,7 @@ func errmapCases() []errmapCase {
 		{"OPENAPI-STATEFUL-3", "CreateFolder with a name the identifier policy rejects is 400", http.StatusBadRequest, "ValidationError",
 			func(t *testing.T, w errmapWorld) *httptest.ResponseRecorder {
 				h := NewFolderHandler(w.cs)
-				body := fmt.Sprintf(`{"name":"bad‮name","project_id":%d,"environment_id":%d}`, w.projectA, w.envA)
+				body := fmt.Sprintf("{\"name\":\"bad\u202ename\",\"project_id\":%d,\"environment_id\":%d}", w.projectA, w.envA)
 				rec := httptest.NewRecorder()
 				h.CreateFolder(rec, errmapJSON(http.MethodPost, body))
 				return rec
