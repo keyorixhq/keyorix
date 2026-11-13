@@ -16,11 +16,11 @@ export interface CompliancePosture {
         // chainedEvents is the count verified through headId at lastCheckedAt, not a live
         // count. When that check is stale the server also reads the newest event id
         // (cheap, no chain walk): eventsSinceCheck events lie past headId, unverified.
-        headId?: number;
-        lastCheckedAt?: string;
-        stale?: boolean;
-        latestEventId?: number;
-        eventsSinceCheck?: number;
+        headId?: number | undefined;
+        lastCheckedAt?: string | undefined;
+        stale?: boolean | undefined;
+        latestEventId?: number | undefined;
+        eventsSinceCheck?: number | undefined;
     };
     accessGovernance: {
         projects: number;
@@ -85,7 +85,7 @@ const normalize = (d: any): CompliancePosture => ({
         lastFullVerificationAt: d.audit_integrity?.last_full_verification_at ?? undefined,
         headId: num(d.audit_integrity?.head_id) || undefined,
         lastCheckedAt: d.audit_integrity?.last_checked_at ?? undefined,
-        stale: !!d.audit_integrity?.stale,
+        stale: d.audit_integrity?.stale ? true : undefined,
         latestEventId: num(d.audit_integrity?.latest_event_id) || undefined,
         eventsSinceCheck: num(d.audit_integrity?.events_since_check) || undefined,
     },
