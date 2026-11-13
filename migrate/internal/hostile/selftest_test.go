@@ -16,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -68,13 +69,21 @@ func run(t *testing.T, c toy, p Program, cfg Config) []string {
 		cfg.CallTimeout = 150 * time.Millisecond
 	}
 	h := New(cfg)
+	// The toy may outlive a Run that reported O2 HANG (P7 ignores its context),
+	// so its result is published under a lock, not through a shared variable.
+	var mu sync.Mutex
 	var val string
 	err := h.Run("toy", func(ctx context.Context) error {
-		var e error
-		val, e = c(ctx, h.URL())
+		v, e := c(ctx, h.URL())
+		mu.Lock()
+		val = v
+		mu.Unlock()
 		return e
 	})
-	check(h, val, err)
+	mu.Lock()
+	got := val
+	mu.Unlock()
+	check(h, got, err)
 	h.Finish(func(string, ...any) {})
 	return h.Violations()
 }
