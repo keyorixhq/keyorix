@@ -4300,7 +4300,7 @@ paths:
                 environment_id: {type: integer}
                 parent_id: {type: integer, description: "0/omit = root."}
       responses:
-        '200':
+        '201':
           description: Envelope `{data, message}`. `data` is the created folder node.
           content:
             application/json:

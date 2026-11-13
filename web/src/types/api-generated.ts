@@ -11101,7 +11101,7 @@ export interface operations {
         };
         responses: {
             /** @description Envelope `{data, message}`. `data` is the created folder node. */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
