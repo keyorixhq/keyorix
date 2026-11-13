@@ -562,7 +562,7 @@ func (h *Harness) writePlain(w http.ResponseWriter, pl plan) {
 	}
 	w.WriteHeader(pl.status)
 	if pl.status != 204 && pl.status != 304 {
-		_, _ = w.Write(pl.wire)
+		_, _ = w.Write(pl.wire) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- test-only hostile backend replays recorded bytes verbatim; no browser or HTML context
 	}
 }
 
