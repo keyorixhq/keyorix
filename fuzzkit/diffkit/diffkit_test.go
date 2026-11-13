@@ -3,6 +3,7 @@ package diffkit
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -202,12 +203,7 @@ func TestMinimize(t *testing.T) {
 	// to the single offending byte.
 	in := []byte{1, 2, 3, 0xFF, 4, 5, 6, 7}
 	stillDiverges := func(b []byte) bool {
-		for _, x := range b {
-			if x == 0xFF {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(b, 0xFF)
 	}
 	got := Minimize(in, ByteCandidates, stillDiverges)
 	if len(got) != 1 || got[0] != 0xFF {

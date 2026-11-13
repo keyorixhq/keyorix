@@ -85,7 +85,7 @@ func (o opensslVerify) Run(ctx context.Context, ch *chain) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("mktemp: %w", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	rootPEM := filepath.Join(dir, "root.pem")
 	leafPEM := filepath.Join(dir, "leaf.pem")
@@ -119,8 +119,7 @@ func (o opensslVerify) Run(ctx context.Context, ch *chain) (string, error) {
 		return ch.leafFP, nil
 	}
 	// A non-zero exit is a reject; surface the reason as the error (reject class).
-	var exitErr *exec.ExitError
-	if errors.As(runErr, &exitErr) {
+	if _, ok := errors.AsType[*exec.ExitError](runErr); ok {
 		return "", fmt.Errorf("openssl reject: %s", bytes.TrimSpace(out))
 	}
 	// Anything else (binary missing, could not spawn) is an infrastructure error,
