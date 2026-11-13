@@ -43,7 +43,7 @@ type UpdateShareRequest struct {
 // ShareSecret shares a secret with another user or group.
 func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) (*models.ShareRecord, error) {
 	if err := c.validateShareSecretRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 
 	secret, err := c.GetSecret(ctx, req.SecretID)
@@ -131,7 +131,7 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 // UpdateSharePermission updates the permission level of an existing share.
 func (c *KeyorixCore) UpdateSharePermission(ctx context.Context, req *UpdateShareRequest) (*models.ShareRecord, error) {
 	if err := c.validateUpdateShareRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 
 	shareRecord, err := c.storage.GetShareRecord(ctx, req.ShareID)
@@ -403,10 +403,10 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 // RemoveSelfFromShare allows a user to remove themselves from a shared secret.
 func (c *KeyorixCore) RemoveSelfFromShare(ctx context.Context, secretID, userID uint) error {
 	if secretID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required"))
 	}
 	if userID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())

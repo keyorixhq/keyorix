@@ -5005,6 +5005,7 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
         '502': {$ref: '#/components/responses/Error'}
   /api/v1/dynamic-secrets/configs/{id}/leases:
     get:
@@ -5096,9 +5097,11 @@ paths:
                     properties:
                       lease_id: {type: string}
                       expires_at: {type: string}
+        '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
         '502': {$ref: '#/components/responses/Error'}
   /api/v1/dynamic-secrets/leases/{leaseID}/revoke:
     post:
@@ -5128,6 +5131,7 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
         '502': {$ref: '#/components/responses/Error'}
 
   /api/v1/shares:

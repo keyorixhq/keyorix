@@ -17,7 +17,7 @@ import (
 // ListSharedSecrets lists all secrets shared with a user.
 func (c *KeyorixCore) ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	secrets, err := c.storage.ListSharedSecrets(ctx, userID, c.shareEffectiveNow())
 	if err != nil {
@@ -71,7 +71,7 @@ func (c *KeyorixCore) ListSharedSecrets(ctx context.Context, userID uint) ([]*mo
 // for scoped resources. This extends the same discipline to a USER target.
 func (c *KeyorixCore) ListSharedSecretsForUser(ctx context.Context, actorID, targetUserID uint) ([]*models.SecretNode, error) {
 	if targetUserID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	if actorID != targetUserID {
 		if allowed, aerr := c.Authorize(ctx, actorID, permRolesRead, Scope{}); aerr != nil || !allowed {
@@ -108,7 +108,7 @@ func (c *KeyorixCore) ListSharedSecretsForUser(ctx context.Context, actorID, tar
 // ListSecretShares lists all shares for a specific secret.
 func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
 	if secretID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required"))
 	}
 	if _, err := c.GetSecret(ctx, secretID); err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*m
 // secret's recipient list forever.
 func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, secretID, userID uint) ([]*models.ShareRecord, error) {
 	if secretID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required"))
 	}
 	secret, err := c.GetSecret(ctx, secretID)
 	if err != nil {
@@ -173,7 +173,7 @@ func (c *KeyorixCore) ListSharesByUser(ctx context.Context, userID uint) ([]*mod
 // sharesReceivedAndOwned fetches the two storage lists ListSharesByUser merges.
 func (c *KeyorixCore) sharesReceivedAndOwned(ctx context.Context, userID uint) (received, owned []*models.ShareRecord, err error) {
 	if userID == 0 {
-		return nil, nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	received, err = c.storage.ListSharesByUser(ctx, userID, c.shareEffectiveNow())
 	if err != nil {
@@ -339,10 +339,10 @@ func (c *KeyorixCore) shareViews(ctx context.Context, shares []*models.ShareReco
 // CheckSharePermission checks if a user has permission to access a secret.
 func (c *KeyorixCore) CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error) {
 	if secretID == 0 {
-		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return "", validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required"))
 	}
 	if userID == 0 {
-		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return "", validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	return c.storage.CheckSharePermission(ctx, secretID, userID, c.shareEffectiveNow())
 }

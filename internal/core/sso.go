@@ -158,7 +158,9 @@ func (c *KeyorixCore) SSOCompleteURL(provider string) (string, bool) {
 func (c *KeyorixCore) oidcProvider(name string) (*SSOProvider, error) {
 	p, ok := c.ssoProviders[name]
 	if !ok || p.Type == "saml" || p.OAuth == nil {
-		return nil, fmt.Errorf("unknown SSO provider %q", name)
+		// #4059: a fixed text, never the caller's provider name (the begin route is
+		// unauthenticated and takes the name from the path).
+		return nil, errors.New("unknown SSO provider")
 	}
 	return p, nil
 }
