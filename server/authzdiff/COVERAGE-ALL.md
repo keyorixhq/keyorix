@@ -12,8 +12,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
 | secrets | 43 | 30 | 10 | 10 |
-| other | 127 | 19 | 21 | 9 |
-| **total** | **211** | **90** | **46** | **34** |
+| other | 127 | 20 | 21 | 9 |
+| **total** | **211** | **91** | **46** | **34** |
 
 ## groups
 
@@ -247,7 +247,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close` — model: access-review campaign/attestation rules are not in the reference model
 - [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide` — model: access-review campaign/attestation rules are not in the reference model
 - [ ] `REST POST /api/v1/projects/{id}/access-review/revoke` — model: access-review campaign/attestation rules are not in the reference model
-- [ ] `REST POST /api/v1/projects/{id}/break-glass` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
+- [x] `REST POST /api/v1/projects/{id}/break-glass` — breakglass.activate
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/review` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/rejection-reason-templates` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
