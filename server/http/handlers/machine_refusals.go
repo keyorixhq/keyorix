@@ -15,6 +15,7 @@ import (
 	"net/http"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/errclass"
 )
 
@@ -24,8 +25,11 @@ import (
 // parity with DELETE /user-roles and gRPC RemoveRole, decided 2026-11-13), 400 for a
 // validation refusal, 409 for a state or duplicate conflict. A storage read fault and
 // an audit outage are answered by sendStorageUnavailable / sendAuditUnavailable first,
-// and any other error is the caller's 500. The message is the refusal's own text,
-// which core words for the client, except the privilege ceiling's fixed "access denied".
+// and any other error is the caller's 500. The message is the refusal's own text for a
+// validation or permission refusal and for the sentinels in machineRefusalOwnText (core
+// words those for the client), the privilege ceiling's fixed "access denied", and the
+// class's fixed text for any other not-found or conflict (a sentinel wrapped with %w
+// can carry a driver message: core_error_answer.go).
 func sendMachineRefusal(w http.ResponseWriter, err error) bool {
 	class := errclass.Of(err)
 	switch class {
@@ -33,9 +37,37 @@ func sendMachineRefusal(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	text := err.Error()
-	if errors.Is(err, core.ErrMachinePrivilegeCeilingDenied) {
+	switch {
+	case errors.Is(err, core.ErrMachinePrivilegeCeilingDenied):
 		text = "access denied"
+	case class == errclass.InvalidInput, class == errclass.PermissionDenied:
+	case !machineRefusalHasOwnText(err):
+		text = coreErrorDefaultText(class, err)
 	}
 	sendError(w, coreErrorCodes[class], text, errclass.HTTPStatus(class), nil)
 	return true
+}
+
+// machineRefusalOwnText are the not-found and conflict sentinels of the machine routes
+// whose text core words for the client (the set these routes echoed before the shared
+// classifier).
+var machineRefusalOwnText = []error{
+	core.ErrMachineIdentityNotFound,
+	storage.ErrUserNotFound,
+	storage.ErrRoleNotFound,
+	storage.ErrOIDCBindingNotFound,
+	core.ErrMachineTransitionInvalid,
+	core.ErrMachineIdentityNotActive,
+	storage.ErrRoleAlreadyAssigned,
+	storage.ErrRoleNotAssigned,
+	storage.ErrOIDCBindingAlreadyBound,
+}
+
+func machineRefusalHasOwnText(err error) bool {
+	for _, s := range machineRefusalOwnText {
+		if errors.Is(err, s) {
+			return true
+		}
+	}
+	return false
 }
