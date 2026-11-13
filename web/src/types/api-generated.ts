@@ -11117,6 +11117,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description Envelope `{data, message}`. `data` is the created folder node. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Secret"];
+                    };
+                };
+            };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
@@ -11903,6 +11914,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             502: components["responses"]["Error"];
         };
     };
@@ -12000,9 +12012,11 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             502: components["responses"]["Error"];
         };
     };
@@ -12035,6 +12049,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             502: components["responses"]["Error"];
         };
     };

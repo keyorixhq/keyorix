@@ -117,7 +117,7 @@ func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *pb.ListUserS
 			// too, so a client can tell "refused, too many" from a server fault.
 			return nil, status.Error(codes.FailedPrecondition, "share list is over the per-request cap; revoke or narrow shares first")
 		}
-		return nil, status.Error(codes.Internal, "failed to list user shares")
+		return nil, internalFailure("failed to list user shares", err)
 	}
 	// #G17: ShareRecord only carries SecretID, so resolve each share's owning
 	// project in one batched lookup before applying the same aggregate MFA
@@ -126,7 +126,7 @@ func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *pb.ListUserS
 	// endpoint needs it despite authorizeGlobal's scope.ProjectID being 0.
 	projectIDs, err := s.shareProjectIDs(ctx, shares)
 	if err != nil {
-		log.Printf("ListUserShares: failed to resolve project ids for the MFA check: %v", err)
+		log.Printf("ListUserShares: failed to resolve project ids for the MFA check: %s", withFaultCause(err))
 		return nil, status.Error(codes.Internal, "failed to list user shares")
 	}
 	if err := enforceProjectMFAForProjects(ctx, s.core, user, projectIDs); err != nil {
@@ -232,7 +232,7 @@ func (s *ShareGRPCService) UpdateSharePermission(ctx context.Context, req *pb.Up
 	})
 	if err != nil {
 		if perr, ok := partialMutationStatus(err); ok {
-			log.Printf("update share %d permission partially applied: %v", req.GetShareId(), err)
+			log.Printf("update share %d permission partially applied: %s", req.GetShareId(), withFaultCause(err))
 			return nil, perr
 		}
 		return nil, mapShareError(err)
@@ -329,7 +329,7 @@ func mapShareError(err error) error {
 		// divergence rather than close one.
 		return status.Error(codes.InvalidArgument, "share expiry must be in the future")
 	default:
-		return status.Error(codes.Internal, "share operation failed")
+		return internalFailure("share operation failed", err)
 	}
 }
 

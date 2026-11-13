@@ -18035,6 +18035,7 @@ type IssueDynamicSecretLeaseResponse struct {
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON409 *Error
 	JSON502 *Error
 }
 
@@ -18125,9 +18126,11 @@ type RenewDynamicSecretLeaseResponse struct {
 		} `json:"data,omitempty"`
 		Message *string `json:"message,omitempty"`
 	}
+	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON409 *Error
 	JSON502 *Error
 }
 
@@ -18160,6 +18163,7 @@ type RevokeDynamicSecretLeaseResponse struct {
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON409 *Error
 	JSON502 *Error
 }
 
@@ -18233,6 +18237,10 @@ type CreateFolderResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
+		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+		Data *Secret `json:"data,omitempty"`
+	}
+	JSON201 *struct {
 		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
 		Data *Secret `json:"data,omitempty"`
 	}
@@ -28279,6 +28287,13 @@ func ParseIssueDynamicSecretLeaseResponse(rsp *http.Response) (*IssueDynamicSecr
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -28429,6 +28444,13 @@ func ParseRenewDynamicSecretLeaseResponse(rsp *http.Response) (*RenewDynamicSecr
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -28449,6 +28471,13 @@ func ParseRenewDynamicSecretLeaseResponse(rsp *http.Response) (*RenewDynamicSecr
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
 		var dest Error
@@ -28509,6 +28538,13 @@ func ParseRevokeDynamicSecretLeaseResponse(rsp *http.Response) (*RevokeDynamicSe
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
 		var dest Error
@@ -28627,6 +28663,16 @@ func ParseCreateFolderResponse(rsp *http.Response) (*CreateFolderResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+			Data *Secret `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error

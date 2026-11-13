@@ -25,10 +25,10 @@ const copyEnvPageSize = 500
 // from the request).
 func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sourceEnvID, targetEnvID uint, actorUsername string, actorID uint, ip, ua string) (copied, skipped int, err error) { // NOSONAR -- domain-driven parameter count; cognitive complexity 18, suppress go:S3776
 	if projectID == 0 || sourceEnvID == 0 || targetEnvID == 0 {
-		return 0, 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project, source and target environment IDs are required")
+		return 0, 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project, source and target environment IDs are required"))
 	}
 	if sourceEnvID == targetEnvID {
-		return 0, 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source and target environments must differ")
+		return 0, 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source and target environments must differ"))
 	}
 
 	// Both environments must belong to the authorized project — so the project-scoped
@@ -86,7 +86,7 @@ func (c *KeyorixCore) projectEnvironment(ctx context.Context, projectID, envID u
 		return nil, classifyReadError(err, "")
 	}
 	if err != nil || env.ProjectID != projectID {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "both environments must belong to the given project")
+		return nil, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "both environments must belong to the given project"))
 	}
 	return env, nil
 }

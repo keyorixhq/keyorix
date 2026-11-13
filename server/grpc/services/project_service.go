@@ -50,7 +50,7 @@ func mapProjectError(err error) error {
 	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "access denied")
 	default:
-		return status.Error(codes.Internal, "project operation failed")
+		return internalFailure("project operation failed", err)
 	}
 }
 
@@ -80,7 +80,7 @@ func (s *ProjectGRPCService) ListProjects(ctx context.Context, _ *emptypb.Empty)
 	// so this keeps parity with both transports' prior behaviour).
 	vis, err := s.core.VisibleProjects(ctx, user.ActorKind(), user.PrincipalID(), permSecretsRead)
 	if err != nil {
-		return nil, status.Error(codes.Internal, "project operation failed")
+		return nil, internalFailure("project operation failed", err)
 	}
 	projects, err := s.core.ListProjects(ctx)
 	if err != nil {

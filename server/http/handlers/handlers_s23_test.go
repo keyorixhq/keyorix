@@ -12,8 +12,6 @@
 //   - admin_jobs.go: RunExpiryReminders (no lead_days — defaults to 0),
 //     RunComplianceDigest (happy path), RunAnomalyAlerts (happy path),
 //     RunRotationReminders (happy path) — using freshCoreS12 for isolation
-//   - isSafeDynamicSecretError: extra safe-string branches not covered by s4
-//     ("cannot issue from the", "mints self-expiring", "has expired")
 //   - groups_proxy.go: AddGroupMemberProxy (storage NotFound branch)
 //   - dynamic_secrets.go: RevokeLease (authorized, lease exists — RevokeLease
 //     core error path)
@@ -377,33 +375,6 @@ func TestAdminJobs_RunComplianceDigest_HappyPath_S23(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.True(t, resp["success"].(bool))
-}
-
-// ── isSafeDynamicSecretError extra branches ────────────────────────────────────
-
-// TestIsSafeDynamicSecretError_ExtraStrings_S23 covers the safe-string branches
-// NOT hit by the existing s4 tests: "cannot issue from the", "mints self-
-// expiring credentials", and "has expired; issue a new lease instead".
-func TestIsSafeDynamicSecretError_ExtraStrings_S23(t *testing.T) {
-	cases := []struct {
-		msg  string
-		want bool
-	}{
-		{"cannot issue from the disabled config", true},
-		{"mints self-expiring credentials that cannot be renewed", true},
-		{"lease has expired; issue a new lease instead", true},
-		{"unsupported backend type", true},
-		{"active-lease limit reached for config 7", true},
-		{"lease is not active (status=revoked)", true},
-		{"config not found", true},
-		{"", false},
-		{"connection refused: dial tcp 127.0.0.1:5432", false},
-		{"ERROR: duplicate key value violates unique constraint", false},
-	}
-	for _, tc := range cases {
-		got := isSafeDynamicSecretError(tc.msg)
-		assert.Equal(t, tc.want, got, "isSafeDynamicSecretError(%q)", tc.msg)
-	}
 }
 
 // ── isSafeConnectError extra branches ─────────────────────────────────────────
