@@ -454,7 +454,7 @@ func TestEveryDirectMachineGrantEntryTagsSelfGranter(t *testing.T) {
 	}
 	for name, why := range machineGranterTagExempt {
 		if !seen[name] {
-			g.Errorf("machineGranterTagExempt[%q] (%s) no longer reproduces; remove it", name, why)
+			guardrules.KnownFindingClosed(g, "machineGranterTagExempt/"+name, why+": no longer reproduces")
 		}
 	}
 }
