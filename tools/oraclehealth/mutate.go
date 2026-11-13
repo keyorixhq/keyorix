@@ -272,7 +272,7 @@ func isGenerated(src []byte) bool {
 	if len(head) > 2048 {
 		head = head[:2048]
 	}
-	for _, line := range strings.Split(string(head), "\n") {
+	for line := range strings.SplitSeq(string(head), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "// Code generated") && strings.HasSuffix(line, "DO NOT EDIT.") {
 			return true
