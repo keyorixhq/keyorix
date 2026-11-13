@@ -107,7 +107,7 @@ func runInitInEmptyDir(t *testing.T, storageType, preWrittenConfig string) (stri
 	initStorageType = storageType
 	initDev = false
 	if preWrittenConfig != "" {
-		if err := os.WriteFile(filepath.Join(dir, configPathFlag),[]byte(preWrittenConfig), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, configPathFlag), []byte(preWrittenConfig), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
