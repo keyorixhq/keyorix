@@ -105,7 +105,6 @@ var uncoveredReasons = map[string]string{
 	"REST POST /api/v1/projects/{id}/secrets/bulk-rename":                        "design: bulk secret operation outside the initially bound secret set; not bound",
 	"REST POST /api/v1/projects/{id}/secrets/bulk-rotate":                        "design: bulk secret operation outside the initially bound secret set; not bound",
 	"REST POST /api/v1/projects/{id}/secrets/extend-expiring":                    "fixture: needs expiring secrets",
-	"REST POST /api/v1/projects/{id}/secrets/reassign-owner":                     "design: bulk secret operation outside the initially bound secret set; not bound",
 	"REST POST /api/v1/projects/{id}/secrets/render":                             "fixture: needs a template referencing secrets",
 	"REST POST /api/v1/projects/{id}/secrets/resume-all":                         "design: bulk secret operation outside the initially bound secret set; not bound",
 	"REST POST /api/v1/projects/{id}/secrets/suspend-all":                        "design: bulk secret operation outside the initially bound secret set; not bound",
