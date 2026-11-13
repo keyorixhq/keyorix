@@ -88,11 +88,9 @@ func FuzzHTTP2AbusiveFrames(f *testing.F) {
 	// An independent, well-behaved HTTP/2 client used to prove server-wide
 	// responsiveness after each abusive sequence.
 	healthyClient := &http.Client{
-		Transport: &http2.Transport{
-			AllowHTTP: false,
-			DialTLSContext: func(_ context.Context, network, a string, cfg *tls.Config) (net.Conn, error) {
-				return tls.Dial(network, a, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}) // #nosec G402 -- loopback self-signed test cert
-			},
+		Transport: &http.Transport{
+			ForceAttemptHTTP2: true,
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}, // #nosec G402 -- loopback self-signed test cert
 		},
 		Timeout: 5 * time.Second,
 	}
@@ -196,11 +194,8 @@ func abuseConnection(addr string, program []byte) {
 
 	// Cap the number of operations so one input cannot run unbounded.
 	const maxOps = 512
-	n := len(program)
-	if n > maxOps {
-		n = maxOps
-	}
-	for i := 0; i < n; i++ {
+	n := min(len(program), maxOps)
+	for i := range n {
 		op := program[i] >> 4
 		var werr error
 		switch op % 8 {
@@ -271,7 +266,7 @@ func bigHeaderBlock(extra int) []byte {
 		val[i] = 'a'
 	}
 	count := 4 + extra%64
-	for i := 0; i < count; i++ {
+	for range count {
 		_ = enc.WriteField(hpack.HeaderField{Name: "x-abuse", Value: string(val)})
 	}
 	return buf

@@ -54,7 +54,7 @@ func TestHTTP2Abuse_ServerStaysResponsive(t *testing.T) {
 		fn   func(fr *http2.Framer, next func() uint32) error
 	}{
 		{"settings-flood", func(fr *http2.Framer, _ func() uint32) error {
-			for i := 0; i < 256; i++ {
+			for i := range 256 {
 				if err := fr.WriteSettings(http2.Setting{ID: http2.SettingInitialWindowSize, Val: uint32(i * 1024)}); err != nil {
 					return err
 				}
@@ -62,7 +62,7 @@ func TestHTTP2Abuse_ServerStaysResponsive(t *testing.T) {
 			return nil
 		}},
 		{"rapid-reset", func(fr *http2.Framer, next func() uint32) error {
-			for i := 0; i < 256; i++ {
+			for range 256 {
 				id := next()
 				if err := writeGRPCHeaders(fr, id, grpcSmallHeaderBlock(), false); err != nil {
 					return err
@@ -77,7 +77,7 @@ func TestHTTP2Abuse_ServerStaysResponsive(t *testing.T) {
 			return writeGRPCHeaders(fr, next(), grpcBigHeaderBlock(), true)
 		}},
 		{"ping-flood", func(fr *http2.Framer, _ func() uint32) error {
-			for i := 0; i < 256; i++ {
+			for i := range 256 {
 				var p [8]byte
 				p[0] = byte(i)
 				if err := fr.WritePing(false, p); err != nil {
@@ -91,7 +91,7 @@ func TestHTTP2Abuse_ServerStaysResponsive(t *testing.T) {
 			if err := writeGRPCHeaders(fr, id, grpcSmallHeaderBlock(), false); err != nil {
 				return err
 			}
-			for i := 0; i < 32; i++ {
+			for range 32 {
 				if err := fr.WriteContinuation(id, false, grpcSmallHeaderBlock()); err != nil {
 					return err
 				}
@@ -100,7 +100,7 @@ func TestHTTP2Abuse_ServerStaysResponsive(t *testing.T) {
 		}},
 		{"exceed-max-concurrent-streams", func(fr *http2.Framer, next func() uint32) error {
 			// Open well past MaxConcurrentStreams (128) without closing them.
-			for i := 0; i < 400; i++ {
+			for range 400 {
 				if err := writeGRPCHeaders(fr, next(), grpcSmallHeaderBlock(), true); err != nil {
 					return err
 				}
@@ -208,7 +208,7 @@ func grpcBigHeaderBlock() []byte {
 	for i := range val {
 		val[i] = 'a'
 	}
-	for i := 0; i < 64; i++ {
+	for range 64 {
 		_ = enc.WriteField(hpack.HeaderField{Name: "x-abuse", Value: string(val)})
 	}
 	return []byte(buf)
