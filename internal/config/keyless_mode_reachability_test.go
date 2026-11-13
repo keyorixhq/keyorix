@@ -71,6 +71,10 @@ var keylessModeAllowedFiles = map[string]string{
 		"whether this setting is in effect, for the start-up warning loop and the settings-diff audit -- " +
 		"never writes it. No HTTP or gRPC transport is involved: these closures only ever run from " +
 		"the server's own startup code, over an already-loaded *config.Config.",
+	"scripts/fuzzing/configspace/posture.go": "reads it once in the P13 posture predicate of the config-space " +
+		"fuzzer (a developer and CI test tool under scripts/, never linked into the server or any shipped " +
+		"binary) to compare the warning the server prints with an independent recomputation of whether the " +
+		"setting is in effect -- never writes it. No HTTP or gRPC transport is involved.",
 }
 
 // repoRootForKeylessModeScan resolves the main module's repo root from this
