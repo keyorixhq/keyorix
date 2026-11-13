@@ -3,6 +3,6 @@
   reassignment route (`POST /api/v1/projects/{id}/secrets/reassign-owner`,
   core `ReassignOwnedSecrets`). Its single project-scope `roles.assign` gate
   (the #G10 fix) is checked on the core and REST legs against the independent
-  reference model, and a permanent planted-defect self-test
-  (`reassign-owner-core-gate-removed`) proves the harness still fires when that
-  gate is dropped. REST coverage rises from 89 to 90 of 211 in-scope operations.
+  reference model (clean sweep: no unexplained case). The route is gated at both
+  the router and in core, so dropping either gate alone is not observable and no
+  planted-defect self-test is claimed for it. REST coverage rises from 89 to 90 of 211 in-scope operations.

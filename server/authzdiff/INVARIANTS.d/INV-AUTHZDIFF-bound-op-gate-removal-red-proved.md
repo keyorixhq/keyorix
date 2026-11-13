@@ -8,9 +8,9 @@
   on that op alone, with the same sweep WITHOUT the overlay producing zero. A
   model rule that could not be red-proved this way is not committed as an oracle.
   Why: "a guard nobody has watched fail is not a guard" and "validate a mechanism
-  against a failure that actually happened" (root `CLAUDE.md`); the reassign-owner
-  plant reproduces the real #G10 "denial masked as a silent no-op" regression, and
-  the break-glass plant (`breakglass-activate-membership-gate-removed`) removes
+  against a failure that actually happened" (root `CLAUDE.md`); the bulk
+  reassign-owner route is gated at the router AND in core, so removing either gate
+  alone is invisible by design (known-04) and it carries no plant; the break-glass plant (`breakglass-activate-membership-gate-removed`) removes
   `ActivateBreakGlass`'s `IsProjectMember` refusal — the self-elevation gate whose
   earlier "holds the install baseline counts as membership" form was the #284-era
   bug — so core (and REST, which has no gate of its own) over-allow every non-member
