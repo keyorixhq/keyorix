@@ -182,7 +182,7 @@ func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Req
 		case isPermissionRefusal(err):
 			// Activating a membership grants its role: the grant ceiling
 			// (requireGranterHoldsRolePermissions) refuses with ErrPermissionDenied, a 403,
-			// never a 500 (#3979 family, TestEveryGrantingHandlerMapsPermissionDenied).
+			// never a 500 (#3979 family; the REST family guard lands with #4165).
 			status = http.StatusForbidden
 		case strings.Contains(msg, "cannot transition"):
 			status = http.StatusConflict

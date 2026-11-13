@@ -2,8 +2,8 @@ package services
 
 // grant_refusal_mapping_guard_test.go — FIX-ERRMAP-STRUCT-1 item 4 (#3979, #4020): every
 // gRPC service method that calls a GRANTING core method (one that enforces a grant
-// ceiling, derived by guardrules.GrantCeilingMethods from internal/core, the same set
-// the REST guard server/http/handlers/grant_refusal_mapping_guard_test.go uses) hands
+// ceiling, derived by guardrules.GrantCeilingMethods from internal/core; the REST twin
+// lands with #4165 as TestEveryGrantingHandlerMapsTheCeilingRefusal) hands
 // the error to a mapper that classifies core.ErrPermissionDenied (PermissionDenied,
 // never Internal): the shared adapter coreErrorStatus, or a same-package function
 // whose body evaluates errors.Is(_, core.ErrPermissionDenied).

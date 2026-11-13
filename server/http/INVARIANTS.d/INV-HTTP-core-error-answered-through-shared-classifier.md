@@ -27,10 +27,10 @@
   adapter: the REST/gRPC parity check on the sentinel errors);
   `TestErrMap_StatefulFindingsAnswerDeclaredStatus` (the #4132 findings, en + pseudo-locale);
   `TestSecretMutation_PermissionLookupOutageIs503` and faultops
-  `TestLookupVerdict_SecretMutationPermissionFaultIs503` (#3873); the family guard
-  `TestEveryGrantingHandlerMapsPermissionDenied` (every handler calling a granting core method,
-  derived by `guardrules.GrantCeilingMethods`, maps `ErrPermissionDenied`; one-hop helpers
-  followed; report-only on pull requests while its `docs/guard-rollout.d` row exists) with its
-  gRPC twin `TestEveryGrantingServiceMapsPermissionDenied`. Not covered: a handler that classifies
-  by text and never calls a granting method is caught only when its family migrates
+  `TestLookupVerdict_SecretMutationPermissionFaultIs503` (#3873). Not covered: a handler that
+  calls a granting core method and does not map `ErrPermissionDenied` (the #3979 family) has no
+  REST guard in this tree yet; it lands with #4165 (`TestEveryGrantingHandlerMapsTheCeilingRefusal`).
+  The gRPC twin is `TestEveryGrantingServiceMapsPermissionDenied`
+  (`INV-GRPCSVC-core-error-status-through-shared-classifier`). A handler that classifies by text
+  and never calls a granting method is caught only when its family migrates
   (`INV-HTTP-classify-errors-by-sentinel-not-text` lists the state).

@@ -15,7 +15,8 @@ import (
 // exported KeyorixCore method that reaches one of them, directly or through one
 // unexported method of the same type, is a granting method, and every transport
 // call of a granting method must map the refusal to 403 / PermissionDenied
-// (TestEveryGrantingHandlerMapsPermissionDenied, TestEveryGrantingServiceMapsPermissionDenied).
+// (TestEveryGrantingServiceMapsPermissionDenied; the REST twin lands with #4165 as
+// TestEveryGrantingHandlerMapsTheCeilingRefusal).
 var grantCeilingFuncs = map[string]bool{
 	"requireGranterHoldsRolePermissions":      true,
 	"requireGranterHoldsRoleSet":              true,
