@@ -338,6 +338,22 @@ const PosturePanel: React.FC = () => {
                     value={auditChainValue(p.auditIntegrity)}
                     tone={auditChainTone(p.auditIntegrity)}
                 />
+                {p.auditIntegrity.headId ? (
+                    <Tile
+                        label={`Chain head, ${p.auditIntegrity.chainedEvents} events verified`}
+                        value={`#${p.auditIntegrity.headId}`}
+                    />
+                ) : null}
+                {p.auditIntegrity.lastCheckedAt && (
+                    <Tile label="Chain last checked" value={formatDateTime(p.auditIntegrity.lastCheckedAt)} />
+                )}
+                {p.auditIntegrity.eventsSinceCheck ? (
+                    <Tile
+                        label={`Events after the last check (newest #${p.auditIntegrity.latestEventId ?? '?'}), not yet verified`}
+                        value={p.auditIntegrity.eventsSinceCheck}
+                        tone="warn"
+                    />
+                ) : null}
                 {p.auditIntegrity.lastFullVerificationAt && (
                     <Tile
                         label="Last full chain re-walk"
