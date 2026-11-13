@@ -51,6 +51,17 @@ var postureEnablers = map[string][]string{
 	"P12": {"audit.siem.enabled"},
 	"P16": {"server.http.enabled"},
 	"P17": {"storage.type", "storage.database.dsn", "storage.database.host"},
+	// P15 (audit durability) is storage-type-dependent: SQLite/local is always
+	// Strict, so P15 can only hold there via an explicit audit key (already in
+	// its model Explicit list); Postgres defaults audit durability to Standard
+	// (config.DatabaseConfig.EffectiveAuditDurability), which the operator opts
+	// out of with storage.database.audit_durability. So an explicit Postgres
+	// selection explains a Standard-durability P15 exactly as it explains the
+	// Postgres-TLS posture P17 — it is the backend's documented default, not a
+	// silently weakened one. A future change that weakened the SQLite/local
+	// default instead would still trip TestI2_DefaultPostureMatchesAllowlist,
+	// which pins the local baseline.
+	"P15": {"storage.type", "storage.database.dsn", "storage.database.host"},
 }
 
 // explainKeys returns every key whose explicit presence explains a posture: its

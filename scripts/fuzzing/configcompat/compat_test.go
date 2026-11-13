@@ -108,6 +108,27 @@ func TestI3_AllAliasPairsEquivalent(t *testing.T) {
 	}
 }
 
+// TestI2_PostgresDefaultDurabilityIsNotFlagged guards the harness fix for the
+// storage-type-dependent audit-durability default: a bare Postgres config has
+// effective audit durability Standard by backend default (operators opt into
+// Strict with storage.database.audit_durability), so P15 holding here is the
+// backend's documented default — explained by the explicit Postgres selection,
+// not a silently weakened default. Surfaced by FuzzConfigCompat.
+func TestI2_PostgresDefaultDurabilityIsNotFlagged(t *testing.T) {
+	m := mustModel(t)
+	env := newEnv(t)
+	data := []byte("storage:\n  type: postgres\n  database:\n    host: db\n    name: k\n    user: k\n")
+	r := env.Load(data)
+	if r.Cfg == nil {
+		t.Fatalf("setup: postgres config did not load: %s", r.Verdict)
+	}
+	for _, fnd := range CheckI2(m, r, data, defaultPostureSet(), rawHasPath) {
+		if fnd.Key == "P15" {
+			t.Errorf("P15 should be explained by the explicit Postgres selection, got: %s", fnd)
+		}
+	}
+}
+
 // ---- Planted red/green proofs (production code is NOT edited; defects are
 // injected behaviourally so each oracle is proven non-vacuous). ----
 
