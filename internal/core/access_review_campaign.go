@@ -226,9 +226,12 @@ func (c *KeyorixCore) GetAccessReviewCampaign(ctx context.Context, projectID, ca
 // and the standalone attest/revoke endpoints (#G52, via
 // principalTypeForDecision's inference — AccessReviewDecision.PrincipalType
 // is only ever populated by the caller for "role" sources).
+// Both refusals are typed ErrPermissionDenied (403 through the shared
+// classifier); the text is unchanged, so the text-matching campaign handler
+// (sendCampaignError) still answers 400.
 func (c *KeyorixCore) checkReviewerIndependence(ctx context.Context, actorID uint, principalType string, principalID uint) error {
 	if principalType == "user" && principalID == actorID {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
+		return permissionDeniedf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
 	}
 	if principalType == "group" {
 		member, err := c.userInGroup(ctx, actorID, principalID)
@@ -236,7 +239,7 @@ func (c *KeyorixCore) checkReviewerIndependence(ctx context.Context, actorID uin
 			return err
 		}
 		if member {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
+			return permissionDeniedf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
 		}
 	}
 	return nil

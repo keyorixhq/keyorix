@@ -276,7 +276,7 @@ func runPATHygiene(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("%-5s %-22s %-14s %-7s %-8s %s\n", "ID", "NAME", "PREFIX", "USER", "FLAGS", "LAST USED")
 	for _, r := range rows {
-		last := derefStr(r.LastUsedAt)
+		last := derefTimeRFC3339(r.LastUsedAt)
 		if last == "" {
 			last = "never"
 		}

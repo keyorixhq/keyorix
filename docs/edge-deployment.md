@@ -329,6 +329,119 @@ recovery key backed up separately ([§6](#6-backup-and-restore)). A unit file
 only restarts the process: it cannot tell a healthy server from one that is up
 and refusing every request, so watch `/health` from outside.
 
+The five subsections below say what the code does today and what you must do.
+Where the code does not do something, it is written as a limit, not as a
+promise. File names are given so a reviewer can check each claim; look the
+function up by name, line numbers drift.
+
+### Start after a reboot: there is no unseal step
+
+The server has no sealed state and no unseal call. At every start it gets its
+key-encryption key (KEK) itself, then serves; if it cannot, the start fails
+(`initializeEncryption` in `server/boot_encryption.go`, called from
+`server/boot_core.go`). What it needs depends on
+`storage.encryption.key_provider.type`:
+
+| Provider | What the server does at start | Unattended? |
+|---|---|---|
+| `password` (default) | Reads the passphrase from `--passphrase-fd`, `--passphrase-file`, `--passphrase-stdin`, or `KEYORIX_MASTER_PASSWORD` / `KEYORIX_MASTER_PASSWORD_FILE`, in that order (`ResolvePassphrase`, `internal/crypto/passphrase.go`). It never prompts. | Only if the passphrase is stored on the device (the systemd credential file above). Then host access means key access ([§8](#8-securing-physical-access)). |
+| `file`, `env`, `exec` | Reads the KEK from a file, a variable, or the output of a command. | Yes, with the same consequence: whatever holds the KEK is on the device. |
+| `tpm` | Unseals the KEK inside the device's TPM (`internal/crypto/tpm_provider.go`). | Yes, on that TPM only; the blob cannot be unsealed anywhere else ([§6](#6-backup-and-restore)). |
+| `shamir` | Needs K shares from share files or variables at start (`internal/crypto/shamir_provider.go`). | Only if K shares stay on the device, which removes the point of splitting. Limit: there is no way to supply shares to a running, waiting server. |
+| `aws-kms`, `gcp-kms` | Calls the cloud KMS to decrypt the wrapped KEK, under a timeout (`KMSKeyProvider.KEK`, `internal/crypto/kms_provider.go`). | Only while the KMS is reachable. Limit: the server cannot start with the link down. |
+
+If the input is missing, the process exits with the reason in its log. Under
+the shipped systemd unit (`Restart=always`, `RestartSec=5`,
+`StartLimitIntervalSec=0`) that becomes a restart every five seconds until
+someone fixes it. Limits: the server does not wait for a passphrase, does not
+come up in a reduced mode, and sends no alert; the watch on `/health` from
+outside is how you find out.
+
+### Stuck states: WAL left behind after `kill -9`
+
+The database runs in SQLite WAL mode (`_journal_mode=WAL` in `sqliteDSN`,
+`internal/storage/factory_local.go`). After `kill -9` or a power cut the
+`-wal` and `-shm` files stay beside the database. Keyorix has no repair step
+of its own: SQLite replays the log when the database is next opened, and the
+server then tightens the sidecars' mode to `0600`
+(`tightenExistingLocalStorageFiles`, same file). The lock files are covered in
+the table above.
+
+- **Do nothing and start the service.** The crash soak in [§4](#4-power-loss-what-to-expect)
+  exercises exactly this.
+- **Never delete or move the `-wal` file of a database that was not closed
+  cleanly.** Committed transactions can exist only in the log; removing it
+  loses them. Copying the database file alone is not a backup; use
+  `admin backup` ([§6](#6-backup-and-restore)).
+- Limit: this is a process-kill result. A power-cut run on a device that drops
+  unsynced writes has not been done ([§4](#4-power-loss-what-to-expect)).
+
+### Self-update and rollback
+
+Keyorix does not update itself. There is no network pull and nothing in the
+server swaps a binary in or out ([§7](#7-air-gapped-updates)); you replace
+the binary, or a unit file restarts the same one. What the server does do, at
+every start, is compare its schema epoch with the database's
+(`checkSchemaEpochFor`, `internal/storage/factory_schema_epoch.go`, called from
+`internal/storage/factory.go`): it applies pending migrations to an older
+database and refuses to start on one that is newer than itself or whose
+recorded compatibility floor is above its own epoch.
+
+- **Before an update:** take a backup and an audit anchor ([§6](#6-backup-and-restore)).
+- **After a bad update:** whether putting the old binary back works depends on
+  whether the new release raised the compatibility floor. If it did, rollback
+  is a restore of the backup. The decision, the commands and the refusal
+  messages are in [UPGRADING.md §7](UPGRADING.md#7-rollback) and
+  [operator/upgrade-rollback.md](operator/upgrade-rollback.md); they are not
+  repeated here.
+- Limits: there is no health-gated swap, no two-slot layout and no automatic
+  rollback. An unattended device that updates itself is something you build
+  around the server, and the restart loop above will keep restarting a binary
+  that refuses a newer database.
+
+### No NTP: where the clock matters in the code
+
+What a bad clock does, and what to do, is in [§5a](#5a-no-ntp-what-a-bad-clock-does).
+Where each part lives:
+
+- **TOTP.** A code is accepted for the current 30 s step and the one before
+  and after it (`validateTOTPStep`, `internal/core/mfa.go`); a step already
+  used is refused (`LastUsedStep`, `internal/storage/models/models.go`). A
+  clock more than about a minute off from the authenticator fails TOTP logins.
+- **Token, session, share and connect expiry.** Judged on the device clock,
+  clamped to an in-memory high-water mark so a small step back does not extend
+  anything (`authEffectiveNow` in `internal/core/auth.go`,
+  `shareEffectiveNow` in `internal/core/permissions.go`,
+  `connectEffectiveNow` in `internal/core/connect.go`). Limit: the mark lives
+  in process memory. A restart forgets it, so a clock that is still wrong
+  after a restart is trusted as it reads.
+- **Dynamic-secret leases** refuse a clock more than 30 s behind the mark
+  (`leaseClockRegressionTolerance`, `internal/core/dynamic_secrets.go`).
+- **Start-up checks.** A clock earlier than the binary's build date logs a
+  warning and the server still starts (`internal/clockcheck`, called from
+  `server/clock_warnings.go`); certificate validity is checked in the same
+  place. `admin init` refuses to mint a certificate on such a clock
+  (`server/admin/init_secure.go`).
+- **Audit timestamps** come from the same clock and do not order the chain
+  (§5a). Limit: the server cannot tell you which timestamps were written while
+  the clock was wrong.
+
+### Offline operation
+
+- **Licence:** evaluated locally against the device clock, with no call out;
+  the result is written to the audit record at start (`AuditLicenseState`,
+  `server/main.go`; [ADR-065](adr-065-offline-license-validation.md)).
+- **Updates:** signed bundles on removable media only ([§7](#7-air-gapped-updates)).
+- **What still needs a network:** anything you configure that points off the
+  device: a cloud KMS KEK provider (above), an identity provider for SSO, a
+  remote PostgreSQL, or a rotation or dynamic-secret target. The server reaches
+  them when it uses them; this guide has not tested each with the link down.
+  Limit: there is no offline substitute for a cloud KMS KEK, so a device that
+  must boot with no link needs a local KEK provider.
+- **What you must do:** at commissioning, start the service with the network
+  cable out and confirm it reaches `/health` and serves a secret read
+  ([§10](#10-commissioning-checklist)).
+
 ## 8. Securing physical access
 
 Whoever holds the device and its disk is the strongest adversary in the

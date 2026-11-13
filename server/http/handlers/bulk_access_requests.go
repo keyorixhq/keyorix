@@ -97,15 +97,7 @@ func (h *CatalogHandler) CreateRejectionReasonTemplate(w http.ResponseWriter, r 
 	}
 	t, err := h.coreService.CreateRejectionReasonTemplate(r.Context(), actor.UserID, body.Name, body.Reason)
 	if err != nil {
-		msg := err.Error()
-		status := http.StatusInternalServerError
-		if strings.Contains(msg, "required") {
-			status = http.StatusBadRequest
-		} else {
-			log.Printf("Error creating rejection reason template: %v", err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, coreErrorAnswer{op: "creating rejection reason template"})
 		return
 	}
 	sendCreated(w, map[string]any{"template": t}, "Template created")
