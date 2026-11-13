@@ -142,6 +142,15 @@ func errmapCases() []errmapCase {
 				h.AttestProjectAccessReview(rec, req)
 				return rec
 			}},
+		{"OPENAPI-STATEFUL-8", "AttestProjectAccessReview of an unknown source is 400", http.StatusBadRequest, "ValidationError",
+			func(t *testing.T, w errmapWorld) *httptest.ResponseRecorder {
+				h := NewCatalogHandler(w.cs)
+				body := fmt.Sprintf(`{"source":"bogus","principal_type":"user","principal_id":%d,"role_id":%d}`, w.viewerUser, w.viewerRole)
+				req := withChiParam(errmapJSON(http.MethodPost, body), "id", uintStrS28(w.projectA))
+				rec := httptest.NewRecorder()
+				h.AttestProjectAccessReview(rec, req)
+				return rec
+			}},
 		{"OPENAPI-STATEFUL-3", "GetProjectStats of a missing project is 404", http.StatusNotFound, "NotFound",
 			func(t *testing.T, w errmapWorld) *httptest.ResponseRecorder {
 				h, err := NewSecretHandler(w.cs)

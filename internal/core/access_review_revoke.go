@@ -310,7 +310,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		}
 		return nil
 	default:
-		return fmt.Errorf("%s: unknown access-review source %q", i18n.T("ErrorValidation", nil), d.Source)
+		return validationErrorf("%s: unknown access-review source %q", i18n.T("ErrorValidation", nil), d.Source)
 	}
 }
 
