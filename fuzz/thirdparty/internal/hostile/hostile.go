@@ -35,9 +35,14 @@ type Server struct {
 // return promptly (it runs under the test's own timeout). Close stops accepting.
 func NewServer(tb testing.TB, handler func(net.Conn)) *Server {
 	tb.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := listenWithRetry()
 	if err != nil {
-		tb.Fatalf("listen: %v", err)
+		// Sustained fuzzing on a shared host transiently exhausts the ephemeral
+		// port range (many short-lived connect/close cycles leave sockets in
+		// TIME_WAIT); a bind failure here is an ENVIRONMENT condition, not a driver
+		// defect, so it must not be recorded as a fuzz crasher. Skip the iteration
+		// instead of failing the oracle (fuzzing treats Skip as not-a-failure).
+		tb.Skipf("hostile: could not obtain a loopback listener (environment, not a finding): %v", err)
 	}
 	s := &Server{ln: ln, done: make(chan struct{})}
 	go func() {
@@ -60,6 +65,22 @@ func NewServer(tb testing.TB, handler func(net.Conn)) *Server {
 		}
 	}()
 	return s
+}
+
+// listenWithRetry opens a loopback listener, retrying a few times on a transient
+// ephemeral-port-exhaustion bind error (common under sustained fuzzing on a shared host).
+// It rides out a brief exhaustion window rather than aborting the whole fuzz run.
+func listenWithRetry() (net.Listener, error) {
+	var err error
+	for attempt := range 8 {
+		var ln net.Listener
+		ln, err = net.Listen("tcp", "127.0.0.1:0")
+		if err == nil {
+			return ln, nil
+		}
+		time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
+	}
+	return nil, err
 }
 
 // Addr is the host:port the driver should connect to.
