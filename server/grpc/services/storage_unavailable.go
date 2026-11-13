@@ -41,3 +41,28 @@ func storageUnavailableStatus(err error) (out error, ok bool) {
 	}
 	return st.Err(), true
 }
+
+// internalFailure is a family mapper's fixed-text Internal answer (msg is the text the
+// client sees). It logs err for the operator first through withFaultCause, so a typed
+// storage read fault, which renders as a fixed sentence, still shows its
+// driver cause in the server log; before this the default branches of mapUserError,
+// mapShareError, mapProjectError and groupError logged nothing (CORE-ERR-FAMILY-7).
+func internalFailure(msg string, err error) error {
+	log.Printf("%s (gRPC Internal): %s", msg, withFaultCause(err))
+	return status.Error(codes.Internal, msg)
+}
+
+// withFaultCause is err's text for the server log: for a typed storage read fault it
+// appends the driver cause (core.StorageReadFaultDetail) that the error's own text
+// leaves out, and keeps the wrapping context (a partial-apply report says what was
+// already committed) that StorageReadFaultDetail alone would drop.
+func withFaultCause(err error) string {
+	text := err.Error()
+	if !core.IsStorageReadUnavailable(err) {
+		return text
+	}
+	if detail := core.StorageReadFaultDetail(err); detail != text {
+		return text + " (cause: " + detail + ")"
+	}
+	return text
+}

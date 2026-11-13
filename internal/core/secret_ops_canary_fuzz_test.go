@@ -73,7 +73,6 @@ func coreCanaryAllow() *canary.Allowlist {
 	return canary.NewAllowlist(
 		canary.Rule{ID: "value-reveal", Channel: coreChanReveal, Origin: "read-value", Why: "GetSecretValueWithPermissionCheck is the authorised read"},
 		canary.Rule{ID: "meta-result", Channel: coreChanResult, MetadataOnly: true, Why: "names, descriptions, tags and metadata are returned by the operations that manage them"},
-		canary.Rule{ID: "meta-error", Channel: coreChanError, MetadataOnly: true, Why: "a rejected non-secret field (an export format) is named in the error returned to the caller who sent it"},
 		canary.Rule{ID: "meta-db", Channel: canary.ChannelDBPrefix + "*", MetadataOnly: true, Why: "stored in plaintext by design"},
 		canary.Rule{ID: "meta-rawdb", Channel: coreChanRawDB, MetadataOnly: true, Why: "stored in plaintext by design"},
 	)
