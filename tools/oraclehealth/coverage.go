@@ -26,7 +26,7 @@ func (e Env) coveredLines(ctx context.Context) (lines map[string]map[int]bool, u
 	}
 	profPath := prof.Name()
 	_ = prof.Close()
-	defer os.Remove(profPath)
+	defer func() { _ = os.Remove(profPath) }()
 
 	// Exclude the fuzz targets themselves (-run matches nothing fuzz-shaped is
 	// fine; we want ordinary unit coverage). Run the whole package's tests.
@@ -39,7 +39,7 @@ func (e Env) coveredLines(ctx context.Context) (lines map[string]map[int]bool, u
 	if err != nil {
 		return lines, unitOK
 	}
-	defer data.Close()
+	defer func() { _ = data.Close() }()
 	sc := bufio.NewScanner(data)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for sc.Scan() {
@@ -48,23 +48,22 @@ func (e Env) coveredLines(ctx context.Context) (lines map[string]map[int]bool, u
 			continue
 		}
 		// form: <file>:<startLine>.<col>,<endLine>.<col> <numStmt> <count>
-		colon := strings.LastIndex(line, ":")
-		if colon < 0 {
+		file, after, ok := strings.CutLast(line, ":")
+		if !ok {
 			continue
 		}
-		file := line[:colon]
-		rest := strings.Fields(line[colon+1:])
+		rest := strings.Fields(after)
 		if len(rest) != 3 {
 			continue
 		}
 		count, _ := strconv.Atoi(rest[2])
 		rng := rest[0] // startLine.col,endLine.col
-		comma := strings.Index(rng, ",")
-		if comma < 0 {
+		startRng, endRng, ok := strings.Cut(rng, ",")
+		if !ok {
 			continue
 		}
-		start := parseLine(rng[:comma])
-		end := parseLine(rng[comma+1:])
+		start := parseLine(startRng)
+		end := parseLine(endRng)
 		if start == 0 {
 			continue
 		}
@@ -95,8 +94,8 @@ func parseLine(s string) int {
 // normalizeCoverFile reduces a cover-profile file key (import-path/foo.go) to
 // just its base name, which is what we match mutations against.
 func normalizeCoverFile(f string) string {
-	if i := strings.LastIndex(f, "/"); i >= 0 {
-		return f[i+1:]
+	if _, after, ok := strings.CutLast(f, "/"); ok {
+		return after
 	}
 	return f
 }
