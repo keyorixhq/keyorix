@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/stretchr/testify/assert"
@@ -64,4 +66,32 @@ func TestAWSSM_GetSecret_SuccessOnlyOn200(t *testing.T) {
 			assert.Equal(t, "s3cr3t", val)
 		})
 	}
+}
+
+// TestAWSSM_GetSecret_NonOK2xxIsNotRetried pins that the refusal is final: with
+// the SDK's standard retryer allowing 3 attempts, a 202 must reach the server
+// exactly once (unexpectedSuccessStatusError.RetryableError() == false).
+func TestAWSSM_GetSecret_NonOK2xxIsNotRetried(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"Name":"app/db","SecretString":"s3cr3t"}`))
+	}))
+	defer srv.Close()
+
+	cl := secretsmanager.New(secretsmanager.Options{
+		Region:       "us-east-1",
+		Credentials:  credentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "example-secret-key", ""),
+		BaseEndpoint: aws.String(srv.URL),
+		HTTPClient:   srv.Client(),
+		Retryer:      retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 3 }),
+	})
+	c := NewAWSSecretsManagerConnector("t", "us-east-1", "", nil)
+	c.newClient = func(_ context.Context, _ string) (smSecretGetter, error) { return cl, nil }
+
+	_, err := c.GetSecret(context.Background(), "app/db")
+	require.Error(t, err)
+	assert.EqualValues(t, 1, hits.Load(), "a refused 2xx must not be retried")
 }

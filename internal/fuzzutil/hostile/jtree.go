@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 )
 
 // Kind is a JSON node kind. KRaw holds verbatim text emitted as-is, which lets
@@ -219,7 +220,10 @@ func (r ref) remove(root **Node) {
 // software that receives such an object is unpredictable"), so strict decoders
 // in targets treat a body with duplicates as having no single correct reading
 // and skip value-level assertions on it (delivery and bounded-work oracles
-// still apply). Unparseable input reports false.
+// still apply). Names are compared under case folding, because encoding/json
+// matches member names case-insensitively: {"DATA":..,"data":..} binds both to
+// one field, so a strict decoder and the production decoder disagree on it.
+// Unparseable input reports false.
 func HasDuplicateKeys(b []byte) bool {
 	root, err := ParseJSON(b)
 	if err != nil {
@@ -230,6 +234,7 @@ func HasDuplicateKeys(b []byte) bool {
 		if n.K == KObj {
 			seen := make(map[string]struct{}, len(n.Keys))
 			for _, k := range n.Keys {
+				k = strings.ToLower(k)
 				if _, dup := seen[k]; dup {
 					return true
 				}
