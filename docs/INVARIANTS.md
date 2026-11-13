@@ -35,7 +35,7 @@ silently removing it.
 | **Total** | | **511** | **506** | **5** |
 
 Separate module, not counted in the table above: the reusable differential-fuzzing kit
-[`fuzz/diffkit/INVARIANTS.md`](../fuzz/diffkit/INVARIANTS.md) lives in the standalone `fuzz/`
+[`fuzzkit/diffkit/INVARIANTS.md`](../fuzzkit/diffkit/INVARIANTS.md) lives in the standalone `fuzzkit/`
 module (built with `GOWORK=off`, like `cli/` and `operator/`). Its invariants
 (`INV-FUZZDIFF-*`) are guarded by that module's own package tests and are deliberately
 excluded from the counts table, which tracks production packages only.

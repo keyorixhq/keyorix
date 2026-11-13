@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/fuzz/diffkit"
+	"github.com/keyorixhq/keyorix/fuzzkit/diffkit"
 )
 
 // mustComparator skips the whole test when openssl is unavailable (so CI without

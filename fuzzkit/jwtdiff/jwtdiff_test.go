@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/keyorixhq/keyorix/fuzz/diffkit"
+	"github.com/keyorixhq/keyorix/fuzzkit/diffkit"
 )
 
 func inputFor(k knobs) *input { return &input{token: buildToken(k), cfg: configFor(k)} }

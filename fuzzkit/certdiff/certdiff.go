@@ -37,7 +37,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/keyorixhq/keyorix/fuzz/diffkit"
+	"github.com/keyorixhq/keyorix/fuzzkit/diffkit"
 )
 
 // perImplTimeout bounds each verifier. openssl is a child process; Go's Verify

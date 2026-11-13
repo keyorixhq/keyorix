@@ -5,7 +5,7 @@
 // russellhaering/gosaml2, …) must never enter the production root go.mod.
 // Mirror the operator/ and cli/ submodule convention: build and test this
 // module with GOWORK=off (it is intentionally absent from the root go.work).
-module github.com/keyorixhq/keyorix/fuzz
+module github.com/keyorixhq/keyorix/fuzzkit
 
 go 1.27
 

@@ -1,6 +1,6 @@
 # diffkit invariants
 
-Invariants for the reusable differential-fuzzing kit (`fuzz/diffkit`). The kit
+Invariants for the reusable differential-fuzzing kit (`fuzzkit/diffkit`). The kit
 compares two or more independent implementations of one security decision and
 reports a disagreement that no documented-differences row explains. Read this
 before changing `diffkit.go` or `minimize.go`.

@@ -44,7 +44,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/keyorixhq/keyorix/fuzz/diffkit"
+	"github.com/keyorixhq/keyorix/fuzzkit/diffkit"
 )
 
 const perImplTimeout = 5 * time.Second
