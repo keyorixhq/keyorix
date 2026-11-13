@@ -12,6 +12,7 @@ import (
 // TestGrantCeilingMethods_RealCore: the derivation finds the granting methods the
 // transports are known to call (the population tripwire of the two family guards).
 func TestGrantCeilingMethods_RealCore(t *testing.T) {
+	g := Rollout(t) // repo-wide (it reads internal/core): docs/guard-rollout-contract.md rule 2
 	got, err := GrantCeilingMethods(filepath.Join(srcpath.RepoRoot(), "internal", "core"))
 	if err != nil {
 		t.Fatal(err)
@@ -19,12 +20,12 @@ func TestGrantCeilingMethods_RealCore(t *testing.T) {
 	for _, want := range []string{"AssignUserRole", "AssignUserRoleWithExpiry", "AssignRoleToGroup", "AssignMachineRole",
 		"AddProjectMember", "SetProjectMemberRole", "InviteMember", "CreateUserWithAssignments", "RestoreProject", "RestoreEnvironment"} {
 		if !slices.Contains(got, want) {
-			t.Errorf("%s must be derived as a granting method; got %v", want, got)
+			g.Errorf("%s must be derived as a granting method; got %v", want, got)
 		}
 	}
 	for _, never := range []string{"GetProject", "ListSecrets", "RemoveUserRole"} {
 		if slices.Contains(got, never) {
-			t.Errorf("%s enforces no grant ceiling and must not be listed", never)
+			g.Errorf("%s enforces no grant ceiling and must not be listed", never)
 		}
 	}
 }
