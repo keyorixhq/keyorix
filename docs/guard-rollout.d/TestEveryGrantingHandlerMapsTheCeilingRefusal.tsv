@@ -1,1 +1,1 @@
-TestEveryGrantingHandlerMapsTheCeilingRefusal	server/http/handlers	#4157	new derived guard (#3979): every handler calling a grant-ceiling core method classifies core.ErrPermissionDenied
+TestEveryGrantingHandlerMapsTheCeilingRefusal	server/http/handlers	#4165	new derived guard (#3979): every handler calling a grant-ceiling core method classifies core.ErrPermissionDenied
