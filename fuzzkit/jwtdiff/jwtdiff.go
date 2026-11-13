@@ -10,8 +10,7 @@
 // module metadata is cached, not the source zip). Rather than drop the instance,
 // the second implementation is an independent verifier built from the spec on the
 // standard library. It is a genuinely independent decision — the GOAL's framing —
-// and is clearly labelled as such; it is NOT a jwx stand-in. See
-// .scratch/kd-REPORT.md §0.
+// and is clearly labelled as such; it is NOT a jwx stand-in.
 //
 // WHAT THE ORACLE VERIFIES: that golang-jwt and the reference verifier reach the
 // SAME accept/reject decision for a token verified under a PINNED config
@@ -221,14 +220,8 @@ func audContains(aud any, want string) bool {
 // strictJSON decodes exactly one JSON value and rejects trailing data, matching
 // encoding/json's one-value contract that golang-jwt also relies on.
 func strictJSON(data []byte, v any) error {
-	dec := json.NewDecoder(strings.NewReader(string(data))) // nosemgrep: keyorix-unbounded-json-decoder -- data is an in-memory []byte (a decoded JWT header/claims segment already held by the fuzz harness), not a network or stdin stream; the fuzz input size is capped by the fuzzing engine
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	if dec.More() {
-		return errors.New("trailing JSON")
-	}
-	return nil
+	// json.Unmarshal validates the whole input first and rejects trailing data.
+	return json.Unmarshal(data, v)
 }
 
 // --- Comparator ---------------------------------------------------------------

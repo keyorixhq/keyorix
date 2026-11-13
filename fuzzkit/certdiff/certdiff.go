@@ -112,7 +112,10 @@ func (o opensslVerify) Run(ctx context.Context, ch *chain) (string, error) {
 	}
 	args = append(args, leafPEM)
 
-	cmd := exec.CommandContext(ctx, o.bin, args...) // #nosec G204 -- o.bin is the openssl path from exec.LookPath("openssl") in NewComparator; args are fixed flags plus temp-dir file paths this function wrote itself, never external input nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- same reason: test-only differential harness running the system openssl with its own fixed arguments
+	// The command is the static name "openssl" (NewComparator already proved it
+	// resolves via exec.LookPath); args are fixed flags plus temp-dir paths this
+	// function wrote itself, never external input.
+	cmd := exec.CommandContext(ctx, "openssl", args...) // #nosec G204 -- static command, fixed args
 	out, runErr := cmd.CombinedOutput()
 	if runErr == nil {
 		// Exit 0 == verification OK.
