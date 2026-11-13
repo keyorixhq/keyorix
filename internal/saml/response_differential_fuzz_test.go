@@ -31,6 +31,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/beevik/etree"
 	csaml "github.com/crewjam/saml"
@@ -73,6 +74,7 @@ func newDiffFixture(tb testing.TB) *diffFixture {
 		tb.Fatalf("NewProvider: %v", err)
 	}
 	spMeta := p.RawServiceProviderMetadata()
+	buildTime := time.Now()
 	signedB64, err := samltest.SignedResponse(fx, diffIDPEntityID, spMeta, diffSubject, diffSubject, "User Corp", []string{"admins"}, "return-here")
 	if err != nil {
 		tb.Fatalf("SignedResponse: %v", err)
@@ -97,6 +99,20 @@ func newDiffFixture(tb testing.TB) *diffFixture {
 		EntityID: diffSPEntityID, MetadataURL: *metaU, AcsURL: *acsU,
 		IDPMetadata: idp, AllowIDPInitiated: true,
 	}
+
+	// Pin BOTH Keyorix's internal crewjam SP and the reference SP to the same fixed
+	// clock at fixture-build time. crewjam's assertion validity window (MaxIssueDelay,
+	// 90s) would otherwise expire partway through a multi-minute fuzz run, and since
+	// Keyorix's call and the reference call happen microseconds apart, an input tested
+	// right at the expiry instant could have Keyorix see "valid" and the reference see
+	// "expired" — a wall-clock race, not a Keyorix defect. A per-SP fixed clock (NOT the
+	// deprecated process-global csaml.TimeNow) makes every time check deterministic and
+	// identical across the two, without affecting any other test in the package. Time
+	// checks are delegated identically to crewjam on both sides, so pinning them cannot
+	// hide a Keyorix-specific divergence.
+	clk := dsig.NewFakeClockAt(buildTime)
+	p.sp.Clock = clk
+	refSP.Clock = clk
 
 	store := &dsig.MemoryX509CertificateStore{Roots: []*x509.Certificate{fx.Cert}}
 	vctx := dsig.NewDefaultValidationContext(store)
