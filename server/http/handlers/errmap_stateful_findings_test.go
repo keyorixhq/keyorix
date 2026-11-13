@@ -124,6 +124,24 @@ func errmapCases() []errmapCase {
 				h.RevokeProjectAccessReview(rec, req)
 				return rec
 			}},
+		{"OPENAPI-STATEFUL-8", "RevokeProjectAccessReview of the reviewer's own access is 403 (independent reviewer)", http.StatusForbidden, "Forbidden",
+			func(t *testing.T, w errmapWorld) *httptest.ResponseRecorder {
+				h := NewCatalogHandler(w.cs)
+				body := fmt.Sprintf(`{"source":"role","principal_type":"user","principal_id":%d,"role_id":%d}`, secretsAdminID, w.viewerRole)
+				req := withChiParam(errmapJSON(http.MethodPost, body), "id", uintStrS28(w.projectA))
+				rec := httptest.NewRecorder()
+				h.RevokeProjectAccessReview(rec, req)
+				return rec
+			}},
+		{"OPENAPI-STATEFUL-8", "AttestProjectAccessReview of the reviewer's own access is 403 (independent reviewer)", http.StatusForbidden, "Forbidden",
+			func(t *testing.T, w errmapWorld) *httptest.ResponseRecorder {
+				h := NewCatalogHandler(w.cs)
+				body := fmt.Sprintf(`{"source":"role","principal_type":"user","principal_id":%d,"role_id":%d}`, secretsAdminID, w.viewerRole)
+				req := withChiParam(errmapJSON(http.MethodPost, body), "id", uintStrS28(w.projectA))
+				rec := httptest.NewRecorder()
+				h.AttestProjectAccessReview(rec, req)
+				return rec
+			}},
 		{"OPENAPI-STATEFUL-3", "GetProjectStats of a missing project is 404", http.StatusNotFound, "NotFound",
 			func(t *testing.T, w errmapWorld) *httptest.ResponseRecorder {
 				h, err := NewSecretHandler(w.cs)
