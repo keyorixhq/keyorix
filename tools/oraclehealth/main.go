@@ -226,13 +226,13 @@ func applyAndRun(ctx context.Context, env Env, target string, m Mutation) Result
 		return res
 	}
 	mutated := string(orig[:m.Start]) + m.New + string(orig[m.End:])
-	if err := os.WriteFile(m.Abs, []byte(mutated), 0o644); err != nil {
+	if err := os.WriteFile(m.Abs, []byte(mutated), 0o600); err != nil { // #nosec G703 -- m.Abs is a file of the tool's own scratch copy of the target package, found by its own walk
 		res.Verdict = BuildFail
 		res.Detail = "write: " + err.Error()
 		return res
 	}
 	// Guarantee restore no matter what.
-	defer func() { _ = os.WriteFile(m.Abs, orig, 0o644) }()
+	defer func() { _ = os.WriteFile(m.Abs, orig, 0o600) }() // #nosec G703 -- restores the same scratch-copy file written above
 
 	if ok, detail := env.buildOK(ctx); !ok {
 		res.Verdict = BuildFail
@@ -281,7 +281,7 @@ func writeJSON(path string, rep Report) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	return os.WriteFile(path, append(b, '\n'), 0o600)
 }
 
 func splitComma(s string) []string {

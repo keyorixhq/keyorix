@@ -51,7 +51,7 @@ func (e Env) pkgArg() string {
 // pinned cache/temp environment.
 func (e Env) goCmd(ctx context.Context, args ...string) *exec.Cmd {
 	full := append([]string{"-n", fmt.Sprintf("%d", e.Nice), "go"}, args...)
-	cmd := exec.CommandContext(ctx, "nice", full...)
+	cmd := exec.CommandContext(ctx, "nice", full...) // #nosec G204 -- fixed nice/go binaries; args are this tool's own go subcommands and flags
 	cmd.Dir = e.ModuleRoot
 	cmd.Env = append(os.Environ(), fmt.Sprintf("GOMAXPROCS=%d", e.GOMAXPROCS))
 	return cmd

@@ -24,7 +24,7 @@ func copyModule(src, dst string) error {
 			return err
 		}
 		if rel == "." {
-			return os.MkdirAll(dst, 0o755)
+			return os.MkdirAll(dst, 0o750)
 		}
 		base := info.Name()
 		target := filepath.Join(dst, rel)
@@ -32,7 +32,7 @@ func copyModule(src, dst string) error {
 			if skipDir[base] {
 				return filepath.SkipDir
 			}
-			return os.MkdirAll(target, 0o755)
+			return os.MkdirAll(target, 0o750)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			// Resolve and copy the content if it points at a regular file.
@@ -54,15 +54,15 @@ func copyModule(src, dst string) error {
 }
 
 func copyFile(src, dst string, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		return err
 	}
-	in, err := os.Open(src)
+	in, err := os.Open(src) // #nosec G304 -- src is a path found by this tool's own walk of the target package
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm) // #nosec G304 -- dst is under the tool's own scratch copy
 	if err != nil {
 		return err
 	}

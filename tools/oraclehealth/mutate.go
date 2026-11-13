@@ -67,7 +67,7 @@ func collectMutations(root, pkgDir string, funcAllow map[string]bool) ([]Mutatio
 }
 
 func collectFile(root, abs string, funcAllow map[string]bool) ([]Mutation, error) {
-	src, err := os.ReadFile(abs)
+	src, err := os.ReadFile(abs) // #nosec G304 -- abs comes from this tool's own walk of the target package directory
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +292,7 @@ func selectMutations(all []Mutation, max int, seed int64) []Mutation {
 	for i := range idx {
 		idx[i] = i
 	}
-	r := rand.New(rand.NewSource(seed))
+	r := rand.New(rand.NewSource(seed)) // #nosec G404 -- deterministic, seeded sampling of mutations; not security-sensitive
 	r.Shuffle(len(idx), func(i, j int) { idx[i], idx[j] = idx[j], idx[i] })
 	idx = idx[:max]
 	sort.Ints(idx)
