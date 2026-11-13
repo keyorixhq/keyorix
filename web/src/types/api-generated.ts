@@ -11101,6 +11101,17 @@ export interface operations {
         };
         responses: {
             /** @description Envelope `{data, message}`. `data` is the created folder node. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Secret"];
+                    };
+                };
+            };
+            /** @description Envelope `{data, message}`. `data` is the created folder node. */
             201: {
                 headers: {
                     [name: string]: unknown;

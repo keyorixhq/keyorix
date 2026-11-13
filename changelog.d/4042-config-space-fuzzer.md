@@ -4,4 +4,4 @@
 - **Configspace known-findings table (`known.tsv`).** Triaged findings of class HARDENING or lower are tagged with a stable `CSK-` id (never dropped); `TestKnownFindingsReproduce` goes red when a listed finding stops reproducing. Configuration findings are triaged privately.
 
 ### Fixed
-- **OpenAPI: `POST /api/v1/folders` (createFolder) declares `201`.** The spec declared `200` but the handler returns `201 Created`; the generated web types follow.
+- **OpenAPI: `POST /api/v1/folders` (createFolder) declares `201`.** The spec declared only `200` but the handler returns `201 Created`; `201` is now declared next to `200`, and the generated web types and CLI client follow.
