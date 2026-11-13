@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -83,14 +84,14 @@ func (h *SecretHandler) AccessHistory(w http.ResponseWriter, r *http.Request) {
 
 	logs, err := h.coreService.ListSecretAccessHistory(r.Context(), uint(id), userCtx.UserID, since)
 	if err != nil {
-		switch {
-		case isSecretNotFound(err):
-			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		case isPermissionRefusal(err):
-			h.sendError(w, "Forbidden", "Not authorized to view this secret's access log", http.StatusForbidden, nil)
-		default:
-			h.sendError(w, "InternalError", "Failed to list access history", http.StatusInternalServerError, nil)
-		}
+		// Through the shared classifier: a machine principal's per-user check refuses
+		// with a typed validation error (400), never an undeclared 500 (#4132
+		// OPENAPI-STATEFUL-1).
+		answerCoreError(w, r, err, coreErrorAnswer{op: "listing access history", texts: coreErrorTexts{
+			errclass.NotFound:         "Secret not found",
+			errclass.PermissionDenied: "Not authorized to view this secret's access log",
+			errclass.Internal:         "Failed to list access history",
+		}})
 		return
 	}
 

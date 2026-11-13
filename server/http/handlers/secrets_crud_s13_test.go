@@ -278,21 +278,26 @@ func TestUpdateSecret_NotFound_S13(t *testing.T) {
 // ── sendUpdateSecretError: validation error branch ────────────────────────────
 
 // TestSendUpdateSecretError_ValidationBranch_S13 directly invokes
-// sendUpdateSecretError with an error string containing the validation prefix
-// so the third branch ("ValidationError", 400) is executed.
+// sendUpdateSecretError with a typed validation refusal (core.ErrSecretInvalidInput)
+// and checks the 400; an untyped error that merely carries the translated validation
+// prefix is a server fault (500), never classified by its text
+// (INV-HTTP-classify-errors-by-sentinel-not-text, FIX-ERRMAP-STRUCT-1).
 func TestSendUpdateSecretError_ValidationBranch_S13(t *testing.T) {
 	cs := freshCoreS12(t)
 	h, err := NewSecretHandler(cs)
 	require.NoError(t, err)
 
-	// Build an error that matches the i18n validation prefix.
 	validationPrefix := i18n.T("ErrorValidation", nil)
-	validationErr := fmt.Errorf("%s: value too long", validationPrefix)
-
+	typed := fmt.Errorf("%s: value too long: %w", validationPrefix, core.ErrSecretInvalidInput)
 	w := httptest.NewRecorder()
-	h.sendUpdateSecretError(w, validationErr)
+	h.sendUpdateSecretError(w, httptest.NewRequest(http.MethodPut, "/", nil), nil, typed)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "ValidationError")
+
+	textOnly := fmt.Errorf("%s: value too long", validationPrefix)
+	w = httptest.NewRecorder()
+	h.sendUpdateSecretError(w, httptest.NewRequest(http.MethodPut, "/", nil), nil, textOnly)
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "text alone is not a class")
 }
 
 // ── ClassifySecret: bad "id" path param ───────────────────────────────────────

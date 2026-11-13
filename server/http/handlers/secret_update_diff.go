@@ -389,10 +389,11 @@ func (h *SecretHandler) updateSecretViaDiff(w http.ResponseWriter, r *http.Reque
 	}
 
 	// The secret.updated row, with its diff, commits with the update (AUDIT-MUTATION-TX-1).
-	response, err := h.coreService.UpdateSecretWithPermissionCheck(secretMutationAuditContext(r, userCtx), req)
+	mctx, faults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(r, userCtx))
+	response, err := h.coreService.UpdateSecretWithPermissionCheck(mctx, req)
 	if err != nil {
 		log.Printf("Error updating secret: %v", err)
-		h.sendUpdateSecretError(w, err)
+		h.sendUpdateSecretError(w, r, faults, err)
 		return
 	}
 

@@ -73,7 +73,7 @@ func runMachineTokenHygiene(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("%-5s %-22s %-16s %-8s %-8s %s\n", "ID", "NAME", "PREFIX", "MACHINE", "FLAGS", "LAST USED")
 	for _, r := range rows {
-		last := derefStr(r.LastUsedAt)
+		last := derefTimeRFC3339(r.LastUsedAt)
 		if last == "" {
 			last = "never"
 		}

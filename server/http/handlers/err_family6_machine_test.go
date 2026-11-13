@@ -91,7 +91,9 @@ func TestErrFamily6_Item4_MachineRoleBinding(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		assert.Equal(t, http.StatusConflict, grant(`{"role_id":`+rid+`}`).Code, "already assigned")
 		require.Equal(t, http.StatusOK, remove("").Code)
-		assert.Equal(t, http.StatusConflict, remove("").Code, "not assigned")
+		// A role the machine does not hold is 404, like DELETE /user-roles and gRPC
+		// RemoveRole (#4020 parity; decided 2026-11-13, FIX-ERRMAP-STRUCT-1).
+		assert.Equal(t, http.StatusNotFound, remove("").Code, "not assigned")
 	})
 	t.Run("an unknown machine is 404", func(t *testing.T) {
 		w := httptest.NewRecorder()
