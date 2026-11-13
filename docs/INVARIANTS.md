@@ -38,7 +38,9 @@ silently removing it.
 | `internal/rotation` | [internal/rotation/INVARIANTS.md](../internal/rotation/INVARIANTS.md) | 1 | 1 | 0 |
 | **Total** | | **516** | **511** | **5** |
 | `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |
-| **Total** | | **511** | **506** | **5** |
+| `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 2 | 2 | 0 |
+| `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 4 | 4 | 0 |
+| **Total** | | **517** | **512** | **5** |
 
 ## Highest-priority UNGUARDED gaps
 

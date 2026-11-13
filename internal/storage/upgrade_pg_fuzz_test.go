@@ -567,8 +567,9 @@ type pgSchemaDifference struct {
 //     release is created only by the fresh-install AutoMigrate tail, never by an
 //     explicit migrate step, so a database first installed at an older release
 //     never gains it on upgrade ("missing on upgraded"). Below the documented
-//     v0.93.x upgrade floor this is out of support; within it (the break-glass
-//     reviewed_by index) it is the finding above.
+//     v0.93.x upgrade floor this is out of support; within it the break-glass
+//     reviewed_by index was this drift (#4091, fixed by #4100, so it is no longer
+//     ignored here; schema_parity_guard_test.go guards the class).
 var pgSchemaIgnored = map[string]string{
 	// Stricter-on-upgrade, harmless, and already recorded for a fresh install in
 	// the committed schema-epoch snapshots (epoch-8/9/10 postgres.txt show
@@ -576,14 +577,6 @@ var pgSchemaIgnored = map[string]string{
 	// safe backfill, while the model (models.go MFAEnrolmentRequired, no not-null
 	// gorm tag) makes a fresh install nullable. Every row has a value either way.
 	"columns:users.mfa_enrolment_required": "EXPECTED: migration adds NOT NULL DEFAULT false; AutoMigrate on a fresh install makes it nullable (see schema_epoch testdata). Stricter on upgrade, every row defaulted.",
-
-	// AutoMigrate-only index: models.go BreakGlassActivation.ReviewedBy carries
-	// gorm:"index" (added in v0.96), creating idx_break_glass_activations_reviewed_by
-	// on a fresh install, but no migrate step backfills it, so every database
-	// first installed before v0.96 lacks it after upgrading, including the
-	// supported sources v0.93.0/v0.94.0/v0.95.3. Non-unique btree, performance
-	// only, low-volume table: a real but minor drift, tracked as the finding above.
-	"indexes:idx_break_glass_activations_reviewed_by": "KNOWN DRIFT (finding): AutoMigrate-only performance index on break_glass_activations.reviewed_by, not backfilled on upgrade from pre-v0.96. Non-unique, low-volume; minor.",
 
 	// Since-removed column retained by the no-drop policy; v0.95.x had it, v0.96
 	// dropped it from the model, the migration leaves the old column in place.

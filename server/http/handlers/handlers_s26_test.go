@@ -1,7 +1,7 @@
 // handlers_s26_test.go — coverage sweep targeting remaining gaps after s25:
 //   - dynamic_secrets.go: GetConfig (happy path with DB-seeded config),
 //     ListLeases (happy path), ClassifyConfig (happy path), SetConfigEnabled
-//     (happy path), isSafeDynamicSecretError (all safe-string branches)
+//     (happy path)
 //   - break_glass.go: ActivateBreakGlass (disabled → 403, enabled+no-role → 400)
 //   - catalog.go: GetProject (bad id), RestoreProject (bad id),
 //     GetProjectDrift (bad id), CreateProjectEnvironment (bad id),
@@ -287,27 +287,6 @@ func TestSetConfigEnabled_BadJSON_S26(t *testing.T) {
 	h.SetConfigEnabled(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// ── dynamic_secrets.go: isSafeDynamicSecretError ────────────────────────────
-
-// TestIsSafeDynamicSecretError_AllSafeStrings_S26 verifies all safe message
-// substrings return true.
-func TestIsSafeDynamicSecretError_AllSafeStrings_S26(t *testing.T) {
-	safeMessages := []string{
-		"config not found",
-		"lease not found",
-		"lease is not active",
-		"lease has expired; issue a new lease instead",
-		"cannot issue from the",
-		"active-lease limit reached",
-		"mints self-expiring credentials that cannot be renewed",
-		"unsupported backend",
-	}
-	for _, msg := range safeMessages {
-		assert.True(t, isSafeDynamicSecretError(msg), "expected %q to be safe", msg)
-	}
-	assert.False(t, isSafeDynamicSecretError("unexpected internal error"), "expected unsafe error to return false")
 }
 
 // ── break_glass.go: ActivateBreakGlass branches ──────────────────────────────

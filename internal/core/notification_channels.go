@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -357,7 +358,8 @@ func (c *KeyorixCore) validateNotificationChannel(ch *models.NotificationChannel
 		return invalidInput(fmt.Errorf("notification channel name is required"))
 	}
 	if _, ok := validChannelTypes[ch.Type]; !ok {
-		return invalidInput(fmt.Errorf("invalid notification channel type %q: must be one of webhook, slack, teams, email", ch.Type))
+		// #4059: the caller's type value is not quoted back.
+		return invalidInput(errors.New("invalid notification channel type: must be one of webhook, slack, teams, email"))
 	}
 	urlValidator := c.webhookURLValidator
 	if urlValidator == nil {
