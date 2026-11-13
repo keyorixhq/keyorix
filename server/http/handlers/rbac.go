@@ -466,8 +466,8 @@ func roleExpiryValid(w http.ResponseWriter, expiresAt *time.Time) bool {
 
 // sendGrantCeilingRefusal answers the grant ceiling (core.ErrPermissionDenied: a role
 // the actor cannot grant, requireGranterHoldsRolePermissions) 403 with core's own
-// client-worded text, and reports whether it did. A refusal, not a fault: without it
-// POST /user-roles answered 500 (#3979). Classified by sentinel, never by text.
+// client-worded text, and reports whether it did. A refusal, not a fault (#3979).
+// Classified by sentinel, never by text.
 func sendGrantCeilingRefusal(w http.ResponseWriter, err error) bool {
 	if !errors.Is(err, core.ErrPermissionDenied) {
 		return false
@@ -524,7 +524,7 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Error assigning role: %v", err)
-		if sendRoleScopeError(w, err) || sendGrantCeilingRefusal(w, err) {
+		if sendRoleScopeError(w, err) {
 			return
 		}
 		if errors.Is(err, core.ErrPermissionDenied) {

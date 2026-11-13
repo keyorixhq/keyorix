@@ -37,11 +37,34 @@ var grantCeilingMappingExempt = map[string]string{
 		"(no internal-error oracle); setup handlers are owned by FIX-3277",
 	"bulk_access_requests.go:BulkApproveAccessRequests": "never a request error: core reports a refused item " +
 		"in the 200 body's failed list (BulkApproveAccessRequests appends approveErr per item)",
-	// #4154: these answer the ceiling 500 today. Remove each row when its handler maps it.
-	"invitations.go:CreateInvitation":             "#4154: answers the ceiling 500; map it with sendGrantCeilingRefusal",
+	// #4154: these answer the ceiling 500 today. Remove each row when its handler maps it
+	// (TestEveryGrantingHandlerMapsTheCeilingRefusal reports a row whose handler maps it).
 	"invitations.go:CreateGlobalInvitation":       "#4154: answers the ceiling 500 past its two 403 pre-checks; map it with sendGrantCeilingRefusal",
-	"invitations.go:ResolveAccessRequest":         "#4154: answers the ceiling 500; map it with sendGrantCeilingRefusal",
 	"project_memberships.go:TransitionMembership": "#4154: answers the ceiling 500; map it with sendGrantCeilingRefusal",
+}
+
+// splitGrantCeilingExempt splits mappingViolations' unexempted output
+// ("file.go:Func -> Methods") into the violations no row exempts and the rows
+// that matched no violation. A stale row exempts a handler that maps the
+// refusal now: kept, it would hide that handler losing its mapping again.
+// The check lives here, not in mappingViolations, so the audit guard is unchanged.
+func splitGrantCeilingExempt(raw []string, exempt map[string]string) (violations, stale []string) {
+	matched := map[string]bool{}
+	for _, v := range raw {
+		key, _, _ := strings.Cut(v, " -> ")
+		if _, ok := exempt[key]; ok {
+			matched[key] = true
+			continue
+		}
+		violations = append(violations, v)
+	}
+	for key := range exempt {
+		if !matched[key] {
+			stale = append(stale, key)
+		}
+	}
+	slices.Sort(stale)
+	return violations, stale
 }
 
 // mentionsPermissionDenied is the mapper predicate: a reference to
@@ -77,15 +100,18 @@ func readGrantCeilingReachingMethods(t *testing.T) map[string]bool {
 func TestEveryGrantingHandlerMapsTheCeilingRefusal(t *testing.T) {
 	g := guardrules.Rollout(t)
 	reaching := readGrantCeilingReachingMethods(t)
-	var violations []string
+	var violations, raw []string
 	seen := 0
 	for _, dir := range append([]string{"."}, handlerFamilySubdirs...) {
-		v, n := mappingViolations(t, dir, reaching, mentionsPermissionDenied, grantCeilingMappingExempt)
-		for _, x := range v {
+		v, n := mappingViolations(t, dir, reaching, mentionsPermissionDenied, nil)
+		unexempted, _ := splitGrantCeilingExempt(v, grantCeilingMappingExempt)
+		for _, x := range unexempted {
 			violations = append(violations, filepath.ToSlash(filepath.Join(dir, x)))
 		}
+		raw = append(raw, v...)
 		seen += n
 	}
+	_, stale := splitGrantCeilingExempt(raw, grantCeilingMappingExempt)
 	// Population tripwire: the grant routes themselves must be seen.
 	if seen < 10 {
 		t.Fatalf("saw only %d coreService calls of a granting method: the scan is broken", seen)
@@ -95,11 +121,15 @@ func TestEveryGrantingHandlerMapsTheCeilingRefusal(t *testing.T) {
 			"core.ErrPermissionDenied: answer it 403 (sendGrantCeilingRefusal(w, err)) before the generic 500, or "+
 			"add a reasoned exemption to grantCeilingMappingExempt:\n  %s", strings.Join(violations, "\n  "))
 	}
+	for _, key := range stale {
+		g.Errorf("stale exemption %s: the handler maps the refusal now, delete the row from grantCeilingMappingExempt", key)
+	}
 }
 
 // TestGrantCeilingMappingGuardCalibration: an unmapped handler and one routed
 // through a helper that does not classify the refusal are reported; inline
-// errors.Is, a helper that does, and an exempted handler are not. This is the
+// errors.Is, a helper that does, and an exempted handler are not; an exemption
+// row whose handler maps the refusal is reported stale. This is the
 // shape #3979 had: POST /user-roles handed the error to nothing that knew the
 // sentinel.
 func TestGrantCeilingMappingGuardCalibration(t *testing.T) {
@@ -117,8 +147,10 @@ func (h *H) Skip(w W, r R)       { _ = h.coreService.AssignUserRole() }
 	if err := os.WriteFile(filepath.Join(dir, "synthetic.go"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	violations, seen := mappingViolations(t, dir, map[string]bool{"AssignUserRole": true}, mentionsPermissionDenied,
-		map[string]string{"synthetic.go:Skip": "test"})
+	raw, seen := mappingViolations(t, dir, map[string]bool{"AssignUserRole": true}, mentionsPermissionDenied, nil)
+	// Skip is a live exemption; Inline maps the refusal, so its row is stale.
+	violations, stale := splitGrantCeilingExempt(raw,
+		map[string]string{"synthetic.go:Skip": "test", "synthetic.go:Inline": "test"})
 	want := []string{
 		"synthetic.go:Bad -> AssignUserRole",
 		"synthetic.go:ViaOther -> AssignUserRole",
@@ -126,5 +158,8 @@ func (h *H) Skip(w W, r R)       { _ = h.coreService.AssignUserRole() }
 	}
 	if seen != 6 || !slices.Equal(violations, want) {
 		t.Fatalf("calibration: seen=%d violations=%v, want 6 and exactly %v", seen, violations, want)
+	}
+	if want := []string{"synthetic.go:Inline"}; !slices.Equal(stale, want) {
+		t.Fatalf("calibration: stale=%v, want exactly %v", stale, want)
 	}
 }
