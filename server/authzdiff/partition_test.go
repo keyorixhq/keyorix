@@ -28,13 +28,14 @@ import (
 //     established on; known-03 is limited to two ops, one target and one
 //     principal. Not detected: a core leg that allows while every present
 //     transport denies (see below).
-//   - Core returns a refusal or error the model does not map (known-07,
-//     known-08, known-09): core denies with ErrPermissionDenied (known-07) or
-//     returns an untyped error (known-08, known-09), and the model denies
-//     (known-07, known-09) or the case is a machine principal on the listed ops
-//     (known-08). Not detected: on those shapes, whether REST answers 400/500
-//     instead of a typed deny; and for known-08, a transport that denies or
-//     errors where the model allows (an over-denial).
+//   - Core returns an error the model does not map (known-08, known-09): core
+//     returns an untyped error, and the model denies (known-09) or the case is
+//     a machine principal on the listed ops (known-08). Not detected: on those
+//     shapes, whether REST answers 400/500 instead of a typed deny; and for
+//     known-08, a transport that denies or errors where the model allows (an
+//     over-denial). A typed core refusal (ErrPermissionDenied) that REST
+//     answers 400/500 is never waived: the former known-07 was fixed in the
+//     four handlers it matched (TestCeilingRefusalIsForbiddenOnREST).
 //
 // The plants (plants_test.go) are exactly the shapes these waivers exclude:
 // core+REST allow (plant 1), gRPC allows a non-group op (plant 2), REST allows
@@ -79,9 +80,6 @@ func explain(r *caseResult) string {
 	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
 		return "known-04"
 
-	case is(core, Denied) && core.Detail == "ErrPermissionDenied" && restBadStatus && modelDenies && !transportAllowsDenied:
-		return "known-07"
-
 	case pk == pkMachine && slices.Contains([]string{"secret.acl.grant", "secret.share", "accessrequest.create",
 		"secret.certificate", "secret.tags", "secret.description", "secret.move", "secret.copy", "secret.extend.expiring"}, r.Op) &&
 		is(core, Other) && core.Detail == "untyped-error" && !transportAllowsDenied:
@@ -95,7 +93,7 @@ func explain(r *caseResult) string {
 
 // waiverIDs is every bucket explain can return other than "unexplained".
 // TestWaiverIDsMatchExplain keeps it in step with explain's source.
-var waiverIDs = []string{"known-02", "known-03", "known-04", "known-07", "known-08", "known-09"}
+var waiverIDs = []string{"known-02", "known-03", "known-04", "known-08", "known-09"}
 
 func needsExplaining(r *caseResult) bool {
 	for _, c := range r.Classes {
