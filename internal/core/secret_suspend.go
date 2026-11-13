@@ -181,7 +181,7 @@ var ErrBulkSuspendAuditUnavailable = errors.New("bulk suspend audit event could 
 // best-effort audit. The per-secret events (secret.suspended) are unchanged.
 func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, projectID, actorID uint, reason string, opts SuspendOptions) (int, error) {
 	if projectID == 0 || actorID == 0 {
-		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required")
+		return 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required"))
 	}
 	secrets, err := c.listProjectSecrets(ctx, projectID)
 	if err != nil {
@@ -294,7 +294,7 @@ func (e *BulkSuspendPartialError) Unwrap() error {
 // returns how many it resumed. See SuspendProjectSecrets for semantics.
 func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actorID uint) (int, error) {
 	if projectID == 0 || actorID == 0 {
-		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required")
+		return 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required"))
 	}
 	secrets, err := c.listProjectSecrets(ctx, projectID)
 	if err != nil {

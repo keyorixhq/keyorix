@@ -41,6 +41,10 @@ func errSecretInvalidf(format string, a ...any) error {
 	return storage.Typed(ErrSecretInvalidInput, fmt.Sprintf(format, a...), nil)
 }
 
+// secretInvalidInput types an already-worded secrets-family validation refusal
+// ("Validation error: ...") as ErrSecretInvalidInput without changing its text.
+func secretInvalidInput(err error) error { return refuseAs(ErrSecretInvalidInput, err) }
+
 // errSecretValidation wraps a CreateSecret validation failure (request shape,
 // value policy, name policy, address name). It renders as before ("Validation
 // error: <cause>"), keeps cause in the chain, and matches ErrSecretInvalidInput
