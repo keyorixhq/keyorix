@@ -209,10 +209,10 @@ func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, proj
 // attested.
 func (c *KeyorixCore) checkAccessReviewAttestation(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
 	if projectID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
 	if d.Source == "" {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source is required")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "source is required")
 	}
 	if err := c.enforceAccessReviewReviewerControls(ctx, actorID, d); err != nil {
 		return err
@@ -229,7 +229,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 	switch d.Source {
 	case "role":
 		if d.PrincipalID == 0 || d.RoleID == 0 {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to attest a role grant")
+			return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to attest a role grant")
 		}
 		// #G51: machine-identity role grants live in a separate table from
 		// user/group grants (local_rbac.go's MachineIdentityRole vs
@@ -264,7 +264,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		return accessReviewNotFound("the role grant being attested no longer exists — the review is stale, re-sync and try again")
 	case "direct_share", "group_share":
 		if d.PrincipalID == 0 || d.SecretID == 0 {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest a share")
+			return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest a share")
 		}
 		// #G51: verify the secret actually belongs to projectID BEFORE
 		// looking at its shares — otherwise a reviewer authorized on project A
@@ -293,7 +293,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		return accessReviewNotFound("the share being attested no longer exists — the review is stale, re-sync and try again")
 	case "owner":
 		if d.PrincipalID == 0 || d.SecretID == 0 {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest ownership")
+			return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest ownership")
 		}
 		secret, err := c.storage.GetSecret(ctx, d.SecretID)
 		if err != nil && !isPositiveNotFound(err) {
