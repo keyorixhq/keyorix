@@ -6,7 +6,7 @@
 // wire bytes. Keyorix's real call sequence (openMySQLConfig → sql.OpenDB(connector)):
 //   - db.PingContext  → handshake v10 greeting + auth + COM_PING
 //   - db.ExecContext  → COM_QUERY (CREATE/GRANT/DROP USER, KILL n): OK/ERR/result-set/
-//                        LOCAL INFILE request
+//     LOCAL INFILE request
 //   - db.QueryContext(…, ?) → prepared statement (COM_STMT_PREPARE/EXECUTE, binary rows)
 //     — the processlist lookup `SELECT id … WHERE user = ?` in killUserConnections.
 //
@@ -20,7 +20,7 @@
 //     reader is registered — which is exactly how openMySQLConfig configures it.
 //
 // Everything runs on a loopback listener (internal/hostile) — never real network.
-// What these oracles do NOT verify: see .scratch/h6-REPORT.md §4.
+// What these oracles do NOT verify: stated in the PR description, not fuzzed here.
 package mysqlhostile
 
 import (
@@ -46,17 +46,17 @@ import (
 // clientDeprecateEOF deliberately so result sets use classic EOF packets (simpler to
 // hand-build in seeds); the driver AND-combines with its own flags.
 const (
-	capClientMySQL        = 0x00000001
-	capLongFlag           = 0x00000004
-	capLocalFiles         = 0x00000080
-	capProtocol41         = 0x00000200
-	capTransactions       = 0x00002000
-	capSecureConn         = 0x00008000
-	capMultiResults       = 0x00020000
-	capPluginAuth         = 0x00080000
-	capConnectAttrs       = 0x00100000
-	capPluginAuthLenEnc   = 0x00200000
-	serverCapabilities    = capClientMySQL | capLongFlag | capLocalFiles | capProtocol41 |
+	capClientMySQL      = 0x00000001
+	capLongFlag         = 0x00000004
+	capLocalFiles       = 0x00000080
+	capProtocol41       = 0x00000200
+	capTransactions     = 0x00002000
+	capSecureConn       = 0x00008000
+	capMultiResults     = 0x00020000
+	capPluginAuth       = 0x00080000
+	capConnectAttrs     = 0x00100000
+	capPluginAuthLenEnc = 0x00200000
+	serverCapabilities  = capClientMySQL | capLongFlag | capLocalFiles | capProtocol41 |
 		capTransactions | capSecureConn | capMultiResults | capPluginAuth |
 		capConnectAttrs | capPluginAuthLenEnc
 )
@@ -68,18 +68,18 @@ func greeting() []byte {
 	var p []byte
 	p = append(p, 0x0a) // protocol version 10
 	p = append(p, []byte("8.0.40-h6-hostile")...)
-	p = append(p, 0x00)                      // version NUL
-	p = append(p, 1, 0, 0, 0)                // connection id
-	p = append(p, 1, 2, 3, 4, 5, 6, 7, 8)    // auth-plugin-data part 1 (8)
-	p = append(p, 0x00)                      // filler
+	p = append(p, 0x00)                   // version NUL
+	p = append(p, 1, 0, 0, 0)             // connection id
+	p = append(p, 1, 2, 3, 4, 5, 6, 7, 8) // auth-plugin-data part 1 (8)
+	p = append(p, 0x00)                   // filler
 	p = binary.LittleEndian.AppendUint16(p, uint16(serverCapabilities&0xffff))
-	p = append(p, 0x2d)                      // charset utf8mb4_general_ci
+	p = append(p, 0x2d)                             // charset utf8mb4_general_ci
 	p = binary.LittleEndian.AppendUint16(p, 0x0002) // status flags (autocommit)
 	p = binary.LittleEndian.AppendUint16(p, uint16(serverCapabilities>>16))
-	p = append(p, 21) // length of auth-plugin-data (8+12+NUL)
-	p = append(p, make([]byte, 10)...)                // reserved
+	p = append(p, 21)                                            // length of auth-plugin-data (8+12+NUL)
+	p = append(p, make([]byte, 10)...)                           // reserved
 	p = append(p, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20) // scramble part 2 (12)
-	p = append(p, 0x00)                               // scramble terminator
+	p = append(p, 0x00)                                          // scramble terminator
 	p = append(p, []byte("mysql_native_password")...)
 	p = append(p, 0x00)
 	return frame(0, p)
@@ -182,7 +182,7 @@ func openDB(tb testing.TB, addr string) *sql.DB {
 }
 
 // knownShortPacketPanics counts recovered panics attributed to the known upstream
-// short-packet-underread class (KFZ-2026-005/076/079) across a fuzz run, for reporting.
+// short-packet-underread class across a fuzz run, for reporting.
 var knownShortPacketPanics atomic.Int64
 
 // isKnownShortPacketPanic decides whether a recovered panic is the ALREADY-KNOWN,
@@ -218,9 +218,8 @@ func runWithOracles(t *testing.T, fn func(ctx context.Context)) {
 			if r := recover(); r != nil {
 				stack := string(debugStack())
 				if isKnownShortPacketPanic(r, stack) {
-					// Known upstream short-packet DoS (KFZ-2026-005/076/079): recorded,
-					// NOT re-reported, NOT a new oracle failure. Reproducer bytes live in
-					// .scratch/findings/mysql-short-packet-known.md.
+					// Known upstream short-packet DoS (already reported): recorded,
+					// NOT re-reported, NOT a new oracle failure.
 					knownShortPacketPanics.Add(1)
 					return
 				}
@@ -264,14 +263,13 @@ func drainWrites(c net.Conn) {
 // OK/ERR, and malformed/truncated variants. Driver call: db.PingContext (opens a conn).
 func FuzzMySQLHandshake(f *testing.F) {
 	// Seeds are kept BENIGN on purpose: the committed corpus (run by plain `go test`)
-	// must stay green. Known truncated-packet reproducers are NOT seeded here (they live
-	// in .scratch/findings/); the fuzzer rediscovers that class on its own and the oracle
+	// must stay green. Known truncated-packet reproducers are NOT seeded here; the fuzzer rediscovers that class on its own and the oracle
 	// records-and-continues it (see isKnownShortPacketPanic).
-	f.Add(greeting())                                // valid greeting, then nothing (auth will fail → error)
-	f.Add(append(greeting(), okPacket(2)...))        // full successful handshake
-	f.Add(errPacket(0, 1045, "Access denied"))       // ERR as first packet
+	f.Add(greeting())                                                                                                                                                         // valid greeting, then nothing (auth will fail → error)
+	f.Add(append(greeting(), okPacket(2)...))                                                                                                                                 // full successful handshake
+	f.Add(errPacket(0, 1045, "Access denied"))                                                                                                                                // ERR as first packet
 	f.Add(append(greeting(), frame(2, []byte{0xfe, 'c', 'a', 'c', 'h', 'i', 'n', 'g', '_', 's', 'h', 'a', '2', '_', 'p', 'a', 's', 's', 'w', 'o', 'r', 'd', 0, 1, 2, 3})...)) // auth switch
-	f.Add(append(greeting(), frame(2, []byte{0x01, 0x03})...)) // AuthMoreData fast-auth-success (caching_sha2)
+	f.Add(append(greeting(), frame(2, []byte{0x01, 0x03})...))                                                                                                                // AuthMoreData fast-auth-success (caching_sha2)
 	f.Fuzz(func(t *testing.T, server []byte) {
 		srv := hostile.NewServer(t, func(c net.Conn) {
 			_, _ = c.Write(server)
@@ -292,17 +290,17 @@ func FuzzMySQLHandshake(f *testing.F) {
 // flags, server-declared huge length-encoded lengths. Driver call: db.ExecContext,
 // mirroring dynamic/mysql.go's CREATE/GRANT/DROP USER.
 func FuzzMySQLQueryResponse(f *testing.F) {
-	f.Add(okPacket(1))                                   // plain OK
-	f.Add(errPacket(1, 1064, "You have an error"))       // ERR
+	f.Add(okPacket(1))                             // plain OK
+	f.Add(errPacket(1, 1064, "You have an error")) // ERR
 	// result set: 1 column, one text row "hi", EOF-terminated (classic protocol).
 	colDef := frame(2, []byte{3, 'd', 'e', 'f', 0, 0, 0, 1, 'c', 0, 1, 'c', 0, 0x0c, 0x2d, 0, 4, 0, 0, 0, 0xfd, 0, 0, 0, 0})
-	rs := append(frame(1, []byte{0x01}), colDef...)      // column count = 1
+	rs := append(frame(1, []byte{0x01}), colDef...)           // column count = 1
 	rs = append(rs, frame(3, []byte{0xfe, 0, 0, 0x02, 0})...) // EOF after columns
-	rs = append(rs, frame(4, []byte{2, 'h', 'i'})...)    // text row
+	rs = append(rs, frame(4, []byte{2, 'h', 'i'})...)         // text row
 	rs = append(rs, frame(5, []byte{0xfe, 0, 0, 0x02, 0})...) // EOF after rows
 	f.Add(rs)
 	f.Add(frame(1, []byte{0xfb, '/', 't', 'm', 'p', '/', 'x'})) // LOCAL INFILE request (non-empty path)
-	f.Add(frame(1, []byte{0x03, 'a', 'b', 'c'}))                 // text column-count = 3 (well-formed header)
+	f.Add(frame(1, []byte{0x03, 'a', 'b', 'c'}))                // text column-count = 3 (well-formed header)
 	f.Fuzz(func(t *testing.T, resp []byte) {
 		srv := hostile.NewServer(t, func(c net.Conn) {
 			r := bufio.NewReader(c)

@@ -11,7 +11,7 @@
 //
 // GSSAPI negotiation is NOT built: pgx only sends a GSSEncRequest when a GSSAPICredsFunc
 // is configured, and Keyorix never configures one — so that answer is unreachable through
-// these callers (stated, not fuzzed). See .scratch/h6-REPORT.md §1/§4.
+// these callers (stated, not fuzzed). See the PR description.
 package pgxhostile
 
 import (
@@ -134,11 +134,11 @@ func newTLSConfig(tb testing.TB, addr string) *pgx.ConnConfig {
 // (a malformed TLS ServerHello when 'S' was sent). pgx must fail the handshake without a
 // panic and within the deadline — never hang on a half-open TLS negotiation.
 func FuzzPgxSSLNegotiation(f *testing.F) {
-	f.Add([]byte{'N'})                          // refuse TLS → pgx falls back / errors
-	f.Add([]byte{'E', 'x'})                     // error byte
-	f.Add([]byte{'S', 0x16, 0x03, 0x03, 0, 0})  // accept, then truncated TLS record
-	f.Add([]byte{'S'})                          // accept, then nothing
-	f.Add([]byte{0x00})                         // junk negotiation byte
+	f.Add([]byte{'N'})                         // refuse TLS → pgx falls back / errors
+	f.Add([]byte{'E', 'x'})                    // error byte
+	f.Add([]byte{'S', 0x16, 0x03, 0x03, 0, 0}) // accept, then truncated TLS record
+	f.Add([]byte{'S'})                         // accept, then nothing
+	f.Add([]byte{0x00})                        // junk negotiation byte
 	f.Fuzz(func(t *testing.T, server []byte) {
 		srv := hostile.NewServer(t, func(c net.Conn) {
 			// pgx sends SSLRequest first (8 bytes, no type byte). Drain it.

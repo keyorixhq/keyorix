@@ -15,10 +15,10 @@
 //     configured password must NOT be sent there. Verified by TestRedisMovedNotFollowed
 //     with a red proof (a ClusterClient, which DOES follow the redirect).
 //
-// RESP3 nesting has no depth limit in go-redis (known: KFZ-2026-010 / KFZ-2026-080); per
-// the task this is not re-reported — seeds use bounded depth only.
+// RESP3 nesting has no depth limit in go-redis (already reported upstream); it
+// is not re-reported here — seeds use bounded depth only.
 //
-// What these oracles do NOT verify: see .scratch/h6-REPORT.md §6.
+// What these oracles do NOT verify: stated in the PR description, not fuzzed here.
 package redishostile
 
 import (
@@ -171,14 +171,14 @@ func FuzzRedisReply(f *testing.F) {
 	f.Add([]byte("-ERR nope\r\n"))
 	f.Add([]byte(":123\r\n"))
 	f.Add([]byte("$5\r\nhello\r\n"))
-	f.Add([]byte("$9999999\r\nshort\r\n"))         // huge declared bulk length
-	f.Add([]byte("*2\r\n:1\r\n:2\r\n"))            // RESP2 array
-	f.Add([]byte("%1\r\n+k\r\n+v\r\n"))            // RESP3 map
-	f.Add([]byte("|1\r\n+a\r\n+b\r\n+OK\r\n"))     // RESP3 attribute then value
+	f.Add([]byte("$9999999\r\nshort\r\n"))           // huge declared bulk length
+	f.Add([]byte("*2\r\n:1\r\n:2\r\n"))              // RESP2 array
+	f.Add([]byte("%1\r\n+k\r\n+v\r\n"))              // RESP3 map
+	f.Add([]byte("|1\r\n+a\r\n+b\r\n+OK\r\n"))       // RESP3 attribute then value
 	f.Add([]byte(">3\r\n+pubsub\r\n+ch\r\n+hi\r\n")) // RESP3 push
-	f.Add([]byte(",3.14\r\n"))                     // double
-	f.Add([]byte("#t\r\n"))                        // boolean
-	f.Add([]byte("_\r\n"))                         // null
+	f.Add([]byte(",3.14\r\n"))                       // double
+	f.Add([]byte("#t\r\n"))                          // boolean
+	f.Add([]byte("_\r\n"))                           // null
 	f.Fuzz(func(t *testing.T, reply []byte) {
 		srv := hostile.NewServer(t, func(c net.Conn) {
 			serveUntilRealCommand(c, reply)

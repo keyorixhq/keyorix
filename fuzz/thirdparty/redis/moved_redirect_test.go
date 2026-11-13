@@ -39,11 +39,11 @@ func clusterSlotsAll(host, port string) []byte {
 // redirect points at. It records how many times it was dialled and whether the
 // configured password ever reached it.
 type attackerListener struct {
-	ln       net.Listener
-	dials    atomic.Int32
-	mu       sync.Mutex
-	sawPass  bool
-	done     chan struct{}
+	ln      net.Listener
+	dials   atomic.Int32
+	mu      sync.Mutex
+	sawPass bool
+	done    chan struct{}
 }
 
 func newAttacker(t *testing.T) *attackerListener {
@@ -92,7 +92,7 @@ func (a *attackerListener) handle(c net.Conn) {
 }
 
 func (a *attackerListener) addr() string { return a.ln.Addr().String() }
-func (a *attackerListener) close()        { _ = a.ln.Close() }
+func (a *attackerListener) close()       { _ = a.ln.Close() }
 func (a *attackerListener) leaked() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()

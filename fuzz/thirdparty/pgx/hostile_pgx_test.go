@@ -15,7 +15,7 @@
 //   - Bounded memory is approximated by Go's own alloc behaviour under -fuzz (an
 //     unbounded alloc trips the fuzzing OOM/limit); not asserted numerically here.
 //
-// What these oracles do NOT verify: see .scratch/h6-REPORT.md §6.
+// What these oracles do NOT verify: stated in the PR description, not fuzzed here.
 package pgxhostile
 
 import (
@@ -95,10 +95,10 @@ func runWithOracles(t *testing.T, fn func(ctx context.Context)) {
 // Authentication* (cleartext/md5/SCRAM subtypes), ParameterStatus, BackendKeyData,
 // NoticeResponse, ErrorResponse, ReadyForQuery, and malformed variants of each.
 func FuzzPgxHandshake(f *testing.F) {
-	f.Add([]byte{'R', 0, 0, 0, 8, 0, 0, 0, 0, 'Z', 0, 0, 0, 5, 'I'})                 // ok
-	f.Add([]byte{'R', 0, 0, 0, 8, 0, 0, 0, 3})                                       // cleartext req
-	f.Add([]byte{'R', 0, 0, 0, 12, 0, 0, 0, 5, 1, 2, 3, 4})                          // md5 req
-	f.Add([]byte{'E', 0, 0, 0, 11, 'S', 'E', 'R', 'R', 0, 0})                        // ErrorResponse
+	f.Add([]byte{'R', 0, 0, 0, 8, 0, 0, 0, 0, 'Z', 0, 0, 0, 5, 'I'})                      // ok
+	f.Add([]byte{'R', 0, 0, 0, 8, 0, 0, 0, 3})                                            // cleartext req
+	f.Add([]byte{'R', 0, 0, 0, 12, 0, 0, 0, 5, 1, 2, 3, 4})                               // md5 req
+	f.Add([]byte{'E', 0, 0, 0, 11, 'S', 'E', 'R', 'R', 0, 0})                             // ErrorResponse
 	f.Add([]byte{'R', 0, 0, 0, 23, 0, 0, 0, 10, 'S', 'C', 'R', 'A', 'M', '-', 'X', 0, 0}) // SASL
 	f.Fuzz(func(t *testing.T, server []byte) {
 		srv := hostile.NewServer(t, func(c net.Conn) {
@@ -157,7 +157,7 @@ func FuzzPgxSimpleQueryResponse(f *testing.F) {
 // Query-with-args — the shape rotation's parameterized ALTER and any arg query produce.
 func FuzzPgxExtendedResponse(f *testing.F) {
 	f.Add([]byte{'1', 0, 0, 0, 4, '2', 0, 0, 0, 4, 'C', 0, 0, 0, 5, 0, 'Z', 0, 0, 0, 5, 'I'}) // Parse/BindComplete/CC/RFQ
-	f.Add([]byte{'t', 0, 0, 0, 6, 0, 0, 'n', 0, 0, 0, 4})                                      // ParameterDescription/NoData
+	f.Add([]byte{'t', 0, 0, 0, 6, 0, 0, 'n', 0, 0, 0, 4})                                     // ParameterDescription/NoData
 	f.Fuzz(func(t *testing.T, server []byte) {
 		srv := hostile.NewServer(t, func(c net.Conn) {
 			if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
