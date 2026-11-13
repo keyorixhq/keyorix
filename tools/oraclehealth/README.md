@@ -29,8 +29,14 @@ any Go module checkout — Keyorix packages or an external library.
    actually exercises, so the kill-rate is not diluted by out-of-scope files.
 
 2. **Isolate** (`copy.go`). The module is copied once into a scratch directory
-   (skipping `.git`, `node_modules`). **The real checkout is never edited** — each
-   mutant is written into the copy, run, then the file is restored before the next.
+   (skipping `.git`, `node_modules`) and the copy is stamped with a
+   `.oraclehealth-copy` marker file. Each mutant is written into the copy, run, then
+   the file is restored before the next. The tool enforces that it never edits a real
+   checkout: `-work` must be outside `-src` (equal, nested and containing paths are
+   refused, symlinks resolved), a non-empty `-work` must be a previous copy (marker
+   present), and `-module` is refused without the marker or if it contains `.git`.
+   Copies are owner-only, and symlinks pointing outside `-src` are not copied. The
+   default temp copy is removed on exit; an explicit `-work` is kept for reuse.
 
 3. **Run & classify** (`runner.go`). For each mutant the package is recompiled and
    the named fuzz target is run as `go test -run=^$ -fuzz=^Target$ -fuzztime=<N>`
@@ -38,26 +44,32 @@ any Go module checkout — Keyorix packages or an external library.
    fuzz oracle runs — ordinary unit tests are skipped, so a KILL is attributable to
    the fuzz oracle and nothing else. Verdicts:
 
-   - **KILLED** — the target failed (seed corpus or a generated input caught it).
+   - **KILLED** — the target itself failed (`--- FAIL: <target>`: the seed corpus or
+     a generated input caught it).
    - **SURVIVED** — the target stayed green for the whole budget: an oracle hole.
    - **EQUIVALENT-SUSPECTED** — (with `-equiv`) survived *and* the mutated line is
      never executed by the package's own unit suite, so the mutant is plausibly
      behaviour-equivalent / dead rather than a true hole.
    - **TIMEOUT** — the run exceeded its wall budget without a verdict.
    - **BUILD-FAIL** — the mutant did not compile; discarded, never counted as killed.
+   - **ERROR** — the run failed for a reason unrelated to the oracle (interrupted,
+     toolchain/link error, out of disk, a test binary that exits early). Excluded from
+     the kill rate; the tool exits non-zero. An interrupted run (SIGINT/SIGTERM) stops
+     immediately and writes no report.
 
    Any crasher the fuzzer writes to `testdata/fuzz/<Target>/` during one mutant run
    is removed before the next, so mutants are measured independently.
 
-   Before mutating, the **baseline** (unmutated) target is run; a non-green
-   baseline aborts that target (a kill would be meaningless).
+   Before mutating, the **baseline** (unmutated) target is run and must report
+   `--- PASS: <target>`; a non-green baseline, or a target name that matches nothing,
+   aborts that target (a kill would be meaningless).
 
 ## Usage
 
 ```
 go run ./tools/oraclehealth \
     -src .                               # module root to copy (or -module <prepared copy>)
-    -work /path/to/scratch/copy          # where to copy it (reusable across runs)
+    -work /path/to/scratch/copy          # where to copy it (outside -src; reusable across runs)
     -pkg internal/netutil                # package under test, module-relative
     -targets FuzzIPv4EmbeddingSSRFParity # comma-separated fuzz target names
     -funcs IsPrivateOrLinkLocal,embeddedIPv4   # optional function allow-list
@@ -72,8 +84,8 @@ go run ./tools/oraclehealth -src . -work $TMP/copy -pkg internal/netutil -target
 go run ./tools/oraclehealth -module $TMP/copy       -pkg internal/backupfmt -targets FuzzB ...
 ```
 
-For an external library, point `-src` at its checkout (copied to scratch; the
-cache is never modified) and name its own `Fuzz*` target.
+`-module` only accepts a copy this tool made (see Isolate above). For an external
+library, point `-src` at its checkout (copied to scratch; the cache is never modified) and name its own `Fuzz*` target.
 
 Output: a Markdown table on stdout plus, with `-out`, a JSON report
 (`target, mutants, killed, survived, kill_rate, survivors[]` with `file:line`

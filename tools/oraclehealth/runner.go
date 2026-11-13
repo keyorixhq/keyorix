@@ -20,6 +20,11 @@ const (
 	Timeout     Verdict = "TIMEOUT"
 	BuildFail   Verdict = "BUILD-FAIL"
 	BaselineBad Verdict = "BASELINE-FAIL"
+	// Error is a run that failed for a reason that says nothing about the
+	// oracle (interrupted, toolchain or link error, out of disk, a test binary
+	// that exits without running the target). It is excluded from the kill rate
+	// and makes the tool exit non-zero.
+	Error Verdict = "ERROR"
 )
 
 // Result is one (mutant, target) outcome.
@@ -54,19 +59,29 @@ func (e Env) goCmd(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "nice", full...) // #nosec G204 -- fixed nice/go binaries; args are this tool's own go subcommands and flags
 	cmd.Dir = e.ModuleRoot
 	cmd.Env = append(os.Environ(), fmt.Sprintf("GOMAXPROCS=%d", e.GOMAXPROCS))
+	// Run the whole nice/go/test-binary tree in one process group and kill the
+	// group on cancel, so an orphaned test binary cannot keep the output pipe
+	// open; WaitDelay bounds the wait if one still does.
+	killGroupOnCancel(cmd)
+	cmd.WaitDelay = 10 * time.Second
 	return cmd
 }
 
 // baselineGreen compiles the package and runs the target's seed corpus on the
-// unmutated copy; a non-green baseline makes every mutant meaningless.
+// unmutated copy; a non-green baseline makes every mutant meaningless. The
+// target must actually run and pass: `go test -run ^Typo$` exits 0 with "no
+// tests to run", which is not a green baseline.
 func (e Env) baselineGreen(ctx context.Context, target string) (bool, string) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	// Run just the seed corpus (no -fuzz) as a fast, deterministic sanity run.
-	cmd := e.goCmd(cctx, "test", "-run", "^"+target+"$", "-count=1", e.pkgArg())
+	cmd := e.goCmd(cctx, "test", "-v", "-run", "^"+target+"$", "-count=1", e.pkgArg())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, tail(string(out), 40)
+	}
+	if !strings.Contains(string(out), "--- PASS: "+target+" ") {
+		return false, "target " + target + " did not run (no matching fuzz target or test?):\n" + tail(string(out), 20)
 	}
 	return true, ""
 }
@@ -101,6 +116,11 @@ func (e Env) runFuzz(ctx context.Context, target string) (Verdict, string) {
 	)
 	out, err := cmd.CombinedOutput()
 	s := string(out)
+	// An interrupted run says nothing about the oracle, whatever the subprocess
+	// printed before it was killed.
+	if ctx.Err() != nil {
+		return Error, "interrupted: " + ctx.Err().Error()
+	}
 	if cctx.Err() == context.DeadlineExceeded {
 		return Timeout, tail(s, 20)
 	}
@@ -110,9 +130,15 @@ func (e Env) runFuzz(ctx context.Context, target string) (Verdict, string) {
 	if strings.Contains(s, "[build failed]") || strings.Contains(s, "build constraints exclude") {
 		return BuildFail, tail(s, 12)
 	}
-	// A failing fuzz run: either the seed corpus already fails or the fuzzer
-	// found a crasher. Either way the oracle caught the mutant.
-	return Killed, tail(s, 20)
+	// A failing fuzz run counts as a kill only when the target itself failed:
+	// either the seed corpus already fails or the fuzzer found a crasher, both
+	// of which print "--- FAIL: <target>". Any other non-zero exit (toolchain or
+	// link error, ENOSPC, a test binary that exits early) is not the oracle
+	// catching anything.
+	if strings.Contains(s, "--- FAIL: "+target+" ") || strings.Contains(s, "--- FAIL: "+target+"/") {
+		return Killed, tail(s, 20)
+	}
+	return Error, "non-oracle failure (no --- FAIL: " + target + " in output): " + tail(s, 20)
 }
 
 // corpusSnapshot lists the committed/seed fuzz corpus files for a target so a

@@ -35,7 +35,7 @@ func (e Env) coveredLines(ctx context.Context) (lines map[string]map[int]bool, u
 	unitOK = runErr == nil
 	_ = out
 
-	data, err := os.Open(profPath) // #nosec G304 -- profPath is the coverage profile this tool just had go test write in its own work dir
+	data, err := os.Open(profPath) // #nosec G304 -- profPath is the private temp file this tool created for go test's coverage profile
 	if err != nil {
 		return lines, unitOK
 	}

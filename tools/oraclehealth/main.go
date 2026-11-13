@@ -5,9 +5,11 @@
 // hole). It is stdlib-only and imports no project-internal packages, so it runs
 // on any Go module checkout, not just Keyorix.
 //
-// Each mutant is applied in a working COPY of the module (the real checkout is
-// never edited): one file is rewritten, the fuzz target is run, then the file
-// is restored before the next mutant.
+// Each mutant is applied in a working COPY of the module: one file is
+// rewritten, the fuzz target is run, then the file is restored before the next
+// mutant. The tool only mutates a directory carrying the marker file that its
+// own copy step writes, and refuses a -module that contains .git or an -src /
+// -work pair that overlap, so a real checkout cannot be edited by mistake.
 package main
 
 import (
@@ -52,6 +54,7 @@ type Run struct {
 	Equivalent   int      `json:"equivalent_suspected"`
 	Timeout      int      `json:"timeout"`
 	BuildFail    int      `json:"build_fail"`
+	Error        int      `json:"error"`
 	KillRate     float64  `json:"kill_rate"`
 	SurvivorList []Result `json:"survivors"`
 }
@@ -67,9 +70,9 @@ type Report struct {
 
 func main() {
 	var o options
-	flag.StringVar(&o.module, "module", "", "path to a prepared module working COPY to mutate in place (never the real checkout)")
+	flag.StringVar(&o.module, "module", "", "path to a working COPY made by this tool (-src/-work) to mutate in place; refused without its marker file or if it contains .git")
 	flag.StringVar(&o.src, "src", "", "module root to copy into -work before running (alternative to -module)")
-	flag.StringVar(&o.work, "work", "", "destination for the copy when -src is set (default: a temp dir)")
+	flag.StringVar(&o.work, "work", "", "destination for the copy when -src is set; must be outside -src and empty or a previous copy (default: a temp dir, removed on exit)")
 	flag.StringVar(&o.pkg, "pkg", "", "package under test, module-relative (e.g. internal/backupfmt)")
 	flag.StringVar(&o.funcs, "funcs", "", "comma-separated function allow-list to mutate (default: all)")
 	flag.StringVar(&o.targets, "targets", "", "comma-separated fuzz target names (e.g. FuzzExtractArchivePathSafety)")
@@ -84,13 +87,20 @@ func main() {
 	flag.BoolVar(&o.verbose, "v", false, "verbose per-mutant logging")
 	flag.Parse()
 
-	if err := run(o); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := runCtx(ctx, o)
+	stop()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "oraclehealth:", err)
 		os.Exit(1)
 	}
 }
 
 func run(o options) error {
+	return runCtx(context.Background(), o)
+}
+
+func runCtx(ctx context.Context, o options) error {
 	if o.pkg == "" || o.targets == "" {
 		return fmt.Errorf("both -pkg and -targets are required")
 	}
@@ -106,6 +116,8 @@ func run(o options) error {
 				return err
 			}
 			dst = d
+			// A default temp copy is disposable; an explicit -work is kept for reuse.
+			defer func() { _ = os.RemoveAll(d) }()
 		}
 		fmt.Fprintf(os.Stderr, "copying %s -> %s ...\n", o.src, dst)
 		if err := copyModule(o.src, dst); err != nil {
@@ -113,7 +125,13 @@ func run(o options) error {
 		}
 		moduleRoot = dst
 	}
-	moduleRoot, _ = filepath.Abs(moduleRoot)
+	moduleRoot, err := resolvePath(moduleRoot)
+	if err != nil {
+		return err
+	}
+	if err := checkModuleDir(moduleRoot); err != nil {
+		return err
+	}
 
 	pkgDir := filepath.Join(moduleRoot, filepath.FromSlash(o.pkg))
 	if fi, err := os.Stat(pkgDir); err != nil || !fi.IsDir() {
@@ -143,8 +161,12 @@ func run(o options) error {
 		Verbose:    o.verbose,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	interrupted := func() error {
+		if ctx.Err() != nil {
+			return fmt.Errorf("interrupted (%v): no report written, results so far are incomplete", ctx.Err())
+		}
+		return nil
+	}
 
 	// Optional coverage signal for equivalence classification (computed once on
 	// the unmutated copy).
@@ -163,9 +185,14 @@ func run(o options) error {
 		Generated: time.Now().UTC().Format(time.RFC3339),
 	}
 
+	nonOracle := 0
 	for _, target := range targets {
 		fmt.Fprintf(os.Stderr, "\n=== target %s ===\n", target)
-		if ok, detail := env.baselineGreen(ctx, target); !ok {
+		ok, detail := env.baselineGreen(ctx, target)
+		if err := interrupted(); err != nil {
+			return err
+		}
+		if !ok {
 			fmt.Fprintf(os.Stderr, "BASELINE NOT GREEN for %s; skipping. detail:\n%s\n", target, detail)
 			report.Runs = append(report.Runs, Run{Target: target, Package: o.pkg})
 			continue
@@ -173,6 +200,9 @@ func run(o options) error {
 		run := Run{Target: target, Package: o.pkg, Mutants: len(muts)}
 		for i, m := range muts {
 			res := applyAndRun(ctx, env, target, m)
+			if err := interrupted(); err != nil {
+				return err
+			}
 			if res.Verdict == Survived && o.equiv && unitOK && !lineCovered(cov, m.File, m.Line) {
 				res.Verdict = Equivalent
 				res.Detail = "unit suite passes and mutated line uncovered by unit tests"
@@ -190,6 +220,10 @@ func run(o options) error {
 				run.Timeout++
 			case BuildFail:
 				run.BuildFail++
+			case Error:
+				run.Error++
+				nonOracle++
+				fmt.Fprintf(os.Stderr, "ERROR detail for %s:\n%s\n", m.String(), res.Detail)
 			}
 			if o.verbose || res.Verdict != Killed {
 				fmt.Fprintf(os.Stderr, "[%2d/%2d] %-20s %s (%.0fs)\n", i+1, len(muts), res.Verdict, m.String(), res.Seconds)
@@ -210,6 +244,9 @@ func run(o options) error {
 		fmt.Fprintf(os.Stderr, "wrote %s\n", o.out)
 	}
 	printTable(report)
+	if nonOracle > 0 {
+		return fmt.Errorf("%d mutant run(s) failed for reasons unrelated to the oracle (verdict ERROR, excluded from the kill rate): the report is incomplete, fix the environment and re-run", nonOracle)
+	}
 	return nil
 }
 
@@ -250,17 +287,17 @@ func applyAndRun(ctx context.Context, env Env, target string, m Mutation) Result
 }
 
 func printRunSummary(r Run) {
-	fmt.Fprintf(os.Stderr, "--- %s: mutants=%d killed=%d survived=%d equiv=%d timeout=%d buildfail=%d killrate=%.0f%%\n",
-		r.Target, r.Mutants, r.Killed, r.Survived, r.Equivalent, r.Timeout, r.BuildFail, r.KillRate*100)
+	fmt.Fprintf(os.Stderr, "--- %s: mutants=%d killed=%d survived=%d equiv=%d timeout=%d buildfail=%d error=%d killrate=%.0f%%\n",
+		r.Target, r.Mutants, r.Killed, r.Survived, r.Equivalent, r.Timeout, r.BuildFail, r.Error, r.KillRate*100)
 }
 
 func printTable(rep Report) {
 	fmt.Println()
-	fmt.Println("| target | mutants | killed | survived | equiv | timeout | buildfail | kill-rate |")
-	fmt.Println("|--------|---------|--------|----------|-------|---------|-----------|-----------|")
+	fmt.Println("| target | mutants | killed | survived | equiv | timeout | buildfail | error | kill-rate |")
+	fmt.Println("|--------|---------|--------|----------|-------|---------|-----------|-------|-----------|")
 	for _, r := range rep.Runs {
-		fmt.Printf("| %s | %d | %d | %d | %d | %d | %d | %.0f%% |\n",
-			r.Target, r.Mutants, r.Killed, r.Survived, r.Equivalent, r.Timeout, r.BuildFail, r.KillRate*100)
+		fmt.Printf("| %s | %d | %d | %d | %d | %d | %d | %d | %.0f%% |\n",
+			r.Target, r.Mutants, r.Killed, r.Survived, r.Equivalent, r.Timeout, r.BuildFail, r.Error, r.KillRate*100)
 	}
 	for _, r := range rep.Runs {
 		if len(r.SurvivorList) == 0 {

@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -292,8 +291,20 @@ func selectMutations(all []Mutation, max int, seed int64) []Mutation {
 	for i := range idx {
 		idx[i] = i
 	}
-	r := rand.New(rand.NewSource(seed)) // #nosec G404 -- deterministic, seeded sampling of mutations; not security-sensitive
-	r.Shuffle(len(idx), func(i, j int) { idx[i], idx[j] = idx[j], idx[i] })
+	// Fisher-Yates driven by a splitmix64 stream: deterministic for a given seed
+	// and independent of any standard-library generator.
+	state := uint64(seed) // #nosec G115 -- bit reinterpretation of the seed is intended; any int64 maps to a distinct stream
+	next := func() uint64 {
+		state += 0x9e3779b97f4a7c15
+		z := state
+		z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+		z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+		return z ^ (z >> 31)
+	}
+	for i := len(idx) - 1; i > 0; i-- {
+		j := int(next() % uint64(i+1)) // #nosec G115 -- i > 0 so i+1 is positive, and the remainder is < i+1 <= len(idx)
+		idx[i], idx[j] = idx[j], idx[i]
+	}
 	idx = idx[:max]
 	sort.Ints(idx)
 	out := make([]Mutation, 0, max)
