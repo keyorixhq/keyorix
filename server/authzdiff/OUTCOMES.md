@@ -115,7 +115,10 @@ Consequences:
   scope rule, 400). Those (target, arg) pairs are not valid requests for any
   principal, so they are excluded from the case space (`opSpec.invalidArg`);
   `TestInvalidArgsFailAdminControl` checks that the admin control fails on
-  each. `editor` (arg 3) is assignable globally and is covered. Likewise
+  each. `editor` (arg 3) is assignable globally and is covered. Since
+  LEGACY-ROLES-GLOBAL-1 a legacy role (`editor`) is install-wide only, so
+  `editor` on a project is excluded the same way on every grant op
+  (`legacyRoleAtProject`). Likewise
   `secret.share` on s1 (arg 1): only its owner, the viewer, may share it, and
   the viewer lacks the route's `secrets.write`, so no fixture principal can
   share it over a transport. Any other

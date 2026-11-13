@@ -1,0 +1,1 @@
+scripts/fuzzing/configspace	none	-	test-only harness: config-space fuzzer and pairwise matrix runner for the server configuration surface; developer and CI tooling, not linked into any shipped binary	test-helper
