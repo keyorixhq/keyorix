@@ -56,7 +56,7 @@ func readCommand(r *bufio.Reader) (name string, nargs int, err error) {
 		return "", 0, nil
 	}
 	n, _ := strconv.Atoi(trimCRLF(line[1:]))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		hdr, err := r.ReadString('\n')
 		if err != nil {
 			return "", 0, err
