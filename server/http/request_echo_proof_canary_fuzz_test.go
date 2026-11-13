@@ -109,10 +109,12 @@ func TestRequestEchoCanaryOracleCatchesPlantedLeaks(t *testing.T) {
 	})
 }
 
-// TestRequestEchoCanaryEchoRowsAreLive proves each echo row of requestEchoRules is
-// needed and sufficient: its route still echoes when the row is absent, and is clean
-// when it is present. A fix to the echo fails this test, so the row gets removed.
-func TestRequestEchoCanaryEchoRowsAreLive(t *testing.T) {
+// TestRequestEchoCanaryFixedEchoesStayFixed drives the three routes whose 400 quoted the
+// caller's rejected value (SSO provider name, notification channel type, export format;
+// #4059) with NO allowlist and requires no echo on the body channel. Their rows were
+// removed from requestEchoRules when the handlers stopped quoting; this fails if one
+// starts quoting again. Red before CORE-ERR-FAMILY-7 item 3.
+func TestRequestEchoCanaryFixedEchoesStayFixed(t *testing.T) {
 	fx := newRequestEchoFixture(t)
 	cases := []struct {
 		route     string
@@ -134,16 +136,8 @@ func TestRequestEchoCanaryEchoRowsAreLive(t *testing.T) {
 			if invalid != "" {
 				t.Fatal(invalid)
 			}
-			echoed := slices.ContainsFunc(without.findings, func(s string) bool { return strings.Contains(s, "channel="+echoChanBody+" ") })
-			if !echoed {
-				t.Fatalf("no echo without the allowlist, so the row is stale; findings: %v", without.findings)
-			}
-			with, invalid := runRequestEcho(t, fx, t.TempDir(), in, requestEchoRules(), nil, nil)
-			if invalid != "" {
-				t.Fatal(invalid)
-			}
-			if len(with.findings) != 0 {
-				t.Fatalf("findings with the allowlist: %v", with.findings)
+			if echoed := slices.ContainsFunc(without.findings, func(s string) bool { return strings.Contains(s, "channel="+echoChanBody+" ") }); echoed {
+				t.Fatalf("%s quotes the caller's input in its error body again: %v", tc.route, without.findings)
 			}
 		})
 	}

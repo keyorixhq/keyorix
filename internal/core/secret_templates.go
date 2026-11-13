@@ -87,20 +87,20 @@ func (c *KeyorixCore) CreateSecretTemplate(ctx context.Context, req *CreateSecre
 		return nil, fmt.Errorf("template name is required")
 	}
 	if err := validateNameLength("template name", req.Name); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	if err := validateTemplateClassification(req.DefaultClassification); err != nil {
 		return nil, err
 	}
 	if err := validateDescription(req.Description); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	if len(req.DescriptionPattern) > maxSecretDescriptionLen {
-		return nil, fmt.Errorf("%s: DescriptionPattern exceeds maximum length of %d", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
+		return nil, secretInvalidInput(fmt.Errorf("%s: DescriptionPattern exceeds maximum length of %d", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen))
 	}
 	if req.DefaultTags != "" {
 		if _, err := normalizeTags(strings.Split(req.DefaultTags, ",")); err != nil {
-			return nil, fmt.Errorf("%s: DefaultTags: %w", i18n.T("ErrorValidation", nil), err)
+			return nil, secretInvalidInput(fmt.Errorf("%s: DefaultTags: %w", i18n.T("ErrorValidation", nil), err))
 		}
 	}
 
@@ -163,20 +163,20 @@ func (c *KeyorixCore) UpdateSecretTemplate(ctx context.Context, id uint, req *Up
 		return nil, fmt.Errorf("template name is required")
 	}
 	if err := validateNameLength("template name", req.Name); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	if err := validateTemplateClassification(req.DefaultClassification); err != nil {
 		return nil, err
 	}
 	if err := validateDescription(req.Description); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	if len(req.DescriptionPattern) > maxSecretDescriptionLen {
-		return nil, fmt.Errorf("%s: DescriptionPattern exceeds maximum length of %d", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
+		return nil, secretInvalidInput(fmt.Errorf("%s: DescriptionPattern exceeds maximum length of %d", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen))
 	}
 	if req.DefaultTags != "" {
 		if _, err := normalizeTags(strings.Split(req.DefaultTags, ",")); err != nil {
-			return nil, fmt.Errorf("%s: DefaultTags: %w", i18n.T("ErrorValidation", nil), err)
+			return nil, secretInvalidInput(fmt.Errorf("%s: DefaultTags: %w", i18n.T("ErrorValidation", nil), err))
 		}
 	}
 

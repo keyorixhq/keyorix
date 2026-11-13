@@ -192,7 +192,11 @@ Format: `INV-MW-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 
 ## Cross-cutting notes
 
-- `docs/adr-conformance-enforced.tsv` has zero rows for `server/middleware` despite several
-  real, tested properties above (CSRF, cookie attributes, cache-hit re-verification) — none of
-  these have been formally seeded into that ledger yet. Low-effort follow-up: add rows citing
-  the tests already named here.
+- LEDGER-SEED-1 seeded `docs/adr-conformance-enforced.d/` rows for the ADR-stated properties
+  here: INV-MW-01 (`ADR-027-PAT-REVOKED-DENIED-ON-CACHE-HIT`), INV-MW-06
+  (`ADR-066-ALLOWLIST-EVALUATED-ON-CACHE-HIT`), INV-MW-18
+  (`ADR-066-ALLOWLIST-IGNORES-SPOOFED-FORWARDED-HEADERS`),
+  INV-MW-authorize-lookup-error-is-503 (`ADR-096-AUTHORIZE-LOOKUP-FAULT-IS-503`) and
+  INV-MW-project-mfa-gate-sentinel-only (`ADR-084-PROJECT-MFA-LOOKUP-ERROR-FAILS-CLOSED`).
+  Not seeded: INV-MW-12..14 (CSRF, cookie attributes). No ADR states them as a design claim,
+  so they stay guarded by their named tests only.

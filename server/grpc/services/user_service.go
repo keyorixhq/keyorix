@@ -159,7 +159,7 @@ func (s *UserGRPCService) ReissueOneTimePassword(ctx context.Context, req *pb.Re
 	res, err := s.core.ReissueOneTimePassword(ctx, actor.UserID, uint(req.GetId()))
 	if err != nil {
 		if perr, ok := partialMutationStatus(err); ok {
-			log.Printf("reissue one-time password for user %d partially applied: %v", req.GetId(), err)
+			log.Printf("reissue one-time password for user %d partially applied: %s", req.GetId(), withFaultCause(err))
 			return nil, perr
 		}
 		switch {
@@ -176,7 +176,7 @@ func (s *UserGRPCService) ReissueOneTimePassword(ctx context.Context, req *pb.Re
 		}
 		// Not mapUserError's substring switch: a storage fault whose text happens to
 		// say "not found" or "invalid" must stay Internal, never NotFound/InvalidArgument.
-		log.Printf("reissue one-time password error for user %d: %v", req.GetId(), err)
+		log.Printf("reissue one-time password error for user %d: %s", req.GetId(), withFaultCause(err))
 		return nil, status.Error(codes.Internal, "user operation failed")
 	}
 	return &pb.ReissueOneTimePasswordResponse{
@@ -226,7 +226,7 @@ func (s *UserGRPCService) UpdateUser(ctx context.Context, req *pb.UpdateUserRequ
 	})
 	if err != nil {
 		if perr, ok := partialMutationStatus(err); ok {
-			log.Printf("update of user %d partially applied: %v", req.GetId(), err)
+			log.Printf("update of user %d partially applied: %s", req.GetId(), withFaultCause(err))
 			return nil, perr
 		}
 		return nil, mapUserError(err)
@@ -426,6 +426,6 @@ func mapUserError(err error) error {
 	case errors.Is(err, core.ErrSetupBaseURLRequired):
 		return status.Error(codes.InvalidArgument, "invalid request parameters")
 	default:
-		return status.Error(codes.Internal, "user operation failed")
+		return internalFailure("user operation failed", err)
 	}
 }

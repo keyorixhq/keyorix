@@ -66,6 +66,13 @@ func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, display
 			} else {
 				reauthed = user
 			}
+		} else {
+			// Unchanged on the row the re-auth decision was made on: nothing to write.
+			// Passed on, UpdateUser would compare it with its own later read, and an
+			// email change committing in between (the web page always resends the
+			// email) would make this an email change that skipped re-auth (#2654,
+			// FIX-USER-ROW-NARROW-1).
+			email = ""
 		}
 	}
 	updated, err := c.UpdateUser(ctx, &UpdateUserRequest{

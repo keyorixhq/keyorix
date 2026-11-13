@@ -17,7 +17,7 @@ import (
 // live user — offboarding hygiene, so an admin can transfer ownership. Metadata only.
 func (c *KeyorixCore) ListOrphanedSecrets(ctx context.Context, projectID uint) ([]*models.SecretNode, error) {
 	if projectID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return nil, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required"))
 	}
 	secrets, err := c.storage.ListOrphanedSecrets(ctx, projectID)
 	if err != nil {

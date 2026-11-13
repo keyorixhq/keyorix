@@ -60,7 +60,7 @@ type CreatePATResult struct {
 // than its owner currently holds.
 func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string, expiresAt *time.Time, scopes []string, projectScope, environmentScope uint, allowedCIDRs []string) (*CreatePATResult, error) { // NOSONAR -- domain-driven parameter count
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	// PAT-GUARD-1: a restricted PAT must not mint a token. The child is
 	// unrestricted unless asked otherwise, so this was a one-call escape from every
@@ -70,7 +70,7 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 		return nil, ErrRestrictedPATCannotMintPAT
 	}
 	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("%s: token name is required", i18n.T("ErrorValidation", nil))
+		return nil, validationError(fmt.Errorf("%s: token name is required", i18n.T("ErrorValidation", nil)))
 	}
 	// nil = never expires; an expiry at or before now is refused here, in core, so
 	// every caller is covered, not only the HTTP handler.
@@ -80,12 +80,12 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 
 	scopesJSON, err := encodePATScopes(scopes)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 
 	cidrsJSON, err := encodePATCIDRs(allowedCIDRs)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 
 	b := make([]byte, 32)
@@ -128,7 +128,7 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 // ListOwnPATs returns the caller's tokens (hashes are never exposed by the HTTP DTO).
 func (c *KeyorixCore) ListOwnPATs(ctx context.Context, userID uint) ([]*models.PersonalAccessToken, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	return c.storage.ListPersonalAccessTokensByUser(ctx, userID)
 }
