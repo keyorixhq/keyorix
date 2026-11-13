@@ -24,8 +24,8 @@ func FuzzValidateKeyorixURL(f *testing.F) {
 		"https://keyorix.internal",
 		"http://localhost",
 		"http://localhost:8080",
-		"http://127.0.0.1",   // loopback IP over http — must be REJECTED (K8SSYNC-007)
-		"http://[::1]",       // loopback IP over http — must be REJECTED
+		"http://127.0.0.1", // loopback IP over http — must be REJECTED (K8SSYNC-007)
+		"http://[::1]",     // loopback IP over http — must be REJECTED
 		"http://localhost.evil.com",
 		"https://",
 		"ftp://keyorix.internal",
