@@ -41,6 +41,8 @@ type options struct {
 	allowlist string
 	out       string
 	verbose   bool
+	compare   bool
+	baseline  string
 }
 
 // Run is one target's health summary.
@@ -86,7 +88,18 @@ func main() {
 	flag.StringVar(&o.allowlist, "allowlist", "", "TSV of known equivalent/dead mutants to reclassify as ALLOWLISTED (excluded from the kill-rate)")
 	flag.StringVar(&o.out, "out", "", "write a JSON report to this path")
 	flag.BoolVar(&o.verbose, "v", false, "verbose per-mutant logging")
+	flag.BoolVar(&o.compare, "compare", false, "compare mode: check report JSON(s) named as args against -baseline, exit non-zero on regression")
+	flag.StringVar(&o.baseline, "baseline", "", "baseline TSV of per-target kill-rate floors (used with -compare)")
 	flag.Parse()
+
+	if o.compare {
+		if err := runCompare(o.baseline, flag.Args()); err != nil {
+			fmt.Fprintln(os.Stderr, "oraclehealth: baseline check FAILED:", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "oraclehealth: baseline check passed")
+		return
+	}
 
 	if err := run(o); err != nil {
 		fmt.Fprintln(os.Stderr, "oraclehealth:", err)

@@ -1,0 +1,23 @@
+# oracle-health baseline — per-target kill-rate floor for scripts/fuzzing/oracle-health.sh.
+#
+# This file is BOTH the run manifest (which target, package, funcs, budget) and the
+# regression threshold. oracle-health.sh runs tools/oraclehealth for each row with the
+# shared allowlist (tools/oraclehealth/oracle-health-allowlist.tsv), then fails if any
+# target's measured kill-rate is below kill_rate - tolerance, or if a row's target is
+# missing from the measurement.
+#
+# kill_rate / tolerance are percentages / percentage-points. The rates below were
+# measured 2026-11-13 on branch fuzz/oracle-hardening (go 1.27.3) after the oracle
+# hardening, WITH the allowlist applied (equivalent/dead survivors excluded), so every
+# target is 100% of its genuine-hole denominator. tolerance 10 catches a real oracle
+# weakening (a deleted assertion re-opens >=1 non-allowlisted survivor, dropping the
+# rate ~13pt to <=86% on a ~7-mutant denominator) while absorbing a single incidental
+# build-fail or sampling shift. Sampling is deterministic (fixed seed), so a green run
+# reproduces exactly; re-measure and bump a row when its package's candidate set changes.
+#
+# Columns (tab-separated): target  package  funcs  fuzztime  max  seed  kill_rate  tolerance
+#
+target	package	funcs	fuzztime	max	seed	kill_rate	tolerance
+FuzzIPv4EmbeddingSSRFParity	internal/netutil	IsPrivateOrLinkLocal,embeddedIPv4,matchesCIDRsWithEmbedded,inCIDRs	15s	10	1	100	10
+FuzzAEADTamperRoundTrip	internal/encryption/aead	Encrypt,Decrypt,EncryptWithAAD,DecryptWithAAD,seal,open,SerializeEncryptedData,DeserializeEncryptedData	15s	10	1	100	10
+FuzzComponentPathContainment	pkg/bundleverify	cleanComponentPath,isUnsafeCleanComponentPath	15s	10	1	100	10

@@ -118,6 +118,31 @@ target   file   func   op   orig   new   class   reason
 Keep it small and honest: every entry is a survivor a human has traced to a specific
 masking mechanism, not a convenient silence.
 
+## Repeatable run + baseline regression check
+
+`scripts/fuzzing/oracle-health.sh` makes the measurement repeatable. It runs the tool
+over the fixed target list in `scripts/fuzzing/oracle-health-baseline.tsv` (which is
+both the run manifest — target, package, funcs, budget — and the per-target kill-rate
+floor), each target against this package's allowlist, then compares via `-compare` and
+**exits non-zero** if any target's kill-rate is below `kill_rate - tolerance`, or if a
+baseline target is missing from the run.
+
+```
+scripts/fuzzing/oracle-health.sh            # run + compare (exit 1 on regression)
+scripts/fuzzing/oracle-health.sh --record   # re-measure and rewrite the baseline rates
+```
+
+- **Runtime (pve01, `nice -n 10`, `GOMAXPROCS=2`, `-parallel 2`, serial mutants):** the
+  three targets at `fuzztime=15s / max=10` plus the one module copy measured **~137 s
+  (~2.3 min)** wall with a warm build cache — killed mutants fail on the seed corpus in
+  a second or two, so only the allowlisted/surviving mutants spend the full budget. A
+  cold cache adds the one-time package+dependency compile (upper bound ~10 min). Either
+  way it fits comfortably in one nightly slot.
+- **Not wired into CI** on purpose: it recompiles a package per mutant and fuzzes each,
+  far too heavy for the per-PR path. Run it nightly or on demand. The comparison logic
+  is unit-tested (`baseline_test.go`: a baseline above the measured value fails, equal
+  passes); `oracle-health.sh` itself is the nightly driver.
+
 ## The tool's own red/green proof
 
 `mutate_test.go` + `testdata/toy/` are the committed proof that the tool measures
