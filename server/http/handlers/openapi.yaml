@@ -4300,7 +4300,7 @@ paths:
                 environment_id: {type: integer}
                 parent_id: {type: integer, description: "0/omit = root."}
       responses:
-        '200':
+        '201':
           description: Envelope `{data, message}`. `data` is the created folder node.
           content:
             application/json:
@@ -4376,7 +4376,7 @@ paths:
                 description_pattern: {type: string}
                 rotation_hint_days: {type: integer}
       responses:
-        '200':
+        '201':
           description: Envelope `{data, message}`. `data` is the created template.
           content:
             application/json:
@@ -8654,7 +8654,7 @@ components:
         token_prefix: {type: string}
         user_id: {type: integer}
         expires_at: {type: string}
-        last_used_at: {type: string}
+        last_used_at: {type: string, format: date-time, nullable: true}
         expired: {type: boolean}
         stale: {type: boolean}
     MachineIdentity:
@@ -8694,7 +8694,7 @@ components:
         machine_identity_id: {type: integer}
         name: {type: string}
         token_prefix: {type: string}
-        last_used_at: {type: string}
+        last_used_at: {type: string, format: date-time, nullable: true}
         expired: {type: boolean}
         stale: {type: boolean}
     OIDCBinding:
