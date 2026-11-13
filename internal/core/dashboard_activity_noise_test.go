@@ -10,17 +10,17 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func newActivityFeedCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "activityfeed_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.SecretNode{}, &models.AnomalyAlert{}, &models.AuditEvent{}, &models.MachineIdentity{}))
 	require.NoError(t, db.Create(&models.User{ID: 5, Username: "ada", Email: "ada@x.io", IsActive: true}).Error)
 	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
