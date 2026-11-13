@@ -55,7 +55,7 @@ func FuzzValidateServer(f *testing.F) {
 	f.Fuzz(func(t *testing.T, allowedBlob, server string) {
 		// A fuzzer-controlled allow-list: split on newline, drop blank lines.
 		var allowed []string
-		for _, line := range strings.Split(allowedBlob, "\n") {
+		for line := range strings.SplitSeq(allowedBlob, "\n") {
 			if strings.TrimSpace(line) != "" {
 				allowed = append(allowed, line)
 			}
