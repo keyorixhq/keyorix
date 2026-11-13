@@ -1289,6 +1289,10 @@ service DynamicSecretService {
   // Set (or clear, with "") a config's data-classification label.
   rpc ClassifyConfig(ClassifyDynamicConfigRequest) returns (DynamicSecretConfig);
 
+  // Replace a config's admin DSN in place (same checks as CreateConfig: admin
+  // authority, egress policy, refused driver options). The DSN is never returned.
+  rpc UpdateConfigAdminDSN(UpdateDynamicConfigAdminDSNRequest) returns (DynamicSecretConfig);
+
   // Issue a short-lived credential. The username/password are returned ONCE.
   rpc IssueLease(IssueLeaseRequest) returns (IssuedCredential);
 
@@ -1369,6 +1373,11 @@ message CreateDynamicConfigRequest {
 message ClassifyDynamicConfigRequest {
   uint32 id = 1;
   string classification = 2;
+}
+
+message UpdateDynamicConfigAdminDSNRequest {
+  uint32 id = 1;
+  string admin_dsn = 2; // encrypted at rest, never echoed back
 }
 
 message IssueLeaseRequest {

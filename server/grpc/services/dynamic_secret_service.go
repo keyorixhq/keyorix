@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
@@ -36,6 +37,18 @@ func mapDynamicError(err error) error {
 	// storage_unavailable reason, not the backend-failure bucket below.
 	if serr, ok := storageUnavailableStatus(err); ok {
 		return serr
+	}
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
+	// The caller's own admin_dsn refused by policy: REST answers these 400 with the same
+	// texts. Neither carries the DSN: ForbiddenOptionError names only the option,
+	// ClientMessage only the host the caller wrote (never the resolved address).
+	if forbidden, ok := errors.AsType[*dsn.ForbiddenOptionError](err); ok {
+		return status.Error(codes.InvalidArgument, forbidden.Error()) // nosemgrep: keyorix-raw-error-to-client -- ForbiddenOptionError is built from the fixed option list only (internal/core/dsn/localfile.go), no DSN text; REST sends the same text with its 400
+	}
+	if refused, ok := errors.AsType[*core.DynamicSecretTargetRefusedError](err); ok {
+		return status.Error(codes.InvalidArgument, refused.ClientMessage())
 	}
 	// ERR-CLASS-LEFTOVERS-1: classified by sentinel (errors.Is), never by err.Error() text.
 	// A backend or driver message that happens to say "permission" or "required" is a
@@ -158,6 +171,26 @@ func (s *DynamicSecretGRPCService) ClassifyConfig(ctx context.Context, req *pb.C
 		return nil, err
 	}
 	cfg, err := s.core.ClassifyDynamicSecretConfig(ctx, user.UserID, uint(req.GetId()), req.GetClassification())
+	if err != nil {
+		return nil, mapDynamicError(err)
+	}
+	return dynamicConfigToProto(cfg), nil
+}
+
+func (s *DynamicSecretGRPCService) UpdateConfigAdminDSN(ctx context.Context, req *pb.UpdateDynamicConfigAdminDSNRequest) (*pb.DynamicSecretConfig, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetId() == 0 || req.GetAdminDsn() == "" {
+		return nil, status.Error(codes.InvalidArgument, "id and admin_dsn are required")
+	}
+	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetId()), permSecretsWrite); err != nil {
+		return nil, err
+	}
+	cfg, err := s.core.UpdateDynamicSecretConfigAdminDSN(ctx, &core.UpdateDynamicSecretConfigAdminDSNRequest{
+		ConfigID: uint(req.GetId()), AdminDSN: req.GetAdminDsn(), ActorID: user.PrincipalID(),
+	})
 	if err != nil {
 		return nil, mapDynamicError(err)
 	}

@@ -3579,15 +3579,16 @@ var MachineIdentityService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	DynamicSecretService_ListConfigs_FullMethodName     = "/keyorix.v1.DynamicSecretService/ListConfigs"
-	DynamicSecretService_GetConfig_FullMethodName       = "/keyorix.v1.DynamicSecretService/GetConfig"
-	DynamicSecretService_CreateConfig_FullMethodName    = "/keyorix.v1.DynamicSecretService/CreateConfig"
-	DynamicSecretService_ClassifyConfig_FullMethodName  = "/keyorix.v1.DynamicSecretService/ClassifyConfig"
-	DynamicSecretService_IssueLease_FullMethodName      = "/keyorix.v1.DynamicSecretService/IssueLease"
-	DynamicSecretService_ListLeases_FullMethodName      = "/keyorix.v1.DynamicSecretService/ListLeases"
-	DynamicSecretService_RevokeLease_FullMethodName     = "/keyorix.v1.DynamicSecretService/RevokeLease"
-	DynamicSecretService_RenewLease_FullMethodName      = "/keyorix.v1.DynamicSecretService/RenewLease"
-	DynamicSecretService_RevokeAllLeases_FullMethodName = "/keyorix.v1.DynamicSecretService/RevokeAllLeases"
+	DynamicSecretService_ListConfigs_FullMethodName          = "/keyorix.v1.DynamicSecretService/ListConfigs"
+	DynamicSecretService_GetConfig_FullMethodName            = "/keyorix.v1.DynamicSecretService/GetConfig"
+	DynamicSecretService_CreateConfig_FullMethodName         = "/keyorix.v1.DynamicSecretService/CreateConfig"
+	DynamicSecretService_ClassifyConfig_FullMethodName       = "/keyorix.v1.DynamicSecretService/ClassifyConfig"
+	DynamicSecretService_UpdateConfigAdminDSN_FullMethodName = "/keyorix.v1.DynamicSecretService/UpdateConfigAdminDSN"
+	DynamicSecretService_IssueLease_FullMethodName           = "/keyorix.v1.DynamicSecretService/IssueLease"
+	DynamicSecretService_ListLeases_FullMethodName           = "/keyorix.v1.DynamicSecretService/ListLeases"
+	DynamicSecretService_RevokeLease_FullMethodName          = "/keyorix.v1.DynamicSecretService/RevokeLease"
+	DynamicSecretService_RenewLease_FullMethodName           = "/keyorix.v1.DynamicSecretService/RenewLease"
+	DynamicSecretService_RevokeAllLeases_FullMethodName      = "/keyorix.v1.DynamicSecretService/RevokeAllLeases"
 )
 
 // DynamicSecretServiceClient is the client API for DynamicSecretService service.
@@ -3607,6 +3608,9 @@ type DynamicSecretServiceClient interface {
 	CreateConfig(ctx context.Context, in *CreateDynamicConfigRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error)
 	// Set (or clear, with "") a config's data-classification label.
 	ClassifyConfig(ctx context.Context, in *ClassifyDynamicConfigRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error)
+	// Replace a config's admin DSN in place (same checks as CreateConfig: admin
+	// authority, egress policy, refused driver options). The DSN is never returned.
+	UpdateConfigAdminDSN(ctx context.Context, in *UpdateDynamicConfigAdminDSNRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error)
 	// Issue a short-lived credential. The username/password are returned ONCE.
 	IssueLease(ctx context.Context, in *IssueLeaseRequest, opts ...grpc.CallOption) (*IssuedCredential, error)
 	// List a config's leases (never the credential bytes).
@@ -3661,6 +3665,16 @@ func (c *dynamicSecretServiceClient) ClassifyConfig(ctx context.Context, in *Cla
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DynamicSecretConfig)
 	err := c.cc.Invoke(ctx, DynamicSecretService_ClassifyConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dynamicSecretServiceClient) UpdateConfigAdminDSN(ctx context.Context, in *UpdateDynamicConfigAdminDSNRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DynamicSecretConfig)
+	err := c.cc.Invoke(ctx, DynamicSecretService_UpdateConfigAdminDSN_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -3734,6 +3748,9 @@ type DynamicSecretServiceServer interface {
 	CreateConfig(context.Context, *CreateDynamicConfigRequest) (*DynamicSecretConfig, error)
 	// Set (or clear, with "") a config's data-classification label.
 	ClassifyConfig(context.Context, *ClassifyDynamicConfigRequest) (*DynamicSecretConfig, error)
+	// Replace a config's admin DSN in place (same checks as CreateConfig: admin
+	// authority, egress policy, refused driver options). The DSN is never returned.
+	UpdateConfigAdminDSN(context.Context, *UpdateDynamicConfigAdminDSNRequest) (*DynamicSecretConfig, error)
 	// Issue a short-lived credential. The username/password are returned ONCE.
 	IssueLease(context.Context, *IssueLeaseRequest) (*IssuedCredential, error)
 	// List a config's leases (never the credential bytes).
@@ -3765,6 +3782,9 @@ func (UnimplementedDynamicSecretServiceServer) CreateConfig(context.Context, *Cr
 }
 func (UnimplementedDynamicSecretServiceServer) ClassifyConfig(context.Context, *ClassifyDynamicConfigRequest) (*DynamicSecretConfig, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClassifyConfig not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) UpdateConfigAdminDSN(context.Context, *UpdateDynamicConfigAdminDSNRequest) (*DynamicSecretConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateConfigAdminDSN not implemented")
 }
 func (UnimplementedDynamicSecretServiceServer) IssueLease(context.Context, *IssueLeaseRequest) (*IssuedCredential, error) {
 	return nil, status.Error(codes.Unimplemented, "method IssueLease not implemented")
@@ -3870,6 +3890,24 @@ func _DynamicSecretService_ClassifyConfig_Handler(srv interface{}, ctx context.C
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DynamicSecretServiceServer).ClassifyConfig(ctx, req.(*ClassifyDynamicConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DynamicSecretService_UpdateConfigAdminDSN_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateDynamicConfigAdminDSNRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).UpdateConfigAdminDSN(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_UpdateConfigAdminDSN_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).UpdateConfigAdminDSN(ctx, req.(*UpdateDynamicConfigAdminDSNRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3986,6 +4024,10 @@ var DynamicSecretService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClassifyConfig",
 			Handler:    _DynamicSecretService_ClassifyConfig_Handler,
+		},
+		{
+			MethodName: "UpdateConfigAdminDSN",
+			Handler:    _DynamicSecretService_UpdateConfigAdminDSN_Handler,
 		},
 		{
 			MethodName: "IssueLease",

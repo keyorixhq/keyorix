@@ -4961,6 +4961,47 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+  /api/v1/dynamic-secrets/configs/{id}/admin-dsn:
+    patch:
+      tags: [DynamicSecrets]
+      summary: Replace a dynamic-secret config's admin DSN
+      description: >-
+        Replaces the stored admin DSN in place, for example to remove an option
+        refused since #3952 (a private-CA sslrootcert or tlsCAFile) without
+        deleting and recreating the config. The same checks as config create
+        apply: admin authority on the config's project/environment (403), the
+        private-network egress policy and the refused driver options (400). The
+        change and its audit row commit together; 503 `audit_unavailable` when
+        the audit log refuses the row (nothing changed). The DSN is never
+        returned.
+      operationId: updateDynamicSecretConfigAdminDSN
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [admin_dsn]
+              properties:
+                admin_dsn: {type: string, format: password, writeOnly: true}
+      responses:
+        '200':
+          description: Envelope `{success, data, message}`. `data` is the sanitized config.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/DynamicSecretConfig'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuditUnavailable'}
   /api/v1/dynamic-secrets/configs/{id}/issue:
     post:
       tags: [DynamicSecrets]

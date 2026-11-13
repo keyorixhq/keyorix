@@ -919,6 +919,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, configScope)).Get("/configs/{id}", dynamicSecretHandler.GetConfig)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Patch("/configs/{id}/classification", dynamicSecretHandler.ClassifyConfig)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Patch("/configs/{id}/enabled", dynamicSecretHandler.SetConfigEnabled)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Patch("/configs/{id}/admin-dsn", dynamicSecretHandler.UpdateConfigAdminDSN)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Post("/configs/{id}/issue", dynamicSecretHandler.IssueLease)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, configScope)).Get("/configs/{id}/leases", dynamicSecretHandler.ListLeases)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Post("/configs/{id}/revoke-all", dynamicSecretHandler.RevokeAllLeases)

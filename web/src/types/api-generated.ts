@@ -3133,6 +3133,26 @@ export interface paths {
         patch: operations["classifyDynamicSecretConfig"];
         trace?: never;
     };
+    "/api/v1/dynamic-secrets/configs/{id}/admin-dsn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Replace a dynamic-secret config's admin DSN
+         * @description Replaces the stored admin DSN in place, for example to remove an option refused since #3952 (a private-CA sslrootcert or tlsCAFile) without deleting and recreating the config. The same checks as config create apply: admin authority on the config's project/environment (403), the private-network egress policy and the refused driver options (400). The change and its audit row commit together; 503 `audit_unavailable` when the audit log refuses the row (nothing changed). The DSN is never returned.
+         */
+        patch: operations["updateDynamicSecretConfigAdminDSN"];
+        trace?: never;
+    };
     "/api/v1/dynamic-secrets/configs/{id}/issue": {
         parameters: {
             query?: never;
@@ -11864,6 +11884,43 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    updateDynamicSecretConfigAdminDSN: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: password */
+                    admin_dsn: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Envelope `{success, data, message}`. `data` is the sanitized config. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message?: string;
+                        data?: components["schemas"]["DynamicSecretConfig"];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     issueDynamicSecretLease: {

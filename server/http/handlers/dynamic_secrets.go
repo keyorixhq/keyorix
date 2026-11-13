@@ -376,6 +376,40 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 	sendSuccess(w, sanitizeConfig(updated), "Config enabled state updated.")
 }
 
+// UpdateConfigAdminDSN handles PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn —
+// replaces a config's admin DSN in place (DYNAMIC-ADMIN-DSN-1), e.g. to remove an
+// option refused since #3952. Core applies create's checks (admin authority, host
+// guard, refused options); the DSN is never echoed back or logged.
+func (h *DynamicSecretHandler) UpdateConfigAdminDSN(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	cfg, ok := h.loadConfig(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		AdminDSN string `json:"admin_dsn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
+		return
+	}
+	updated, err := h.coreService.UpdateDynamicSecretConfigAdminDSN(r.Context(), &core.UpdateDynamicSecretConfigAdminDSNRequest{
+		ConfigID: cfg.ID, AdminDSN: body.AdminDSN, ActorID: userCtx.PrincipalID(),
+	})
+	if err != nil {
+		if sendStorageUnavailable(w, err) || sendAuditUnavailable(w, err) {
+			return
+		}
+		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error updating the admin DSN of dynamic-secret config %d", cfg.ID))
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadRequest), nil)
+		return
+	}
+	sendSuccess(w, sanitizeConfig(updated), "Admin DSN updated.")
+}
+
 // loadConfig fetches the {id} config. #1645/ADR-096: authorization against
 // the config's project/environment scope now runs as route-level
 // RequireScopedPermission middleware (router.go, ScopeFromDynamicSecretConfigParam)
