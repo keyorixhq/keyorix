@@ -296,6 +296,7 @@ func familyOps() []opSpec {
 		// ---- memberships ----
 		{
 			name: "membership.invite", row: "InviteMember", targets: projTargets, grantArgs: true,
+			invalidArg: legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}
@@ -312,6 +313,7 @@ func familyOps() []opSpec {
 		},
 		{
 			name: "member.add", row: "AddProjectMember", targets: projTargets, grantArgs: true, selfMachineGranter: true,
+			invalidArg: legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}
@@ -328,6 +330,7 @@ func familyOps() []opSpec {
 		{
 			// the ACL recipient holds project_viewer@P; arg 0 re-sets the same role (no-op).
 			name: "member.setrole", row: "SetProjectMemberRole", targets: projTargets, grantArgs: true, selfMachineGranter: true,
+			invalidArg: legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				// The ceiling is judged before the no-op return, so arg 0 carries it too.
 				_, rid := grantRole(fx, a)

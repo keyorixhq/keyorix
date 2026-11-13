@@ -6,13 +6,15 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // explain assigns a flagged case to a known waiver ("known-NN"). Each waiver
 // names an exact SHAPE — principal kind and every layer's outcome, and an op
 // list where needed — so a case that merely resembles a waiver is NOT
-// absorbed: it lands in "unexplained" and must be investigated. Waivers carry
-// no descriptions here; they are tracked privately.
+// absorbed: it lands in "unexplained" and must be investigated. Each waiver's
+// issue and expiry are in waivers below.
 //
 // Every waiver keeps one direction closed: none matches a case where a present
 // transport leg (REST or gRPC) allows and the model denies (or has no
@@ -28,13 +30,14 @@ import (
 //     established on; known-03 is limited to two ops, one target and one
 //     principal. Not detected: a core leg that allows while every present
 //     transport denies (see below).
-//   - Core returns a refusal or error the model does not map (known-07,
-//     known-08, known-09): core denies with ErrPermissionDenied (known-07) or
-//     returns an untyped error (known-08, known-09), and the model denies
-//     (known-07, known-09) or the case is a machine principal on the listed ops
-//     (known-08). Not detected: on those shapes, whether REST answers 400/500
-//     instead of a typed deny; and for known-08, a transport that denies or
-//     errors where the model allows (an over-denial).
+//   - Core returns an error the model does not map (known-08, known-09): core
+//     returns an untyped error, and the model denies (known-09) or the case is
+//     a machine principal on the listed ops (known-08). Not detected: on those
+//     shapes, whether REST answers 400/500 instead of a typed deny; and for
+//     known-08, a transport that denies or errors where the model allows (an
+//     over-denial). A typed core refusal (ErrPermissionDenied) that REST
+//     answers 400/500 is never waived: the former known-07 was fixed in the
+//     four handlers it matched (TestCeilingRefusalIsForbiddenOnREST).
 //
 // The plants (plants_test.go) are exactly the shapes these waivers exclude:
 // core+REST allow (plant 1), gRPC allows a non-group op (plant 2), REST allows
@@ -79,9 +82,6 @@ func explain(r *caseResult) string {
 	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
 		return "known-04"
 
-	case is(core, Denied) && core.Detail == "ErrPermissionDenied" && restBadStatus && modelDenies && !transportAllowsDenied:
-		return "known-07"
-
 	case pk == pkMachine && slices.Contains([]string{"secret.acl.grant", "secret.share", "accessrequest.create",
 		"secret.certificate", "secret.tags", "secret.description", "secret.move", "secret.copy", "secret.extend.expiring"}, r.Op) &&
 		is(core, Other) && core.Detail == "untyped-error" && !transportAllowsDenied:
@@ -93,9 +93,45 @@ func explain(r *caseResult) string {
 	return "unexplained"
 }
 
-// waiverIDs is every bucket explain can return other than "unexplained".
+// waivers is the known-open list: every bucket explain can return other than
+// "unexplained", each with the issue that tracks it and an expiry. The nightly
+// job fails on an expired row (TestAuthzDiffWaiversNotExpired); renewing one
+// is a decision recorded on its issue, not a date bump.
+var waivers = []struct{ id, issue, expires string }{
+	{"known-02", "#4159", "2027-02-13"},
+	{"known-03", "#4160", "2027-02-13"},
+	{"known-04", "#4161", "2027-02-13"},
+	{"known-08", "#4162", "2027-02-13"},
+	{"known-09", "#4163", "2027-02-13"},
+}
+
+// waiverIDs is waivers' ids (the dead-waiver check's population).
 // TestWaiverIDsMatchExplain keeps it in step with explain's source.
-var waiverIDs = []string{"known-02", "known-03", "known-04", "known-07", "known-08", "known-09"}
+var waiverIDs = func() []string {
+	ids := make([]string, len(waivers))
+	for i, w := range waivers {
+		ids[i] = w.id
+	}
+	return ids
+}()
+
+// TestAuthzDiffWaiversNotExpired: every waiver names an issue and a valid
+// expiry; guardrules.CheckExpiry compares the date only in the nightly job
+// (no calendar at PR time, docs/guard-rollout-contract.md).
+func TestAuthzDiffWaiversNotExpired(t *testing.T) {
+	issue := regexp.MustCompile(`^#[0-9]+$`)
+	for _, w := range waivers {
+		if !issue.MatchString(w.issue) {
+			t.Errorf("waiver %s: issue %q is not #NNNN", w.id, w.issue)
+		}
+		guardrules.CheckExpiry(t, guardrules.Expiry{
+			Source:  "server/authzdiff/partition_test.go waivers",
+			Key:     w.id,
+			Expires: w.expires,
+			Note:    "authzdiff waiver, tracked in " + w.issue,
+		})
+	}
+}
 
 func needsExplaining(r *caseResult) bool {
 	for _, c := range r.Classes {

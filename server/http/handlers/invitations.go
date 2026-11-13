@@ -88,7 +88,10 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 			status := http.StatusInternalServerError
 			msg := err.Error()
 			switch {
-			case strings.Contains(msg, errDomainNotAllowed):
+			// ErrPermissionDenied is the granter ceiling (a role the actor
+			// cannot grant): a refusal, not a fault. Checked before the text
+			// cases, whose "required" would read it as a 400.
+			case errors.Is(err, core.ErrPermissionDenied), strings.Contains(msg, errDomainNotAllowed):
 				status = http.StatusForbidden
 			case strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required"):
 				status = http.StatusBadRequest
@@ -415,6 +418,10 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 		status := http.StatusInternalServerError
 		msg := resolveErr.Error()
 		switch {
+		// The granter ceiling on the role being approved: a refusal, not a
+		// fault. Checked first, before the text cases below.
+		case errors.Is(resolveErr, core.ErrPermissionDenied):
+			status = http.StatusForbidden
 		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, errOnlyPending), strings.Contains(msg, errUnknownRole), strings.Contains(msg, "required"),
