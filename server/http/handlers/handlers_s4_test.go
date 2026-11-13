@@ -790,14 +790,6 @@ func newDynamicSecretHandlerS4(t *testing.T) *DynamicSecretHandler {
 	return NewDynamicSecretHandler(newHandlerCoreS4(t))
 }
 
-func TestIsSafeDynamicSecretError(t *testing.T) {
-	assert.True(t, isSafeDynamicSecretError("config not found"))
-	assert.True(t, isSafeDynamicSecretError("lease not found"))
-	assert.True(t, isSafeDynamicSecretError("lease is not active"))
-	assert.True(t, isSafeDynamicSecretError("active-lease limit reached"))
-	assert.False(t, isSafeDynamicSecretError("connection refused"))
-}
-
 func TestNewDynamicSecretHandler(t *testing.T) {
 	h := NewDynamicSecretHandler(newHandlerCore(t))
 	require.NotNil(t, h)
@@ -6596,17 +6588,6 @@ func TestIsSafeSSOError_KnownMessages(t *testing.T) {
 	assert.True(t, isSafeSSOError("the IdP returned no email; cannot auto-provision an account"))
 	assert.False(t, isSafeSSOError("some internal error"))
 	assert.False(t, isSafeSSOError(""))
-}
-
-// ── isSafeDynamicSecretError ──────────────────────────────────────────────────
-
-func TestIsSafeDynamicSecretError_KnownMessages(t *testing.T) {
-	assert.True(t, isSafeDynamicSecretError("config not found"))
-	assert.True(t, isSafeDynamicSecretError("lease not found"))
-	assert.True(t, isSafeDynamicSecretError("lease is not active"))
-	assert.True(t, isSafeDynamicSecretError("active-lease limit reached"))
-	assert.False(t, isSafeDynamicSecretError("some internal DB error"))
-	assert.False(t, isSafeDynamicSecretError(""))
 }
 
 // ── dynamic_secrets.go: IssueLease ───────────────────────────────────────────

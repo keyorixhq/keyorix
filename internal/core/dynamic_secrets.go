@@ -362,17 +362,21 @@ func validateCreateDynamicSecretConfigRequest(req *CreateDynamicSecretConfigRequ
 	return nil
 }
 
+// requireDynamicSecretAdminAuthority refuses an actor without admin authority at the
+// config's scope with an ErrPermissionDenied (403 / PermissionDenied). Failing to
+// resolve the actor's roles is not a refusal: it is a storage read fault
+// (ErrStorageReadUnavailable, 503 / Unavailable), and still fails closed.
 func (c *KeyorixCore) requireDynamicSecretAdminAuthority(ctx context.Context, actorID, projectID, environmentID uint) error {
 	ids, err := c.scopedRoleIDs(ctx, actorID, Scope{ProjectID: projectID, EnvironmentID: environmentID})
 	if err != nil {
-		return fmt.Errorf("failed to resolve actor authority: %w", err)
+		return &storageReadFault{cause: fmt.Errorf("failed to resolve actor authority: %w", err)}
 	}
 	containsAdmin, err := c.roleSetContainsAdmin(ctx, ids)
 	if err != nil {
-		return fmt.Errorf("failed to resolve actor authority: %w", err)
+		return &storageReadFault{cause: fmt.Errorf("failed to resolve actor authority: %w", err)}
 	}
 	if !containsAdmin {
-		return fmt.Errorf("binding a dynamic-secret backend requires admin authority on this project")
+		return permissionDeniedf("binding a dynamic-secret backend requires admin authority on this project")
 	}
 	return nil
 }
@@ -599,7 +603,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	// credentials against it just because the RBAC join that resolved their
 	// authority doesn't itself check project liveness.
 	if cfg.Disabled {
-		return nil, fmt.Errorf("dynamic-secret config is disabled")
+		return nil, dynamicPreconditionf("dynamic-secret config is disabled")
 	}
 	if err := c.requireLiveProjectAndEnvironment(ctx, cfg.ProjectID, cfg.EnvironmentID); err != nil {
 		return nil, err
@@ -613,7 +617,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	// sweeper is disabled would mint a credential whose advertised expiry is never
 	// enforced — a false promise — so refuse and point the operator at the fix.
 	if !engine.SupportsNativeExpiry() && !c.dynamicSweepEnabled {
-		return nil, fmt.Errorf("cannot issue from the %s backend while the auto-revoke sweeper is disabled: its lease TTL is enforced only by the sweeper, so the credential would never expire — enable dynamic_secrets.sweep_enabled", cfg.BackendType)
+		return nil, dynamicPreconditionf("cannot issue from the %s backend while the auto-revoke sweeper is disabled: its lease TTL is enforced only by the sweeper, so the credential would never expire — enable dynamic_secrets.sweep_enabled", cfg.BackendType)
 	}
 	// Enforce the config's active-lease ceiling so a caller can't mint unbounded real DB
 	// roles/users (resource exhaustion on the target). A small race under concurrency is
@@ -621,10 +625,10 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	if cfg.MaxActiveLeases > 0 {
 		active, cerr := c.storage.CountActiveLeases(ctx, configID)
 		if cerr != nil {
-			return nil, fmt.Errorf("failed to check active lease count: %w", cerr)
+			return nil, &storageReadFault{cause: fmt.Errorf("failed to check active lease count: %w", cerr)}
 		}
 		if active >= int64(cfg.MaxActiveLeases) {
-			return nil, fmt.Errorf("active-lease limit reached for this config (%d); revoke a lease before issuing another", cfg.MaxActiveLeases)
+			return nil, dynamicPreconditionf("active-lease limit reached for this config (%d); revoke a lease before issuing another", cfg.MaxActiveLeases)
 		}
 	}
 	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, ports.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
@@ -696,7 +700,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 		// check above, so the credential minted for it is revoked here, not leaked.
 		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
 		if errors.Is(err, storage.ErrDynamicSecretConfigDisabled) {
-			return nil, fmt.Errorf("dynamic-secret config is disabled")
+			return nil, dynamicPreconditionf("dynamic-secret config is disabled")
 		}
 		return nil, fmt.Errorf("failed to persist lease: %w", err)
 	}
@@ -769,7 +773,7 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	// credential LIVE, so it must remain retryable (manually or via the sweep). Only an
 	// already-revoked/expired lease is a no-op.
 	if lease.Status != "active" && lease.Status != "revoke_failed" {
-		return fmt.Errorf("lease is not active (status %s)", lease.Status)
+		return dynamicPreconditionf("lease is not active (status %s)", lease.Status)
 	}
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
 	if err != nil {
@@ -912,7 +916,7 @@ func (c *KeyorixCore) checkLeaseRenewClockNotRegressed(now time.Time) error {
 	c.dynamicSecretsClockWatermarkMu.Lock()
 	defer c.dynamicSecretsClockWatermarkMu.Unlock()
 	if !c.dynamicSecretsClockWatermark.IsZero() && now.Before(c.dynamicSecretsClockWatermark.Add(-leaseClockRegressionTolerance)) {
-		return fmt.Errorf("lease has expired; issue a new lease instead")
+		return dynamicPreconditionf("lease has expired; issue a new lease instead")
 	}
 	if now.After(c.dynamicSecretsClockWatermark) {
 		c.dynamicSecretsClockWatermark = now
@@ -1065,7 +1069,7 @@ func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) 
 	switch {
 	case override > 0:
 		if override > maxDynamicTTLSecondsAsInt {
-			return 0, fmt.Errorf("ttl_seconds (%d) exceeds the maximum of %d seconds", override, int64(maxDynamicTTLSeconds))
+			return 0, validationErrorf("ttl_seconds (%d) exceeds the maximum of %d seconds", override, int64(maxDynamicTTLSeconds))
 		}
 		ttl = time.Duration(override) * time.Second
 	case cfg.DefaultTTLSeconds > 0:
@@ -1096,7 +1100,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 		return time.Time{}, classifyReadErrorAs(err, ErrDynamicSecretNotFound, "lease not found")
 	}
 	if lease.Status != "active" {
-		return time.Time{}, fmt.Errorf("lease is not active (status %s)", lease.Status)
+		return time.Time{}, dynamicPreconditionf("lease is not active (status %s)", lease.Status)
 	}
 	// A lease whose expiry has already passed is logically dead even if the sweeper
 	// has not yet flipped its status (sweep disabled, or not run yet). Renewing it
@@ -1113,7 +1117,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 		return time.Time{}, err
 	}
 	if !c.now().Before(lease.ExpiresAt) {
-		return time.Time{}, fmt.Errorf("lease has expired; issue a new lease instead")
+		return time.Time{}, dynamicPreconditionf("lease has expired; issue a new lease instead")
 	}
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
 	if err != nil {
@@ -1127,7 +1131,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	// catches); this closes the race window between that cascade committing and
 	// its best-effort revoke actually reaching the target.
 	if cfg.Disabled {
-		return time.Time{}, fmt.Errorf("dynamic-secret config is disabled")
+		return time.Time{}, dynamicPreconditionf("dynamic-secret config is disabled")
 	}
 	if err := c.requireLiveProjectAndEnvironment(ctx, cfg.ProjectID, cfg.EnvironmentID); err != nil {
 		return time.Time{}, err
@@ -1135,7 +1139,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	// Cloud-IAM backends (AWS STS) mint self-expiring credentials whose lifetime is
 	// fixed by the provider at issue — they cannot be renewed; issue a new lease.
 	if eng, eerr := c.dynamicEngine(cfg.BackendType); eerr == nil && eng.IsEphemeralBackend() {
-		return time.Time{}, fmt.Errorf("the %s backend mints self-expiring credentials that cannot be renewed; issue a new lease instead", cfg.BackendType)
+		return time.Time{}, dynamicPreconditionf("the %s backend mints self-expiring credentials that cannot be renewed; issue a new lease instead", cfg.BackendType)
 	}
 	renewTTL, err := c.dynamicTTL(cfg, ttlSeconds)
 	if err != nil {
@@ -1159,7 +1163,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 		newExpiry = hardCap.UTC()
 	}
 	if !newExpiry.After(lease.ExpiresAt) {
-		return time.Time{}, fmt.Errorf("renewal would not extend the lease (max-TTL ceiling reached)")
+		return time.Time{}, dynamicPreconditionf("renewal would not extend the lease (max-TTL ceiling reached)")
 	}
 	engine, err := c.dynamicEngine(cfg.BackendType)
 	if err != nil {
@@ -1169,7 +1173,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	// lease's TTL. With the sweeper disabled, a renewal would extend a credential nothing
 	// will ever revoke — mirror IssueLease's fail-closed refusal.
 	if !engine.SupportsNativeExpiry() && !c.dynamicSweepEnabled {
-		return time.Time{}, fmt.Errorf("renewal is unavailable for the %s backend while the lease sweeper is disabled (its TTL would be unenforced)", cfg.BackendType)
+		return time.Time{}, dynamicPreconditionf("renewal is unavailable for the %s backend while the lease sweeper is disabled (its TTL would be unenforced)", cfg.BackendType)
 	}
 	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, ports.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
@@ -1195,7 +1199,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 		return time.Time{}, err
 	}
 	if !matched {
-		return time.Time{}, fmt.Errorf("lease %s is no longer active; renewal refused", lease.LeaseID)
+		return time.Time{}, dynamicPreconditionf("lease %s is no longer active; renewal refused", lease.LeaseID)
 	}
 	lease.ExpiresAt = newExpiry
 	uid := userID
