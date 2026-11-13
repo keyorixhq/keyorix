@@ -434,14 +434,22 @@ type BreakGlassSettings struct {
 type BulkDeleteResult struct {
 	Deleted *[]int         `json:"deleted,omitempty"`
 	Failed  *[]BulkOpError `json:"failed,omitempty"`
-	Total   *int           `json:"total,omitempty"`
+
+	// Retryable How many of `failed` are retryable outages.
+	Retryable *int `json:"retryable,omitempty"`
+	Total     *int `json:"total,omitempty"`
 }
 
 // BulkOpError defines model for BulkOpError.
 type BulkOpError struct {
-	Error    *string `json:"error,omitempty"`
-	Name     *string `json:"name,omitempty"`
-	SecretId *int    `json:"secret_id,omitempty"`
+	// Code Stable code of a retryable outage item (audit_unavailable, storage_unavailable); absent for any other failure.
+	Code  *string `json:"code,omitempty"`
+	Error *string `json:"error,omitempty"`
+	Name  *string `json:"name,omitempty"`
+
+	// Retryable True when the item failed because the audit log or storage was unavailable; nothing was changed and the call can be repeated.
+	Retryable *bool `json:"retryable,omitempty"`
+	SecretId  *int  `json:"secret_id,omitempty"`
 }
 
 // BulkRenameReport defines model for BulkRenameReport.
