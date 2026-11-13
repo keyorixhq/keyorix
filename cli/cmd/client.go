@@ -47,8 +47,8 @@ func resolveServerAndToken(store *credstore.FileStore) (serverURL, token string,
 // Where a resolved token came from, as the words `keyorix doctor` prints after "token from".
 const (
 	tokenSourceNone      = ""
-	tokenSourceEnv       = "KEYORIX_TOKEN"
-	tokenSourceEnvFile   = "KEYORIX_TOKEN_FILE"
+	tokenSourceEnv       = "KEYORIX_TOKEN"      // #nosec G101 -- env var name, not a credential
+	tokenSourceEnvFile   = "KEYORIX_TOKEN_FILE" // #nosec G101 -- env var name, not a credential
 	tokenSourceCredsFile = "the credentials file"
 )
 
