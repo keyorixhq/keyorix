@@ -124,6 +124,36 @@ var plants = append([]plant{
 		op:             "breakglass.activate",
 		minUnexplained: 10,
 	},
+	{
+		// V8: removes the access-review campaign-open router gate
+		// (RequireScopedPermission roles.assign@project). core.OpenAccessReviewCampaign
+		// performs NO authorization of its own (matrix core_refusal:"none" — opening is
+		// deliberately NOT human-gated so the scheduler can auto-open overdue campaigns),
+		// so with the router gate gone REST lets any authenticated principal open a
+		// recertification campaign, over-allowing every principal the roles.assign@project
+		// model rule denies. This is the clean router-gate differential the binding checks.
+		name:           "access-review-campaign-open-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/campaigns", catalogHandler.OpenAccessReviewCampaign)`,
+		repl:           `r.Post("/projects/{id}/access-review/campaigns", catalogHandler.OpenAccessReviewCampaign) // PLANT: router gate removed`,
+		op:             "access-review.campaign.open",
+		minUnexplained: 10,
+	},
+	{
+		// V8: removes the risk-exception create router gate (RequirePermission
+		// system.write@global). core.CreateRiskException performs no permission check
+		// (matrix core_refusal:"none"; it enforces only human-only + a bounded sunset +
+		// the SoD-live-violation check for category=="sod"), so with the router gate gone
+		// REST lets any authenticated HUMAN file a governed risk acceptance, over-allowing
+		// every principal the system.write@global model rule denies. (Machine actors stay
+		// refused by core's human-only rule, so the over-allows are the human cases.)
+		name:           "riskexception-create-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathRiskExceptions, dashboardHandler.CreateRiskException)`,
+		repl:           `r.Post(pathRiskExceptions, dashboardHandler.CreateRiskException) // PLANT: router gate removed`,
+		op:             "riskexception.create",
+		minUnexplained: 10,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after

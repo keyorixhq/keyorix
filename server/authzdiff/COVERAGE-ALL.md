@@ -12,8 +12,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
 | secrets | 43 | 30 | 10 | 10 |
-| other | 127 | 20 | 21 | 9 |
-| **total** | **211** | **91** | **46** | **34** |
+| other | 127 | 22 | 21 | 9 |
+| **total** | **211** | **93** | **46** | **34** |
 
 ## groups
 
@@ -243,7 +243,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/notifications/read-all` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/notifications/{id}/read` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/projects/{id}/access-review/attest` — model: access-review campaign/attestation rules are not in the reference model
-- [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns` — model: access-review campaign/attestation rules are not in the reference model
+- [x] `REST POST /api/v1/projects/{id}/access-review/campaigns` — access-review.campaign.open
 - [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close` — model: access-review campaign/attestation rules are not in the reference model
 - [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide` — model: access-review campaign/attestation rules are not in the reference model
 - [ ] `REST POST /api/v1/projects/{id}/access-review/revoke` — model: access-review campaign/attestation rules are not in the reference model
@@ -251,7 +251,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/review` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/rejection-reason-templates` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/risk-exceptions` — model: risk-exception approval rules are not in the reference model
+- [x] `REST POST /api/v1/risk-exceptions` — riskexception.create
 - [ ] `REST POST /api/v1/risk-exceptions/{id}/approve` — model: risk-exception approval rules are not in the reference model
 - [x] `REST POST /api/v1/roles` — role.create
 - [x] `REST POST /api/v1/roles/{id}/permissions` — role.perm.add
