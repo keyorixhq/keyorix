@@ -21,7 +21,8 @@
 - **Azure AD rotation Graph client is now hardened like the repo's other
   outbound clients (H1).** `internal/rotation/azure.go`'s Microsoft Graph client
   gained a redirect policy that refuses all redirects and a `netutil` dialer that
-  refuses link-local targets. The Graph host is a hard-coded public constant, so
+  refuses link-local targets. It still honours `HTTPS_PROXY`/`NO_PROXY` (the
+  guard then checks the proxy address). The Graph host is a hard-coded public constant, so
   this is defence in depth against a compromised or man-in-the-middled upstream,
   bringing the one remaining unhardened outbound client in line with
   connect/notary/operator.
