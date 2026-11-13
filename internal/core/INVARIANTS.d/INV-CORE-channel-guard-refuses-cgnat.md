@@ -6,9 +6,11 @@
   prior hand-rolled stdlib `ip.IsPrivate()` which did not. Complements
   [[INV-CORE-channel-guard-refuses-local-host]] (same predicate, same three call sites:
   `validateWebhookURL`, `validateWebhookSendTimeURL`, dial-time `escalationTransport`). Why: V7
-  egress parity audit F2. Guard: `internal/core` `FuzzSSRFGuardDifferential` (drives
-  `isChannelDisallowedIP` through every encoding and asserts parity with the raw-form verdict,
-  which is now `true` for 100.64/10) and `internal/evidencesink`
-  `TestEgressParity_WebhookTierCGNATGap`. **Not covered**: the `IsLinkLocal` tier
+  egress parity audit F2. Guard: `internal/core` `TestIsChannelDisallowedIP_RefusesCGNAT`
+  (CGNAT direct, IPv4-mapped and NAT64 forms refused; 100.63.255.255 and 100.128.0.1 allowed)
+  and `TestValidateWebhookURL_RefusesCGNAT` (literal and resolved-hostname refusal at
+  `validateWebhookURL`, literal refusal at `validateWebhookSendTimeURL`); both are red on a
+  revert to the stdlib check. `FuzzSSRFGuardDifferential` only asserts that every encoding gets
+  the raw form's verdict, so it does not by itself pin the CGNAT refusal. **Not covered**: the `IsLinkLocal` tier
   (connect/OIDC) intentionally still permits CGNAT (on-prem/carrier deployments use it
   internally); this invariant is specific to the notification-channel guard.

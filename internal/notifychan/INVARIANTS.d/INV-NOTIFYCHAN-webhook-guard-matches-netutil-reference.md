@@ -6,7 +6,11 @@
   local). Wired into the per-dial `netutil.Dialer` and shared by `validateEndpoint`, `NewWebhook`
   and `NewChat`. Why: V7 egress parity audit F2 — the guard classified with stdlib
   `ip.IsPrivate()`, which excludes CGNAT. Guard: `internal/notifychan`
+  `TestIsDisallowedIP_RefusesCGNAT` (CGNAT direct, IPv4-mapped and NAT64 forms refused through
+  `isDisallowedIP` and `netutil.Dialer{Disallow: isDisallowedIP}.ValidateHost`; the public
+  neighbours 100.63.255.255 and 100.128.0.1 allowed; red on a revert to stdlib `IsPrivate`),
   `TestSSRFMatrix_EndpointIPLiteralForms` and `TestSSRFMatrix_DialGuardRefusesLiteralForms`
-  (literal refuse/allow matrix incl. unspecified and embedded forms), with the CGNAT and
-  cross-guard parity pinned by `internal/evidencesink`'s differential harness. **Not covered**:
+  (literal refuse/allow matrix incl. unspecified and embedded forms). `internal/evidencesink`'s
+  differential harness checks parity of the evidencesink/siem guards with the netutil reference;
+  it does not call this package. **Not covered**:
   redirect-chain policy (`refuseRedirectDowngrade`) and URL redaction are separate controls.
