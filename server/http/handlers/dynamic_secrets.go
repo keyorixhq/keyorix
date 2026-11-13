@@ -56,6 +56,9 @@ func dynamicSecretClientMessage(err error, op string) string {
 		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(refused)) // server-side only; the client gets ClientMessage()
 		return refused.ClientMessage()
 	}
+	if errors.Is(err, core.ErrPermissionDenied) {
+		return "Insufficient permissions"
+	}
 	if forbidden, ok := errors.AsType[*dsn.ForbiddenOptionError](err); ok {
 		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(forbidden))
 		return forbidden.Error() // names only the option the caller wrote
@@ -70,12 +73,15 @@ func dynamicSecretClientMessage(err error, op string) string {
 
 // dynamicSecretStatus is the HTTP status for a failed dynamic-secret operation, by
 // sentinel: 404 for a config, lease, project or environment that is not there
-// (core.ErrDynamicSecretNotFound), 400 for a refused input (core.ErrValidation), and the
-// route's own fallback (400 for config writes, 502 for backend calls) for the rest.
+// (core.ErrDynamicSecretNotFound), 400 for a refused input (core.ErrValidation), 403 for
+// an authorization refusal (core.ErrPermissionDenied), and the route's own fallback (400
+// for config writes, 502 for backend calls) for the rest.
 func dynamicSecretStatus(err error, fallback int) int {
 	switch {
 	case errors.Is(err, core.ErrDynamicSecretNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, core.ErrPermissionDenied):
+		return http.StatusForbidden
 	case errors.Is(err, core.ErrValidation):
 		return http.StatusBadRequest
 	default:

@@ -362,17 +362,21 @@ func validateCreateDynamicSecretConfigRequest(req *CreateDynamicSecretConfigRequ
 	return nil
 }
 
+// requireDynamicSecretAdminAuthority refuses an actor without admin authority at the
+// config's scope with an ErrPermissionDenied (403 / PermissionDenied). Failing to
+// resolve the actor's roles is not a refusal: it is a storage read fault
+// (ErrStorageReadUnavailable, 503 / Unavailable), and still fails closed.
 func (c *KeyorixCore) requireDynamicSecretAdminAuthority(ctx context.Context, actorID, projectID, environmentID uint) error {
 	ids, err := c.scopedRoleIDs(ctx, actorID, Scope{ProjectID: projectID, EnvironmentID: environmentID})
 	if err != nil {
-		return fmt.Errorf("failed to resolve actor authority: %w", err)
+		return &storageReadFault{cause: fmt.Errorf("failed to resolve actor authority: %w", err)}
 	}
 	containsAdmin, err := c.roleSetContainsAdmin(ctx, ids)
 	if err != nil {
-		return fmt.Errorf("failed to resolve actor authority: %w", err)
+		return &storageReadFault{cause: fmt.Errorf("failed to resolve actor authority: %w", err)}
 	}
 	if !containsAdmin {
-		return fmt.Errorf("binding a dynamic-secret backend requires admin authority on this project")
+		return permissionDeniedf("binding a dynamic-secret backend requires admin authority on this project")
 	}
 	return nil
 }
