@@ -14,12 +14,13 @@
 //	IPv6 ULA/link-local AND every embedded-IPv4 encoding of those (NAT64
 //	well-known + local-use/96, IPv4-compatible, 6to4, Teredo).
 //
-//	The "webhook tier" (evidencesink, siem, notifychan, internal/core's
-//	channel guard) is meant to be that SAME policy with ONE documented
-//	exception: loopback is PERMITTED (an operator-configured webhook/SIEM/
-//	evidence receiver is a legitimate local dev/test target, unlike a backend
-//	admin DSN). webhookTierReference below encodes exactly that: netutil's
-//	verdict, minus loopback.
+//	The "webhook tier" (evidencesink, siem, notifychan) is meant to be that
+//	SAME policy with ONE documented exception: loopback is PERMITTED (an
+//	operator-configured webhook/SIEM/evidence receiver is a legitimate local
+//	dev/test target, unlike a backend admin DSN). webhookTierReference below
+//	encodes exactly that: netutil's verdict, minus loopback. internal/core's
+//	notification-channel guard is NOT in this tier: it uses the strict
+//	IsPrivateOrLinkLocal policy and refuses loopback too.
 //
 // WHY THIS HARNESS EXISTS (not redundant with core's FuzzSSRFGuardDifferential):
 // that fuzzer covers netutil's two tiers, siem, internal/core's channel guard,
@@ -31,6 +32,12 @@
 // the CGNAT gap every webhook-tier guard shared (FINDING F2, fixed on this
 // branch) — a divergence core's fuzzer does not assert because it compares each
 // guard only to its own raw-form verdict, not to the stricter netutil reference.
+//
+// SCOPE: the tables and the fuzzer here call evidencesink, siem and netutil only.
+// notifychan's isDisallowedIP and core's isChannelDisallowedIP are unexported in
+// their own packages, so their CGNAT refusal is pinned there
+// (TestIsDisallowedIP_RefusesCGNAT, TestIsChannelDisallowedIP_RefusesCGNAT), not
+// by this harness.
 //
 // ORACLE: no webhook-tier guard may ALLOW what webhookTierReference FORBIDS,
 // except the one documented exception (loopback). A new, undocumented
@@ -48,8 +55,8 @@
 //   - Redirect-chain policy across packages: refuseRedirect is unexported in
 //     every package and the implementations are structurally identical (refuse
 //     cross-host + https->http downgrade, 3-hop cap) except oidcverify (permits
-//     same-host). Kept as a documented table in the report, not code, since the
-//     funcs are not reachable cross-package without patching production.
+//     same-host). Not asserted here, since the funcs are not reachable
+//     cross-package without patching production; each package tests its own.
 //   - IPv6-native non-link-local internal addresses beyond fc00::/7 and the
 //     metadata set enumerated here.
 package evidencesink
@@ -118,16 +125,22 @@ type documentedException struct {
 
 var documentedExceptions = []documentedException{
 	{
-		guard:  "evidencesink/siem/notifychan/core-channel (webhook tier)",
+		guard:  "evidencesink/siem/notifychan (webhook tier)",
 		diff:   "PERMIT loopback (127.0.0.0/8, ::1, and embedded-IPv4 loopback), which netutil.IsPrivateOrLinkLocal refuses",
 		reason: "a webhook/SIEM/evidence receiver is an operator-configured EXTERNAL endpoint; a local receiver is a legitimate dev/test target, unlike a backend admin DSN where loopback is the deployment's own services.",
-		ref:    "internal/evidencesink/webhook.go:140-148,182; internal/audit/siem/forwarder.go:50-58,103; internal/netutil/dialer.go:197-206",
+		ref:    "evidencesink isDisallowedIP; siem DialDisallowed; notifychan isDisallowedIP; netutil IsPrivateOrLinkLocalExceptLoopback",
 	},
 	{
 		guard:  "connect/oidcverify (IsLinkLocal tier) — separate reference",
 		diff:   "permit RFC-1918 and loopback; refuse ONLY link-local (169.254/16, fe80::/10). AWS IPv6 IMDS fd00:ec2::254 is intentionally NOT refused by this tier.",
 		reason: "on-prem/air-gapped IdPs and Connect backends legitimately live on internal 10.x/192.168.x/ULA segments; only the universal IPv4 IMDS endpoint must stay unreachable (netutil.IsLinkLocal's own documented scope).",
-		ref:    "internal/netutil/dialer.go:334-375; internal/connect/hardened_client.go; internal/oidcverify/oidc_jwks.go:41",
+		ref:    "netutil IsLinkLocal; internal/connect/hardened_client.go; internal/oidcverify/oidc_jwks.go",
+	},
+	{
+		guard:  "evidencesink/siem/notifychan/core-channel (both netutil tiers)",
+		diff:   "PERMIT link-local multicast (224.0.0.0/24, ff02::/16), which the pre-V7 hand-rolled guards refused via IsLinkLocalMulticast",
+		reason: "every guard here protects a TCP (HTTP) dial, and the kernel refuses connect() to a multicast address, so no request can reach one; the netutil CIDR set therefore lists no multicast range.",
+		ref:    "netutil privateNetworkCIDRs; review REVIEW-4143-DEEP-1 L1",
 	},
 }
 
@@ -172,9 +185,9 @@ func TestEgressParity_NetutilReferenceIsEncodingRobust(t *testing.T) {
 
 // TestEgressParity_SiemIsEncodingRobust is a GREEN control: the sibling guard
 // siem.DialDisallowed gives identical verdicts across every embedding of the
-// same address (it HAS the embedded-IPv4 decode). This isolates siem's only
-// divergence from the reference to the DIRECT CGNAT range (F2), not encodings —
-// and is the baseline evidencesink's F1 is measured against.
+// same address (it HAS the embedded-IPv4 decode). It is the baseline
+// evidencesink's F1 is measured against; siem's former CGNAT divergence (F2) was
+// in the direct range, not in the encodings.
 func TestEgressParity_SiemIsEncodingRobust(t *testing.T) {
 	for _, v := range vectors {
 		raw := siem.DialDisallowed(net.IPv4(v.a, v.b, v.c, v.d))
@@ -191,10 +204,8 @@ func TestEgressParity_SiemIsEncodingRobust(t *testing.T) {
 }
 
 // TestEgressParity_EvidencesinkDirectFormMatchesSiblings is GREEN: on the forms
-// the stdlib folds natively (raw IPv4, IPv4-mapped ::ffff:x), evidencesink,
-// siem and notifychan's shared stdlib classifier all agree. This bounds F1 to
-// the embedded ENCODINGS specifically, and confirms F2 (CGNAT) is a shared
-// webhook-tier property, not evidencesink-specific.
+// the stdlib folds natively (raw IPv4, IPv4-mapped ::ffff:x), evidencesink and
+// siem agree. This bounds F1 to the embedded ENCODINGS specifically.
 func TestEgressParity_EvidencesinkDirectFormMatchesSiblings(t *testing.T) {
 	for _, v := range vectors {
 		for _, enc := range []byte{0, 1} {
@@ -276,8 +287,8 @@ func TestEgressParity_WebhookTierCGNATGap(t *testing.T) {
 // TestEgressParity_DNSRebindingPinned proves the netutil.Dialer property every
 // webhook-tier guard relies on: validate-at-dial. A resolver answering PUBLIC
 // at construction and a disallowed IP at dial must be caught at dial. For the
-// DIRECT (non-embedded) form evidencesink already catches it — this is the
-// GREEN half; the embedded-form rebind that evidencesink misses is part of F1.
+// DIRECT (non-embedded) form; the embedded-form rebind was part of F1 and is
+// refused since the fix (TestEgressParity_EvidencesinkEmbeddedIPv4Gap).
 func TestEgressParity_DNSRebindingPinned(t *testing.T) {
 	orig := lookupIPAddr
 	t.Cleanup(func() { lookupIPAddr = orig })
@@ -384,10 +395,10 @@ func TestEgressParity_OracleSoundness_RedProof(t *testing.T) {
 // for every fuzzed address in every embedded encoding, siem.DialDisallowed and
 // netutil's two tiers must each agree with their OWN verdict on the raw form
 // (encoding robustness). This is the control that stays green at fuzz scale.
-// The two known webhook-tier findings (F1 embedded decode, F2 CGNAT) are the
-// documented divergences, pinned by the quarantined table tests above — not
-// folded in here, because folding a known defect into a green oracle whitewashes
-// it. If this fuzz ever goes red, a guard that was encoding-robust regressed.
+// The two webhook-tier findings (F1 embedded decode, F2 CGNAT) are fixed and
+// pinned by the active table tests above (EvidencesinkEmbeddedIPv4Gap,
+// WebhookTierCGNATGap), not asserted here. If this fuzz ever goes red, a guard
+// that was encoding-robust regressed.
 func FuzzEgressGuardParity(f *testing.F) {
 	f.Add(byte(169), byte(254), byte(169), byte(254), byte(2)) // IMDS via NAT64
 	f.Add(byte(169), byte(254), byte(169), byte(254), byte(6)) // IMDS via Teredo
