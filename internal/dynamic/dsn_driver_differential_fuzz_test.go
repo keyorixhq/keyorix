@@ -116,6 +116,14 @@ func FuzzDSNHostsCoverDriverHosts(f *testing.F) {
 					if hh, _, err := net.SplitHostPort(h); err == nil {
 						host = hh
 					}
+					if strings.Contains(host, ",") {
+						// "%2C" decodes to one host name containing a comma (never an IP
+						// literal); require every comma-separated part to be covered instead.
+						for _, part := range strings.Split(host, ",") {
+							check("mongo", part)
+						}
+						continue
+					}
 					check("mongo", host)
 				}
 			}
