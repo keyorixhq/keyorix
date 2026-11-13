@@ -616,6 +616,10 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
+	// What this request changes, decided (and validated) against the read above. The
+	// default branch's write applies exactly these to the row as it is under the
+	// row lock, never the rest of this read (#2653/#2654, FIX-USER-ROW-NARROW-1).
+	var setUsername, setEmail bool
 	if req.Username != "" && req.Username != user.Username {
 		// Checked here, not in validateUpdateUserRequest: a client that echoes
 		// the stored username back unchanged (a legacy name this rule would
@@ -642,6 +646,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		}
 		user.Username = req.Username
 		user.UsernameFolded = foldedUsername.Folded()
+		setUsername = true
 	}
 	if req.Email != "" && req.Email != user.Email {
 		foldedEmail, ferr := identity.NewFoldedName(req.Email)
@@ -659,6 +664,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		}
 		user.Email = req.Email
 		user.EmailFolded = foldedEmail.Folded()
+		setEmail = true
 	}
 	if req.DisplayName != "" {
 		user.DisplayName = req.DisplayName
@@ -741,7 +747,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 				deactivate.IsActive = false
 				deactivate.UpdatedAt = user.UpdatedAt
 				write, desc := &deactivate, "deactivated user %d (%s)"
-				if remainder = userIdentityChanges(req, locked); !remainder {
+				if remainder = userIdentityChanges(user, locked, setUsername, setEmail); !remainder {
 					if req.DisplayName != "" {
 						deactivate.DisplayName = req.DisplayName
 					}
@@ -832,14 +838,42 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		// email/username change can widen it (a reset link goes to the new address),
 		// so the user.updated row commits with the update or not at all (fail closed).
 		err = c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
-			matched, terr := tx.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
+			// #2653/#2654 (FIX-USER-ROW-NARROW-1): the write is built from the row as it
+			// is NOW, under its row lock (Postgres FOR UPDATE; SQLite's write
+			// transaction is BEGIN IMMEDIATE), with only this request's changes applied.
+			// It used to persist the unlocked read above, so a username or email change
+			// committing in between (an admin re-pointing a compromised account's reset
+			// address) was reverted by any concurrent edit, including a session-only
+			// display-name change. The gate on wasActive stays: a concurrent
+			// (de)activation is still a conflict, not overwritten.
+			locked, lerr := tx.LockUserForUpdate(ctx, req.ID)
+			if lerr != nil {
+				if storage.IsUserNotFound(lerr) {
+					// Deleted since the read: what the conditional write answered before.
+					return fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
+				}
+				return lerr
+			}
+			next := *locked
+			if setUsername {
+				next.Username, next.UsernameFolded = user.Username, user.UsernameFolded
+			}
+			if setEmail {
+				next.Email, next.EmailFolded = user.Email, user.EmailFolded
+			}
+			if req.DisplayName != "" {
+				next.DisplayName = req.DisplayName
+			}
+			next.IsActive = user.IsActive
+			next.UpdatedAt = user.UpdatedAt
+			matched, terr := tx.UpdateUserIfActiveStateMatches(ctx, &next, wasActive)
 			if terr != nil {
 				return terr
 			}
 			if !matched {
 				return fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
 			}
-			updated = user
+			updated = &next
 			c.writeAuditEventFullOn(ctx, tgt, EventUserUpdated, actorPtr(req.ActorID), nil, nil, "",
 				fmt.Sprintf("updated user %d (%s)", updated.ID, updated.Username))
 			return nil
@@ -875,12 +909,14 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 			if lerr != nil {
 				return lerr
 			}
-			// Only the fields the request sets: the rest stay as stored.
+			// Only the fields the request changes: the rest stay as stored. A field the
+			// request merely echoes is the unlocked read's value, which a concurrent
+			// rename may have replaced since (REVIEW-4138-DEEP-1 F2).
 			next := *locked
-			if req.Username != "" {
+			if setUsername {
 				next.Username, next.UsernameFolded = user.Username, user.UsernameFolded
 			}
-			if req.Email != "" {
+			if setEmail {
 				next.Email, next.EmailFolded = user.Email, user.EmailFolded
 			}
 			if req.DisplayName != "" {
@@ -905,11 +941,13 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	return updated, nil
 }
 
-// userIdentityChanges reports whether req changes the username or the email the stored
-// row has (cur, read on the row lock): the part of an update that can widen access (a
-// reset link goes to the new address).
-func userIdentityChanges(req *UpdateUserRequest, cur *models.User) bool {
-	return (req.Username != "" && req.Username != cur.Username) || (req.Email != "" && req.Email != cur.Email)
+// userIdentityChanges reports whether the request changes the username or the email the
+// stored row has (cur, read on the row lock): the part of an update that can widen access
+// (a reset link goes to the new address). want is the unlocked read with the request
+// applied; setUsername/setEmail say which of its fields the request changes. A field the
+// request only echoes is not a change, even if a concurrent rename has since replaced it.
+func userIdentityChanges(want, cur *models.User, setUsername, setEmail bool) bool {
+	return (setUsername && want.Username != cur.Username) || (setEmail && want.Email != cur.Email)
 }
 
 // EventUserDeleted/EventUserRestored are audited on the admin delete/restore path
