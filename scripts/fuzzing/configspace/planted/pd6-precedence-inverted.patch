@@ -1,0 +1,14 @@
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 902da9d08..715e09c4e 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -205,6 +205,9 @@ func resolveSecret(envVar, fallback string) string {
+ 	if err != nil {
+ 		return ""
+ 	}
++	if fallback != "" {
++		return fallback
++	}
+ 	if found {
+ 		return v
+ 	}

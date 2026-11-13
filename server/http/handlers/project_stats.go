@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -32,7 +33,11 @@ func (h *SecretHandler) GetProjectStats(w http.ResponseWriter, r *http.Request) 
 
 	stats, err := h.coreService.GetProjectStats(r.Context(), uint(id))
 	if err != nil {
-		h.sendError(w, "InternalError", "Failed to compute project stats", http.StatusInternalServerError, nil)
+		// A missing project is 404, not 500 (#4132 OPENAPI-STATEFUL-3).
+		answerCoreError(w, r, err, coreErrorAnswer{op: "computing project stats", texts: coreErrorTexts{
+			errclass.NotFound: "Project not found",
+			errclass.Internal: "Failed to compute project stats",
+		}})
 		return
 	}
 

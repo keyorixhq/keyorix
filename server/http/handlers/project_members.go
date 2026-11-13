@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/errclass"
 )
 
 // ListProjectMembers handles GET /api/v1/projects/{id}/members
@@ -109,24 +111,29 @@ func (h *CatalogHandler) RevokeProjectAccessReview(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := h.coreService.RevokeAccessReviewGrant(r.Context(), actorID, projectID, decision); err != nil {
-		if sendStorageUnavailable(w, err) {
-			return
-		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "required") || strings.Contains(msg, "unknown access-review source") || strings.Contains(msg, "ownership cannot be revoked"):
-			status = http.StatusBadRequest
-		case errors.Is(err, core.ErrAccessReviewNotFound):
-			status = http.StatusNotFound
-		default:
-			log.Printf("Error revoking access-review grant for project %d: %v", projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		// Through the shared classifier (#4132 OPENAPI-STATEFUL-8): a grant the
+		// principal does not hold (storage.ErrRoleNotAssigned) is 404 like every
+		// other absent target; the independent-reviewer refusal is 403, not the 400
+		// the word "required" used to give it (decided 2026-11-13); validation 400.
+		answerCoreError(w, r, err, coreErrorAnswer{op: fmt.Sprintf("revoking access-review grant for project %d", projectID),
+			texts: accessReviewErrorTexts(err)})
 		return
 	}
 	sendSuccess(w, nil, "Access revoked")
+}
+
+// accessReviewErrorTexts keeps the access-review routes' texts: core's own words for a
+// typed not-found (the translated "not found: <what>") and for a refusal; a grant the
+// principal does not hold gets a fixed text instead of the storage layer's wrapping.
+func accessReviewErrorTexts(err error) coreErrorTexts {
+	notFound := "The grant to revoke is not held by this principal, or was already revoked"
+	if errors.Is(err, core.ErrAccessReviewNotFound) {
+		notFound = err.Error()
+	}
+	return coreErrorTexts{
+		errclass.NotFound:         notFound,
+		errclass.PermissionDenied: err.Error(),
+	}
 }
 
 // AttestProjectAccessReview handles POST /api/v1/projects/{id}/access-review/attest
@@ -138,21 +145,8 @@ func (h *CatalogHandler) AttestProjectAccessReview(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := h.coreService.AttestAccessReviewGrant(r.Context(), actorID, projectID, decision); err != nil {
-		if sendStorageUnavailable(w, err) {
-			return
-		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "required"):
-			status = http.StatusBadRequest
-		case errors.Is(err, core.ErrAccessReviewNotFound):
-			status = http.StatusNotFound
-		default:
-			log.Printf("Error attesting access-review grant for project %d: %v", projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, coreErrorAnswer{op: fmt.Sprintf("attesting access-review grant for project %d", projectID),
+			texts: accessReviewErrorTexts(err)})
 		return
 	}
 	sendSuccess(w, nil, "Access attested")

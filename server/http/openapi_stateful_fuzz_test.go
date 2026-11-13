@@ -767,13 +767,6 @@ func (w *osWorld) osBuildRequest(st *osState, o *osOp, princ int, mode int, rd *
 var osConformanceExceptions = map[string]string{
 	"prometheusMetrics": "returns Prometheus text exposition format, not JSON; no response schema by design",
 	"authPasswordReset": "returns a deliberately generic 200 with no schema, so it cannot be used as an account-existence oracle",
-	// OPENAPI-STATEFUL-4 (FINDING, not a by-design skip): patHygiene's 200 body can carry
-	// last_used_at:null for a never-used token, but the schema declares last_used_at as a
-	// non-nullable {type: string} — while OTHER last_used_at definitions in the same spec
-	// (openapi.yaml:8610, :8653) ARE nullable:true. Real response-conformance mismatch; the
-	// schema should mark the field nullable (or the handler should omit it). Excepted here so
-	// the committed harness stays green while the fix is pending. See #4132 (OPENAPI-STATEFUL-4).
-	"patHygiene": "FINDING OPENAPI-STATEFUL-4: 200 body returns last_used_at:null but the declared schema is non-nullable {type:string} (inconsistent with the nullable variants elsewhere in the spec)",
 }
 
 // osKnownUndeclaredSuccessStatus documents (opID|statusCode) pairs where the handler returns
@@ -782,15 +775,7 @@ var osConformanceExceptions = map[string]string{
 // osConformanceExceptions this is status-scoped: it suppresses ONLY the undeclared-success-
 // status report for that exact (op, code) pair; body-schema validation of every DECLARED
 // status on the same op stays live. Each entry names a real defect with its root cause.
-var osKnownUndeclaredSuccessStatus = map[string]string{
-	// OPENAPI-STATEFUL-6: createSecretTemplate's handler returns 201 Created
-	// (secret_templates.go:81 `sendCreated`, and its own unit tests assert http.StatusCreated),
-	// but openapi.yaml:4354-4365 declares ONLY 200 for POST /api/v1/secret-templates. Spec
-	// under-declares the real success status: a client generated from the spec (web/src/types/
-	// api-generated.ts) would not model 201. Fail-closed, no security impact. Fix: declare 201
-	// in the spec (or change the handler to 200 to match the 200-returning sibling creates).
-	"createSecretTemplate|201": "FINDING OPENAPI-STATEFUL-6: handler returns 201 (sendCreated) but the spec declares only 200 for POST /api/v1/secret-templates",
-}
+var osKnownUndeclaredSuccessStatus = map[string]string{}
 
 // osDeclaresStatus reports whether the operation declares the given status code (exact or
 // by its range class like '2XX', or a 'default' response).
@@ -1076,22 +1061,6 @@ var osKnownUndeclared5xx = []struct {
 	bodyContains string // "" = any body
 	reason       string
 }{
-	{
-		id:           "OPENAPI-STATEFUL-1",
-		opID:         "", // class: multiple secret sub-resource handlers share the root cause
-		princ:        osPrincMachine,
-		code:         500,
-		pathContains: "/api/v1/secrets/",
-		reason:       "CLASS: secret sub-resource handlers (confirmed: getSecretAccessLog, getSecretCertificate) thread userCtx.UserID — which is 0 for a machine-token principal — into a user-scoped permission check (checkSecretPermission) that rejects userID==0 with a 'user ID is required' VALIDATION error. The handler classifies that neither as not-found nor permission-refusal, so it becomes an undeclared 500 instead of a handled 403/200. Fail-closed (no leak). See #4132 (OPENAPI-STATEFUL-1).",
-	},
-	{
-		id:           "OPENAPI-STATEFUL-2",
-		opID:         "", // class: machine-identity / machine-token handlers
-		princ:        -1,
-		code:         500,
-		pathContains: "/machine-identities",
-		reason:       "CLASS: machine-identity/token handlers (confirmed: createMachineIdentity, issueMachineToken — invalid `classification` value; listMachineTokens — machine identity not found / cross-project) surface core VALIDATION and NOT-FOUND errors as undeclared 500 instead of 400/404. The handlers classify core errors by incomplete substring matching ('invalid identity_type'/'required' only) or do not map a not-found to 404. See #4132 (OPENAPI-STATEFUL-2).",
-	},
 	// OPENAPI-STATEFUL-3 (CLASS): generic-CRUD handlers blanket-map ANY core error to an
 	// undeclared 500 instead of the appropriate 4xx. The clearest example is GetProjectStats:
 	// `stats, err := GetProjectStats(id); if err != nil { 500 }` — a not-found project id
@@ -1099,28 +1068,16 @@ var osKnownUndeclared5xx = []struct {
 	// the same shape (not-found / duplicate-name constraint / boundary input → 500) on each op
 	// below; the list is observed-via-fuzzing, likely non-exhaustive. See #4132
 	// (OPENAPI-STATEFUL-3).
-	{id: "OPENAPI-STATEFUL-3", opID: "getProjectStats", princ: -1, code: 500, reason: "not-found/compute error blanket-mapped to 500 (project_stats.go:35)"},
+
 	{id: "OPENAPI-STATEFUL-3", opID: "deleteProject", princ: -1, code: 500, reason: "project-with-dependencies / not-found blanket-mapped to 500"},
 	{id: "OPENAPI-STATEFUL-3", opID: "updateProject", princ: -1, code: 500, reason: "duplicate-name constraint / not-found blanket-mapped to 500"},
 	{id: "OPENAPI-STATEFUL-3", opID: "createProjectEnvironment", princ: -1, code: 500, reason: "duplicate env-name constraint / not-found blanket-mapped to 500"},
 	{id: "OPENAPI-STATEFUL-3", opID: "restoreEnvironment", princ: -1, code: 500, reason: "restore of a non-deleted/absent environment blanket-mapped to 500"},
 	{id: "OPENAPI-STATEFUL-3", opID: "restoreSecret", princ: -1, code: 500, reason: "restore of a non-deleted/absent secret blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "createSecretTemplate", princ: -1, code: 500, reason: "validation/constraint error blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "createRejectionReasonTemplate", princ: -1, code: 500, reason: "validation/constraint error blanket-mapped to 500"},
+
 	{id: "OPENAPI-STATEFUL-3", opID: "renderSecretTemplate", princ: -1, code: 500, reason: "template render error on schema-valid input blanket-mapped to 500"},
 	{id: "OPENAPI-STATEFUL-3", opID: "shareSecret", princ: -1, code: 500, reason: "share error (self-share / duplicate / not-found) blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "createFolder", princ: -1, code: 500, reason: "validation/constraint error blanket-mapped to 500"},
-	// OPENAPI-STATEFUL-5: ResumeSecret (secrets_suspend.go:73-77) maps a deleted PROJECT to
-	// 404 (storage.IsProjectNotFound) but NOT a deleted ENVIRONMENT: resuming a suspended
-	// secret whose environment was deleted earlier in the sequence makes core's
-	// withEnvironmentSecretGuard return an "environment N not found" sentinel
-	// (errSecretTargetInvalidf, secrets.go:69/85-86) that is neither isSecretNotFound nor
-	// IsProjectNotFound, so the handler's else-branch returns an undeclared 500 "Failed to
-	// resume secret" on a WELL-FORMED request. Directly parallel to — and the same fix as —
-	// the project case the handler already handles. Fail-closed (resume refused; nothing
-	// leaks). Surfaced on princ=5 (global admin); principal-independent. See #4132
-	// (OPENAPI-STATEFUL-5).
-	{id: "OPENAPI-STATEFUL-5", opID: "resumeSecret", princ: -1, code: 500, reason: "resume of a suspended secret whose ENVIRONMENT was deleted returns core 'environment not found' mapped to 500, not 404 (the sibling deleted-project case IS mapped to 404). secrets_suspend.go:73."},
+
 	// OPENAPI-STATEFUL-7: StartImpersonation's handler switch (admin_impersonation.go:92-99)
 	// maps only "yourself"->400 and storage.ErrUserNotFound->404; every OTHER core refusal
 	// falls through to the default 500 branch. For an interactive admin session that includes
@@ -1130,17 +1087,6 @@ var osKnownUndeclared5xx = []struct {
 	// becomes an undeclared 500 instead of a 403/409. No session is minted; nothing leaks.
 	// Fix: classify these as 403 (authority/credential refusal) / 409 (target-state refusal).
 	{id: "OPENAPI-STATEFUL-7", opID: "startImpersonation", princ: -1, code: 500, reason: "core impersonation refusal (suspended/inactive target, ceiling-exceeded, admin-not-found) falls through the handler switch to an undeclared 500 instead of 403/409. admin_impersonation.go:97."},
-	// OPENAPI-STATEFUL-8: RevokeProjectAccessReview (project_members.go:111-126) revoking a
-	// grant whose underlying ROLE is not assigned (already revoked, or removed earlier in the
-	// sequence) gets core error "Storage operation failed: Role not assigned" from plan.write
-	// (the role removal). The handler switch maps only "required"/"unknown access-review
-	// source"/"ownership cannot be revoked"->400 and ErrAccessReviewNotFound->404; the
-	// "role not assigned" storage error matches none, so it defaults to an undeclared 500.
-	// Semantically this IS the grant-not-found / already-revoked case and should be 404 (or an
-	// idempotent 200/204). Fail-closed (nothing changes). Confirmed root cause via the handler's
-	// own log.Printf: "Error revoking access-review grant for project 2: Storage operation
-	// failed: Role not assigned: role not assigned".
-	{id: "OPENAPI-STATEFUL-8", opID: "revokeProjectAccessReview", princ: -1, code: 500, reason: "revoke of an access-review grant whose role is not assigned returns core 'Role not assigned' (storage), unmapped by the handler switch -> undeclared 500 instead of 404/idempotent. project_members.go:122."},
 }
 
 // --- Oracle 2: response conformance ----------------------------------------

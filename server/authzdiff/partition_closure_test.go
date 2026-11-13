@@ -28,7 +28,7 @@ func TestExplainNeverWaivesTransportAllowOverModelDeny(t *testing.T) {
 		name string
 		r    caseResult
 	}{
-		{"known-07 shape, gRPC allows", caseResult{
+		{"former known-07 shape, gRPC allows", caseResult{
 			caseKey: caseKey{Op: "secret.update", Principal: pkViewer, Target: "A"}, Model: Denied, Classes: o2,
 			Legs: map[layer]*legOutcome{layerCore: legOut(Denied, "ErrPermissionDenied"), layerREST: legOut(Other, "Internal Server Error"), layerGRPC: legOut(Allowed, "")},
 		}},

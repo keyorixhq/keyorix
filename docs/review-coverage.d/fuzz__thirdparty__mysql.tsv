@@ -1,0 +1,1 @@
+fuzz/thirdparty/mysql	none	-	test-only hostile-server fuzz harness for third-party DB drivers; not part of any shipped build	test-helper
