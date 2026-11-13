@@ -179,7 +179,7 @@ def full_reason(changed, base, head):
 
 def load_packages():
     out = subprocess.run(
-        ["go", "list", "-e", "-json=ImportPath,Dir,Deps,TestImports,XTestImports,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,IgnoredGoFiles,EmbedPatterns", "./..."],
+        ["go", "list", "-e", "-json=ImportPath,Dir,Imports,Deps,TestImports,XTestImports,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,IgnoredGoFiles,EmbedPatterns", "./..."],
         capture_output=True, text=True, check=True,
     ).stdout
     packages, dec, i = {}, json.JSONDecoder(), 0
@@ -189,7 +189,7 @@ def load_packages():
         # another package's tests import) as variants: "internal/core
         # [github.com/keyorixhq/keyorix/server]". Strip the bracket, or no
         # changed package would ever match server's Deps.
-        for key in ("Deps", "TestImports", "XTestImports"):
+        for key in ("Imports", "Deps", "TestImports", "XTestImports"):
             if obj.get(key):
                 obj[key] = [d.split(" [", 1)[0] for d in obj[key]]
         packages[obj["ImportPath"]] = obj
@@ -396,6 +396,10 @@ def decide(base, head, changed=None):
     # anything not embedded): _test.go files compile into that package's own
     # test binary and nothing else, so its importers cannot see the change.
     code_seeds, test_seeds, why = set(), set(), {}
+    # For mq_slim (MQ-TEST-SLIM-1): which seeds come from changed compiled code,
+    # which non-Go inputs (rule 2) and named files (rule 3) select a package,
+    # and which packages a named-reader rule selected. Recorded only.
+    real_code, inputs, hits, special = set(), {}, {}, {}
 
     def seed(pkg, code, reason):
         (code_seeds if code else test_seeds).add(pkg)
@@ -424,10 +428,13 @@ def decide(base, head, changed=None):
                 seed(pkg, False, f"test file {f}")
             elif f.endswith(".go"):
                 seed(pkg, True, f"code file {f}")
+                real_code.add(pkg)
             elif embedded(obj, rel):
                 seed(pkg, True, f"embedded file {f}")
+                real_code.add(pkg)
             else:
                 seed(pkg, False, f"test input {f}")
+                inputs.setdefault(pkg, []).append(f)
         # Every changed file goes through rule 3, .go files too: a test may
         # read another package's source as text by path.
         readers_needed.append((f, pkg is None, not f.endswith(".go")))
@@ -441,19 +448,22 @@ def decide(base, head, changed=None):
             code_files = [os.path.join(obj["Dir"], n) for k in ("GoFiles", "CgoFiles") for n in (obj.get(k) or [])]
             test_files = [os.path.join(obj["Dir"], n) for k in ("TestGoFiles", "XTestGoFiles") for n in (obj.get(k) or [])]
             code_index, test_index = literal_index(code_files), literal_index(test_files)
-            code_hit = next((f for f, outside, by_base in readers_needed if references(code_index, f, outside, by_base)), None)
-            if code_hit:
-                seed(imp, True, f"its code names {code_hit}")
+            code_hits = [f for f, outside, by_base in readers_needed if references(code_index, f, outside, by_base)]
+            test_hits = [f for f, outside, by_base in readers_needed if references(test_index, f, outside, by_base)]
+            if code_hits or test_hits:
+                hits[imp] = sorted(set(code_hits + test_hits))
+            if code_hits:
+                seed(imp, True, f"its code names {code_hits[0]}")
                 continue
-            test_hit = next((f for f, outside, by_base in readers_needed if references(test_index, f, outside, by_base)), None)
-            if test_hit:
-                seed(imp, False, f"its tests name {test_hit}")
+            if test_hits:
+                seed(imp, False, f"its tests name {test_hits[0]}")
 
     # security-closure rows: the pg-gated ones are only proven by ci.yml's
     # closures-pg job, which runs when the core-1 leg runs, so a change to the
     # ledger or its checker must select that leg.
     if any(f.startswith("docs/security-closures.d/") or f == "scripts/check-closures.sh" for f in changed):
         seed(MODULE + "/internal/core", False, "security-closure ledger or checker changed (closures-pg proves pg-gated rows when core-1 runs)")
+        special[MODULE + "/internal/core"] = "security-closure ledger"
 
     # guard-inputs ledger: guardinputs.LoadMap finds the fragments through a
     # directory name it computes (FragmentDir), so no literal names a fragment
@@ -461,6 +471,7 @@ def decide(base, head, changed=None):
     # ledger is data, nothing imports it.
     if any(f == "scripts/ci/guard-inputs.tsv" or GUARD_INPUTS_FRAGMENT.match(f) for f in changed):
         seed(GUARDINPUTS_PKG, False, "guard-inputs ledger changed (guardinputs tests load the map and its fragments)")
+        special[GUARDINPUTS_PKG] = "guard-inputs ledger"
 
     seeds = code_seeds | test_seeds
     affected = set(seeds)
@@ -517,6 +528,17 @@ def decide(base, head, changed=None):
         "fuzz_targets": bool(fuzz_files) or touched(lambda f: f.startswith("scripts/fuzzing/")),
         "fuzz_reach": reach_pkgs is None or bool(reach_pkgs & affected) or touched(lambda f: f.startswith("scripts/fuzzing/")),
     }
+    # MQ-TEST-SLIM-1 levers: logged (MQ_SLIM_MODE=shadow, the default) and
+    # never part of mode/legs/gates above; see scripts/ci/mq_slim.py.
+    shadow, slim = [], {}
+    try:
+        import mq_slim
+        ctx = {"packages": packages, "repo": repo, "affected": affected, "changed": changed,
+               "code_seeds": code_seeds, "real_code": real_code, "inputs": inputs, "hits": hits,
+               "special": special, "owner": owning_package}
+        shadow, slim = mq_slim.run(ctx, legs, all_legs, gates, touched, log)
+    except Exception as exc:  # the levers must never change the selection
+        log(f"MQ-SHADOW {json.dumps({'v': 1, 'lever': 'mq_slim', 'decision': 'error', 'why': f'{type(exc).__name__}: {exc}'})}")
     return {
         **decision,
         "mode": "selected",
@@ -527,6 +549,8 @@ def decide(base, head, changed=None):
         "total_legs": len(all_legs),
         "gates": gates,
         "fuzz_files": fuzz_files,
+        "shadow": shadow,
+        "slim": slim,
     }
 
 
@@ -571,6 +595,12 @@ def main():
         d = decide(args.base, args.head, args.changed)
     except Exception as exc:  # fail safe: an error here must never skip a test
         d = {"base": args.base, "head": args.head, "changed": [], "mode": "full", "reason": f"selection failed ({type(exc).__name__}: {exc}); running everything"}
+    try:
+        import mq_slim
+        if d["mode"] == "selected" and mq_slim.sampled_full_run():
+            d = {**d, "mode": "full", "reason": f"sampled full run (every {mq_slim.SAMPLE_EVERY}th merge_group run, MQ_SLIM_MODE=enforce)", "slim": {}}
+    except Exception as exc:
+        log(f"select-affected: mq_slim unavailable ({type(exc).__name__}: {exc})")
 
     if d["mode"] == "full":
         d["gates"] = {g: True for g in ALL_GATES}
@@ -589,6 +619,10 @@ def main():
             fh.write(f"legs={one_line(json.dumps(d['legs'], separators=(',', ':'), sort_keys=True))}\n")
             for g in ALL_GATES:
                 fh.write(f"gate_{g}={'true' if d['gates'][g] else 'false'}\n")
+            # MQ_SLIM_MODE=enforce only (mq_slim.run returns {} otherwise).
+            for k, v in sorted((d.get("slim") or {}).items()):
+                val = json.dumps(v, separators=(",", ":"), sort_keys=True) if isinstance(v, dict) else ("true" if v else "false")
+                fh.write(f"{k}={one_line(val)}\n")
     if args.summary:
         with open(args.summary, "a", encoding="utf-8") as fh:
             fh.write(f"### merge_group selection: {d['mode']}\n\n{one_line(d['reason'])}\n\n")
@@ -601,6 +635,11 @@ def main():
                 for p, w in d["seeds"].items():
                     fh.write(f"- `{p}`: {w}\n")
                 fh.write(f"\n{len(d['affected'])} affected packages including importers.\n\n</details>\n")
+            if d.get("shadow"):
+                fh.write("\n<details><summary>MQ-TEST-SLIM-1 shadow decisions (logged only, nothing skipped)</summary>\n\n| lever | check | decision | why |\n|---|---|---|---|\n")
+                for r in d["shadow"]:
+                    fh.write(f"| {r.get('lever')} | {r.get('check')} | {r.get('decision')} | {one_line(r.get('why', ''))[:200].replace('|', '/')} |\n")
+                fh.write("\n</details>\n")
     if args.json:
         print(json.dumps(d, indent=2, sort_keys=True))
 
