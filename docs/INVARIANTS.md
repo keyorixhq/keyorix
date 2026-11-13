@@ -36,7 +36,7 @@ silently removing it.
 | `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 2 | 2 | 0 |
 | `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
-| **Total** | | **519** | **514** | **5** |
+| **Total** | | **521** | **516** | **5** |
 
 ## Highest-priority UNGUARDED gaps
 
