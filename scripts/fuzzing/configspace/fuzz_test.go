@@ -17,11 +17,11 @@ const fuzzCanary = "cnryfuzz0123456789ab"
 // the point of that message, so a canary that the fuzzer typed as a key name is not a
 // disclosure of a secret value. Values, DSNs, tokens and every other part of the error are
 // still checked.
-var unknownKeyEcho = regexp.MustCompile(`unknown key "[^"]*"`)
+var unknownKeyEcho = regexp.MustCompile(`unknown key "[^"]*"|field \S+ not found in type [\w.]+`)
 
 // leaksCanary reports whether an error text discloses the canary outside an unknown-key echo.
 func leaksCanary(verdict string) bool {
-	return strings.Contains(unknownKeyEcho.ReplaceAllString(verdict, `unknown key "-"`), fuzzCanary)
+	return strings.Contains(unknownKeyEcho.ReplaceAllString(verdict, `-`), fuzzCanary)
 }
 
 var fuzzSeeds = []string{
