@@ -108,6 +108,22 @@ var plants = []plant{
 		op:             "secret.reassign.owner",
 		minUnexplained: 10,
 	},
+	{
+		// V5: removes ActivateBreakGlass's IsProjectMember refusal — the
+		// self-elevation gate. Its earlier form (GetUserRoleIDsAt, which matches
+		// project_id = 0 OR P) let the install-wide baseline count as membership
+		// and any authenticated user self-grant the emergency role on ANY project
+		// (#284-era). With the refusal gone, core grants the emergency role to any
+		// user who passes input validation, and REST — which has no gate of its own
+		// on this route — over-allows the same non-members, so both legs allow what
+		// the memberOnly model rule denies.
+		name:   "breakglass-activate-membership-gate-removed",
+		file:   "internal/core/break_glass.go",
+		anchor: "\tif !affiliated {\n\t\treturn nil, refuseBreakGlass(fmt.Sprintf(\"%s: %s\", i18n.T(\"ErrorPermissionDenied\", nil), \"break-glass is available only to members of the project\"), ErrBreakGlassNotProjectMember, ErrPermissionDenied)\n\t}\n",
+		repl:   "\t_ = affiliated // PLANT: break-glass membership gate removed\n",
+		op:     "breakglass.activate",
+		minUnexplained: 10,
+	},
 }
 
 func TestPlantsAreDetected(t *testing.T) {

@@ -482,6 +482,17 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 func newCore(ls *store.LocalStorage) *core.KeyorixCore {
 	c := core.NewKeyorixCore(ls)
 	c.SetCredentialDelivery(nil, "https://keyorix.example.invalid")
+	// Self-service emergency access, wired the way the server does from config
+	// (server start → SetBreakGlassPolicy). Enabled with a CONTAINED emergency
+	// role (project_developer: no roles.assign, not admin-bypass — the role
+	// config_access.go's own comment names as the safe choice), so the
+	// break-glass activate binding (v5) exercises core's real gate
+	// (ErrBreakGlassDisabled would otherwise mask it). Disabled cores still exist
+	// nowhere the harness probes — no bound op reads this policy except
+	// breakglass.activate.
+	c.SetBreakGlassPolicy(core.BreakGlassPolicy{
+		Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour,
+	})
 	return c
 }
 
