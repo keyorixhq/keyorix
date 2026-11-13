@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { ALL_CAN } from '../../../test/can';
 import { render, screen, within, fireEvent } from '../../../test/test-utils';
 import { SecretTableRow } from '../SecretTableRow';
 import { Secret } from '../../../types';
@@ -58,11 +59,11 @@ const renderRow = (props: Partial<React.ComponentProps<typeof SecretTableRow>> =
 // What the signed-in user may do. Tests that exercise a control assume the user can; the
 // permission-aware cases flip fields on this object (see useCan.ts).
 const canState = vi.hoisted(() => ({
-    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+    value: {} as Record<string, boolean>,
 }));
 vi.mock('../../auth/useCan', () => ({ useCan: () => canState.value }));
 beforeEach(() => {
-    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+    canState.value = { ...ALL_CAN };
 });
 
 describe('SecretTableRow', () => {
