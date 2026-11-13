@@ -131,10 +131,11 @@ func newSession(m *Mut, target string) *hSession {
 
 // HostSrv is the mock server of one SDK instance.
 type HostSrv struct {
-	ln   net.Listener
-	mu   sync.Mutex
-	sess *hSession
-	wg   sync.WaitGroup
+	ln    net.Listener
+	mu    sync.Mutex
+	sess  *hSession
+	conns map[net.Conn]struct{} // open connections; Disarm closes them so no handler outlives its session
+	wg    sync.WaitGroup
 }
 
 // NewHostSrv listens on a free loopback port.
@@ -143,7 +144,7 @@ func NewHostSrv() (*HostSrv, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &HostSrv{ln: ln}
+	s := &HostSrv{ln: ln, conns: map[net.Conn]struct{}{}}
 	go s.loop()
 	return s, nil
 }
@@ -162,15 +163,24 @@ func (s *HostSrv) Arm(se *hSession) {
 }
 
 // Disarm ends the session, unblocks stalled handlers, waits for them and returns the recorded requests.
+// Closing the open connections also unblocks a handler stuck in a write to a client that stopped reading
+// (B01, B02, H10), which the done channel alone cannot reach.
 func (s *HostSrv) Disarm() []HReq {
 	s.mu.Lock()
 	se := s.sess
 	s.sess = nil
+	open := make([]net.Conn, 0, len(s.conns))
+	for c := range s.conns {
+		open = append(open, c)
+	}
 	s.mu.Unlock()
 	if se == nil {
 		return nil
 	}
 	close(se.done)
+	for _, c := range open {
+		_ = c.Close()
+	}
 	waitTimeout(&s.wg, 12*time.Second)
 	se.mu.Lock()
 	defer se.mu.Unlock()
@@ -192,7 +202,17 @@ func (s *HostSrv) loop() {
 		if err != nil {
 			return
 		}
-		s.wg.Go(func() { s.serve(c) })
+		s.mu.Lock()
+		s.conns[c] = struct{}{}
+		s.mu.Unlock()
+		s.wg.Go(func() {
+			defer func() {
+				s.mu.Lock()
+				delete(s.conns, c)
+				s.mu.Unlock()
+			}()
+			s.serve(c)
+		})
 	}
 }
 
@@ -308,6 +328,11 @@ type shaper struct {
 }
 
 func (s *shaper) Write(p []byte) (int, error) {
+	select {
+	case <-s.done:
+		return 0, errAbort
+	default:
+	}
 	if s.a.Kind == "" {
 		return s.c.Write(p)
 	}
@@ -534,6 +559,11 @@ func writePlan(c net.Conn, p *Plan, done <-chan struct{}) {
 		}
 	} else if _, err := c.Write(head.Bytes()); err != nil {
 		return
+	}
+	select {
+	case <-done:
+		return
+	default:
 	}
 	if p.Body == nil {
 		return

@@ -4,6 +4,7 @@ const http = require('node:http');
 const path = require('node:path');
 const readline = require('node:readline');
 const util = require('node:util');
+const { AsyncLocalStorage } = require('node:async_hooks');
 
 const plant = process.env.SDKDIFF_PLANT || '';
 if (plant === 'P2' || plant === 'P5') {
@@ -49,7 +50,7 @@ function classify(err, force) {
   } else if (err instanceof SyntaxError) cls = 'decode';
   let full = '';
   try { full = util.inspect(err, { depth: 4 }).slice(0, 20000); } catch (e2) { full = 'inspect failed'; }
-  return { ok: false, class: cls, status, native: (err && err.constructor && err.constructor.name) || typeof err, msg: String(err && err.message !== undefined ? err.message : err), sdk_error: err instanceof sdk.KeyorixError, full };
+  return { ok: false, class: cls, status, native: (err && err.constructor && err.constructor.name) || typeof err, msg: String(err && err.message !== undefined ? err.message : err).slice(0, 20000), sdk_error: err instanceof sdk.KeyorixError, full };
 }
 
 async function run(f) {
@@ -99,28 +100,71 @@ async function run(f) {
   } catch (e) { return classify(e); }
 }
 
-// Unhandled rejections and uncaught exceptions are reported, not fatal, so that the harness can see them (hostile mode, oracle O1).
-const sideEvents = [];
-let wake = null;
+// Hostile mode only (SDKDIFF_HOSTILE=1, set by `sdkdiff hostile`): unhandled rejections and uncaught exceptions are
+// reported, not fatal, so that the harness can see them (oracle O1). Differential runs keep Node's default behaviour.
+// Each call runs in its own AsyncLocalStorage context, and an event is attributed to the call whose async work raised
+// it (Node runs both handlers in the context of the failing promise or callback), not to whichever call is running
+// when it fires.
+const hostile = process.env.SDKDIFF_HOSTILE === '1';
+const callCtx = new AsyncLocalStorage();
+const unattributed = []; // events of already answered calls or outside any call: reported on the next line as late_side_events
 function side(kind, e) {
-  sideEvents.push(kind + ': ' + String(e && e.stack || e).slice(0, 2000));
-  if (wake) wake();
+  const ev = kind + ': ' + String(e && e.stack || e).slice(0, 2000);
+  const c = callCtx.getStore();
+  if (c && !c.answered) {
+    c.events.push(ev);
+    if (c.wake) c.wake();
+  } else {
+    unattributed.push((c ? 'call ' + c.seq + ' (answered): ' : 'no call: ') + ev);
+  }
 }
-process.on('unhandledRejection', (e) => side('unhandledRejection', e));
-process.on('uncaughtException', (e) => side('uncaughtException', e));
+if (hostile) {
+  process.on('unhandledRejection', (e) => side('unhandledRejection', e));
+  process.on('uncaughtException', (e) => side('uncaughtException', e));
+}
+
+// runHostile runs one call. After a side event the call gets until its own timeout plus 1 s to settle, so its real
+// result is kept; if it does not settle, the answer is the side event and is marked abandoned, and the harness then
+// restarts the driver so the still-running SDK work cannot reach the next call.
+async function runHostile(seq, fields) {
+  const c = { seq, events: [], wake: null, answered: false };
+  const done = callCtx.run(c, () => run(fields)).catch((e) => ({ driver_error: String(e && e.stack || e) }));
+  const woken = new Promise((resolve) => { c.wake = () => resolve(null); });
+  let res = await Promise.race([done, woken]);
+  let abandoned = false;
+  if (res === null) {
+    const graceMs = (parseInt(fields[3], 10) || 5000) + 1000;
+    let timer;
+    const grace = new Promise((resolve) => { timer = setTimeout(() => resolve(null), graceMs); });
+    res = await Promise.race([done, grace]);
+    clearTimeout(timer);
+    if (res === null) {
+      abandoned = true;
+      res = { ok: false, class: 'other', native: 'SideEvent', sdk_error: false, msg: 'side event during call, call did not settle', full: '' };
+    }
+  }
+  // one turn of the event loop, so a rejection left unhandled by the call itself is still reported with it
+  await new Promise((resolve) => setImmediate(resolve));
+  c.answered = true;
+  c.wake = null;
+  if (c.events.length) res.side_events = c.events.splice(0);
+  if (abandoned) res.abandoned = true;
+  return res;
+}
 
 (async () => {
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  let seq = 0;
   for await (const line of rl) {
     if (!line) continue;
     const t0 = Date.now();
     let res;
-    try {
-      const ev = new Promise((resolve) => { wake = () => resolve({ ok: false, class: 'other', native: 'SideEvent', sdk_error: false, msg: 'side event during call', full: '' }); });
-      res = await Promise.race([run(line.split('\t')), ev]);
-    } catch (e) { res = { driver_error: String(e && e.stack || e) }; }
-    wake = null;
-    if (sideEvents.length) { res.side_events = sideEvents.splice(0); }
+    if (hostile) {
+      res = await runHostile(++seq, line.split('\t'));
+      if (unattributed.length) res.late_side_events = unattributed.splice(0);
+    } else {
+      try { res = await run(line.split('\t')); } catch (e) { res = { driver_error: String(e && e.stack || e) }; }
+    }
     res.ms = Date.now() - t0;
     process.stdout.write(JSON.stringify(res, (k, v) => (v === undefined ? null : v)) + '\n');
   }

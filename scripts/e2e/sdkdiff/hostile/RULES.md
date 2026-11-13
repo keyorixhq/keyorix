@@ -171,13 +171,14 @@ Each candidate is reduced to one (scenario, mutation, SDK) triple, replayed at l
 size-parameterised mutations (nesting, bulk, lists) are run on their ladder (the three registered sizes) to give the smallest
 registered size at which the violation appears. Classes: SDK bug / spec ambiguity / harness artefact. Security-relevant results
 (token disclosure, fail-open on malformed, truncated or mismatched responses, crashes or hangs caused by server data,
-corruption of ids or secret values) are written only to `~/proj/sdk-hostile-private/FINDINGS.md`, not to this repository,
-a PR, a commit message or an issue. A clear, small SDK bug gets a suggested patch under `~/proj/sdk-hostile-private/patches/`.
+corruption of ids or secret values) are written only to a private findings file outside this repository, not to this repository,
+a PR, a commit message or an issue. A clear, small SDK bug gets a suggested patch kept next to that private file.
 Nothing is opened against the SDK repository.
 
 ## 7. Environment
 
-Mac only: GOMAXPROCS 2, `nice -n 10`, at most 2 SDK runners in parallel, bounded memory as above, no broad pkill. pve01 is not used.
+One local workstation only: GOMAXPROCS 2, `nice -n 10`, at most 2 SDK runners in parallel, bounded memory as above, no broad pkill.
+No shared lab hosts are used.
 SDK trees under test: `sdks-hostile-base` = keyorix-sdks origin/main 64c66a8; `sdks-hostile-harden` = PR #88 head d39dafc
 merged with origin/main (88cdecf, local merge, not pushed). Both run through the same matrix.
 
@@ -220,3 +221,24 @@ mutation family was run.
 - A9 Content-Encoding family H09/H12-H14: an SDK that returns the complete valid payload despite a bad or truncated encoding is
   reported as O3 by the judge; in reports it is classified individually (the payload was complete, so no data is wrong).
 - A10 Mechanism B was run on the base tree only: `JsonParser.java` is byte-identical in the PR #88 tree.
+- A11 (review of PR #4043) Replaces A7. The judge now reports a token found in `msg`, `native`, `full` or stderr on S13m as
+  the informational O4r note, as section 4 states, and raises no O4 for S13m. A7 had kept a HIGH O4 because `full` always
+  contains the message, so section 4 and the judge disagreed. Cost: on S13m an SDK that adds the token by itself cannot be
+  told apart from reflection; every other mutation, including S01m-S04m, still raises O4.
+- A12 (review of PR #4043) O5 as implemented compares `ok` against not-`ok` per (scenario, mutation): a pair is listed when
+  at least one SDK succeeds and at least one fails. Disagreement between two error classes (`err:network` against
+  `err:decode`) is not listed on its own; the listed line shows every SDK's outcome class, so such differences remain
+  visible on the pairs that are listed. Section 4's "outcome class" is read this way.
+- A13 (review of PR #4043) Section 5's subsets are those of `validate.sh`, which ran the validation: PH1 O3 on R05b, R02,
+  B07 and R05d (the cut one byte before the end, the case a lenient reader most likely returns), scenarios S07-S09; PH2 O3
+  on S01m and S02m, scenarios S02, S03, S06, S07, S08, S10; PH3 scenarios S03, S06, S07; PH4 O4 on S01m and S03m,
+  scenarios S03, S06, S07; PH5 scenarios S03, S05, S06; PH6 scenarios S03, S06, S07. A failed run is reported as
+  HARNESS-FAIL, never as MISSED. PH6 patches each known timeout form with an exact count per known SDK layout and fails
+  on any other layout.
+- A14 (review of PR #4043) Harness robustness, no oracle change: every driver caps `msg` and `full` at 20 000 characters
+  (a token past that point in an echoed body is not seen); the harness keeps at most 32 MiB of one driver answer and
+  records a longer answer, or one that is not JSON, as a harness note (H2), not as O1; the Node and Java side-event
+  handlers are installed only in hostile mode (`SDKDIFF_HOSTILE=1`); Node attributes an unhandled rejection or uncaught
+  exception to the call whose async work raised it, reports events of an already answered call as a harness note (H3) on
+  the next record, keeps the call's own result when the call still settles, and is restarted after a call that does not;
+  Disarm closes the mock server's open connections. Sections 6 and 7 name no private path and no lab host.

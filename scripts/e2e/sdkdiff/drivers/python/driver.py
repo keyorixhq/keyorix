@@ -75,10 +75,11 @@ def classify(err, force=None):
     elif isinstance(err, OSError):
         cls = "network"
     try:
-        full = "".join(traceback.format_exception(err))
+        # three-argument form: the one-argument form needs Python 3.10+, and a TypeError here would hide "full" from O4
+        full = "".join(traceback.format_exception(type(err), err, err.__traceback__))
     except Exception as e2:  # noqa: BLE001
         full = "format failed: " + type(e2).__name__
-    return {"ok": False, "class": cls, "status": status, "native": type(err).__name__, "msg": str(err),
+    return {"ok": False, "class": cls, "status": status, "native": type(err).__name__, "msg": str(err)[:20000],
             "sdk_error": isinstance(err, keyorix.KeyorixError), "full": full[:20000]}
 
 

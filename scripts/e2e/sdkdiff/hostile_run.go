@@ -30,6 +30,11 @@ const (
 	hRSSCeilingKB  = 1 << 20 // 1 GiB
 )
 
+// hMaxLine bounds one driver answer line held in memory. It is above the largest value an X mutation must get back
+// exactly (U19, 16 MiB) and far below what an SDK that accepts B01/B02/U20 would print; longer lines are drained
+// without being kept (Reason "oversize"), so four drivers in parallel cannot exhaust the harness's memory.
+var hMaxLine = 32 << 20
+
 // ---- driver process with RSS monitoring ----
 
 type syncBuf struct {
@@ -67,7 +72,7 @@ type HDriver struct {
 }
 
 func hostileDriver(name, root, build, sdks string) (*HDriver, error) {
-	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "SDKDIFF_SDKS_DIR=" + sdks, "SDKDIFF_PLANT="}
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "SDKDIFF_SDKS_DIR=" + sdks, "SDKDIFF_PLANT=", "SDKDIFF_HOSTILE=1"}
 	var argv []string
 	switch kindOf(name) {
 	case "go":
@@ -132,9 +137,29 @@ func rssKB(pid int) int64 {
 type callInfo struct {
 	Elapsed time.Duration
 	PeakKB  int64
-	Reason  string // "" | hang | rss | died
+	Reason  string // "" | hang | rss | died | badout (answer not JSON) | oversize (answer longer than hMaxLine)
 	Exit    string
 	Stderr  string
+}
+
+// readLineMax reads one '\n'-terminated line. A line longer than max is consumed up to its end but not kept
+// (over is true), so the protocol stays in step and memory stays bounded.
+func readLineMax(r *bufio.Reader, max int) (line string, over bool, err error) {
+	var b []byte
+	for {
+		frag, err := r.ReadSlice('\n')
+		if !over {
+			if len(b)+len(frag) > max {
+				over, b = true, nil
+			} else {
+				b = append(b, frag...)
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return string(b), over, err
+	}
 }
 
 func (d *HDriver) call(line string) (map[string]any, callInfo) {
@@ -153,11 +178,12 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 		return nil, info
 	}
 	type res struct {
-		s   string
-		err error
+		s    string
+		over bool
+		err  error
 	}
 	ch := make(chan res, 1)
-	go func() { s, err := d.out.ReadString('\n'); ch <- res{s, err} }()
+	go func() { s, over, err := readLineMax(d.out, hMaxLine); ch <- res{s, over, err} }()
 	var peak atomic.Int64
 	var reason atomic.Value
 	stop := make(chan struct{})
@@ -215,12 +241,23 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 		return nil, info
 	}
 	info.Stderr = d.stderr.take()
+	if r.over {
+		info.Reason, info.Exit = "oversize", fmt.Sprintf("driver answer longer than %d bytes, discarded", hMaxLine)
+		return nil, info
+	}
 	dec := json.NewDecoder(strings.NewReader(r.s))
 	dec.UseNumber()
 	var m map[string]any
 	if err := dec.Decode(&m); err != nil {
-		info.Exit = "driver output not JSON: " + trunc(r.s, 200)
+		// Something other than the driver wrote to stdout; the real answer may still be in the pipe, so start over.
+		d.kill()
+		info.Reason, info.Exit = "badout", "driver output not JSON: "+trunc(r.s, 200)
 		return nil, info
+	}
+	if m["abandoned"] == true {
+		// The Node driver answered for a call whose SDK work is still running (a side event fired and the call did
+		// not settle). Restart it so that work cannot reach the next call's session.
+		d.kill()
 	}
 	return m, info
 }
@@ -373,12 +410,20 @@ func judge(sc *HScen, m *Mut, drv map[string]any, info callInfo, reqs []HReq, go
 		case "rss":
 			rec.Outcome = "rss"
 			add("O2", "MEDIUM", fmt.Sprintf("RSS above %d MB, driver killed (peak %d MB)", hRSSCeilingKB/1024, info.PeakKB/1024))
+		case "badout", "oversize":
+			// the driver is alive (or was restarted by the harness): a harness record, not an O1 crash
+			rec.Outcome = "harness"
+			rec.Notes = append(rec.Notes, "H2 "+info.Reason+": "+trunc(info.Exit, 200))
 		default:
 			rec.Outcome = "died"
 			add("O1", "MEDIUM", "driver process exited during the call: "+trunc(info.Exit+" "+info.Stderr, 250))
 		}
 		if leaksToken(info.Stderr) {
-			add("O4", "HIGH", "token in stderr: "+trunc(info.Stderr, 120))
+			if m.ID == "S13m" {
+				rec.Notes = append(rec.Notes, "O4r token reflected from the server body in stderr")
+			} else {
+				add("O4", "HIGH", "token in stderr: "+trunc(info.Stderr, 120))
+			}
 		}
 		if rec.Applied != "applied" {
 			rec.Viol = nil
@@ -386,6 +431,10 @@ func judge(sc *HScen, m *Mut, drv map[string]any, info callInfo, reqs []HReq, go
 		return
 	}
 	rec.Drv = drv
+	if ev, _ := drv["late_side_events"].([]any); len(ev) > 0 {
+		// fired in the context of an earlier, already answered call: noted here, not judged against this call
+		rec.Notes = append(rec.Notes, fmt.Sprintf("H3 %d late side event(s) of an earlier call: %s", len(ev), trunc(str(ev[0]), 200)))
+	}
 	if _, ok := drv["driver_error"]; ok {
 		rec.Outcome = "harness"
 		rec.Notes = append(rec.Notes, "H1 driver_error: "+trunc(str(drv["driver_error"]), 200))
@@ -418,20 +467,25 @@ func judge(sc *HScen, m *Mut, drv map[string]any, info callInfo, reqs []HReq, go
 	if !ok && drv["sdk_error"] == false {
 		add("O1", "MEDIUM", fmt.Sprintf("non-SDK error type %s: %s", rec.Native, trunc(str(drv["msg"]), 150)))
 	}
-	// O4
+	// O4. S13m's server body echoes the Authorization header, so a token anywhere in the SDK's output for that
+	// mutation is reflection, reported as the informational O4r (RULES.md section 4, amendment A11).
+	o4 := func(where, v string) bool {
+		if !leaksToken(v) {
+			return false
+		}
+		if m.ID == "S13m" {
+			rec.Notes = append(rec.Notes, "O4r token reflected from the server body in "+where)
+		} else {
+			add("O4", "HIGH", "token in "+where+": "+trunc(v, 160))
+		}
+		return true
+	}
 	for _, f := range []string{"msg", "native", "full"} {
-		if leaksToken(str(drv[f])) {
-			if m.ID == "S13m" && f == "msg" {
-				rec.Notes = append(rec.Notes, "O4r token reflected from the server body")
-				continue
-			}
-			add("O4", "HIGH", "token in "+f+": "+trunc(str(drv[f]), 160))
+		if o4(f, str(drv[f])) {
 			break
 		}
 	}
-	if leaksToken(info.Stderr) {
-		add("O4", "HIGH", "token in stderr: "+trunc(info.Stderr, 120))
-	}
+	o4("stderr", info.Stderr)
 	sev := sevFor(sc, m)
 	switch exp {
 	case "R":
@@ -487,7 +541,8 @@ func checkExact(sc *HScen, m *Mut, drv map[string]any, ok bool, reqs []HReq, add
 		}
 		return
 	}
-	if m.WantMain == "" {
+	want := m.wantMain()
+	if want == "" {
 		return
 	}
 	var got string
@@ -503,8 +558,8 @@ func checkExact(sc *HScen, m *Mut, drv map[string]any, ok bool, reqs []HReq, add
 			got = str(it["name"])
 		}
 	}
-	if got != m.WantMain {
-		add("O3", sev, fmt.Sprintf("returned %q, server sent %q", trunc(got, 60), trunc(m.WantMain, 60)))
+	if got != want {
+		add("O3", sev, fmt.Sprintf("returned %q, server sent %q", trunc(got, 60), trunc(want, 60)))
 	}
 }
 
@@ -866,12 +921,12 @@ func report(recs []RunRec, label string, took time.Duration) string {
 	var notes []string
 	for _, r := range recs {
 		for _, n := range r.Notes {
-			if strings.HasPrefix(n, "H1") || strings.HasPrefix(n, "unexpected rejection") && isCtl(r.Mut) {
+			if reHarnessNote.MatchString(n) || strings.HasPrefix(n, "O4r") || strings.HasPrefix(n, "unexpected rejection") && isCtl(r.Mut) {
 				notes = append(notes, fmt.Sprintf("%s %s %s: %s", r.SDK, r.Scen, r.Mut, trunc(n, 160)))
 			}
 		}
 	}
-	fmt.Fprintf(&b, "\n-- harness notes and control rejections: %d\n", len(notes))
+	fmt.Fprintf(&b, "\n-- harness notes, O4r reflections and control rejections: %d\n", len(notes))
 	for i, n := range notes {
 		if i >= 60 {
 			b.WriteString("...\n")
@@ -881,6 +936,8 @@ func report(recs []RunRec, label string, took time.Duration) string {
 	}
 	return b.String()
 }
+
+var reHarnessNote = regexp.MustCompile(`^H\d `)
 
 func isCtl(id string) bool {
 	m := mutByID(id)
@@ -940,46 +997,54 @@ func hostileReplay(args []string) error {
 		by[p[0]] = append(by[p[0]], p[1]+":"+p[2])
 	}
 	for sdk, list := range by {
-		srv, err := NewHostSrv()
-		if err != nil {
+		if err := replaySDK(&cfg, sdk, list, *n); err != nil {
 			return err
 		}
-		d, err := hostileDriver(sdk, cfg.root, cfg.build, cfg.sdksDir)
-		if err != nil {
-			return err
+	}
+	return nil
+}
+
+// replaySDK replays the (scenario, mutation) pairs of one SDK; the server and the driver are released on every return.
+func replaySDK(cfg *hostileCfg, sdk string, list []string, n int) error {
+	srv, err := NewHostSrv()
+	if err != nil {
+		return err
+	}
+	defer srv.Close()
+	d, err := hostileDriver(sdk, cfg.root, cfg.build, cfg.sdksDir)
+	if err != nil {
+		return err
+	}
+	defer d.kill()
+	golden := map[string]map[string]any{}
+	for i := range hscens {
+		r := runOne(d, srv, &hscens[i], mutByID("C0"), nil)
+		if r.Drv != nil && r.Drv["ok"] == true {
+			golden[hscens[i].ID] = r.Drv
 		}
-		golden := map[string]map[string]any{}
-		for i := range hscens {
-			r := runOne(d, srv, &hscens[i], mutByID("C0"), nil)
-			if r.Drv != nil && r.Drv["ok"] == true {
-				golden[hscens[i].ID] = r.Drv
+	}
+	for _, t := range list {
+		p := strings.Split(t, ":")
+		sc, m := scenByID(p[0]), mutByID(p[1])
+		if sc == nil || m == nil {
+			return fmt.Errorf("unknown triple %s", t)
+		}
+		var sigs []string
+		var last RunRec
+		for range n {
+			last = runOne(d, srv, sc, m, golden[sc.ID])
+			sigs = append(sigs, sigOf(last))
+		}
+		same := true
+		for _, s := range sigs {
+			if s != sigs[0] {
+				same = false
 			}
 		}
-		for _, t := range list {
-			p := strings.Split(t, ":")
-			sc, m := scenByID(p[0]), mutByID(p[1])
-			if sc == nil || m == nil {
-				return fmt.Errorf("unknown triple %s", t)
-			}
-			var sigs []string
-			var last RunRec
-			for i := 0; i < *n; i++ {
-				last = runOne(d, srv, sc, m, golden[sc.ID])
-				sigs = append(sigs, sigOf(last))
-			}
-			same := true
-			for _, s := range sigs {
-				if s != sigs[0] {
-					same = false
-				}
-			}
-			fmt.Printf("%-7s %-4s %-5s repeats=%d identical=%v sig=%s outcome=%s ms=%d peakMB=%d\n", sdk, p[0], p[1], *n, same, sigs[0], last.Outcome, last.Ms, last.PeakMB)
-			for _, v := range last.Viol {
-				fmt.Printf("        %s %s %s\n", v.Oracle, v.Sev, v.Detail)
-			}
+		fmt.Printf("%-7s %-4s %-5s repeats=%d identical=%v sig=%s outcome=%s ms=%d peakMB=%d\n", sdk, p[0], p[1], n, same, sigs[0], last.Outcome, last.Ms, last.PeakMB)
+		for _, v := range last.Viol {
+			fmt.Printf("        %s %s %s\n", v.Oracle, v.Sev, v.Detail)
 		}
-		d.kill()
-		srv.Close()
 	}
 	return nil
 }

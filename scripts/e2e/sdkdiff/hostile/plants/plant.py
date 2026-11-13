@@ -74,15 +74,32 @@ def ph5(root):
     sub(f, 'id=data.get("id", 0),', 'id=int(float(data.get("id", 0))),', count=3)
 
 
+# PH6 timeout forms: (text, replacement). The known SDK layouts give the exact count of each form; a tree that matches
+# none of them fails, so a plant that silently missed a timeout site cannot read as a miss.
+PH6_FORMS = (
+    ("urlopen(req, timeout=self._timeout,", "urlopen(req, timeout=None,"),
+    ("urlopen(req, timeout=timeout)", "urlopen(req, timeout=None)"),
+    ("opener.open(req, timeout=timeout)", "opener.open(req, timeout=None)"),
+)
+PH6_LAYOUTS = {
+    "64c66a8 (RULES.md section 7)": (4, 1, 0),
+    "no-redirect opener (ab4290f and later)": (2, 0, 1),
+}
+
+
 def ph6(root):
     # Python ignores the caller timeout.
     f = f"{root}/python/keyorix.py"
     s = pathlib.Path(f).read_text()
-    n = s.count("timeout=self._timeout") + s.count("timeout=timeout")
-    if n < 4:
-        sys.exit(f"ph6: only {n} timeout sites")
-    s = s.replace("timeout=self._timeout", "timeout=None").replace("urlopen(req, timeout=timeout", "urlopen(req, timeout=None")
-    pathlib.Path(f).write_text(s)
+    found = tuple(s.count(old) for old, _ in PH6_FORMS)
+    if found not in PH6_LAYOUTS.values():
+        sys.exit(f"ph6: timeout forms {found} match no known layout {PH6_LAYOUTS}")
+    for (old, new), n in zip(PH6_FORMS, found):
+        if n:
+            sub(f, old, new, count=n)
+    left = pathlib.Path(f).read_text()
+    if "timeout=self._timeout" in left or "timeout=timeout" in left:
+        sys.exit("ph6: a timeout site was left unpatched")
 
 
 if __name__ == "__main__":

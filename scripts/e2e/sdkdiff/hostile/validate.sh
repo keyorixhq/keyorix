@@ -3,12 +3,20 @@
 # Usage: validate.sh <sdkdiff binary> <keyorix-sdks checkout> <plants dir from make-plants.sh> <build dir of the checkout> <work dir>
 # For each plant it runs the plant's mutation subset on the planted SDK copy and on the unpatched checkout, then prints the
 # violations that exist only with the plant.  PH0 (no-op patch) must show none, on all four SDKs.
+# A run that fails or writes no results is reported as HARNESS-FAIL (with the tail of its log), never as MISSED.
 set -u
 BIN=$1; SDKS=$2; PLANTS=$3; BUILD=$4; W=$5
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$W"
-run() { # name sdkdir builddir kinds muts scens
-  "$BIN" hostile run -sdks "$4" -sdks-dir "$2" -build "$3" -root "$ROOT" -out "$W/$1" -mut "$5" -scen "$6" -par 4 -label "$1" >"$W/$1.log" 2>&1
+FAILS=0
+run() { # name sdkdir builddir kinds muts scens; returns non-zero when the run failed or wrote no results
+  local rc=0
+  "$BIN" hostile run -sdks "$4" -sdks-dir "$2" -build "$3" -root "$ROOT" -out "$W/$1" -mut "$5" -scen "$6" -par 4 -label "$1" >"$W/$1.log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -s "$W/$1/results.jsonl" ]; then
+    echo "$1: HARNESS-FAIL (exit $rc, log $W/$1.log)"
+    tail -5 "$W/$1.log" | sed 's/^/    /'
+    return 1
+  fi
 }
 declare -a SPEC=(
   "PH1|go|O3|R05b,R02,B07,R05d|S07,S08,S09"
@@ -21,10 +29,20 @@ declare -a SPEC=(
 )
 for spec in "${SPEC[@]}"; do
   IFS='|' read -r P KINDS ORACLE MUTS SCENS <<<"$spec"
-  run "base-$P" "$SDKS" "$BUILD" "$KINDS" "$MUTS" "$SCENS"
-  run "plant-$P" "$PLANTS/$P" "$PLANTS/build-$P" "$KINDS" "$MUTS" "$SCENS"
+  OK=1
+  run "base-$P" "$SDKS" "$BUILD" "$KINDS" "$MUTS" "$SCENS" || OK=0
+  run "plant-$P" "$PLANTS/$P" "$PLANTS/build-$P" "$KINDS" "$MUTS" "$SCENS" || OK=0
+  if [ "$OK" -eq 0 ]; then
+    echo "$P sdk=$KINDS registered=$ORACLE verdict=HARNESS-FAIL (no verdict: a run failed)"
+    FAILS=$((FAILS + 1))
+    continue
+  fi
   for K in ${KINDS//,/ }; do
-    OUT=$("$BIN" hostile diff -base "$W/base-$P" -run "$W/plant-$P" -sdk "$K")
+    if ! OUT=$("$BIN" hostile diff -base "$W/base-$P" -run "$W/plant-$P" -sdk "$K"); then
+      echo "$P sdk=$K registered=$ORACLE verdict=HARNESS-FAIL (hostile diff failed)"
+      FAILS=$((FAILS + 1))
+      continue
+    fi
     NEW=$(echo "$OUT" | grep -c "^NEW .* $ORACLE:" || true)
     TOT=$(echo "$OUT" | tail -1)
     if [ "$ORACLE" = none ]; then
@@ -36,3 +54,4 @@ for spec in "${SPEC[@]}"; do
     echo "$OUT" | grep "^NEW" | head -3 | cut -c1-220 | sed 's/^/    /'
   done
 done
+exit $((FAILS > 0))

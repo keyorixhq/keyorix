@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -70,12 +71,22 @@ type Mut struct {
 	Times    int // 0: first request of the target class only, -1: every request of that class
 	Plan     func(e *Env) *Plan
 	WantMain string // X: decoded main string expected back (V value, list/project name)
-	WantID   string // X: decimal id expected back and forwarded; "!" means no success is acceptable
+	// WantMainFn replaces WantMain for expected strings too large to build at package init.
+	WantMainFn func() string
+	WantID     string // X: decimal id expected back and forwarded; "!" means no success is acceptable
 }
 
 var muts []Mut
 
 func add(m Mut) { muts = append(muts, m) }
+
+// wantMain is the decoded main string an X mutation expects back, "" when it checks none.
+func (m *Mut) wantMain() string {
+	if m.WantMainFn != nil {
+		return m.WantMainFn()
+	}
+	return m.WantMain
+}
 
 func mutByID(id string) *Mut {
 	for i := range muts {
@@ -161,8 +172,9 @@ func nestText(kind string, depth int) (open, close string) {
 	case "obj":
 		return strings.Repeat(`{"a":`, depth), "1" + strings.Repeat("}", depth)
 	}
-	// alternating
+	// alternating; the innermost level gets a value like the obj case, so the text stays valid JSON at every depth
 	var o, c strings.Builder
+	c.WriteString("1")
 	for i := range depth {
 		if i%2 == 0 {
 			o.WriteString(`[`)
@@ -549,8 +561,8 @@ func init() {
 	txt("U10", "raw NUL", "R", true, "ab\x00cd", "")
 	txt("U11", "raw CR LF", "R", true, "ab\r\ncd", "")
 	txt("U12", "escaped CR LF", "X", false, `ab\r\ncd`, "ab\r\ncd")
-	txt("U13", "escapes \\/ \\b \\f \\t \\u00e9", "X", false, `a\/b\b\f\té`, "a/b\b\f\té")
-	txt("U14", "escaped surrogate pair", "X", false, `x😀y`, "x\U0001F600y")
+	txt("U13", "escapes \\/ \\b \\f \\t \\u00e9", "X", false, `a\/b\b\f\t\u00e9`, "a/b\b\f\té")
+	txt("U14", "escaped surrogate pair", "X", false, `x\ud83d\ude00y`, "x\U0001F600y")
 	txt("U15", "value ending in a backslash", "X", false, `abc\\`, `abc\`)
 	add(Mut{ID: "U16", Family: "U", Desc: "name with escaped quotes and the text value, before the real value", Exp: "X", Scens: scVal, WantMain: "s3cret-value",
 		Plan: func(e *Env) *Plan {
@@ -568,9 +580,10 @@ func init() {
 		exp string
 	}{{"U18", 1 << 20, "X"}, {"U19", 16 << 20, "X"}, {"U20", 64 << 20, "E"}} {
 		sz, exp := n.n, n.exp
-		s := repeatStr("B", sz)
-		add(Mut{ID: n.id, Family: "U", Desc: fmt.Sprintf("%d-byte string", sz), Exp: exp, Scens: scTxt, WantMain: s,
-			Plan: func(e *Env) *Plan { return okPlan(e, docWith(e, s)) }})
+		// built on first use, not at package init: every sdkdiff subcommand loads this catalogue
+		s := sync.OnceValue(func() string { return repeatStr("B", sz) })
+		add(Mut{ID: n.id, Family: "U", Desc: fmt.Sprintf("%d-byte string", sz), Exp: exp, Scens: scTxt, WantMainFn: s,
+			Plan: func(e *Env) *Plan { return okPlan(e, docWith(e, s())) }})
 	}
 	add(Mut{ID: "U21", Family: "U", Desc: "1 MiB key name", Exp: "E", Scens: scBody,
 		Plan: func(e *Env) *Plan {
