@@ -155,4 +155,44 @@ func checkAEADAlgebra(keySeed, plaintext, aad []byte, flip uint16) {
 			panic("aad-binding: DecryptWithAAD accepted a plain ciphertext under a non-empty AAD")
 		}
 	}
+
+	// ---- WIPED DEK: no operation may succeed after WipeDEK ----
+	// WipeDEK only latches a flag — the GCM key schedule stays usable (crypto/aes
+	// cannot zero it), so the only thing that stops a wiped service from still
+	// encrypting/decrypting is the es.wiped guard at the head of each method.
+	// A dropped guard therefore leaks a usable cipher past a wipe; assert every
+	// public operation refuses, which pins that guard on all four methods.
+	{
+		svcW, err := NewEncryptionService(derive32(keySeed))
+		if err != nil {
+			panic(fmt.Sprintf("NewEncryptionService(wipe): %v", err))
+		}
+		// Seal real ciphertexts while the service is still live, so the post-wipe
+		// Decrypt/DecryptWithAAD have genuine inputs to refuse (not malformed ones
+		// a different guard would reject anyway).
+		encW, err := svcW.Encrypt(plaintext, "v1")
+		if err != nil {
+			panic(fmt.Sprintf("wiped-dek: pre-wipe Encrypt: %v", err))
+		}
+		encWA, err := svcW.EncryptWithAAD(plaintext, "v1", aad)
+		if err != nil {
+			panic(fmt.Sprintf("wiped-dek: pre-wipe EncryptWithAAD: %v", err))
+		}
+		svcW.WipeDEK()
+		if !svcW.IsDEKWiped() {
+			panic("wiped-dek: WipeDEK did not latch IsDEKWiped")
+		}
+		if _, err := svcW.Encrypt(plaintext, "v1"); err == nil {
+			panic("wiped-dek: Encrypt succeeded after WipeDEK")
+		}
+		if _, err := svcW.EncryptWithAAD(plaintext, "v1", aad); err == nil {
+			panic("wiped-dek: EncryptWithAAD succeeded after WipeDEK")
+		}
+		if _, err := svcW.Decrypt(encW); err == nil {
+			panic("wiped-dek: Decrypt succeeded after WipeDEK")
+		}
+		if _, err := svcW.DecryptWithAAD(encWA, aad); err == nil {
+			panic("wiped-dek: DecryptWithAAD succeeded after WipeDEK")
+		}
+	}
 }
