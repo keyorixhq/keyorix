@@ -333,7 +333,7 @@ func TestTagError_ForbiddenBranch_S13(t *testing.T) {
 func TestTagError_InternalBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, errors.New("unexpected storage failure"), "Failed to list tags")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, errors.New("unexpected storage failure"), "Failed to list tags")
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, w.Body.String(), "Failed to list tags")
 }
@@ -343,7 +343,7 @@ func TestTagError_InternalBranch_S13(t *testing.T) {
 func TestTagError_NotFoundBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, storage.NotFound(storage.ErrSecretNotFound, "secret not found in store", nil), "Failed to list tags")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, storage.NotFound(storage.ErrSecretNotFound, "secret not found in store", nil), "Failed to list tags")
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -352,7 +352,7 @@ func TestTagError_NotFoundBranch_S13(t *testing.T) {
 func TestTagError_PermissionBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, storage.Typed(core.ErrPermissionDenied, "permission denied", nil), "Failed to list tags")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, storage.Typed(core.ErrPermissionDenied, "permission denied", nil), "Failed to list tags")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -361,7 +361,7 @@ func TestTagError_PermissionBranch_S13(t *testing.T) {
 func TestTagError_ValidationBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "at most 50 tags allowed", nil), "Failed to set tags")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, storage.Typed(core.ErrSecretInvalidInput, "at most 50 tags allowed", nil), "Failed to set tags")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 

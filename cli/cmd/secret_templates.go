@@ -126,10 +126,10 @@ var secretTemplateCreateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("create template: %w", err)
 		}
-		if resp.JSON200 == nil || resp.JSON200.Data == nil {
+		if resp.JSON201 == nil || resp.JSON201.Data == nil {
 			return httpStatusError("create template", resp.StatusCode(), resp.Body)
 		}
-		fmt.Printf("Template %q created (ID %d).\n", derefStr(resp.JSON200.Data.Name), derefSecretInt(resp.JSON200.Data.Id))
+		fmt.Printf("Template %q created (ID %d).\n", derefStr(resp.JSON201.Data.Name), derefSecretInt(resp.JSON201.Data.Id))
 		return nil
 	},
 }

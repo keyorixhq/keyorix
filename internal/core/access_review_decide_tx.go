@@ -122,7 +122,7 @@ type reviewRevokeApply struct {
 // and reject exactly the same requests.
 func (c *KeyorixCore) planReviewRevoke(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) (*reviewRevokeApply, error) {
 	if projectID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
 	if err := c.enforceAccessReviewReviewerControls(ctx, actorID, d); err != nil {
 		return nil, err
@@ -130,12 +130,12 @@ func (c *KeyorixCore) planReviewRevoke(ctx context.Context, actorID, projectID u
 	switch d.Source {
 	case "role":
 		if d.PrincipalID == 0 || d.RoleID == 0 {
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to revoke a role grant")
+			return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to revoke a role grant")
 		}
 		return c.planReviewRoleRevoke(ctx, actorID, projectID, d)
 	case "direct_share", "group_share":
 		if d.PrincipalID == 0 || d.SecretID == 0 {
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to revoke a share")
+			return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to revoke a share")
 		}
 		return &reviewRevokeApply{
 			guarded: runUnguarded,
@@ -144,9 +144,9 @@ func (c *KeyorixCore) planReviewRevoke(ctx context.Context, actorID, projectID u
 			},
 		}, nil
 	case "owner":
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "ownership cannot be revoked via access review; reassign or delete the secret instead")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "ownership cannot be revoked via access review; reassign or delete the secret instead")
 	default:
-		return nil, fmt.Errorf("%s: unknown access-review source %q", i18n.T("ErrorValidation", nil), d.Source)
+		return nil, validationErrorf("%s: unknown access-review source %q", i18n.T("ErrorValidation", nil), d.Source)
 	}
 }
 
