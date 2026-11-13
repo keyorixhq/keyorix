@@ -162,7 +162,7 @@ func TestDynamic_RenewLease_LeaseNotFound_S29(t *testing.T) {
 
 // TestDynamic_RenewLease_AdminLeaseFound_S29 — admin finds a lease and attempts
 // to renew it; the backend type (empty) triggers a "cannot renew" error which
-// exercises the isSafeDynamicSecretError branch.
+// exercises the typed lease-refusal branch of dynamicSecretClientMessage.
 func TestDynamic_RenewLease_AdminLeaseFound_S29(t *testing.T) {
 	t.Parallel()
 	cs, db := freshCoreS29WithAdmin(t)

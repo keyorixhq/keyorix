@@ -115,7 +115,7 @@ var identifierRegex = regexp.MustCompile(`^[a-zA-Z0-9 _-]+$`)
 
 func validateIdentifier(name string) error {
 	if !identifierRegex.MatchString(name) {
-		return fmt.Errorf("%s: must contain only letters, digits, spaces, - or _", i18n.T("ErrorValidation", nil))
+		return validationError(fmt.Errorf("%s: must contain only letters, digits, spaces, - or _", i18n.T("ErrorValidation", nil)))
 	}
 	return validateIdentifierWhitespace(name)
 }
@@ -127,7 +127,7 @@ func validateIdentifier(name string) error {
 // "Support  Team"). Shared by validateIdentifier and validateUsernameCharset.
 func validateIdentifierWhitespace(name string) error {
 	if trimmed := strings.TrimSpace(name); trimmed == "" || trimmed != name || strings.Contains(trimmed, "  ") {
-		return fmt.Errorf("%s: must not be all whitespace or have leading, trailing, or repeated internal whitespace", i18n.T("ErrorValidation", nil))
+		return validationError(fmt.Errorf("%s: must not be all whitespace or have leading, trailing, or repeated internal whitespace", i18n.T("ErrorValidation", nil)))
 	}
 	return nil
 }
@@ -137,10 +137,10 @@ func validateIdentifierWhitespace(name string) error {
 // enforces the anti-homograph identifier charset (G38) — see validateIdentifier.
 func validateProjectName(name string) error {
 	if name == "" {
-		return fmt.Errorf("%s: project name is required", i18n.T("ErrorValidation", nil))
+		return validationError(fmt.Errorf("%s: project name is required", i18n.T("ErrorValidation", nil)))
 	}
 	if len(name) > maxProjectNameLen {
-		return fmt.Errorf("%s: project name exceeds %d characters", i18n.T("ErrorValidation", nil), maxProjectNameLen)
+		return validationError(fmt.Errorf("%s: project name exceeds %d characters", i18n.T("ErrorValidation", nil), maxProjectNameLen))
 	}
 	return validateIdentifier(name)
 }
@@ -152,10 +152,10 @@ func validateProjectName(name string) error {
 // still slip past every transport (gRPC, CLI embedded mode), not just HTTP.
 func validateEnvironmentName(name string) error {
 	if name == "" {
-		return fmt.Errorf("%s: environment name is required", i18n.T("ErrorValidation", nil))
+		return validationError(fmt.Errorf("%s: environment name is required", i18n.T("ErrorValidation", nil)))
 	}
 	if len(name) > maxEnvironmentNameLen {
-		return fmt.Errorf("%s: environment name exceeds %d characters", i18n.T("ErrorValidation", nil), maxEnvironmentNameLen)
+		return validationError(fmt.Errorf("%s: environment name exceeds %d characters", i18n.T("ErrorValidation", nil), maxEnvironmentNameLen))
 	}
 	return validateIdentifier(name)
 }
@@ -942,8 +942,8 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 	// roughly 1-2 million times in that budget) could request on the order of a
 	// million environments, degrading the shared install for every other tenant.
 	if len(envNames) > maxEnvNamesPerCreate {
-		return nil, fmt.Errorf("%s: at most %d environments per project create (got %d)",
-			i18n.T("ErrorValidation", nil), maxEnvNamesPerCreate, len(envNames))
+		return nil, validationError(fmt.Errorf("%s: at most %d environments per project create (got %d)",
+			i18n.T("ErrorValidation", nil), maxEnvNamesPerCreate, len(envNames)))
 	}
 	for _, envName := range envNames {
 		if err := validateEnvironmentName(envName); err != nil {

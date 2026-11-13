@@ -204,24 +204,26 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	if req.ParentID != nil && *req.ParentID != 0 {
 		parent, perr := c.storage.GetSecret(ctx, *req.ParentID)
 		if perr != nil {
-			msg := fmt.Sprintf("%s: parent folder %d not found", i18n.T("ErrorValidation", nil), *req.ParentID)
 			// A definitive miss matches storage.ErrSecretNotFound (gRPC answers
 			// NotFound); the text is unchanged, so HTTP still answers 400.
 			if storage.IsSecretNotFound(perr) {
-				return nil, storage.NotFound(storage.ErrSecretNotFound, msg, perr)
+				return nil, storage.NotFound(storage.ErrSecretNotFound,
+					fmt.Sprintf("%s: parent folder %d not found", i18n.T("ErrorValidation", nil), *req.ParentID), perr)
 			}
-			return nil, errors.New(msg)
+			// Reading the parent FAILED: a storage fault, not "parent not found"
+			// (CORE-ERR-FAMILY-7; it used to answer the not-found validation text).
+			return nil, &storageReadFault{cause: perr}
 		}
 		if parent.IsSecret {
-			return nil, fmt.Errorf("%s: parent %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *req.ParentID)
+			return nil, secretInvalidInput(fmt.Errorf("%s: parent %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *req.ParentID))
 		}
 		if parent.ProjectID != req.ProjectID || parent.EnvironmentID != req.EnvironmentID {
-			return nil, fmt.Errorf("%s: parent folder %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *req.ParentID)
+			return nil, secretInvalidInput(fmt.Errorf("%s: parent folder %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *req.ParentID))
 		}
 	}
 
 	if !IsValidClassification(req.Classification) {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "invalid classification")
+		return nil, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "invalid classification"))
 	}
 
 	// #390: normalize req.Tags UP FRONT, before creating anything, so a caller intending
@@ -408,7 +410,7 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 // GetSecretWithPermissionCheck for that.
 func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
 	if id == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required"))
 	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
@@ -500,13 +502,13 @@ func (c *KeyorixCore) GetSecretByNameWithPermissionCheck(ctx context.Context, na
 // UpdateSecret updates an existing secret.
 func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest) (*models.SecretNode, error) {
 	if err := c.validateUpdateSecretRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	// An update that changes the value writes a new version, so it must clear the
 	// value policy too (otherwise a weak value bypasses the create/rotate gate).
 	if len(req.Value) > 0 {
 		if err := c.secretValuePolicy.Validate(req.Value); err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+			return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 		}
 		if err := c.checkSecretSize(req.Value); err != nil {
 			return nil, err
@@ -651,7 +653,7 @@ func applyUpdateSecretFields(secret *models.SecretNode, req *UpdateSecretRequest
 // UpdateSecretWithPermissionCheck updates a secret with write permission enforcement.
 func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *UpdateSecretRequest) (*models.SecretNode, error) {
 	if req.UserID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
+		return nil, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking"))
 	}
 	if _, err := c.EnforceSecretActionPermission(ctx, req.ID, req.UserID, c.updateSecretAction(ctx, req)); err != nil {
 		return nil, err
@@ -726,7 +728,7 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 // it is always one transaction (see the comment at the write below).
 func (c *KeyorixCore) rotateSecret(ctx context.Context, id uint, newValue []byte, actorID uint, rotatedBy string, rollback bool, auditRow func(*models.SecretNode) (mutationAuditRow, bool)) (*models.SecretNode, error) {
 	if err := c.secretValuePolicy.Validate(newValue); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	if err := c.checkSecretSize(newValue); err != nil {
 		return nil, err
@@ -861,7 +863,7 @@ func updateRotationStamp(ctx context.Context, st storage.Storage, id uint, stamp
 // DeleteSecret soft-deletes a secret by ID.
 func (c *KeyorixCore) DeleteSecret(ctx context.Context, id uint) error {
 	if id == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required"))
 	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
@@ -899,7 +901,7 @@ func (c *KeyorixCore) DeleteSecret(ctx context.Context, id uint) error {
 // DeleteSecretWithPermissionCheck deletes a secret with owner permission enforcement.
 func (c *KeyorixCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, userID uint) error {
 	if userID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
+		return secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking"))
 	}
 	if _, err := c.EnforceSecretOwnerPermission(ctx, id, userID); err != nil {
 		return err
@@ -916,7 +918,7 @@ const EventSecretRestored = "secret.restored"
 // secret.deleted event, so a deleted secret reappearing leaves a trail.
 func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required"))
 	}
 	// Fetch before restoring so we have name + projectID even though the row is
 	// still soft-deleted at this point (GetSecretIncludingDeleted ignores deleted_at).
@@ -1025,7 +1027,7 @@ func (c *KeyorixCore) CreateFolder(
 ) (*models.SecretNode, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return nil, fmt.Errorf("%s: folder name is required", i18n.T("ErrorValidation", nil))
+		return nil, secretInvalidInput(fmt.Errorf("%s: folder name is required", i18n.T("ErrorValidation", nil)))
 	}
 	// #1642: folders share secret_nodes' (project, environment, name) unique
 	// index with secrets, so they share the identical NFC-vs-NFD collision
@@ -1033,14 +1035,14 @@ func (c *KeyorixCore) CreateFolder(
 	// case-folded (a folder name is an address/path segment, not identity).
 	normalizedFolderName, nerr := identity.NewAddressName(name)
 	if nerr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), nerr)
+		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), nerr))
 	}
 	name = normalizedFolderName.String()
 	if projectID == 0 {
-		return nil, fmt.Errorf("%s: project_id is required", i18n.T("ErrorValidation", nil))
+		return nil, secretInvalidInput(fmt.Errorf("%s: project_id is required", i18n.T("ErrorValidation", nil)))
 	}
 	if envID == 0 {
-		return nil, fmt.Errorf("%s: environment_id is required", i18n.T("ErrorValidation", nil))
+		return nil, secretInvalidInput(fmt.Errorf("%s: environment_id is required", i18n.T("ErrorValidation", nil)))
 	}
 
 	// Validate that the parent exists and is itself a folder node.
@@ -1054,7 +1056,7 @@ func (c *KeyorixCore) CreateFolder(
 			return nil, fmt.Errorf("parent folder %d not found: %w: %w", *parentID, storage.ErrSecretNotFound, err)
 		}
 		if parent.IsSecret {
-			return nil, fmt.Errorf("%s: parent node %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *parentID)
+			return nil, secretInvalidInput(fmt.Errorf("%s: parent node %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *parentID))
 		}
 		// The destination parent was loaded with a bare, unauthorized GetSecret:
 		// the caller's write authorization was only ever checked against
@@ -1068,7 +1070,7 @@ func (c *KeyorixCore) CreateFolder(
 		// HasSecretACL's ancestor walk in secret_acl.go) would then apply that
 		// other project's grants to it.
 		if parent.ProjectID != projectID || parent.EnvironmentID != envID {
-			return nil, fmt.Errorf("%s: parent folder %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *parentID)
+			return nil, secretInvalidInput(fmt.Errorf("%s: parent folder %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *parentID))
 		}
 	}
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/dynamic/dynamictest"
 	"github.com/keyorixhq/keyorix/internal/encryption"
@@ -26,6 +27,13 @@ import (
 // a fake credential engine (so Issue/Revoke/Renew don't touch a real DB), and a
 // user (id 1) holding a global writer role with secrets.read/write/delete.
 func newDynamicTestRig(t *testing.T) *DynamicSecretGRPCService {
+	t.Helper()
+	return newDynamicTestRigOn(t, func(st storage.Storage) storage.Storage { return st })
+}
+
+// newDynamicTestRigOn is newDynamicTestRig whose core reads through wrap(storage), so a
+// test can put a faultstorage.FaultyStorage between the core and the seeded database.
+func newDynamicTestRigOn(t *testing.T, wrap func(storage.Storage) storage.Storage) *DynamicSecretGRPCService {
 	t.Helper()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
@@ -58,11 +66,14 @@ func newDynamicTestRig(t *testing.T) *DynamicSecretGRPCService {
 	// secrets.write — grant user 1 (also, separately from "writer") a global admin role.
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 2}).Error)
+	// User 3 holds only "writer": secrets.write passes, the #162 admin check refuses.
+	require.NoError(t, db.Create(&models.User{ID: 3, Username: "writer-only"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1}).Error)
 
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
 	require.NoError(t, enc.Initialize("test-passphrase"))
 
-	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
+	coreService := core.NewKeyorixCore(wrap(store.NewLocalStorage(db)))
 	coreService.SetAuthEncryptor(enc)
 	coreService.SetDynamicAllowPrivateTargets(true) // tests use localhost DSNs; real SSRF guard tested in dynamic_secrets_ssrf_test.go
 	fake := &dynamictest.FakeEngine{NativeExpiry: true}

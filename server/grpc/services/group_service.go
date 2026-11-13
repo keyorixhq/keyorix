@@ -261,6 +261,6 @@ func groupError(err error) error {
 	case core.IsAuthTransient(err):
 		return status.Error(codes.Unavailable, "group operation temporarily unavailable; retry")
 	default:
-		return status.Error(codes.Internal, "group operation failed")
+		return internalFailure("group operation failed", err)
 	}
 }
