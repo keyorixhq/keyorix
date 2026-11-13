@@ -93,7 +93,7 @@ func hostileDriver(name, root, build, sdks string) (*HDriver, error) {
 }
 
 func (d *HDriver) start() error {
-	cmd := exec.Command(d.argv[0], d.argv[1:]...) // #nosec G204 -- operator-built driver commands
+	cmd := exec.Command(d.argv[0], d.argv[1:]...) // #nosec G204 -- operator-built driver commands // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Env = d.env
 	cmd.Stderr = d.stderr
 	in, err := cmd.StdinPipe()
@@ -245,7 +245,7 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 		info.Reason, info.Exit = "oversize", fmt.Sprintf("driver answer longer than %d bytes, discarded", hMaxLine)
 		return nil, info
 	}
-	dec := json.NewDecoder(strings.NewReader(r.s))
+	dec := json.NewDecoder(strings.NewReader(r.s)) // nosemgrep: semgrep.keyorix-unbounded-json-decoder -- r.s is already capped at hMaxLine above
 	dec.UseNumber()
 	var m map[string]any
 	if err := dec.Decode(&m); err != nil {

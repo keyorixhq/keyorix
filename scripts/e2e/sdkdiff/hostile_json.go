@@ -38,7 +38,7 @@ func cmdJSONTable(args []string) error {
 			return err
 		}
 		var v any
-		if json.NewDecoder(bytes.NewReader(b)).Decode(&v) == nil {
+		if json.NewDecoder(bytes.NewReader(b)).Decode(&v) == nil { // nosemgrep: semgrep.keyorix-unbounded-json-decoder -- operator-supplied local corpus file, not network input
 			res["go-decoder"][e.Name()] = "accept"
 		} else {
 			res["go-decoder"][e.Name()] = "reject"
@@ -54,7 +54,7 @@ func cmdJSONTable(args []string) error {
 		"python": {"python3", "-I", filepath.Join(*root, "hostile", "jsonparser", "table.py"), *corpus},
 		"node":   {"node", "--stack-size=984", filepath.Join(*root, "hostile", "jsonparser", "table.js"), *corpus},
 	} {
-		out, err := exec.Command(argv[0], argv[1:]...).Output() // #nosec G204 -- fixed operator scripts
+		out, err := exec.Command(argv[0], argv[1:]...).Output() // #nosec G204 -- fixed operator scripts // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 		if err != nil {
 			return fmt.Errorf("%s: %w", kind, err)
 		}
