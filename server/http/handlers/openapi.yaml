@@ -5019,7 +5019,9 @@ paths:
         apply: admin authority on the config's project/environment (403), the
         private-network egress policy and the refused driver options (400). The
         change and its audit row commit together; 503 `audit_unavailable` when
-        the audit log refuses the row (nothing changed). The DSN is never
+        the audit log refuses the row (nothing changed). While the config has an
+        active or revoke_failed lease the new DSN must name the same host(s)
+        (409 otherwise): those leases are revoked through it. The DSN is never
         returned.
       operationId: updateDynamicSecretConfigAdminDSN
       security: [{bearerAuth: []}]
@@ -5048,6 +5050,7 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
         '503': {$ref: '#/components/responses/AuditUnavailable'}
   /api/v1/dynamic-secrets/configs/{id}/issue:
     post:

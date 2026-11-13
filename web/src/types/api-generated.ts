@@ -3168,7 +3168,7 @@ export interface paths {
         head?: never;
         /**
          * Replace a dynamic-secret config's admin DSN
-         * @description Replaces the stored admin DSN in place, for example to remove an option refused since #3952 (a private-CA sslrootcert or tlsCAFile) without deleting and recreating the config. The same checks as config create apply: admin authority on the config's project/environment (403), the private-network egress policy and the refused driver options (400). The change and its audit row commit together; 503 `audit_unavailable` when the audit log refuses the row (nothing changed). The DSN is never returned.
+         * @description Replaces the stored admin DSN in place, for example to remove an option refused since #3952 (a private-CA sslrootcert or tlsCAFile) without deleting and recreating the config. The same checks as config create apply: admin authority on the config's project/environment (403), the private-network egress policy and the refused driver options (400). The change and its audit row commit together; 503 `audit_unavailable` when the audit log refuses the row (nothing changed). While the config has an active or revoke_failed lease the new DSN must name the same host(s) (409 otherwise): those leases are revoked through it. The DSN is never returned.
          */
         patch: operations["updateDynamicSecretConfigAdminDSN"];
         trace?: never;
@@ -11982,6 +11982,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             503: components["responses"]["AuditUnavailable"];
         };
     };

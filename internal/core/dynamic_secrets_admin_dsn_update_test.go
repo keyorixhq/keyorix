@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -254,5 +255,40 @@ func TestDynamicSecrets_UpdateAdminDSN_DSNNeverLeaves(t *testing.T) {
 			assert.False(t, strings.Contains(fmt.Sprintf("%s", v), adsnSecret), "column %s holds the DSN in clear", col)
 		}
 		assert.Equal(t, adsnCleanDSN("ok"), w.storedDSN(cfg), "precondition: the encrypted column holds the DSN")
+	})
+}
+
+// TestDynamicSecrets_UpdateAdminDSN_LiveLeasesPinTheHost: while a lease is live,
+// its revoke goes through the config's DSN, so the new DSN must name the same
+// host; removing a refused option (the fix this exists for) keeps the host.
+func TestDynamicSecrets_UpdateAdminDSN_LiveLeasesPinTheHost(t *testing.T) {
+	adsnBackends(t, func(t *testing.T, w *adsnWorld) {
+		legacy := "host=203.0.113.10 user=admin password=" + adsnSecret + " dbname=app sslrootcert=/etc/keyorix/private-ca.pem"
+		cfg := w.legacyConfig("adsn-pin", legacy)
+		now := w.core.now()
+		for i, st := range []string{"active", "revoke_failed", "revoked"} {
+			_, err := w.f.setup.Storage().CreateDynamicSecretLease(w.ctx, &models.DynamicSecretLease{
+				ConfigID: cfg.ID, LeaseID: fmt.Sprintf("adsn-pin-%d", i), ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID,
+				RoleName: fmt.Sprintf("kx_pin_%d", i), Status: st, IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+			})
+			require.NoError(t, err)
+		}
+		events := w.updateEvents()
+		_, err := w.core.UpdateDynamicSecretConfigAdminDSN(w.ctx, &UpdateDynamicSecretConfigAdminDSNRequest{
+			ConfigID: cfg.ID, AdminDSN: "postgres://admin:" + adsnSecret + "@198.51.100.77:5432/app", ActorID: w.f.adminID,
+		})
+		require.ErrorIs(t, err, ErrDynamicSecretPrecondition)
+		assert.Contains(t, err.Error(), "2 live lease(s)", "active and revoke_failed count, revoked does not")
+		assert.NotContains(t, err.Error(), "198.51.100.77", "the refusal names no host")
+		assert.Equal(t, legacy, w.storedDSN(cfg))
+		assert.Equal(t, events, w.updateEvents())
+
+		// Same host, the refused option removed: accepted (URL form vs key-value, case differs).
+		fixed := "postgres://admin:" + adsnSecret + "@203.0.113.10:5432/app?sslmode=require"
+		_, err = w.core.UpdateDynamicSecretConfigAdminDSN(w.ctx, &UpdateDynamicSecretConfigAdminDSNRequest{
+			ConfigID: cfg.ID, AdminDSN: fixed, ActorID: w.f.adminID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, fixed, w.storedDSN(cfg))
 	})
 }

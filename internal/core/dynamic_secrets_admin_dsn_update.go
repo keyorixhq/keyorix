@@ -8,6 +8,8 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
@@ -34,7 +36,9 @@ type UpdateDynamicSecretConfigAdminDSNRequest struct {
 // error carries the DSN.
 //
 // Live leases keep running: a lease's revoke reads the config's admin DSN when
-// it runs, so once this commits revoke and the sweep use the new DSN.
+// it runs, so once this commits revoke and the sweep use the new DSN. That is why
+// the new DSN must name the same host(s) while the config has a live lease
+// (requireSameTargetWhileLeasesLive).
 func (c *KeyorixCore) UpdateDynamicSecretConfigAdminDSN(ctx context.Context, req *UpdateDynamicSecretConfigAdminDSNRequest) (*models.DynamicSecretConfig, error) {
 	if req.ConfigID == 0 || req.AdminDSN == "" {
 		return nil, validationErrorf("config id and admin_dsn are required")
@@ -52,6 +56,9 @@ func (c *KeyorixCore) UpdateDynamicSecretConfigAdminDSN(ctx context.Context, req
 		return nil, err
 	}
 	if err := dsn.CheckLocalFileOptions(cfg.BackendType, req.AdminDSN); err != nil {
+		return nil, err
+	}
+	if err := c.requireSameTargetWhileLeasesLive(ctx, cfg, req.AdminDSN); err != nil {
 		return nil, err
 	}
 	// The AAD binds the ciphertext to (id, project, environment); none of them is
@@ -77,4 +84,48 @@ func (c *KeyorixCore) UpdateDynamicSecretConfigAdminDSN(ctx context.Context, req
 	}
 	cfg.AdminDSNEnc, cfg.AdminDSNMeta = dsnEnc, dsnMeta
 	return cfg, nil
+}
+
+// requireSameTargetWhileLeasesLive refuses (ErrDynamicSecretPrecondition, 409 /
+// FailedPrecondition) a new admin DSN that names other hosts than the stored one
+// while cfg has an active or revoke_failed lease. Those leases are revoked through
+// the config's DSN at the time of the revoke: pointed at another server, revoke
+// and the sweep would drop a role that does not exist there, mark the lease
+// revoked and leave the real credential alive on the old server. A stored DSN
+// that cannot be decrypted cannot be compared, so it is refused the same way.
+// Hosts are compared as parsed (dsn.ParseDSNHosts), case-insensitively; a DSN
+// with no host (postgres service=, cloud backends) only matches another with none.
+//
+// Not covered: a lease issued between this check and the write. The window is one
+// admin's own request; issue from a config with a refused option fails anyway.
+func (c *KeyorixCore) requireSameTargetWhileLeasesLive(ctx context.Context, cfg *models.DynamicSecretConfig, newDSN string) error {
+	leases, err := c.storage.ListDynamicSecretLeases(ctx, cfg.ID)
+	if err != nil {
+		return &storageReadFault{cause: fmt.Errorf("failed to list the config's leases: %w", err)}
+	}
+	live := 0
+	for _, l := range leases {
+		if l.Status == "active" || l.Status == "revoke_failed" {
+			live++
+		}
+	}
+	if live == 0 {
+		return nil
+	}
+	oldDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, ports.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
+	if err == nil && slices.Equal(normalizedDSNHosts(oldDSN), normalizedDSNHosts(newDSN)) {
+		return nil
+	}
+	return dynamicPreconditionf("dynamic-secret config %d has %d live lease(s) and the new admin_dsn names a different host: "+
+		"revoke them first (drop the roles of revoke_failed leases by hand), or create a new config for the new host", cfg.ID, live)
+}
+
+// normalizedDSNHosts is dsn.ParseDSNHosts lower-cased and sorted.
+func normalizedDSNHosts(adminDSN string) []string {
+	hosts := dsn.ParseDSNHosts(adminDSN)
+	for i, h := range hosts {
+		hosts[i] = strings.ToLower(h)
+	}
+	slices.Sort(hosts)
+	return hosts
 }

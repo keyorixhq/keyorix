@@ -6,12 +6,16 @@
   (`dsn.CheckLocalFileOptions`); it stores the DSN only encrypted, bound to the config's
   (id, project, environment), through the column-scoped `SetDynamicSecretConfigAdminDSN`; and
   no audit row, log line or error it produces carries the DSN. The replace commits in one
-  transaction with its audit row. The read-only listing of configs with a refused option
+  transaction with its audit row, and while the config has an active or revoke_failed lease it
+  must name the same host(s) as the stored DSN (`requireSameTargetWhileLeasesLive`): those leases
+  are revoked through it, and a revoke on another server would mark them revoked while the role
+  lives on. The read-only listing of configs with a refused option
   (`ListProjectConfigsWithRefusedAdminDSN`) has the same authority gate and returns config and
   option names only. Why: an update path that skipped one check would re-open what create closes
   (#162 authority, the SSRF guard, #3952 file options). Guard: `internal/core`
   `TestDynamicSecrets_UpdateAdminDSN_RefusesWhatCreateRefuses`, `_NonAdminRefused`,
-  `_AuditFailureChangesNothing`, `_DSNNeverLeaves`,
+  `_AuditFailureChangesNothing`, `_DSNNeverLeaves`, `_LiveLeasesPinTheHost`,
   `TestDynamicSecrets_ListProjectRefusedAdminDSN_Gate` (SQLite, PostgreSQL pg-gated);
   `TestDynamicSecrets_CreateConfig_RefusesLocalFileOptions` for create.
-  **Not covered**: a third writer of `admin_dsn` added later is not detected by a static guard.
+  **Not covered**: a lease issued between the host check and the write; a third writer of
+  `admin_dsn` added later is not detected by a static guard.
