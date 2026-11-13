@@ -631,7 +631,11 @@ func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Reque
 		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, errNotFound) {
+		if errors.Is(err, core.ErrPermissionDenied) {
+			// The authority to reinstate the environment's project role
+			// assignments: a refusal, not a fault.
+			status = http.StatusForbidden
+		} else if strings.Contains(msg, errNotFound) {
 			status = http.StatusNotFound
 		} else {
 			log.Printf("Error restoring environment %d in project %d: %v", id, projectID, err)
