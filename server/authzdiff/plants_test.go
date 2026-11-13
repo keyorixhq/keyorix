@@ -89,6 +89,52 @@ var plants = append([]plant{
 		op:             "group.delete",
 		minUnexplained: 20,
 	},
+	{
+		// V5: removes ActivateBreakGlass's IsProjectMember refusal — the
+		// self-elevation gate. Its earlier form (GetUserRoleIDsAt, which matches
+		// project_id = 0 OR P) let the install-wide baseline count as membership
+		// and any authenticated user self-grant the emergency role on ANY project
+		// (#284-era). With the refusal gone, core grants the emergency role to any
+		// user who passes input validation, and REST — which has no gate of its own
+		// on this route — over-allows the same non-members, so both legs allow what
+		// the memberOnly model rule denies.
+		name:           "breakglass-activate-membership-gate-removed",
+		file:           "internal/core/break_glass.go",
+		anchor:         "\tif !affiliated {\n\t\treturn nil, refuseBreakGlass(fmt.Sprintf(\"%s: %s\", i18n.T(\"ErrorPermissionDenied\", nil), \"break-glass is available only to members of the project\"), ErrBreakGlassNotProjectMember, ErrPermissionDenied)\n\t}\n",
+		repl:           "\t_ = affiliated // PLANT: break-glass membership gate removed\n",
+		op:             "breakglass.activate",
+		minUnexplained: 10,
+	},
+	{
+		// V8: removes the access-review campaign-open router gate
+		// (RequireScopedPermission roles.assign@project). core.OpenAccessReviewCampaign
+		// performs NO authorization of its own (matrix core_refusal:"none" — opening is
+		// deliberately NOT human-gated so the scheduler can auto-open overdue campaigns),
+		// so with the router gate gone REST lets any authenticated principal open a
+		// recertification campaign, over-allowing every principal the roles.assign@project
+		// model rule denies. This is the clean router-gate differential the binding checks.
+		name:           "access-review-campaign-open-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/campaigns", catalogHandler.OpenAccessReviewCampaign)`,
+		repl:           `r.Post("/projects/{id}/access-review/campaigns", catalogHandler.OpenAccessReviewCampaign) // PLANT: router gate removed`,
+		op:             "access-review.campaign.open",
+		minUnexplained: 10,
+	},
+	{
+		// V8: removes the risk-exception create router gate (RequirePermission
+		// system.write@global). core.CreateRiskException performs no permission check
+		// (matrix core_refusal:"none"; it enforces only human-only + a bounded sunset +
+		// the SoD-live-violation check for category=="sod"), so with the router gate gone
+		// REST lets any authenticated HUMAN file a governed risk acceptance, over-allowing
+		// every principal the system.write@global model rule denies. (Machine actors stay
+		// refused by core's human-only rule, so the over-allows are the human cases.)
+		name:           "riskexception-create-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathRiskExceptions, dashboardHandler.CreateRiskException)`,
+		repl:           `r.Post(pathRiskExceptions, dashboardHandler.CreateRiskException) // PLANT: router gate removed`,
+		op:             "riskexception.create",
+		minUnexplained: 10,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after
