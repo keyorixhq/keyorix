@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -532,10 +533,16 @@ const (
 	layerGRPC layer = "grpc"
 )
 
+// legsCreated counts newLeg calls in this test binary; the sweep logs it next
+// to the template size so the bytes cloned per sweep can be computed
+// (legs x template bytes) without fs tracing.
+var legsCreated atomic.Int64
+
 // newLeg clones the template and builds exactly the surface the layer needs.
 func newLeg(tb testing.TB, l layer) *leg {
 	tb.Helper()
 	b, fx := template(tb)
+	legsCreated.Add(1)
 	// Each leg owns its directory and is released by close() as soon as its
 	// case ends — NOT at the end of the (parallel) op subtest, which would let
 	// thousands of database copies accumulate on disk at once.
