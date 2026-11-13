@@ -1,5 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ALL_CAN } from '../../../test/can';
 import { AxiosError, AxiosHeaders } from 'axios';
 import { render, screen, fireEvent, within } from '../../../test/test-utils';
 import { ProjectSecretsTab } from '../ProjectSecretsTab';
@@ -174,11 +175,11 @@ beforeEach(() => {
 // What the signed-in user may do. Tests that exercise a control assume the user can; the
 // permission-aware cases flip fields on this object (see useCan.ts).
 const canState = vi.hoisted(() => ({
-    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+    value: {} as Record<string, boolean>,
 }));
 vi.mock('../../../features/auth/useCan', () => ({ useCan: () => canState.value }));
 beforeEach(() => {
-    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+    canState.value = { ...ALL_CAN };
 });
 
 describe('ProjectSecretsTab — environment selection', () => {

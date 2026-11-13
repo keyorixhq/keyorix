@@ -2,10 +2,11 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '../../../test/test-utils';
 import DynamicSecretsPage from '../DynamicSecretsPage';
+import { NO_CAN } from '../../../test/can';
 
 const classifyMutate = vi.fn();
 const createConfigMutate = vi.fn();
-let isAdmin = true;
+let canWrite = true;
 
 const baseConfig = {
     id: 5,
@@ -26,8 +27,10 @@ vi.mock('../../../features/projects', () => ({
     useProjectEnvironments: () => ({ data: environmentsData }),
 }));
 
-vi.mock('../../../features/auth', () => ({
-    useAuth: () => ({ isAdmin }),
+// Dynamic-secret create, classify and lease management all need secrets.write on the server
+// (router.go /dynamic-secrets), so the page gates on that, not on install admin.
+vi.mock('../../../features/auth/useCan', () => ({
+    useCan: () => ({ ...NO_CAN, writeSecrets: canWrite }),
 }));
 
 vi.mock('../../../features/dynamic-secrets/api', () => ({
@@ -54,7 +57,7 @@ beforeEach(() => {
     classifyMutate.mockClear();
     createConfigMutate.mockClear();
     leasesPanelSpy.mockClear();
-    isAdmin = true;
+    canWrite = true;
     configsData = [baseConfig];
     configsLoading = false;
     configsError = null;
@@ -91,8 +94,8 @@ describe('DynamicSecretsPage', () => {
         expect(screen.queryByLabelText(/session policy|Creation template/)).not.toBeInTheDocument();
     });
 
-    it('non-admins see a read-only classification badge and no create button', () => {
-        isAdmin = false;
+    it('sessions without secrets.write see a read-only classification badge and no create button', () => {
+        canWrite = false;
         render(<DynamicSecretsPage />);
         expect(screen.getByTestId('dsc-classification-badge')).toHaveTextContent('Confidential');
         expect(screen.queryByRole('button', { name: /new config/i })).not.toBeInTheDocument();
@@ -141,6 +144,13 @@ describe('DynamicSecretsPage', () => {
         expect(screen.queryByTestId('leases-panel-stub')).not.toBeInTheDocument();
     });
 
+    it('mounts the leases panel read-only for a session without secrets.write', () => {
+        canWrite = false;
+        render(<DynamicSecretsPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'Toggle leases for analytics-ro' }));
+        expect(screen.getByTestId('leases-panel-stub')).toHaveAttribute('data-can-manage', 'false');
+    });
+
     it('treats a config with no classification as unclassified for the admin picker, defaulting the reclassify baseline too', () => {
         configsData = [{ ...baseConfig, classification: undefined }];
         render(<DynamicSecretsPage />);
@@ -154,7 +164,7 @@ describe('DynamicSecretsPage', () => {
     });
 
     it('treats a config with no classification as unclassified for the read-only badge', () => {
-        isAdmin = false;
+        canWrite = false;
         configsData = [{ ...baseConfig, classification: undefined }];
         render(<DynamicSecretsPage />);
         expect(screen.getByTestId('dsc-classification-badge')).toHaveTextContent('Unclassified');
