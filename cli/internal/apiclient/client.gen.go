@@ -18035,6 +18035,7 @@ type IssueDynamicSecretLeaseResponse struct {
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON409 *Error
 	JSON502 *Error
 }
 
@@ -18125,9 +18126,11 @@ type RenewDynamicSecretLeaseResponse struct {
 		} `json:"data,omitempty"`
 		Message *string `json:"message,omitempty"`
 	}
+	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON409 *Error
 	JSON502 *Error
 }
 
@@ -18160,6 +18163,7 @@ type RevokeDynamicSecretLeaseResponse struct {
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON409 *Error
 	JSON502 *Error
 }
 
@@ -28279,6 +28283,13 @@ func ParseIssueDynamicSecretLeaseResponse(rsp *http.Response) (*IssueDynamicSecr
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -28429,6 +28440,13 @@ func ParseRenewDynamicSecretLeaseResponse(rsp *http.Response) (*RenewDynamicSecr
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -28449,6 +28467,13 @@ func ParseRenewDynamicSecretLeaseResponse(rsp *http.Response) (*RenewDynamicSecr
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
 		var dest Error
@@ -28509,6 +28534,13 @@ func ParseRevokeDynamicSecretLeaseResponse(rsp *http.Response) (*RevokeDynamicSe
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
 		var dest Error
