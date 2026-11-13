@@ -3,6 +3,7 @@ package configspace
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -11,8 +12,22 @@ import (
 
 const fuzzCanary = "cnryfuzz0123456789ab"
 
+// unknownKeyEcho matches the part of a load error that repeats a key NAME taken from the
+// file ("unknown key \"x\" at the top level of the file ..."). Naming the misspelt key is
+// the point of that message, so a canary that the fuzzer typed as a key name is not a
+// disclosure of a secret value. Values, DSNs, tokens and every other part of the error are
+// still checked.
+var unknownKeyEcho = regexp.MustCompile(`unknown key "[^"]*"`)
+
+// leaksCanary reports whether an error text discloses the canary outside an unknown-key echo.
+func leaksCanary(verdict string) bool {
+	return strings.Contains(unknownKeyEcho.ReplaceAllString(verdict, `unknown key "-"`), fuzzCanary)
+}
+
 var fuzzSeeds = []string{
 	"",
+	// a canary typed as a top-level key name: the error repeats the key (by design) and must not trip I4
+	fuzzCanary + ": 1\n",
 	"server:\n  http:\n    enabled: true\n    port: \"8080\"\nstorage:\n  type: sqlite\n  database:\n    path: keyorix.db\n",
 	"server:\n  http:\n    enabled: true\n    host: 0.0.0.0\n    port: \"8080\"\n    tls:\n      enabled: true\n      cert_file: c.crt\n      key_file: c.key\n      allowed_ciphers: [TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384]\n    tls_mode: strict\n    metrics_token: " + fuzzCanary + "\n    allowed_origins: [\"https://a.example.com\"]\n    trusted_proxies: [\"10.0.0.0/8\"]\nsecurity:\n  require_transport_tls: true\n  require_mfa: true\n  login_lockout:\n    window: 15m\n    max_attempts: 5\nsession:\n  access_ttl: 30m\n  absolute_ttl: 12h\nstorage:\n  type: sqlite\n  database:\n    path: keyorix.db\n    audit_durability: strict\n  encryption:\n    enabled: true\n    key_provider:\n      type: password\n",
 	"storage:\n  type: postgres\n  database:\n    dsn: \"postgres://k:" + fuzzCanary + "@db.example.com:5432/k?sslmode=verify-full\"\n    ssl_mode: require\n    pooler: pgbouncer-session\n",
@@ -93,7 +108,7 @@ func FuzzConfigLoadValidate(f *testing.F) {
 			return "", c
 		}
 		v1, cfg := load()
-		if strings.Contains(v1, fuzzCanary) {
+		if leaksCanary(v1) {
 			t.Fatalf("secret value in error text: %s", v1)
 		}
 		if v2, _ := load(); v2 != v1 {
