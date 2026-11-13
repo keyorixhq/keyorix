@@ -8,5 +8,11 @@
   and the RSA-only suite list failed every TLS 1.2 handshake for an ECDSA certificate.
   Guard: `tls_reload_test.go:TestNewServer_TLS_ECDSAOverTLS12_H2_AndCertReload`,
   `server/tls_reload_ecdsa_test.go:TestStartHTTPServer_TLSReloadsRotatedCertificateAndNegotiatesH2`,
-  `internal/tlsreload/tlsreload_test.go`. Not covered: an open gRPC connection keeps its
-  certificate until `max_connection_age` recycles it.
+  `internal/tlsreload/tlsreload_test.go`, and
+  `internal/tlsreload/reloader_failclosed_fuzz_test.go:FuzzReloaderFailClosed` (fuzzes
+  valid/expired/not-yet-valid/mismatched/half-rotated/truncated/empty/deleted/symlink
+  file-state sequences against a stdlib-loader differential: a cert/key mismatch is never
+  served and the previous good pair is always retained on a bad reload). Not covered: an
+  open gRPC connection keeps its certificate until `max_connection_age` recycles it; and
+  rotation is detected by mtime, so an mtime-preserving replacement is served stale (see
+  the HARDENING note in the V4 report).

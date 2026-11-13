@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ALL_CAN } from '../../../test/can';
 import { Routes, Route } from 'react-router';
 import { render, screen, fireEvent, within } from '../../../test/test-utils';
 import { ProjectDetailPage } from '../ProjectDetailPage';
@@ -81,7 +82,7 @@ const canState = vi.hoisted(() => ({
     manageMembers: true,
 }));
 vi.mock('../../../features/auth/useCan', () => ({
-    useCan: () => ({ ...canState }),
+    useCan: () => ({ ...ALL_CAN, ...canState }),
 }));
 
 describe('ProjectDetailPage — loading state', () => {

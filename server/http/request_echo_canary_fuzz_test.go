@@ -62,11 +62,9 @@ const (
 // only the control reads through it, and the control's result is asserted directly.
 func requestEchoRules() *canary.Allowlist {
 	return canary.NewAllowlist(
-		// Each echo row below names a non-secret field whose rejected value the error
-		// returns to the caller who sent it. Found by the full route sweep.
-		canary.Rule{ID: "echo-sso-provider", Channel: echoChanBody, Origin: "GET /auth/sso/{provider}/login", Label: "m-path", MetadataOnly: true, Why: "the unknown provider name is quoted in the 400"},
-		canary.Rule{ID: "echo-channel-type", Channel: echoChanBody, Origin: "POST /api/v1/notification-channels", Label: "m-body", MetadataOnly: true, Why: "the invalid channel type is quoted in the 400"},
-		canary.Rule{ID: "echo-export-format", Channel: echoChanBody, Origin: "GET /api/v1/secrets/{id}/access-log/export", Label: "m-query", MetadataOnly: true, Why: "the unsupported format is quoted, lower-cased, in the 400"},
+		// No request echo is allowed on an error response: the three the full route sweep
+		// found (SSO provider, notification channel type, export format) were fixed by
+		// #4059 / CORE-ERR-FAMILY-7, and an echo row here would let them come back.
 		canary.Rule{ID: "meta-db", Channel: canary.ChannelDBPrefix + "*", MetadataOnly: true, Why: "names and descriptions are stored in plaintext by design"},
 		canary.Rule{ID: "meta-rawdb", Channel: echoChanRawDB, MetadataOnly: true, Why: "names and descriptions are stored in plaintext by design"},
 	)
