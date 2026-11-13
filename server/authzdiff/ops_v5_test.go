@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+
+	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
 // V5 ops: authorization-completeness extension of the harness over operations
@@ -27,11 +29,13 @@ func v5Ops() []opSpec {
 // ---- area 2: break-glass activation (self-service emergency access) ----
 //
 // POST /api/v1/projects/{id}/break-glass carries NO RequireScopedPermission at
-// the REST router (only BlockWhenImpersonating) and no gRPC auth interceptor
-// gate beyond the token: the ENTIRE authorization is core's, in
-// ActivateBreakGlass. So this is the cleanest core-gated differential after
-// reassign-owner — REST and core agree by construction, and Oracle 2 checks
-// core's real gate against the independent model.
+// the REST router (only BlockWhenImpersonating), and the gRPC RPC
+// BreakGlassService.ActivateBreakGlass has no gate beyond requireUser (a user
+// token): the ENTIRE authorization is core's, in ActivateBreakGlass, reached
+// the same way from both transports. So this is the cleanest core-gated
+// differential after reassign-owner — the transports agree with core by
+// construction, and Oracle 2 checks core's real gate against the independent
+// model.
 //
 // Core's gate (internal/core/break_glass.go:256-293), in order:
 //  1. a restricted PAT is refused (ErrRestrictedPATCannotBreakGlass) — the
@@ -48,8 +52,7 @@ func v5Ops() []opSpec {
 //
 // The global admin holds project_admin@A and @B (world_test.go), so it IS a
 // project member: the positive control passes on both targets without a
-// controlAs override. gRPC is left to a later area (ADR-105 partial surface;
-// the core gate it shares with REST is already exercised here).
+// controlAs override.
 func v5BreakGlassOps() []opSpec {
 	return []opSpec{
 		{
@@ -64,6 +67,11 @@ func v5BreakGlassOps() []opSpec {
 			rest: func(fx *fixtures, t tgt, _ byte) restReq {
 				return restReq{http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/break-glass", pid(fx, t)),
 					map[string]any{"justification": "emergency-access-justification"}}
+			},
+			grpc: func(ctx context.Context, lg *leg, t tgt, _ byte) error {
+				_, err := pb.NewBreakGlassServiceClient(lg.conn).ActivateBreakGlass(ctx, &pb.ActivateBreakGlassRequest{
+					ProjectId: uint32(pid(lg.fx, t)), Justification: "emergency-access-justification"})
+				return err
 			},
 		},
 	}

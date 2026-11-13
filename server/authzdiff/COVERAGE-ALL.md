@@ -12,8 +12,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
 | secrets | 43 | 30 | 10 | 10 |
-| other | 127 | 20 | 21 | 9 |
-| **total** | **211** | **91** | **46** | **34** |
+| other | 127 | 20 | 21 | 10 |
+| **total** | **211** | **91** | **46** | **35** |
 
 ## groups
 
@@ -148,7 +148,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 ## other
 
 - [ ] `GRPC keyorix.v1.AuditService.WriteAuditCheckpoint` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
+- [x] `GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass` — breakglass.activate
 - [ ] `GRPC keyorix.v1.BreakGlassService.RevokeBreakGlass` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `GRPC keyorix.v1.ConnectService.CreateRefGrant` — fixture: needs a Keyorix Connect connector configured
 - [ ] `GRPC keyorix.v1.ConnectService.DeleteRefGrant` — fixture: needs a Keyorix Connect connector configured

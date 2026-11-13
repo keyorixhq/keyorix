@@ -1,16 +1,16 @@
 package authzdiff
 
-import (
-	"fmt"
-	"testing"
-)
+import "testing"
 
 // TestV5StrictSweep is a deterministic, env-free strict check over the V5
 // break-glass-activation binding (ops_v5_test.go). It runs in ordinary `go test`
 // (skipped under -short), so the binding falling out of calibration, or
 // disagreeing with the model in a shape no known waiver absorbs, is caught in
-// CI. (reassign-owner, the earlier V5 area, is already guarded by its own plant
-// and TestAuthzDiffSmoke; keeping it out of this test keeps the check fast.)
+// CI. reassign-owner, the earlier V5 area, is left out to keep the check fast;
+// it runs in the opt-in full sweep and TestAuthzDiffSmoke. Neither of those, nor
+// this test, FAILS when only reassign-owner's own core gate is removed: REST
+// still gates that route, so the core-only over-allow lands in the known-04
+// waiver (partition_test.go). Its plant asserts exactly that recording.
 //
 // Coverage: every NAMED principal (admin, viewer, project-admin, no-role,
 // actor-0, expired, suspended, restricted-PAT) plus a small CURATED set of
@@ -22,12 +22,8 @@ import (
 // always-on guard, deliberately bounded so default `go test` does not pay the
 // full sweep's cost.
 //
-// Break-glass has NO gRPC leg (it is left to a later area), so this drives only
-// the core and REST legs and marks the gRPC leg NA by hand — exactly what
-// runCase records for a spec.grpc==nil op — WITHOUT paying newLeg(layerGRPC)'s
-// per-case gRPC-server startup. TestEveryV5OpHasNoGRPCLeg guards that
-// precondition: the moment a V5 op grows a gRPC binding this fast path would
-// skip a real leg, and that test fails first.
+// Each case runs through runCase, the same oracle as the full sweep, on all
+// three legs (core, REST and the BreakGlassService.ActivateBreakGlass gRPC RPC).
 //
 // Strict rule, verbatim from the full sweep: zero uncalibrated cases and zero
 // "unexplained" cases. Disagreements that map to a known waiver (the
@@ -40,10 +36,7 @@ func TestV5StrictSweep(t *testing.T) {
 	tally := &sweepTally{disBuckets: map[string]int{}, gapBuckets: map[string]int{}}
 	for _, spec := range withDerived(t, ops()) {
 		if !isBreakGlassV5Op(spec.name) {
-			continue // reassign-owner is already guarded (its plant + TestAuthzDiffSmoke); keep this fast
-		}
-		if spec.grpc != nil {
-			t.Fatalf("%s grew a gRPC leg: TestV5StrictSweep skips the gRPC leg and would hide it — drive it through runCase instead", spec.name)
+			continue // reassign-owner runs in the full sweep and TestAuthzDiffSmoke; keep this fast
 		}
 		spec := spec
 		t.Run(spec.name, func(t *testing.T) {
@@ -54,7 +47,7 @@ func TestV5StrictSweep(t *testing.T) {
 					}
 					run := func(pk principalKind, v variation) {
 						k := caseKey{Op: spec.name, Principal: pk, Target: tg.String(), Arg: arg, variation: v}
-						r := runCaseNoGRPC(t, spec, k, tg)
+						r := runCase(t, spec, k, tg)
 						sink.write(r)
 						tally.add(t, r)
 					}
@@ -105,31 +98,6 @@ func curatedV5Variations(t tgt) []struct {
 	}
 }
 
-// runCaseNoGRPC is runCase for an op with no gRPC leg: it drives the core and
-// REST legs, records the gRPC leg NA (as runCase would for spec.grpc==nil), and
-// runs the identical uncalibration, classification and partition steps.
-func runCaseNoGRPC(tb testing.TB, spec opSpec, k caseKey, t tgt) *caseResult {
-	tb.Helper()
-	_, fx := template(tb)
-	p := fx.principals[k.Principal]
-	res := &caseResult{caseKey: k, Legs: map[layer]*legOutcome{}}
-	res.Legs[layerCore] = runLayer(tb, spec, layerCore, p, k, t, res)
-	res.Legs[layerREST] = runLayer(tb, spec, layerREST, p, k, t, nil)
-	res.Legs[layerGRPC] = &legOutcome{NA: "ID-3: no gRPC RPC (ADR-105 partial surface)"}
-	for l, lo := range res.Legs {
-		if lo.NA != "" {
-			continue
-		}
-		if c := control(tb, spec, l, t, k.Arg); c.NA == "" && c.Outcome != Allowed {
-			lo.NA = fmt.Sprintf("uncalibrated: admin control on %s got %s (%s)", l, c.Outcome, c.Detail)
-		}
-	}
-	res.Classes = classify(spec, p, res)
-	res.PATUngatedWrite = patRefusesUngatedWrite(tb, fx, spec, p)
-	res.Bucket = explain(res)
-	return res
-}
-
 func isBreakGlassV5Op(name string) bool {
 	for _, s := range v5BreakGlassOps() {
 		if s.name == name {
@@ -137,15 +105,4 @@ func isBreakGlassV5Op(name string) bool {
 		}
 	}
 	return false
-}
-
-// TestEveryV5OpHasNoGRPCLeg guards runCaseNoGRPC's precondition: if any V5 op
-// gains a gRPC binding, the fast check above would skip a real leg. This test
-// fails first, forcing that op onto the full runCase path.
-func TestEveryV5OpHasNoGRPCLeg(t *testing.T) {
-	for _, s := range v5Ops() {
-		if s.grpc != nil {
-			t.Errorf("%s has a gRPC leg: move it off TestV5StrictSweep's no-gRPC fast path", s.name)
-		}
-	}
 }
