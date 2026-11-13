@@ -25,21 +25,22 @@ import (
 )
 
 type options struct {
-	module   string
-	src      string
-	work     string
-	pkg      string
-	funcs    string
-	targets  string
-	fuzztime time.Duration
-	max      int
-	seed     int64
-	parallel int
-	nice     int
-	gomaxp   int
-	equiv    bool
-	out      string
-	verbose  bool
+	module    string
+	src       string
+	work      string
+	pkg       string
+	funcs     string
+	targets   string
+	fuzztime  time.Duration
+	max       int
+	seed      int64
+	parallel  int
+	nice      int
+	gomaxp    int
+	equiv     bool
+	allowlist string
+	out       string
+	verbose   bool
 }
 
 // Run is one target's health summary.
@@ -50,10 +51,12 @@ type Run struct {
 	Killed       int      `json:"killed"`
 	Survived     int      `json:"survived"`
 	Equivalent   int      `json:"equivalent_suspected"`
+	Allowlisted  int      `json:"allowlisted"`
 	Timeout      int      `json:"timeout"`
 	BuildFail    int      `json:"build_fail"`
 	KillRate     float64  `json:"kill_rate"`
 	SurvivorList []Result `json:"survivors"`
+	AllowedList  []Result `json:"allowlisted_survivors,omitempty"`
 }
 
 // Report is the full JSON artefact for a tool invocation.
@@ -80,6 +83,7 @@ func main() {
 	flag.IntVar(&o.nice, "nice", 10, "nice level for subprocesses")
 	flag.IntVar(&o.gomaxp, "gomaxprocs", 2, "GOMAXPROCS for subprocesses")
 	flag.BoolVar(&o.equiv, "equiv", false, "classify survivors on unit-test-dead lines as EQUIVALENT-SUSPECTED")
+	flag.StringVar(&o.allowlist, "allowlist", "", "TSV of known equivalent/dead mutants to reclassify as ALLOWLISTED (excluded from the kill-rate)")
 	flag.StringVar(&o.out, "out", "", "write a JSON report to this path")
 	flag.BoolVar(&o.verbose, "v", false, "verbose per-mutant logging")
 	flag.Parse()
@@ -125,6 +129,14 @@ func run(o options) error {
 		funcAllow[f] = true
 	}
 	targets := splitComma(o.targets)
+
+	allow, err := loadAllowlist(o.allowlist)
+	if err != nil {
+		return fmt.Errorf("load allowlist: %w", err)
+	}
+	if o.allowlist != "" {
+		fmt.Fprintf(os.Stderr, "allowlist: %d known equivalent/dead mutant(s) loaded from %s\n", len(allow), o.allowlist)
+	}
 
 	all, err := collectMutations(moduleRoot, pkgDir, funcAllow)
 	if err != nil {
@@ -173,9 +185,14 @@ func run(o options) error {
 		run := Run{Target: target, Package: o.pkg, Mutants: len(muts)}
 		for i, m := range muts {
 			res := applyAndRun(ctx, env, target, m)
-			if res.Verdict == Survived && o.equiv && unitOK && !lineCovered(cov, m.File, m.Line) {
-				res.Verdict = Equivalent
-				res.Detail = "unit suite passes and mutated line uncovered by unit tests"
+			if res.Verdict == Survived {
+				if e, ok := matchAllow(allow, target, m); ok {
+					res.Verdict = Allowlisted
+					res.Detail = e.class + ": " + e.reason
+				} else if o.equiv && unitOK && !lineCovered(cov, m.File, m.Line) {
+					res.Verdict = Equivalent
+					res.Detail = "unit suite passes and mutated line uncovered by unit tests"
+				}
 			}
 			switch res.Verdict {
 			case Killed:
@@ -186,6 +203,9 @@ func run(o options) error {
 			case Equivalent:
 				run.Equivalent++
 				run.SurvivorList = append(run.SurvivorList, res)
+			case Allowlisted:
+				run.Allowlisted++
+				run.AllowedList = append(run.AllowedList, res)
 			case Timeout:
 				run.Timeout++
 			case BuildFail:
@@ -195,6 +215,9 @@ func run(o options) error {
 				fmt.Fprintf(os.Stderr, "[%2d/%2d] %-20s %s (%.0fs)\n", i+1, len(muts), res.Verdict, m.String(), res.Seconds)
 			}
 		}
+		// Allowlisted (known-equivalent/dead) and build-fail mutants are excluded
+		// from the kill-rate denominator: the rate measures genuine oracle holes,
+		// not mutations that provably cannot change observable behaviour.
 		compiled := run.Killed + run.Survived + run.Equivalent + run.Timeout
 		if compiled > 0 {
 			run.KillRate = float64(run.Killed) / float64(compiled)
@@ -250,17 +273,17 @@ func applyAndRun(ctx context.Context, env Env, target string, m Mutation) Result
 }
 
 func printRunSummary(r Run) {
-	fmt.Fprintf(os.Stderr, "--- %s: mutants=%d killed=%d survived=%d equiv=%d timeout=%d buildfail=%d killrate=%.0f%%\n",
-		r.Target, r.Mutants, r.Killed, r.Survived, r.Equivalent, r.Timeout, r.BuildFail, r.KillRate*100)
+	fmt.Fprintf(os.Stderr, "--- %s: mutants=%d killed=%d survived=%d equiv=%d allowlisted=%d timeout=%d buildfail=%d killrate=%.0f%%\n",
+		r.Target, r.Mutants, r.Killed, r.Survived, r.Equivalent, r.Allowlisted, r.Timeout, r.BuildFail, r.KillRate*100)
 }
 
 func printTable(rep Report) {
 	fmt.Println()
-	fmt.Println("| target | mutants | killed | survived | equiv | timeout | buildfail | kill-rate |")
-	fmt.Println("|--------|---------|--------|----------|-------|---------|-----------|-----------|")
+	fmt.Println("| target | mutants | killed | survived | equiv | allowlisted | timeout | buildfail | kill-rate |")
+	fmt.Println("|--------|---------|--------|----------|-------|-------------|---------|-----------|-----------|")
 	for _, r := range rep.Runs {
-		fmt.Printf("| %s | %d | %d | %d | %d | %d | %d | %.0f%% |\n",
-			r.Target, r.Mutants, r.Killed, r.Survived, r.Equivalent, r.Timeout, r.BuildFail, r.KillRate*100)
+		fmt.Printf("| %s | %d | %d | %d | %d | %d | %d | %d | %.0f%% |\n",
+			r.Target, r.Mutants, r.Killed, r.Survived, r.Equivalent, r.Allowlisted, r.Timeout, r.BuildFail, r.KillRate*100)
 	}
 	for _, r := range rep.Runs {
 		if len(r.SurvivorList) == 0 {

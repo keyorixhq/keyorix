@@ -17,6 +17,7 @@ const (
 	Killed      Verdict = "KILLED"
 	Survived    Verdict = "SURVIVED"
 	Equivalent  Verdict = "EQUIVALENT-SUSPECTED"
+	Allowlisted Verdict = "ALLOWLISTED"
 	Timeout     Verdict = "TIMEOUT"
 	BuildFail   Verdict = "BUILD-FAIL"
 	BaselineBad Verdict = "BASELINE-FAIL"

@@ -90,6 +90,34 @@ and the exact mutation).
   functions tried* — not that the target is complete. Mutation testing can only
   refute "this oracle is weak"; it cannot prove "this oracle is strong".
 
+## The equivalent/dead allowlist
+
+A survivor is not always a hole: it can be an **equivalent** mutant (the change
+cannot alter observable behaviour) or **dead** code the target never reaches. Re-
+reporting those on every run buries the real holes. `-allowlist <file.tsv>`
+reclassifies a known survivor as **ALLOWLISTED** and drops it from the kill-rate
+denominator (same treatment as `BUILD-FAIL`), so the rate measures genuine oracle
+holes only.
+
+The committed list is `oracle-health-allowlist.tsv`. Columns (tab-separated):
+
+```
+target   file   func   op   orig   new   class   reason
+```
+
+- `class` is `equivalent` or `dead` (anything else is a load error).
+- `reason` must name the code that makes the mutant unobservable — an empty reason
+  is a load error. This is the honesty contract: an allowlist entry is a claim, and
+  the claim has to point at the masking mechanism.
+- The match key is `(target, file, func, op, orig, new)` with whitespace collapsed,
+  **not** the line number. An entry keeps matching when the construct moves to a new
+  line, and stops matching — failing safe, re-reporting the survivor — only when the
+  mutated construct itself changes. A multi-line guard body is written on one line in
+  the TSV; the collapse makes it match the real (indented, multi-line) source.
+
+Keep it small and honest: every entry is a survivor a human has traced to a specific
+masking mechanism, not a convenient silence.
+
 ## The tool's own red/green proof
 
 `mutate_test.go` + `testdata/toy/` are the committed proof that the tool measures
