@@ -112,11 +112,22 @@ func (e *AzureAppSecretExecutor) client(ctx context.Context) (azureGraphAPI, err
 //     Graph is a public endpoint, so link-local egress from this client is never
 //     legitimate, and resolving-and-validating per dial also closes DNS
 //     rebinding of the Graph hostname. IsLinkLocal (not IsPrivateOrLinkLocal) is
-//     the right tier here — same as connect/oidcverify — so a legitimate
-//     corporate proxy on an RFC-1918 address is not broken.
+//     the right tier here — same as connect/oidcverify.
+//
+// The transport is a clone of http.DefaultTransport (what the bare http.Client
+// used before), so HTTPS_PROXY/NO_PROXY, HTTP/2 and the TLS-handshake and idle
+// timeouts are kept; only DialContext is replaced. With a proxy configured the
+// guarded dial is the dial to the proxy, so a proxy on an RFC-1918 address
+// keeps working and a proxy on a link-local address is refused.
 func azureGraphHTTPClient() *http.Client {
-	guard := netutil.Guard{Dial: netutil.Dialer{Disallow: netutil.IsLinkLocal}}
-	return guard.HTTPClient(azureHTTPTimeout, nil, refuseAzureGraphRedirect)
+	guard := netutil.Dialer{Disallow: netutil.IsLinkLocal}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = guard.DialContext
+	return &http.Client{
+		Timeout:       azureHTTPTimeout,
+		CheckRedirect: refuseAzureGraphRedirect,
+		Transport:     transport,
+	}
 }
 
 // refuseAzureGraphRedirect refuses any redirect the Graph client receives. A
