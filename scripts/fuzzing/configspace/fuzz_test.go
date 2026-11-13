@@ -3,6 +3,7 @@ package configspace
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -10,6 +11,18 @@ import (
 )
 
 const fuzzCanary = "cnryfuzz0123456789ab"
+
+// echoedKeyNameRE matches the two shapes in which the loader repeats a user-supplied KEY
+// name in an error: the rewritten `unknown key "<name>" ...` (internal/config/unknown_key.go)
+// and yaml.v3's raw `field <name> not found in type ...`. Echoing a key name is by design;
+// the canary is a secret VALUE, so only occurrences outside these shapes count as a leak.
+var echoedKeyNameRE = regexp.MustCompile(`unknown key "(?:[^"\\]|\\.)*"|field \S+ not found in type`)
+
+// canaryLeaksAsValue reports whether the canary appears in an error text anywhere other
+// than as an echoed key name.
+func canaryLeaksAsValue(errText string) bool {
+	return strings.Contains(echoedKeyNameRE.ReplaceAllString(errText, "<key>"), fuzzCanary)
+}
 
 var fuzzSeeds = []string{
 	"",
@@ -93,7 +106,7 @@ func FuzzConfigLoadValidate(f *testing.F) {
 			return "", c
 		}
 		v1, cfg := load()
-		if strings.Contains(v1, fuzzCanary) {
+		if canaryLeaksAsValue(v1) {
 			t.Fatalf("secret value in error text: %s", v1)
 		}
 		if v2, _ := load(); v2 != v1 {
