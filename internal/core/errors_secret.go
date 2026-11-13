@@ -53,8 +53,10 @@ func errSecretValidation(cause error) error {
 // csv or json. The handler answers 400.
 var ErrUnsupportedExportFormat = errors.New("unsupported export format")
 
-func errUnsupportedExportFormatf(format string) error {
-	return storage.Typed(ErrUnsupportedExportFormat, fmt.Sprintf("unsupported export format %q: must be csv or json", format), nil)
+// unsupportedExportFormat is the ErrUnsupportedExportFormat refusal. Its text is fixed:
+// it never quotes the caller's format value (#4059).
+func unsupportedExportFormat() error {
+	return storage.Typed(ErrUnsupportedExportFormat, "unsupported export format: must be csv or json", nil)
 }
 
 // ErrRotatedValueStoredSecretDeleted: a backend-bound rotation stored its new
