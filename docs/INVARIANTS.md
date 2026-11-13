@@ -37,6 +37,8 @@ silently removing it.
 | `internal/notifychan` | [internal/notifychan/INVARIANTS.md](../internal/notifychan/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/rotation` | [internal/rotation/INVARIANTS.md](../internal/rotation/INVARIANTS.md) | 1 | 1 | 0 |
 | **Total** | | **516** | **511** | **5** |
+| `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |
+| **Total** | | **511** | **506** | **5** |
 
 ## Highest-priority UNGUARDED gaps
 
