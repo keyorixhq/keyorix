@@ -4,7 +4,7 @@ package bad
 
 import "context"
 
-type segment struct{ anchor any }
+type segment struct{ Anchor any }
 
 type verification struct{ Valid bool }
 
@@ -12,7 +12,7 @@ type chainStore interface {
 	VerifyAuditChain(ctx context.Context, anchor any) (*verification, error)
 }
 
-type KeyorixCore struct{ storage chainStore }
+type KeyorixCore struct{ Storage chainStore }
 
 func (c *KeyorixCore) walkAuditChain(ctx context.Context, seg segment) (*verification, error) {
 	return nil, nil
@@ -44,3 +44,12 @@ func rawStoreWalk(ctx context.Context, s chainStore) error {
 	_, err := s.VerifyAuditChain(ctx, nil)
 	return err
 }
+
+// Package-level references keep the linter's unused check quiet; the scan
+// reads function bodies only, so they are not sites.
+var (
+	_ = (*KeyorixCore).exportChain
+	_ = (*KeyorixCore).sealedReport
+	_ = pickWalk
+	_ = rawStoreWalk
+)
