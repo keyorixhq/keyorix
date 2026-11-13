@@ -11,7 +11,9 @@ import (
 // literals in the regression test): for ANY IPv4 address, the SSRF verdict of
 // IsPrivateOrLinkLocal must be identical whether that host is written as raw IPv4 or as
 // any IPv6 encoding that denotes the same host — IPv4-mapped (::ffff:x), NAT64
-// well-known (64:ff9b::x), or deprecated IPv4-compatible (::x). They all route to the
+// well-known (64:ff9b::x), NAT64 local-use (64:ff9b:1::x, RFC 8215), deprecated
+// IPv4-compatible (::x), 6to4 (2002:WWXX:YYZZ::, RFC 3056), or Teredo (2001::/32 with
+// the low 32 bits XOR-obfuscated, RFC 4380). They all route to the
 // same IPv4 host, so a verdict that differs across encodings is exactly an SSRF gap: a
 // private target reachable through an encoding the blocklist forgot (bypass), or a
 // public target blocked through one encoding (over-block that breaks IPv6-only NAT64
@@ -52,6 +54,25 @@ func FuzzIPv4EmbeddingSSRFParity(f *testing.F) {
 		compat := make(net.IP, net.IPv6len)
 		compat[12], compat[13], compat[14], compat[15] = a, b, c, d
 
+		// NAT64 local-use (RFC 8215, 64:ff9b:1::/96) carries the IPv4 in the low 32
+		// bits exactly like the well-known prefix; the only difference is the prefix.
+		localNat64 := make(net.IP, net.IPv6len)
+		copy(localNat64, nat64LocalUsePrefix96.IP)
+		localNat64[12], localNat64[13], localNat64[14], localNat64[15] = a, b, c, d
+
+		// 6to4 (RFC 3056, 2002::/16) embeds the IPv4 directly in the next 32 bits
+		// (bytes 2..5), not the low 32 bits.
+		sixToFour := make(net.IP, net.IPv6len)
+		copy(sixToFour, sixToFourPrefix.IP)
+		sixToFour[2], sixToFour[3], sixToFour[4], sixToFour[5] = a, b, c, d
+
+		// Teredo (RFC 4380, 2001::/32) carries the client IPv4 in the low 32 bits
+		// XORed with 0xffffffff (anti-middlebox obfuscation); the decoder must undo
+		// that XOR, so the encoding here must apply it.
+		teredo := make(net.IP, net.IPv6len)
+		copy(teredo, teredoPrefix.IP)
+		teredo[12], teredo[13], teredo[14], teredo[15] = a^0xff, b^0xff, c^0xff, d^0xff
+
 		for _, enc := range []struct {
 			name string
 			ip   net.IP
@@ -59,6 +80,9 @@ func FuzzIPv4EmbeddingSSRFParity(f *testing.F) {
 			{"ipv4-mapped", mapped},
 			{"nat64-wellknown", nat64},
 			{"ipv4-compatible", compat},
+			{"nat64-local-use", localNat64},
+			{"6to4", sixToFour},
+			{"teredo", teredo},
 		} {
 			if enc.ip == nil {
 				t.Fatalf("failed to build %s encoding for %d.%d.%d.%d", enc.name, a, b, c, d)

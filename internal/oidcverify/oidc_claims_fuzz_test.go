@@ -82,6 +82,71 @@ func FuzzOIDCVerifierClaims(f *testing.F) {
 			expOffset = -1_000_000_000
 		}
 		now := time.Now()
+
+		// --- Fixed assertions run on EVERY iteration (before the fuzzed-token path,
+		// so an over-rejection mutant that rejects the fuzzed token cannot skip them
+		// via the early return below). ---
+		//
+		// signHdr signs an otherwise-perfect token (trusted issuer/audience, present
+		// subject, fresh iat, unexpired) with optional extra headers/claims applied by
+		// mut. The base token is unconditionally valid, so correct code accepts it
+		// unless mut introduces a reason to reject.
+		signHdr := func(mut func(tok *jwt.Token, c jwt.MapClaims)) string {
+			c := jwt.MapClaims{
+				"iss": trustedIss, "sub": "svc",
+				"aud": []string{trustedAud},
+				"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
+			}
+			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, c)
+			tok.Header["kid"] = "kid-1"
+			if mut != nil {
+				mut(tok, c)
+			}
+			s, serr := tok.SignedString(key)
+			if serr != nil {
+				t.Fatalf("signHdr: %v", serr)
+			}
+			return s
+		}
+
+		// LIVENESS (accept direction). The fuzzer never asserts that a valid token is
+		// accepted (azp/iat/max-age add legitimate rejection reasons that make a blanket
+		// "must accept" unsound over arbitrary input) — so every mutant that merely
+		// rejects MORE (an inverted guard, a flipped comparison) survived. Pin it with
+		// one fixed, unconditionally-valid token: correct code must accept it, so this
+		// only fails under a real over-rejection regression.
+		if _, _, lerr := v.Verify(context.Background(), signHdr(nil)); lerr != nil {
+			t.Fatalf("LIVENESS: Verify rejected an unconditionally-valid token: %v", lerr)
+		}
+		// FAIL-CLOSED: a token with a "crit" header naming an extension this verifier
+		// does not understand MUST be rejected (RFC 7515 §4.1.11), however valid its
+		// claims. The fuzzer never sets headers.
+		critRaw := signHdr(func(tok *jwt.Token, _ jwt.MapClaims) {
+			tok.Header["crit"] = []string{"exp"}
+		})
+		if _, _, cerr := v.Verify(context.Background(), critRaw); cerr == nil {
+			t.Fatalf("CRIT BYPASS: Verify accepted a token with an unrecognized crit header")
+		}
+		// FAIL-CLOSED: a token naming MORE THAN ONE audience with no azp is ambiguous
+		// about its true recipient and MUST be rejected, even though one audience is
+		// allow-listed. The fuzzer only ever sends a single audience.
+		multiRaw := signHdr(func(_ *jwt.Token, c jwt.MapClaims) {
+			c["aud"] = []string{trustedAud, "other-rp"} // one allowed, one not; no azp
+		})
+		if _, _, merr := v.Verify(context.Background(), multiRaw); merr == nil {
+			t.Fatalf("AZP BYPASS: Verify accepted a multi-audience token with no azp claim")
+		}
+		// LIVENESS (multi-audience accept): a multi-audience token WHOSE azp is a
+		// trusted audience is the legitimate disambiguated case and MUST be accepted —
+		// pins that the azp==\"\" reject does not spill onto a validly-azp'd token.
+		multiAzpRaw := signHdr(func(_ *jwt.Token, c jwt.MapClaims) {
+			c["aud"] = []string{trustedAud, "other-rp"}
+			c["azp"] = trustedAud
+		})
+		if _, _, aerr := v.Verify(context.Background(), multiAzpRaw); aerr != nil {
+			t.Fatalf("LIVENESS: Verify rejected a multi-audience token with a trusted azp: %v", aerr)
+		}
+
 		claims := jwt.MapClaims{
 			"iss":   iss,
 			"sub":   sub,

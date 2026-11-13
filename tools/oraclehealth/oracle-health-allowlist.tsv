@@ -1,0 +1,21 @@
+# oracle-health allowlist — mutants that SURVIVE but are NOT oracle holes.
+#
+# Each row is an equivalent (behaviour cannot change) or dead (code not reached by
+# the target) mutant. Listed here, oraclehealth reclassifies it as ALLOWLISTED and
+# drops it from the kill-rate denominator, so a later run does not re-report it as a
+# hole. A row must name the exact code that makes the mutation unobservable.
+#
+# Match key is (target, file, func, op, orig, new) with whitespace collapsed — NOT
+# the line number, so an entry survives the construct moving to a new line and stops
+# matching (fails safe, re-reporting) only when the construct itself changes.
+#
+# Columns (tab-separated): target  file  func  op  orig  new  class  reason
+# class is "equivalent" or "dead". See README.md "The equivalent/dead allowlist".
+#
+target	file	func	op	orig	new	class	reason
+FuzzIPv4EmbeddingSSRFParity	internal/netutil/dialer.go	embeddedIPv4	bound-const	5	6	equivalent	6to4 reads the 4th octet from ip16[5]; no CIDR in privateNetworkCIDRs is longer than /16, so the 4th octet never affects IsPrivateOrLinkLocal's verdict — the oracle cannot observe this read shifting.
+FuzzIPv4EmbeddingSSRFParity	internal/netutil/dialer.go	embeddedIPv4	bound-const	14	15	equivalent	local-use NAT64 reads the 3rd octet from ip16[14]; no CIDR in privateNetworkCIDRs is longer than /16, so the 3rd octet never affects IsPrivateOrLinkLocal's verdict.
+FuzzAEADTamperRoundTrip	internal/encryption/aead/aead.go	DecryptWithAAD	drop-error-guard	if err != nil { return nil, fmt.Errorf("failed to decode nonce: %w", err) }	{}	equivalent	nonce base64-decode guard; a bad nonce is still caught by the len(nonce)!=gcmNonceSize guard and, failing that, by the GCM tag in open(), so Decrypt still errors — invisible to a fails-on-tamper oracle.
+FuzzAEADTamperRoundTrip	internal/encryption/aead/aead.go	DecryptWithAAD	drop-error-guard	if len(nonce) != gcmNonceSize { return nil, fmt.Errorf("invalid nonce length %d", len(nonce)) }	{}	equivalent	nonce-length guard; open() feeds a wrong-length nonce to the GCM tag, which fails as an error (never a panic, per open()'s own doc comment), so dropping the length check is unobservable to a fails-on-tamper oracle.
+FuzzAEADTamperRoundTrip	internal/encryption/aead/aead.go	DeserializeEncryptedData	drop-error-guard	if err := json.Unmarshal(data, &encrypted); err != nil { return nil, fmt.Errorf("failed to deserialize encrypted data: %w", err) }	{}	dead	DeserializeEncryptedData is never called by this tamper/round-trip target (it builds EncryptedData structs directly, never round-tripping through Serialize/Deserialize); covered by FuzzDeserializeEncryptedData.
+FuzzComponentPathContainment	pkg/bundleverify/bundleverify.go	cleanComponentPath	drop-error-guard	if path.IsAbs(p) || strings.HasPrefix(p, "/") { return "", fmt.Errorf("bundle: absolute component path %q", p) }	{}	equivalent	early absolute-path reject; masked by the post-path.Clean re-check isUnsafeCleanComponentPath, whose HasPrefix(clean, "/") rejects a leading slash regardless (path.Clean preserves it).
