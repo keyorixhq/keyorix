@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
@@ -36,6 +37,18 @@ func mapDynamicError(err error) error {
 	// storage_unavailable reason, not the backend-failure bucket below.
 	if serr, ok := storageUnavailableStatus(err); ok {
 		return serr
+	}
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
+	// An admin_dsn refused by policy (the caller's on create/update, the stored one on issue/
+	// renew/revoke): REST answers 400 with the same texts. No DSN in them: ForbiddenOptionError
+	// names only the option, ClientMessage only the DSN's host (never the resolved address).
+	if forbidden, ok := errors.AsType[*dsn.ForbiddenOptionError](err); ok {
+		return status.Error(codes.InvalidArgument, forbidden.Error()) // nosemgrep: keyorix-raw-error-to-client -- ForbiddenOptionError is built from the fixed option list only (internal/core/dsn/localfile.go), no DSN text; REST sends the same text with its 400
+	}
+	if refused, ok := errors.AsType[*core.DynamicSecretTargetRefusedError](err); ok {
+		return status.Error(codes.InvalidArgument, refused.ClientMessage())
 	}
 	// ERR-CLASS-LEFTOVERS-1: classified by sentinel (errors.Is), never by err.Error() text.
 	// A backend or driver message that happens to say "permission" or "required" is a
@@ -162,6 +175,51 @@ func (s *DynamicSecretGRPCService) ClassifyConfig(ctx context.Context, req *pb.C
 		return nil, mapDynamicError(err)
 	}
 	return dynamicConfigToProto(cfg), nil
+}
+
+func (s *DynamicSecretGRPCService) UpdateConfigAdminDSN(ctx context.Context, req *pb.UpdateDynamicConfigAdminDSNRequest) (*pb.DynamicSecretConfig, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetId() == 0 || req.GetAdminDsn() == "" {
+		return nil, status.Error(codes.InvalidArgument, "id and admin_dsn are required")
+	}
+	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetId()), permSecretsWrite); err != nil {
+		return nil, err
+	}
+	cfg, err := s.core.UpdateDynamicSecretConfigAdminDSN(ctx, &core.UpdateDynamicSecretConfigAdminDSNRequest{
+		ConfigID: uint(req.GetId()), AdminDSN: req.GetAdminDsn(), ActorID: user.PrincipalID(),
+	})
+	if err != nil {
+		return nil, mapDynamicError(err)
+	}
+	return dynamicConfigToProto(cfg), nil
+}
+
+func (s *DynamicSecretGRPCService) ListConfigsWithRefusedAdminDSN(ctx context.Context, req *pb.ListRefusedAdminDSNConfigsRequest) (*pb.ListRefusedAdminDSNConfigsResponse, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetProjectId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+		return nil, err
+	}
+	rep, err := s.core.ListProjectConfigsWithRefusedAdminDSN(ctx, user.PrincipalID(), uint(req.GetProjectId()))
+	if err != nil {
+		return nil, mapDynamicError(err)
+	}
+	out := &pb.ListRefusedAdminDSNConfigsResponse{Unreadable: intToU32(rep.Unreadable)}
+	for _, c := range rep.Configs {
+		out.Configs = append(out.Configs, &pb.RefusedAdminDSNConfig{
+			Id: uintToU32(c.ConfigID), Name: c.Name, ProjectId: uintToU32(c.ProjectID), EnvironmentId: uintToU32(c.EnvironmentID),
+			BackendType: c.BackendType, RefusedOptions: c.Options, LiveLeases: intToU32(c.LiveLeases),
+		})
+	}
+	return out, nil
 }
 
 func (s *DynamicSecretGRPCService) IssueLease(ctx context.Context, req *pb.IssueLeaseRequest) (*pb.IssuedCredential, error) {

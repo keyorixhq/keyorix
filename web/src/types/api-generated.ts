@@ -3093,6 +3093,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dynamic-secrets/configs/refused-admin-dsn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a project's configs whose admin DSN names a refused option
+         * @description Read-only. The configs in the project whose stored admin DSN names a driver option refused since #3952 (a server file such as sslrootcert or tlsCAFile, or ambient credentials): they can no longer issue. Fix each with PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn. Needs secrets.read on the project and dynamic-secret admin authority there (403), because the report is derived from the decrypted DSNs. Returns config and option names only, never a DSN or an option value.
+         */
+        get: operations["listDynamicSecretConfigsWithRefusedAdminDSN"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dynamic-secrets/configs/{id}": {
         parameters: {
             query?: never;
@@ -3131,6 +3151,26 @@ export interface paths {
          * @description Added for ADR-108 PR 1 (thin CLI `dynamic-secret classify`) — see listDynamicSecretConfigs above.
          */
         patch: operations["classifyDynamicSecretConfig"];
+        trace?: never;
+    };
+    "/api/v1/dynamic-secrets/configs/{id}/admin-dsn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Replace a dynamic-secret config's admin DSN
+         * @description Replaces the stored admin DSN in place, for example to remove an option refused since #3952 (a private-CA sslrootcert or tlsCAFile) without deleting and recreating the config. The same checks as config create apply: admin authority on the config's project/environment (403), the private-network egress policy and the refused driver options (400). The change and its audit row commit together; 503 `audit_unavailable` when the audit log refuses the row (nothing changed). While the config has an active or revoke_failed lease the new DSN must name the same host(s) (409 otherwise): those leases are revoked through it. The DSN is never returned.
+         */
+        patch: operations["updateDynamicSecretConfigAdminDSN"];
         trace?: never;
     };
     "/api/v1/dynamic-secrets/configs/{id}/issue": {
@@ -11808,6 +11848,48 @@ export interface operations {
             503: components["responses"]["AuthorizeUnavailable"];
         };
     };
+    listDynamicSecretConfigsWithRefusedAdminDSN: {
+        parameters: {
+            query: {
+                project_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope `{success, data}`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            configs?: {
+                                id?: number;
+                                name?: string;
+                                project_id?: number;
+                                environment_id?: number;
+                                backend_type?: string;
+                                /** @description Refused option names, lower case (authMechanism with its value, e.g. `authmechanism=mongodb-aws`). */
+                                refused_options?: string[];
+                                /** @description Active and revoke_failed leases. */
+                                live_leases?: number;
+                            }[];
+                            /** @description Configs whose admin DSN could not be decrypted, so they were not checked. */
+                            unreadable?: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     getDynamicSecretConfig: {
         parameters: {
             query?: never;
@@ -11870,6 +11952,44 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    updateDynamicSecretConfigAdminDSN: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: password */
+                    admin_dsn: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Envelope `{success, data, message}`. `data` is the sanitized config. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message?: string;
+                        data?: components["schemas"]["DynamicSecretConfig"];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     issueDynamicSecretLease: {

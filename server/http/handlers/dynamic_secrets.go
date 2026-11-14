@@ -376,6 +376,82 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 	sendSuccess(w, sanitizeConfig(updated), "Config enabled state updated.")
 }
 
+// UpdateConfigAdminDSN handles PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn —
+// replaces a config's admin DSN in place (DYNAMIC-ADMIN-DSN-1), e.g. to remove an
+// option refused since #3952. Core applies create's checks (admin authority, host
+// guard, refused options); the DSN is never echoed back or logged.
+func (h *DynamicSecretHandler) UpdateConfigAdminDSN(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	cfg, ok := h.loadConfig(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		AdminDSN string `json:"admin_dsn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
+		return
+	}
+	updated, err := h.coreService.UpdateDynamicSecretConfigAdminDSN(r.Context(), &core.UpdateDynamicSecretConfigAdminDSNRequest{
+		ConfigID: cfg.ID, AdminDSN: body.AdminDSN, ActorID: userCtx.PrincipalID(),
+	})
+	if err != nil {
+		if sendStorageUnavailable(w, err) || sendAuditUnavailable(w, err) {
+			return
+		}
+		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error updating the admin DSN of dynamic-secret config %d", cfg.ID))
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadRequest), nil)
+		return
+	}
+	sendSuccess(w, sanitizeConfig(updated), "Admin DSN updated.")
+}
+
+// ListConfigsWithRefusedAdminDSN handles
+// GET /api/v1/dynamic-secrets/configs/refused-admin-dsn?project_id= — read-only: the
+// project's configs whose stored admin DSN names an option refused since #3952,
+// i.e. the ones to fix with UpdateConfigAdminDSN (DYNAMIC-ADMIN-DSN-1). secrets.read
+// at the project here, dynamic-secret admin authority in core (the report is derived
+// from the decrypted DSNs). It returns config names and option names, never a DSN.
+func (h *DynamicSecretHandler) ListConfigsWithRefusedAdminDSN(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	projectID, _, ok := parseScopeQuery(w, r)
+	if !ok {
+		return
+	}
+	if projectID == 0 {
+		sendError(w, "InvalidParameter", "project_id is required", http.StatusBadRequest, nil)
+		return
+	}
+	if ok, mfaBlocked, lookupErr := h.authorize(r, permSecretsRead, core.Scope{ProjectID: projectID}); !ok {
+		h.denyAuthz(w, r, mfaBlocked, lookupErr)
+		return
+	}
+	rep, err := h.coreService.ListProjectConfigsWithRefusedAdminDSN(r.Context(), userCtx.PrincipalID(), projectID)
+	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error listing dynamic-secret configs with a refused admin DSN in project %d", projectID))
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusInternalServerError), nil)
+		return
+	}
+	out := make([]map[string]any, 0, len(rep.Configs))
+	for _, c := range rep.Configs {
+		out = append(out, map[string]any{
+			"id": c.ConfigID, "name": c.Name, "project_id": c.ProjectID, "environment_id": c.EnvironmentID,
+			"backend_type": c.BackendType, "refused_options": c.Options, "live_leases": c.LiveLeases,
+		})
+	}
+	sendSuccess(w, map[string]any{"configs": out, "unreadable": rep.Unreadable}, "")
+}
+
 // loadConfig fetches the {id} config. #1645/ADR-096: authorization against
 // the config's project/environment scope now runs as route-level
 // RequireScopedPermission middleware (router.go, ScopeFromDynamicSecretConfigParam)

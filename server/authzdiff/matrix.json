@@ -1205,6 +1205,23 @@
       ]
     },
     {
+      "key": "REST GET /api/v1/dynamic-secrets/configs/refused-admin-dsn",
+      "layer": "rest",
+      "handler": "dynamicSecretHandler.ListConfigsWithRefusedAdminDSN",
+      "gated": false,
+      "mutating": false,
+      "secret_reading": false,
+      "core_entries": [
+        "AuthorizePrincipal",
+        "ListProjectConfigsWithRefusedAdminDSN",
+        "ProjectRequiresMFA"
+      ],
+      "guard_reach": [
+        "Authorize"
+      ],
+      "decrypts_internally": true
+    },
+    {
       "key": "REST GET /api/v1/dynamic-secrets/configs/{id}",
       "layer": "rest",
       "handler": "dynamicSecretHandler.GetConfig",
@@ -1217,6 +1234,22 @@
       "core_entries": [
         "GetDynamicSecretConfig"
       ]
+    },
+    {
+      "key": "REST PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn",
+      "layer": "rest",
+      "handler": "dynamicSecretHandler.UpdateConfigAdminDSN",
+      "gate_perms": [
+        "permSecretsWrite"
+      ],
+      "gated": true,
+      "mutating": true,
+      "secret_reading": false,
+      "core_entries": [
+        "GetDynamicSecretConfig",
+        "UpdateDynamicSecretConfigAdminDSN"
+      ],
+      "decrypts_internally": true
     },
     {
       "key": "REST PATCH /api/v1/dynamic-secrets/configs/{id}/classification",
@@ -6965,6 +6998,23 @@
       ]
     },
     {
+      "key": "GRPC keyorix.v1.DynamicSecretService.ListConfigsWithRefusedAdminDSN",
+      "layer": "grpc",
+      "handler": "*github.com/keyorixhq/keyorix/server/grpc/services.DynamicSecretGRPCService.ListConfigsWithRefusedAdminDSN",
+      "gated": false,
+      "mutating": false,
+      "secret_reading": false,
+      "core_entries": [
+        "AuthorizePrincipal",
+        "ListProjectConfigsWithRefusedAdminDSN",
+        "ProjectRequiresMFA"
+      ],
+      "guard_reach": [
+        "Authorize"
+      ],
+      "decrypts_internally": true
+    },
+    {
       "key": "GRPC keyorix.v1.DynamicSecretService.ListLeases",
       "layer": "grpc",
       "handler": "*github.com/keyorixhq/keyorix/server/grpc/services.DynamicSecretGRPCService.ListLeases",
@@ -7029,6 +7079,24 @@
         "GetDynamicSecretLease",
         "ProjectRequiresMFA",
         "RevokeLease"
+      ],
+      "guard_reach": [
+        "Authorize"
+      ],
+      "decrypts_internally": true
+    },
+    {
+      "key": "GRPC keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN",
+      "layer": "grpc",
+      "handler": "*github.com/keyorixhq/keyorix/server/grpc/services.DynamicSecretGRPCService.UpdateConfigAdminDSN",
+      "gated": false,
+      "mutating": true,
+      "secret_reading": false,
+      "core_entries": [
+        "AuthorizePrincipal",
+        "GetDynamicSecretConfig",
+        "ProjectRequiresMFA",
+        "UpdateDynamicSecretConfigAdminDSN"
       ],
       "guard_reach": [
         "Authorize"
@@ -7670,6 +7738,7 @@
         "keyorix.v1.DynamicSecretService.RenewLease",
         "keyorix.v1.DynamicSecretService.RevokeAllLeases",
         "keyorix.v1.DynamicSecretService.RevokeLease",
+        "keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN",
         "keyorix.v1.GroupService.AddGroupMember",
         "keyorix.v1.GroupService.CreateGroup",
         "keyorix.v1.GroupService.DeleteGroup",
@@ -7707,7 +7776,7 @@
       ],
       "mutating": true,
       "secret_reading": false,
-      "reached_by_all_ops": 98,
+      "reached_by_all_ops": 101,
       "infra": true,
       "guards": [
         "Authorize"
@@ -8227,7 +8296,7 @@
       "reached_by_all_ops": 2,
       "infra": false,
       "guards": null,
-      "core_refusal": "none"
+      "core_refusal": "typed"
     },
     {
       "core": "CreateEnvironment",
@@ -8324,7 +8393,7 @@
       "guards": [
         "requireAdminAuthorityAt"
       ],
-      "core_refusal": "untyped"
+      "core_refusal": "typed+untyped"
     },
     {
       "core": "CreateOwnPAT",
@@ -8977,6 +9046,7 @@
     {
       "core": "GetDynamicSecretConfig",
       "rest": [
+        "PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn",
         "PATCH /api/v1/dynamic-secrets/configs/{id}/classification",
         "PATCH /api/v1/dynamic-secrets/configs/{id}/enabled",
         "POST /api/v1/dynamic-secrets/configs/{id}/issue",
@@ -8985,11 +9055,12 @@
       "grpc": [
         "keyorix.v1.DynamicSecretService.ClassifyConfig",
         "keyorix.v1.DynamicSecretService.IssueLease",
-        "keyorix.v1.DynamicSecretService.RevokeAllLeases"
+        "keyorix.v1.DynamicSecretService.RevokeAllLeases",
+        "keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN"
       ],
       "mutating": true,
       "secret_reading": false,
-      "reached_by_all_ops": 11,
+      "reached_by_all_ops": 13,
       "infra": false,
       "guards": null,
       "core_refusal": "none"
@@ -9886,6 +9957,7 @@
         "keyorix.v1.DynamicSecretService.RenewLease",
         "keyorix.v1.DynamicSecretService.RevokeAllLeases",
         "keyorix.v1.DynamicSecretService.RevokeLease",
+        "keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN",
         "keyorix.v1.GroupService.AddGroupMember",
         "keyorix.v1.GroupService.CreateGroup",
         "keyorix.v1.GroupService.DeleteGroup",
@@ -9923,7 +9995,7 @@
       ],
       "mutating": true,
       "secret_reading": false,
-      "reached_by_all_ops": 95,
+      "reached_by_all_ops": 98,
       "infra": true,
       "guards": null,
       "core_refusal": "none"
@@ -11263,6 +11335,21 @@
       "infra": false,
       "guards": null,
       "core_refusal": "none"
+    },
+    {
+      "core": "UpdateDynamicSecretConfigAdminDSN",
+      "rest": [
+        "PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn"
+      ],
+      "grpc": [
+        "keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN"
+      ],
+      "mutating": true,
+      "secret_reading": false,
+      "reached_by_all_ops": 2,
+      "infra": false,
+      "guards": null,
+      "core_refusal": "typed"
     },
     {
       "core": "UpdateGroup",

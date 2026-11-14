@@ -8,7 +8,7 @@ Method, population sources and blind spots: the header comment of `devtools/auth
 - Secret-reading = reaches, inside core, a `Decrypt*` invoke on an `internal/core/ports` interface, `(*encryption.Service).Decrypt*`, `(*KeyorixCore).decryptVersionValue`, or a `GetSecret` invoke on `ports.Connector`/`connect.Connector`.
 - Infra = core method reached by >=10% of all operations (a shared helper, not an operation); listed separately.
 
-Population: 384 REST routes (211 in scope), 87 gRPC methods (46 in scope).
+Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 
 ## Operations by core entry point
 
@@ -71,14 +71,14 @@ Population: 384 REST routes (211 in scope), 87 gRPC methods (46 in scope).
 | `CopySecret` | Y | Y | typed+untyped | Authorize | POST /api/v1/secrets/{id}/copy | — | no gRPC |
 | `CreateAlertEscalationPolicy` | Y |  | none |  | POST /api/v1/alert-escalation-policies | — | no gRPC |
 | `CreateConnectRefGrant` | Y |  | none |  | POST /api/v1/connect/ref-grants | keyorix.v1.ConnectService.CreateRefGrant |  |
-| `CreateDynamicSecretConfig` | Y |  | none |  | POST /api/v1/dynamic-secrets/configs | keyorix.v1.DynamicSecretService.CreateConfig |  |
+| `CreateDynamicSecretConfig` | Y |  | typed |  | POST /api/v1/dynamic-secrets/configs | keyorix.v1.DynamicSecretService.CreateConfig |  |
 | `CreateEnvironment` | Y |  | none |  | POST /api/v1/projects/{id}/environments | — | no gRPC |
 | `CreateFolder` | Y |  | none |  | POST /api/v1/folders | — | no gRPC |
 | `CreateGroup` | Y |  | none |  | POST /api/v1/groups | keyorix.v1.GroupService.CreateGroup |  |
 | `CreateMFAChallengeHoldingLoginSlot` | Y |  | none |  | POST /auth/login | — | no gRPC |
 | `CreateMachineIdentity` | Y |  | none |  | POST /api/v1/projects/{id}/machine-identities | keyorix.v1.MachineIdentityService.CreateMachineIdentity |  |
 | `CreateNotificationChannel` | Y |  | none |  | POST /api/v1/notification-channels | — | no gRPC |
-| `CreateOIDCBinding` | Y |  | untyped | requireAdminAuthorityAt | POST /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings | — | no gRPC |
+| `CreateOIDCBinding` | Y |  | typed+untyped | requireAdminAuthorityAt | POST /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings | — | no gRPC |
 | `CreateOwnPAT` | Y |  | none |  | POST /api/v1/auth/tokens | — | no gRPC |
 | `CreateProject` | Y |  | none |  | POST /api/v1/projects | keyorix.v1.ProjectService.CreateProject |  |
 | `CreateProjectWithEnvs` | Y |  | none |  | POST /api/v1/projects | — | no gRPC |
@@ -125,7 +125,7 @@ Population: 384 REST routes (211 in scope), 87 gRPC methods (46 in scope).
 | `FinishWebAuthnPasswordlessLoginPending` | Y |  | none |  | POST /auth/webauthn/passwordless/finish | — | no gRPC |
 | `FinishWebAuthnReauth` | Y |  | none |  | POST /api/v1/auth/webauthn/reauth/finish | — | no gRPC |
 | `FinishWebAuthnRegistration` | Y |  | none |  | POST /api/v1/auth/webauthn/register/finish | — | no gRPC |
-| `GetDynamicSecretConfig` | Y |  | none |  | PATCH /api/v1/dynamic-secrets/configs/{id}/classification<br>PATCH /api/v1/dynamic-secrets/configs/{id}/enabled<br>POST /api/v1/dynamic-secrets/configs/{id}/issue<br>POST /api/v1/dynamic-secrets/configs/{id}/revoke-all | keyorix.v1.DynamicSecretService.ClassifyConfig<br>keyorix.v1.DynamicSecretService.IssueLease<br>keyorix.v1.DynamicSecretService.RevokeAllLeases |  |
+| `GetDynamicSecretConfig` | Y |  | none |  | PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn<br>PATCH /api/v1/dynamic-secrets/configs/{id}/classification<br>PATCH /api/v1/dynamic-secrets/configs/{id}/enabled<br>POST /api/v1/dynamic-secrets/configs/{id}/issue<br>POST /api/v1/dynamic-secrets/configs/{id}/revoke-all | keyorix.v1.DynamicSecretService.ClassifyConfig<br>keyorix.v1.DynamicSecretService.IssueLease<br>keyorix.v1.DynamicSecretService.RevokeAllLeases<br>keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN |  |
 | `GetDynamicSecretLease` | Y |  | none |  | POST /api/v1/dynamic-secrets/leases/{leaseID}/renew<br>POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke | keyorix.v1.DynamicSecretService.RenewLease<br>keyorix.v1.DynamicSecretService.RevokeLease |  |
 | `GetPermittedSecretValue` |  | Y | untyped | Authorize | GET /api/v1/secrets/{id} | keyorix.v1.SecretService.GetSecretValue |  |
 | `GetRoleWithPermissions` | Y |  | none |  | — | keyorix.v1.RoleService.UpdateRole | no REST |
@@ -276,6 +276,7 @@ Population: 384 REST routes (211 in scope), 87 gRPC methods (46 in scope).
 | `UnlockUser` | Y |  | none |  | POST /api/v1/users/{id}/unlock | — | no gRPC |
 | `UpdateAlertEscalationPolicy` | Y |  | none |  | PUT /api/v1/alert-escalation-policies/{id} | — | no gRPC |
 | `UpdateAnomalyConfig` | Y |  | none |  | PUT /api/v1/admin/anomaly-config | — | no gRPC |
+| `UpdateDynamicSecretConfigAdminDSN` | Y |  | typed |  | PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn | keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN |  |
 | `UpdateGroup` | Y |  | none |  | PUT /api/v1/groups/{id} | keyorix.v1.GroupService.UpdateGroup |  |
 | `UpdateNotificationChannel` | Y |  | none |  | PUT /api/v1/notification-channels/{id} | — | no gRPC |
 | `UpdateOwnProfile` | Y |  | none | Authorize | PUT /api/v1/auth/profile | — | no gRPC |
@@ -300,8 +301,8 @@ Population: 384 REST routes (211 in scope), 87 gRPC methods (46 in scope).
 
 ## Infra core methods (excluded from operation rows)
 
-- `AuthorizePrincipal` (reached by 98 ops)
-- `ProjectRequiresMFA` (reached by 95 ops)
+- `AuthorizePrincipal` (reached by 101 ops)
+- `ProjectRequiresMFA` (reached by 98 ops)
 
 ## Residue: in-scope operations reaching no non-infra core entry
 

@@ -14,12 +14,16 @@ import (
 // the options revoke cannot remove (internal/dynamic/revoke_dsn.go), which leave
 // them revoke_failed.
 type RefusedAdminDSNConfig struct {
-	ConfigID    uint
-	ProjectID   uint
-	Name        string
-	BackendType string
+	ConfigID      uint
+	ProjectID     uint
+	EnvironmentID uint
+	Name          string
+	BackendType   string
 	// Option is the first refused option found; the DSN may name more.
 	Option string
+	// Options names every refused option in the DSN (dsn.RefusedLocalFileOptions):
+	// option names only, never a value or any other part of the DSN.
+	Options []string
 	// LiveLeases counts the config's active and revoke_failed leases.
 	LiveLeases int
 }
@@ -43,35 +47,64 @@ func (c *KeyorixCore) ListConfigsWithRefusedAdminDSN(ctx context.Context) (*Refu
 	}
 	rep := &RefusedAdminDSNReport{}
 	for _, p := range projects {
-		cfgs, err := c.storage.ListDynamicSecretConfigs(ctx, p.ID, 0)
-		if err != nil {
+		if err := c.collectRefusedAdminDSNConfigs(ctx, p.ID, rep); err != nil {
 			return nil, err
-		}
-		for _, cfg := range cfgs {
-			adminDSN, derr := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, ports.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
-			if derr != nil {
-				rep.Unreadable++
-				continue
-			}
-			fe, ok := errors.AsType[*dsn.ForbiddenOptionError](dsn.CheckLocalFileOptions(cfg.BackendType, adminDSN))
-			if !ok {
-				continue
-			}
-			leases, err := c.storage.ListDynamicSecretLeases(ctx, cfg.ID)
-			if err != nil {
-				return nil, err
-			}
-			live := 0
-			for _, l := range leases {
-				if l.Status == "active" || l.Status == "revoke_failed" {
-					live++
-				}
-			}
-			rep.Configs = append(rep.Configs, RefusedAdminDSNConfig{
-				ConfigID: cfg.ID, ProjectID: cfg.ProjectID, Name: cfg.Name, BackendType: cfg.BackendType,
-				Option: fe.Option, LiveLeases: live,
-			})
 		}
 	}
 	return rep, nil
+}
+
+// ListProjectConfigsWithRefusedAdminDSN is ListConfigsWithRefusedAdminDSN for one
+// project, for an operator who must find the configs to fix with
+// UpdateDynamicSecretConfigAdminDSN (DYNAMIC-ADMIN-DSN-1). It is gated like that
+// update: actorID needs dynamic-secret admin authority on the project, because the
+// report is derived from the decrypted admin DSNs. It names configs and refused
+// option names only, never a DSN.
+func (c *KeyorixCore) ListProjectConfigsWithRefusedAdminDSN(ctx context.Context, actorID, projectID uint) (*RefusedAdminDSNReport, error) {
+	if projectID == 0 {
+		return nil, validationErrorf("project_id is required")
+	}
+	if err := c.requireDynamicSecretAdminAuthority(ctx, actorID, projectID, 0); err != nil {
+		return nil, err
+	}
+	rep := &RefusedAdminDSNReport{}
+	if err := c.collectRefusedAdminDSNConfigs(ctx, projectID, rep); err != nil {
+		return nil, &storageReadFault{cause: err}
+	}
+	return rep, nil
+}
+
+// collectRefusedAdminDSNConfigs appends projectID's configs with a refused
+// admin_dsn option to rep.
+func (c *KeyorixCore) collectRefusedAdminDSNConfigs(ctx context.Context, projectID uint, rep *RefusedAdminDSNReport) error {
+	cfgs, err := c.storage.ListDynamicSecretConfigs(ctx, projectID, 0)
+	if err != nil {
+		return err
+	}
+	for _, cfg := range cfgs {
+		adminDSN, derr := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, ports.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
+		if derr != nil {
+			rep.Unreadable++
+			continue
+		}
+		fe, ok := errors.AsType[*dsn.ForbiddenOptionError](dsn.CheckLocalFileOptions(cfg.BackendType, adminDSN))
+		if !ok {
+			continue
+		}
+		leases, err := c.storage.ListDynamicSecretLeases(ctx, cfg.ID)
+		if err != nil {
+			return err
+		}
+		live := 0
+		for _, l := range leases {
+			if l.Status == "active" || l.Status == "revoke_failed" {
+				live++
+			}
+		}
+		rep.Configs = append(rep.Configs, RefusedAdminDSNConfig{
+			ConfigID: cfg.ID, ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID, Name: cfg.Name, BackendType: cfg.BackendType,
+			Option: fe.Option, Options: dsn.RefusedLocalFileOptions(cfg.BackendType, adminDSN), LiveLeases: live,
+		})
+	}
+	return nil
 }
