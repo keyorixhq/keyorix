@@ -159,6 +159,13 @@ type EmergencyAccessPosture struct {
 	// never to silently read identical to "reviewed" or to an ordinary
 	// unreviewed backlog.
 	IndependentReviewImpossible bool `json:"independent_review_impossible"`
+	// DegradedActivations (POSTURE-DEGRADED-NOV-1) counts activations committed
+	// while the audit log refused their rows (BREAKGLASS-OWED-1) whose owed rows
+	// the backfill has not yet written into the chain (AuditSettledAt nil). Their
+	// audit trail is incomplete right now, so the snapshot is also marked
+	// Degraded: a posture that read these as clean would claim a complete audit
+	// record for an emergency elevation that does not have one yet.
+	DegradedActivations int `json:"degraded_activations"`
 }
 
 // AccessRequestPosture summarises the dual-control access-request/approval workflow
@@ -1011,6 +1018,11 @@ func (c *KeyorixCore) accumulateBreakGlassPosture(p *CompliancePosture, pid uint
 	for _, a := range acts {
 		if a.State == BreakGlassActive {
 			p.EmergencyAccess.ActiveActivations++
+		}
+		if a.Degraded && a.AuditSettledAt == nil {
+			p.EmergencyAccess.DegradedActivations++
+			p.degrade(fmt.Sprintf("emergency_access:project=%d", pid),
+				fmt.Errorf("break-glass activation %d committed while the audit log refused its rows; they are still owed", a.ID))
 		}
 		if a.ReviewedAt == nil && !a.CreatedAt.After(cutoff) {
 			p.EmergencyAccess.UnreviewedActivations++

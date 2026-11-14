@@ -94,6 +94,47 @@ func TestAccumulateBreakGlassPosture_CountsUnreviewedPastTheWindow(t *testing.T)
 		"the threshold must travel with the counts, or the report is uninterpretable without the deployment's config")
 }
 
+// TestAccumulateBreakGlassPosture_DegradedActivationIsNotClean
+// (POSTURE-DEGRADED-NOV-1): an activation committed while the audit log refused
+// its rows, with those rows still owed, must be counted and must flip the
+// snapshot's Degraded flag; once the backfill settles it, it is clean again.
+func TestAccumulateBreakGlassPosture_DegradedActivationIsNotClean(t *testing.T) {
+	t.Parallel()
+	fixed := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	settled := fixed.Add(-time.Hour)
+
+	c := NewKeyorixCore(new(MockStorage))
+	c.now = func() time.Time { return fixed }
+
+	run := func(acts ...*models.BreakGlassActivation) *CompliancePosture {
+		p := &CompliancePosture{}
+		c.accumulateBreakGlassPosture(p, 1, &complianceSnapshot{
+			breakGlassByProject:    map[uint][]*models.BreakGlassActivation{1: acts},
+			breakGlassErrByProject: map[uint]error{},
+		})
+		return p
+	}
+
+	owed := run(
+		&models.BreakGlassActivation{ID: 7, ProjectID: 1, State: BreakGlassActive, CreatedAt: fixed.Add(-time.Hour), Degraded: true},
+		&models.BreakGlassActivation{ID: 8, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-time.Hour)},
+	)
+	assert.Equal(t, 1, owed.EmergencyAccess.DegradedActivations)
+	assert.True(t, owed.Degraded, "an activation with owed audit rows is an incomplete audit record, not a clean posture")
+	require.Len(t, owed.DegradedReasons, 1)
+	assert.Contains(t, owed.DegradedReasons[0], "emergency_access:project=1")
+	assert.Contains(t, owed.DegradedReasons[0], "activation 7")
+	assert.True(t, owed.DegradedArea("emergency_access"))
+
+	clean := run(
+		&models.BreakGlassActivation{ID: 7, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-2 * time.Hour), Degraded: true, AuditSettledAt: &settled},
+		&models.BreakGlassActivation{ID: 8, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-time.Hour)},
+	)
+	assert.Equal(t, 0, clean.EmergencyAccess.DegradedActivations, "a settled degraded activation has its rows in the chain")
+	assert.False(t, clean.Degraded)
+	assert.Empty(t, clean.DegradedReasons)
+}
+
 // TestAccumulateBreakGlassPosture_SingleAdminDeploymentFlagsIndependentReviewImpossible
 // is INV-CORE-break-glass-independent-review-impossible-is-visible's proving
 // test (#2461 round 2, Andrei's decision item (c)):
