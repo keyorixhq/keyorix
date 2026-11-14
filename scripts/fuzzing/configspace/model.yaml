@@ -939,8 +939,12 @@ conflicts:
     names: [path, storage.type]
   # C20, C21: added 2026-11-12 after triage (RULES.md amendment of that date): both are
   # refused by Validate with a message naming the option, the model did not list them.
+  # $empty: a blank storage.type is mapped to "local" by server/main.go before Validate,
+  # so pooler-on-non-postgres is refused there too (the model's enumeration had missed
+  # the empty-string spelling, which made the correctly-named pooler refusal look
+  # "unnamed" whenever another unrelated conflict was also present — M42C).
   - id: C20
-    when: {storage.database.pooler: [pgbouncer-session, pgbouncer-transaction], storage.type: [sqlite, local, $absent]}
+    when: {storage.database.pooler: [pgbouncer-session, pgbouncer-transaction], storage.type: [sqlite, local, $absent, $empty]}
     names: [pooler]
   - id: C21
     when: {server.http.tls.enabled: [true], server.http.tls.auto_cert: [true], server.http.tls.domains: [$absent, "[]"]}
