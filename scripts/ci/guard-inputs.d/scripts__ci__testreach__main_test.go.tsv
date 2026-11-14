@@ -1,0 +1,1 @@
+scripts/ci/testreach/main_test.go	!**	fixture packages written under t.TempDir; the docs/ and web/ paths are fake changed-file names, never read from the repository
