@@ -73,6 +73,7 @@ func packageStaysLightViolations(t *testing.T, sources map[string]string) []stri
 	return out
 }
 
+// dir-listing-ok: this guards package's own files
 func TestGuardsPackageStaysLight(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {

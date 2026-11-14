@@ -191,6 +191,7 @@ func beScanCore(t *testing.T) *beScan {
 
 // beScanDir scans one directory: a synthetic fixture or a mutated copy of the
 // core family. The real scan is beScanCore.
+// dir-listing-ok: lists a synthetic fixture dir or a mutated copy of the family; the real scan is beScanCore (srcpath.CoreFamilyGoFiles)
 func beScanDir(t *testing.T, dir string) *beScan {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
