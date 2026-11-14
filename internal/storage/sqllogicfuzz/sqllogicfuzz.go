@@ -15,8 +15,7 @@
 //   - Injection-structure invariance: a value passed as a bind parameter never
 //     changes the prepared-statement text (DryRun SQL identical, value absent).
 //
-// What each oracle does NOT verify is documented on each oracle function and in
-// the SQ1 report. All oracles compare row-id *sets* (sorted), so result
+// What each oracle does NOT verify is documented on each oracle function. All oracles compare row-id *sets* (sorted), so result
 // ORDER, collation-dependent ORDER BY, and NULL ordering are deliberately out
 // of scope — they are known, legitimate cross-engine differences.
 package sqllogicfuzz
