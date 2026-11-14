@@ -39,8 +39,7 @@ var grantCeilingMappingExempt = map[string]string{
 		"in the 200 body's failed list (BulkApproveAccessRequests appends approveErr per item)",
 	// #4154: these answer the ceiling 500 today. Remove each row when its handler maps it
 	// (TestEveryGrantingHandlerMapsTheCeilingRefusal reports a row whose handler maps it).
-	"invitations.go:CreateGlobalInvitation":       "#4154: answers the ceiling 500 past its two 403 pre-checks; map it with sendGrantCeilingRefusal",
-	"project_memberships.go:TransitionMembership": "#4154: answers the ceiling 500; map it with sendGrantCeilingRefusal",
+	"invitations.go:CreateGlobalInvitation": "#4154: answers the ceiling 500 past its two 403 pre-checks; map it with sendGrantCeilingRefusal",
 }
 
 // splitGrantCeilingExempt splits mappingViolations' unexempted output
