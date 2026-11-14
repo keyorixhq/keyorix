@@ -180,6 +180,11 @@ var ErrDuplicateProjectName = errors.New("a project with this name already exist
 // driver's constraint text.
 var ErrDuplicateEnvironmentName = errors.New("an environment with this name already exists in the project")
 
+// ErrDuplicateRoleName is returned (wrapped) by CreateRole when the insert collides with
+// the unique index on roles.name_folded (uniq_roles_name_folded, #1642). REST answers 409
+// by this sentinel, not by the driver's constraint text.
+var ErrDuplicateRoleName = errors.New("a role with this name already exists")
+
 // ErrEnvironmentHasSecrets is returned (wrapped) by DeleteEnvironment when the environment
 // still holds active secrets. The refusal is about the target's state: REST 409, gRPC
 // FailedPrecondition.

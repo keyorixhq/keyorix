@@ -205,6 +205,7 @@ var sentinelTable = []Sentinel{
 	{"storage.ErrDuplicateUsername", storage.ErrDuplicateUsername, Conflict},
 	{"storage.ErrDuplicateProjectName", storage.ErrDuplicateProjectName, Conflict},
 	{"storage.ErrDuplicateEnvironmentName", storage.ErrDuplicateEnvironmentName, Conflict},
+	{"storage.ErrDuplicateRoleName", storage.ErrDuplicateRoleName, Conflict},
 	{"storage.ErrDuplicateGroupName", storage.ErrDuplicateGroupName, Conflict},
 	{"storage.ErrDuplicateNotificationChannelName", storage.ErrDuplicateNotificationChannelName, Conflict},
 	{"storage.ErrDuplicateSecretVersion", storage.ErrDuplicateSecretVersion, Conflict},
