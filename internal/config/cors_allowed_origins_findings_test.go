@@ -25,10 +25,12 @@ import (
 // configuration, so this is a guard gap (HARDENING), not something a remote party can
 // set.
 func TestAllowedOriginsFindingWildcardEntry(t *testing.T) {
-	list := []string{"https://*"}
-	if err := validateAllowedOrigins(list); err != nil {
-		t.Fatalf("validateAllowedOrigins now rejects %q (%v): finding fixed", list, err)
+	for _, entry := range []string{"https://*", "https://*.example.com", "http://*:8080"} {
+		if err := validateAllowedOrigins([]string{entry}); err != nil {
+			t.Fatalf("validateAllowedOrigins now rejects %q (%v): finding fixed", entry, err)
+		}
 	}
+	list := []string{"https://*"}
 	h := cors.Handler(corsTestOptions(list))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil)
 	req.Header.Set("Origin", "https://attacker.example")
