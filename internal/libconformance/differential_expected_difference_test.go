@@ -30,7 +30,21 @@ var yamlExpectedDiff = map[string]bool{
 // DIFFERENT dialects (JSON Schema draft vs OpenAPI 3.0 Schema Object), so a
 // broad set of divergences is expected and listed here by feature.
 var jsonSchemaExpectedDiff = map[string]bool{
-	// (populated during triage — see report)
+	// The two validators decode the INSTANCE with different JSON parsers, so some
+	// instances parse for one and not the other — a parser differential, not a
+	// schema-validation one.
+
+	// santhosh's jsonschema.UnmarshalJSON keeps numbers as json.Number (unbounded);
+	// kin decodes via encoding/json into float64 and rejects a number too large for
+	// float64. Found by the fuzzer at {"":1e700}. Benign: Keyorix feeds each
+	// validator its own idiomatic decode.
+	"parse-split:kin-float64-number-range": true,
+
+	// santhosh's UnmarshalJSON REJECTS duplicate object keys; encoding/json (kin's
+	// path) keeps last-wins. A real, security-flavoured divergence in the two JSON
+	// parsers — recorded here, and also the kind of thing a duplicate-key pre-scan
+	// (see FuzzYAMLSiblingDifferential) exists to normalise.
+	"parse-split:santhosh-duplicate-key": true,
 }
 
 // jsonDecodeExpectedDiff lists tolerated accept/reject divergence classes among
@@ -50,4 +64,13 @@ var jsonDecodeExpectedDiff = map[string]bool{
 	// it. By design in Keyorix (unknown fields ignored); recorded so the choice is
 	// visible rather than invisible.
 	"A-vs-C:unknown-field": true,
+
+	// A struct decode SKIPS an unknown field's value and stores a json.RawMessage
+	// field as raw bytes, so it never converts the number to a Go float64; a
+	// schemaless decode (M) materializes every number into float64 and rejects one
+	// that overflows (e.g. {"":1e700}). A genuine, benign value-materialization
+	// differential, found by the fuzzer at input {"":1e700}. HARDENING note (report):
+	// a handler using struct decode silently accepts request bodies whose unknown
+	// or raw fields carry float64-overflowing number literals.
+	"A-vs-M:schemaless-number-range": true,
 }

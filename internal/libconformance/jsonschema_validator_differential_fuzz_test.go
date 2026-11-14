@@ -163,10 +163,16 @@ func FuzzJSONSchemaValidatorDifferential(f *testing.F) {
 		parsedS := errSparse == nil
 		parsedK := errKparse == nil
 		if parsedS != parsedK {
-			class := "instance-parse-split:" + schemaName
+			// The two instance decoders are DIFFERENT JSON parsers:
+			// santhosh's jsonschema.UnmarshalJSON preserves numbers as json.Number
+			// (unbounded) and REJECTS duplicate object keys; kin decodes via
+			// encoding/json, which materializes numbers into float64 (range-bounded)
+			// and keeps last-wins on duplicate keys. A parse split is therefore a
+			// property of the parsers, not of the schema — classify by cause.
+			class := classifyParseSplit(parsedS, parsedK, errSparse, errKparse)
 			if !jsonSchemaExpectedDiff[class] {
-				t.Fatalf("NEW instance-parse disagreement [class=%q]\n  instance=%q\n  santhosh parsed=%v err=%v\n  kin      parsed=%v err=%v",
-					class, instance, parsedS, errSparse, parsedK, errKparse)
+				t.Fatalf("NEW instance-parse disagreement [class=%q]\n  schema=%s\n  instance=%q\n  santhosh parsed=%v err=%v\n  kin      parsed=%v err=%v",
+					class, schemaName, instance, parsedS, errSparse, parsedK, errKparse)
 			}
 			return
 		}
@@ -185,6 +191,32 @@ func FuzzJSONSchemaValidatorDifferential(f *testing.F) {
 			}
 		}
 	})
+}
+
+// classifyParseSplit names the cause of a one-sided instance-parse failure
+// between santhosh (json.Number-preserving, duplicate-key-rejecting) and kin
+// (encoding/json: float64 numbers, last-wins duplicates).
+func classifyParseSplit(parsedS, parsedK bool, errS, errK error) string {
+	if parsedS && !parsedK {
+		// santhosh accepted, kin (encoding/json) rejected.
+		m := ""
+		if errK != nil {
+			m = errK.Error()
+		}
+		if containsAny(m, "cannot unmarshal number", "overflow") {
+			return "parse-split:kin-float64-number-range" // number too big for float64
+		}
+		return "parse-split:kin-rejects:other"
+	}
+	// kin accepted, santhosh rejected.
+	m := ""
+	if errS != nil {
+		m = errS.Error()
+	}
+	if containsAny(m, "duplicate") {
+		return "parse-split:santhosh-duplicate-key"
+	}
+	return "parse-split:santhosh-rejects:other"
 }
 
 func rootKind(v any) string {

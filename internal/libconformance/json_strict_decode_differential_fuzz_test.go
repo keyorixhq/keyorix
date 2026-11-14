@@ -158,13 +158,24 @@ func FuzzJSONStrictDecodeDifferential(f *testing.F) {
 		errM := json.Unmarshal(data, &vm)
 		acceptM := errM == nil
 		if acceptA && !acceptM && !trailing {
-			// A (struct) accepted but M (schemaless) rejected. M is json.Unmarshal-
-			// based, so it shares B's trailing-data semantics; when A left trailing
-			// bytes this split is the SAME known trailing-data class, not a new
-			// finding — hence the !trailing guard. With no trailing data, schemaless
-			// decode is strictly more permissive on syntax than a struct decode, so
-			// this direction genuinely should never happen.
-			t.Fatalf("struct decode accepted but schemaless decode rejected with NO trailing data (impossible-direction)\n  input=%q\n  errM=%v", data, errM)
+			// A (struct) accepted but M (schemaless) rejected, no trailing data.
+			// This is NOT impossible: the two decoders share one tokenizer but
+			// differ in what they MATERIALIZE. A struct decode (A) SKIPS the value
+			// of an unknown field without parsing it, and stores a json.RawMessage
+			// field as raw bytes — in neither case does it convert the number to a
+			// Go float64/int, so it never hits the float64-range check. A schemaless
+			// decode (M) materializes every number into float64 and rejects one that
+			// overflows (e.g. {"":1e700} under the unknown key "", or {"raw":1e700}).
+			// That is a genuine, benign value-materialization differential, gated as
+			// a named class; only a NON-materialization M-rejection (a true syntax
+			// reject A somehow passed) is impossible.
+			if isSchemalessMaterializationReject(errM) {
+				if !jsonDecodeExpectedDiff["A-vs-M:schemaless-number-range"] {
+					t.Fatalf("NEW A/M materialization split not listed in table\n  input=%q\n  errM=%v", data, errM)
+				}
+			} else {
+				t.Fatalf("struct decode accepted but schemaless decode rejected for a NON-materialization reason (impossible-direction)\n  input=%q\n  errM=%v", data, errM)
+			}
 		}
 		if acceptM && !acceptA {
 			// Expected when types mismatch (M has no schema). Only flag if NOT a
@@ -203,4 +214,19 @@ func isTypeOrTrailingReject(err error, trailing bool) bool {
 	// generic error; treat number-range/format rejects as type-ish.
 	msg := err.Error()
 	return containsAny(msg, "cannot unmarshal", "overflow", "out of range", "invalid number")
+}
+
+// isSchemalessMaterializationReject reports whether a json.Unmarshal-into-any
+// error is a value-materialization rejection (chiefly a number too large for
+// float64), the only reason schemaless decode legitimately rejects bytes a
+// struct decode accepted by skipping/raw-storing them.
+func isSchemalessMaterializationReject(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ute *json.UnmarshalTypeError
+	if errors.As(err, &ute) {
+		return true
+	}
+	return containsAny(err.Error(), "cannot unmarshal number", "overflow", "out of range")
 }
