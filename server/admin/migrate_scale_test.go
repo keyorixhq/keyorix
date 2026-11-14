@@ -268,3 +268,13 @@ func moveAtTwoSizes(t *testing.T, from, to string) {
 func TestMigrateScale_SQLiteToPostgres(t *testing.T) {
 	moveAtTwoSizes(t, scaleBackendSQLite, scaleBackendPostgres)
 }
+
+// TestMigrateScale_PostgresToSQLite settles #3462's "PostgreSQL -> SQLite: not
+// covered": the move is supported. A seeded PostgreSQL instance is backed up
+// (through its snapshot) and restored into an empty SQLite target with the same
+// row counts, a valid audit chain, every version decryptable and bounded memory.
+// scripts/migrate/sqlite-to-pg-check.sh (leg 4b) and scale-check.sh run the same
+// direction with real binaries.
+func TestMigrateScale_PostgresToSQLite(t *testing.T) {
+	moveAtTwoSizes(t, scaleBackendPostgres, scaleBackendSQLite)
+}
