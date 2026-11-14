@@ -16,6 +16,7 @@ touch two different files, so they never conflict. Full explanation:
 | `oracleAByDesignErrors` | `oracle_a_by_design_entry_<slug>_test.go` | `registerOracleAByDesign` |
 | `toleranceDeadPendingTriage` | `tolerance_dead_pending_triage_entry_<slug>_test.go` | `registerToleranceDeadPendingTriage` |
 | `toleranceStalenessUndrivable` | `tolerance_staleness_undrivable_entry_<slug>_test.go` | `registerToleranceStalenessUndrivable` |
+| `userCreateLostAckSites` | `user_create_lost_ack_entry_<func>_test.go` | `registerUserCreateLostAckSite` |
 
 Put the row's reasoning comment above the `register…` call, in that file. Do not
 add a row to the table's declaration (those literals are empty on purpose). A
