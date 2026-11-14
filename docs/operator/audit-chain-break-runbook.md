@@ -18,7 +18,7 @@ triage, containment and evidence. Section 5 lists what does exist and what is mi
 
 | Where | Command / signal | Verdicts |
 |---|---|---|
-| Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`; non-zero exit on the last two |
+| Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`, `SEALED` (prints the seal's `state_reason`); non-zero exit unless `VALID`, and `SEALED` exits 4 like `keyorix-server admin verify-audit` |
 | Prometheus | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_discontinuity` (1 while a sticky state discontinuity is recorded), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
 | Compliance posture | `GET /api/v1/compliance/posture`, field `audit_integrity` | reads the persisted state, walks nothing |
 | Offline, independent code | `keyorix-server admin verify-audit` | exit `0` VALID, `1` BROKEN, `2` INDETERMINATE, `3` usage/input error |
