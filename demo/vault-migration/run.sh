@@ -121,7 +121,7 @@ AUTH_HDR_FILE="${DEMO_SECRETS_DIR}/auth.hdr"
 (umask 077; printf 'Authorization: Bearer %s\n' "$TOKEN" > "$AUTH_HDR_FILE")
 PROJECT_ID="$(curl -sf -H "@${AUTH_HDR_FILE}" "${KEYORIX_URL}/api/v1/projects" | jq -r '.data.projects[] | select(.name=="default") | .id' | head -1)"
 [[ -n "$PROJECT_ID" ]] || { echo "could not find the 'default' project on ${KEYORIX_URL}"; exit 1; }
-ENV_ID="$(curl -sf -H "@${AUTH_HDR_FILE}""${KEYORIX_URL}/api/v1/projects/${PROJECT_ID}/environments" | jq -r '.data.environments[] | select(.name=="production") | .id' | head -1)"
+ENV_ID="$(curl -sf -H "@${AUTH_HDR_FILE}" "${KEYORIX_URL}/api/v1/projects/${PROJECT_ID}/environments" | jq -r '.data.environments[] | select(.name=="production") | .id' | head -1)"
 [[ -n "$ENV_ID" ]] || { echo "could not find the 'production' environment in project ${PROJECT_ID}"; exit 1; }
 # Both tokens go in 0600 files inside the demo secrets dir (removed on exit): a flag value
 # would show in ps and shell history.
