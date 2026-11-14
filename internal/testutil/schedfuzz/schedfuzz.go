@@ -65,6 +65,16 @@ func Decode(program []byte, maxGoroutines, maxOpsPerG, maxKeys int) Program {
 		return Program{GOMAXPROCS: 2}
 	}
 	g := 2 + int(program[0])%(maxGoroutines-1)
+	// ceiling is the GOMAXPROCS already in effect for this process
+	// (runtime.GOMAXPROCS(0) reflects the GOMAXPROCS env var), so a shared-host
+	// run that exports GOMAXPROCS=2 can never have a single fuzz iteration spike
+	// the process above its core budget regardless of which value the corpus
+	// picks — the same role the in-tree harness's KEYORIX_CL_GOMAXPROCS override
+	// plays. A local/CI run with no cap keeps the full {2,4,NumCPU} variety.
+	ceiling := runtime.GOMAXPROCS(0)
+	if ceiling < 2 {
+		ceiling = 2
+	}
 	var gomaxprocs int
 	switch program[1] % 3 {
 	case 0:
@@ -73,6 +83,9 @@ func Decode(program []byte, maxGoroutines, maxOpsPerG, maxKeys int) Program {
 		gomaxprocs = 4
 	default:
 		gomaxprocs = runtime.NumCPU()
+	}
+	if gomaxprocs > ceiling {
+		gomaxprocs = ceiling
 	}
 	goroutines := make([][]Op, g)
 	body := program[2:]
