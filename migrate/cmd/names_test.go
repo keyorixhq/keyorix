@@ -5,6 +5,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/migrate/internal/cloudentry"
 	"github.com/keyorixhq/keyorix/migrate/internal/plan"
+	"github.com/keyorixhq/keyorix/migrate/internal/vaultsource"
 )
 
 // TestSanitizeSecretName_StripsControlAndIsFixedPoint is the F1 regression: control characters
@@ -63,5 +64,29 @@ func TestBuildCloudPlanEntries_EmptyDerivedNameIsSkipped(t *testing.T) {
 	}
 	if skipped[0].Entry.Path != "loc-empty" {
 		t.Errorf("skip locator = %q, want loc-empty", skipped[0].Entry.Path)
+	}
+}
+
+// TestBuildVaultPlanEntries_EmptyDerivedNameIsSkipped is the vault-side twin of the cloud test
+// above: a walked Vault entry whose path (or path-field) normalises to "" is reported as a Skip
+// under its human-readable vault: path, never planned as a Create under an empty name.
+func TestBuildVaultPlanEntries_EmptyDerivedNameIsSkipped(t *testing.T) {
+	entries := []vaultsource.Entry{
+		{Path: "---", Value: "v1"},
+		{Path: "/", Field: "\x00", Value: "v2"},
+		{Path: "app/db", Field: "password", Value: "v3", Version: 2},
+	}
+	out, skipped := buildVaultPlanEntries("https://vault.example", "secret", entries)
+	if len(out) != 1 || out[0].Name != "app-db-password" || out[0].SourceVersion != "2" {
+		t.Fatalf("out = %+v, want exactly one entry named \"app-db-password\" at version 2", out)
+	}
+	wantPaths := []string{"vault:secret/---", "vault:secret//#\x00"}
+	if len(skipped) != len(wantPaths) {
+		t.Fatalf("skipped = %+v, want %d skips for the empty-derived names", skipped, len(wantPaths))
+	}
+	for i, s := range skipped {
+		if s.Outcome != plan.Skip || s.Reason != emptyDerivedNameSkipReason || s.Entry.Path != wantPaths[i] {
+			t.Errorf("skipped[%d] = %+v, want Outcome=Skip Reason=%q Path=%q", i, s, emptyDerivedNameSkipReason, wantPaths[i])
+		}
 	}
 }
