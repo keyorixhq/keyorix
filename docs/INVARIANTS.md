@@ -38,6 +38,12 @@ silently removing it.
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
 | **Total** | | **521** | **516** | **5** |
 
+Separate module, not counted in the table above: the reusable differential-fuzzing kit
+[`fuzzkit/diffkit/INVARIANTS.md`](../fuzzkit/diffkit/INVARIANTS.md) lives in the standalone `fuzzkit/`
+module (built with `GOWORK=off`, like `cli/` and `operator/`). Its invariants
+(`INV-FUZZDIFF-*`) are guarded by that module's own package tests and are deliberately
+excluded from the counts table, which tracks production packages only.
+
 ## Highest-priority UNGUARDED gaps
 
 One UNGUARDED item is flagged as materially more important than the rest, and one guarded
