@@ -171,6 +171,24 @@ still restores: after `rotate-kek`, restore it with the passphrase that was curr
 when it was taken. Keep each old passphrase for as long as you keep the archives that
 need it.
 
+## When `admin backup` stops after an interrupted rotation
+
+A `rotate-kek` that was interrupted before it changed any active key leaves
+`keys/kek.salt.pending`. A server start that succeeds proves the active keys open without
+it and leaves the file in place, and every later `admin backup` is refused while it
+exists. The refusal exits with status **4** (every other backup failure exits 1) and prints
+`keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="keys/kek.salt.pending"`
+on stderr, so a cron wrapper can match either. The server's start log says it too:
+a `[WARN] key set:` line containing ``admin backup` will refuse until keys/kek.salt.pending is moved away``,
+and `keyorix-server admin diagnose` prints `[WARN] backups would be refused: staging file
+present (keys/kek.salt.pending)` followed by the same steps as the refusal. Those are: check
+that no `rotate-kek` is running, `mv keys/kek.salt.pending` to a directory outside the key
+directory, back up, and delete the moved copy once that backup and a server start have
+succeeded. A `keys/dek.key.pending` is different: never delete it by hand (it can be the only
+copy of the new DEK); start the server so boot recovery settles it. Boot never removes
+either file itself. All of this was run on a throwaway SQLite install with a leftover
+`kek.salt.pending`; the DEK variant of the `diagnose` line is covered by a test only.
+
 ## Rehearse it: `scripts/drills/key-rotation.sh`
 
 The script runs this page's offline operations on a throwaway instance (SQLite or
