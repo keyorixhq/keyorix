@@ -1,2 +1,0 @@
-### Testing
-- **Config-space campaign tool is unit-tested.** `scripts/fuzzing/configspace` had 31% statement coverage because only an opt-in campaign (`CONFIGSPACE_RUN=1`, needs a built server) exercised its checks; the invariant checks, case rendering, process stage (against a stand-in server script) and the campaign loop now run in plain `go test`, which brings the main coverage floor back above 80%.

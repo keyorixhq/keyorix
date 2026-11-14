@@ -26,7 +26,7 @@ The stack is three containers:
 ## 2. Quick start
 
 ```sh
-git clone --branch v0.96.3 https://github.com/keyorixhq/keyorix.git   # a release tag: main can be ahead of the published images
+git clone --branch v0.97.0 https://github.com/keyorixhq/keyorix.git   # a release tag: main can be ahead of the published images
 cd keyorix
 cp .env.example .env
 ./scripts/selfhost/init-secrets.sh     # generates ./secrets/* and records KEYORIX_SECRETS_GID in .env

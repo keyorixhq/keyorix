@@ -1,2 +1,0 @@
-### Changed
-- **The exemption-ledger review test (`TestExemptLedgers_EveryRowIndependentlyReviewed`) now reads each `docs/*exempt*.tsv` dual-way: the flat file plus every `*.tsv` in the sibling `<name>.d/` directory.** A key present in both the flat file and a fragment (or in two fragments) is reported with both locations. This lets `scripts/ledgers/migrate-to-fragments.sh` move `docs/check-then-act-lock-exempt.tsv` into fragments without every `.reviewed.tsv` row reading "matches no row". Test-only; no behaviour change.

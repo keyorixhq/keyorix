@@ -20,7 +20,7 @@ are listed on the [releases page](https://github.com/keyorixhq/keyorix/releases)
 Work in an empty directory; everything is created in it.
 
 ```bash
-V=v0.96.3   # the release you want; v0.96.1 and later have `admin generate-secrets` and `mfa enroll`
+V=v0.97.0   # the release you want; v0.96.1 and later have `admin generate-secrets` and `mfa enroll`
 P=darwin_arm64   # your platform
 BASE=https://github.com/keyorixhq/keyorix/releases/download/$V
 curl -fsSLO $BASE/keyorix-server_$P
