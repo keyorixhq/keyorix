@@ -1,2 +1,0 @@
-### Testing
-- **Storage-interface differential fuzzer.** `FuzzStorageIfaceDifferential` drives the same operation sequences through SQLite and PostgreSQL storage and compares results; `FuzzStorageIfaceMetamorphicSQLite` checks metamorphic relations on SQLite. Both are registered in `scripts/fuzzing/targets.conf`. Chunk runs found no divergence; one finding (audit resource-type LIKE case) is recorded in docs.

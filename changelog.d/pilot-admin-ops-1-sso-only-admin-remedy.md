@@ -1,2 +1,0 @@
-### Changed
-- **The SSO-only-administrator posture warning says how to fix it, and says it louder without a recovery key.** When every administrator is managed by an identity provider, `admin validate --posture` now names the remedy (create a local break-glass administrator with `keyorix user create` and `keyorix rbac assign-role`, keep its credentials offline) and, when no recovery key has been generated, says that `admin recover-admin` cannot help either and to run `admin recovery-key rotate`. Still a WARN: the posture exit code is unchanged (#2914).
