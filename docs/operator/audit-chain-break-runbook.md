@@ -117,7 +117,7 @@ INDETERMINATE beats VALID). Strings are from `internal/auditverify/verify.go`.
 
 | Report says | Kind | Likely causes, in the order to rule them out |
 |---|---|---|
-| `entry_hash is valid under the pre-#1452 audit-hash encoding but not the current one ... un-migrated upgrade, NOT evidence of tampering` | content | Benign: the chain predates the 2026-08-16 encoding change. Section 4a. |
+| `event #N was hashed with the old audit-hash format ... not evidence of tampering` (JSON `reason_code`: `legacy_hash_encoding`) | content | Benign: the chain predates the 2026-08-16 encoding change. Section 4a. |
 | `event #N's recorded entry_hash does not match the row's contents — the row was changed after it was written` | content | The row changed after it was written: tampering, or storage corruption. |
 | `event #N's prev_hash does not link to the preceding event (row inserted, deleted, or reordered)` | linkage | Tampering, a manual `DELETE`, or a database restored/merged from two sources. |
 | `event #N has no entry_hash (chain data removed after a chained region began)` | content | Hash columns blanked or rows replaced by unchained rows. |
@@ -136,7 +136,7 @@ The online report adds `Checkpoint:` (authenticated or not, key version) and `Re
 
 ## 4. Benign causes first
 
-**a. Un-migrated hash encoding.** Only when the reason says pre-#1452. Preview, then apply in
+**a. Un-migrated hash encoding.** Only when the reason says the event was hashed with the old audit-hash format (`reason_code` `legacy_hash_encoding`). Preview, then apply in
 a maintenance window with no other writers (the migration rewrites every chained row, re-signs
 the retention anchor if there is one, and appends an `audit.chain_migrated` event):
 

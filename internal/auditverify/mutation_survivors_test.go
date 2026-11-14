@@ -354,7 +354,11 @@ func TestVerify_HashMismatchReasonNamesTheEncoding(t *testing.T) {
 	db, _ := survivorDB(t, rows...)
 	r := verifyWithKey(t, db, Options{})
 	assert.Equal(t, VerdictBroken, r.Verdict)
-	assert.Contains(t, r.Reason, "valid under the pre-#1452 audit-hash encoding")
+	assert.Equal(t, ReasonCodeLegacyHashEncoding, r.ReasonCode)
+	assert.Contains(t, r.Reason, "old audit-hash format")
+	assert.Contains(t, r.Reason, "not evidence of tampering")
+	assert.Contains(t, r.Reason, "keyorix audit migrate-chain-encoding")
+	assert.NotContains(t, r.Reason, "#1452", "operator-facing text: no internal references")
 	assert.NotContains(t, r.Reason, "matches neither")
 
 	// Valid under neither: the contents changed after the row was written.
@@ -365,7 +369,8 @@ func TestVerify_HashMismatchReasonNamesTheEncoding(t *testing.T) {
 	assert.Equal(t, VerdictBroken, r.Verdict)
 	assert.Contains(t, r.Reason, "event #1's recorded entry_hash does not match the row's contents")
 	assert.Contains(t, r.Reason, "the row was changed after it was written")
-	assert.NotContains(t, r.Reason, "valid under the pre-#1452")
+	assert.Empty(t, r.ReasonCode, "a modified row carries no legacy-encoding code")
+	assert.NotContains(t, r.Reason, "old audit-hash format")
 	// Operator-facing text: no internal references.
 	assert.NotRegexp(t, `#[0-9]{3,}`, r.Reason)
 	for _, internal := range []string{"design §", "ADR-", "pre-#", "§", "matches neither"} {
