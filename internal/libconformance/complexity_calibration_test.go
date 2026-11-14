@@ -19,7 +19,7 @@ import (
 // TestComplexityCalibration logs, for each parser, the measured cost of a
 // legitimate-large input and a pathological input, as bytes-allocated per input
 // byte. It asserts nothing (it is a calibration/measurement run
-// for how the budgets were derived from these numbers); run with -v to read the
+// recording how the budgets were derived from these numbers); run with -v to read the
 // table. It is also where a real super-linear blow-up would show up as a wildly
 // high ratio, before the fuzzer is even started.
 func TestComplexityCalibration(t *testing.T) {

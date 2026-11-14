@@ -35,11 +35,11 @@ import (
 func FuzzIdentityNormalizeComplexity(f *testing.F) {
 	f.Add("admin")
 	f.Add("ADMIN role name")
-	f.Add("café")                                 // precomposed vs decomposed
-	f.Add("é́́́́")      // stacked combining marks
-	f.Add(string(make([]byte, 0)))                // empty
-	f.Add("ẛ̣")                         // NFC recomposition edge
-	f.Add("Ạ̊̀́̂̃") // many reorderable marks
+	f.Add("café")                  // precomposed vs decomposed
+	f.Add("é́́́́")                // stacked combining marks
+	f.Add(string(make([]byte, 0))) // empty
+	f.Add("ẛ̣")                    // NFC recomposition edge
+	f.Add("Ạ̊̀́̂̃")               // many reorderable marks
 
 	// Budget: 64 KiB worst-case field, calibrated from TestComplexityBaselines.
 	// Normalization output is a small multiple of input; a generous 512 B/byte
