@@ -62,6 +62,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -935,18 +936,24 @@ func osBindResponse(st *osState, o *osOp, rec *httptest.ResponseRecorder, target
 	walk(top)
 }
 
-func osRunIteration(t *testing.T, w *osWorld, program []byte) {
+func osRunIteration(t *testing.T, w *osWorld, mask uint64, program []byte) {
 	t.Helper()
 	if len(osOps) == 0 {
 		return
 	}
+	// Swarm testing: mask enables a random SUBSET of the operation alphabet for
+	// this execution (internal/fuzzutil.Swarm). An all-ones mask enables every
+	// operation (the uniform generator), so a pre-swarm seed keeps its meaning.
+	// Operations outside the enabled subset are never selected this execution,
+	// which exercises op interactions a full-alphabet generator under-exercises.
+	sw := fuzzutil.NewSwarm(mask, len(osOps))
 	rd := &osReader{b: program}
 	princ := rd.intn(osNumPrincipals)
 	st := w.newState()
 	numSteps := 1 + rd.intn(12)
 
 	for range numSteps {
-		opIdx := rd.u16() % len(osOps)
+		opIdx := sw.Pick(rd.u16())
 		o := &osOps[opIdx]
 		modeByte := rd.byte()
 		mode := 0
@@ -1336,16 +1343,19 @@ func FuzzOpenAPIStateful(f *testing.F) {
 
 	// Seeds: a mix of principals and simple op sequences. Byte 0 selects the principal;
 	// bytes thereafter drive step count, op selection (u16), per-step mode, and args.
-	f.Add([]byte{osPrincAnon, 0x00, 0x01, 0x00})
-	f.Add([]byte{osPrincGarbage, 0x00, 0x02, 0x00})
-	f.Add([]byte{osPrincGlobalAdmin, 0x05, 0x00, 0x10, 0x00, 0x00, 0x20, 0x00})
-	f.Add([]byte{osPrincProjAdminA, 0x03, 0x00, 0x30, 0x02, 0x00, 0x40, 0x03})
-	f.Add([]byte{osPrincViewer, 0x02, 0x01, 0x11, 0x00})
-	f.Add([]byte{osPrincExpired, 0x02, 0x00, 0x22, 0x00})
-	f.Add([]byte{osPrincMachine, 0x02, 0x00, 0x33, 0x00})
-	f.Add([]byte{})
+	// The swarm feature mask is the first fuzz argument; every pre-swarm seed keeps
+	// its meaning by prepending an all-ones mask ("every operation available").
+	const allOps = ^uint64(0)
+	f.Add(allOps, []byte{osPrincAnon, 0x00, 0x01, 0x00})
+	f.Add(allOps, []byte{osPrincGarbage, 0x00, 0x02, 0x00})
+	f.Add(allOps, []byte{osPrincGlobalAdmin, 0x05, 0x00, 0x10, 0x00, 0x00, 0x20, 0x00})
+	f.Add(allOps, []byte{osPrincProjAdminA, 0x03, 0x00, 0x30, 0x02, 0x00, 0x40, 0x03})
+	f.Add(allOps, []byte{osPrincViewer, 0x02, 0x01, 0x11, 0x00})
+	f.Add(allOps, []byte{osPrincExpired, 0x02, 0x00, 0x22, 0x00})
+	f.Add(allOps, []byte{osPrincMachine, 0x02, 0x00, 0x33, 0x00})
+	f.Add(allOps, []byte{})
 
-	f.Fuzz(func(t *testing.T, program []byte) {
-		osRunIteration(t, w, program)
+	f.Fuzz(func(t *testing.T, mask uint64, program []byte) {
+		osRunIteration(t, w, mask, program)
 	})
 }
