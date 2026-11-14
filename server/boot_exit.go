@@ -56,6 +56,13 @@ func operatorFix(err error) error {
 	return &bootError{code: exitOperatorFix, err: err}
 }
 
+// operatorFixWith is operatorFix for err prefixed by a message, "<prefix>: <err>"
+// (the prefix may start with a capital: these lines predate the exit statuses
+// and operators grep for them).
+func operatorFixWith(prefix string, err error) error {
+	return operatorFix(fmt.Errorf("%s: %w", prefix, err))
+}
+
 // isDependencyUnreachable reports whether err is a network-level failure
 // (refused, unreachable, DNS, timed out) rather than an answer from the
 // dependency: a KMS or database that replied "no" is a configuration problem,

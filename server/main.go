@@ -115,7 +115,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		bootFatal(operatorFix(fmt.Errorf("Failed to load configuration: %w", err)))
+		bootFatal(operatorFixWith("Failed to load configuration", err))
 	}
 
 	// #G-blank-storage-default: the server's own boot path is the ONE caller
@@ -135,7 +135,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Schema/sanity validation (ports, TLS cert/key presence, storage DSN/path) — always
 	// enforced, independent of any security flag: a malformed config should never boot.
 	if err := cfg.Validate(); err != nil {
-		bootFatal(operatorFix(fmt.Errorf("Configuration is invalid: %w", err)))
+		bootFatal(operatorFixWith("Configuration is invalid", err))
 	}
 
 	// server.log.format: from here on every log line is a JSON object when "json".
