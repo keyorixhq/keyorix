@@ -3,9 +3,12 @@ package admin
 // Rollout of the #4151 stdin guard (cli/cmd TestNoDirectBufioOverStdin) to server/admin and
 // scripts/analysis/remote_storage_classify.go. A bufio reader or scanner built directly over
 // os.Stdin reads ahead, and what it buffered is lost when the next prompt builds its own
-// (#3448, #4126). New sites fail; the three existing ones are allowlisted below by file and
-// enclosing func, because each builds the only stdin reader of its process and reads once,
-// so there is no second reader to lose input to.
+// (#3448, #4126). Every stdin line read in this package goes through readStdinLine
+// (stdin_reader.go, the only allowlisted site), so any new site fails. recover_admin.go and testhook.go were migrated
+// to it; scripts/analysis/remote_storage_classify.go is exempt by construction, not by
+// allowlist: it reads its list once to EOF with io.ReadAll, which has no read-ahead to lose
+// and no second reader after it, so it is not the bug class (the file stays in the scan so a
+// bufio reader added to it later still fails).
 //
 // What it checks: in every non-test .go file of this directory plus stdinGuardExtraFiles,
 // a call to bufio.NewReader, bufio.NewReaderSize or bufio.NewScanner whose first argument is
@@ -37,11 +40,12 @@ var stdinGuardExtraFiles = []string{
 }
 
 // stdinGuardAllowed maps "file:func" (file as scanned, func as stdinBufioUses names it) to
-// the reason that site cannot lose buffered input.
+// the reason that site cannot lose buffered input. Only the shared reader itself is listed:
+// the three sites that used to be here no longer build a bufio reader over os.Stdin, and an
+// entry that matches no call is reported stale (the nightly run in enforce mode failed on
+// exactly that).
 var stdinGuardAllowed = map[string]string{
-	"recover_admin.go:readRecoveryKeyFromStdin":              "single stdin read per process (recover-admin, reset-mfa: one call each, no other stdin reader in those commands)",
-	"testhook.go:runHoldLockForTest":                         "single stdin read per process (one blocking read that releases the lock)",
-	"../../scripts/analysis/remote_storage_classify.go:main": "single stdin read per process (one scanner loop, go:build ignore tool)",
+	"stdin_reader.go:readStdinLine": "the one shared stdin reader of the process; every other read goes through it",
 }
 
 // stdinBufioSite is one bufio-over-os.Stdin call: its "file:func" key and its position.
