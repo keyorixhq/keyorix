@@ -30,6 +30,7 @@ echo "oracle = $TT1_PKCS7_OLD_DRIVER" >&2
 
 cmd="${1:-smoke}"
 mkdir -p "$HERE/out"
+cd "$REPO_ROOT"   # the package path below is repo-root-relative; CWD may be anywhere
 case "$cmd" in
   smoke)
     nice -n 10 go test -run="$FUZZ" -count=1 "$PKG"
