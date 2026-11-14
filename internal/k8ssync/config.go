@@ -6,10 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"go.yaml.in/yaml/v3"
-
 	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
+	"github.com/keyorixhq/keyorix/internal/yamlsafe"
 )
 
 // Config is the Keyorix Kubernetes sync agent's configuration: where the Keyorix
@@ -109,7 +108,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 	var c Config
-	if err := yaml.Unmarshal(raw, &c); err != nil {
+	if err := yamlsafe.Unmarshal(raw, &c); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := c.validate(); err != nil {
