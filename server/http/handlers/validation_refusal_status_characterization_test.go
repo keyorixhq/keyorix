@@ -26,10 +26,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 )
 
 // refusalFixture is the world a case runs in: user 1 (the withUserCtx caller) is a global
@@ -461,5 +463,33 @@ func TestValidationRefusalStatusCharacterization(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The shared classifier (REST answerCoreError, gRPC core_error_status) reads the typed
+// refusals of these families as InvalidInput, and the clone's missing environment as
+// NotFound, by errors.Is alone: the same class on both transports without reading text.
+func TestValidationRefusalClassByTypeNotText(t *testing.T) {
+	for _, lang := range errorClassLocales {
+		t.Run(lang, func(t *testing.T) {
+			withErrorTextLocale(t, lang)
+			f := newRefusalFixture(t)
+			ctx := t.Context()
+			invalid := map[string]error{}
+			_, invalid["account/profile of user 0"] = f.cs.UpdateOwnProfile(ctx, 0, "n", "", "")
+			_, invalid["versions/list without secret id"] = f.cs.GetSecretVersions(ctx, 0)
+			_, invalid["env_clone/same environment"] = f.cs.CloneEnvironment(ctx, 1, 2, 2, "u", 1)
+			_, invalid["access_review/open without project"] = f.cs.OpenAccessReviewCampaign(ctx, 1, 0, 0, "q")
+			_, invalid["break_glass/list without project"] = f.cs.ListBreakGlassActivations(ctx, 0)
+			for name, err := range invalid {
+				require.Error(t, err, name)
+				assert.Equal(t, errclass.InvalidInput, errclass.Of(err), name)
+				assert.Equal(t, http.StatusBadRequest, errclass.HTTPStatus(errclass.Of(err)), name)
+				assert.Equal(t, codes.InvalidArgument, errclass.GRPCCode(errclass.Of(err)), name)
+			}
+			_, err := f.cs.CloneEnvironment(ctx, 1, 999, 2, "u", 1)
+			require.Error(t, err)
+			assert.Equal(t, errclass.NotFound, errclass.Of(err), "a missing environment is NotFound on both transports")
+		})
 	}
 }
