@@ -101,6 +101,20 @@ func runActorMachineSearch(t *testing.T, ls *LocalStorage) {
 	got := search("dana")
 	require.Len(t, got, 1)
 	assert.Equal(t, dana.ID, *got[0].UserID)
+
+	// actor_type still combines with the actor term (AND): the right kind keeps the
+	// row, the other kinds drop it.
+	combined := func(term, kind string) []*models.AuditEvent {
+		t.Helper()
+		events, _, err := ls.GetAuditLogs(ctx, &storage.AuditFilter{ActorUsername: &term, ActorType: &kind, PageSize: 50})
+		require.NoError(t, err, "%s/%s", term, kind)
+		return events
+	}
+	assert.Len(t, combined("payments", "machine_identity"), 1, "machine term + machine kind")
+	assert.Empty(t, combined("payments", "user"), "machine term + user kind")
+	assert.Empty(t, combined("payments", "system"), "machine term + system kind")
+	assert.Len(t, combined("dana", "user"), 1, "user term + user kind")
+	assert.Empty(t, combined("dana", "machine_identity"), "user term + machine kind")
 }
 
 func TestGetAuditLogs_ActorSearchMatchesMachineIdentity_SQLite(t *testing.T) {
