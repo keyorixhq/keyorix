@@ -300,6 +300,27 @@ func (h *RBACTestHelper) CreateTestRole(t *testing.T, name, description string, 
 	return role
 }
 
+// CreateProjectRoleWithPermissions creates a project-assignable custom role that
+// holds exactly the named permissions. A fixture that granted a legacy role (admin,
+// editor, viewer, auditor) at a project uses the matching project_* role
+// (RoleProject*); where that role's bundle differs from the legacy one in a way the
+// test asserts on (project_developer also holds secrets.delete, project_auditor has
+// no roles.read), it uses this to keep the legacy bundle as a project-tier role.
+func (h *RBACTestHelper) CreateProjectRoleWithPermissions(t *testing.T, name string, roleID uint, permissions ...string) *models.Role {
+	t.Helper()
+	role := h.CreateTestRole(t, name, name+" (test fixture)", roleID)
+	for _, perm := range permissions {
+		res, err := h.SqlDB.Exec(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+			SELECT r.id, p.id FROM roles r, permissions p
+			WHERE r.id = ? AND p.name = ?`, roleID, perm)
+		require.NoError(t, err)
+		n, err := res.RowsAffected()
+		require.NoError(t, err)
+		require.EqualValues(t, 1, n, "permission %q is not seeded", perm)
+	}
+	return role
+}
+
 // CreateTestGroup creates a test group in the database
 func (h *RBACTestHelper) CreateTestGroup(t *testing.T, name, description string, groupID uint) *models.Group {
 	group := &models.Group{

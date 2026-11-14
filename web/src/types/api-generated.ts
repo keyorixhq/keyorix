@@ -5618,11 +5618,17 @@ export interface components {
             secret_id?: number;
             name?: string;
             error?: string;
+            /** @description Stable code of a retryable outage item (audit_unavailable, storage_unavailable); absent for any other failure. */
+            code?: string;
+            /** @description True when the item failed because the audit log or storage was unavailable; nothing was changed and the call can be repeated. */
+            retryable?: boolean;
         };
         BulkDeleteResult: {
             deleted?: number[];
             failed?: components["schemas"]["BulkOpError"][];
             total?: number;
+            /** @description How many of `failed` are retryable outages. */
+            retryable?: number;
         };
         BulkRotateResult: {
             triggered?: number[];

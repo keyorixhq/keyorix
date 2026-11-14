@@ -40,7 +40,7 @@ func TestRBACTestHelper_S36(t *testing.T) {
 
 	// AssignUserRole — non-nil project (derefScope non-nil path)
 	projectID := uint(1)
-	h.AssignUserRole(t, user.ID, 1, &projectID)
+	h.AssignUserRole(t, user.ID, RoleProjectAdmin, &projectID)
 
 	// AssignUserToGroup
 	h.AssignUserToGroup(t, user.ID, group.ID)
@@ -49,7 +49,7 @@ func TestRBACTestHelper_S36(t *testing.T) {
 	h.AssignGroupRole(t, group.ID, role.ID, nil)
 
 	// AssignGroupRole — non-nil project
-	h.AssignGroupRole(t, group.ID, 1, &projectID)
+	h.AssignGroupRole(t, group.ID, RoleProjectAdmin, &projectID)
 
 	// CreateTestSecret
 	secret := h.CreateTestSecret(t, "my-secret", user.ID, 200)

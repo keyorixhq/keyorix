@@ -3926,12 +3926,11 @@ func TestCloseAccessReviewCampaign_HappyPath(t *testing.T) {
 
 func TestCampaignStatusForError_Cases(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, campaignStatusForError(fmt.Errorf("get campaign: %w", core.ErrAccessReviewNotFound)))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("still pending items")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("already closed")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("campaign is closed")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("ownership cannot be revoked")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("value must be")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("required field")))
+	for _, text := range []string{"still pending items", "already closed", "campaign is closed", "ownership cannot be revoked", "value must be", "required field"} {
+		assert.Equal(t, http.StatusBadRequest, campaignStatusForError(fmt.Errorf("%s: %w", text, core.ErrValidation)), text)
+	}
+	// The independent-reviewer refusals are typed permission refusals and keep their 400 here.
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(fmt.Errorf("an independent reviewer is required: %w", core.ErrPermissionDenied)))
 	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError(errors.New("some unexpected storage error")))
 }
 

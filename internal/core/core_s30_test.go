@@ -142,6 +142,11 @@ func TestProvisionSCIMUser_Inactive(t *testing.T) {
 	ms.On("GetUserByUsername", mock.Anything, "dave").Return(nil, storage.ErrUserNotFound)
 	created := &models.User{ID: 12, Username: "dave", Email: "dave@x.com", AccountState: "deprovisioned"}
 	ms.On("CreateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(created, nil)
+	// active=false is written explicitly after the create (the INSERT's column default
+	// would store true), through the conditional is_active writer.
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+		return u.ID == 12 && !u.IsActive
+	}), true).Return(true, nil)
 	ms.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 1, Name: "system_viewer"}, nil)
 	ms.On("AssignRole", mock.Anything, mock.Anything, uint(1), mock.Anything).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -149,6 +154,8 @@ func TestProvisionSCIMUser_Inactive(t *testing.T) {
 	u, err := c.ProvisionSCIMUser(context.Background(), 0, "dave@x.com", "", "dave@x.com", "ext-3", false)
 	require.NoError(t, err)
 	assert.Equal(t, uint(12), u.ID)
+	assert.False(t, u.IsActive)
+	ms.AssertCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, true)
 }
 
 func TestProvisionSCIMUser_CreateUserDuplicateEmail(t *testing.T) {
