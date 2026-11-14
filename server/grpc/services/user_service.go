@@ -11,6 +11,7 @@ import (
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -372,20 +373,15 @@ func optStringValue(s string) *string {
 	return &s
 }
 
-// mapUserError translates core user errors into gRPC status codes.
+// mapUserError translates core user errors into gRPC status codes through the shared
+// classifier (coreErrorStatus). What stays here is what the classifier does not know:
+// four typed refusals that are not in its table and the two client messages core
+// supplies (role scope, password policy). The texts are this family's own and fixed
+// (GRPC-003: never an internal role name or a policy threshold).
 func mapUserError(err error) error {
-	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
-	}
-	// STORAGE-ERR-CLASS-2: a failed parent read (role, project) is retryable, not InvalidArgument.
-	if serr, ok := storageUnavailableStatus(err); ok {
-		return serr
-	}
-	// S1 (CLI-split inventory #2012): checked via errors.Is, not the substring
-	// switch below, so the specific permission name requireEqualOrGreaterAdminAuthority
-	// wraps into the error text never reaches this function's substring matching
-	// (and, via the generic messages below, never reaches the client either).
+	// S1 (CLI-split inventory #2012): checked via errors.Is, so the specific permission
+	// name requireEqualOrGreaterAdminAuthority wraps into the error text never reaches
+	// the client.
 	if errors.Is(err, core.ErrInsufficientAdminAuthority) {
 		return status.Error(codes.PermissionDenied, "insufficient privileges to modify this user")
 	}
@@ -398,34 +394,20 @@ func mapUserError(err error) error {
 	}
 	// PASSWORD-POLICY-FAMILY-1: a refused new password names the rule it broke, as
 	// HTTP does, so the caller can pick another. The text is fixed policy wording
-	// from core (never derived from the password), so it does not undo GRPC-003's
-	// concern below about echoing raw error text.
+	// from core (never derived from the password).
 	if ruleMsg, ok := core.PolicyRefusalMessage(err); ok {
 		return status.Error(codes.InvalidArgument, ruleMsg)
 	}
-	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
-	switch {
-	case errors.Is(err, corestorage.ErrUserNotFound), errors.Is(err, corestorage.ErrRoleNotFound),
-		errors.Is(err, corestorage.ErrGroupNotFound), errors.Is(err, corestorage.ErrProjectNotFound):
-		return status.Error(codes.NotFound, "user not found")
-	case errors.Is(err, core.ErrUserAlreadyExists), errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail),
-		errors.Is(err, corestorage.ErrDuplicateUsername):
-		return status.Error(codes.AlreadyExists, "a user with that username or email already exists")
-	// ERRSTRING-CLASS-1: core's roles.assign ceiling refusals (internal/core/authz.go)
-	// are typed (permissionDeniedf), as is every other authorization refusal.
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "insufficient privileges for this operation") // GRPC-003: was err.Error() — leaked internal role name
-	case errors.Is(err, core.ErrInvalidInput), errors.Is(err, identity.ErrEmpty):
-		return status.Error(codes.InvalidArgument, "invalid request parameters") // GRPC-003: was err.Error() — leaked password policy thresholds
-	// ERR-CLASS-LEFTOVERS-1: core/users.go field validation (and the folded-name checks)
-	// carry core.ErrValidation.
-	case errors.Is(err, core.ErrValidation):
+	// An empty folded name, and CreateUser with deliver_setup_link and no
+	// credential_delivery.base_url (REVFIX-3964-1: HTTP answers 400 for the same
+	// sentinel), are input errors the classifier table does not list.
+	if errors.Is(err, identity.ErrEmpty) || errors.Is(err, core.ErrSetupBaseURLRequired) {
 		return status.Error(codes.InvalidArgument, "invalid request parameters")
-	// REVFIX-3964-1: CreateUser with deliver_setup_link and no credential_delivery.base_url
-	// (HTTP answers 400 ConfigError for the same sentinel).
-	case errors.Is(err, core.ErrSetupBaseURLRequired):
-		return status.Error(codes.InvalidArgument, "invalid request parameters")
-	default:
-		return internalFailure("user operation failed", err)
 	}
+	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "user operation", texts: coreErrorTexts{
+		errclass.NotFound:         "user not found",
+		errclass.Conflict:         "a user with that username or email already exists",
+		errclass.PermissionDenied: "insufficient privileges for this operation",
+		errclass.InvalidInput:     "invalid request parameters",
+	}})
 }
