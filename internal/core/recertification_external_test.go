@@ -35,7 +35,7 @@ func TestRunScheduledRecertification_RemindsAndDedupes(t *testing.T) {
 
 	ctx := context.Background()
 	h.CreateTestUser(t, "carol", 20)
-	h.AssignUserRole(t, 20, 2, uptr(2)) // admin on project 2 (role 2 = "admin")
+	h.AssignUserRole(t, 20, testhelper.RoleProjectAdmin, uptr(2)) // project_admin on project 2
 
 	res, err := h.CoreService.RunScheduledRecertification(ctx, 90, false)
 	require.NoError(t, err)
