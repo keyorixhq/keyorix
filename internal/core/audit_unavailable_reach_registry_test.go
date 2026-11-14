@@ -53,10 +53,23 @@ var auditUnavailableRoots = []string{
 // methods from which a root is reachable, over the given non-test .go files.
 func deriveAuditUnavailableReachingMethods(t *testing.T, paths []string) []string {
 	t.Helper()
+	return deriveCoreMethodsReaching(t, paths, auditUnavailableRoots, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		return ok && id.Name == "ErrMutationAuditUnavailable"
+	})
+}
+
+// deriveCoreMethodsReaching is the call-graph walk above, shared with
+// grant_ceiling_reach_registry_test.go: roots are the named functions plus every
+// function or method whose body contains a node isRoot accepts; the result is the
+// sorted exported KeyorixCore methods from which a root is reachable. The call
+// forms followed and not followed are the ones this file's doc comment lists.
+func deriveCoreMethodsReaching(t *testing.T, paths, roots []string, isRoot func(ast.Node) bool) []string {
+	t.Helper()
 	fset := token.NewFileSet()
 	callers := map[string]map[string]bool{} // callee -> callers
 	coreMethods := map[string]bool{}
-	queue := slices.Clone(auditUnavailableRoots)
+	queue := slices.Clone(roots)
 	for _, path := range paths {
 		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
@@ -81,11 +94,10 @@ func deriveAuditUnavailableReachingMethods(t *testing.T, paths []string) []strin
 			}
 			caller := fd.Name.Name
 			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				if n != nil && isRoot(n) {
+					queue = append(queue, caller)
+				}
 				switch x := n.(type) {
-				case *ast.Ident:
-					if x.Name == "ErrMutationAuditUnavailable" {
-						queue = append(queue, caller)
-					}
 				case *ast.CallExpr:
 					var callee string
 					switch fn := x.Fun.(type) {
