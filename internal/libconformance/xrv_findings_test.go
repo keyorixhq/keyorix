@@ -2,6 +2,7 @@ package libconformance
 
 import (
 	"bytes"
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -47,6 +48,46 @@ func TestXRVFindingXMLPrefixRebind(t *testing.T) {
 	}
 	if got, want := etreeView(doc, false)[1], "S urn:evil b"; got != want {
 		t.Fatalf("etree view %q, want %q", got, want)
+	}
+}
+
+// TestXRVFindingPrefixUndeclare pins the second member of finding
+// LF1-XRV-ns-ill-formed, found by FuzzXMLRoundtripValidatorDifferential after ~24 min:
+// a prefix undeclaration (xmlns:q="", legal only in Namespaces in XML 1.1) passes
+// xrv.Validate and strict encoding/xml, and then q:x lands in no namespace under
+// encoding/xml, the same name as the unprefixed x. A consumer reading attribute "x"
+// gets different values from the two readers: xml.Unmarshal takes the last one (q:x),
+// etree's SelectAttrValue the unprefixed one. This test goes red when the differential
+// disappears; then drop prefixUndeclared from checkXRVDifferential with this test.
+//
+// What this does NOT verify: keyorix reach beyond the validators.
+// internal/saml.parseIDPMetadata reads operator metadata with xml.Unmarshal only (one
+// reader), and crewjam/saml v0.6.3's unmarshalElement drops prefixed attributes before
+// unmarshalling ("attribute fields are read only from unqualified attributes").
+func TestXRVFindingPrefixUndeclare(t *testing.T) {
+	data := []byte(`<A x="good" xmlns:q="" q:x="evil"/>`)
+	if err := xrv.Validate(bytes.NewReader(data)); err != nil {
+		t.Fatalf("xrv now rejects the undeclaration (%v): finding fixed", err)
+	}
+	if err := strictXMLDecode(data); err != nil {
+		t.Fatalf("strict encoding/xml now rejects the undeclaration (%v): finding fixed", err)
+	}
+	var v struct {
+		X string `xml:"x,attr"`
+	}
+	if err := xml.Unmarshal(data, &v); err != nil {
+		t.Fatal(err)
+	}
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(data); err != nil {
+		t.Fatalf("etree now rejects the undeclaration (%v): finding fixed", err)
+	}
+	et := doc.Root().SelectAttrValue("x", "")
+	if v.X == et {
+		t.Fatalf("encoding/xml and etree now agree on attribute x (%q): finding fixed", et)
+	}
+	if v.X != "evil" || et != "good" {
+		t.Fatalf("xml.Unmarshal x=%q, etree x=%q; the finding predicted evil/good", v.X, et)
 	}
 }
 

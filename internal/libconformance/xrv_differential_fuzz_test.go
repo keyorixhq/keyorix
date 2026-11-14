@@ -154,8 +154,12 @@ func checkXRVDifferential(t *testing.T, data []byte, validate xrvValidateFunc, v
 	}
 	et := etreeView(doc, false)
 	if diff := compareXMLViews(std, et); diff != "" {
-		if xmlPrefixRebound(doc) && compareXMLViews(std, etreeView(doc, true)) == "" {
-			return // known class: LF1-XRV-xml-prefix-rebind (see TestXRVFindingXMLPrefixRebind)
+		if (xmlPrefixRebound(doc) || prefixUndeclared(doc)) && compareXMLViews(std, etreeView(doc, true)) == "" {
+			// Known class LF1-XRV-ns-ill-formed (TestXRVFindingXMLPrefixRebind,
+			// TestXRVFindingPrefixUndeclare): the document is namespace-ill-formed in
+			// one of the two named ways, and the views agree once etree is read the
+			// way the spec and encoding/xml read those declarations.
+			return
 		}
 		t.Fatalf("O1 VIEW-AGREEMENT: xrv accepted a document encoding/xml and etree read differently: %s\n in=%q\n encoding/xml=%q\n etree=%q", diff, data, std, et)
 	}
@@ -292,19 +296,53 @@ func encodingXMLView(data []byte) (xmlView, error) {
 	}
 }
 
-// etreeURI renders etree's resolution of a prefix. "?<prefix>" marks a prefixed name
-// etree resolved to "" (unbound, or bound to ""), which compareXMLViews matches against
-// either "" or the literal prefix on the encoding/xml side. specXML pins the "xml"
-// prefix to its fixed namespace, as the Namespaces spec requires and encoding/xml does,
-// whatever an xmlns:xml declaration says.
-func etreeURI(prefix, uri string, specXML bool) string {
+// etreeURI renders etree's resolution of a prefix on element e. "?<prefix>" marks a
+// prefixed name etree resolved to "" (unbound, or bound to ""), which compareXMLViews
+// matches against either "" or the literal prefix on the encoding/xml side. lenient
+// reads the two namespace-ill-formed declarations the way encoding/xml does: the "xml"
+// prefix is pinned to its fixed namespace whatever an xmlns:xml declaration says, and a
+// prefix undeclared with xmlns:p="" resolves to no namespace.
+func etreeURI(e *etree.Element, prefix, uri string, lenient bool) string {
 	switch {
-	case prefix == "xml" && (uri == "" || specXML):
+	case prefix == "xml" && (uri == "" || lenient):
 		return xmlNamespaceURL
+	case prefix != "" && uri == "" && lenient && boundToEmpty(e, prefix):
+		return ""
 	case prefix != "" && uri == "":
 		return "?" + prefix
 	}
 	return uri
+}
+
+// boundToEmpty reports whether the nearest xmlns:prefix declaration in scope of e has
+// the empty value.
+func boundToEmpty(e *etree.Element, prefix string) bool {
+	for ; e != nil; e = e.Parent() {
+		for _, a := range e.Attr {
+			if a.Space == "xmlns" && a.Key == prefix {
+				return a.Value == ""
+			}
+		}
+	}
+	return false
+}
+
+// prefixUndeclared reports whether any element carries xmlns:p="" (a prefix
+// undeclaration: legal in Namespaces in XML 1.1, not in 1.0, which keyorix's documents
+// are). encoding/xml then puts p:x in no namespace, the same name as the unprefixed x,
+// so xml.Unmarshal's last-wins attribute read and etree's prefix-keyed one pick
+// different values for "x".
+func prefixUndeclared(doc *etree.Document) bool {
+	var walk func(e *etree.Element) bool
+	walk = func(e *etree.Element) bool {
+		for _, a := range e.Attr {
+			if a.Space == "xmlns" && a.Value == "" {
+				return true
+			}
+		}
+		return slices.ContainsFunc(e.ChildElements(), walk)
+	}
+	return slices.ContainsFunc(doc.ChildElements(), walk)
 }
 
 // xmlPrefixRebound reports whether any element declares xmlns:xml with a value other
@@ -324,7 +362,7 @@ func xmlPrefixRebound(doc *etree.Document) bool {
 	return slices.ContainsFunc(doc.ChildElements(), walk)
 }
 
-func etreeView(doc *etree.Document, specXML bool) xmlView {
+func etreeView(doc *etree.Document, lenient bool) xmlView {
 	var v xmlView
 	var text strings.Builder
 	flush := func() {
@@ -339,14 +377,14 @@ func etreeView(doc *etree.Document, specXML bool) xmlView {
 			switch tt := tok.(type) {
 			case *etree.Element:
 				flush()
-				v = append(v, fmt.Sprintf("S %s %s", etreeURI(tt.Space, tt.NamespaceURI(), specXML), tt.Tag))
+				v = append(v, fmt.Sprintf("S %s %s", etreeURI(tt, tt.Space, tt.NamespaceURI(), lenient), tt.Tag))
 				attrs := map[[2]string]string{}
 				for i := range tt.Attr {
 					a := &tt.Attr[i]
 					if isXMLNSDecl(a.Space, a.Key) {
 						continue
 					}
-					attrs[[2]string{etreeURI(a.Space, a.NamespaceURI(), specXML), a.Key}] = a.Value
+					attrs[[2]string{etreeURI(tt, a.Space, a.NamespaceURI(), lenient), a.Key}] = a.Value
 				}
 				v = append(v, viewAttrs(attrs)...)
 				walk(tt.Child)
