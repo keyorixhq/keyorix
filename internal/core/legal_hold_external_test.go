@@ -124,7 +124,7 @@ func TestLegalHold_PlaceDeniedForProjectScopedAdmin(t *testing.T) {
 
 	// Actor 30 holds "admin" (role 2), but scoped ONLY to project 5 — not global.
 	projectID := uint(5)
-	h.AssignUserRole(t, 30, 2, &projectID)
+	h.AssignUserRole(t, 30, testhelper.RoleProjectAdmin, &projectID)
 
 	_, err := h.CoreService.PlaceLegalHold(ctx, 30, "bogus decoy hold from project-scoped admin")
 	require.Error(t, err, "a project-scoped admin must not be able to place a deployment-wide legal hold")

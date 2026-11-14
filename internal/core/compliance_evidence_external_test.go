@@ -25,7 +25,7 @@ func TestGenerateComplianceEvidence_BundlesRecords(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj))
 
 	// A campaign (the recertification record) and an active break-glass activation.
 	camp, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "Q4 review")
