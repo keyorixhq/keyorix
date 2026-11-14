@@ -11,6 +11,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,25 +102,46 @@ func runSecretImport(cmd *cobra.Command, _ []string) error {
 	return doSecretImport(context.Background(), client, entries)
 }
 
-// collectImportEntries reads and parses --file, transparently decrypting first when
-// --decrypt-with is set and the file looks like an encrypted-json envelope.
+// isEncryptedExportEnvelope reports whether data is a keyorix-encrypted-export envelope:
+// a JSON object whose "format" field is encryptedExportFormat. The export is
+// pretty-printed, so this parses the JSON rather than matching a byte prefix (#4278).
+func isEncryptedExportEnvelope(data []byte) bool {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || data[0] != '{' {
+		return false
+	}
+	var probe struct {
+		Format string `json:"format"`
+	}
+	return json.Unmarshal(data, &probe) == nil && probe.Format == encryptedExportFormat
+}
+
+// collectImportEntries reads and parses --file. An encrypted-json envelope is decrypted
+// first with --decrypt-with; without it the envelope is refused, whatever --format says,
+// so its fields (algorithm, ciphertext, ...) are never imported as secrets. Everything is
+// parsed and decrypted before the first secret is created, so a refusal imports nothing.
 func collectImportEntries() ([]secretEntry, error) {
 	clean := filepath.Clean(importFile)
 	if _, err := os.Stat(clean); err != nil {
 		return nil, fmt.Errorf("cannot open file %q: %w", importFile, err)
 	}
-	if importDecryptWith != "" {
-		fileBytes, err := regularfile.ReadFile("import file", clean)
+	if err := checkImportFileSize(clean); err != nil {
+		return nil, err
+	}
+	fileBytes, err := regularfile.ReadFile("import file", clean)
+	if err != nil {
+		return nil, fmt.Errorf("read file %q: %w", clean, err)
+	}
+	if isEncryptedExportEnvelope(fileBytes) {
+		if importDecryptWith == "" {
+			return nil, usageErrorf("%q is an encrypted export (%s): pass the recipient's RSA private key with "+
+				"--decrypt-with <private-key.pem> to import it", clean, encryptedExportFormat)
+		}
+		plain, err := decryptExport(fileBytes, importDecryptWith)
 		if err != nil {
-			return nil, fmt.Errorf("read file %q: %w", clean, err)
+			return nil, fmt.Errorf("decrypt %q: %w", clean, err)
 		}
-		if bytes.HasPrefix(bytes.TrimSpace(fileBytes), []byte(`{"format":"`+encryptedExportFormat)) {
-			plain, err := decryptExport(fileBytes, importDecryptWith)
-			if err != nil {
-				return nil, fmt.Errorf("decrypt %q: %w", clean, err)
-			}
-			return parseJSONBytes(plain)
-		}
+		return parseJSONBytes(plain)
 	}
 	entries, err := parseImportFile(clean, importFormat)
 	if err != nil {
