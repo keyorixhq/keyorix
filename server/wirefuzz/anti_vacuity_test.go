@@ -112,8 +112,12 @@ func TestAntiVacuity_HalfCloseCausesFailClosed503(t *testing.T) {
 	if bytes.Contains(buf.Bytes(), []byte(w.valA)) {
 		t.Fatal("the server now serves a half-closed authorized read: the premise of the no-half-close driver rule (oracles_test.go header) no longer holds; update that comment and this test")
 	}
-	if !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 503")) {
-		t.Fatalf("expected the documented fail-closed 503 for a half-closed authorized read, got %q", truncate(buf.Bytes(), 80))
+	// net/http cancels the request context on the FIN; where the cancellation lands decides
+	// the status: the auth middleware fails closed with 503, or (when auth already passed)
+	// the handler's storage read reports "context canceled" as 500 (seen in CI on #4201).
+	// Both are fail-closed with no secret value; only a 200 would break the premise.
+	if !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 503")) && !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 500")) {
+		t.Fatalf("expected a fail-closed 503 (or 500 from a cancelled handler read) for a half-closed authorized read, got %q", truncate(buf.Bytes(), 80))
 	}
 
 	// ...while exchange() (no half-close) gets the real answer.
