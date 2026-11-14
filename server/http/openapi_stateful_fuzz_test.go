@@ -988,6 +988,8 @@ func osRunIteration(t *testing.T, w *osWorld, program []byte) {
 		osOracleAuthUnauth(t, w, st, o, princ, mode, rd, req, rec)
 		osOracleCanary(t, o, princ, rec)
 		osOracleIdempotentRead(t, w, o, princ, req, rec)
+		osOracleTypedError(t, o, princ, req, rec)         // oracle 6
+		osOracleDenialExistence(t, w, o, princ, req, rec) // oracle 7
 
 		osBindResponse(st, o, rec, targetID)
 	}
