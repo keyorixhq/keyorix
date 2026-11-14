@@ -41,9 +41,9 @@ func mapDynamicError(err error) error {
 	if aerr, ok := auditUnavailableStatus(err); ok {
 		return aerr
 	}
-	// The caller's own admin_dsn refused by policy: REST answers these 400 with the same
-	// texts. Neither carries the DSN: ForbiddenOptionError names only the option,
-	// ClientMessage only the host the caller wrote (never the resolved address).
+	// An admin_dsn refused by policy (the caller's on create/update, the stored one on issue/
+	// renew/revoke): REST answers 400 with the same texts. No DSN in them: ForbiddenOptionError
+	// names only the option, ClientMessage only the DSN's host (never the resolved address).
 	if forbidden, ok := errors.AsType[*dsn.ForbiddenOptionError](err); ok {
 		return status.Error(codes.InvalidArgument, forbidden.Error()) // nosemgrep: keyorix-raw-error-to-client -- ForbiddenOptionError is built from the fixed option list only (internal/core/dsn/localfile.go), no DSN text; REST sends the same text with its 400
 	}

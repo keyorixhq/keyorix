@@ -283,12 +283,74 @@ func TestDynamicSecrets_UpdateAdminDSN_LiveLeasesPinTheHost(t *testing.T) {
 		assert.Equal(t, legacy, w.storedDSN(cfg))
 		assert.Equal(t, events, w.updateEvents())
 
-		// Same host, the refused option removed: accepted (URL form vs key-value, case differs).
+		// Same host, another port: another server (REVIEW-4193-DEEP-1 F1), refused.
+		// So is a DSN whose target cannot be read (no host at all).
+		for _, refused := range []string{
+			"postgres://admin:" + adsnSecret + "@203.0.113.10:6543/app?sslmode=require",
+			"host=203.0.113.10 port=6543 user=admin password=" + adsnSecret + " dbname=app",
+			"user=admin password=" + adsnSecret + " dbname=app",
+		} {
+			_, err = w.core.UpdateDynamicSecretConfigAdminDSN(w.ctx, &UpdateDynamicSecretConfigAdminDSNRequest{
+				ConfigID: cfg.ID, AdminDSN: refused, ActorID: w.f.adminID,
+			})
+			require.ErrorIs(t, err, ErrDynamicSecretPrecondition, "%s", strings.ReplaceAll(refused, adsnSecret, "***"))
+			assert.Equal(t, legacy, w.storedDSN(cfg))
+			assert.Equal(t, events, w.updateEvents())
+		}
+
+		// Same host, the refused option removed: accepted (URL form vs key-value, the
+		// key-value port implicit, the URL's 5432 written out).
 		fixed := "postgres://admin:" + adsnSecret + "@203.0.113.10:5432/app?sslmode=require"
 		_, err = w.core.UpdateDynamicSecretConfigAdminDSN(w.ctx, &UpdateDynamicSecretConfigAdminDSNRequest{
 			ConfigID: cfg.ID, AdminDSN: fixed, ActorID: w.f.adminID,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, fixed, w.storedDSN(cfg))
+	})
+}
+
+// TestDynamicSecrets_UpdateAdminDSN_LiveLeasesPinKubernetesTarget: a kubernetes
+// revoke deletes the lease's bound Secret in the config's namespace through its
+// api_server, and only when revocable is set, so with a live lease all three are
+// pinned (REVIEW-4193-DEEP-1 F1); the credentials in the JSON may change.
+func TestDynamicSecrets_UpdateAdminDSN_LiveLeasesPinKubernetesTarget(t *testing.T) {
+	adsnBackends(t, func(t *testing.T, w *adsnWorld) {
+		k8s := func(apiServer, namespace string, revocable bool, token string) string {
+			return fmt.Sprintf(`{"api_server":%q,"namespace":%q,"service_account":"app","revocable":%t,"ca_cert":"x","token":%q}`,
+				apiServer, namespace, revocable, token)
+		}
+		stored := k8s("https://203.0.113.10:6443", "team-a", true, adsnSecret)
+		cfg, err := w.core.CreateDynamicSecretConfig(w.ctx, &CreateDynamicSecretConfigRequest{
+			Name: "adsn-k8s-pin", ProjectID: w.f.projectID, EnvironmentID: w.f.envID, BackendType: "kubernetes",
+			AdminDSN: stored, DefaultTTLSeconds: 3600, CreatedBy: "admin", ActorID: w.f.adminID,
+		})
+		require.NoError(t, err)
+		now := w.core.now()
+		_, err = w.f.setup.Storage().CreateDynamicSecretLease(w.ctx, &models.DynamicSecretLease{
+			ConfigID: cfg.ID, LeaseID: "adsn-k8s-pin-0", ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID,
+			RoleName: "keyorix-dyn-pin0", Status: "active", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		})
+		require.NoError(t, err)
+		events := w.updateEvents()
+		for name, refused := range map[string]string{
+			"namespace":     k8s("https://203.0.113.10:6443", "team-b", true, adsnSecret),
+			"revocable off": k8s("https://203.0.113.10:6443", "team-a", false, adsnSecret),
+			"api port":      k8s("https://203.0.113.10:7443", "team-a", true, adsnSecret),
+			"not json":      "api_server=https://203.0.113.10:6443",
+		} {
+			_, err := w.core.UpdateDynamicSecretConfigAdminDSN(w.ctx, &UpdateDynamicSecretConfigAdminDSNRequest{
+				ConfigID: cfg.ID, AdminDSN: refused, ActorID: w.f.adminID,
+			})
+			require.ErrorIs(t, err, ErrDynamicSecretPrecondition, name)
+			assert.Equal(t, stored, w.storedDSN(cfg), name)
+		}
+		assert.Equal(t, events, w.updateEvents())
+
+		rotated := k8s("https://203.0.113.10:6443/", "team-a", true, adsnSecret+"-rotated")
+		_, err = w.core.UpdateDynamicSecretConfigAdminDSN(w.ctx, &UpdateDynamicSecretConfigAdminDSNRequest{
+			ConfigID: cfg.ID, AdminDSN: rotated, ActorID: w.f.adminID,
+		})
+		require.NoError(t, err, "same api_server, namespace and revocable: a rotated token is accepted")
+		assert.Equal(t, rotated, w.storedDSN(cfg))
 	})
 }
