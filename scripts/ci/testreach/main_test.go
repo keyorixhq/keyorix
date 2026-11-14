@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -113,7 +114,13 @@ func TestC(t *testing.T) { _ = sharedFixture() }
 `,
 	})
 	r.Targets = outside("docs/other.md")
-	wantTests(t, analyse(r))
+	none := analyse(r)
+	wantTests(t, none)
+	// An empty selection is [] in the JSON, never null: mq_slim iterates it
+	// (a null crashed the lever on 9 of 60 replayed rounds).
+	if b, _ := json.Marshal(none); !strings.Contains(string(b), `"tests":[]`) {
+		t.Fatalf("empty selection encodes as %s, want \"tests\":[]", b)
+	}
 	r.TestFiles = []string{"b_test.go"}
 	wantTests(t, analyse(r), "TestB", "TestC")
 }

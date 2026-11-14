@@ -180,7 +180,7 @@ def testreach_lever(ctx, legs, leg_pkgs, log):
             why = keep.get(p) or (res[p]["reason"] if p in res else "not analysed")
             recs.append(record(log, "testreach", "test-suite/" + leg, "keep", f"{p.replace(MODULE + '/', '')}: {why}"))
             continue
-        names = sorted({t for p in pkgs for t in res[p]["tests"]})
+        names = sorted({t for p in pkgs for t in (res[p]["tests"] or [])})
         total = sum(res[p]["total"] for p in pkgs)
         sharded = legs[leg] == "*"
         # A sharded package's narrowed tests all run in its first selected shard.

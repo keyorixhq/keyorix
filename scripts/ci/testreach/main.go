@@ -191,7 +191,7 @@ func analyse(r request) result {
 		}
 	}
 	reach := reachSeeds(decls, seeds)
-	var sel []string
+	sel := []string{}
 	for i, d := range decls {
 		w, ok := reach[i]
 		if !ok {
