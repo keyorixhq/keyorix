@@ -37,7 +37,7 @@ call sites of source 1 from the code on every run. A new insert site with no row
 | invitation accept, project and global (`completeInvitationAccept`, `setup_consume.go`) | `POST /auth/setup/consume`, purpose `invitation_accept` | goes through `c.CreateUser`, so the #4208 read-back applies; the accept then continues (`LogUserCreated`, token consume, grants) | already correct (#4208). Both invitation kinds use the same function; the global one only differs in `applyInvitationGrants` |
 | `CreateUserWithAssignments` (`users.go`) | gRPC `UserService.CreateUser` (admin-set password), REST `POST /api/v1/users/` with `role` or `project_assignments` | answered `Internal`/500 while the user, its role grants and `user.created` committed; password history not seeded; a retry gets "already exists" (oracle (d) flags it) | **fixed by this PR** |
 | `ProvisionSCIMUser` (`scim.go`) | SCIM `POST /scim/v2/Users` | answered 500 while the user, its baseline role and `scim.user_provisioned` committed; the IdP's retry gets 409 uniqueness and never learns the id. No oracle flagged it (the state equals the fault-free one) | **fixed by this PR**: a landed row answers 201 with the user; an unreadable outcome answers 503 + `Retry-After` with the SCIM error body |
-| `provisionSSOUser` (`sso.go`) | OIDC `CompleteSSO` (`ensureSSOUser`) and SAML `CompleteSAML` JIT | login refused while the account and its default role committed; the post-commit `sso.jit_provision` row was never written, and the next login resolves the account by its `sso:` external id as an existing one, so that row never appears. No oracle flagged it | **fixed by this PR**: a landed row writes `sso.jit_provision` and the login continues |
+| `provisionSSOUser` (`sso.go`) | OIDC `CompleteSSO` (`ensureSSOUser`) and SAML `CompleteSAML` JIT | login refused while the account and its default role committed; the post-commit `auth.sso_jit_provisioned` row was never written, and the next login resolves the account by its `sso:` external id as an existing one, so that row never appears. No oracle flagged it | **fixed by this PR**: a landed row writes `auth.sso_jit_provisioned` and the login continues |
 | `bootstrapSystemLocked` (`auth_bootstrap.go`) | `POST /system/init` (`handlers.AuthHandler.InitSystem`) | answered failure while the admin, the catalog and the initialised marker committed; the post-commit `user.created` / `project.created` rows and the password-history seed are skipped; the bootstrap token stays in memory (harmless: the marker refuses a second bootstrap, and a retry answers `AlreadyInitialized`) | **out of scope**: verify only here, `auth_bootstrap.go` is being changed by DEMO-COPY-TAILS (#4218). Left as a LEFTOVER for after #4218 merges |
 
 ## What "fixed" means on each path
@@ -53,7 +53,7 @@ call sites of source 1 from the code on every run. A new insert site with no row
   a second account.
 - An SSO account is never half-provisioned: the user row and its default role commit
   in one transaction, so either both exist or neither does. What the lost ack used
-  to lose was the `sso.jit_provision` audit row and the login itself.
+  to lose was the `auth.sso_jit_provisioned` audit row and the login itself.
 
 ## knownOpenTolerances
 
