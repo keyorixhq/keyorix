@@ -101,7 +101,7 @@ func (r *Reloader) read() (certPEM, keyPEM []byte, digest [sha256.Size]byte, err
 		return nil, nil, digest, fmt.Errorf("TLS key file: %w", err)
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "%d:%d:", len(certPEM), len(keyPEM))
+	_, _ = fmt.Fprintf(h, "%d:%d:", len(certPEM), len(keyPEM))
 	h.Write(certPEM)
 	h.Write(keyPEM)
 	h.Sum(digest[:0])

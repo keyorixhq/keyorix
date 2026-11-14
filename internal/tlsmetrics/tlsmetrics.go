@@ -25,7 +25,7 @@ const (
 
 var notAfter = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	Name: "keyorix_tls_certificate_not_after_timestamp_seconds",
-	Help: "Unix time at which the TLS certificate served by a listener (http|grpc) expires. Alert on this minus time() before it reaches zero; a renewed file is picked up by new handshakes within about 30 seconds.",
+	Help: "Unix time at which the TLS certificate served by a listener (http|grpc) expires. Alert on this minus time() before it reaches zero; a renewed file is picked up by new handshakes within about 30 seconds (the cert and key contents are compared, so a replacement that keeps the old file time is picked up too).",
 }, []string{"listener"})
 
 // Wrap returns a tls.Config.GetCertificate hook that serves what get serves and
