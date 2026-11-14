@@ -51,7 +51,8 @@ func TestGetProjectStats_NotFound(t *testing.T) {
 	req = withUserCtx(req)
 	w := httptest.NewRecorder()
 	h.GetProjectStats(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A missing project is a client error, not a server fault (#4132 OPENAPI-STATEFUL-3).
+	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }
 
 func TestGetProjectStats_Success(t *testing.T) {

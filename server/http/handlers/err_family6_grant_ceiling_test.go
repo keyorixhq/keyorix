@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,7 @@ func f(err error) bool { return errors.Is(err, core.ErrPermissionDenied) }`
 	assert.Empty(t, grantCeilingTextMatches(t, "now", now))
 }
 
-// TestEveryGrantRouteMapsTheCeilingRefusalTo403 drives each handler that grants a role (eight routes)
+// TestEveryGrantRouteMapsTheCeilingRefusalTo403 drives each handler that grants a role (ten routes)
 // as an actor who holds roles.assign but not the permissions of the role it grants.
 // Core refuses (core.ErrPermissionDenied); every route must answer 403, never 500/400.
 func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
@@ -176,6 +177,18 @@ func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
 		{"POST /projects/{id}/machine-identities/{machineId}/roles", func() *httptest.ResponseRecorder {
 			w := httptest.NewRecorder()
 			cat.GrantMachineRole(w, suReq(http.MethodPost, `{"role_id":`+rid+`}`, map[string]string{"id": pid, "machineId": suID(machine.ID)}))
+			return w
+		}},
+		// #3979: POST /user-roles, both forms, answered the ceiling 500.
+		{"POST /user-roles", func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			rbac.AssignRole(w, suReq(http.MethodPost, `{"user_id":`+tid+`,"role_id":`+rid+`,"project_id":`+pid+`}`, nil))
+			return w
+		}},
+		{"POST /user-roles with expires_at", func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			exp := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+			rbac.AssignRole(w, suReq(http.MethodPost, `{"user_id":`+tid+`,"role_id":`+rid+`,"project_id":`+pid+`,"expires_at":"`+exp+`"}`, nil))
 			return w
 		}},
 		{"PUT /users/{id}/roles", func() *httptest.ResponseRecorder {

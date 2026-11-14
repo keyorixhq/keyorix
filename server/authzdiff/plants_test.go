@@ -17,9 +17,15 @@ import (
 // Each plant must:
 //   - still find its anchor exactly once (else the production code moved and
 //     the plant must be re-pointed — the test says so, it does not skip);
-//   - produce at least minUnexplained "unexplained" cases, ALL on op;
+//   - produce at least minUnexplained cases in its bucket (default
+//     "unexplained"), ALL on op;
 //   - and the same restricted sweep WITHOUT the overlay must produce zero
-//     unexplained cases (the detection is the plant's, not pre-existing noise).
+//     cases in that bucket (the detection is the plant's, not pre-existing
+//     noise).
+//
+// A plant whose bucket is a waiver (not "unexplained") does NOT prove that a
+// strict sweep fails on the defect: it proves only that the harness still
+// RECORDS it, in that waiver, where a clean tree records none.
 //
 // Opt-in (AUTHZDIFF_PLANTS=1): each plant compiles the server packages with an
 // overlay and runs a restricted sweep, ~1-2 min per plant — far over the 10 s
@@ -32,6 +38,16 @@ type plant struct {
 	anchor, repl   string
 	op             string
 	minUnexplained int
+	// bucket is the partition bucket the plant's cases must land in; "" means
+	// "unexplained" (a strict sweep fails on them).
+	bucket string
+}
+
+func (pl plant) wantBucket() string {
+	if pl.bucket == "" {
+		return "unexplained"
+	}
+	return pl.bucket
 }
 
 var plants = append([]plant{
@@ -88,6 +104,47 @@ var plants = append([]plant{
 			"\t\treturn nil, err\n\t}\n\tif err := s.core.DeleteGroup(",
 		op:             "group.delete",
 		minUnexplained: 20,
+	},
+	{
+		// V5: removes ReassignOwnedSecrets' own roles.assign@project gate — the
+		// exact #G10 regression (the function once had "no independent
+		// authorization of its own", and the per-secret continue-on-error below
+		// masks every denial as a silent (0, nil) success). With the gate gone the
+		// core leg returns no error for any principal that passes input
+		// validation, so it over-allows everyone the model denies. REST keeps its
+		// router gate and the op has no gRPC leg, so only the core leg diverges:
+		// "core allows, every present transport denies, the model denies" is
+		// exactly the known-04 waiver (partition_test.go), never "unexplained".
+		// This plant therefore proves the harness RECORDS the core-only
+		// over-allow (240 known-04 cases planted, 0 clean, at introduction); it
+		// does not fail a strict sweep, by the partition's design.
+		name: "reassign-owner-core-gate-removed",
+		file: "internal/core/secret_reassign_owner.go",
+		anchor: "\tif allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, Scope{ProjectID: projectID}); err != nil {\n" +
+			"\t\treturn 0, fmt.Errorf(\"%s: %w\", i18n.T(\"ErrorRetrievalFailed\", nil), err)\n" +
+			"\t} else if !allowed {\n" +
+			"\t\treturn 0, permissionDeniedf(\"%s: %s\", i18n.T(\"ErrorPermissionDenied\", nil), \"not authorized to reassign secrets in this project\")\n" +
+			"\t}\n",
+		repl:           "\t_ = actorKind // PLANT: core roles.assign@project gate removed\n",
+		op:             "secret.reassign.owner",
+		minUnexplained: 10,
+		bucket:         "known-04",
+	},
+	{
+		// V5: removes ActivateBreakGlass's IsProjectMember refusal — the
+		// self-elevation gate. Its earlier form (GetUserRoleIDsAt, which matches
+		// project_id = 0 OR P) let the install-wide baseline count as membership
+		// and any authenticated user self-grant the emergency role on ANY project
+		// (#284-era). With the refusal gone, core grants the emergency role to any
+		// user who passes input validation, and REST and gRPC — which have no gate
+		// of their own on this op — over-allow the same non-members, so every leg
+		// allows what the memberOnly model rule denies.
+		name:           "breakglass-activate-membership-gate-removed",
+		file:           "internal/core/break_glass.go",
+		anchor:         "\tif !affiliated {\n\t\treturn nil, refuseBreakGlass(fmt.Sprintf(\"%s: %s\", i18n.T(\"ErrorPermissionDenied\", nil), \"break-glass is available only to members of the project\"), ErrBreakGlassNotProjectMember, ErrPermissionDenied)\n\t}\n",
+		repl:           "\t_ = affiliated // PLANT: break-glass membership gate removed\n",
+		op:             "breakglass.activate",
+		minUnexplained: 10,
 	},
 }, fixRegressionPlants...)
 
@@ -183,30 +240,31 @@ func TestPlantsAreDetected(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			planted := childSweep(t, pl.op, overlay)
-			clean := childSweep(t, pl.op, "")
-			if clean.unexplained != 0 {
-				t.Fatalf("control sweep of %s WITHOUT the plant already has %d unexplained cases: fix those first", pl.op, clean.unexplained)
+			bucket := pl.wantBucket()
+			planted := childSweep(t, pl.op, overlay, bucket)
+			clean := childSweep(t, pl.op, "", bucket)
+			if clean.matched != 0 {
+				t.Fatalf("control sweep of %s WITHOUT the plant already has %d %s cases: fix those first", pl.op, clean.matched, bucket)
 			}
-			if planted.unexplained < pl.minUnexplained {
-				t.Errorf("plant %s: %d unexplained cases on %s, want >= %d — the harness stopped detecting it", pl.name, planted.unexplained, pl.op, pl.minUnexplained)
+			if planted.matched < pl.minUnexplained {
+				t.Errorf("plant %s: %d %s cases on %s, want >= %d — the harness stopped detecting it", pl.name, planted.matched, bucket, pl.op, pl.minUnexplained)
 			}
 			if len(planted.otherOps) > 0 {
-				t.Errorf("plant %s: unexplained cases on ops other than %s: %v", pl.name, pl.op, planted.otherOps)
+				t.Errorf("plant %s: %s cases on ops other than %s: %v", pl.name, bucket, pl.op, planted.otherOps)
 			}
-			t.Logf("plant %s: %d unexplained cases, all on %s (control: 0)", pl.name, planted.unexplained, pl.op)
+			t.Logf("plant %s: %d %s cases, all on %s (control: 0)", pl.name, planted.matched, bucket, pl.op)
 		})
 	}
 }
 
 type childResult struct {
-	unexplained int
-	otherOps    []string
+	matched  int // results in the requested bucket
+	otherOps []string
 }
 
 // childSweep runs TestAuthzDiffSweep for one op in a child `go test`, with an
-// overlay when given, and reads its JSONL results.
-func childSweep(t *testing.T, op, overlay string) childResult {
+// overlay when given, and counts its JSONL results in bucket.
+func childSweep(t *testing.T, op, overlay, bucket string) childResult {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "res.jsonl")
 	args := []string{"test", "-count=1", "-run", "^TestAuthzDiffSweep$", "-timeout", "20m"}
@@ -234,10 +292,10 @@ func childSweep(t *testing.T, op, overlay string) childResult {
 			Op     string `json:"op"`
 			Bucket string `json:"bucket"`
 		}
-		if json.Unmarshal(sc.Bytes(), &r) != nil || r.Bucket != "unexplained" {
+		if json.Unmarshal(sc.Bytes(), &r) != nil || r.Bucket != bucket {
 			continue
 		}
-		res.unexplained++
+		res.matched++
 		if r.Op != op && !seen[r.Op] {
 			seen[r.Op] = true
 			res.otherOps = append(res.otherOps, r.Op)

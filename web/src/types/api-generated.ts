@@ -5686,7 +5686,8 @@ export interface components {
             token_prefix?: string;
             user_id?: number;
             expires_at?: string;
-            last_used_at?: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
             expired?: boolean;
             stale?: boolean;
         };
@@ -5728,7 +5729,8 @@ export interface components {
             machine_identity_id?: number;
             name?: string;
             token_prefix?: string;
-            last_used_at?: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
             expired?: boolean;
             stale?: boolean;
         };
@@ -11101,17 +11103,6 @@ export interface operations {
         };
         responses: {
             /** @description Envelope `{data, message}`. `data` is the created folder node. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        data?: components["schemas"]["Secret"];
-                    };
-                };
-            };
-            /** @description Envelope `{data, message}`. `data` is the created folder node. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -11199,7 +11190,7 @@ export interface operations {
         };
         responses: {
             /** @description Envelope `{data, message}`. `data` is the created template. */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

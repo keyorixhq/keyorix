@@ -3,13 +3,13 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
-	"log"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -34,22 +34,15 @@ func (h *SecretHandler) DescribeSecret(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
 		return
 	}
-	secret, err := h.coreService.SetSecretDescription(r.Context(), userCtx.UserID, uint(id), reqBody.Description)
+	// The recorder tells a permission refusal core reached through a storage outage of
+	// the permission lookup from a verdict (#3873).
+	ctx, faults := core.WithAuthorizeFaultRecorder(r.Context())
+	secret, err := h.coreService.SetSecretDescription(ctx, userCtx.UserID, uint(id), reqBody.Description)
 	if err != nil {
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case errors.Is(err, core.ErrSecretInvalidInput):
-			status = http.StatusBadRequest
-		case isSecretNotFound(err):
-			status = http.StatusNotFound
-		case isPermissionRefusal(err):
-			status = http.StatusForbidden
-		default:
-			log.Printf("Error describing secret %d: %v", id, err) // NOSONAR
-			msg = clientSafe(err)
-		}
-		h.sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, coreErrorAnswer{op: fmt.Sprintf("describing secret %d", id), faults: faults, texts: coreErrorTexts{
+			errclass.NotFound:         err.Error(),
+			errclass.PermissionDenied: err.Error(),
+		}})
 		return
 	}
 	h.sendSuccess(w, newSecretNodeWire(secret), "Description updated")

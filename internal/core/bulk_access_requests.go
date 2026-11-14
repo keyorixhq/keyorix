@@ -196,7 +196,7 @@ func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs [
 		return nil, fmt.Errorf("request_ids exceeds the maximum batch size of %d", maxBulkAccessRequestBatchSize)
 	}
 	if reason == "" {
-		return nil, errors.New("reason is required")
+		return nil, validationError(errors.New("reason is required"))
 	}
 
 	fetched, err := k.storage.ListAccessRequestsByIDs(ctx, requestIDs)
@@ -248,10 +248,10 @@ func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs [
 // CreateRejectionReasonTemplate creates a new named rejection reason template.
 func (k *KeyorixCore) CreateRejectionReasonTemplate(ctx context.Context, createdBy uint, name, reason string) (*models.RejectionReasonTemplate, error) {
 	if name == "" {
-		return nil, errors.New("name is required")
+		return nil, validationError(errors.New("name is required"))
 	}
 	if reason == "" {
-		return nil, errors.New("reason is required")
+		return nil, validationError(errors.New("reason is required"))
 	}
 	now := k.now()
 	t := &models.RejectionReasonTemplate{
