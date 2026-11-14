@@ -1,0 +1,2 @@
+### Documentation
+- **Operator runbooks walked against the binary.** Backup/restore (SQLite and PostgreSQL), DEK and KEK rotation, `recover-admin` and the v0.96.3 upgrade were run on a built main binary and the quoted output corrected where it differed: `admin validate` also needs the server stopped, the rotate and rotate-kek expected output, the setup-session 403 hint and 401 message in the lost-admin runbook, no password or code flags on `change-password`/`mfa activate`, and the empty `limits:` left after removing `secrets.limits.max_secrets_per_user`.
