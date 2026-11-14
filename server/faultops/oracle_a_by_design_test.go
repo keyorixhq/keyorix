@@ -73,6 +73,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // oracleAByDesignError is one reviewed exemption for oracle (a)'s
@@ -498,18 +499,35 @@ func TestKnownOpenTolerances_AreLoadBearing(t *testing.T) {
 			"\"could not reach\" is NOT the same as \"no longer flagged\", so do not delete on this signal "+
 			"alone.", len(undrivable), undrivable)
 	}
-	if len(dead) > 0 {
-		t.Errorf("found %d knownOpenTolerance entr(y/ies) that no longer tolerate anything — their fault "+
-			"fired, but the oracle did not report a violation for them, so matchingKnownOpen never "+
-			"returned them: %v\n\n"+
-			"Remove them. A dead tolerance is worse than no tolerance: it carries an expiry that produces "+
-			"re-filing churn for a case nothing flags, and it tells a reader the oracle still reports that "+
-			"case when it does not. This is exactly how four of #2549's own entries decayed unnoticed once "+
-			"the error-reporting branch gained onlyOutcomeLogTables.\n\n"+
-			"Before deleting, establish WHY each one went quiet — the fix landed, or an earlier "+
-			"accept-by-design now shadows it. If it is the latter and the behaviour really is by design, "+
-			"move it to oracleAByDesignErrors (this file) with its design citation and proving test rather "+
-			"than just dropping it.", len(dead), dead)
+	reportDeadKnownOpenTolerances(t, dead)
+}
+
+// deadKnownOpenToleranceAdvice is the part of the dead-row report that does not
+// depend on which row it is.
+const deadKnownOpenToleranceAdvice = "its fault fired, but the oracle did not report a violation for it, so " +
+	"matchingKnownOpen never returned it. Remove it. A dead tolerance is worse than no tolerance: it carries " +
+	"an expiry that produces re-filing churn for a case nothing flags, and it tells a reader the oracle still " +
+	"reports that case when it does not. This is exactly how four of #2549's own entries decayed unnoticed " +
+	"once the error-reporting branch gained onlyOutcomeLogTables. Before deleting, establish WHY it went " +
+	"quiet — the fix landed, or an earlier accept-by-design now shadows it. If it is the latter and the " +
+	"behaviour really is by design, move it to oracleAByDesignErrors with its design citation and proving " +
+	"test rather than just dropping it"
+
+// reportDeadKnownOpenTolerances reports each dead row as a CLOSED KNOWN FINDING
+// (guardrules.KnownFindingClosed) instead of failing the test: a row goes dead
+// the moment ANY PR fixes the bug it tolerates, so failing here ejected the
+// unrelated PR queued next to the fixer from the merge queue (FLAKE-ROOT-NOV-3
+// item 4b, #4100/#4115). On pull_request and merge_group runs it logs a
+// "FINDING CLOSED" line; on main pushes and the nightly run
+// (KEYORIX_GUARD_ROLLOUT=enforce) it fails, so the stale row still gets removed.
+//
+// Only the dead bucket goes through here. undrivable, inconclusive,
+// underspecified and the baseline ratchets say the HARNESS or the baseline is
+// wrong, not that a bug was fixed, and stay hard failures.
+func reportDeadKnownOpenTolerances(t testing.TB, dead []string) {
+	t.Helper()
+	for _, label := range dead {
+		guardrules.KnownFindingClosed(t, "knownOpenTolerances/"+label, deadKnownOpenToleranceAdvice)
 	}
 }
 
