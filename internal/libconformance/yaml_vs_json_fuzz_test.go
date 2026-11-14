@@ -1,0 +1,335 @@
+package libconformance
+
+// DF1 Oracle D — gopkg.in/yaml.v3 vs encoding/json on input that is valid JSON.
+//
+// Every JSON document is a YAML document (JSON is a YAML 1.2 subset). Keyorix parses
+// config/policy with yaml.v3 (internal/config/config.go:447, internal/k8ssync/config.go:112)
+// and parses request/API bodies and many artefacts with encoding/json. Where the same
+// bytes can be read by either — a config value echoed into a JSON API, a JSON body a tool
+// later re-reads as YAML, `cli/cmd/output.go`'s YAML/JSON duality — a value that the two
+// libraries decode DIFFERENTLY is a decision-vs-action split. This oracle feeds one input
+// that encoding/json accepts to both libraries and fails when they disagree on acceptance
+// or on the decoded value, outside a documented, allowlisted dialect difference.
+//
+// WHAT THIS ORACLE DOES NOT VERIFY:
+//   - It only drives inputs encoding/json ACCEPTS (JSON ⊆ YAML direction). It does NOT test
+//     YAML-only syntax (anchors `&`/`*`, merge keys `<<`, tags `!!`, flow/block scalars,
+//     multi-doc `---`): those are not valid JSON, so there is no "same bytes, two readings"
+//     at a JSON consumer. The anchors/merge/duplicate-key strict-vs-lax axis is partially
+//     covered — duplicate keys ARE reachable as JSON and ARE tested (yaml.v3 rejects, json
+//     last-wins) — but anchor/merge expansion is out of scope here.
+//   - It compares DECODED VALUES canonicalised through Go's own types, not the raw token
+//     streams. A difference that both libraries normalise away before returning an
+//     `interface{}` is invisible.
+//   - Number equality is by mathematical value (big.Rat), so 1 and 1.0 are equal; a pure
+//     REPRESENTATION difference that preserves value is not flagged. A value-changing
+//     precision loss (float64 rounding of a large integer) IS flagged as number-precision.
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math/big"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+func newBytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
+
+// hasDuplicateJSONKey reports whether any JSON object in data declares the same member
+// name twice (the construct encoding/json silently accepts last-wins and yaml.v3 rejects).
+func hasDuplicateJSONKey(data []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	type frame struct {
+		isObj   bool
+		seen    map[string]bool
+		wantKey bool // inside an object, the next string token is a key
+	}
+	var stack []*frame
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			switch t {
+			case '{':
+				stack = append(stack, &frame{isObj: true, seen: map[string]bool{}, wantKey: true})
+			case '[':
+				stack = append(stack, &frame{})
+			case '}', ']':
+				if len(stack) > 0 {
+					stack = stack[:len(stack)-1]
+				}
+				// the structure that just closed was a value for its parent object;
+				// the parent now expects the next key.
+				if len(stack) > 0 && stack[len(stack)-1].isObj {
+					stack[len(stack)-1].wantKey = true
+				}
+			}
+			continue
+		}
+		if len(stack) == 0 {
+			continue
+		}
+		top := stack[len(stack)-1]
+		if top.isObj && top.wantKey {
+			if s, ok := tok.(string); ok {
+				if top.seen[s] {
+					return true
+				}
+				top.seen[s] = true
+			}
+			top.wantKey = false
+		} else if top.isObj {
+			// a scalar value just completed; expect the next key.
+			top.wantKey = true
+		}
+	}
+}
+
+type yamlJSONMismatch struct {
+	key        string
+	detail     string
+	jsonV, yml string
+}
+
+// normMapKey renders any map key as a string (JSON keys are always strings; yaml may hand
+// back map[string]any or map[any]any depending on key types).
+func asStringMap(v any) (map[string]any, bool) {
+	switch m := v.(type) {
+	case map[string]any:
+		return m, true
+	case map[any]any:
+		out := make(map[string]any, len(m))
+		for k, vv := range m {
+			out[fmt.Sprint(k)] = vv
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// numVal converts any numeric decoding (float64/int/int64/uint64/json.Number) to a big.Rat.
+func numVal(v any) (*big.Rat, bool) {
+	switch n := v.(type) {
+	case float64:
+		r := new(big.Rat)
+		if r.SetFloat64(n) == nil {
+			return nil, false // NaN/Inf — not representable
+		}
+		return r, true
+	case int:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int64:
+		return new(big.Rat).SetInt64(n), true
+	case uint64:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(n)), true
+	case json.Number:
+		r, ok := new(big.Rat).SetString(string(n))
+		return r, ok
+	}
+	return nil, false
+}
+
+// treeCompare returns the first precise mismatch between two decoded JSON/YAML values.
+func treeCompare(j, y any) *yamlJSONMismatch {
+	// numbers first (cross-type int/float)
+	if jr, jok := numVal(j); jok {
+		yr, yok := numVal(y)
+		if !yok {
+			return &yamlJSONMismatch{key: "type-differs", detail: "json number vs non-number", jsonV: fmt.Sprint(j), yml: fmt.Sprint(y)}
+		}
+		if jr.Cmp(yr) != 0 {
+			return &yamlJSONMismatch{key: "number-precision", detail: "same token decoded to different numeric value", jsonV: jr.FloatString(0), yml: yr.FloatString(0)}
+		}
+		return nil
+	}
+	switch jv := j.(type) {
+	case map[string]any:
+		ym, ok := asStringMap(y)
+		if !ok {
+			return &yamlJSONMismatch{key: "type-differs", detail: "json object vs non-object", jsonV: fmt.Sprint(j), yml: fmt.Sprint(y)}
+		}
+		if len(jv) != len(ym) {
+			return &yamlJSONMismatch{key: "object-size-differs", detail: "object key count differs", jsonV: fmt.Sprint(jv), yml: fmt.Sprint(ym)}
+		}
+		for k, jvv := range jv {
+			yvv, ok := ym[k]
+			if !ok {
+				return &yamlJSONMismatch{key: "object-keys-differ", detail: "key " + k + " missing in yaml reading", jsonV: fmt.Sprint(jv), yml: fmt.Sprint(ym)}
+			}
+			if m := treeCompare(jvv, yvv); m != nil {
+				return m
+			}
+		}
+		return nil
+	case []any:
+		ys, ok := y.([]any)
+		if !ok {
+			return &yamlJSONMismatch{key: "type-differs", detail: "json array vs non-array", jsonV: fmt.Sprint(j), yml: fmt.Sprint(y)}
+		}
+		if len(jv) != len(ys) {
+			return &yamlJSONMismatch{key: "array-length-differs", detail: "array length differs", jsonV: fmt.Sprint(jv), yml: fmt.Sprint(ys)}
+		}
+		for i := range jv {
+			if m := treeCompare(jv[i], ys[i]); m != nil {
+				return m
+			}
+		}
+		return nil
+	case string:
+		if ys, ok := y.(string); !ok || ys != jv {
+			return &yamlJSONMismatch{key: "string-differs", detail: "string value differs", jsonV: jv, yml: fmt.Sprint(y)}
+		}
+		return nil
+	case bool:
+		if yb, ok := y.(bool); !ok || yb != jv {
+			return &yamlJSONMismatch{key: "bool-differs", detail: "bool value differs", jsonV: fmt.Sprint(jv), yml: fmt.Sprint(y)}
+		}
+		return nil
+	case nil:
+		if y != nil {
+			return &yamlJSONMismatch{key: "null-differs", detail: "json null vs yaml non-null", jsonV: "null", yml: fmt.Sprint(y)}
+		}
+		return nil
+	}
+	return nil
+}
+
+// yamlJSONCompare is the pure oracle core.
+func yamlJSONCompare(data []byte) *yamlJSONMismatch {
+	// DEFAULT encoding/json decode (float64 numbers) — this is what nearly all Keyorix
+	// call sites use (json.Unmarshal / Decoder.Decode without UseNumber), so it is the
+	// reading a real security decision is taken on. Modelling UseNumber() here would hide
+	// the float64 precision loss that is the actual differential.
+	dec := json.NewDecoder(newBytesReader(data))
+	var jv any
+	if err := dec.Decode(&jv); err != nil {
+		return nil // not JSON — out of scope for this oracle
+	}
+	if dec.More() {
+		return nil // trailing content: not a single JSON value
+	}
+	var yv any
+	if err := yaml.Unmarshal(data, &yv); err != nil {
+		// yaml rejected a value encoding/json accepted. The reachable, documented case is
+		// a duplicate mapping key (JSON: last-wins; yaml.v3: error). Classify precisely.
+		return &yamlJSONMismatch{key: classifyYAMLReject(data), detail: "yaml.v3 rejected input encoding/json accepted", jsonV: "accepted", yml: err.Error()}
+	}
+	return treeCompare(jv, yv)
+}
+
+func classifyYAMLReject(data []byte) string {
+	if hasDuplicateJSONKey(data) {
+		return "yaml-rejects-json-dup-key"
+	}
+	return "yaml-rejects-json-accepts"
+}
+
+var yamlDiffAllow = func() *allowlist {
+	return newAllowlist(
+		expectedDiff{
+			key: "yaml-rejects-json-dup-key",
+			reason: "A JSON object with a duplicate member name (`{\"a\":1,\"a\":2}`). RFC 8259 " +
+				"permits it and encoding/json takes LAST-wins (`{\"a\":2}`); YAML 1.2 forbids " +
+				"duplicate mapping keys and yaml.v3 returns an error. This is a real, documented " +
+				"accept-vs-reject split and a genuine security concern where one config reader is " +
+				"JSON-based and another YAML-based (report Finding D-1), but it is a library/spec " +
+				"difference, not a bug in either parser. RED-PROVEN by seed `{\"a\":1,\"a\":2}`.",
+		},
+		expectedDiff{
+			key: "number-precision",
+			reason: "A JSON number too large for an IEEE-754 double (e.g. 12345678901234567890). " +
+				"encoding/json decodes numbers as float64 by DEFAULT and rounds; yaml.v3 decodes an " +
+				"integer that fits uint64 without loss. Same token, different numeric value. " +
+				"Documented: encoding/json's float64 default (callers who care use json.Number / " +
+				"Decimal). Security note in report Finding D-2. RED-PROVEN by seed " +
+				"`{\"n\":12345678901234567890}`. The oracle decodes the JSON side with DEFAULT " +
+				"float64 (no UseNumber) because that is the reading nearly all Keyorix call sites " +
+				"take; a value that fits a float64 exactly agrees, only a value-changing overflow " +
+				"is flagged.",
+		},
+	)
+}
+
+var yamlSeeds = [][]byte{
+	[]byte(`{"a":1}`),
+	[]byte(`{"name":"alice","age":30}`),
+	[]byte(`[1,2,3]`),
+	[]byte(`{"x":null}`),
+	[]byte(`{"s":"yes"}`),
+	[]byte(`{"nested":{"b":[true,false]}}`),
+	[]byte(`"plain"`),
+	[]byte(`{"a":1,"a":2}`),                  // dup key: exercises yaml-rejects-json-dup-key
+	[]byte(`{"n":12345678901234567890}`),     // big int: exercises number-precision
+	[]byte(`{"k":"0x10"}`),                    // quoted hex-like string stays a string in both
+	[]byte(`{"a":{"b":1},"a":2}`),            // nested then dup key (detector regression seed)
+}
+
+func FuzzYAMLVsJSON(f *testing.F) {
+	for _, s := range yamlSeeds {
+		f.Add(s)
+	}
+	allow := yamlDiffAllow()
+	f.Fuzz(func(t *testing.T, data []byte) {
+		m := yamlJSONCompare(data)
+		if m == nil {
+			return
+		}
+		if allow.allows(m.key) {
+			return
+		}
+		t.Fatalf("DIFFERENTIAL [yaml.v3 vs encoding/json] (key=%s): %s\n  input=%q\n  json=%s\n  yaml=%s",
+			m.key, m.detail, data, m.jsonV, m.yml)
+	})
+}
+
+func TestYAMLDiffAllowlistNoDead(t *testing.T) {
+	allow := yamlDiffAllow()
+	for _, s := range yamlSeeds {
+		if m := yamlJSONCompare(s); m != nil {
+			allow.allows(m.key)
+		}
+	}
+	allow.assertNoDeadEntries(t)
+}
+
+func TestYAMLJSONCompare_RedGreen(t *testing.T) {
+	// GREEN: JSON both read identically.
+	for _, g := range []string{`{"a":1}`, `[1,2,3]`, `{"x":null}`, `{"s":"yes"}`, `{"n":1.5}`, `"hi"`, `{"deep":{"k":[1,{"z":2}]}}`} {
+		if m := yamlJSONCompare([]byte(g)); m != nil {
+			t.Fatalf("GREEN input %q flagged: key=%s %s (json=%s yaml=%s)", g, m.key, m.detail, m.jsonV, m.yml)
+		}
+	}
+	// RED (natural): duplicate key detected + classified.
+	if m := yamlJSONCompare([]byte(`{"a":1,"a":2}`)); m == nil {
+		t.Fatal("RED: dup-key divergence not detected")
+	} else if m.key != "yaml-rejects-json-dup-key" {
+		t.Fatalf("RED: dup-key misclassified as %q", m.key)
+	}
+	// RED (natural): big-int precision loss detected + classified.
+	if m := yamlJSONCompare([]byte(`{"n":12345678901234567890}`)); m == nil {
+		t.Fatal("RED: number-precision divergence not detected")
+	} else if m.key != "number-precision" {
+		t.Fatalf("RED: number-precision misclassified as %q", m.key)
+	}
+	// RED (synthetic, dangerous class): a genuine value divergence fires as a
+	// non-allowlisted key, so the fuzzer would fail on it.
+	if m := treeCompare(map[string]any{"role": "reader"}, map[string]any{"role": "admin"}); m == nil || m.key != "string-differs" {
+		t.Fatalf("RED: value divergence not detected/classified (got %v)", m)
+	}
+	if yamlDiffAllow().allows("string-differs") {
+		t.Fatal("RED: dangerous key string-differs must not be allowlisted")
+	}
+	// the dup-key detector must survive a nested value before the duplicate.
+	if !hasDuplicateJSONKey([]byte(`{"a":{"b":1},"a":2}`)) {
+		t.Fatal("RED: dup-key detector missed a duplicate after a nested object")
+	}
+	if hasDuplicateJSONKey([]byte(`{"a":{"b":1},"c":2}`)) {
+		t.Fatal("GREEN: dup-key detector false-positived on distinct keys")
+	}
+}
