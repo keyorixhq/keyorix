@@ -78,6 +78,19 @@ never change the exit code. Currently one finding is reported there:
 | TLS 1.3-only | `server.http.tls_mode` / `server.grpc.tls_mode` (`"strict"`) | Set once every client that will ever connect can speak TLS 1.3 — the default (1.2 floor, forward-secret AEAD ciphers) is already compliant, not a weaker fallback to graduate away from on a fixed timeline; `allowed_ciphers` has no effect once set. |
 | Bundled auto-HTTPS | `docker compose --profile tls up` | Simplest path for a real public domain — auto-provisions a publicly-trusted certificate via Caddy. |
 
+**`cert_file` and a CA file are on different sides.** `server.*.tls.cert_file` (with `key_file`)
+is the certificate the *server presents*. The server's `tls.Config` is built with a
+certificate callback only (`server/tls_config.go`, `server/grpc/server.go`; the key set is
+`TLSConfig` in `internal/config/config_server.go`): there is no server-side `tls.ca_file`,
+and no client-CA or mutual-TLS setting, so the server asks clients for no certificate and
+verifies none. The CA a *client* trusts for that certificate is the client's own setting:
+the CLI's `ca_file` (`--ca-file`, `KEYORIX_CA_FILE`, `keyorix config set ca_file`; for a
+self-signed `cert_file`, the certificate itself), or the system roots when unset. The
+third CA in the product, `storage.database.ssl_root_cert`, is what the server trusts when
+it connects to PostgreSQL. With a TLS-terminating proxy in front, the proxy's certificate
+is the one clients must trust and the backend's `cert_file` is not involved. Detail and
+examples: [CONFIGURATION.md](../CONFIGURATION.md) ("Which side verifies what").
+
 ## 2. Encryption key management
 
 | Decision | Key | Recommendation |

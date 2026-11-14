@@ -126,6 +126,50 @@ func (c *AWSSecretsManagerConnector) client(ctx context.Context) (smSecretGetter
 	}), nil
 }
 
+// unexpectedSuccessStatusError is returned for a 2xx other than 200. It carries
+// only the status code, never anything the backend sent.
+type unexpectedSuccessStatusError struct{ status int }
+
+func (e unexpectedSuccessStatusError) Error() string {
+	return fmt.Sprintf("unexpected success status %d (only 200 is accepted)", e.status)
+}
+
+// RetryableError tells the SDK retryer not to re-send: a peer that answered
+// 2xx-but-not-200 once is not going to become the service on a retry.
+func (unexpectedSuccessStatusError) RetryableError() bool { return false }
+
+// status200Client wraps the SDK's HTTP client and refuses any 2xx response other
+// than 200. The smithy awsJson1_1 client treats every 2xx as success, but Secrets
+// Manager answers GetSecretValue with 200 only, so a 201/202/204/206 means the
+// peer is not the service (or a proxy rewrote the exchange) and its body must
+// not be trusted as a secret.
+type status200Client struct{ inner secretsmanager.HTTPClient }
+
+func (c status200Client) Do(req *http.Request) (*http.Response, error) {
+	resp, err := c.inner.Do(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.StatusCode != http.StatusOK {
+		status := resp.StatusCode
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		return nil, unexpectedSuccessStatusError{status: status}
+	}
+	return resp, nil
+}
+
+// requireHTTP200 is a per-call option that installs status200Client around
+// whatever HTTP client the SDK client was built with.
+func requireHTTP200(o *secretsmanager.Options) {
+	inner := o.HTTPClient
+	if inner == nil {
+		inner = http.DefaultClient
+	}
+	o.HTTPClient = status200Client{inner: inner}
+}
+
 func (c *AWSSecretsManagerConnector) GetSecret(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("aws-secrets-manager: secret reference is required")
@@ -146,7 +190,7 @@ func (c *AWSSecretsManagerConnector) GetSecret(ctx context.Context, ref string) 
 	if err != nil {
 		return "", err
 	}
-	out, err := cl.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(ref)})
+	out, err := cl.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(ref)}, requireHTTP200)
 	if err != nil {
 		return "", fmt.Errorf("aws-secrets-manager: get %q: %w", ref, err)
 	}

@@ -73,9 +73,10 @@ What the check does **not** establish (a green run is not "Keyorix makes no othe
 
 - A connection made through a package or function that is not in the lists above. The lists
   are the reviewable assumption; extend them when a new kind of client is adopted.
-- Subprocesses. `storage.encryption.key_provider.type: exec` runs the operator's own
-  `exec_command`, and `keyorix run` runs the operator's command; those programs may use the
-  network. Neither is detected.
+- What a subprocess does. `storage.encryption.key_provider.type: exec` runs the operator's own
+  `exec_command`, and `keyorix run` runs the user's command; those programs may use the
+  network. Every call site that starts a process is listed and checked under "Subprocess call
+  sites" below, but the child's own connections are not.
 - Browser-side requests (JavaScript in `web/`, the vendored swagger UI). Served markup is
   checked for third-party hosts by `server/http/airgap_external_hosts_guard_test.go`, which
   states its own limits.
@@ -131,6 +132,30 @@ no-op stubs (`*_noaws.go`, `*_noazure.go`, `*_nogcp.go`); `novault` and `nok8s` 
 the Vault connector and the Kubernetes dynamic-secret backend. The guard reads both
 variants of each file, so it does not itself check what a tagged build leaves out.
 
+## Subprocess call sites
+
+Every place shipped Go code starts a process (`os/exec` `Command`/`CommandContext`,
+`exec.Cmd` built directly, `syscall.Exec`/`ForkExec`, `os.StartProcess`, `unix.Exec`),
+found by `TestEgressSubprocessSitesAreInventoried` in `internal/egressguard`. Files of the
+`DEV` rows (`scripts/`, `examples/`, ...) are not scanned. A row is keyed by file and
+function, so every call in that function must fit the row. An unlisted call site fails
+with `<file>:<line> starts a subprocess ... and has no row`. What the child itself does is
+not checked: the last column is reviewed prose.
+
+| Class | Meaning |
+|---|---|
+| EXEC-OPERATOR-CONFIGURED | The command line comes from the operator's deployment configuration and is run by the server. The child may use the network |
+| EXEC-LOCAL-ONLY | A fixed program and fixed arguments (no operator or user choice of program), working on local files; no connection of its own |
+| EXEC-USER-COMMAND | The person running the CLI names the program and its arguments; it runs with that person's rights. The child may use the network |
+
+| File | Function | Class | Runs | Command line set by | Reaches the network |
+|---|---|---|---|---|---|
+| `internal/crypto/exec_provider.go` | `ExecKeyProvider.KEK` | EXEC-OPERATOR-CONFIGURED | The key helper (`op read`, `sops -d`, `vault read`, a sidecar helper) whose stdout is the KEK, with a timeout, no shell and only `PATH`/`HOME` in its environment | `storage.encryption.key_provider.exec_command` (argv) in the server config, at boot and on admin commands that open the key | Not by Keyorix; the helper usually does (a secret manager) |
+| `cli/cmd/run.go` | `execChild` | EXEC-USER-COMMAND | `keyorix run -- <command>`: the child process that receives the secrets as environment variables | The user's argv after `--`; no shell | Not by Keyorix; the child does whatever the user's program does |
+| `cli/cmd/secret_scan.go` | `resolveScanFileSet` | EXEC-LOCAL-ONLY | `git diff --cached --name-only` and `git diff-tree` to list the files `secret scan --staged/--commit` checks | Fixed `git` and fixed flags; the user's `--commit` value is one argv entry and may not start with `-` | No: reads the local repository (the user's own git configuration applies) |
+| `tools/oraclehealth/runner.go` | `Env.goCmd` | EXEC-LOCAL-ONLY | `nice -n N go test` against a mutated working copy, for the fuzz-oracle mutation tool. Development tool, not a release artifact and not imported by shipped code | Fixed `nice`/`go`; the arguments are the tool's own subcommands and flags | Only through the Go toolchain's own module download, if the module cache is cold; no Keyorix code connects |
+| `server/http/handlers/contracttest/exercising_tests_exist.go` | `realTestNames` | EXEC-LOCAL-ONLY | `go test -list` in the handlers package, for a test that checks test names. Test helper: not imported by any shipped package | Fixed arguments; the `go` binary is `runtime.GOROOT()` or the `go` found on `PATH` | Only through the Go toolchain's own module download, if the module cache is cold; no Keyorix code connects |
+
 ## Needs coordinator
 
 Nothing in the table is on by default and aimed at a third party, so there is nothing to
@@ -147,6 +172,12 @@ change. These are decisions or limits that are not mine to settle:
    directories is covered without a row. The import check proves they are not shipped,
    which is why this is allowed; narrow the prefixes if you would rather review each new
    tool. (The first draft also listed all of `internal/testutil/`; the check failed on it
-   because shipped packages import its `srcpath` helper, so it was narrowed.)
-3. **Subprocess egress** (`key_provider.type: exec`, `keyorix run`) is documented above
-   and not detected. A guard for `os/exec` call sites would be a separate piece of work.
+   because shipped packages import its `srcpath` helper, so it was narrowed.) Looked at again
+   with the subprocess guard (EGRESS-SUBPROCESS-GUARD-1) and left as is: 13 files in about 11
+   tool directories under `scripts/` and `examples/` hold a network client, and a per-tool
+   row set would also make every other `scripts/` file non-DEV, putting it under the
+   DEV-import check and the subprocess table (about a dozen more rows for tools that are
+   built by hand or by CI only). That is a review of the dev tools, not a small diff.
+3. **Subprocess egress** (`key_provider.type: exec`, `keyorix run`): the call sites are
+   listed and guarded (see "Subprocess call sites"); what the operator's or user's program
+   does on the network cannot be, by construction.

@@ -40,6 +40,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -162,6 +163,7 @@ func scanShellForSecrets(content string) []docsSecretHit {
 	var hits []docsSecretHit
 	hits = append(hits, scanShellForVarBodies(content)...)
 	hits = append(hits, scanShellForJqArgs(content)...)
+	hits = append(hits, scanShellForHeaderVars(content)...)
 	for i, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
@@ -205,8 +207,11 @@ func scanShellForSecrets(content string) []docsSecretHit {
 // body flag (the same list as above) whose value is a bare variable (`$NAME`, `${NAME}`,
 // `${NAME:-x}`, `$1`, `$@`) on the logical line, backslash continuations joined.
 //
-// NOT recognised, so a green run is not more than this: a header held in a variable
-// ("$hdr") or built by a function; a body built by a function or command substitution
+// Also recognised (SCRIPTS-SECRETS-4, scanShellForHeaderVars, shell scripts only): a credential
+// header assigned to a variable in the same file and passed as `-H "$NAME"`.
+//
+// NOT recognised, so a green run is not more than this: a header built by a function or from
+// several variables, or defined in another file; a body built by a function or command substitution
 // (`-d "$(...)"`) or mixed with literal text (`-d "x=$v"`); a curl invoked through a
 // variable or array (`"${CURL[@]}" -d "$b"`); wget --post-data; curl -F/--form; a header
 // split from its flag by a line continuation; a helm --set whose key is held in a
@@ -372,6 +377,42 @@ func scanShellForJqArgs(content string) []docsSecretHit {
 			hits = append(hits, docsSecretHit{l.first + 1, "credential in jq --arg on argv (use `P=\"$X\" jq ... env.P`): " + strings.TrimSpace(m), l.text})
 		}
 	}
+	return hits
+}
+
+// SCRIPTS-SECRETS-4: a credential header held in a shell variable and handed to curl/wget as
+// `-H "$NAME"`. credHeaderFlagRE only sees a header NAME written next to the flag, so
+// `AUTH_HDR="Authorization: Bearer $TOKEN"` followed by `curl -H "$AUTH_HDR"` put the token
+// on argv unseen (demo/vault-migration/run.sh). Recognised, per file: an assignment
+// (`NAME=`, `local NAME=`, `export NAME=`, `declare [-flags] NAME=`, `readonly NAME=`) whose
+// value starts with a credential header name (the credHeaderFlagRE set), and a later
+// `-H` / `--header` (space, `=` or attached quote) whose value is `$NAME` / `${NAME}`. The hit is
+// reported on the USE line. Not recognised: a header assembled from several variables
+// (`H="$K: $V"`), an array element (`H=(-H "X-Vault-Token: $T")` is already caught by
+// credHeaderFlagRE), a header read from a file or stdin (the safe forms), and a variable
+// defined in another file. A header that is not a credential opts out with the usual marker.
+var (
+	credHeaderAssignRE = regexp.MustCompile(`(?i)^\s*(?:(?:local|export|readonly)\s+|declare\s+(?:-[A-Za-z]+\s+)?)?([A-Za-z_][A-Za-z0-9_]*)=["']?(?:Authorization|Proxy-Authorization|Cookie|X-[A-Za-z0-9-]*(?:Token|Key|Secret|Auth|Password)[A-Za-z0-9-]*)\s*:`)
+)
+
+func scanShellForHeaderVars(content string) []docsSecretHit {
+	var hits []docsSecretHit
+	lines := shellLogicalLines(content)
+	names := map[string]bool{}
+	for _, l := range lines {
+		if m := credHeaderAssignRE.FindStringSubmatch(l.joined); m != nil {
+			names[m[1]] = true
+		}
+	}
+	for name := range names {
+		useRE := regexp.MustCompile(`(?:^|[\s(])(?:-H|--header)(?:(?:=|\s+)["']?|["'])\$(?:` + regexp.QuoteMeta(name) + `|\{` + regexp.QuoteMeta(name) + `\})["']?(?:\s|$|\))`)
+		for _, l := range lines {
+			if m := useRE.FindString(l.joined); m != "" {
+				hits = append(hits, docsSecretHit{l.first + 1, "credential header held in $" + name + " on argv (write it to a 0600 file and use -H @file): " + strings.TrimSpace(m), l.text})
+			}
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].line < hits[j].line })
 	return hits
 }
 
