@@ -360,15 +360,17 @@ option there, but it does not bundle the key-material files.
   operational surprises (wrong config, wrong key-file paths) that are best
   found in a drill, not an actual incident. Restore into an **empty** target
   (a fresh directory, or an empty PostgreSQL database); that is the supported
-  flow and the one the drill script exercises. `admin restore
-  --overwrite-existing` moves only existing key files and a SQLite database
-  file aside (`<path>.pre-restore-<timestamp>`) rather than truncating them.
-  It does **not** empty a PostgreSQL database: the rows are loaded into the
-  tables that are already there, so over a database that holds data the
-  restore stops on a duplicate key (the load is one transaction, so the
-  database itself is unchanged) after the key files have already been
-  replaced. To restore over a used PostgreSQL database, drop and recreate it
-  first ([`../SELF_HOSTING.md`](../SELF_HOSTING.md) §5).
+  flow and the one the drill script exercises. Into a PostgreSQL database that
+  already has tables, `admin restore` is refused (`target Postgres database
+  already has 80 table(s) -- restore refuses to overwrite it`); with
+  `--overwrite-existing` the load transaction empties the target's tables
+  itself, loads the archive and replaces the key files, so every row written
+  since the backup is gone. `--overwrite-existing` moves existing key files and
+  a SQLite database file aside (`<path>.pre-restore-<timestamp>`) rather than
+  truncating them. Only a v0.96.x binary does not empty the tables: it stops on
+  a duplicate key, and the database must be dropped and recreated first
+  ([`../SELF_HOSTING.md`](../SELF_HOSTING.md) §5,
+  [`../operator/upgrade-rollback.md`](../operator/upgrade-rollback.md)).
 
 ## 7. Process and host hardening
 
