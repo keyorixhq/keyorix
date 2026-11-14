@@ -78,7 +78,7 @@ var (
 // would otherwise reactivate it). Nothing is written on any refusal.
 func (c *KeyorixCore) ReissueOneTimePassword(ctx context.Context, adminID, userID uint) (*OneTimePasswordResult, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: user ID is required", i18n.T("ErrorValidation", nil))
+		return nil, validationErrorf("%s: user ID is required", i18n.T("ErrorValidation", nil))
 	}
 	if adminID == 0 {
 		// 0 is the "no human actor" / machine sentinel; a reissue is a human decision.

@@ -170,6 +170,20 @@ carried over, not cleared.
   With the new key alone, `verify-audit` reads `VALID` and lists the transition's old-key
   signature under "not proven". With the previous key it also proves that a holder of the
   new key alone did not forge the pre-rotation state.
+- **Older checkpoints and the key you verify with.** `rotate-kek` writes the fresh checkpoint
+  itself ("a fresh checkpoint is signed under it when the chain verified"); no separate command
+  is needed. What reads differently afterwards is which key you hand to `verify-audit`
+  (reproduced on SQLite with the native binary, one checkpoint exported before the rotation):
+
+  | `verify-audit` run against the rotated database | Result |
+  |---|---|
+  | `--anchor <pre-rotation export> --checkpoint-key-file <old key>` | `Verdict: BROKEN`, exit 1: `audit high-water mark fails its signature under the supplied checkpoint key (claims key version "ack-<new>") — the high-water row was tampered with, or the wrong key was supplied`. The database now carries state signed under the new key; the old key no longer authenticates it. This is the key mismatch, not tampering. |
+  | `--anchor <pre-rotation export> --checkpoint-key-file <new key>` | `Verdict: VALID`, but the anchor is `present but UNAUTHENTICATED`: it was signed under the old key, so its claims are advisory and not cross-checked. |
+  | the same, plus `--previous-checkpoint-key-file <old key>` | `Verdict: VALID`; the anchor is `authenticated and cross-checked against the live chain`, and `old-key signatures checked: 1`. |
+
+  So after a `rotate-kek`, verify with the **new** key and pass the old one as
+  `--previous-checkpoint-key-file`. To anchor going forward, export a new anchor with
+  `admin audit export-checkpoint` as above.
 - `compliance verify` still reports evidence packs signed before the rotation as "superseded
   key version", not tampered (the evidence-signing key is not carried over).
 

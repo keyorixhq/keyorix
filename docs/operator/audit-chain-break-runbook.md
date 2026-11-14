@@ -118,7 +118,7 @@ INDETERMINATE beats VALID). Strings are from `internal/auditverify/verify.go`.
 | Report says | Kind | Likely causes, in the order to rule them out |
 |---|---|---|
 | `entry_hash is valid under the pre-#1452 audit-hash encoding but not the current one ... un-migrated upgrade, NOT evidence of tampering` | content | Benign: the chain predates the 2026-08-16 encoding change. Section 4a. |
-| `event #N's entry_hash matches neither the current encoding nor the pre-#1452 one` | content | The row changed after it was written: tampering, or storage corruption. |
+| `event #N's recorded entry_hash does not match the row's contents — the row was changed after it was written` | content | The row changed after it was written: tampering, or storage corruption. |
 | `event #N's prev_hash does not link to the preceding event (row inserted, deleted, or reordered)` | linkage | Tampering, a manual `DELETE`, or a database restored/merged from two sources. |
 | `event #N has no entry_hash (chain data removed after a chained region began)` | content | Hash columns blanked or rows replaced by unchained rows. |
 | `audit trail truncated below signed checkpoint #N: it certified X chained events, only Y remain` | truncation | Rows removed from the tail, **or** the database is an older state (restore, stale copy, PITR). Section 4. |

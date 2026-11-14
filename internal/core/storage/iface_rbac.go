@@ -184,12 +184,15 @@ type RBACStore interface {
 	// treated as if it applied everywhere.
 	GetUserGroupsAt(ctx context.Context, userID uint, scope Scope) ([]*models.Group, error)
 	// GetUserRoleScopes returns the distinct (project, environment) scopes at which
-	// userID holds ANY role, directly or via a live (non-deleted) group. It is the
-	// scope-DISCOVERY step behind a scope-aware admin-rank-ceiling comparison
-	// (impersonation's #165 check): the caller doesn't know in advance which
-	// project a target might hold a project-scoped admin role in, so it must
-	// enumerate every scope the target actually has a grant at, then evaluate
-	// GetUserRoleIDsAt/GetUserGroupRoleIDsAt (via scopedRoleIDs) per scope.
+	// userID holds ANY role, directly or via a live (non-deleted) group. It is a
+	// scope source for the scope-aware admin-rank-ceiling comparison
+	// (requireEqualOrGreaterAdminAuthority, impersonation's #165 check): the caller
+	// doesn't know in advance which project a target might hold a project-scoped
+	// admin role in. The ceiling does NOT re-read the target's role set per scope
+	// from this list (a grant moved between the listing and a per-scope read was
+	// missed, #4025): it takes the role set at every scope from one
+	// ListUserRoleGrants read and checks the scopes of that read plus the scopes
+	// listed here, which also include grants on a deleted project or environment.
 	GetUserRoleScopes(ctx context.Context, userID uint) ([]Scope, error)
 	// GetUserRoleScopesByUserIDs is the batch form of GetUserRoleScopes (LIST-ENDPOINTS-1):
 	// the same distinct live scopes per user, keyed by user id; a user with no live role is absent.

@@ -115,6 +115,17 @@ func runAdmin(t *testing.T, binPath, dir string, env []string, args ...string) (
 	return string(out), err
 }
 
+// adminEncryptionInit creates the KEK salt and the wrapped DEK the way the
+// documented install does (`admin init`, then `admin encryption init`). `admin
+// diagnose` is read-only and reports missing key files instead of generating
+// them, so a fixture that needs keys must create them first.
+func adminEncryptionInit(t *testing.T, binPath, dir string, env []string) {
+	t.Helper()
+	if out, err := runAdmin(t, binPath, dir, env, "encryption", "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin encryption init failed: %v\n%s", err, out)
+	}
+}
+
 // adminConfigForProbe loads a config file the same way admin commands do,
 // for tests that need to call internal/serverguard.ProbeRunning directly
 // in-process (see waitForPresence).
@@ -345,8 +356,9 @@ func TestAdminWorkflow_SQLite(t *testing.T) {
 		t.Fatalf("expected config file to be created: %v", statErr)
 	}
 
-	// First diagnose creates the DEK (first-boot key derivation) and must
-	// report every check passing.
+	adminEncryptionInit(t, bin, dir, env)
+	// First diagnose derives the KEK from the keys encryption init created
+	// and must report every check passing.
 	out, err = runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml")
 	if err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
@@ -420,6 +432,9 @@ func TestAdminDiagnose_MissingKEK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
+	// The keys exist (created with a passphrase), so the failure below is the
+	// missing passphrase, not diagnose's missing-key-file report.
+	adminEncryptionInit(t, bin, dir, append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-missing-kek"))
 
 	out, err = runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml")
 	if err == nil {
@@ -443,6 +458,7 @@ func TestAdminDiagnose_UnmigratedDatabase(t *testing.T) {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
 
+	adminEncryptionInit(t, bin, dir, env)
 	// Derive the KEK without ever opening storage through the migrating
 	// factory: init's own audit-event recording (recordAdminAction) DOES
 	// open (and thus migrate) storage as a side effect, so use --config only
@@ -481,8 +497,9 @@ func TestAdminGuard_RefusesWhileServerRunning_ThenForceOverrides(t *testing.T) {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
 	pinFreeHTTPPort(t, dir)
-	// diagnose performs first-boot KEK derivation (creates keys/kek.salt and
-	// keys/dek.key) -- required before the real server below can pass its own
+	adminEncryptionInit(t, bin, dir, env)
+	// encryption init creates keys/kek.salt and keys/dek.key and diagnose
+	// derives the KEK from them -- required before the real server below can pass its own
 	// startup validation and actually boot far enough to acquire the
 	// presence lock this test is probing for.
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
@@ -639,6 +656,7 @@ func TestServerStartup_RefusedWhileAdminHoldsExclusiveLock_SQLite(t *testing.T) 
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
 	pinFreeHTTPPort(t, dir)
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
 	}
@@ -745,6 +763,7 @@ func TestAdminBackupRestore_SQLite_RoundTrip(t *testing.T) {
 	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
 	}
@@ -833,6 +852,7 @@ func TestAdminBackup_OutputAlreadyExists_Refuses(t *testing.T) {
 	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
 	}
@@ -860,6 +880,7 @@ func TestAdminRestore_RefusesNonEmptyTargetWithoutOverwrite(t *testing.T) {
 	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
 	}
@@ -903,6 +924,7 @@ func TestAdminRestore_ChecksumMismatchDetected(t *testing.T) {
 	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
 	}

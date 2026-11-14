@@ -1345,8 +1345,8 @@ func refuseIfAuditChainBroken(tx *gorm.DB, anchor *storage.AuditChainAnchor) err
 					"before migrating", e.ID)
 			}
 			if !auditEntryHashMatchesAnyKnownEncoding(e) {
-				return fmt.Errorf("refusing to re-encode the audit chain: event %d's entry_hash matches "+
-					"neither the current encoding nor the pre-#1452 one, so its contents changed after it "+
+				return fmt.Errorf("refusing to re-encode the audit chain: event %d's recorded entry_hash "+
+					"does not match the row's contents, so the row was changed after it "+
 					"was written -- this is not a stale encoding. Re-encoding would re-hash the modified "+
 					"contents and leave the chain verifying, destroying the evidence. Investigate before "+
 					"migrating", e.ID)
@@ -1430,8 +1430,8 @@ func verifyBatchEvents(batch []*models.AuditEvent, prevHash string, started bool
 					"refuses if it finds a row that matches neither encoding")
 				return prevHash, headID, started, true
 			}
-			brokenChain(result, e.ID, "entry_hash matches neither the current encoding nor the pre-#1452 "+
-				"one, so this event's contents changed after it was written (event modified)")
+			brokenChain(result, e.ID, "the recorded entry_hash does not match this row's contents, "+
+				"so the row was changed after it was written (event modified)")
 			return prevHash, headID, started, true
 		}
 		prevHash = e.EntryHash

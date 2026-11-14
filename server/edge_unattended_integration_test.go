@@ -176,6 +176,7 @@ func (e *edgeInstall) waitHealthy(p *edgeProc) {
 type edgeAPI struct {
 	base, token string
 	c           *http.Client
+	logTail     func() string // server log tail, appended to a failure so a queue log shows why
 }
 
 func (a *edgeAPI) do(method, path string, body any) (int, json.RawMessage, error) {
@@ -208,14 +209,22 @@ func (a *edgeAPI) do(method, path string, body any) (int, json.RawMessage, error
 }
 
 func (e *edgeInstall) api() *edgeAPI {
-	return &edgeAPI{base: "http://127.0.0.1:" + e.port, c: &http.Client{Timeout: 5 * time.Second}}
+	return &edgeAPI{base: "http://127.0.0.1:" + e.port, c: &http.Client{Timeout: 5 * time.Second}, logTail: e.logTail}
+}
+
+// serverLog is the server's log tail for a failure message ("" when unknown).
+func (a *edgeAPI) serverLog() string {
+	if a.logTail == nil {
+		return ""
+	}
+	return "\nServer log tail:\n" + a.logTail()
 }
 
 func (a *edgeAPI) must(t *testing.T, method, path string, body any, want int) json.RawMessage {
 	t.Helper()
 	code, data, err := a.do(method, path, body)
 	if err != nil || code != want {
-		t.Fatalf("%s %s: code=%d err=%v, want %d", method, path, code, err, want)
+		t.Fatalf("%s %s: code=%d err=%v body=%s, want %d%s", method, path, code, err, data, want, a.serverLog())
 	}
 	return data
 }
@@ -243,9 +252,14 @@ func (a *edgeAPI) bootstrap(t *testing.T) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		t.Fatalf("bootstrap returned %d: %s", resp.StatusCode, raw)
+		t.Fatalf("bootstrap returned %d: %s%s", resp.StatusCode, raw, a.serverLog())
+	}
+	// /system/init answers 200 for an install that is already initialised and
+	// creates nothing then: a later login 401 would be this, not a login bug.
+	if bytes.Contains(raw, []byte(`"already_initialized":true`)) {
+		t.Fatalf("bootstrap answered already_initialized on a database no admin was ever created in: %s%s", raw, a.serverLog())
 	}
 }
 

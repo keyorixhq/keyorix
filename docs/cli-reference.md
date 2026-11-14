@@ -1392,9 +1392,11 @@ Issue and manage on-demand database credentials (dynamic secrets)
 - [`keyorix dynamic-secret issue`](#keyorix-dynamic-secret-issue) — Issue a short-lived credential from a config (shown once)
 - [`keyorix dynamic-secret leases`](#keyorix-dynamic-secret-leases) — List leases issued from a config
 - [`keyorix dynamic-secret list`](#keyorix-dynamic-secret-list) — List dynamic-secret target configs
+- [`keyorix dynamic-secret refused-dsn`](#keyorix-dynamic-secret-refused-dsn) — List a project's configs whose admin DSN names a refused option
 - [`keyorix dynamic-secret renew`](#keyorix-dynamic-secret-renew) — Extend an active lease (up to the config's max TTL)
 - [`keyorix dynamic-secret revoke`](#keyorix-dynamic-secret-revoke) — Revoke an active lease now
 - [`keyorix dynamic-secret revoke-all`](#keyorix-dynamic-secret-revoke-all) — Revoke ALL active leases from a config (incident kill switch)
+- [`keyorix dynamic-secret set-admin-dsn`](#keyorix-dynamic-secret-set-admin-dsn) — Replace a dynamic-secret config's admin DSN (from the environment or stdin)
 
 ## `keyorix dynamic-secret classify`
 
@@ -1544,6 +1546,37 @@ keyorix dynamic-secret list --project-id 3
 | `-o`, `--output` | `string` | `table` | Output format: table, json or yaml |
 | `--project-id` | `int` | — | Filter by project ID |
 
+## `keyorix dynamic-secret refused-dsn`
+
+List a project's configs whose admin DSN names a refused option
+
+List the configs in a project whose stored admin DSN names a driver option the server
+has refused since #3952 (a server file such as sslrootcert or tlsCAFile, or ambient
+credentials). They can no longer issue. Fix each with:
+```text
+  keyorix dynamic-secret set-admin-dsn <config-id>
+
+```
+Needs secrets.read on the project and dynamic-secret admin authority there, because the
+report is derived from the decrypted DSNs. It prints config and option names only, never a
+DSN or an option value.
+
+**Usage:** `keyorix dynamic-secret refused-dsn [flags]`
+
+**Examples:**
+
+```sh
+# Configs that can no longer issue because their stored DSN names a refused option
+keyorix dynamic-secret refused-dsn --project-id 3
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-o`, `--output` | `string` | `table` | Output format: table, json or yaml |
+| `--project-id` | `int` | — | Project ID (required) |
+
 ## `keyorix dynamic-secret renew`
 
 Extend an active lease (up to the config's max TTL)
@@ -1591,6 +1624,33 @@ keyorix dynamic-secret revoke-all 5 --yes
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--yes` | — | — | Skip the confirmation prompt |
+
+## `keyorix dynamic-secret set-admin-dsn`
+
+Replace a dynamic-secret config's admin DSN (from the environment or stdin)
+
+Replace the admin DSN stored for a dynamic-secret config, in place. Use it to remove an
+option the server has refused since #3952 (a private-CA sslrootcert or tlsCAFile) from a
+config that can no longer issue, without deleting and recreating the config.
+
+The new DSN is read from the KEYORIX_DYNAMIC_ADMIN_DSN environment variable, or from
+stdin (a hidden prompt on a terminal, or whatever is piped in). It is never accepted as a
+flag, so it cannot land in shell history or a process listing; the server encrypts it at
+rest and never returns it.
+
+While the config has an active or revoke_failed lease, the new DSN must name the same
+host(s) as the old one (the server answers 409 otherwise): those leases are revoked through it.
+
+List the configs that need this with: keyorix dynamic-secret refused-dsn --project-id \<id\>
+
+**Usage:** `keyorix dynamic-secret set-admin-dsn <config-id>`
+
+**Examples:**
+
+```sh
+# The new DSN is read from KEYORIX_DYNAMIC_ADMIN_DSN or stdin, never from the command line
+keyorix dynamic-secret set-admin-dsn 5 < new-admin-dsn.txt
+```
 
 ## `keyorix group`
 

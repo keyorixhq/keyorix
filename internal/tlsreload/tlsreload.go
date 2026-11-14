@@ -94,6 +94,13 @@ func (r *Reloader) reloadLocked() {
 	if !snap.changedFrom(r.loaded) {
 		return
 	}
+	if snap.digest == r.loaded.digest {
+		// Same bytes under a new mtime or inode (a rewrite, a symlink swap to an
+		// identical file): not a rotation. Remember the new identity and keep serving
+		// the same certificate.
+		r.loaded = snap.forget()
+		return
+	}
 	cert, err := tls.X509KeyPair(snap.certPEM, snap.keyPEM)
 	if err != nil {
 		// r.loaded stays as it was, so the next check sees the change again and

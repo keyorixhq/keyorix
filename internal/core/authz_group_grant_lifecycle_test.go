@@ -37,9 +37,9 @@ func TestCrossTenant_ExpiredGroupGrantExcluded(t *testing.T) {
 	past := time.Now().Add(-1 * time.Hour)
 	// EXPIRED editor grant to the group, plus a PERMANENT viewer grant, both at project 1.
 	require.NoError(t, h.DB.Create(&models.GroupRole{
-		GroupID: g.ID, RoleID: roleEditor, ProjectID: 1, ExpiresAt: &past,
+		GroupID: g.ID, RoleID: testhelper.RoleProjectDeveloper, ProjectID: 1, ExpiresAt: &past,
 	}).Error)
-	h.AssignGroupRole(t, g.ID, roleViewer, ptr(1))
+	h.AssignGroupRole(t, g.ID, testhelper.RoleProjectViewer, ptr(1))
 
 	ctx := context.Background()
 	ok, err := h.CoreService.Authorize(ctx, u.ID, "secrets.read", core.Scope{ProjectID: 1})
@@ -65,7 +65,7 @@ func TestCrossTenant_FutureGroupGrantStillAuthorizes(t *testing.T) {
 
 	future := time.Now().Add(24 * time.Hour)
 	require.NoError(t, h.DB.Create(&models.GroupRole{
-		GroupID: g.ID, RoleID: roleEditor, ProjectID: 1, ExpiresAt: &future,
+		GroupID: g.ID, RoleID: testhelper.RoleProjectDeveloper, ProjectID: 1, ExpiresAt: &future,
 	}).Error)
 
 	ctx := context.Background()
@@ -85,7 +85,7 @@ func TestCrossTenant_GroupMembershipRevocationRevokesRole(t *testing.T) {
 	u := h.CreateTestUser(t, "exgroupmember", 212)
 	g := h.CreateTestGroup(t, "keepgroup", "", 62)
 	h.AssignUserToGroup(t, u.ID, g.ID)
-	h.AssignGroupRole(t, g.ID, roleEditor, ptr(1))
+	h.AssignGroupRole(t, g.ID, testhelper.RoleProjectDeveloper, ptr(1))
 
 	ctx := context.Background()
 	ok, err := h.CoreService.Authorize(ctx, u.ID, "secrets.write", core.Scope{ProjectID: 1})
