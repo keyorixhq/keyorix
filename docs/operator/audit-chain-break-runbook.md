@@ -349,8 +349,13 @@ after the break is not notarised: decide soon.
 
    | View | Reads |
    |---|---|
-   | `keyorix audit verify`, `GET /api/v1/audit/verify`, posture | `not_proven` until a full verification completes, then `sealed` (`state_reason` names each seal); `valid` is false |
+   | `GET /api/v1/audit/verify`, posture | `not_proven` until a full verification completes, then `sealed` (`state_reason` names each seal); `valid` is false |
+   | `keyorix audit verify` | `NOT PROVEN` until a full verification completes (`--full` runs one), then `Audit chain: SEALED` with a `seal:` line (seal number, time, operator, rows lost) and exit status 1, like BROKEN and NOT PROVEN. `--json`: `status` is `sealed` and `reason` and `state_reason` both carry the seal text. It never prints `FAILED`: a sealed chain is an accepted loss, not an undetected break |
    | `keyorix-server admin verify-audit --checkpoint-key-file ...` | `Verdict: SEALED`, exit code 4, the seals listed; without the key, BROKEN (a seal is only trusted with the key) |
+
+   The two verifiers use different exit statuses for SEALED on purpose: in the `keyorix` CLI, 4 already
+   means "permission denied" (`keyorix --help`), so a script that runs `keyorix audit verify` treats any
+   non-zero status as "not a clean chain" and reads the first line of the output for which one.
    | Deleted, altered, moved or replayed seal record, removed seal event, rows removed or put back around the gap | BROKEN, on both verifiers (except a rollback that reads as an unfinished acceptance, section 8) |
 
    `verify-audit` lists each seal with the rows it recorded as `unpinned` and the anchor it

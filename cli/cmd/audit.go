@@ -42,14 +42,16 @@ var (
 
 var auditVerifyCmd = &cobra.Command{
 	Use:   "verify",
-	Short: "Report the audit hash chain's integrity (non-zero exit if broken or not proven)",
+	Short: "Report the audit hash chain's integrity (non-zero exit if broken, sealed or not proven)",
 	Long: `Report the audit hash chain's integrity.
 
 By default this reads the server's incremental verification: the rolling full
 re-walk (every row re-hashed at least once per cycle) plus a check of the rows
-after the latest signed checkpoint. Status is VALID, BROKEN, or NOT PROVEN
-(no recent full verification covers the older rows yet). --full runs a full
-walk on the server now, as a background job, and waits for it.`,
+after the latest signed checkpoint. Status is VALID, BROKEN, NOT PROVEN (no
+recent full verification covers the older rows yet) or SEALED (a loss of audit
+events was accepted with the checkpoint key; the seal text names each seal, and
+the chain is never reported VALID again). Every status except VALID exits 1.
+--full runs a full walk on the server now, as a background job, and waits for it.`,
 	SilenceUsage: true,
 	RunE:         runAuditVerify,
 }
@@ -71,6 +73,7 @@ type verifyResult struct {
 	HeadID                    uint   `json:"head_id"`
 	FirstBrokenID             uint   `json:"first_broken_id"`
 	Reason                    string `json:"reason"`
+	StateReason               string `json:"state_reason,omitempty"`
 	Checkpointed              bool   `json:"checkpointed"`
 	CheckpointReason          string `json:"checkpoint_reason"`
 	AnchorToken               string `json:"anchor_token,omitempty"`
@@ -97,6 +100,23 @@ func (v *verifyResult) verifyStatus() string {
 		return "valid"
 	}
 	return "broken"
+}
+
+// sealedFallbackText is shown when a sealed answer carries no seal text at all.
+const sealedFallbackText = "the audit chain is sealed: a loss of audit events was accepted with the checkpoint key; " +
+	"the chain is not whole and is never reported valid again " +
+	"(`keyorix-server admin verify-audit --checkpoint-key-file ...` lists each seal)"
+
+// sealText is what a sealed result says about its seals: the server's state_reason (seal
+// number, time and operator), else its reason, else a fixed sentence, never empty.
+func (v *verifyResult) sealText() string {
+	switch {
+	case v.StateReason != "":
+		return v.StateReason
+	case v.Reason != "":
+		return v.Reason
+	}
+	return sealedFallbackText
 }
 
 type verifyJob struct {
@@ -131,6 +151,11 @@ func runAuditVerify(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	status := v.verifyStatus()
+	if status == "sealed" {
+		// A sealed chain is not a break: the loss was accepted and recorded. Its answer is
+		// the seal text, in `reason` too so a client that renders reason is never left empty.
+		v.Reason = v.sealText()
+	}
 
 	if auditVerifyJSON {
 		b, err := json.Marshal(v)
@@ -139,7 +164,7 @@ func runAuditVerify(_ *cobra.Command, _ []string) error {
 		}
 		fmt.Println(string(b))
 	} else {
-		label := map[string]string{"valid": "VALID", "broken": "BROKEN", "not_proven": "NOT PROVEN"}[status]
+		label := map[string]string{"valid": "VALID", "broken": "BROKEN", "not_proven": "NOT PROVEN", "sealed": "SEALED"}[status]
 		if label == "" {
 			label = strings.ToUpper(status)
 		}
@@ -167,6 +192,8 @@ func runAuditVerify(_ *cobra.Command, _ []string) error {
 		case "broken":
 			fmt.Printf("  first broken id:  %d\n", v.FirstBrokenID)
 			fmt.Printf("  reason:           %s\n", v.Reason)
+		case "sealed":
+			fmt.Printf("  seal:             %s\n", cliout.SanitizeForTerminal(v.Reason))
 		case "not_proven":
 			fmt.Printf("  not proven:       %s\n", v.NotProvenReason)
 			fmt.Println("  hint:             'keyorix audit verify --full' runs a full walk now")
@@ -192,6 +219,10 @@ func runAuditVerify(_ *cobra.Command, _ []string) error {
 		return nil
 	case "not_proven":
 		return fmt.Errorf("audit chain integrity NOT PROVEN: %s", v.NotProvenReason)
+	case "sealed":
+		// Exit status 1 like BROKEN and NOT PROVEN (fail closed for scripts). The offline
+		// verifier's SEALED is exit 4 there; here 4 already means "permission denied".
+		return fmt.Errorf("audit chain is SEALED: %s", cliout.SanitizeForTerminal(v.Reason))
 	default:
 		return fmt.Errorf("audit chain verification FAILED (first broken id %d): %s", v.FirstBrokenID, v.Reason)
 	}
