@@ -148,7 +148,7 @@ func pbUnknownFields(n int) []byte {
 	for i := 1; i <= n; i++ {
 		// tag = (field<<3)|wiretype(0=varint); use field numbers well past Struct's.
 		field := uint64(1000 + i)
-		tag := field<<3
+		tag := field << 3
 		b = appendVarint(b, tag)
 		b = appendVarint(b, 1)
 	}
