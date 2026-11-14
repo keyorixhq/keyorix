@@ -47,6 +47,9 @@ func FuzzSanitizeSecretName(f *testing.F) {
 		"секрет/ключ",
 		"a:::b",
 		"0\v/",
+		"0\u00a0\b",
+		"a\u00a0-",
+		"a\u00a0/",
 	} {
 		f.Add(s)
 	}

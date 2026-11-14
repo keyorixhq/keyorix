@@ -7,7 +7,7 @@ import (
 
 // sanitizeSecretName normalises a source path/key into a Keyorix secret name: path separators,
 // spaces, and colons collapse to '-', control characters are dropped, repeated '-' collapse, and
-// surrounding '-' are trimmed. Ported from internal/cli/secret/source.go's sanitizeSecretName
+// surrounding '-' and whitespace are trimmed. Ported from internal/cli/secret/source.go's sanitizeSecretName
 // (old CLI) and hardened: keyorix-migrate cannot import it (docs/design-keyorix-migrate.md's
 // module boundary), and a deterministic, matching name-derivation rule is required for idempotent
 // re-runs to look up the same target name every time. Case is preserved (source names are often
@@ -36,7 +36,10 @@ func sanitizeSecretName(s string) string {
 	for strings.Contains(s, "--") {
 		s = strings.ReplaceAll(s, "--", "-")
 	}
-	return strings.Trim(s, "-")
+	// Trim '-' AND Unicode whitespace together: the TrimSpace above runs before the strip, so a
+	// non-ASCII space next to a dropped control byte or a trimmed '-' would otherwise reach the
+	// edge only now and be removed by a second call (not a fixed point).
+	return strings.TrimFunc(s, func(r rune) bool { return r == '-' || unicode.IsSpace(r) })
 }
 
 // emptyDerivedNameSkipReason is the Skip reason for a source item whose name/key normalises to an

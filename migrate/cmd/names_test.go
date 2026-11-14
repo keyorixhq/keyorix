@@ -21,6 +21,16 @@ func TestSanitizeSecretName_StripsControlAndIsFixedPoint(t *testing.T) {
 		"---":          "", // all-separator: empty is allowed (callers skip it)
 		"\x00":         "", // all-control: empty
 		"секрет/ключ":  "секрет-ключ",
+		// A non-ASCII space (NBSP, U+2003, ...) next to a control byte or '-' at an edge used to
+		// survive the first pass (TrimSpace ran before the strip and the '-' trim) and was removed
+		// by the second: not a fixed point (FuzzSanitizeSecretName: "0\u00a0\b" -> "0\u00a0" -> "0").
+		"0\u00a0\b":   "0",
+		"a\u00a0-":    "a",
+		"a\u00a0\x00": "a",
+		"\x00\u00a0a": "a",
+		"a\u00a0/":    "a",
+		"-\u2003-a":   "a",
+		"a\u00a0b":    "a\u00a0b", // an inner Unicode space is kept (only edges are trimmed)
 	}
 	for in, want := range cases {
 		got := sanitizeSecretName(in)
