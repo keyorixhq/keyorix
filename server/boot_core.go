@@ -30,7 +30,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// Enforcing it here means "this function accepted the config" is only ever true
 	// for a config production would actually boot with.
 	if err := cfg.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid configuration: %w", err)
+		return nil, nil, operatorFix(fmt.Errorf("invalid configuration: %w", err))
 	}
 	// Use storage factory to support SQLite, PostgreSQL, and remote storage
 	factory := appstorage.NewStorageFactory()

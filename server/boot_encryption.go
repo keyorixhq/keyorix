@@ -41,10 +41,10 @@ func initializeEncryption(cfg *config.Config, auditSink encryption.AuditSink) (*
 	if providerType == "" || providerType == "password" {
 		passphraseBytes, err := crypto.ResolvePassphrase(masterPassphraseSource, "KEYORIX_MASTER_PASSWORD")
 		if err != nil {
-			return nil, fmt.Errorf(
+			return nil, operatorFix(fmt.Errorf(
 				"encryption is enabled with the password key provider but no master passphrase is "+
 					"available (%w); set KEYORIX_MASTER_PASSWORD, pass --passphrase-fd/--passphrase-file/"+
-					"--passphrase-stdin, or configure storage.encryption.key_provider (file/env/aws-kms)", err)
+					"--passphrase-stdin, or configure storage.encryption.key_provider (file/env/aws-kms)", err))
 		}
 		defer crypto.WipeBytes(passphraseBytes)
 		passphrase = string(passphraseBytes)
@@ -107,7 +107,7 @@ func initializeEncryption(cfg *config.Config, auditSink encryption.AuditSink) (*
 		// interrupted rotate-kek the manifest proves finishable, so recovery and
 		// Initialize below load a coherent set; refuse one it cannot finish.
 		if err := svc.ReconcileKeySet(); err != nil {
-			return nil, fmt.Errorf("key file consistency: %w", err)
+			return nil, operatorFix(fmt.Errorf("key file consistency: %w", err))
 		}
 		if cfg.Storage.Type == "remote" {
 			svc.CleanPendingDEK()
