@@ -26,6 +26,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // CheckInterval bounds how often a handshake re-reads the cert and key files.
@@ -128,15 +130,13 @@ func (r *Reloader) read() (snapshot, error) {
 }
 
 func readFile(path string) ([]byte, os.FileInfo, error) {
-	f, err := os.Open(path) // #nosec G304 -- operator-configured TLS file path
+	// OpenRegular opens non-blocking and refuses a FIFO or device, so a mis-pointed
+	// path cannot hang a handshake while the reloader's lock is held.
+	f, fi, err := secretenv.OpenRegular(path, 0)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer func() { _ = f.Close() }()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, nil, err
-	}
 	b, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
 	if err != nil {
 		return nil, nil, err

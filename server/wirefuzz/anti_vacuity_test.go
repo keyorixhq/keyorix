@@ -87,11 +87,11 @@ func joinText(rs []h1Resp) []byte {
 	return b
 }
 
-// TestAntiVacuity_HalfCloseCausesFailClosed503 pins the ROOT CAUSE of review finding F1,
+// TestAntiVacuity_HalfCloseCausesFailClosed pins the ROOT CAUSE of review finding F1,
 // so nobody reintroduces a half-close "to get a prompt EOF": a request that is
 // half-closed (FIN) right after the write is cancelled by net/http, the auth
-// middleware fails closed, and an authorized admin read returns 503 instead of 200.
-func TestAntiVacuity_HalfCloseCausesFailClosed503(t *testing.T) {
+// middleware fails closed, and an authorized admin read returns 503 (or 500) instead of 200.
+func TestAntiVacuity_HalfCloseCausesFailClosed(t *testing.T) {
 	w := buildWireWorld(t)
 	wire := []byte("GET /api/v1/secrets/value?ref=" + w.refA + " HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + w.adminTok + "\r\n\r\n")
 

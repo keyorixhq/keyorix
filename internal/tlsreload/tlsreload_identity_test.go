@@ -16,6 +16,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/pem"
 	"log"
@@ -314,6 +315,17 @@ func TestReloader_LogsNeverCarryKeyMaterialOrDigest(t *testing.T) {
 	for _, f := range [][]byte{oldCert, oldKey, newCert, newKey, append(append([]byte{}, newCert...), newKey...), append(append([]byte{}, oldCert...), oldKey...)} {
 		sum := sha256.Sum256(f)
 		secrets = append(secrets, hex.EncodeToString(sum[:])[:16])
+	}
+	// the digest the reloader actually computes (length-prefixed, cert then key)
+	for _, pair := range [][2][]byte{{oldCert, oldKey}, {newCert, newKey}, {newCert, oldKey}} {
+		h := sha256.New()
+		for _, b := range pair {
+			var n [8]byte
+			binary.BigEndian.PutUint64(n[:], uint64(len(b)))
+			h.Write(n[:])
+			h.Write(b)
+		}
+		secrets = append(secrets, hex.EncodeToString(h.Sum(nil))[:16])
 	}
 	for _, s := range secrets {
 		if strings.Contains(out, s) {
