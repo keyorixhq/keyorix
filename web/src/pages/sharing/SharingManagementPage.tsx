@@ -22,6 +22,8 @@ import {
     useUpdateShare,
     expiresAtFromPreset,
 } from '../../features/sharing';
+import { Link, useNavigate } from 'react-router';
+import { ROUTES } from '../../constants';
 import { useUIStore } from '../../store/uiStore';
 import { useAuthStore } from '../../store/authStore';
 import { ShareRecord, PaginationState } from '../../types';
@@ -84,6 +86,7 @@ export const shareExpiry = (
 
 export const SharingManagementPage: React.FC = () => {
     const { openModal, closeModal, activeModal, modalData } = useUIStore();
+    const navigate = useNavigate();
     const updateShare = useUpdateShare();
     const currentUser = useAuthStore((s) => s.user);
     // Edit-share form: the chosen permission and an expiry action (keep current,
@@ -171,8 +174,9 @@ export const SharingManagementPage: React.FC = () => {
     };
 
     // Handle individual share actions
+    // Opens the secret's detail page (the old 'view-secret' modal had no renderer, so the button did nothing).
     const handleViewSecret = (share: ShareRecord) => {
-        openModal('view-secret', { secretId: share.secretId });
+        navigate(ROUTES.SECRET_DETAIL(share.secretId));
     };
 
     const handleEditShare = (share: ShareRecord) => {
@@ -353,12 +357,13 @@ export const SharingManagementPage: React.FC = () => {
                                 )}
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     {/* The API names the secret only when the caller may read it (#3153). */}
-                                    <div
-                                        className="text-sm font-medium text-base-primary dark:text-white"
+                                    <Link
+                                        to={ROUTES.SECRET_DETAIL(share.secretId)}
+                                        className="text-sm font-medium text-base-primary dark:text-white hover:underline"
                                         data-testid="share-secret-name"
                                     >
                                         {share.secretName || `Secret #${share.secretId}`}
-                                    </div>
+                                    </Link>
                                     {share.secretName && share.projectName && (
                                         <div
                                             className="text-xs text-base-muted dark:text-base-muted"
