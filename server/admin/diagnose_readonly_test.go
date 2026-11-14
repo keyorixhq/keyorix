@@ -41,32 +41,42 @@ func TestDiagnoseEncryption_MissingKeys_ReportsMissingAndCreatesNothing(t *testi
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Setenv("KEYORIX_MASTER_PASSWORD", keyLockTestPassphrase)
 
-	for name, enc := range map[string]config.EncryptionConfig{
-		"key directory missing":   {Enabled: true, DEKPath: "keys/dek.key", SaltPath: "keys/kek.salt"},
-		"keys in the data dir":    {Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"},
-		"key directory is empty":  {Enabled: true, DEKPath: "keys/dek.key", SaltPath: "keys/kek.salt"},
-		"salt only, DEK missing":  {Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"},
-		"DEK only, salt missing":  {Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"},
-		"absolute key paths":      {Enabled: true},
-		"absolute, dir not there": {Enabled: true},
+	writeFile := func(name string, size int) func(t *testing.T, _ string, _ *config.EncryptionConfig) {
+		return func(t *testing.T, _ string, _ *config.EncryptionConfig) {
+			require.NoError(t, os.WriteFile(name, make([]byte, size), 0o600))
+		}
+	}
+	absPaths := func(mkdir bool) func(t *testing.T, dir string, enc *config.EncryptionConfig) {
+		return func(t *testing.T, dir string, enc *config.EncryptionConfig) {
+			enc.DEKPath = filepath.Join(dir, "abs", "dek.key")
+			enc.SaltPath = filepath.Join(dir, "abs", "kek.salt")
+			if mkdir {
+				require.NoError(t, os.Mkdir("abs", 0o700))
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		enc   config.EncryptionConfig
+		setup func(t *testing.T, dir string, enc *config.EncryptionConfig)
+	}{
+		{name: "key directory missing", enc: config.EncryptionConfig{Enabled: true, DEKPath: "keys/dek.key", SaltPath: "keys/kek.salt"}},
+		{name: "keys in the data dir", enc: config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}},
+		{
+			name: "key directory is empty", enc: config.EncryptionConfig{Enabled: true, DEKPath: "keys/dek.key", SaltPath: "keys/kek.salt"},
+			setup: func(t *testing.T, _ string, _ *config.EncryptionConfig) { require.NoError(t, os.Mkdir("keys", 0o700)) },
+		},
+		{name: "salt only, DEK missing", enc: config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, setup: writeFile("kek.salt", 32)},
+		{name: "DEK only, salt missing", enc: config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, setup: writeFile("dek.key", 60)},
+		{name: "absolute key paths", enc: config.EncryptionConfig{Enabled: true}, setup: absPaths(true)},
+		{name: "absolute, dir not there", enc: config.EncryptionConfig{Enabled: true}, setup: absPaths(false)},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			chdirTest(t, dir)
-			switch name {
-			case "key directory is empty":
-				require.NoError(t, os.Mkdir("keys", 0o700))
-			case "salt only, DEK missing":
-				require.NoError(t, os.WriteFile("kek.salt", make([]byte, 32), 0o600))
-			case "DEK only, salt missing":
-				require.NoError(t, os.WriteFile("dek.key", make([]byte, 60), 0o600))
-			case "absolute key paths":
-				enc.DEKPath = filepath.Join(dir, "abs", "dek.key")
-				enc.SaltPath = filepath.Join(dir, "abs", "kek.salt")
-				require.NoError(t, os.Mkdir("abs", 0o700))
-			case "absolute, dir not there":
-				enc.DEKPath = filepath.Join(dir, "abs", "dek.key")
-				enc.SaltPath = filepath.Join(dir, "abs", "kek.salt")
+			enc := tc.enc
+			if tc.setup != nil {
+				tc.setup(t, dir, &enc)
 			}
 			cfg := &config.Config{Storage: config.StorageConfig{Type: "local", Encryption: enc}}
 
@@ -75,6 +85,8 @@ func TestDiagnoseEncryption_MissingKeys_ReportsMissingAndCreatesNothing(t *testi
 			require.Error(t, err, "missing key files are a failed check, not a silent first boot")
 			require.Contains(t, err.Error(), "does not exist")
 			require.Contains(t, err.Error(), "read-only")
+			require.Contains(t, err.Error(), "`keyorix-server admin encryption init` creates the keys",
+				"the remedy must name the command that creates keys (`admin init` does not)")
 			require.Equal(t, before, dirEntries(t, dir),
 				"diagnose is read-only: no salt, DEK, lock or directory may be created")
 		})

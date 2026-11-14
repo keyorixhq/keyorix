@@ -142,9 +142,11 @@ func diagnoseConfigParse() (*config.Config, error) {
 }
 
 // requireKeyFilesPresent fails, naming each absolute path, when a key file the
-// configuration requires is not on disk. Read-only: it only stats. A path that
-// cannot be statted for another reason counts as present, as the first-boot
-// gate does (never treat "could not look" as "absent").
+// configuration requires is not on disk. Read-only: it only stats. Only "does
+// not exist" is reported here; a path that cannot be statted for another reason
+// (permission denied, say) is left to the KEK check below, which reads the file
+// and fails with that error. This differs from keyfiles.InspectKeySet (the
+// first-boot gate), which counts any stat error as missing.
 func requireKeyFilesPresent(enc *config.EncryptionConfig) error {
 	paths, err := keyfiles.RequiredKeyFilePaths(enc, ".")
 	if err != nil {
@@ -163,7 +165,7 @@ func requireKeyFilesPresent(enc *config.EncryptionConfig) error {
 		return nil
 	}
 	return fmt.Errorf("%s. diagnose is read-only and does not create keys; "+
-		"`keyorix-server admin init` creates the keys of a new install (relative key paths are resolved against the current directory)",
+		"`keyorix-server admin encryption init` creates the keys of a new install (relative key paths are resolved against the current directory)",
 		strings.Join(missing, "; "))
 }
 
