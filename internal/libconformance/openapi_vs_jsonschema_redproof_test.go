@@ -41,4 +41,19 @@ func TestOpenAPICompare_RedGreen(t *testing.T) {
 	if openapiDiffAllow().allows("verdict-differs") {
 		t.Fatal("RED: generic key verdict-differs must not be on the allowlist")
 	}
+
+	// RED (upstream DoS, DF1 Finding C-2): jsonschema/v6 panics on a huge-exponent number
+	// range-checked against a bound; kin-openapi does not. The oracle must recover, detect
+	// the one-sided crash, and classify it — not die.
+	p := openapiCompare([]byte(`{"minimum":0}`), []byte(`1e1000001`))
+	if p == nil {
+		t.Fatal("RED: jsonschema bignum panic not detected as a differential")
+	}
+	if p.key != "jsonschema-numeric-bignum-panic" {
+		t.Fatalf("RED: panic differential misclassified as %q", p.key)
+	}
+	// kin-openapi-panic must stay OFF the allowlist (a kin crash would be a new finding).
+	if openapiDiffAllow().allows("kin-openapi-panic") {
+		t.Fatal("RED: kin-openapi-panic must not be allowlisted")
+	}
 }

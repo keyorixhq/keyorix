@@ -109,6 +109,7 @@ func buildFromEncodingXML(data []byte) (*xmlNode, bool) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.Strict = true
 	var root *xmlNode
+	rootCount := 0 // top-level elements seen
 	stack := []*xmlNode{}
 	for {
 		tok, err := dec.Token()
@@ -127,7 +128,9 @@ func buildFromEncodingXML(data []byte) (*xmlNode, bool) {
 				}
 				n.attrs[a.Name.Local] = a.Value
 			}
-			if len(stack) > 0 {
+			if len(stack) == 0 {
+				rootCount++
+			} else {
 				parent := stack[len(stack)-1]
 				parent.children = append(parent.children, n)
 			}
@@ -144,7 +147,13 @@ func buildFromEncodingXML(data []byte) (*xmlNode, bool) {
 			}
 		}
 	}
-	if root == nil {
+	// A well-formed XML document has EXACTLY ONE root element. encoding/xml's Token()
+	// stream is lenient and happily tokenises `<A/><B/>` as two siblings, but Decode()
+	// rejects trailing roots, and etree's doc.Root() returns only the FIRST. Rather than
+	// pick a root and compare against etree's different pick (a harness artifact, not a
+	// library semantic difference), treat a multi-root document as not-both-valid so the
+	// oracle skips it — the comparison premise is one well-formed document.
+	if root == nil || rootCount != 1 {
 		return nil, false
 	}
 	return root, true
