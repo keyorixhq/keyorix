@@ -212,14 +212,36 @@ func (g *Gen) boolExpr(depth int) Frag {
 }
 
 // boolLeaf is a comparison or the e flag.
+//
+// In commonSubset mode the LEFT operand of every comparison is column-rooted,
+// so a bind parameter on the right is always compared against (or combined
+// with) a typed column. This matters for PostgreSQL: it resolves an untyped
+// bind parameter's type bottom-up from its operands, so `? + ?` or `? = ?`
+// (two untyped parameters) is "operator is not unique / could not determine
+// data type" — a parameter-type-inference rule, not a logic difference, and a
+// shape Keyorix never produces (parameters are always bound against a typed
+// column). Keeping a column on the left removes that degenerate shape without
+// weakening the logic oracle. SQLite (untyped) is unaffected either way.
 func (g *Gen) boolLeaf() Frag {
 	switch g.s.intn(3) {
 	case 0: // numeric comparison
-		l, r := g.numExpr(g.maxDepth), g.numExpr(g.maxDepth) // leaves only
+		var l Frag
+		if g.commonSubset {
+			l = g.numColExpr(g.maxDepth)
+		} else {
+			l = g.numExpr(g.maxDepth)
+		}
+		r := g.numExpr(g.maxDepth)
 		op := g.cmpOp(true)
 		return Frag{l.SQL + op + r.SQL, append(l.Args, r.Args...)}
 	case 1: // text comparison
-		l, r := g.textExpr(), g.textExpr()
+		var l Frag
+		if g.commonSubset {
+			l = Frag{textCols[g.s.intn(len(textCols))], nil} // column-rooted left
+		} else {
+			l = g.textExpr()
+		}
+		r := g.textExpr()
 		op := g.cmpOp(false)
 		return Frag{l.SQL + op + r.SQL, append(l.Args, r.Args...)}
 	default: // the e flag
@@ -227,12 +249,32 @@ func (g *Gen) boolLeaf() Frag {
 	}
 }
 
-// scalar returns a numeric or text scalar (used under IS NULL).
+// scalar returns a numeric or text scalar (used under IS NULL). In commonSubset
+// mode it is column-rooted so the parameter types are inferable in PostgreSQL.
 func (g *Gen) scalar(depth int) Frag {
 	if g.s.bool() {
+		if g.commonSubset {
+			return g.numColExpr(depth)
+		}
 		return g.numExpr(depth)
 	}
+	if g.commonSubset {
+		return Frag{textCols[g.s.intn(len(textCols))], nil}
+	}
 	return g.textExpr()
+}
+
+// numColExpr builds a numeric expression whose left operand is always a column,
+// so every bind parameter it contains is combined with a typed value.
+func (g *Gen) numColExpr(depth int) Frag {
+	col := Frag{numCols[g.s.intn(len(numCols))], nil}
+	if depth <= 0 || g.s.intn(2) == 0 {
+		return col
+	}
+	r := g.numExpr(depth - 1)
+	ops := []string{" + ", " - ", " * "}
+	op := ops[g.s.intn(len(ops))]
+	return Frag{"(" + col.SQL + op + r.SQL + ")", r.Args}
 }
 
 func (g *Gen) cmpOp(numeric bool) string {
@@ -257,7 +299,15 @@ func (g *Gen) numExpr(depth int) Frag {
 		}
 		return Frag{"?", []any{g.s.smallInt(20)}}
 	}
-	l, r := g.numExpr(depth-1), g.numExpr(depth-1)
+	// In commonSubset mode keep the left operand column-rooted so no arithmetic
+	// node is `? op ?` (two untyped parameters) — see boolLeaf for why.
+	var l Frag
+	if g.commonSubset {
+		l = g.numColExpr(depth - 1)
+	} else {
+		l = g.numExpr(depth - 1)
+	}
+	r := g.numExpr(depth - 1)
 	ops := []string{" + ", " - ", " * "} // no / or % (divide-by-zero diverges)
 	op := ops[g.s.intn(len(ops))]
 	return Frag{"(" + l.SQL + op + r.SQL + ")", append(l.Args, r.Args...)}
