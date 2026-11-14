@@ -68,7 +68,13 @@ func (ls *LocalStorage) CreateProject(ctx context.Context, project *models.Proje
 }
 
 func (ls *LocalStorage) CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error) {
-	return env, ls.db.WithContext(ctx).Create(env).Error
+	if err := ls.db.WithContext(ctx).Create(env).Error; err != nil {
+		if isUniqueViolation(err) {
+			return env, storage.Typed(storage.ErrDuplicateEnvironmentName, "an environment with this name already exists in the project", err)
+		}
+		return env, err
+	}
+	return env, nil
 }
 
 func (ls *LocalStorage) ListProjects(ctx context.Context) ([]*models.Project, error) {
@@ -306,7 +312,7 @@ func deleteProjectCascade(tx *gorm.DB, id uint, softDeleteDays int) error {
 		return fmt.Errorf("failed to delete project: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("project not found")
+		return storage.NotFound(storage.ErrProjectNotFound, "project not found", nil)
 	}
 	return nil
 }
@@ -356,7 +362,7 @@ func lockProjectRowForCascade(tx *gorm.DB, id uint) error {
 		return fmt.Errorf("failed to lock project: %w", err)
 	}
 	if len(deletedAt) == 0 || deletedAt[0].Valid {
-		return fmt.Errorf("project not found")
+		return storage.NotFound(storage.ErrProjectNotFound, "project not found", nil)
 	}
 	return nil
 }
@@ -447,7 +453,7 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEn
 			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
 		if err := q.Where("id = ? AND deleted_at IS NOT NULL", id).First(&project).Error; err != nil {
-			return fmt.Errorf("project not found or not deleted")
+			return storage.NotFound(storage.ErrProjectNotFound, "project not found or not deleted", nil)
 		}
 		cascadeTS := project.DeletedAt.Time
 
@@ -637,7 +643,8 @@ func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 			return fmt.Errorf("failed to count secrets in environment: %w", err)
 		}
 		if secretCount > 0 {
-			return fmt.Errorf("environment has %d active secret(s); move or delete them before removing this environment", secretCount)
+			return storage.Typed(storage.ErrEnvironmentHasSecrets,
+				fmt.Sprintf("environment has %d active secret(s); move or delete them before removing this environment", secretCount), nil)
 		}
 
 		result := ls.db.WithContext(ctx).Delete(&models.Environment{}, id)
@@ -645,7 +652,7 @@ func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 			return fmt.Errorf("failed to delete environment: %w", result.Error)
 		}
 		if result.RowsAffected == 0 {
-			return fmt.Errorf("environment not found")
+			return storage.NotFound(storage.ErrEnvironmentNotFound, "environment not found", nil)
 		}
 		return nil
 	})
@@ -674,14 +681,14 @@ func (ls *LocalStorage) RestoreEnvironment(ctx context.Context, projectID, id ui
 			return fmt.Errorf("failed to restore environment: %w", result.Error)
 		}
 		if result.RowsAffected == 0 {
-			return fmt.Errorf("environment not found or not deleted")
+			return storage.NotFound(storage.ErrEnvironmentNotFound, "environment not found or not deleted", nil)
 		}
 		live, err := lockLiveParent(tx, &models.Project{}, sqlWhereID, projectID)
 		if err != nil {
 			return err
 		}
 		if !live {
-			return fmt.Errorf("cannot restore: the parent project is deleted — restore the project first")
+			return storage.Typed(storage.ErrParentDeleted, "cannot restore: the parent project is deleted — restore the project first", nil)
 		}
 		return nil
 	})
@@ -1213,7 +1220,7 @@ func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 				return lerr
 			}
 			if !live {
-				return fmt.Errorf("cannot restore: the parent project is deleted — restore the project first")
+				return storage.Typed(storage.ErrParentDeleted, "cannot restore: the parent project is deleted — restore the project first", nil)
 			}
 			return nil
 		})
@@ -1238,7 +1245,16 @@ func (ls *LocalStorage) requireLiveProject(ctx context.Context, projectID uint) 
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if n == 0 {
-		return fmt.Errorf("cannot restore: the parent project is deleted — restore the project first")
+		// A project that never existed is a not-found, not a deleted parent.
+		var existing int64
+		if err := ls.db.WithContext(ctx).Unscoped().Model(&models.Project{}).
+			Where(sqlWhereID, projectID).Count(&existing).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if existing == 0 {
+			return storage.NotFound(storage.ErrProjectNotFound, "project not found", nil)
+		}
+		return storage.Typed(storage.ErrParentDeleted, "cannot restore: the parent project is deleted — restore the project first", nil)
 	}
 	return nil
 }
@@ -1251,7 +1267,7 @@ func (ls *LocalStorage) requireLiveEnvironment(ctx context.Context, environmentI
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if n == 0 {
-		return fmt.Errorf("cannot restore: the parent environment is deleted — restore the environment first")
+		return storage.Typed(storage.ErrParentDeleted, "cannot restore: the parent environment is deleted — restore the environment first", nil)
 	}
 	return nil
 }

@@ -1069,10 +1069,6 @@ var osKnownUndeclared5xx = []struct {
 	// below; the list is observed-via-fuzzing, likely non-exhaustive. See #4132
 	// (OPENAPI-STATEFUL-3).
 
-	{id: "OPENAPI-STATEFUL-3", opID: "deleteProject", princ: -1, code: 500, reason: "project-with-dependencies / not-found blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "updateProject", princ: -1, code: 500, reason: "duplicate-name constraint / not-found blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "createProjectEnvironment", princ: -1, code: 500, reason: "duplicate env-name constraint / not-found blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "restoreEnvironment", princ: -1, code: 500, reason: "restore of a non-deleted/absent environment blanket-mapped to 500"},
 	{id: "OPENAPI-STATEFUL-3", opID: "restoreSecret", princ: -1, code: 500, reason: "restore of a non-deleted/absent secret blanket-mapped to 500"},
 
 	{id: "OPENAPI-STATEFUL-3", opID: "renderSecretTemplate", princ: -1, code: 500, reason: "template render error on schema-valid input blanket-mapped to 500"},

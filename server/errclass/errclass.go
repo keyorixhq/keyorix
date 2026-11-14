@@ -186,6 +186,9 @@ var sentinelTable = []Sentinel{
 
 	// Precondition: the target's state refuses.
 	{"core.ErrSecretNotDeleted", core.ErrSecretNotDeleted, Precondition},
+	{"core.ErrProjectHasSecrets", core.ErrProjectHasSecrets, Precondition},
+	{"storage.ErrEnvironmentHasSecrets", storage.ErrEnvironmentHasSecrets, Precondition},
+	{"storage.ErrParentDeleted", storage.ErrParentDeleted, Precondition},
 	{"core.ErrMachineTransitionInvalid", core.ErrMachineTransitionInvalid, Precondition},
 	{"core.ErrMachineIdentityNotActive", core.ErrMachineIdentityNotActive, Precondition},
 	{"core.ErrDynamicSecretPrecondition", core.ErrDynamicSecretPrecondition, Precondition},
@@ -201,6 +204,7 @@ var sentinelTable = []Sentinel{
 	{"storage.ErrDuplicateEmail", storage.ErrDuplicateEmail, Conflict},
 	{"storage.ErrDuplicateUsername", storage.ErrDuplicateUsername, Conflict},
 	{"storage.ErrDuplicateProjectName", storage.ErrDuplicateProjectName, Conflict},
+	{"storage.ErrDuplicateEnvironmentName", storage.ErrDuplicateEnvironmentName, Conflict},
 	{"storage.ErrDuplicateGroupName", storage.ErrDuplicateGroupName, Conflict},
 	{"storage.ErrDuplicateNotificationChannelName", storage.ErrDuplicateNotificationChannelName, Conflict},
 	{"storage.ErrDuplicateSecretVersion", storage.ErrDuplicateSecretVersion, Conflict},

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,9 +14,27 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
 )
+
+// catalogAnswer is the answerCoreError input of the project and environment routes: the
+// wording their clients know ("Project not found", "A project with that name already
+// exists"), and core's own text for a state refusal (the secret count, the deleted
+// parent), which names no driver or storage detail.
+func catalogAnswer(op, notFound string, err error) coreErrorAnswer {
+	texts := coreErrorTexts{errclass.NotFound: notFound}
+	switch {
+	case errors.Is(err, core.ErrProjectHasSecrets), errors.Is(err, storage.ErrEnvironmentHasSecrets), errors.Is(err, storage.ErrParentDeleted):
+		texts[errclass.Precondition] = err.Error()
+	case errors.Is(err, storage.ErrDuplicateProjectName):
+		texts[errclass.Conflict] = "A project with that name already exists"
+	case errors.Is(err, storage.ErrDuplicateEnvironmentName):
+		texts[errclass.Conflict] = "An environment with that name already exists in the project"
+	}
+	return coreErrorAnswer{op: op, texts: texts}
+}
 
 // actorID returns the acting user's ID from the request context (0 when absent).
 //
@@ -172,18 +191,7 @@ func (h *CatalogHandler) RestoreProject(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.coreService.RestoreProject(r.Context(), actorID(r), id); err != nil {
-		if sendAuditUnavailable(w, err) {
-			return
-		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		if strings.Contains(msg, errNotFound) {
-			status = http.StatusNotFound
-		} else {
-			log.Printf("Error restoring project %d: %v", id, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, catalogAnswer(fmt.Sprintf("restoring project %d", id), "Project not found", err))
 		return
 	}
 	sendSuccess(w, nil, "Project restored")
@@ -402,25 +410,7 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	// transaction, attributed to the tagged actor.
 	project, err := h.coreService.UpdateProject(core.WithMutationAuditActor(r.Context(), actor.UserID), id, body.Name, body.Description, body.RequireMFA)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
-			return
-		}
-		if sendPartialMutation(w, err) {
-			log.Printf("Update of project %d partially applied: %v", id, err)
-			return
-		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "name is required"), strings.Contains(msg, "exceeds"):
-			status = http.StatusBadRequest
-		case strings.Contains(msg, errNotFound):
-			status = http.StatusNotFound
-		default:
-			log.Printf("Error updating project %d: %v", id, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, catalogAnswer(fmt.Sprintf("updating project %d", id), "Project not found", err))
 		return
 	}
 	sendSuccess(w, newProjectWire(project), "Project updated")
@@ -443,15 +433,7 @@ func (h *CatalogHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	// AUDIT-TX-3: core reads the name and writes the project.deleted row in the
 	// delete's own transaction, attributed to the tagged actor.
 	if err := h.coreService.DeleteProject(core.WithMutationAuditActor(r.Context(), actor.UserID), actor.UserID, uint(id), force); err != nil {
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		if strings.Contains(msg, "secret(s)") {
-			status = http.StatusConflict
-		} else {
-			log.Printf("Error deleting project %d: %v", id, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, catalogAnswer(fmt.Sprintf("deleting project %d", id), "Project not found", err))
 		return
 	}
 	sendSuccess(w, nil, "Project deleted")
@@ -491,15 +473,7 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 	// AUDIT-TX-2: core writes environment.created inside the create's transaction.
 	env, err := h.coreService.CreateEnvironment(core.WithMutationAuditActor(r.Context(), actorID(r)), uint(id), body.Name)
 	if err != nil {
-		if sendAuditUnavailable(w, err) || sendStorageUnavailable(w, err) {
-			return
-		}
-		log.Printf("Error creating environment for project %d: %v", id, err)
-		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
-			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
-			return
-		}
-		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		answerCoreError(w, r, err, catalogAnswer(fmt.Sprintf("creating environment for project %d", id), "Project not found", err))
 		return
 	}
 	sendCreated(w, newEnvironmentWire(env), "Environment created")
@@ -516,18 +490,7 @@ func (h *CatalogHandler) DeleteEnvironment(w http.ResponseWriter, r *http.Reques
 	// AUDIT-TX-3: the environment.deleted row is written by core, in the delete's
 	// own transaction, attributed to the tagged actor.
 	if err := h.coreService.DeleteEnvironment(core.WithMutationAuditActor(r.Context(), actorID(r)), uint(id)); err != nil {
-		msg := err.Error()
-		status := http.StatusInternalServerError
-		switch {
-		case strings.Contains(msg, "active secret"):
-			status = http.StatusConflict
-		case strings.Contains(msg, errNotFound):
-			status = http.StatusNotFound
-		default:
-			log.Printf("Error deleting environment %d: %v", id, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, catalogAnswer(fmt.Sprintf("deleting environment %d", id), "Environment not found", err))
 		return
 	}
 	sendSuccess(w, nil, "Environment deleted")
@@ -626,22 +589,9 @@ func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.coreService.RestoreEnvironment(r.Context(), actorID(r), uint(projectID), uint(id)); err != nil {
-		if sendAuditUnavailable(w, err) {
-			return
-		}
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		if errors.Is(err, core.ErrPermissionDenied) {
-			// The authority to reinstate the environment's project role
-			// assignments: a refusal, not a fault.
-			status = http.StatusForbidden
-		} else if strings.Contains(msg, errNotFound) {
-			status = http.StatusNotFound
-		} else {
-			log.Printf("Error restoring environment %d in project %d: %v", id, projectID, err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		// A permission refusal is the authority to reinstate the environment's project
+		// role assignments: a refusal, not a fault.
+		answerCoreError(w, r, err, catalogAnswer(fmt.Sprintf("restoring environment %d in project %d", id, projectID), "Environment not found", err))
 		return
 	}
 	sendSuccess(w, nil, "Environment restored")

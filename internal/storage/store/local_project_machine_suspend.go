@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -50,7 +51,7 @@ func lockSoftDeletedProject(tx *gorm.DB, id uint) error {
 	}
 	if len(deletedAt) == 0 || !deletedAt[0].Valid {
 		// RestoreProject's own wording: the restore path reaches this first.
-		return fmt.Errorf("project not found or not deleted")
+		return storage.NotFound(storage.ErrProjectNotFound, "project not found or not deleted", nil)
 	}
 	return nil
 }
