@@ -1111,8 +1111,19 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 		if sendPolicyRefusal(w, "InitSystem", err) {
 			return
 		}
-		// A bad/missing token or another validation failure is a client error, not a 500.
-		if errors.Is(err, core.ErrInvalidBootstrapToken) || strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+		// Token refusals carry typed codes. Both answer 403 and say nothing about
+		// whether a user exists (core checks the token only on a fresh install).
+		if errors.Is(err, core.ErrBootstrapAPIDisabled) {
+			sendError(w, "BootstrapAPIDisabled", "System initialisation over the API is disabled. "+
+				"Set KEYORIX_BOOTSTRAP_TOKEN or use `keyorix system init` on the host.", http.StatusForbidden, nil)
+			return
+		}
+		if errors.Is(err, core.ErrInvalidBootstrapToken) {
+			sendError(w, "InvalidBootstrapToken", err.Error(), http.StatusForbidden, nil)
+			return
+		}
+		// Another validation failure is a client error, not a 500.
+		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
 			sendError(w, "Error", err.Error(), http.StatusForbidden, nil)
 			return
 		}

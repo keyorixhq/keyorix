@@ -1,0 +1,2 @@
+### Fixed
+- **`POST /system/init` refusals now carry typed codes.** A wrong or missing bootstrap token answers 403 `InvalidBootstrapToken`; a server with no `KEYORIX_BOOTSTRAP_TOKEN` answers 403 `BootstrapAPIDisabled` with the hint "Set KEYORIX_BOOTSTRAP_TOKEN or use `keyorix system init` on the host", instead of a generic `Error`. The token comparison and the order of checks are unchanged, and neither answer reveals whether a user exists.
