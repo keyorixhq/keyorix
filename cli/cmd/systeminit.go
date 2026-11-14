@@ -15,7 +15,9 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -24,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
+	"github.com/keyorixhq/keyorix/cli/internal/cliout"
 )
 
 var (
@@ -108,7 +111,7 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("contact %s: %w", server, err)
 	}
 	if resp.StatusCode() != 200 {
-		return apiError("bootstrap server", resp.StatusCode(), resp.Body)
+		return systemInitError(resp.StatusCode(), resp.Body)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
 		return fmt.Errorf("unexpected response from %s: HTTP %d", server, resp.StatusCode())
@@ -174,6 +177,26 @@ func resolveSystemInitAdminPassword(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("admin password is required to bootstrap a server (--admin-password, KEYORIX_ADMIN_PASSWORD, or enter one at the prompt)")
 	}
 	return p, nil
+}
+
+// bootstrapTokenHint is the next step for a refused bootstrap token. The generic 403
+// hint ("ask a project admin ...") does not fit: nobody is signed in yet.
+const bootstrapTokenHint = " Next step: check that KEYORIX_BOOTSTRAP_TOKEN / KEYORIX_BOOTSTRAP_TOKEN_FILE " +
+	"matches the token the server was started with."
+
+// systemInitError turns a non-200 answer of POST /system/init into the command's error.
+// The server answers a refused bootstrap token with a plain 403 whose error code is the
+// generic "Error" (shared with its other validation refusals), so the refusal is told
+// apart by its message; any other answer keeps the standard status handling.
+func systemInitError(status int, body []byte) error {
+	var eb apiErrorBody
+	if status == http.StatusForbidden && json.Unmarshal(body, &eb) == nil &&
+		strings.Contains(eb.Message, "invalid bootstrap token") &&
+		!strings.Contains(eb.Message, "disabled") {
+		return withExitCode(statusExitCode(status), fmt.Errorf("bootstrap server failed: %s (HTTP %d)%s",
+			cliout.SanitizeForTerminal(eb.Message), status, bootstrapTokenHint))
+	}
+	return apiError("bootstrap server", status, body)
 }
 
 // resolveSystemInitBootstrapToken resolves the bootstrap token: the (insecure,
