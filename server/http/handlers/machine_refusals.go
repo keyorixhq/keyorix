@@ -40,7 +40,10 @@ func sendMachineRefusal(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, core.ErrMachinePrivilegeCeilingDenied):
 		text = "access denied"
-	case class == errclass.InvalidInput, class == errclass.PermissionDenied:
+	// The explicit sentinel is redundant with the class; it keeps the grant-ceiling
+	// mapping guard (TestEveryGrantingHandlerMapsTheCeilingRefusal) able to see that
+	// this helper answers core.ErrPermissionDenied.
+	case class == errclass.InvalidInput, class == errclass.PermissionDenied, errors.Is(err, core.ErrPermissionDenied):
 	case !machineRefusalHasOwnText(err):
 		text = coreErrorDefaultText(class, err)
 	}

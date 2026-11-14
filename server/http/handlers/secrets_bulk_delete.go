@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -49,5 +50,11 @@ func (h *SecretHandler) BulkDeleteSecrets(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	h.sendSuccess(w, result, "")
+	// The summary says how many failures are outages that the same call can repeat
+	// (#3912); the per-item code/retryable fields say which.
+	msg := ""
+	if result.Retryable > 0 {
+		msg = fmt.Sprintf("%d of %d secrets were not deleted because the service was unavailable; retry them", result.Retryable, result.Total)
+	}
+	h.sendSuccess(w, result, msg)
 }

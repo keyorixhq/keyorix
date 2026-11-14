@@ -84,7 +84,6 @@ func displayVersionsTable(secret *apiclient.Secret, versions []apiclient.SecretV
 	if totalReads != nil {
 		fmt.Printf("Total Reads: %d\n", *totalReads)
 	}
-	fmt.Println("(size/algorithm columns are omitted -- not exposed by the API)")
 	fmt.Println()
 
 	if len(versions) == 0 {

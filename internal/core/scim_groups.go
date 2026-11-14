@@ -305,9 +305,29 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 		state, rerr = c.readSCIMGroupState(ctx, tx, groupID)
 		return rerr
 	}); err != nil {
+		if errors.Is(err, ErrSCIMGroupStateUnavailable) {
+			// The pure removal committed and only its read-back failed. The group
+			// row and member list read before the write are the answer: no rename
+			// ran and nothing was added, so the group is that row with the members
+			// the new set kept (#3773). Returned WITH the error: a caller that
+			// renders it must still log the cause.
+			return removalOnlyState(group, current, want), err
+		}
 		return nil, err
 	}
 	return state, nil
+}
+
+// removalOnlyState is the group a pure member removal left, built from the group row
+// and member list read before the write: the same row, and the members still wanted.
+func removalOnlyState(group *models.Group, before []*models.User, want map[uint]bool) *SCIMGroupState {
+	kept := make([]*models.User, 0, len(before))
+	for _, u := range before {
+		if want[u.ID] {
+			kept = append(kept, u)
+		}
+	}
+	return &SCIMGroupState{Group: group, Members: kept}
 }
 
 // PatchSCIMGroup applies a SCIM PATCH: an optional rename plus incremental member

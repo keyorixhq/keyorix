@@ -16,11 +16,17 @@ import (
 )
 
 // validationRefusalFamilies are the file-name prefixes of the core families whose
-// i18n "ErrorValidation" refusals must be typed (CORE-ERR-FAMILY-7 item 4): groups
-// (group*.go), secrets (secret*.go), catalog (catalog*.go), personal access tokens
-// (pat*.go) and sharing (sharing*.go, share*.go). Other files that spell the key
-// (users.go, versions.go, break_glass.go, access_review*.go, ...) are not scanned yet.
-var validationRefusalFamilies = []string{"group", "secret", "catalog", "pat", "shar"}
+// i18n "ErrorValidation" refusals must be typed (CORE-ERR-FAMILY-7 item 4,
+// VALIDATION-TYPED-NOV-1 item 5): groups (group*.go), secrets (secret*.go), catalog
+// (catalog*.go), personal access tokens (pat*.go), sharing (sharing*.go, share*.go),
+// users (users*.go), secret versions (versions*.go), environment clone (env_clone*.go),
+// the self-service account (account*.go), break-glass (break_glass*.go) and access review
+// (access_review*.go). Other files that spell the key (setup*.go, invitations.go,
+// classification.go, ...) are not scanned yet.
+var validationRefusalFamilies = []string{
+	"group", "secret", "catalog", "pat", "shar",
+	"users", "versions", "env_clone", "account", "break_glass", "access_review",
+}
 
 // validationTypingCalls make an error match a sentinel (errors.Is) while keeping its
 // text: a refusal built inside one of them is typed. storage.Typed and storage.NotFound
@@ -30,7 +36,16 @@ var validationTypingCalls = map[string]bool{
 	"invalidGroupRequest": true, "invalidACLRequest": true, "errSecretValidation": true,
 	"errSecretInvalidf": true, "errSecretTargetInvalidf": true, "errDependencyInvalidf": true,
 	"errVersionDiffInvalidf": true, "secretInvalidInput": true, "Typed": true, "NotFound": true,
+	// VALIDATION-TYPED-NOV-1: classifyReadErrorAs(err, ErrValidation, text) types a positive
+	// not-found with the sentinel and turns anything else into a storage read fault;
+	// refuseBreakGlass(text, kinds...) carries the break-glass kinds; permissionDeniedf is the
+	// authorization refusal (ErrPermissionDenied) that access review words with the key.
+	"classifyReadErrorAs": true, "refuseBreakGlass": true, "permissionDeniedf": true,
 }
+
+// validationTypingLiterals are composite literals that type the refusal they carry:
+// policyRefusal{msg: ...} matches ErrPasswordPolicy and ErrValidation (account.go).
+var validationTypingLiterals = map[string]bool{"policyRefusal": true}
 
 // untypedValidationRefusals returns the position of every i18n.T("ErrorValidation", ...)
 // call that is neither an argument (at any depth) of a validationTypingCalls call nor
@@ -60,6 +75,10 @@ func untypedValidationRefusals(fset *token.FileSet, file *ast.File) []string {
 				}
 			case *ast.CallExpr:
 				if validationTypingCalls[calleeName(a)] || wrapsPackageSentinel(a) {
+					return true
+				}
+			case *ast.CompositeLit:
+				if id, ok := a.Type.(*ast.Ident); ok && validationTypingLiterals[id.Name] {
 					return true
 				}
 			}
@@ -136,8 +155,8 @@ func inValidationRefusalFamily(path string) bool {
 }
 
 // TestEveryValidationRefusalIsTyped is the ErrorValidation sibling of
-// TestEveryGrantCeilingRefusalIsTyped: in the groups, secrets, catalog, pat and sharing
-// families every refusal worded with the i18n "ErrorValidation" key matches a sentinel
+// TestEveryGrantCeilingRefusalIsTyped: in the groups, secrets, catalog, pat, sharing,
+// users, versions, env-clone, account, break-glass and access-review families every refusal worded with the i18n "ErrorValidation" key matches a sentinel
 // (the family's own, or ErrValidation), so HTTP and gRPC answer it 400 /
 // InvalidArgument by errors.Is and never by the translated text. It walks core family
 // files, so it reports through guardrules.Rollout (docs/guard-rollout-contract.md rule 2).
@@ -175,14 +194,20 @@ func typedGroup() error    { return invalidGroupRequest(fmt.Errorf("%s: x", i18n
 func typedStorage() error  { return storage.Typed(ErrX, fmt.Sprintf("%s: x", i18n.T("ErrorValidation", nil)), nil) }
 func typedSentinel() error { return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrPATExpiresInPast) }
 func errSecretValidation(cause error) error { return fmt.Errorf("%s: %v", i18n.T("ErrorValidation", nil), cause) }
+func typedRead() error     { return classifyReadErrorAs(err, ErrValidation, fmt.Sprintf("%s: unknown role", i18n.T("ErrorValidation", nil))) }
+func typedBreakGlass() error { return refuseBreakGlass(fmt.Sprintf("%s: x", i18n.T("ErrorValidation", nil)), ErrBreakGlassInvalidRequest) }
+func typedDenied() error   { return permissionDeniedf("%s: x", i18n.T("ErrorValidation", nil)) }
+func typedPolicy() error   { return policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": password must be longer"} }
+func untypedLiteral() error { return otherRefusal{msg: i18n.T("ErrorValidation", nil) + ": x"} }
 func otherKey() error      { return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil)) }
 `
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "calibration", src, 0)
 	require.NoError(t, err)
 	bad := untypedValidationRefusals(fset, file)
-	require.Len(t, bad, 3, "only the three untyped spellings fire: %v", bad)
+	require.Len(t, bad, 4, "only the four untyped spellings fire: %v", bad)
 	require.Contains(t, bad[0], ":3:")
 	require.Contains(t, bad[1], ":4:")
 	require.Contains(t, bad[2], ":5:")
+	require.Contains(t, bad[3], ":15:", "a composite literal of a type that does not type its refusal fires")
 }

@@ -1,0 +1,2 @@
+### Documentation
+- **Open-issue audit, 2026-11, second batch (ISSUE-AUDIT-NOV-3).** `docs/design/issue-audit-2026-11-b.md` gives each of 13 storage, perf, security-test and policy issues a verdict (FIXED / OPEN / NEEDS DECISION) with the file:line or test name that proves it. It records that #3427, #3612 and the tightening of #3605 are already on `main`, that the INV-PQWRAP keyset is not wired yet (#3758), and what the perf issues measured and did not. No code change.

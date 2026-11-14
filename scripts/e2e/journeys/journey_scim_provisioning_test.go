@@ -105,6 +105,27 @@ func TestJourney_SCIMProvisioning(t *testing.T) {
 		}
 		return out
 	}
+	// adminActive reads the user's "active" flag the way an operator's user list does.
+	adminActive := func(scimID string) bool {
+		t.Helper()
+		env := restExpect(t, s, adminToken, http.MethodGet, "/api/v1/users?page_size=100", nil, http.StatusOK)
+		var data struct {
+			Users []struct {
+				ID     uint `json:"id"`
+				Active bool `json:"active"`
+			} `json:"users"`
+		}
+		if err := json.Unmarshal(env.Data, &data); err != nil {
+			t.Fatalf("decode the admin user list: %v\n%s", err, env.Raw)
+		}
+		for _, u := range data.Users {
+			if strconv.FormatUint(uint64(u.ID), 10) == scimID {
+				return u.Active
+			}
+		}
+		t.Fatalf("the admin API does not list user %s: %s", scimID, env.Raw)
+		return false
+	}
 	wantMembers := func(what, groupID string, scimView scimJSON, want ...string) {
 		t.Helper()
 		if got := scimView.memberValues(); !sameStrings(got, want) {
@@ -155,6 +176,75 @@ func TestJourney_SCIMProvisioning(t *testing.T) {
 		t.Fatalf("reactivating the user must not hand the revoked PAT back: want 401, got %d: %s", back.StatusCode, back.Raw)
 	}
 
+	// ── 2b. Entra ID's PATCH body: capitalised op, "active" as the strings "False"/"True" ──
+	entraOff := scim(http.MethodPatch, userPath, scimPatch(map[string]any{"op": "Replace", "path": "active", "value": "False"}), http.StatusOK)
+	if entraOff.Active {
+		t.Fatalf(`Entra PATCH {"op":"Replace","path":"active","value":"False"}: the user must read back inactive, got %+v`, entraOff)
+	}
+	if got := scim(http.MethodGet, userPath, nil, http.StatusOK); got.Active {
+		t.Fatalf("GET after the Entra deactivation: want active=false, got %+v", got)
+	}
+	if got := adminActive(user.ID); got {
+		t.Fatalf("the admin API lists the Entra-deactivated user as active")
+	}
+	entraOn := scim(http.MethodPatch, userPath, scimPatch(map[string]any{"op": "Replace", "path": "active", "value": "True"}), http.StatusOK)
+	if !entraOn.Active {
+		t.Fatalf(`Entra PATCH {"op":"Replace","path":"active","value":"True"}: the user must read back active, got %+v`, entraOn)
+	}
+	if got := adminActive(user.ID); !got {
+		t.Fatalf("the admin API lists the Entra-reactivated user as inactive")
+	}
+
+	// ── 2c. provisioned inactive: POST with "active": false is STORED inactive ────
+	// Before the fix the account_state was right (deprovisioned, login refused) but
+	// is_active was written as true, so every read below said the user was active.
+	const offEmail = "scim-journey-inactive@example.invalid"
+	offRaw := restCall(t, s, s.SCIMToken, http.MethodPost, "/scim/v2/Users", map[string]any{
+		"userName": offEmail, "externalId": "idp|scim-journey-inactive", "displayName": "SCIM Journey Inactive", "active": false,
+		"emails": []map[string]any{{"value": offEmail, "primary": true}},
+	})
+	if offRaw.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /scim/v2/Users active=false: want 201, got %d: %s", offRaw.StatusCode, offRaw.Raw)
+	}
+	var offBody map[string]any
+	if err := json.Unmarshal(offRaw.Raw, &offBody); err != nil {
+		t.Fatalf("decode the inactive user: %v\n%s", err, offRaw.Raw)
+	}
+	// The field must be present and false, not merely absent (a missing key also decodes to false).
+	if v, ok := offBody["active"]; !ok || v != false {
+		t.Fatalf(`POST active=false: the response must carry "active": false, got %v (present=%t)`, v, ok)
+	}
+	offID, _ := offBody["id"].(string)
+	if offID == "" {
+		t.Fatalf("POST active=false: no id in %s", offRaw.Raw)
+	}
+	if got := scim(http.MethodGet, "/scim/v2/Users/"+offID, nil, http.StatusOK); got.Active {
+		t.Fatalf("GET the user provisioned inactive: want active=false, got %+v", got)
+	}
+	listEnv := restCall(t, s, s.SCIMToken, http.MethodGet, "/scim/v2/Users?count=100", nil)
+	if listEnv.StatusCode != http.StatusOK {
+		t.Fatalf("SCIM list users: want 200, got %d: %s", listEnv.StatusCode, listEnv.Raw)
+	}
+	var list struct {
+		Resources []struct {
+			ID     string `json:"id"`
+			Active bool   `json:"active"`
+		} `json:"Resources"`
+	}
+	if err := json.Unmarshal(listEnv.Raw, &list); err != nil {
+		t.Fatalf("decode the SCIM user list: %v\n%s", err, listEnv.Raw)
+	}
+	listed := map[string]bool{}
+	for _, r := range list.Resources {
+		listed[r.ID] = r.Active
+	}
+	if active, ok := listed[offID]; !ok || active {
+		t.Fatalf("SCIM list: the user provisioned inactive must be listed with active=false, got listed=%t active=%t", ok, active)
+	}
+	if adminActive(offID) {
+		t.Fatalf("the admin API lists the user provisioned inactive as active")
+	}
+
 	// ── 3. group: create, PUT members, PATCH members ──────────────────────────────
 	group := scim(http.MethodPost, "/scim/v2/Groups", map[string]any{
 		"displayName": "scim-journey-group", "members": []map[string]any{{"value": user.ID}},
@@ -189,12 +279,13 @@ func TestJourney_SCIMProvisioning(t *testing.T) {
 	restExpect(t, s, adminToken, http.MethodGet, "/api/v1/groups/"+group.ID, nil, http.StatusNotFound)
 	scim(http.MethodDelete, userPath, nil, http.StatusNoContent)
 	scim(http.MethodGet, userPath, nil, http.StatusNotFound)
+	scim(http.MethodDelete, "/scim/v2/Users/"+offID, nil, http.StatusNoContent)
 
 	// ── 5. audit: the scim.* rows, attributed to the SCIM principal, no token in them ──
 	wantRows := map[string]int{
-		"scim.user_provisioned":    1,
-		"scim.user_updated":        2, // deactivate, reactivate
-		"scim.user_deprovisioned":  1,
+		"scim.user_provisioned":    2, // the main user, and the one provisioned with active=false
+		"scim.user_updated":        4, // deactivate, reactivate, then the Entra-shaped deactivate and reactivate
+		"scim.user_deprovisioned":  2,
 		"scim.group_provisioned":   1,
 		"scim.group_updated":       4, // two PUTs, a PATCH remove, a PATCH add
 		"scim.group_deprovisioned": 1,

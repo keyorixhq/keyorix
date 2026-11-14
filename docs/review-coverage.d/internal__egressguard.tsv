@@ -1,0 +1,1 @@
+internal/egressguard	none	-	EGRESS-INVENTORY-1: test-only package that machine-checks docs/security/egress-inventory.md and egress-allowlist.tsv against every outbound client in the tree and every direct go.mod dependency; no non-test Go code	test-helper

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"time"
 
@@ -175,6 +176,33 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	return user, string(hash), nil
 }
 
+// persistInactiveOnCreate stores is_active=false for a user that was created
+// inactive. models.User.IsActive is `gorm:"default:true"`, so the plain INSERT in
+// storage CreateUser treats a false (zero) value as "unset", omits the column and
+// the DB default stores true; the same zero value is also what every caller that
+// simply leaves IsActive unset passes, so storage cannot tell the two apart and
+// the model default must stay. A caller that KNOWS it wants an inactive account
+// (SCIM active=false, admin is_active=false) therefore writes the column
+// explicitly, inside the transaction that created the row so no committed state
+// has an inactive account listed as active. wantActive is the caller's intent
+// captured BEFORE the create: GORM back-fills the default into the struct, so
+// created.IsActive reads true afterwards. Fails closed: if the row did not match,
+// the whole create rolls back.
+func persistInactiveOnCreate(ctx context.Context, tx storage.Storage, created *models.User, wantActive bool) error {
+	if wantActive {
+		return nil
+	}
+	created.IsActive = false
+	ok, err := tx.UpdateUserIfActiveStateMatches(ctx, created, true)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if !ok {
+		return fmt.Errorf("%s: user %d vanished before is_active=false could be stored", i18n.T("ErrorStorageFailed", nil), created.ID)
+	}
+	return nil
+}
+
 // EventUserCreated/EventUserUpdated are audited on every user create/update,
 // REST and gRPC alike (F2, audit-completeness campaign) — previously CreateUser/
 // CreateUserWithAssignments/UpdateUser wrote no audit event of their own at all,
@@ -282,10 +310,14 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 	// failure/panic must not roll back the user row — same accepted tradeoff as
 	// before, just tx-scoped now), so only a CreateUser failure can trigger rollback.
 	var createdUser *models.User
+	wantActive := user.IsActive // before the create: GORM back-fills the column default
 	createTx := func(tx storage.Storage, tgt auditTarget) error {
 		var txErr error
 		createdUser, txErr = tx.CreateUser(ctx, user, req.Password)
 		if txErr != nil {
+			return txErr
+		}
+		if txErr = persistInactiveOnCreate(ctx, tx, createdUser, wantActive); txErr != nil {
 			return txErr
 		}
 		// Auto-assign the system_viewer role (ADR-021): a minimal install-wide
@@ -332,7 +364,13 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 		if errors.Is(err, storage.ErrDuplicateUsername) {
 			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
 		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// #3225: the transaction may have committed and still reported an error (a
+		// lost acknowledgement). Answering failure then leaves a user the client was
+		// told does not exist, and a retry meets a duplicate. Read the row back: if it
+		// is there, the create succeeded and continues down the success path.
+		if !c.userCreateLanded(ctx, createdUser, err) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
 	}
 
 	// Seed password history with the initial password so the no-reuse rule
@@ -353,6 +391,34 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 	// alongside the CreateUser write — see the fix/create-ops-atomicity comment there.
 
 	return createdUser, nil
+}
+
+// userCreateLanded reports whether the user the create transaction inserted is
+// present after the transaction returned writeErr. created is the row the closure
+// got back from CreateUser; nil means the insert itself never succeeded, so
+// nothing can have landed. The row is matched on ID and username, so an ID reused
+// after a rollback cannot be mistaken for ours. A failing lookup counts as not
+// landed (the error stands, fail closed) and is logged. Panic-safe.
+func (c *KeyorixCore) userCreateLanded(ctx context.Context, created *models.User, writeErr error) (landed bool) {
+	if created == nil || created.ID == 0 {
+		return false
+	}
+	besteffort.Run(ctx, "users.CreateUser.ReadBack", func() error {
+		got, err := c.storage.GetUser(ctx, created.ID)
+		if err != nil {
+			if isPositiveNotFound(err) {
+				return nil
+			}
+			log.Printf("users.CreateUser: create of user %d reported %v and the read-back failed: %v; the user may exist", created.ID, writeErr, err)
+			return err
+		}
+		if got != nil && got.ID == created.ID && got.Username == created.Username {
+			log.Printf("users.CreateUser: create of user %d reported %v but the row is present; it committed and is delivered", created.ID, writeErr)
+			landed = true
+		}
+		return nil
+	})
+	return landed
 }
 
 // maxUserCreateAssignments bounds how many project-scoped role assignments a
@@ -455,6 +521,7 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	// AUDIT-TX-2: the user, its role grants and its user.created row commit in
 	// ONE transaction (CreateUserWithRoleGrants nests as a savepoint).
 	var created *models.User
+	wantActive := user.IsActive // before the create: GORM back-fills the column default
 	if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		var err error
 		if created, err = tx.CreateUserWithRoleGrants(ctx, user, grants); err != nil {
@@ -466,6 +533,9 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 				return fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
 			}
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if err = persistInactiveOnCreate(ctx, tx, created, wantActive); err != nil {
+			return err
 		}
 		c.logUserCreatedOn(ctx, tgt, actorID, created.ID, created.Username)
 		return nil

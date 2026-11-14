@@ -63,6 +63,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 var keyishCalleeRe = regexp.MustCompile(`(?i)(kek|dek|key)`)
@@ -543,7 +545,7 @@ func TestWipeBytesSweep_EveryKeyLocalIsWipedOnEveryReturn(t *testing.T) {
 	}
 	for key := range knownWipeGaps {
 		if gapHits[key] == 0 {
-			t.Errorf("knownWipeGaps entry %q no longer reproduces: the gap was fixed, so remove the entry (and update #2512)", key)
+			guardrules.KnownFindingClosed(t, "knownWipeGaps/"+key, "the gap was fixed (also update #2512)")
 		}
 	}
 	for key := range wipeSweepExempt {

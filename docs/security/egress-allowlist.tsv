@@ -1,0 +1,82 @@
+# Every non-test Go file that can open an outbound connection, with the destination class
+# (an id of the table in docs/security/egress-inventory.md) and why it is allowed.
+# Enforced by internal/egressguard (TestEgressSitesAreInventoried). Columns: path<TAB>class<TAB>reason.
+# A path ending in "/" covers a directory; use it only for class DEV (development and test
+# tooling, proven unreachable from shipped code by TestEgressDevToolingIsNotImportedByShippedCode).
+# To add a row for a new site: use an existing class if the destination is the same kind, else
+# add a class to the inventory table in the same PR.
+cli/internal/apiclient/ca_file.go	E16	Clones http.DefaultTransport to add the operator's CA file for the CLI's own server connection
+cli/internal/apiclient/client.gen.go	E16	Generated API client; talks only to the Keyorix server URL the user gives the CLI
+cli/internal/apiclient/hardened_client.go	E16	The CLI's HTTP client (size cap, timeouts) for the Keyorix server URL
+cli/internal/apiclient/tlsinspect.go	E16	InspectTLS: one TLS handshake with the Keyorix server URL, for CLI TLS diagnostics
+examples/	DEV	Example programs, never built into a release artifact
+internal/audit/siem/forwarder.go	E04	Splunk HEC / Datadog Logs / generic webhook forwarder, audit.siem.enabled
+internal/auditverify/db.go	E01	Opens the operator's database (SQLite file or PostgreSQL) to verify the audit chain
+internal/connect/awssm.go	E10	AWS Secrets Manager connector (build tag !noaws)
+internal/connect/azurekv.go	E10	Azure Key Vault connector (build tag !noazure)
+internal/connect/gcpsm.go	E10	GCP Secret Manager connector (build tag !nogcp)
+internal/connect/hardened_client.go	E10	Shared hardened transport for the Vault and Azure connectors
+internal/connect/vault.go	E10	HashiCorp Vault connector (build tag !novault)
+internal/core/alert_escalation.go	E03	Webhook/Slack POST of an escalated anomaly alert to an admin-created notification channel
+internal/core/dynamic_secrets.go	E13	DNS lookup of an admin-supplied dynamic-secret target host to refuse private addresses
+internal/core/sso.go	E08	OAuth2 code exchange with the configured SSO identity provider (client built in server/wire_sso.go)
+internal/crypto/awskms/awskms.go	E11	AWS KMS wrap/unwrap of the KEK, key_provider.type aws-kms (build tag !noaws)
+internal/crypto/azurekms/azurekms.go	E11	Azure Key Vault wrap/unwrap of the KEK, key_provider.type azure-kms (build tag !noazure)
+internal/crypto/gcpkms/gcpkms.go	E11	GCP KMS wrap/unwrap of the KEK, key_provider.type gcp-kms (build tag !nogcp)
+internal/delivery/smtp.go	E07	Setup-link email through the operator's SMTP relay, credential_delivery.smtp
+internal/dynamic/awssts.go	E13	AWS STS dynamic-secret backend (build tag !noaws)
+internal/dynamic/azure.go	E13	Azure dynamic-secret backend (build tag !noazure)
+internal/dynamic/gcp.go	E13	GCP IAM credentials dynamic-secret backend (build tag !nogcp)
+internal/dynamic/kubernetes.go	E13	Kubernetes API dynamic-secret backend (build tag !nok8s)
+internal/dynamic/mongodb.go	E13	MongoDB dynamic-secret backend
+internal/dynamic/mysql.go	E13	MySQL dynamic-secret backend
+internal/dynamic/postgres.go	E13	PostgreSQL dynamic-secret backend
+internal/dynamic/redis.go	E13	Redis dynamic-secret backend
+internal/dynamic/revoke_dsn.go	E13	Revoke-only rewrite of a stored admin_dsn before connecting to the dynamic-secret target
+internal/evidencesink/objectstore.go	E06	S3-compatible upload of the evidence pack, evidence_delivery.object_store
+internal/evidencesink/webhook.go	E06	Webhook POST of the evidence pack, evidence_delivery.webhook
+internal/k8ssync/keyorix_fetcher.go	E14	keyorix-k8s-sync reads secrets from the configured Keyorix server
+internal/k8ssync/rest_sink.go	E14	keyorix-k8s-sync writes Kubernetes Secrets through the in-cluster API server
+internal/mcp/keyorix.go	E17	keyorix-mcp calls the configured Keyorix server
+internal/netutil/dialer.go	E19	Egress-guarded dialer: resolves and checks a destination configured for E02-E06 before connecting
+internal/netutil/egress.go	E19	Egress-guarded http.Client builder used by the webhook-style sinks
+internal/notary/rfc3161.go	E05	RFC 3161 timestamp request to audit.checkpoint_notary.url
+internal/notifychan/chat.go	E02	Slack / Teams incoming-webhook POST, notifications.slack / notifications.teams
+internal/notifychan/email.go	E02	Notification email through the operator's SMTP relay, notifications.email
+internal/notifychan/secure_transport.go	E19	Resolves a notification destination to refuse private and link-local addresses
+internal/notifychan/webhook.go	E02	Webhook POST, notifications.webhook
+internal/oidcverify/oidc_jwks.go	E09	Fetches the JWKS of a trusted machine-identity issuer, oidc.issuers[].jwks_uri
+internal/rotation/awsiam.go	E12	AWS IAM access-key rotation backend (build tag !noaws)
+internal/rotation/azure.go	E12	Microsoft Graph rotation backend
+internal/rotation/azure_sdk.go	E12	Azure credential for the rotation backend (build tag !noazure)
+internal/rotation/gcpsa.go	E12	GCP service-account key rotation backend (build tag !nogcp)
+internal/rotation/mongodb.go	E12	MongoDB password rotation backend
+internal/rotation/mysql.go	E12	MySQL password rotation backend
+internal/rotation/postgres.go	E12	PostgreSQL password rotation backend
+internal/rotation/redis.go	E12	Redis password rotation backend
+internal/serverguard/serverguard.go	E01	Opens the operator's database to detect a live server process attached to it
+internal/solewriter/solewriter.go	E01	storage.database.single_writer: connects to the operator's PostgreSQL database
+internal/storage/postgres_open.go	E01	Opens the PostgreSQL database named by storage.postgres
+internal/storage/sqlite_write_gate.go	E01	Opens the local SQLite file (no network)
+internal/storage/sqlitedialect/sqlite.go	E01	Opens the local SQLite file (no network)
+internal/testhelper/	DEV	RBAC test helper, imported only by tests
+internal/testutil/fuzzworld/	DEV	Fuzz-world test database setup, imported only by tests
+internal/testutil/pgcanary/	DEV	Postgres canary helper for tests
+internal/testutil/pgdsn/	DEV	Per-test Postgres databases
+internal/testutil/pgwirecount/	DEV	Test proxy that counts Postgres wire messages
+internal/testutil/sqlitetest/	DEV	Test SQLite databases
+migrate/internal/apiclient/client.gen.go	E18	Generated client for the Keyorix server that keyorix-migrate imports into
+migrate/internal/awssource/aws.go	E18	keyorix-migrate reads from AWS Secrets Manager
+migrate/internal/azuresource/azure.go	E18	keyorix-migrate reads from Azure Key Vault
+migrate/internal/gcpsource/gcp.go	E18	keyorix-migrate reads from GCP Secret Manager
+migrate/internal/healthscan/client.go	E18	keyorix-migrate health scan of the source Vault
+migrate/internal/httpsafe/httpsafe.go	E18	keyorix-migrate size-capped HTTP client
+migrate/internal/vaultsource/vault.go	E18	keyorix-migrate reads from HashiCorp Vault
+operator/cmd/main.go	E15	Kubernetes operator: API server connection (controller-runtime manager)
+operator/internal/controller/keyorixsecret_controller.go	E15	Kubernetes operator: reconciles KeyorixSecret objects against the API server
+operator/internal/controller/source_state.go	E15	Kubernetes operator: metrics registry import, no connection of its own
+operator/internal/keyorix/client.go	E15	Kubernetes operator reads secrets from the Keyorix server named in the KeyorixSecret
+scripts/	DEV	Build, CI, e2e, fuzzing, drill and demo tooling, never built into a release artifact
+server/admin/restore.go	E01	Opens a local SQLite file read-only during restore (no network)
+server/admin/restore_postgres.go	E01	`admin restore` into a PostgreSQL target database
+server/wire_sso.go	E08	OIDC discovery at boot and the SSO HTTP client, sso.providers[]
