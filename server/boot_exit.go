@@ -10,8 +10,9 @@ package main
 //	exitOperatorFix    78  refused configuration or missing/unusable key
 //	                       material: restarting cannot help; stop and tell
 //	                       the operator. (sysexits EX_CONFIG)
-//	exitDependencyDown 75  a dependency that may come back (cloud KMS,
-//	                       remote database): retry, but not every five
+//	exitDependencyDown 75  a dependency that may come back (cloud KMS or
+//	                       remote database unreachable, or a KMS answering
+//	                       5xx/throttled): retry, but not every five
 //	                       seconds. (sysexits EX_TEMPFAIL)
 //	1                      everything else, as before: a crash, a port that
 //	                       is in use, a lost lock.
@@ -28,9 +29,17 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/keyorixhq/keyorix/internal/config"
+	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 )
 
 const (
@@ -63,21 +72,89 @@ func operatorFixWith(prefix string, err error) error {
 	return operatorFix(fmt.Errorf("%s: %w", prefix, err))
 }
 
-// isDependencyUnreachable reports whether err is a network-level failure
-// (refused, unreachable, DNS, timed out) rather than an answer from the
-// dependency: a KMS or database that replied "no" is a configuration problem,
-// one that did not reply may come back.
+// isDependencyUnreachable reports whether err means the dependency may come
+// back: either it did not answer (isNetworkFailure) or it answered that it
+// cannot serve right now (isServiceUnavailable). A KMS or database that
+// replied "no" is a configuration problem; one that did not reply, or replied
+// "not now", may come back.
 func isDependencyUnreachable(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
+	return isNetworkFailure(err) || isServiceUnavailable(err)
+}
+
+// isNetworkFailure reports whether err is a network-level failure (refused,
+// unreachable, DNS, timed out). A *url.Error is a net.Error whatever its
+// cause, so for one it is the cause that decides: a TLS certificate the host
+// does not trust, wrapped in a *url.Error, is not a network failure.
+func isNetworkFailure(err error) bool {
 	var ne net.Error
-	return errors.As(err, &ne)
+	if !errors.As(err, &ne) {
+		return false
+	}
+	if ue, ok := ne.(*url.Error); ok {
+		return ue.Timeout() || isNetworkFailure(ue.Err)
+	}
+	return true
+}
+
+// The error shapes isServiceUnavailable reads, by method so this file needs
+// no SDK-internal types: httpStatusError is the AWS SDK's response error,
+// apiCodeError its API error (smithy.APIError), grpcStatusError a gRPC status
+// (the GCP KMS client).
+type (
+	httpStatusError interface {
+		error
+		HTTPStatusCode() int
+	}
+	apiCodeError interface {
+		error
+		ErrorCode() string
+	}
+	grpcStatusError interface {
+		error
+		GRPCStatus() *status.Status
+	}
+)
+
+// isServiceUnavailable reports whether err is an answer from a cloud KMS that
+// says "not now" rather than "no": a server-side failure (HTTP 5xx, gRPC
+// UNAVAILABLE/INTERNAL/DEADLINE_EXCEEDED) or throttling (HTTP 429, AWS's
+// throttle error codes, gRPC RESOURCE_EXHAUSTED). The SDKs retry exactly
+// these; a refusal (access denied, key not found or disabled, bad
+// ciphertext: HTTP 4xx, gRPC PERMISSION_DENIED/NOT_FOUND/...) is not one.
+//
+// Recognised shapes, one per provider SDK this server links: the AWS SDK's
+// response error (HTTPStatusCode()) and API error (ErrorCode()), Azure's
+// *azcore.ResponseError, and a gRPC status (GCP, GRPCStatus()).
+func isServiceUnavailable(err error) bool {
+	transientHTTP := func(code int) bool {
+		return code >= http.StatusInternalServerError || code == http.StatusTooManyRequests
+	}
+	if he, ok := errors.AsType[httpStatusError](err); ok && transientHTTP(he.HTTPStatusCode()) {
+		return true
+	}
+	if ae, ok := errors.AsType[apiCodeError](err); ok {
+		if _, throttled := retry.DefaultThrottleErrorCodes[ae.ErrorCode()]; throttled {
+			return true
+		}
+	}
+	if re, ok := errors.AsType[*azcore.ResponseError](err); ok && transientHTTP(re.StatusCode) {
+		return true
+	}
+	if _, ok := errors.AsType[grpcStatusError](err); ok {
+		switch status.Code(err) {
+		case codes.Unavailable, codes.Internal, codes.DeadlineExceeded, codes.ResourceExhausted:
+			return true
+		}
+	}
+	return false
 }
 
 // operatorFixUnlessUnreachable is operatorFix for a step that may also fail
-// because something it talks to is down: that stays unmarked so bootExitCode
-// reports it as a dependency.
+// because something it talks to is down or overloaded: that stays unmarked so
+// bootExitCode reports it as a dependency.
 func operatorFixUnlessUnreachable(err error) error {
 	if isDependencyUnreachable(err) {
 		return err
@@ -85,14 +162,32 @@ func operatorFixUnlessUnreachable(err error) error {
 	return operatorFix(err)
 }
 
+// poolerStepError classifies an error from
+// appstorage.RefuseUndeclaredTransactionPooler. Only the pooler refusal itself
+// is an operator fix. That step is also the first one that connects to
+// Postgres, so every other error from it (a database that is down, starting up
+// or out of connections) stays unmarked and bootExitCode retries it.
+func poolerStepError(err error) error {
+	if _, ok := errors.AsType[*appstorage.UndeclaredTransactionPoolerError](err); ok {
+		return operatorFix(err)
+	}
+	return err
+}
+
 // bootExitCode is the exit status for a boot failure err. An explicit mark
 // wins; otherwise a database authentication failure needs an operator and an
 // unreachable dependency may recover. Anything else stays 1.
+//
+// Only a login the database answered with an authentication SQLSTATE is 78. A
+// connection closed during start-up (PostgresAuthError.ClosedDuringStartup) is
+// a guess: a proxy or pooler in front of a backend that is down, or a Postgres
+// that is restarting, closes it the same way, so it falls through and is
+// retried.
 func bootExitCode(err error) int {
 	if be, ok := errors.AsType[*bootError](err); ok {
 		return be.code
 	}
-	if _, ok := errors.AsType[*config.PostgresAuthError](err); ok {
+	if pae, ok := errors.AsType[*config.PostgresAuthError](err); ok && !pae.ClosedDuringStartup {
 		return exitOperatorFix
 	}
 	if isDependencyUnreachable(err) {

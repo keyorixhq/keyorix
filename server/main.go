@@ -257,7 +257,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		if authErr, ok := errors.AsType[*config.PostgresAuthError](err); ok {
 			bootFatal(fmt.Errorf("%w\n(driver detail, secrets redacted: %s)", err, authErr.Detail()))
 		}
-		bootFatal(operatorFix(err))
+		bootFatal(poolerStepError(err))
 	}
 	// Registered first so it runs last: a lost process-wide lock (presence or
 	// single_writer, see awaitShutdown below) ends the process with a failure
