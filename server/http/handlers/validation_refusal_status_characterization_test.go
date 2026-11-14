@@ -247,11 +247,11 @@ func refusalCases() []refusalCase {
 			call: callUserQuery("username=", func(uh *UserHandler) http.HandlerFunc { return uh.GetUserByUsername })},
 		{family: "users", name: "lookup by external id without id", en: http.StatusBadRequest, code: "InvalidParameter",
 			call: callUserQuery("external_id=", func(uh *UserHandler) http.HandlerFunc { return uh.GetUserByExternalID })},
-		// FINDING: a user-id refusal ("user ID is required") answers 500 on main: the
-		// handler has no arm for it.
-		{family: "users", name: "delete user 0", en: http.StatusInternalServerError, code: "InternalError",
+		// FINDING (fixed by item 2): a user-id refusal ("user ID is required") answered
+		// 500 on main; the handler had no arm for it.
+		{family: "users", name: "delete user 0", en: http.StatusBadRequest, code: "ValidationError",
 			call: callUserByID(http.MethodDelete, "0", "", func(uh *UserHandler) http.HandlerFunc { return uh.DeleteUser })},
-		{family: "users", name: "restore user 0", en: http.StatusInternalServerError, code: "InternalError",
+		{family: "users", name: "restore user 0", en: http.StatusBadRequest, code: "ValidationError",
 			call: callUserByID(http.MethodPost, "0", "", func(uh *UserHandler) http.HandlerFunc { return uh.RestoreUser })},
 		{family: "users", name: "reissue one-time password for user 0", en: http.StatusBadRequest,
 			call: callUserByID(http.MethodPost, "0", "", func(uh *UserHandler) http.HandlerFunc { return uh.ReissueOneTimePassword })},
