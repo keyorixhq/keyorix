@@ -266,7 +266,7 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 	// unauthenticated, first-caller-wins admin seizure on any fresh, network-reachable
 	// instance. An unset server token disables API bootstrap entirely (fail closed).
 	if c.bootstrapToken == "" {
-		return nil, fmt.Errorf("system initialisation over the API is disabled: %w", ErrInvalidBootstrapToken)
+		return nil, fmt.Errorf("%w: %w", ErrBootstrapAPIDisabled, ErrInvalidBootstrapToken)
 	}
 	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(c.bootstrapToken)) != 1 {
 		return nil, ErrInvalidBootstrapToken

@@ -31,6 +31,12 @@ var (
 	// missing, empty, or does not match the server's configured token.
 	ErrInvalidBootstrapToken = errors.New("invalid bootstrap token")
 
+	// ErrBootstrapAPIDisabled is returned (together with ErrInvalidBootstrapToken)
+	// when the server has no bootstrap token configured, so system initialisation
+	// over the API is switched off. Matched by sentinel so the HTTP layer can give
+	// it its own typed code.
+	ErrBootstrapAPIDisabled = errors.New("system initialisation over the API is disabled")
+
 	// ErrInvalidInput is returned when a caller supplies a logically inconsistent
 	// or out-of-range parameter (e.g. a time range where Since >= Until).
 	ErrInvalidInput = errors.New("invalid input")
