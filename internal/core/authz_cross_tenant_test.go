@@ -19,7 +19,8 @@ import (
 // GetMachineRoleIDsAt) through a live SQLite store, not mocks — so a future change to
 // a WHERE clause that opened a cross-tenant leak would fail here.
 //
-// (roleEditor/roleViewer/ptr are defined in authz_scoped_test.go, same package.)
+// (ptr is defined in authz_scoped_test.go, same package. Grants at a project use the
+// project_* roles: the legacy roles are install-wide only, #3605.)
 
 func TestCrossTenant_GroupRoleDoesNotLeakToOtherProject(t *testing.T) {
 	t.Parallel()
@@ -28,7 +29,7 @@ func TestCrossTenant_GroupRoleDoesNotLeakToOtherProject(t *testing.T) {
 	u := h.CreateTestUser(t, "groupie", 200)
 	g := h.CreateTestGroup(t, "team-p1", "editors on p1", 50)
 	h.AssignUserToGroup(t, u.ID, g.ID)
-	h.AssignGroupRole(t, g.ID, roleEditor, ptr(1)) // group is editor on project 1 only
+	h.AssignGroupRole(t, g.ID, testhelper.RoleProjectDeveloper, ptr(1)) // group is developer on project 1 only
 
 	ctx := context.Background()
 	ok, err := h.CoreService.Authorize(ctx, u.ID, "secrets.write", core.Scope{ProjectID: 1})
@@ -47,7 +48,7 @@ func TestCrossTenant_SoftDeletedGroupRevokesInheritedRole(t *testing.T) {
 	u := h.CreateTestUser(t, "exmember", 201)
 	g := h.CreateTestGroup(t, "doomed", "", 51)
 	h.AssignUserToGroup(t, u.ID, g.ID)
-	h.AssignGroupRole(t, g.ID, roleEditor, ptr(1))
+	h.AssignGroupRole(t, g.ID, testhelper.RoleProjectDeveloper, ptr(1))
 
 	ctx := context.Background()
 	ok, err := h.CoreService.Authorize(ctx, u.ID, "secrets.write", core.Scope{ProjectID: 1})
@@ -69,9 +70,9 @@ func TestCrossTenant_ExpiredGrantExcludedAlongsidePermanent(t *testing.T) {
 	past := time.Now().Add(-1 * time.Hour)
 	// An EXPIRED editor (read+write) and a PERMANENT viewer (read) at the SAME scope.
 	require.NoError(t, h.DB.Create(&models.UserRole{
-		UserID: u.ID, RoleID: roleEditor, ProjectID: 1, ExpiresAt: &past,
+		UserID: u.ID, RoleID: testhelper.RoleProjectDeveloper, ProjectID: 1, ExpiresAt: &past,
 	}).Error)
-	h.AssignUserRole(t, u.ID, roleViewer, ptr(1))
+	h.AssignUserRole(t, u.ID, testhelper.RoleProjectViewer, ptr(1))
 
 	ctx := context.Background()
 	ok, err := h.CoreService.Authorize(ctx, u.ID, "secrets.read", core.Scope{ProjectID: 1})
@@ -89,7 +90,7 @@ func TestCrossTenant_MachineIdentityDeniedOtherProject(t *testing.T) {
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.MachineIdentity{}, &models.MachineIdentityRole{}))
 	require.NoError(t, h.DB.Create(&models.MachineIdentity{ID: 70, ProjectID: 1, Name: "ci", State: "active"}).Error)
-	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{MachineIdentityID: 70, RoleID: roleEditor, ProjectID: 1}).Error)
+	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{MachineIdentityID: 70, RoleID: testhelper.RoleProjectDeveloper, ProjectID: 1}).Error)
 
 	ctx := context.Background()
 	ok, err := h.CoreService.AuthorizePrincipal(ctx, core.ActorTypeMachine, 70, "secrets.read", core.Scope{ProjectID: 1})

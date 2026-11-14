@@ -338,7 +338,7 @@ func TestAssignUserRole_ProjectScopedAdminNotExemptFromSoD(t *testing.T) {
 	// "admin" (role 2) bundles secrets.write but NOT audit.admin — grant it to
 	// kim scoped ONLY to project 9, not globally.
 	projectID := uint(9)
-	h.AssignUserRole(t, 18, 2, &projectID)
+	h.AssignUserRole(t, 18, testhelper.RoleProjectAdmin, &projectID)
 
 	// Policy pairs secrets.write (already in kim's project-scoped admin bundle)
 	// with audit.admin (only "auditor", role 5, bundles it).
