@@ -22,6 +22,7 @@ import {
     useClassifyDynamicConfig,
 } from '../../features/dynamic-secrets/api';
 import { LeasesPanel } from '../../features/dynamic-secrets/LeasesPanel';
+import { RefusedAdminDsnBanner } from '../../features/dynamic-secrets/RefusedAdminDsnBanner';
 import { ReplaceAdminDsnModal, ReplaceAdminDsnTarget } from '../../features/dynamic-secrets/ReplaceAdminDsnModal';
 
 /**
@@ -207,6 +208,15 @@ const DynamicSecretsPage: React.FC = () => {
                     <Alert type="success" message={`Admin DSN replaced for ${replacedName}.`} />
                 </div>
             )}
+
+            <RefusedAdminDsnBanner
+                projectId={projectId}
+                canManage={canWrite}
+                onReplace={(target) => {
+                    setReplacedName('');
+                    setReplaceTarget(target);
+                }}
+            />
 
             {error ? (
                 <Alert
