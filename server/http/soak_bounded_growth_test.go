@@ -54,7 +54,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -490,7 +489,6 @@ func (w *soakWorld) quiesce() {
 		time.Sleep(25 * time.Millisecond)
 		n := runtime.NumGoroutine()
 		if n <= prev {
-			prev = n
 			// two consecutive non-increasing reads == settled.
 			time.Sleep(25 * time.Millisecond)
 			if runtime.NumGoroutine() <= n {
@@ -579,11 +577,8 @@ func (w *soakWorld) probeLatencyP95(iters int) time.Duration {
 		w.do(http.MethodGet, path, w.adminTok, "")
 		ds = append(ds, time.Since(t0))
 	}
-	sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
-	idx := int(math.Ceil(0.95*float64(len(ds)))) - 1
-	if idx < 0 {
-		idx = 0
-	}
+	slices.Sort(ds)
+	idx := max(int(math.Ceil(0.95*float64(len(ds))))-1, 0)
 	if idx >= len(ds) {
 		idx = len(ds) - 1
 	}
@@ -716,7 +711,7 @@ func medianP95(ss []soakSample) time.Duration {
 	for _, s := range ss {
 		ds = append(ds, s.probeP95)
 	}
-	sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+	slices.Sort(ds)
 	return ds[len(ds)/2]
 }
 
