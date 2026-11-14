@@ -109,6 +109,11 @@ func runBGActivate(_ *cobra.Command, _ []string) error {
 	a := resp.JSON201.Data.Activation
 	fmt.Printf("Emergency access activated (id=%d): role %q until %s.\n",
 		derefUint32(a.Id), derefStr(a.RoleName), derefStr(a.ExpiresAt))
+	if derefBool(a.Degraded) {
+		// The grant went through, but not the normal way: say so before anything else.
+		fmt.Println("  DEGRADED: the audit log was refusing writes, so this activation's audit rows are owed " +
+			"(written when the log recovers); it expires sooner than a normal one and its review is mandatory.")
+	}
 	printBreakGlassEffect(client, bgProject, a)
 	return nil
 }
@@ -200,12 +205,45 @@ func runBGList(_ *cobra.Command, _ []string) error {
 			userW = n
 		}
 	}
-	fmt.Printf("%-5s %-*s %-9s %-*s %-20s %s\n", "ID", userW, "USER", "STATE", roleW, "ROLE", "EXPIRES (UTC)", "JUSTIFICATION")
+	// AUDIT appears only when some activation went through the degraded path, so a list
+	// without one is unchanged. It sits before JUSTIFICATION, which stays the last column.
+	auditW, anyDegraded := len("AUDIT"), false
+	audits := make([]string, len(activations))
 	for i, a := range activations {
-		fmt.Printf("%-5d %-*s %-9s %-*s %-20s %s\n", derefUint32(a.Id), userW, users[i],
-			derefStr((*string)(a.State)), roleW, cliout.SanitizeForTerminal(derefStr(a.RoleName)), shortTime(derefStr(a.ExpiresAt)), derefStr(a.Justification))
+		audits[i] = bgAuditLabel(a)
+		anyDegraded = anyDegraded || derefBool(a.Degraded)
+		if n := len(audits[i]); n > auditW {
+			auditW = n
+		}
 	}
+	if !anyDegraded {
+		fmt.Printf("%-5s %-*s %-9s %-*s %-20s %s\n", "ID", userW, "USER", "STATE", roleW, "ROLE", "EXPIRES (UTC)", "JUSTIFICATION")
+		for i, a := range activations {
+			fmt.Printf("%-5d %-*s %-9s %-*s %-20s %s\n", derefUint32(a.Id), userW, users[i],
+				derefStr((*string)(a.State)), roleW, cliout.SanitizeForTerminal(derefStr(a.RoleName)), shortTime(derefStr(a.ExpiresAt)), derefStr(a.Justification))
+		}
+		return nil
+	}
+	fmt.Printf("%-5s %-*s %-9s %-*s %-20s %-*s %s\n", "ID", userW, "USER", "STATE", roleW, "ROLE", "EXPIRES (UTC)", auditW, "AUDIT", "JUSTIFICATION")
+	for i, a := range activations {
+		fmt.Printf("%-5d %-*s %-9s %-*s %-20s %-*s %s\n", derefUint32(a.Id), userW, users[i],
+			derefStr((*string)(a.State)), roleW, cliout.SanitizeForTerminal(derefStr(a.RoleName)), shortTime(derefStr(a.ExpiresAt)),
+			auditW, audits[i], derefStr(a.Justification))
+	}
+	fmt.Println("\nDEGRADED = granted while the audit log refused writes: its audit rows are owed (written when the log recovers) and its review is mandatory.")
 	return nil
+}
+
+// bgAuditLabel is the AUDIT cell: "-" for a normal activation, DEGRADED for one granted
+// while the audit log refused writes, "DEGRADED, settled" once its owed rows are written.
+func bgAuditLabel(a apiclient.BreakGlassActivation) string {
+	switch {
+	case !derefBool(a.Degraded):
+		return "-"
+	case derefStr(a.AuditSettledAt) != "":
+		return "DEGRADED, settled"
+	}
+	return "DEGRADED"
 }
 
 // bgUserLabel is the activating user as shown in the list: the username (sanitised,
