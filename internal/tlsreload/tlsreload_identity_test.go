@@ -28,7 +28,7 @@ import (
 )
 
 // genPair returns a self-signed ECDSA cert/key PEM pair with the given serial.
-func genPair(t *testing.T, serial int64) (certPEM, keyPEM []byte) {
+func genPair(t testing.TB, serial int64) (certPEM, keyPEM []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
