@@ -45,7 +45,7 @@ func FuzzJWTParseComplexity(f *testing.F) {
 	// Budget calibrated in TestComplexityBaselines. base64 shrinks ~4:3; JSON
 	// into a map allocates a few × the decoded bytes. 64 B/byte slope + 2 MiB
 	// floor is generous. Absolute ceiling for a 10 MiB token: measured worst
-	// case stays far under 256 MiB (see report).
+	// case stays far under 256 MiB.
 	budget := complexity.Budget{
 		MaxAllocBytesPerByte: 64,
 		FloorBytes:           2 << 20,
