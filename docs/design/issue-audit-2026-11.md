@@ -43,3 +43,51 @@ Postgres tests ran against a `kpg` database. No issue was fixed in this PR (see 
 | #3328 flake: FuzzCrossReplicaOps seed#0 role-grant commit-order mismatch | NEEDS DECISION | No code change targets it. The last 10 scheduled "Cross-replica race tests (Postgres)" runs (2026-11-04 to 11-13): 8 green, 2 red (11-07 run 42367720758, 11-09 run 42624893497), and both reds fail `TestAuditLongReaders_RollingRewalkDoesNotHoldOneSnapshot`, not this test. `FuzzCrossReplicaOps -count=20` on Postgres passes 20 of 20 here (tree `77a7c2576b95`). | Question: close as not reproduced, or keep for the cross-replica fuzzer owner? Separately, `TestAuditLongReaders_RollingRewalkDoesNotHoldOneSnapshot` failed 2 of the last 10 nightly Postgres runs; I found no issue for it (audit area, OPT-AUDIT-RT-1). |
 | #3185 nightly failure on main: is it still red? | FIXED | Scheduled `ci.yml` runs: 2026-11-13 run 43401834881 success (`1856a6b6d28d`), 2026-11-12 run 43194997520 success (`c6ad8a7dcede`). The last red was 2026-11-11 run 42994975630. | Green twice in a row. The bot issue stays open until closed by hand. |
 
+## Group 3: docs, contract and posture
+
+| Issue | Verdict | Evidence | Note |
+|---|---|---|---|
+| #3449 Docs nits from the v0.96.0 release review | NEEDS DECISION | Item 4 (CA vs `tls.cert_file`) is done: `docs/SELF_HOSTING.md:740-743`. Item 1 (version pin ~239): the clone line now pins a release tag with a reason (`SELF_HOSTING.md:29`, `v0.96.3`), so the original line moved. Items 2 and 3 cannot be checked: `docs/UPGRADING.md` writes release versions with `v` and chart versions without, which looks deliberate, and "names of the control tests cited in the release docs" names no file. | Question: close this issue with this audit as the record, or name the remaining nits. |
+| #3941 Contract text for users `?filter=inactive` | FIXED | `server/http/handlers/openapi.yaml:5496`, `server/proto/keyorix.proto:540-541`, `server/proto/pb/keyorix.pb.go:2558` and `web/src/types/api-generated.ts:12458` all say a never-logged-in account counts once it is 30+ days old (judged by its creation date). | Also checked, as asked. |
+| #3450 Suspend dialog cannot show where a secret is synced | NEEDS DECISION | Still a gap: `rg` finds no cluster/target report-in anywhere in the server, proto or docs. | Design questions from the issue: opt-in vs default, what an agent may report (no values), staleness, audit. Feature, not a defect. |
+| #3455 JSON responses: UTC at the source; evaluate encoding/json/v2 | OPEN | Still the reflective walk with a pre-scan: `server/http/handlers/httpx/response_time_utc_scan.go` (`needsUTC`). No `GOEXPERIMENT=jsonv2` evaluation exists in the tree. | Repro: run the server in a non-UTC zone; every JSON response walks the full value. Low priority perf; owner is the storage owners (convert at source). |
+| #2895 ADR-112: 14 settings that cannot be renamed mechanically | NEEDS DECISION | Row 14 was renamed (#2899, `sso.providers[].insecure_trust_saml_asserted_email`). The other 13 stay registered under their current names (`internal/config/insecure_settings_registry.go:342-352`), all 14 are tracked by `TestInsecureSettingsRegistry_EveryIssue2895RowIsRegistered`, and the sweep test refuses a new unregistered weakening. | Questions for Andrei, unchanged from the issue: (1) are the polarity inversions (rows 1, 2, 3, 6, 7, 11) worth inverting, given the alias mechanism does not invert; (2) for the shape changes (rows 4, 5, 8, 9, 10, 12, 13) add a new boolean or stay derived-only. |
+| #2892 ADR-115: fold improvements from closed #2628 | OPEN | `docs/adr-115-local-audit-journal.md` is `Parked (2026-10-13)` with no amendment from #2628. #2628 and the prototype #2758 are both closed. | Deferred by its own terms: do it in the session that revives the journal. Not actionable now; keep open as a pointer. |
+| #2900 Key-set manifest | FIXED | `internal/keyfiles/manifest.go` (generation id, per-file hash and generation, atomic write), verified at boot by `VerifyKeySetConsistency` (`internal/keyfiles/consistency.go:275-282`, `server/main.go:515`). The mtime heuristic is gone (`rg keySetMtimeTolerance` finds nothing). `TestEveryKeyMaterialWriterUpdatesTheManifest` (`internal/keyfiles/manifest_writers_structural_test.go:118`), `TestReconcile_PreManifestCompleteSet_IsAdoptedOnce`, `TestReviewKF_ManifestFromAnotherGeneration_Refused` pass; writer tests in `internal/encryption/keyset_manifest_writers_test.go`; restore path in `server/admin/restore_keyset_manifest_test.go`. | Acceptance criteria 1 to 6 each have a test or a code location. |
+
+## Verified earlier today by PLANNER-11140103 (rows copied, not rechecked)
+
+Source: `~/proj/prompts/reports/SESSION-PLANNER-11140103.md`. The brief says not to recheck these.
+
+| Issue | Verdict | Evidence |
+|---|---|---|
+| #3147 | FIXED | `internal/core/break_glass.go` `ListBreakGlassActivationsForCaller` returns the caller's own rows. |
+| #2868 | FIXED | `web/src/types/__tests__/openapiDrift.test.ts` `allowKey(path, kind)`. |
+| #3460 | FIXED | `web/nginx.conf` `/health` is backend-aware. |
+| #2803 | FIXED | `RevertAccessReviewItemClaim` no longer exists. |
+| #3453 | FIXED | `scripts/demo` curl sites use `-H @file`. |
+| #3830 secretenv bootstrap and Vault tokens bypass the `*_FILE` snapshot | FIXED | Verified by PLANNER-11140103 in an earlier plan; no evidence line in its report. |
+| #3914 residual host-zone time sites | FIXED | Same. |
+| #3426 failed webhook delivery logs the full channel URL | FIXED | Same. |
+| #3429 gRPC failed-auth IP limiter sweeps its whole map | FIXED | Same. |
+| #2925 posture labels a deprecated-name setting as shipped-default | FIXED | Same. |
+| #3742 `[demo]` encryption init blames a live server | FIXED | Same. |
+| #3736 `[demo]` audit search `--actor` never matches a machine identity | FIXED | Same. |
+| #3741 `[demo]` break-glass list shows the user as a bare ID | FIXED | Same. |
+| #3941 | FIXED | Rechecked above (Group 3). |
+| #3523 admin init creates a SQLite file when PostgreSQL is intended | OPEN | The fix is in open PR #4189 (PILOT-ADMIN-OPS-1, `server/admin`, not mine to touch). It is not on `origin/main` yet: close after #4189 merges. |
+
+Rows with "no evidence line" rest on the planner's word; a reader who wants the file:line should ask PLANNER-11140103.
+
+## Fixes in this PR
+
+None. Every OPEN or undecided item is one of: an API-shape or product decision (#3444, #3450, #2895),
+a CI or `.github` change (#3445), another session's files (#3523 in `server/admin`, #3454 read path),
+an open leftover with no small unowned fix (#3455, #2892), or a flake with no reproduction (#3328).
+The "at most 4 test-first fixes" allowance was not used.
+
+## Methods and limits
+
+- Every FIXED row names code or a test on `origin/main`; tests marked "pass" were run on this tree.
+- Not run: the e2e journeys (#3463, need a built server and the e2e VM), the opt-in scale test (#3462),
+  and the web specs (#2823, no browser in the sandbox). Their rows rest on reading the code and tests.
