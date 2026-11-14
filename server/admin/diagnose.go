@@ -3,10 +3,15 @@ package admin
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
@@ -136,6 +141,32 @@ func diagnoseConfigParse() (*config.Config, error) {
 	return cfg, nil
 }
 
+// requireKeyFilesPresent fails, naming each absolute path, when a key file the
+// configuration requires is not on disk. Read-only: it only stats. A path that
+// cannot be statted for another reason counts as present, as the first-boot
+// gate does (never treat "could not look" as "absent").
+func requireKeyFilesPresent(enc *config.EncryptionConfig) error {
+	paths, err := keyfiles.RequiredKeyFilePaths(enc, ".")
+	if err != nil {
+		return fmt.Errorf("encryption key paths: %w", err)
+	}
+	var missing []string
+	for _, p := range paths {
+		if _, serr := os.Stat(p); errors.Is(serr, fs.ErrNotExist) {
+			if abs, aerr := filepath.Abs(p); aerr == nil {
+				p = abs
+			}
+			missing = append(missing, "key file "+p+" does not exist")
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s. diagnose is read-only and does not create keys; "+
+		"`keyorix-server admin init` creates the keys of a new install (relative key paths are resolved against the current directory)",
+		strings.Join(missing, "; "))
+}
+
 // diagnoseEncryption attempts a REAL KEK derivation (not just a file-exists
 // check) under the same exclusive DEK lock the server itself acquires at
 // startup, released immediately after. This is deliberately more thorough
@@ -151,6 +182,13 @@ func diagnoseEncryption(cfg *config.Config) error {
 		}
 		defer crypto.WipeBytes(passphraseBytes)
 		passphrase = string(passphraseBytes)
+	}
+
+	// Before anything that can write: the lock file below and Initialize (which
+	// generates a salt and a DEK when none exist) both create files, and a
+	// diagnose command must not.
+	if err := requireKeyFilesPresent(&cfg.Storage.Encryption); err != nil {
+		return err
 	}
 
 	svc := encryption.NewService(&cfg.Storage.Encryption, ".")
