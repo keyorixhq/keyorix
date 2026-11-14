@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
@@ -84,12 +85,27 @@ func (s seqStep) String() string {
 	return fmt.Sprintf("%s actor=%s subject=%s scope=%s role=%d bit=%d", seqKindNames[s.Kind], s.Actor, s.Subject, s.T, s.Role, s.Bit)
 }
 
-func decodeSeq(data []byte) []seqStep {
+// decodeSeq decodes bytes into steps over the FULL operation alphabet. It is the
+// all-features (uniform) decoder used by the hand-written controls, plants,
+// census and sweep; it is exactly decodeSeqSwarm with an all-ones feature mask.
+func decodeSeq(data []byte) []seqStep { return decodeSeqSwarm(^uint64(0), data) }
+
+// decodeSeqSwarm decodes bytes into steps whose operation KINDS are drawn only
+// from the subset of the alphabet enabled by mask (swarm testing — see
+// internal/fuzzutil.Swarm). The step-kind byte is mapped through the enabled
+// subset instead of the whole alphabet, so an execution whose mask disables a
+// kind never emits that kind. The non-kind fields (actor, subject, scope, role,
+// bit) are decoded exactly as before. With mask == ^uint64(0) every kind is
+// enabled and the mapping is byte-identical to the original decoder
+// (int(b[0]) % numSeqKinds), which is why prepending an all-ones mask to a seed
+// preserves its meaning. Guarded by TestDecodeSeqAllOnesMatchesUniform.
+func decodeSeqSwarm(mask uint64, data []byte) []seqStep {
+	sw := fuzzutil.NewSwarm(mask, int(numSeqKinds))
 	var out []seqStep
 	for i := 0; i+seqStepLen <= len(data) && len(out) < seqMaxSteps; i += seqStepLen {
 		b := data[i : i+seqStepLen]
 		out = append(out, seqStep{
-			Kind:    seqKind(int(b[0]) % int(numSeqKinds)),
+			Kind:    seqKind(sw.Pick(int(b[0]))),
 			Actor:   seqActors[int(b[1])%len(seqActors)],
 			Subject: seqSubjects[int(b[2])%len(seqSubjects)],
 			T:       seqTargets[int(b[3])%len(seqTargets)],
