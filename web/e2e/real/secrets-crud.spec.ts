@@ -282,12 +282,25 @@ test('revealing a secret value shows the plaintext without crashing the page (re
     const row = page.getByRole('row', { name: new RegExp(secretName) });
     await row.getByTitle('View').click();
 
+    // #2450 guard: the value must come from GET /secrets/{id}?include_value=true
+    // (the versions list is metadata only and may still be fetched for History).
+    const valueRead = page.waitForResponse(
+        (r) =>
+            r.request().method() === 'GET' &&
+            /\/api\/v1\/secrets\/\d+$/.test(new URL(r.url()).pathname) &&
+            new URL(r.url()).searchParams.get('include_value') === 'true'
+    );
+    const pageErrors: string[] = [];
+    page.on('pageerror', (e) => pageErrors.push(e.message));
+
     await page.getByRole('button', { name: 'Reveal', exact: true }).click();
+    expect((await valueRead).status()).toBe(200);
     await expect(page.locator('body')).toContainText(value, { timeout: 10_000 });
     // The page must still be the real secret detail view, not a crashed
     // RouteErrorBoundary fallback.
     await expect(page.getByText('Page failed to load')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Secret Value' })).toBeVisible();
+    expect(pageErrors, 'Reveal must not throw (atob of a missing field)').toEqual([]);
 });
 
 // DEMO-UI-2: the History and Recent access panels must follow the secret's own
