@@ -192,6 +192,29 @@ func TestNoFiles(t *testing.T) {}
 	wantTests(t, analyse(r), "TestUsesReader")
 }
 
+// A test that walks the tree and checks that cited paths exist observes a file
+// elsewhere that no literal names (internal/docsdrift's TestDocLinksResolve
+// failed when internal/core/INVARIANTS.md was deleted, and the first version of
+// testreach did not select it). Any file-reading call is a seed, for every target.
+func TestReach_ComputedPathReaderSeesEveryTarget(t *testing.T) {
+	r := writePkg(t, map[string]string{
+		"p/p.go": pkgSrc,
+		"p/a_test.go": `package p
+import ("io/fs"; "os"; "path/filepath"; "testing")
+func repoRoot() string { return ".." }
+func TestCitedPathsExist(t *testing.T) {
+	_ = filepath.WalkDir(filepath.Join(repoRoot(), "docs"), func(p string, d fs.DirEntry, err error) error {
+		_, serr := os.Stat(p)
+		return serr
+	})
+}
+func TestPure(t *testing.T) {}
+`,
+	})
+	r.Targets = []target{{File: "internal/core/INVARIANTS.md"}}
+	wantTests(t, analyse(r), "TestCitedPathsExist")
+}
+
 // A one-word directory literal names a target only when the target is
 // outside every package (select-affected.py's rule 3), and a .go target is
 // named by path, never by its basename.

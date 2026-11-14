@@ -51,10 +51,11 @@
 //     (rule 3's semantics: the basename of a non-Go target, the target's path or
 //     a directory above it, a one-word directory only for an outside target);
 //     for a target inside dir also when a literal names it relative to dir, is
-//     ".", "./", "" or a glob, or when it calls a file-reading function
-//     (os.ReadDir/ReadFile/Open/Stat, filepath.Walk/Glob, fs.WalkDir, ...) or uses
-//     a reader_imports package; and Fuzz<Name> when a target is under
-//     testdata/fuzz/<Name>/ (go test reads that corpus itself).
+//     ".", "./", "" or a glob; for ANY target when it calls a file-reading
+//     function (os.ReadDir/ReadFile/Open/Stat, filepath.Walk/Glob, fs.WalkDir,
+//     runtime.Caller, ...) or uses a reader_imports package, since a walk that
+//     checks cited paths exist observes a file no literal names; and Fuzz<Name>
+//     when a target is under testdata/fuzz/<Name>/ (go test reads that corpus).
 //   - Falls back to ALL tests on a parse error, a dot import, //go:linkname, or
 //     a //go:embed in a test file.
 //
@@ -70,6 +71,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -77,6 +79,8 @@ import (
 	"strconv"
 	"strings"
 )
+
+const maxRequestBytes = 64 << 20
 
 type target struct {
 	File    string `json:"file"`
@@ -134,7 +138,9 @@ type decl struct {
 
 func main() {
 	var reqs []request
-	if err := json.NewDecoder(os.Stdin).Decode(&reqs); err != nil {
+	// The request is select-affected.py's own output (a few hundred KiB for
+	// the whole module); the cap only bounds a malformed one.
+	if err := json.NewDecoder(io.LimitReader(os.Stdin, maxRequestBytes)).Decode(&reqs); err != nil {
 		fmt.Fprintln(os.Stderr, "testreach: bad request:", err)
 		os.Exit(2)
 	}
@@ -217,18 +223,24 @@ func seedReason(d *decl, r request, changedTest, seedImp, readerImp map[string]b
 			return "uses " + imp
 		}
 	}
-	for _, t := range r.Targets {
-		inDir := strings.HasPrefix(t.File, r.Dir+"/")
-		if inDir && d.access {
-			return "reads files of " + r.Dir
+	// A file-reading or tree-reading call can observe ANY file, wherever it
+	// is: a walk of docs/ that checks every cited path exists breaks when a
+	// file elsewhere is deleted or renamed, with no literal naming it
+	// (TestDocLinksResolve, TestDocsCitedRepoPathsExist and
+	// internal/core/INVARIANTS.md, found by deleting the file; see the
+	// session report MQ-TEST-SLIM-1).
+	if len(r.Targets) > 0 {
+		if d.access {
+			return "reads files by a computed path"
 		}
-		if inDir {
-			for imp := range d.imports {
-				if readerImp[imp] {
-					return "uses " + imp + ", which can read the source tree"
-				}
+		for imp := range d.imports {
+			if readerImp[imp] {
+				return "uses " + imp + ", which can read the source tree"
 			}
 		}
+	}
+	for _, t := range r.Targets {
+		inDir := strings.HasPrefix(t.File, r.Dir+"/")
 		if w := literalNames(d, t, r.Dir, inDir); w != "" {
 			return w
 		}
