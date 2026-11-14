@@ -9,7 +9,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 )
 
-type panicExec struct{ gen bool }
+type panicExec struct{}
 
 func (panicExec) Name() string { return "probe" }
 func (panicExec) Type() string { return "probe" }
