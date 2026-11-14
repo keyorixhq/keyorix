@@ -29,7 +29,7 @@ func TestOpenAccessReviewCampaign_SnapshotsEntries(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // editor → one role entry
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // project_developer → one role entry
 
 	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "Q4 2026")
 	require.NoError(t, err)
@@ -81,8 +81,8 @@ func TestDecideAccessReviewItem_AttestAndRevoke(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	h.CreateTestUser(t, "bob", 11)
-	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // alice editor
-	h.AssignUserRole(t, 11, testhelper.RoleProjectViewer, uptr(proj))    // bob viewer
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // alice project_developer
+	h.AssignUserRole(t, 11, testhelper.RoleProjectViewer, uptr(proj))    // bob project_viewer
 
 	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "review")
 	require.NoError(t, err)
@@ -380,7 +380,7 @@ func TestOpenAccessReviewCampaign_PersistsDegradedFromReport(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // editor → write
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // project_developer → delete
 
 	report, err := svc.GenerateProjectAccessReview(ctx, proj)
 	require.NoError(t, err)

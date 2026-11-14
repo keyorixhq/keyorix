@@ -169,7 +169,7 @@ func TestRevokeAccessReviewGrant_Role(t *testing.T) {
 
 	const proj = uint(2)
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // editor → write
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // project_developer → delete
 
 	ctx := context.Background()
 	before, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
@@ -200,7 +200,7 @@ func TestRevokeAccessReviewGrant_RejectsSelfCertification(t *testing.T) {
 
 	const proj = uint(2)
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // editor → write
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // project_developer → delete
 
 	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 10, proj, core.AccessReviewDecision{
 		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: testhelper.RoleProjectDeveloper,
