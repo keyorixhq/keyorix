@@ -95,7 +95,11 @@ func SplitDSNHostList(field string) []string {
 		// every guard downstream of it) rejects a bracket-wrapped literal
 		// outright, which would otherwise fall through to net.LookupHost and
 		// silently skip validation for exactly this shape.
-		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 1 {
+		//
+		// An empty bracket pair ("[]") would strip to "" and be dropped by
+		// every caller, hiding a host the driver still sees (pgx dials the
+		// literal "[]"); keep the entry as written so it stays a candidate.
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 2 {
 			part = part[1 : len(part)-1]
 		}
 		hosts = append(hosts, part)
