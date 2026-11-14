@@ -4,14 +4,16 @@ import { AxiosError, AxiosHeaders } from 'axios';
 import { useSecretReveal } from '../useSecretReveal';
 import { Secret } from '../../../types';
 
-const { getValueMock, copyToClipboardMock } = vi.hoisted(() => ({
+const { getValueMock, getVersionsMock, copyToClipboardMock } = vi.hoisted(() => ({
     getValueMock: vi.fn(),
+    getVersionsMock: vi.fn(),
     copyToClipboardMock: vi.fn(),
 }));
 
 vi.mock('../../../services/secrets', () => ({
     secretsApi: {
         getValue: getValueMock,
+        getVersions: getVersionsMock,
     },
 }));
 
@@ -75,6 +77,26 @@ describe('useSecretReveal', () => {
         });
 
         expect(result.current.copiedSecretId).toBeNull();
+    });
+
+    // #2450 guard: Copy must never go through the versions list (metadata only,
+    // no value field) and must not atob() anything.
+    it('copies without reading /versions or decoding base64 (#2450)', async () => {
+        const atobSpy = vi.spyOn(globalThis, 'atob');
+        getValueMock.mockResolvedValue('plain-value');
+        copyToClipboardMock.mockResolvedValue(undefined);
+
+        const { result } = renderHook(() => useSecretReveal());
+
+        await act(async () => {
+            await result.current.handleCopySecretValue(makeSecret({ id: 3 }));
+        });
+
+        expect(copyToClipboardMock).toHaveBeenCalledWith('plain-value');
+        expect(result.current.copyErrorId).toBeNull();
+        expect(getVersionsMock).not.toHaveBeenCalled();
+        expect(atobSpy).not.toHaveBeenCalled();
+        atobSpy.mockRestore();
     });
 
     it('sets copyErrorId (not copiedSecretId) when getValue rejects, and clears after 6s', async () => {
