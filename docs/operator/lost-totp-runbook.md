@@ -31,22 +31,30 @@ Authenticator code (or an unused recovery code):
 Logged in to https://localhost:8080 as alice.
 ```
 
-Then, in the same session, replace the lost factor before the codes run out. The `keyorix`
-CLI has `mfa enroll`, `mfa activate` and `mfa stepup` only, so these two go through the web UI
-or the API (all require a bearer session):
+**What a recovery code does not do (verified, 2026-11-14).** It gets the user a session, but it
+is not accepted as the re-proof for the two calls below, which is what replacing the factor
+needs. With a TOTP secret enrolled, both accept only a **current authenticator code** (a
+password alone is answered `400 invalid code or password`, and so is a recovery code in
+`code`, also after `keyorix mfa stepup` with a recovery code):
 
-- `GET /api/v1/auth/mfa/recovery-codes` returns `{remaining, total}`.
-- `POST /api/v1/auth/mfa/recovery-codes/regenerate` issues ten new codes and invalidates every old
-  one, used or not; it needs a current code **or the account password**.
-- `POST /api/v1/auth/mfa/disable` (`{"code": ...}` or `{"password": ...}`) clears the secret and
-  all recovery codes, and ends the user's other sessions. The user then enrols a new device:
+- `GET /api/v1/auth/mfa/recovery-codes` returns `{remaining, total}` (a bearer session is enough).
+- `POST /api/v1/auth/mfa/recovery-codes/regenerate` (`{"code": "<TOTP code>"}`) issues ten new
+  codes and invalidates every old one, used or not.
+- `POST /api/v1/auth/mfa/disable` (`{"code": "<TOTP code>"}`) clears the secret and all
+  recovery codes, and ends the user's other sessions.
 
-  ```bash
-  keyorix mfa enroll        # scan the otpauth:// URI or type the base32 secret into the new app
-  keyorix mfa activate      # prompts for a code from the app and the account password
-  ```
+So a user who has lost the authenticator and holds only recovery codes cannot replace the
+factor themselves: they can sign in and keep working with the codes they have (the CLI has
+`mfa enroll`, `mfa activate` and `mfa stepup` only, no `mfa disable`), but to get a new
+authenticator they need section 3 or 4. The user who can still produce a code (a clock drift
+that was fixed, an app that was restored) can disable and re-enrol:
 
-  `mfa activate` prints the new recovery codes once. Store them offline.
+```bash
+keyorix mfa enroll        # scan the otpauth:// URI or type the base32 secret into the new app
+keyorix mfa activate      # prompts for a code from the app and the account password
+```
+
+`mfa activate` prints the new recovery codes once. Store them offline.
 
 ## 3. A global admin, with host access
 
