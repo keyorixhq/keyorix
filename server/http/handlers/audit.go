@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -487,6 +488,10 @@ func (h *AuditHandler) writeAuditVerifyReport(w http.ResponseWriter, r *http.Req
 	sendSuccess(w, auditVerifyResponse(v), "")
 }
 
+// auditSealedFallbackReason is the `reason` of a sealed report whose state text is
+// empty (it should not be: state_reason carries the seal text).
+const auditSealedFallbackReason = "the audit chain is sealed: it is not whole, though the rows since each seal verify"
+
 // auditVerifyResponse renders a verification report. The pre-incremental keys
 // keep their names and presence rules; valid is true only for status "valid".
 func auditVerifyResponse(v *core.AuditVerifyReport) map[string]any {
@@ -507,6 +512,11 @@ func auditVerifyResponse(v *core.AuditVerifyReport) map[string]any {
 	if v.Status == core.AuditVerifyStatusBroken {
 		resp["first_broken_id"] = v.FirstBrokenID
 		resp["reason"] = v.Reason
+	}
+	if v.Status == core.AuditVerifyStatusSealed {
+		// Sealed is not a failed walk, but a client that renders `reason` must
+		// never print an empty one: carry the seal text there too (#4230).
+		resp["reason"] = cmp.Or(v.StateReason, auditSealedFallbackReason)
 	}
 	if v.NotProvenReason != "" {
 		resp["not_proven_reason"] = v.NotProvenReason
