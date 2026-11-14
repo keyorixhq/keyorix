@@ -1,0 +1,2 @@
+### Fixed
+- **`GET /api/v1/dashboard/stats` `recentActivity` no longer carries scheduler heartbeats (#4272).** The stats payload built its recent-activity list without the filter #4184 set on `/dashboard/activity`, so `admin_job.*` rows written by the system actor (the anomaly-alerts job logs one every pass) reached API and SDK consumers and could crowd out the real events. It now leaves them out; an admin-triggered run and the audit log itself are unchanged.
