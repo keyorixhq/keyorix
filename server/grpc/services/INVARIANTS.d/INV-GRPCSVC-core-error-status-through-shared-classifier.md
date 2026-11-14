@@ -18,6 +18,6 @@
   `TestCoreErrorStatus_TextsAndDetails` (every table row and the ErrorInfo details), the REST
   twin `TestAnswerCoreError_EverySentinelRendersItsClass` over the same `errclass.Sentinels()`
   (the parity check), and the family guard `TestEveryGrantingServiceMapsPermissionDenied` (every
-  service method calling a granting core method, derived by `guardrules.GrantCeilingMethods`,
-  hands the error to a mapper that classifies `ErrPermissionDenied`; report-only on pull
+  service method calling a granting core method, read from
+  `internal/core/testdata/grant_ceiling_reaching_methods.txt`, hands the error to a mapper that classifies `ErrPermissionDenied`; report-only on pull
   requests while its `docs/guard-rollout.d` row exists).
