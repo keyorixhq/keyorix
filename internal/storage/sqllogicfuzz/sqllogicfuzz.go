@@ -22,7 +22,7 @@ package sqllogicfuzz
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 
 	"gorm.io/gorm"
 )
@@ -353,7 +353,7 @@ func SelectIDs(db *gorm.DB, table, where string, args []any) ([]int64, error) {
 	if err := tx.Pluck("id", &ids).Error; err != nil {
 		return nil, err
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	return ids, nil
 }
 
@@ -397,7 +397,7 @@ func CheckTLP(db *gorm.DB, table string, p Frag) (TLPResult, error) {
 		return res, fmt.Errorf("p is null: %w", err)
 	}
 	union := append(append(append([]int64{}, res.PTrue...), res.PFalse...), res.PNull...)
-	sort.Slice(union, func(i, j int) bool { return union[i] < union[j] })
+	slices.Sort(union)
 	// disjointness: union length must equal distinct count must equal len(All)
 	if dup := firstDup(union); dup != nil {
 		res.Mismatch = fmt.Sprintf("partitions overlap at id %d (predicate %q)", *dup, p.SQL)
