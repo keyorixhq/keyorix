@@ -273,7 +273,10 @@ func childSweep(t *testing.T, op, overlay, bucket string) childResult {
 	}
 	args = append(args, ".")
 	cmd := exec.Command("go", args...)
-	cmd.Env = append(os.Environ(), "GOFLAGS=", "AUTHZDIFF_SWEEP=1", "AUTHZDIFF_OPS="+op, "AUTHZDIFF_OUT="+out,
+	// GOFLAGS is passed through (the parent's harness flags such as -p, -trimpath
+	// and -ldflags=-w keep the child on the same build-cache keys, without
+	// debug-symbol links). It used to be cleared with no recorded reason.
+	cmd.Env = append(os.Environ(), "GOFLAGS="+os.Getenv("GOFLAGS"), "AUTHZDIFF_SWEEP=1", "AUTHZDIFF_OPS="+op, "AUTHZDIFF_OUT="+out,
 		"AUTHZDIFF_STRICT=", "AUTHZDIFF_PLANTS=")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("child sweep (overlay=%q) failed: %v\n%s", overlay, err, tail(string(b), 40))
