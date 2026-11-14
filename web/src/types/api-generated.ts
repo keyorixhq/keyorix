@@ -12942,6 +12942,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
             503: components["responses"]["AuditUnavailable"];
         };
     };
