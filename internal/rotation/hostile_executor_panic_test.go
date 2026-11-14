@@ -276,4 +276,3 @@ func mongoHandler(tc hostileCase) func(net.Conn) {
 		}
 	}
 }
-
