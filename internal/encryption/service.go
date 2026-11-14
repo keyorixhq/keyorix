@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -39,6 +40,9 @@ type Service struct {
 	// keyBaseDir is the base directory NewService resolved the configured key
 	// paths against (keyfiles.RequiredKeyFilePaths' baseDir), for ReconcileKeySet.
 	keyBaseDir string
+	// keyPathErr: the config's relative key paths are not defined for this
+	// process's working directory (config.EncryptionConfig.CheckRelativeKeyPathBase).
+	keyPathErr error
 }
 
 // NewService creates a new encryption Service.
@@ -64,10 +68,20 @@ func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
 	} else if ks != nil {
 		km.keySet = ks
 	}
+	// #4249: a relative key path opened from another directory than the
+	// config's names other key files and another DEK lock. Refused before
+	// anything opens them (AcquireExclusiveKeyLock, Initialize).
+	var keyPathErr error
+	if !filepath.IsAbs(baseDir) {
+		if keyPathErr = cfg.CheckRelativeKeyPathBase(); keyPathErr != nil {
+			km.configErr = keyPathErr
+		}
+	}
 	return &Service{
 		config:     cfg,
 		keyManager: km,
 		keyBaseDir: baseDir,
+		keyPathErr: keyPathErr,
 	}
 }
 

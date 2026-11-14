@@ -111,8 +111,8 @@ It still opens the database (read only, to finish an interrupted DEK rotation fi
 take the exclusive presence lock, #3513), so the database must be reachable with the
 configured `storage` settings: on PostgreSQL the server must be reachable; on SQLite a relative
 `database.path` is taken relative to the config file. Give `encryption.dek_path` and
-`salt_path` as absolute paths: relative ones are resolved against the directory you run the
-command from, so another directory gets (and writes) a different key set (#4249). When the
+`salt_path` as absolute paths: relative ones are defined against the config file's
+directory, and the command refuses to run from any other directory, naming the key (#4249). When the
 database is not reachable, `rotate-kek` fails with
 `cannot connect to the database to check for a running server`, although only key files change.
 Bring the database up first; `--force` is not a fix for this (see the runbook).
