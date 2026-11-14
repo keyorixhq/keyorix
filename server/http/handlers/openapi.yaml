@@ -2324,8 +2324,8 @@ paths:
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
       responses:
-        '200':
-          description: "Envelope {data=null, message='deleted'}."
+        '204': {description: Template deleted. No response body.}
+        '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
