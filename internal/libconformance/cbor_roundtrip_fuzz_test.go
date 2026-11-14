@@ -141,9 +141,31 @@ func nanAwareEqual(a, b any) bool {
 		if !ok || len(av) != len(bv) {
 			return false
 		}
-		for k, va := range av {
-			vb, present := bv[k]
-			if !present || !nanAwareEqual(va, vb) {
+		// Set-match rather than direct key lookup: a KEY can itself be normalized
+		// by the round-trip (a tag-1 datetime key becomes an int key — E11; a NaN
+		// or bignum key re-types — E1/E2), so a Go `==` map lookup would miss it.
+		// Pair each av entry with an unused bv entry whose key AND value are
+		// nanAwareEqual. O(n²), fine for fuzz-sized maps. (Found by fuzzing:
+		// a {tag1(-17): -17} map whose key re-encoded to the untagged int -17.)
+		usedB := make([]bool, 0, len(bv))
+		bEntries := make([]struct{ k, v any }, 0, len(bv))
+		for k, v := range bv {
+			bEntries = append(bEntries, struct{ k, v any }{k, v})
+			usedB = append(usedB, false)
+		}
+		for ka, va := range av {
+			matched := false
+			for i, be := range bEntries {
+				if usedB[i] {
+					continue
+				}
+				if nanAwareEqual(ka, be.k) && nanAwareEqual(va, be.v) {
+					usedB[i] = true
+					matched = true
+					break
+				}
+			}
+			if !matched {
 				return false
 			}
 		}
