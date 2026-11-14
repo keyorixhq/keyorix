@@ -1,0 +1,7 @@
+### Documentation
+- **Lost-TOTP, break-glass and audit-chain-break runbooks walked against the binary.** `docs/operator/lost-totp-runbook.md` no longer says a recovery code plus the account password can disable or regenerate MFA (the server accepts a current authenticator code, or the password only after a passkey re-authentication; #4224), says that `clear-login-lockout --user` takes an email address or id, and names the 72h one-time-password expiry of the online two-administrator reset. `break-glass-runbook.md` drops the "note" a degraded activation does not print. `audit-chain-break-runbook.md` lists the `SEALED` verdict and the HTTP 500 that `migrate-chain-encoding` returns for a refusal (#4230).
+
+- **Documented commands the CLI refuses are fixed.** `keyorix user suspend|delete|revoke-sessions|resend-setup-link` take no `--by` (CONFIGURATION.md, SECRET_SHARING_WORKFLOWS.md, ADR-028); `keyorix invite resend` takes `--project` and `--id`; the DEK rotation command in ADR-010 is `keyorix-server admin encryption rotate`.
+
+### Testing
+- **`make docs-cli-check` finds docs that give the CLI a flag or command it does not have.** `scripts/docs/check-cli-flags.sh` reads every fenced `keyorix` / `keyorix-server` command line in the documentation and checks the command path and each `--flag` against the built binary's `--help`; secret flags the CLI refuses count as missing. Placeholders go in `scripts/docs/check-cli-flags.allow` with a reason per row.
