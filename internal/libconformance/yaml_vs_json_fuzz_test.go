@@ -56,6 +56,27 @@ func containsYAMLBreakRunes(s string) bool {
 	return false
 }
 
+// yamlWSFoldEqual reports whether a and b are equal once every space, tab, newline, CR and
+// Unicode line-break rune (NEL/LS/PS) is removed. Because both strings are decoded from the
+// SAME bytes, a difference that vanishes under this stripping is purely yaml.v3's
+// whitespace / line-break folding (it folds breaks and strips whitespace adjacent to a fold
+// point) against encoding/json's verbatim preservation — documented YAML behaviour, not an
+// arbitrary value divergence.
+func stripYAMLWS(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case ' ', '\t', '\n', '\r', 0x85, 0x2028, 0x2029:
+			// drop
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func yamlWSFoldEqual(a, b string) bool { return stripYAMLWS(a) == stripYAMLWS(b) }
+
 // normalizeYAMLBreaks maps every character YAML treats as a line break — CR, NEL (U+0085),
 // LINE SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029) — plus CRLF to a single '\n', so
 // two strings that differ only in YAML's line-break folding compare equal.
@@ -221,7 +242,7 @@ func treeCompare(j, y any) *yamlJSONMismatch {
 			// scalar content; encoding/json preserves them verbatim. If normalising those to
 			// \n on both sides reconciles the strings, this is that documented line-folding,
 			// not an arbitrary value divergence.
-			if ok && containsYAMLBreakRunes(jv) && !containsYAMLBreakRunes(ystr) {
+			if ok && (containsYAMLBreakRunes(jv) || containsYAMLBreakRunes(ystr)) && yamlWSFoldEqual(jv, ystr) {
 				key = "yaml-line-break-normalization"
 			}
 			return &yamlJSONMismatch{key: key, detail: "string value differs", jsonV: jv, yml: ystr}
