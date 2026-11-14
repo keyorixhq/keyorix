@@ -23,6 +23,7 @@ Columns: Class · Library/target · What differs · Why it is EXPECTED · Where 
 | E8 | OOB / bounded | go-tpm `FuzzTPMUnmarshalBoundedWork` | a TPM2B length prefix larger than the remaining buffer is rejected (error) not read past | go-tpm validates length prefixes against remaining bytes before copying | oracle asserts no-panic + bounded alloc |
 | E9 | Scope | go-tpm `FuzzTPMUnmarshalBoundedWork` | a hit confined to `TPMTPublic`/`TPMSAttest`/`TPM2BAttest` is UPSTREAM-only, not a Keyorix reachability claim | only `TPM2BPublic`/`TPM2BPrivate` have a traced live Keyorix caller | triage classifies by tripped type |
 | E10 | Scope | cbor/v2 (all) | CBOR findings are INDIRECT-only w.r.t. Keyorix | no direct Keyorix import; reached via go-webauthn attestation decode | reachability trace required before any Keyorix claim |
+| E11 | Round-trip | cbor/v2 `FuzzCBORRoundTrip` | **FOUND BY FUZZING** (input `c130`): tag-0/1 datetime decodes to `time.Time`, re-encodes as an UNTAGGED Unix number → type changes `time.Time`→`int64`/`float64` and the tag is dropped | default EncMode encodes `time.Time` as `TimeUnix`; the *instant* is preserved, only the tag/Go-type representation changes. Documented fxamacker behavior, benign for Keyorix (go-webauthn uses no datetime tags) | `sameInstant` compares by Unix second; reproducer kept as a regression seed |
 
 ## Padding / unwrap panic class (class 3) — note
 
