@@ -388,16 +388,19 @@ unit names different ones.
 
 | Exit status | Class | Examples | Shipped systemd unit |
 |---|---|---|---|
-| exit 78 | An operator must fix it; waiting cannot help. | Config file unreadable or invalid; key file missing, unreadable or inconsistent; master passphrase file missing, empty or wrong; transport or file-permission refusal; database login refused. | `RestartPreventExitStatus=78`: not restarted. `systemctl status` shows the unit failed with `status=78`; fix the cause, then `systemctl restart keyorix-server`. |
-| exit 75 | A dependency that may come back. | The cloud KMS (`aws-kms`, `gcp-kms`) or a remote database cannot be reached: connection refused, DNS failure, timeout. | Restarted after `RestartSec=30` (`Restart=always`, `StartLimitIntervalSec=0`), for as long as it takes. |
-| exit 1 | Everything else, as before. | A crash, a listener port in use, a lock held by another server, a database or KMS that answered with an error. | Restarted after `RestartSec=30`. |
+| exit 78 | An operator must fix it; waiting cannot help. | Config file unreadable or invalid; key file missing, unreadable or inconsistent; master passphrase file missing, empty or wrong; transport or file-permission refusal; database login refused (an authentication error from Postgres); an undeclared transaction-mode pooler; a KMS that refused (access denied, key not found or disabled, a TLS certificate the host does not trust). | `RestartPreventExitStatus=78`: not restarted. `systemctl status` shows the unit failed with `status=78`; fix the cause, then `systemctl restart keyorix-server`. |
+| exit 75 | A dependency that may come back. | The cloud KMS (`aws-kms`, `gcp-kms`, `azure-kms`) or a remote database cannot be reached: connection refused, DNS failure, timeout. A KMS that answered "not now": HTTP 5xx or 429, an AWS throttling error, gRPC `UNAVAILABLE`, `INTERNAL`, `DEADLINE_EXCEEDED` or `RESOURCE_EXHAUSTED`. | Restarted after `RestartSec=30` (`Restart=always`, `StartLimitIntervalSec=0`), for as long as it takes. |
+| exit 1 | Everything else, as before. | A crash, a listener port in use, a lock held by another server, a database that answered with a non-login error (starting up, too many connections), a connection closed during the Postgres login. | Restarted after `RestartSec=30`. |
 
 What the code does not do, written as limits:
 
 - The class comes from the failing step, not from a guess about the cause. A
-  network error while reaching the KMS or database is 75; a KMS that answered
-  and refused (wrong key, access denied) is 78 for the key provider and 1
-  elsewhere. A failure no step classified stays 1 and is retried.
+  network error while reaching the KMS or database, or a KMS answering with a
+  server-side or throttling error, is 75; a KMS that answered and refused
+  (wrong key, access denied) is 78 for the key provider. A connection Postgres
+  (or a proxy in front of it) closed during the login is 1, not 78: a backend
+  that is down or restarting looks the same as refused credentials. A failure
+  no step classified stays 1 and is retried.
 - `RestartSec=30` is one delay for every restart, crashes included: after a
   crash or an OOM kill the server is back after 30 s, not 5. systemd's growing
   delay (`RestartSteps=`, `RestartMaxDelaySec=`) needs v254 and this guide
@@ -407,8 +410,11 @@ What the code does not do, written as limits:
   mode, and sends no alert. After exit 78 nothing runs: the watch on `/health`
   from outside, or an alert on a failed unit, is how you find out.
 - Run natively against the built binary: missing passphrase file, missing key
-  file, unparseable config (all 78) and an unreachable `aws-kms` endpoint (75),
-  in `server/boot_exit_codes_integration_test.go`. Not run: a real systemd
+  file, unparseable config, an `aws-kms` answering access denied (all 78), an
+  unreachable `aws-kms` endpoint, an `aws-kms` answering 500 or throttling, and
+  a Postgres nothing listens for (all 75), in
+  `server/boot_exit_codes_integration_test.go`. The Azure and GCP answers are
+  covered by unit cases only. Not run: a real systemd
   honouring `RestartPreventExitStatus=` and `RestartSec=`, a container start,
   and a real cloud KMS outage (pending e2e VM).
 
