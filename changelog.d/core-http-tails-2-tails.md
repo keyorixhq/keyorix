@@ -1,6 +1,0 @@
-### Fixed
-- **`pending_steps` now lists `enroll_mfa` for a user who owes MFA enrolment after an administrator MFA reset.** The login and `GET /auth/profile` responses omitted the step although the setup gate's 403 listed it, so the user was confined but the informational field said nothing was owed. `core.PendingSetupStepsFor` takes the owed flag (`core.MFAEnrolmentOwed(user)` at login, `userCtx.MFAEnrolmentOwed` at profile); users who owe nothing see no change.
-- **The gRPC role RPCs (`AssignRole`, `RemoveRole`) answer `PermissionDenied`, not `Internal`, for a role grant-ceiling refusal.** The refusal (`core.ErrPermissionDenied`) fell through `mapRoleError` to `Internal`; it now maps to `PermissionDenied` with a fixed message that names no permission or role. Nothing was ever over-granted: the request was refused before any change.
-
-### Testing
-- **The MFA-reset cross-replica, login-budget and project MFA toggle tests run on the production SQLite dialect.** `mfa_reset_cross_replica_test.go`, `login_budget_count_failures_test.go` and `project_mfa_toggle_http_test.go` use `internal/storage/sqlitedialect` and are removed from the `TestNoNewDriverSqliteTestImports` allowlist. No assertion needed changing.

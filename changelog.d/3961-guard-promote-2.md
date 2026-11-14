@@ -1,2 +1,0 @@
-### Testing
-- **GUARD-PROMOTE-2 guard promotion and widening.** The URL-leak guard (`TestNoConfiguredURLFormattedIntoLogsOrErrors`) is blocking on every run now; the KEK-derived wording guard also scans `_test.go` comments (two wording fixes); a new report-only guard, `TestEveryExpiryAssignmentAndColumnWriteInCoreIsUTC`, covers assignments and `Update`/`UpdateColumn`/`Updates(map)` writes of expiry, `last_used_at` and `last_seen_at` in core (#3961).

@@ -1,2 +1,0 @@
-### Testing
-- **Fake-clock fuzzers for extreme instants and DST schedules.** `FuzzFakeClockExtremes` mints sessions, PATs and leases from the zero time through 2106 and runs multi-step clock programs against model-based oracles, and `FuzzEnforceScheduleDST` compares `enforceSchedule` with an independent computation across 14 time zones. `TestSeamGap_*` pins two expiry and schedule decisions that the injected clock cannot reach yet. Rules, oracles and results: `internal/core/FAKE_CLOCK_FUZZ.md`.

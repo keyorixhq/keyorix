@@ -1,2 +1,0 @@
-### Fixed
-- **`admin init` leaves a PostgreSQL database alone until `admin migrate`.** With `storage.type: postgres` and a DSN, init used to open storage for its own audit event, which migrated the whole schema before `admin migrate` ran. It now creates no table and no SQLite file (`keyorix.db*`); it records itself in the audit chain only when the schema already exists, and says so otherwise. Its closing hints are now the last thing it prints, after the SQLite files it creates, and the "Using PostgreSQL instead?" hint names every SQLite file to delete (#3523).
