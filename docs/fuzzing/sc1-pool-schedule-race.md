@@ -99,12 +99,18 @@ modified. **Status: PASS under `-race`** (see §6).
 
 ## 4. Findings table
 
-| # | Target / area | Classification | Status |
-|---|---|---|---|
-| — | all three pool targets, seed corpus + oracle self-tests, `-race`, SQLite + Postgres | green | PASS |
-| — | fuzzing in progress; hits triaged below as they arrive | — | pending |
+| # | Target / area | Observation | Classification | Trace to live Keyorix caller |
+|---|---|---|---|---|
+| F1 | `FuzzSQLitePoolLinearizable`, first contact | `read()->"v23"` flagged NOT LINEARIZABLE with a lone op | **ARTIFACT** (harness bug, fixed in fixture) | n/a — see triage T1 |
+| — | all three targets, ~128 min `-race`, SQLite + Postgres, post-fix | no linearizability violation, no leak, no deadlock, no panic/race | green | — (no defect to trace) |
+| N1 | go-redis | no shared pool; no in-cache test server | **NEGATIVE RESULT / SKIP** | n/a (§5) |
+| N2 | gRPC client conns | Keyorix opens none | **NEGATIVE RESULT** | n/a (§5) |
+| H1 | PG schema hygiene on the shared test server | killed fuzz workers leak `sc1_*` schemas | **HARDENING (test infra, not product)** | n/a — see triage T2 |
 
-*(Updated continuously during the fuzz run — see §6.)*
+No VULNERABILITY / SECURITY-DEFECT / DEFECT / CANDIDATE findings. The one hit (F1)
+was a harness false positive caught by the oracle on first contact and fixed in the
+fixture, exactly as the CLAUDE.md rule prescribes ("fix the harness, do not weaken the
+oracle"). No upstream-library defect was observed, so no upstream reproducer is owed.
 
 ---
 
@@ -125,16 +131,87 @@ modified. **Status: PASS under `-race`** (see §6).
 
 ## 6. Fuzz run log & triage
 
-*(Filled in as chunks complete. Each chunk is one foreground
-`go test -fuzz … -fuzztime 540s -race -parallel 2`, GOMAXPROCS=2, nice -n 10.)*
+Each chunk is one foreground `go test -fuzz … -fuzztime 540s -race -parallel 2`,
+`GOMAXPROCS=2`, `nice -n 10`, against SQLite always and Postgres (`KEYORIX_TEST_PG_DSN`)
+where the target uses it. All chunks exited 0 (green).
 
-Pending — see end of report for the running tally.
+| Chunk | Target | fuzztime | execs | new-interesting (total corpus) | result |
+|---|---|---|---|---|---|
+| verify | sqlite | 90s | 85 | 3 (7) | green (post-fix) |
+| sqlite #2 | sqlite | 540s | 780 | 19 (26) | green |
+| sqlite #3 | sqlite | 540s | 301 | 18 (44) | green |
+| sqlite #4 | sqlite | 540s | 1207 | 18 (62) | green |
+| sqlite #5 | sqlite | 540s | 1691 | 16 (78) | green |
+| pgx #1 | pgx | 540s | 32875 | 45 (48) | green |
+| pgx #2 | pgx | 540s | 10962 | 20 (68) | green |
+| pgx #3 | pgx | 540s | 10831 | 18 (86) | green |
+| pgx #4 | pgx | 540s | 19843 | 23 (109) | green |
+| pgx #5 | pgx | 540s | 13951 | 20 (129) | green |
+| gorm #1 | gorm | 540s | 539 | 19 (22) | green |
+| gorm #2 | gorm | 540s | 1139 | 19 (41) | green |
+| gorm #3 | gorm | 540s | 565 | 16 (57) | green |
+| gorm #4 | gorm | 540s | 484 | 16 (73) | green |
+| gorm #5 | gorm | 540s | 335 | 16 (89) | green |
+
+**Total real fuzz wall time ≈ 128 min** (sqlite ≈ 37 min incl. verify, pgx ≈ 45 min,
+gorm ≈ 45 min), each target ≥ 8 min, total ≥ 120 min. Throughput is intentionally low for
+the SQLite/gorm targets: every iteration is a heavyweight real-DB concurrent interleaving
+(WAL fsync, per-iteration table reset, transactional RMW) run under `-race` — the value is
+in the breadth of interleavings exercised, not raw exec count. The pgx target is faster
+(no local fsync) and drove the corpus to 129 interesting inputs. Temperature stayed in the
+66–90 °C band (peaked 90 °C mid-run, never the 92 °C pause threshold); all runs kept
+`nice -n 10`, `GOMAXPROCS=2`, `-parallel 2`.
+
+### Triage
+
+**T1 — F1, first-contact harness false positive (ARTIFACT).** On the very first SQLite
+chunk the linearizability oracle fired in ~3 s: a single `read()->"v23"` with no matching
+write in the recorded history. Minimised and root-caused in one pass: the pool and its `kv`
+table are built once and reused across fuzz iterations, so a read could observe a value a
+*prior* iteration wrote — not in the current history — which `regModel`'s `Init:""`
+correctly rejects. A second latent variant: a cancelled leak-probe *write* can still commit
+and mutate a recorded key unobserved. **Fix was in the fixture, never the assertion**
+(CLAUDE.md "fix the harness, do not weaken the oracle"): clear recorded keys before each
+concurrent phase, and move leak-probe writes to a disjoint `probe*` keyspace the model
+never reads. Re-ran 90 s + 128 min green. This is itself the strongest evidence the
+linearizability oracle is load-bearing: it caught a real history inconsistency on first
+contact, and the red/green proofs (`TestOracle_Linearizability_*`) show it distinguishes
+legal from illegal histories deterministically.
+
+**T2 — H1, leaked `sc1_*` schemas on the shared PG server (HARDENING, test infra).**
+After the run, 29 `sc1_pool_*` / `sc1_gormtx_*` schemas remained. Root cause: `go test
+-fuzz` kills its worker subprocesses at the deadline without running `tb.Cleanup`, so the
+per-process schema drop never fires for a worker. Not a product defect and not a leak in
+any library — a shared-test-server hygiene gap in these harnesses. Mitigated here by a
+sweep that drops every `sc1_%` schema (left Postgres at 0 leftover). **Issue-ready
+proposal:** add a `TestMain`/package-level pre-run sweep that drops stale `sc1_%` schemas
+older than N minutes, or name schemas under a single per-invocation parent schema dropped
+by the coordinator process (which is not killed); the rig's session-start cleanup should
+also `DROP SCHEMA ... sc1_%`. No production change.
+
+**Replay note:** no crashing input was produced that survived triage (F1 was fixed, not a
+crasher), so there is no minimised crasher to replay 3×. The oracle red/green proofs stand
+in for replay determinism: each is deterministic and was observed to fire and to pass.
 
 ---
 
 ## 7. Talk material
 
-*(Filled in at the end.)*
+The most striking result is a negative one, and it is the point. Across ~128 minutes of
+real-time, `-race`-instrumented, seeded-scheduler fuzzing of pgx's pool, `database/sql` +
+modernc SQLite, and gorm transactions — the three third-party pools a running Keyorix
+shares across every handler goroutine — the linearizability checker and the leak/deadlock
+oracles found **zero** real defects: these libraries hold their guarantees under the
+interleavings Keyorix actually subjects them to. The single hit came in the first three
+seconds and was *our* bug, not theirs: a read saw a value from a previous iteration because
+the test reused one pool across iterations without resetting the table. That is exactly the
+failure mode the repo's own doctrine warns about — a mechanism must be validated against a
+failure that actually happened — and it is also the proof the oracle works, because a
+checker that never fires is indistinguishable from one that is switched off. We fixed the
+fixture and never touched the assertion, and the most valuable artefact to carry forward is
+the transaction-isolation oracle: a monotonic-counter model whose linearizability *is* the
+lost-update check, red-proven by stripping the `FOR UPDATE` off the exact
+`TryAcquireSchedulerLock` RMW shape and watching two increments both return the same value.
 
 ---
 
