@@ -9,9 +9,21 @@ ran: shadow skips nothing). A MISS is
   - a test that failed in a leg the shadow marked would-narrow, and that is
     not among the tests the shadow would have run, or
   - a gated job (edge-builds, e2e-smoke, smoke) marked would-skip that FAILED.
-A failure of a test the shadow would have run is not a miss. Promotion rule
-(report SESSION-MQ-TEST-SLIM-1, section 5): >= 7 days, >= 40 selected rounds,
-zero misses.
+A failure of a test the shadow would have run is not a miss.
+
+A would-skip or would-narrow check whose leg or job did not finish with
+success or failure (cancelled -- the merge_group test-suite matrix is
+fail-fast, so the first failing leg cancels its siblings --, timed_out,
+skipped, or no such job) is INCONCLUSIVE: it might have failed, so the run
+proves nothing about that check. So is a would-narrow leg whose failed tests
+are not all in a logged test list that mq_slim truncated. A run with an
+inconclusive check is not counted as a selected round. Without this the rounds
+that carry signal (something failed) would count a miss only when the
+narrowed leg happened to fail first, biasing the evidence towards zero misses.
+
+Promotion rule (report SESSION-MQ-TEST-SLIM-1, section 5): >= 7 days, >= 40
+conclusive selected rounds, zero misses AND zero inconclusive runs (look at
+each INCONCLUSIVE run, e.g. re-run it, before promoting).
 
 Usage:
   mq-shadow-report.py --since 2026-11-15 [--repo keyorixhq/keyorix]   (uses gh)
@@ -19,7 +31,8 @@ Usage:
                                          DIR/<run>/jobs.json [{name, conclusion,
                                          log}], as the online mode saves them
                                          with --save DIR)
-Exit status: 0 with no misses, 1 with misses, 2 on a usage or API error.
+Exit status: 0 with no misses and no inconclusive run, 1 with misses, 3 with
+inconclusive runs but no misses, 2 on a usage or API error.
 """
 import argparse
 import json
@@ -30,6 +43,7 @@ import sys
 
 FAIL_RX = re.compile(r"^\s*--- FAIL: (\S+)", re.M)
 JOB_OF = {"edge-builds": "edge-builds", "e2e-smoke": "e2e-smoke", "smoke": "smoke"}
+CONCLUSIVE = ("success", "failure")
 
 
 def gh(*args):
@@ -63,10 +77,19 @@ def leg_of(job_name):
 
 
 def judge(records, jobs):
-    """(misses, counts) for one run. jobs: [{name, conclusion, log}]."""
+    """(misses, inconclusive, counts) for one run. jobs: [{name, conclusion, log}]."""
     by_leg = {leg_of(j["name"]): j for j in jobs if leg_of(j["name"])}
     by_name = {j["name"]: j for j in jobs}
-    misses, counts = [], {}
+    misses, inconclusive, counts = [], [], {}
+
+    def finished(check, j):
+        """True when j ran to success or failure; else records why not."""
+        c = (j or {}).get("conclusion")
+        if c in CONCLUSIVE:
+            return True
+        inconclusive.append({"check": check, "why": f"job conclusion {c}" if j else "no such job in the run"})
+        return False
+
     for r in records:
         counts[r.get("decision")] = counts.get(r.get("decision"), 0) + 1
         check, dec = r.get("check", ""), r.get("decision")
@@ -74,21 +97,25 @@ def judge(records, jobs):
             continue
         if check.startswith("test-suite/"):
             j = by_leg.get(check.split("/", 1)[1])
-            if not j or j.get("conclusion") != "failure":
+            if not finished(check, j) or j.get("conclusion") != "failure":
                 continue
             failed = failed_tests(j.get("log", ""))
             if dec == "would-skip":
                 misses.append({"check": check, "why": "leg failed but the shadow would have skipped it", "failed": sorted(failed)})
             else:
-                outside = sorted(failed - set(r.get("tests") or []))
-                if outside or not failed:
+                logged = r.get("tests") or []
+                outside = sorted(failed - set(logged))
+                truncated = r.get("tests_truncated") or (r.get("run_tests") or 0) > len(logged)
+                if outside and truncated:
+                    inconclusive.append({"check": check, "why": "failed tests not in the logged (truncated) narrowed set", "failed": outside})
+                elif outside or not failed:
                     misses.append({"check": check, "why": "failed tests outside the narrowed set" if outside else "leg failed, no test name found",
                                    "failed": outside or ["<unknown>"]})
         elif check in JOB_OF and dec == "would-skip":
             j = by_name.get(JOB_OF[check])
-            if j and j.get("conclusion") == "failure":
+            if finished(check, j) and j.get("conclusion") == "failure":
                 misses.append({"check": check, "why": "job failed but the shadow would have skipped it"})
-    return misses, counts
+    return misses, inconclusive, counts
 
 
 def online(args):
@@ -147,20 +174,30 @@ def main():
     except RuntimeError as exc:
         print(f"mq-shadow-report: {exc}", file=sys.stderr)
         return 2
-    total, all_misses, rounds = {}, [], 0
+    total, all_misses, all_inconclusive, rounds, inconclusive_runs = {}, [], [], 0, 0
     for rid, recs, jobs in runs:
         if not recs:
             continue
-        rounds += 1
-        misses, counts = judge(recs, jobs)
+        misses, inconclusive, counts = judge(recs, jobs)
+        if inconclusive:
+            inconclusive_runs += 1
+        else:
+            rounds += 1
         for k, v in counts.items():
             total[k] = total.get(k, 0) + v
         for m in misses:
             all_misses.append({"run": rid, **m})
-    print(f"mq-shadow-report: {rounds} runs with shadow records; decisions {json.dumps(total, sort_keys=True)}; misses {len(all_misses)}")
+        for m in inconclusive:
+            all_inconclusive.append({"run": rid, **m})
+    print(f"mq-shadow-report: {rounds} conclusive runs with shadow records, {inconclusive_runs} inconclusive; "
+          f"decisions {json.dumps(total, sort_keys=True)}; misses {len(all_misses)}; inconclusive checks {len(all_inconclusive)}")
     for m in all_misses:
         print("MISS " + json.dumps(m, sort_keys=True))
-    return 1 if all_misses else 0
+    for m in all_inconclusive:
+        print("INCONCLUSIVE " + json.dumps(m, sort_keys=True))
+    if all_misses:
+        return 1
+    return 3 if all_inconclusive else 0
 
 
 if __name__ == "__main__":

@@ -135,28 +135,53 @@ func TestMQShadowReport_Misses(t *testing.T) {
 	}
 	failLog := "=== RUN   TestNarrowedIn\n--- FAIL: TestNarrowedIn (0.01s)\n    x_test.go:1: boom\nFAIL\n"
 	outLog := "--- FAIL: TestOutside/sub (0.00s)\n"
+	truncated := func(check string, runTests int, tests ...string) string {
+		b, _ := json.Marshal(map[string]any{"v": 1, "lever": "testreach", "check": check, "decision": "would-narrow", "tests": tests,
+			"run_tests": runTests, "tests_truncated": true, "why": "x", "mode": "shadow"})
+		return "select-affected: MQ-SHADOW " + string(b)
+	}
 	for name, tc := range map[string]struct {
-		records []string
-		jobs    []map[string]string
-		misses  int
+		records      []string
+		jobs         []map[string]string
+		misses       int
+		inconclusive int
 	}{
 		"narrowed test fails inside the set": {
 			[]string{rec("test-suite/http-1", "would-narrow", "TestNarrowedIn")},
-			[]map[string]string{{"name": "test-suite (http-1, 2400, coverage_http1.out)", "conclusion": "failure", "log": failLog}}, 0},
+			[]map[string]string{{"name": "test-suite (http-1, 2400, coverage_http1.out)", "conclusion": "failure", "log": failLog}}, 0, 0},
 		"failing test outside the narrowed set": {
 			[]string{rec("test-suite/http-1", "would-narrow", "TestNarrowedIn")},
-			[]map[string]string{{"name": "test-suite (http-1, 2400, coverage_http1.out)", "conclusion": "failure", "log": outLog}}, 1},
+			[]map[string]string{{"name": "test-suite (http-1, 2400, coverage_http1.out)", "conclusion": "failure", "log": outLog}}, 1, 0},
 		"would-skip leg failed": {
 			[]string{rec("test-suite/core-2", "would-skip")},
-			[]map[string]string{{"name": "test-suite (core-2, 3300, coverage_core2.out)", "conclusion": "failure", "log": failLog}}, 1},
+			[]map[string]string{{"name": "test-suite (core-2, 3300, coverage_core2.out)", "conclusion": "failure", "log": failLog}}, 1, 0},
 		"would-skip gate job failed": {
 			[]string{strings.Replace(rec("e2e-smoke", "would-skip"), `"testreach"`, `"gate"`, 1)},
-			[]map[string]string{{"name": "e2e-smoke", "conclusion": "failure", "log": ""}}, 1},
+			[]map[string]string{{"name": "e2e-smoke", "conclusion": "failure", "log": ""}}, 1, 0},
 		"keep and passing legs are not misses": {
 			[]string{rec("test-suite/http-2", "keep"), rec("test-suite/http-3", "would-skip")},
 			[]map[string]string{
 				{"name": "test-suite (http-2, 2400, coverage_http2.out)", "conclusion": "failure", "log": failLog},
-				{"name": "test-suite (http-3, 2400, coverage_http3.out)", "conclusion": "success", "log": ""}}, 0},
+				{"name": "test-suite (http-3, 2400, coverage_http3.out)", "conclusion": "success", "log": ""}}, 0, 0},
+		// The merge_group matrix is fail-fast: the first failing leg cancels
+		// the others, so a narrowed leg that would also have failed ends
+		// cancelled. That is no evidence either way (REVIEW-4196-DEEP-1 M2).
+		"would-skip leg cancelled by fail-fast": {
+			[]string{rec("test-suite/http-1", "keep"), rec("test-suite/core-2", "would-skip")},
+			[]map[string]string{
+				{"name": "test-suite (http-1, 2400, coverage_http1.out)", "conclusion": "failure", "log": failLog},
+				{"name": "test-suite (core-2, 3300, coverage_core2.out)", "conclusion": "cancelled", "log": ""}}, 0, 1},
+		"would-narrow leg timed out": {
+			[]string{rec("test-suite/http-1", "would-narrow", "TestNarrowedIn")},
+			[]map[string]string{{"name": "test-suite (http-1, 2400, coverage_http1.out)", "conclusion": "timed_out", "log": ""}}, 0, 1},
+		"would-skip leg missing from the run": {
+			[]string{rec("test-suite/core-2", "would-skip")}, []map[string]string{}, 0, 1},
+		"would-skip gate job cancelled": {
+			[]string{strings.Replace(rec("smoke", "would-skip"), `"testreach"`, `"gate"`, 1)},
+			[]map[string]string{{"name": "smoke", "conclusion": "cancelled", "log": ""}}, 0, 1},
+		"failed test beyond a truncated logged list": {
+			[]string{truncated("test-suite/http-1", 41, "TestNarrowedIn")},
+			[]map[string]string{{"name": "test-suite (http-1, 2400, coverage_http1.out)", "conclusion": "failure", "log": outLog}}, 0, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "4242")
@@ -172,12 +197,27 @@ func TestMQShadowReport_Misses(t *testing.T) {
 			}
 			cmd := exec.Command("python3", "mq-shadow-report.py", "--logs-dir", filepath.Dir(dir))
 			out, err := cmd.CombinedOutput()
-			got := strings.Count(string(out), "MISS ")
-			if got != tc.misses {
+			if got := strings.Count(string(out), "MISS "); got != tc.misses {
 				t.Fatalf("misses=%d, want %d\n%s", got, tc.misses, out)
 			}
-			if (err != nil) != (tc.misses > 0) {
-				t.Fatalf("exit error=%v with %d misses, want non-zero exactly when there are misses\n%s", err, tc.misses, out)
+			if got := strings.Count(string(out), "INCONCLUSIVE "); got != tc.inconclusive {
+				t.Fatalf("inconclusive=%d, want %d\n%s", got, tc.inconclusive, out)
+			}
+			// 1 with misses, 3 with only inconclusive checks, 0 when clean.
+			want := 0
+			if tc.misses > 0 {
+				want = 1
+			} else if tc.inconclusive > 0 {
+				want = 3
+			}
+			code := 0
+			if ee, ok := err.(*exec.ExitError); ok {
+				code = ee.ExitCode()
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if code != want {
+				t.Fatalf("exit %d, want %d\n%s", code, want, out)
 			}
 		})
 	}
