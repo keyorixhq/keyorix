@@ -186,6 +186,11 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 		// inv with an error means it exists but the link couldn't be provisioned (e.g.
 		// base_url unset) — surface that so the admin can fix config and resend.
 		if inv == nil {
+			// The granter ceiling (a role the actor cannot grant): a refusal, not a
+			// fault (#4154). Before the text cases, whose "required" would read it as a 400.
+			if sendGrantCeilingRefusal(w, err) {
+				return
+			}
 			status := http.StatusInternalServerError
 			msg := err.Error()
 			switch {
