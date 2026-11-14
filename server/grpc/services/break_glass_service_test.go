@@ -25,7 +25,7 @@ func newBreakGlassService(t *testing.T) *BreakGlassGRPCService {
 	// Break-glass eligibility now requires a PROJECT-scoped membership (a global role no
 	// longer counts), so give user 1 a project-scoped role on project 1.
 	proj := uint(1)
-	h.AssignUserRole(t, 1, 4, &proj) // viewer at project 1
+	h.AssignUserRole(t, 1, testhelper.RoleProjectViewer, &proj) // project_viewer at project 1
 	// Configure self-service emergency access with an emergency role that exists.
 	h.CreateTestRole(t, "emergency", "break-glass role", 90)
 	h.CoreService.SetBreakGlassPolicy(core.BreakGlassPolicy{
@@ -96,7 +96,7 @@ func TestBreakGlass_ZeroProjectIDRejectedBeforeAuthz(t *testing.T) {
 	proj := uint(1)
 	// role 2 = "admin": grants roles.read/roles.assign and admin bypass, but
 	// ONLY within project 1's scope — this user holds NO global-scope grant.
-	h.AssignUserRole(t, scopedUserID, 2, &proj)
+	h.AssignUserRole(t, scopedUserID, testhelper.RoleProjectAdmin, &proj)
 
 	ctx := authCtx(scopedUserID, "project-scoped-admin", "roles.read", "roles.assign")
 	svc := NewBreakGlassService(h.CoreService)

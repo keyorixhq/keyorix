@@ -219,7 +219,7 @@ func TestAuthInterceptor_PATAuthenticatesAndEnforcesScope(t *testing.T) {
 
 	h.CreateTestUser(t, "grpc-ci", 9100)
 	proj2 := uint(2)
-	h.AssignUserRole(t, 9100, 3, &proj2) // editor (secrets.read + secrets.write) in project 2
+	h.AssignUserRole(t, 9100, testhelper.RoleProjectDeveloper, &proj2) // project_developer (secrets.read + secrets.write + secrets.delete) in project 2
 
 	// A token confined to secrets.read in project 2 only.
 	res, err := h.CoreService.CreateOwnPAT(context.Background(), 9100, "ci", nil, []string{"secrets.read"}, 2, 0, nil)
@@ -331,7 +331,7 @@ func TestAuthInterceptor_PATNetworkAllowlistOverGRPC(t *testing.T) {
 
 	h.CreateTestUser(t, "grpc-cidr", 9200)
 	proj2 := uint(2)
-	h.AssignUserRole(t, 9200, 3, &proj2)
+	h.AssignUserRole(t, 9200, testhelper.RoleProjectDeveloper, &proj2)
 
 	// A token restricted to 10.0.0.0/8 (no permission/project scoping).
 	res, err := h.CoreService.CreateOwnPAT(context.Background(), 9200, "ci-cidr", nil, nil, 0, 0, []string{"10.0.0.0/8"})
@@ -366,7 +366,7 @@ func TestAuthInterceptor_MachineTokenNetworkAllowlistOverGRPC(t *testing.T) {
 	// hold roles.assign at the target project scope before it can mint a token —
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2cidr := uint(2)
-	h.AssignUserRole(t, 1, 2, &proj2cidr)
+	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2cidr)
 	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{
 		Name:         "tok-cidr",
 		AllowedCIDRs: []string{"10.0.0.0/8"},
@@ -466,7 +466,7 @@ func TestAuthInterceptor_MachineRequestStampsMachineActorInAudit(t *testing.T) {
 	// hold roles.assign at the target project scope before it can mint a token —
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2audit := uint(2)
-	h.AssignUserRole(t, 1, 2, &proj2audit)
+	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2audit)
 	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 

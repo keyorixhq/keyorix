@@ -820,7 +820,7 @@ func TestUserService_ListUsers_ProjectCountsPopulated(t *testing.T) {
 	// POST /projects/{id}/members path writes, so both figures are populated and
 	// projectCounts' success branch is still the one exercised.
 	projectID := uint(2)
-	h.AssignUserRole(t, 1, 1, &projectID)
+	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &projectID)
 	require.NoError(t, h.DB.Create(&models.ProjectMembership{
 		ProjectID: projectID, UserID: 1, State: "active", InvitedAt: time.Now(), UpdatedAt: time.Now(),
 	}).Error)
