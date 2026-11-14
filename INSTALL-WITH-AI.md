@@ -525,10 +525,10 @@ binaries come in as described in
    (after v0.96.3): with v0.96.3 or older the script stops at its init step.
 3. Do the operator step the script prints (sign in, enrol MFA), in your own terminal.
 4. `sh offline-install.sh finish`. If it prints a second operator step (the recovery
-   key), do it and run `finish` again with `KEYORIX_RECOVERY_KEY_DONE=1` in front, as
-   printed, but from the directory you ran `setup` from: the printed line names the script
-   by the path you gave it and the operator step has just changed directory to the install
-   directory, so use `sh <that path>` (the printed line has no `sh`). `finish` ends with the posture check:
+   key), do it and run the `finish` line it prints, with its variable prefix, but from the
+   directory you ran `setup` from and with `sh` in front: the printed line names the script
+   by the path you gave it and has no `sh`, and the operator step has just changed directory
+   to the install directory. `finish` ends with the posture check:
    `No deviations found.`
 5. Back up as the script's last lines say, and set up the routine backup in
    [docs/AIRGAP_RUNBOOK.md](docs/AIRGAP_RUNBOOK.md#routine-backup).
