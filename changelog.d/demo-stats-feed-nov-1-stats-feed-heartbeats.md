@@ -1,0 +1,2 @@
+### Fixed
+- **`GET /api/v1/dashboard/stats` `recentActivity` no longer lists scheduler heartbeats (#4272).** #4184 left `admin_job.*` rows written by the system actor out of `/dashboard/activity` only; the stats feed (the deployment-wide one, for a caller with `audit.read`) still showed every `admin_job.anomaly_alerts_run` pass and pushed real events out of its ten slots. It now applies the same NULL-safe filter, so a legacy row with no actor type that names a user stays. The audit log page still lists every row. No API shape change.
