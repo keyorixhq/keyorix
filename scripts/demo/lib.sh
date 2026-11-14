@@ -264,8 +264,19 @@ for a in json.loads(sys.argv[1])['data'].get('alerts') or []:
 # Best-effort: returns 0 even when it cannot settle (printing why), so a slow first pass
 # never discards a good seed. CONTAINER (docker) lets it read the exact first-pass delay
 # from the server log; without it the worst case (5 min) is waited.
+#
+# Why the wait is minutes: the first pass runs 1 min + uniform[0, min(schedule, 4 min)) after
+# start (server/scheduler_run.go anomalyFirstPassDelay), not at the schedule. With
+# anomaly_alerts.schedule 15s (native-up.sh) that is 60-75 s; with the 1 h default, 1-5 min.
+#
+# Feedback (the wait must never be silent): the expected duration is printed up front and a
+# heartbeat line every DEMO_SETTLE_HEARTBEAT seconds (default 15). Nothing secret is printed:
+# the token is only sent as a header by demo_api. DEMO_SETTLE_POLL / _HEARTBEAT /
+# _RETRY_SLEEP (seconds) exist so scripts/demo/settle-heartbeat-test.sh can run in seconds.
 demo_settle_anomalies() {
   local base="$1" token="$2" container="${3:-}" need=320 line d up wait tries=0 acked=0 left=0
+  local poll="${DEMO_SETTLE_POLL:-5}" beat="${DEMO_SETTLE_HEARTBEAT:-15}" retry="${DEMO_SETTLE_RETRY_SLEEP:-10}"
+  local t0=$SECONDS last_beat=$SECONDS announced=0 mins
   if [ -n "$container" ] || [ -n "${DEMO_SERVER_LOG:-}" ]; then
     # DEMO_SERVER_LOG (native-up.sh) is the server's log file; otherwise the docker log.
     if [ -n "${DEMO_SERVER_LOG:-}" ]; then
@@ -280,7 +291,15 @@ demo_settle_anomalies() {
   while :; do
     up="$(demo_uptime_seconds "$base" "$token")" || { echo "settle: could not read the server uptime (detail above); skipping" >&2; return 0; }
     [ "$up" -ge "$need" ] && break
-    wait=$((need - up)); [ "$wait" -gt 10 ] && wait=10
+    if [ "$announced" -eq 0 ]; then
+      announced=1
+      mins=$(( (need - up + 59) / 60 ))
+      echo "settle: waiting for the anomaly detector's first pass; this takes up to $mins minute(s) the first time (server uptime must reach ${need}s, now ${up}s)"
+    elif [ $((SECONDS - last_beat)) -ge "$beat" ]; then
+      last_beat=$SECONDS
+      echo "settle: still waiting, $((SECONDS - t0))s elapsed, polling /system/info (server up ${up}s of ${need}s)"
+    fi
+    wait=$((need - up)); [ "$wait" -gt "$poll" ] && wait=$poll
     sleep "$wait"
   done
   # The pass may still be writing: look up to three times, 10 s apart, before concluding.
@@ -288,7 +307,9 @@ demo_settle_anomalies() {
   while [ "$tries" -lt 3 ]; do
     alerts="$(demo_open_anomalies "$base" "$token")"
     [ -n "$alerts" ] && break
-    tries=$((tries + 1)); sleep 10
+    tries=$((tries + 1))
+    echo "settle: first pass reached, no alerts visible yet; checking again ($tries/3, $((SECONDS - t0))s elapsed)"
+    sleep "$retry"
   done
   local id type sev who secret
   while read -r id type sev who secret; do
