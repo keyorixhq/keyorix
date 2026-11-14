@@ -29,6 +29,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
@@ -62,7 +63,6 @@ func TestFailureNamedAuditEvents_AreWrittenWithSuccessFalse(t *testing.T) {
 	}
 	fset := token.NewFileSet()
 	var files []*ast.File
-	consts := map[string]string{}
 	for _, path := range paths {
 		src, err := os.ReadFile(path) // #nosec G304 -- core family source file from srcpath.CoreFamilyGoFiles
 		if err != nil {
@@ -73,6 +73,37 @@ func TestFailureNamedAuditEvents_AreWrittenWithSuccessFalse(t *testing.T) {
 			t.Fatal(err)
 		}
 		files = append(files, f)
+	}
+	if len(files) < 50 {
+		t.Fatalf("parsed only %d source files: the glob no longer finds this package", len(files))
+	}
+
+	res := scanFailureNamedSuccessEvents(fset, files, failureNamedSuccessEvents)
+	t.Logf("success-writer calls: %d with a resolvable event type, %d built at run time (not checked); %d writers incl. wrappers", res.matched, res.unresolved, res.writers)
+	if res.matched < 100 {
+		t.Fatalf("resolved only %d success-writer calls: the scan no longer matches how audit events are written, so it would pass vacuously", res.matched)
+	}
+	for _, v := range res.violations {
+		t.Errorf("failure-named audit event written with Success=true: %s -- use writeAuditEventFailed (Success=false), or list the site in failureNamedSuccessEvents with a reason", v)
+	}
+	for _, key := range res.stale {
+		t.Errorf("stale failureNamedSuccessEvents entry %s: no such call site any more", key)
+	}
+}
+
+// failureScan is the result of scanFailureNamedSuccessEvents.
+type failureScan struct {
+	violations, stale []string // sorted
+	matched           int      // success-writer calls with a resolvable event type
+	unresolved        int      // success-writer calls whose event type is built at run time
+	writers           int      // success writers incl. wrappers
+}
+
+// scanFailureNamedSuccessEvents runs the guard's analysis over parsed files; allowed has
+// the same shape as failureNamedSuccessEvents.
+func scanFailureNamedSuccessEvents(fset *token.FileSet, files []*ast.File, allowed map[string]string) failureScan {
+	consts := map[string]string{}
+	for _, f := range files {
 		for _, decl := range f.Decls {
 			gd, ok := decl.(*ast.GenDecl)
 			if !ok || gd.Tok != token.CONST {
@@ -91,9 +122,6 @@ func TestFailureNamedAuditEvents_AreWrittenWithSuccessFalse(t *testing.T) {
 				}
 			}
 		}
-	}
-	if len(files) < 50 {
-		t.Fatalf("parsed only %d source files: the glob no longer finds this package", len(files))
 	}
 
 	calleeName := func(call *ast.CallExpr) string {
@@ -186,7 +214,7 @@ func TestFailureNamedAuditEvents_AreWrittenWithSuccessFalse(t *testing.T) {
 					return true
 				}
 				key := fd.Name.Name + ":" + event
-				if _, ok := failureNamedSuccessEvents[key]; ok {
+				if _, ok := allowed[key]; ok {
 					seen[key] = true
 					return true
 				}
@@ -195,17 +223,88 @@ func TestFailureNamedAuditEvents_AreWrittenWithSuccessFalse(t *testing.T) {
 			})
 		}
 	}
-	t.Logf("success-writer calls: %d with a resolvable event type, %d built at run time (not checked); %d writers incl. wrappers", matched, unresolved, len(writers))
-	if matched < 100 {
-		t.Fatalf("resolved only %d success-writer calls: the scan no longer matches how audit events are written, so it would pass vacuously", matched)
-	}
 	sort.Strings(violations)
-	for _, v := range violations {
-		t.Errorf("failure-named audit event written with Success=true: %s -- use writeAuditEventFailed (Success=false), or list the site in failureNamedSuccessEvents with a reason", v)
-	}
-	for key := range failureNamedSuccessEvents {
+	var stale []string
+	for key := range allowed {
 		if !seen[key] {
-			t.Errorf("stale failureNamedSuccessEvents entry %s: no such call site any more", key)
+			stale = append(stale, key)
 		}
+	}
+	sort.Strings(stale)
+	return failureScan{violations: violations, stale: stale, matched: matched, unresolved: unresolved, writers: len(writers)}
+}
+
+// Calibration: the scan must flag a synthetic violating source (directly, through a
+// package-level constant, and through a wrapper that forwards its event-type parameter),
+// pass a clean one, honour an allowlist entry and report a stale one, or the guard could
+// go silently vacuous. Uses t directly, so it is always blocking.
+func TestFailureNamedAuditEvents_Calibration(t *testing.T) {
+	t.Parallel()
+	const red = `package core
+
+const eventDenied = "thing.denied"
+
+func literal(c *Core) { c.writeAuditEvent(ctx, "mfa.failed") }
+
+func viaConst(c *Core) { c.writeAuditEventFull(ctx, eventDenied) }
+
+func (c *Core) wrapper(ctx Ctx, ev string) { c.writeAuditEventDiff(ctx, ev) }
+
+func viaWrapper(c *Core) { c.wrapper(ctx, "login.error") }
+
+func allowedSite(c *Core) { c.writeAuditEvent(ctx, "access_request.rejected") }
+`
+	const green = `package core
+
+const eventOK = "thing.created"
+
+func ok(c *Core) { c.writeAuditEvent(ctx, "mfa.verified") }
+
+func okConst(c *Core) { c.writeAuditEventFull(ctx, eventOK) }
+
+func failedWriter(c *Core) { c.writeAuditEventFailed(ctx, "mfa.failed") }
+
+func runtime(c *Core, name string) { c.writeAuditEvent(ctx, name) }
+`
+	scan := func(src string, allowed map[string]string) failureScan {
+		t.Helper()
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "synthetic.go", src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return scanFailureNamedSuccessEvents(fset, []*ast.File{f}, allowed)
+	}
+
+	allowed := map[string]string{
+		"allowedSite:access_request.rejected": "x",
+		"gone:thing.failed":                   "x",
+	}
+	res := scan(red, allowed)
+	want := []string{"literal:mfa.failed", "viaConst:thing.denied", "viaWrapper:login.error"}
+	if len(res.violations) != len(want) {
+		t.Fatalf("red source: want %d violations %v, got %v", len(want), want, res.violations)
+	}
+	for _, w := range want {
+		found := false
+		for _, v := range res.violations {
+			if strings.Contains(v, " "+w+" ") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("red source: violation %s not flagged, got %v", w, res.violations)
+		}
+	}
+	if len(res.stale) != 1 || res.stale[0] != "gone:thing.failed" {
+		t.Errorf("an allowlist entry with no call site must be reported stale (and the matched one must not), got %v", res.stale)
+	}
+
+	res = scan(green, nil)
+	if len(res.violations) != 0 || len(res.stale) != 0 {
+		t.Errorf("green source: want no findings, got violations %v stale %v", res.violations, res.stale)
+	}
+	if res.matched != 2 || res.unresolved != 1 {
+		t.Errorf("green source: want 2 resolved and 1 run-time call, got %d and %d", res.matched, res.unresolved)
 	}
 }
