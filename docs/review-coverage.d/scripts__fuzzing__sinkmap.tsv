@@ -1,0 +1,1 @@
+scripts/fuzzing/sinkmap	none	-	test-only tooling: offline AST sink-mapper that ranks fuzz-harness targets; developer and CI tooling, not linked into any shipped binary	test-helper
