@@ -257,9 +257,9 @@ func refusalCases() []refusalCase {
 			call: callUserByID(http.MethodPost, "0", "", func(uh *UserHandler) http.HandlerFunc { return uh.ReissueOneTimePassword })},
 
 		// ── versions ─────────────────────────────────────────────────────────────
-		// FINDING: "secret ID is required" answers 500 on main (no arm for it in
-		// GetSecretVersions; secrets_versions.go is not owned by another session).
-		{family: "versions", name: "list versions of secret 0", en: http.StatusInternalServerError, code: "InternalError",
+		// FINDING (fixed by item 3): "secret ID is required" answered 500 on main (no arm
+		// for it in GetSecretVersions).
+		{family: "versions", name: "list versions of secret 0", en: http.StatusBadRequest, code: "ValidationError",
 			call: callSecretVersions("0")},
 
 		// ── env clone (handler is catalog.go: owned by ERRMAP-CATALOG-NOV-1) ─────
