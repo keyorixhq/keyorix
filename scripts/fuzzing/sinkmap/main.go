@@ -77,7 +77,7 @@ func run(args []string, out, errw io.Writer) int {
 
 	if *check {
 		committed := filepath.Join(*root, committedTSV)
-		data, err := os.ReadFile(committed)
+		data, err := os.ReadFile(committed) // #nosec G304 -- developer tool reads its own committed table
 		if err != nil {
 			_, _ = fmt.Fprintf(errw, "sinkmap -check: cannot read %s: %v\n", committedTSV, err)
 			return 1
@@ -91,6 +91,7 @@ func run(args []string, out, errw io.Writer) int {
 	}
 
 	if *tsvOut != "" {
+		// #nosec G306 -- generated report, not a secret
 		if err := os.WriteFile(*tsvOut, []byte(tsv.String()), 0o644); err != nil {
 			_, _ = fmt.Fprintln(errw, "sinkmap:", err)
 			return 1
@@ -99,6 +100,7 @@ func run(args []string, out, errw io.Writer) int {
 	var md strings.Builder
 	writeMarkdown(res, *topN, &md)
 	if *mdOut != "" {
+		// #nosec G306 -- generated report, not a secret
 		if err := os.WriteFile(*mdOut, []byte(md.String()), 0o644); err != nil {
 			_, _ = fmt.Fprintln(errw, "sinkmap:", err)
 			return 1

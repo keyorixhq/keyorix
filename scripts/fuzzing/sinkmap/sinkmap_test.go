@@ -1,15 +1,47 @@
 package main
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// materializeFixture copies testdata/fixture into a temp dir, dropping the
+// ".tmpl" suffix. The toy module is stored as .tmpl so that repo-wide tooling
+// (gofmt, semgrep, gosec, guard-input walks) does not see a nested go.mod and
+// deliberately unsafe sample code as part of the repository.
+func materializeFixture(t *testing.T) string {
+	t.Helper()
+	dst := t.TempDir()
+	src := "testdata/fixture"
+	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		out := filepath.Join(dst, strings.TrimSuffix(rel, ".tmpl"))
+		if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(p) // #nosec G304 -- test fixture path under testdata
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(out, data, 0o600)
+	})
+	if err != nil {
+		t.Fatalf("materialize fixture: %v", err)
+	}
+	return dst
+}
 
 // scanFixture runs the full pipeline over the pinned toy module and returns
 // the classified sinks.
 func scanFixture(t *testing.T) []Sink {
 	t.Helper()
-	res, err := scanModule("testdata/fixture", true)
+	res, err := scanModule(materializeFixture(t), true)
 	if err != nil {
 		t.Fatalf("scanModule: %v", err)
 	}

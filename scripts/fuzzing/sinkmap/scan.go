@@ -130,7 +130,7 @@ func scanModule(root string, includeTestdata bool) (*scanResult, error) {
 }
 
 func scanFile(fset *token.FileSet, rootAbs, path, rel string, res *scanResult) error {
-	src, err := os.ReadFile(path)
+	src, err := os.ReadFile(path) // #nosec G304 -- developer tool walks the scanned module source
 	if err != nil {
 		return nil // unreadable file: skip, never fail the whole walk
 	}
@@ -291,7 +291,7 @@ func sortedKeys(m map[string]bool) []string {
 
 // readModulePath returns the module path declared in a go.mod file, or "".
 func readModulePath(gomod string) string {
-	data, err := os.ReadFile(gomod)
+	data, err := os.ReadFile(gomod) // #nosec G304 -- developer tool reads the scanned module go.mod
 	if err != nil {
 		return ""
 	}
