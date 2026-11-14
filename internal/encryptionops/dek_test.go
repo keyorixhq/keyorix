@@ -52,16 +52,7 @@ func TestMasterPassphrase_NonPasswordProvider_ReturnsEmptyNoError(t *testing.T) 
 
 // --- InitWithConfig -----------------------------------------------------
 
-func TestInitWithConfig_Disabled_NoError(t *testing.T) {
-	chdirTemp(t)
-	cfg := testConfig(false)
-	if err := InitWithConfig(cfg, zeroPassSrc()); err != nil {
-		t.Fatalf("expected nil error when encryption disabled, got %v", err)
-	}
-	if _, err := os.Stat("dek.key"); err == nil {
-		t.Fatal("dek.key must not be created when encryption is disabled")
-	}
-}
+// The disabled-encryption refusal lives in init_disabled_exit_test.go.
 
 func TestInitWithConfig_CreatesKeyFilesWithRestrictivePerms(t *testing.T) {
 	chdirTemp(t)

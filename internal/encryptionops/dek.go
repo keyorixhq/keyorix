@@ -252,6 +252,7 @@ func RotateWithConfig(cfg *config.Config, confirm bool, dryRun bool, passSrc cry
 		return fmt.Errorf("this is a write-locking operation. Re-run with --confirm")
 	}
 
+	// Advisory, stays (#4270 sweep): a pre-flight banner; the rotation proceeds and reports its own errors.
 	fmt.Println("⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.")
 
 	baseDir, _ := os.Getwd()
@@ -401,13 +402,13 @@ func ValidateWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) err
 
 	service, err := InitLocalKeyOpService(cfg, baseDir, passphrase, false)
 	if err != nil {
-		fmt.Printf("❌ %v\n", err)
+		fmt.Printf("❌ %v\n", err) // returns err: already correct (#4270 sweep)
 		return err
 	}
 	defer service.Shutdown()
 
 	if err := service.ValidateKeyFiles(); err != nil {
-		fmt.Printf("❌ Key file validation failed: %v\n", err)
+		fmt.Printf("❌ Key file validation failed: %v\n", err) // returns err: already correct (#4270 sweep)
 		fmt.Println("💡 Run `encryption fix-perms` to fix permissions")
 		return err
 	}
@@ -420,7 +421,8 @@ func ValidateWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) err
 func InitWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) error {
 	if !cfg.Storage.Encryption.Enabled {
 		fmt.Println("❌ Encryption is disabled in configuration")
-		return nil
+		// Fix (#4270 sweep): init creates no keys here, so it cannot do its job; exit non-zero like fix-perms.
+		return fmt.Errorf("encryption is disabled in configuration")
 	}
 
 	baseDir, _ := os.Getwd()
