@@ -16,7 +16,8 @@
 //     prose is not scanned, so "the --password flag" is fine.
 //   - Go and NOTES.txt: any line that is a quoted/$/<..> value after the flag, or
 //     any value on a line that mentions `keyorix`.
-//   - Shell scripts (scripts/**/*.sh, deploy/**/*.sh; SCRIPTS-SECRETS-1): an argv
+//   - Shell scripts (scripts/**/*.sh, deploy/**/*.sh, demo/**/*.sh; SCRIPTS-SECRETS-1,
+//     demo/ added by SECRETS-ARGV-RESIDUE-1): an argv
 //     is visible in ps and CI logs whether or not a human reads the script, so any
 //     secretFlags flag followed by a value on a non-comment line is a hit. There is
 //     no allowlist: a script that needs a secret uses KEYORIX_* env vars (the
@@ -424,7 +425,7 @@ var docsSecretsSkipDirs = map[string]bool{
 // TestDocsShowNoLiteralSecretOnCommandLine is the guard. See the file header.
 func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 	root := repoRoot(t)
-	scanned := 0
+	scanned, demoScripts := 0, 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -442,7 +443,7 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 		relSh, _ := filepath.Rel(root, path)
 		relSh = filepath.ToSlash(relSh)
 		isShell := strings.HasSuffix(name, ".sh") &&
-			(strings.HasPrefix(relSh, "scripts/") || strings.HasPrefix(relSh, "deploy/"))
+			(strings.HasPrefix(relSh, "scripts/") || strings.HasPrefix(relSh, "deploy/") || strings.HasPrefix(relSh, "demo/"))
 		if !isMD && !isNotes && !isGo && !isShell {
 			return nil
 		}
@@ -451,6 +452,9 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 			return rerr
 		}
 		scanned++
+		if isShell && strings.HasPrefix(relSh, "demo/") {
+			demoScripts++
+		}
 		var hits []docsSecretHit
 		switch {
 		case isMD:
@@ -478,6 +482,9 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 	// Liveness: a walk that matched nothing would pass vacuously.
 	if scanned < 20 {
 		t.Fatalf("scanned only %d files under %s; the walk is not reaching the docs", scanned, root)
+	}
+	if demoScripts == 0 {
+		t.Fatalf("no demo/**/*.sh script scanned under %s; the walk lost the demo/ root", root)
 	}
 }
 
