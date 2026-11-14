@@ -261,8 +261,16 @@ type ClientInterface interface {
 
 	CreateDynamicSecretConfig(ctx context.Context, body CreateDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListDynamicSecretConfigsWithRefusedAdminDSN request
+	ListDynamicSecretConfigsWithRefusedAdminDSN(ctx context.Context, params *ListDynamicSecretConfigsWithRefusedAdminDSNParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetDynamicSecretConfig request
 	GetDynamicSecretConfig(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateDynamicSecretConfigAdminDSNWithBody request with any body
+	UpdateDynamicSecretConfigAdminDSNWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateDynamicSecretConfigAdminDSN(ctx context.Context, id int, body UpdateDynamicSecretConfigAdminDSNJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClassifyDynamicSecretConfigWithBody request with any body
 	ClassifyDynamicSecretConfigWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1734,8 +1742,44 @@ func (c *Client) CreateDynamicSecretConfig(ctx context.Context, body CreateDynam
 	return c.Client.Do(req)
 }
 
+func (c *Client) ListDynamicSecretConfigsWithRefusedAdminDSN(ctx context.Context, params *ListDynamicSecretConfigsWithRefusedAdminDSNParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDynamicSecretConfigsWithRefusedAdminDSNRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetDynamicSecretConfig(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDynamicSecretConfigRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateDynamicSecretConfigAdminDSNWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateDynamicSecretConfigAdminDSNRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateDynamicSecretConfigAdminDSN(ctx context.Context, id int, body UpdateDynamicSecretConfigAdminDSNJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateDynamicSecretConfigAdminDSNRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7315,6 +7359,51 @@ func NewCreateDynamicSecretConfigRequestWithBody(server string, contentType stri
 	return req, nil
 }
 
+// NewListDynamicSecretConfigsWithRefusedAdminDSNRequest generates requests for ListDynamicSecretConfigsWithRefusedAdminDSN
+func NewListDynamicSecretConfigsWithRefusedAdminDSNRequest(server string, params *ListDynamicSecretConfigsWithRefusedAdminDSNParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/configs/refused-admin-dsn")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_id", runtime.ParamLocationQuery, params.ProjectId); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetDynamicSecretConfigRequest generates requests for GetDynamicSecretConfig
 func NewGetDynamicSecretConfigRequest(server string, id int) (*http.Request, error) {
 	var err error
@@ -7345,6 +7434,53 @@ func NewGetDynamicSecretConfigRequest(server string, id int) (*http.Request, err
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewUpdateDynamicSecretConfigAdminDSNRequest calls the generic UpdateDynamicSecretConfigAdminDSN builder with application/json body
+func NewUpdateDynamicSecretConfigAdminDSNRequest(server string, id int, body UpdateDynamicSecretConfigAdminDSNJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateDynamicSecretConfigAdminDSNRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateDynamicSecretConfigAdminDSNRequestWithBody generates requests for UpdateDynamicSecretConfigAdminDSN with any type of body
+func NewUpdateDynamicSecretConfigAdminDSNRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/configs/%s/admin-dsn", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -16023,8 +16159,16 @@ type ClientWithResponsesInterface interface {
 
 	CreateDynamicSecretConfigWithResponse(ctx context.Context, body CreateDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDynamicSecretConfigResponse, error)
 
+	// ListDynamicSecretConfigsWithRefusedAdminDSNWithResponse request
+	ListDynamicSecretConfigsWithRefusedAdminDSNWithResponse(ctx context.Context, params *ListDynamicSecretConfigsWithRefusedAdminDSNParams, reqEditors ...RequestEditorFn) (*ListDynamicSecretConfigsWithRefusedAdminDSNResponse, error)
+
 	// GetDynamicSecretConfigWithResponse request
 	GetDynamicSecretConfigWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetDynamicSecretConfigResponse, error)
+
+	// UpdateDynamicSecretConfigAdminDSNWithBodyWithResponse request with any body
+	UpdateDynamicSecretConfigAdminDSNWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDynamicSecretConfigAdminDSNResponse, error)
+
+	UpdateDynamicSecretConfigAdminDSNWithResponse(ctx context.Context, id int, body UpdateDynamicSecretConfigAdminDSNJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDynamicSecretConfigAdminDSNResponse, error)
 
 	// ClassifyDynamicSecretConfigWithBodyWithResponse request with any body
 	ClassifyDynamicSecretConfigWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClassifyDynamicSecretConfigResponse, error)
@@ -17964,6 +18108,51 @@ func (r CreateDynamicSecretConfigResponse) StatusCode() int {
 	return 0
 }
 
+type ListDynamicSecretConfigsWithRefusedAdminDSNResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Configs *[]struct {
+				BackendType   *string `json:"backend_type,omitempty"`
+				EnvironmentId *int    `json:"environment_id,omitempty"`
+				Id            *int    `json:"id,omitempty"`
+
+				// LiveLeases Active and revoke_failed leases.
+				LiveLeases *int    `json:"live_leases,omitempty"`
+				Name       *string `json:"name,omitempty"`
+				ProjectId  *int    `json:"project_id,omitempty"`
+
+				// RefusedOptions Refused option names, lower case (authMechanism with its value, e.g. `authmechanism=mongodb-aws`).
+				RefusedOptions *[]string `json:"refused_options,omitempty"`
+			} `json:"configs,omitempty"`
+
+			// Unreadable Configs whose admin DSN could not be decrypted, so they were not checked.
+			Unreadable *int `json:"unreadable,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON503 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDynamicSecretConfigsWithRefusedAdminDSNResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDynamicSecretConfigsWithRefusedAdminDSNResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetDynamicSecretConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -17987,6 +18176,38 @@ func (r GetDynamicSecretConfigResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetDynamicSecretConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateDynamicSecretConfigAdminDSNResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A registered dynamic-secret target config (ADR-108 PR 1 addition).
+		Data    *DynamicSecretConfig `json:"data,omitempty"`
+		Message *string              `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+	JSON409 *Error
+	JSON503 *AuditUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateDynamicSecretConfigAdminDSNResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateDynamicSecretConfigAdminDSNResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -23921,6 +24142,15 @@ func (c *ClientWithResponses) CreateDynamicSecretConfigWithResponse(ctx context.
 	return ParseCreateDynamicSecretConfigResponse(rsp)
 }
 
+// ListDynamicSecretConfigsWithRefusedAdminDSNWithResponse request returning *ListDynamicSecretConfigsWithRefusedAdminDSNResponse
+func (c *ClientWithResponses) ListDynamicSecretConfigsWithRefusedAdminDSNWithResponse(ctx context.Context, params *ListDynamicSecretConfigsWithRefusedAdminDSNParams, reqEditors ...RequestEditorFn) (*ListDynamicSecretConfigsWithRefusedAdminDSNResponse, error) {
+	rsp, err := c.ListDynamicSecretConfigsWithRefusedAdminDSN(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDynamicSecretConfigsWithRefusedAdminDSNResponse(rsp)
+}
+
 // GetDynamicSecretConfigWithResponse request returning *GetDynamicSecretConfigResponse
 func (c *ClientWithResponses) GetDynamicSecretConfigWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetDynamicSecretConfigResponse, error) {
 	rsp, err := c.GetDynamicSecretConfig(ctx, id, reqEditors...)
@@ -23928,6 +24158,23 @@ func (c *ClientWithResponses) GetDynamicSecretConfigWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseGetDynamicSecretConfigResponse(rsp)
+}
+
+// UpdateDynamicSecretConfigAdminDSNWithBodyWithResponse request with arbitrary body returning *UpdateDynamicSecretConfigAdminDSNResponse
+func (c *ClientWithResponses) UpdateDynamicSecretConfigAdminDSNWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDynamicSecretConfigAdminDSNResponse, error) {
+	rsp, err := c.UpdateDynamicSecretConfigAdminDSNWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateDynamicSecretConfigAdminDSNResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateDynamicSecretConfigAdminDSNWithResponse(ctx context.Context, id int, body UpdateDynamicSecretConfigAdminDSNJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDynamicSecretConfigAdminDSNResponse, error) {
+	rsp, err := c.UpdateDynamicSecretConfigAdminDSN(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateDynamicSecretConfigAdminDSNResponse(rsp)
 }
 
 // ClassifyDynamicSecretConfigWithBodyWithResponse request with arbitrary body returning *ClassifyDynamicSecretConfigResponse
@@ -28121,6 +28368,79 @@ func ParseCreateDynamicSecretConfigResponse(rsp *http.Response) (*CreateDynamicS
 	return response, nil
 }
 
+// ParseListDynamicSecretConfigsWithRefusedAdminDSNResponse parses an HTTP response from a ListDynamicSecretConfigsWithRefusedAdminDSNWithResponse call
+func ParseListDynamicSecretConfigsWithRefusedAdminDSNResponse(rsp *http.Response) (*ListDynamicSecretConfigsWithRefusedAdminDSNResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDynamicSecretConfigsWithRefusedAdminDSNResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Configs *[]struct {
+					BackendType   *string `json:"backend_type,omitempty"`
+					EnvironmentId *int    `json:"environment_id,omitempty"`
+					Id            *int    `json:"id,omitempty"`
+
+					// LiveLeases Active and revoke_failed leases.
+					LiveLeases *int    `json:"live_leases,omitempty"`
+					Name       *string `json:"name,omitempty"`
+					ProjectId  *int    `json:"project_id,omitempty"`
+
+					// RefusedOptions Refused option names, lower case (authMechanism with its value, e.g. `authmechanism=mongodb-aws`).
+					RefusedOptions *[]string `json:"refused_options,omitempty"`
+				} `json:"configs,omitempty"`
+
+				// Unreadable Configs whose admin DSN could not be decrypted, so they were not checked.
+				Unreadable *int `json:"unreadable,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetDynamicSecretConfigResponse parses an HTTP response from a GetDynamicSecretConfigWithResponse call
 func ParseGetDynamicSecretConfigResponse(rsp *http.Response) (*GetDynamicSecretConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -28166,6 +28486,78 @@ func ParseGetDynamicSecretConfigResponse(rsp *http.Response) (*GetDynamicSecretC
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateDynamicSecretConfigAdminDSNResponse parses an HTTP response from a UpdateDynamicSecretConfigAdminDSNWithResponse call
+func ParseUpdateDynamicSecretConfigAdminDSNResponse(rsp *http.Response) (*UpdateDynamicSecretConfigAdminDSNResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateDynamicSecretConfigAdminDSNResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A registered dynamic-secret target config (ADR-108 PR 1 addition).
+			Data    *DynamicSecretConfig `json:"data,omitempty"`
+			Message *string              `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
