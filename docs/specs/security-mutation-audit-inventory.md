@@ -153,6 +153,7 @@ from core, as before, so there are no duplicates.
 | **Legal hold place / lift** | `PlaceLegalHold`, `LiftLegalHold` | `data.legal_hold_placed` / `.legal_hold_lifted` | after commit | in tx |
 | **Machine / token classification** | `ClassifyMachineIdentity`, `ClassifyMachineToken` | `machine_identity.classified` / `.token_classified` | after commit | in tx |
 | **Access review campaign open / close** | `OpenAccessReviewCampaign`, `CloseAccessReviewCampaign` | `access_review.campaign_opened` / `.campaign_closed` | after commit | in tx |
+| **Dynamic-secret admin DSN replace** (DYNAMIC-ADMIN-DSN-1) | `UpdateDynamicSecretConfigAdminDSN` | `dynamic_secret.config_admin_dsn_updated` (no DSN in it) | new | in tx |
 
 Risk closed: a crash or a refused append after the commit left these changes with
 no audit record. That includes an emergency self-elevation (break-glass), a new
