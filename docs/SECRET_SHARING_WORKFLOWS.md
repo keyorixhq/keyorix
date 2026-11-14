@@ -310,10 +310,10 @@ INCIDENT_ID="INC-2025-001"
 echo "Starting incident response for user id: $COMPROMISED_USER_ID"
 
 # 1. Immediately block login
-keyorix user suspend --id "$COMPROMISED_USER_ID" --by "$ADMIN_EMAIL"
+keyorix user suspend --id "$COMPROMISED_USER_ID"
 
 # 2. Revoke all active sessions
-keyorix user revoke-sessions --id "$COMPROMISED_USER_ID" --by "$ADMIN_EMAIL"
+keyorix user revoke-sessions --id "$COMPROMISED_USER_ID"
 
 # 3. List all secrets shared with the user
 keyorix share shared-secrets --user-id "$COMPROMISED_USER_ID"
