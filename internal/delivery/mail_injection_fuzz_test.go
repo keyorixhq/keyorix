@@ -66,19 +66,30 @@ type msgStructure struct {
 	partCount  int      // number of MIME parts (0 if not multipart)
 }
 
-func (a msgStructure) equal(b msgStructure) bool {
-	if a.toCount != b.toCount || a.partCount != b.partCount {
-		return false
+// injectionVs reports INJECTION of `a` (hostile) relative to `b` (benign): a
+// header field name in `a` absent from `b` (smuggled header), MORE recipients,
+// or MORE MIME parts. Returns "" when there is no injection. A DECREASE (a header
+// go-mail drops, or a recipient count that falls because go-mail emits an address
+// a strict RFC-5322 parser can't re-parse — finding F3) is NOT injection: the
+// security property is "attacker bytes never create an EXTRA header, recipient or
+// MIME part", not exact round-trip fidelity.
+func (a msgStructure) injectionVs(b msgStructure) string {
+	benignKeys := make(map[string]bool, len(b.headerKeys))
+	for _, k := range b.headerKeys {
+		benignKeys[k] = true
 	}
-	if len(a.headerKeys) != len(b.headerKeys) {
-		return false
-	}
-	for i := range a.headerKeys {
-		if a.headerKeys[i] != b.headerKeys[i] {
-			return false
+	for _, k := range a.headerKeys {
+		if !benignKeys[k] {
+			return "smuggled header field " + k
 		}
 	}
-	return true
+	if a.toCount > b.toCount {
+		return "extra recipient(s)"
+	}
+	if a.partCount > b.partCount {
+		return "extra MIME part(s)"
+	}
+	return ""
 }
 
 // buildSetupMessageBytes builds the real setup-link message for req and returns
@@ -217,11 +228,11 @@ func FuzzMailSetupLinkInjection(f *testing.F) {
 			t.Fatalf("benign baseline unparseable: %v", err)
 		}
 
-		if !hostile.equal(benign) {
-			t.Fatalf("structural inequality — attacker bytes changed message structure\n"+
+		if why := hostile.injectionVs(benign); why != "" {
+			t.Fatalf("header/recipient/MIME injection: %s\n"+
 				"hostile: headers=%v to=%d parts=%d\nbenign:  headers=%v to=%d parts=%d\n"+
 				"--- hostile message ---\n%s",
-				hostile.headerKeys, hostile.toCount, hostile.partCount,
+				why, hostile.headerKeys, hostile.toCount, hostile.partCount,
 				benign.headerKeys, benign.toCount, benign.partCount, hostileRaw)
 		}
 	})

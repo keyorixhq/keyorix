@@ -49,16 +49,51 @@ type hdrShape struct {
 	toCount int
 }
 
-func (a hdrShape) equal(b hdrShape) bool {
-	if a.toCount != b.toCount || len(a.keys) != len(b.keys) {
-		return false
+// injectionVs reports whether `a` (the hostile message) shows INJECTION relative
+// to `b` (the benign baseline): a header field name present in `a` but not in
+// `b` (a smuggled header), or MORE recipients than the single intended one.
+// Returns "" if there is no injection. A header field that is DROPPED, or a
+// recipient count that DECREASES (e.g. go-mail emits an address a strict
+// RFC-5322 parser then can't parse — finding F3), is NOT injection and does not
+// fire: the security property is "attacker bytes never create an EXTRA header or
+// recipient", not exact round-trip fidelity. A header that is injected would be
+// a superset; a Bcc/extra-To would raise toCount — both still caught.
+func (a hdrShape) injectionVs(b hdrShape) string {
+	benignKeys := make(map[string]bool, len(b.keys))
+	for _, k := range b.keys {
+		benignKeys[k] = true
 	}
-	for i := range a.keys {
-		if a.keys[i] != b.keys[i] {
-			return false
+	for _, k := range a.keys {
+		if !benignKeys[k] {
+			return "smuggled header field " + k
 		}
 	}
-	return true
+	if a.toCount > b.toCount {
+		return "extra recipient(s): to=" + itoa(a.toCount) + " > benign to=" + itoa(b.toCount)
+	}
+	return ""
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 // buildNotifyBytes reproduces EmailSink.send's message build (email.go:119-127)
@@ -147,9 +182,9 @@ func FuzzNotifyEmailInjection(f *testing.F) {
 			t.Fatalf("benign baseline rejected for shape of %#v", ev)
 		}
 		benign := parseHdrShape(t, benignRaw)
-		if !hostile.equal(benign) {
-			t.Fatalf("structural inequality — attacker bytes changed notification-mail headers\nhostile: keys=%v to=%d\nbenign:  keys=%v to=%d\n--- hostile ---\n%s",
-				hostile.keys, hostile.toCount, benign.keys, benign.toCount, hostileRaw)
+		if why := hostile.injectionVs(benign); why != "" {
+			t.Fatalf("header/recipient injection: %s\nhostile: keys=%v to=%d\nbenign:  keys=%v to=%d\n--- hostile ---\n%s",
+				why, hostile.keys, hostile.toCount, benign.keys, benign.toCount, hostileRaw)
 		}
 	})
 }
