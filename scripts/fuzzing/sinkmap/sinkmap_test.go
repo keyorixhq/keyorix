@@ -129,26 +129,38 @@ func TestFixtureClassification(t *testing.T) {
 }
 
 // TestNestedModuleSkipped confirms a nested go.mod subtree is not descended
-// into: the real root run must skip the known separate modules.
+// into. It builds its own small module (the fixture plus a nested module that
+// holds a sink) instead of scanning the real repository, so the test reads no
+// repo paths outside its own testdata.
 func TestNestedModuleSkipped(t *testing.T) {
-	// `go test` runs with CWD = this package dir; the repo root is three up.
-	res, err := scanModule("../../..", false)
+	root := materializeFixture(t)
+	nested := filepath.Join(root, "nested")
+	if err := os.MkdirAll(nested, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module example.com/nested\n\ngo 1.22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := "package nested\n\nimport \"os/exec\"\n\nfunc Run(arg string) error { return exec.Command(\"sh\", \"-c\", arg).Run() }\n"
+	if err := os.WriteFile(filepath.Join(nested, "n.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := scanModule(root, true)
 	if err != nil {
 		t.Fatalf("scanModule: %v", err)
 	}
-	wantSkipped := "cli"
 	found := false
 	for _, s := range res.skipped {
-		if s == wantSkipped {
+		if s == "nested" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected nested module %q to be skipped; skipped=%v", wantSkipped, res.skipped)
+		t.Errorf("expected nested module %q to be skipped; skipped=%v", "nested", res.skipped)
 	}
 	// No sink should ever be reported from inside a skipped nested module.
 	for _, s := range res.Sinks {
-		if strings.HasPrefix(s.File, "cli/") || strings.HasPrefix(s.File, "operator/") {
+		if strings.HasPrefix(s.File, "nested/") {
 			t.Errorf("sink reported from nested module: %s:%d", s.File, s.Line)
 		}
 	}
