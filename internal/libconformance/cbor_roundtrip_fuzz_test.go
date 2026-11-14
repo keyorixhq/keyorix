@@ -62,6 +62,7 @@ func FuzzCBORRoundTrip(f *testing.F) {
 	f.Add([]byte{0xfb, 0x7f, 0xf0, 0, 0, 0, 0, 0, 0}) // +Inf
 	f.Add([]byte{0xc1, 0x30})                         // E11: tag1(epoch) int -17 (fuzz-found datetime-tag class)
 	f.Add([]byte{0xc0, 0x74, 0x32, 0x30, 0x32, 0x36, 0x2d, 0x30, 0x31, 0x2d, 0x30, 0x31, 0x54, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x5a}) // E11: tag0 RFC3339
+	f.Add([]byte{0xc8, 0xfb, 0x7f, 0xf0, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30}) // E1: NaN inside tag 8 (fuzz-found)
 	f.Add([]byte{0x63, 0x66, 0x6f, 0x6f})             // text "foo"
 	f.Add([]byte{})
 
@@ -105,6 +106,16 @@ func nanAwareEqual(a, b any) bool {
 		return sameInstant(bt, a)
 	}
 	switch av := a.(type) {
+	case cbor.Tag:
+		// Unknown tags decode to cbor.Tag{Number, Content}; the comparison must
+		// recurse into Content so a NaN/bignum/nested EXPECTED-DIFFERENCE inside a
+		// tag is handled like one at top level (found by fuzzing: c8fb... =
+		// tag8(NaN), whose Content NaN tripped a bare reflect.DeepEqual).
+		bv, ok := b.(cbor.Tag)
+		if !ok {
+			return false
+		}
+		return av.Number == bv.Number && nanAwareEqual(av.Content, bv.Content)
 	case float64:
 		bv, ok := b.(float64)
 		if !ok {
