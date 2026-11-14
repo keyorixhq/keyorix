@@ -192,7 +192,7 @@ crypto-compare	internal/core/audit_seal_accept_pins.go	117	internal/core.(Keyori
 crypto-compare	internal/core/audit_verify_incremental.go	746	internal/core.(KeyorixCore).advanceAuditRollingCycle	yes	no	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/audit_verify_state.go	801	internal/core.(KeyorixCore).auditVerifyStateHeadGone	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 deserialize	internal/core/audit_verify_state.go	831	internal/core.(KeyorixCore).decodeAuditVerifyState	yes	yes	no	json.Unmarshal (target type unresolved)
-crypto-compare	internal/core/auth.go	957	internal/core.(KeyorixCore).sessionRowLiveForToken	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+crypto-compare	internal/core/auth.go	1004	internal/core.(KeyorixCore).sessionRowLiveForToken	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/auth_bootstrap.go	268	internal/core.(KeyorixCore).bootstrapSystemLocked	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/authz.go	302	internal/core.(KeyorixCore).secretForDecision	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/bulk_delete.go	142	internal/core.(KeyorixCore).bulkDeleteOneSecret	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
@@ -529,6 +529,8 @@ fs-path	internal/fuzzutil/taint/taint.go	491	internal/fuzzutil/taint.under	yes	y
 template-regexp	internal/guardrules/expiry.go	58	internal/guardrules.CheckExpiry	yes	no	no	.Parse with variable argument (likely template parse)
 template-regexp	internal/guardrules/expiry.go	67	internal/guardrules.CheckExpiry	yes	no	no	.Parse with variable argument (likely template parse)
 fs-path	internal/guardrules/expiry.go	98	internal/guardrules.appendReport	yes	no	no	os.OpenFile (filesystem path)
+fs-path	internal/guardrules/grant_ceiling_methods.go	38	internal/guardrules.GrantCeilingMethods	yes	no	no	os.ReadDir (filesystem path)
+fs-path	internal/guardrules/grant_ceiling_methods.go	53	internal/guardrules.GrantCeilingMethods	yes	no	no	filepath.Join with variable component
 fs-path	internal/guardrules/rollout.go	65	internal/guardrules.Rollout	yes	no	no	filepath.Join with variable component
 fs-path	internal/guardrules/rollout.go	71	internal/guardrules.rollout	yes	no	no	filepath.Join with variable component
 fs-path	internal/guardrules/rollout.go	72	internal/guardrules.rollout	yes	no	no	os.ReadFile (filesystem path)
@@ -1343,10 +1345,10 @@ template-regexp	server/http/handlers/secret_read_aggregation_handler.go	48	serve
 crypto-compare	server/http/handlers/secret_read_refusal.go	14	server/http/handlers.secretReadRefusalStatus	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	server/http/handlers/secret_update_diff.go	215	server/http/handlers.diffSecretUpdate	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 deserialize	server/http/handlers/secret_update_diff.go	383	server/http/handlers.(SecretHandler).updateSecretViaDiff	yes	yes	yes	json.Unmarshal (target type unresolved)
-crypto-compare	server/http/handlers/secrets_crud.go	286	server/http/handlers.(SecretHandler).GetSecret	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
-crypto-compare	server/http/handlers/secrets_crud.go	504	server/http/handlers.(SecretHandler).GetSecretValueByRef	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
-crypto-compare	server/http/handlers/secrets_crud.go	638	server/http/handlers.(SecretHandler).UpdateSecret	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
-template-regexp	server/http/handlers/secrets_crud.go	670	server/http/handlers.(SecretHandler).UpdateSecret	yes	yes	yes	.Parse with variable argument (likely template parse)
+crypto-compare	server/http/handlers/secrets_crud.go	287	server/http/handlers.(SecretHandler).GetSecret	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+crypto-compare	server/http/handlers/secrets_crud.go	505	server/http/handlers.(SecretHandler).GetSecretValueByRef	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+crypto-compare	server/http/handlers/secrets_crud.go	639	server/http/handlers.(SecretHandler).UpdateSecret	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+template-regexp	server/http/handlers/secrets_crud.go	671	server/http/handlers.(SecretHandler).UpdateSecret	yes	yes	yes	.Parse with variable argument (likely template parse)
 crypto-compare	server/http/handlers/secrets_handler.go	86	server/http/handlers.(SecretHandler).resolveSecretNames	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 template-regexp	server/http/handlers/secrets_list.go	140	server/http/handlers.(SecretHandler).ListSecrets	yes	yes	yes	.Parse with variable argument (likely template parse)
 crypto-compare	server/http/handlers/secrets_versions.go	70	server/http/handlers.(SecretHandler).GetSecretVersions	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
