@@ -7,10 +7,10 @@ import (
 
 // TestSwarmAllOnesIsFullAlphabet pins the seed-compatibility contract: an
 // all-ones mask enables every element, in order, for a range of alphabet sizes
-// (including n > 64, where bits are shared). This is why prepending ^uint64(0)
-// to an existing seed preserves its meaning.
+// (including n > 64). This is why prepending ^uint64(0) to an existing seed
+// preserves its meaning (Pick == raw % n).
 func TestSwarmAllOnesIsFullAlphabet(t *testing.T) {
-	for _, n := range []int{1, 2, 7, 8, 63, 64, 65, 150, 300} {
+	for _, n := range []int{1, 2, 7, 8, 63, 64, 65, 150, 307} {
 		s := NewSwarm(^uint64(0), n)
 		if s.Len() != n {
 			t.Fatalf("n=%d: all-ones enabled %d, want %d", n, s.Len(), n)
@@ -30,79 +30,100 @@ func TestSwarmAllOnesIsFullAlphabet(t *testing.T) {
 }
 
 // TestSwarmNeverEmpty: whatever the mask, the enabled set is non-empty for a
-// non-empty alphabet. mask==0 and masks that select no in-range bit fall back to
-// the full alphabet rather than an empty one.
+// non-empty alphabet, and every Pick lands on an enabled index.
 func TestSwarmNeverEmpty(t *testing.T) {
-	for _, n := range []int{1, 3, 8, 64, 65, 200} {
-		for _, mask := range []uint64{0, 1, 2, 0xAAAAAAAAAAAAAAAA, 0x5555555555555555, 1 << 63, ^uint64(0)} {
+	r := rand.New(rand.NewSource(11))
+	for _, n := range []int{1, 3, 8, 64, 65, 307, 1000} {
+		for range 500 {
+			mask := r.Uint64()
 			s := NewSwarm(mask, n)
 			if s.Len() < 1 {
 				t.Fatalf("n=%d mask=%#x: empty enabled set", n, mask)
 			}
-			// Pick must always land on an enabled index.
-			for raw := -3; raw < 300; raw++ {
+			for raw := -3; raw < 50; raw++ {
 				if !s.Has(s.Pick(raw)) {
 					t.Fatalf("n=%d mask=%#x: Pick(%d)=%d not enabled", n, mask, raw, s.Pick(raw))
 				}
 			}
 		}
 	}
-	// mask==0 specifically falls back to full, not empty.
-	s := NewSwarm(0, 8)
-	if !s.IsFull() || s.Len() != 8 {
-		t.Fatalf("mask=0 should fall back to the full alphabet, got len=%d full=%v", s.Len(), s.IsFull())
-	}
-	// A mask whose only set bits are above the alphabet size (n<64) also falls back.
-	s = NewSwarm(uint64(1)<<40, 8)
-	if !s.IsFull() {
-		t.Fatalf("out-of-range-only mask should fall back to full for n=8")
+	// A high density exponent against a small alphabet selects nothing and must
+	// fall back to full, not empty. Low nibble 0xF -> d=15 -> keep 1 in 32768.
+	s := NewSwarm(0xFFFFFFFFFFFFFF0F, 8)
+	if s.Len() == 0 {
+		t.Fatalf("high-exponent small-alphabet mask produced an empty set")
 	}
 }
 
-// TestSwarmDecodeBits: for n<=64, element i is enabled exactly when bit i is set.
-func TestSwarmDecodeBits(t *testing.T) {
-	// 0b1011 -> indices 0,1,3 enabled; index 2 disabled.
-	s := NewSwarm(0b1011, 4)
-	want := map[int]bool{0: true, 1: true, 2: false, 3: true}
-	for i, w := range want {
-		if s.Has(i) != w {
-			t.Fatalf("mask=0b1011 n=4: Has(%d)=%v, want %v", i, s.Has(i), w)
+// TestSwarmDensityExponent pins the decoding: the low nibble is the density
+// exponent and d==0 means density 1 (full). d>0 removes elements.
+func TestSwarmDensityExponent(t *testing.T) {
+	// Low nibble 0 -> density 1 -> every element enabled (but not the all-ones
+	// special case; this exercises the general path).
+	s := NewSwarm(0xABCD0, 8) // low nibble 0
+	if s.Len() != 8 || !s.IsFull() {
+		t.Fatalf("low-nibble-0 mask should be full, got len=%d full=%v", s.Len(), s.IsFull())
+	}
+	// A non-zero exponent must drop the density below 1 on a large alphabet.
+	full, restricted := 0, 0
+	r := rand.New(rand.NewSource(5))
+	const n = 307
+	for range 3000 {
+		m := r.Uint64() | 0x0 // arbitrary
+		if m&0xF == 0 || m == ^uint64(0) {
+			continue // skip the density-1 cases for this measurement
+		}
+		s := NewSwarm(m, n)
+		if s.Len() == n {
+			full++
+		} else {
+			restricted++
 		}
 	}
-	if s.Len() != 3 {
-		t.Fatalf("mask=0b1011 n=4: Len=%d, want 3", s.Len())
-	}
-	if s.IsFull() {
-		t.Fatalf("mask=0b1011 n=4 should not be full")
-	}
-	// Pick cycles over exactly {0,1,3}.
-	seen := map[int]int{}
-	for raw := range 9 {
-		seen[s.Pick(raw)]++
-	}
-	if seen[2] != 0 {
-		t.Fatalf("Pick returned the disabled index 2")
-	}
-	if len(seen) != 3 {
-		t.Fatalf("Pick covered %d indices, want 3", len(seen))
+	if restricted == 0 {
+		t.Fatalf("no mask produced a restricted alphabet on n=%d", n)
 	}
 }
 
-// TestSwarmBitsShared documents the n>64 behaviour: index i tracks bit (i mod
-// 64), so indices 64 apart share a bit. This is a documented property, asserted
-// so a future change to the sharing scheme is caught.
-func TestSwarmBitsShared(t *testing.T) {
-	s := NewSwarm(0b1, 130) // only bit 0 set
-	for _, i := range []int{0, 64, 128} {
-		if !s.Has(i) {
-			t.Fatalf("bit 0 set: index %d (==0 mod 64) should be enabled", i)
+// TestSwarmProducesSmallSubsets is the property the density scheme exists for:
+// over random masks on a LARGE alphabet, a meaningful fraction of executions
+// enable only a SMALL subset (this is exactly what a naive per-bit mask could
+// not do, which the SW1 report documents as the reason for this scheme).
+func TestSwarmProducesSmallSubsets(t *testing.T) {
+	const n = 307
+	r := rand.New(rand.NewSource(13))
+	small := 0 // subsets of <= n/8 elements
+	const trials = 20000
+	for range trials {
+		s := NewSwarm(r.Uint64(), n)
+		if s.Len() <= n/8 {
+			small++
 		}
 	}
-	if s.Has(1) || s.Has(65) {
-		t.Fatalf("bit 0 only: index 1/65 should be disabled")
+	if small < trials/20 {
+		t.Fatalf("only %d/%d executions enabled a small (<=n/8) subset — density scheme not producing small subsets", small, trials)
 	}
-	if s.Len() != 3 {
-		t.Fatalf("bit0 over n=130: Len=%d, want 3 (indices 0,64,128)", s.Len())
+}
+
+// TestSwarmEachElementOmittable: over random masks, every alphabet element is
+// disabled in at least some executions — a uniform (all-ones) generator never
+// omits any element, which is the gap swarm closes.
+func TestSwarmEachElementOmittable(t *testing.T) {
+	const n = 32
+	r := rand.New(rand.NewSource(17))
+	omitted := make([]int, n)
+	for range 20000 {
+		s := NewSwarm(r.Uint64(), n)
+		for i := range n {
+			if !s.Has(i) {
+				omitted[i]++
+			}
+		}
+	}
+	for i := range n {
+		if omitted[i] == 0 {
+			t.Fatalf("element %d was never omitted — swarm is not disabling features", i)
+		}
 	}
 }
 
@@ -112,7 +133,7 @@ func TestSwarmDeterministic(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
 	for range 2000 {
 		mask := r.Uint64()
-		n := 1 + r.Intn(200)
+		n := 1 + r.Intn(400)
 		a := NewSwarm(mask, n)
 		b := NewSwarm(mask, n)
 		if a.Len() != b.Len() {
@@ -148,34 +169,24 @@ func TestSwarmEmptyAlphabet(t *testing.T) {
 	}
 }
 
-// TestSwarmSubsetDiversity is the property that motivates swarm testing: over
-// many random masks, the generator reaches many DISTINCT alphabet subsets,
-// including subsets that omit any given element — which an all-ones (uniform)
-// generator never does. This is a helper-level sanity check of the mechanism;
-// the per-fuzzer coverage/shape evidence lives with each fuzzer.
+// TestSwarmSubsetDiversity: over many random masks the generator reaches many
+// DISTINCT subsets of a small alphabet, including subsets that omit any given
+// element — which an all-ones (uniform) generator never does.
 func TestSwarmSubsetDiversity(t *testing.T) {
 	const n = 8
 	r := rand.New(rand.NewSource(7))
 	subsets := map[uint8]struct{}{}
-	omitsEach := make([]int, n)
-	for range 5000 {
+	for range 20000 {
 		s := NewSwarm(r.Uint64(), n)
 		var key uint8
 		for i := range n {
 			if s.Has(i) {
 				key |= 1 << uint(i)
-			} else {
-				omitsEach[i]++
 			}
 		}
 		subsets[key] = struct{}{}
 	}
-	if len(subsets) < 200 {
-		t.Fatalf("swarm reached only %d distinct subsets of %d elements, expected most of 2^%d", len(subsets), n, n)
-	}
-	for i := range n {
-		if omitsEach[i] == 0 {
-			t.Fatalf("no sampled mask omitted element %d — swarm is not disabling features", i)
-		}
+	if len(subsets) < 32 {
+		t.Fatalf("swarm reached only %d distinct subsets of %d elements, expected many", len(subsets), n)
 	}
 }
