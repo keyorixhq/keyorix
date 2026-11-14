@@ -58,21 +58,44 @@ interface AuditFeedPage {
  * docs/specs/audit-list-keyset.md). Only the first page carries the total,
  * which is exact up to 10,000 and capped there (totalExact false).
  */
-export const useAuditLogFeed = (params?: { pageSize?: number; projectId?: number }) => {
+export interface AuditFeedParams {
+    pageSize?: number;
+    projectId?: number;
+    /** Actor-name search (username or machine-identity name), done by the server (#4185). */
+    actor?: string;
+    /** 'user' | 'machine_identity' | 'system': the server's actor_type filter. */
+    actorType?: string;
+    /** Exact event type (the server's `action`). */
+    eventType?: string;
+}
+
+export const useAuditLogFeed = (params?: AuditFeedParams) => {
     const query = useInfiniteQuery({
         queryKey: ['audit-log-feed', params],
         initialPageParam: '',
         queryFn: async ({ pageParam }): Promise<AuditFeedPage> => {
-            const response = await apiClient.get('/api/v1/audit/logs', {
+            // The filters are the server's, so a match is found however far back it is,
+            // not only among the newest page loaded (#4185). The actor-name search lives
+            // on /audit/search (it takes `actor`, not `actor_type`; the list endpoint
+            // takes `actor_type`, not `actor`): pick the endpoint by the filters set.
+            const byActor = !!params?.actor;
+            const response = await apiClient.get(byActor ? '/api/v1/audit/search' : '/api/v1/audit/logs', {
                 params: {
-                    page_size: params?.pageSize ?? 100,
+                    ...(byActor ? { limit: params?.pageSize ?? 100 } : { page_size: params?.pageSize ?? 100 }),
                     ...(params?.projectId ? { project_id: params.projectId } : {}),
+                    ...(byActor ? { actor: params?.actor } : {}),
+                    ...(!byActor && params?.actorType ? { actor_type: params.actorType } : {}),
+                    ...(params?.eventType ? { action: params.eventType } : {}),
                     ...(pageParam ? { cursor: pageParam } : {}),
                 },
             });
             const data = response.data.data ?? {};
+            let logs = (data.logs ?? data.events ?? []) as AuditLogEntry[];
+            // /audit/search has no actor_type parameter: that one is applied to the
+            // already name-filtered rows (a small set), not to the newest page.
+            if (byActor && params?.actorType) logs = logs.filter((e) => e.actor_type === params.actorType);
             return {
-                logs: (data.logs ?? []) as AuditLogEntry[],
+                logs,
                 total: data.total,
                 totalExact: data.total_exact,
                 nextCursor: data.next_cursor ?? undefined,

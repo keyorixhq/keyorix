@@ -46,6 +46,11 @@ type AuditFilter struct {
 	// ResourceType filters events by the resource type embedded in the event_type
 	// (the prefix before the first dot, e.g. "secret" from "secret.read").
 	ResourceType *string
+	// ExcludeSystemJobEvents drops the scheduler's own "job ran" rows: event_type
+	// admin_job.* whose displayed actor kind is "system" (#4184). An admin-triggered
+	// run (a real user id on the row) is kept. Read-side only: the audit log page
+	// never sets it, so every stored row stays listable there.
+	ExcludeSystemJobEvents bool
 
 	// Before is the keyset cursor of the newest-first order (event_time DESC,
 	// id DESC): only rows strictly after that position are returned and Page is

@@ -1,5 +1,5 @@
 import { apiErrorMessage } from '../../services/client';
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router';
 import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
@@ -273,6 +273,19 @@ function exportCSV(entries: AuditLogEntry[], filename: string) {
 // ─── Filter bar ───────────────────────────────────────────────────────────────
 
 type ActorTypeFilter = 'all' | 'user' | 'machine_identity';
+
+const ACTOR_SEARCH_DEBOUNCE_MS = 300;
+
+// A value that follows `value` after it has been stable for delayMs.
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+    const [debounced, setDebounced] = useState(value);
+    useEffect(() => {
+        if (value === debounced) return undefined;
+        const t = setTimeout(() => setDebounced(value), delayMs);
+        return () => clearTimeout(t);
+    }, [value, debounced, delayMs]);
+    return debounced;
+}
 
 interface FilterBarProps {
     actorFilter: string;
@@ -1008,7 +1021,16 @@ export const AuditLogPage: React.FC = () => {
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
     const [actorTypeFilter, setActorTypeFilter] = useState<ActorTypeFilter>('all');
-    const feed = useAuditLogFeed({ pageSize: 100 });
+    // The actor, actor-type and event-type filters go to the server (#4185), so a match
+    // older than the newest 100 rows is found. The typed actor is sent after a short
+    // pause, not on every keystroke; the filters below still run over what comes back.
+    const serverActor = useDebouncedValue(actorFilter.trim(), ACTOR_SEARCH_DEBOUNCE_MS);
+    const feed = useAuditLogFeed({
+        pageSize: 100,
+        ...(serverActor ? { actor: serverActor } : {}),
+        ...(actorTypeFilter !== 'all' ? { actorType: actorTypeFilter } : {}),
+        ...(eventTypeFilter !== 'all' ? { eventType: eventTypeFilter } : {}),
+    });
     const { isLoading, error } = feed;
     const loadMore: LoadMoreProps = {
         loaded: feed.entries.length,
@@ -1055,6 +1077,7 @@ export const AuditLogPage: React.FC = () => {
     const openCount = anomalies.filter((a) => !a.Acknowledged).length;
 
     const allEntries: AuditLogEntry[] = feed.entries;
+    const seenEventTypes = useRef(new Set<string>());
 
     // Apply tab-level pre-filter first, then user filters
     const applyFilters = useCallback(
@@ -1118,10 +1141,15 @@ export const AuditLogPage: React.FC = () => {
     const rbacEntries = applyFilters(allEntries.filter((e) => isRbacEvent(e.event_type))).map(resolveIds);
 
     // Unique event types for the dropdown
-    const auditTypes = Array.from(new Set(allEntries.map((e) => e.event_type))).sort((a, b) => a.localeCompare(b));
-    const rbacTypes = Array.from(
-        new Set(allEntries.filter((e) => isRbacEvent(e.event_type)).map((e) => e.event_type))
-    ).sort((a, b) => a.localeCompare(b));
+    // With the event-type filter on the server, the rows loaded are all of the chosen type: keep
+    // every type seen so far in the list so the filter can be switched to another one.
+    allEntries.forEach((e) => seenEventTypes.current.add(e.event_type));
+    const sortedTypes = (keep: (t: string) => boolean) =>
+        Array.from(seenEventTypes.current)
+            .filter(keep)
+            .sort((a, b) => a.localeCompare(b));
+    const auditTypes = sortedTypes(() => true);
+    const rbacTypes = sortedTypes(isRbacEvent);
 
     const activeEntries = activeTab === 'rbac' ? rbacEntries : auditEntries;
     const activeTypes = activeTab === 'rbac' ? rbacTypes : auditTypes;

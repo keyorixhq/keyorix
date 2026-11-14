@@ -44,6 +44,32 @@ type AuditIntegrityPosture struct {
 	VerificationStatus     string     `json:"verification_status,omitempty"`
 	LastFullVerificationAt *time.Time `json:"last_full_verification_at,omitempty"`
 	LastCheckedAt          *time.Time `json:"last_checked_at,omitempty"`
+	// HeadID is the id of the chain head as of the last check: the ChainedEvents
+	// figure is the count verified through it, not a live count (#4186).
+	HeadID uint `json:"head_id,omitempty"`
+	// Stale is true when that check is older than auditPostureFreshWindow (or none
+	// is recorded). Only then is the cheap head lookup made: LatestEventID is the
+	// newest audit event id now (storage MaxAuditEventID, one indexed read, no walk)
+	// and EventsSinceCheck how many events lie past HeadID, written since the check
+	// and not yet verified. Neither field is a verification result.
+	Stale            bool  `json:"stale,omitempty"`
+	LatestEventID    uint  `json:"latest_event_id,omitempty"`
+	EventsSinceCheck int64 `json:"events_since_check,omitempty"`
+}
+
+// auditPostureFreshWindow is how old the last recorded chain check may be before
+// the posture looks at the live chain head (#4186). A page load inside the window
+// reads nothing extra.
+const auditPostureFreshWindow = time.Minute
+
+// auditCheckStale reports whether the recorded chain check is older than the
+// window, or none is recorded. A full-mode report is a walk made for this very
+// request, so it is never stale.
+func auditCheckStale(r *AuditVerifyReport, now time.Time) bool {
+	if r.Mode == AuditVerifyModeFull {
+		return false
+	}
+	return r.LastCheckedAt == nil || now.Sub(*r.LastCheckedAt) > auditPostureFreshWindow
 }
 
 // AccessGovernancePosture summarises access recertification + dormant access.
@@ -368,6 +394,10 @@ type complianceSnapshot struct {
 
 	auditChain    *AuditVerifyReport
 	auditChainErr error
+	// auditLatestID is the newest audit event id, read only when the recorded
+	// check is stale (auditPostureFreshWindow); 0 when not read or on error.
+	auditLatestID uint
+	auditStale    bool
 
 	rotationStatuses []*RotationStatusEntry
 	rotationErr      error
@@ -417,6 +447,14 @@ func (c *KeyorixCore) buildComplianceSnapshot(ctx context.Context) (*complianceS
 
 	// The persisted verification state, not a walk (spec audit-incremental-verification §5).
 	snap.auditChain, snap.auditChainErr = c.AuditVerificationStatus(ctx)
+	if snap.auditChainErr == nil && snap.auditChain != nil && auditCheckStale(snap.auditChain, c.now()) {
+		snap.auditStale = true
+		// Best effort: the lookup only annotates the figure, so a failure leaves
+		// the tile showing the recorded check without the "newer events" note.
+		if id, err := c.storage.MaxAuditEventID(ctx); err == nil {
+			snap.auditLatestID = id
+		}
+	}
 	snap.rotationStatuses, snap.rotationErr = c.GetRotationStatus(ctx, nil, nil)
 	if _, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{Page: 1, PageSize: 1}); err == nil {
 		snap.totalSecrets = int(total)
@@ -680,6 +718,14 @@ func applyAuditIntegrityPosture(p *CompliancePosture, snap *complianceSnapshot) 
 		VerificationStatus:     v.Status,
 		LastFullVerificationAt: v.LastFullVerificationAt,
 		LastCheckedAt:          v.LastCheckedAt,
+		HeadID:                 v.HeadID,
+	}
+	p.AuditIntegrity.Stale = snap.auditStale
+	if snap.auditLatestID != 0 {
+		p.AuditIntegrity.LatestEventID = snap.auditLatestID
+		if snap.auditLatestID > v.HeadID {
+			p.AuditIntegrity.EventsSinceCheck = int64(snap.auditLatestID - v.HeadID) // #nosec G115 -- difference of two audit row IDs, guarded > above; an audit table never approaches 2^63 rows
+		}
 	}
 	switch {
 	case v.Status == AuditVerifyStatusNotProven:
