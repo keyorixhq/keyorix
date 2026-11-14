@@ -9,6 +9,7 @@ package hostile
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -268,6 +269,41 @@ func TestPlantedDefectsDetectedByDirectedPrograms(t *testing.T) {
 			}
 			t.Fatalf("planted defect %q NOT detected by %s; violations: %v", d.id, d.oracle, v)
 		})
+	}
+}
+
+// TestRunHangReturnsSentinelAndDoesNotRace pins the O2 path: Run must release
+// the hung backend, wait for the call goroutine, and return errHang instead of
+// nil. Before the fix the goroutine wrote the caller's captured result after
+// Run had returned (a data race under -race) and the nil error sent callers
+// down their success branch. The race only shows under `go test -race`.
+func TestRunHangReturnsSentinelAndDoesNotRace(t *testing.T) {
+	for i := range 3 {
+		cfg := Config{Routes: toyRoutes(), Program: Program{Fault: 4}, RecoverPanics: true, CallTimeout: 150 * time.Millisecond}
+		h := New(cfg)
+		var val string
+		err := h.Run("toy", func(ctx context.Context) error {
+			var e error
+			val, e = p7NoCtx(ctx, h.URL())
+			return e
+		})
+		if !errors.Is(err, errHang) {
+			t.Errorf("run %d: Run returned %v, want errHang", i, err)
+		}
+		_ = val // read after Run returns: the race detector checks the ordering
+		h.Finish(func(string, ...any) {})
+		hung := false
+		for _, m := range h.Violations() {
+			if strings.HasPrefix(m, "O2 ") {
+				hung = true
+			}
+			if strings.HasPrefix(m, "O5 ") {
+				t.Errorf("run %d: spurious %q next to the O2 report", i, m)
+			}
+		}
+		if !hung {
+			t.Errorf("run %d: no O2 violation: %v", i, h.Violations())
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package hostile
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -141,6 +142,10 @@ const hangSlack = 4 * time.Second
 // on a saturated host, so it is 4 s.
 const leakWindow = 4 * time.Second
 
+// errHang is what Run returns after reporting O2, so a caller never mistakes a
+// hung call for a success with an empty result.
+var errHang = errors.New("hostile: call hung past its deadline (O2)")
+
 // Run executes the connector call under the deadline, hang, panic and
 // allocation oracles (O1, O2, O4) and scans the returned error and captured
 // logs for leakage (O7). It returns the call's error.
@@ -180,7 +185,18 @@ func (h *Harness) Run(label string, fn func(ctx context.Context) error) error {
 	case <-time.After(timeout + hangSlack):
 		cancel()
 		h.Violate("O2 HANG: %s did not return within %s of a %s context deadline", label, hangSlack, h.cfg.CallTimeout)
-		return nil
+		// Release the hung backend, then give the call goroutine a bounded
+		// window to finish: it writes the caller's captured result variables,
+		// and the caller reads them as soon as Run returns. Waiting here gives
+		// that write a happens-before edge in the common case. The sentinel
+		// error keeps callers off their success branch (no O5 noise on an
+		// empty result).
+		h.Close()
+		select {
+		case <-ch:
+		case <-time.After(leakWindow):
+		}
+		return errHang
 	}
 	cancel()
 
