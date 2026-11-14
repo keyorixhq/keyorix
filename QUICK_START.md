@@ -174,9 +174,10 @@ export KEYORIX_ADMIN_PASSWORD
 
 Two things about this command are not obvious from `--help` alone:
 
-- **Pass `--admin-email` explicitly.** The flag's own default (`admin@localhost`)
-  fails the server's email validation (no dot after `@`), so omitting it makes
-  bootstrap fail with a confusing `Validation error: Validation error: Email`.
+- **Pass your own `--admin-email` if you want password-reset mail.** The flag's
+  default (`admin@keyorix.local`) is a placeholder that passes the server's email
+  validation but has no mailbox. A rejected address is answered `400` and the CLI
+  says which flag to fix.
 - **Pick a password with an uppercase letter, a digit, and that does not contain
   the username.** The one `keyorix-server admin generate-secrets` writes to
   `secrets/admin_password` satisfies all three.

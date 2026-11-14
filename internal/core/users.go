@@ -75,7 +75,7 @@ func validateUsernameCharset(username string) error {
 
 func validateEmailFormat(email string) error {
 	if !emailRegex.MatchString(email) {
-		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEmail", nil))
+		return validationErrorf("%s: email address is not valid (expected name@domain.tld)", i18n.T("ErrorValidation", nil))
 	}
 	return nil
 }
@@ -1515,19 +1515,19 @@ func (c *KeyorixCore) GetUserByExternalID(ctx context.Context, externalID string
 
 func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 	if req.Username == "" {
-		return fmt.Errorf("%s", i18n.T("LabelUsername", nil))
+		return refuseField("username", fmt.Errorf("%s", i18n.T("LabelUsername", nil)))
 	}
 	if err := validateUsernameFormat(req.Username); err != nil {
-		return err
+		return refuseField("username", err)
 	}
 	if err := validateUsernameCharset(req.Username); err != nil {
-		return err
+		return refuseField("username", err)
 	}
 	if req.Email == "" {
-		return fmt.Errorf("%s", i18n.T("LabelEmail", nil))
+		return refuseField("email", fmt.Errorf("%s", i18n.T("LabelEmail", nil)))
 	}
 	if err := validateEmailFormat(req.Email); err != nil {
-		return err
+		return refuseField("email", err)
 	}
 	// DisplayName is optional at this layer (buildUserForCreate defaults it to
 	// Username when blank) — only format-check it when the caller actually
@@ -1535,11 +1535,11 @@ func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 	// semantics without re-imposing that requirement here.
 	if req.DisplayName != "" {
 		if err := validateDisplayNameFormat(req.DisplayName); err != nil {
-			return err
+			return refuseField("display_name", err)
 		}
 	}
 	if req.Password == "" {
-		return fmt.Errorf("%s", i18n.T("LabelPassword", nil))
+		return refuseField("password", fmt.Errorf("%s", i18n.T("LabelPassword", nil)))
 	}
 	return nil
 }
