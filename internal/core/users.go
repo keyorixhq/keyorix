@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"time"
 
@@ -332,7 +333,13 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 		if errors.Is(err, storage.ErrDuplicateUsername) {
 			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
 		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// #3225: the transaction may have committed and still reported an error (a
+		// lost acknowledgement). Answering failure then leaves a user the client was
+		// told does not exist, and a retry meets a duplicate. Read the row back: if it
+		// is there, the create succeeded and continues down the success path.
+		if !c.userCreateLanded(ctx, createdUser, err) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
 	}
 
 	// Seed password history with the initial password so the no-reuse rule
@@ -353,6 +360,34 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 	// alongside the CreateUser write — see the fix/create-ops-atomicity comment there.
 
 	return createdUser, nil
+}
+
+// userCreateLanded reports whether the user the create transaction inserted is
+// present after the transaction returned writeErr. created is the row the closure
+// got back from CreateUser; nil means the insert itself never succeeded, so
+// nothing can have landed. The row is matched on ID and username, so an ID reused
+// after a rollback cannot be mistaken for ours. A failing lookup counts as not
+// landed (the error stands, fail closed) and is logged. Panic-safe.
+func (c *KeyorixCore) userCreateLanded(ctx context.Context, created *models.User, writeErr error) (landed bool) {
+	if created == nil || created.ID == 0 {
+		return false
+	}
+	besteffort.Run(ctx, "users.CreateUser.ReadBack", func() error {
+		got, err := c.storage.GetUser(ctx, created.ID)
+		if err != nil {
+			if isPositiveNotFound(err) {
+				return nil
+			}
+			log.Printf("users.CreateUser: create of user %d reported %v and the read-back failed: %v; the user may exist", created.ID, writeErr, err)
+			return err
+		}
+		if got != nil && got.ID == created.ID && got.Username == created.Username {
+			log.Printf("users.CreateUser: create of user %d reported %v but the row is present; it committed and is delivered", created.ID, writeErr)
+			landed = true
+		}
+		return nil
+	})
+	return landed
 }
 
 // maxUserCreateAssignments bounds how many project-scoped role assignments a
