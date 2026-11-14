@@ -8,6 +8,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -299,38 +300,27 @@ func shareScopeReadError(ctx context.Context, err error) error {
 	return status.Error(codes.NotFound, "share not found")
 }
 
-// mapShareError translates core sharing errors into gRPC status codes.
+// mapShareError translates core sharing errors into gRPC status codes through the
+// shared classifier (coreErrorStatus); the texts are this family's own and fixed.
 func mapShareError(err error) error {
-	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
-	}
 	// #2976: a typed share refusal carries a fixed, user-facing reason (owner not a
 	// project member, recipient not a member, ...) — the same text HTTP returns.
 	if reason, ok := core.ShareRefusalMessage(err); ok {
 		return status.Error(codes.PermissionDenied, reason)
 	}
-	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
-	switch {
-	case errors.Is(err, storage.ErrShareNotFound), errors.Is(err, storage.ErrSecretNotFound),
-		errors.Is(err, storage.ErrUserNotFound), errors.Is(err, storage.ErrGroupNotFound):
-		return status.Error(codes.NotFound, "share or secret not found")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "not authorized for this share")
-	case errors.Is(err, storage.ErrShareExpiryNotInFuture):
-		// Matches REST's 400 ValidationError for the identical core error
-		// (shares_crud.go) — otherwise this fell into the default Internal bucket,
-		// a transport-dependent error-class divergence for a plain validation
-		// failure. NOTE: core's other expiry error, "cannot update an expired
-		// share record" (UpdateSharePermission on an already-expired share), is
-		// deliberately left in the default Internal bucket below — REST's own
-		// handler (shares_crud.go) does not special-case that message either, so
-		// mapping it to InvalidArgument here would create a NEW REST/gRPC
-		// divergence rather than close one.
-		return status.Error(codes.InvalidArgument, "share expiry must be in the future")
-	default:
-		return internalFailure("share operation failed", err)
+	texts := coreErrorTexts{
+		errclass.NotFound:         "share or secret not found",
+		errclass.PermissionDenied: "not authorized for this share",
 	}
+	// storage.ErrShareExpiryNotInFuture matches REST's 400 ValidationError for the
+	// identical core error (shares_crud.go). NOTE: core's other expiry error, "cannot
+	// update an expired share record" (UpdateSharePermission on an already-expired
+	// share), is deliberately left Internal — REST's own handler does not special-case
+	// that message either, so mapping it here would create a NEW REST/gRPC divergence.
+	if errors.Is(err, storage.ErrShareExpiryNotInFuture) {
+		texts[errclass.InvalidInput] = "share expiry must be in the future"
+	}
+	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "share operation", texts: texts})
 }
 
 func shareRecordToProto(r *models.ShareRecord) *pb.ShareRecord {
