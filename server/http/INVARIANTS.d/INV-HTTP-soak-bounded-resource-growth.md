@@ -12,8 +12,7 @@
   fuzzer, then exhausts a limit in production days later (precedent: a per-fixture
   `time.AfterFunc` coalescer re-armed against a closed DB pinned a whole core graph).
   Guard: `soak_bounded_growth_test.go` (`TestSoakBoundedGrowth`, SQLite always +
-  PostgreSQL when `KEYORIX_TEST_PG_DSN` is set; thresholds calibrated in its doc comment
-  and in `/mnt/data/wave4/out/i5-REPORT.md` section 4). Not covered: background
+  PostgreSQL when `KEYORIX_TEST_PG_DSN` is set; thresholds calibrated in its doc comment). Not covered: background
   schedulers/rotation loops (this harness wires NewRouter+core, not server/main's
   `startSchedulers`, so their growth is out of scope and is exercised by the kill-9/edge
   soak drills instead); a remote client's connection-pool fds (requests run over a local
