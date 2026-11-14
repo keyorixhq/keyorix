@@ -1,0 +1,2 @@
+### Testing
+- **Decision-tuple novelty for the authz sequence fuzzer (opt-in, experiment).** `server/authzdiff` gains `FuzzAuthzSeqNov`, a copy of `FuzzAuthzSeq` that records which (actor, verb, resource, decision, scope) tuples each execution reached and, with `AUTHZNOV_FEED=1`, runs one generated basic block per tuple so a new decision counts as a new coverage edge for Go's native fuzzer. `NOVELTY.md` holds the pre-registered comparison and its result: no gain over plain coverage, claim withdrawn. Not wired into any campaign.
