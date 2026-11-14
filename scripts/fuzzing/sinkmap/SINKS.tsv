@@ -154,8 +154,8 @@ crypto-compare	internal/core/account.go	227	internal/core.(KeyorixCore).clearCac
 crypto-compare	internal/core/account.go	332	internal/core.(KeyorixCore).resolveKeepSession	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/account.go	393	internal/core.(KeyorixCore).deleteSessionsForUserAndEvict	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/account.go	473	internal/core.(historyRefusal).Is	yes	no	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
-crypto-compare	internal/core/account.go	488	internal/core.(policyRefusal).Is	yes	no	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
-crypto-compare	internal/core/account.go	686	internal/core.(KeyorixCore).CurrentSessionID	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+crypto-compare	internal/core/account.go	491	internal/core.(policyRefusal).Is	yes	no	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+crypto-compare	internal/core/account.go	689	internal/core.(KeyorixCore).CurrentSessionID	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/account_setup.go	117	internal/core.(KeyorixCore).EndSetupSessionIfComplete	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/account_state.go	607	internal/core.activePATHashes	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 template-regexp	internal/core/anomaly.go	401	internal/core.(AnomalyDetector).scanWindowStart	yes	no	no	.Parse with variable argument (likely template parse)
@@ -195,7 +195,7 @@ deserialize	internal/core/audit_verify_state.go	831	internal/core.(KeyorixCore).
 crypto-compare	internal/core/auth.go	1004	internal/core.(KeyorixCore).sessionRowLiveForToken	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/auth_bootstrap.go	268	internal/core.(KeyorixCore).bootstrapSystemLocked	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/authz.go	302	internal/core.(KeyorixCore).secretForDecision	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
-crypto-compare	internal/core/bulk_delete.go	142	internal/core.(KeyorixCore).bulkDeleteOneSecret	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+crypto-compare	internal/core/bulk_delete.go	166	internal/core.(KeyorixCore).bulkDeleteOneSecret	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/certificate.go	135	internal/core.(KeyorixCore).refreshCertNotAfterCache	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/certificate.go	135	internal/core.(KeyorixCore).refreshCertNotAfterCache	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/certificate_expiry.go	96	internal/core.(KeyorixCore).certNotAfter	yes	no	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
@@ -336,7 +336,7 @@ crypto-compare	internal/core/storage/storagetest/mock_dynamic.go	35	internal/cor
 deserialize	internal/core/user_baseline_role_reconcile.go	163	internal/core.(KeyorixCore).usersWithBaselineRoleRemoved	yes	no	no	json.Unmarshal (target type unresolved)
 deserialize	internal/core/user_baseline_role_reconcile.go	204	internal/core.(KeyorixCore).usersSSOJITNonDefaultRole	yes	no	no	json.Unmarshal (target type unresolved)
 crypto-compare	internal/core/users.go	156	internal/core.(KeyorixCore).buildUserForCreate	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
-crypto-compare	internal/core/users.go	1471	internal/core.(KeyorixCore).validateCreateUserRequest	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+crypto-compare	internal/core/users.go	1506	internal/core.(KeyorixCore).validateCreateUserRequest	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/versions.go	69	internal/core.(KeyorixCore).GetSecretVersions	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/versions.go	95	internal/core.(KeyorixCore).GetSecretVersion	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/core/versions.go	126	internal/core.(KeyorixCore).GetLatestSecretVersion	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
@@ -815,8 +815,8 @@ sql	internal/storage/store/secret_suspend_marker_trigger.go	50	internal/storage/
 sql	internal/storage/store/secret_suspend_marker_trigger.go	69	internal/storage/store.EnsureSecretSuspendMarkerTrigger	yes	no	no	.Exec with non-literal query string
 sql	internal/storage/store/secret_suspend_marker_trigger.go	81	internal/storage/store.EnsureSecretSuspendMarkerTrigger	yes	no	no	.Exec with non-literal query string
 template-regexp	internal/storage/store/utc_timestamp.go	38	internal/storage/store.parseDBTimestamp	yes	yes	no	.Parse with variable argument (likely template parse)
-sql	internal/testhelper/rbac_test_helper.go	473	internal/testhelper.(RBACTestHelper).ExecuteRawSQL	yes	no	no	.Exec with non-literal query string
-sql	internal/testhelper/rbac_test_helper.go	479	internal/testhelper.(RBACTestHelper).QueryRawSQL	yes	no	no	.Query with non-literal query string
+sql	internal/testhelper/rbac_test_helper.go	494	internal/testhelper.(RBACTestHelper).ExecuteRawSQL	yes	no	no	.Exec with non-literal query string
+sql	internal/testhelper/rbac_test_helper.go	500	internal/testhelper.(RBACTestHelper).QueryRawSQL	yes	no	no	.Query with non-literal query string
 sql	internal/testutil/fuzzworld/fuzzworld.go	97	internal/testutil/fuzzworld.OpenPostgres	yes	no	yes	.Exec with non-literal query string
 sql	internal/testutil/fuzzworld/fuzzworld.go	100	internal/testutil/fuzzworld.OpenPostgres	yes	no	yes	.Exec with non-literal query string
 sql	internal/testutil/fuzzworld/fuzzworld.go	104	internal/testutil/fuzzworld.OpenPostgres	yes	no	yes	.Exec with non-literal query string
@@ -858,6 +858,9 @@ fs-path	internal/testutil/srcpath/corefamily.go	192	internal/testutil/srcpath.Co
 net-out	internal/testutil/srcpath/srcpath.go	38	internal/testutil/srcpath.RepoRoot	yes	yes	no	.Do (likely http.Client.Do; receiver type unresolved)
 fs-path	internal/testutil/srcpath/srcpath.go	65	internal/testutil/srcpath.findRoot	yes	yes	no	filepath.Join with variable component
 fs-path	internal/testutil/srcpath/srcpath.go	79	internal/testutil/srcpath.modulePath	yes	yes	no	os.ReadFile (filesystem path)
+crypto-compare	internal/tlsreload/tlsreload.go	76	internal/tlsreload.(Reloader).reloadLocked	yes	no	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+fs-path	internal/tlsreload/tlsreload.go	95	internal/tlsreload.(Reloader).read	yes	yes	yes	os.ReadFile (filesystem path)
+fs-path	internal/tlsreload/tlsreload.go	99	internal/tlsreload.(Reloader).read	yes	yes	yes	os.ReadFile (filesystem path)
 deserialize	internal/webauthnrp/webauthnrp.go	123	internal/webauthnrp.(relyingParty).DecodeCredential	yes	yes	no	json.Unmarshal (target type unresolved)
 deserialize	internal/webauthnrp/webauthnrp.go	133	internal/webauthnrp.(relyingParty).DecodeSession	yes	yes	no	json.Unmarshal (target type unresolved)
 deserialize	internal/wycheproof/wvec/wvec.go	37	internal/wycheproof/wvec.(Hex).UnmarshalJSON	yes	no	no	json.Unmarshal (target type unresolved)
@@ -900,8 +903,8 @@ fs-path	scripts/analysis/remote_storage_classify.go	141	scripts/analysis.loadCor
 fs-path	scripts/analysis/remote_storage_classify.go	335	scripts/analysis.filesReferencingMethod	no	no	no	os.ReadFile (filesystem path)
 fs-path	scripts/analysis/remote_storage_classify.go	354	scripts/analysis.main	no	no	no	filepath.Join with variable component
 fs-path	scripts/analysis/remote_storage_classify.go	364	scripts/analysis.main	no	no	no	filepath.Join with variable component
-fs-path	scripts/analysis/remote_storage_classify.go	403	scripts/analysis.main	no	no	no	os.ReadFile (filesystem path)
-fs-path	scripts/analysis/remote_storage_classify.go	426	scripts/analysis.main	no	no	no	os.ReadFile (filesystem path)
+fs-path	scripts/analysis/remote_storage_classify.go	407	scripts/analysis.main	no	no	no	os.ReadFile (filesystem path)
+fs-path	scripts/analysis/remote_storage_classify.go	430	scripts/analysis.main	no	no	no	os.ReadFile (filesystem path)
 fs-path	scripts/ci/declrefs/main.go	110	scripts/ci/declrefs.run	no	no	yes	filepath.Join with variable component
 exec	scripts/ci/fuzzplan/main.go	147	scripts/ci/fuzzplan.testFiles	no	no	no	exec.Command (process exec)
 deserialize	scripts/ci/fuzzplan/main.go	157	scripts/ci/fuzzplan.testFiles	no	no	no	json.Unmarshal (target type unresolved)
@@ -920,6 +923,9 @@ fs-path	scripts/ci/shadowprobe/main.go	207	scripts/ci/shadowprobe.main	no	no	no	
 fs-path	scripts/ci/shadowprobe/main.go	217	scripts/ci/shadowprobe.main	no	no	no	os.WriteFile (filesystem path)
 fs-path	scripts/ci/shadowprobe/main.go	221	scripts/ci/shadowprobe.main	no	no	no	os.WriteFile (filesystem path)
 fs-path	scripts/ci/shadowprobe/main.go	221	scripts/ci/shadowprobe.main	no	no	no	filepath.Join with variable component
+fs-path	scripts/ci/testreach/main.go	207	scripts/ci/testreach.analyse	no	no	no	filepath.Join with variable component
+fs-path	scripts/ci/testreach/main.go	368	scripts/ci/testreach.parseDir	no	no	no	os.ReadDir (filesystem path)
+fs-path	scripts/ci/testreach/main.go	379	scripts/ci/testreach.parseDir	no	no	no	filepath.Join with variable component
 sql	scripts/demo/dbexec/main.go	50	scripts/demo/dbexec.run	no	no	yes	.ExecContext with non-literal query string
 sql	scripts/demo/dbexec/main.go	58	scripts/demo/dbexec.run	no	no	yes	.QueryContext with non-literal query string
 crypto-compare	scripts/demo/fakevault/main.go	34	scripts/demo/fakevault.main	no	no	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
@@ -1155,8 +1161,8 @@ exec	scripts/fuzzing/reencode-seeds.go	117	scripts/fuzzing.run	no	no	yes	exec.Co
 template-regexp	scripts/fuzzing/sinkmap/main.go	64	scripts/fuzzing/sinkmap.run	no	no	yes	.Parse with variable argument (likely template parse)
 fs-path	scripts/fuzzing/sinkmap/main.go	79	scripts/fuzzing/sinkmap.run	no	no	yes	filepath.Join with variable component
 fs-path	scripts/fuzzing/sinkmap/main.go	80	scripts/fuzzing/sinkmap.run	no	no	yes	os.ReadFile (filesystem path)
-fs-path	scripts/fuzzing/sinkmap/main.go	94	scripts/fuzzing/sinkmap.run	no	no	yes	os.WriteFile (filesystem path)
-fs-path	scripts/fuzzing/sinkmap/main.go	102	scripts/fuzzing/sinkmap.run	no	no	yes	os.WriteFile (filesystem path)
+fs-path	scripts/fuzzing/sinkmap/main.go	95	scripts/fuzzing/sinkmap.run	no	no	yes	os.WriteFile (filesystem path)
+fs-path	scripts/fuzzing/sinkmap/main.go	104	scripts/fuzzing/sinkmap.run	no	no	yes	os.WriteFile (filesystem path)
 fs-path	scripts/fuzzing/sinkmap/scan.go	76	scripts/fuzzing/sinkmap.scanModule	no	no	yes	filepath.Join with variable component
 fs-path	scripts/fuzzing/sinkmap/scan.go	93	scripts/fuzzing/sinkmap.scanModule	no	no	yes	filepath.Join with variable component
 fs-path	scripts/fuzzing/sinkmap/scan.go	133	scripts/fuzzing/sinkmap.scanFile	no	no	no	os.ReadFile (filesystem path)
@@ -1220,11 +1226,11 @@ fs-path	server/admin/audit_export_checkpoint_key.go	106	server/admin.runExportCh
 fs-path	server/admin/backup.go	382	server/admin.runAdminBackup	yes	no	no	os.OpenFile (filesystem path)
 fs-path	server/admin/backup.go	393	server/admin.runAdminBackup	yes	no	no	os.Remove (filesystem path)
 fs-path	server/admin/backup.go	449	server/admin.runAdminBackup	yes	no	no	os.Remove (filesystem path)
-fs-path	server/admin/backup.go	758	server/admin.liveKeyMaterial	yes	no	no	os.RemoveAll (filesystem path)
-fs-path	server/admin/backup.go	763	server/admin.liveKeyMaterial	yes	no	no	os.MkdirAll (filesystem path)
-fs-path	server/admin/backup.go	766	server/admin.liveKeyMaterial	yes	no	no	os.WriteFile (filesystem path)
-fs-path	server/admin/backup.go	782	server/admin.stagedKeyPath	yes	no	no	filepath.Join with variable component
-fs-path	server/admin/backup.go	784	server/admin.stagedKeyPath	yes	no	no	filepath.Join with variable component
+fs-path	server/admin/backup.go	782	server/admin.liveKeyMaterial	yes	no	no	os.RemoveAll (filesystem path)
+fs-path	server/admin/backup.go	787	server/admin.liveKeyMaterial	yes	no	no	os.MkdirAll (filesystem path)
+fs-path	server/admin/backup.go	790	server/admin.liveKeyMaterial	yes	no	no	os.WriteFile (filesystem path)
+fs-path	server/admin/backup.go	806	server/admin.stagedKeyPath	yes	no	no	filepath.Join with variable component
+fs-path	server/admin/backup.go	808	server/admin.stagedKeyPath	yes	no	no	filepath.Join with variable component
 deserialize	server/admin/backup_v1_legacy.go	145	server/admin.readBackupArchive	yes	no	yes	json.Unmarshal (target type unresolved)
 fs-path	server/admin/backup_v1_legacy.go	216	server/admin.auditEventCountFromDBBytes	yes	no	no	os.RemoveAll (filesystem path)
 fs-path	server/admin/backup_v1_legacy.go	217	server/admin.auditEventCountFromDBBytes	yes	no	no	filepath.Join with variable component
@@ -1233,17 +1239,17 @@ crypto-compare	server/admin/generate_secrets.go	82	server/admin.runGenerateSecre
 fs-path	server/admin/generate_secrets.go	92	server/admin.runGenerateSecrets	yes	no	no	filepath.Join with variable component
 fs-path	server/admin/generate_secrets.go	93	server/admin.runGenerateSecrets	yes	no	no	filepath.Join with variable component
 fs-path	server/admin/generate_secrets.go	119	server/admin.runGenerateSecrets	yes	no	no	filepath.Join with variable component
-fs-path	server/admin/init.go	230	server/admin.generateAdminConfigFile	yes	no	no	os.MkdirAll (filesystem path)
-fs-path	server/admin/init.go	307	server/admin.initializeAdminDatabase	yes	no	no	os.MkdirAll (filesystem path)
-fs-path	server/admin/init.go	312	server/admin.initializeAdminDatabase	yes	no	no	os.OpenFile (filesystem path)
-fs-path	server/admin/init.go	334	server/admin.initializeAdminEncryption	yes	no	no	os.MkdirAll (filesystem path)
-fs-path	server/admin/init.go	337	server/admin.initializeAdminEncryption	yes	no	no	os.MkdirAll (filesystem path)
-fs-path	server/admin/init.go	345	server/admin.initializeAdminLogging	yes	no	no	os.MkdirAll (filesystem path)
-fs-path	server/admin/init.go	348	server/admin.initializeAdminLogging	yes	no	no	os.OpenFile (filesystem path)
+fs-path	server/admin/init.go	267	server/admin.generateAdminConfigFile	yes	no	no	os.MkdirAll (filesystem path)
+fs-path	server/admin/init.go	344	server/admin.initializeAdminDatabase	yes	no	no	os.MkdirAll (filesystem path)
+fs-path	server/admin/init.go	349	server/admin.initializeAdminDatabase	yes	no	no	os.OpenFile (filesystem path)
+fs-path	server/admin/init.go	371	server/admin.initializeAdminEncryption	yes	no	no	os.MkdirAll (filesystem path)
+fs-path	server/admin/init.go	374	server/admin.initializeAdminEncryption	yes	no	no	os.MkdirAll (filesystem path)
+fs-path	server/admin/init.go	382	server/admin.initializeAdminLogging	yes	no	no	os.MkdirAll (filesystem path)
+fs-path	server/admin/init.go	385	server/admin.initializeAdminLogging	yes	no	no	os.OpenFile (filesystem path)
 crypto-compare	server/admin/init_secure.go	69	server/admin.generateSecureBaselineFiles	yes	no	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 fs-path	server/admin/init_secure.go	93	server/admin.fileExists	yes	no	no	os.Lstat (filesystem path)
 fs-path	server/admin/init_secure.go	227	server/admin.createPrivateFile	yes	no	no	os.MkdirAll (filesystem path)
-template-regexp	server/admin/posture.go	685	server/admin.requireMFAGraceWindow	yes	no	no	.Parse with variable argument (likely template parse)
+template-regexp	server/admin/posture.go	696	server/admin.requireMFAGraceWindow	yes	no	no	.Parse with variable argument (likely template parse)
 fs-path	server/admin/posture_integrity.go	43	server/admin.integrityEnv	yes	no	no	filepath.Join with variable component
 fs-path	server/admin/recovery_key.go	117	server/admin.runRotateRecoveryKey	yes	no	no	os.Remove (filesystem path)
 fs-path	server/admin/recovery_key_encrypt.go	115	server/admin.reserveRecoveryKeyOutputFile	yes	no	no	os.OpenFile (filesystem path)
@@ -1337,8 +1343,8 @@ deserialize	server/http/handlers/scim.go	305	server/http/handlers.parseSCIMUserP
 deserialize	server/http/handlers/scim.go	310	server/http/handlers.parseSCIMUserPatchOp	yes	yes	no	json.Unmarshal (target type unresolved)
 deserialize	server/http/handlers/scim.go	323	server/http/handlers.parseSCIMUserPatchOp	yes	yes	no	json.Unmarshal (target type unresolved)
 deserialize	server/http/handlers/scim_bool.go	38	server/http/handlers.parseSCIMBool	yes	yes	no	json.Unmarshal (target type unresolved)
-deserialize	server/http/handlers/scim_groups.go	257	server/http/handlers.(SCIMHandler).PatchGroup	yes	yes	no	json.Unmarshal (target type unresolved)
-deserialize	server/http/handlers/scim_groups.go	295	server/http/handlers.(SCIMHandler).PatchGroup	yes	yes	no	json.Unmarshal (target type unresolved)
+deserialize	server/http/handlers/scim_groups.go	263	server/http/handlers.(SCIMHandler).PatchGroup	yes	yes	no	json.Unmarshal (target type unresolved)
+deserialize	server/http/handlers/scim_groups.go	301	server/http/handlers.(SCIMHandler).PatchGroup	yes	yes	no	json.Unmarshal (target type unresolved)
 crypto-compare	server/http/handlers/secret_access_requests.go	41	server/http/handlers.(CatalogHandler).CreateSecretAccessRequest	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 template-regexp	server/http/handlers/secret_read_aggregation_handler.go	43	server/http/handlers.(SecretHandler).GetSecretReadSummary	yes	yes	no	.Parse with variable argument (likely template parse)
 template-regexp	server/http/handlers/secret_read_aggregation_handler.go	48	server/http/handlers.(SecretHandler).GetSecretReadSummary	yes	yes	no	.Parse with variable argument (likely template parse)
@@ -1351,7 +1357,7 @@ crypto-compare	server/http/handlers/secrets_crud.go	639	server/http/handlers.(Se
 template-regexp	server/http/handlers/secrets_crud.go	671	server/http/handlers.(SecretHandler).UpdateSecret	yes	yes	yes	.Parse with variable argument (likely template parse)
 crypto-compare	server/http/handlers/secrets_handler.go	86	server/http/handlers.(SecretHandler).resolveSecretNames	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 template-regexp	server/http/handlers/secrets_list.go	140	server/http/handlers.(SecretHandler).ListSecrets	yes	yes	yes	.Parse with variable argument (likely template parse)
-crypto-compare	server/http/handlers/secrets_versions.go	70	server/http/handlers.(SecretHandler).GetSecretVersions	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
+crypto-compare	server/http/handlers/secrets_versions.go	74	server/http/handlers.(SecretHandler).GetSecretVersions	yes	yes	yes	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	server/http/handlers/shares_query.go	155	server/http/handlers.(ShareHandler).sendShareViewPage	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	server/http/handlers/shares_query.go	263	server/http/handlers.(ShareHandler).ListSharedSecrets	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	server/http/handlers/shares_query.go	314	server/http/handlers.(ShareHandler).ListSharedSecretsForUser	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
