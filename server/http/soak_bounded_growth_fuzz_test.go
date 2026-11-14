@@ -44,9 +44,9 @@ func FuzzSoakOperationSequence(f *testing.F) {
 	// Seeds: each byte selects an operation kind (byte % len(soakOpKinds)); a few
 	// representative orderings get the corpus started.
 	f.Add([]byte{0, 1, 2, 3, 0, 1, 2, 4}) // create,read,update,rotate,create,read,update,delete
-	f.Add([]byte{0, 0, 0, 4, 4, 4})        // create burst then delete burst
-	f.Add([]byte{6, 6, 6})                 // churn (login/logout) only
-	f.Add([]byte{0, 5, 0, 5, 7})           // create, audit-read, ..., project churn
+	f.Add([]byte{0, 0, 0, 4, 4, 4})       // create burst then delete burst
+	f.Add([]byte{6, 6, 6})                // churn (login/logout) only
+	f.Add([]byte{0, 5, 0, 5, 7})          // create, audit-read, ..., project churn
 	f.Add([]byte{})
 
 	worlds := []*soakWorld{buildSoakWorldSQLite(f)}
