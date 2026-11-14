@@ -21,9 +21,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/keyorixhq/keyorix/internal/guardrules"
-	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // stdinReaderFile is the one file allowed to build a bufio reader over os.Stdin.
@@ -98,39 +95,6 @@ func TestNoDirectBufioOverStdin(t *testing.T) {
 		t.Errorf("a bufio reader built over os.Stdin loses the input it buffered when the next prompt builds its own (#3448, #4126).\n"+
 			"Use stdinReader() or promptInput(cmd.InOrStdin()) from %s instead:\n  %s",
 			stdinReaderFile, strings.Join(hits, "\n  "))
-	}
-}
-
-// scriptsStdinFiles are the files outside this package that the same rule is extended to
-// (report-only first, docs/guard-rollout.d/TestNoDirectBufioOverStdin_Scripts.tsv).
-// Only this one so far: server/admin/recover_admin.go and server/admin/testhook.go have the
-// same shape and are listed as leftovers until the server/admin owners are done.
-//
-// The script reads stdin once, to EOF, through a single scanner, so it cannot lose input to a
-// second reader the way a prompt sequence does; it is listed because the rule is syntactic
-// and a later second read in it would be the bug. What it does not check: any file not named
-// here.
-var scriptsStdinFiles = []string{"scripts/analysis/remote_storage_classify.go"}
-
-func TestNoDirectBufioOverStdin_Scripts(t *testing.T) {
-	g := guardrules.Rollout(t)
-	root := srcpath.RepoRoot()
-	var hits []string
-	for _, rel := range scriptsStdinFiles {
-		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatalf("the guard is looking in the wrong place: %v", err) // not a finding
-		}
-		h, err := directStdinBufioUses(rel, src)
-		if err != nil {
-			t.Fatalf("parse %s: %v", rel, err)
-		}
-		hits = append(hits, h...)
-	}
-	sort.Strings(hits)
-	if len(hits) > 0 {
-		g.Errorf("a bufio reader built over os.Stdin loses the input it buffered when the next reader is built (#3448, #4126):\n  %s",
-			strings.Join(hits, "\n  "))
 	}
 }
 

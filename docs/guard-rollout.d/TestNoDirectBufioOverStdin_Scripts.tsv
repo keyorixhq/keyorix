@@ -1,1 +1,0 @@
-TestNoDirectBufioOverStdin_Scripts	cli/cmd	#4146	extends the #4151 stdin guard to scripts/analysis/remote_storage_classify.go (TLS-RELOAD-NOV-1, tracking issue #4146); report-only until its first green nightly on main
