@@ -230,6 +230,29 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	grpcCtx := metadata.NewOutgoingContext(context.Background(),
 		metadata.Pairs("authorization", "Bearer "+session.SessionToken))
 
+	// Quiesce the core's background bookkeeping before this world's DB closes.
+	// Session validation (bootstrap/login and every authenticated request) arms
+	// a 30 s last-used flush timer (last_used_coalescer.go) that holds the whole
+	// *KeyorixCore graph — storage, the gorm.DB and its per-connection schema
+	// cache, the permission/RBAC caches. Nothing in a FRESH world stops it, so a
+	// world torn down inside 30 s left its timer armed (pinning ~0.9 MiB of heap
+	// per world), and once the timer fired against the now-closed DB the failed
+	// flush RE-ARMED it, pinning the core forever: FuzzMixedPrincipalAuthority
+	// grew ~2.5 MB resident per execution for exactly this reason (IF1). This is
+	// the same teardown resetForReuse (world_reuse_test.go) already runs before
+	// it discards a core; newFaultWorld simply never had it. Registered here so
+	// LIFO cleanup ordering runs it before openWorldDB's DB-close cleanup (which
+	// was registered first). The underlying "a permanently-failing DB re-arms the
+	// last-used timer forever" is a production HARDENING item (IF1 report), benign
+	// with one long-lived core but not safe for the harness to depend on.
+	// KEYORIX_IF1_DISABLE_QUIESCE suppresses this teardown so the red proof for
+	// TestWorldFixtureNoRetainedMemoryGrowth can be reproduced without editing
+	// code (same role leakTableForTest plays for the reuse-soundness gate).
+	// Unset in every normal run, including CI.
+	if os.Getenv("KEYORIX_IF1_DISABLE_QUIESCE") == "" {
+		t.Cleanup(func() { quiesceWorldCore(testCore) })
+	}
+
 	return &faultWorld{
 		t: t, db: db, core: testCore, faulty: faulty,
 		httpServer: httpSrv, httpClient: &http.Client{Timeout: 10 * time.Second},
@@ -237,6 +260,19 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		scimToken:  faultopsSCIMToken,
 		grpcConn:   conn, grpcCtx: grpcCtx,
 	}
+}
+
+// quiesceWorldCore stops a world core's background bookkeeping so the core (and
+// the DB/schema-cache graph it pins) can be collected once the iteration's
+// t.Cleanup runs. It flushes the last-used coalescer (stops its armed 30 s
+// timer), flushes any open secret-read-denial aggregation window, and drains
+// detached goSafe goroutines. It is the exact teardown resetForReuse
+// (world_reuse_test.go) already performs before discarding a core; see
+// newFaultWorld's registration site for why a fresh world needs it too (IF1).
+func quiesceWorldCore(c *core.KeyorixCore) {
+	c.FlushLastUsed(context.Background())
+	c.FlushSecretReadDenials()
+	drainAllBackgroundGoroutines()
 }
 
 // migrateWorldSchema migrates a world's schema: every test model, audit_checkpoints
