@@ -7,9 +7,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -241,26 +240,18 @@ func groupMemberToProto(u *models.User) *pb.GroupMember {
 // authorization refusal (ERRSTRING-CLASS-1). An untyped error is Internal until it
 // is typed; a transient authorization-storage fault is Unavailable (retryable).
 func groupError(err error) error {
-	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
+	texts := coreErrorTexts{
+		errclass.NotFound:         "group not found",
+		errclass.Conflict:         "group name already in use",
+		errclass.Precondition:     "cannot remove the last administrator",
+		errclass.InvalidInput:     "invalid group request",
+		errclass.PermissionDenied: "access denied",
 	}
-	switch {
-	case errors.Is(err, storage.ErrGroupNotFound):
-		return status.Error(codes.NotFound, "group not found")
-	case errors.Is(err, storage.ErrUserNotFound):
-		return status.Error(codes.NotFound, "user not found")
-	case errors.Is(err, storage.ErrDuplicateGroupName):
-		return status.Error(codes.AlreadyExists, "group name already in use")
-	case errors.Is(err, core.ErrLastAdminGroupGuard), errors.Is(err, storage.ErrWouldStrandLastAdmin):
-		return status.Error(codes.FailedPrecondition, "cannot remove the last administrator")
-	case errors.Is(err, storage.ErrInvalidGroupRequest):
-		return status.Error(codes.InvalidArgument, "invalid group request")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "access denied")
-	case core.IsAuthTransient(err):
-		return status.Error(codes.Unavailable, "group operation temporarily unavailable; retry")
-	default:
-		return internalFailure("group operation failed", err)
+	if errors.Is(err, storage.ErrUserNotFound) {
+		texts[errclass.NotFound] = "user not found"
 	}
+	// The classifier answers an audit outage and a typed storage read fault Unavailable
+	// (retry), and a transient authorization-storage fault Unavailable with the gates'
+	// fixed text.
+	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "group operation", texts: texts})
 }
