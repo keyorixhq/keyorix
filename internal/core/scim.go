@@ -192,6 +192,11 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 		if cerr != nil {
 			return cerr
 		}
+		// active=false must be STORED: the INSERT's gorm:"default:true" turns the
+		// zero value into true. Same transaction as the create (see helper).
+		if cerr = persistInactiveOnCreate(ctx, tx, created, active); cerr != nil {
+			return cerr
+		}
 		role, rerr := tx.GetRoleByName(ctx, "system_viewer")
 		if rerr != nil {
 			return fmt.Errorf("failed to resolve baseline role: %w", rerr)
