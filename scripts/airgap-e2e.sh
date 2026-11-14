@@ -212,15 +212,16 @@ $ENGINE run -d --name "$SERVER_CONTAINER" --network none --workdir /app/data \
 wait_for_health "$SERVER_CONTAINER"
 
 echo "==> Bootstrapping the first admin user + default project (POST /system/init)"
-jq -n --arg u "$ADMIN_USER" --arg e "$ADMIN_EMAIL" --arg p "$ADMIN_PW" --arg t "$BOOTSTRAP_TOKEN" \
-    '{username: $u, email: $e, password: $p, bootstrap_token: $t}' >"$SRC_DIR/init-payload.json"
+# The credentials reach jq through its environment (`env.X`), not `--arg` (argv is visible in ps).
+JQ_USER="$ADMIN_USER" JQ_EMAIL="$ADMIN_EMAIL" JQ_PW="$ADMIN_PW" JQ_BOOT="$BOOTSTRAP_TOKEN" \
+    jq -n '{username: env.JQ_USER, email: env.JQ_EMAIL, password: env.JQ_PW, bootstrap_token: env.JQ_BOOT}' >"$SRC_DIR/init-payload.json"
 INIT_OUT="$($ENGINE exec "$SERVER_CONTAINER" wget -q --header="Content-Type: application/json" \
     --post-file=/app/data/init-payload.json -O- "http://127.0.0.1:8080/system/init")" || fail "POST /system/init failed"
 echo "$INIT_OUT" | jq -e '.data.user.id' >/dev/null || fail "system/init did not return a user id: $INIT_OUT"
 
 echo "==> Logging in as $ADMIN_USER"
 LOGIN_PAYLOAD="$SRC_DIR/login-payload.json"
-jq -n --arg u "$ADMIN_USER" --arg p "$ADMIN_PW" '{username: $u, password: $p}' >"$LOGIN_PAYLOAD"
+JQ_USER="$ADMIN_USER" JQ_PW="$ADMIN_PW" jq -n '{username: env.JQ_USER, password: env.JQ_PW}' >"$LOGIN_PAYLOAD"
 LOGIN_OUT="$($ENGINE exec "$SERVER_CONTAINER" wget -q --header="Content-Type: application/json" \
     --post-file=/app/data/login-payload.json -O- "http://127.0.0.1:8080/auth/login")" || fail "POST /auth/login failed"
 TOKEN="$(echo "$LOGIN_OUT" | jq -r '.data.token')"
@@ -241,8 +242,8 @@ ENV_ID="$(echo "$ENVS_OUT" | jq -r '.data.environments[0].id // .data.environmen
 
 echo "==> Creating a real secret ($SECRET_NAME)"
 SECRET_PAYLOAD="$SRC_DIR/secret-payload.json"
-jq -n --arg name "$SECRET_NAME" --arg value "$SECRET_VALUE" --argjson pid "$PROJECT_ID" --argjson eid "$ENV_ID" \
-    '{name: $name, value: $value, project_id: $pid, environment_id: $eid, type: "generic"}' >"$SECRET_PAYLOAD"
+JQ_NAME="$SECRET_NAME" JQ_VAL="$SECRET_VALUE" jq -n --argjson pid "$PROJECT_ID" --argjson eid "$ENV_ID" \
+    '{name: env.JQ_NAME, value: env.JQ_VAL, project_id: $pid, environment_id: $eid, type: "generic"}' >"$SECRET_PAYLOAD"
 CREATE_OUT="$(api_post "$SERVER_CONTAINER" "/api/v1/secrets" "/app/data/secret-payload.json" "$TOKEN")" || fail "POST /api/v1/secrets failed"
 SECRET_ID="$(echo "$CREATE_OUT" | jq -r '.data.id // .data.ID')"
 [ -n "$SECRET_ID" ] && [ "$SECRET_ID" != "null" ] || fail "secret create did not return an id: $CREATE_OUT"
@@ -344,7 +345,7 @@ $ENGINE run -d --name "$RESTORE_CONTAINER" --network none --workdir /app/data \
 wait_for_health "$RESTORE_CONTAINER"
 
 RESTORE_LOGIN_PAYLOAD="$DST_DIR/login-payload.json"
-jq -n --arg u "$ADMIN_USER" --arg p "$ADMIN_PW" '{username: $u, password: $p}' >"$RESTORE_LOGIN_PAYLOAD"
+JQ_USER="$ADMIN_USER" JQ_PW="$ADMIN_PW" jq -n '{username: env.JQ_USER, password: env.JQ_PW}' >"$RESTORE_LOGIN_PAYLOAD"
 RESTORE_LOGIN_OUT="$($ENGINE exec "$RESTORE_CONTAINER" wget -q --header="Content-Type: application/json" \
     --post-file=/app/data/login-payload.json -O- "http://127.0.0.1:8080/auth/login")" || fail "login against restored server failed"
 RESTORE_TOKEN="$(echo "$RESTORE_LOGIN_OUT" | jq -r '.data.token')"
