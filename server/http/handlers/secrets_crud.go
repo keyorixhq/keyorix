@@ -115,6 +115,9 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	response, err := h.coreService.CreateSecret(secretMutationAuditContext(r, userCtx), req)
 	if err != nil {
 		log.Printf("Error creating secret: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if h.trySendSecretSizeError(w, err) {
 			return
 		}
@@ -312,6 +315,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	}
 	if err != nil {
 		log.Printf("Error getting secret: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if authorized && h.sendSecretReadRefusal(w, err) {
 			return
 		}
@@ -339,6 +345,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		}
 		if err != nil {
 			log.Printf("Error getting secret value: %v", err)
+			if sendStorageUnavailable(w, err) {
+				return
+			}
 			if h.sendSecretReadRefusal(w, err) {
 				return
 			}
@@ -523,6 +532,9 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 	}
 	if err != nil {
 		log.Printf("Error getting secret value by ref: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		// The route gate authorized the caller on this secret before this read.
 		if h.sendSecretReadRefusal(w, err) {
 			return
