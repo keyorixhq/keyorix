@@ -390,4 +390,7 @@ var exercisingTests = map[string][]string{
 	// #2781 (one definition of project membership) --
 	// users_memberships_2781_test.go.
 	"getUserMembershipsForUser": {"TestContract2781_GetUserMembershipsForUser"},
+	// DYNAMIC-ADMIN-DSN-1 -- openapi_contract_dynamic_admin_dsn_test.go.
+	"updateDynamicSecretConfigAdminDSN":           {"TestContractDynamicAdminDSN_UpdateDynamicSecretConfigAdminDSN"},
+	"listDynamicSecretConfigsWithRefusedAdminDSN": {"TestContractDynamicAdminDSN_ListDynamicSecretConfigsWithRefusedAdminDSN"},
 }

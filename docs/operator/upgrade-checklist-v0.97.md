@@ -48,7 +48,7 @@ server or an `admin` command at start-up with a message that names the key.
 |---|---|---|---|
 | PostgreSQL TLS | `ssl_mode` is `verify-full`/`verify-ca` with no `ssl_root_cert`; `ssl_mode` outside the allowed list; `ssl_mode` next to a `dsn` with a different or missing `sslmode`; a `service=`/`PGSERVICE` file | set `ssl_root_cert` (a PEM path, or `system`); make `dsn` and `ssl_mode` agree | §2 |
 | PostgreSQL `session_replication_role` | the server's sessions report anything but `origin` (server default, database, role, `PGOPTIONS`, DSN option) | run the two queries in §6n and `RESET` the setting | §6n |
-| Bootstrap token | `KEYORIX_BOOTSTRAP_TOKEN` (or `_FILE`) is set and shorter than 32 characters | `openssl rand -hex 32`, or unset it on an initialised install | §6g |
+| Bootstrap token | `KEYORIX_BOOTSTRAP_TOKEN` (or `_FILE`) is set and shorter than 32 characters; refused at server start (`KEYORIX_BOOTSTRAP_TOKEN too short (min 32 characters)`), not by `admin validate` | `openssl rand -hex 32`, or unset it on an initialised install | §6g |
 | gRPC `auto_cert` | `server.grpc.tls.auto_cert: true` | remove the line; give gRPC `cert_file`/`key_file` | §6t |
 | Audit durability | `audit_durability: standard` on SQLite; `audit_durability` and the old `insecure_audit_skip_durable_sync` set to different levels | remove one, or use `strict` on SQLite | §6c |
 | Multi-replica | `single_writer: true` with several replicas; `pooler: pgbouncer-transaction` with `single_writer` | leave `single_writer` off | §6f |
@@ -153,7 +153,7 @@ replaces it (UPGRADING §6q). That is expected, not a fault.
   deliberate override is `--allow-rollback`, which is logged to the audit trail.
 - **Everything written after the upgrade is lost by a restore:** secrets, audit rows, sessions,
   tokens. Decide how long you can afford that before you start, and keep the post-checks fast.
-- **Schema epoch.** The schema epoch is 7 and the compatibility floor is 3 (UPGRADING §6q), so a
+- **Schema epoch.** The schema epoch is 10 and the compatibility floor is 3 (UPGRADING §6q), so a
   v0.96.x binary (epoch 2) **refuses to start** on a database this release has migrated:
   `database declares a minimum compatible schema epoch of 3 (database schema epoch 10)`. It must not
   be run on one: v0.97.0 writes a v2 audit retention anchor (#3258) and a `suspend_clear_synced_copies`
@@ -178,10 +178,12 @@ Run all of them against the upgraded server and write down the output.
   step 1.2 (the upgrade, your own logins and reads are in it).
 - [ ] `keyorix-server admin validate --posture` (server stopped for the command, or as documented
   for your deployment): the deviations match what you accepted before, and none is new.
-- [ ] `GET /api/v1/system/info`: the version, `security.audit_durability`, and
-  `database.single_writer` are what you set. `GET /readyz` is 200.
+- [ ] `GET /api/v1/system/info` (needs a bearer token: 401 `missing authorization header`
+  without one): the version, `security.audit_durability`, and `database.single_writer` are what
+  you set (a SQLite server's answer has no `single_writer`). `GET /readyz` is 200 without one.
 - [ ] `keyorix doctor`: a read-only health checklist of the CLI's connection to the server (#3319).
-  Then the next item.
+  It prints one PASS/WARN/FAIL/SKIP line each for config, reachable, tls, version, clock, auth
+  and audit, then a total. Then the next item.
 - [ ] A real round trip: log in as a human, read a known secret and compare its value, create
   and delete a test secret, read one as a machine identity or PAT. Each read appears in
   `keyorix audit logs` with the right actor.

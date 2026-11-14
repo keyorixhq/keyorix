@@ -95,6 +95,7 @@ var writeShareRouteMatrix = map[string]writeShareCase{
 	"DELETE /api/v1/secret-templates/{id}":                         {},
 	"PATCH /api/v1/dynamic-secrets/configs/{id}/classification":    {body: `{}`},
 	"PATCH /api/v1/dynamic-secrets/configs/{id}/enabled":           {body: `{}`},
+	"PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn":         {body: `{}`},
 	"POST /api/v1/dynamic-secrets/configs/{id}/issue":              {body: `{}`},
 	"POST /api/v1/dynamic-secrets/configs/{id}/revoke-all":         {body: `{}`},
 	"POST /api/v1/dynamic-secrets/leases/{leaseID}/renew":          {body: `{}`},
