@@ -213,10 +213,16 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, err := h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, p.DisplayName, p.memberIDs())
+	if errors.Is(err, core.ErrSCIMGroupStateUnavailable) && st != nil {
+		// A pure removal committed and only its read-back failed. A PUT must return the
+		// resource (RFC 7644 §3.5.1), so it answers 200 with the group built from the
+		// data the write already held; a 500 would tell the IdP the revocation did not
+		// happen (#3773). The cause is logged for the operator.
+		log.Printf("SCIM replacing group %d applied, but the group could not be read back (HTTP 200 from the pre-write state, request %s): %v", id, chimw.GetReqID(r.Context()), err)
+		writeSCIM(w, http.StatusOK, toSCIMGroup(st.Group, st.Members))
+		return
+	}
 	if err != nil {
-		// Including core.ErrSCIMGroupStateUnavailable (a pure removal applied, its
-		// read-back failed): a PUT must return the resource (RFC 7644 §3.5.1), so it
-		// answers the SCIM error as before; the IdP's retry is an idempotent no-op.
 		writeSCIMWriteError(w, r, fmt.Sprintf("replacing SCIM group %d", id), err)
 		return
 	}

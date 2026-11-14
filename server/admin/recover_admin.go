@@ -21,7 +21,6 @@
 package admin
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -198,7 +197,7 @@ func recoverAdminNotification(summary *recoverAdminSummary, keyDetail string) st
 // whitespace/case/dash variation beyond this, so only the trailing newline
 // needs stripping here.
 func readRecoveryKeyFromStdin() (string, error) {
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	line, err := readStdinLine()
 	if err != nil && line == "" {
 		return "", fmt.Errorf("read recovery key from stdin: %w", err)
 	}

@@ -24,6 +24,18 @@ type EnvCloneResult struct {
 	Errors         []string
 }
 
+// cloneEnvironmentReadError classifies a failed read of one of the two environments a
+// clone names. A positive not-found keeps its worded refusal ("Validation error: source
+// environment: environment not found", the text clients and the 404 mapping know) and
+// matches storage.ErrEnvironmentNotFound; any other failure is a storage read fault
+// (ErrStorageReadUnavailable), never worded as a refused input.
+func cloneEnvironmentReadError(which string, err error) error {
+	if !isPositiveNotFound(err) {
+		return &storageReadFault{cause: err}
+	}
+	return refuseAs(storage.ErrEnvironmentNotFound, fmt.Errorf("%s: %s: %w", i18n.T("ErrorValidation", nil), which, err))
+}
+
 // CloneEnvironment copies all active secrets from srcEnvID to dstEnvID.
 // Both environments must belong to the same project (projectID).
 // Secrets that already exist by name in dstEnvID are skipped (not overwritten).
@@ -32,23 +44,23 @@ type EnvCloneResult struct {
 // per-secret read permission check).
 func (c *KeyorixCore) CloneEnvironment(ctx context.Context, projectID, srcEnvID, dstEnvID uint, clonedBy string, actorID uint) (*EnvCloneResult, error) {
 	if projectID == 0 || srcEnvID == 0 || dstEnvID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project, source and destination environment IDs are required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "project, source and destination environment IDs are required")
 	}
 	if srcEnvID == dstEnvID {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source and destination environments must differ")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "source and destination environments must differ")
 	}
 
 	// Verify both environments belong to the authorised project.
 	srcEnv, err := c.storage.GetEnvironment(ctx, srcEnvID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: source environment: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, cloneEnvironmentReadError("source environment", err)
 	}
 	dstEnv, err := c.storage.GetEnvironment(ctx, dstEnvID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: destination environment: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, cloneEnvironmentReadError("destination environment", err)
 	}
 	if srcEnv.ProjectID != projectID || dstEnv.ProjectID != projectID {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "both environments must belong to the given project")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "both environments must belong to the given project")
 	}
 
 	result := &EnvCloneResult{

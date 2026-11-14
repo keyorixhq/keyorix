@@ -285,11 +285,17 @@ PostgreSQL (DEMO-1, #3743): stop, back up with the old binary, swap the binaries
 start. Secrets, versions and the audit chain come through intact. Two things look
 alarming and are not:
 
-- **`keyorix audit verify` says `NOT PROVEN` right after the first start** (non-zero
-  exit): the new server has not finished a full re-walk of the chain yet. Run
-  `keyorix audit verify --full` once; it walks the whole chain on the server and
-  prints `Audit chain: VALID`. Later plain `audit verify` calls are `VALID` too. A
-  post-upgrade check script should call `--full`.
+- **`keyorix audit verify` can say `NOT PROVEN` right after the first start** (non-zero
+  exit): the new server has not finished a full re-walk of the chain yet, and plain
+  `audit verify` only reports `VALID` once one has. v0.96.x kept no record of a full
+  re-walk, so there is nothing to carry over. Releases after #3743 run the first
+  re-walk at start (the log says `first tick in 0s`), so a chain of up to 100,000
+  audit events reads `VALID` within seconds. A longer chain is re-walked over 7
+  daily ticks. Until then, or on a release before that fix, run
+  `keyorix audit verify --full` once: it walks the whole chain on the server and
+  prints `Audit chain: VALID`, and later plain `audit verify` calls are `VALID` too.
+  A post-upgrade check script should call `--full`. `NOT PROVEN` is never a broken
+  chain: a break reads `BROKEN` and names the first bad event.
 - **`WARNING: deprecated config key: "secrets.chunking"`** (and
   `"secrets.limits.max_secrets_per_user"`) on every start. The `keyorix.yaml` that
   v0.96.x's own `admin init` wrote contains both. No feature reads them today, so the
