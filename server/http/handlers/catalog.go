@@ -590,8 +590,12 @@ func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Reque
 	}
 	if err := h.coreService.RestoreEnvironment(r.Context(), actorID(r), uint(projectID), uint(id)); err != nil {
 		// A permission refusal is the authority to reinstate the environment's project
-		// role assignments: a refusal, not a fault.
-		answerCoreError(w, r, err, catalogAnswer(fmt.Sprintf("restoring environment %d in project %d", id, projectID), "Environment not found", err))
+		// role assignments: a refusal, not a fault. Core's own text is kept.
+		answer := catalogAnswer(fmt.Sprintf("restoring environment %d in project %d", id, projectID), "Environment not found", err)
+		if errors.Is(err, core.ErrPermissionDenied) {
+			answer.texts[errclass.PermissionDenied] = err.Error()
+		}
+		answerCoreError(w, r, err, answer)
 		return
 	}
 	sendSuccess(w, nil, "Environment restored")

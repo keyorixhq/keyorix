@@ -453,7 +453,12 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEn
 			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
 		if err := q.Where("id = ? AND deleted_at IS NOT NULL", id).First(&project).Error; err != nil {
-			return storage.NotFound(storage.ErrProjectNotFound, "project not found or not deleted", nil)
+			// Only a definitive miss is a not-found: a lock timeout, serialization
+			// failure or cancelled context on this read must not match the sentinel.
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return storage.NotFound(storage.ErrProjectNotFound, "project not found or not deleted", err)
+			}
+			return fmt.Errorf("failed to lock project for restore: %w", err)
 		}
 		cascadeTS := project.DeletedAt.Time
 
@@ -1267,6 +1272,15 @@ func (ls *LocalStorage) requireLiveEnvironment(ctx context.Context, environmentI
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if n == 0 {
+		// An environment that never existed is a not-found, not a deleted parent.
+		var existing int64
+		if err := ls.db.WithContext(ctx).Unscoped().Model(&models.Environment{}).
+			Where(sqlWhereID, environmentID).Count(&existing).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if existing == 0 {
+			return storage.NotFound(storage.ErrEnvironmentNotFound, "environment not found", nil)
+		}
 		return storage.Typed(storage.ErrParentDeleted, "cannot restore: the parent environment is deleted — restore the environment first", nil)
 	}
 	return nil

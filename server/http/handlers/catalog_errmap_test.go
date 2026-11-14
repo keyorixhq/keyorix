@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,6 +101,7 @@ func TestCatalogRoutes_RefusalsAnswerTheirStatus(t *testing.T) {
 		{"DeleteProject with secrets", w.h.DeleteProject, http.MethodDelete, "", map[string]string{"id": id(full)}, http.StatusConflict, "secret(s)"},
 		{"DeleteProject absent", w.h.DeleteProject, http.MethodDelete, "", map[string]string{"id": "999999"}, http.StatusNotFound, ""},
 		{"UpdateProject duplicate name", w.h.UpdateProject, http.MethodPut, `{"name":"has-secrets"}`, map[string]string{"id": id(other)}, http.StatusConflict, "already exists"},
+		{"UpdateProject description too long", w.h.UpdateProject, http.MethodPut, `{"name":"other-name","description":"` + strings.Repeat("a", 1100) + `"}`, map[string]string{"id": id(other)}, http.StatusBadRequest, "exceeds"},
 		{"UpdateProject absent", w.h.UpdateProject, http.MethodPut, `{"name":"nobody"}`, map[string]string{"id": "999999"}, http.StatusNotFound, ""},
 		{"CreateProjectEnvironment duplicate", w.h.CreateProjectEnvironment, http.MethodPost, `{"name":"` + liveEnv.Name + `"}`, map[string]string{"id": id(live)}, http.StatusConflict, "already exists"},
 		{"CreateProjectEnvironment bad name", w.h.CreateProjectEnvironment, http.MethodPost, `{"name":"bad/name"}`, map[string]string{"id": id(live)}, http.StatusBadRequest, ""},
@@ -142,4 +144,27 @@ func TestDeleteProject_SecretRefusalIsAPreconditionSentinel(t *testing.T) {
 	require.ErrorIs(t, err, core.ErrProjectHasSecrets)
 	assert.Equal(t, errclass.Precondition, errclass.Of(err))
 	assert.Contains(t, err.Error(), "project has 1 secret(s)")
+}
+
+// TestRestoreEnvironment_PermissionRefusalKeepsCoreText pins that the 403 for a restore
+// that would reinstate an administrative grant carries core's own wording, as it did
+// before the route answered through answerCoreError.
+func TestRestoreEnvironment_PermissionRefusalKeepsCoreText(t *testing.T) {
+	w := newCatalogErrmapWorld(t)
+	p := w.project(t, "admin-grant")
+	e := w.env(t, p.ID)
+	require.NoError(t, w.db.Exec("UPDATE environments SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", e.ID).Error)
+
+	role := models.Role{Name: "bypass-role", BypassesPermissionChecks: true}
+	require.NoError(t, w.db.Create(&role).Error)
+	require.NoError(t, w.db.Create(&models.UserRole{UserID: 1, RoleID: role.ID, ProjectID: p.ID}).Error)
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = withChiParams(req, map[string]string{"projectId": strconv.Itoa(int(p.ID)), "id": strconv.Itoa(int(e.ID))})
+	req = withUserCtxID(req, 2, "plain-user") // holds no global admin role
+	rec := httptest.NewRecorder()
+	w.h.RestoreEnvironment(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "only an administrator can restore")
 }
