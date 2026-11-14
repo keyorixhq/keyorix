@@ -1,0 +1,2 @@
+### Fixed
+- **`keyorix-server admin encryption status` now exits non-zero when it cannot read the key state** (#4270). A wrong passphrase, a missing passphrase source, or a live server holding the DEK lock still print the same `❌`/`⚠️` line, but the command then exits 1, like `admin encryption validate`. A preflight such as `encryption status && encryption rotate --confirm` no longer continues past a failed state check. A healthy key set and `Enabled: false` still exit 0.
