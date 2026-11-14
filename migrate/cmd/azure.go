@@ -127,13 +127,14 @@ func runAzure(cmd *cobra.Command, _ []string) error {
 		skippedItems = append(skippedItems, plan.Item{Entry: plan.Entry{SourceKind: "azure", Path: s.Locator}, Outcome: plan.Skip, Reason: s.Reason})
 	}
 
-	planEntries := buildCloudPlanEntries("azure", cloudEntries, func(e cloudentry.Entry) string {
+	planEntries, nameSkipped := buildCloudPlanEntries("azure", cloudEntries, func(e cloudentry.Entry) string {
 		field := e.Field
 		if field == "" {
 			field = "value"
 		}
 		return plan.SourceID("azure-key-vault", vaultURL, e.RawName, field)
 	})
+	skippedItems = append(skippedItems, nameSkipped...)
 
 	unique, collided := splitIntraBatchNameCollisions(planEntries)
 	built, err := plan.BuildPlan(ctx, tgt, unique)
