@@ -77,8 +77,7 @@ func userInsertMethods() map[string]bool {
 	userPtr := reflect.TypeFor[*models.User]()
 	out := map[string]bool{}
 	st := reflect.TypeFor[storage.Storage]()
-	for i := range st.NumMethod() {
-		m := st.Method(i)
+	for m := range st.Methods() {
 		if m.Type.NumOut() == 0 || m.Type.Out(0) != userPtr {
 			continue
 		}
