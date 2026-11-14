@@ -306,7 +306,9 @@ alarming and are not:
   2. In `keyorix.yaml`, under the top-level `secrets:` key, delete the whole `chunking:`
      block (the `chunking:` line and its indented sub-keys) and the one
      `max_secrets_per_user:` line, which sits under `limits:`. Leave the other `limits:`
-     keys (for example `max_secret_size`) and everything else in `secrets:` as they are.
+     keys and everything else in `secrets:` as they are. In the file v0.96.3's `admin init`
+     wrote, `max_secrets_per_user` is the only key under `limits:`: the empty `limits:` line
+     that is left is accepted (checked: the server starts with no warning), or delete it too.
   3. Start the server. Both warnings are gone from the log. If one remains, you edited a
      different copy of the file or a different `secrets:` section: search for the key
      name in the file the server reports loading.
