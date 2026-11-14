@@ -38,13 +38,27 @@ import (
 
 const decodeDeadline = 2 * time.Second
 
-// expansionFactor bounds decoded-then-remarshaled size per input byte. It is set
-// ABOVE yaml.v3's own measured legitimate alias-expansion ceiling (~103x for
-// small inputs; yaml.v3 rejects anything that would expand further with
-// "document contains excessive aliasing" — confirmed, see report §Findings), so
-// the bound never fires on yaml.v3's sanctioned behaviour but DOES fire if that
-// alias budget regresses (a 3-level 9-way nest would then expand >500x).
-const expansionFactor = 256
+// Bounded-output backstop. yaml.v3's anti-"billion-laughs" protection is an
+// ABSOLUTE alias-work budget, NOT a fixed expansion ratio: it rejects a document
+// ("document contains excessive aliasing") once total alias resolution exceeds a
+// threshold, so the maximum output an aliased small input can produce is bounded
+// in ABSOLUTE terms (measured ~38 KiB across a branch×depth sweep — see report
+// §Findings), not as a ratio of input size. An input-relative ratio bound is the
+// WRONG shape and false-positives on legitimately-budgeted expansions (two such
+// were found and triaged during this campaign). So we bound output absolutely:
+//
+//	output <= len(input)*remarshalGrowth + aliasHeadroom
+//
+// remarshalGrowth covers ordinary re-serialisation growth of a NON-alias doc;
+// aliasHeadroom (1 MiB, ~27x above the measured ~38 KiB ceiling) covers the
+// alias budget's full legitimate contribution with wide margin. The bound never
+// fires on yaml.v3's sanctioned behaviour, and DOES fire if the alias budget is
+// removed/grossly loosened (a few-level 9-way nest then amplifies a <1 KiB input
+// to many MiB). It does NOT catch a SMALL loosening of the budget.
+const (
+	remarshalGrowth = 8
+	aliasHeadroom   = 1 << 20
+)
 
 // aliasBomb is a classic YAML "billion laughs"; yaml.v3 should REJECT it (its
 // alias budget is exceeded), not expand it. Used as a seed to keep that path hot.
@@ -62,13 +76,15 @@ func FuzzYAMLDecodeBoundedWork(f *testing.F) {
 	f.Add([]byte("{}"))
 	f.Add([]byte(""))
 	f.Add([]byte("- - - - - - - - - -")) // deep flow nesting
-	// Triaged ARTIFACT seed (see report): a 2-level 9-way alias nest that
-	// yaml.v3 LEGITIMATELY expands ~100x before its alias budget would reject a
-	// deeper one ("document contains excessive aliasing" at 3 levels). Kept as a
-	// regression seed: it must stay UNDER expansionFactor, and a removal of
-	// yaml.v3's alias budget (which would let a 3+-level nest through at >500x)
-	// must trip the bound.
+	// Triaged ARTIFACT seeds (see report §Findings): nested 9-way alias docs that
+	// yaml.v3 LEGITIMATELY expands (~103x and ~313x respectively, to ~11 KiB and
+	// ~32 KiB — both ABSOLUTELY bounded by yaml.v3's alias budget, which rejects
+	// deeper nests outright). Both exposed that an input-relative ratio bound is
+	// the wrong shape; kept as regression seeds under the absolute bound. A
+	// removal of yaml.v3's alias budget would let these amplify to many MiB and
+	// trip the bound.
 	f.Add([]byte("0: &a\n1: &b [00,00,00,&0,&0,&0,&0,&0,00]\n2: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b]\n7: [*c,*c,*c,*c,*c,*c,*c,*c,*c]"))
+	f.Add([]byte("0: &a [0,0,0,0,0,0]\n1: &b [*a,*a,*a,*a,*a,*a,*a,*a]\n2: &c [*b,*b,*b,*b,*b,*b]\n7: [*c,*c,*c,*c,*c,*c,*c]"))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > 1<<16 {
@@ -88,9 +104,9 @@ func FuzzYAMLDecodeBoundedWork(f *testing.F) {
 		if merr != nil {
 			return // can't bound; not a decoder defect
 		}
-		bound := len(data)*expansionFactor + 4096
+		bound := len(data)*remarshalGrowth + aliasHeadroom
 		if len(out) > bound {
-			t.Fatalf("decoded value re-marshaled to %d bytes from %d input (> %d bound) — alias/anchor expansion?",
+			t.Fatalf("decoded value re-marshaled to %d bytes from %d input (> %d bound) — alias budget regressed?",
 				len(out), len(data), bound)
 		}
 	})
