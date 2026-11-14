@@ -8,8 +8,10 @@ package docsdrift
 // (UPGRADE-RESTORE-COMPAT-1, DOCS-OPS-TAILS-2).
 //
 // What this checks: each package appears in one row only, each row's
-// Invariants = Guarded + UNGUARDED, there is exactly one Total row, and its
-// three numbers are the column sums. Every line of the counts table (the
+// Invariants = Guarded + UNGUARDED, and there is NO hand-kept Total row: the
+// column sums are computed here and logged (#4237: a hand-kept Total edited by
+// two concurrent PRs merged in the queue into two Total rows or a sum that
+// matched neither branch, and ejected PRs that were green on their own). Every line of the counts table (the
 // "| Package |" header through the last consecutive "|" line) must be the
 // header, the separator, a package row or the Total row: any other line is
 // reported, because a row the patterns do not match would otherwise be left
@@ -44,7 +46,13 @@ var (
 
 // checkInvariantsIndex returns one message per problem in the index document.
 func checkInvariantsIndex(doc string) []string {
-	var problems []string
+	problems, _, _, _ := invariantsIndexSums(doc)
+	return problems
+}
+
+// invariantsIndexSums is checkInvariantsIndex plus the column sums of the
+// package rows (invariants, guarded, UNGUARDED).
+func invariantsIndexSums(doc string) (problems []string, inv, guarded, unguarded int) {
 	type counts struct {
 		inv, guarded, unguarded, line int
 		text                          string // the row as written, so a message can quote it
@@ -101,33 +109,29 @@ func checkInvariantsIndex(doc string) []string {
 	}
 
 	if len(order) == 0 {
-		return append(problems, "no package rows found: the row pattern no longer matches the table")
+		return append(problems, "no package rows found: the row pattern no longer matches the table"), sum.inv, sum.guarded, sum.unguarded
 	}
-	switch len(totals) {
-	case 0:
-		problems = append(problems, "the table has no **Total** row")
-	case 1:
-		t := totals[0]
-		if t.inv != sum.inv || t.guarded != sum.guarded || t.unguarded != sum.unguarded {
-			problems = append(problems, fmt.Sprintf("line %d: Total is %d / %d / %d but the rows sum to %d / %d / %d (invariants / guarded / UNGUARDED)",
-				t.line, t.inv, t.guarded, t.unguarded, sum.inv, sum.guarded, sum.unguarded))
-		}
-	default:
-		var b strings.Builder
-		for _, t := range totals {
-			fmt.Fprintf(&b, "\n  line %d: %s", t.line, t.text)
-		}
-		problems = append(problems, fmt.Sprintf("the table has %d **Total** rows (lines %d and %d): keep one, set to the column sums %d / %d / %d (a concurrent PR edited the Total row; recompute after merging main)%s",
-			len(totals), totals[0].line, totals[1].line, sum.inv, sum.guarded, sum.unguarded, b.String()))
+	// The table carries NO hand-kept total (#4237). Two PRs that each touched
+	// the Total row, or each appended a package row above it, merged in the
+	// queue into two Total rows or a sum that matched neither PR, so a PR that
+	// was green on its own branch failed on the merge result. The sums are
+	// derived here from the rows instead and logged by the test.
+	for _, t := range totals {
+		problems = append(problems, fmt.Sprintf("line %d: remove the hand-kept Total row (%s): the sums are computed by this test from the package rows, currently %d / %d / %d (invariants / guarded / UNGUARDED); a hand-kept row is what made concurrent PRs fail each other in the merge queue (#4237)",
+			t.line, t.text, sum.inv, sum.guarded, sum.unguarded))
 	}
-	return problems
+	return problems, sum.inv, sum.guarded, sum.unguarded
 }
 
 func TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp(t *testing.T) {
 	g := guardrules.Rollout(t)
-	for _, p := range checkInvariantsIndex(readDoc(g, "docs/INVARIANTS.md")) {
+	problems, inv, guarded, unguarded := invariantsIndexSums(readDoc(g, "docs/INVARIANTS.md"))
+	for _, p := range problems {
 		g.Errorf("docs/INVARIANTS.md: %s", p)
 	}
+	// The diagnostic a failing queue run needs: the exact sums of the tree this
+	// ran on, so a mismatch is visible without re-deriving it.
+	t.Logf("docs/INVARIANTS.md package rows sum to %d / %d / %d (invariants / guarded / UNGUARDED)", inv, guarded, unguarded)
 }
 
 // TestInvariantsIndexCheck_Calibration proves checkInvariantsIndex fires on
@@ -144,12 +148,11 @@ func TestInvariantsIndexCheck_Calibration(t *testing.T) {
 		doc  string
 		want string // substring of the single expected problem; "" = clean
 	}{
-		{"clean", head + rowA + rowB + total, ""},
-		{"duplicate package row", head + rowA + rowB + rowA2 + "| **Total** | | **26** | **21** | **5** |\n", "listed twice"},
-		{"total is not the sum", head + rowA + rowB + "| **Total** | | **16** | **13** | **3** |\n", "rows sum to 15 / 13 / 2"},
-		{"row does not add up", head + rowA + "| `b/http` | [b](../b) | 5 | 4 | 0 |\n" + "| **Total** | | **15** | **12** | **2** |\n", "5 invariants but 4 guarded"},
-		{"two totals", head + rowA + rowB + total + total, "2 **Total** rows"},
-		{"no total", head + rowA + rowB, "no **Total** row"},
+		{"clean", head + rowA + rowB, ""},
+		{"duplicate package row", head + rowA + rowB + rowA2, "listed twice"},
+		{"row does not add up", head + rowA + "| `b/http` | [b](../b) | 5 | 4 | 0 |\n", "5 invariants but 4 guarded"},
+		{"hand-kept total, even a correct one", head + rowA + rowB + total, "remove the hand-kept Total row"},
+		{"two totals", head + rowA + rowB + total + total, "remove the hand-kept Total row"},
 		{"no rows", "# empty\n", "no package rows found"},
 	}
 	for _, tc := range cases {
@@ -157,8 +160,21 @@ func TestInvariantsIndexCheck_Calibration(t *testing.T) {
 		switch {
 		case tc.want == "" && len(got) != 0:
 			t.Errorf("%s: want clean, got %v", tc.name, got)
-		case tc.want != "" && (len(got) != 1 || !strings.Contains(got[0], tc.want)):
+		case tc.want == "":
+		case tc.name == "two totals" && (len(got) != 2 || !strings.Contains(got[0], tc.want) || !strings.Contains(got[1], tc.want)):
+			t.Errorf("%s: want one problem per Total row containing %q, got %v", tc.name, tc.want, got)
+		case tc.name != "two totals" && (len(got) != 1 || !strings.Contains(got[0], tc.want)):
 			t.Errorf("%s: want one problem containing %q, got %v", tc.name, tc.want, got)
 		}
+	}
+
+	// The sums are derived from the rows, whatever order PRs landed them in.
+	_, inv, guarded, unguarded := invariantsIndexSums(head + rowA + rowB)
+	if inv != 15 || guarded != 13 || unguarded != 2 {
+		t.Errorf("sums = %d / %d / %d, want 15 / 13 / 2", inv, guarded, unguarded)
+	}
+	_, inv2, guarded2, unguarded2 := invariantsIndexSums(head + rowB + rowA)
+	if inv != inv2 || guarded != guarded2 || unguarded != unguarded2 {
+		t.Errorf("sums depend on row order: %d / %d / %d vs %d / %d / %d", inv, guarded, unguarded, inv2, guarded2, unguarded2)
 	}
 }

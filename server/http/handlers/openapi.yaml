@@ -4904,6 +4904,53 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
+  /api/v1/dynamic-secrets/configs/refused-admin-dsn:
+    get:
+      tags: [DynamicSecrets]
+      summary: List a project's configs whose admin DSN names a refused option
+      description: >-
+        Read-only. The configs in the project whose stored admin DSN names a
+        driver option refused since #3952 (a server file such as sslrootcert or
+        tlsCAFile, or ambient credentials): they can no longer issue. Fix each
+        with PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn. Needs
+        secrets.read on the project and dynamic-secret admin authority there
+        (403), because the report is derived from the decrypted DSNs. Returns
+        config and option names only, never a DSN or an option value.
+      operationId: listDynamicSecretConfigsWithRefusedAdminDSN
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{success, data}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      configs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: {type: integer}
+                            name: {type: string}
+                            project_id: {type: integer}
+                            environment_id: {type: integer}
+                            backend_type: {type: string}
+                            refused_options:
+                              type: array
+                              description: "Refused option names, lower case (authMechanism with its value, e.g. `authmechanism=mongodb-aws`)."
+                              items: {type: string}
+                            live_leases: {type: integer, description: "Active and revoke_failed leases."}
+                      unreadable: {type: integer, description: "Configs whose admin DSN could not be decrypted, so they were not checked."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/dynamic-secrets/configs/{id}:
     get:
       tags: [DynamicSecrets]
@@ -4961,6 +5008,50 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+  /api/v1/dynamic-secrets/configs/{id}/admin-dsn:
+    patch:
+      tags: [DynamicSecrets]
+      summary: Replace a dynamic-secret config's admin DSN
+      description: >-
+        Replaces the stored admin DSN in place, for example to remove an option
+        refused since #3952 (a private-CA sslrootcert or tlsCAFile) without
+        deleting and recreating the config. The same checks as config create
+        apply: admin authority on the config's project/environment (403), the
+        private-network egress policy and the refused driver options (400). The
+        change and its audit row commit together; 503 `audit_unavailable` when
+        the audit log refuses the row (nothing changed). While the config has an
+        active or revoke_failed lease the new DSN must name the same host(s)
+        (409 otherwise): those leases are revoked through it. The DSN is never
+        returned.
+      operationId: updateDynamicSecretConfigAdminDSN
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [admin_dsn]
+              properties:
+                admin_dsn: {type: string, format: password, writeOnly: true}
+      responses:
+        '200':
+          description: Envelope `{success, data, message}`. `data` is the sanitized config.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/DynamicSecretConfig'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuditUnavailable'}
   /api/v1/dynamic-secrets/configs/{id}/issue:
     post:
       tags: [DynamicSecrets]

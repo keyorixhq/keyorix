@@ -75,25 +75,34 @@ config, readable by the server's user and **not writable by group or others**
     ssl_root_cert: pg-ca.pem
 ```
 
-`keyorix-server admin validate --posture` prints one line saying what is
-verified:
+`keyorix-server admin validate --posture` (config path from `--config` or
+`KEYORIX_CONFIG_PATH`) prints one line saying what is verified. It is listed
+under "Informational", with the CA path resolved to an absolute path:
 
 ```
-database TLS: storage.database.ssl_mode=verify-full -- encrypted; certificate chain and host name verified against CA file /etc/keyorix/pg-ca.pem (1 certificate(s))
+  - database TLS: storage.database.ssl_mode=verify-full -- encrypted; certificate chain and host name verified against CA file /etc/keyorix/pg-ca.pem (1 certificate(s))
 ```
+
+The command exits non-zero when it finds any other secure-baseline deviation
+(for example a config file that is not mode 0600); that does not mean the
+database TLS check failed.
 
 ### 5. Check that a wrong CA fails
 
 Point `ssl_root_cert` at any other CA (for example a second one made with
-step 1) and start the server. It cannot connect:
+step 1) and start the server. It cannot connect, and exits 1. The error ends
+with:
 
 ```
-tls: failed to verify certificate: x509: certificate signed by unknown authority
+failed to write startup message: write failed: tls: failed to verify certificate: x509: certificate signed by unknown authority
 ```
 
 A `host` that is not in the certificate's SAN fails the same way, with
-`x509: certificate is valid for db.internal, not <host>`. Neither falls back to
-an unverified or plaintext connection. Put the right CA back.
+`x509: certificate is valid for db.internal, not <host>`. If `host` is an IP
+address, the certificate needs an IP SAN (`subjectAltName=IP:10.0.0.5`); a
+DNS-only certificate fails with `x509: cannot validate certificate for <ip>
+because it doesn't contain any IP SANs`. None of these falls back to an
+unverified or plaintext connection. Put the right CA back.
 
 ## What the server refuses at start-up
 
