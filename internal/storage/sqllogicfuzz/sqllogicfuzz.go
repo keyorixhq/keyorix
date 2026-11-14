@@ -24,7 +24,6 @@ package sqllogicfuzz
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"gorm.io/gorm"
 )
@@ -456,25 +455,45 @@ func DryRunSQL(db *gorm.DB, build func(*gorm.DB) *gorm.DB) (sql string, vars []a
 }
 
 // StructureStable reports whether substituting a hostile value for a benign one
-// leaves the prepared-statement text byte-identical AND keeps the hostile value
-// out of the SQL text (it must live in Vars). A false result means the value
-// changed the statement structure — i.e. it was interpolated, not bound.
+// leaves the prepared-statement text byte-identical AND the hostile value is
+// carried as a bound parameter (present in Vars). A false result means the
+// value changed the statement structure — i.e. it was interpolated, not bound.
+//
+// The structure check compares the hostile SQL against a benign-value baseline:
+// any interpolation changes the text relative to that baseline, which is the
+// sound test. (An earlier "hostile value must not be a substring of the SQL"
+// heuristic was removed — it false-positives whenever a short hostile value
+// coincides with a structural SQL token such as a column name, e.g. the value
+// " c" matching "WHERE c", even though the value is correctly bound. The
+// baseline comparison already catches real interpolation, so the substring
+// check added only false positives.)
 //
 // Does NOT verify: that the value is safe at execution time on a specific
 // driver, runtime escaping, or any construction path not exercised by buildFn.
-// It verifies one thing: structure invariance under value substitution.
+// It verifies two things: structure invariance under value substitution, and
+// that the value is actually bound as a parameter.
 func StructureStable(db *gorm.DB, buildFn func(tx *gorm.DB, v string) *gorm.DB, hostile string) (stable bool, detail string) {
-	const benign = "x"
+	const benign = "keyorix-benign-sentinel"
 	sqlB, _ := DryRunSQL(db, func(tx *gorm.DB) *gorm.DB { return buildFn(tx, benign) })
 	sqlH, varsH := DryRunSQL(db, func(tx *gorm.DB) *gorm.DB { return buildFn(tx, hostile) })
 	if sqlB != sqlH {
 		return false, fmt.Sprintf("SQL changed:\n benign=%q\n hostile=%q", sqlB, sqlH)
 	}
-	if hostile != benign && strings.Contains(sqlH, hostile) && len(hostile) > 1 {
-		return false, fmt.Sprintf("hostile value appears in SQL text: %q in %q", hostile, sqlH)
+	if !varsContains(varsH, hostile) {
+		return false, fmt.Sprintf("hostile value %q not carried as a bound parameter (vars=%v)", hostile, varsH)
 	}
-	_ = varsH
 	return true, ""
+}
+
+// varsContains reports whether v appears among the bound parameters (GORM
+// flattens slice args, e.g. IN ?, into Vars).
+func varsContains(vars []any, v string) bool {
+	for _, a := range vars {
+		if s, ok := a.(string); ok && s == v {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
