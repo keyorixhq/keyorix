@@ -20,6 +20,8 @@
   Why: ADR-112 §3 items 4–5, #2461. Guard:
   `break_glass_review_surfacing_test.go:TestAccumulateBreakGlassPosture_CountsUnreviewedPastTheWindow`,
   `TestAccumulateBreakGlassPosture_DegradedActivationCountsWithNoGraceWindow`,
+  `break_glass_posture_consistency_test.go:TestBreakGlassReviewOwed_PostureReminderAndStatusAgree`
+  (posture, reminder and degraded status agree on one real-store fixture),
   `TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation`,
   `TestRunBreakGlassReviewReminder_WarnsAndAuditsOncePerPass`,
   `TestRunBreakGlassReviewReminder_NotifiesAdmins`,
