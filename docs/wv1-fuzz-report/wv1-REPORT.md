@@ -247,14 +247,26 @@ exists, and that is the whole discipline this repo is built on.
 
 ---
 
-## Fuzzing log (real wall-clock, clean runs only — red-proofs excluded)
+## Fuzzing log (real wall-clock, clean runs only — red-proofs and smoke runs excluded)
 
-| Chunk | Target | Duration | Execs | Result |
-|---|---|---|---|---|
-| 1 | FuzzTOTPMutation | 9m00s | 2,880,484 | PASS |
-| 2 | FuzzAgeCiphertextMutation | 9m01s | — | PASS |
-| 3 | FuzzTOTPMutation | 9m00s | — | PASS |
-| 4 | FuzzAgeCiphertextMutation | 9m01s | — | PASS |
+14 foreground chunks of 9 minutes each (`-fuzztime=540s -parallel 2`, `GOMAXPROCS=2`,
+`nice -n 10`), alternating the two targets, every one PASS:
 
-**Running total so far: ~36 min** (TOTP ~18 min, age ~18 min; both well past the 8-min floor).
-Additional chunks appended below as they complete; final total stated at the end of the run.
+| Target | Chunks | Clean wall-clock | Result |
+|---|---|---|---|
+| `FuzzTOTPMutation` | 7 × 9m00s | **~63 min** | all PASS (e.g. chunk 1: 2,880,484 execs) |
+| `FuzzAgeCiphertextMutation` | 7 × 9m01s | **~63 min** | all PASS |
+| **Total** | **14** | **~126 min** | **no finding** |
+
+Both targets are well past the 8-minute per-target floor; the total exceeds the 120-minute
+requirement. No crash corpus was written to `internal/libconformance/testdata/` at any point
+(verified after the campaign). The companion KATs were re-run green after the campaign. The
+per-chunk raw logs are in the working dir under `.scratch/fuzz_*.log` (not committed).
+
+### Triage
+
+No hit occurred, so there was nothing to minimise / replay / classify — every chunk exited
+0 with `PASS`. The only RED results in the whole run were the two deliberate red-proofs
+(Section 4), each reproduced, then reverted and re-confirmed green. Reachability to a live
+Keyorix caller was established *before* fuzzing for both targets (Section 2) and no claim
+about Keyorix beyond "the library behaves correctly on this call path" is made.
