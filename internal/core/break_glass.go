@@ -329,7 +329,7 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), aerr)
 	}
 	if adminIDs[role.ID] {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the configured emergency role grants install-wide administration and cannot be used for break-glass")
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "the configured emergency role grants install-wide administration and cannot be used for break-glass"), ErrBreakGlassInvalidRequest)
 	}
 	// Refuse an emergency role that can ASSIGN ROLES or issue credentials. The whole
 	// security model of break-glass is "it auto-expires", but a time-bound role carrying
@@ -341,7 +341,7 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	if hasAssign, perr := c.storage.RoleSetHasPermission(ctx, []uint{role.ID}, "roles.assign"); perr != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), perr)
 	} else if hasAssign {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the configured emergency role can assign roles or issue credentials and cannot be used for break-glass (it would let an emergency grant create permanent access); configure a contained role such as project_developer")
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "the configured emergency role can assign roles or issue credentials and cannot be used for break-glass (it would let an emergency grant create permanent access); configure a contained role such as project_developer"), ErrBreakGlassInvalidRequest)
 	}
 
 	defaultTTL, ceiling := c.breakGlassTTLs()
@@ -685,7 +685,7 @@ func failClosedOwedResult(sink *auditForwardSink) error {
 // docs/security-review-2026-09.md's "Update" section for the full account.
 func (c *KeyorixCore) ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error) {
 	if projectID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required"), ErrBreakGlassInvalidRequest)
 	}
 	rows, err := c.storage.ListBreakGlassActivations(ctx, projectID)
 	if err != nil {
