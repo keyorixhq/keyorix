@@ -393,7 +393,7 @@ func TestFullRowWriters_NarrowWriteSurvivesStaleTransition_UpdateLegalHold(t *te
 // The class is latent: any new caller that edits a hold in place and saves it would
 // silently re-activate or drop a hold.
 //
-// Proposed fix (not applied: this PR is tests only): replace Save with a conditional,
+// Tracked by #4210. Proposed fix (not applied: this PR is tests only): replace Save with a conditional,
 // column-scoped lift, `UPDATE legal_holds SET released=true, released_by=?, released_at=?,
 // release_reason=? WHERE id=? AND released=false`, returning whether a row matched. That
 // also removes the double-lift residual (second lifter gets matched=false).
