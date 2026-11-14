@@ -83,7 +83,7 @@ func CheckProc(m *Model, c *Case, ip InProcResult, pr ProcResult) []Finding {
 			add("I2", "S3", "refusal-exit0:"+firstAssign(c), "refused to start but exited 0", tail(pr.Log, 400))
 		}
 		if len(tokens) > 0 && !errNames(pr.Log, tokens) {
-			add("I2", "S3", "proc-refusal-unnamed:"+firstAssign(c), "refusal does not name the offending option", tail(pr.Log, 400))
+			add("I2", "S3", procRefusalKey(pr.Log), "refusal does not name the offending option", tail(pr.Log, 400))
 		}
 		if len(tokens) == 0 && ip.Accepted {
 			// a boot-time refusal the in-process check did not predict: informational
