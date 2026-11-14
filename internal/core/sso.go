@@ -330,7 +330,9 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	// with an orphan session. Every other login path already runs it
 	// panic-safe (goSafe in the handlers).
 	besteffort.Run(ctx, "sso.CompleteSSO.RecordLogin", func() error { return c.RecordLogin(ctx, user.ID) })
-	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
+	// The login event names the same client address the session records (ip is
+	// the handler's clientIP(r), trusted-proxy aware), as auth.login does (#2934).
+	c.writeAuditEventFull(ctx, EventSSOLogin, actorPtr(user.ID), nil, nil, ip,
 		fmt.Sprintf("SSO login via %s (subject=%s)", providerName, sub))
 	return session, user, st.ReturnTo, nil
 }
@@ -520,7 +522,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	// -- see the identical steps in CompleteSSO.
 	besteffort.Run(ctx, "sso.CompleteSAML.clearLoginFailures", func() error { c.clearLoginFailures(ctx, user); return nil })
 	besteffort.Run(ctx, "sso.CompleteSAML.RecordLogin", func() error { return c.RecordLogin(ctx, user.ID) })
-	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
+	c.writeAuditEventFull(ctx, EventSSOLogin, actorPtr(user.ID), nil, nil, ip,
 		fmt.Sprintf("SAML login via %s (subject=%s)", name, info.Subject))
 	return session, user, st.ReturnTo, nil
 }
