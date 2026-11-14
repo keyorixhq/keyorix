@@ -279,8 +279,5 @@ func anyNonLit(args []ast.Expr) bool {
 }
 
 func lastElem(p string) string {
-	if i := strings.LastIndexByte(p, '/'); i >= 0 {
-		return p[i+1:]
-	}
-	return p
+	return p[strings.LastIndexByte(p, '/')+1:]
 }

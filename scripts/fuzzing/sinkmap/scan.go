@@ -274,8 +274,8 @@ func inModulePkg(imp, modPath string) (rel string, in bool) {
 	if imp == modPath {
 		return ".", true
 	}
-	if strings.HasPrefix(imp, modPath+"/") {
-		return strings.TrimPrefix(imp, modPath+"/"), true
+	if rest, ok := strings.CutPrefix(imp, modPath+"/"); ok {
+		return rest, true
 	}
 	return "", false
 }
@@ -295,7 +295,7 @@ func readModulePath(gomod string) string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if rest, ok := strings.CutPrefix(line, "module "); ok {
 			return strings.TrimSpace(rest)

@@ -3,6 +3,7 @@ package keyfiles
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -65,10 +66,6 @@ func FuzzSafePathConfinement(f *testing.F) {
 // scanning both separators so the check is OS-independent and distinct from
 // SafePath's substring test.
 func hasDotDotSegment(p string) bool {
-	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == filepath.Separator }) {
-		if seg == ".." {
-			return true
-		}
-	}
-	return false
+	segs := strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == filepath.Separator })
+	return slices.Contains(segs, "..")
 }
