@@ -41,7 +41,7 @@ current directory, drop the `bin/`: `./keyorix`, `./keyorix-server`.
 A release binary is the release's own behaviour: this page tracks `main`, so a
 command below can be newer than the release. For example `keyorix mfa enroll`
 does not exist in v0.95.3, and the v0.96.3 CLI has no `KEYORIX_PASSWORD_FILE`, `KEYORIX_MFA_CODE`,
-`KEYORIX_MFA_CODE_FILE` or `keyorix doctor` (only `main` does): with a release CLI, type the password
+`KEYORIX_MFA_CODE_FILE` or `keyorix doctor` (they arrive in v0.97.0, which also refuses the `--mfa-code` flag): with a v0.96.x CLI, type the password
 and the code at the prompts, or in a script pipe the password on stdin and pass the one-time code with the `--mfa-code` flag (it is visible in the process list, so prefer the prompt for interactive use).
 `keyorix-server --version` (or `keyorix-server admin version`)
 prints the version, commit, build date and Go version. The server itself has no
@@ -257,23 +257,24 @@ directory: on Linux set `XDG_CONFIG_HOME=<dir>` for every `keyorix` command of t
 install (the file is then `<dir>/keyorix/credentials.yaml`); macOS ignores
 `XDG_CONFIG_HOME`, so use a separate `HOME` there. `KEYORIX_SERVER` and
 `KEYORIX_TOKEN_FILE` override the stored server and token without touching the file.
-`keyorix logout` deletes this file, `ca_file` included: run
-`keyorix config set ca_file ...` again before the next `login` (#3735).
+`keyorix logout` revokes the session and removes the token from this file; the server URL and
+`ca_file` stay (v0.96.3 and older deleted the whole file, `ca_file` included: there, run
+`keyorix config set ca_file ...` again before the next `login`, #3735).
 
 With no terminal (a script, CI), `login` reads `KEYORIX_PASSWORD` or the file named
-by `KEYORIX_PASSWORD_FILE` (a 0600 file; on `main`, not in the v0.96.3 release).
+by `KEYORIX_PASSWORD_FILE` (a 0600 file; v0.97.0 and later, not in v0.96.3).
 
 `login` asks for things in this order: **password first, then the authenticator code**
 (only when the account has MFA on). A script should not pipe both on stdin (the second
 line is lost); set `KEYORIX_PASSWORD_FILE` and `KEYORIX_MFA_CODE` (or
-`KEYORIX_MFA_CODE_FILE`) instead (on `main`; a release CLI takes the password on stdin
+`KEYORIX_MFA_CODE_FILE`) instead (v0.97.0 and later; a v0.96.x CLI takes the password on stdin
 and the `--mfa-code` flag). `keyorix mfa activate` asks in the opposite order:
 **code first, then the account password** (`KEYORIX_MFA_CODE` and
 `KEYORIX_PASSWORD[_FILE]` work there too).
 
 To check the connection at any time, run `keyorix status` (server URL, whether you are
-logged in, health, version compatibility), or `keyorix doctor` (on `main`, not in the
-v0.96.3 release) for a read-only checklist (reachability, TLS, version, clock, login,
+logged in, health, version compatibility), or `keyorix doctor` (v0.97.0 and later, not in
+v0.96.3) for a read-only checklist (reachability, TLS, version, clock, login,
 audit chain) that says what to do about each failure; it exits 1 when a check failed.
 On the server host, `keyorix-server admin diagnose` runs the checks
 server startup depends on (config parse, encryption-key access, database open,

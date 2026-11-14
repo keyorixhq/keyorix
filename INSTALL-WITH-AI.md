@@ -241,7 +241,7 @@ the TOTP secret and the recovery codes, and asks for the password.
 > - `mfa enroll` prints an `otpauth://` URI and a base32 secret: add it to your
 >   authenticator app.
 > - `mfa activate` asks for a code from the app; it reads the account password
->   from the file (v0.96.4 and later, or a source build; older CLIs, including the
+>   from the file (v0.97.0 and later, or a source build; older CLIs, including the
 >   v0.96.3 release, ask for the password at a prompt instead).
 > - Move the password in `secrets/admin_password` into your password manager
 >   (open the file yourself), and save the recovery codes `mfa activate` prints,
@@ -372,12 +372,11 @@ the database connection is not encrypted: stop and tell the user; do not accept 
 ## Docker Compose with PostgreSQL
 
 The repository's `docker-compose.yml` runs the web UI, the server and a bundled
-PostgreSQL. At the pinned tag v0.96.3 the server-to-database connection is
-**plaintext** on the internal Compose network (`ssl_mode: prefer`, and the bundled
-database has no server certificate); tell the user this before you start, and do not
-describe the stack as encrypted end to end. Database TLS for the bundled database
-arrives in the first release after v0.96.3. For an encrypted database connection use
-the PostgreSQL path above. Secrets are Docker secret files under `secrets/`
+PostgreSQL. At the pinned tag v0.97.0 the server-to-database connection is encrypted:
+the bundled database serves TLS with a certificate that `scripts/selfhost/init-secrets.sh`
+generates, and the server connects with `ssl_mode: verify-full` against it
+(`docker-compose.yml`).
+Secrets are Docker secret files under `secrets/`
 that `scripts/selfhost/init-secrets.sh` generates without printing them; the first
 admin is created at first boot from `secrets/admin_password`. Requirements: a Linux
 host (Docker Desktop maps file ownership differently), Docker Engine 24 or newer with
@@ -405,18 +404,18 @@ sed -i.bak 's/^KEYORIX_ADMIN_EMAIL=.*/KEYORIX_ADMIN_EMAIL=ADMIN_EMAIL/' .env
 ./scripts/selfhost/init-secrets.sh
 ```
 
-It prints `created` (or `kept`) and a path for each file, never a value. On v0.96.3
-it prints a `sudo chown` line only when the user's own uid is 1001 (the server
-container's uid, which would refuse files that uid owns); newer releases always end with a `sudo chown root:<gid>
-secrets/*` command with the user's group id filled in. In the uid 1001 case on v0.96.3
-the script also prints `ERROR` and exits non-zero: that exit is expected, not a failure
-to stop on. Go on to C4, then run C3 again once the user says "done".
+It prints `created` (or `kept`) and a path for each file, never a value. It ends with a
+`sudo chown root:<gid> secrets/*` command with the user's group id filled in, because the
+server only trusts secret files that root owns. If the user's own uid is 1001 (the server
+container's uid, which would refuse files that uid owns) and the files do not exist yet,
+the script prints `ERROR`, writes nothing and exits non-zero: ask the user to run it as a
+different regular user. Go on to C4.
 
 **C4. HUMAN STEP, only if C3 printed a `sudo chown` line: hand the secret files to
 root.** Show the user the exact `sudo chown` line C3 printed and wait for "done". The
 user runs it in their own terminal (it needs their sudo password). If C3 exited with
-the uid 1001 error, run C3 again after "done"; it must now exit 0. If C3 printed no
-such line, skip C4.
+the error that existing files are owned by uid 1001, run C3 again after "done"; it must
+now exit 0. If C3 printed no such line, skip C4.
 
 **C5. Start the stack.**
 
