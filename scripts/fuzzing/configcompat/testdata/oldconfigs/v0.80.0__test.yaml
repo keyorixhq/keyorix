@@ -1,0 +1,23 @@
+
+locale:
+  language: en
+  fallback_language: en
+
+storage:
+  database:
+    path: "test_cli_versioning.db"
+    max_open_conns: 10
+    max_idle_conns: 5
+  encryption:
+    enabled: false
+    dek_path: ""
+    salt_path: ""
+
+security:
+  enable_file_permission_check: false
+  auto_fix_file_permissions: false
+  allow_unsafe_file_permissions: true
+
+soft_delete:
+  enabled: true
+  retention_days: 30
