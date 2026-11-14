@@ -1,0 +1,1 @@
+TestEveryModelTimestampStampIsUTC	internal/core/guards	#4275	new guard: a persisted model's CreatedAt/UpdatedAt stamped from a bare host-zone time.Now() in non-test code under internal/ and server/; green on main because every remaining site is allow-listed with its reason in model_timestamp_hostzone_exceptions_test.go
