@@ -7,7 +7,7 @@ package http
 // asserts BOUNDED GROWTH of resource/consistency metrics that per-input fuzzers
 // cannot see because they rebuild or reset state every iteration.
 //
-// Six oracle families (section numbers refer to /mnt/data/wave4/out/i5-REPORT.md):
+// Six oracle families:
 //
 //  1. goroutine count          -- runtime.NumGoroutine after quiescing async writers
 //  2. open file descriptors    -- entries in /proc/self/fd (Linux; skipped elsewhere)
@@ -29,14 +29,13 @@ package http
 // and fail ONLY when the slope-per-10k-ops exceeds a calibrated threshold AND the
 // trend is monotonic (a solid majority of consecutive second-half deltas are
 // positive) -- so a one-off spike or oscillation does not fail the run. Thresholds
-// are stated as consts below, calibrated from a baseline run (see the report).
+// are stated as consts below, calibrated from a baseline run.
 //
 // Deterministic & replayable: the whole operation stream is a math/rand sequence
 // seeded by KEYORIX_SOAK_SEED; a given (seed, op-count) reproduces byte-for-byte.
 // Duration is env-driven: short by default (CI), long on a soak host.
 //
-// What these oracles do NOT verify is documented in the report, section 3 -- in
-// brief: schedulers/rotation background loops are NOT wired here (NewRouter+core,
+// What these oracles do NOT verify, in brief: schedulers/rotation background loops are NOT wired here (NewRouter+core,
 // not server/main's startSchedulers), so their growth is out of scope; the HTTP
 // transport uses a real httptest.Server + keep-alive client, so socket FDs ARE
 // exercised, but a remote client's connection pool is not; and the audit oracle is
@@ -74,7 +73,7 @@ import (
 
 // --- calibrated growth thresholds (slope per 10,000 operations) ---
 //
-// Calibrated from a baseline SQLite run (see report section 4). A healthy server
+// Calibrated from a baseline SQLite run (baseline run). A healthy server
 // is flat on every axis; these ceilings are set a few multiples above baseline
 // noise so a real leak (unclosed goroutine/fd per request, an unbounded map, a WAL
 // that never checkpoints) is caught while an idle run stays green.
@@ -89,7 +88,7 @@ const (
 	// ceiling is set above the worst warm-up-contaminated SHORT-run second-half
 	// slope observed at baseline (~2.5 MiB/10k over 1.5k ops, where warm-up still
 	// bleeds into the second half); on a long run the steady-state slope is ~0
-	// (report section 4), so this comfortably catches a real per-request leak
+	// (baseline run), so this comfortably catches a real per-request leak
 	// while staying green on an honest run of any length.
 	soakMaxHeapSlopePer10kBytes = 6 << 20 // 6 MiB
 	// DB+WAL bytes per logical record (bytes-per-record slope per 10k ops). Flat
@@ -754,7 +753,7 @@ func (w *soakWorld) runSoak(tb testing.TB, cfg soakConfig) ([]soakSample, *soakS
 	return samples, stats
 }
 
-// logGrowthTable prints the full per-sample table for the report.
+// logGrowthTable prints the full per-sample table.
 func logGrowthTable(tb testing.TB, backend string, samples []soakSample, stats *soakStats) {
 	tb.Helper()
 	tb.Logf("=== SOAK growth table (%s) === ops=%d  op-mix=%v", backend, samples[len(samples)-1].ops, stats.byKind)
