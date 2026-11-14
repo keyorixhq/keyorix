@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -122,9 +123,23 @@ func TestAccumulateBreakGlassPosture_DegradedActivationIsNotClean(t *testing.T) 
 	assert.Equal(t, 1, owed.EmergencyAccess.DegradedActivations)
 	assert.True(t, owed.Degraded, "an activation with owed audit rows is an incomplete audit record, not a clean posture")
 	require.Len(t, owed.DegradedReasons, 1)
-	assert.Contains(t, owed.DegradedReasons[0], "emergency_access:project=1")
-	assert.Contains(t, owed.DegradedReasons[0], "activation 7")
-	assert.True(t, owed.DegradedArea("emergency_access"))
+	assert.Contains(t, owed.DegradedReasons[0], "emergency_access_audit:project=1")
+	assert.Contains(t, owed.DegradedReasons[0], "1 break-glass activation(s)")
+	assert.Contains(t, owed.DegradedReasons[0], "first id 7")
+	assert.True(t, owed.DegradedArea("emergency_access_audit:"))
+	assert.False(t, owed.DegradedArea("emergency_access:"), "owed audit rows are not a failed emergency-access collection")
+
+	// A long audit outage can leave many activations owed: one reason per
+	// project, not one per activation.
+	many := run(
+		&models.BreakGlassActivation{ID: 9, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-3 * time.Hour), Degraded: true},
+		&models.BreakGlassActivation{ID: 7, ProjectID: 1, State: BreakGlassActive, CreatedAt: fixed.Add(-time.Hour), Degraded: true},
+		&models.BreakGlassActivation{ID: 8, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-2 * time.Hour), Degraded: true},
+	)
+	assert.Equal(t, 3, many.EmergencyAccess.DegradedActivations)
+	require.Len(t, many.DegradedReasons, 1, "reasons must be aggregated per project")
+	assert.Contains(t, many.DegradedReasons[0], "3 break-glass activation(s)")
+	assert.Contains(t, many.DegradedReasons[0], "first id 7")
 
 	clean := run(
 		&models.BreakGlassActivation{ID: 7, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-2 * time.Hour), Degraded: true, AuditSettledAt: &settled},
@@ -133,6 +148,21 @@ func TestAccumulateBreakGlassPosture_DegradedActivationIsNotClean(t *testing.T) 
 	assert.Equal(t, 0, clean.EmergencyAccess.DegradedActivations, "a settled degraded activation has its rows in the chain")
 	assert.False(t, clean.Degraded)
 	assert.Empty(t, clean.DegradedReasons)
+}
+
+// TestEvaluateControls_OwedBreakGlassAuditKeepsIndependentReviewerGap
+// (POSTURE-DEGRADED-NOV-1 review): an activation with owed audit rows makes
+// the emergency-access control Unknown (its "all audited" detail is not true
+// yet), but must not hide a real IndependentReviewImpossible gap behind
+// Unknown: reviewer availability does not depend on the audit log.
+func TestEvaluateControls_OwedBreakGlassAuditKeepsIndependentReviewerGap(t *testing.T) {
+	t.Parallel()
+	p := &CompliancePosture{EmergencyAccess: EmergencyAccessPosture{IndependentReviewImpossible: true}}
+	p.degrade("emergency_access_audit:project=1", errors.New("1 break-glass activation(s) still owed"))
+
+	controls := EvaluateControls(p)
+	assert.Equal(t, ControlStatusUnknown, findControl(t, controls, "emergency-access").Status)
+	assert.Equal(t, ControlStatusGap, findControl(t, controls, "emergency-access-independent-reviewer").Status)
 }
 
 // TestAccumulateBreakGlassPosture_SingleAdminDeploymentFlagsIndependentReviewImpossible

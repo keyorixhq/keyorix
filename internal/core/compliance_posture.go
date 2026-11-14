@@ -1015,14 +1015,20 @@ func (c *KeyorixCore) accumulateBreakGlassPosture(p *CompliancePosture, pid uint
 	p.EmergencyAccess.ReviewWindowHours = int(window.Hours())
 	cutoff := c.now().Add(-window)
 	p.EmergencyAccess.TotalActivations += len(acts)
+	// Owed audit rows get their own area (not "emergency_access:"), so they do
+	// not turn the independent-reviewer control Unknown, and one reason per
+	// project, so a long audit outage does not grow DegradedReasons unbounded.
+	owed, firstOwedID := 0, uint(0)
 	for _, a := range acts {
 		if a.State == BreakGlassActive {
 			p.EmergencyAccess.ActiveActivations++
 		}
 		if a.Degraded && a.AuditSettledAt == nil {
 			p.EmergencyAccess.DegradedActivations++
-			p.degrade(fmt.Sprintf("emergency_access:project=%d", pid),
-				fmt.Errorf("break-glass activation %d committed while the audit log refused its rows; they are still owed", a.ID))
+			if owed == 0 || a.ID < firstOwedID {
+				firstOwedID = a.ID
+			}
+			owed++
 		}
 		if a.ReviewedAt == nil && !a.CreatedAt.After(cutoff) {
 			p.EmergencyAccess.UnreviewedActivations++
@@ -1030,6 +1036,10 @@ func (c *KeyorixCore) accumulateBreakGlassPosture(p *CompliancePosture, pid uint
 				p.EmergencyAccess.OldestUnreviewedAgeHours = ageHours
 			}
 		}
+	}
+	if owed > 0 {
+		p.degrade(fmt.Sprintf("emergency_access_audit:project=%d", pid),
+			fmt.Errorf("%d break-glass activation(s) committed while the audit log refused their rows are still owed (first id %d)", owed, firstOwedID))
 	}
 }
 

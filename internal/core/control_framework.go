@@ -206,7 +206,9 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			// matrix may silently read a real posture deviation as passing. A
 			// failed collection still needs to surface as unknown, not a default
 			// Pass or a false Gap.
-			Status:     controlStatus(p.DegradedArea("emergency_access:", "evidence:break_glass:"), p.EmergencyAccess.UnreviewedActivations > 0),
+			// "emergency_access_audit:" (owed audit rows) makes only this control
+			// Unknown: its "all audited" detail is not true until they settle.
+			Status:     controlStatus(p.DegradedArea("emergency_access:", "emergency_access_audit:", "evidence:break_glass:"), p.EmergencyAccess.UnreviewedActivations > 0),
 			Detail:     fmt.Sprintf("%d active, %d total activations (all audited), %d unreviewed past the window", p.EmergencyAccess.ActiveActivations, p.EmergencyAccess.TotalActivations, p.EmergencyAccess.UnreviewedActivations),
 			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{ctrlOpAcc4, "op.exp.7"}},
 		},
