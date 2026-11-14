@@ -16,10 +16,10 @@ func seedWithNulls(t *testing.T, db *gorm.DB, table string) {
 	t.Helper()
 	rows := []Row{
 		{ID: 1, A: 5, B: ptrInt(3), C: "a", E: 1},  // b>0  -> TRUE
-		{ID: 2, A: 5, B: ptrInt(-3), C: "a", E: 0},  // b<=0 -> FALSE
-		{ID: 3, A: 5, B: nil, C: "a", E: 1},         // b NULL -> NULL
-		{ID: 4, A: 5, B: ptrInt(7), C: "b", E: 0},   // b>0  -> TRUE
-		{ID: 5, A: 5, B: nil, C: "b", E: 1},         // b NULL -> NULL
+		{ID: 2, A: 5, B: ptrInt(-3), C: "a", E: 0}, // b<=0 -> FALSE
+		{ID: 3, A: 5, B: nil, C: "a", E: 1},        // b NULL -> NULL
+		{ID: 4, A: 5, B: ptrInt(7), C: "b", E: 0},  // b>0  -> TRUE
+		{ID: 5, A: 5, B: nil, C: "b", E: 1},        // b NULL -> NULL
 	}
 	if err := InsertRows(db, table, rows); err != nil {
 		t.Fatalf("seed: %v", err)
