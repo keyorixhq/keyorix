@@ -2,6 +2,7 @@ package http
 
 import (
 	"math/rand"
+	"slices"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
@@ -49,7 +50,7 @@ func TestOSFSwarmAllOnesIsUniform(t *testing.T) {
 	if sw.Len() != len(osOps) {
 		t.Fatalf("all-ones enabled %d ops, want %d", sw.Len(), len(osOps))
 	}
-	for sel := 0; sel < 70000; sel++ {
+	for sel := range 70000 {
 		if got, want := sw.Pick(sel), sel%len(osOps); got != want {
 			t.Fatalf("all-ones Pick(%d)=%d, want %d (len=%d)", sel, got, want, len(osOps))
 		}
@@ -63,12 +64,7 @@ func TestOSFSwarmAllOnesIsUniform(t *testing.T) {
 func osPlantTriad() (a, b, c int) { return 0, 1, 2 }
 
 func contains(ops []int, x int) bool {
-	for _, o := range ops {
-		if o == x {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ops, x)
 }
 
 // osPlantTriggered models the harness-level defect: operations a and b are both

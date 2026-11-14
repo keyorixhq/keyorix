@@ -69,7 +69,7 @@ func TestSwarmDensityExponent(t *testing.T) {
 	r := rand.New(rand.NewSource(5))
 	const n = 307
 	for range 3000 {
-		m := r.Uint64() | 0x0 // arbitrary
+		m := r.Uint64()
 		if m&0xF == 0 || m == ^uint64(0) {
 			continue // skip the density-1 cases for this measurement
 		}
@@ -145,7 +145,7 @@ func TestSwarmDeterministic(t *testing.T) {
 				t.Fatalf("mask=%#x n=%d: enabled set differs at %d", mask, n, i)
 			}
 		}
-		for raw := 0; raw < 50; raw++ {
+		for raw := range 50 {
 			if a.Pick(raw) != b.Pick(raw) {
 				t.Fatalf("mask=%#x n=%d: Pick(%d) non-deterministic", mask, n, raw)
 			}
