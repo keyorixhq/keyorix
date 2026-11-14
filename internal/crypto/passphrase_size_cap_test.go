@@ -21,7 +21,7 @@ func TestReadPassphraseFile_SizeCap(t *testing.T) {
 
 	big := filepath.Join(dir, "big")
 	require.NoError(t, os.WriteFile(big, []byte(strings.Repeat("a", 2<<20)), 0o600))
-	_, err := readPassphraseFile(big)
+	_, err := readPassphraseFile(big, "--passphrase-file")
 	require.Error(t, err, "a 2 MiB --passphrase-file must be refused")
 	assert.Contains(t, err.Error(), "too large")
 	assert.Contains(t, err.Error(), "limit "+strconv.Itoa(capBytes))
@@ -30,13 +30,13 @@ func TestReadPassphraseFile_SizeCap(t *testing.T) {
 
 	normal := filepath.Join(dir, "normal")
 	require.NoError(t, os.WriteFile(normal, []byte("correct horse battery staple\n"), 0o600))
-	got, err := readPassphraseFile(normal)
+	got, err := readPassphraseFile(normal, "--passphrase-file")
 	require.NoError(t, err)
 	assert.Equal(t, "correct horse battery staple", string(got), "a normal file is read and trimmed as before")
 
 	atCap := filepath.Join(dir, "atcap")
 	require.NoError(t, os.WriteFile(atCap, []byte(strings.Repeat("b", capBytes)), 0o600))
-	got, err = readPassphraseFile(atCap)
+	got, err = readPassphraseFile(atCap, "--passphrase-file")
 	require.NoError(t, err, "the cap is inclusive, like X_FILE's")
 	assert.Len(t, got, capBytes)
 }

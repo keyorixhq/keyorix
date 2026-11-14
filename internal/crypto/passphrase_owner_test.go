@@ -83,6 +83,7 @@ func TestPassphraseSource_Describe(t *testing.T) {
 	assert.Equal(t, "--passphrase-fd 0", PassphraseSource{FDSet: true}.Describe("KX_PASS"))
 	assert.Equal(t, `--passphrase-file "/run/mp"`, PassphraseSource{FilePath: "/run/mp", Stdin: true}.Describe("KX_PASS"))
 	assert.Equal(t, "--passphrase-stdin", PassphraseSource{Stdin: true}.Describe("KX_PASS"))
+	assert.Equal(t, `--new-passphrase-file "/run/mp"`, PassphraseSource{FilePath: "/run/mp", FlagPrefix: "new-"}.Describe("KX_PASS"), "#4217: names the flag given")
 	assert.Equal(t, "KX_PASS", PassphraseSource{}.Describe("KX_PASS"))
 	t.Setenv("KX_PASS_FILE", "/run/secrets/mp")
 	assert.Equal(t, `KX_PASS_FILE="/run/secrets/mp"`, PassphraseSource{}.Describe("KX_PASS"))

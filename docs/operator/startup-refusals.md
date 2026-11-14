@@ -138,11 +138,12 @@ gRPC equivalent is below). **In place:** yes.
 ```
 gRPC server is enabled but no port is specified
 gRPC TLS is enabled but cert_file or key_file is missing
-gRPC TLS auto_cert is not supported; provide cert_file and key_file
+server.grpc.tls.auto_cert: true is not supported: automatic (ACME) certificates are only available for the HTTP listener (server.http.tls.auto_cert). Remove server.grpc.tls.auto_cert and set server.grpc.tls.cert_file and key_file, or terminate gRPC TLS at a proxy
 ```
 
 **Match:** `gRPC server is enabled but no port is specified`,
-`gRPC TLS is enabled but cert_file or key_file is missing`
+`gRPC TLS is enabled but cert_file or key_file is missing`,
+`server.grpc.tls.auto_cert: true is not supported`
 
 **Cause / fix.** Same as the HTTP entries; gRPC cannot use `auto_cert`. **In place:** yes.
 

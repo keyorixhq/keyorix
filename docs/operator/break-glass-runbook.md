@@ -13,7 +13,20 @@ behind it is ADR-112 §3 and its Amendment 6.
 keyorix break-glass activate --project-id 3 --justification "INC-4711: prod DB down, paging on-call"
 ```
 
-On success:
+Replace `3` with the project's id (`keyorix project list`). The caller must be a member of the
+project and, on an install with `security.require_mfa` (the default), must already have a
+second factor: without one the activation is refused with `This deployment requires
+multi-factor authentication. Enrol MFA to continue. (HTTP 403)`.
+
+On success the CLI prints:
+
+```
+Emergency access activated (id=1): role "project_developer" until 2026-11-14T13:34:46.676601Z.
+  "project_developer" is now granted to you on project 1, in addition to the access you already had there.
+  It expires automatically; a project administrator can end it early with: keyorix break-glass revoke --project-id 1 --activation-id 1
+```
+
+and the server does the following:
 
 - The emergency role is granted at the project scope until `default_ttl` (or the requested
   `ttl`, capped at `max_ttl`). It expires on its own.
@@ -25,6 +38,37 @@ On success:
   project). Unreviewed past
   `review_window` (72h by default), it is a compliance posture deviation and a repeating
   reminder.
+
+### Listing, revoking, expiry and the counter
+
+The activator's `keyorix break-glass list --project-id 1` shows only their own activations;
+a caller with `roles.read` on the project (an administrator) sees all of them:
+
+```
+Break-glass activations — project 1:
+
+ID    USER  STATE     ROLE              EXPIRES (UTC)        JUSTIFICATION
+1     alice active    project_developer 2026-11-14 13:34:46  INC-4711: prod DB down, paging on-call
+```
+
+(The activator's own view starts `Your break-glass activations — project 1 (only your own;
+other users' need roles.read):`.) A project administrator ends an activation early with
+`keyorix break-glass revoke --project-id 1 --activation-id 1` (`Revoked break-glass
+activation 1 in project 1.`); `list` then shows `revoked`, and an activation that reaches its
+expiry shows `expired`. Both leave the grant removed, with these audit rows (`keyorix audit
+logs`): `break_glass.activated` + `role.assigned` on activation, `break_glass.revoked` +
+`role.removed` on revocation, and `break_glass.reviewed` on review. Expiry by itself writes no
+`break_glass.*` row. The review has no CLI command: `curl -H "Authorization: Bearer $TOKEN" -H
+'Content-Type: application/json' -d '{"note": "at least ten characters"}'
+https://HOST/api/v1/projects/1/break-glass/1/review` answers `Break-glass activation
+reviewed`, and refuses the activator themselves (403) and an activation that is still active
+(400).
+
+`keyorix compliance report` shows the count under "Emergency access (break-glass)" as
+`active / total activations : 1 / 1`. The JSON from `GET /api/v1/compliance/posture` carries
+`emergency_access.{active_activations, total_activations, unreviewed_activations,
+oldest_unreviewed_age_hours, review_window_hours}`; `unreviewed_activations` counts ended
+activations still unreviewed after `review_window`.
 
 ## 2. Degraded mode: the audit log refuses the activation
 
@@ -52,12 +96,16 @@ within the audit write path's 10-second bound), the server does this instead:
      (`security.audit_owed`) counts its owed rows too;
    - the activation carries `"degraded": true` in the API (HTTP and gRPC) and a
      **Degraded · audit owed** badge in the project's break-glass tab.
-4. Its post-activation **review is mandatory at once**: a degraded activation is listed as
-   a posture deviation and in the review reminder from the moment it exists, with no grace
-   window.
+4. Its post-activation **review is mandatory at once**: a degraded activation is listed in
+   the review reminder and in `security.break_glass_degraded` from the moment it exists, with
+   no grace window. The compliance posture counter `emergency_access.unreviewed_activations`
+   does not (yet) treat it differently: it counts a degraded activation only after
+   `review_window`, like any other (verified: still 0 after the degraded activation ended).
 
-The user who activated sees the shortened expiry and a note that the audit log was not
-accepting writes.
+The activator sees the shortened expiry. The web UI adds a note that the audit log was not
+accepting writes; the CLI prints the same text as for a normal activation (only the shorter
+`until` time tells them), and `keyorix break-glass list` does not mark it. The HTTP response
+carries `"degraded": true`.
 
 ### What an operator should do
 
@@ -77,7 +125,9 @@ accepting writes.
    The server log says `Audit backfill: wrote owed audit event ...` for each row.
 3. Review the activation (someone other than the activator), as for any activation. The
    banner goes away when every degraded activation is both settled and reviewed.
-4. Confirm with the offline verifier:
+4. Confirm with the offline verifier (an admin command: with a server running on the same
+   database it refuses with `appears to be using this database ... stop it first` and exit
+   code 3, so stop the server first, or add `--force` if you accept the race):
 
    ```bash
    keyorix-server admin verify-audit --config ./keyorix.yaml
