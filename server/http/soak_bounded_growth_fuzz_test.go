@@ -76,10 +76,7 @@ func runFuzzSeq(t *testing.T, w *soakWorld, data []byte, cfg soakConfig, baseG i
 	stats := &soakStats{byKind: map[string]int{}}
 	live := w.fuzzLive
 
-	n := len(data)
-	if n > fuzzSeqMaxOps {
-		n = fuzzSeqMaxOps
-	}
+	n := min(len(data), fuzzSeqMaxOps)
 	for i := range n {
 		kind := soakOpKinds[int(data[i])%len(soakOpKinds)]
 		// Steer so a byte stream of all-creates or all-deletes cannot run the live
