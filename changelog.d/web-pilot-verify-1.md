@@ -1,0 +1,2 @@
+### Testing
+- **Reveal and Copy value guard for #2450.** The copy hook test now asserts Copy never reads `/versions` or calls `atob()`, and the real-backend Reveal spec asserts the value comes from `GET /secrets/{id}?include_value=true` with no page error. The Sharing secret names, revoke dialog, transfer-ownership dialog and read-only gating items (#3153, #3142) were re-checked on main and already have unit and real-backend coverage.
