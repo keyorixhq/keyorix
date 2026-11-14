@@ -115,7 +115,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		bootFatal(operatorFixWith("Failed to load configuration", err))
 	}
 
 	// #G-blank-storage-default: the server's own boot path is the ONE caller
@@ -135,7 +135,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Schema/sanity validation (ports, TLS cert/key presence, storage DSN/path) — always
 	// enforced, independent of any security flag: a malformed config should never boot.
 	if err := cfg.Validate(); err != nil {
-		log.Fatalf("Configuration is invalid: %v", err)
+		bootFatal(operatorFixWith("Configuration is invalid", err))
 	}
 
 	// server.log.format: from here on every log line is a JSON object when "json".
@@ -171,7 +171,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// (#330), despite official docs and that command's own help text claiming they run
 	// automatically on every boot.
 	if err := runStartupValidation(cfg); err != nil {
-		log.Fatalf("startup validation: %v", err)
+		bootFatal(operatorFixUnlessUnreachable(fmt.Errorf("startup validation: %w", err)))
 	}
 
 	// Disable core dumps before any key material or decrypted secret value is ever
@@ -215,7 +215,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 
 	// Refuse (or loudly warn about) serving bearer tokens + secret values in cleartext.
 	if err := checkTransportTLSPosture(cfg); err != nil {
-		log.Fatalf("transport security: %v", err)
+		bootFatal(operatorFix(fmt.Errorf("transport security: %w", err)))
 	}
 
 	// No-NTP edge devices: warn when the clock is implausible or the TLS
@@ -226,7 +226,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Key-file, secret-file and SCIM-token refusals, in order (bootRefusals below).
 	for _, r := range bootRefusals {
 		if err := r.check(cfg); err != nil {
-			log.Fatalf("%s: %v", r.name, err)
+			bootFatal(operatorFix(fmt.Errorf("%s: %w", r.name, err)))
 		}
 	}
 
@@ -255,9 +255,9 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// the storage factory) would not release it.
 	if err := appstorage.RefuseUndeclaredTransactionPooler(cfg); err != nil {
 		if authErr, ok := errors.AsType[*config.PostgresAuthError](err); ok {
-			log.Fatalf("%v\n(driver detail, secrets redacted: %s)", err, authErr.Detail())
+			bootFatal(fmt.Errorf("%w\n(driver detail, secrets redacted: %s)", err, authErr.Detail()))
 		}
-		log.Fatalf("%v", err)
+		bootFatal(poolerStepError(err))
 	}
 	// Registered first so it runs last: a lost process-wide lock (presence or
 	// single_writer, see awaitShutdown below) ends the process with a failure
@@ -271,9 +271,9 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	presence, err := serverguard.AcquirePresence(cfg)
 	if err != nil {
 		if authErr, ok := errors.AsType[*config.PostgresAuthError](err); ok {
-			log.Fatalf("%v\n(driver detail, secrets redacted: %s)", err, authErr.Detail())
+			bootFatal(fmt.Errorf("%w\n(driver detail, secrets redacted: %s)", err, authErr.Detail()))
 		}
-		log.Fatalf("%v", err)
+		bootFatal(err)
 	}
 	defer presence.Release() //nolint:errcheck
 
@@ -305,7 +305,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// coordination.
 	coreService, encSvc, err := initializeCoreService(cfg)
 	if err != nil {
-		log.Fatalf("failed to initialize core service: %v", err)
+		bootFatal(fmt.Errorf("failed to initialize core service: %w", err))
 	}
 	// Ensure KEK is wiped from memory on shutdown.
 	if encSvc != nil {

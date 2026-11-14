@@ -48,7 +48,20 @@ ExecStart=/usr/local/bin/keyorix-server --passphrase-file=${CREDENTIALS_DIRECTOR
 # recovers on open and the server takes no stale lock (flock is released by the
 # kernel on exit), so a restart needs no cleanup step.
 Restart=always
-RestartSec=5
+# 30 s, not 5: the one delay applies to every restart, and a server that cannot
+# reach its KMS or database (exit 75, see below) would otherwise retry them every
+# five seconds. systemd's growing delay (RestartSteps=, RestartMaxDelaySec=)
+# needs v254 and this repo documents no minimum systemd version, so the delay is
+# fixed. The price: after a crash or OOM kill the server is back after 30 s.
+RestartSec=30
+# Exit statuses of a server that could not start (server/boot_exit.go,
+# docs/edge-deployment.md "Start after a reboot"). 78: configuration or key
+# material was refused, and only an operator can fix it, so do not restart: the
+# unit stays "failed" with status=78 until `systemctl restart keyorix-server`
+# after the fix. 75 (KMS or database unreachable) is not listed on purpose: it
+# is retried every RestartSec. deploy/edge/edge_exit_codes_test.go keeps this
+# number equal to exitOperatorFix.
+RestartPreventExitStatus=78
 # SIGTERM lets the server finish in-flight requests and close the database.
 KillSignal=SIGTERM
 TimeoutStopSec=30

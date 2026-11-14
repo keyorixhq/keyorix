@@ -111,7 +111,9 @@ func (p *ExecKeyProvider) KEK() ([]byte, error) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("exec key provider: command %q timed out after %s", p.command[0], execKeyTimeout)
+			// Wrapped so a caller can tell a timeout (a helper waiting on a
+			// network that is down may come back) from a refusal.
+			return nil, fmt.Errorf("exec key provider: command %q timed out after %s: %w", p.command[0], execKeyTimeout, ctx.Err())
 		}
 		// stderr can carry the helper's own diagnostic, but may also echo the
 		// secret — surface only a trimmed, bounded tail and never the stdout.

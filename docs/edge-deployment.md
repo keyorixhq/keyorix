@@ -334,7 +334,8 @@ over as a credential file (`LoadCredential=` +
 `--passphrase-file=${CREDENTIALS_DIRECTORY}/…`), so it is neither in the
 environment nor on the command line
 ([ADR-099](adr-099-master-passphrase-sourcing.md)), waits for the data volume
-to be mounted, and never gives up retrying. `deploy/edge/edge_units_test.go`
+to be mounted, and never gives up retrying a start that can succeed (it stops
+on an exit that only an operator can fix; see "Start after a reboot"). `deploy/edge/edge_units_test.go`
 runs the unit's real `ExecStart` line against the built server, kills it and
 runs it again, and pins the directives above; it does not boot a real systemd
 or launchd (pending the e2e VM).
@@ -378,12 +379,54 @@ key-encryption key (KEK) itself, then serves; if it cannot, the start fails
 | `shamir` | Needs K shares from share files or variables at start (`internal/crypto/shamir_provider.go`). | Only if K shares stay on the device, which removes the point of splitting. Limit: there is no way to supply shares to a running, waiting server. |
 | `aws-kms`, `gcp-kms` | Calls the cloud KMS to decrypt the wrapped KEK, under a timeout (`KMSKeyProvider.KEK`, `internal/crypto/kms_provider.go`). | Only while the KMS is reachable. Limit: the server cannot start with the link down. |
 
-If the input is missing, the process exits with the reason in its log. Under
-the shipped systemd unit (`Restart=always`, `RestartSec=5`,
-`StartLimitIntervalSec=0`) that becomes a restart every five seconds until
-someone fixes it. Limits: the server does not wait for a passphrase, does not
-come up in a reduced mode, and sends no alert; the watch on `/health` from
-outside is how you find out.
+**A start that fails says what kind of failure it was.** The server exits with a
+status the service manager can act on, and prints one hint line last on stderr
+(plain text, even with `server.log.format: json`; it repeats no secret and no
+path, the line above it is the error as before). The numbers are constants in
+`server/boot_exit.go`; `deploy/edge/edge_exit_codes_test.go` fails if the shipped
+unit names different ones.
+
+| Exit status | Class | Examples | Shipped systemd unit |
+|---|---|---|---|
+| exit 78 | An operator must fix it; waiting cannot help. | Config file unreadable or invalid; key file missing, unreadable or inconsistent; master passphrase file missing, empty or wrong; transport or file-permission refusal; database login refused (an authentication error from Postgres); an undeclared transaction-mode pooler; a KMS that refused (access denied, key not found or disabled; for `aws-kms` and `azure-kms`, a TLS certificate the host does not trust: `gcp-kms` reports that as gRPC `UNAVAILABLE`, which is 75); an `exec` key helper that exited with an error. | `RestartPreventExitStatus=78`: not restarted. `systemctl status` shows the unit failed with `status=78`; fix the cause, then `systemctl restart keyorix-server`. |
+| exit 75 | A dependency that may come back. | The cloud KMS (`aws-kms`, `gcp-kms`, `azure-kms`, including the Entra ID token endpoint `azure-kms` signs in to first) or a remote database cannot be reached: connection refused, DNS failure, timeout. A KMS or Entra ID that answered "not now": HTTP 5xx or 429, an AWS throttling error, gRPC `UNAVAILABLE`, `INTERNAL`, `DEADLINE_EXCEEDED` or `RESOURCE_EXHAUSTED`. An `exec` key helper that did not finish within its 30 s timeout. A key-provider fallback chain (`key_provider.fallbacks`) in which at least one member could not be reached. | Restarted after `RestartSec=30` (`Restart=always`, `StartLimitIntervalSec=0`), for as long as it takes. |
+| exit 1 | Everything else, as before. | A crash, a listener port in use, a lock held by another server, a database that answered with a non-login error (starting up, too many connections), a connection closed during the Postgres login. | Restarted after `RestartSec=30`. |
+
+What the code does not do, written as limits:
+
+- The class comes from the failing step, not from a guess about the cause. A
+  network error while reaching the KMS or database, or a KMS answering with a
+  server-side or throttling error, is 75; a KMS that answered and refused
+  (wrong key, access denied) is 78 for the key provider. For `azure-kms`,
+  Entra ID refusing the sign-in (a wrong client secret or application) is 78;
+  a sign-in that got no answer is 75. A fallback chain is 78 only when every
+  member refused: a member that could not be reached may come back and serve
+  the KEK, so the chain is 75. A connection Postgres
+  (or a proxy in front of it) closed during the login is 1, not 78: a backend
+  that is down or restarting looks the same as refused credentials. A failure
+  no step classified stays 1 and is retried.
+- `RestartSec=30` is one delay for every restart, crashes included: after a
+  crash or an OOM kill the server is back after 30 s, not 5. systemd's growing
+  delay (`RestartSteps=`, `RestartMaxDelaySec=`) needs v254 and this guide
+  names no minimum systemd version, so the unit uses the fixed delay. The
+  launchd plist is unchanged (`KeepAlive`); it does not act on the status.
+- The server does not wait for a passphrase, does not come up in a reduced
+  mode, and sends no alert. After exit 78 nothing runs: the watch on `/health`
+  from outside, or an alert on a failed unit, is how you find out.
+- Run natively against the built binary: missing passphrase file, missing key
+  file, unparseable config, an `aws-kms` answering access denied (all 78), an
+  unreachable `aws-kms` endpoint, an `aws-kms` answering 500 or throttling, and
+  a Postgres nothing listens for (all 75), in
+  `server/boot_exit_codes_integration_test.go`, and a malformed Postgres DSN
+  (78). The Azure and GCP answers and the fallback chain are covered by unit
+  cases only; the Azure sign-in cases drive real `azidentity` credentials
+  against an Entra ID stub and a closed port (`server/boot_exit_chain_test.go`).
+  One case is still 78 although it may come back: a `gcp-kms` whose OAuth token
+  endpoint cannot be reached while the KMS endpoint can (gRPC reports it as
+  `UNAUTHENTICATED` with the cause only as text). With the uplink down the
+  KMS endpoint fails first and that is 75. Not run: a real systemd
+  honouring `RestartPreventExitStatus=` and `RestartSec=`, a container start,
+  and a real cloud KMS outage (pending e2e VM).
 
 ### Stuck states: WAL left behind after `kill -9`
 
