@@ -43,8 +43,11 @@ def mode():
 
 
 def sampled_full_run():
-    """enforce only: every SAMPLE_EVERY-th merge_group run is a full run, the
-    safety net that bounds how long a selection miss can stay unseen."""
+    """enforce only: a merge_group run whose GITHUB_RUN_NUMBER is divisible by
+    SAMPLE_EVERY is a full run, the safety net that bounds how long a selection
+    miss can stay unseen. The run number counts every run of the workflow (pull
+    request and push runs too), so this samples about 1 in SAMPLE_EVERY
+    merge_group runs at random, not exactly every SAMPLE_EVERY-th one."""
     if mode() != "enforce" or os.environ.get("GITHUB_EVENT_NAME") != "merge_group":
         return False
     try:
@@ -145,12 +148,16 @@ def requests(ctx):
         if imp in lit_code:
             files |= set(ctx["hits"].get(imp, []))
         rel = os.path.relpath(o["Dir"], repo)
+        # The module root's files have dirname "" but relpath ".".
+        changed_tests = sorted(f for f in ctx["changed"] if f.endswith("_test.go") and (os.path.dirname(f) or ".") == rel)
         reqs.append({
             "dir": rel,
             "import_path": imp,
             "targets": [{"file": f, "outside": ctx["owner"](f) is None} for f in sorted(files)],
-            "test_files": sorted(os.path.basename(f) for f in ctx["changed"]
-                                 if f.endswith("_test.go") and os.path.dirname(f) == rel),
+            "test_files": [os.path.basename(f) for f in changed_tests],
+            # What a changed test file removed (an init() registry row, a
+            # TestMain) is only in its base version; "" when the change adds it.
+            "base_test_sources": {os.path.basename(f): ctx["file_at"](ctx["base"], f) for f in changed_tests},
             "seed_imports": sorted(own & reaching),
             "reader_imports": sorted(own & rdr),
             "chain": chain,
@@ -183,7 +190,9 @@ def testreach_lever(ctx, legs, leg_pkgs, log):
         names = sorted({t for p in pkgs for t in (res[p]["tests"] or [])})
         total = sum(res[p]["total"] for p in pkgs)
         sharded = legs[leg] == "*"
-        # A sharded package's narrowed tests all run in its first selected shard.
+        # A sharded package's narrowed tests all run in its first selected
+        # shard: the ci.yml enforce patch must run leg_tests there whatever
+        # that shard's weight partition holds (re-check when it is reviewed).
         if sharded and names and first_shard.setdefault(pkgs[0], leg) != leg:
             names_here = []
         else:
@@ -192,13 +201,21 @@ def testreach_lever(ctx, legs, leg_pkgs, log):
         why = "; ".join(f"{p.replace(MODULE + '/', '')}: {res[p]['reason']}" for p in pkgs)
         recs.append(record(log, "testreach", "test-suite/" + leg, decision, why,
                            pkg=",".join(p.replace(MODULE + "/", "") for p in pkgs),
-                           run_tests=len(names_here), of_tests=total, tests=names_here[:MAX_LOGGED_TESTS]))
+                           run_tests=len(names_here), of_tests=total, tests=names_here[:MAX_LOGGED_TESTS],
+                           # mq-shadow-report.py: a failure outside a truncated list is unknown, not a miss.
+                           tests_truncated=len(names_here) > MAX_LOGGED_TESTS))
         leg_tests[leg] = "^(" + "|".join(re.escape(n) for n in names_here) + ")$" if names_here else "-"
     return recs, leg_tests
 
 
 def gate_lever(ctx, gates, touched, log):
-    """edge / e2e_smoke / smoke gates, logged against the jobs that would skip."""
+    """edge / e2e_smoke / smoke gates, logged against the jobs that would skip.
+
+    Not covered: these decisions use code seeds only. e2e-tagged test files are
+    IgnoredGoFiles for the root go list, so rule 3 never indexes their
+    literals, and a non-Go, non-embedded file read at run time by an e2e test
+    or by the server, outside scripts/e2e/, does not open a gate. Re-check
+    before the ci.yml enforce patch lands (REVIEW-4196-DEEP-1 L5)."""
     packages, code = ctx["packages"], ctx["code_seeds"]
 
     def reaches(main_pkgs):
