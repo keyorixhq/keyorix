@@ -58,6 +58,17 @@ type PassphraseSource struct {
 	// internal/cli/secret/create.go and siblings), or a raw read until EOF
 	// when stdin is piped/redirected.
 	Stdin bool
+	// FlagPrefix is the prefix of the flag names this source was registered
+	// under ("" for --passphrase-file, "new-" for --new-passphrase-file), set by
+	// RegisterPassphraseFlags. Refusals and Describe name the flag the operator
+	// actually typed with it. Empty means the unprefixed names.
+	FlagPrefix string
+}
+
+// flagName returns the "--<prefix>passphrase-<kind>" flag this source was
+// registered under (kind is "fd", "file" or "stdin").
+func (src PassphraseSource) flagName(kind string) string {
+	return "--" + src.FlagPrefix + "passphrase-" + kind
 }
 
 // ResolvePassphrase returns the master passphrase as a byte slice the caller
@@ -72,9 +83,9 @@ type PassphraseSource struct {
 func ResolvePassphrase(src PassphraseSource, envVarName string) ([]byte, error) {
 	switch {
 	case src.FDSet:
-		return readPassphraseFD(src.FD)
+		return readPassphraseFD(src.FD, src.flagName("fd"))
 	case src.FilePath != "":
-		return readPassphraseFile(src.FilePath)
+		return readPassphraseFile(src.FilePath, src.flagName("file"))
 	case src.Stdin:
 		return readPassphraseStdin()
 	}
@@ -96,7 +107,8 @@ func ResolvePassphrase(src PassphraseSource, envVarName string) ([]byte, error) 
 		v = strings.TrimSpace(raw)
 	}
 	if !found || v == "" {
-		return nil, fmt.Errorf("%s is not set (and no --passphrase-fd/--passphrase-file/--passphrase-stdin was given; %s%s works too)", envVarName, envVarName, secretenv.FileSuffix)
+		return nil, fmt.Errorf("%s is not set (and no %s/%s/%s was given; %s%s works too)", envVarName,
+			src.flagName("fd"), src.flagName("file"), src.flagName("stdin"), envVarName, secretenv.FileSuffix)
 	}
 	return []byte(v), nil
 }
@@ -107,11 +119,11 @@ func ResolvePassphrase(src PassphraseSource, envVarName string) ([]byte, error) 
 func (src PassphraseSource) Describe(envVarName string) string {
 	switch {
 	case src.FDSet:
-		return fmt.Sprintf("--passphrase-fd %d", src.FD)
+		return fmt.Sprintf("%s %d", src.flagName("fd"), src.FD)
 	case src.FilePath != "":
-		return fmt.Sprintf("--passphrase-file %q", src.FilePath)
+		return fmt.Sprintf("%s %q", src.flagName("file"), src.FilePath)
 	case src.Stdin:
-		return "--passphrase-stdin"
+		return src.flagName("stdin")
 	}
 	if fvs := secretenv.FileVars(envVarName); len(fvs) > 0 {
 		return secretenv.DescribeFile(fvs[0].Var(), fvs[0].Path) // a relative path is not shown (F4)
@@ -119,15 +131,15 @@ func (src PassphraseSource) Describe(envVarName string) string {
 	return envVarName
 }
 
-func readPassphraseFD(fd int) ([]byte, error) {
+func readPassphraseFD(fd int, flag string) ([]byte, error) {
 	f := os.NewFile(uintptr(fd), "passphrase-fd")
 	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return nil, fmt.Errorf("reading --passphrase-fd %d: %w", fd, err)
+		return nil, fmt.Errorf("reading %s %d: %w", flag, fd, err)
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("--passphrase-fd %d produced no data", fd)
+		return nil, fmt.Errorf("%s %d produced no data", flag, fd)
 	}
 	return trimTrailingNewline(data), nil
 }
@@ -137,36 +149,39 @@ func readPassphraseFD(fd int) ([]byte, error) {
 // target) and check permissions via fstat on the SAME fd used to read, so
 // there is no window between the permission check and the read for the file
 // to be swapped out from under it.
-func readPassphraseFile(path string) ([]byte, error) {
+//
+// flag is the flag the operator gave ("--passphrase-file" or
+// "--new-passphrase-file"); it only names the flag in refusals.
+func readPassphraseFile(path, flag string) ([]byte, error) {
 	// OpenRegular adds O_NONBLOCK and refuses a non-regular file on the same fd: a
 	// 0600 FIFO would otherwise pass the mode check below and hang in open(2)/read.
 	f, info, err := secretenv.OpenRegular(path, syscall.O_NOFOLLOW)
 	if err != nil {
-		return nil, fmt.Errorf("opening --passphrase-file %q: %w", path, err)
+		return nil, fmt.Errorf("opening %s %q: %w", flag, path, err)
 	}
 	defer func() { _ = f.Close() }()
 
 	if info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("--passphrase-file %q is group- or world-readable (mode %04o) -- refusing to read it; chmod 600 the file", path, info.Mode().Perm())
+		return nil, fmt.Errorf("%s %q is group- or world-readable (mode %04o) -- refusing to read it; chmod 600 the file", flag, path, info.Mode().Perm())
 	}
 	// #3410: the owner can chmod and rewrite the file, so it must be the running
 	// user or root (the #3393 rule KEYORIX_MASTER_PASSWORD_FILE follows), judged on
 	// the same descriptor. No override, like the mode check above.
 	if err := secretenv.CheckOwner(info); err != nil {
 		if foe, ok := errors.AsType[*secretenv.ForeignOwnerError](err); ok {
-			return nil, fmt.Errorf("--passphrase-file %q is %w; chown it to uid %d (the user the server runs as) or to root", path, err, foe.ProcessUID)
+			return nil, fmt.Errorf("%s %q is %w; chown it to uid %d (the user the server runs as) or to root", flag, path, err, foe.ProcessUID)
 		}
-		return nil, fmt.Errorf("--passphrase-file %q: %w", path, err)
+		return nil, fmt.Errorf("%s %q: %w", flag, path, err)
 	}
 
 	// The X_FILE size rule (1 MiB, SECRETENV-TAILS-2 F11): a mis-pointed path to a
 	// large regular file (a log, a disk image) is refused, not read into memory.
 	data, err := secretenv.ReadCapped(f, info)
 	if err != nil {
-		return nil, fmt.Errorf("reading --passphrase-file %q: %w", path, err)
+		return nil, fmt.Errorf("reading %s %q: %w", flag, path, err)
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("--passphrase-file %q is empty", path)
+		return nil, fmt.Errorf("%s %q is empty", flag, path)
 	}
 	return trimTrailingNewline(data), nil
 }

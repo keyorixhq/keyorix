@@ -21,7 +21,7 @@ func TestSecretFileReaders_FIFO_RefuseWithoutBlocking(t *testing.T) {
 			_, err := NewShamirKeyProvider([]string{p, p}, nil, "").KEK()
 			return err
 		},
-		"readPassphraseFile": func(p string) error { _, err := readPassphraseFile(p); return err },
+		"readPassphraseFile": func(p string) error { _, err := readPassphraseFile(p, "--passphrase-file"); return err },
 	}
 	for name, read := range readers {
 		t.Run(name, func(t *testing.T) {
