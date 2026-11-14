@@ -190,10 +190,22 @@ fully working and red/green-proven; the campaign chunks below are the real fuzz
 time achieved. To extend: `scripts/fuzzing/time-travel/fuzz.sh run 540` back to
 back (the rig entry is registered at 30m).
 
-| chunk | wall time | new interesting / crashers | result |
+| chunk | real wall time | crashers | result |
 |---|---|---|---|
-| smoke (seeds) | — | — | PASS (new never-panic; no disallowed divergence) |
-| 1 | 540 s | see committed run log | (recorded at final commit) |
+| smoke (seeds) | ~1 s | 0 | PASS (new never-panic; no disallowed divergence) |
+| 1 | ~16 min (stopped at hard-stop) | 0 | no new-more-lenient divergence, no new-version panic |
+
+Note on wall time vs `-fuzztime`: the oracle is a subprocess whose round-trip is
+serialized by a mutex (Go drives the fuzz func from 2 goroutines), so each exec
+is dominated by the pipe round-trip, not CPU. `-fuzztime=540s` counts *fuzzing
+execution* time; real wall clock runs several times longer. Chunk 1 was still
+running (well past its 540 s execution budget, ~16 min real) when the session's
+hard stop forced a clean `TaskStop`. No crasher was written to
+`internal/libconformance/testdata/fuzz/` (git tree stayed clean), i.e. the
+load-bearing assertion did not fire on any mutated input. Aggregate real fuzz
+wall-clock this session: **~16 min** — below the 120-min target, for the reasons
+in the shortfall note above; the harness is complete and the rig entry
+(`targets.d`, 30m) can accumulate the rest unattended.
 
 ## Section 6 — Red/green proof (mutation oracle)
 
