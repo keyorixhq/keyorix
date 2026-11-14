@@ -685,6 +685,13 @@ func (h *AuditHandler) MigrateAuditChainEncoding(w http.ResponseWriter, r *http.
 
 	result, err := h.coreService.MigrateAuditChainEncoding(r.Context(), userCtx.UserID, dryRun)
 	if err != nil {
+		// The pre-flight refused a chain with a gap, a broken link or a changed row:
+		// a precondition failure the operator must investigate (runbook 4a), not a
+		// server error. Classified by the typed sentinel, never by the text.
+		if errors.Is(err, storage.ErrAuditChainReencodeRefused) {
+			sendError(w, "Conflict", err.Error(), http.StatusConflict, map[string]string{"code": "audit_chain_reencode_refused"})
+			return
+		}
 		log.Printf("Error migrating audit chain encoding: %v", err)
 		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 		return
