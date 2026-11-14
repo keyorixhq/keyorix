@@ -96,9 +96,11 @@ cli	keyorix dynamic-secret get-config	cli/cmd/dynamicsecret.go	runDynGetConfig	n
 cli	keyorix dynamic-secret issue	cli/cmd/dynamicsecret.go	runDynIssue	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix dynamic-secret leases	cli/cmd/dynamicsecret.go	runDynLeases	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix dynamic-secret list	cli/cmd/dynamicsecret.go	runDynList	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix dynamic-secret refused-dsn	cli/cmd/dynamicsecret_admin_dsn.go	runDynRefusedDSN	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix dynamic-secret renew	cli/cmd/dynamicsecret.go	runDynRenew	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix dynamic-secret revoke	cli/cmd/dynamicsecret.go	runDynRevoke	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix dynamic-secret revoke-all	cli/cmd/dynamicsecret.go	runDynRevokeAll	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix dynamic-secret set-admin-dsn	cli/cmd/dynamicsecret_admin_dsn.go	runDynSetAdminDSN	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix encryption	server/admin/encryption.go		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix encryption auth-encryption	server/admin/auth_encryption.go		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix encryption auth-encryption enable	server/admin/auth_encryption.go	runAuthEnable	none	single/no write-shaped call found by a 1-hop scan of the handler body
