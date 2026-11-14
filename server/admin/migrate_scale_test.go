@@ -278,3 +278,51 @@ func TestMigrateScale_SQLiteToPostgres(t *testing.T) {
 func TestMigrateScale_PostgresToSQLite(t *testing.T) {
 	moveAtTwoSizes(t, scaleBackendPostgres, scaleBackendSQLite)
 }
+
+// TestRestoreScale_SQLiteToSQLite is the restore-only memory assertion that
+// needs no PostgreSQL, so it runs in every environment: `admin restore` of a
+// SQLite backup into a fresh SQLite target at two sizes.
+func TestRestoreScale_SQLiteToSQLite(t *testing.T) {
+	moveAtTwoSizes(t, scaleBackendSQLite, scaleBackendSQLite)
+}
+
+// TestRestoreScale_SQLite_NonEmptyTargetRefusedWithoutFlag: a restore onto a
+// SQLite database that already holds data is refused unless --overwrite-existing
+// is given, and the refusal leaves the target as it was: same database bytes, no
+// key files written, nothing staged. (PostgreSQL: backup_restore_postgres_test.go
+// TestAdminRestore_Postgres_RefusesNonEmptyTarget.)
+func TestRestoreScale_SQLite_NonEmptyTargetRefusedWithoutFlag(t *testing.T) {
+	resetBackupRestoreFlags(t)
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Setenv("KEYORIX_MASTER_PASSWORD", scaleSeedPassphrase)
+
+	src := newScaleSource(t, scaleBackendSQLite, "", scaleSpecFromEnv(t, 1))
+	src.enter(t)
+	archive := filepath.Join(t.TempDir(), "scale-backup.tar.gz")
+	backupOutput = archive
+	backupExclusive = false
+	out, err := captureStdout(t, func() error { return runAdminBackup(nil, nil) })
+	require.NoError(t, err, "backup output:\n%s", out)
+
+	// The target already runs a deployment: its schema is created, so the file is not empty.
+	dst := newScaleEnd(t, scaleBackendSQLite, "")
+	st, err := storage.NewStorageFactory().CreateStorage(dst.cfg)
+	require.NoError(t, err)
+	closeTestStorage(st)
+	dbPath := filepath.Join(dst.dir, "secrets.db")
+	before := fileSHA256(t, dbPath)
+
+	dst.enter(t)
+	restoreInput = archive
+	restoreOverwriteExisting = false
+	restoreMaxEntryBytes = 0
+	restoreMaxTotalBytes = 0
+	_, err = captureStdout(t, func() error { return runAdminRestore(nil, nil) })
+	require.Error(t, err, "restore into a populated SQLite target must be refused without --overwrite-existing")
+	require.Contains(t, err.Error(), "not empty")
+	require.Contains(t, err.Error(), "--overwrite-existing", "the refusal must name the flag that overrides it")
+
+	require.Equal(t, before, fileSHA256(t, dbPath), "a refused restore must leave the target database byte-identical")
+	require.NoFileExists(t, filepath.Join(dst.dir, "dek.key"), "a refused restore must not install key files")
+	requireNoAsideFiles(t, dst.dir)
+}
