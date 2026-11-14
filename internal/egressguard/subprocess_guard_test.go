@@ -239,7 +239,7 @@ func parseSubprocessTable(doc string) (rows []subprocessRow, legend map[string]b
 		legend[m[1]] = true
 	}
 	seen := map[string]bool{}
-	for _, line := range strings.Split(sec, "\n") {
+	for line := range strings.SplitSeq(sec, "\n") {
 		if !strings.HasPrefix(line, "| `") {
 			continue
 		}
