@@ -13,8 +13,13 @@
   activation is counted too ("an OPEN activation"), which matters because
   INV-CORE-break-glass-review-independent-and-once refuses to review one that is still
   active — excluding them would hide exactly the activations that cannot be closed out yet.
+  A DEGRADED activation (INV-CORE-break-glass-never-unrecorded) is unreviewed from the moment
+  it exists: the posture count and the oldest-age figure include it with no grace window,
+  the same rule the review reminder and `BreakGlassDegradedStatus` already follow through
+  `ListUnreviewedBreakGlassActivationsBefore` (BREAKGLASS-POSTURE-NOV-1).
   Why: ADR-112 §3 items 4–5, #2461. Guard:
   `break_glass_review_surfacing_test.go:TestAccumulateBreakGlassPosture_CountsUnreviewedPastTheWindow`,
+  `TestAccumulateBreakGlassPosture_DegradedActivationCountsWithNoGraceWindow`,
   `TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation`,
   `TestRunBreakGlassReviewReminder_WarnsAndAuditsOncePerPass`,
   `TestRunBreakGlassReviewReminder_NotifiesAdmins`,
