@@ -72,3 +72,39 @@ func TestOpenAPIDeclaredStatuses_DeleteRejectionReasonTemplate(t *testing.T) {
 	}
 	assert.False(t, declared["200"], "the handler never answers 200; a client waiting for it would misread the 204")
 }
+
+// VALIDATION-TYPED-NOV-1 leftover: deleteUser and restoreUser refuse a bad id,
+// the caller's own account (delete) and user id 0 with 400; the spec left the 400 out.
+func TestOpenAPIDeclaredStatuses_DeleteAndRestoreUserRefusals(t *testing.T) {
+	kc := freshCoreBrokenS35(t)
+	h, err := NewUserHandler(kc)
+	require.NoError(t, err)
+
+	call := func(handler http.HandlerFunc, method, id string) *httptest.ResponseRecorder {
+		r := withUserCtxS7(withChiParamS7(httptest.NewRequest(method, "/", nil), "id", id))
+		w := httptest.NewRecorder()
+		handler(w, r)
+		return w
+	}
+	const callerID = "1" // withUserCtxS7 acts as user 1
+
+	cases := []struct {
+		name, path, method string
+		handler            http.HandlerFunc
+		id                 string
+	}{
+		{"delete non-numeric id", "/api/v1/users/{id}", http.MethodDelete, h.DeleteUser, "abc"},
+		{"delete own account", "/api/v1/users/{id}", http.MethodDelete, h.DeleteUser, callerID},
+		{"delete user id 0", "/api/v1/users/{id}", http.MethodDelete, h.DeleteUser, "0"},
+		{"restore non-numeric id", "/api/v1/users/{id}/restore", http.MethodPost, h.RestoreUser, "abc"},
+		{"restore user id 0", "/api/v1/users/{id}/restore", http.MethodPost, h.RestoreUser, "0"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := call(c.handler, c.method, c.id)
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			declared := declaredStatuses(t, c.method, c.path)
+			assert.True(t, declared["400"], "handler answers 400 but the spec declares only %v", sortedKeys(declared))
+		})
+	}
+}
