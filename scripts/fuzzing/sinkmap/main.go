@@ -67,7 +67,7 @@ func run(args []string, out, errw io.Writer) int {
 
 	res, err := scanModule(*root, false)
 	if err != nil {
-		fmt.Fprintln(errw, "sinkmap:", err)
+		_, _ = fmt.Fprintln(errw, "sinkmap:", err)
 		return 1
 	}
 	classify(res)
@@ -79,20 +79,20 @@ func run(args []string, out, errw io.Writer) int {
 		committed := filepath.Join(*root, committedTSV)
 		data, err := os.ReadFile(committed)
 		if err != nil {
-			fmt.Fprintf(errw, "sinkmap -check: cannot read %s: %v\n", committedTSV, err)
+			_, _ = fmt.Fprintf(errw, "sinkmap -check: cannot read %s: %v\n", committedTSV, err)
 			return 1
 		}
 		if string(data) != tsv.String() {
-			fmt.Fprintf(errw, "sinkmap -check: %s is stale; regenerate with:\n  go run ./scripts/fuzzing/sinkmap -tsv %s\n", committedTSV, committedTSV)
+			_, _ = fmt.Fprintf(errw, "sinkmap -check: %s is stale; regenerate with:\n  go run ./scripts/fuzzing/sinkmap -tsv %s\n", committedTSV, committedTSV)
 			return 1
 		}
-		fmt.Fprintln(out, "sinkmap -check: committed table is up to date")
+		_, _ = fmt.Fprintln(out, "sinkmap -check: committed table is up to date")
 		return 0
 	}
 
 	if *tsvOut != "" {
 		if err := os.WriteFile(*tsvOut, []byte(tsv.String()), 0o644); err != nil {
-			fmt.Fprintln(errw, "sinkmap:", err)
+			_, _ = fmt.Fprintln(errw, "sinkmap:", err)
 			return 1
 		}
 	}
@@ -100,12 +100,12 @@ func run(args []string, out, errw io.Writer) int {
 	writeMarkdown(res, *topN, &md)
 	if *mdOut != "" {
 		if err := os.WriteFile(*mdOut, []byte(md.String()), 0o644); err != nil {
-			fmt.Fprintln(errw, "sinkmap:", err)
+			_, _ = fmt.Fprintln(errw, "sinkmap:", err)
 			return 1
 		}
 	}
 	if *stdoutMD || (*tsvOut == "" && *mdOut == "") {
-		fmt.Fprint(out, md.String())
+		_, _ = fmt.Fprint(out, md.String())
 	}
 	return 0
 }

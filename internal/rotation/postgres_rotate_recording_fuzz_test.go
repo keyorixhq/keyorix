@@ -143,14 +143,14 @@ func parseEString(s string) (decoded string, ok bool) {
 	var b strings.Builder
 	i := 2
 	for i < len(s) {
-		switch {
-		case s[i] == '\\':
+		switch s[i] {
+		case '\\':
 			if i+1 >= len(s) {
 				return "", false // dangling backslash
 			}
 			b.WriteByte(s[i+1]) // \\ -> \, \' would be unusual but decode the next byte
 			i += 2
-		case s[i] == '\'':
+		case '\'':
 			if i+1 < len(s) && s[i+1] == '\'' { // '' -> literal '
 				b.WriteByte('\'')
 				i += 2
