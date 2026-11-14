@@ -55,6 +55,15 @@ call sites of source 1 from the code on every run. A new insert site with no row
   in one transaction, so either both exist or neither does. What the lost ack used
   to lose was the `auth.sso_jit_provisioned` audit row and the login itself.
 
+## Not covered
+
+- `bootstrapSystemLocked`, see the table.
+- The off-box audit forward. A create through `withAuditedMutation`
+  (`CreateUserAudited`, `CreateUserWithAssignments`, `ProvisionSCIMUser`) forwards
+  its committed audit rows (`auditForwardSink.Flush`) only after a clean commit, so on
+  a delivered lost ack the row is in the database but was not forwarded. This is the
+  same for every audited mutation, not only creates, and belongs to the audit flusher.
+
 ## knownOpenTolerances
 
 None of these ops had a `knownOpenTolerances` (or other exemption) row for the
