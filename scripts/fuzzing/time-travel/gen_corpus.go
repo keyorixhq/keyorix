@@ -52,11 +52,11 @@ func main() {
 
 	// ContentInfo { contentType OID, [0] content } for each known pkcs7 OID.
 	for name, o := range map[string][]int{
-		"signeddata":   oidSignedData,
-		"data":         {1, 2, 840, 113549, 1, 7, 1},
+		"signeddata":    oidSignedData,
+		"data":          {1, 2, 840, 113549, 1, 7, 1},
 		"envelopeddata": {1, 2, 840, 113549, 1, 7, 3},
 		"encrypteddata": {1, 2, 840, 113549, 1, 7, 6},
-		"digesteddata": {1, 2, 840, 113549, 1, 7, 5},
+		"digesteddata":  {1, 2, 840, 113549, 1, 7, 5},
 	} {
 		ci := seq(cat(oid(o), expl0(seq(nil))))
 		emit("contentinfo-"+name, ci)
