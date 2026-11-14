@@ -94,6 +94,7 @@ func TestMetricsEndpoint_OperatorMetricsOnRealServer(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(strings.Replace(string(cfgRaw), "\n  require_mfa: true\n", "\n  require_mfa: false\n", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
 	}
