@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -17,18 +16,23 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// campaignStatusForError maps a core error to an HTTP status (shared shape).
+// campaignStatusForError maps a core error to an HTTP status (shared shape). Every status
+// is decided by a sentinel, never by the text of the message (which embeds the translated
+// "Validation error" prefix): a missing target is 404, a refused request (a missing id, an
+// unknown action or source, a closed campaign, an item already decided, items still
+// pending) is core.ErrValidation, 400.
 func campaignStatusForError(err error) int {
-	// A missing target is matched by sentinel, never by message text: the text is the
-	// translated i18n "ErrorNotFound", and a storage fault must not read as one.
-	if errors.Is(err, core.ErrAccessReviewNotFound) {
-		return http.StatusNotFound
-	}
-	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "required") || strings.Contains(msg, "must be") ||
-		strings.Contains(msg, "still pending") || strings.Contains(msg, "already closed") ||
-		strings.Contains(msg, "campaign is closed") || strings.Contains(msg, "ownership cannot be revoked"):
+	case errors.Is(err, core.ErrAccessReviewNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, core.ErrValidation):
+		return http.StatusBadRequest
+	case errors.Is(err, core.ErrPermissionDenied):
+		// The independent-reviewer refusals (your own access, a group you belong to, a
+		// machine identity you provisioned, a machine caller) answer 400 on this route
+		// since they were worded "... an independent reviewer is required"; the
+		// standalone attest/revoke endpoints answer the same refusals 403. Kept as it
+		// was (an answer for AUTHZ-CORE-WAIVERS-1 / the admin, not a typing matter).
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError

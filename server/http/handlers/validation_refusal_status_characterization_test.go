@@ -317,14 +317,15 @@ func refusalCases() []refusalCase {
 				f.breakGlassMember(t, "refusal_developer")
 				return callBreakGlassActivate("1", `{"justification":"prod incident, db is down","ttl":"soon"}`)(t, f)
 			}},
-		// FINDING: both emergency-role guards answer 500 on main (no sentinel, so the
-		// handler's default arm); "no emergency role is configured", the sibling, is 400.
-		{family: "break_glass", name: "activate/emergency role is install-wide admin", en: http.StatusInternalServerError,
+		// FINDING (fixed by item 4): both emergency-role guards answered 500 on main (no
+		// sentinel, so the handler's default arm); "no emergency role is configured", the
+		// sibling, is 400, and so are these now.
+		{family: "break_glass", name: "activate/emergency role is install-wide admin", en: http.StatusBadRequest,
 			call: func(t *testing.T, f refusalFixture) *httptest.ResponseRecorder {
 				f.breakGlassMember(t, "system_admin")
 				return callBreakGlassActivate("1", `{"justification":"prod incident, db is down"}`)(t, f)
 			}},
-		{family: "break_glass", name: "activate/emergency role can assign roles", en: http.StatusInternalServerError,
+		{family: "break_glass", name: "activate/emergency role can assign roles", en: http.StatusBadRequest,
 			call: func(t *testing.T, f refusalFixture) *httptest.ResponseRecorder {
 				f.breakGlassMember(t, "refusal_assigner")
 				assigner := &models.Role{Name: "refusal_assigner", NameFolded: "refusal_assigner", Description: "assigns"}
@@ -370,16 +371,28 @@ func refusalCases() []refusalCase {
 				item := seedPendingReviewItem(t, f, opened.Campaign.ID)
 				return callCampaign(http.MethodPost, "1", uitoa(opened.Campaign.ID), uitoa(item), `{"action":"maybe"}`, func(h *CatalogHandler) http.HandlerFunc { return h.DecideAccessReviewCampaignItem })(t, f)
 			}},
-		// FINDING (read from campaignStatusForError, pinned below): "this item has already
-		// been decided" matches none of the handler's text arms and answers 500, while its
-		// sibling "campaign is closed" answers 400.
-		{family: "access_review", name: "decide/item already decided", en: http.StatusInternalServerError,
+		// FINDING (fixed by item 4): "this item has already been decided" matched none of
+		// the handler's text arms and answered 500, while its sibling "campaign is closed"
+		// answers 400.
+		{family: "access_review", name: "decide/item already decided", en: http.StatusBadRequest,
 			call: func(t *testing.T, f refusalFixture) *httptest.ResponseRecorder {
 				opened, err := f.cs.OpenAccessReviewCampaign(t.Context(), 1, 0, 1, "refusal-campaign")
 				require.NoError(t, err)
 				item := seedPendingReviewItem(t, f, opened.Campaign.ID)
 				require.NoError(t, f.db.Model(&models.AccessReviewItem{}).Where("id = ?", item).Update("decision", core.ReviewItemAttested).Error)
 				return callCampaign(http.MethodPost, "1", uitoa(opened.Campaign.ID), uitoa(item), `{"action":"attest"}`, func(h *CatalogHandler) http.HandlerFunc { return h.DecideAccessReviewCampaignItem })(t, f)
+			}},
+		// The independent-reviewer refusal is an authorization refusal, typed
+		// ErrPermissionDenied: it answers 400 on this route (the standalone attest/revoke
+		// endpoints answer 403). Pinned as it is: NEEDS ADMIN, not a typing matter.
+		{family: "access_review", name: "decide/own access (independent reviewer)", en: http.StatusBadRequest,
+			call: func(t *testing.T, f refusalFixture) *httptest.ResponseRecorder {
+				opened, err := f.cs.OpenAccessReviewCampaign(t.Context(), 1, 0, 1, "refusal-campaign")
+				require.NoError(t, err)
+				item := &models.AccessReviewItem{CampaignID: opened.Campaign.ID, PrincipalType: "user", PrincipalID: 1, RoleID: 1,
+					Source: "role", Decision: core.ReviewItemPending}
+				require.NoError(t, f.db.Create(item).Error)
+				return callCampaign(http.MethodPost, "1", uitoa(opened.Campaign.ID), uitoa(item.ID), `{"action":"attest"}`, func(h *CatalogHandler) http.HandlerFunc { return h.DecideAccessReviewCampaignItem })(t, f)
 			}},
 		{family: "access_review", name: "close/campaign already closed", en: http.StatusBadRequest,
 			call: func(t *testing.T, f refusalFixture) *httptest.ResponseRecorder {
