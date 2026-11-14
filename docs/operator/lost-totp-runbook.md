@@ -13,7 +13,7 @@ below and it weakens every account on the install.
 
 | The user | Path |
 |---|---|
-| Still has an **unused recovery code** | Section 2: self-service, no operator needed. |
+| Still has an **unused recovery code** | Section 2: it signs the user in, but does not replace the lost factor; for that, sections 3-4. |
 | Is a **global admin**, no recovery code, you have shell access to the server host | Section 3: `recover-admin`. |
 | Signs in through **SSO** | Their identity provider owns the second factor. Fix it there. Keyorix cannot reset it (`user reissue-one-time-password` also refuses SSO users). |
 | Is a **non-admin with local credentials**, no recovery code | Section 4: an administrator MFA reset (host command `admin reset-mfa`). |
@@ -31,15 +31,25 @@ Authenticator code (or an unused recovery code):
 Logged in to https://localhost:8080 as alice.
 ```
 
-Then, in the same session, replace the lost factor before the codes run out. The `keyorix`
-CLI has `mfa enroll`, `mfa activate` and `mfa stepup` only, so these two go through the web UI
-or the API (all require a bearer session):
+A recovery code is a sign-in factor only. **It does not replace the lost factor**: the two
+calls that do (below) re-check the user with a current authenticator code, or with the account
+password after a passkey re-authentication. They refuse an unused recovery code, and refuse the
+password alone on an account that has TOTP and no passkey (HTTP 400 `invalid code or password`;
+each refusal counts toward the account lockout, section 5). So a user who lost the phone and
+holds only recovery codes and a password cannot clear or regenerate on their own
+(issue #4224): use section 3 (global admin) or section 4 (anyone else), and until then keep
+signing in with the remaining recovery codes.
 
-- `GET /api/v1/auth/mfa/recovery-codes` returns `{remaining, total}`.
+A user who still has a working authenticator, or a passkey, can replace the factor in a signed-in
+session. The `keyorix` CLI has `mfa enroll`, `mfa activate` and `mfa stepup` only, so the first
+two go through the web UI or the API (all require a bearer session):
+
+- `GET /api/v1/auth/mfa/recovery-codes` returns `{remaining, total}` (inside `data`).
 - `POST /api/v1/auth/mfa/recovery-codes/regenerate` issues ten new codes and invalidates every old
-  one, used or not; it needs a current code **or the account password**.
-- `POST /api/v1/auth/mfa/disable` (`{"code": ...}` or `{"password": ...}`) clears the secret and
-  all recovery codes, and ends the user's other sessions. The user then enrols a new device:
+  one, used or not; its body is `{"code": ...}` (a current TOTP code) or `{"password": ...}`
+  (accepted only right after a passkey re-authentication).
+- `POST /api/v1/auth/mfa/disable` takes the same body, clears the secret and all recovery codes,
+  and ends the user's other sessions. The user then enrols a new device:
 
   ```bash
   keyorix mfa enroll        # scan the otpauth:// URI or type the base32 secret into the new app
@@ -47,6 +57,9 @@ or the API (all require a bearer session):
   ```
 
   `mfa activate` prints the new recovery codes once. Store them offline.
+
+An authenticator code can be used once: a second request in the same 30-second window with the
+same code is refused, so wait for the next code.
 
 ## 3. A global admin, with host access
 
@@ -125,7 +138,8 @@ no `keyorix` CLI subcommand for this yet; use the API (or `curl`):
 curl -sS -H "Authorization: Bearer $TOKEN_A" -H 'Content-Type: application/json' \
   -d '{"user":"alice","reason":"lost phone","verified_by":"video","evidence":"call 10:05, ticket T-123","code":"123456"}' \
   https://keyorix.example.com/api/v1/mfa-reset-requests
-# admin B: list, then approve; the response carries the one-time password, once
+# admin B: list (the request id is in the reply), then approve it; the response carries the
+# one-time password, once, and it expires after security.one_time_password_ttl (default 72h)
 curl -sS -H "Authorization: Bearer $TOKEN_B" 'https://keyorix.example.com/api/v1/mfa-reset-requests?status=pending'
 curl -sS -H "Authorization: Bearer $TOKEN_B" -H 'Content-Type: application/json' \
   -d '{"code":"654321"}' https://keyorix.example.com/api/v1/mfa-reset-requests/7/approve
@@ -153,7 +167,9 @@ keyorix-server admin clear-login-lockout --user alice@example.com --config ./key
 keyorix-server admin clear-login-lockout --ip 203.0.113.7 --config ./keyorix.yaml
 ```
 
-At least one of `--user` / `--ip` is required; the run is audited as `admin.login_lockout_cleared`.
+At least one of `--user` / `--ip` is required (`--user` takes an email address or a numeric user
+id, not a username); the run is audited as `admin.login_lockout_cleared`. With `--force` on a live
+server the audit row says the exclusive lock was not held.
 Also check the clock: a TOTP code is time-based, and a server or phone that is several minutes
 off fails every code.
 

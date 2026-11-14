@@ -2792,13 +2792,13 @@ curl -s -H "Authorization: Bearer $KEYORIX_TOKEN" \
   "https://<host>/api/v1/users/by-email?email=leaver@example.com"
 
 # 2. Suspend: login is blocked and every session and PAT of the user is revoked at once.
-keyorix user suspend --id <user-id> --by admin@example.com
+keyorix user suspend --id <user-id>
 #    API equivalent:
 curl -s -X POST -H "Authorization: Bearer $KEYORIX_TOKEN" \
   "https://<host>/api/v1/users/<user-id>/suspend"
 
 # 3. Or remove the account (soft delete; sessions and PATs are revoked in the same step).
-keyorix user delete --id <user-id> --by admin@example.com --force
+keyorix user delete --id <user-id> --force
 #    API equivalent: DELETE /api/v1/users/<user-id>
 ```
 

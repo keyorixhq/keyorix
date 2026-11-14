@@ -240,10 +240,10 @@ The deprecated function remains for any external integration that may import it 
 ### Operator-facing behaviour
 
 ```
-$ keyorix encryption rotate
+$ keyorix-server admin encryption rotate
 Error: this is a write-locking operation. Re-run with --confirm.
 
-$ keyorix encryption rotate --confirm
+$ keyorix-server admin encryption rotate --confirm
 ⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
 🔄 Rotating DEK with full re-encryption sweep...
 ✅ Sweep committed: 142 secret_versions, 8 sessions, 3 api_tokens, 1 api_clients, 0 password_resets re-encrypted (12 legacy AAD upgraded)
