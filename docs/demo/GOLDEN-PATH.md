@@ -613,22 +613,26 @@ secret should count as "new" remains a product question, not a demo one.
 - `keyorix logout` forgets `ca_file`, so switching users on stage needs
   `keyorix config set ca_file ...` again before the next `login`:
   [#3735](https://github.com/keyorixhq/keyorix/issues/3735).
-- `audit search --actor payments-ci` finds nothing: filter machine reads with
-  `audit logs --actor-type machine_identity` (as the script does):
-  [#3736](https://github.com/keyorixhq/keyorix/issues/3736).
+- `audit search --actor payments-ci` found nothing: fixed, the actor term now
+  matches a machine identity's name as well as a username
+  ([#3736](https://github.com/keyorixhq/keyorix/issues/3736)).
 - `secret restore` on a secret that is not deleted says "Storage operation failed:
   Secret not found": [#3737](https://github.com/keyorixhq/keyorix/issues/3737).
 - `break-glass list` shows the user as a number:
   [#3741](https://github.com/keyorixhq/keyorix/issues/3741).
-- A missing key directory is reported as "a live server ... is using this key
-  directory": [#3742](https://github.com/keyorixhq/keyorix/issues/3742).
+- A missing key directory used to be reported as "a live server ... is using this
+  key directory"; it now says the directory does not exist and to run
+  `keyorix-server admin init` ([#3742](https://github.com/keyorixhq/keyorix/issues/3742)).
 - Right after an upgrade, `audit verify` says `NOT PROVEN` until
   `audit verify --full`; the v0.96 config carries two deprecated keys:
   [#3743](https://github.com/keyorixhq/keyorix/issues/3743) (documented in UPGRADING.md).
-- Copy: the wrong "request access" hint after `recover-admin` and the help of
-  `user create`/`logout` are fixed in the DEMO-1 PR; internal references
-  ("pre-#1452", "design §3.4") in `verify-audit`/`restore` output remain:
-  [#3744](https://github.com/keyorixhq/keyorix/issues/3744).
+- Copy: the wrong "request access" hint after `recover-admin`, the help of
+  `user create`/`logout`, and the internal references in `restore` and
+  `secret versions` output are fixed. `verify-audit` on a row hashed with the
+  old audit-hash format now says so in plain words ("was hashed with the old
+  audit-hash format ... not evidence of tampering", with the
+  `keyorix audit migrate-chain-encoding` command to run) instead of quoting
+  "pre-#1452": [#3744](https://github.com/keyorixhq/keyorix/issues/3744).
 - With the default TLS (self-signed certificate), a browser shows a certificate
   warning until the presenter trusts `certs/server.crt` (macOS: open it in Keychain
   Access and set it to "Always Trust"), so do that before the demo. The
