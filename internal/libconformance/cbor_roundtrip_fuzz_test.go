@@ -160,6 +160,11 @@ func nanAwareEqual(a, b any) bool {
 // int64/uint64; a float (fractional seconds) is also accepted by truncation.
 func sameInstant(tt time.Time, other any) bool {
 	switch o := other.(type) {
+	case nil:
+		// fxamacker encodes a ZERO time.Time as CBOR null, so it re-decodes to
+		// nil. A tag-1 epoch of NaN/Inf also decodes to the zero time. Both ends
+		// denote "no valid instant" (found by fuzzing: c1faffff3030 = tag1(NaN)).
+		return tt.IsZero()
 	case time.Time:
 		return tt.Equal(o)
 	case float64:
