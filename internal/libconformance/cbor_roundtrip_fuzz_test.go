@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -31,6 +32,15 @@ import (
 //     encodings are already collapsed in v1, so the property is stated on v1↔v2,
 //     not data↔v1 (which is NOT round-trip-stable by design and intentionally
 //     not asserted).
+//   - E11 (datetime tag): CBOR tag 0 (RFC3339) / tag 1 (epoch) decode to a Go
+//     time.Time, but the default EncMode re-encodes time.Time as an UNTAGGED Unix
+//     number — so v1 is time.Time while v2 is an int/float of the same instant,
+//     and the tag is dropped. FOUND BY FUZZING on input c130 (tag1(int -17)); this
+//     is a documented fxamacker behavior, benign for Keyorix (go-webauthn uses no
+//     datetime tags), and the reason an EXPECTED-DIFFERENCE table exists at all —
+//     the harness surfaced a real disagreement class the author had not listed.
+//     nanAwareEqual treats a time.Time and the Unix-number of the same instant as
+//     equal; the reproducer is kept as a regression seed in testdata/fuzz.
 //
 // What this does NOT verify:
 //   - It does NOT assert data↔v1 fidelity (that CBOR preserves the exact input
@@ -50,6 +60,8 @@ func FuzzCBORRoundTrip(f *testing.F) {
 	f.Add([]byte{0xc2, 0x49, 0x01, 0, 0, 0, 0, 0, 0, 0, 0}) // bignum 2^64
 	f.Add([]byte{0xf9, 0x7e, 0x00})                   // NaN
 	f.Add([]byte{0xfb, 0x7f, 0xf0, 0, 0, 0, 0, 0, 0}) // +Inf
+	f.Add([]byte{0xc1, 0x30})                         // E11: tag1(epoch) int -17 (fuzz-found datetime-tag class)
+	f.Add([]byte{0xc0, 0x74, 0x32, 0x30, 0x32, 0x36, 0x2d, 0x30, 0x31, 0x2d, 0x30, 0x31, 0x54, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x5a}) // E11: tag0 RFC3339
 	f.Add([]byte{0x63, 0x66, 0x6f, 0x6f})             // text "foo"
 	f.Add([]byte{})
 
@@ -83,6 +95,14 @@ func nanAwareEqual(a, b any) bool {
 			return an.Cmp(bn) == 0
 		}
 		return false
+	}
+	// E11 datetime-tag class: tag-0/1 decode to time.Time, re-encode drops the
+	// tag to an untagged Unix number. Compare by instant in either direction.
+	if at, ok := a.(time.Time); ok {
+		return sameInstant(at, b)
+	}
+	if bt, ok := b.(time.Time); ok {
+		return sameInstant(bt, a)
 	}
 	switch av := a.(type) {
 	case float64:
@@ -119,6 +139,25 @@ func nanAwareEqual(a, b any) bool {
 		return true
 	default:
 		return reflect.DeepEqual(a, b)
+	}
+}
+
+// sameInstant implements the E11 datetime-tag EXPECTED-DIFFERENCE: a time.Time
+// (from a tag-0/1 decode) equals the untagged Unix number the default EncMode
+// produces on re-encode, when they denote the same second. The default EncMode
+// encodes time.Time as integer Unix seconds (TimeUnix), so the counterpart is an
+// int64/uint64; a float (fractional seconds) is also accepted by truncation.
+func sameInstant(tt time.Time, other any) bool {
+	switch o := other.(type) {
+	case time.Time:
+		return tt.Equal(o)
+	case float64:
+		return int64(o) == tt.Unix()
+	default:
+		if n, ok := asBigInt(other); ok {
+			return n.Cmp(big.NewInt(tt.Unix())) == 0
+		}
+		return false
 	}
 }
 
