@@ -65,6 +65,18 @@ anywhere with `--verbose`; the summary on stdout is unchanged.
 | 4.-5. Committed, key files not (all) installed | the journal; the archive's data with some or none of its key files | `admin restore --recover` (rolls forward) |
 | 6. Finish | the journal (marked installed), if it was not removed yet | `admin restore --recover` (finishes; repeats the restore's audit events) |
 
+Failures in step 1 print one `Error:` line, exit 1, and leave nothing but the lock file
+(checked on SQLite with a real archive):
+
+| Cause | Message |
+|---|---|
+| target database exists and is not empty | `database "<path>" already exists and is not empty -- restore refuses to overwrite it (pass --overwrite-existing if you are certain, ...)` |
+| wrong master passphrase | `failed to derive/verify the KEK: failed to initialize key manager: failed to unwrap DEK — wrong passphrase or corrupted key file: GCM open failed: cipher: message authentication failed` |
+| truncated archive | `extract backup archive "<file>": read tar entry "tables/<table>.ndjson": unexpected EOF` (the entry named depends on where it was cut) |
+
+On PostgreSQL the non-empty target is refused with `target Postgres database already has N
+table(s) -- restore refuses to overwrite it` (from code, not run here).
+
 While the journal exists, the server refuses to start, and `admin backup` and a new
 `admin restore` refuse to run:
 
