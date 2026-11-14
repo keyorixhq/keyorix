@@ -25,7 +25,8 @@ func TestInvariantsIndexCheck_MalformedRowIsReported(t *testing.T) {
 	doc := readDoc(g, "docs/INVARIANTS.md")
 	base := checkInvariantsIndex(doc)
 
-	const marker = "| **Total** |"
+	// The planted row goes after the last table line (there is no Total row).
+	const marker = "\n\n## Highest-priority UNGUARDED gaps"
 	plants := []struct{ name, row string }{
 		{"non-numeric count", "| `planted/pkg` | [p/INVARIANTS.md](../p/INVARIANTS.md) | 3 | two | 1 |"},
 		{"missing cell", "| `planted/pkg` | [p/INVARIANTS.md](../p/INVARIANTS.md) | 3 | 3 |"},
@@ -35,9 +36,9 @@ func TestInvariantsIndexCheck_MalformedRowIsReported(t *testing.T) {
 	for _, p := range plants {
 		at := strings.Index(doc, marker)
 		if at < 0 {
-			t.Fatalf("no %q row in docs/INVARIANTS.md", marker)
+			t.Fatalf("no %q anchor in docs/INVARIANTS.md", marker)
 		}
-		planted := doc[:at] + p.row + "\n" + doc[at:]
+		planted := doc[:at] + "\n" + p.row + doc[at:]
 		// Line numbers in the unmodified table's problems shift by one
 		// after the planted line, so compare counts, not messages.
 		got := checkInvariantsIndex(planted)

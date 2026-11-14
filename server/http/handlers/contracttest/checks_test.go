@@ -286,6 +286,10 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"approveMFAReset":      true,
 		"cancelMFAReset":       true,
 		"listMFAResetRequests": true,
+
+		// DYNAMIC-ADMIN-DSN-1 -- openapi_contract_dynamic_admin_dsn_test.go.
+		"updateDynamicSecretConfigAdminDSN":           true,
+		"listDynamicSecretConfigsWithRefusedAdminDSN": true,
 	}
 
 	loadSpec()

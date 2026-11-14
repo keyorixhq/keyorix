@@ -396,17 +396,24 @@ func ParseDSNHostsFromKeyValue(dsn string) []string {
 // pairs read before the error -- pgx then refuses the whole string, so those are
 // candidates at worst.
 func keywordValuePairs(s string) [][2]string {
+	out, _ := keywordValuePairsStrict(s)
+	return out
+}
+
+// keywordValuePairsStrict is keywordValuePairs that also reports whether the
+// whole string was read (false where pgx would refuse it).
+func keywordValuePairsStrict(s string) ([][2]string, bool) {
 	const space = " \t\n\r\v\f"
 	var out [][2]string
 	s = strings.TrimLeft(s, space)
 	for len(s) > 0 {
 		eq := strings.IndexByte(s, '=')
 		if eq < 0 {
-			return out
+			return out, false
 		}
 		key := strings.Trim(s[:eq], space)
 		if key == "" || strings.ContainsAny(key, space) {
-			return out
+			return out, false
 		}
 		s = strings.TrimLeft(s[eq+1:], space)
 		var val string
@@ -433,14 +440,14 @@ func keywordValuePairs(s string) [][2]string {
 				}
 			}
 			if end >= len(s) {
-				return out // unterminated quote: pgx refuses the string
+				return out, false // unterminated quote: pgx refuses the string
 			}
 			val = unescapeKeywordValue(s[:end])
 			s = strings.TrimLeft(s[end+1:], space)
 		}
 		out = append(out, [2]string{key, val})
 	}
-	return out
+	return out, true
 }
 
 // unescapeKeywordValue drops each backslash and keeps the byte after it

@@ -122,6 +122,10 @@ var grpcWriteShareMatrix = map[string]grpcWriteShareCase{
 		_, err := f.dynamic.ClassifyConfig(ctx, &pb.ClassifyDynamicConfigRequest{Id: 1, Classification: "public"})
 		return err
 	}},
+	"DynamicSecretGRPCService.UpdateConfigAdminDSN": {call: func(f *grpcWriteShareFixture, ctx context.Context) error {
+		_, err := f.dynamic.UpdateConfigAdminDSN(ctx, &pb.UpdateDynamicConfigAdminDSNRequest{Id: 1, AdminDsn: "postgres://u:p@h/db"})
+		return err
+	}},
 	"DynamicSecretGRPCService.IssueLease": {call: func(f *grpcWriteShareFixture, ctx context.Context) error {
 		_, err := f.dynamic.IssueLease(ctx, &pb.IssueLeaseRequest{ConfigId: 1})
 		return err
