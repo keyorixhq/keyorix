@@ -221,11 +221,17 @@ func censusArm(seed int64, budget int, forceFull bool) (presenceSets, kindSeqs i
 // execution (the uniform arm). The swarm arm reports the plant in well under a
 // second; the uniform arm cannot report it in any budget (revoke is always
 // available). Inert as a unit test (the f.Fuzz body with seeds alone never
-// triggers the plant).
+// triggers the plant). It is a red-proof tool, not a regression target: its
+// purpose is to FAIL when the swarm finds the plant, so every execution is
+// skipped unless KEYORIX_SWARM_PLANT=1 (the generic fuzz jobs discover every
+// Fuzz* function and must not run it).
 func FuzzAuthzSeqSwarmPlant(f *testing.F) {
 	forceFull := os.Getenv("KEYORIX_SWARM_FORCE_FULL") == "1"
 	f.Add(^uint64(0), []byte{0, 0, 0, 0, 0, 2, 0, 0, 0, 0})
 	f.Fuzz(func(t *testing.T, mask uint64, data []byte) {
+		if os.Getenv("KEYORIX_SWARM_PLANT") != "1" {
+			t.Skip("red-proof arm: set KEYORIX_SWARM_PLANT=1 to run it")
+		}
 		if forceFull {
 			mask = ^uint64(0)
 		}
