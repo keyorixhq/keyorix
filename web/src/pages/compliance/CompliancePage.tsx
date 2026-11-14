@@ -279,6 +279,17 @@ function auditChainTone(a: CompliancePosture['auditIntegrity']): 'good' | 'warn'
     return boolTone(a.chainVerified);
 }
 
+// headId and eventsSinceCheck are also set when the last check failed, the chain is
+// sealed or not proven. Only a verified chain may say its events were verified.
+function auditChainHeadVerified(a: CompliancePosture['auditIntegrity']): boolean {
+    return a.chainVerified && a.verificationStatus !== 'not_proven' && a.verificationStatus !== 'sealed';
+}
+
+function auditChainHeadTone(a: CompliancePosture['auditIntegrity']): 'warn' | 'bad' | undefined {
+    if (auditChainHeadVerified(a)) return undefined;
+    return a.verificationStatus === 'not_proven' ? 'warn' : 'bad';
+}
+
 // PosturePanel surfaces the live controls-posture report (GET /compliance/posture).
 // It needs system.read; non-admins get 403 and the panel shows a quiet note rather
 // than failing the page.
@@ -340,8 +351,13 @@ const PosturePanel: React.FC = () => {
                 />
                 {p.auditIntegrity.headId ? (
                     <Tile
-                        label={`Chain head, ${p.auditIntegrity.chainedEvents} events verified`}
+                        label={
+                            auditChainHeadVerified(p.auditIntegrity)
+                                ? `Chain head, ${p.auditIntegrity.chainedEvents} events verified`
+                                : 'Chain head at last check (not verified)'
+                        }
                         value={`#${p.auditIntegrity.headId}`}
+                        tone={auditChainHeadTone(p.auditIntegrity)}
                     />
                 ) : null}
                 {p.auditIntegrity.lastCheckedAt && (
@@ -349,9 +365,9 @@ const PosturePanel: React.FC = () => {
                 )}
                 {p.auditIntegrity.eventsSinceCheck ? (
                     <Tile
-                        label={`Events after the last check (newest #${p.auditIntegrity.latestEventId ?? '?'}), not yet verified`}
+                        label={`Up to this many events after the last check (newest #${p.auditIntegrity.latestEventId ?? '?'}), not yet verified`}
                         value={p.auditIntegrity.eventsSinceCheck}
-                        tone="warn"
+                        tone={auditChainHeadTone(p.auditIntegrity) ?? 'warn'}
                     />
                 ) : null}
                 {p.auditIntegrity.lastFullVerificationAt && (
