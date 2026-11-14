@@ -185,6 +185,22 @@ go test <scratch-package> -run Fuzz        # deterministic seed-measurement pass
 `github.com/json-iterator/go` (dep `modern-go/reflect2` not fully in cache),
 `github.com/russross/blackfriday/v2`, `github.com/yuin/goldmark` (module lookup disabled).
 
+### Real `-fuzz` corroboration (not just seeds)
+
+Two committed green targets were run under real coverage-guided fuzzing
+(`-fuzz … -fuzztime 180s -parallel 2`, `GOMAXPROCS=2`), to confirm the 0-FP result
+holds under mutation, not only on seeds:
+
+| Target | execs | new-interesting | verdict |
+|--------|-------|-----------------|---------|
+| `encoding/json` Unmarshal bounded-work | 35 171 | 125 | **PASS** (stayed linear) |
+| `go.yaml.in/yaml/v2` Unmarshal bounded-work | 28 914 | 200 | **PASS** (stayed linear) |
+
+Neither fired across ~64 k mutated inputs — the oracle does not false-trip under real
+fuzzing, and the yaml.v2 control stays linear even as the fuzzer explores 200 new coverage
+points. (The firing yaml.v3 targets fire on their very first seed in the deterministic
+pass, so a `-fuzz` run of them fails at seed-execution — already demonstrated above.)
+
 ### False-positive rate
 
 **0 / 78.** Every one of the 78 non-yaml.v3 targets stayed green, including the perfect
