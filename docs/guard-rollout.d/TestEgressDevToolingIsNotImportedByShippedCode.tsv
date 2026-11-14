@@ -1,1 +1,1 @@
-TestEgressDevToolingIsNotImportedByShippedCode	internal/egressguard	#4213	sibling of TestEgressSitesAreInventoried: the DEV rows of docs/security/egress-allowlist.tsv are only true while no shipped package imports them (EGRESS-INVENTORY-1), report-only until its first green nightly on main
+TestEgressDevToolingIsNotImportedByShippedCode	internal/egressguard	#4215	sibling of TestEgressSitesAreInventoried: the DEV rows of docs/security/egress-allowlist.tsv are only true while no shipped package imports them (EGRESS-INVENTORY-1), report-only until its first green nightly on main
