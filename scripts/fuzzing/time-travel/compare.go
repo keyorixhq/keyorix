@@ -10,7 +10,7 @@
 // Usage: go run compare.go <old.jsonl> <new.jsonl>
 //
 // Classification is intentionally conservative and names the AXIS of change, not
-// a security verdict — a human (and the report) decides fixed-bug vs
+// a security verdict — a human decides fixed-bug vs
 // introduced-bug vs intentional. The axes:
 //
 //	VERDICT   accept<->reject<->panic<->driver_exit : the accept/reject decision moved.
