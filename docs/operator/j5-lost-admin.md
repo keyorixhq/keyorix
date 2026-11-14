@@ -108,11 +108,11 @@ set a new password and enrol a second factor. Everything else is refused:
 
 ```
 $ keyorix secret list
-Error: failed to list secrets: Finish account setup before continuing: change your password and enrol a second factor (MFA), in either order. (HTTP 403) Next step: you do not have permission for this; ask a project admin, or request access with `keyorix request access`.
+Error: failed to list secrets: Finish account setup before continuing: change your password and enrol a second factor (MFA), in either order. (HTTP 403) Next step: set your own password with `keyorix change-password`; if the message above also asks for a second factor, enrol it with `keyorix mfa enroll`, then `keyorix mfa activate`.
 ```
 
-(The "Next step" text is the CLI's generic hint for any 403; it does not apply here. What is owed
-is in the message before it.)
+(The command exits 4. Older builds printed the CLI's generic 403 hint here, "you do not have
+permission for this ...", which did not apply; what is owed is in the message before the hint.)
 
 Over the API the refusal names what is still owed:
 `{"error":"PasswordChangeRequired", ..., "pending_steps":["change_password","enroll_mfa"]}`.
@@ -144,15 +144,16 @@ run "keyorix login" with the new password and a code from your authenticator app
 ```
 
 Changing the password first and enrolling second works the same way; whichever step is
-last ends the session (`mfa activate` then says `Account setup is complete ...`). Omit the
-flags to be prompted (no terminal echo); passing `--current-password`/`--new-password`/
-`--code`/`--password` on the command line works but leaves them in shell history.
+last ends the session (`mfa activate` then says `Account setup is complete ...`). Both
+commands prompt without terminal echo. Passwords and codes are never accepted as flags (argv is
+visible to other users): in a script set `KEYORIX_CURRENT_PASSWORD` and `KEYORIX_NEW_PASSWORD`
+(or the `_FILE` forms) for `change-password`, and `KEYORIX_MFA_CODE` for `mfa activate`.
 
 ## 5. Log in normally, with the second factor
 
 ```
 $ keyorix secret list
-Error: failed to list secrets: Account setup is complete. Sign in again with your new password and second factor. (HTTP 401) Next step: run `keyorix login` to sign in again (the session may have expired or been revoked).
+Error: failed to list secrets: Invalid or expired token (HTTP 401) Next step: run `keyorix login` to sign in again (the session may have expired or been revoked).
 $ keyorix login --server https://localhost:8080 --ca-file certs/server.crt --username admin
 Password:                                        # the new password, no echo
 Authenticator code (or an unused recovery code):
