@@ -50,7 +50,6 @@ import (
 var (
 	numCols  = []string{"a", "b", "e"}
 	textCols = []string{"c", "d"}
-	allCols  = []string{"a", "b", "c", "d", "e"}
 )
 
 const tableCreateSQLite = `CREATE TABLE %s (
