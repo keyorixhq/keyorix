@@ -1,0 +1,10 @@
+# axis	id	old->new	detail
+VERDICT	contentinfo-signeddata	accept->reject	err "none"->"length" alloc 11->11
+VERDICT	contentinfo-signeddata-nocontent	accept->reject	err "none"->"length" alloc 11->10
+WORDING	longform-len-missing-bytes	-	"ber2der: BER tag length has leading zero"->"ber2der: cannot move offset forward, end of ber data reached"
+ERRCLASS	nest-indef-501	length->ber	err "asn1: structure error: tags don't match (6 vs {class:0 tag:16 length:1829 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} ObjectIdentifier @4"->"ber2der: maximum nesting depth exceeded"
+ERRCLASS	nest-indef-510	length->ber	err "asn1: structure error: tags don't match (6 vs {class:0 tag:16 length:1865 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} ObjectIdentifier @4"->"ber2der: maximum nesting depth exceeded"
+ERRCLASS	nest-indef-1000	length->ber	err "asn1: structure error: tags don't match (6 vs {class:0 tag:16 length:3825 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} ObjectIdentifier @4"->"ber2der: maximum nesting depth exceeded"
+ERRCLASS	nest-indef-2000	length->ber	err "asn1: structure error: tags don't match (6 vs {class:0 tag:16 length:7825 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} ObjectIdentifier @4"->"ber2der: maximum nesting depth exceeded"
+ERRCLASS	nest-indef-4000	length->ber	err "asn1: structure error: tags don't match (6 vs {class:0 tag:16 length:15825 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} ObjectIdentifier @4"->"ber2der: maximum nesting depth exceeded"
+# 8 behaviour change(s)
