@@ -230,6 +230,9 @@ func (w *bgdWorld) requireDegraded(u *models.User, a *models.BreakGlassActivatio
 	require.NoError(w.t, json.Unmarshal([]byte(owed[1].Event), &ev))
 	require.Contains(w.t, ev.Description, "DEGRADED")
 	require.Contains(w.t, ev.Description, fmt.Sprintf("activation %d", a.ID))
+	// #3741: the owed row names the user exactly like the normal path does.
+	require.Contains(w.t, ev.Description, fmt.Sprintf("user %d (%q) self-granted", u.ID, u.Username),
+		"the owed row must carry the same named-user text as a normally written one")
 	require.Empty(w.t, w.auditRows(u, EventBreakGlassActivated), "a refused row must not be in the chain")
 
 	unreviewed, err := w.c.ListUnreviewedBreakGlassActivations(context.Background(), 72*time.Hour)
