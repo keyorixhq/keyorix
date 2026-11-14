@@ -508,8 +508,8 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 							"chain-encoding migration", e.ID))
 				} else {
 					result.escalate(VerdictBroken, fmt.Sprintf(
-						"event #%d's entry_hash matches neither the current encoding nor the pre-#1452 one — "+
-							"its contents changed after it was written", e.ID))
+						"event #%d's recorded entry_hash does not match the row's contents — "+
+							"the row was changed after it was written", e.ID))
 				}
 				result.ChainedEvents, result.UnchainedLegacyEvents = chainedEvents, unchained
 				return nil

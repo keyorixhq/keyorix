@@ -47,6 +47,13 @@ On a local-KEK-file install, this key does not protect your secrets from host ro
 protects your admin account from anyone who is not you. Running this command again
 replaces the key; the old one stops working immediately.
 
+**SSO-managed administrators.** If every administrator is provisioned by an identity
+provider (SSO or SCIM), an IdP outage or deprovisioning leaves no one who can sign in.
+`admin validate --posture` warns about it (louder when no recovery key exists): create a
+local break-glass administrator, a password account no IdP manages (`keyorix user create`,
+then `keyorix rbac assign-role` with the administrator role), keep its credentials offline,
+and generate the recovery key above.
+
 ## 1. When locked out: stop the server
 
 `recover-admin` needs exclusive access to the database, the same as any other `admin`

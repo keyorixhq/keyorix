@@ -340,6 +340,9 @@ refused with a non-zero exit, no archive written and no key file changed:
   copy once that backup and a server start have succeeded. Until then
   `admin validate --posture` reports `backups are refused: key-rotation staging
   file present` and exits non-zero, so a cron'd backup that stops is visible there.
+  The refused backup itself exits with status **4** (every other failure exits 1)
+  and prints one stderr line a cron wrapper can match:
+  `keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="<files>"`.
 - *A DEK rotation committed its re-encryption sweep, but this key directory holds a
   different `dek.key`* (Postgres, several key directories, `key_dir_lock: database`):
   another key directory rotated the DEK and its new key set has not reached this
@@ -989,8 +992,10 @@ wrong credential, so the response cannot be used to confirm a guess.
 
 For environments where Docker isn't available, `keyorix-server` is a single Go
 binary that runs against SQLite or PostgreSQL (a config with `storage.type: postgres`
-and a `dsn`, written by `admin init --storage-type postgres` on a build that has that flag
-(v0.96.3 and older do not: edit the config `admin init` generates), and
+and a `dsn`: `admin init --storage-type postgres` writes the config with `storage.type: postgres`
+on a build that has that flag (v0.96.3 and older do not: edit the config `admin init` generates);
+add the `dsn`, then run `admin init` again to finish. Init creates no SQLite file for it and
+leaves the database alone: `admin migrate` creates the schema), and
 `KEYORIX_MASTER_PASSWORD` + `KEYORIX_DB_PASSWORD` set, or their `_FILE` forms; the
 steps are in [operations/postgres-single-binary.md](operations/postgres-single-binary.md))
 — and it can serve the **web dashboard from the binary

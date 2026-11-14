@@ -68,11 +68,11 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -363,11 +363,15 @@ func main() {
 	// stop repeating.
 	serverRoot := filepath.Join(root, "server")
 
-	scanner := bufio.NewScanner(os.Stdin)
+	// Read the whole list in one call: no read-ahead reader over os.Stdin (#4179).
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read target list from stdin: %v\n", err)
+		os.Exit(1)
+	}
 	var targets []string
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
+	for _, line := range strings.Split(string(input), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
 			targets = append(targets, line)
 		}
 	}
