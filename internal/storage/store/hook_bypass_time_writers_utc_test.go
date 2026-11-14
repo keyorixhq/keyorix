@@ -86,6 +86,14 @@ var hostZoneWriters = []hostZoneWriter{
 		require.NoError(w.t, w.ls.ReviewBreakGlassActivation(ctx, a.ID, a.UserID, "ok", at))
 		return "break_glass_activations", "reviewed_at", a.ID
 	}},
+	{"ReleaseLegalHold", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
+		h := &models.LegalHold{Reason: "r", PlacedBy: w.user(), PlacedAt: time.Now().UTC()}
+		require.NoError(w.t, w.ls.db.Create(h).Error)
+		ok, err := w.ls.ReleaseLegalHold(ctx, h.ID, w.user(), at, "lifted")
+		require.NoError(w.t, err)
+		require.True(w.t, ok)
+		return "legal_holds", "released_at", h.ID
+	}},
 	{"TryAcquireSchedulerLock create", func(ctx context.Context, w ppWorld, _ time.Time) (string, string, any) {
 		key := ppSeq.Add(1)
 		ok, err := w.ls.TryAcquireSchedulerLock(ctx, key, "holder-a", time.Millisecond)
@@ -240,7 +248,7 @@ func TestHookBypassTimeWriters_StoreUTCOnNonUTCHost(t *testing.T) {
 					&models.SchedulerLockLease{}, &models.AlertEscalationPolicy{}, &models.SecretTemplate{},
 					&models.RotationPolicy{}, &models.SetupToken{}, &models.Session{}, &models.AnomalyAlert{},
 					&models.ProjectInvitation{}, &models.AccessRequest{}, &models.MachineIdentity{},
-					&models.SystemMetadata{}, &models.RecoveryKeyRecord{}, &models.SecretACL{}, &models.PendingAuditEvent{}))
+					&models.SystemMetadata{}, &models.RecoveryKeyRecord{}, &models.SecretACL{}, &models.PendingAuditEvent{}, &models.LegalHold{}))
 				ctx := context.Background()
 
 				skew := hostZoneSkew[wr.name]
