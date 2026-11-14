@@ -52,6 +52,13 @@ const (
 	// applied before the refusal. Class C means the applied part is NOT rolled
 	// back, so this event is the only record of it.
 	EventSSOReconcileRefused = "auth.sso_reconcile_refused"
+	// EventSSOLoginSessionFailed is written (Success=false) when an SSO login
+	// passed every gate, JIT provisioning and reconcile included, and then the
+	// session could not be created (#2839). Class C: the account and its
+	// reconciled groups/roles are kept, not rolled back, and the next login for
+	// the same identity reuses them (no duplicate account, no extra grant). This
+	// event is the record that the login itself failed after those writes.
+	EventSSOLoginSessionFailed = "auth.sso_login_session_failed"
 	// EventSSOReconcileLastAdminRefused replaces EventSSOReconcileRefused when one
 	// of the failed steps is a removal the last-admin guard refused: the IdP
 	// revoked the install's last administrator's admin-conferring group or role.
@@ -318,6 +325,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
+		c.auditSSOLoginSessionFailed(ctx, "SSO", providerName, user.ID, ip, err)
 		return nil, nil, "", err
 	}
 	// Lockout clear AFTER mintSession (#2894), and panic-safe for the same
@@ -516,6 +524,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
+		c.auditSSOLoginSessionFailed(ctx, "SAML", name, user.ID, ip, err)
 		return nil, nil, "", err
 	}
 	// Lockout clear after mint (#2894); both steps best-effort and panic-safe
@@ -525,6 +534,18 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	c.writeAuditEventFull(ctx, EventSSOLogin, actorPtr(user.ID), nil, nil, ip,
 		fmt.Sprintf("SAML login via %s (subject=%s)", name, info.Subject))
 	return session, user, st.ReturnTo, nil
+}
+
+// auditSSOLoginSessionFailed records an SSO login refused because its session
+// could not be created after provisioning and reconcile had applied (#2839,
+// EventSSOLoginSessionFailed). The storage error goes to the log only; the
+// event says what was kept. writeAuditEventFailed recovers its own panic, so
+// the login's error answer stands whatever happens here.
+func (c *KeyorixCore) auditSSOLoginSessionFailed(ctx context.Context, kind, provider string, userID uint, ip string, err error) {
+	log.Printf("%s login via %s: session for user %d could not be created: %v", kind, provider, userID, err)
+	c.writeAuditEventFailed(ctx, EventSSOLoginSessionFailed, actorPtr(userID), nil, ip,
+		fmt.Sprintf("%s login via %s for user %d refused: the session could not be created; "+
+			"the account and its reconciled groups/roles are kept and the next login reuses them", kind, provider, userID))
 }
 
 // ssoExternalIDScheme namespaces an SSO-provider-managed identity inside the shared
