@@ -38,7 +38,6 @@ silently removing it.
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
 | `migrate/internal/splitjson` | [migrate/internal/splitjson/INVARIANTS.md](../migrate/internal/splitjson/INVARIANTS.md) | 1 | 1 | 0 |
 | `migrate/internal/vaultsource` | [migrate/internal/vaultsource/INVARIANTS.md](../migrate/internal/vaultsource/INVARIANTS.md) | 4 | 4 | 0 |
-| **Total** | | **526** | **521** | **5** |
 
 ## Highest-priority UNGUARDED gaps
 
@@ -75,7 +74,9 @@ ledger gap.
 
 - The table is written by hand; no generator exists. `TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp`
   (`internal/docsdrift`) fails on a package listed twice, on a row whose Invariants is not
-  Guarded + UNGUARDED, on a Total that is not the column sums, and on any line of this table
+  Guarded + UNGUARDED, on a hand-kept Total row (there is none: two PRs editing it merged in
+  the queue into two Total rows or a wrong sum, #4237; the test computes the column sums and
+  logs them, run it with `-v` to read them), and on any line of this table
   that matches neither the package-row nor the Total pattern (it would otherwise be left out
   of the sums). It does not check a row against its package's files or that the linked file
   exists. When two PRs both change a row, keep ONE row with the current counts.

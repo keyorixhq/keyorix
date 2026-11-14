@@ -5,8 +5,9 @@ package handlers
 // response's read-back of the group and its members must not run inside that
 // transaction: a failed read there rolled the removal back, and the member kept the
 // group's roles. The removal stands whatever the read-back does; PATCH then answers
-// 204 No Content (RFC 7644 §3.5.2), PUT answers the SCIM error (a PUT must return the
-// resource, §3.5.1, and the IdP's retry is an idempotent no-op).
+// 204 No Content (RFC 7644 §3.5.2), PUT answers 200 with the group built from the data
+// the write already held (a PUT must return the resource, §3.5.1; GRPC-OUTAGE-TAILS-1
+// item 4, #3773: it used to answer the SCIM error for a change that had committed).
 
 import (
 	"fmt"
@@ -29,7 +30,7 @@ var scimRevocationOps = []struct {
 		return scimGroupDo(h.PatchGroup, http.MethodPatch, gid,
 			`{"Operations":[{"op":"remove","path":"members","value":[{"value":"`+u1+`"}]}]}`)
 	}},
-	{"PUT empty member set", http.StatusInternalServerError, func(h *SCIMHandler, gid, _ string) *httptest.ResponseRecorder {
+	{"PUT empty member set", http.StatusOK, func(h *SCIMHandler, gid, _ string) *httptest.ResponseRecorder {
 		return scimGroupDo(h.ReplaceGroup, http.MethodPut, gid, `{"displayName":"Engineers","members":[]}`)
 	}},
 }
@@ -81,10 +82,19 @@ func TestSCIM_GroupRevocationNotRolledBackByReadBack(t *testing.T) {
 					require.True(t, fs.Fired(), "the armed %s fault must have fired", method)
 					fs.Arm(nil)
 
-					if op.status == http.StatusNoContent {
+					switch op.status {
+					case http.StatusNoContent:
 						require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
 						assert.Empty(t, w.Body.String())
-					} else {
+					case http.StatusOK:
+						// The committed change is reported as the success it is, with the
+						// group as the write left it (no member, the same id and name).
+						require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+						body := decodeSCIM(t, w)
+						assert.Equal(t, gid, body["id"])
+						assert.Equal(t, "Engineers", body["displayName"])
+						assert.Empty(t, groupMemberValues(body))
+					default:
 						assertSCIMErrorBody(t, w, op.status)
 					}
 					assert.Contains(t, logBuf.String(), scimInjectedDetail, "the read-back error must be logged for the operator")

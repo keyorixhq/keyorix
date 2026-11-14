@@ -25,8 +25,8 @@ func TestGenerateProjectAccessReview_AnnotatesLastUsed(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	h.CreateTestUser(t, "bob", 11)
-	h.AssignUserRole(t, 10, 3, uptr(proj)) // alice editor — has activity
-	h.AssignUserRole(t, 11, 4, uptr(proj)) // bob viewer — never used it
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // alice project_developer — has activity
+	h.AssignUserRole(t, 11, testhelper.RoleProjectViewer, uptr(proj))    // bob project_viewer — never used it
 
 	pid := proj
 	aid := uint(10)
@@ -65,7 +65,7 @@ func TestGenerateProjectAccessReview_LastUsedIsProjectScoped(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj))
 
 	aid := uint(10)
 	otherProj := uint(3)
@@ -100,7 +100,7 @@ func TestGenerateProjectAccessReview_DegradedOnLastUsedQueryError(t *testing.T) 
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor → write
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // project_developer → delete
 
 	report, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
 	require.NoError(t, err)

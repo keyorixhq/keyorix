@@ -1,0 +1,1 @@
+scripts/ci/mq_slim_test.go	scripts/ci/select-affected.py,scripts/ci/mq_slim.py,scripts/ci/mq-shadow-report.py,scripts/ci/testreach/**,scripts/ci-test-legs.sh,!**	the MQ-TEST-SLIM-1 levers and their evidence script; other paths are fake changed-file inputs

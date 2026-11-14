@@ -592,7 +592,10 @@ func TestIncrementalVerify_TickAndPostureNeverWalkTheWholeChain(t *testing.T) {
 }
 
 // (6) The first tick after a restart is deferred while the latest checkpoint is
-// fresh; the delay is clamped to one interval (created_at is not signed).
+// fresh; the delay is clamped to one interval (created_at is not signed). A
+// fresh checkpoint with no full verification or cycle in the signed state
+// (written by a release before incremental verification, #3743, or a state
+// that is not trusted) never defers.
 func TestAuditCheckpointFirstTickDelay(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -601,8 +604,15 @@ func TestAuditCheckpointFirstTickDelay(t *testing.T) {
 	assert.Zero(t, c.AuditCheckpointFirstTickDelay(ctx, day), "no checkpoint: tick at once")
 
 	logIncrEvents(t, c, clk, 3)
-	cp, _, err := c.WriteAuditCheckpoint(ctx)
+	legacy, _, err := c.WriteAuditCheckpoint(ctx) // written by the pre-upgrade server
 	require.NoError(t, err)
+	require.NoError(t, db.Model(&models.AuditCheckpoint{}).Where("id = ?", legacy.ID).Update("created_at", clk.t.Add(-6*time.Hour)).Error)
+	assert.Zero(t, c.AuditCheckpointFirstTickDelay(ctx, day), "fresh checkpoint but no verification state: tick at once")
+
+	logIncrEvents(t, c, clk, 3)
+	res := tickOK(t, c)
+	require.True(t, res.Written)
+	cp := res.Checkpoint
 	setCreated := func(at time.Time) {
 		require.NoError(t, db.Model(&models.AuditCheckpoint{}).Where("id = ?", cp.ID).Update("created_at", at).Error)
 	}
@@ -612,6 +622,16 @@ func TestAuditCheckpointFirstTickDelay(t *testing.T) {
 	assert.Zero(t, c.AuditCheckpointFirstTickDelay(ctx, day))
 	setCreated(clk.t.Add(400 * day))
 	assert.Equal(t, day, c.AuditCheckpointFirstTickDelay(ctx, day), "a forged future created_at defers by at most one interval")
+
+	setCreated(clk.t.Add(-6 * time.Hour))
+	parts := strings.Split(rawAuditVerifyState(t, c), auditVerifyStateSep)
+	require.Len(t, parts, 3)
+	flipped := "0"
+	if parts[2][0] == '0' {
+		flipped = "1"
+	}
+	putAuditVerifyState(t, c, strings.Join([]string{parts[0], parts[1], flipped + parts[2][1:]}, auditVerifyStateSep))
+	assert.Zero(t, c.AuditCheckpointFirstTickDelay(ctx, day), "an untrusted verification state never defers")
 
 	require.NoError(t, db.Model(&models.AuditCheckpoint{}).Where("id = ?", cp.ID).Update("signature", "00").Error)
 	assert.Zero(t, c.AuditCheckpointFirstTickDelay(ctx, day), "an unauthenticated checkpoint never defers")

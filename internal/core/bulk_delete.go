@@ -25,18 +25,42 @@ type BulkDeleteRequest struct {
 // same class of bug as maxBulkAccessRequestBatchSize (bulk_access_requests.go).
 const maxBulkDeleteBatchSize = 500
 
+// Stable machine-readable codes of a retryable bulk item, the same words the single
+// delete answers with (the envelope "error" of its 503). Clients branch on the code,
+// never on the message.
+const (
+	BulkErrCodeAuditUnavailable   = "audit_unavailable"
+	BulkErrCodeStorageUnavailable = "storage_unavailable"
+)
+
 // BulkOpError captures why a single secret in a bulk operation could not be processed.
+// Code and Retryable are set only for an outage (audit log or storage): nothing was
+// changed for that item and the same call can be repeated. A real refusal or a missing
+// secret carries neither.
 type BulkOpError struct {
-	SecretID uint   `json:"secret_id"`
-	Name     string `json:"name,omitempty"`
-	Error    string `json:"error"`
+	SecretID  uint   `json:"secret_id"`
+	Name      string `json:"name,omitempty"`
+	Error     string `json:"error"`
+	Code      string `json:"code,omitempty"`
+	Retryable bool   `json:"retryable,omitempty"`
 }
 
-// BulkDeleteResult reports outcome counts and per-secret failures.
+// BulkDeleteResult reports outcome counts and per-secret failures. Retryable is how
+// many of Failed are retryable outages, so a caller can tell "retry these" from "these
+// will never succeed" without walking the list.
 type BulkDeleteResult struct {
-	Deleted []uint        `json:"deleted"`
-	Failed  []BulkOpError `json:"failed"`
-	Total   int           `json:"total"`
+	Deleted   []uint        `json:"deleted"`
+	Failed    []BulkOpError `json:"failed"`
+	Total     int           `json:"total"`
+	Retryable int           `json:"retryable"`
+}
+
+// addFailure records a failed item and counts it when it is a retryable outage.
+func (r *BulkDeleteResult) addFailure(e BulkOpError) {
+	if e.Retryable {
+		r.Retryable++
+	}
+	r.Failed = append(r.Failed, e)
 }
 
 // BulkDeleteSecrets deletes multiple secrets by ID within a project.
@@ -129,7 +153,7 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	// fetches below fold every failure into the uniform denial.
 	if ferr := c.secretReadFault(ctx, id); ferr != nil {
 		log.Printf("bulk delete: secret %d not processed, storage read failed: %s", id, StorageReadFaultDetail(ferr))
-		result.Failed = append(result.Failed, BulkOpError{SecretID: id, Error: StorageReadUnavailableMessage})
+		result.addFailure(BulkOpError{SecretID: id, Error: StorageReadUnavailableMessage, Code: BulkErrCodeStorageUnavailable, Retryable: true})
 		return
 	}
 	var secret *models.SecretNode
@@ -159,10 +183,13 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 		// The client gets one fixed class, never err.Error(): on a storage failure
 		// that is driver text naming tables and columns (STORAGE-ERR-CLASS-3).
 		log.Printf("bulk delete: secret %d not deleted: %s", id, StorageReadFaultDetail(err))
-		result.Failed = append(result.Failed, BulkOpError{
-			SecretID: id,
-			Name:     secretName,
-			Error:    bulkDeleteFailureMessage(ctx, err),
+		msg, code := bulkDeleteFailure(ctx, err)
+		result.addFailure(BulkOpError{
+			SecretID:  id,
+			Name:      secretName,
+			Error:     msg,
+			Code:      code,
+			Retryable: code != "",
 		})
 		return
 	}
@@ -196,18 +223,26 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 // secret went away after it was read), an audit-log outage (retry), a storage outage
 // (retry), or anything else.
 func bulkDeleteFailureMessage(ctx context.Context, err error) string {
+	msg, _ := bulkDeleteFailure(ctx, err)
+	return msg
+}
+
+// bulkDeleteFailure is bulkDeleteFailureMessage plus the stable code of a retryable
+// outage (BulkErrCodeAuditUnavailable / BulkErrCodeStorageUnavailable); the code is ""
+// for every class that retrying cannot fix.
+func bulkDeleteFailure(ctx context.Context, err error) (msg, code string) {
 	switch {
 	case errors.Is(err, ErrPermissionDenied):
-		return "permission denied"
+		return "permission denied", ""
 	case errors.Is(err, ErrSecretMutationAuditUnavailable), errors.Is(err, ErrMutationAuditUnavailable):
 		// Same sentence REST and the other mutation endpoints send; the delete was rolled
 		// back with its audit row, so the item can be retried.
-		return MutationAuditUnavailableMessage
+		return MutationAuditUnavailableMessage, BulkErrCodeAuditUnavailable
 	case isPositiveNotFound(err):
-		return "secret not found"
+		return "secret not found", ""
 	case IsStorageReadUnavailable(err) || IsAuthorizeTransient(ctx, err):
-		return StorageReadUnavailableMessage
+		return StorageReadUnavailableMessage, BulkErrCodeStorageUnavailable
 	default:
-		return "internal error"
+		return "internal error", ""
 	}
 }

@@ -26,7 +26,7 @@ The stack is three containers:
 ## 2. Quick start
 
 ```sh
-git clone --branch v0.96.3 https://github.com/keyorixhq/keyorix.git   # a release tag: main can be ahead of the published images
+git clone --branch v0.97.0 https://github.com/keyorixhq/keyorix.git   # a release tag: main can be ahead of the published images
 cd keyorix
 cp .env.example .env
 ./scripts/selfhost/init-secrets.sh     # generates ./secrets/* and records KEYORIX_SECRETS_GID in .env
@@ -303,7 +303,11 @@ On a binary install (no Docker), run the same commands directly:
 **every** command, as for the server itself. The replacement host needs the config,
 the certificates and the secrets files, not `keys/`: restore installs the key files
 from the archive. Server stopped is only required for restore (and for
-`admin audit export-checkpoint`, `admin verify-audit` and `--exclusive`).
+`admin audit export-checkpoint`, `admin verify-audit`, `admin validate` and
+`--exclusive`): `admin validate --posture` beside a live server is refused like those
+(`a Keyorix server (or another admin command) appears to be using this database`).
+That includes the posture check the stale-staging-file paragraph below points at: it
+cannot be polled from a monitor while the server runs.
 
 On Postgres, this reads through a single `REPEATABLE READ` snapshot
 transaction by default — every table sees the identical point-in-time view,
@@ -336,6 +340,9 @@ refused with a non-zero exit, no archive written and no key file changed:
   copy once that backup and a server start have succeeded. Until then
   `admin validate --posture` reports `backups are refused: key-rotation staging
   file present` and exits non-zero, so a cron'd backup that stops is visible there.
+  The refused backup itself exits with status **4** (every other failure exits 1)
+  and prints one stderr line a cron wrapper can match:
+  `keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="<files>"`.
 - *A DEK rotation committed its re-encryption sweep, but this key directory holds a
   different `dek.key`* (Postgres, several key directories, `key_dir_lock: database`):
   another key directory rotated the DEK and its new key set has not reached this
@@ -985,8 +992,10 @@ wrong credential, so the response cannot be used to confirm a guess.
 
 For environments where Docker isn't available, `keyorix-server` is a single Go
 binary that runs against SQLite or PostgreSQL (a config with `storage.type: postgres`
-and a `dsn`, written by `admin init --storage-type postgres` on a build that has that flag
-(v0.96.3 and older do not: edit the config `admin init` generates), and
+and a `dsn`: `admin init --storage-type postgres` writes the config with `storage.type: postgres`
+on a build that has that flag (v0.96.3 and older do not: edit the config `admin init` generates);
+add the `dsn`, then run `admin init` again to finish. Init creates no SQLite file for it and
+leaves the database alone: `admin migrate` creates the schema), and
 `KEYORIX_MASTER_PASSWORD` + `KEYORIX_DB_PASSWORD` set, or their `_FILE` forms; the
 steps are in [operations/postgres-single-binary.md](operations/postgres-single-binary.md))
 — and it can serve the **web dashboard from the binary

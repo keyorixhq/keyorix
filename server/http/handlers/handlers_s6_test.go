@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -795,12 +796,10 @@ func TestCloseAccessReviewCampaign_Unauthorized_S6(t *testing.T) {
 // TestCampaignStatusForError covers all branches of the switch.
 func TestCampaignStatusForError_S6(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, campaignStatusForError(core.ErrAccessReviewNotFound))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("required field missing")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("still pending items")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("already closed")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("campaign is closed")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("ownership cannot be revoked")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("must be unique")))
+	for _, text := range []string{"required field missing", "still pending items", "already closed", "campaign is closed", "ownership cannot be revoked", "must be unique"} {
+		assert.Equal(t, http.StatusBadRequest, campaignStatusForError(fmt.Errorf("%s: %w", text, core.ErrValidation)), text)
+		assert.Equal(t, http.StatusInternalServerError, campaignStatusForError(errors.New(text)), "untyped text does not classify: "+text)
+	}
 	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError(errors.New("unexpected db error")))
 }
 
