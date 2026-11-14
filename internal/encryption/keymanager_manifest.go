@@ -107,6 +107,37 @@ func (s *Service) ReconcileKeySet() error {
 	if err != nil {
 		return err
 	}
+	if res.AdoptionDeferred {
+		s.mu.Lock()
+		s.adoptAfterInit = true
+		s.mu.Unlock()
+	}
+	s.reportKeySet(res)
+	return nil
+}
+
+// adoptDeferredKeySet adopts the manifest-less set ReconcileKeySet left alone
+// because of its rotation staging files (keyfiles.AdoptProvenKeySet), once
+// Initialize has opened it. Not fatal: until it succeeds the set is exactly as
+// checked as before the manifest existed, and the next start tries again.
+func (s *Service) adoptDeferredKeySet() {
+	s.mu.Lock()
+	deferred := s.adoptAfterInit
+	s.adoptAfterInit = false
+	s.mu.Unlock()
+	if !deferred {
+		return
+	}
+	res, err := keyfiles.AdoptProvenKeySet(s.config, s.keyBaseDir, manifestFS())
+	if err != nil {
+		log.Printf("[WARN] key set: could not adopt the key files into a key-set manifest after opening them: %v; the next start tries again", err)
+		return
+	}
+	s.reportKeySet(res)
+}
+
+// reportKeySet logs a manifest step's warnings and records its audit events.
+func (s *Service) reportKeySet(res *keyfiles.ReconcileResult) {
 	for _, w := range res.Warnings {
 		log.Printf("[WARN] key set: %s", w)
 	}
@@ -124,7 +155,6 @@ func (s *Service) ReconcileKeySet() error {
 			"boot finished an interrupted %s from its staging files (%s), as the key-set manifest recorded it",
 			res.Finished, strings.Join(renamed, ", ")))
 	}
-	return nil
 }
 
 // recordKeySetEvent writes a key-set audit event through the Service's audit

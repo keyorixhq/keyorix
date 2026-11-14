@@ -32,6 +32,10 @@ type ReconcileResult struct {
 	Adopted []string
 	// AdoptReason says why (for the audit event and the log line).
 	AdoptReason string
+	// AdoptionDeferred: the set has no manifest but rotation staging files are
+	// present, so it was not adopted; the caller adopts it with
+	// AdoptProvenKeySet once the active set has been proved to open.
+	AdoptionDeferred bool
 }
 
 // ReconcileKeySet runs InspectKeySet (returning its refusal unchanged) and
@@ -69,7 +73,11 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 		return nil, err
 	}
 	if st.Manifest == nil {
-		if err := adoptWholeSet(st, required, fs, res); err != nil {
+		if len(st.Leftovers) > 0 {
+			deferAdoption(st, enc, baseDir, res)
+			return res, nil
+		}
+		if err := adoptWholeSet(st, required, fs, res, ""); err != nil {
 			return nil, err
 		}
 		return res, nil
@@ -209,8 +217,9 @@ func adoptFailedWarning(what, manifestPath string, err error) string {
 //
 // What adoption cannot know is whether the files it records belong together:
 // it trusts the set as it is, exactly as every boot did before the manifest
-// existed. The guarantee starts from this generation on.
-func adoptWholeSet(st *KeySetState, required []string, fs ManifestFS, res *ReconcileResult) error {
+// existed. The guarantee starts from this generation on. note, when not
+// empty, is appended to the reason.
+func adoptWholeSet(st *KeySetState, required []string, fs ManifestFS, res *ReconcileResult, note string) error {
 	m, err := adoptFromDisk(filepath.Dir(st.ManifestPath), required, 1, true)
 	if err != nil {
 		return err
@@ -224,6 +233,7 @@ func adoptWholeSet(st *KeySetState, required []string, fs ManifestFS, res *Recon
 		}
 		reason = fmt.Sprintf("the key-set manifest was unparseable (%v; moved aside to %s)", st.ManifestErr, aside)
 	}
+	reason += note
 	if err := writeManifest(st.ManifestPath, m, fs); err != nil {
 		res.Warnings = append(res.Warnings, adoptFailedWarning("the key set", st.ManifestPath, err))
 		return nil

@@ -110,6 +110,7 @@ var notKeyMaterialCallees = map[string]string{
 	"newKeyProviderFromConfig": "provider object, not key bytes",
 	"NewKeyManager":            "KeyManager object",
 	"ReconcileKeySet":          "key-set manifest result (warnings, renamed paths), not key bytes",
+	"AdoptProvenKeySet":        "key-set manifest result (warnings, adopted paths), not key bytes",
 }
 
 // retainingCallees keep the key slice they are passed: passing v to one hands
@@ -131,7 +132,7 @@ var wipeSweepExempt = map[string]string{}
 var knownWipeGaps = map[string]string{
 	"(KeyManager).unwrapDEK:dek": "wrong-size branch returns without wiping the unwrapped DEK; reachable only with a " +
 		"wrapped DEK that authenticates under the KEK but has the wrong length (#2512)",
-	"(Service).Initialize:dek": "NewEncryptionService error path drops the GetDEK copy unwiped; practically unreachable " +
+	"(Service).initialize:dek": "(the body of Initialize) NewEncryptionService error path drops the GetDEK copy unwiped; practically unreachable " +
 		"since the DEK is validated to 32 bytes on unwrap (#2512)",
 	"(Service).RotateDEKWithSweep:dek": "same as (Service).Initialize, after rotation (#2512)",
 }
