@@ -23,6 +23,8 @@
   `break_glass_posture_consistency_test.go:TestBreakGlassReviewOwed_PostureReminderAndStatusAgree`
   (posture, reminder and degraded status agree on one real-store fixture),
   `TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation`,
+  `TestEvaluateControls_EmergencyAccessDegradedCollectionIsUnknownNeverPass` (an unread
+  collection is Unknown on both break-glass controls, never Pass),
   `TestRunBreakGlassReviewReminder_WarnsAndAuditsOncePerPass`,
   `TestRunBreakGlassReviewReminder_NotifiesAdmins`,
   `TestRunBreakGlassReviewReminder_StorageErrorIsReported` (a broken query must not read as
