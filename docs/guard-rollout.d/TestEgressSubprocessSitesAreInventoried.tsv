@@ -1,0 +1,1 @@
+TestEgressSubprocessSitesAreInventoried	internal/egressguard	#4224	new repo-wide guard: every non-test file that starts a process needs a row in the subprocess table of docs/security/egress-inventory.md (EGRESS-SUBPROCESS-GUARD-1), report-only until its first green nightly on main
