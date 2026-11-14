@@ -120,10 +120,13 @@ func TestListAccessReviewCampaigns_HappyPath(t *testing.T) {
 
 func TestCampaignStatusForError(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, campaignStatusForError(core.ErrAccessReviewNotFound))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("required field")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("still pending")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("already closed")))
+	// A refused request is core.ErrValidation, whatever its (translated) text says.
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(fmt.Errorf("required field: %w", core.ErrValidation)))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(fmt.Errorf("still pending: %w", core.ErrValidation)))
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(fmt.Errorf("already closed: %w", core.ErrValidation)))
 	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError(errors.New("unknown error")))
+	// The text alone no longer classifies: an untyped error that merely says "required" is a fault.
+	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError(errors.New("required field")))
 }
 
 // ── audit.go ──────────────────────────────────────────────────────────────────

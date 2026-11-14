@@ -251,15 +251,14 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 		call := buildCall(tb, w.fx, st)
 		p := w.fx.principals[st.Actor] // userID and kind only; per-layer tokens below
 		before := map[layer]string{}
-		// The #4020 precondition on the pre-step state of every leg: the step's
-		// effect already holds before it runs (a revoke's grant is absent, a
-		// grant's is present). A step with no effect check never qualifies.
-		preKnown := call.effect != nil
+		// A grant whose row every leg already holds before the step is a repeated
+		// grant: its correct answer is the conflict (REST 409, gRPC AlreadyExists).
+		alreadyHeld := st.Kind == skGrant && call.effect != nil
 		for _, l := range seqLayers {
 			before[l] = authzSnapshot(w.legs[l].db)
-			if preKnown {
+			if alreadyHeld {
 				if ok, _ := call.effect(w.legs[l].db); !ok {
-					preKnown = false
+					alreadyHeld = false
 				}
 			}
 		}
@@ -338,26 +337,26 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 		// and O-S:other-client when every transport that answered Other gave a
 		// client error (4xx, InvalidArgument, AlreadyExists, ...). When the model
 		// denies the step, the other legs denied it, no leg allowed it and no
-		// transport answered a server error, or it is a known-open tolerance, it
-		// must also have left the state untouched.
+		// transport answered a server error, it must also have left the state
+		// untouched.
 		serverErr := false
 		for _, l := range other {
 			if layer(l) != layerCore && !isClientError(layer(l), outs[layer(l)]) {
 				serverErr = true
 			}
 		}
-		known := serverErr && knownSeqOther(st, outs, modelWant, preKnown)
-		if len(other) > 0 {
+		// #4020 (fixed): the repeated grant's conflict answer from every transport is
+		// the expected outcome, not a finding. It still must leave the state untouched
+		// (mustNotChange below) and still ends the sequence.
+		expectedConflict := alreadyHeld && !serverErr && modelWant == Allowed
+		if len(other) > 0 && !expectedConflict {
 			kind := "O-S:other"
-			switch {
-			case known:
-				kind = seqKnownOtherKind
-			case !serverErr:
+			if !serverErr {
 				kind = "O-S:other-client"
 			}
 			findings = append(findings, seqFinding{i, fmt.Sprintf("%s(%s;other=%s;got=%s;model=%s)", kind, tag, strings.Join(other, "+"), consensus, modelWant)})
 		}
-		mustNotChange := consensus == Denied || (len(other) > 0 && consensus == Other && (modelWant == Denied || !serverErr)) || known
+		mustNotChange := consensus == Denied || (len(other) > 0 && consensus == Other && (modelWant == Denied || !serverErr))
 		for _, l := range seqLayers {
 			lg := w.legs[l]
 			switch {
@@ -396,49 +395,6 @@ func isClientError(l layer, o *legOutcome) bool {
 	case layerGRPC:
 		switch o.Detail {
 		case codes.InvalidArgument.String(), codes.AlreadyExists.String(), codes.FailedPrecondition.String(), codes.OutOfRange.String():
-			return true
-		}
-	}
-	return false
-}
-
-// seqKnownOtherKind is the class of a step that matches knownSeqOthers.
-const seqKnownOtherKind = "O-S:known-other-4020"
-
-// isKnownOpen reports whether a finding class is a known-open tolerance (#4020).
-func isKnownOpen(c string) bool { return classKind(c) == seqKnownOtherKind }
-
-// knownSeqOthers are the known-open O-S:other signatures of #4020: gRPC
-// mapRoleError has no case for storage.ErrRoleNotAssigned or
-// storage.ErrRoleAlreadyAssigned, so RemoveRole of a grant the subject does not
-// hold and AssignRole of one it already holds answer Internal, where REST answers
-// 404 and 409. A row matches only a step of its kind that the model allows, with
-// exactly these outcomes and details on every leg (core nil: the core leg did not
-// run), and only when the #4020 precondition held on the pre-step state of every
-// leg (preKnown: the step's effect was already true before it ran, so the revoked
-// grant was absent and the granted one present). Without it, a revoke of a held
-// grant that does nothing would look like the known no-op. runSeq still requires
-// the state unchanged on every leg. Remove when #4020 is fixed.
-var knownSeqOthers = []struct {
-	kind             seqKind
-	core, rest, grpc *legOutcome
-}{
-	{skRevoke, nil, &legOutcome{Outcome: Denied, Detail: "Not Found"}, &legOutcome{Outcome: Other, Detail: "Internal"}},
-	{skGrant, &legOutcome{Outcome: Other, Detail: "untyped-error"}, &legOutcome{Outcome: Other, Detail: "Conflict"}, &legOutcome{Outcome: Other, Detail: "Internal"}},
-}
-
-func knownSeqOther(st seqStep, outs map[layer]*legOutcome, modelWant Outcome, preKnown bool) bool {
-	if modelWant != Allowed || !preKnown {
-		return false
-	}
-	same := func(got, want *legOutcome) bool {
-		if want == nil {
-			return got != nil && got.NA != ""
-		}
-		return got != nil && got.NA == "" && got.Outcome == want.Outcome && got.Detail == want.Detail
-	}
-	for _, k := range knownSeqOthers {
-		if st.Kind == k.kind && same(outs[layerCore], k.core) && same(outs[layerREST], k.rest) && same(outs[layerGRPC], k.grpc) {
 			return true
 		}
 	}
@@ -501,8 +457,7 @@ func alwaysFails(c string) bool {
 }
 
 // pickFinding is the finding to report and shrink: the first over-allow one if
-// there is any, else the first one that always fails, else the first that is
-// not a known-open tolerance, else the first.
+// there is any, else the first one that always fails, else the first.
 func pickFinding(fs []seqFinding) seqFinding {
 	for _, f := range fs {
 		if isOverAllow(f.Class) {
@@ -511,11 +466,6 @@ func pickFinding(fs []seqFinding) seqFinding {
 	}
 	for _, f := range fs {
 		if alwaysFails(f.Class) {
-			return f
-		}
-	}
-	for _, f := range fs {
-		if !isKnownOpen(f.Class) {
 			return f
 		}
 	}
@@ -548,7 +498,6 @@ const (
 	seqSingleStep                       // the failing step alone reproduces the class: covered by the single-step harness
 	seqAlwaysFail                       // a class that always fails (alwaysFails)
 	seqCandidate                        // a class only the sequence shows: sequence-dependent candidate
-	seqKnown                            // only known-open tolerances (#4020), in any sequence position
 )
 
 type seqTriage struct {
@@ -576,11 +525,6 @@ func seqVerdict(tb testing.TB, steps []seqStep, fault *seqFault, stats *seqStats
 		return seqTriage{kind: seqClean}
 	}
 	top := pickFinding(fs)
-	if isKnownOpen(top.Class) {
-		// pickFinding returns a known-open finding only when every finding is one;
-		// it is the step's own outcome signature, whatever the steps before it
-		return seqTriage{kind: seqKnown, key: classKey(top.Class), class: top.Class}
-	}
 	if isSingleStep(tb, steps, top, fault) {
 		return seqTriage{kind: seqSingleStep, key: classKey(top.Class), class: top.Class}
 	}
@@ -596,8 +540,6 @@ func seqVerdict(tb testing.TB, steps []seqStep, fault *seqFault, stats *seqStats
 	switch {
 	case alwaysFails(top.Class):
 		v.kind = seqAlwaysFail
-	case isKnownOpen(top.Class):
-		v.kind = seqKnown
 	case len(min) == 1 || isSingleStep(tb, min, top, fault):
 		v.kind = seqSingleStep
 	default:

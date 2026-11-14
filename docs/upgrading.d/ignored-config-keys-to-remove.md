@@ -21,5 +21,4 @@ Renamed keys (old name still accepted, with a warning, and rewritten in memory) 
 case; they are listed in the renamed-settings table in `docs/CONFIGURATION.md`.
 
 Also on the first start after a v0.96.x upgrade: `keyorix audit verify` reports `NOT PROVEN`
-until the first full re-walk of the chain completes. That is the intended fail-closed answer, not
-damage to the chain. Run `keyorix audit verify --full` once (it prints `Audit chain: VALID`).
+until the first full re-walk of the chain completes; see `audit-verify-after-v096-upgrade.md`.

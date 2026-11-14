@@ -5,8 +5,9 @@
   never inside its transaction: a failed statement there would roll the revocation back (and on
   Postgres aborts the transaction, so catching it inside `fn` is not enough). A read-back failure,
   a panic included, is `ErrSCIMGroupStateUnavailable` with the removal applied; SCIM PATCH answers
-  204 No Content, PUT the SCIM error. A write that can widen access reads the state inside its
-  transaction (fail closed).
+  204 No Content, PUT 200 with the group built from the row and members the write read before
+  it (`removalOnlyState`: no rename ran, nothing was added; #3773). A write that can widen access
+  reads the state inside its transaction (fail closed).
   Why: REVIEW-3775 F1, a read-back fault left the removed member in the group with its roles.
   Guard: `server/http/handlers` `TestSCIM_GroupRevocationNotRolledBackByReadBack` (PATCH remove
   and PUT shrink x the read-back's GetGroup and ListGroupMembers x 4 error classes and a panic;

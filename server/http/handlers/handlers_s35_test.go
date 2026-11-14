@@ -45,8 +45,8 @@ func TestGetUser_ZeroID_S35(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// RestoreUser: id=0 → core.RestoreUser returns "Validation error: user ID is
-// required" (no "not found") → 500 (lines 746-747).
+// RestoreUser: id=0 → core.RestoreUser returns the typed "Validation error: user ID
+// is required" (core.ErrValidation) → 400 (it answered 500 until VALIDATION-TYPED-NOV-1).
 func TestRestoreUser_ZeroID_S35(t *testing.T) {
 	t.Parallel()
 	kc := freshCoreBrokenS35(t)
@@ -56,7 +56,7 @@ func TestRestoreUser_ZeroID_S35(t *testing.T) {
 		httptest.NewRequest(http.MethodPost, "/api/v1/users/0/restore", nil), "id", "0"))
 	w := httptest.NewRecorder()
 	h.RestoreUser(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // UnlockUser: id=0 → core.UnlockUser returns "user ID is required" (no "not

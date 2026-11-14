@@ -230,6 +230,20 @@ test.describe('least-privilege user (alice)', () => {
         expect(Object.values(statuses), 'a shares list must have answered 200').toContain(200);
     });
 
+    // WEB-DEMO-VISIBLE-TAILS-1 (#3153): each Sharing row's secret cell links to the secret, and the row's
+    // View button opens it (it used to open a modal nothing rendered). pending e2e VM: not run in the sandbox.
+    test('a Sharing row links to its secret, and View opens it', async ({ page }) => {
+        await page.goto('/sharing');
+        await settle(page);
+        const main = page.locator('main');
+        const link = main.getByTestId('share-secret-name').first();
+        // The page may hold no share for this persona; the link assertions need a row.
+        test.skip((await link.count()) === 0, 'no share row for this persona');
+        await expect(link).toHaveAttribute('href', /^\/secrets\/\d+$/);
+        await main.getByTitle('View secret').first().click();
+        await page.waitForURL(/\/secrets\/\d+$/);
+    });
+
     test('the Members tab lists members without Add / Invite / role / remove controls', async ({ page }) => {
         const pid = await projectId(page);
         const failed: string[] = [];
