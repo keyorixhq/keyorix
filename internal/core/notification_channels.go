@@ -131,7 +131,7 @@ func (c *KeyorixCore) decryptNotificationChannelURL(ch *models.NotificationChann
 			return fmt.Errorf("notification channel %d URL is stored unencrypted while encryption is active: refusing it (no legitimate write path produces this, and an unencrypted URL carries no binding to the channel)", ch.ID)
 		}
 		ch.URL = string(payload)
-		return nil
+		return c.revalidateStoredChannelURL(ch)
 	default: // ports.NotificationChannelURLTagEncrypted -- Unwrap admits no other value
 		if !c.AuthEncryptionActive() {
 			return fmt.Errorf("notification channel %d URL is encrypted at rest but encryption is disabled: refusing to return the stored envelope as a URL", ch.ID)
@@ -148,8 +148,41 @@ func (c *KeyorixCore) decryptNotificationChannelURL(ch *models.NotificationChann
 			return fmt.Errorf("failed to decrypt notification channel %d URL: %w", ch.ID, derr)
 		}
 		ch.URL = plain
+		return c.revalidateStoredChannelURL(ch)
+	}
+}
+
+// revalidateStoredChannelURL re-runs the URL validator on a channel URL read
+// back from storage, before any caller (alert dispatch, the REST view) can use
+// it (#3625, CodeQL #1209). The create/update-time check cannot vouch for a row
+// that was rewritten afterwards: a URL that passes AAD decryption was still
+// written by whoever held the DEK-protected write path at the time, and a
+// plaintext-mode row carries no binding at all. Defence in depth, fail closed.
+//
+// Only webhook/slack/teams rows carry a dialled URL; an email channel's empty
+// URL is not validated. Without an injected validator the literal-only
+// send-time policy is used (scheme + IP literal): hostnames are resolved and
+// re-checked at dial time by escalationTransport, and a DNS lookup per row on
+// every list/get would add latency and a TOCTOU window of its own. The error
+// never carries the URL (a channel URL is a bearer credential, #3426).
+func (c *KeyorixCore) revalidateStoredChannelURL(ch *models.NotificationChannel) error {
+	switch ch.Type {
+	case "webhook", "slack", "teams":
+	default:
 		return nil
 	}
+	if ch.URL == "" {
+		return nil
+	}
+	validate := validateWebhookSendTimeURL
+	if c.webhookURLValidator != nil {
+		validate = c.webhookURLValidator
+	}
+	if err := validate(ch.URL); err != nil {
+		ch.URL = ""
+		return fmt.Errorf("notification channel %d: stored URL refused: %w", ch.ID, err)
+	}
+	return nil
 }
 
 // encryptNotificationChannelURL produces the url_enc/url_meta pair to store
