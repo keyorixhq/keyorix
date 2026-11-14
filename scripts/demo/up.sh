@@ -293,7 +293,10 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
         /app/keyorix-server admin migrate --config keyorix.yaml
         # Break-glass is off by default (secure default); the demo turns it on
         # explicitly so `keyorix break-glass activate` works (#2943).
-        printf "\nbreak_glass:\n  enabled: true\n  emergency_role: project_developer\n  default_ttl: 4h\n  max_ttl: 24h\n" >> keyorix.yaml
+        # anomaly_alerts.schedule 15s (as native-up.sh): the first detector pass runs
+        # 1 min + jitter up to min(schedule, 4 min) after start, so the seed settles in
+        # about 75 s instead of 1-5 min. Trade-off: the detector scans 4x a minute (demo only).
+        printf "\nbreak_glass:\n  enabled: true\n  emergency_role: project_developer\n  default_ttl: 4h\n  max_ttl: 24h\nanomaly_alerts:\n  schedule: 15s\n" >> keyorix.yaml
       fi
       # The server binds 127.0.0.1 by default (#2939); inside the container it
       # must listen on all interfaces for the published -p port to work. Done on
@@ -428,5 +431,5 @@ cat "$STATE_FILE"
 # seed's own first reads/writes as low-severity "first observed access" alerts. Wait for
 # that pass and acknowledge exactly those, so the Alerts tile and the Compliance page are
 # calm when the presenter opens them. The login details above are already printed.
-step "Waiting for the first anomaly-detection pass, then acknowledging what the seed itself caused (up to ~5 min)"
+step "Waiting for the first anomaly-detection pass, then acknowledging what the seed itself caused"
 demo_settle_anomalies "$SERVER_URL" "$KEYORIX_TOKEN" "$CONTAINER_NAME"
