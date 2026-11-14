@@ -247,6 +247,12 @@ single transaction.  If the server crashes mid-sweep, the orphaned pending key
 file is detected and cleaned up automatically on the next `--confirm` run.
 Back up the `keyorix_keys` volume after a successful rotation.
 
+**There is no command that undoes a rotation.** `admin encryption` has no reverse subcommand
+and `rotate` takes only `--confirm` and `--dry-run`. The way back is `admin backup` taken
+*before* the rotation, restored with `admin restore` (every write made since the archive is
+lost), so take that backup first; otherwise roll forward by rotating again. See
+[operator/key-rotation-runbook.md](operator/key-rotation-runbook.md) §6 "Rollback".
+
 With several server replicas on one PostgreSQL database, stop all of them, and
 copy the new key files to every replica before starting it: a replica with the
 old `dek.key` refuses to start. See [`operator/j6-key-rotation.md`](operator/j6-key-rotation.md)
