@@ -376,10 +376,12 @@ grpc	DynamicSecretService.CreateConfig	server/proto/keyorix.proto	CreateConfig	n
 grpc	DynamicSecretService.GetConfig	server/proto/keyorix.proto	GetConfig	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	DynamicSecretService.IssueLease	server/proto/keyorix.proto	IssueLease	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	DynamicSecretService.ListConfigs	server/proto/keyorix.proto	ListConfigs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+grpc	DynamicSecretService.ListConfigsWithRefusedAdminDSN	server/proto/keyorix.proto	ListConfigsWithRefusedAdminDSN	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	DynamicSecretService.ListLeases	server/proto/keyorix.proto	ListLeases	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	DynamicSecretService.RenewLease	server/proto/keyorix.proto	RenewLease	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	DynamicSecretService.RevokeAllLeases	server/proto/keyorix.proto	RevokeAllLeases	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	DynamicSecretService.RevokeLease	server/proto/keyorix.proto	RevokeLease	none	single/no write-shaped call found by a 1-hop scan of the handler body
+grpc	DynamicSecretService.UpdateConfigAdminDSN	server/proto/keyorix.proto	UpdateConfigAdminDSN	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	GroupService.AddGroupMember	server/proto/keyorix.proto	AddGroupMember	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	GroupService.CreateGroup	server/proto/keyorix.proto	CreateGroup	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	GroupService.DeleteGroup	server/proto/keyorix.proto	DeleteGroup	none	single/no write-shaped call found by a 1-hop scan of the handler body
@@ -539,6 +541,7 @@ rest	GET /api/v1/connect/ref-grants	server/http/router.go	connectHandler.ListRef
 rest	GET /api/v1/dashboard/activity	server/http/router.go	dashboardHandler.GetActivity	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/dashboard/stats	server/http/router.go	dashboardHandler.GetStats	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/dynamic-secrets/configs	server/http/router.go	dynamicSecretHandler.ListConfigs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/dynamic-secrets/configs/refused-admin-dsn	server/http/router.go	dynamicSecretHandler.ListConfigsWithRefusedAdminDSN	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/dynamic-secrets/configs/{id}	server/http/router.go	dynamicSecretHandler.GetConfig	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/dynamic-secrets/configs/{id}/leases	server/http/router.go	dynamicSecretHandler.ListLeases	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/environments	server/http/router.go	catalogHandler.ListEnvironments	none	single/no write-shaped call found by a 1-hop scan of the handler body
@@ -678,6 +681,7 @@ rest	GET /scim/v2/Users	server/http/router.go	scimHandler.ListUsers	D	SCIMHandle
 rest	GET /scim/v2/Users/{id}	server/http/router.go	scimHandler.GetUser	D	SCIMHandler.GetUser (server/http/handlers/scim.go:216) calls coreService.GetSCIMUser (read) then writeSCIM; no writes.
 rest	GET /status	server/http/router.go	<expr>	D	router.go:259 closure: on success serves a static status.html via http.ServeFile after two w.Header().Set calls, else falls back to handlers.HealthCheck (itself D, read-only); no storage access.
 rest	GET /status-es	server/http/router.go	<expr>	D	router.go:275 closure: identical shape to /status for the Spanish status page; no storage access.
+rest	PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn	server/http/router.go	dynamicSecretHandler.UpdateConfigAdminDSN	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	PATCH /api/v1/dynamic-secrets/configs/{id}/classification	server/http/router.go	dynamicSecretHandler.ClassifyConfig	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	PATCH /api/v1/dynamic-secrets/configs/{id}/enabled	server/http/router.go	dynamicSecretHandler.SetConfigEnabled	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	PATCH /api/v1/projects/{id}/machine-identities/{machineId}/classification	server/http/router.go	catalogHandler.ClassifyMachineIdentity	none	single/no write-shaped call found by a 1-hop scan of the handler body
