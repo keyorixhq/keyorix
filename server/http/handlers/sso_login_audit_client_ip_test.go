@@ -148,7 +148,7 @@ func TestBeginSAML_BudgetKeyIsTheForwardedClientBehindTrustedProxy(t *testing.T)
 		chain.ServeHTTP(w, req)
 		return w.Code
 	}
-	for i := 0; i < core.SSOBeginMaxAttempts; i++ {
+	for i := range core.SSOBeginMaxAttempts {
 		require.NotEqual(t, http.StatusTooManyRequests, begin(ssoAuditForwardedFor), "attempt %d is inside the budget", i+1)
 	}
 	assert.Equal(t, http.StatusTooManyRequests, begin(ssoAuditForwardedFor),
