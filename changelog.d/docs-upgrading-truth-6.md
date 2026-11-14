@@ -1,5 +1,0 @@
-### Changed
-- **The web container's `/health` answers by status only.** `web/nginx.conf` asks the backend's `/health` through an internal subrequest and returns `200 healthy` when it answers 2xx and `503 unavailable` otherwise; the backend's response body is no longer proxied through the web container, so backend health detail does not leave through it. `/nginx-health` stays a local static `200`. Guarded by `internal/config/web_nginx_health_guard_test.go`. `nginx -t` and a real-container run (backend scaled to 0 gives 503) are pending an e2e VM run.
-
-### Documentation
-- **Pilot upgrade notes match the code (DOCS-UPGRADING-TRUTH-6).** `docs/UPGRADING.md` 6o now says a mutation refused because its audit row cannot be recorded answers `503 audit_unavailable` with `Retry-After: 5` (it said 500); 6l no longer says `system init --bootstrap-token` has a prompt; 6w says the dormant-access wording follows `cadence_days`; 6r notes the 60 s flush backoff ceiling. `docs/SELF_HOSTING.md` describes the status-only `/health`.

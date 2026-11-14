@@ -22,18 +22,26 @@ func TestGenerateProjectAccessReview(t *testing.T) {
 	defer h.Cleanup()
 
 	const proj = uint(2)
-	// alice: editor (secrets.read+write) at project 2 → write.
+	// Legacy roles are install-wide only (#3605), so the project grants use project-tier
+	// roles. The access level is the role's highest secrets.* action and a role with no
+	// secrets.* is excluded, so the writer and the auditor keep the legacy editor and
+	// auditor bundles as project-tier custom roles: project_developer would report
+	// "delete" and project_auditor reads secrets.
+	writerRole := h.CreateProjectRoleWithPermissions(t, "review-writer", 21, "secrets.read", "secrets.write", "users.read")
+	auditorRole := h.CreateProjectRoleWithPermissions(t, "review-auditor", 22,
+		"audit.read", "audit.admin", "system.read", "users.read", "roles.read")
+	// alice: writer (secrets.read+write) at project 2 → write.
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj))
+	h.AssignUserRole(t, 10, writerRole.ID, uptr(proj))
 	// bob: auditor (audit.read, NO secrets.*) at project 2 → excluded.
 	h.CreateTestUser(t, "bob", 11)
-	h.AssignUserRole(t, 11, 5, uptr(proj))
+	h.AssignUserRole(t, 11, auditorRole.ID, uptr(proj))
 	// carol: viewer (secrets.read) at a DIFFERENT project → excluded from project 2.
 	h.CreateTestUser(t, "carol", 12)
-	h.AssignUserRole(t, 12, 4, uptr(uint(3)))
+	h.AssignUserRole(t, 12, testhelper.RoleProjectViewer, uptr(uint(3)))
 	// devs group: viewer (secrets.read) at project 2 → read.
 	h.CreateTestGroup(t, "devs", "", 100)
-	h.AssignGroupRole(t, 100, 4, uptr(proj))
+	h.AssignGroupRole(t, 100, testhelper.RoleProjectViewer, uptr(proj))
 
 	report, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
 	require.NoError(t, err)
@@ -63,10 +71,11 @@ func TestGenerateProjectAccessReview_IncludesMachineIdentities(t *testing.T) {
 	require.NoError(t, h.DB.Create(&models.MachineIdentity{
 		ID: 50, ProjectID: proj, Name: "ci-runner", IdentityType: "ci", State: "active",
 	}).Error)
-	// role_id 3 = editor (secrets.read+write), matching the seeded roles used elsewhere
-	// in this file.
+	// A project-tier role with the legacy editor bundle (secrets.read+write): the level
+	// asserted below is "write", and project_developer would report "delete".
+	writerRole := h.CreateProjectRoleWithPermissions(t, "review-writer", 21, "secrets.read", "secrets.write", "users.read")
 	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{
-		MachineIdentityID: 50, RoleID: 3, ProjectID: proj,
+		MachineIdentityID: 50, RoleID: writerRole.ID, ProjectID: proj,
 	}).Error)
 
 	report, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
@@ -97,11 +106,11 @@ func TestRevokeAccessReviewGrant_MachineRole(t *testing.T) {
 		ID: 50, ProjectID: proj, Name: "ci-runner", IdentityType: "ci", State: "active",
 	}).Error)
 	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{
-		MachineIdentityID: 50, RoleID: 3, ProjectID: proj,
+		MachineIdentityID: 50, RoleID: testhelper.RoleProjectDeveloper, ProjectID: proj,
 	}).Error)
 
 	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 1, proj, core.AccessReviewDecision{
-		Source: "role", PrincipalType: "machine", PrincipalID: 50, RoleID: 3,
+		Source: "role", PrincipalType: "machine", PrincipalID: 50, RoleID: testhelper.RoleProjectDeveloper,
 	})
 	require.NoError(t, err)
 
@@ -160,7 +169,7 @@ func TestRevokeAccessReviewGrant_Role(t *testing.T) {
 
 	const proj = uint(2)
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor → write
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // project_developer → delete
 
 	ctx := context.Background()
 	before, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
@@ -168,7 +177,7 @@ func TestRevokeAccessReviewGrant_Role(t *testing.T) {
 	require.Len(t, before.Entries, 1, "alice's editor grant is present before revoke")
 
 	err = h.CoreService.RevokeAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
-		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: testhelper.RoleProjectDeveloper,
 	})
 	require.NoError(t, err)
 
@@ -191,10 +200,10 @@ func TestRevokeAccessReviewGrant_RejectsSelfCertification(t *testing.T) {
 
 	const proj = uint(2)
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor → write
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj)) // project_developer → delete
 
 	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 10, proj, core.AccessReviewDecision{
-		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: testhelper.RoleProjectDeveloper,
 	})
 	require.Error(t, err, "alice must not be able to revoke her own access")
 	assert.Contains(t, err.Error(), "your own access")
@@ -210,10 +219,10 @@ func TestRevokeAccessReviewGrant_RejectsNonHumanReviewer(t *testing.T) {
 
 	const proj = uint(2)
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj))
 
 	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 0, proj, core.AccessReviewDecision{
-		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: testhelper.RoleProjectDeveloper,
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "attributable human reviewer")
@@ -331,11 +340,11 @@ func TestAttestAccessReviewGrant_AuditsDecision(t *testing.T) {
 
 	const proj = uint(2)
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj))
 
 	ctx := context.Background()
 	err := h.CoreService.AttestAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
-		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: testhelper.RoleProjectDeveloper,
 	})
 	require.NoError(t, err)
 
@@ -370,18 +379,18 @@ func TestAttestAccessReviewGrant_RefusesRevokedRoleGrant(t *testing.T) {
 
 	const proj = uint(2)
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj))
 
 	ctx := context.Background()
 	// The grant is revoked through a path unrelated to the (now-stale) campaign item...
 	require.NoError(t, h.CoreService.RevokeAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
-		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: testhelper.RoleProjectDeveloper,
 	}))
 
 	// ...so attesting the same decision (as a reviewer acting on stale campaign data
 	// would) must be refused, not recorded as clean evidence.
 	err := h.CoreService.AttestAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
-		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: testhelper.RoleProjectDeveloper,
 	})
 	require.Error(t, err, "attesting a grant that no longer exists must be refused")
 
@@ -405,7 +414,7 @@ func TestAttestAccessReviewGrant_RefusesFabricatedRoleGrant(t *testing.T) {
 	// alice is never actually granted role 3 at project 2.
 
 	err := h.CoreService.AttestAccessReviewGrant(context.Background(), 1, proj, core.AccessReviewDecision{
-		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: testhelper.RoleProjectDeveloper,
 	})
 	require.Error(t, err, "attesting a grant that was never real must be refused")
 
@@ -468,11 +477,11 @@ func TestAttestAccessReviewGrant_MachineRole(t *testing.T) {
 		ID: 50, ProjectID: proj, Name: "ci-runner", IdentityType: "ci", State: "active",
 	}).Error)
 	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{
-		MachineIdentityID: 50, RoleID: 3, ProjectID: proj,
+		MachineIdentityID: 50, RoleID: testhelper.RoleProjectDeveloper, ProjectID: proj,
 	}).Error)
 
 	err := h.CoreService.AttestAccessReviewGrant(context.Background(), 1, proj, core.AccessReviewDecision{
-		Source: "role", PrincipalType: "machine", PrincipalID: 50, RoleID: 3,
+		Source: "role", PrincipalType: "machine", PrincipalID: 50, RoleID: testhelper.RoleProjectDeveloper,
 	})
 	require.NoError(t, err, "a live machine-identity role grant must attest cleanly")
 

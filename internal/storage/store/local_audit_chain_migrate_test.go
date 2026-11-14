@@ -219,8 +219,14 @@ func TestMigrateAuditChainEncoding_RefusesToLaunderATamperedRow(t *testing.T) {
 
 	_, err := ls.MigrateAuditChainEncoding(context.Background(), false, nil)
 	require.Error(t, err, "a tampered row must stop the migration, not be re-hashed into a valid chain")
-	assert.Contains(t, err.Error(), "matches neither the current encoding nor the pre-#1452 one")
+	assert.Contains(t, err.Error(), "recorded entry_hash does not match the row's contents")
+	assert.Contains(t, err.Error(), "the row was changed after it was written")
 	assert.Contains(t, err.Error(), "destroying the evidence")
+	// Operator-facing text: no internal references.
+	assert.NotRegexp(t, `#[0-9]{3,}`, err.Error())
+	for _, internal := range []string{"design §", "ADR-", "pre-#", "§", "matches neither"} {
+		assert.NotContains(t, err.Error(), internal)
+	}
 
 	// The refusal must leave the database exactly as it was: the whole point is
 	// that nothing is rewritten, so a forensic copy taken afterwards is still

@@ -1,0 +1,56 @@
+{
+  "passphrase": "i6-fixture-pass-7777",
+  "secrets": [
+    {
+      "secret_name": "s1",
+      "version": 1,
+      "plaintext": "s1-v1-PLAINTEXT",
+      "project_id": 1,
+      "secret_id": 1,
+      "environment_id": 1
+    },
+    {
+      "secret_name": "s1",
+      "version": 2,
+      "plaintext": "s1-v2-PLAINTEXT",
+      "project_id": 1,
+      "secret_id": 1,
+      "environment_id": 1
+    },
+    {
+      "secret_name": "s2",
+      "version": 1,
+      "plaintext": "s2-v1-PLAINTEXT",
+      "project_id": 1,
+      "secret_id": 2,
+      "environment_id": 1
+    },
+    {
+      "secret_name": "s2",
+      "version": 2,
+      "plaintext": "s2-v2-PLAINTEXT",
+      "project_id": 1,
+      "secret_id": 2,
+      "environment_id": 1
+    }
+  ],
+  "roles": [
+    {
+      "id": 1,
+      "name": "i6-custom-role"
+    }
+  ],
+  "grants": [
+    {
+      "user_id": 1,
+      "username": "i6-user",
+      "role_id": 1,
+      "role_name": "i6-custom-role"
+    }
+  ],
+  "user_count": 1,
+  "token_count": 1,
+  "machine_identity_count": 1,
+  "project_count": 1,
+  "notes": "Generated at tag v0.96.3 via runAdminBackup (v2 logical backup). Secrets sealed with AES-256-GCM AAD = SecretAAD(secret_id, project_id, version). audit_events intentionally left empty (an empty chain verifies VALID; a valid chain is not producible at this raw-storage layer without full core/auth context). Key-rotation pending-state and passphrase-change history are NOT populated: no straightforward raw-storage API exists for them at this tag -- structural tables are present and empty."
+}

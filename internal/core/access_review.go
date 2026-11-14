@@ -153,7 +153,7 @@ func roleIsAdminTier(perms []*models.Permission) bool {
 // "no entry has ever been used" (#453).
 func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID uint) (*AccessReviewReport, error) {
 	if projectID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {

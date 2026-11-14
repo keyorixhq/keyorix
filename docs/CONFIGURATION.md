@@ -655,6 +655,15 @@ empty database in its place
 Create the database deliberately with `keyorix-server admin init --database` (which creates the file
 with `O_CREATE|O_EXCL`), then start the server.
 
+In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
+pre-exist. The Postgres backend is unaffected too.
+
+**Why this is off by default:** the shipped first-boot paths (`server/entrypoint.sh`,
+`docker-compose.yml`) start the server directly and let it create the database, so turning this
+on by default would break every first boot that does not run `keyorix-server admin init --database`
+first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
+after that, a missing file can only mean something went wrong.
+
 ### Committing with fdatasync
 
 `storage.database.fdatasync` (SQLite only, default `false`).
@@ -713,14 +722,6 @@ often what a commit waits for, so a commit can be considerably faster.
   refused at once by the shared cache should give `BeginTx` a context with a short deadline, rather
   than expect the driver to fail the transaction on its own.
 
-In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
-pre-exist. The Postgres backend is unaffected too.
-
-**Why this is off by default:** the shipped first-boot paths (`server/entrypoint.sh`,
-`docker-compose.yml`) start the server directly and let it create the database, so turning this
-on by default would break every first boot that does not run `keyorix-server admin init --database`
-first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
-after that, a missing file can only mean something went wrong.
 ### Single-writer mode (`single_writer`)
 
 `storage.database.single_writer` (default `false`, PostgreSQL only) declares this server the only writer
@@ -1578,9 +1579,16 @@ the named file (#3980). Issue from such a config keeps failing.
 
 At startup the server logs a `WARNING: dynamic secrets:` line with the number of
 such configs and their live (`active` or `revoke_failed`) leases, then one line per
-config. A stored `admin_dsn` cannot be edited: create a replacement config whose
-DSN names no server file, and drop by hand the roles of any lease that stays
-`revoke_failed` (MongoDB and MySQL users have no expiry of their own).
+config. List the configs of a project that carry such an option with
+`keyorix dynamic-secret refused-dsn --project-id <id>` (config and option names only,
+never a DSN), and replace the stored DSN of each in place with
+`keyorix dynamic-secret set-admin-dsn <config-id>`. The new DSN is read from
+`KEYORIX_DYNAMIC_ADMIN_DSN` or from stdin (a hidden prompt on a terminal), and never
+from the command line, so it cannot land in shell history or a process listing. While
+the config has an `active` or `revoke_failed` lease the new DSN must name the same
+host(s) as the old one (409 otherwise), because those leases are revoked through it.
+Drop by hand the roles of any lease that stays `revoke_failed` (MongoDB and MySQL
+users have no expiry of their own).
 
 ---
 

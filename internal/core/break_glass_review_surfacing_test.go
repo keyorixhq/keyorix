@@ -94,6 +94,53 @@ func TestAccumulateBreakGlassPosture_CountsUnreviewedPastTheWindow(t *testing.T)
 		"the threshold must travel with the counts, or the report is uninterpretable without the deployment's config")
 }
 
+// TestAccumulateBreakGlassPosture_DegradedActivationCountsWithNoGraceWindow is
+// BREAKGLASS-POSTURE-NOV-1 item 1: a degraded activation (BREAKGLASS-OWED-1) has a
+// mandatory review from the moment it exists, so a one-minute-old one is
+// unreviewed in the posture too, and it feeds the oldest-age figure. A normal
+// activation of the same age stays inside the grace window, and a reviewed
+// degraded one is never counted.
+func TestAccumulateBreakGlassPosture_DegradedActivationCountsWithNoGraceWindow(t *testing.T) {
+	t.Parallel()
+	fixed := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	reviewedAt := fixed.Add(-time.Minute)
+
+	c := NewKeyorixCore(new(MockStorage))
+	c.now = func() time.Time { return fixed }
+	c.SetBreakGlassPolicy(BreakGlassPolicy{ReviewWindow: 72 * time.Hour})
+
+	acts := []*models.BreakGlassActivation{
+		{ID: 1, ProjectID: 1, UserID: 10, State: BreakGlassActive, CreatedAt: fixed.Add(-time.Minute), Degraded: true},
+		// Same age, normal: inside the window, not yet a deviation.
+		{ID: 2, ProjectID: 1, UserID: 11, State: BreakGlassRevoked, CreatedAt: fixed.Add(-time.Minute)},
+		// Degraded but reviewed: closed out.
+		{ID: 3, ProjectID: 1, UserID: 12, State: BreakGlassRevoked, CreatedAt: fixed.Add(-time.Minute), Degraded: true, ReviewedBy: 99, ReviewedAt: &reviewedAt},
+	}
+	p := &CompliancePosture{}
+	snap := &complianceSnapshot{
+		breakGlassByProject:    map[uint][]*models.BreakGlassActivation{1: acts},
+		breakGlassErrByProject: map[uint]error{},
+	}
+	c.accumulateBreakGlassPosture(p, 1, snap)
+
+	assert.Equal(t, 3, p.EmergencyAccess.TotalActivations)
+	assert.Equal(t, 1, p.EmergencyAccess.UnreviewedActivations,
+		"a degraded activation is unreviewed from the moment it exists; the fresh normal and the reviewed degraded one are not")
+
+	// And it feeds the age: a degraded activation 100h old (still unreviewed) and a
+	// fresh one -> the oldest is the 100h one, a fresh one reads 0h, not "absent".
+	old := []*models.BreakGlassActivation{
+		{ID: 4, ProjectID: 2, UserID: 13, State: BreakGlassRevoked, CreatedAt: fixed.Add(-100 * time.Hour), Degraded: true},
+	}
+	p2 := &CompliancePosture{}
+	c.accumulateBreakGlassPosture(p2, 2, &complianceSnapshot{
+		breakGlassByProject:    map[uint][]*models.BreakGlassActivation{2: old},
+		breakGlassErrByProject: map[uint]error{},
+	})
+	assert.Equal(t, 1, p2.EmergencyAccess.UnreviewedActivations)
+	assert.Equal(t, 100, p2.EmergencyAccess.OldestUnreviewedAgeHours)
+}
+
 // TestAccumulateBreakGlassPosture_SingleAdminDeploymentFlagsIndependentReviewImpossible
 // is INV-CORE-break-glass-independent-review-impossible-is-visible's proving
 // test (#2461 round 2, Andrei's decision item (c)):

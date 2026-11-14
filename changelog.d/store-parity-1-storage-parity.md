@@ -1,3 +1,0 @@
-### Fixed
-- **Audit verification no longer reads a valid chain as broken when a retention purge runs during the walk.** On chains longer than 1000 events, a purge that removed rows past the walk's position reported "prev_hash does not link to the preceding event" (#3944). On that failure the verifier now re-reads the signed retention anchor and, only if a sanctioned purge moved it, verifies the chain once more from the new anchor. A delete outside a purge and a tampered row are still reported broken.
-- **Upgrade: PostgreSQL and SQLite databases installed before v0.96 get `idx_break_glass_activations_reviewed_by`.** The migration creates it if missing (idempotent), so upgraded databases match a fresh install (#4091).

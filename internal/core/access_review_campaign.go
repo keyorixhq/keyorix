@@ -79,7 +79,7 @@ func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, act
 	// items; the attributable-human requirement is enforced on the DECISION (attest/
 	// revoke) in DecideAccessReviewItem, which is the actual recertification control.
 	if projectID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
 	report, err := c.GenerateProjectAccessReview(ctx, projectID)
 	if err != nil {
@@ -169,7 +169,7 @@ func (c *KeyorixCore) AuditCampaignCreated(ctx context.Context, actorID, project
 // with its decision tally.
 func (c *KeyorixCore) ListAccessReviewCampaigns(ctx context.Context, projectID uint) ([]*CampaignWithProgress, error) {
 	if projectID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
 	campaigns, err := c.storage.ListAccessReviewCampaigns(ctx, projectID)
 	if err != nil {
@@ -226,9 +226,12 @@ func (c *KeyorixCore) GetAccessReviewCampaign(ctx context.Context, projectID, ca
 // and the standalone attest/revoke endpoints (#G52, via
 // principalTypeForDecision's inference — AccessReviewDecision.PrincipalType
 // is only ever populated by the caller for "role" sources).
+// Both refusals are typed ErrPermissionDenied (403 through the shared
+// classifier); the text is unchanged, so the text-matching campaign handler
+// (sendCampaignError) still answers 400.
 func (c *KeyorixCore) checkReviewerIndependence(ctx context.Context, actorID uint, principalType string, principalID uint) error {
 	if principalType == "user" && principalID == actorID {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
+		return permissionDeniedf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
 	}
 	if principalType == "group" {
 		member, err := c.userInGroup(ctx, actorID, principalID)
@@ -236,7 +239,7 @@ func (c *KeyorixCore) checkReviewerIndependence(ctx context.Context, actorID uin
 			return err
 		}
 		if member {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
+			return permissionDeniedf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
 		}
 	}
 	return nil
@@ -251,7 +254,7 @@ func targetDecisionForAction(action string) (string, error) {
 	case "revoke":
 		return ReviewItemRevoked, nil
 	default:
-		return "", fmt.Errorf("%s: action must be attest or revoke", i18n.T("ErrorValidation", nil))
+		return "", validationErrorf("%s: action must be attest or revoke", i18n.T("ErrorValidation", nil))
 	}
 }
 
@@ -311,9 +314,9 @@ func (c *KeyorixCore) claimItemDecisionOn(ctx context.Context, st storage.Storag
 		// in database/sql.(*DB).conn. See access_review_decide_tx.go's
 		// "connection budget" note.
 		if reloaded, rerr := st.GetAccessReviewItem(ctx, itemID); rerr == nil && reloaded.Decision != ReviewItemPending {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
+			return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
 		}
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
 	}
 	return nil
 }
@@ -332,7 +335,7 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 		return err
 	}
 	if campaign.State != CampaignStateOpen {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
 	}
 	// #1646: accessReviewDecisionMu only ever serialized callers within ONE process
 	// -- across independent replicas (a real multi-instance Postgres deployment) it
@@ -356,7 +359,7 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	// removes the real grant, so re-deciding it (revoke→attest) would record
 	// "attested" for access that no longer exists — false certification evidence.
 	if item.Decision != ReviewItemPending {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
 	}
 	if err := c.checkReviewerIndependence(ctx, actorID, item.PrincipalType, item.PrincipalID); err != nil {
 		return err
@@ -454,7 +457,7 @@ func (c *KeyorixCore) checkMachineIndependence(ctx context.Context, actorID uint
 		return &storageReadFault{cause: err}
 	}
 	if machine.CreatedBy == actorID {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a machine identity you provisioned is still pending; an independent reviewer must decide it first")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a machine identity you provisioned is still pending; an independent reviewer must decide it first")
 	}
 	return nil
 }
@@ -467,7 +470,7 @@ func (c *KeyorixCore) checkForceCloseIndependence(ctx context.Context, actorID u
 			continue
 		}
 		if it.PrincipalType == "user" && it.PrincipalID == actorID {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while your own access item is still pending; an independent reviewer must decide it first")
+			return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while your own access item is still pending; an independent reviewer must decide it first")
 		}
 		if it.PrincipalType == "group" {
 			member, err := c.userInGroup(ctx, actorID, it.PrincipalID)
@@ -475,7 +478,7 @@ func (c *KeyorixCore) checkForceCloseIndependence(ctx context.Context, actorID u
 				return err
 			}
 			if member {
-				return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a group you belong to is still pending; an independent reviewer must decide it first")
+				return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a group you belong to is still pending; an independent reviewer must decide it first")
 			}
 		}
 		if it.PrincipalType == "machine" {
@@ -496,7 +499,7 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, ac
 		return nil, err
 	}
 	if campaign.State == CampaignStateClosed {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is already closed")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is already closed")
 	}
 	items, err := c.storage.ListAccessReviewItems(ctx, campaignID)
 	if err != nil {
@@ -504,7 +507,7 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, ac
 	}
 	progress := tallyProgress(items)
 	if progress.Pending > 0 && !force {
-		return nil, fmt.Errorf("%s: %d item(s) still pending — decide them or close with force", i18n.T("ErrorValidation", nil), progress.Pending)
+		return nil, validationErrorf("%s: %d item(s) still pending — decide them or close with force", i18n.T("ErrorValidation", nil), progress.Pending)
 	}
 	// ARC-002: even a forced close must not let the actor suppress their own
 	// undecided access item — that would allow the closer to silently freeze a
@@ -553,7 +556,7 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, ac
 		return nil
 	}); err != nil {
 		if closedAlready {
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is already closed")
+			return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is already closed")
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

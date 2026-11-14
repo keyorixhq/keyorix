@@ -3,9 +3,10 @@ package store_test
 // Known divergences from FuzzStorageBackendDifferentialV2. Each test PINS a divergence that
 // was minimised, replayed three times and classified (docs/fuzzing/pg-sqlite-differential.md).
 // The fuzz target gates or normalises exactly that input class so a campaign can keep
-// looking for other divergences. When one is fixed its test fails with "FIXED": whichever
-// lands second, the fix or this harness, deletes the gate in the fuzz target and the test
-// together in the same PR.
+// looking for other divergences. When one is fixed its test logs "FINDING CLOSED" and
+// passes on pull_request and merge-queue runs (so a fix elsewhere does not eject an unrelated
+// PR) and fails on main and the nightly run (guardrules.KnownFindingClosed): delete the gate
+// in the fuzz target and the test together.
 //
 // F-1 (ListSecrets search), F-2 and F-3 (ListUsers Username/Email filters) were pinned here
 // first and are fixed by #4019; their gates and tests are gone. B (project-name uniqueness
@@ -16,8 +17,10 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -44,7 +47,9 @@ func TestBackendDifferentialKnownDifference_A_EmptyValueNilness(t *testing.T) {
 		isNil[s.label] = v.EncryptedValue == nil
 	}
 	if isNil["sqlite"] == isNil["postgres"] {
-		t.Fatalf("FIXED: A no longer differs (sqlite nil=%v postgres nil=%v); drop normalisation 7 in diffVersionFP and this test", isNil["sqlite"], isNil["postgres"])
+		guardrules.KnownFindingClosed(t, "backend-differential-A",
+			fmt.Sprintf("A no longer differs (sqlite nil=%v postgres nil=%v); drop normalisation 7 in diffVersionFP and this test", isNil["sqlite"], isNil["postgres"]))
+		return
 	}
 	t.Logf("A still differs: empty value reads back nil on sqlite=%v, on postgres=%v", isNil["sqlite"], isNil["postgres"])
 }

@@ -3,12 +3,12 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -25,9 +25,10 @@ func (h *SecretHandler) GetTags(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "BadRequest", "Invalid secret ID", http.StatusBadRequest, nil)
 		return
 	}
-	tags, err := h.coreService.GetSecretTags(r.Context(), uint(id), userCtx.UserID)
+	ctx, faults := core.WithAuthorizeFaultRecorder(r.Context())
+	tags, err := h.coreService.GetSecretTags(ctx, uint(id), userCtx.UserID)
 	if err != nil {
-		h.tagError(w, err, "Failed to list tags")
+		h.tagError(w, r, faults, err, "Failed to list tags")
 		return
 	}
 	if tags == nil {
@@ -57,9 +58,12 @@ func (h *SecretHandler) SetTags(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
 		return
 	}
-	tags, err := h.coreService.SetSecretTags(r.Context(), uint(id), userCtx.UserID, body.Tags)
+	// The recorder tells a permission refusal core reached through a storage outage of
+	// the permission lookup from a verdict (#3873).
+	ctx, faults := core.WithAuthorizeFaultRecorder(r.Context())
+	tags, err := h.coreService.SetSecretTags(ctx, uint(id), userCtx.UserID, body.Tags)
 	if err != nil {
-		h.tagError(w, err, "Failed to set tags")
+		h.tagError(w, r, faults, err, "Failed to set tags")
 		return
 	}
 	if tags == nil {
@@ -68,16 +72,12 @@ func (h *SecretHandler) SetTags(w http.ResponseWriter, r *http.Request) {
 	h.sendSuccess(w, map[string]any{"tags": tags}, "")
 }
 
-// tagError maps a core error to the right status for the tag endpoints.
-func (h *SecretHandler) tagError(w http.ResponseWriter, err error, fallback string) {
-	switch {
-	case isSecretNotFound(err):
-		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-	case isPermissionRefusal(err):
-		h.sendError(w, "Forbidden", "Not authorized for this secret", http.StatusForbidden, nil)
-	case errors.Is(err, core.ErrSecretInvalidInput):
-		h.sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
-	default:
-		h.sendError(w, "InternalError", fallback, http.StatusInternalServerError, nil)
-	}
+// tagError maps a core error to the right status for the tag endpoints through the
+// shared classifier; faults is the permission-lookup fault recorder (#3873).
+func (h *SecretHandler) tagError(w http.ResponseWriter, r *http.Request, faults *core.AuthorizeFaultRecorder, err error, fallback string) {
+	answerCoreError(w, r, err, coreErrorAnswer{op: "changing secret tags", faults: faults, texts: coreErrorTexts{
+		errclass.NotFound:         "Secret not found",
+		errclass.PermissionDenied: "Not authorized for this secret",
+		errclass.Internal:         fallback,
+	}})
 }

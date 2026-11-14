@@ -28,9 +28,9 @@ func TestMachineIdentity_NoAdminBypass_RealDB(t *testing.T) {
 
 	// A user and a machine, each holding the SAME admin role at project 1.
 	u := h.CreateTestUser(t, "adminuser", 400)
-	h.AssignUserRole(t, u.ID, roleAdmin, ptr(1))
+	h.AssignUserRole(t, u.ID, testhelper.RoleProjectAdmin, ptr(1))
 	require.NoError(t, h.DB.Create(&models.MachineIdentity{ID: 80, ProjectID: 1, Name: "ci", State: "active"}).Error)
-	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{MachineIdentityID: 80, RoleID: roleAdmin, ProjectID: 1}).Error)
+	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{MachineIdentityID: 80, RoleID: testhelper.RoleProjectAdmin, ProjectID: 1}).Error)
 
 	ctx := context.Background()
 	scope := core.Scope{ProjectID: 1}

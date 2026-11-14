@@ -786,6 +786,13 @@ func (c *KeyorixCore) advanceAuditRollingCycle(ctx context.Context, res *AuditVe
 // interval old. created_at is not signed, so the delay is clamped to
 // [0, interval]: a forged timestamp can postpone the first tick by at most one
 // interval.
+//
+// A fresh checkpoint stands for "a tick ran recently" only when the signed
+// verification state records a full verification or a rolling cycle in
+// progress. Without one (an install upgraded from a release that wrote
+// checkpoints but no verification state, v0.96.x and earlier, #3743; or an
+// untrusted state) every request reads not_proven until a cycle completes, so
+// the first tick runs at once instead of up to one interval later.
 func (c *KeyorixCore) AuditCheckpointFirstTickDelay(ctx context.Context, interval time.Duration) time.Duration {
 	if !c.AuditCheckpointsAvailable() || interval <= 0 {
 		return 0
@@ -795,6 +802,10 @@ func (c *KeyorixCore) AuditCheckpointFirstTickDelay(ctx context.Context, interva
 	}
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil || cp == nil || !c.checkpointSignatureValid(cp) {
+		return 0
+	}
+	st, stReason, err := c.loadAuditVerifyState(ctx)
+	if err != nil || stReason != "" || (st.LastFull == nil && st.Cycle == nil) {
 		return 0
 	}
 	return min(max(interval-c.now().Sub(cp.CreatedAt), 0), interval)

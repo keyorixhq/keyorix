@@ -6,12 +6,18 @@
 //
 // The files are re-checked at most once per CheckInterval, from the TLS handshake
 // itself (tls.Config.GetCertificate), so there is no goroutine and no file watcher.
-// A changed pair is loaded and validated as a whole; if it does not load (a
-// half-written rotation, a key that does not match the certificate) the previous
-// pair keeps being served and the failure is logged, and the next check tries again.
+// A change is detected by the content of the pair (a SHA-256 over the certificate
+// and the key bytes), not by file times: `cp -p`, `rsync -t` and a restore from
+// backup keep the old modification time, and a swap through a symlink can keep
+// size and inode as well, so none of those are reliable signals. Hashing two small
+// files per tick is cheap. A changed pair is parsed and validated as a whole, from
+// the same bytes that were hashed; if it does not load (a half-written rotation, a
+// key that does not match the certificate) the previous pair keeps being served and
+// the failure is logged, and the next check tries again.
 package tlsreload
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -20,7 +26,7 @@ import (
 	"time"
 )
 
-// CheckInterval bounds how often a handshake re-stats the cert and key files.
+// CheckInterval bounds how often a handshake re-reads the cert and key files.
 // A rotated certificate is served within this long of being written.
 var CheckInterval = 30 * time.Second
 
@@ -30,8 +36,7 @@ type Reloader struct {
 
 	mu        sync.Mutex
 	cert      *tls.Certificate
-	certMod   time.Time
-	keyMod    time.Time
+	digest    [sha256.Size]byte // content hash of the pair currently served
 	lastCheck time.Time
 }
 
@@ -39,15 +44,15 @@ type Reloader struct {
 // configuration still stops the server at start.
 func New(certFile, keyFile string) (*Reloader, error) {
 	r := &Reloader{certFile: certFile, keyFile: keyFile}
-	certMod, keyMod, err := r.modTimes()
+	certPEM, keyPEM, digest, err := r.read()
 	if err != nil {
 		return nil, err
 	}
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS certificate: %w", err)
 	}
-	r.cert, r.certMod, r.keyMod, r.lastCheck = &cert, certMod, keyMod, time.Now()
+	r.cert, r.digest, r.lastCheck = &cert, digest, time.Now()
 	return r, nil
 }
 
@@ -63,34 +68,42 @@ func (r *Reloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error
 }
 
 func (r *Reloader) reloadLocked() {
-	certMod, keyMod, err := r.modTimes()
+	certPEM, keyPEM, digest, err := r.read()
 	if err != nil {
 		log.Printf("TLS certificate reload: %v (still serving the previous certificate)", err)
 		return
 	}
-	if certMod.Equal(r.certMod) && keyMod.Equal(r.keyMod) {
+	if digest == r.digest {
 		return
 	}
-	cert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		// Leave certMod/keyMod unchanged so the next check retries: a rotation
+		// Leave the digest unchanged so the next check retries: a rotation
 		// that writes the cert and the key one after the other is caught on the
 		// check after the second write.
 		log.Printf("TLS certificate reload: %s changed but does not load: %v (still serving the previous certificate)", r.certFile, err)
 		return
 	}
-	r.cert, r.certMod, r.keyMod = &cert, certMod, keyMod
+	r.cert, r.digest = &cert, digest
 	log.Printf("TLS certificate reloaded from %s", r.certFile)
 }
 
-func (r *Reloader) modTimes() (certMod, keyMod time.Time, err error) {
-	ci, err := os.Stat(r.certFile)
+// read returns the contents of the cert and key files and a digest over both. The
+// lengths are part of the digest so moving bytes from the end of one file to the
+// start of the other cannot produce the same value.
+func (r *Reloader) read() (certPEM, keyPEM []byte, digest [sha256.Size]byte, err error) {
+	certPEM, err = os.ReadFile(r.certFile)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("TLS certificate file: %w", err)
+		return nil, nil, digest, fmt.Errorf("TLS certificate file: %w", err)
 	}
-	ki, err := os.Stat(r.keyFile)
+	keyPEM, err = os.ReadFile(r.keyFile)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("TLS key file: %w", err)
+		return nil, nil, digest, fmt.Errorf("TLS key file: %w", err)
 	}
-	return ci.ModTime(), ki.ModTime(), nil
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%d:%d:", len(certPEM), len(keyPEM))
+	h.Write(certPEM)
+	h.Write(keyPEM)
+	h.Sum(digest[:0])
+	return certPEM, keyPEM, digest, nil
 }

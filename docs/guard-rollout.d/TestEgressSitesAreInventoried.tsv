@@ -1,0 +1,1 @@
+TestEgressSitesAreInventoried	internal/egressguard	#4215	new repo-wide guard: every non-test file that opens an outbound connection needs a row in docs/security/egress-allowlist.tsv (EGRESS-INVENTORY-1), report-only until its first green nightly on main

@@ -143,7 +143,9 @@ func actorCtx(ctx context.Context, p *principal) context.Context {
 
 // ops is every bound operation: the hand-bound Phase 2 set plus the Phase 4
 // family bindings. The sweep orders them by family (coverage_test.go).
-func ops() []opSpec { return append(append(baseOps(), familyOps()...), phase5Ops()...) }
+func ops() []opSpec {
+	return append(append(append(baseOps(), familyOps()...), phase5Ops()...), v5Ops()...)
+}
 
 func baseOps() []opSpec {
 	return []opSpec{

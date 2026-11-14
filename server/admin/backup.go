@@ -242,7 +242,7 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	// key set no passphrase opens yet, and this is the error that explains it.
 	// readKeyFilesForBackup checks again under the key lock.
 	if err := refusePendingKeyRotation(cfg); err != nil {
-		return err
+		return machineVisibleBackupRefusal(err)
 	}
 
 	// design §4: SQLite always holds the exclusive lock (VACUUM INTO's own
@@ -642,8 +642,9 @@ func readKeyFile(path string) ([]byte, error) {
 // staging file is never suggested for removal.
 //
 // The refusal runs before storage is opened, so it writes no audit event: the
-// error (non-zero exit) and `admin validate --posture` (collectBackupRefusalPosture)
-// are where it shows.
+// error (exit backupRefusedExitCode with a structured stderr line,
+// machineVisibleBackupRefusal) and `admin validate --posture`
+// (collectBackupRefusalPosture) are where it shows.
 func refusePendingKeyRotation(cfg *config.Config) error {
 	pending, err := keyfiles.PendingRotationFiles(&cfg.Storage.Encryption, ".")
 	if err != nil {
@@ -681,6 +682,29 @@ type pendingRotationRefusal struct {
 }
 
 func (e *pendingRotationRefusal) Error() string { return e.msg }
+
+// backupRefusedExitCode is the exit status of a backup refused because a
+// key-rotation staging file is present (#4105). It is distinct from 1 (every
+// other failure) so a cron wrapper can tell "backups are blocked until someone
+// acts" from a transient failure. Documented in docs/SELF_HOSTING.md.
+const backupRefusedExitCode = 4
+
+// backupRefusedLine is the one structured stderr line that comes with
+// backupRefusedExitCode, for wrappers that match output rather than the exit
+// status.
+const backupRefusedLine = "keyorix-backup-refused reason=key-rotation-staging-file exit_code=%d files=%q"
+
+// machineVisibleBackupRefusal turns refusePendingKeyRotation's refusal into
+// backupRefusedExitCode plus the structured line. A failed check (not a
+// refusal) stays a plain error with exit 1.
+func machineVisibleBackupRefusal(err error) error {
+	r, ok := errors.AsType[*pendingRotationRefusal](err)
+	if !ok {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, backupRefusedLine+"\n", backupRefusedExitCode, strings.Join(r.paths, ","))
+	return newExitCodeError(backupRefusedExitCode, err)
+}
 
 // readKeyFilesForBackup reads every file internal/keyfiles.Registry
 // enumerates and computes its checksum -- unchanged from v1 (design §1: no

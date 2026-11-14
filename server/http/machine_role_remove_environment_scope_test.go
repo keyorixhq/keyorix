@@ -56,11 +56,13 @@ func TestRemoveMachineRole_EnvironmentScopedGrantRemovedByEnvironmentID(t *testi
 
 	// Without environment_id only the project-wide grant is addressed: the
 	// env-scoped grant is not found (409 "not assigned") and must survive.
-	require.Equal(t, http.StatusConflict, deleteMachineRole(t, url, ""))
+	// A grant the machine does not hold at that scope is 404 (parity with DELETE /user-roles and
+	// gRPC RemoveRole, #4020; decided 2026-11-13, FIX-ERRMAP-STRUCT-1), no longer 409.
+	require.Equal(t, http.StatusNotFound, deleteMachineRole(t, url, ""))
 	require.True(t, machineCan(t, c, core.Scope{ProjectID: 1, EnvironmentID: 10}), "project-wide removal must not touch an env-scoped grant")
 
 	// Naming the wrong environment of the same project removes nothing.
-	require.Equal(t, http.StatusConflict, deleteMachineRole(t, url, "?environment_id=11"))
+	require.Equal(t, http.StatusNotFound, deleteMachineRole(t, url, "?environment_id=11"))
 	require.True(t, machineCan(t, c, core.Scope{ProjectID: 1, EnvironmentID: 10}))
 
 	require.Equal(t, http.StatusOK, deleteMachineRole(t, url, "?environment_id=10"))

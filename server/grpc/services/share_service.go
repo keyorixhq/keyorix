@@ -265,29 +265,38 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 // authorizeShareScoped resolves a share's underlying secret and checks the
 // permission at that secret's project/environment — mirroring HTTP's
 // ScopeFromShareParam, so mutating a specific share enforces the same scoped
-// RBAC as HTTP rather than the flat global set. A missing share/secret yields
-// NotFound; the downstream core call still enforces ownership.
+// RBAC as HTTP rather than the flat global set. A really missing share/secret
+// yields NotFound; a read FAULT yields Unavailable (retry), as ScopeFromShareParam
+// answers 503 (STORAGE-ERR-CLASS-3, #3911). The downstream core call still
+// enforces ownership.
 func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, actor *interceptors.UserContext, shareID uint, perm string) error {
 	share, err := s.core.Storage().GetShareRecord(ctx, shareID)
 	if err != nil {
-		// A fetch that failed because storage is down is an outage, not "no such share".
-		if core.IsAuthorizeTransient(ctx, err) {
-			return authorizeRefusal(ctx, err, "share not found")
-		}
-		return status.Error(codes.NotFound, "share not found")
+		return shareScopeReadError(ctx, err)
 	}
 	secret, err := s.core.Storage().GetSecret(ctx, share.SecretID)
 	if err != nil {
-		if core.IsAuthorizeTransient(ctx, err) {
-			return authorizeRefusal(ctx, err, "share not found")
-		}
-		return status.Error(codes.NotFound, "share not found")
+		return shareScopeReadError(ctx, err)
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
 	if allowed, err := s.core.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
 		return authorizeRefusal(ctx, err, "insufficient permissions for this share")
 	}
 	return enforceProjectMFA(ctx, s.core, actor, scope.ProjectID)
+}
+
+// shareScopeReadError is the status for a failed share or secret read in
+// authorizeShareScoped: a transient failure is the shared authorization
+// Unavailable, any other read fault is the storage Unavailable (the cause is
+// logged, never sent), and only a positively absent row is NotFound.
+func shareScopeReadError(ctx context.Context, err error) error {
+	if core.IsAuthorizeTransient(ctx, err) {
+		return authorizeRefusal(ctx, err, "share not found")
+	}
+	if serr, ok := storageUnavailableStatus(core.ReadFault(err)); ok {
+		return serr
+	}
+	return status.Error(codes.NotFound, "share not found")
 }
 
 // mapShareError translates core sharing errors into gRPC status codes.

@@ -585,7 +585,8 @@ func collectAdminMFAPosture(ctx context.Context, requireMFAInGrace bool, coreSer
 // IdP's externalId), and a local account never does. If the identity provider
 // is unavailable, or deprovisions those accounts, no administrator can sign in.
 // A local administrator held in reserve (break-glass), or the local recovery
-// command, is the mitigation. A WARN, not a deviation: the install matches the
+// command, is the mitigation; the warning says so louder when no recovery key
+// exists, since recover-admin then cannot help either. A WARN, not a deviation: the install matches the
 // secure baseline, it only has a recovery dependency worth knowing about.
 func collectSSOOnlyAdminPosture(ctx context.Context, coreService *core.KeyorixCore, report *postureReport) error {
 	admins, err := coreService.ListGlobalAdminHolders(ctx)
@@ -602,10 +603,20 @@ func collectSSOOnlyAdminPosture(ctx context.Context, coreService *core.KeyorixCo
 		}
 		names = append(names, u.Username)
 	}
+	// The recovery key is the other way back (recover-admin needs it). Without
+	// one, only the identity provider itself can restore an administrator.
+	recovery := " The recovery key exists: keep it offline, and know the local recovery procedure (keyorix-server admin recover-admin)"
+	if status, err := coreService.GetRecoveryKeyStatus(ctx); err != nil {
+		recovery = fmt.Sprintf(" Could not tell whether a recovery key exists (%v): check with keyorix-server admin diagnose", err)
+	} else if !status.Configured {
+		recovery = " In addition, no recovery key has been generated, so keyorix-server admin recover-admin cannot help either and only " +
+			"the identity provider can give this install back an administrator: run keyorix-server admin recovery-key rotate now"
+	}
 	report.warn(fmt.Sprintf("every administrator is managed by an identity provider (SSO or SCIM): %s. "+
 		"If the identity provider is unavailable, or deprovisions these accounts, no administrator can sign in. "+
-		"Keep at least one local administrator account as a break-glass account, and know the local recovery procedure "+
-		"(keyorix-server admin recover-admin)", strings.Join(names, ", ")))
+		"Remedy: create a local break-glass administrator, a password account no identity provider manages "+
+		"(keyorix user create, then keyorix rbac assign-role with the administrator role), and keep its credentials offline.%s",
+		strings.Join(names, ", "), recovery))
 	return nil
 }
 

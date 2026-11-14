@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -95,6 +96,19 @@ func init() {
 	}
 }
 
+// checkedForms is adminDSN as written and with percent-escapes decoded (URL
+// query keys are decoded by the drivers), lower case.
+func checkedForms(adminDSN string) []string {
+	forms := []string{strings.ToLower(adminDSN)}
+	if dec, err := url.QueryUnescape(adminDSN); err == nil {
+		forms = append(forms, strings.ToLower(dec))
+	}
+	if dec, err := url.PathUnescape(adminDSN); err == nil {
+		forms = append(forms, strings.ToLower(dec))
+	}
+	return forms
+}
+
 // space is every byte pgx trims around a key or '=' (RE2's \s lacks \v).
 const space = `[\t\n\v\f\r ]*`
 
@@ -107,14 +121,7 @@ func CheckLocalFileOptions(backendType, adminDSN string) error {
 	if !ok {
 		return nil
 	}
-	forms := []string{strings.ToLower(adminDSN)}
-	if dec, err := url.QueryUnescape(adminDSN); err == nil {
-		forms = append(forms, strings.ToLower(dec))
-	}
-	if dec, err := url.PathUnescape(adminDSN); err == nil {
-		forms = append(forms, strings.ToLower(dec))
-	}
-	for _, f := range forms {
+	for _, f := range checkedForms(adminDSN) {
 		if m := re.FindStringSubmatch(f); m != nil {
 			return &ForbiddenOptionError{Backend: backendType, Option: m[1]}
 		}
@@ -125,4 +132,34 @@ func CheckLocalFileOptions(backendType, adminDSN string) error {
 		}
 	}
 	return nil
+}
+
+// RefusedLocalFileOptions returns every option CheckLocalFileOptions refuses in
+// adminDSN, as the lower-case names CheckLocalFileOptions reports them
+// (authMechanism with its value: "authmechanism=mongodb-aws"), each once, in
+// first-seen order. Every name comes from localFileOptions or
+// ambientCredentialMechanisms, never from the rest of the DSN. nil when
+// CheckLocalFileOptions would accept the DSN.
+func RefusedLocalFileOptions(backendType, adminDSN string) []string {
+	re, ok := localFileOptionRE[backendType]
+	if !ok {
+		return nil
+	}
+	var out []string
+	add := func(name string) {
+		if !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	for _, f := range checkedForms(adminDSN) {
+		for _, m := range re.FindAllStringSubmatch(f, -1) {
+			add(m[1])
+		}
+		if are, ok := ambientRE[backendType]; ok {
+			for _, m := range are.FindAllStringSubmatch(f, -1) {
+				add(ambientCredentialMechanisms[backendType].key + "=" + m[1])
+			}
+		}
+	}
+	return out
 }

@@ -192,6 +192,11 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 		if cerr != nil {
 			return cerr
 		}
+		// active=false must be STORED: the INSERT's gorm:"default:true" turns the
+		// zero value into true. Same transaction as the create (see helper).
+		if cerr = persistInactiveOnCreate(ctx, tx, created, active); cerr != nil {
+			return cerr
+		}
 		role, rerr := tx.GetRoleByName(ctx, "system_viewer")
 		if rerr != nil {
 			return fmt.Errorf("failed to resolve baseline role: %w", rerr)
@@ -217,7 +222,14 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 		if errors.Is(err, storage.ErrDuplicateUsername) {
 			return nil, ErrSCIMUserExists
 		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// #3225: the transaction may have committed the account, its role and
+		// scim.user_provisioned and lost the acknowledgement. A 5xx then makes the
+		// IdP retry into a 409 for an account whose id it never learned. Read it
+		// back: a landed row is answered 201; an unreadable outcome carries
+		// ErrUserCreateOutcomeUnknown, which the transport answers 503 + Retry-After.
+		if landed, answer := c.userCreateLanded(ctx, "scim.ProvisionSCIMUser", created, err); !landed {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), answer)
+		}
 	}
 	return created, nil
 }

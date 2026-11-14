@@ -344,7 +344,8 @@ func (h *CatalogHandler) ListMachineTokens(w http.ResponseWriter, r *http.Reques
 	}
 	creds, err := h.coreService.ListMachineTokens(r.Context(), projectID, uint(machineID))
 	if err != nil {
-		if sendStorageUnavailable(w, err) {
+		// A machine in another project, or none at all, is 404 (#4132 OPENAPI-STATEFUL-2).
+		if sendStorageUnavailable(w, err) || sendMachineRefusal(w, err) {
 			return
 		}
 		log.Printf("Error listing machine tokens for machine %d in project %d: %v", machineID, projectID, err)

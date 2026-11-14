@@ -170,14 +170,14 @@ session report; not fixed in this PR).
 
 | Deprecated key | Replace with | Announced | Earliest removal | Current promise |
 |---|---|---|---|---|
-| `storage.database.insecure_audit_skip_durable_sync` | `storage.database.audit_durability` (`true` = `standard`, explicit `false` = `strict`) | v0.97.0 (unreleased: `changelog.d/audit-durability-1-levels.md`, `UPGRADING.md` §6c) | **v0.99.0** under rule 3 | "one minor release" (changelog, `UPGRADING.md` §6c, `CONFIGURATION.md`, ADR-112 Amendment 3), i.e. removal in v0.98.0. **[DECISION]** extend to v0.99.0 to match rule 3 (recommended: lengthening is safe; the docs and ADR-112 wording then change from "one minor release" to "two"; proposed text in the session report) |
+| `storage.database.insecure_audit_skip_durable_sync` | `storage.database.audit_durability` (`true` = `standard`, explicit `false` = `strict`) | v0.97.0 (`CHANGELOG.md`, `UPGRADING.md` §6c) | **v0.99.0** under rule 3 | "one minor release" (changelog, `UPGRADING.md` §6c, `CONFIGURATION.md`, ADR-112 Amendment 3), i.e. removal in v0.98.0. **[DECISION]** extend to v0.99.0 to match rule 3 (recommended: lengthening is safe; the docs and ADR-112 wording then change from "one minor release" to "two"; proposed text in the session report) |
 
 ### CLI
 
 | Deprecated | Replace with | Announced | Earliest removal | Runtime signal |
 |---|---|---|---|---|
 | `keyorix run --derive-names` | `--var NAME=secret-ref` (issue #1816) | v0.92.0 (changelog entry for the `run` behaviour change) | Already past the period. **[DECISION]** set a removal version | stderr `WARNING: --derive-names is deprecated ...` (`cli/cmd/run.go`) |
-| `--format` on six commands (alias of `--output`/`-o`) | `--output` (`-o`) | v0.97.0 (unreleased: `changelog.d/cliux1-output-flag.md`) | **v0.99.0** | Hidden flag; cobra deprecation notice on stderr (`MarkDeprecated`, `cli/cmd/output.go`) |
+| `--format` on six commands (alias of `--output`/`-o`) | `--output` (`-o`) | v0.97.0 (`CHANGELOG.md`) | **v0.99.0** | Hidden flag; cobra deprecation notice on stderr (`MarkDeprecated`, `cli/cmd/output.go`) |
 
 ### Formats
 

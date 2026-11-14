@@ -3,11 +3,11 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
-	"log"
+	"fmt"
 	"net/http"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/errclass"
 )
 
 // MoveSecret handles POST /api/v1/secrets/{id}/move
@@ -41,22 +41,15 @@ func (h *SecretHandler) MoveSecret(w http.ResponseWriter, r *http.Request) {
 		parentID = &pid
 	}
 
-	updated, err := h.coreService.MoveSecret(r.Context(), userCtx.UserID, secretID, parentID)
+	// The recorder tells a permission refusal core reached through a storage outage of
+	// the permission lookup from a verdict (#3873).
+	ctx, faults := core.WithAuthorizeFaultRecorder(r.Context())
+	updated, err := h.coreService.MoveSecret(ctx, userCtx.UserID, secretID, parentID)
 	if err != nil {
-		status := http.StatusInternalServerError
-		msg := err.Error()
-		switch {
-		case isSecretNotFound(err):
-			status = http.StatusNotFound
-		case errors.Is(err, core.ErrSecretInvalidInput):
-			status = http.StatusBadRequest
-		case isPermissionRefusal(err):
-			status = http.StatusForbidden
-		default:
-			log.Printf("Error moving secret %d: %v", secretID, err) // NOSONAR
-			msg = clientSafe(err)
-		}
-		h.sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, coreErrorAnswer{op: fmt.Sprintf("moving secret %d", secretID), faults: faults, texts: coreErrorTexts{
+			errclass.NotFound:         err.Error(),
+			errclass.PermissionDenied: err.Error(),
+		}})
 		return
 	}
 	h.sendSuccess(w, newSecretNodeWire(updated), "Secret moved")
