@@ -18,7 +18,7 @@ triage, containment and evidence. Section 5 lists what does exist and what is mi
 
 | Where | Command / signal | Verdicts |
 |---|---|---|
-| Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`; non-zero exit on the last two |
+| Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`, `SEALED` (after `accept-loss`, section 7); exit 1 on all but `VALID`. For `SEALED` the CLI ends with `audit chain verification FAILED (first broken id 0):` and an empty reason: read the seal text in `state_reason` of `GET /api/v1/audit/verify` (#4230) |
 | Prometheus | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_discontinuity` (1 while a sticky state discontinuity is recorded), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
 | Compliance posture | `GET /api/v1/compliance/posture`, field `audit_integrity` | reads the persisted state, walks nothing |
 | Offline, independent code | `keyorix-server admin verify-audit` | exit `0` VALID, `1` BROKEN, `2` INDETERMINATE, `3` usage/input error |
@@ -147,7 +147,10 @@ keyorix audit verify --full
 ```
 
 It refuses a chain that is inconsistent under both encodings, so it cannot be used to paper
-over a real break.
+over a real break. Today the refusal reaches the CLI as `HTTP 500 ... an internal error occurred`
+(the real text, "refusing to re-encode the audit chain: event N's prev_hash does not link ...", is
+in the server log; #4230): read a 500 here as a refusal, not as a reason to retry. On a healthy
+chain the preview prints `DRY RUN — nothing was written.` with the rows it would migrate.
 
 **b. A copy that is not the database.** A SQLite file copied without its `-wal`/`-shm`, a
 backup mounted from the wrong date, a replica that has not caught up: all look like
