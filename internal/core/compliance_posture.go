@@ -724,7 +724,7 @@ func applyAuditIntegrityPosture(p *CompliancePosture, snap *complianceSnapshot) 
 	if snap.auditLatestID != 0 {
 		p.AuditIntegrity.LatestEventID = snap.auditLatestID
 		if snap.auditLatestID > v.HeadID {
-			p.AuditIntegrity.EventsSinceCheck = int64(snap.auditLatestID - v.HeadID)
+			p.AuditIntegrity.EventsSinceCheck = int64(snap.auditLatestID - v.HeadID) // #nosec G115 -- difference of two audit row IDs, guarded > above; an audit table never approaches 2^63 rows
 		}
 	}
 	switch {
