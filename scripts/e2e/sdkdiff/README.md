@@ -51,3 +51,7 @@ header, or in an encoded form.
 see a discrepancy. Never set it for a real run.
 
 Unit tests: `go test ./scripts/e2e/sdkdiff` (normalisers, oracles, minimiser helpers, a Go fuzz target for the normalisers).
+
+## Hostile-server mode
+
+`sdkdiff hostile` runs the SDK drivers against a mock server that mutates otherwise valid responses (malformed, oversized, slow). See `hostile/README.md` and the pre-registered `hostile/RULES.md`.
