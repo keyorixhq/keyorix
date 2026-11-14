@@ -15,9 +15,11 @@ MongoDB `tlsCAFile` and the other `tls*File` / `ssl*File` options, or an
   their leases stay `revoke_failed`.
 
 After the upgrade, look for `WARNING: dynamic secrets:` in the server log at
-startup: it counts these configs and their live leases and lists each config. A
-stored `admin_dsn` cannot be edited: create a replacement config whose DSN names
-no server file, and drop by hand the database user of every lease that stays
+startup: it counts these configs and their live leases and lists each config. List
+them with `keyorix dynamic-secret refused-dsn --project-id <id>` and replace the
+stored `admin_dsn` of each with `keyorix dynamic-secret set-admin-dsn <config-id>`
+(the DSN is read from `KEYORIX_DYNAMIC_ADMIN_DSN` or stdin, never the command line).
+Drop by hand the database user of every lease that stays
 `revoke_failed`, especially on MongoDB and MySQL, whose users never expire on
 their own. The full table is in
 [CONFIGURATION.md](../CONFIGURATION.md#revoking-leases-of-a-config-whose-admin_dsn-names-a-server-file).
