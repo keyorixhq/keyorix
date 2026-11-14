@@ -21,7 +21,7 @@ func recordFatalf(msg *string) func(string, ...any) {
 // linearWork does work proportional to n.
 func linearWork(n int) uint64 {
 	var w uint64
-	for i := 0; i < n; i++ {
+	for range n {
 		w++
 	}
 	return w
@@ -31,8 +31,8 @@ func linearWork(n int) uint64 {
 // algorithmic-complexity bug (e.g. an O(n^2) dedup, a backtracking matcher).
 func quadraticWork(n int) uint64 {
 	var w uint64
-	for i := 0; i < n; i++ {
-		for j := 0; j < n; j++ {
+	for range n {
+		for range n {
 			w++
 		}
 	}

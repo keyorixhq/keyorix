@@ -75,7 +75,7 @@ func FuzzEtreeParseComplexity(f *testing.F) {
 
 // countNodes returns the number of elements plus attributes in the subtree.
 func countNodes(e *etree.Element) uint64 {
-	var n uint64 = 1 + uint64(len(e.Attr))
+	var n = 1 + uint64(len(e.Attr))
 	for _, child := range e.ChildElements() {
 		n += countNodes(child)
 	}
