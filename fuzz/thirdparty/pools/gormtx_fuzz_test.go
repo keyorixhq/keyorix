@@ -96,6 +96,24 @@ func gormIncrementUnsafe(ctx context.Context, db *gorm.DB, k string, beforeWrite
 	return row.N, nil
 }
 
+// gormCancelProbe runs a two-statement transaction on a disjoint probe key
+// under a context cancelled mid-flight — the mid-TRANSACTION cancellation leak
+// probe. Its only assertion is indirect: the pool must still drain to baseline
+// afterwards (checked once per iteration). It never touches a counter key, so
+// it cannot perturb the isolation oracle, and whatever it commits or rolls back
+// is irrelevant.
+func gormCancelProbe(db *gorm.DB, probeKey string, val byte) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(time.Duration(1+int(val)%20) * time.Microsecond); cancel() }()
+	_ = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&gormKV{K: probeKey, N: 0}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&gormKV{}).Where("k = ?", probeKey).Update("n", gorm.Expr("n + 1")).Error
+	})
+	cancel()
+}
+
 func gormWorlds(t testing.TB) []*fuzzworld.World {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "gormtx.db")
@@ -152,6 +170,10 @@ func FuzzGormTxnLinearizable(f *testing.F) {
 				for _, op := range prog.Goroutines[gi] {
 					schedfuzz.Pace(op)
 					kStr := fmt.Sprintf("k%d", op.Key)
+					if op.Kind%4 == 3 { // mid-transaction cancellation leak probe (not recorded)
+						gormCancelProbe(w.DB, "probe"+kStr, op.Val)
+						continue
+					}
 					call := time.Since(start).Nanoseconds()
 					n, err := gormIncrement(context.Background(), w.DB, kStr)
 					ret := time.Since(start).Nanoseconds()

@@ -116,11 +116,14 @@ func pgxRegisterOp(t *testing.T, pool *pgxpool.Pool, hist *history, start time.T
 			t.Fatalf("pgx read: %v", err)
 		}
 		hist.add(op.Key, porcupine.Operation{ClientId: gi, Input: regOp{write: false}, Call: call, Output: v, Return: ret})
-	case 2: // write under a mid-flight-cancelled context — leak probe, NOT recorded
+	case 2: // write under a mid-flight-cancelled context — leak probe, NOT recorded.
+		// Disjoint "probe" keyspace: a cancelled write may still commit, so it must
+		// not touch a recorded register key (see the sqlite target for the same
+		// reasoning).
 		ctx2, cancel := context.WithCancel(ctx)
 		go func() { time.Sleep(time.Duration(1+int(op.Val)%20) * time.Microsecond); cancel() }()
 		val := fmt.Sprintf("v%d", poolValSeq.Add(1))
-		_, _ = pool.Exec(ctx2, `INSERT INTO kv(k,v) VALUES($1,$2) ON CONFLICT(k) DO UPDATE SET v=EXCLUDED.v`, kStr, val)
+		_, _ = pool.Exec(ctx2, `INSERT INTO kv(k,v) VALUES($1,$2) ON CONFLICT(k) DO UPDATE SET v=EXCLUDED.v`, "probe"+kStr, val)
 		cancel()
 	default: // 3: read under a cancelled context — leak probe, NOT recorded
 		ctx2, cancel := context.WithCancel(ctx)
@@ -147,6 +150,12 @@ func FuzzPgxPoolLinearizable(f *testing.F) {
 		prev := runtime.GOMAXPROCS(prog.GOMAXPROCS)
 		defer runtime.GOMAXPROCS(prev)
 
+		// Clear recorded keys to "" first — the pool and its kv table are reused
+		// across iterations, so regModel's Init:"" requires a clean slate (see the
+		// sqlite target). Single-threaded, before the concurrent phase.
+		if _, err := pool.Exec(context.Background(), `DELETE FROM kv`); err != nil {
+			t.Fatalf("reset kv: %v", err)
+		}
 		hist := newHistory()
 		start := time.Now()
 		completed := schedfuzz.RunBounded(t, len(prog.Goroutines), deadlockTimeout, func(gi int) {

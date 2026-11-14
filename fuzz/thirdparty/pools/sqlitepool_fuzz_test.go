@@ -135,6 +135,15 @@ func assertSQLPoolDrained(t *testing.T, db *sql.DB, where string) {
 // under a mid-flight-cancelled context (leak probes, not recorded).
 func runSQLiteRegisterIteration(t *testing.T, db *sql.DB, prog schedfuzz.Program) *history {
 	t.Helper()
+	// The pool (and its kv table) is built once and reused across every fuzz
+	// iteration, so the recorded keys must be cleared to "" first — otherwise a
+	// read in this iteration could observe a value a PRIOR iteration wrote, which
+	// is not in this history and regModel's Init:"" would (correctly) reject.
+	// Fixing the fixture, not the oracle: the oracle caught exactly this on first
+	// contact. Done before the concurrent phase, single-threaded.
+	if _, err := db.Exec(`DELETE FROM kv`); err != nil {
+		t.Fatalf("reset kv: %v", err)
+	}
 	hist := newHistory()
 	start := time.Now()
 
@@ -178,11 +187,15 @@ func sqliteRegisterOp(t *testing.T, db *sql.DB, hist *history, start time.Time, 
 			t.Fatalf("sqlite read: %v", err)
 		}
 		hist.add(key, porcupine.Operation{ClientId: gi, Input: regOp{write: false}, Call: call, Output: v, Return: ret})
-	case 2: // write under a context cancelled mid-flight — leak probe, NOT recorded
+	case 2: // write under a context cancelled mid-flight — leak probe, NOT recorded.
+		// Writes to a DISJOINT "probe" keyspace the register model never reads or
+		// records: a cancelled write may still commit (cancellation races the
+		// statement), so letting it touch a recorded key would mutate the
+		// register unobserved and manufacture a false non-linearizable history.
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() { time.Sleep(time.Duration(1+int(op.Val)%20) * time.Microsecond); cancel() }()
 		val := fmt.Sprintf("v%d", poolValSeq.Add(1))
-		_, _ = db.ExecContext(ctx, `INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, kStr, val)
+		_, _ = db.ExecContext(ctx, `INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, "probe"+kStr, val)
 		cancel()
 	default: // 3: read under a cancelled context — leak probe, NOT recorded
 		ctx, cancel := context.WithCancel(context.Background())
