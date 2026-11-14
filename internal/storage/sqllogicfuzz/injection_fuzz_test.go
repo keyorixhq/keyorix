@@ -18,6 +18,11 @@ var safeShapes = []struct {
 	{"where-map", func(tx *gorm.DB, v string) *gorm.DB { return tx.Where(map[string]any{"c": v}) }},
 	{"where-in", func(tx *gorm.DB, v string) *gorm.DB { return tx.Where("c IN ?", []string{v, "y"}) }},
 	{"where-not", func(tx *gorm.DB, v string) *gorm.DB { return tx.Not("c = ?", v) }},
+	// NB: a struct-based Where (`tx.Where(&Row{C: v})`) is deliberately NOT in
+	// this list — GORM omits zero-value struct fields, so an empty v legitimately
+	// removes the condition and changes the statement. That is documented GORM
+	// behaviour, not an injection, and it is covered by the Phase-0 note that
+	// Keyorix's struct-based lookups rely on it.
 }
 
 // FuzzGormInjectionStructure asserts the injection-structure invariant: a value
