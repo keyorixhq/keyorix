@@ -6,7 +6,11 @@ server; paths and addresses differ on your install.
 First step for any start-up failure: `keyorix-server admin diagnose --config ./keyorix.yaml`
 runs the checks server start-up depends on (config parse, encryption key access, database
 open, migration state) and reports which one fails, without starting a listener. It needs
-the master passphrase like the server does.
+the master passphrase like the server does. It is not read-only: pointed at a directory with
+no key files it generates the DEK and KEK salt (`Generated and wrapped new DEK at data.key`),
+as a first start would, and on an empty database it ends with
+`The database schema is behind this binary; run keyorix-server admin migrate before starting.`
+Exit status 0 means every check that can stop the boot passed, WARN lines included.
 
 **The server refuses to start, or an `admin` command stops with `Error:`?** Every
 fail-closed refusal (configuration, TLS, key files, schema epoch, locks, backup/restore)
@@ -36,9 +40,14 @@ storage:
 ```
 
 ```
-connect to postgres for server-presence check: failed to connect to `user=keyorix database=keyorix`:
+failed to connect to postgres: failed to connect to `user=keyorix database=keyorix`:
 	[::1]:59999 (localhost): dial error: dial tcp [::1]:59999: connect: connection refused
+	127.0.0.1:59999 (localhost): dial error: dial tcp 127.0.0.1:59999: connect: connection refused
 ```
+
+The server exits with status 1. An `admin` command (for example `admin validate`) reports the
+same cause after the prefix `cannot connect to the database to check for a running server:
+connect to postgres for server-presence check:`.
 
 The exact host/port that failed is in the message — check Postgres is actually running
 and reachable at that address, and that `storage.database.dsn` (or `host`/`port`) matches
@@ -66,15 +75,13 @@ see [startup-refusals.md](startup-refusals.md#another-process-holds-the-key-lock
 ## An admin command while the server is (still) running
 
 ```
-Error: a Keyorix server (or another admin command) appears to be using this database
-(another process holds this database (a live server, or another admin command) via
-<path>/keyorix.db.server.lock) — admin commands must not run concurrently with either;
-stop it first, or pass --force if you are certain this is safe.
-With Docker Compose, run admin commands in a throwaway container while the server is stopped:
-  docker compose stop backend
-  docker compose run --rm backend ./keyorix-server admin <command>
-  docker compose start backend
+Error: a Keyorix server (or another admin command) appears to be using this database (another process holds this database (a live server, or another admin command) via <path>/keyorix.db.server.lock) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe.
+Run admin commands with the server stopped: stop the server (for example 'systemctl stop keyorix'), run this command again, then start the server.
 ```
+
+Inside the Docker Compose container the second line is replaced by the Compose recipe
+(`docker compose stop backend`, `docker compose run --rm backend ./keyorix-server admin <command>`,
+`docker compose start backend`). The exit status is 1.
 
 This is exactly right — every `admin` subcommand (`init`, `migrate`, `backup`,
 `encryption rotate`, ...) needs the database to itself. Stop the server, or confirm you
@@ -106,23 +113,31 @@ the SQLite database on a local filesystem, or use PostgreSQL.
 
 ## Expired TLS certificate
 
-**Known gap:** the server does not check its own certificate's expiry at startup — it
-starts and serves normally even with an already-expired certificate, with no warning
-anywhere in its own logs. The failure only shows up client-side, once someone actually
-tries to connect:
+The server checks its own certificate when it starts. It still starts and serves with an
+expired one (so a renewal can happen with the listener up), but it logs, at start:
+
+```
+WARNING: /etc/keyorix/tls/server.crt: TLS certificate expired on 2020-01-02T00:00:00Z (system clock reads 2026-11-14T13:22:23Z): clients that check expiry will refuse this server; renew the certificate, or set the clock if it is wrong
+```
+
+A certificate that is close to expiry logs `TLS certificate expires on <date> (within <n> days): renew it`.
+The check runs at start only: a server that has been up since before the certificate expired
+logs nothing more. `deploy/observability/prometheus-alerts.yaml` has alerts for a listener
+certificate that expires within 14 and 3 days.
+
+Clients refuse the connection. The message depends on whether they trust the issuing CA:
 
 ```
 $ curl https://your-server/health
 curl: (60) SSL certificate problem: certificate has expired
+
+$ keyorix login --server https://your-server --username alice --ca-file ca.pem
+Error: cannot trust the TLS certificate of the Keyorix server at https://your-server (tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2026-11-14T14:22:41+01:00 is after 2020-01-02T00:00:00Z). Next step: ...
 ```
 
-```
-$ keyorix login --server https://your-server ...
-Error: contact https://your-server: Post "https://your-server/auth/login": tls: failed to verify certificate: x509: certificate signed by unknown authority
-```
-
-If you see either of these against a server you expected to be healthy, check the
-certificate's own expiry directly rather than assuming a network problem:
+`x509: certificate signed by unknown authority` means the client does not trust the CA
+(for a private CA, pass `--ca-file`), not that the certificate expired. Check the certificate's
+own dates directly rather than assuming a network problem:
 
 ```bash
 openssl x509 -in /path/to/server.crt -noout -dates
