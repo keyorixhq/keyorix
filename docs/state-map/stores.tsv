@@ -151,6 +151,7 @@ scripts/fuzzing/configspace/runner.go (os.Create)	file_write	scripts/fuzzing/con
 scripts/fuzzing/configspace/runner.go (os.WriteFile)	file_write	scripts/fuzzing/configspace	2
 scripts/fuzzing/invariant-map/main.go (os.WriteFile)	file_write	scripts/fuzzing/invariant-map	1
 scripts/fuzzing/reencode-seeds.go (os.WriteFile)	file_write	scripts/fuzzing	1
+scripts/fuzzing/sinkmap/main.go (os.WriteFile)	file_write	scripts/fuzzing/sinkmap	2
 scripts/metrics/cfgkeys/main.go (os.WriteFile)	file_write	scripts/metrics/cfgkeys	1
 scripts/metrics/surfacewalk/startup.go (os.Create)	file_write	scripts/metrics/surfacewalk	1
 scripts/migrate/rssrun/main.go (os.Create)	file_write	scripts/migrate/rssrun	1
