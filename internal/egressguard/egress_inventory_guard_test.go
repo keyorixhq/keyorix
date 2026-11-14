@@ -895,6 +895,7 @@ var dependencyKinds = map[string]string{
 	"github.com/stretchr/testify":                                       "local: test assertions",
 	"github.com/wneessen/go-mail":                                       "client",
 	"go.mongodb.org/mongo-driver/v2":                                    "client",
+	"go.yaml.in/yaml/v3":                                                "local: YAML parsing",
 	"golang.org/x/crypto":                                               "client", // the ssh package's Dial and NewClientConn are in refForms
 	"golang.org/x/net":                                                  "client", // the websocket package is in clientImports
 	"golang.org/x/oauth2":                                               "client",
@@ -908,7 +909,6 @@ var dependencyKinds = map[string]string{
 	"google.golang.org/genproto/googleapis/rpc":                         "local: protobuf types",
 	"google.golang.org/grpc":                                            "client",
 	"google.golang.org/protobuf":                                        "local: protobuf runtime",
-	"gopkg.in/yaml.v3":                                                  "local: YAML parsing",
 	"gorm.io/driver/postgres":                                           "local: a gorm dialector; the connection is opened by gorm.Open, which is in refForms",
 	"gorm.io/driver/sqlite":                                             "local: a gorm dialector for a local SQLite file",
 	"gorm.io/gorm":                                                      "client",

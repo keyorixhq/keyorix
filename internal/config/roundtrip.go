@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/securefiles"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // IsNotExist reports whether err (as returned by Load) means the config file does not

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // unknownFieldRE matches yaml.v3's strict-decode message for a key the target

@@ -7,7 +7,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/secrettemplate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // EscapeYAMLString must produce content that, wrapped in a pair of double quotes,

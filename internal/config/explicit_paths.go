@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/securefiles"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ExplicitlySetPaths reads the config file at path (resolved exactly as Load

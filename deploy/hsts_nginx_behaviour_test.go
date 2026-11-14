@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // #3058: HSTS behind a TLS-terminating load balancer. These tests run a REAL nginx

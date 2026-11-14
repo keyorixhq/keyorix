@@ -47,7 +47,7 @@ import (
 	"sync"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 var events = []string{"pull_request", "merge_group"}

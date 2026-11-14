@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // HELM-PILOT-TAILS-2: render matrix. The chart must render, pass kubeconform (when it is

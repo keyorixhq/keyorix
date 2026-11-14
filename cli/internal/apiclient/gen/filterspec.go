@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // keptPaths is the worklist: as each Phase 3 PR (docs/cli-split-inventory.md §7) wires a

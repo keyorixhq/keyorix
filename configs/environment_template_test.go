@@ -3,7 +3,7 @@ package configs
 import (
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func environmentIn(t *testing.T, b []byte) string {

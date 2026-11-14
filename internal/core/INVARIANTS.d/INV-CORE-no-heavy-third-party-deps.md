@@ -1,7 +1,7 @@
 - **INV-CORE-no-heavy-third-party-deps** `internal/core`'s production dependency closure
   (`go list -deps ./internal/core`, default build tags) contains no package under a registered
   heavy third-party prefix. Registered so far: `github.com/spf13/` (cobra, pflag),
-  `gopkg.in/yaml.v3`, and `github.com/go-webauthn/`, `github.com/google/go-tpm`,
+  `gopkg.in/yaml.v3` and its maintained successor `go.yaml.in/yaml/`, and `github.com/go-webauthn/`, `github.com/google/go-tpm`,
   `github.com/fxamacker/cbor`, `github.com/tinylib/msgp` (`heavy_deps_webauthn_test.go`; see
   INV-CORE-webauthn-rp-behind-port-decisions-in-core); each further decoupling cut registers its
   own prefixes. The only heavy

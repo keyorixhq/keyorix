@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // HELM-WEB-PROBES-1 (follow-up to #3460 / #3871): the chart's web pod used to

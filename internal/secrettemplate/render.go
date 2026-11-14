@@ -9,7 +9,7 @@
 // YAML document around a placeholder should use RenderJSON / yamlescape.RenderYAML
 // (or RenderWithOptions with RenderOptions.Escape) instead, so a secret value can't
 // break out of its quoted field and inject or overwrite an adjacent key. The YAML
-// helpers live in the yamlescape subpackage so gopkg.in/yaml.v3 stays out of this
+// helpers live in the yamlescape subpackage so the YAML library (go.yaml.in/yaml/v3) stays out of this
 // package's (and internal/core's) dependency closure.
 package secrettemplate
 

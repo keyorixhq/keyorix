@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Kubernetes does not restart pods when a mounted Secret changes. With

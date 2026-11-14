@@ -31,7 +31,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func repoRoot() string {

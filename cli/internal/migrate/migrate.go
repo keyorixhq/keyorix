@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/cli/internal/regularfile"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Candidate is a server URL found in an old-CLI config file.

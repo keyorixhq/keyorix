@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Case is one configuration to exercise: a set of parameter assignments applied on top
