@@ -6,6 +6,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -14,8 +16,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -72,21 +76,21 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if shareErr != nil {
-		log.Printf("Error sharing secret: %v", shareErr)
-		if sendAuditUnavailable(w, shareErr) || sendStorageUnavailable(w, shareErr) {
-			return
+		// A refusal names its reason through core.ShareRefusalMessage (a recipient outside
+		// the project, a non-owner, a group without a role there); a self-share and a
+		// past expiry are validation refusals (400), an absent secret is a 404.
+		texts := coreErrorTexts{
+			errclass.NotFound:         "Secret not found",
+			errclass.PermissionDenied: "Not authorized to share this secret",
+			errclass.Internal:         "Failed to share secret",
 		}
-		if strings.Contains(shareErr.Error(), errNotFound) {
-			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else if reason, ok := core.ShareRefusalMessage(shareErr); ok {
-			h.sendError(w, "Forbidden", reason, http.StatusForbidden, nil)
-		} else if strings.Contains(shareErr.Error(), errPermissionDenied) {
-			h.sendError(w, "Forbidden", "Not authorized to share this secret", http.StatusForbidden, nil)
-		} else if strings.Contains(shareErr.Error(), "expiry must be in the future") {
-			h.sendError(w, "ValidationError", "Share expiry must be in the future", http.StatusBadRequest, nil)
-		} else {
-			h.sendError(w, "InternalError", "Failed to share secret", http.StatusInternalServerError, nil)
+		if reason, ok := core.ShareRefusalMessage(shareErr); ok {
+			texts[errclass.PermissionDenied] = reason
 		}
+		if errors.Is(shareErr, storage.ErrShareExpiryNotInFuture) {
+			texts[errclass.InvalidInput] = "Share expiry must be in the future"
+		}
+		answerCoreError(w, r, shareErr, coreErrorAnswer{op: fmt.Sprintf("sharing secret %d", id), texts: texts})
 		return
 	}
 
