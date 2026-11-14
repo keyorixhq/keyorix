@@ -17,6 +17,7 @@
 //	bestEffortTables                  best_effort_tables_entry_<method>_test.go
 //	nonLoadBearingAuthzReadExceptions non_load_bearing_authz_read_entry_<slug>_test.go
 //	oracleAByDesignErrors             oracle_a_by_design_entry_<slug>_test.go
+//	userCreateLostAckSites            user_create_lost_ack_entry_<func>_test.go
 //
 // To add a row: create ONE new file named as above whose init() calls the
 // table's register function with a unique <slug> (the registered name), and put
@@ -85,6 +86,7 @@ var (
 	nonLoadBearingReg      = &sliceRegistry[nonLoadBearingException]{table: &nonLoadBearingAuthzReadExceptions, label: "nonLoadBearingAuthzReadExceptions"}
 	oracleAByDesignReg     = &sliceRegistry[oracleAByDesignError]{table: &oracleAByDesignErrors, label: "oracleAByDesignErrors"}
 	bestEffortTablesReg    = mapRegistry[[]string]{table: bestEffortTables, label: "bestEffortTables"}
+	userCreateLostAckReg   = &sliceRegistry[userCreateLostAckSite]{table: &userCreateLostAckSites, label: "userCreateLostAckSites"}
 )
 
 func registerKnownOpenTolerance(name string, e knownOpenTolerance) { //nolint:unused // see REGISTRY-ENTRIES.md
@@ -101,6 +103,13 @@ func registerNonLoadBearingAuthzRead(name string, e nonLoadBearingException) {
 }
 func registerOracleAByDesign(name string, e oracleAByDesignError) { oracleAByDesignReg.add(name, e) }
 func registerBestEffortTable(method string, tables []string)      { bestEffortTablesReg.add(method, tables) }
+
+// registerUserCreateLostAckSite adds one internal/core user-insert site (#3225),
+// keyed by the name of the function that holds the insert.
+func registerUserCreateLostAckSite(fn string, e userCreateLostAckSite) {
+	e.fn = fn
+	userCreateLostAckReg.add(fn, e)
+}
 
 // opScopedBestEffortTable is one row of opScopedBestEffortTables (declared in
 // fuzz_storage_fault_operations_test.go, where the rationale for the table lives).

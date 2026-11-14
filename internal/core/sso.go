@@ -812,7 +812,14 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		if errors.Is(err, storage.ErrDuplicateUsername) {
 			return nil, fmt.Errorf("a user with this username already exists")
 		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// #3225: the account and its default role commit together, so a lost
+		// acknowledgement leaves a complete account the next login reuses by its
+		// sso: external id, minus the auth.sso_jit_provisioned row below, which only this
+		// call writes. Read it back: a landed row continues to that row and the
+		// login.
+		if landed, answer := c.userCreateLanded(ctx, "sso.provisionSSOUser", created, err); !landed {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), answer)
+		}
 	}
 	role := roleName
 	detail, _ := json.Marshal(ssoJITProvisionDetail{Role: role, NonDefaultRole: role != ssoDefaultRole})

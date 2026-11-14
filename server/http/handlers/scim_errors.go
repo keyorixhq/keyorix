@@ -45,7 +45,9 @@ type scimErrorClass struct {
 //   - invalid attribute value, or a group member SCIM does not manage -> 400 invalidValue
 //   - adding members to a group that grants an admin role (permanent) -> 403
 //   - SQLite write-gate contention, or a concurrent state change lost
-//     the conditional write (nothing written, safe to retry)          -> 503 + Retry-After
+//     the conditional write (nothing written, safe to retry), or a
+//     create whose outcome could not be read back (#3225: a retry
+//     creates the account or finds it)                                -> 503 + Retry-After
 //   - anything else: transient, deadlock, rolled back, canceled       -> 500, generic detail
 //
 // A PartialMutationError is not classified here (scimPartialMutation answers it first).
@@ -75,7 +77,8 @@ func classifySCIMError(err error) scimErrorClass {
 		return scimErrorClass{status: http.StatusBadRequest, scimType: scimTypeInvalidValue, detail: "invalid attribute value"}
 	case corestorage.IsWriteContention(err),
 		errors.Is(err, core.ErrUserActiveStateConflict),
-		errors.Is(err, core.ErrUserAccountStateConflict):
+		errors.Is(err, core.ErrUserAccountStateConflict),
+		errors.Is(err, core.ErrUserCreateOutcomeUnknown):
 		return scimErrorClass{status: http.StatusServiceUnavailable, detail: scimBusyDetail}
 	default:
 		return scimErrorClass{status: http.StatusInternalServerError}
