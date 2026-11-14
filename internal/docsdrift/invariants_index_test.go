@@ -45,7 +45,10 @@ var (
 // checkInvariantsIndex returns one message per problem in the index document.
 func checkInvariantsIndex(doc string) []string {
 	var problems []string
-	type counts struct{ inv, guarded, unguarded, line int }
+	type counts struct {
+		inv, guarded, unguarded, line int
+		text                          string // the row as written, so a message can quote it
+	}
 	seen := map[string]counts{}
 	var order []string
 	var sum counts
@@ -64,7 +67,7 @@ func checkInvariantsIndex(doc string) []string {
 			continue
 		}
 		if m := invIndexTotalRE.FindStringSubmatch(line); m != nil {
-			c := counts{line: n}
+			c := counts{line: n, text: line}
 			c.inv, _ = strconv.Atoi(m[1])
 			c.guarded, _ = strconv.Atoi(m[2])
 			c.unguarded, _ = strconv.Atoi(m[3])
@@ -79,12 +82,12 @@ func checkInvariantsIndex(doc string) []string {
 			continue
 		}
 		pkg := strings.TrimSpace(m[1])
-		c := counts{line: n}
+		c := counts{line: n, text: line}
 		c.inv, _ = strconv.Atoi(m[2])
 		c.guarded, _ = strconv.Atoi(m[3])
 		c.unguarded, _ = strconv.Atoi(m[4])
 		if first, dup := seen[pkg]; dup {
-			problems = append(problems, fmt.Sprintf("line %d: package %s is listed twice (first at line %d): keep one row with the current counts", n, pkg, first.line))
+			problems = append(problems, fmt.Sprintf("line %d: package %s is listed twice: keep one row with the current counts (a concurrent PR edited the same row; recompute from main)\n  line %d: %s\n  line %d: %s", n, pkg, first.line, first.text, n, line))
 		} else {
 			seen[pkg] = c
 			order = append(order, pkg)
@@ -110,7 +113,12 @@ func checkInvariantsIndex(doc string) []string {
 				t.line, t.inv, t.guarded, t.unguarded, sum.inv, sum.guarded, sum.unguarded))
 		}
 	default:
-		problems = append(problems, fmt.Sprintf("the table has %d **Total** rows (lines %d and %d): keep one", len(totals), totals[0].line, totals[1].line))
+		var b strings.Builder
+		for _, t := range totals {
+			fmt.Fprintf(&b, "\n  line %d: %s", t.line, t.text)
+		}
+		problems = append(problems, fmt.Sprintf("the table has %d **Total** rows (lines %d and %d): keep one, set to the column sums %d / %d / %d (a concurrent PR edited the Total row; recompute after merging main)%s",
+			len(totals), totals[0].line, totals[1].line, sum.inv, sum.guarded, sum.unguarded, b.String()))
 	}
 	return problems
 }
