@@ -8,7 +8,9 @@ package tlsreload
 // key directory can produce: a fresh valid pair, an expired pair, a
 // not-yet-valid pair, a cert whose key was replaced (mismatch), the key replaced
 // before the cert (the classic half-rotation race), a truncated PEM, an empty
-// file, a deleted file, and a symlink swapped to a different pair's cert. After
+// file, a deleted file, a symlink swapped to a different pair's cert, and the
+// mtime-preserving variants of a full-pair, cert-only and key-only replacement
+// (cp -p, rsync -t, a restore: #4146). After
 // each mutation the harness reads the certificate the Reloader would hand a
 // client and checks it against a reference computed independently from the same
 // files with the standard library's own loader.
@@ -200,6 +202,9 @@ func FuzzReloaderFailClosed(f *testing.F) {
 	f.Add([]byte{0x40, 0x51, 0x62})       // empty→delete→symlink
 	f.Add([]byte{0x21, 0x02, 0x13})       // key-replaced-before-cert then full
 	f.Add([]byte{0x33, 0x44, 0x00})       // garbage, empty, then recover
+	f.Add([]byte{0x71})                   // full pair replaced, mtimes preserved (#4146)
+	f.Add([]byte{0x82, 0x72})             // cert first (mismatch window), then the pair, mtimes preserved
+	f.Add([]byte{0x83, 0x73, 0x81, 0x00}) // key first, then the pair, then a cert-only, then a new-mtime pair
 
 	f.Fuzz(func(t *testing.T, program []byte) {
 		withCheckInterval(t, 0) // re-check on every handshake → exact differential
@@ -234,6 +239,24 @@ func FuzzReloaderFailClosed(f *testing.F) {
 		writeFile(certFile, pool[0].certPEM)
 		writeFile(keyFile, pool[0].keyPEM)
 
+		// writeKeepMtime rewrites path in place and restores the mtime it had, the way
+		// cp -p / rsync -t / a restore do. A missing file is created with a fresh mtime.
+		writeKeepMtime := func(path string, b []byte) {
+			if li, err := os.Lstat(path); err == nil && li.Mode()&os.ModeSymlink != 0 {
+				// Writing through the link would corrupt the pool copy it points at.
+				_ = os.Remove(path)
+			}
+			fi, err := os.Stat(path)
+			if err != nil {
+				writeFile(path, b)
+				return
+			}
+			if err := os.WriteFile(path, b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_ = os.Chtimes(path, fi.ModTime(), fi.ModTime())
+		}
+
 		r, err := New(certFile, keyFile)
 		if err != nil {
 			t.Fatalf("New on a known-good pair failed: %v", err)
@@ -263,7 +286,7 @@ func FuzzReloaderFailClosed(f *testing.F) {
 		for _, b := range program {
 			op := b >> 4
 			arg := int(b&0x0f) % len(pool)
-			switch op % 7 {
+			switch op % 9 {
 			case 0: // write a full, coherent pool pair (valid/expired/not-yet-valid)
 				writeFile(certFile, pool[arg].certPEM)
 				writeFile(keyFile, pool[arg].keyPEM)
@@ -284,6 +307,15 @@ func FuzzReloaderFailClosed(f *testing.F) {
 				// os.Stat (which follows the link).
 				mtime = mtime.Add(time.Second)
 				_ = os.Chtimes(poolCertPath[arg], mtime, mtime)
+			case 7: // full pair replaced in place, both mtimes preserved
+				writeKeepMtime(certFile, pool[arg].certPEM)
+				writeKeepMtime(keyFile, pool[arg].keyPEM)
+			case 8: // one file replaced, mtime preserved: cert for an even arg, key for an odd one
+				if arg%2 == 0 {
+					writeKeepMtime(certFile, pool[arg].certPEM)
+				} else {
+					writeKeepMtime(keyFile, pool[arg].keyPEM)
+				}
 			}
 			step()
 		}
