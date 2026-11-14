@@ -20,9 +20,9 @@
 // that calls core.FlushLastUsed before the DB-close cleanup runs (LIFO ordering),
 // which stops the timer and empties pending so nothing re-arms. The underlying
 // "a permanently-failing DB re-arms the last-used timer forever, holding the
-// pending set and the core it belongs to" is reported as a HARDENING item in the
-// IF1 report; it is benign in production (one long-lived core) but the harness
-// must not depend on that.
+// pending set and the core it belongs to" is a hardening observation; it is
+// benign in production (one long-lived core) but the harness must not depend on
+// that.
 package faultops
 
 import (
@@ -37,7 +37,7 @@ import (
 )
 
 // residentBytes reads this process's resident set size from /proc/self/statm
-// (field 2, resident pages) × page size. Linux-only; the CI and the IF1 host are
+// (field 2, resident pages) × page size. Linux-only; the CI hosts are
 // Linux. Returns 0 if /proc is unavailable so the caller can fall back to
 // runtime heap stats.
 func residentBytes(tb tbLite) uint64 {
@@ -84,8 +84,8 @@ func heapAllocAfterGC() uint64 {
 // TestWorldFixtureLeakProfile is the profiling run (not a correctness gate):
 // it builds worlds back to back for KEYORIX_FAULTOPS_LEAK_ITERS iterations
 // (default 40), sampling RSS, HeapAlloc and goroutine count every 8 worlds, and
-// writes a heap profile to KEYORIX_FAULTOPS_LEAKPROF if set. Used to produce the
-// IF1 report's before/after RSS time series and the pprof that names the leak.
+// writes a heap profile to KEYORIX_FAULTOPS_LEAKPROF if set. Used to produce a
+// before/after RSS time series and the pprof that names the leak.
 func TestWorldFixtureLeakProfile(t *testing.T) {
 	if os.Getenv("KEYORIX_FAULTOPS_LEAK") == "" {
 		t.Skip("profiling only; set KEYORIX_FAULTOPS_LEAK=1 to run")
@@ -122,7 +122,7 @@ func TestWorldFixtureLeakProfile(t *testing.T) {
 	}
 }
 
-// TestWorldFixtureNoRetainedMemoryGrowth is the correctness gate for the IF1
+// TestWorldFixtureNoRetainedMemoryGrowth is the correctness gate for the
 // memory fix: it builds a warmup world (to pay one-time init costs — i18n,
 // package-level caches, first gorm pool), measures HeapAlloc, builds N more
 // worlds, and asserts the per-world retained HeapAlloc is bounded. With the leak

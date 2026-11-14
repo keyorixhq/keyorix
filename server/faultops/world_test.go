@@ -243,7 +243,7 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	// it discards a core; newFaultWorld simply never had it. Registered here so
 	// LIFO cleanup ordering runs it before openWorldDB's DB-close cleanup (which
 	// was registered first). The underlying "a permanently-failing DB re-arms the
-	// last-used timer forever" is a production HARDENING item (IF1 report), benign
+	// last-used timer forever" is a production hardening observation, benign
 	// with one long-lived core but not safe for the harness to depend on.
 	// KEYORIX_IF1_DISABLE_QUIESCE suppresses this teardown so the red proof for
 	// TestWorldFixtureNoRetainedMemoryGrowth can be reproduced without editing

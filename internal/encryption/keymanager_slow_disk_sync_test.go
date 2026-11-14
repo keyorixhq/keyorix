@@ -25,7 +25,7 @@
 //     GetKeyVersion on every encrypt). So a slow fsync stalls every encrypt for
 //     its full duration. The test measures this and asserts the stall tracks the
 //     injected delay (red), against a zero-contention baseline (green). This is a
-//     HARDENING finding, see the IF1 report; it is benign in production (rotation
+//     hardening observation, not a defect; it is benign in production (rotation
 //     is rare and admin-initiated) but real.
 //   - NO FD / GOROUTINE LEAK (gate): the slow-disk rotation leaves the open-fd and
 //     goroutine counts where it found them.
@@ -176,7 +176,7 @@ func TestSlowDiskSync_HoldsReadLockAcrossSync(t *testing.T) {
 		// held across the slow fsync.
 		if blocked < delay/2 {
 			t.Fatalf("trial %d: expected the hot-path RLock to be blocked >= %v by the slow fsync, got %v "+
-				"(if this now passes, KeyManager.mu is no longer held across the directory fsync — update the IF1 HARDENING finding)",
+				"(if this now passes, KeyManager.mu is no longer held across the directory fsync — revisit this characterization)",
 				i, delay/2, blocked)
 		}
 		// GREEN control: with no rotation in flight the same probe is ~instant.
