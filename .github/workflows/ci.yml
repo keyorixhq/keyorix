@@ -3179,7 +3179,7 @@ jobs:
   #     entry (e.g. after a rename/removal) that no longer matches any target
   #     in the tree.
   # Also skipped on web_only PRs: every target here is a Go `func FuzzXxx` in
-  # internal/** (or operator/**), and `go test -list` output for those
+  # internal/** (or operator/**, cli/**, migrate/**, fuzzkit/**), and `go test -list` output for those
   # packages cannot change from a diff that only touches web/ -- ADR-070
   # merged the frontend into this repo, but the fuzz targets themselves stay
   # Go-only (there's no JS/TS equivalent to Go's native fuzzing engine), so a
@@ -3187,8 +3187,8 @@ jobs:
   fuzz-targets:
     needs: [changes, select]
     # Deliberately NOT gated on operator_only -- this job checks FuzzXxx
-    # functions in BOTH the root and operator modules, and an operator-only
-    # diff could add/remove/rename one there.
+    # functions in the root AND the operator/cli/migrate/fuzzkit modules, and
+    # an operator-only diff could add/remove/rename one there.
     # FULL profile only (CI-LIGHT-1). Required context: skipped satisfies it on a FAST PR run, the merge queue runs it.
     # Merge-queue gate (CI-SELECT-1): gate_fuzz_targets -- scripts/fuzzing/**,
     # or a changed .go file (any module) that has a `func Fuzz` line before
@@ -3223,9 +3223,9 @@ jobs:
           # summary line. Only the ROOT module prefix is stripped (never the
           # operator/cli/migrate submodule's own path segment) -- each
           # submodule's import path is
-          # "github.com/keyorixhq/keyorix/<operator|cli|migrate>/...",
-          # so stripping just the root leaves "operator/...", "cli/..." or
-          # "migrate/..."
+          # "github.com/keyorixhq/keyorix/<operator|cli|migrate|fuzzkit>/...",
+          # so stripping just the root leaves "operator/...", "cli/...",
+          # "migrate/..." or "fuzzkit/..."
           # already disambiguated from the root module's own package paths;
           # re-adding that segment as a separate prefix would double it
           # (e.g. "cli/cli/internal/skew").
@@ -3265,12 +3265,19 @@ jobs:
           # pass or the entries are wrongly reported as stale.
           echo "== true FuzzXxx functions: migrate module (GOWORK=off) =="
           (cd migrate && GOWORK=off go test -list '^Fuzz' ./...) | tee migrate-fuzz-list.txt
+          # fuzzkit (module github.com/keyorixhq/keyorix/fuzzkit, the
+          # differential-fuzzing kit and its instances) is likewise a separate
+          # module absent from go.work: without this pass its
+          # targets.d/fuzzkit-*__Fuzz*.conf entries are reported as stale.
+          echo "== true FuzzXxx functions: fuzzkit module (GOWORK=off) =="
+          (cd fuzzkit && GOWORK=off go test -list '^Fuzz' ./...) | tee fuzzkit-fuzz-list.txt
 
           {
             extract_fuzz_targets < root-fuzz-list.txt
             extract_fuzz_targets < operator-fuzz-list.txt
             extract_fuzz_targets < cli-fuzz-list.txt
             extract_fuzz_targets < migrate-fuzz-list.txt
+            extract_fuzz_targets < fuzzkit-fuzz-list.txt
           } > true-targets.txt
           sort -u true-targets.txt -o true-targets.txt
 
