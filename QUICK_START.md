@@ -178,12 +178,19 @@ Two things about this command are not obvious from `--help` alone:
   default (`admin@keyorix.local`) is a placeholder that passes the server's email
   validation but has no mailbox. A rejected address is answered `400` and the CLI
   says which flag to fix.
-- **Pick a password with an uppercase letter, a digit, and that does not contain
-  the username.** The one `keyorix-server admin generate-secrets` writes to
-  `secrets/admin_password` satisfies all three.
+- **Pick a password that meets the policy: at least 16 characters with an
+  uppercase letter, a lowercase letter, a digit and a special character, not
+  containing the username, email or display name, and not a commonly-used
+  password.** Anything shorter fails with `Validation error: password must be at
+  least 16 characters, contain a special character (HTTP 400)` (the message lists
+  every rule that failed). The one `keyorix-server admin generate-secrets` writes to
+  `secrets/admin_password` satisfies all of them;
+  `keyorix-server admin check-admin-password --username admin --email <email> < <file>`
+  tells you before you start whether a password would be accepted.
 
-`system init --server` is safe to run more than once — it is idempotent, and
-reports `already_initialized` on every call after the first. It creates the
+`system init --server` is safe to run more than once — it is idempotent: every call
+after the first prints `Server at <url> is already initialised.` (the API answers
+`already_initialized: true`) and changes nothing. It creates the
 admin user, default RBAC roles, and a default workspace (a project with three
 seeded environments — development, staging, production — as IDs 1/2/3) in one
 call. Without `KEYORIX_BOOTSTRAP_TOKEN` (or `KEYORIX_BOOTSTRAP_TOKEN_FILE`) set
@@ -223,9 +230,10 @@ ignores it. For the bundled Caddy `tls` profile the CA is
 
 What you will see on first start, and what it means:
 
-- **`WARNING: HTTP protocol_versions is set but NOT honored`.** Informational:
-  the TLS 1.2 minimum is fixed in code. (A `--dev` config also prints cleartext
-  and `trusted_proxies` warnings: TLS is off there.)
+- **`WARNING: HTTP protocol_versions is set but NOT honored`** appears only if you
+  set `server.http.protocol_versions` yourself (the generated config does not).
+  Informational: the TLS 1.2 minimum is fixed in code. (A `--dev` config also
+  prints cleartext and `trusted_proxies` warnings: TLS is off there.)
 - **`Automatic file-permission fixing is on (security.auto_fix_file_permissions ...)`.**
   Informational. The generated config turns the setting on, so it is printed on
   every start. A permission change is reported separately as `[FIXED] <path>`; if

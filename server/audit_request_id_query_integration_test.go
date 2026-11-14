@@ -77,10 +77,13 @@ func TestAuditRequestID_QuerySurface_RealServer(t *testing.T) {
 		clientChosenID = "client-chosen-req-id-001"
 	)
 	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+masterPass)
-	for _, step := range []string{"init", "diagnose", "migrate"} {
+	for _, step := range []string{"init", "encryption", "diagnose", "migrate"} {
 		args := []string{step, "--config", "./keyorix.yaml"}
-		if step == "init" {
+		switch step {
+		case "init":
 			args = []string{"init", "--dev", "--config", "./keyorix.yaml"}
+		case "encryption":
+			args = []string{"encryption", "init", "--config", "./keyorix.yaml"}
 		}
 		if out, err := runAdmin(t, bin, dir, env, args...); err != nil {
 			t.Fatalf("admin %s failed: %v\n%s", step, err, out)

@@ -3,7 +3,7 @@
 // Targets (DB-error paths not previously covered):
 //   - local_auth.go:230          CreatePersonalAccessToken
 //   - local_auth.go:326          CreateSetupToken
-//   - local_legal_hold.go:60     UpdateLegalHold
+//   - local_legal_hold.go        ReleaseLegalHold
 //   - local_memberships.go:56    UpdateProjectMembership
 //   - local_notifications.go:133 MarkAllNotificationsRead
 //   - local_rbac.go:28           CreatePermission
@@ -130,10 +130,10 @@ func TestCreateSetupToken_BrokenDB(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// local_legal_hold.go:60 — UpdateLegalHold
+// local_legal_hold.go — ReleaseLegalHold
 // ---------------------------------------------------------------------------
 
-func TestUpdateLegalHold_HappyPath(t *testing.T) {
+func TestReleaseLegalHold_HappyPath(t *testing.T) {
 	ls := newS18Store(t, &models.LegalHold{})
 	ctx := context.Background()
 
@@ -145,14 +145,19 @@ func TestUpdateLegalHold_HappyPath(t *testing.T) {
 	}
 	require.NoError(t, ls.db.Create(h).Error)
 
-	h.Released = true
-	releasedAt := time.Now()
-	h.ReleasedAt = &releasedAt
-	err := ls.UpdateLegalHold(ctx, h)
+	released, err := ls.ReleaseLegalHold(ctx, h.ID, 2, time.Now(), "case closed")
 	require.NoError(t, err)
+	require.True(t, released)
+	var got models.LegalHold
+	require.NoError(t, ls.db.First(&got, h.ID).Error)
+	require.True(t, got.Released)
+	require.Equal(t, uint(2), got.ReleasedBy)
+	require.NotNil(t, got.ReleasedAt)
+	require.Equal(t, "case closed", got.ReleaseReason)
+	require.Equal(t, "litigation hold", got.Reason, "a release must not touch the placement columns")
 }
 
-func TestUpdateLegalHold_BrokenDB(t *testing.T) {
+func TestReleaseLegalHold_BrokenDB(t *testing.T) {
 	ls := newS18Store(t, &models.LegalHold{})
 	ctx := context.Background()
 
@@ -165,8 +170,7 @@ func TestUpdateLegalHold_BrokenDB(t *testing.T) {
 	require.NoError(t, ls.db.Create(h).Error)
 	closeS18DB(t, ls)
 
-	h.Released = true
-	err := ls.UpdateLegalHold(ctx, h)
+	_, err := ls.ReleaseLegalHold(ctx, h.ID, 2, time.Now(), "r")
 	require.Error(t, err)
 }
 
