@@ -1,0 +1,1 @@
+internal/fuzzutil/hostile	none	-	test-only helper for the hostile-backend record-and-mutate fuzz harnesses: fake backend server, mutation programs and oracle checks used only by *_hostile_fuzz_test.go files; not linked into any shipped binary	test-helper
