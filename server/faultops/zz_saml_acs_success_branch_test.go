@@ -7,6 +7,11 @@
 // reference world in User/Session/AuditEvent whatever the fault did. #2910 made
 // the subject and RelayState deterministic; these tests keep that true:
 //
+//   - TestSAMLACSOp_IssueSuccessBranchFaultsPassTheOracles drives the four
+//     tuples #2839 reported (EnforceSessionLimit#1, LogAuditEvent#1,
+//     LogAuditEvent#2, UpdateLastLogin#1, all KindError) and requires each to
+//     fire, report success and pass every oracle. It logs the tables that still
+//     differ from the reference and the tolerance that covers each.
 //   - TestSAMLACSOp_OracleASeesAPerWorldSubject is the calibration: with a
 //     per-world subject swapped in, the same four tuples are oracle (a)
 //     findings again (the #2934 false positive), with the deterministic one they
@@ -76,6 +81,31 @@ func oracleAFindings(findings []string) int {
 		}
 	}
 	return n
+}
+
+// Item 4: each of the four is classified by what it leaves, logged per tuple:
+// AuditEvent only (bestEffortTables["LogAuditEvent"]), or no difference at all.
+// A tuple that starts differing in User or Session again fails here.
+func TestSAMLACSOp_IssueSuccessBranchFaultsPassTheOracles(t *testing.T) {
+	for _, c := range samlACSIssueSuccessFaults {
+		t.Run(fmt.Sprintf("%s#%d", c.method, c.nth), func(t *testing.T) {
+			in, findings := driveSAMLACSFindings(t, c.method, c.nth)
+			if !in.result.Success {
+				t.Fatalf("a best-effort fault after the session commit must leave the login successful: %s", in.result.Detail)
+			}
+			if len(findings) != 0 {
+				t.Fatalf("oracle findings on a success-branch best-effort fault:\n%s", strings.Join(findings, "\n"))
+			}
+			differ := diffTables(in.refAfter, in.after)
+			slices.Sort(differ)
+			for _, tbl := range differ {
+				if tbl == "User" || tbl == "Session" {
+					t.Errorf("%s differs from the fault-free reference: the #2934 (a) fixture artefact is back, or this fault now changes the account/session", tbl)
+				}
+			}
+			t.Logf("%s#%d: success, 0 oracle findings, tables differing from the reference: %v", c.method, c.nth, differ)
+		})
+	}
 }
 
 // Item 3, before/after: the oracle (a) count on these four tuples with a
