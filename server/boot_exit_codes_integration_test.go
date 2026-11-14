@@ -10,7 +10,8 @@ package main
 //   - an aws-kms provider whose endpoint refuses connections, or answers 500
 //     KMSInternalException, and a Postgres nothing listens for -> 75
 //     (exitDependencyDown: the KMS or database may come back);
-//   - an aws-kms provider that answers 400 AccessDeniedException -> 78;
+//   - an aws-kms provider that answers 400 AccessDeniedException, and a
+//     malformed Postgres DSN -> 78;
 // and each leaves ONE hint line last on stderr that names neither a secret nor
 // a path. The numbers are literals here on purpose:
 // TestSystemdUnit_ExitStatusesMatchServerConstants in
@@ -233,9 +234,33 @@ func TestBootExitCodes_PostgresDownIs75(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the server")
 	}
-	bin := buildServerBinary(t)
-	e := newEdgeInstall(t, bin, true)
+	e := postgresInstall(t, "host=127.0.0.1 port="+freeTCPPort(t)+" user=keyorix dbname=keyorix sslmode=disable connect_timeout=5")
+	code, stderr := bootAttempt(t, e, bootEnv(e, "KEYORIX_DB_PASSWORD=edge-test-db-password"), "--passphrase-file=./pass")
+	if code != 75 {
+		t.Errorf("exit status = %d, want 75 (the database may come back)\nstderr:\n%s", code, stderr)
+	}
+	requireHint(t, e, stderr, "keyorix-server: exit 75 ")
+}
 
+// REVIEW-4213-DEEP-2 LOW: a malformed DSN is refused when the configuration
+// is validated, before the pooler step connects: an operator fix.
+func TestBootExitCodes_MalformedPostgresDSNIs78(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs the server")
+	}
+	e := postgresInstall(t, "host=127.0.0.1 port=not-a-port user=keyorix dbname=keyorix sslmode=disable")
+	code, stderr := bootAttempt(t, e, bootEnv(e, "KEYORIX_DB_PASSWORD=edge-test-db-password"), "--passphrase-file=./pass")
+	if code != 78 {
+		t.Errorf("exit status = %d, want 78 (only a configuration fix helps)\nstderr:\n%s", code, stderr)
+	}
+	requireHint(t, e, stderr, "keyorix-server: exit 78 ")
+}
+
+// postgresInstall is an edge install whose storage is Postgres at dsn, with a
+// passphrase file at ./pass.
+func postgresInstall(t *testing.T, dsn string) *edgeInstall {
+	t.Helper()
+	e := newEdgeInstall(t, buildServerBinary(t), true)
 	cfgPath := filepath.Join(e.dir, "keyorix.yaml")
 	raw, err := os.ReadFile(cfgPath) //nolint:gosec // test path
 	if err != nil {
@@ -246,7 +271,6 @@ func TestBootExitCodes_PostgresDownIs75(t *testing.T) {
 		t.Fatal("config template no longer has the storage type/path lines this test rewrites")
 	}
 	text := strings.Replace(string(raw), typeLine, "\n  type: postgres", 1)
-	dsn := "host=127.0.0.1 port=" + freeTCPPort(t) + " user=keyorix dbname=keyorix sslmode=disable connect_timeout=5"
 	text = strings.Replace(text, pathLine, "\n    dsn: \""+dsn+"\"\n", 1)
 	if err := os.WriteFile(cfgPath, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
@@ -254,9 +278,5 @@ func TestBootExitCodes_PostgresDownIs75(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(e.dir, "pass"), []byte("edge-unattended-test-passphrase\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	code, stderr := bootAttempt(t, e, bootEnv(e, "KEYORIX_DB_PASSWORD=edge-test-db-password"), "--passphrase-file=./pass")
-	if code != 75 {
-		t.Errorf("exit status = %d, want 75 (the database may come back)\nstderr:\n%s", code, stderr)
-	}
-	requireHint(t, e, stderr, "keyorix-server: exit 75 ")
+	return e
 }

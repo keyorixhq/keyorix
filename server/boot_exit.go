@@ -34,6 +34,7 @@ import (
 	"os"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -81,7 +82,7 @@ func isDependencyUnreachable(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	return isNetworkFailure(err) || isServiceUnavailable(err)
+	return isNetworkFailure(err) || isServiceUnavailable(err) || isTokenRequestUnanswered(err)
 }
 
 // isNetworkFailure reports whether err is a network-level failure (refused,
@@ -129,9 +130,6 @@ type (
 // response error (HTTPStatusCode()) and API error (ErrorCode()), Azure's
 // *azcore.ResponseError, and a gRPC status (GCP, GRPCStatus()).
 func isServiceUnavailable(err error) bool {
-	transientHTTP := func(code int) bool {
-		return code >= http.StatusInternalServerError || code == http.StatusTooManyRequests
-	}
 	if he, ok := errors.AsType[httpStatusError](err); ok && transientHTTP(he.HTTPStatusCode()) {
 		return true
 	}
@@ -150,6 +148,36 @@ func isServiceUnavailable(err error) bool {
 		}
 	}
 	return false
+}
+
+// isTokenRequestUnanswered reports whether err is an Azure token request
+// (azure-kms authenticates to Entra ID before it calls the vault) that got no
+// answer or a "not now" answer. azidentity's *AuthenticationFailedError keeps
+// the cause of a request that failed (a refused dial, a DNS failure, a
+// timeout) only as message text, with no Unwrap, so isNetworkFailure cannot
+// see it; its RawResponse is nil exactly when Entra ID did not answer. An
+// answer of 5xx or 429 may come back too. Any other answer (400 invalid_client,
+// 401: a wrong secret or application) is a refusal. No credential configured
+// at all is azidentity's credentialUnavailableError, a different type, and
+// stays a refusal.
+//
+// What this does not tell apart: a nil RawResponse also covers a local failure
+// inside azidentity before the request (a client assertion that could not be
+// read). That is retried rather than stopped, the direction that fails soft.
+func isTokenRequestUnanswered(err error) bool {
+	afe, ok := errors.AsType[*azidentity.AuthenticationFailedError](err)
+	if !ok {
+		return false
+	}
+	if afe.RawResponse == nil {
+		return true
+	}
+	return transientHTTP(afe.RawResponse.StatusCode)
+}
+
+// transientHTTP reports whether an HTTP answer says "not now": 5xx or 429.
+func transientHTTP(code int) bool {
+	return code >= http.StatusInternalServerError || code == http.StatusTooManyRequests
 }
 
 // operatorFixUnlessUnreachable is operatorFix for a step that may also fail

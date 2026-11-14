@@ -58,7 +58,7 @@ func (m *MultiKeyProvider) Name() string {
 // SetDowngradeHook), so a caller with a real audit trail available can record it
 // as more than a log line.
 func (m *MultiKeyProvider) KEK() ([]byte, error) {
-	var errs []string
+	var errs []error
 	maxTier := ProviderTierOf(m.providers[0].Name())
 	for i, p := range m.providers {
 		key, err := p.KEK()
@@ -81,10 +81,29 @@ func (m *MultiKeyProvider) KEK() ([]byte, error) {
 			return nil, err
 		}
 		log.Printf("key provider: %s failed (%v), trying next", p.Name(), err)
-		errs = append(errs, fmt.Sprintf("%s: %v", p.Name(), err))
+		errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
 		if t := ProviderTierOf(p.Name()); t > maxTier {
 			maxTier = t
 		}
 	}
-	return nil, fmt.Errorf("all key providers failed: %s", strings.Join(errs, "; "))
+	return nil, &allProvidersFailedError{errs: errs}
 }
+
+// allProvidersFailedError is what KEK returns when every provider in the chain
+// failed. errs holds one "<provider name>: <error>" per provider, in chain
+// order, each wrapping that provider's error: errors.Is/As see every member's
+// cause (the server reads them to tell a KMS that is unreachable from one that
+// refused, EDGE-STARTUP-NOV-1), and Error() is the single line it always was.
+type allProvidersFailedError struct {
+	errs []error
+}
+
+func (e *allProvidersFailedError) Error() string {
+	msgs := make([]string, len(e.errs))
+	for i, err := range e.errs {
+		msgs[i] = err.Error()
+	}
+	return "all key providers failed: " + strings.Join(msgs, "; ")
+}
+
+func (e *allProvidersFailedError) Unwrap() []error { return e.errs }
