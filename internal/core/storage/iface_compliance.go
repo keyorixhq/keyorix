@@ -15,7 +15,15 @@ type ComplianceStore interface {
 	// blocks the purge jobs from hard-deleting records while active.
 	CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error)
 	GetActiveLegalHold(ctx context.Context) (*models.LegalHold, error)
-	UpdateLegalHold(ctx context.Context, h *models.LegalHold) error
+	// ReleaseLegalHold lifts hold id through one conditional, column-scoped UPDATE
+	// (released, released_by, released_at, release_reason WHERE id = ? AND
+	// released = false). It never writes any other column and never sets released
+	// back to false, so a caller holding a stale struct cannot re-activate a lifted
+	// hold (#4210). The bool reports whether the row matched: false means the hold
+	// was already released by a prior or racing lift (or does not exist), and the
+	// caller must refuse rather than report success (core returns
+	// ErrLegalHoldAlreadyReleased).
+	ReleaseLegalHold(ctx context.Context, id, releasedBy uint, releasedAt time.Time, reason string) (bool, error)
 
 	// Risk exceptions (ISO 27001 A.5.8 risk treatment) — governed, time-bound
 	// acceptances of a known control gap. CreateRiskException records one;
