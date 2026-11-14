@@ -223,13 +223,14 @@ func FuzzReloaderFailClosed(f *testing.F) {
 
 		// Start from a known-good, currently-valid pair (pool[0] is the normal
 		// window). New() must succeed on it.
-		mtime := time.Now()
+		// Every file is pinned to one fixed modification time: change detection is
+		// by content, so a rewrite must be seen even when the mtime never moves.
+		fixedMtime := time.Now().Add(-time.Hour)
 		writeFile := func(path string, b []byte) {
 			if err := os.WriteFile(path, b, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			mtime = mtime.Add(time.Second) // strictly increasing, always detected
-			_ = os.Chtimes(path, mtime, mtime)
+			_ = os.Chtimes(path, fixedMtime, fixedMtime)
 		}
 		writeFile(certFile, pool[0].certPEM)
 		writeFile(keyFile, pool[0].keyPEM)
@@ -280,10 +281,6 @@ func FuzzReloaderFailClosed(f *testing.F) {
 			case 6: // swap the cert file for a symlink to another pool pair's cert
 				_ = os.Remove(certFile)
 				_ = os.Symlink(poolCertPath[arg], certFile)
-				// Bump the symlink target's mtime so the change is detected via
-				// os.Stat (which follows the link).
-				mtime = mtime.Add(time.Second)
-				_ = os.Chtimes(poolCertPath[arg], mtime, mtime)
 			}
 			step()
 		}

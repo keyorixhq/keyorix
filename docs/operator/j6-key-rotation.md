@@ -25,8 +25,10 @@ Expected:
 ```
 🔍 Dry run: previewing what a DEK rotation would re-encrypt — no changes will be made to the database or the DEK...
 ✅ Dry run complete — no changes were made
-📋 secret_versions: 1, api_tokens: 0, api_clients: 0, password_resets: 0, mfa_secrets: 0, dynamic_secret_configs: 0, dynamic_secret_leases: 0 (legacy AAD upgraded: 0)
+📋 secret_versions: 1, api_tokens: 0, api_clients: 0, password_resets: 0, mfa_secrets: 0, dynamic_secret_configs: 0, dynamic_secret_leases: 0, notification_channels: 0 (legacy AAD upgraded: 0)
 ```
+
+(A `[sweep] secret_versions: N rows processed` log line precedes the result.)
 
 Then actually rotate:
 
@@ -37,8 +39,15 @@ keyorix-server admin encryption rotate --config ./keyorix.yaml --confirm
 Expected:
 
 ```
+⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
+🔄 Rotating DEK with full re-encryption sweep...
+[sweep] pre-commit verification: all N re-encrypted values decrypt under the new DEK
+✅ Sweep committed: 3 secret_versions, 0 api_tokens, ... re-encrypted (0 legacy AAD upgraded)
 ✅ DEK rotated and full re-encryption sweep complete. New version: v1790408589
 ```
+
+(On PostgreSQL a line `DEK rotation: encrypted writes are now refused on every replica; waiting 10s ...`
+comes first. The command ends with a second summary line like the dry run's.)
 
 A kill at any point during this is safe — the design guarantees exactly one of the old or
 new DEK stays consistently active and every row stays decryptable under it, never a
@@ -109,11 +118,21 @@ keyorix-server admin encryption rotate-kek --config ./keyorix.yaml --confirm --n
 Expected:
 
 ```
+Rotating KEK — re-wrapping DEK under new passphrase...
+Verifying the audit chain under the current key and recording the key transition...
+audit key transition to key version "ack-..." completed: the verification state, high-water mark and retention anchor are signed under the new key
+Audit verification state, high-water mark and retention anchor carried over to the new key (a fresh checkpoint is signed under it when the chain verified; a recorded break stays recorded).
 KEK rotation complete.
+
   Evidence-signing key fingerprint:      esk-...
   Audit-checkpoint key fingerprint:      ack-...
 
 Update the master passphrase in your deployment configuration to the new value before restarting the server.
+
+Note: evidence packs signed before this rotation will report as 'superseded
+key version' (not tampered) under `compliance verify`. Audit checkpoints signed
+before it stay verifiable with the previous checkpoint key; export the new one
+with `admin audit export-checkpoint-key`.
 ```
 
 The variable to update is `KEYORIX_MASTER_PASSWORD` or the file `KEYORIX_MASTER_PASSWORD_FILE`

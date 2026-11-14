@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -65,16 +65,13 @@ func (h *SecretHandler) ResumeSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, err := h.coreService.ResumeSecret(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
-			return
-		}
-		// A secret whose project was deleted cannot be resumed until the project is
-		// restored: the same 404 as a missing secret.
-		if isSecretNotFound(err) || storage.IsProjectNotFound(err) {
-			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else {
-			h.sendError(w, "InternalError", "Failed to resume secret", http.StatusInternalServerError, nil)
-		}
+		// A secret whose project or environment was deleted cannot be resumed until
+		// the parent is restored: the same 404 as a missing secret (storage.ErrProjectNotFound,
+		// core.ErrSecretTargetInvalid; #4132 OPENAPI-STATEFUL-5 for the environment).
+		answerCoreError(w, r, err, coreErrorAnswer{op: "resuming secret", texts: coreErrorTexts{
+			errclass.NotFound: "Secret not found",
+			errclass.Internal: "Failed to resume secret",
+		}})
 		return
 	}
 	h.sendSuccess(w, newSecretNodeWire(secret), "Secret resumed")

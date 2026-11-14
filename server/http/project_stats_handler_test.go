@@ -176,5 +176,6 @@ func TestGetProjectStats_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	// A missing project is 404, not 500 (#4132 OPENAPI-STATEFUL-3, FIX-ERRMAP-STRUCT-1).
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }

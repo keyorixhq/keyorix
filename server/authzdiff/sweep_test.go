@@ -297,6 +297,8 @@ func TestAuthzDiffSweep(t *testing.T) {
 	tally := &sweepTally{disBuckets: map[string]int{}, gapBuckets: map[string]int{}}
 	t.Cleanup(func() {
 		t.Logf("sweep: %d cases, %d with an O1/O2 class, %d uncalibrated", tally.n, tally.dis, tally.uncalibrated)
+		tb, _ := template(t)
+		t.Logf("io: template %d bytes, %d legs created (%d bytes cloned)", len(tb), legsCreated.Load(), int64(len(tb))*legsCreated.Load())
 		t.Logf("partition of O1/O2 cases: %v", tally.disBuckets)
 		t.Logf("partition of mapping-gap-only cases: %v", tally.gapBuckets)
 		if !strict {

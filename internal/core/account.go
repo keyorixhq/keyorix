@@ -34,7 +34,7 @@ import (
 // need no password. currentPassword is ignored when the email is not changing.
 func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, displayName, email, currentPassword string) (*models.User, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 	// reauthed is the account whose bare current password (no second factor)
 	// authorised an email change; its lockout clear follows the update.
@@ -137,7 +137,7 @@ func (c *KeyorixCore) verifyCurrentPassword(ctx context.Context, user *models.Us
 // request), all of the user's sessions are dropped.
 func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, newPassword, keepSessionToken string) error {
 	if userID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 
 	user, err := c.storage.GetUser(ctx, userID)
@@ -485,7 +485,10 @@ func (e policyRefusal) Error() string { return e.msg }
 // RefusalMessage is the caller-facing text; see PolicyRefusalMessage.
 func (e policyRefusal) RefusalMessage() string { return e.msg }
 func (e policyRefusal) Is(target error) bool {
-	return target == ErrPasswordPolicy
+	// A refused new password is also a field-validation refusal: a transport that
+	// classifies by ErrValidation answers it 400 / InvalidArgument without knowing
+	// the password-policy sentinel.
+	return target == ErrPasswordPolicy || target == ErrValidation
 }
 
 // applyNewPassword hashes newPassword, stamps it on the user (clearing a restricted
@@ -696,7 +699,7 @@ func (c *KeyorixCore) CurrentSessionID(ctx context.Context, token string) uint {
 // ListOwnSessions returns the caller's active sessions.
 func (c *KeyorixCore) ListOwnSessions(ctx context.Context, userID uint) ([]*models.Session, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 	return c.storage.ListSessionsByUser(ctx, userID)
 }

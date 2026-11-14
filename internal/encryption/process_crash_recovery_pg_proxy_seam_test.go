@@ -217,10 +217,14 @@ func TestPCrashPGProxySeams(t *testing.T) {
 func TestPCrashPGProxySeamsExtendedProtocol(t *testing.T) {
 	srv := newPCrashPGFakeServer(t, func() byte { return 'T' })
 	c := newPCrashPGProxyClient(t, srv, nil, "sql:pre:update:secret_versions")
+	// The proxy cuts at Execute and closes the connection, so a later frame
+	// (Sync) can race the close and fail with ECONNRESET/EPIPE. That is the
+	// behaviour under test, not a failure: stop sending, and let the
+	// assertions below (seam seen, server got only P and B) decide.
 	send := func(frames ...[]byte) {
 		for _, f := range frames {
 			if _, err := c.c.Write(f); err != nil {
-				t.Fatal(err)
+				return
 			}
 		}
 	}

@@ -493,13 +493,27 @@ describe('SharingManagementPage — secret column (#3153)', () => {
         expect(within(rowFor('Carol Smith')).getByTestId('share-secret-name')).toHaveTextContent('Secret #103');
         expect(within(rowFor('Carol Smith')).queryByTestId('share-secret-project')).not.toBeInTheDocument();
     });
+
+    it('the secret name links to the secret detail page, also when the API withholds the name', () => {
+        sharesState.data = makeResponse([
+            { ...shareAlice, secretName: 'db-password', projectName: 'Payments' } as typeof shareAlice,
+            shareCarol,
+        ]);
+        render(<SharingManagementPage />);
+        expect(within(rowFor('Alice Anderson')).getByTestId('share-secret-name')).toHaveAttribute(
+            'href',
+            '/secrets/101'
+        );
+        expect(within(rowFor('Carol Smith')).getByTestId('share-secret-name')).toHaveAttribute('href', '/secrets/103');
+    });
 });
 
 describe('SharingManagementPage — per-row actions', () => {
-    it('View secret opens the view-secret modal request', () => {
+    it('View secret goes to the secret detail page (no modal: none renders it)', () => {
         render(<SharingManagementPage />);
         fireEvent.click(within(rowFor('Alice Anderson')).getByTitle('View secret'));
-        expect(openModalMock).toHaveBeenCalledWith('view-secret', { secretId: 101 });
+        expect(window.location.pathname).toBe('/secrets/101');
+        expect(openModalMock).not.toHaveBeenCalledWith('view-secret', expect.anything());
     });
 
     it('Revoke access opens the confirm dialog; confirming deletes the share and closes on success', () => {

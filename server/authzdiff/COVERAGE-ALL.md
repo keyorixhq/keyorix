@@ -11,9 +11,9 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | invitations | 4 | 4 | 0 | 0 |
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
-| secrets | 43 | 29 | 10 | 10 |
-| other | 127 | 19 | 21 | 9 |
-| **total** | **211** | **89** | **46** | **34** |
+| secrets | 43 | 30 | 10 | 10 |
+| other | 127 | 20 | 21 | 10 |
+| **total** | **211** | **91** | **46** | **35** |
 
 ## groups
 
@@ -119,7 +119,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-rename` — design: bulk secret operation outside the initially bound secret set; not bound
 - [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-rotate` — design: bulk secret operation outside the initially bound secret set; not bound
 - [x] `REST POST /api/v1/projects/{id}/secrets/extend-expiring` — secret.extend.expiring
-- [ ] `REST POST /api/v1/projects/{id}/secrets/reassign-owner` — design: bulk secret operation outside the initially bound secret set; not bound
+- [x] `REST POST /api/v1/projects/{id}/secrets/reassign-owner` — secret.reassign.owner
 - [ ] `REST POST /api/v1/projects/{id}/secrets/render` — fixture: needs a template referencing secrets
 - [ ] `REST POST /api/v1/projects/{id}/secrets/resume-all` — design: bulk secret operation outside the initially bound secret set; not bound
 - [ ] `REST POST /api/v1/projects/{id}/secrets/suspend-all` — design: bulk secret operation outside the initially bound secret set; not bound
@@ -148,7 +148,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 ## other
 
 - [ ] `GRPC keyorix.v1.AuditService.WriteAuditCheckpoint` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
+- [x] `GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass` — breakglass.activate
 - [ ] `GRPC keyorix.v1.BreakGlassService.RevokeBreakGlass` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `GRPC keyorix.v1.ConnectService.CreateRefGrant` — fixture: needs a Keyorix Connect connector configured
 - [ ] `GRPC keyorix.v1.ConnectService.DeleteRefGrant` — fixture: needs a Keyorix Connect connector configured
@@ -247,7 +247,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close` — model: access-review campaign/attestation rules are not in the reference model
 - [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide` — model: access-review campaign/attestation rules are not in the reference model
 - [ ] `REST POST /api/v1/projects/{id}/access-review/revoke` — model: access-review campaign/attestation rules are not in the reference model
-- [ ] `REST POST /api/v1/projects/{id}/break-glass` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
+- [x] `REST POST /api/v1/projects/{id}/break-glass` — breakglass.activate
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/review` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/rejection-reason-templates` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound

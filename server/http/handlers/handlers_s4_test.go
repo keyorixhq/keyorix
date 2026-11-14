@@ -3926,12 +3926,11 @@ func TestCloseAccessReviewCampaign_HappyPath(t *testing.T) {
 
 func TestCampaignStatusForError_Cases(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, campaignStatusForError(fmt.Errorf("get campaign: %w", core.ErrAccessReviewNotFound)))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("still pending items")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("already closed")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("campaign is closed")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("ownership cannot be revoked")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("value must be")))
-	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(errors.New("required field")))
+	for _, text := range []string{"still pending items", "already closed", "campaign is closed", "ownership cannot be revoked", "value must be", "required field"} {
+		assert.Equal(t, http.StatusBadRequest, campaignStatusForError(fmt.Errorf("%s: %w", text, core.ErrValidation)), text)
+	}
+	// The independent-reviewer refusals are typed permission refusals and keep their 400 here.
+	assert.Equal(t, http.StatusBadRequest, campaignStatusForError(fmt.Errorf("an independent reviewer is required: %w", core.ErrPermissionDenied)))
 	assert.Equal(t, http.StatusInternalServerError, campaignStatusForError(errors.New("some unexpected storage error")))
 }
 
@@ -4141,49 +4140,49 @@ func TestToDeletedSecretEntry_NoDeletedAt(t *testing.T) {
 func TestTagError_NotFound(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, storage.NotFound(storage.ErrSecretNotFound, "record not found", nil), "fallback")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, storage.NotFound(storage.ErrSecretNotFound, "record not found", nil), "fallback")
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestTagError_Forbidden(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, storage.Typed(core.ErrPermissionDenied, "permission denied", nil), "fallback")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, storage.Typed(core.ErrPermissionDenied, "permission denied", nil), "fallback")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestTagError_Validation(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "tag exceeds maximum", nil), "fallback")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, storage.Typed(core.ErrSecretInvalidInput, "tag exceeds maximum", nil), "fallback")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestTagError_AtMost(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "at most 10 tags allowed", nil), "fallback")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, storage.Typed(core.ErrSecretInvalidInput, "at most 10 tags allowed", nil), "fallback")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestTagError_ValidationKeyword(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "validation failed: bad tag", nil), "fallback")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, storage.Typed(core.ErrSecretInvalidInput, "validation failed: bad tag", nil), "fallback")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestTagError_Internal(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("unexpected storage error"), "internal error occurred")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, fmt.Errorf("unexpected storage error"), "internal error occurred")
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestTagError_NotAuthorized(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, storage.Typed(core.ErrPermissionDenied, "not authorized to tag this secret", nil), "fallback")
+	h.tagError(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, storage.Typed(core.ErrPermissionDenied, "not authorized to tag this secret", nil), "fallback")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 

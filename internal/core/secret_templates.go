@@ -49,7 +49,7 @@ var validClassificationLabels = map[string]bool{
 
 func validateTemplateClassification(label string) error {
 	if !validClassificationLabels[label] {
-		return fmt.Errorf("invalid classification %q: must be one of public, internal, confidential, restricted, or empty", label)
+		return secretInvalidInput(fmt.Errorf("invalid classification %q: must be one of public, internal, confidential, restricted, or empty", label))
 	}
 	return nil
 }
@@ -84,7 +84,7 @@ func (c *KeyorixCore) LogSecretTemplateApplied(ctx context.Context, actorID, tem
 // CreateSecretTemplate creates a new secret template.
 func (c *KeyorixCore) CreateSecretTemplate(ctx context.Context, req *CreateSecretTemplateRequest) (*models.SecretTemplate, error) {
 	if strings.TrimSpace(req.Name) == "" {
-		return nil, fmt.Errorf("template name is required")
+		return nil, secretInvalidInput(fmt.Errorf("template name is required"))
 	}
 	if err := validateNameLength("template name", req.Name); err != nil {
 		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
@@ -160,7 +160,7 @@ func (c *KeyorixCore) UpdateSecretTemplate(ctx context.Context, id uint, req *Up
 		return nil, fmt.Errorf("failed to get secret template: %w", err)
 	}
 	if strings.TrimSpace(req.Name) == "" {
-		return nil, fmt.Errorf("template name is required")
+		return nil, secretInvalidInput(fmt.Errorf("template name is required"))
 	}
 	if err := validateNameLength("template name", req.Name); err != nil {
 		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))

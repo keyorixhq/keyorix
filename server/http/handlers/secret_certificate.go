@@ -6,14 +6,11 @@
 package handlers
 
 import (
-	"errors"
-	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -40,20 +37,13 @@ func (h *SecretHandler) GetSecretCertificate(w http.ResponseWriter, r *http.Requ
 		if h.sendSecretReadRefusal(w, err) {
 			return
 		}
-		msg := err.Error()
-		status := http.StatusInternalServerError
-		switch {
-		case errors.Is(err, storage.ErrSecretNotFound), errors.Is(err, storage.ErrSecretVersionNotFound):
-			status = http.StatusNotFound
-		case errors.Is(err, core.ErrCertificateUnparseable):
-			status = http.StatusBadRequest
-		case errors.Is(err, core.ErrPermissionDenied):
-			status = http.StatusForbidden
-		default:
-			log.Printf("Error inspecting certificate for secret %d: %v", id, err)
-			msg = clientSafe(err)
-		}
-		h.sendError(w, "Error", msg, status, nil)
+		// Through the shared classifier (#4132 OPENAPI-STATEFUL-1): not found 404,
+		// unparseable certificate and a machine principal's per-user check 400,
+		// refusal 403, each with core's text; anything else a clientSafe 500.
+		answerCoreError(w, r, err, coreErrorAnswer{op: "inspecting certificate", texts: coreErrorTexts{
+			errclass.NotFound:         err.Error(),
+			errclass.PermissionDenied: err.Error(),
+		}})
 		return
 	}
 	h.sendSuccess(w, info, "")

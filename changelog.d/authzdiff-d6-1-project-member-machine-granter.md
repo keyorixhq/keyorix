@@ -1,3 +1,0 @@
-### Security
-- **A machine actor holding `roles.assign` (and every permission the target role bundles) can now add or update project members as itself.** `AddProjectMember`/`UpdateProjectMember` never tagged the request context for a machine-authenticated caller, so the escalation-by-proxy ceiling treated every machine actor as an untagged relay and refused it unconditionally, regardless of its real authority (authzdiff cross-layer differential harness waiver known-06).
-- **`AddProjectMember` now returns 403, not 500, for a ceiling refusal.** Its error-status switch was missing the `errors.Is(err, core.ErrPermissionDenied)` case `UpdateProjectMember`'s otherwise-identical switch already had.

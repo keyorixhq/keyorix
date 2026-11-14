@@ -1,0 +1,78 @@
+# Triaged configspace findings (see known.go). Columns, tab separated:
+# id	class	inv	stage	key	min_assign	note
+# Only HARDENING, DEFECT and EXPECTED-DIFFERENCE rows are listed; configuration findings
+# of a more serious class are triaged privately and stay novel in every run. A row is
+# removed when TestKnownFindingsReproduce reports that it no longer reproduces.
+# Triage: 2026-11-12, at the merge of origin/main 78de06b4b.
+CSK-001	HARDENING	I2	inproc	invalid-accepted:breakglass.role:admin	breakglass.role=2	not refused by Validate; boot logs a warning and every activation is refused (fail-closed)
+CSK-002	HARDENING	I2	proc	proc-invalid-started:breakglass.role:admin	breakglass.role=2	as CSK-001, process stage
+CSK-003	HARDENING	I2	inproc	invalid-accepted:http.proxies:[]	http.proxies=5	unparseable trusted_proxies entries are dropped silently (nothing trusted)
+CSK-004	HARDENING	I2	proc	proc-invalid-started:http.proxies:[]	http.proxies=5	as CSK-003, process stage
+CSK-005	HARDENING	I2	inproc	invalid-accepted:http.proxies:[not-a-cidr]	http.proxies=4	as CSK-003
+CSK-006	HARDENING	I2	proc	proc-invalid-started:http.proxies:[not-a-cidr]	http.proxies=4	as CSK-003, process stage
+CSK-007	HARDENING	I2	inproc	invalid-accepted:http.rl.burst:-5	http.rl.burst=2	burst <= 0 falls back to burst = requests_per_second
+CSK-008	HARDENING	I2	proc	proc-invalid-started:http.rl.burst:-5	http.rl.burst=2	as CSK-007, process stage
+CSK-009	HARDENING	I2	inproc	invalid-accepted:http.rl.rps:-1	http.rl.rps=3	requests_per_second <= 0 turns the per-principal limiter off; not refused, no WARNING
+CSK-010	HARDENING	I2	proc	proc-invalid-started:http.rl.rps:-1	http.rl.rps=3	as CSK-009, process stage
+CSK-011	HARDENING	I2	inproc	invalid-accepted:membership.mode:anyone	membership.mode=4	unknown validation_mode is ignored, the allowlist default stays (fail-closed)
+CSK-012	HARDENING	I2	proc	proc-invalid-started:membership.mode:anyone	membership.mode=4	as CSK-011, process stage
+CSK-013	HARDENING	I2	inproc	invalid-accepted:pwpolicy.min:-1	pwpolicy.min=4	enforcement falls back to the default minimum; the settings API reports the raw value
+CSK-014	HARDENING	I2	proc	proc-invalid-started:pwpolicy.min:-1	pwpolicy.min=4	as CSK-013, process stage
+CSK-015	EXPECTED-DIFFERENCE	I2	inproc	invalid-accepted:storage.dsn:host=%%%	storage.dsn=4	syntactically valid DSN; refused when the connection fails (not startable in the sandbox)
+CSK-016	EXPECTED-DIFFERENCE	I2	inproc	invalid-fallback:grpc.keepalive.time:-1m	grpc.keepalive.time=3	fallback documented in docs/CONFIGURATION.md (server.grpc.keepalive)
+CSK-017	EXPECTED-DIFFERENCE	I2	inproc	invalid-fallback:grpc.keepalive.time:five minutes	grpc.keepalive.time=4	as CSK-016
+CSK-018	HARDENING	I2	inproc	invalid-fallback:sec.lockout.max:-3	sec.lockout.max=4	falls back to the default (not weaker); not refused
+CSK-019	HARDENING	I2	inproc	invalid-fallback:sec.lockout.window:15 minutes	sec.lockout.window=4	falls back to the default (not weaker); not refused
+CSK-020	DEFECT	I2	inproc	refusal-unnamed:http.enabled	http.enabled=3	YAML type error names a line number, not the key
+CSK-021	DEFECT	I2	proc	proc-refusal-unnamed:http.enabled	http.enabled=3	as CSK-020, process stage
+CSK-022	DEFECT	I2	inproc	refusal-unnamed:http.maxbody	http.maxbody=5	as CSK-020
+CSK-023	DEFECT	I2	proc	proc-refusal-unnamed:enc.dek	enc.dek=3	boot refusal names the file path, not the key
+CSK-024	DEFECT	I2	proc	proc-refusal-unnamed:enc.salt	enc.salt=3	as CSK-023
+CSK-025	DEFECT	I2	proc	proc-refusal-unnamed:grpc.tls.cert	grpc.tls.cert=3	as CSK-023
+CSK-026	DEFECT	I2	proc	proc-refusal-unnamed:http.tls.cert	http.tls.cert=3	as CSK-023
+CSK-027	DEFECT	I2	proc	proc-refusal-unnamed:http.tls.key	http.tls.key=3	TLS key-pair load error names neither key nor path
+CSK-028	DEFECT	I2	proc	proc-refusal-unnamed:accesslog.stall+breakglass.enabled+breakglass.role	accesslog.stall=1,breakglass.enabled=1,breakglass.role=1,ckpt.disable=1,ckpt.disable.alias=1,enc.dek=0,enc.dirlock=0,enc.enabled=0,enc.fallbackweak=1,enc.fallbackweak.alias=1,enc.provider=3,enc.salt=1,http.tls.autocert=0,http.tls.cert=0,http.tls.ciphers=0,http.tls.domains=2,http.tls.enabled=2,http.tls.key=0	minimised case: an empty salt_path is checked as "."; original case: a blank storage.type is refused at boot
+CSK-029	DEFECT	I2	proc	boot-refusal:accesslog.stall+breakglass.enabled+breakglass.role	accesslog.stall=1,breakglass.enabled=0,breakglass.role=0,ckpt.disable=0,ckpt.disable.alias=0,enc.dek=1	minimised case: an empty dek_path; original case: storage.database.path ":memory:" refused by the permission audit
+CSK-030	HARDENING	I3	inproc	posture-default:P03	http.metrics.file=1	no token is the code default for /metrics; documented, warned at boot
+CSK-031	HARDENING	I3	inproc	posture-default:P04	enc.enabled=2	encryption off is the zero-value default; documented, warned at boot
+CSK-032	HARDENING	I3	inproc	posture-default:P06	http.rl.enabled=2	rate limiting off is the default; documented, warned at boot
+CSK-033	HARDENING	I3	inproc	posture-default:P09	session.absolute=0	no absolute ceiling is the documented default; no warning
+CSK-034	EXPECTED-DIFFERENCE	I3	inproc	posture-default:P15	storage.dsn=4	ADR-112 amendment 3: standard durability is the PostgreSQL baseline, logged at INFO
+CSK-035	HARDENING	I3	proc	no-warning:P06	http.rl.rps=1	requests_per_second 0 turns the limiter off without a WARNING line
+CSK-036	HARDENING	I3	proc	no-warning:P09	session.absolute=3,session.access=3,siem.enabled=2	documented "no ceiling" value; no WARNING line
+CSK-037	HARDENING	I3	proc	no-warning:P10	http.proxies=2	catch-all trusted proxy range; no WARNING line
+CSK-038	HARDENING	I3	proc	no-warning:P11	http.swagger=1	public API schema only; docs say keep false in production; no WARNING line
+CSK-039	HARDENING	I3	proc	no-warning:P16	http.origins=3	non-loopback http CORS origin; no WARNING line
+CSK-040	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:audit.siem.allow_insecure_transport	-	replacement key wins, the warning names both keys (resolveDeprecatedAliases)
+CSK-041	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:audit.siem.allow_private_network_target	-	as CSK-040
+CSK-042	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:audit_checkpoints.disabled	-	as CSK-040
+CSK-043	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:dynamic_secrets.allow_insecure_transport	-	as CSK-040
+CSK-044	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:dynamic_secrets.allow_private_network_targets	-	as CSK-040
+CSK-045	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:evidence_delivery.webhook.allow_insecure_transport	-	as CSK-040
+CSK-046	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:evidence_delivery.webhook.allow_private_network_target	-	as CSK-040
+CSK-047	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:notifications.webhook.allow_insecure_transport	-	as CSK-040
+CSK-048	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:notifications.webhook.allow_private_network_target	-	as CSK-040
+CSK-049	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:security.allow_unsafe_file_permissions	-	as CSK-040
+CSK-050	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:security.login_lockout.disabled	-	as CSK-040
+CSK-051	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:security.recover_admin.keyless_mode	-	as CSK-040
+CSK-052	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:sso.providers[].saml.allow_idp_initiated	-	as CSK-040
+CSK-053	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:sso.providers[].trust_asserted_email	-	as CSK-040
+CSK-054	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:storage.encryption.key_provider.allow_weaker_fallback	-	as CSK-040
+CSK-055	EXPECTED-DIFFERENCE	I5	inproc	alias-conflict-weaker:storage.encryption.key_provider.kms_allow_context_fallback	-	as CSK-040
+CSK-056	EXPECTED-DIFFERENCE	I2	inproc	invalid-accepted:enc.dek:$FX:garbage	enc.dek=4	late refusal: file contents are checked at boot (inproc-only runs)
+CSK-057	EXPECTED-DIFFERENCE	I2	inproc	invalid-accepted:enc.dek:$FX:missing	enc.dek=3	late refusal at boot (inproc-only runs)
+CSK-058	HARDENING	I2	inproc	invalid-accepted:enc.provider:rot13	enc.provider=10	provider type is checked only when encryption starts, after admin validate passes
+CSK-059	EXPECTED-DIFFERENCE	I2	inproc	invalid-accepted:enc.salt:$FX:empty	enc.salt=3	late refusal at boot (inproc-only runs)
+CSK-060	HARDENING	I2	inproc	invalid-accepted:grpc.port:70000	grpc.port=4	port is not range-checked by Validate; refused only by listen
+CSK-061	EXPECTED-DIFFERENCE	I2	inproc	invalid-accepted:grpc.tls.cert:$FX:missing	grpc.tls.cert=3	late refusal at boot (inproc-only runs)
+CSK-062	HARDENING	I2	inproc	invalid-accepted:http.metrics.file:$FX:world	http.metrics.file=5	permissions enforced at boot, not by admin validate
+CSK-063	HARDENING	I2	inproc	invalid-accepted:http.port:-1	http.port=5	as CSK-060
+CSK-064	HARDENING	I2	inproc	invalid-accepted:http.port:65536	http.port=4	as CSK-060
+CSK-065	HARDENING	I2	inproc	invalid-accepted:http.port:80 80	http.port=7	as CSK-060
+CSK-066	HARDENING	I2	inproc	invalid-accepted:http.port:http	http.port=6	as CSK-060 (a service name)
+CSK-067	EXPECTED-DIFFERENCE	I2	inproc	invalid-accepted:http.tls.cert:$FX:dir	http.tls.cert=5	late refusal at boot (inproc-only runs)
+CSK-068	HARDENING	I2	inproc	invalid-accepted:http.tls.cert:$FX:garbage	http.tls.cert=4	key pair parsed only when the listener starts, after admin validate passes
+CSK-069	EXPECTED-DIFFERENCE	I2	inproc	invalid-accepted:http.tls.cert:$FX:missing	http.tls.cert=3	late refusal at boot (inproc-only runs)
+CSK-070	HARDENING	I2	inproc	invalid-accepted:http.tls.key:$FX:garbage	http.tls.key=4	as CSK-068
+CSK-071	HARDENING	I2	inproc	invalid-accepted:http.tls.key:certs/server.crt	http.tls.key=3	as CSK-068
+CSK-072	HARDENING	I2	inproc	invalid-accepted:siem.endpoint:not a url	siem.endpoint=5	not validated as a URL; refused only by the TLS rule with a misleading message

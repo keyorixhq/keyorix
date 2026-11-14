@@ -55,7 +55,7 @@ type ProjectStats struct {
 // projects (< a few thousand secrets).
 func (c *KeyorixCore) GetProjectStats(ctx context.Context, projectID uint) (*ProjectStats, error) {
 	if projectID == 0 {
-		return nil, fmt.Errorf("project ID is required")
+		return nil, validationErrorf("project ID is required")
 	}
 
 	proj, err := c.storage.GetProject(ctx, projectID)

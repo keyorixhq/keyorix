@@ -30,5 +30,11 @@
   delete folds into its uniform denial (#G14: reporting a fault there only for an existing
   secret would let a caller without access probe existence during a partial outage); the gRPC
   lease lookup answers `PermissionDenied`, not `Unavailable`, to a caller without global
-  permission (the lease scope is unknown when the read faults), and the same fold remains in the
-  other REST scope resolvers (config, share, rotation policy, secret).
+  permission (the lease scope is unknown when the read faults). The REST scope resolvers
+  (config, share, rotation policy, secret) answer a read fault 503 `storage_unavailable` since
+  #3888 (`handleScopeResolutionError`, `errTargetReadFault`); the gRPC twins
+  (`authorizeScopedTarget` since STORAGE-ERR-CLASS-4, `authorizeShareScoped` with #3911) do the
+  same. Since FIX-ERRMAP-STRUCT-1 the transports render the fault through one classifier
+  (`server/errclass`: `ErrStorageReadUnavailable` is the `Unavailable` class, checked before any
+  not-found sentinel, so a fault wrapped in a "not found" text is still a retry answer;
+  `INV-HTTP-core-error-answered-through-shared-classifier`).

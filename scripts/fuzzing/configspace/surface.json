@@ -1,0 +1,1425 @@
+[
+ {
+  "path": "anomaly_alerts.baseline_quarantine",
+  "type": "string"
+ },
+ {
+  "path": "anomaly_alerts.business_hours.off_hours_end",
+  "type": "int"
+ },
+ {
+  "path": "anomaly_alerts.business_hours.off_hours_start",
+  "type": "int"
+ },
+ {
+  "path": "anomaly_alerts.business_hours.timezone",
+  "type": "string"
+ },
+ {
+  "path": "anomaly_alerts.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "anomaly_alerts.ml.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "anomaly_alerts.ml.num_trees",
+  "type": "int"
+ },
+ {
+  "path": "anomaly_alerts.ml.sample_size",
+  "type": "int"
+ },
+ {
+  "path": "anomaly_alerts.ml.seed",
+  "type": "int64"
+ },
+ {
+  "path": "anomaly_alerts.ml.threshold",
+  "type": "float64"
+ },
+ {
+  "path": "anomaly_alerts.schedule",
+  "type": "string"
+ },
+ {
+  "path": "audit.checkpoint_notary.ca_cert_path",
+  "type": "string"
+ },
+ {
+  "path": "audit.checkpoint_notary.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "audit.checkpoint_notary.timeout",
+  "type": "string"
+ },
+ {
+  "path": "audit.checkpoint_notary.type",
+  "type": "string"
+ },
+ {
+  "path": "audit.checkpoint_notary.url",
+  "type": "string"
+ },
+ {
+  "path": "audit.offline_anchor_path",
+  "type": "string"
+ },
+ {
+  "path": "audit.siem.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "audit.siem.endpoint",
+  "type": "string"
+ },
+ {
+  "path": "audit.siem.insecure_allow_plaintext_siem_transport",
+  "type": "bool"
+ },
+ {
+  "path": "audit.siem.insecure_allow_private_network_siem_target",
+  "type": "bool"
+ },
+ {
+  "path": "audit.siem.insecure_skip_verify",
+  "type": "bool"
+ },
+ {
+  "path": "audit.siem.provider",
+  "type": "string"
+ },
+ {
+  "path": "audit.siem.spool_dir",
+  "type": "string"
+ },
+ {
+  "path": "audit.siem.token",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "audit_checkpoints.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "audit_checkpoints.insecure_disable_audit_checkpoints",
+  "type": "bool"
+ },
+ {
+  "path": "audit_checkpoints.schedule",
+  "type": "string"
+ },
+ {
+  "path": "auto_rotation.backends[].allowed_refs",
+  "type": "[]string"
+ },
+ {
+  "path": "auto_rotation.backends[].dsn_env",
+  "type": "string"
+ },
+ {
+  "path": "auto_rotation.backends[].name",
+  "type": "string"
+ },
+ {
+  "path": "auto_rotation.backends[].region",
+  "type": "string"
+ },
+ {
+  "path": "auto_rotation.backends[].type",
+  "type": "string"
+ },
+ {
+  "path": "auto_rotation.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "auto_rotation.schedule",
+  "type": "string"
+ },
+ {
+  "path": "break_glass.default_ttl",
+  "type": "string"
+ },
+ {
+  "path": "break_glass.degraded_ttl",
+  "type": "string"
+ },
+ {
+  "path": "break_glass.emergency_role",
+  "type": "string"
+ },
+ {
+  "path": "break_glass.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "break_glass.max_ttl",
+  "type": "string"
+ },
+ {
+  "path": "break_glass.review_window",
+  "type": "string"
+ },
+ {
+  "path": "certificate_expiry.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "certificate_expiry.lead_days",
+  "type": "int"
+ },
+ {
+  "path": "certificate_expiry.schedule",
+  "type": "string"
+ },
+ {
+  "path": "classification.mfa_stepup_grant_retention_days",
+  "type": "int"
+ },
+ {
+  "path": "classification.restricted_mfa_stepup_window_minutes",
+  "type": "int"
+ },
+ {
+  "path": "classification.restricted_requires_approval",
+  "type": "bool"
+ },
+ {
+  "path": "classification.restricted_requires_mfa_stepup",
+  "type": "bool"
+ },
+ {
+  "path": "classification.restricted_requires_permission",
+  "type": "bool"
+ },
+ {
+  "path": "client.auth.api_key",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "client.auth.type",
+  "type": "string"
+ },
+ {
+  "path": "client.endpoint",
+  "type": "string"
+ },
+ {
+  "path": "client.timeout",
+  "type": "string"
+ },
+ {
+  "path": "compliance_digest.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "compliance_digest.schedule",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].account_id",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].address",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].allowed_refs",
+  "type": "[]string"
+ },
+ {
+  "path": "connect.connectors[].environment",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].name",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].project",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].project_id",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].region",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].scope",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].token_env",
+  "type": "string"
+ },
+ {
+  "path": "connect.connectors[].type",
+  "type": "string"
+ },
+ {
+  "path": "connect.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "credential_delivery.base_url",
+  "type": "string"
+ },
+ {
+  "path": "credential_delivery.mode",
+  "type": "string"
+ },
+ {
+  "path": "credential_delivery.setup_token_ttl",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "credential_delivery.smtp.from",
+  "type": "string"
+ },
+ {
+  "path": "credential_delivery.smtp.host",
+  "type": "string"
+ },
+ {
+  "path": "credential_delivery.smtp.password",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "credential_delivery.smtp.port",
+  "type": "int"
+ },
+ {
+  "path": "credential_delivery.smtp.tls",
+  "type": "string"
+ },
+ {
+  "path": "credential_delivery.smtp.username",
+  "type": "string"
+ },
+ {
+  "path": "crypto_inventory.migration_years",
+  "type": "int"
+ },
+ {
+  "path": "crypto_inventory.quantum_horizon",
+  "type": "string"
+ },
+ {
+  "path": "crypto_inventory.unbounded_lifetime_years",
+  "type": "int"
+ },
+ {
+  "path": "data_retention.anomaly_alerts_days",
+  "type": "int"
+ },
+ {
+  "path": "data_retention.anomaly_alerts_unacked_ceiling_days",
+  "type": "int"
+ },
+ {
+  "path": "data_retention.break_glass_days",
+  "type": "int"
+ },
+ {
+  "path": "data_retention.closed_access_reviews_days",
+  "type": "int"
+ },
+ {
+  "path": "data_retention.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "data_retention.resolved_access_requests_days",
+  "type": "int"
+ },
+ {
+  "path": "data_retention.schedule",
+  "type": "string"
+ },
+ {
+  "path": "dual_control.required_approvals",
+  "type": "int"
+ },
+ {
+  "path": "dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport",
+  "type": "bool",
+  "secret": true
+ },
+ {
+  "path": "dynamic_secrets.insecure_allow_private_network_dynamic_secret_targets",
+  "type": "bool",
+  "secret": true
+ },
+ {
+  "path": "dynamic_secrets.max_lease_ttl",
+  "type": "string"
+ },
+ {
+  "path": "dynamic_secrets.sweep_enabled",
+  "type": "bool"
+ },
+ {
+  "path": "dynamic_secrets.sweep_interval",
+  "type": "string"
+ },
+ {
+  "path": "environment",
+  "type": "string"
+ },
+ {
+  "path": "evidence_delivery.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "evidence_delivery.object_store.bucket",
+  "type": "string"
+ },
+ {
+  "path": "evidence_delivery.object_store.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "evidence_delivery.object_store.endpoint",
+  "type": "string"
+ },
+ {
+  "path": "evidence_delivery.object_store.legal_hold",
+  "type": "bool"
+ },
+ {
+  "path": "evidence_delivery.object_store.lock_mode",
+  "type": "string"
+ },
+ {
+  "path": "evidence_delivery.object_store.lock_retain_days",
+  "type": "int"
+ },
+ {
+  "path": "evidence_delivery.object_store.prefix",
+  "type": "string"
+ },
+ {
+  "path": "evidence_delivery.object_store.region",
+  "type": "string"
+ },
+ {
+  "path": "evidence_delivery.object_store.use_path_style",
+  "type": "bool"
+ },
+ {
+  "path": "evidence_delivery.output_dir",
+  "type": "string"
+ },
+ {
+  "path": "evidence_delivery.schedule",
+  "type": "string"
+ },
+ {
+  "path": "evidence_delivery.webhook.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "evidence_delivery.webhook.endpoint",
+  "type": "string"
+ },
+ {
+  "path": "evidence_delivery.webhook.insecure_allow_plaintext_evidence_transport",
+  "type": "bool"
+ },
+ {
+  "path": "evidence_delivery.webhook.insecure_allow_private_network_evidence_target",
+  "type": "bool"
+ },
+ {
+  "path": "evidence_delivery.webhook.insecure_skip_verify",
+  "type": "bool"
+ },
+ {
+  "path": "evidence_delivery.webhook.token",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "expiry_reminders.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "expiry_reminders.lead_days",
+  "type": "int"
+ },
+ {
+  "path": "expiry_reminders.schedule",
+  "type": "string"
+ },
+ {
+  "path": "jit_access_expiry.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "jit_access_expiry.schedule",
+  "type": "string"
+ },
+ {
+  "path": "license.deployment_id",
+  "type": "string"
+ },
+ {
+  "path": "license.grace_hours",
+  "type": "int"
+ },
+ {
+  "path": "license.path",
+  "type": "string"
+ },
+ {
+  "path": "license_expiry.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "license_expiry.lead_days",
+  "type": "int"
+ },
+ {
+  "path": "license_expiry.schedule",
+  "type": "string"
+ },
+ {
+  "path": "locale.fallback_language",
+  "type": "string"
+ },
+ {
+  "path": "locale.language",
+  "type": "string"
+ },
+ {
+  "path": "membership.domain_allowlist",
+  "type": "[]string"
+ },
+ {
+  "path": "membership.validation_mode",
+  "type": "string"
+ },
+ {
+  "path": "minimum_cli_version",
+  "type": "string"
+ },
+ {
+  "path": "notifications.email.broadcast_to",
+  "type": "string"
+ },
+ {
+  "path": "notifications.email.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "notifications.email.from",
+  "type": "string"
+ },
+ {
+  "path": "notifications.email.host",
+  "type": "string"
+ },
+ {
+  "path": "notifications.email.password",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "notifications.email.port",
+  "type": "int"
+ },
+ {
+  "path": "notifications.email.tls",
+  "type": "string"
+ },
+ {
+  "path": "notifications.email.username",
+  "type": "string"
+ },
+ {
+  "path": "notifications.slack.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "notifications.slack.webhook_url",
+  "type": "string"
+ },
+ {
+  "path": "notifications.teams.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "notifications.teams.webhook_url",
+  "type": "string"
+ },
+ {
+  "path": "notifications.webhook.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "notifications.webhook.endpoint",
+  "type": "string"
+ },
+ {
+  "path": "notifications.webhook.insecure_allow_plaintext_notify_transport",
+  "type": "bool"
+ },
+ {
+  "path": "notifications.webhook.insecure_allow_private_network_notify_target",
+  "type": "bool"
+ },
+ {
+  "path": "notifications.webhook.insecure_skip_verify",
+  "type": "bool"
+ },
+ {
+  "path": "notifications.webhook.signing_secret",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "notifications.webhook.token",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "oidc.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "oidc.issuers[].audiences",
+  "type": "[]string"
+ },
+ {
+  "path": "oidc.issuers[].issuer",
+  "type": "string"
+ },
+ {
+  "path": "oidc.issuers[].jwks_uri",
+  "type": "string"
+ },
+ {
+  "path": "oidc.issuers[].max_token_age_seconds",
+  "type": "int",
+  "secret": true
+ },
+ {
+  "path": "oidc.issuers[].name",
+  "type": "string"
+ },
+ {
+  "path": "password_policy.history_count",
+  "type": "int"
+ },
+ {
+  "path": "password_policy.max_age_days",
+  "type": "int"
+ },
+ {
+  "path": "password_policy.min_length",
+  "type": "int"
+ },
+ {
+  "path": "password_policy.reject_common_passwords",
+  "type": "bool",
+  "secret": true
+ },
+ {
+  "path": "password_policy.reject_personal_info",
+  "type": "bool"
+ },
+ {
+  "path": "password_policy.require_digit",
+  "type": "bool"
+ },
+ {
+  "path": "password_policy.require_lowercase",
+  "type": "bool"
+ },
+ {
+  "path": "password_policy.require_special",
+  "type": "bool"
+ },
+ {
+  "path": "password_policy.require_uppercase",
+  "type": "bool"
+ },
+ {
+  "path": "purge.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "purge.schedule",
+  "type": "string"
+ },
+ {
+  "path": "read_quota_alerts.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "read_quota_alerts.schedule",
+  "type": "string"
+ },
+ {
+  "path": "recertification.auto_open",
+  "type": "bool"
+ },
+ {
+  "path": "recertification.cadence_days",
+  "type": "int"
+ },
+ {
+  "path": "recertification.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "recertification.schedule",
+  "type": "string"
+ },
+ {
+  "path": "rotation_reminders.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "rotation_reminders.schedule",
+  "type": "string"
+ },
+ {
+  "path": "scim.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "scim.token",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "secret_name_policy.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "secret_name_policy.max_length",
+  "type": "int"
+ },
+ {
+  "path": "secret_name_policy.pattern",
+  "type": "string"
+ },
+ {
+  "path": "secret_value_policy.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "secret_value_policy.extra_denylist",
+  "type": "[]string"
+ },
+ {
+  "path": "secret_value_policy.min_length",
+  "type": "int"
+ },
+ {
+  "path": "secret_value_policy.reject_common",
+  "type": "bool"
+ },
+ {
+  "path": "secrets.chunking.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "secrets.chunking.max_chunk_size_kb",
+  "type": "int"
+ },
+ {
+  "path": "secrets.chunking.max_chunks_per_secret",
+  "type": "int",
+  "secret": true
+ },
+ {
+  "path": "secrets.limits.max_secret_size",
+  "type": "int",
+  "secret": true
+ },
+ {
+  "path": "secrets.limits.max_secrets_per_user",
+  "type": "int",
+  "secret": true
+ },
+ {
+  "path": "security.auth_rate_limit_fallback.replicas",
+  "type": "int"
+ },
+ {
+  "path": "security.auto_fix_file_permissions",
+  "type": "bool"
+ },
+ {
+  "path": "security.enable_file_permission_check",
+  "type": "bool"
+ },
+ {
+  "path": "security.insecure_allow_unsafe_file_permissions",
+  "type": "bool"
+ },
+ {
+  "path": "security.login_lockout.base_cooldown",
+  "type": "string"
+ },
+ {
+  "path": "security.login_lockout.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "security.login_lockout.insecure_disable_login_lockout",
+  "type": "bool"
+ },
+ {
+  "path": "security.login_lockout.max_attempts",
+  "type": "int"
+ },
+ {
+  "path": "security.login_lockout.max_cooldown",
+  "type": "string"
+ },
+ {
+  "path": "security.login_lockout.window",
+  "type": "string"
+ },
+ {
+  "path": "security.one_time_password_ttl",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "security.recover_admin.insecure_keyless_admin_recovery",
+  "type": "bool"
+ },
+ {
+  "path": "security.recovery_one_time_password_ttl",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "security.require_mfa",
+  "type": "bool"
+ },
+ {
+  "path": "security.require_transport_tls",
+  "type": "bool"
+ },
+ {
+  "path": "server.access_log.on_sink_stall",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.allowed_origins",
+  "type": "[]string"
+ },
+ {
+  "path": "server.grpc.domain",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.grpc.host",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.hsts_preload",
+  "type": "bool"
+ },
+ {
+  "path": "server.grpc.keepalive.handshake_timeout",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.keepalive.max_connection_age",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.keepalive.max_connection_age_grace",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.keepalive.max_connection_idle",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.keepalive.min_time",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.keepalive.permit_without_stream",
+  "type": "bool"
+ },
+ {
+  "path": "server.grpc.keepalive.time",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.keepalive.timeout",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.max_request_body_bytes",
+  "type": "int64"
+ },
+ {
+  "path": "server.grpc.metrics_token",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "server.grpc.metrics_token_file",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.port",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.protocol_versions",
+  "type": "[]string"
+ },
+ {
+  "path": "server.grpc.ratelimit.burst",
+  "type": "int"
+ },
+ {
+  "path": "server.grpc.ratelimit.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.grpc.ratelimit.requests_per_second",
+  "type": "int"
+ },
+ {
+  "path": "server.grpc.reflection_enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.grpc.swagger_enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.grpc.tls.allowed_ciphers",
+  "type": "[]string"
+ },
+ {
+  "path": "server.grpc.tls.auto_cert",
+  "type": "bool"
+ },
+ {
+  "path": "server.grpc.tls.cert_cache_dir",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.tls.cert_file",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.tls.domains",
+  "type": "[]string"
+ },
+ {
+  "path": "server.grpc.tls.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.grpc.tls.key_file",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.tls_mode",
+  "type": "string"
+ },
+ {
+  "path": "server.grpc.trusted_proxies",
+  "type": "[]string"
+ },
+ {
+  "path": "server.grpc.web_assets_path",
+  "type": "string"
+ },
+ {
+  "path": "server.http.allowed_origins",
+  "type": "[]string"
+ },
+ {
+  "path": "server.http.domain",
+  "type": "string"
+ },
+ {
+  "path": "server.http.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.http.host",
+  "type": "string"
+ },
+ {
+  "path": "server.http.hsts_preload",
+  "type": "bool"
+ },
+ {
+  "path": "server.http.keepalive.handshake_timeout",
+  "type": "string"
+ },
+ {
+  "path": "server.http.keepalive.max_connection_age",
+  "type": "string"
+ },
+ {
+  "path": "server.http.keepalive.max_connection_age_grace",
+  "type": "string"
+ },
+ {
+  "path": "server.http.keepalive.max_connection_idle",
+  "type": "string"
+ },
+ {
+  "path": "server.http.keepalive.min_time",
+  "type": "string"
+ },
+ {
+  "path": "server.http.keepalive.permit_without_stream",
+  "type": "bool"
+ },
+ {
+  "path": "server.http.keepalive.time",
+  "type": "string"
+ },
+ {
+  "path": "server.http.keepalive.timeout",
+  "type": "string"
+ },
+ {
+  "path": "server.http.max_request_body_bytes",
+  "type": "int64"
+ },
+ {
+  "path": "server.http.metrics_token",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "server.http.metrics_token_file",
+  "type": "string"
+ },
+ {
+  "path": "server.http.port",
+  "type": "string"
+ },
+ {
+  "path": "server.http.protocol_versions",
+  "type": "[]string"
+ },
+ {
+  "path": "server.http.ratelimit.burst",
+  "type": "int"
+ },
+ {
+  "path": "server.http.ratelimit.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.http.ratelimit.requests_per_second",
+  "type": "int"
+ },
+ {
+  "path": "server.http.reflection_enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.http.swagger_enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.http.tls.allowed_ciphers",
+  "type": "[]string"
+ },
+ {
+  "path": "server.http.tls.auto_cert",
+  "type": "bool"
+ },
+ {
+  "path": "server.http.tls.cert_cache_dir",
+  "type": "string"
+ },
+ {
+  "path": "server.http.tls.cert_file",
+  "type": "string"
+ },
+ {
+  "path": "server.http.tls.domains",
+  "type": "[]string"
+ },
+ {
+  "path": "server.http.tls.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "server.http.tls.key_file",
+  "type": "string"
+ },
+ {
+  "path": "server.http.tls_mode",
+  "type": "string"
+ },
+ {
+  "path": "server.http.trusted_proxies",
+  "type": "[]string"
+ },
+ {
+  "path": "server.http.web_assets_path",
+  "type": "string"
+ },
+ {
+  "path": "server.log.format",
+  "type": "string"
+ },
+ {
+  "path": "session.absolute_ttl",
+  "type": "string"
+ },
+ {
+  "path": "session.access_ttl",
+  "type": "string"
+ },
+ {
+  "path": "soft_delete.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "soft_delete.retention_days",
+  "type": "int"
+ },
+ {
+  "path": "sso.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "sso.providers[].auto_provision",
+  "type": "bool"
+ },
+ {
+  "path": "sso.providers[].client_id",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].client_secret",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "sso.providers[].default_role",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].group_role_map",
+  "type": "map[string]string"
+ },
+ {
+  "path": "sso.providers[].group_sync",
+  "type": "bool"
+ },
+ {
+  "path": "sso.providers[].groups_claim",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].insecure_trust_saml_asserted_email",
+  "type": "bool"
+ },
+ {
+  "path": "sso.providers[].issuer",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].name",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].redirect_url",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].saml.acs_url",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].saml.email_attribute",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].saml.groups_attribute",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].saml.idp_metadata_file",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].saml.idp_metadata_xml",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].saml.insecure_allow_idp_initiated_saml",
+  "type": "bool"
+ },
+ {
+  "path": "sso.providers[].saml.name_attribute",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].saml.sp_entity_id",
+  "type": "string"
+ },
+ {
+  "path": "sso.providers[].scopes",
+  "type": "[]string"
+ },
+ {
+  "path": "sso.providers[].type",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.audit_durability",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.audit_flusher_linger_window",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.conn_max_lifetime_minutes",
+  "type": "int"
+ },
+ {
+  "path": "storage.database.dsn",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "storage.database.fdatasync",
+  "type": "bool"
+ },
+ {
+  "path": "storage.database.host",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.insecure_audit_skip_durable_sync",
+  "type": "bool"
+ },
+ {
+  "path": "storage.database.insecure_audit_skip_reads",
+  "type": "bool"
+ },
+ {
+  "path": "storage.database.max_idle_conns",
+  "type": "int"
+ },
+ {
+  "path": "storage.database.max_open_conns",
+  "type": "int"
+ },
+ {
+  "path": "storage.database.name",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.native_read_pool_max",
+  "type": "int"
+ },
+ {
+  "path": "storage.database.password",
+  "type": "string",
+  "secret": true
+ },
+ {
+  "path": "storage.database.path",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.pooler",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.port",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.require_existing_path",
+  "type": "bool"
+ },
+ {
+  "path": "storage.database.single_writer",
+  "type": "bool"
+ },
+ {
+  "path": "storage.database.ssl_mode",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.ssl_root_cert",
+  "type": "string"
+ },
+ {
+  "path": "storage.database.user",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.dek_path",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "storage.encryption.key_dir_lock",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.env_var",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.exec_command",
+  "type": "[]string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].env_var",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].exec_command",
+  "type": "[]string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].file_path",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].insecure_allow_kms_context_fallback",
+  "type": "bool"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].insecure_allow_weaker_kek_fallback",
+  "type": "bool"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].kms_encryption_context",
+  "type": "map[string]string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].kms_key_id",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].shamir_commitment",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].shamir_share_env",
+  "type": "[]string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].shamir_share_files",
+  "type": "[]string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].tpm_device",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].type",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.fallbacks[].wrapped_key_path",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.file_path",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.insecure_allow_kms_context_fallback",
+  "type": "bool"
+ },
+ {
+  "path": "storage.encryption.key_provider.insecure_allow_weaker_kek_fallback",
+  "type": "bool"
+ },
+ {
+  "path": "storage.encryption.key_provider.kms_encryption_context",
+  "type": "map[string]string"
+ },
+ {
+  "path": "storage.encryption.key_provider.kms_key_id",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.shamir_commitment",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.shamir_share_env",
+  "type": "[]string"
+ },
+ {
+  "path": "storage.encryption.key_provider.shamir_share_files",
+  "type": "[]string"
+ },
+ {
+  "path": "storage.encryption.key_provider.tpm_device",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.type",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.key_provider.wrapped_key_path",
+  "type": "string"
+ },
+ {
+  "path": "storage.encryption.salt_path",
+  "type": "string"
+ },
+ {
+  "path": "storage.type",
+  "type": "string"
+ },
+ {
+  "path": "webauthn.enabled",
+  "type": "bool"
+ },
+ {
+  "path": "webauthn.rp_display_name",
+  "type": "string"
+ },
+ {
+  "path": "webauthn.rp_id",
+  "type": "string"
+ },
+ {
+  "path": "webauthn.rp_origins",
+  "type": "[]string"
+ }
+]

@@ -1,0 +1,9 @@
+# id	patch	needs_server_binary	invariant	stage	finding key prefix
+pd1	pd1-tls-silently-off.patch	0	I3	inproc	fidelity:http.tls.enabled
+pd2	pd2-invalid-ignored.patch	0	I2	inproc	invalid-accepted:accesslog.stall
+pd3	pd3-secret-in-log.patch	1	I4	proc	leak:metrics
+pd4	pd4-panic-on-empty.patch	0	I1	inproc	panic:
+pd5	pd5-alias-wrong-target.patch	0	I5	inproc	alias-effect-diff:security.login_lockout.disabled
+pd6	pd6-precedence-inverted.patch	0	I5	inproc	prec-envloses:
+pd7	pd7-secret-in-error.patch	0	I4	inproc	leak-err:
+pd8	pd8-warning-suppressed.patch	1	I3	proc	no-warning:P05

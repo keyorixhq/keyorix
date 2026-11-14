@@ -1082,12 +1082,15 @@ func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context, resume bool) (*
 	if err != nil {
 		return nil, "", err
 	}
-	v, err := c.walkAuditChain(ctx, storage.AuditChainSegment{Anchor: anchor})
+	v, err := c.walkAuditChainRacingPurge(ctx, storage.AuditChainSegment{Anchor: anchor})
 	if err != nil {
 		return nil, "", err
 	}
 	if !v.Valid {
 		return nil, "", fmt.Errorf("accept-loss: the sealed chain does not verify: %s", v.Reason)
+	}
+	if v.Reanchored != nil {
+		anchor = v.Reanchored
 	}
 	cp := &models.AuditCheckpoint{ChainedEvents: v.ChainedEvents + anchorPurgedEvents(anchor), HeadID: v.HeadID, HeadHash: v.HeadHash, KeyVersion: c.auditCkptKeyVersion}
 	bind := c.sealBinding()

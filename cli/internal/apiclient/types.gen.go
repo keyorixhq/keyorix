@@ -434,14 +434,22 @@ type BreakGlassSettings struct {
 type BulkDeleteResult struct {
 	Deleted *[]int         `json:"deleted,omitempty"`
 	Failed  *[]BulkOpError `json:"failed,omitempty"`
-	Total   *int           `json:"total,omitempty"`
+
+	// Retryable How many of `failed` are retryable outages.
+	Retryable *int `json:"retryable,omitempty"`
+	Total     *int `json:"total,omitempty"`
 }
 
 // BulkOpError defines model for BulkOpError.
 type BulkOpError struct {
-	Error    *string `json:"error,omitempty"`
-	Name     *string `json:"name,omitempty"`
-	SecretId *int    `json:"secret_id,omitempty"`
+	// Code Stable code of a retryable outage item (audit_unavailable, storage_unavailable); absent for any other failure.
+	Code  *string `json:"code,omitempty"`
+	Error *string `json:"error,omitempty"`
+	Name  *string `json:"name,omitempty"`
+
+	// Retryable True when the item failed because the audit log or storage was unavailable; nothing was changed and the call can be repeated.
+	Retryable *bool `json:"retryable,omitempty"`
+	SecretId  *int  `json:"secret_id,omitempty"`
 }
 
 // BulkRenameReport defines model for BulkRenameReport.
@@ -726,13 +734,13 @@ type MachineToken struct {
 
 // MachineTokenHygieneRow A deployment-wide machine-token hygiene entry (GET /machine-token-hygiene) -- never includes the token secret.
 type MachineTokenHygieneRow struct {
-	Expired           *bool   `json:"expired,omitempty"`
-	Id                *int    `json:"id,omitempty"`
-	LastUsedAt        *string `json:"last_used_at,omitempty"`
-	MachineIdentityId *int    `json:"machine_identity_id,omitempty"`
-	Name              *string `json:"name,omitempty"`
-	Stale             *bool   `json:"stale,omitempty"`
-	TokenPrefix       *string `json:"token_prefix,omitempty"`
+	Expired           *bool      `json:"expired,omitempty"`
+	Id                *int       `json:"id,omitempty"`
+	LastUsedAt        *time.Time `json:"last_used_at"`
+	MachineIdentityId *int       `json:"machine_identity_id,omitempty"`
+	Name              *string    `json:"name,omitempty"`
+	Stale             *bool      `json:"stale,omitempty"`
+	TokenPrefix       *string    `json:"token_prefix,omitempty"`
 }
 
 // OIDCBinding An OIDC federation binding (ADR-031) mapping an external (issuer, subject) to a machine identity.
@@ -771,14 +779,14 @@ type OwnershipRecord struct {
 
 // PATHygieneRow A deployment-wide PAT hygiene entry (GET /pat-hygiene) -- never includes the token secret.
 type PATHygieneRow struct {
-	Expired     *bool   `json:"expired,omitempty"`
-	ExpiresAt   *string `json:"expires_at,omitempty"`
-	Id          *int    `json:"id,omitempty"`
-	LastUsedAt  *string `json:"last_used_at,omitempty"`
-	Name        *string `json:"name,omitempty"`
-	Stale       *bool   `json:"stale,omitempty"`
-	TokenPrefix *string `json:"token_prefix,omitempty"`
-	UserId      *int    `json:"user_id,omitempty"`
+	Expired     *bool      `json:"expired,omitempty"`
+	ExpiresAt   *string    `json:"expires_at,omitempty"`
+	Id          *int       `json:"id,omitempty"`
+	LastUsedAt  *time.Time `json:"last_used_at"`
+	Name        *string    `json:"name,omitempty"`
+	Stale       *bool      `json:"stale,omitempty"`
+	TokenPrefix *string    `json:"token_prefix,omitempty"`
+	UserId      *int       `json:"user_id,omitempty"`
 }
 
 // PATToken A personal access token (ADR-027/ADR-042). The raw secret is never returned except once, in the create response.

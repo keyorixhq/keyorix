@@ -20,6 +20,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -676,7 +677,9 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The secret.updated row, with its before/after diff, commits with the update.
-	ctx := secretMutationAuditContext(r, userCtx)
+	// The recorder tells a permission refusal core reached through a storage outage of
+	// the permission lookup from a verdict (#3873, as the gRPC twin does).
+	ctx, faults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(r, userCtx))
 	var response *models.SecretNode
 	if isMachine {
 		response, err = h.coreService.UpdateSecret(ctx, req)
@@ -685,7 +688,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("Error updating secret: %v", err)
-		h.sendUpdateSecretError(w, err)
+		h.sendUpdateSecretError(w, r, faults, err)
 		return
 	}
 
@@ -720,7 +723,9 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 
 	// The secret.deleted row commits with the delete (secretMutationAuditContext); core
 	// reads the name and project for it from the row it deletes.
-	ctx := secretMutationAuditContext(r, userCtx)
+	// The recorder tells a permission refusal core reached through a storage outage of
+	// the permission lookup from a verdict (#3873, as the gRPC twin does).
+	ctx, faults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(r, userCtx))
 	var deleteErr error
 	if isMachine {
 		deleteErr = h.coreService.DeleteSecret(ctx, uint(id))
@@ -728,14 +733,11 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 		deleteErr = h.coreService.DeleteSecretWithPermissionCheck(ctx, uint(id), userCtx.UserID)
 	}
 	if deleteErr != nil {
-		log.Printf("Error deleting secret: %v", deleteErr)
-		if isSecretNotFound(deleteErr) {
-			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
-		} else if isPermissionRefusal(deleteErr) {
-			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
-		} else {
-			h.sendError(w, "InternalError", "Failed to delete secret", http.StatusInternalServerError, nil)
-		}
+		answerCoreError(w, r, deleteErr, coreErrorAnswer{op: "deleting secret", faults: faults, texts: coreErrorTexts{
+			errclass.NotFound:         errSecretNotFound,
+			errclass.PermissionDenied: errAccessDenied,
+			errclass.Internal:         "Failed to delete secret",
+		}})
 		return
 	}
 
@@ -759,7 +761,11 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, err error) {
+// sendUpdateSecretError answers an UpdateSecret failure. faults is the recorder the
+// caller installed with core.WithAuthorizeFaultRecorder (nil when it did not): a
+// permission refusal core reached because the permission lookup hit a storage outage
+// is 503, not 403 (#3873).
+func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, r *http.Request, faults *core.AuthorizeFaultRecorder, err error) {
 	if h.trySendSecretSizeError(w, err) {
 		return
 	}
@@ -780,13 +786,11 @@ func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, err error) 
 		h.sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
 		return
 	}
-	if isSecretNotFound(err) {
-		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-	} else if isPermissionRefusal(err) {
-		h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
-	} else if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
-		h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
-	} else {
-		h.sendError(w, "InternalError", "Failed to update secret", http.StatusInternalServerError, nil)
-	}
+	// Everything else by sentinel through the shared classifier: a validation refusal
+	// is 400 in every locale (core.ErrSecretInvalidInput), not by the translated word.
+	answerCoreError(w, r, err, coreErrorAnswer{op: "updating secret", faults: faults, texts: coreErrorTexts{
+		errclass.NotFound:         "Secret not found",
+		errclass.PermissionDenied: "Access denied",
+		errclass.Internal:         "Failed to update secret",
+	}})
 }

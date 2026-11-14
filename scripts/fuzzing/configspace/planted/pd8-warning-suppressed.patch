@@ -1,0 +1,27 @@
+diff --git a/server/startup_settings.go b/server/startup_settings.go
+index 6fddc2d0b..ce2b095df 100644
+--- a/server/startup_settings.go
++++ b/server/startup_settings.go
+@@ -70,6 +70,9 @@ func warnHTTPOnlySettingsUnderGRPC(cfg *config.Config) {
+ func warnInsecureSettingsInEffect(cfg *config.Config) {
+ 	for _, s := range config.InsecureSettingsRegistry {
+ 		if s.InEffect(cfg) {
++			if strings.Contains(s.Name, "login_lockout") {
++				continue
++			}
+ 			log.Print(insecureSettingWarning(s, cfg))
+ 		}
+ 	}
+diff --git a/server/wire_login_security.go b/server/wire_login_security.go
+index 8472eecb2..e4f4459b8 100644
+--- a/server/wire_login_security.go
++++ b/server/wire_login_security.go
+@@ -43,7 +43,7 @@ func wireLoginLockout(cw *coreWiring) error {
+ 		log.Printf("Per-account login lockout enabled (max_attempts=%d, window=%s, base_cooldown=%s, max_cooldown=%s)",
+ 			ll.GetMaxAttempts(), ll.GetWindow(), ll.GetBaseCooldown(), ll.GetMaxCooldown())
+ 	} else {
+-		log.Printf("WARNING: per-account login lockout is DISABLED — only the per-IP rate limiter throttles password guessing, which distributed/botnet guessing against a single account can evade")
++		_ = ll
+ 	}
+ 	return nil
+ }

@@ -1,0 +1,269 @@
+// zz_i6gen_test.go is a FIXTURE GENERATOR, not a behavioural test. Running
+// TestI6Generate writes a frozen v2 logical backup archive (produced through
+// the tag's own `admin backup` path, runAdminBackup) of a SQLite store that is
+// populated with genuine, encrypted-at-rest data, plus a sidecar expected.json
+// recording the known plaintext/roles/counts. A separate NEW-code test consumes
+// that archive + sidecar to prove "an old backup restores and its secrets
+// decrypt to the original values".
+//
+// It lives in package admin so it can reuse the unexported helpers in
+// backup_restore_integration_test.go (writeBackupRestoreTestConfig, chdirTest,
+// loadConfig, runAdminBackup, the backupOutput flag var, resetBackupRestoreFlags).
+//
+// Not t.Parallel(): it mutates package-level cobra flag vars and os.Chdir, like
+// every other test in this package (see the integration test's package doc).
+package admin
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
+	"github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+const (
+	i6Passphrase = "i6-fixture-pass-7777"
+	i6DefaultOut = "/mnt/data/wave4/i6/.scratch/snapshots/v0.96.3"
+)
+
+// i6SecretRecord is one (secret, version, plaintext) row in the sidecar.
+type i6SecretRecord struct {
+	SecretName string `json:"secret_name"`
+	Version    int    `json:"version"`
+	Plaintext  string `json:"plaintext"`
+	// ProjectID/SecretID/Environment are recorded so the NEW-code consumer can
+	// reconstruct the AAD (SecretAAD(secretID, projectID, versionNumber)) the
+	// value was sealed under -- decryption fails without the exact same AAD.
+	ProjectID     uint   `json:"project_id"`
+	SecretID      uint   `json:"secret_id"`
+	EnvironmentID uint   `json:"environment_id"`
+}
+
+// i6Grant is one user->role binding recorded in the sidecar.
+type i6Grant struct {
+	UserID   uint   `json:"user_id"`
+	Username string `json:"username"`
+	RoleID   uint   `json:"role_id"`
+	RoleName string `json:"role_name"`
+}
+
+// i6RoleRec is one role recorded in the sidecar.
+type i6RoleRec struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+}
+
+// i6Expected is the full sidecar schema written to <out>/expected.json.
+type i6Expected struct {
+	Passphrase           string           `json:"passphrase"`
+	Secrets              []i6SecretRecord `json:"secrets"`
+	Roles                []i6RoleRec      `json:"roles"`
+	Grants               []i6Grant        `json:"grants"`
+	UserCount            int              `json:"user_count"`
+	TokenCount           int              `json:"token_count"`
+	MachineIdentityCount int              `json:"machine_identity_count"`
+	ProjectCount         int              `json:"project_count"`
+	Notes                string           `json:"notes"`
+}
+
+func i6Fold(t *testing.T, raw string) string {
+	t.Helper()
+	fn, err := identity.NewFoldedName(raw)
+	require.NoError(t, err)
+	return fn.Folded()
+}
+
+func TestI6Generate(t *testing.T) {
+	resetBackupRestoreFlags(t)
+	require.NoError(t, i18n.InitializeForTesting())
+
+	outDir := os.Getenv("I6_OUT_DIR")
+	if outDir == "" {
+		outDir = i6DefaultOut
+	}
+	require.NoError(t, os.MkdirAll(outDir, 0o755))
+
+	// --- 1. Encryption: initialize key material at relative paths dek.key/kek.salt.
+	// admin backup resolves the passphrase itself via KEYORIX_MASTER_PASSWORD
+	// (ResolvePassphrase fallback) to derive the manifest-signing key, exactly
+	// as TestAdminBackupRestore_RoundTrip relies on.
+	t.Setenv("KEYORIX_MASTER_PASSWORD", i6Passphrase)
+
+	srcDir := t.TempDir()
+	chdirTest(t, srcDir)
+
+	encCfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
+	encSvc := encryption.NewService(encCfg, srcDir)
+	require.NoError(t, encSvc.Initialize(i6Passphrase))
+
+	// --- 2. Create + migrate the SQLite store through the real factory.
+	srcDBPath := filepath.Join(srcDir, "secrets.db")
+	configPathFlag = writeBackupRestoreTestConfig(t, srcDir, srcDBPath)
+	srcCfg, err := loadConfig()
+	require.NoError(t, err)
+	_, err = storage.NewStorageFactory().CreateStorage(srcCfg) // creates + migrates
+	require.NoError(t, err)
+
+	// Raw *gorm.DB on the SAME migrated database for direct, low-ceremony seeding
+	// (OpenGormDB deliberately does not re-migrate).
+	db, err := storage.OpenGormDB(srcCfg)
+	require.NoError(t, err)
+
+	exp := i6Expected{
+		Passphrase: i6Passphrase,
+		Notes: "Generated at tag v0.96.3 via runAdminBackup (v2 logical backup). " +
+			"Secrets sealed with AES-256-GCM AAD = SecretAAD(secret_id, project_id, version). " +
+			"audit_events intentionally left empty (an empty chain verifies VALID; a valid " +
+			"chain is not producible at this raw-storage layer without full core/auth context). " +
+			"Key-rotation pending-state and passphrase-change history are NOT populated: no " +
+			"straightforward raw-storage API exists for them at this tag -- structural tables " +
+			"are present and empty.",
+	}
+
+	// --- 3. One project + one environment.
+	proj := models.Project{Name: "i6-project", Description: "i6 fixture project"}
+	require.NoError(t, db.Create(&proj).Error)
+	envRow := models.Environment{ProjectID: proj.ID, Name: "production"}
+	require.NoError(t, db.Create(&envRow).Error)
+	exp.ProjectCount = 1
+
+	// --- 2 (data). Two secrets, each with two versions, distinct known plaintext.
+	type plan struct {
+		name     string
+		versions map[int]string
+	}
+	plans := []plan{
+		{name: "s1", versions: map[int]string{1: "s1-v1-PLAINTEXT", 2: "s1-v2-PLAINTEXT"}},
+		{name: "s2", versions: map[int]string{1: "s2-v1-PLAINTEXT", 2: "s2-v2-PLAINTEXT"}},
+	}
+	for _, p := range plans {
+		node := models.SecretNode{
+			ProjectID:     proj.ID,
+			EnvironmentID: envRow.ID,
+			Name:          p.name,
+			IsSecret:      true,
+			Type:          "secret",
+			Status:        "active",
+		}
+		require.NoError(t, db.Create(&node).Error)
+		for _, vnum := range []int{1, 2} {
+			plaintext := p.versions[vnum]
+			aad := encryption.SecretAAD(node.ID, node.ProjectID, vnum)
+			ct, meta, encErr := encSvc.EncryptSecretWithAAD([]byte(plaintext), aad)
+			require.NoError(t, encErr)
+			ver := models.SecretVersion{
+				SecretNodeID:       node.ID,
+				VersionNumber:      vnum,
+				EncryptedValue:     ct,
+				EncryptionMetadata: models.JSON(meta),
+			}
+			require.NoError(t, db.Create(&ver).Error)
+			exp.Secrets = append(exp.Secrets, i6SecretRecord{
+				SecretName:    p.name,
+				Version:       vnum,
+				Plaintext:     plaintext,
+				ProjectID:     node.ProjectID,
+				SecretID:      node.ID,
+				EnvironmentID: node.EnvironmentID,
+			})
+		}
+	}
+
+	// --- 4. One user, one custom role, one user->role grant.
+	user := models.User{
+		Username:       "i6-user",
+		UsernameFolded: i6Fold(t, "i6-user"),
+		Email:          "i6-user@example.test",
+		EmailFolded:    i6Fold(t, "i6-user@example.test"),
+		DisplayName:    "i6 Fixture User",
+		IsActive:       true,
+		AccountState:   "active",
+	}
+	require.NoError(t, db.Create(&user).Error)
+	exp.UserCount = 1
+
+	role := models.Role{
+		Name:        "i6-custom-role",
+		NameFolded:  i6Fold(t, "i6-custom-role"),
+		Description: "i6 fixture custom role",
+	}
+	require.NoError(t, db.Create(&role).Error)
+	exp.Roles = append(exp.Roles, i6RoleRec{ID: role.ID, Name: role.Name})
+
+	// Global-scope grant (ProjectID/EnvironmentID = 0 sentinel).
+	grant := models.UserRole{UserID: user.ID, RoleID: role.ID}
+	require.NoError(t, db.Create(&grant).Error)
+	exp.Grants = append(exp.Grants, i6Grant{
+		UserID: user.ID, Username: user.Username, RoleID: role.ID, RoleName: role.Name,
+	})
+
+	// --- 5. One API token (Token column stores a SHA-256 hash; a fixed hex
+	// string is sufficient for structural presence -- we are not exercising auth).
+	token := models.APIToken{
+		UserID: &user.ID,
+		Token:  "i6fixturetokenhash000000000000000000000000000000000000000000beef",
+		Scope:  "read",
+	}
+	require.NoError(t, db.Create(&token).Error)
+	exp.TokenCount = 1
+
+	// --- 6. One machine identity.
+	machine := models.MachineIdentity{
+		ProjectID:    proj.ID,
+		Name:         "i6-machine",
+		IdentityType: "service",
+		State:        "active",
+		Description:  "i6 fixture machine identity",
+	}
+	require.NoError(t, db.Create(&machine).Error)
+	exp.MachineIdentityCount = 1
+
+	// Also grant the machine identity the custom role, so machine->role bindings
+	// are present for comparison (mirrors UserRole's scope sentinels).
+	require.NoError(t, db.Create(&models.MachineIdentityRole{
+		MachineIdentityID: machine.ID, RoleID: role.ID,
+	}).Error)
+
+	// --- 7/8. audit_events / key-rotation-pending / passphrase-change: see Notes.
+	// Left empty deliberately (empty audit chain verifies VALID).
+
+	// Release the raw gorm handle's underlying *sql.DB so SQLite is flushed and
+	// not holding the file open while admin backup reads it.
+	if sqlDB, dbErr := db.DB(); dbErr == nil {
+		_ = sqlDB.Close()
+	}
+
+	// --- Produce the v2 logical backup archive through the real command path.
+	archivePath := filepath.Join(outDir, "backup.tar.gz")
+	backupOutput = archivePath
+	out, err := captureStdout(t, func() error { return runAdminBackup(nil, nil) })
+	require.NoError(t, err, "admin backup failed; output was:\n%s", out)
+
+	// Copy the key material next to the archive (restore needs byte-identical keys).
+	for _, name := range []string{"dek.key", "kek.salt"} {
+		data, rerr := os.ReadFile(filepath.Join(srcDir, name))
+		require.NoError(t, rerr)
+		require.NoError(t, os.WriteFile(filepath.Join(outDir, name), data, 0o600))
+	}
+
+	// --- Write the sidecar.
+	sidecar, err := json.MarshalIndent(exp, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(outDir, "expected.json"), sidecar, 0o644))
+
+	// Sanity: archive is present and under the 2 MB fixture budget.
+	info, err := os.Stat(archivePath)
+	require.NoError(t, err)
+	require.Less(t, info.Size(), int64(2*1024*1024), "fixture archive must stay < 2 MB")
+
+	t.Logf("i6 fixture written to %s (backup.tar.gz = %d bytes)", outDir, info.Size())
+}

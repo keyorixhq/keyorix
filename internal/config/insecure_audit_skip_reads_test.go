@@ -26,6 +26,9 @@ var insecureAuditSkipReadsRawFieldAllowedFiles = map[string]string{
 		"admin.audit_reads_skipped_at_startup event",
 	"server/http/handlers/system.go": "reports security.audit_reads_skipped in GET /system/info",
 	"internal/startup/validation.go": "reports the deviation in `admin validate`",
+	"scripts/fuzzing/configspace/posture.go": "reads it in the audit-durability posture predicate of the " +
+		"config-space fuzzer (a developer and CI test tool under scripts/, never linked into the server or any " +
+		"shipped binary) to recompute independently whether the setting is in effect",
 }
 
 var insecureAuditSkipReadsSelectorRe = regexp.MustCompile(`\.InsecureAuditSkipReads\b`)

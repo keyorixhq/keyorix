@@ -190,18 +190,20 @@ func TestGetSecretCertificate_InternalError_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.GetSecretCertificate(w, req)
 
-	// DB failure produces an error that doesn't match any special substring,
-	// so the handler returns 500 (or possibly 404 if "not found" appears).
+	// A closed database is a storage READ fault of the secret lookup: the shared
+	// classifier answers 503 storage_unavailable with Retry-After (never 404, never a
+	// verdict), the same answer every other route gives that fault (FIX-ERRMAP-STRUCT-1;
+	// before, this handler's default branch answered a bare 500).
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+	assert.Equal(t, "5", w.Header().Get("Retry-After"))
+	assert.Contains(t, w.Body.String(), storageUnavailableCode)
 
 	// G50: the raw driver error ("sql: database is closed") must never reach
-	// the client — GetSecretCertificate's default branch must route through
-	// clientSafe() instead of forwarding err.Error() verbatim.
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// the client.
 	assert.NotContains(t, w.Body.String(), "sql:")
 	assert.NotContains(t, w.Body.String(), "database is closed")
-	assert.Contains(t, w.Body.String(), "an internal error occurred")
 }
 
 // ── SecretNameConformance: bad project ID → 400 ──────────────────────────────

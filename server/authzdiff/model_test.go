@@ -158,6 +158,10 @@ func (m model) allowed(p *principal, req requirement) bool {
 			return false
 		}
 	}
+	if req.memberOnly && (p.machineID != 0 || p.userID == 0 || !m.memberOf(p, req.scope)) {
+		// break-glass activate: only a USER who is a member of the project NOW.
+		return false
+	}
 	if req.requesterUserID != 0 && p.userID != req.requesterUserID {
 		// documented requester-only rule (WithdrawAccessRequest: "not your" → refused)
 		return false
@@ -253,6 +257,14 @@ type requirement struct {
 	globalAdminRole bool
 	// recipientUserIDs non-nil: only these users may act (self-share removal).
 	recipientUserIDs []uint
+	// memberOnly: the op has NO permission gate — eligibility is project
+	// membership alone (break-glass activate: core.ActivateBreakGlass →
+	// IsProjectMember, a role scoped to THIS project, direct or via a live group;
+	// a global/install-wide role is NOT membership — the #284-era fix). A machine
+	// actor reaches core as userID==0 and is refused with a validation error, not
+	// a permission denial, so the model denies it here and the untyped-core
+	// refusal is absorbed by known-09 at the partition.
+	memberOnly bool
 	// tokenForMachineID != 0: the op mints a credential for that machine. A
 	// MACHINE caller must then cover the target (#3993): it is not the target
 	// itself, the target holds no role that bypasses permission checks, and the

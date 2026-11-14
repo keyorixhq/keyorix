@@ -1,3 +1,0 @@
-### Fixed
-
-- **Accurate `tls: none` SMTP wording and a clear auth-failure log.** The `KEYORIX_ALLOW_INSECURE_SMTP` refusal (credential delivery and the notification email channel), the env flag description and `docs/CONFIGURATION.md` no longer say relay credentials are sent in cleartext: go-mail never sends a PLAIN or LOGIN password without TLS. They now say the message and username travel unencrypted and that a relay offering only PLAIN or LOGIN will fail to authenticate. When that happens, the send failure now names the cause ("server offers only PLAIN/LOGIN and TLS is disabled") instead of go-mail's generic autodiscover error; credential delivery still hands the admin the setup link. No change to what is sent.

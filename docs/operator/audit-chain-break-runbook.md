@@ -118,7 +118,7 @@ INDETERMINATE beats VALID). Strings are from `internal/auditverify/verify.go`.
 | Report says | Kind | Likely causes, in the order to rule them out |
 |---|---|---|
 | `entry_hash is valid under the pre-#1452 audit-hash encoding but not the current one ... un-migrated upgrade, NOT evidence of tampering` | content | Benign: the chain predates the 2026-08-16 encoding change. Section 4a. |
-| `event #N's entry_hash matches neither the current encoding nor the pre-#1452 one` | content | The row changed after it was written: tampering, or storage corruption. |
+| `event #N's recorded entry_hash does not match the row's contents — the row was changed after it was written` | content | The row changed after it was written: tampering, or storage corruption. |
 | `event #N's prev_hash does not link to the preceding event (row inserted, deleted, or reordered)` | linkage | Tampering, a manual `DELETE`, or a database restored/merged from two sources. |
 | `event #N has no entry_hash (chain data removed after a chained region began)` | content | Hash columns blanked or rows replaced by unchained rows. |
 | `audit trail truncated below signed checkpoint #N: it certified X chained events, only Y remain` | truncation | Rows removed from the tail, **or** the database is an older state (restore, stale copy, PITR). Section 4. |
@@ -182,6 +182,23 @@ A server older than that release reports the chain broken (`docs/CONFIGURATION.m
 `.audit-highwater-witness` file unless `--allow-rollback` is given, and then records an
 `admin.restore_rollback_override` event saying how many events behind it went. Search the
 trail for that event, and ask who restored what.
+
+**f. A purge during a long online verification.** A retention purge takes no lock that a
+chain walk holds. On a chain longer than one walk batch (1000 events), a purge that lands
+while a walk from the chain start is part way through (`keyorix audit verify --full`, the
+rolling re-walk, a checkpoint write, the accept-loss re-seal) removes rows ahead of it, and the
+chain would read "prev_hash does not link to the preceding event" although nothing was lost.
+Since #3944 (AUDIT-WALK-TAILS-1 for the checkpoint write and the re-seal) those walks re-read
+the signed retention anchor on that failure and, only if a sanctioned purge moved it, walk the
+chain once more from the new anchor; the result counts the purged events. A reason that begins
+"after walking again from the retention re-anchor at audit event #N" is that second walk
+failing: the purge was not the cause, go to section 5. A delete outside a purge never moves
+the anchor and stays BROKEN. A server older than that fix, and the tail check from the latest
+checkpoint, do not walk again: once the purge job has finished (its `system.audit_purge`
+event is in the trail), run `keyorix audit verify --full`. It clears a failure recorded during
+the purge if the chain is sound (section 1); a break it repeats on a quiet database is real.
+The offline `keyorix-server admin verify-audit` is not affected on the configured database:
+it holds the exclusive admin lock, so no server (and no purge) runs alongside it.
 
 ## 5. Tampering or crash-truncation
 
