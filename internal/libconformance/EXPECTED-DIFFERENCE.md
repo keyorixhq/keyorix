@@ -13,7 +13,7 @@ Columns: Class · Library/target · What differs · Why it is EXPECTED · Where 
 
 | # | Class | Library / target | What differs | Why EXPECTED (not a bug) | Where handled |
 |---|-------|------------------|--------------|--------------------------|---------------|
-| E1 | Round-trip | cbor/v2 `FuzzCBORRoundTrip` | `float64` NaN ≠ NaN | IEEE-754: NaN is unequal to itself under `reflect.DeepEqual`; the *bits* round-trip fine | `nanAwareEqual` treats NaN==NaN |
+| E1 | Round-trip | cbor/v2 `FuzzCBORRoundTrip` | `float64` NaN ≠ NaN, at any depth incl. inside a `cbor.Tag.Content` (found by fuzzing: `c8fb…` = tag8(NaN); NaN payloads also normalize to float16 `f97e00`) | IEEE-754: NaN is unequal to itself under `reflect.DeepEqual`; the value round-trips fine | `nanAwareEqual` treats NaN==NaN and recurses through `cbor.Tag` |
 | E2 | Round-trip | cbor/v2 `FuzzCBORRoundTrip` | a tag-2/3 bignum that fits in 64 bits decodes to `big.Int` on one pass and `int64`/`uint64` on the other | fxamacker picks the narrowest Go type; magnitude is preserved | `asBigInt` numeric compare |
 | E3 | Round-trip | cbor/v2 `FuzzCBORRoundTrip` | indefinite-length array/map/string collapses to definite-length on re-encode | CBOR §3.2: indefinite and definite forms denote the same value | property stated on `v1↔v2`; `data↔v1` not asserted |
 | E4 | Round-trip | cbor/v2 `FuzzCBORRoundTrip` | duplicate map keys: later value wins, earlier dropped | default DecMode is `DupMapKeyQuiet`; the map value is well-defined (last-wins) | normalized by the first decode |
