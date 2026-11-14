@@ -25,7 +25,7 @@ func TestBootLeavesStaleSaltPending_WarnsThatBackupsRefuseUntilMoved(t *testing.
 
 	require.FileExists(t, testSaltPending, "boot keeps the file: only the log line changed")
 	var lines []string
-	for _, l := range bytes.Split(buf.Bytes(), []byte("\n")) {
+	for _, l := range bytes.SplitSeq(buf.Bytes(), []byte("\n")) {
 		if bytes.Contains(l, []byte(testSaltPending)) {
 			lines = append(lines, string(l))
 		}
