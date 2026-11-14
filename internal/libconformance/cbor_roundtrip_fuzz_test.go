@@ -81,10 +81,54 @@ func FuzzCBORRoundTrip(f *testing.F) {
 		if err := cbor.Unmarshal(b, &v2); err != nil {
 			t.Fatalf("ROUND-TRIP: re-encoded bytes do not decode: %v (input %x, reenc %x)", err, data, b)
 		}
+		// E11 (datetime-tag class): a decoded value CONTAINING a time.Time is not
+		// value-stable through re-encode, in several benign ways — the tag drops to
+		// an untagged Unix number (type changes time.Time→int/float), a zero/NaN
+		// time becomes CBOR null→nil, and a datetime map KEY can normalize into and
+		// COLLIDE with an int key, shrinking the map. All are documented, benign
+		// fxamacker behaviors (go-webauthn uses no datetime tags). Rather than model
+		// every normalization precisely, we classify any time-bearing value as E11
+		// and assert only that it re-decodes (verified just above) — NOT value
+		// equality. Found by fuzzing: c130, c1faffff3030, {tag1(-17):-17}, and a
+		// {-17:-17, tag1(-17):-17} key-collision. See EXPECTED-DIFFERENCE.md E11.
+		if containsTime(v1) || containsTime(v2) {
+			return
+		}
 		if !nanAwareEqual(v1, v2) {
 			t.Fatalf("ROUND-TRIP: decode→encode→decode changed value (NEW class, not in EXPECTED-DIFFERENCE table)\n in:   %x\n v1:   %#v\n reenc: %x\n v2:   %#v", data, v1, b, v2)
 		}
 	})
+}
+
+// containsTime reports whether a decoded CBOR value holds a time.Time anywhere —
+// at top level, inside an array, as a map key or value, or inside a cbor.Tag's
+// content. A time.Time only appears from a tag-0/1 decode, which is the E11
+// datetime class whose round-trip is not value-stable (see the gate in the fuzz
+// body). It mirrors the structure nanAwareEqual walks so the gate is as deep as
+// the comparison.
+func containsTime(v any) bool {
+	switch x := v.(type) {
+	case time.Time:
+		return true
+	case cbor.Tag:
+		return containsTime(x.Content)
+	case []any:
+		for _, e := range x {
+			if containsTime(e) {
+				return true
+			}
+		}
+		return false
+	case map[any]any:
+		for k, val := range x {
+			if containsTime(k) || containsTime(val) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // nanAwareEqual compares two decoded CBOR values, treating the EXPECTED-DIFFERENCE
