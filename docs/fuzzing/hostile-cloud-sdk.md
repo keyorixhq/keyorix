@@ -1,8 +1,7 @@
 # Hostile-server fuzzing of the cloud SDKs (SK1)
 
-Durable in-repo record of the SK1 campaign. The full report (findings table, per-oracle
-"what it does NOT verify", reachability ranking, talk material) was delivered separately;
-this note is the lasting pointer for anyone touching these harnesses.
+Durable in-repo record of the SK1 hostile-server campaign: the lasting pointer for
+anyone touching these harnesses.
 
 ## What it is
 
@@ -53,4 +52,4 @@ dial-time SSRF/redirect guard (`azurekms.azureKMSTransport`).
 ## Deferred (future work)
 
 AWS STS AssumeRole + IAM key rotation (awsquery/XML), GCP KMS (gRPC — needs a fake gRPC
-server), AWS IMDS / web-identity, azidentity GetToken. Ranked rationale in the SK1 report.
+server), AWS IMDS / web-identity, azidentity GetToken.
