@@ -2,10 +2,12 @@ package libconformance
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"regexp"
 	"runtime"
 	"slices"
@@ -227,12 +229,22 @@ const xmlNamespaceURL = "http://www.w3.org/XML/1998/namespace"
 // attributes, sorted), "T <text>" (merged character data, never empty) and "E".
 type xmlView []string
 
+// viewAttrs renders effective attributes sorted by local name, value, then URI with
+// etree's "?" ambiguity marker stripped, so an unbound prefix p (encoding/xml: "p",
+// etree: "?p") sorts to the same position on both sides.
 func viewAttrs(attrs map[[2]string]string) []string {
-	out := make([]string, 0, len(attrs))
-	for k, v := range attrs {
-		out = append(out, fmt.Sprintf("A %s %s=%q", k[0], k[1], v))
+	keys := slices.Collect(maps.Keys(attrs))
+	slices.SortFunc(keys, func(a, b [2]string) int {
+		return cmp.Or(
+			cmp.Compare(a[1], b[1]),
+			cmp.Compare(attrs[a], attrs[b]),
+			cmp.Compare(strings.TrimPrefix(a[0], "?"), strings.TrimPrefix(b[0], "?")),
+		)
+	})
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, fmt.Sprintf("A %s %s=%q", k[0], k[1], attrs[k]))
 	}
-	slices.Sort(out)
 	return out
 }
 
