@@ -30,11 +30,32 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/cli/internal/credstore"
 	"gopkg.in/yaml.v3"
 )
+
+// credField constrains a fuzzed field to the domain real credential values
+// live in: no control characters and no leading/trailing whitespace. YAML
+// (yaml.v3) does not byte-round-trip a scalar with a leading newline or
+// trailing space — "\n0" marshals and unmarshals back as "0" — but a server
+// URL, bearer token, project name or CA-file path never contains such bytes.
+// Fuzzing those into the ROUND-TRIP oracle (a) tests YAML scalar-folding
+// fidelity, not the credential store's crash-replay behaviour, so this bounds
+// the input domain to realistic values (a fixture fix, not an assertion
+// change — oracle (c)'s torn-file handling is unaffected and still fuzzed on
+// fully arbitrary bytes via mutateCreds).
+func credField(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.TrimSpace(s)
+}
 
 func fdCount(t *testing.T) int {
 	t.Helper()
@@ -58,10 +79,10 @@ func FuzzCredStoreCrashReplay(f *testing.F) {
 		store := credstore.NewFileStore(path)
 
 		c := credstore.Credentials{
-			ServerURL:     serverURL,
-			Token:         token,
-			ActiveProject: project,
-			CAFile:        caFile,
+			ServerURL:     credField(serverURL),
+			Token:         credField(token),
+			ActiveProject: credField(project),
+			CAFile:        credField(caFile),
 		}
 
 		// ── oracle (a): round-trip ────────────────────────────────────────
