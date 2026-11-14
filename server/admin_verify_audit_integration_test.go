@@ -48,6 +48,7 @@ func setupVerifyAuditDB(t *testing.T, bin string) (dir, dbPath string, env []str
 	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
 	}
