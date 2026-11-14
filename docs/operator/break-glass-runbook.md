@@ -96,9 +96,11 @@ within the audit write path's 10-second bound), the server does this instead:
      (`security.audit_owed`) counts its owed rows too;
    - the activation carries `"degraded": true` in the API (HTTP and gRPC) and a
      **Degraded · audit owed** badge in the project's break-glass tab.
-4. Its post-activation **review is mandatory at once**: a degraded activation is listed as
-   a posture deviation and in the review reminder from the moment it exists, with no grace
-   window.
+4. Its post-activation **review is mandatory at once**: a degraded activation is listed in
+   the review reminder and in `security.break_glass_degraded` from the moment it exists, with
+   no grace window. The compliance posture counter `emergency_access.unreviewed_activations`
+   does not (yet) treat it differently: it counts a degraded activation only after
+   `review_window`, like any other (verified: still 0 after the degraded activation ended).
 
 The activator sees the shortened expiry. The web UI adds a note that the audit log was not
 accepting writes; the CLI prints the same text as for a normal activation (only the shorter
