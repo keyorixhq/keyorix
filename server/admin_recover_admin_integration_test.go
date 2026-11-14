@@ -108,6 +108,7 @@ func TestAdminRecoverAdmin_FullFlow_SQLite(t *testing.T) {
 	if out, err := runAdmin(t, bin, dir, env, "init", "--dev", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
 	}
@@ -185,6 +186,7 @@ func TestAdminRecoverAdmin_KeylessMode_SQLite(t *testing.T) {
 		t.Fatalf("write edited config: %v", err)
 	}
 
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
 	}

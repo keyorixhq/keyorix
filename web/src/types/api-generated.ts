@@ -8983,13 +8983,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data=null, message='deleted'}. */
-            200: {
+            /** @description Template deleted. No response body. */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
@@ -12799,6 +12800,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
         };
@@ -12821,6 +12823,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
         };
