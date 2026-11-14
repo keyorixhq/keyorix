@@ -25,7 +25,7 @@ package core
 //   - The round-trip is restricted to ID <= math.MaxUint32: DecodeAuditCursor
 //     parses the id as a 32-bit unsigned, while EncodeAuditCursor emits
 //     uint64(e.ID). An ID above 2^32-1 encodes to a value Decode rejects — a
-//     bound noted in the report (audit IDs are a uint primary key; reaching
+//     known bound (audit IDs are a uint primary key; reaching
 //     2^32 rows is the only way to observe it, and such a cursor simply fails
 //     closed rather than mis-paging).
 //   - EventTime is exercised only within int64-nanosecond range (time.Unix(0,

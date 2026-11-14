@@ -25,7 +25,7 @@ package auditverify
 //     \x1f, so this is a faithful restriction, not a blind spot being hidden.
 //   - It SKIPS the (Seals>0, SealDigest=="") shape: EncodeHighWater emits a v2
 //     string with an empty digest field, which ParseHighWater rejects
-//     (parts[2]=="" guard) — an encode/parse asymmetry noted in the report as a
+//     (parts[2]=="" guard) — an encode/parse asymmetry recorded here as a
 //     hardening candidate, not a reachable state (a sealed checkpoint always
 //     carries a non-empty digest, set from sealBindingOf).
 import (
@@ -58,7 +58,7 @@ func FuzzHighWaterRoundTrip(f *testing.F) {
 				return
 			}
 			// (Seals>0, digest=="") is the encode/parse asymmetry — out of scope
-			// for the round-trip oracle; see the file doc comment and report.
+			// for the round-trip oracle; see the file doc comment.
 			if effDigest == "" {
 				return
 			}
