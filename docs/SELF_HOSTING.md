@@ -303,7 +303,11 @@ On a binary install (no Docker), run the same commands directly:
 **every** command, as for the server itself. The replacement host needs the config,
 the certificates and the secrets files, not `keys/`: restore installs the key files
 from the archive. Server stopped is only required for restore (and for
-`admin audit export-checkpoint`, `admin verify-audit` and `--exclusive`).
+`admin audit export-checkpoint`, `admin verify-audit`, `admin validate` and
+`--exclusive`): `admin validate --posture` beside a live server is refused like those
+(`a Keyorix server (or another admin command) appears to be using this database`).
+That includes the posture check the stale-staging-file paragraph below points at: it
+cannot be polled from a monitor while the server runs.
 
 On Postgres, this reads through a single `REPEATABLE READ` snapshot
 transaction by default — every table sees the identical point-in-time view,
