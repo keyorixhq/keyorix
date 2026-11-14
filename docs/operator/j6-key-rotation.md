@@ -41,13 +41,18 @@ Expected:
 ```
 ⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
 🔄 Rotating DEK with full re-encryption sweep...
-[sweep] pre-commit verification: all N re-encrypted values decrypt under the new DEK
-✅ Sweep committed: 3 secret_versions, 0 api_tokens, ... re-encrypted (0 legacy AAD upgraded)
-✅ DEK rotated and full re-encryption sweep complete. New version: v1790408589
+2026/11/14 14:25:08 [sweep] secret_versions: 3 rows processed
+2026/11/14 14:25:08 [sweep] pre-commit verification: all 3 re-encrypted values decrypt under the new DEK
+2026/11/14 14:25:08 ✅ Sweep committed: 3 secret_versions, 0 api_tokens, ... re-encrypted (0 legacy AAD upgraded)
+✅ DEK rotated and full re-encryption sweep complete. New version: v1794662708
+✅ DEK rotated successfully
+📋 New key version: v1794662708
+📋 secret_versions: 3, api_tokens: 0, api_clients: 0, ... (legacy AAD upgraded: 0)
+ran `keyorix-server admin encryption rotate` (full DEK re-encryption sweep)
 ```
 
 (On PostgreSQL a line `DEK rotation: encrypted writes are now refused on every replica; waiting 10s ...`
-comes first. The command ends with a second summary line like the dry run's.)
+comes first. The last summary line is the dry run's. Exit status 0.)
 
 A kill at any point during this is safe — the design guarantees exactly one of the old or
 new DEK stays consistently active and every row stays decryptable under it, never a
@@ -104,8 +109,11 @@ the old DEK, or by re-running `rotate`. SQLite (single server) is unchanged.
 This re-wraps the DEK under a new passphrase; it does **not** touch any database row.
 It still opens the database (read only, to finish an interrupted DEK rotation first, and to
 take the exclusive presence lock, #3513), so the database must be reachable with the
-configured `storage` settings: on PostgreSQL the server must be reachable, on SQLite run it
-from the directory the configured path is relative to. When it is not, `rotate-kek` fails with
+configured `storage` settings: on PostgreSQL the server must be reachable; on SQLite a relative
+`database.path` is taken relative to the config file. Give `encryption.dek_path` and
+`salt_path` as absolute paths: relative ones are resolved against the directory you run the
+command from, so another directory gets (and writes) a different key set (#4249). When the
+database is not reachable, `rotate-kek` fails with
 `cannot connect to the database to check for a running server`, although only key files change.
 Bring the database up first; `--force` is not a fix for this (see the runbook).
 `admin encryption migrate-provider` opens it the same way.
