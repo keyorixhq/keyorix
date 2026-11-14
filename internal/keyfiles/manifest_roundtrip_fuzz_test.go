@@ -86,7 +86,7 @@ func FuzzManifestRoundTrip(f *testing.F) {
 			t.Fatalf("re-encoded manifest %q failed to reload: %v (original input %q)", enc, err, data)
 		}
 
-		if !reflect.DeepEqual(m, m2) {
+		if !reflect.DeepEqual(normNilMaps(m), normNilMaps(m2)) {
 			t.Fatalf("manifest round-trip mismatch:\n input   %q\n first   %+v\n reload  %+v\n encoded %q", data, m, m2, enc)
 		}
 
@@ -105,4 +105,27 @@ func FuzzManifestRoundTrip(f *testing.F) {
 			}
 		}
 	})
+}
+
+// normNilMaps returns a copy of m in which nil Files maps (top level and in the
+// staged Next intent) are replaced by empty ones. encodeManifest writes
+// "files":{} unconditionally, so a manifest loaded from input without a files
+// key (nil map) reloads from its own re-encoding with an empty non-nil map.
+// reflect.DeepEqual distinguishes the two, and nothing in the package does
+// (Files is only ranged over), so the round-trip oracle must not either.
+func normNilMaps(m *Manifest) *Manifest {
+	c := *m
+	fix := func(p any) {
+		v := reflect.ValueOf(p).Elem()
+		if v.IsNil() {
+			v.Set(reflect.MakeMap(v.Type()))
+		}
+	}
+	fix(&c.Files)
+	if c.Next != nil {
+		n := *c.Next
+		fix(&n.Files)
+		c.Next = &n
+	}
+	return &c
 }
