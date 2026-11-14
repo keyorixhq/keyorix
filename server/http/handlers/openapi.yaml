@@ -2324,8 +2324,8 @@ paths:
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
       responses:
-        '200':
-          description: "Envelope {data=null, message='deleted'}."
+        '204': {description: Template deleted. No response body.}
+        '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -5740,6 +5740,7 @@ paths:
       security: [{bearerAuth: []}]
       responses:
         '204': {description: User deleted.}
+        '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 
@@ -5754,6 +5755,7 @@ paths:
       security: [{bearerAuth: []}]
       responses:
         '200': {description: "Envelope with `message`; `data` is null."}
+        '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 

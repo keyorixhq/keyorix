@@ -1030,7 +1030,11 @@ func (c *KeyorixCore) accumulateBreakGlassPosture(p *CompliancePosture, pid uint
 			}
 			owed++
 		}
-		if a.ReviewedAt == nil && !a.CreatedAt.After(cutoff) {
+		// BREAKGLASS-OWED-1: a degraded activation's review is mandatory from the
+		// moment it exists, with no grace window -- the same rule
+		// ListUnreviewedBreakGlassActivationsBefore applies to the reminder and
+		// BreakGlassDegradedStatus.
+		if a.ReviewedAt == nil && (a.Degraded || !a.CreatedAt.After(cutoff)) {
 			p.EmergencyAccess.UnreviewedActivations++
 			if ageHours := int(c.now().Sub(a.CreatedAt).Hours()); ageHours > p.EmergencyAccess.OldestUnreviewedAgeHours {
 				p.EmergencyAccess.OldestUnreviewedAgeHours = ageHours

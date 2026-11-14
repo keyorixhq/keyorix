@@ -32,6 +32,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // wrongCredentialRequests send a WRONG credential to a class-A op, after the
@@ -422,7 +423,9 @@ func TestOpScopedBestEffort_PinnedEntriesAreLoadBearing(t *testing.T) {
 				}
 				f := oracleFindingsWithout(t, in, func() func() { return withoutBestEffortEntry(i) })
 				if len(f) == 0 {
-					t.Fatalf("with the entry removed the oracle STILL accepts the case: the entry is dead. Remove it")
+					guardrules.KnownFindingClosed(t, fmt.Sprintf("opScopedBestEffortTables/%s/%s#%d/%s", e.op, e.method, nth, kind),
+						"with the entry removed the oracle STILL accepts the case: the entry is dead. Remove it")
+					return
 				}
 				t.Logf("load-bearing: diff vs reference %v; without the entry: %s", diffTables(in.refAfter, in.after), f[0])
 			})

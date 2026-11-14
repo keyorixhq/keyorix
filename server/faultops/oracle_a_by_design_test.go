@@ -351,13 +351,15 @@ func TestOracleAByDesign_RowsAreLoadBearing(t *testing.T) {
 			}
 			diff := diffTables(in.before, in.after)
 			if len(diff) == 0 {
-				t.Fatalf("oracleAByDesignError %q: no state diverged at all, so oracle (a) would not flag "+
-					"this case and the row is dead. Remove it", label)
+				guardrules.KnownFindingClosed(t, "oracleAByDesignErrors/"+label, "no state diverged at all, so "+
+					"oracle (a) would not flag this case and the row is dead. Remove it")
+				return
 			}
 			if onlyOutcomeLogTables(diff) {
-				t.Fatalf("oracleAByDesignError %q: the diff %v is outcome-log-only, already accepted by "+
-					"onlyOutcomeLogTables before this mechanism is consulted — the row is dead. Remove it",
-					label, diff)
+				guardrules.KnownFindingClosed(t, "oracleAByDesignErrors/"+label, fmt.Sprintf("the diff %v is "+
+					"outcome-log-only, already accepted by onlyOutcomeLogTables before this mechanism is "+
+					"consulted — the row is dead. Remove it", diff))
+				return
 			}
 			if got := oracleAErrorByDesign(in, diff); got == nil {
 				t.Fatalf("oracleAByDesignError %q: the real diff is %v (response %q), which this row (tables %v, "+
@@ -371,8 +373,9 @@ func TestOracleAByDesign_RowsAreLoadBearing(t *testing.T) {
 			// consume-first, an op-scoped best-effort entry, another row) already
 			// shadows passes both ways, and is dead.
 			if f := oracleFindingsWithout(t, in, func() func() { return withoutByDesignRow(e) }); len(f) == 0 {
-				t.Fatalf("oracleAByDesignError %q: with the row removed the oracle STILL accepts this case, so "+
-					"something earlier already covers it and the row is dead. Remove it", label)
+				guardrules.KnownFindingClosed(t, "oracleAByDesignErrors/"+label, "with the row removed the oracle "+
+					"STILL accepts this case, so something earlier already covers it and the row is dead. Remove it")
+				return
 			}
 			if f := oracleFindingsWithout(t, in, func() func() { return func() {} }); len(f) > 0 {
 				t.Fatalf("oracleAByDesignError %q: with the row in place the oracle still reports: %v", label, f)
@@ -441,7 +444,19 @@ func withoutByDesignRow(e oracleAByDesignError) func() {
 // and "the oracle no longer flags it" are different facts and only the second
 // justifies deleting a row.
 func TestKnownOpenTolerances_AreLoadBearing(t *testing.T) {
-	c := classifyToleranceStaleness(t)
+	reportToleranceStaleness(t, classifyToleranceStaleness(t))
+}
+
+// reportToleranceStaleness turns a classification into test failures. Only the
+// dead bucket is soft: it means "the fault fired but the oracle no longer
+// reports a violation", which is what any PR that fixes the pinned bug causes,
+// so it goes through guardrules.KnownFindingClosed (logged in the merge queue,
+// a failure on main and the nightly with KEYORIX_GUARD_ROLLOUT=enforce) instead
+// of ejecting every unrelated PR queued next to the fixer. Inconclusive,
+// undrivable, underspecified and the baseline ratchets stay hard failures: they
+// say the check learned nothing or the baseline lies, not that a bug got fixed.
+func reportToleranceStaleness(t testing.TB, c toleranceStaleness) {
+	t.Helper()
 	dead, undrivable, inconclusive, revivedLive := c.dead, c.undrivable, c.inconclusive, c.revivedLive
 
 	for _, label := range c.underspecified {
