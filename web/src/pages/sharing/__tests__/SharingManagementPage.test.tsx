@@ -230,6 +230,40 @@ describe('SharingManagementPage — table rendering', () => {
         expect(within(carolRow).getByText('in 5h')).toBeInTheDocument();
     });
 
+    // #3153: the SECRET column names the secret and links to it; the API omits the name when
+    // the secret has since been deleted (or the caller may not read it), so fall back to the id.
+    it('renders the secret name as a link, with its project, when the share record carries it', () => {
+        sharesState.data = makeResponse([
+            { ...shareAlice, secretName: 'db-password', projectName: 'payments' } as typeof shareAlice,
+        ]);
+        render(<SharingManagementPage />);
+
+        const link = screen.getByTestId('share-secret-name');
+        expect(link).toHaveTextContent('db-password');
+        expect(link).not.toHaveTextContent('Secret #');
+        expect(link).toHaveAttribute('href', '/secrets/101');
+        expect(screen.getByTestId('share-secret-project')).toHaveTextContent('payments');
+    });
+
+    it('falls back to "Secret #id" (still linked, no project line) when the secret no longer resolves', () => {
+        sharesState.data = makeResponse([shareOps]);
+        render(<SharingManagementPage />);
+
+        const link = screen.getByTestId('share-secret-name');
+        expect(link).toHaveTextContent('Secret #102');
+        expect(link).toHaveAttribute('href', '/secrets/102');
+        expect(screen.queryByTestId('share-secret-project')).not.toBeInTheDocument();
+    });
+
+    it('uses theme-token text classes for the secret name in the dark theme', () => {
+        sharesState.data = makeResponse([{ ...shareAlice, secretName: 'db-password' } as typeof shareAlice]);
+        render(<SharingManagementPage />);
+
+        const link = screen.getByTestId('share-secret-name');
+        expect(link.className).toContain('text-base-primary');
+        expect(link.className).toContain('dark:text-white');
+    });
+
     it('initially queries useShares with only page and pageSize', () => {
         render(<SharingManagementPage />);
         expect(sharesQueryMock).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
