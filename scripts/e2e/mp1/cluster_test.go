@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,7 +115,7 @@ func (tg pgTarget) storageYAML(dbName string) string {
 }
 
 // mp1DBCounter makes every created database name unique within this process.
-var mp1DBCounter int64
+var mp1DBCounter atomic.Int64
 
 // createIsolatedDB creates a fresh, empty `mp1_<pid>_<n>` database on tg and
 // returns its DSN. The DROP is registered on the package teardown list, not on
@@ -122,7 +123,7 @@ var mp1DBCounter int64
 // create the cluster. Only `mp1_*` databases are ever created or dropped.
 func createIsolatedDB(t *testing.T, tg pgTarget) (dsn, name string) {
 	t.Helper()
-	name = fmt.Sprintf("mp1_%d_%d", os.Getpid(), atomic.AddInt64(&mp1DBCounter, 1))
+	name = fmt.Sprintf("mp1_%d_%d", os.Getpid(), mp1DBCounter.Add(1))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	conn, err := pgx.Connect(ctx, tg.raw)
@@ -307,7 +308,6 @@ func StartCluster(t *testing.T, n int, anomalySchedule string) *Cluster {
 	// Record all replicas on the teardown kill-list immediately, so even a
 	// later fatal in this function leaves nothing running.
 	for _, s := range c.Replicas {
-		s := s
 		registerTeardown(s.Close)
 	}
 
@@ -506,8 +506,8 @@ func runTeardowns() {
 	fns := teardowns
 	teardowns = nil
 	teardownMu.Unlock()
-	for i := len(fns) - 1; i >= 0; i-- {
-		fns[i]()
+	for _, fn := range slices.Backward(fns) {
+		fn()
 	}
 }
 

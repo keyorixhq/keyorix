@@ -85,7 +85,7 @@ func TestRedProof_RevokedPATLive(t *testing.T) {
 	// be unsound.
 	deadline := time.Now().Add(validTokenTTL + 2*time.Second)
 	for time.Now().Before(deadline) {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if st := c.authProbe(c.Replica(i), rawToken); st == http.StatusUnauthorized {
 				t.Fatalf("a never-revoked PAT was denied (401) on replica %d — the revoke oracle's 401 signal is not attributable to the revoke", i)
 			}

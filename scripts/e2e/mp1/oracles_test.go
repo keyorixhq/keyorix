@@ -105,7 +105,7 @@ func TestRevokedPATDenied(t *testing.T) {
 
 	// Confirm the token authenticates on every replica first (so each has a
 	// chance to positively cache it — the case the bound must survive).
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if st := c.authProbe(c.Replica(i), rawToken); st != http.StatusOK {
 			t.Fatalf("fresh PAT not accepted on replica %d: HTTP %d", i, st)
 		}
@@ -117,7 +117,7 @@ func TestRevokedPATDenied(t *testing.T) {
 		t.Fatalf("revoke PAT: HTTP %d: %s", env.StatusCode, env.Raw)
 	}
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		deadline := time.Now().Add(validTokenTTL + 5*time.Second)
 		start := time.Now()
 		denied := false
@@ -179,7 +179,7 @@ func TestAuditChainVerifies(t *testing.T) {
 
 	// Drive a short concurrent cross-replica burst so there is fresh audit
 	// activity attributable to this test even if run in isolation.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		name := fmt.Sprintf("mp1-audit-%d-%d", time.Now().UnixNano(), i)
 		v := "audit-" + name
 		recordCanary(v)
@@ -238,7 +238,7 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	// Fire a few writes at the replica we are about to kill, concurrently,
 	// then SIGKILL it mid-flight.
 	victim := 1
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		go func(k int) { _, _ = c.updateSecret(c.Replica(victim), id, fmt.Sprintf("kill-inflight-%d", k)) }(i)
 	}
 	vs := c.Replicas[victim]

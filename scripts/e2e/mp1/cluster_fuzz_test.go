@@ -171,12 +171,12 @@ func canarySnapshot() []string {
 
 // maxConvergeNanos records the longest cross-replica convergence delay the fuzz
 // loop observed for a secret value (post-return visibility window, measured).
-var maxConvergeNanos int64
+var maxConvergeNanos atomic.Int64
 
 func recordConverge(d time.Duration) {
 	for {
-		cur := atomic.LoadInt64(&maxConvergeNanos)
-		if int64(d) <= cur || atomic.CompareAndSwapInt64(&maxConvergeNanos, cur, int64(d)) {
+		cur := maxConvergeNanos.Load()
+		if int64(d) <= cur || maxConvergeNanos.CompareAndSwap(cur, int64(d)) {
 			return
 		}
 	}
@@ -184,7 +184,7 @@ func recordConverge(d time.Duration) {
 
 // fuzzIter gives each iteration a process-unique id so its secret name never
 // collides with another iteration's in the shared database.
-var fuzzIter int64
+var fuzzIter atomic.Int64
 
 // FuzzMP1MultiProc drives a fuzz-chosen interleaving of concurrent secret
 // writes across the real replica processes and checks two oracles per
@@ -224,7 +224,7 @@ func FuzzMP1MultiProc(f *testing.F) {
 		if len(data) == 0 {
 			data = []byte{0}
 		}
-		iter := atomic.AddInt64(&fuzzIter, 1)
+		iter := fuzzIter.Add(1)
 		name := fmt.Sprintf("mp1-s-%d", iter)
 		v0 := fmt.Sprintf("v-%d-0", iter)
 		recordCanary(v0)
@@ -273,11 +273,8 @@ func FuzzMP1MultiProc(f *testing.F) {
 
 		var wg sync.WaitGroup
 		for _, op := range ops {
-			op := op
 			recordCanary(op.value)
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				var st int
 				var e error
 				if op.rotate {
@@ -297,7 +294,7 @@ func FuzzMP1MultiProc(f *testing.F) {
 				if st == http.StatusOK || st == http.StatusCreated {
 					success[op.value] = struct{}{}
 				}
-			}()
+			})
 		}
 		wg.Wait()
 		if fault != "" {
@@ -313,7 +310,7 @@ func FuzzMP1MultiProc(f *testing.F) {
 		for {
 			vals := make([]string, 0, n)
 			converged := true
-			for i := 0; i < n; i++ {
+			for i := range n {
 				v, st, rerr := c.readSecretValue(c.Replica(i), id)
 				if rerr != nil {
 					converged = false
