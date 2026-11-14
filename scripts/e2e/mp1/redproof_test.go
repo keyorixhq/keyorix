@@ -15,8 +15,8 @@ import (
 // stay green). Because production code must not be changed, the planted
 // violation lives in the test input, not in Keyorix: these proofs validate
 // that the CHECK fires on the shape it claims to catch — they do NOT, and are
-// not claimed to, prove that Keyorix ever produces that shape. (See the report
-// and CLAUDE.md's "validate a mechanism against a failure that actually
+// not claimed to, prove that Keyorix ever produces that shape. (See
+// CLAUDE.md's "validate a mechanism against a failure that actually
 // happened" caveat.)
 
 // TestRedProof_SerialEquivalence: the serial-equivalence check must flag a
