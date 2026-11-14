@@ -2,8 +2,8 @@ package services
 
 // grant_refusal_mapping_guard_test.go — FIX-ERRMAP-STRUCT-1 item 4 (#3979, #4020): every
 // gRPC service method that calls a GRANTING core method (one that enforces a grant
-// ceiling, derived by guardrules.GrantCeilingMethods from internal/core; the REST twin
-// lands with #4165 as TestEveryGrantingHandlerMapsTheCeilingRefusal) hands
+// ceiling, read from internal/core/testdata/grant_ceiling_reaching_methods.txt, the one
+// derivation shared with the REST twin TestEveryGrantingHandlerMapsTheCeilingRefusal) hands
 // the error to a mapper that classifies core.ErrPermissionDenied (PermissionDenied,
 // never Internal): the shared adapter coreErrorStatus, or a same-package function
 // whose body evaluates errors.Is(_, core.ErrPermissionDenied).
@@ -124,18 +124,32 @@ func grantRefusalStatusViolations(t *testing.T, dir string, granting map[string]
 	return violations, seen
 }
 
+// grantCeilingReachingMethodsFile is the granting set, derived once in internal/core
+// (grant_ceiling_reach_registry_test.go) and shared with the REST guard
+// (server/http/handlers/grant_ceiling_mapping_guard_test.go).
+const grantCeilingReachingMethodsFile = "../../../internal/core/testdata/grant_ceiling_reaching_methods.txt"
+
+func readGrantCeilingReachingMethods(t *testing.T) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile(grantCeilingReachingMethodsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
+		out[strings.TrimSpace(line)] = true
+	}
+	if len(out) < 10 {
+		t.Fatalf("%s lists %d methods: the derivation is broken", grantCeilingReachingMethodsFile, len(out))
+	}
+	return out
+}
+
 // TestEveryGrantingServiceMapsPermissionDenied reports through guardrules.Rollout
 // (report-only on pull requests while its docs/guard-rollout.d row exists).
 func TestEveryGrantingServiceMapsPermissionDenied(t *testing.T) {
 	g := guardrules.Rollout(t)
-	names, err := guardrules.GrantCeilingMethods(filepath.Join("..", "..", "..", "internal", "core"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	granting := map[string]bool{}
-	for _, n := range names {
-		granting[n] = true
-	}
+	granting := readGrantCeilingReachingMethods(t)
 	violations, seen := grantRefusalStatusViolations(t, ".", granting, grantRefusalStatusExempt)
 	if seen < 4 {
 		t.Fatalf("saw only %d s.core calls of a granting method: the scan is broken", seen)

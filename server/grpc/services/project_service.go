@@ -2,14 +2,13 @@ package services
 
 import (
 	"context"
-	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
@@ -29,29 +28,23 @@ func NewProjectService(coreService *core.KeyorixCore) *ProjectGRPCService {
 	return &ProjectGRPCService{core: coreService}
 }
 
+// mapProjectError translates core/storage project errors into gRPC status codes
+// through the shared classifier (coreErrorStatus): an audit outage and a typed storage
+// read fault are Unavailable (retry), the texts are this family's own and fixed.
 func mapProjectError(err error) error {
-	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
-	}
-	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
-	switch {
 	// Not yet typed: storage's lockProjectRowForCascade (internal/storage/store/
 	// local_secrets.go) returns a bare fmt.Errorf("project not found") to
 	// DeleteProject/DeleteProjectIfEmpty for a missing or already-deleted project.
 	// Exact-text match, scoped to that one message, until it wraps
 	// storage.ErrProjectNotFound; then delete this line.
-	case err.Error() == "project not found":
+	if err.Error() == "project not found" {
 		return status.Error(codes.NotFound, "project not found")
-	case errors.Is(err, storage.ErrProjectNotFound), errors.Is(err, storage.ErrEnvironmentNotFound):
-		return status.Error(codes.NotFound, "project not found")
-	case errors.Is(err, storage.ErrDuplicateProjectName):
-		return status.Error(codes.AlreadyExists, "a project with this name already exists")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "access denied")
-	default:
-		return internalFailure("project operation failed", err)
 	}
+	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "project operation", texts: coreErrorTexts{
+		errclass.NotFound:         "project not found",
+		errclass.Conflict:         "a project with this name already exists",
+		errclass.PermissionDenied: "access denied",
+	}})
 }
 
 // ListProjects returns the projects the CALLER CAN READ, matching the HTTP route

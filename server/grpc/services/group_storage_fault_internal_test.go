@@ -3,7 +3,9 @@ package services
 // CORE-GRPC-ERR-TAILS-1 item 1: the counterpart of TestGroupRPCs_MissingGroupIsNotFound.
 // A storage fault under a group RPC is a server failure, not a missing group: it answers
 // Internal with the static message, never NotFound (which would tell a caller the id does
-// not exist) and never the raw storage text. The injected text contains "not found" on
+// not exist) and never the raw storage text. ERRMAP-GRPC-NOV-3: a fault of the group READ
+// (GetGroup) is typed core.ErrStorageReadUnavailable, so it answers Unavailable with the
+// storage_unavailable ErrorInfo (REST: 503 since #4077); a fault of a write stays Internal. The injected text contains "not found" on
 // purpose, so the test fails if groupError ever goes back to classifying by error text.
 // It covers faults whose text avoids the permission/invalid/required/exceeds fallback
 // words in groupError; untyped faults using those words are not covered here.
@@ -22,7 +24,7 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
-func TestGroupRPCs_StorageFaultIsInternal(t *testing.T) {
+func TestGroupRPCs_StorageFaultAnswer(t *testing.T) {
 	_, h := newGroupServiceFull(t)
 	fs := faultstorage.NewFaultyStorage(h.Storage, nil)
 	svc := NewGroupService(core.NewKeyorixCore(fs))
@@ -33,17 +35,18 @@ func TestGroupRPCs_StorageFaultIsInternal(t *testing.T) {
 
 	calls := map[string]struct {
 		method string
+		want   codes.Code
 		call   func() error
 	}{
-		"GetGroup": {"GetGroup", func() error { _, err := svc.GetGroup(groupCtx(), &pb.GetGroupRequest{Id: gid}); return err }},
-		"UpdateGroup": {"GetGroup", func() error {
+		"GetGroup": {"GetGroup", codes.Unavailable, func() error { _, err := svc.GetGroup(groupCtx(), &pb.GetGroupRequest{Id: gid}); return err }},
+		"UpdateGroup": {"GetGroup", codes.Internal, func() error {
 			_, err := svc.UpdateGroup(groupCtx(), &pb.UpdateGroupRequest{Id: gid, Name: "renamed"})
 			return err
 		}},
-		"DeleteGroup": {"GetGroup", func() error { _, err := svc.DeleteGroup(groupCtx(), &pb.DeleteGroupRequest{Id: gid}); return err }},
+		"DeleteGroup": {"GetGroup", codes.Internal, func() error { _, err := svc.DeleteGroup(groupCtx(), &pb.DeleteGroupRequest{Id: gid}); return err }},
 		// AddUserToGroup's own GetGroup is only an audit-name lookup whose error is
 		// dropped by design (audit_refs.go), so fault the membership write itself.
-		"AddGroupMember": {"AddUserToGroup", func() error {
+		"AddGroupMember": {"AddUserToGroup", codes.Internal, func() error {
 			_, err := svc.AddGroupMember(groupCtx(), &pb.GroupMemberRequest{GroupId: gid, UserId: 2})
 			return err
 		}},
@@ -59,7 +62,10 @@ func TestGroupRPCs_StorageFaultIsInternal(t *testing.T) {
 			fs.Arm(nil)
 			require.True(t, fired, "the armed %s fault must have fired for %s", c.method, name)
 			require.Error(t, err)
-			assert.Equal(t, codes.Internal, status.Code(err), err.Error())
+			assert.Equal(t, c.want, status.Code(err), err.Error())
+			if c.want == codes.Unavailable {
+				assert.True(t, hasErrorInfoReason(err, storageUnavailableReason), "an Unavailable storage fault carries the storage_unavailable ErrorInfo")
+			}
 			assert.NotContains(t, err.Error(), "injected", "raw storage text must not reach the caller")
 		})
 	}

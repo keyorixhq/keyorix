@@ -74,7 +74,7 @@ func f(err error) bool { return errors.Is(err, core.ErrPermissionDenied) }`
 	assert.Empty(t, grantCeilingTextMatches(t, "now", now))
 }
 
-// TestEveryGrantRouteMapsTheCeilingRefusalTo403 drives each handler that grants a role (ten routes)
+// TestEveryGrantRouteMapsTheCeilingRefusalTo403 drives each handler that grants a role (fourteen routes)
 // as an actor who holds roles.assign but not the permissions of the role it grants.
 // Core refuses (core.ErrPermissionDenied); every route must answer 403, never 500/400.
 func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
@@ -130,6 +130,13 @@ func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
 
 	machine, err := fw.cs.CreateMachineIdentity(ctx, proj.ID, "fam6-grant-machine", "service", "", "", fw.admin.ID, 0)
 	require.NoError(t, err)
+
+	// #4154: a provisioned membership and a pending access request, both for the
+	// powerful role: activating / approving them grants it.
+	membership := &models.ProjectMembership{ProjectID: proj.ID, UserID: target.ID, Role: "fam6-powerful", State: "provisioned", InvitedAt: time.Now()}
+	require.NoError(t, fw.db.Create(membership).Error)
+	accessReq := &models.AccessRequest{ProjectID: proj.ID, UserID: target.ID, SuggestedRole: "fam6-powerful", State: "pending", CreatedAt: time.Now()}
+	require.NoError(t, fw.db.Create(accessReq).Error)
 
 	cat := NewCatalogHandler(fw.cs)
 	users, err := NewUserHandler(fw.cs)
@@ -194,6 +201,27 @@ func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
 		{"PUT /users/{id}/roles", func() *httptest.ResponseRecorder {
 			w := httptest.NewRecorder()
 			usersRoles.UpdateUserRoles(w, suReq(http.MethodPut, `{"role_ids":[`+rid+`],"project_id":`+pid+`}`, map[string]string{"id": tid}))
+			return w
+		}},
+		// #4154: these four answered the ceiling 500 (or, for the global invite, past its two 403 pre-checks).
+		{"POST /projects/{id}/invitations", func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			cat.CreateInvitation(w, suReq(http.MethodPost, `{"email":"fam6-invitee@example.com","role":"fam6-powerful"}`, map[string]string{"id": pid}))
+			return w
+		}},
+		{"POST /invitations (global) with a system role", func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			cat.CreateGlobalInvitation(w, suReq(http.MethodPost, `{"email":"fam6-global-invitee@example.com","role":"fam6-global"}`, nil))
+			return w
+		}},
+		{"PUT /projects/{id}/access-requests/{requestId} approve", func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			cat.ResolveAccessRequest(w, suReq(http.MethodPut, `{"action":"approve","granted_role":"fam6-powerful"}`, map[string]string{"id": pid, "requestId": suID(accessReq.ID)}))
+			return w
+		}},
+		{"PUT /projects/{id}/memberships/{membershipId} activate", func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			cat.TransitionMembership(w, suReq(http.MethodPut, `{"action":"activate"}`, map[string]string{"id": pid, "membershipId": suID(membership.ID)}))
 			return w
 		}},
 	}

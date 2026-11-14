@@ -44,9 +44,9 @@ func TestBreakGlassGRPC_OwnList(t *testing.T) {
 	p1, p2 := uint(1), uint(2)
 	h.CreateTestUser(t, "alice", 10)
 	h.CreateTestUser(t, "bob", 11)
-	h.AssignUserRole(t, 10, 4, &p1) // viewer at 1: a member, no roles.read
-	h.AssignUserRole(t, 10, 4, &p2) // and at 2
-	h.AssignUserRole(t, 11, 4, &p1)
+	h.AssignUserRole(t, 10, testhelper.RoleProjectViewer, &p1) // project_viewer at 1: a member, no roles.read
+	h.AssignUserRole(t, 10, testhelper.RoleProjectViewer, &p2) // and at 2
+	h.AssignUserRole(t, 11, testhelper.RoleProjectViewer, &p1)
 	alice, bob := authCtx(10, "alice"), authCtx(11, "bob")
 
 	activate := func(ctx context.Context, pid uint32, why string) uint32 {
