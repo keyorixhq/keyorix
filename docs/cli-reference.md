@@ -453,7 +453,7 @@ Verify and export the tamper-evident audit trail
 - [`keyorix audit logs`](#keyorix-audit-logs) — Query the audit trail with filters (human-readable table)
 - [`keyorix audit migrate-chain-encoding`](#keyorix-audit-migrate-chain-encoding) — One-time re-derivation of the audit hash chain under the current encoding
 - [`keyorix audit search`](#keyorix-audit-search) — Search the audit trail with structured filters
-- [`keyorix audit verify`](#keyorix-audit-verify) — Report the audit hash chain's integrity (non-zero exit if broken or not proven)
+- [`keyorix audit verify`](#keyorix-audit-verify) — Report the audit hash chain's integrity (non-zero exit unless valid)
 
 ## `keyorix audit checkpoint`
 
@@ -577,15 +577,21 @@ keyorix audit search --resource-type secret --resource-id 42
 
 ## `keyorix audit verify`
 
-Report the audit hash chain's integrity (non-zero exit if broken or not proven)
+Report the audit hash chain's integrity (non-zero exit unless valid)
 
 Report the audit hash chain's integrity.
 
 By default this reads the server's incremental verification: the rolling full
 re-walk (every row re-hashed at least once per cycle) plus a check of the rows
-after the latest signed checkpoint. Status is VALID, BROKEN, or NOT PROVEN
-(no recent full verification covers the older rows yet). --full runs a full
-walk on the server now, as a background job, and waits for it.
+after the latest signed checkpoint. Status is VALID, BROKEN, NOT PROVEN
+(no recent full verification covers the older rows yet) or SEALED (the rows
+that remain verify, but an audit loss was accepted with "admin audit
+accept-loss"; the reason names the seal). --full runs a full walk on the
+server now, as a background job, and waits for it.
+
+Exit codes: 0 VALID; 1 BROKEN or NOT PROVEN; 4 SEALED (the same code
+"keyorix-server admin verify-audit" uses for SEALED; note that 4 is also this
+CLI's "permission denied" code, so check the printed status when it matters).
 
 **Usage:** `keyorix audit verify [flags]`
 
