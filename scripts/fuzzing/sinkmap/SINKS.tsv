@@ -594,7 +594,7 @@ net-out	internal/notary/rfc3161.go	135	internal/notary.(RFC3161).Anchor	yes	yes	
 net-out	internal/notifychan/chat.go	112	internal/notifychan.(ChatSink).send	yes	yes	no	http.NewRequestWithContext with variable URL
 net-out	internal/notifychan/chat.go	117	internal/notifychan.(ChatSink).send	yes	yes	no	.Do (likely http.Client.Do; receiver type unresolved)
 net-out	internal/notifychan/delivery.go	143	internal/notifychan.(deliverer).close	yes	yes	yes	.Do (likely http.Client.Do; receiver type unresolved)
-template-regexp	internal/notifychan/secure_transport.go	32	internal/notifychan.validateEndpoint	yes	no	no	.Parse with variable argument (likely template parse)
+template-regexp	internal/notifychan/secure_transport.go	32	internal/notifychan.validateEndpoint	yes	no	yes	.Parse with variable argument (likely template parse)
 net-out	internal/notifychan/webhook.go	160	internal/notifychan.(WebhookSink).send	yes	yes	no	http.NewRequestWithContext with variable URL
 crypto-compare	internal/notifychan/webhook.go	165	internal/notifychan.(WebhookSink).send	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
 crypto-compare	internal/notifychan/webhook.go	168	internal/notifychan.(WebhookSink).send	yes	yes	no	== / != on credential-named operand (operand type unresolved; may be []byte or string)
@@ -616,9 +616,9 @@ crypto-compare	internal/rotation/azure.go	127	internal/rotation.(AzureAppSecretE
 net-out	internal/rotation/azure.go	196	internal/rotation.(azureGraphClient).do	yes	yes	no	http.NewRequestWithContext with variable URL
 net-out	internal/rotation/azure.go	204	internal/rotation.(azureGraphClient).do	yes	yes	no	.Do (likely http.Client.Do; receiver type unresolved)
 template-regexp	internal/rotation/gcpsa.go	173	internal/rotation.evictableServiceAccountKey	yes	yes	yes	.Parse with variable argument (likely template parse)
-sql	internal/rotation/mysql.go	93	internal/rotation.(MySQLExecutor).Rotate	yes	yes	no	.Exec with non-literal query string
+sql	internal/rotation/mysql.go	93	internal/rotation.(MySQLExecutor).Rotate	yes	yes	yes	.Exec with non-literal query string
 sql	internal/rotation/mysql.go	118	internal/rotation.(mysqlDBConn).Exec	yes	yes	yes	.ExecContext with non-literal query string
-sql	internal/rotation/postgres.go	82	internal/rotation.(PostgresExecutor).Rotate	yes	yes	no	.Exec with non-literal query string
+sql	internal/rotation/postgres.go	82	internal/rotation.(PostgresExecutor).Rotate	yes	yes	yes	.Exec with non-literal query string
 sql	internal/rotation/postgres.go	113	internal/rotation.(pgxConn).Exec	yes	yes	yes	.Exec with non-literal query string
 template-regexp	internal/saml/provider.go	77	internal/saml.NewProvider	yes	no	yes	.Parse with variable argument (likely template parse)
 template-regexp	internal/saml/provider.go	81	internal/saml.NewProvider	yes	no	yes	.Parse with variable argument (likely template parse)
