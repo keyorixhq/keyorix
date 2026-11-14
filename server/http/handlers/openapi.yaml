@@ -8528,12 +8528,15 @@ components:
         secret_id: {type: integer}
         name: {type: string}
         error: {type: string}
+        code: {type: string, description: 'Stable code of a retryable outage item (audit_unavailable, storage_unavailable); absent for any other failure.'}
+        retryable: {type: boolean, description: 'True when the item failed because the audit log or storage was unavailable; nothing was changed and the call can be repeated.'}
     BulkDeleteResult:
       type: object
       properties:
         deleted: {type: array, items: {type: integer}}
         failed: {type: array, items: {$ref: '#/components/schemas/BulkOpError'}}
         total: {type: integer}
+        retryable: {type: integer, description: 'How many of `failed` are retryable outages.'}
     BulkRotateResult:
       type: object
       properties:
