@@ -14,6 +14,7 @@
 //	{"dir": "server/http", "import_path": "github.com/keyorixhq/keyorix/server/http",
 //	 "targets": [{"file": "web/e2e/real/x.spec.ts", "outside": true}],
 //	 "test_files": ["a_test.go"],
+//	 "base_test_sources": {"a_test.go": "package p\n..."},
 //	 "seed_imports": ["github.com/keyorixhq/keyorix/internal/statemap"],
 //	 "reader_imports": ["github.com/keyorixhq/keyorix/internal/testutil/srcpath"],
 //	 "chain": [{"dir": "internal/statemap", "seed_imports": [], "is_seed": true}]}
@@ -21,7 +22,11 @@
 //	dir            repo-relative package directory (testreach runs at the repo root)
 //	targets        changed non-Go files, or .go files of OTHER packages, that rule
 //	               2/3 matched; outside = select-affected's "outside every package"
-//	test_files     changed _test.go files of this package (base names)
+//	test_files     changed _test.go files of this package (base names), deleted
+//	               ones included
+//	base_test_sources  each changed test file's content at the base ("" when
+//	               the change adds it); a changed test file without an entry
+//	               selects every test
 //	seed_imports   this package's imports that are, or depend on, a package whose
 //	               non-test code names a target (a rule-3 CODE seed)
 //	reader_imports this package's in-module imports that can read the source tree
@@ -46,6 +51,11 @@
 //     selected. The same holds for those of every chain package. A var whose
 //     initialiser is plain data (literals, composite literals) is reached
 //     through the declarations that use it, like any other declaration.
+//   - A changed test file's BASE version is parsed too: its declarations are
+//     seeds as if still present, so whatever used a removed name or the type of
+//     a removed method is selected, and a removed init, TestMain or calling
+//     initialiser (a registry row, registered from init()) selects ALL tests.
+//     A deleted changed test file selects ALL tests.
 //   - A declaration is a seed when it is declared in a changed test file; when
 //     it uses a seed_imports package; when a string literal in it names a target
 //     (rule 3's semantics: the basename of a non-Go target, the target's path or
@@ -101,6 +111,10 @@ type request struct {
 	SeedImports   []string   `json:"seed_imports"`
 	ReaderImports []string   `json:"reader_imports"`
 	Chain         []chainPkg `json:"chain"`
+
+	// BaseTestSources: file name -> content at the base, for every TestFiles
+	// entry ("" for a file the change adds).
+	BaseTestSources map[string]string `json:"base_test_sources"`
 }
 
 type result struct {
@@ -185,6 +199,36 @@ func analyse(r request) result {
 	for i, d := range decls {
 		if w := seedReason(d, r, changedTest, seedImp, readerImp); w != "" {
 			seeds[i] = w
+		}
+	}
+	// What a changed test file no longer declares is invisible in the head
+	// tree; its base version says what was removed (REVIEW-4196-DEEP-1 M1).
+	for _, n := range uniq(slices.Clone(r.TestFiles)) {
+		if _, err := os.Stat(filepath.Join(r.Dir, n)); err != nil {
+			return every("changed test file "+n+" was deleted (what it registered or declared is gone)", len(tests))
+		}
+		src, ok := r.BaseTestSources[n]
+		if !ok {
+			return every("no base version of changed test file "+n, len(tests))
+		}
+		if src == "" {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), n, src, parser.ParseComments)
+		if err != nil {
+			return every("base version of "+n+": parse error: "+err.Error(), len(tests))
+		}
+		bd, why := fileDecls(n, f)
+		if why != "" {
+			return every("base version of "+n+": "+why, len(tests))
+		}
+		for _, d := range bd {
+			if d.global {
+				return every(fmt.Sprintf("%s in the base version of %s ran in every test and the change edits it", d.name, n), len(tests))
+			}
+			d.test = "" // a removed test does not run
+			seeds[len(decls)] = "declared in the base version of changed " + n
+			decls = append(decls, d)
 		}
 	}
 	for _, t := range r.Targets {

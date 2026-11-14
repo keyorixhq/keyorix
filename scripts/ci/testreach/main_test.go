@@ -97,17 +97,18 @@ func TestUnrelated(t *testing.T) { _ = fmt.Sprint(1) }
 // The same literal, but the target sits elsewhere: nothing is selected, and a
 // changed test file selects its own tests and their users.
 func TestReach_ChangedTestFileSelectsItsDeclarations(t *testing.T) {
+	const bSrc = `package p
+import "testing"
+func sharedFixture() int { return 2 }
+func TestB(t *testing.T) { _ = sharedFixture() }
+`
 	r := writePkg(t, map[string]string{
 		"p/p.go": pkgSrc,
 		"p/a_test.go": `package p
 import "testing"
 func TestA(t *testing.T) {}
 `,
-		"p/b_test.go": `package p
-import "testing"
-func sharedFixture() int { return 2 }
-func TestB(t *testing.T) { _ = sharedFixture() }
-`,
+		"p/b_test.go": bSrc,
 		"p/c_test.go": `package p
 import "testing"
 func TestC(t *testing.T) { _ = sharedFixture() }
@@ -122,6 +123,7 @@ func TestC(t *testing.T) { _ = sharedFixture() }
 		t.Fatalf("empty selection encodes as %s, want \"tests\":[]", b)
 	}
 	r.TestFiles = []string{"b_test.go"}
+	withBase(t, &r, map[string]string{"b_test.go": bSrc})
 	wantTests(t, analyse(r), "TestB", "TestC")
 }
 
@@ -289,4 +291,92 @@ func TestIsTestName(t *testing.T) {
 			t.Errorf("isTestName(%q)=%v, want %v", n, got, want)
 		}
 	}
+}
+
+// withBase sets the request's base versions of its changed test files through
+// the JSON the request is decoded from (mq_slim fills it from git show).
+func withBase(t *testing.T, r *request, base map[string]string) {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"base_test_sources": base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, r); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The registry-row pattern (CLAUDE.md: one test file per row, registered from
+// init()): reg_test.go checks the table, a_reg_test.go fills a row. Deleting
+// a_reg_test.go breaks the package although no declaration left in the head
+// tree is in a changed file, so nothing seeds and testreach used to answer
+// "0 of 2 tests" (REVIEW-4196-DEEP-1 M1; server/faultops without
+// best_effort_tables_entry_logauditevent_test.go gave "0 of 152").
+const regSrc = `package p
+import "testing"
+var Registry = map[string]bool{}
+func TestRegistryHasA(t *testing.T) { if !Registry["a"] { t.Fatal("no a") } }
+func TestOther(t *testing.T) {}
+`
+
+func TestReach_DeletedTestFileSelectsEveryTest(t *testing.T) {
+	r := writePkg(t, map[string]string{"p/p.go": pkgSrc, "p/reg_test.go": regSrc})
+	r.Targets = outside("docs/guide.md")
+	r.TestFiles = []string{"a_reg_test.go"}
+	withBase(t, &r, map[string]string{"a_reg_test.go": "package p\nfunc init() { Registry[\"a\"] = true }\n"})
+	wantAll(t, analyse(r), "a_reg_test.go")
+}
+
+// The same row removed from a test file that stays: the base version declared
+// an init (or TestMain, or a var whose initialiser calls something), which ran
+// in every test, so every test can observe its removal. A removed plain
+// declaration seeds the head declarations that use its name, and a removed
+// method seeds the users of its type.
+func TestReach_RemovedInitSelectsEveryTest(t *testing.T) {
+	for name, removed := range map[string]string{
+		"init":            "func init() { Registry[\"a\"] = true }\n",
+		"TestMain":        "func TestMain(m *testing.M) { Registry[\"a\"] = true; m.Run() }\n",
+		"var with a call": "var _ = register(\"a\")\nfunc register(k string) bool { Registry[k] = true; return true }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			head := "package p\nimport \"testing\"\nfunc TestFromRow(t *testing.T) {}\n"
+			r := writePkg(t, map[string]string{"p/p.go": pkgSrc, "p/reg_test.go": regSrc, "p/a_reg_test.go": head})
+			r.Targets = outside("docs/guide.md")
+			r.TestFiles = []string{"a_reg_test.go"}
+			withBase(t, &r, map[string]string{"a_reg_test.go": head + removed})
+			wantAll(t, analyse(r), "base version of a_reg_test.go")
+		})
+	}
+
+	r := writePkg(t, map[string]string{
+		"p/p.go": "package p\ntype Doc struct{}\nfunc Prod() int { return 1 }\n",
+		"p/a_test.go": `package p
+import ("fmt"; "testing")
+func TestPrintsDoc(t *testing.T) { _ = fmt.Sprint(Doc{}) }
+func TestUsesLimit(t *testing.T) { _ = limit }
+func TestUnrelated(t *testing.T) { _ = Prod() }
+`,
+		"p/b_test.go": "package p\nvar limit = 3\n",
+	})
+	r.Targets = outside("docs/guide.md")
+	r.TestFiles = []string{"b_test.go"}
+	withBase(t, &r, map[string]string{"b_test.go": "package p\nvar limit = 3\nfunc (Doc) String() string { return \"doc\" }\n"})
+	wantTests(t, analyse(r), "TestPrintsDoc", "TestUsesLimit")
+}
+
+// Without the base version of a changed test file nothing tells what it
+// removed: every test (fail closed). An empty base is a file added by the
+// change. An unparsable base also selects every test.
+func TestReach_ChangedTestFileWithoutBaseSelectsEveryTest(t *testing.T) {
+	src := map[string]string{"p/p.go": pkgSrc, "p/a_test.go": "package p\nimport \"testing\"\nfunc TestA(t *testing.T) {}\nfunc TestB(t *testing.T) {}\n"}
+	r := writePkg(t, src)
+	r.Targets = outside("docs/guide.md")
+	r.TestFiles = []string{"a_test.go"}
+	wantAll(t, analyse(r), "no base version")
+
+	withBase(t, &r, map[string]string{"a_test.go": "package p\nfunc TestA(\n"})
+	wantAll(t, analyse(r), "base version of a_test.go")
+
+	withBase(t, &r, map[string]string{"a_test.go": ""})
+	wantTests(t, analyse(r), "TestA", "TestB")
 }

@@ -535,7 +535,7 @@ def decide(base, head, changed=None):
         import mq_slim
         ctx = {"packages": packages, "repo": repo, "affected": affected, "changed": changed,
                "code_seeds": code_seeds, "real_code": real_code, "inputs": inputs, "hits": hits,
-               "special": special, "owner": owning_package}
+               "special": special, "owner": owning_package, "base": base, "file_at": file_at}
         shadow, slim = mq_slim.run(ctx, legs, all_legs, gates, touched, log)
     except Exception as exc:  # the levers must never change the selection
         log(f"MQ-SHADOW {json.dumps({'v': 1, 'lever': 'mq_slim', 'decision': 'error', 'why': f'{type(exc).__name__}: {exc}'})}")
@@ -598,7 +598,7 @@ def main():
     try:
         import mq_slim
         if d["mode"] == "selected" and mq_slim.sampled_full_run():
-            d = {**d, "mode": "full", "reason": f"sampled full run (every {mq_slim.SAMPLE_EVERY}th merge_group run, MQ_SLIM_MODE=enforce)", "slim": {}}
+            d = {**d, "mode": "full", "reason": f"sampled full run (GITHUB_RUN_NUMBER divisible by {mq_slim.SAMPLE_EVERY}, about 1 in {mq_slim.SAMPLE_EVERY} merge_group runs, MQ_SLIM_MODE=enforce)", "slim": {}}
     except Exception as exc:
         log(f"select-affected: mq_slim unavailable ({type(exc).__name__}: {exc})")
 
