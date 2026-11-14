@@ -160,12 +160,17 @@ func checkGoMailRender(t *testing.T, rcpt, subject, body string, build goMailBui
 	}
 
 	// O3 subject.
-	gotSubj, err := new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
-	if err != nil {
-		t.Fatalf("O3 SUBJECT: Subject header %q does not decode: %v", msg.Header.Get("Subject"), err)
-	}
-	if normFolding(gotSubj) != normFolding(subject) && !xmailEncodedWordLookalike.MatchString(subject) {
-		t.Fatalf("O3 SUBJECT: subject %q renders as %q and decodes to %q", subject, msg.Header.Get("Subject"), gotSubj)
+	// A plain subject that itself contains an encoded-word shape is the named exception:
+	// it reaches the reader verbatim, which may decode it or, for an unknown charset,
+	// fail to. Neither is an injection, so O3 does not judge it.
+	if !xmailEncodedWordLookalike.MatchString(subject) {
+		gotSubj, err := new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
+		if err != nil {
+			t.Fatalf("O3 SUBJECT: Subject header %q does not decode: %v", msg.Header.Get("Subject"), err)
+		}
+		if normFolding(gotSubj) != normFolding(subject) {
+			t.Fatalf("O3 SUBJECT: subject %q renders as %q and decodes to %q", subject, msg.Header.Get("Subject"), gotSubj)
+		}
 	}
 
 	// O4 body.
