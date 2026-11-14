@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // withoutEffectThenErrorRow removes the row at index i (not every row with the
@@ -50,27 +51,30 @@ func oracleDFindings(findings []string) []string {
 }
 
 // effectThenErrorRowProblem returns why row i is not load-bearing, or "" if it is.
-func effectThenErrorRowProblem(t *testing.T, i int) string {
+// stale is true when the problem is only that the row went dead (the case no
+// longer produces an oracle (d) finding): that is the verdict a PR fixing the
+// underlying bug causes, and is reported through guardrules.KnownFindingClosed.
+func effectThenErrorRowProblem(t *testing.T, i int) (problem string, stale bool) {
 	t.Helper()
 	e := effectThenErrorExtraExclusions[i]
 	in, outcome, reason := driveFaultCase(t, e.op, e.method, 1, faultstorage.KindEffectThenError)
 	if outcome != driveObserved {
 		return fmt.Sprintf("its own (op, method) could not be driven as an effect-then-error fault at call 1 (%s: %s); "+
-			"fix the row, or fix whatever made the case unreachable", outcome, reason)
+			"fix the row, or fix whatever made the case unreachable", outcome, reason), false
 	}
 	if in.result.Success {
 		return "the op reported SUCCESS under effect-then-error, so it never reaches oracle (d)'s error branch " +
-			"(the behaviour changed: remove the row, or the row names the wrong case)"
+			"(the behaviour changed: remove the row, or the row names the wrong case)", false
 	}
 	if f := oracleDFindings(oracleFindingsWithout(t, in, func() func() { return withoutEffectThenErrorRow(i) })); len(f) == 0 {
 		return "with the row removed oracle (d) reports nothing for this case, so the row is stale " +
-			"(an earlier layer accepts it, or the op no longer produces the diff). Remove it"
+			"(an earlier layer accepts it, or the op no longer produces the diff). Remove it", true
 	}
 	if f := oracleDFindings(oracleFindingsWithout(t, in, func() func() { return func() {} })); len(f) > 0 {
 		return fmt.Sprintf("with the row in place oracle (d) still reports: %v. The row does not cover the real diff "+
-			"(NOT widened automatically: an unexplained table or column is a different finding)", f)
+			"(NOT widened automatically: an unexplained table or column is a different finding)", f), false
 	}
-	return ""
+	return "", false
 }
 
 func TestEffectThenErrorExclusions_AreLoadBearing(t *testing.T) {
@@ -83,9 +87,15 @@ func TestEffectThenErrorExclusions_AreLoadBearing(t *testing.T) {
 		e := effectThenErrorExtraExclusions[i]
 		label := fmt.Sprintf("%s/%s", e.op, e.method)
 		t.Run(label, func(t *testing.T) {
-			if p := effectThenErrorRowProblem(t, i); p != "" {
-				t.Fatalf("effectThenErrorExclusion %q: %s", label, p)
+			p, stale := effectThenErrorRowProblem(t, i)
+			if p == "" {
+				return
 			}
+			if stale {
+				guardrules.KnownFindingClosed(t, "effectThenErrorExtraExclusions/"+label, p)
+				return
+			}
+			t.Fatalf("effectThenErrorExclusion %q: %s", label, p)
 		})
 	}
 }
