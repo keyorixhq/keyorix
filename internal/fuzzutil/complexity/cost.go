@@ -111,7 +111,7 @@ func MeasureWork(work func() uint64, fn func()) Cost {
 type Budget struct {
 	MaxAllocBytesPerByte float64
 	FloorBytes           uint64
-	AbsMaxAllocBytes      uint64
+	AbsMaxAllocBytes     uint64
 
 	MaxWorkPerByte float64
 	FloorWork      uint64
