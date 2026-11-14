@@ -78,6 +78,19 @@ func dynamicPreconditionf(format string, a ...any) error {
 	return refuseAs(ErrDynamicSecretPrecondition, fmt.Errorf(format, a...))
 }
 
+// ErrProjectHasSecrets is matched (errors.Is) by DeleteProject's refusal to delete a
+// project that still holds secrets without force (ADR-019). The refusal is about the
+// target's state, not the request's shape: REST answers 409, gRPC FailedPrecondition. Its
+// text is core's own and names only the secret count.
+var ErrProjectHasSecrets = errors.New("project still has secrets")
+
+// errProjectHasSecrets is the ErrProjectHasSecrets refusal for n (> 0) live secrets; the
+// text is unchanged from before it was typed.
+func errProjectHasSecrets(n int) error {
+	return storage.Typed(ErrProjectHasSecrets,
+		fmt.Sprintf("project has %d secret(s) — delete them first or use --force to cascade", n), nil)
+}
+
 // classifyReadErrorAs is classifyReadError whose not-found answer also matches sentinel:
 // a positive not-found keeps the caller's text, anything else is a storage fault.
 func classifyReadErrorAs(err, sentinel error, notFound string) error {

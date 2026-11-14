@@ -21389,6 +21389,7 @@ type GetSecretValueByRefResponse struct {
 	JSON403 *Error
 	JSON404 *Error
 	JSON409 *SecretReadRefused
+	JSON503 *AuthorizeUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -34110,6 +34111,13 @@ func ParseGetSecretValueByRefResponse(rsp *http.Response) (*GetSecretValueByRefR
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthorizeUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

@@ -103,6 +103,10 @@ func (ls *LocalStorage) CreateRole(ctx context.Context, name identity.FoldedName
 	role := &models.Role{Name: name.Display(), NameFolded: name.Folded(), Description: description,
 		AssignableScope: models.DefaultRoleAssignableScope(name.Display())}
 	if err := ls.db.WithContext(ctx).Create(role).Error; err != nil {
+		if isUniqueViolation(err) {
+			// The text is what it was; the sentinel lets a transport answer 409 without reading it.
+			return nil, storage.Typed(storage.ErrDuplicateRoleName, fmt.Sprintf("%s: %v", i18n.T("ErrorStorageFailed", nil), err), err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return role, nil

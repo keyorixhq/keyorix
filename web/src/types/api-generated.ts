@@ -10293,6 +10293,7 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["SecretReadRefused"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     diffSecretVersions: {
