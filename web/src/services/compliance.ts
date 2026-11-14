@@ -15,7 +15,8 @@ export interface CompliancePosture {
         lastFullVerificationAt?: string;
         // chainedEvents is the count verified through headId at lastCheckedAt, not a live
         // count. When that check is stale the server also reads the newest event id
-        // (cheap, no chain walk): eventsSinceCheck events lie past headId, unverified.
+        // (cheap, no chain walk): at most eventsSinceCheck events lie past headId, unverified (an id difference:
+        // sequence gaps make it an upper bound, not a count).
         headId?: number | undefined;
         lastCheckedAt?: string | undefined;
         stale?: boolean | undefined;

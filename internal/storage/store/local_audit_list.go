@@ -262,12 +262,14 @@ func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 		// admin_job.* rows of kind "system" are scheduler heartbeats (#4184). Same
 		// case-sensitive prefix match per backend as ResourceType below, and the
 		// shared system-kind rule so the display and the filter cannot drift.
+		// IS NOT TRUE, not NOT: sysCond is NULL for a legacy NULL actor_type row
+		// that names a user (kind user), and NOT NULL would drop it.
 		sysCond, sysArgs := storage.AuditSystemActorWhere()
 		prefix := `event_type LIKE 'admin\_job.%' ESCAPE '\'`
 		if q.Dialector.Name() != "postgres" {
 			prefix = `event_type GLOB 'admin_job.*'`
 		}
-		q = q.Where("NOT ("+prefix+" AND "+sysCond+")", sysArgs...)
+		q = q.Where("("+prefix+" AND "+sysCond+") IS NOT TRUE", sysArgs...)
 	}
 	if f.ResourceType != nil {
 		// event_type is "resource_type.action" — match rows whose event_type
