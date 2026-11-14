@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/rotation/quote"
 )
 
@@ -90,7 +91,51 @@ func (e *AzureAppSecretExecutor) client(ctx context.Context) (azureGraphAPI, err
 	if err != nil {
 		return nil, fmt.Errorf("azure-app: %w", err)
 	}
-	return &azureGraphClient{tokenSource: ts, http: &http.Client{Timeout: azureHTTPTimeout}}, nil
+	return &azureGraphClient{tokenSource: ts, http: azureGraphHTTPClient()}, nil
+}
+
+// azureGraphHTTPClient builds the hardened HTTP client every Graph call goes
+// through, matching the rest of the repo's outbound clients instead of a bare
+// http.Client. Two defence-in-depth controls (the Graph host is the hard-coded
+// constant azureGraphBase, so neither closes an attacker-influenced-host SSRF —
+// they bound what a compromised or MITM'd upstream Graph response can do):
+//
+//   - CheckRedirect refuses every redirect. None of the single-object Graph
+//     calls this executor makes (list password key IDs, add/remove a password
+//     credential) has any legitimate reason to redirect, so a 30x from a
+//     compromised or man-in-the-middled upstream must not bounce the
+//     bearer-token-bearing request to another host (the stdlib default follows
+//     up to 10 redirects to any host). Matches connect/notary/operator's
+//     refuse-all-redirects policy.
+//   - The transport dials through a netutil.Dialer that refuses link-local
+//     targets (IsLinkLocal, including cloud IMDS 169.254.169.254) on every dial:
+//     Graph is a public endpoint, so link-local egress from this client is never
+//     legitimate, and resolving-and-validating per dial also closes DNS
+//     rebinding of the Graph hostname. IsLinkLocal (not IsPrivateOrLinkLocal) is
+//     the right tier here — same as connect/oidcverify.
+//
+// The transport is a clone of http.DefaultTransport (what the bare http.Client
+// used before), so HTTPS_PROXY/NO_PROXY, HTTP/2 and the TLS-handshake and idle
+// timeouts are kept; only DialContext is replaced. With a proxy configured the
+// guarded dial is the dial to the proxy, so a proxy on an RFC-1918 address
+// keeps working and a proxy on a link-local address is refused.
+func azureGraphHTTPClient() *http.Client {
+	guard := netutil.Dialer{Disallow: netutil.IsLinkLocal}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = guard.DialContext
+	return &http.Client{
+		Timeout:       azureHTTPTimeout,
+		CheckRedirect: refuseAzureGraphRedirect,
+		Transport:     transport,
+	}
+}
+
+// refuseAzureGraphRedirect refuses any redirect the Graph client receives. A
+// custom CheckRedirect fully replaces net/http's default (follow up to 10, any
+// host), so this is what keeps a bearer-token-bearing Graph request from being
+// bounced to an attacker-controlled host by a 30x response.
+func refuseAzureGraphRedirect(req *http.Request, via []*http.Request) error {
+	return fmt.Errorf("azure-app: refusing redirect to %q", netutil.RedactURLHost(req.URL.String()))
 }
 
 // GenerateUpstream rotates application `ref` (its object id): mint a fresh client secret

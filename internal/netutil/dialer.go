@@ -205,6 +205,38 @@ func IsPrivateOrLinkLocal(ip net.IP) bool {
 	return matchesCIDRsWithEmbedded(ip, privateNetworkCIDRs)
 }
 
+// IsPrivateOrLinkLocalExceptLoopback is the "webhook tier" SSRF predicate: the
+// SAME disallow set as IsPrivateOrLinkLocal (RFC-1918, 0.0.0.0/8, link-local /
+// cloud IMDS, RFC-6598 CGNAT 100.64.0.0/10, IPv6 ULA/link-local, AND every
+// embedded-IPv4 encoding of all of those — NAT64 well-known/local-use,
+// IPv4-compatible, 6to4, Teredo), EXCEPT that loopback is PERMITTED.
+//
+// It exists so the handful of outbound-webhook / SIEM / evidence / notification
+// clients that legitimately differ from the backend tier in exactly one way —
+// an operator may run the receiver on the local host during dev/test, unlike a
+// backend admin DSN which is the deployment's own backing services — share ONE
+// policy definition instead of each hand-rolling `!ip.IsLoopback() &&
+// (ip.IsPrivate() || ip.IsLinkLocal*())`. Those hand-rolled copies classified on
+// stdlib alone, so they silently missed both the embedded-IPv4 encodings (which
+// stdlib does not fold beyond IPv4-mapped) and RFC-6598 CGNAT (which
+// ip.IsPrivate() does not cover) — a policy difference (loopback allowed) must
+// never become an ENCODING or RANGE gap, which is exactly what delegating here
+// prevents.
+//
+// "Loopback permitted" covers the direct forms (127.0.0.0/8, ::1) AND an
+// embedded-IPv4 loopback encoding (e.g. NAT64/IPv4-compatible of 127.0.0.1), so
+// a loopback receiver written in an exotic IPv6 encoding stays permitted too,
+// mirroring the embedded-decode shape the rest of this package uses.
+func IsPrivateOrLinkLocalExceptLoopback(ip net.IP) bool {
+	if ip.IsLoopback() {
+		return false
+	}
+	if v4 := embeddedIPv4(ip); v4 != nil && v4.IsLoopback() {
+		return false
+	}
+	return IsPrivateOrLinkLocal(ip)
+}
+
 // matchesCIDRsWithEmbedded reports whether ip itself falls in one of cidrs, OR —
 // for an IPv6 address — whether the IPv4 address it EMBEDS does. net.IPNet.Contains
 // folds IPv4-MAPPED (::ffff:x) via To4, so a direct cidrs check already covers that

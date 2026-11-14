@@ -57,36 +57,24 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-// isDisallowedIP reports whether ip is a private or link-local address,
-// mirroring evidencesink/notifychan's identically-named helper (loopback
-// permitted, unlike netutil.IsPrivateOrLinkLocal's stricter backend-DSN
-// policy -- see isLoopbackHost above for why the two destination classes
-// warrant different defaults).
+// isDisallowedIP reports whether ip is refused as a SIEM-forwarder target: the
+// shared webhook-tier SSRF policy (netutil.IsPrivateOrLinkLocalExceptLoopback) —
+// every private/link-local/IMDS/CGNAT range the backend tier refuses, in every
+// embedded-IPv4 IPv6 encoding (NAT64 well-known/local-use, IPv4-compatible,
+// 6to4, Teredo), with loopback permitted (a SIEM collector, like a webhook /
+// evidence receiver, is an operator-configured endpoint that may legitimately
+// run on the local host during dev/test -- see isLoopbackHost above -- unlike a
+// backend admin DSN, which is the deployment's own services).
 //
-// Checked both directly AND against ip's embedded IPv4 (netutil.EmbeddedIPv4),
-// mirroring netutil's own matchesCIDRsWithEmbedded "direct match OR embedded
-// match" shape — classifying ONLY the decoded form would wrongly permit a
-// genuine IPv6 link-local literal whose low 32 bits happen not to look
-// link-local once reinterpreted as IPv4, and would need care around ::1 itself
-// (which decodes, as deprecated IPv4-compatible, to embedded 0.0.0.1). A NAT64
-// (64:ff9b::/96) or IPv4-compatible (::x) encoding of a private/link-local
-// IPv4 (e.g. 64:ff9b::a9fe:a9fe = cloud IMDS 169.254.169.254) needs the
-// embedded check: Go's own net.IP.IsPrivate/IsLinkLocalUnicast fold
-// IPv4-MAPPED (::ffff:x) via To4, but NOT these two encodings, so a bare
-// stdlib check here disagreed with netutil.IsPrivateOrLinkLocal (the guard
-// every other backend-infrastructure dial site in this codebase shares) for
-// exactly those two forms -- an SSRF bypass reachable through this
-// forwarder's own dial-time Disallow policy (newForwarder wires
-// isDisallowedIP directly into netutil.Dialer), not merely a register-time
-// convenience check.
+// Delegating to the shared predicate (rather than the hand-rolled stdlib
+// classify + embedded decode this used to carry) keeps all three webhook-tier
+// guards on ONE policy definition, and in particular adds RFC-6598 CGNAT
+// 100.64.0.0/10 (Alibaba cloud IMDS 100.100.100.200), which stdlib
+// ip.IsPrivate() does not cover. Reachable through this forwarder's own
+// dial-time Disallow policy (newForwarder wires isDisallowedIP directly into
+// netutil.Dialer), not merely a register-time convenience check.
 func isDisallowedIP(ip net.IP) bool {
-	if isDisallowedIPDirect(ip) {
-		return true
-	}
-	if v4 := netutil.EmbeddedIPv4(ip); v4 != nil {
-		return isDisallowedIPDirect(v4)
-	}
-	return false
+	return netutil.IsPrivateOrLinkLocalExceptLoopback(ip)
 }
 
 // DialDisallowed reports whether the SIEM forwarder's dial-time egress policy
@@ -97,13 +85,6 @@ func isDisallowedIP(ip net.IP) bool {
 // grants nothing and changes no state.
 func DialDisallowed(ip net.IP) bool {
 	return isDisallowedIP(ip)
-}
-
-func isDisallowedIPDirect(ip net.IP) bool {
-	if ip.IsLoopback() {
-		return false
-	}
-	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
 // refuseRedirect blocks a redirect to a different host or an https->http downgrade.

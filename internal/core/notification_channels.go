@@ -449,47 +449,25 @@ func parseWebhookURLLiteral(raw string) (*url.URL, error) {
 // time) directly testable end-to-end.
 var channelLookupIPAddr netutil.Resolver = netutil.DefaultResolver
 
-// isChannelDisallowedIP reports whether ip is a private, link-local, loopback or
-// unspecified ("this network") address — all of which are forbidden as outbound
-// webhook destinations (SSRF guard).
+// isChannelDisallowedIP reports whether ip is a private, link-local, loopback,
+// CGNAT or unspecified ("this network") address — all of which are forbidden as
+// outbound webhook destinations (SSRF guard). It is the strict backend policy
+// (netutil.IsPrivateOrLinkLocal): unlike the evidencesink/siem/notifychan
+// webhook tier, a notification channel refuses loopback too (a channel target is
+// not a local dev/test receiver).
 //
-// Checked both directly AND against ip's embedded IPv4 (netutil.EmbeddedIPv4),
-// mirroring netutil's own matchesCIDRsWithEmbedded "direct match OR embedded
-// match" shape — checking ONLY the decoded form would wrongly clear a genuine
-// IPv6 loopback/link-local literal (e.g. ::1 itself decodes, as deprecated
-// IPv4-compatible, to embedded 0.0.0.1, which is neither loopback nor private
-// in isolation). A NAT64 (64:ff9b::/96) or IPv4-compatible (::x) encoding of a
-// private/loopback/link-local IPv4 (e.g. 64:ff9b::a9fe:a9fe = cloud IMDS
-// 169.254.169.254) needs the embedded check: Go's own net.IP.IsPrivate/
-// IsLoopback/IsLinkLocalUnicast fold IPv4-MAPPED (::ffff:x) via To4, but NOT
-// these two encodings, so a bare stdlib check here disagreed with
-// netutil.IsPrivateOrLinkLocal (the guard every backend-infrastructure dial
-// site in this codebase shares) for exactly those two forms -- reachable both
-// from validateWebhookURL's construction-time check and, more importantly,
-// from escalationTransport's dial-time re-validation (alert_escalation.go),
-// which wires this exact function in as its netutil.Dialer.Disallow policy.
+// netutil.IsPrivateOrLinkLocal classifies ip directly AND against its embedded
+// IPv4 (NAT64 64:ff9b::/96 well-known and local-use, deprecated IPv4-compatible
+// ::x, 6to4, Teredo), so a NAT64/compat encoding of a private/loopback/
+// link-local IPv4 (e.g. 64:ff9b::a9fe:a9fe = cloud IMDS 169.254.169.254) cannot
+// slip past — Go's own net.IP.IsPrivate/IsLoopback fold only IPv4-mapped
+// (::ffff:x). It also refuses the unspecified address and the rest of 0.0.0.0/8
+// (Linux routes a connect() to 0.0.0.0 to loopback) and RFC-6598 CGNAT
+// 100.64.0.0/10 (Alibaba cloud IMDS 100.100.100.200), which the prior
+// hand-rolled stdlib check missed. Reachable both from validateWebhookURL's
+// construction-time check and, more importantly, from escalationTransport's
+// dial-time re-validation (alert_escalation.go), which wires this exact function
+// in as its netutil.Dialer.Disallow policy.
 func isChannelDisallowedIP(ip net.IP) bool {
-	if isChannelDisallowedIPDirect(ip) {
-		return true
-	}
-	if v4 := netutil.EmbeddedIPv4(ip); v4 != nil {
-		return isChannelDisallowedIPDirect(v4)
-	}
-	return false
-}
-
-// isChannelDisallowedIPDirect also refuses the unspecified address (0.0.0.0,
-// ::) and the rest of 0.0.0.0/8 ("this network", RFC 1122): Go's net.Dial
-// treats a literal unspecified host as the local system, and Linux routes a
-// connect() to 0.0.0.0 to loopback, so without this a URL host of 0.0.0.0 (or
-// a name resolving to it at dial time) reached the Keyorix host's own loopback
-// services despite IsLoopback. Same range netutil.IsPrivateOrLinkLocal refuses.
-func isChannelDisallowedIPDirect(ip net.IP) bool {
-	if ip.IsUnspecified() {
-		return true
-	}
-	if v4 := ip.To4(); v4 != nil && v4[0] == 0 {
-		return true
-	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+	return netutil.IsPrivateOrLinkLocal(ip)
 }
