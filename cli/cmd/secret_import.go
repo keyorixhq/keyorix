@@ -55,8 +55,10 @@ Encrypted imports (--decrypt-with):
   with --decrypt-with. The file is decrypted transparently and then imported
   as a standard JSON payload.
 
+An encrypted export given without --decrypt-with is refused; nothing is imported.
+
 Importing from a live source (Vault/AWS/Azure/GCP) is not supported by this command —
-use the old CLI's 'secret import --source' until the dedicated migration tool exists.`,
+use keyorix-migrate (docs/migrate-from-vault.md, docs/migrate-from-cloud.md).`,
 	SilenceUsage: true,
 	RunE:         runSecretImport,
 }

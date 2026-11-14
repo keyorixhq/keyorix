@@ -1800,7 +1800,7 @@ login exchanges a username and password for a session token via POST /auth/login
 .PP
 The password is read from, in order: \-\-password (insecure: visible in ps and shell history), KEYORIX_PASSWORD or the file named by KEYORIX_PASSWORD_FILE, then a no\-echo prompt. With no terminal and neither variable set, login stops with an error.
 .PP
-When the account has TOTP multi\-factor authentication enabled, /auth/login answers with a second\-factor challenge instead of a token; login then asks for an authenticator code (or an unused recovery code) and completes the challenge via POST /auth/mfa/verify. Pass \-\-mfa\-code to supply it non\-interactively. The code is used for that one request only: it is never echoed, never logged, and never written to the credential file.
+When the account has TOTP multi\-factor authentication enabled, /auth/login answers with a second\-factor challenge instead of a token; login then asks for an authenticator code (or an unused recovery code) and completes the challenge via POST /auth/mfa/verify. To supply it non\-interactively set KEYORIX_MFA_CODE, or KEYORIX_MFA_CODE_FILE to a file that holds it (the \-\-mfa\-code flag is refused: a code on the command line shows in ps and in shell history). The code is used for that one request only: it is never echoed, never logged, and never written to the credential file.
 .PP
 Usage: \fBkeyorix login [flags]\fR
 .PP
@@ -4279,7 +4279,9 @@ Encrypted imports (\-\-decrypt\-with):
   as a standard JSON payload.
 .fi
 .PP
-Importing from a live source (Vault/AWS/Azure/GCP) is not supported by this command \(em use the old CLI's 'secret import \-\-source' until the dedicated migration tool exists.
+An encrypted export given without \-\-decrypt\-with is refused; nothing is imported.
+.PP
+Importing from a live source (Vault/AWS/Azure/GCP) is not supported by this command \(em use keyorix\-migrate (docs/migrate\-from\-vault.md, docs/migrate\-from\-cloud.md).
 .PP
 Usage: \fBkeyorix secret import [flags]\fR
 .PP
