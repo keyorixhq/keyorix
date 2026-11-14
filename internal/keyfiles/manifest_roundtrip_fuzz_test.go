@@ -95,7 +95,7 @@ func FuzzManifestRoundTrip(f *testing.F) {
 		// emits map entries in (randomized) iteration order, so a single
 		// comparison catches that only ~1-in-4 of the time for a multi-key
 		// manifest; the loop makes the property's violation reliably observable.
-		for i := 0; i < 64; i++ {
+		for i := range 64 {
 			enc2, err := encodeManifest(m2)
 			if err != nil {
 				t.Fatalf("encodeManifest failed on reload: %v", err)
