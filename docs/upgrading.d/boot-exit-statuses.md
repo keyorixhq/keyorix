@@ -8,7 +8,7 @@ on stderr (`keyorix-server: exit 78 ...` / `exit 75 ...`; no secret, no path):
 | Exit status | Meaning | Shipped `deploy/edge/keyorix-server.service` |
 |---|---|---|
 | 78 | Refused configuration or missing/unusable key material: an operator must fix it. | `RestartPreventExitStatus=78`: not restarted; fix, then `systemctl restart keyorix-server`. |
-| 75 | A dependency that may come back (cloud KMS or remote database unreachable, or a KMS answering 5xx or throttling). | Retried every `RestartSec`. |
+| 75 | A dependency that may come back (cloud KMS, its sign-in endpoint or remote database unreachable, a KMS answering 5xx or throttling, or a key-provider fallback chain with a member that could not be reached). | Retried every `RestartSec`. |
 | 1 | Everything else, as before. | Retried every `RestartSec`. |
 
 **What to do when upgrading:**
@@ -23,5 +23,5 @@ on stderr (`keyorix-server: exit 78 ...` / `exit 75 ...`; no secret, no path):
   specifically should also match 78 and 75. No config key changed.
 - Checked natively against the built binary (missing passphrase file, missing key file, unparseable
   config, `aws-kms` access denied: 78; unreachable `aws-kms` endpoint, `aws-kms` answering 500 or
-  throttling, Postgres not listening: 75). A real systemd and a container start are pending
+  throttling, Postgres not listening: 75; malformed Postgres DSN: 78). A real systemd and a container start are pending
   e2e VM. See `docs/edge-deployment.md` §7a, "Start after a reboot".
