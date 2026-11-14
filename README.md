@@ -55,7 +55,7 @@ To install a server with an AI assistant, without the assistant seeing a secret,
 **Self-host the full stack (web UI + API + PostgreSQL) with Docker Compose:**
 
 ```bash
-git clone --branch v0.96.3 https://github.com/keyorixhq/keyorix.git && cd keyorix   # the compose file, .env.example and scripts/selfhost/ live in the repo; use a release tag, main can be ahead of the published images
+git clone --branch v0.97.0 https://github.com/keyorixhq/keyorix.git && cd keyorix   # the compose file, .env.example and scripts/selfhost/ live in the repo; use a release tag, main can be ahead of the published images
 cp .env.example .env
 ./scripts/selfhost/init-secrets.sh   # generates ./secrets/* (Docker secrets files); admin password is in ./secrets/admin_password
 docker compose up -d                 # open http://localhost:8088

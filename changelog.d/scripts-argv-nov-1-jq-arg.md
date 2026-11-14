@@ -1,2 +1,0 @@
-### Security
-- **Script credentials stay off jq argv.** `scripts/airgap-e2e.sh` built its login, `/system/init` and secret-create payloads with `jq --arg` (admin password, bootstrap token and secret value in jq's argv, visible in `ps`); the values now reach jq through its environment (`env.X`) and the payload files are unchanged. The no-secrets-on-command-line guard (`cli/cmd/docs_no_literal_secrets_test.go`) now flags `jq --arg`/`--argjson` whose name or `$VARIABLE` value says it carries a credential in `scripts/**/*.sh` and `deploy/**/*.sh`.

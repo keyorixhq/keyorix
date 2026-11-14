@@ -1,5 +1,0 @@
-### Fixed
-
-- Adding a user to a group no longer skips the grant ceiling for a group role whose definition could not be read because of a storage fault: the join is refused with a retryable "storage temporarily unavailable" error. A role that was really deleted is still skipped. The same fix applies to the group-join separation-of-duties check, the invitation scope check and the report of pending invitations outside their role's assignable scope (#3988).
-- Updating a role's assignable scope on a multi-replica Postgres deployment now locks the role row while it decides whether the change widens the scope, so a concurrent narrowing on another replica can no longer turn a widening into a "narrowing" that skips the fail-closed audit path or records the wrong scope change (#3919).
-- `GET /api/v1/secrets` and gRPC `ListSecrets` no longer fail for a user with a role who has received 10,000 or more shares. Past that cap some rows may not show the user's share permission. The share-list endpoints still refuse at the cap (#3943).

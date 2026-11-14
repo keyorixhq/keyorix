@@ -23,7 +23,7 @@ only the CLI (Linux and macOS). For the server and CLI, pick your platform's suf
 `linux_arm64`):
 
 ```bash
-V=v0.96.3   # the release you want (any release from v0.96.0 has `admin generate-secrets` and `mfa enroll`)
+V=v0.97.0   # the release you want (any release from v0.96.0 has `admin generate-secrets` and `mfa enroll`)
 P=darwin_arm64   # your platform
 BASE=https://github.com/keyorixhq/keyorix/releases/download/$V
 curl -fsSLO $BASE/keyorix-server_$P

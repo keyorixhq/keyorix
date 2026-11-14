@@ -102,7 +102,7 @@ server and the CLI are separate assets), verify them, and put them in
 include the web UI, served at `https://localhost:8080/` once the server runs:
 
 ```bash
-V=v0.96.3   # any release from v0.96.0 on
+V=v0.97.0   # any release from v0.96.0 on
 mkdir -p ~/keyorix-src/bin && cd ~/keyorix-src/bin
 curl -fsSLO https://github.com/keyorixhq/keyorix/releases/download/$V/keyorix-server_linux_amd64
 curl -fsSLO https://github.com/keyorixhq/keyorix/releases/download/$V/keyorix_linux_amd64
@@ -388,7 +388,7 @@ Background: [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) and
 **C1. Get the release.** The compose file pins the images of the tag you clone.
 
 ```bash
-git clone --branch v0.96.3 https://github.com/keyorixhq/keyorix.git ~/keyorix
+git clone --branch v0.97.0 https://github.com/keyorixhq/keyorix.git ~/keyorix
 cd ~/keyorix
 cp .env.example .env
 ```

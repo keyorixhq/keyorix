@@ -1,3 +1,0 @@
-### Documentation
-- **Edge guide, "Unattended operation" (§7a):** states, per topic, what the server does today and what the operator must do. It covers start after a reboot (there is no unseal step; what each key provider needs at start), the `-wal` file left behind by `kill -9`, self-update and rollback (the server never swaps binaries; pointers to UPGRADING.md §7), where the clock matters in the code when there is no NTP, and which configured dependencies need a network. Anything the code does not do is written as a limit.
-- **`docs/CONFIGURATION.md`:** two `require_existing_path` paragraphs that had slipped under "Committing with fdatasync" are back in their own section.
