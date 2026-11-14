@@ -87,11 +87,11 @@ func joinText(rs []h1Resp) []byte {
 	return b
 }
 
-// TestAntiVacuity_HalfCloseCausesFailClosed503 pins the ROOT CAUSE of review finding F1,
+// TestAntiVacuity_HalfCloseCausesFailClosed pins the ROOT CAUSE of review finding F1,
 // so nobody reintroduces a half-close "to get a prompt EOF": a request that is
 // half-closed (FIN) right after the write is cancelled by net/http, the auth
-// middleware fails closed, and an authorized admin read returns 503 instead of 200.
-func TestAntiVacuity_HalfCloseCausesFailClosed503(t *testing.T) {
+// middleware fails closed, and an authorized admin read returns 503 (or 500) instead of 200.
+func TestAntiVacuity_HalfCloseCausesFailClosed(t *testing.T) {
 	w := buildWireWorld(t)
 	wire := []byte("GET /api/v1/secrets/value?ref=" + w.refA + " HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + w.adminTok + "\r\n\r\n")
 
@@ -112,8 +112,12 @@ func TestAntiVacuity_HalfCloseCausesFailClosed503(t *testing.T) {
 	if bytes.Contains(buf.Bytes(), []byte(w.valA)) {
 		t.Fatal("the server now serves a half-closed authorized read: the premise of the no-half-close driver rule (oracles_test.go header) no longer holds; update that comment and this test")
 	}
-	if !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 503")) {
-		t.Fatalf("expected the documented fail-closed 503 for a half-closed authorized read, got %q", truncate(buf.Bytes(), 80))
+	// net/http cancels the request context on the FIN; where the cancellation lands decides
+	// the status: the auth middleware fails closed with 503, or (when auth already passed)
+	// the handler's storage read reports "context canceled" as 500 (seen in CI on #4201).
+	// Both are fail-closed with no secret value; only a 200 would break the premise.
+	if !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 503")) && !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 500")) {
+		t.Fatalf("expected a fail-closed 503 (or 500 from a cancelled handler read) for a half-closed authorized read, got %q", truncate(buf.Bytes(), 80))
 	}
 
 	// ...while exchange() (no half-close) gets the real answer.
