@@ -61,7 +61,7 @@ func TestRunBGActivate_DegradedSaysSoInOneLine(t *testing.T) {
 	out := runBGActivateOut(t, `{"success":true,"data":{"activation":`+strings.Replace(bgActivationDegraded, `"id":43`, `"id":42`, 1)+`}}`)
 
 	var note []string
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.Contains(l, "DEGRADED") {
 			note = append(note, l)
 		}
@@ -89,7 +89,7 @@ func TestRunBGList_MarksDegradedRows(t *testing.T) {
 	out := runBGListOut(t, `{"success":true,"data":{"activations":[`+bgActivationNormal+`,`+bgActivationDegraded+`,`+bgActivationSettled+`],"count":3}}`)
 
 	rows := map[string]string{}
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		for _, who := range []string{"alice", "bob", "carol"} {
 			if strings.Contains(l, who) {
 				rows[who] = l

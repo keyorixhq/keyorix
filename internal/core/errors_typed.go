@@ -73,8 +73,7 @@ func refuseField(field string, err error) error {
 // "password") a user-field validation refusal names, or "" when err names none. A
 // transport uses it to tell the caller which input to fix, never the error text.
 func ValidationField(err error) string {
-	var f *fieldRefusal
-	if errors.As(err, &f) {
+	if f, ok := errors.AsType[*fieldRefusal](err); ok {
 		return f.field
 	}
 	return ""
