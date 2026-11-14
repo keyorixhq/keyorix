@@ -664,11 +664,20 @@ func (w *soakWorld) verifyAuditChain(tb testing.TB, samples []soakSample, audite
 	if v.ChainedEvents == 0 {
 		tb.Errorf("AUDIT: zero chained events -- the hash chain never formed (fixture wiring bug or a real regression)")
 	}
-	// Completeness lower bound: every mutation we drove must have left at least one
-	// event. A skipped audit write (the RED plant) trips this.
-	if total < int64(auditedMutations) {
-		tb.Errorf("AUDIT COMPLETENESS: stored events %d < mutations driven %d -- an audit write was skipped",
-			total, auditedMutations)
+	// Completeness: every successful secret mutation (create/update/rotate/delete)
+	// must leave exactly its own attributable event. This is asserted against the
+	// MUTATION event types specifically, not the total -- comparing the total to
+	// the mutation count is too weak (login/churn/audit-read events mask a skipped
+	// mutation audit; a RED plant that drops the mutation audit row still left the
+	// total above the mutation count, so that check passed while the trail was
+	// broken). Mutation audit rows commit in the mutation's own transaction
+	// (AUDIT-MUTATION-TX-1), so this read is race-free.
+	var mutEvents int64
+	w.db.Raw(`SELECT COUNT(*) FROM audit_events WHERE event_type IN (?,?,?,?)`,
+		"secret.created", "secret.updated", "secret.rotated", "secret.deleted").Scan(&mutEvents)
+	if mutEvents < int64(auditedMutations) {
+		tb.Errorf("AUDIT COMPLETENESS: secret-mutation events %d < secret mutations driven %d -- an audit write was skipped",
+			mutEvents, auditedMutations)
 	}
 	// Monotonic non-decrease across samples: audit rows must never vanish mid-run.
 	for i := 1; i < len(samples); i++ {
@@ -677,8 +686,8 @@ func (w *soakWorld) verifyAuditChain(tb testing.TB, samples []soakSample, audite
 				samples[i-1].auditEvents, samples[i].auditEvents, samples[i].ops)
 		}
 	}
-	tb.Logf("AUDIT ok: valid=%v chained=%d unchained=%d stored=%d mutations=%d",
-		v.Valid, v.ChainedEvents, v.UnchainedEvents, total, auditedMutations)
+	tb.Logf("AUDIT ok: valid=%v chained=%d unchained=%d stored=%d mutationEvents=%d mutationsDriven=%d",
+		v.Valid, v.ChainedEvents, v.UnchainedEvents, total, mutEvents, auditedMutations)
 }
 
 // checkLatencyDrift asserts oracle 6: late p95 within tolerance of early p95.
