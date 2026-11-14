@@ -1,2 +1,0 @@
-### Documentation
-- **Threat model row NW-2 (notification-channel URL on read, #3425) is closed.** The notifications-webhooks threat model now records the contract change that already shipped: the channel URL is a create-only secret (full URL in the `POST` response only), `GET` list/get and `PUT` return scheme+host with the path elided plus `url_set`, and an explicit `url` on `PUT` replaces it. Operators who read the URL back from list or get must keep the value from the create response.

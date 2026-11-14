@@ -1,2 +1,0 @@
-### Fixed
-- **Audit search `resource_type` is now case-sensitive on SQLite, as it already was on PostgreSQL (#4090).** Event types are lower-case, so `resource_type=secret` matches `secret.*` on both databases and a differently cased value (`SECRET`, `Secret`) matches nothing on both. Behaviour change on SQLite only, and only for callers that sent an upper- or mixed-case value: they got results before and now get an empty list; send the lower-case resource kind.

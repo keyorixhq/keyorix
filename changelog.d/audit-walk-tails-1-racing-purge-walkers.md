@@ -1,2 +1,0 @@
-### Fixed
-- **A retention purge during a checkpoint write or an `admin audit accept-loss` re-seal no longer refuses a valid audit chain.** Like `audit verify` since #3944, both walks now re-read the signed retention anchor when a purge removed rows ahead of them and walk once more from the moved anchor, counting its purged events. A delete outside a purge is still refused. A new guard test fails on any other walk from the chain start that skips this.
