@@ -202,8 +202,10 @@ func (c *Client) appRoleLogin(ctx context.Context, roleID, secretID string) (str
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("AppRole login returned HTTP %d", resp.StatusCode)
+	// Only 200 is a successful login, as in do()/doRawRead(): an un-followed 3xx or another 2xx
+	// must not have its body decoded and its client_token adopted for the whole import.
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("AppRole login returned HTTP %d (only 200 is a successful login; a 3xx is never followed and its body is never read)", resp.StatusCode)
 	}
 	var result struct {
 		Auth struct {

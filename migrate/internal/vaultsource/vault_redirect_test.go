@@ -86,3 +86,44 @@ func TestWalk_Non200ReadIsAnError(t *testing.T) {
 		t.Fatal("Walk treated a 206 read as success; want an error (only 200 and 404 are accepted)")
 	}
 }
+
+// TestAppRoleLogin_Non200IsAnError covers the third response handler in the client: an AppRole
+// login answered with anything other than 200 must fail New(), and its body must never be decoded.
+// Pre-fix only status >= 400 was an error, so an un-followed 302 (or a 206/204) whose body carried
+// a client_token had that token adopted as the session token for the whole import.
+func TestAppRoleLogin_Non200IsAnError(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"302 with a token body", http.StatusFound, `{"auth":{"client_token":"from-a-redirect-body"}}`},
+		{"206 with a token body", http.StatusPartialContent, `{"auth":{"client_token":"from-a-partial-body"}}`},
+		{"204 no content", http.StatusNoContent, ``},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/auth/approle/login" {
+					http.Error(w, "unexpected path "+r.URL.Path, http.StatusTeapot)
+					return
+				}
+				if tc.status == http.StatusFound {
+					w.Header().Set("Location", "http://169.254.169.254/latest/")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := New(context.Background(), Config{Addr: srv.URL, Mount: "secret", RoleID: "r", SecretID: "s"})
+			if err == nil {
+				t.Fatalf("New succeeded on an AppRole login answered with HTTP %d (token %q); want an error", tc.status, c.token)
+			}
+			if strings.Contains(err.Error(), "decode") {
+				t.Fatalf("New error %q shows the HTTP %d body was decoded; it must be rejected on status alone", err, tc.status)
+			}
+		})
+	}
+}
