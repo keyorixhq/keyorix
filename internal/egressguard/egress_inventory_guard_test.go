@@ -45,9 +45,10 @@
 //     clientImports, or through a function of a listed stdlib package that is not
 //     in refForms. The lists are the reviewable assumption; extend them when a
 //     new kind of client is adopted.
-//   - Subprocesses (os/exec): the encryption key provider type "exec" and
-//     `keyorix run` start an operator-supplied command, which may itself use the
-//     network. It is named in the inventory but not detected here.
+//   - What a subprocess does: the encryption key provider type "exec" and
+//     `keyorix run` start a command that may itself use the network. The call
+//     sites that start a process are checked by subprocess_guard_test.go; the
+//     child's own connections are not.
 //   - Browser-side requests: JavaScript in web/ and the vendored swagger UI. The
 //     markup check lives in server/http/airgap_external_hosts_guard_test.go.
 //   - Reflection, plugins and code generated at run time.
