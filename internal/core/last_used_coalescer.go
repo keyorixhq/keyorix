@@ -135,6 +135,7 @@ type lastUsedCoalescer struct {
 	mu           sync.Mutex
 	pending      map[lastUsedKey]time.Time
 	timer        *time.Timer // armed while pending is non-empty and no flush is running
+	stopped      bool        // set by Stop(): forbids arming a timer or starting a flush
 	failures     int         // consecutive failed flushes
 	backoffUntil time.Time   // no background flush before this
 	dropped      uint64      // stamps dropped over the cap, lifetime
@@ -232,6 +233,13 @@ func (c *KeyorixCore) writeLastUsedBatch(ctx context.Context, entries []lastUsed
 // record notes a use at time at. It never touches the database.
 func (a *lastUsedCoalescer) record(k lastUsedKey, at time.Time) {
 	a.mu.Lock()
+	if a.stopped {
+		// After Stop() the coalescer is permanently shut: a late stamp is
+		// dropped rather than re-arming a timer that would touch a closing
+		// store. This is the lifecycle hole FlushLastUsed alone left open.
+		a.mu.Unlock()
+		return
+	}
 	prev, already := a.pending[k]
 	switch {
 	case already:
@@ -274,6 +282,9 @@ func (a *lastUsedCoalescer) droppedCount() uint64 {
 // armTimerLocked arms the periodic flush: after interval, or after the backoff
 // if that ends later. The caller holds a.mu and has checked a.timer == nil.
 func (a *lastUsedCoalescer) armTimerLocked() {
+	if a.stopped {
+		return
+	}
 	delay := a.interval
 	if wait := a.backoffUntil.Sub(a.clock()); wait > delay {
 		delay = wait
@@ -286,6 +297,10 @@ func (a *lastUsedCoalescer) armTimerLocked() {
 func (a *lastUsedCoalescer) onTimer() {
 	a.mu.Lock()
 	a.timer = nil
+	if a.stopped {
+		a.mu.Unlock()
+		return
+	}
 	if wait := a.backoffUntil.Sub(a.clock()); wait > 0 {
 		if len(a.pending) > 0 {
 			a.timer = time.AfterFunc(wait, a.onTimer)
@@ -305,6 +320,15 @@ func (a *lastUsedCoalescer) onTimer() {
 // kick starts a background flush unless one is already in flight. It never
 // starts more than one goroutine however many callers race here.
 func (a *lastUsedCoalescer) kick() {
+	// record() releases a.mu before calling kick(); re-check stopped under the
+	// lock so a Stop() that raced in between cannot start a background flush
+	// that would touch the store after Stop returned.
+	a.mu.Lock()
+	stopped := a.stopped
+	a.mu.Unlock()
+	if stopped {
+		return
+	}
 	if !a.flushing.CompareAndSwap(false, true) {
 		return
 	}
@@ -544,4 +568,43 @@ func (a *lastUsedCoalescer) safeWrite(ctx context.Context, k lastUsedKey, at tim
 // lost with the process).
 func (c *KeyorixCore) FlushLastUsed(ctx context.Context) {
 	c.lastUsed().flush(ctx)
+}
+
+// Stop permanently shuts the coalescer down. It is the lifecycle counterpart to
+// flush: idempotent, it stops and forbids the periodic timer, then performs one
+// final flush bounded by ctx (which, via flush's semaphore, also waits for a
+// background flush still in flight). After Stop returns, record() is a no-op and
+// no timer or flush goroutine of this coalescer ever touches the store again —
+// so it is safe to call immediately before the store is closed. A stamp the
+// final flush cannot reach within ctx stays unwritten (lost with the process),
+// the same bound a crash gives.
+//
+// flush() alone (FlushLastUsed) is not a stop: a stamp recorded after it re-arms
+// the timer, which then fires against a store the caller believed drained, and a
+// failed final flush re-arms the timer from finishFlush. Stop closes both holes
+// by latching a.stopped, which every arm/flush entry point now honours.
+func (a *lastUsedCoalescer) Stop(ctx context.Context) {
+	a.mu.Lock()
+	first := !a.stopped
+	a.stopped = true
+	if a.timer != nil {
+		a.timer.Stop()
+		a.timer = nil
+	}
+	a.mu.Unlock()
+	if !first {
+		// Already stopped: the first Stop did (or is doing) the final flush.
+		// Idempotent — never a second write, never a panic.
+		return
+	}
+	a.flush(ctx)
+}
+
+// StopLastUsed stops the last-used coalescer for good on graceful shutdown: a
+// final bounded flush, after which no timer or background flush goroutine of the
+// coalescer touches the store again. Unlike FlushLastUsed (which flushes but
+// leaves the coalescer able to re-arm on a late stamp), this is the lifecycle
+// stop the shutdown path wires in. ctx bounds the final flush.
+func (c *KeyorixCore) StopLastUsed(ctx context.Context) {
+	c.lastUsed().Stop(ctx)
 }
