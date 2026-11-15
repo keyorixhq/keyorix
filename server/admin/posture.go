@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -324,11 +325,8 @@ var perSideSourcePaths = map[string]func(*config.Config) []string{
 		if weak(kp) {
 			p = append(p, base+"shamir_commitment")
 		}
-		for _, fb := range kp.Fallbacks {
-			if weak(fb) {
-				p = append(p, base+"fallbacks.shamir_commitment")
-				break
-			}
+		if slices.ContainsFunc(kp.Fallbacks, weak) {
+			p = append(p, base+"fallbacks.shamir_commitment")
 		}
 		return p
 	},
