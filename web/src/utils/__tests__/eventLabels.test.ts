@@ -3,7 +3,7 @@ import { eventLabel } from '../eventLabels';
 
 describe('eventLabel', () => {
     it('labels auth.sso_login_session_failed in plain words', () => {
-        expect(eventLabel('auth.sso_login_session_failed')).toBe('SSO login failed to start a session');
+        expect(eventLabel('auth.sso_login_session_failed')).toBe('SSO login failed: session not created');
     });
 
     it('falls back to a humanized name, never a raw identifier', () => {
