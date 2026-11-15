@@ -20,9 +20,23 @@ layer) and nothing else.
    `uncalibrated` and excluded from both oracles; it is never counted as a
    denial or as a disagreement. This keeps a 404 from a wrong path, or a 400
    from a bad body, from being read as authorization.
-3. **Fresh store per iteration.** Rate-limit or lockout state cannot leak
-   between iterations. A `429`/`ResourceExhausted` is still mapped to `other`
-   and counted, as a harness-health signal.
+3. **Fresh store per iteration.** *Store-backed* rate-limit or lockout state
+   cannot leak between iterations. But the per-IP invalid-token brute-force
+   limiter (PAT-003) is NOT store-backed: it is a process-global in-memory
+   bucket in the HTTP middleware / gRPC interceptor packages, keyed by the
+   source IP, and the harness drives every leg from one constant test peer — so
+   a rejected token (e.g. a suspended principal's) spends that shared budget and
+   a *later* iteration's probe comes back `429` / `ResourceExhausted`. That
+   answer is a transport throttle, not an authorization decision, so the invalid
+   -token limiter's refusal is recorded as **n/a** on both transports: HTTP
+   `429` (`runLayer` REST leg), and gRPC `ResourceExhausted` whose message is
+   *exactly* the limiter's `"too many invalid token attempts"` (`runLayer` gRPC
+   leg via `grpcInvalidTokenLimited`). Every OTHER `ResourceExhausted` — an
+   oversized secret value, the audit-stream cap — is still mapped to `other` and
+   counted. (Fuzz-corpus issue #118: a suspended-principal case was reported as
+   `mapping-gap:other-where-model-denies:grpc` because the gRPC leg mapped that
+   leaked limiter refusal to `other` while the REST/sequence paths already
+   excused it.)
 
 ## Table
 
