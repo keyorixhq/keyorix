@@ -469,11 +469,25 @@ check_release_assets() {
   fi
   comm -23 "$WORK/exp.assets" "$WORK/act.assets" >"$WORK/missing.assets"
   comm -13 "$WORK/exp.assets" "$WORK/act.assets" >"$WORK/extra.assets"
+  local skipped_bins=0
+  if [ "$SKIP_BINARIES" = 1 ] && [ "$ASSETS_GIVEN" = 1 ]; then
+    # the user's directory is the set of files they chose to transfer: with --skip-binaries
+    # the 14 binaries are not required there (#4269). A binary that IS present stays
+    # allowed, an unknown name stays "unexpected". The GitHub Release listing (no
+    # --assets-dir) is still held to all 32: the release itself must be complete.
+    comm -23 "$WORK/missing.assets" "$WORK/exp.bins" >"$WORK/missing.assets.new"
+    mv "$WORK/missing.assets.new" "$WORK/missing.assets"
+    skipped_bins=1
+  fi
   if [ -s "$WORK/missing.assets" ] || [ -s "$WORK/extra.assets" ]; then
-    fail $id "$(wc -l <"$WORK/missing.assets" | tr -d ' ') missing, $(wc -l <"$WORK/extra.assets" | tr -d ' ') unexpected of $(wc -l <"$WORK/exp.assets" | tr -d ' ') expected assets"
+    fail $id "$(wc -l <"$WORK/missing.assets" | tr -d ' ') missing, $(wc -l <"$WORK/extra.assets" | tr -d ' ') unexpected of $(wc -l <"$WORK/exp.assets" | tr -d ' ')$([ "$skipped_bins" = 1 ] && echo ' (14 binaries not required with --skip-binaries)') expected assets"
     { sed 's/^/missing: /' "$WORK/missing.assets"; sed 's/^/unexpected (not covered by checksums.txt; update EXPECTED if intentional): /' "$WORK/extra.assets"; } >"$WORK/d.txt"
     detail "$WORK/d.txt" 8
     return 1
+  fi
+  if [ "$skipped_bins" = 1 ]; then
+    pass $id "all $(($(wc -l <"$WORK/exp.assets" | tr -d ' ') - $(wc -l <"$WORK/exp.bins" | tr -d ' '))) expected non-binary assets present (15 SBOMs, checksums.txt, .sig, .pem); the 14 binaries are not required with --skip-binaries"
+    return 0
   fi
   pass $id "all $(wc -l <"$WORK/exp.assets" | tr -d ' ') expected assets present (14 binaries, 15 SBOMs, checksums.txt, .sig, .pem)"
 }
@@ -1296,7 +1310,7 @@ self_test() {
   local base=(--repo selftest/keyorix --registry registry.test/keyorix --no-gh)
   local id n
 
-  log "self-test 1/16: consistent synthetic release: every check PASS, only the gh check SKIPped (exit 2)"
+  log "self-test 1/20: consistent synthetic release: every check PASS, only the gh check SKIPped (exit 2)"
   st_world "$WORK/st/ok"
   PATH="$WORK/st/bin:$PATH" st_run ok 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   for id in source.commit release.assets release.checksums.listing release.checksums.sboms release.checksums.binaries release.signature.cosign release.signature.cert release.signature.offline release.sbom release.provenance ci.release-run ci.docker-publish-run image.server.tag image.server.shatag image.server.platforms image.server.sbom image.server.buildkit-provenance image.server.signature image.server.slsa image.server-airgap.tag image.k8s-sync.signature image.operator.slsa image.mcp.platforms image.web.platforms chart.keyorix.version chart.keyorix-operator.signature; do
@@ -1309,7 +1323,7 @@ self_test() {
   PATH="$WORK/st/bin:$PATH" st_run ok-allow 0 "${base[@]}" --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 2/16: one altered binary, one missing SBOM, cosign rejecting everything"
+  log "self-test 2/20: one altered binary, one missing SBOM, cosign rejecting everything"
   st_world "$WORK/st/mut"
   printf 'tampered\n' >>"$WORK/st/mut/assets/keyorix_linux_amd64"
   rm "$WORK/st/mut/assets/keyorix-migrate_darwin_arm64_sbom.cdx.json"
@@ -1329,7 +1343,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL chart.keyorix.signature
   st_expect "$ST_OUT" PASS image.web.tag
 
-  log "self-test 3/16: checksums.txt altered after signing"
+  log "self-test 3/20: checksums.txt altered after signing"
   st_world "$WORK/st/sum"
   awk '{ if ($2 == "keyorix_darwin_arm64") $1 = "0000000000000000000000000000000000000000000000000000000000000000"; print $1 "  " $2 }' "$WORK/st/sum/assets/checksums.txt" >"$WORK/st/sum/c.txt"
   mv "$WORK/st/sum/c.txt" "$WORK/st/sum/assets/checksums.txt"
@@ -1338,13 +1352,13 @@ self_test() {
   st_expect "$ST_OUT" FAIL release.checksums.binaries
   st_expect "$ST_OUT" FAIL release.provenance
 
-  log "self-test 4/16: certificate names a different workflow"
+  log "self-test 4/20: certificate names a different workflow"
   ST_SAN="https://github.com/selftest/keyorix/.github/workflows/evil.yml@refs/tags/v9.9.9" st_world "$WORK/st/san"
   PATH="$WORK/st/bin:$PATH" st_run san 1 "${base[@]}" --assets-dir "$WORK/st/san/assets" --fixtures "$WORK/st/san/fx" v9.9.9
   st_expect "$ST_OUT" FAIL release.signature.cert
   st_expect "$ST_OUT" PASS release.signature.offline
 
-  log "self-test 5/16: chart appVersion wrong, one image tag missing"
+  log "self-test 5/20: chart appVersion wrong, one image tag missing"
   ST_BAD_APPVERSION=9.9.8 ST_NO_TAG=web st_world "$WORK/st/chart"
   PATH="$WORK/st/bin:$PATH" st_run chart 1 "${base[@]}" --assets-dir "$WORK/st/chart/assets" --fixtures "$WORK/st/chart/fx" v9.9.9
   st_expect "$ST_OUT" FAIL chart.keyorix.version
@@ -1352,7 +1366,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL image.web.tag
   st_expect "$ST_OUT" PASS image.server.tag
 
-  log "self-test 6/16: no cosign and unreachable registry must be INCOMPLETE (exit 2), not a pass"
+  log "self-test 6/20: no cosign and unreachable registry must be INCOMPLETE (exit 2), not a pass"
   st_world "$WORK/st/skip"
   printf 'https://registry.test/v2/\t-\t000\t\n' >"$WORK/st/skip/fx/index.tsv.new"
   awk -F'\t' '$1 != "https://registry.test/v2/"' "$WORK/st/skip/fx/index.tsv" >>"$WORK/st/skip/fx/index.tsv.new"
@@ -1364,7 +1378,7 @@ self_test() {
   st_expect "$ST_OUT" PASS release.signature.offline
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 7/16: replay of GitHub-side data copied from the real v0.96.3 release"
+  log "self-test 7/20: replay of GitHub-side data copied from the real v0.96.3 release"
   local real
   real="$(dirname "$SELF")/testdata/real-v0.96.3"
   if [ -d "$real" ]; then
@@ -1382,7 +1396,7 @@ self_test() {
     ST_BAD=$((ST_BAD + 1))
   fi
 
-  log "self-test 8/16: cosign v2 verifies checksums.txt but cannot see referrer signatures: SKIP + precondition, never FAIL"
+  log "self-test 8/20: cosign v2 verifies checksums.txt but cannot see referrer signatures: SKIP + precondition, never FAIL"
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=v2.5.2 st_run cosign2 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS release.signature.cosign
   st_expect "$ST_OUT" SKIP image.server.signature
@@ -1411,14 +1425,14 @@ self_test() {
   st_expect "$ST_OUT" PASS release.signature.cosign
   st_count "$ST_OUT" 'PRECONDITION NOT MET' 0
 
-  log "self-test 9/16: unrecognised cosign version string (dev build, no output): the checks are attempted"
+  log "self-test 9/20: unrecognised cosign version string (dev build, no output): the checks are attempted"
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=devel st_run cosigndev 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS image.server.signature
   st_expect "$ST_OUT" PASS chart.keyorix.signature
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION='' st_run cosignnone 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS image.web.signature
 
-  log "self-test 10/16: BuildKit attestation layers as the real registry serves them"
+  log "self-test 10/20: BuildKit attestation layers as the real registry serves them"
   local RB want got
   RB="$(dirname "$SELF")/testdata/real-buildkit-v0.96.3"
   # verbatim copy of the real v0.96.3 keyorix-k8s-sync attestation manifest (sha256:862b7c3f...)
@@ -1436,7 +1450,7 @@ self_test() {
   st_expect "$ST_OUT" PASS image.server.buildkit-provenance
   st_count "$ST_OUT" 'no-sbom-layer\(layer types: https://spdx.dev/Spdx,https://slsa.dev/provenance/v1\)' 6
 
-  log "self-test 11/16: GitHub API rate limit (HTTP 403 'API rate limit exceeded') is INCOMPLETE, never FAIL"
+  log "self-test 11/20: GitHub API rate limit (HTTP 403 'API rate limit exceeded') is INCOMPLETE, never FAIL"
   st_world "$WORK/st/rate"
   printf '{"message":"API rate limit exceeded for 203.0.113.7. (But here'"'"'s the good news: Authenticated requests get a higher rate limit.)","documentation_url":"https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting"}\n' >"$WORK/st/rate/fx/ratelimit.json"
   awk -F'\t' -v OFS='\t' '$1 ~ /^https:\/\/api\.github\.com\// { $2 = "ratelimit.json"; $3 = "403" } { print }' "$WORK/st/rate/fx/index.tsv" >"$WORK/st/rate/fx/index.tsv.new"
@@ -1452,7 +1466,7 @@ self_test() {
   st_count "$ST_OUT" 'GitHub API rate limit reached \(HTTP 403\).*NOT a verification failure' 8
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 12/16: --allow-skip never covers a SKIPped cosign signature check (a self-signed forgery must not exit 0)"
+  log "self-test 12/20: --allow-skip never covers a SKIPped cosign signature check (a self-signed forgery must not exit 0)"
   # the synthetic release IS a forgery as far as openssl can tell: a self-signed certificate
   # with the right SAN and issuer extension, a matching signature and checksums
   st_run nocosign-allow 2 "${base[@]}" --no-cosign --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
@@ -1503,7 +1517,7 @@ self_test() {
   st_expect "$ST_OUT" PASS release.signature.cosign
   st_count "$ST_OUT" '^SCOPE REDUCED: --skip-images --skip-charts: the image and chart signatures were not verified by this run' 1
 
-  log "self-test 13/16: cosign is asked for the pinned identity, issuer and @digest; wrong issuer and missing .sig/.pem FAIL"
+  log "self-test 13/20: cosign is asked for the pinned identity, issuer and @digest; wrong issuer and missing .sig/.pem FAIL"
   : >"$WORK/st/cosign.log"
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_LOG="$WORK/st/cosign.log" st_run cosign-args 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" '^FAIL ' 0
@@ -1533,7 +1547,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL release.signature.files
   st_count "$ST_OUT" '^PASS +release\.signature\.cosign' 0
 
-  log "self-test 14/16: REGISTRY_USER/REGISTRY_PASSWORD go to the registry only, GITHUB_TOKEN to api.github.com only, both never on a command line"
+  log "self-test 14/20: REGISTRY_USER/REGISTRY_PASSWORD go to the registry only, GITHUB_TOKEN to api.github.com only, both never on a command line"
   st_fake_curl
   : >"$WORK/st/curl.log"
   PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" REGISTRY_USER=mirroruser REGISTRY_PASSWORD=MIRROR-SECRET GITHUB_TOKEN='' GH_TOKEN='' \
@@ -1562,7 +1576,7 @@ self_test() {
   PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" REGISTRY_USER=mirroruser REGISTRY_PASSWORD=$'a\nurl = "https://evil.test/"' \
     st_run creds-newline 3 --repo selftest/keyorix --registry registry.test/keyorix --no-gh --no-cosign --skip-binaries v9.9.9
 
-  log "self-test 15/16: --commit is cross-checked online and only ASSERTED offline; TAG/--commit validation; attestation manifest bound to its digest"
+  log "self-test 15/20: --commit is cross-checked online and only ASSERTED offline; TAG/--commit validation; attestation manifest bound to its digest"
   PATH="$WORK/st/bin:$PATH" st_run commit-match 2 "${base[@]}" --commit 0123456789abcdef0123456789abcdef01234567 --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" '^PASS +source\.commit +tag v9\.9\.9 -> 0123456789abcdef0123456789abcdef01234567 \(matches --commit\)' 1
   PATH="$WORK/st/bin:$PATH" st_run commit-wrong 1 "${base[@]}" --commit ffffffffffffffffffffffffffffffffffffffff --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
@@ -1587,7 +1601,7 @@ self_test() {
   st_atleast "$ST_OUT" 'attestation-manifest-digest-mismatch' 2
   st_expect "$ST_OUT" PASS image.k8s-sync.sbom
 
-  log "self-test 16/16: release gate only with --check-blockers: default run (token set, open blocker) has no release.blockers; with the flag green PASS, red FAIL (exit 1), listing failure, no token and --offline SKIP"
+  log "self-test 16/20: release gate only with --check-blockers: default run (token set, open blocker) has no release.blockers; with the flag green PASS, red FAIL (exit 1), listing failure, no token and --offline SKIP"
   # shellcheck disable=SC2016 # the stub expands $KRB_STUB_JSON when it runs, not here
   printf '#!/bin/sh\nprintf "%%s\\n" "$KRB_STUB_JSON"\n' >"$WORK/st/lister.sh"
   printf '#!/bin/sh\nexit 1\n' >"$WORK/st/lister-fail.sh"
@@ -1615,6 +1629,152 @@ self_test() {
   st_count "$ST_OUT" '^PASS +release\.blockers' 0
   PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[]' st_run blk-offline 2 "${base[@]}" --check-blockers --offline --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" '^SKIP +release\.blockers +--offline' 1
+
+  log "self-test 17/20: #4269: the air-gapped transfer (signed files + SBOMs, no binaries) with --skip-binaries is INCOMPLETE (exit 2), not FAILED, offline and online"
+  st_world "$WORK/st/nobin"
+  while IFS= read -r n; do rm "$WORK/st/nobin/assets/$n"; done <"$WORK/exp.bins"
+  st_count "$WORK/exp.bins" . 14
+  PATH="$WORK/st/bin:$PATH" st_run nobin-offline 2 "${base[@]}" --offline --no-cosign --skip-binaries --skip-images --skip-charts --assets-dir "$WORK/st/nobin/assets" --fixtures "$WORK/st/nobin/fx" v9.9.9
+  st_expect "$ST_OUT" PASS release.assets
+  st_expect "$ST_OUT" SKIP release.checksums.binaries
+  st_expect "$ST_OUT" PASS release.checksums.sboms
+  st_count "$ST_OUT" '^FAIL ' 0
+  st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
+  st_count "$ST_OUT" 'do not deploy' 0
+  PATH="$WORK/st/bin:$PATH" st_run nobin-online 2 "${base[@]}" --no-cosign --skip-binaries --skip-images --skip-charts --assets-dir "$WORK/st/nobin/assets" --fixtures "$WORK/st/nobin/fx" v9.9.9
+  st_expect "$ST_OUT" PASS release.assets
+  st_expect "$ST_OUT" SKIP release.checksums.binaries
+  st_count "$ST_OUT" '^FAIL ' 0
+  st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
+  # an unexpected binary in the directory is still reported
+  printf 'binary\n' >"$WORK/st/nobin/assets/keyorix_windows_amd64"
+  PATH="$WORK/st/bin:$PATH" st_run nobin-extra 1 "${base[@]}" --offline --no-cosign --skip-binaries --skip-images --skip-charts --assets-dir "$WORK/st/nobin/assets" --fixtures "$WORK/st/nobin/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL release.assets
+  st_count "$ST_OUT" '^FAIL +release\.assets +0 missing, 1 unexpected' 1
+  st_count "$ST_OUT" 'unexpected \(not covered by checksums\.txt.*\): keyorix_windows_amd64|unexpected.*keyorix_windows_amd64' 1
+  rm "$WORK/st/nobin/assets/keyorix_windows_amd64"
+
+  log "self-test 18/20: flag matrix --offline x --no-cosign x --skip-binaries x --skip-images x --skip-charts x --allow-skip, with a complete directory and a signed-files-plus-SBOMs directory"
+  # What docs/operator/verifying-releases.md says: 0 every check passed, 1 a FAIL, 2 no FAIL but a
+  # check could not run (INCOMPLETE). The synthetic worlds are consistent, so no combination may
+  # FAIL; --no-gh (in $base) always leaves one SKIP, so the result is INCOMPLETE; --allow-skip turns
+  # 2 into 0 except when cosign was not used (a SKIPped signature check is never covered).
+  # Each run costs seconds, so the full cross product uses --skip-images --skip-charts (the
+  # image and chart checks are not what this matrix is about); a few runs keep them on.
+  local mx_off mx_nc mx_sb mx_si mx_sc mx_al mx_world mx_args mx_want mx_name
+  mx_run() { # WORLD OFF NC SB SI SC AL
+    mx_world=$1 mx_off=$2 mx_nc=$3 mx_sb=$4 mx_si=$5 mx_sc=$6 mx_al=$7
+      mx_args=("${base[@]}")
+      [ "$mx_off" = 1 ] && mx_args+=(--offline)
+      [ "$mx_nc" = 1 ] && mx_args+=(--no-cosign)
+      [ "$mx_sb" = 1 ] && mx_args+=(--skip-binaries)
+      [ "$mx_si" = 1 ] && mx_args+=(--skip-images)
+      [ "$mx_sc" = 1 ] && mx_args+=(--skip-charts)
+      [ "$mx_al" = 1 ] && mx_args+=(--allow-skip)
+      mx_want=2
+      [ "$mx_al" = 1 ] && [ "$mx_nc" = 0 ] && mx_want=0
+      mx_name="mx-$mx_world-off$mx_off-nc$mx_nc-sb$mx_sb-si$mx_si-sc$mx_sc-al$mx_al"
+      PATH="$WORK/st/bin:$PATH" st_run "$mx_name" "$mx_want" "${mx_args[@]}" --assets-dir "$WORK/st/$mx_world/assets" --fixtures "$WORK/st/$mx_world/fx" v9.9.9
+      st_count "$ST_OUT" '^FAIL ' 0
+      st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
+      st_expect "$ST_OUT" PASS release.assets
+      st_expect "$ST_OUT" PASS release.checksums.sboms
+      if [ "$mx_sb" = 1 ]; then st_expect "$ST_OUT" SKIP release.checksums.binaries; else st_expect "$ST_OUT" PASS release.checksums.binaries; fi
+  }
+  for mx_world in ok nobin; do
+    for mx_off in 0 1; do for mx_nc in 0 1; do for mx_sb in 0 1; do for mx_al in 0 1; do
+      # a directory without binaries is only valid when the binaries are skipped (see 17/18)
+      [ "$mx_world" = nobin ] && [ "$mx_sb" = 0 ] && continue
+      mx_run "$mx_world" "$mx_off" "$mx_nc" "$mx_sb" 1 1 "$mx_al"
+    done; done; done; done
+  done
+  mx_run ok 0 0 0 0 0 0 # everything on, online
+  mx_run ok 0 0 1 0 0 1
+  mx_run ok 1 0 0 0 0 1 # offline, images and charts from the mirror fixtures
+  mx_run ok 0 0 0 1 0 1 # --skip-images only
+  mx_run ok 0 0 0 0 1 1 # --skip-charts only
+  mx_run ok 1 1 1 0 0 1 # the air-gap recipe, nothing skipped but binaries
+  # a directory without binaries and no --skip-binaries is a real failure, with every other flag combination
+  for mx_off in 0 1; do for mx_nc in 0 1; do
+    mx_args=("${base[@]}" --skip-images --skip-charts)
+    [ "$mx_off" = 1 ] && mx_args+=(--offline)
+    [ "$mx_nc" = 1 ] && mx_args+=(--no-cosign)
+    PATH="$WORK/st/bin:$PATH" st_run "mx-nobin-needbin-off$mx_off-nc$mx_nc" 1 "${mx_args[@]}" --assets-dir "$WORK/st/nobin/assets" --fixtures "$WORK/st/nobin/fx" v9.9.9
+    st_expect "$ST_OUT" FAIL release.assets
+    st_expect "$ST_OUT" FAIL release.checksums.binaries
+    st_count "$ST_OUT" '^RESULT: FAILED' 1
+  done; done
+
+  log "self-test 19/20: with --skip-binaries (signed files + SBOMs, offline, --no-cosign) a bad SBOM, a missing SBOM, an extra file and a tampered checksums.txt stay FAIL (exit 1)"
+  nb_world() { # NAME: a signed-files-plus-SBOMs world; echoes nothing
+    st_world "$WORK/st/$1"
+    while IFS= read -r n; do rm "$WORK/st/$1/assets/$n"; done <"$WORK/exp.bins"
+  }
+  nb_run() { # NAME -> runs the transfer recipe against $WORK/st/NAME, expects exit 1
+    PATH="$WORK/st/bin:$PATH" st_run "$1" 1 "${base[@]}" --offline --no-cosign --skip-binaries --skip-images --skip-charts --assets-dir "$WORK/st/$1/assets" --fixtures "$WORK/st/$1/fx" v9.9.9
+    st_count "$ST_OUT" '^RESULT: FAILED' 1
+  }
+  # an SBOM whose sha256 differs from checksums.txt
+  nb_world nb-badsbom
+  printf 'tampered\n' >>"$WORK/st/nb-badsbom/assets/keyorix_linux_amd64_sbom.cdx.json"
+  nb_run nb-badsbom
+  st_expect "$ST_OUT" FAIL release.checksums.sboms
+  st_expect "$ST_OUT" PASS release.assets
+  st_expect "$ST_OUT" SKIP release.checksums.binaries
+  # a missing SBOM
+  nb_world nb-nosbom
+  rm "$WORK/st/nb-nosbom/assets/keyorix-migrate_darwin_arm64_sbom.cdx.json"
+  nb_run nb-nosbom
+  st_expect "$ST_OUT" FAIL release.assets
+  st_expect "$ST_OUT" FAIL release.checksums.sboms
+  st_count "$ST_OUT" 'missing: keyorix-migrate_darwin_arm64_sbom\.cdx\.json' 1
+  # an extra unexpected file (not a binary name, not covered by checksums.txt)
+  nb_world nb-extra
+  printf 'x\n' >"$WORK/st/nb-extra/assets/notes.txt"
+  nb_run nb-extra
+  st_expect "$ST_OUT" FAIL release.assets
+  st_count "$ST_OUT" '^FAIL +release\.assets +0 missing, 1 unexpected' 1
+  # checksums.txt altered after signing (an SBOM's line): the checksum mismatch path, and the openssl signature check, FAIL
+  nb_world nb-sum
+  awk '{ if ($2 == "keyorix_darwin_arm64_sbom.cdx.json") $1 = "0000000000000000000000000000000000000000000000000000000000000000"; print $1 "  " $2 }' "$WORK/st/nb-sum/assets/checksums.txt" >"$WORK/st/nb-sum/c.txt"
+  mv "$WORK/st/nb-sum/c.txt" "$WORK/st/nb-sum/assets/checksums.txt"
+  nb_run nb-sum
+  st_expect "$ST_OUT" FAIL release.checksums.sboms
+  st_expect "$ST_OUT" FAIL release.signature.offline
+  st_expect "$ST_OUT" SKIP release.signature.cosign
+  # checksums.txt that no longer lists a binary: the listing check FAILs
+  nb_world nb-list
+  grep -v ' keyorix_linux_amd64$' "$WORK/st/nb-list/assets/checksums.txt" >"$WORK/st/nb-list/c.txt"
+  mv "$WORK/st/nb-list/c.txt" "$WORK/st/nb-list/assets/checksums.txt"
+  nb_run nb-list
+  st_expect "$ST_OUT" FAIL release.checksums.listing
+
+  log "self-test 20/20: the 32 expected asset names equal what 'make -n release' and release.yml emit for a fake tag"
+  # Offline and derived, not asserted: the binary and SBOM names are the -o/-output targets of the
+  # dry-run recipe (the same recipe the release job runs), checksums.txt is the recipe's own
+  # checksum step, and the .sig/.pem names are the cosign --output-* paths of release.yml.
+  # Skipped (and said so) where the repository is not next to the script, as when it is downloaded alone.
+  local repo_root
+  repo_root="$(dirname "$SELF")/../.."
+  if have make && [ -f "$repo_root/Makefile" ] && [ -f "$repo_root/.github/workflows/release.yml" ]; then
+    make -n -C "$repo_root" release VERSION=v9.9.9 -o populate-webui-dist >"$WORK/st/make.out" 2>/dev/null
+    {
+      grep -Eo '(-o|-output) [^ ]*dist/[^ ]+' "$WORK/st/make.out" | sed -E 's|.*dist/||'
+      grep -Eo 'build-frontend-sbom\.mjs [^ ]*dist/[^ ]+' "$WORK/st/make.out" | sed -E 's|.*dist/||'
+      grep -q 'sha256sum \* > checksums\.txt' "$WORK/st/make.out" && echo checksums.txt
+      grep -Eo -- '--output-(signature|certificate) dist/[^ ]+' "$repo_root/.github/workflows/release.yml" | sed -E 's|.*dist/||'
+    } | sort -u >"$WORK/st/make.assets"
+    st_count "$WORK/st/make.assets" . 32
+    if cmp -s "$WORK/st/make.assets" "$WORK/exp.assets"; then
+      ST_OK=$((ST_OK + 1))
+    else
+      ST_BAD=$((ST_BAD + 1))
+      printf '  SELF-TEST MISMATCH: expected-asset list differs from make -n release + release.yml (< script, > build):\n' >&2
+      diff "$WORK/exp.assets" "$WORK/st/make.assets" >&2
+    fi
+  else
+    log "  skipped: make, the Makefile or .github/workflows/release.yml not found next to the script"
+  fi
 
   printf 'self-test: %d assertions passed, %d failed\n' "$ST_OK" "$ST_BAD"
   [ "$ST_BAD" = 0 ] || { log "outputs kept in $WORK/st"; KEEP_WORK=1; return 1; }

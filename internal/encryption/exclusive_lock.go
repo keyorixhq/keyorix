@@ -63,6 +63,44 @@ func lockRelPath(dekPath string) string {
 	return filepath.Join(filepath.Dir(dekPath), serverLockFileName)
 }
 
+// keyLockDisplayPath is the absolute path of the lock file, for messages that name
+// it (a relative base resolves against the process working directory, exactly as
+// the open itself does). Falls back to the joined path if the cwd is unreadable.
+func keyLockDisplayPath(baseDir, dekPath string) string {
+	p := filepath.Join(baseDir, lockRelPath(dekPath))
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
+// RelativeKeyPathWarning returns a one-line startup warning naming the resolved
+// absolute key paths and the dek.lock path when dek_path or salt_path is
+// relative, and "" when both are absolute or unset. Relative key paths are
+// defined against the config file's directory, like a relative database.path,
+// and are opened from the working directory, so a process started anywhere
+// else is refused (config.EncryptionConfig.CheckRelativeKeyPathBase, #4249).
+func RelativeKeyPathWarning(dekPath, saltPath string) string {
+	rel := func(p string) bool { return p != "" && !filepath.IsAbs(p) }
+	if !rel(dekPath) && !rel(saltPath) {
+		return ""
+	}
+	abs := func(p string) string {
+		if p == "" {
+			return "(unset)"
+		}
+		a, err := filepath.Abs(p)
+		if err != nil {
+			return p
+		}
+		return a
+	}
+	return fmt.Sprintf("WARNING: storage.encryption.dek_path/salt_path are relative to the config file's directory: "+
+		"dek_path -> %s, salt_path -> %s, DEK lock -> %s. Keyorix and every `admin` command must be started from that directory "+
+		"(any other is refused); use absolute paths to remove the dependency.",
+		abs(dekPath), abs(saltPath), abs(lockRelPath(dekPath)))
+}
+
 // openKeyLockFile opens (creating if needed) the dek.lock file beside dekPath,
 // relative to baseDir, via securefiles.SecureOpenBeneath — the same path-escape
 // and symlink-at-any-component protection every DEK/salt write already gets, so a
@@ -133,7 +171,7 @@ func acquireExclusiveKeyLock(baseDir, dekPath string) (*os.File, error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("another process already holds the DEK lock (a live server, or a concurrent rotation): %w", err)
+		return nil, fmt.Errorf("another process already holds the DEK lock (a live server, or a concurrent rotation) at %s: %w", keyLockDisplayPath(baseDir, dekPath), err)
 	}
 	return f, nil
 }
@@ -154,7 +192,7 @@ func acquireSharedKeyLock(baseDir, dekPath string) (*os.File, error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("another process holds the DEK lock exclusively (a live server, or an in-progress rotation/migrate-provider): %w", err)
+		return nil, fmt.Errorf("another process holds the DEK lock exclusively (a live server, or an in-progress rotation/migrate-provider) at %s: %w", keyLockDisplayPath(baseDir, dekPath), err)
 	}
 	return f, nil
 }

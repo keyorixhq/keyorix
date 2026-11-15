@@ -21,7 +21,7 @@ func TestEnsureSSOUser_ExistingReturnedDirectly(t *testing.T) {
 	t.Parallel()
 	c, _, _, p := ssoTestCore(t)
 	existing := &models.User{ID: 7, Email: "ada@x.io"}
-	got, err := c.ensureSSOUser(context.Background(), p, existing, "okta|7", "ada@x.io", true, "Ada")
+	got, err := c.ensureSSOUser(context.Background(), p, existing, "okta|7", "ada@x.io", true, "Ada", "")
 	require.NoError(t, err)
 	assert.Same(t, existing, got)
 }
@@ -30,7 +30,7 @@ func TestEnsureSSOUser_NoAutoProvision_Rejected(t *testing.T) {
 	t.Parallel()
 	c, _, _, p := ssoTestCore(t)
 	p.AutoProvision = false
-	_, err := c.ensureSSOUser(context.Background(), p, nil, "okta|new", "new@x.io", true, "New Person")
+	_, err := c.ensureSSOUser(context.Background(), p, nil, "okta|new", "new@x.io", true, "New Person", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no Keyorix account matches")
 }
@@ -58,7 +58,7 @@ func TestEnsureSSOUser_AutoProvision_CreatesUser(t *testing.T) {
 	store.On("AssignRole", mock.Anything, uint(42), uint(3), storage.Scope{}).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	got, err := c.ensureSSOUser(context.Background(), p, nil, "okta|new", "new@x.io", true, "New Person")
+	got, err := c.ensureSSOUser(context.Background(), p, nil, "okta|new", "new@x.io", true, "New Person", "")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, uint(42), got.ID)
@@ -72,7 +72,7 @@ func TestEnsureSSOUser_AutoProvision_NoEmail_Rejected(t *testing.T) {
 	t.Parallel()
 	c, _, _, p := ssoTestCore(t)
 	p.AutoProvision = true
-	_, err := c.ensureSSOUser(context.Background(), p, nil, "okta|new", "", true, "New Person")
+	_, err := c.ensureSSOUser(context.Background(), p, nil, "okta|new", "", true, "New Person", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no email")
 }

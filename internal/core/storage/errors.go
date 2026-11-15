@@ -403,3 +403,10 @@ func IsSecretVersionNotFound(err error) bool {
 	}
 	return errors.Is(err, ErrSecretVersionNotFound)
 }
+
+// ErrAuditChainReencodeRefused is wrapped (%w) by every refusal of
+// MigrateAuditChainEncoding's pre-flight: the chain has a gap, a broken link or
+// a changed row, and re-encoding would repair it invisibly. It is a precondition
+// failure the operator must investigate, not a server error. The wrapping
+// error's text is the full operator-facing reason and stays unchanged.
+var ErrAuditChainReencodeRefused = errors.New("refusing to re-encode the audit chain")

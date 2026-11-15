@@ -19,7 +19,7 @@ sections: for each fragment, in file-name order, they take the next free section
 cross-reference, and delete the fragment in the same commit. A fragment that is still here after the
 release it names has shipped is a defect.
 
-Reader: `go test -run 'TestUpgradingFragments' ./internal/docsdrift/` fails on a fragment with a name
+Reader: `go test -run 'TestUpgradingFragmentsAreWellFormed' ./internal/docsdrift/` fails on a fragment with a name
 that is not a lower-case slug, an empty one, or one with a numbered `## 6x` heading.
 `TestUpgradingSectionReferencesResolve` already walks every `.md` under `docs/`, so a `§6q`
 reference in a fragment must name a heading that exists in `docs/UPGRADING.md`.

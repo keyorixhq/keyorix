@@ -32,9 +32,10 @@
 //     that reason.
 // Wrong-reason exemptions are checked: an exception that no longer matches any hit fails.
 //
-// The exception file is testdata/errtext_classification_exceptions.tsv: `path:Func<TAB>reason`,
-// one row per function that still reads error text, with a one-line reason. A new row needs a
-// reason a reviewer can check; "unmigrated" is only valid for the families named in the file.
+// The exceptions are one file per function in testdata/errtext_classification_exceptions.d/,
+// each holding one `path:Func<TAB>reason` row for a function that still reads error text, with
+// a one-line reason (naming and families: the README.md there). A new row needs a reason a
+// reviewer can check; "unmigrated" is only valid for the families named in the README.
 //
 // Report-only on its first day (docs/guard-rollout.d/TestNoErrorTextClassification.tsv,
 // docs/guard-rollout-contract.md).
@@ -53,6 +54,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
@@ -274,30 +276,145 @@ func errTextSources(t testing.TB) []string {
 	return out
 }
 
-const errTextExceptionsFile = "testdata/errtext_classification_exceptions.tsv"
+// errTextExceptionsDir holds one file per exception (GUARD-COLLISION-NOV-1): a PR that
+// adds, migrates or deletes a function's row touches only that function's file, so two PRs
+// that are each green alone cannot fail each other in the merge queue the way two edits to
+// one shared TSV did. See the README.md in the directory.
+const errTextExceptionsDir = "testdata/errtext_classification_exceptions.d"
 
-// loadErrTextExceptions reads path:Func -> reason.
-func loadErrTextExceptions(t testing.TB) map[string]string {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join(srcpath.PkgDir(), filepath.FromSlash(errTextExceptionsFile)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := map[string]string{}
+// errTextExceptionFileName is the file name the row for key must live in: the key with
+// "/" and ":" replaced by "__". The loader requires it, so one key cannot hide in two files.
+func errTextExceptionFileName(key string) string {
+	return strings.NewReplacer("/", "__", ":", "__").Replace(key) + ".tsv"
+}
+
+// parseErrTextExceptionFile parses one fragment: exactly one `path:Func<TAB>reason` row
+// (blank and '#' lines ignored), in the file named for its key.
+func parseErrTextExceptionFile(name string, b []byte) (key, reason string, err error) {
+	var rows [][2]string
 	for i, line := range strings.Split(string(b), "\n") {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		key, reason, ok := strings.Cut(line, "\t")
-		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(reason) == "" {
-			t.Fatalf("%s:%d: want `path:Func<TAB>reason` with a non-empty reason, got %q", errTextExceptionsFile, i+1, line)
+		k, r, ok := strings.Cut(line, "\t")
+		if !ok || strings.TrimSpace(k) == "" || strings.TrimSpace(r) == "" {
+			return "", "", fmt.Errorf("%s:%d: want `path:Func<TAB>reason` with a non-empty reason, got %q", name, i+1, line)
+		}
+		rows = append(rows, [2]string{k, strings.TrimSpace(r)})
+	}
+	if len(rows) != 1 {
+		return "", "", fmt.Errorf("%s: holds %d rows; a fragment holds exactly one", name, len(rows))
+	}
+	if want := errTextExceptionFileName(rows[0][0]); name != want {
+		return "", "", fmt.Errorf("%s: the row for %q must live in a file named %s", name, rows[0][0], want)
+	}
+	return rows[0][0], rows[0][1], nil
+}
+
+// loadErrTextExceptionsFS reads path:Func -> reason from every *.tsv in dir of fsys.
+//
+// dir-listing-ok: the exception fragments in testdata, not internal/core's sources
+func loadErrTextExceptionsFS(fsys fs.FS, dir string) (map[string]string, error) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tsv") {
+			continue // README.md and friends
+		}
+		b, err := fs.ReadFile(fsys, dir+"/"+e.Name())
+		if err != nil {
+			return nil, err
+		}
+		key, reason, err := parseErrTextExceptionFile(e.Name(), b)
+		if err != nil {
+			return nil, err
 		}
 		if _, dup := out[key]; dup {
-			t.Fatalf("%s:%d: duplicate exception %q", errTextExceptionsFile, i+1, key)
+			return nil, fmt.Errorf("%s: duplicate exception %q", e.Name(), key)
 		}
-		out[key] = strings.TrimSpace(reason)
+		out[key] = reason
+	}
+	return out, nil
+}
+
+// loadErrTextExceptions reads path:Func -> reason.
+func loadErrTextExceptions(t testing.TB) map[string]string {
+	t.Helper()
+	out, err := loadErrTextExceptionsFS(os.DirFS(srcpath.PkgDir()), errTextExceptionsDir)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return out
+}
+
+// TestErrTextExceptionLoaderCalibration is the loader's red/green proof: every malformed
+// fragment shape must be rejected and a well-formed directory must load, so a loader that
+// accepts everything (or a layout that quietly allows one key in two files) fails here.
+func TestErrTextExceptionLoaderCalibration(t *testing.T) {
+	t.Parallel()
+	const dir = "d"
+	// Fixture keys are built from parts: a whole "a/x.go" literal would be read by
+	// TestNamedSourceFilesExist as a reference to a real file.
+	const goExt = ".go"
+	row := func(key, reason string) *fstest.MapFile {
+		return &fstest.MapFile{Data: []byte(key + "\t" + reason + "\n")}
+	}
+	cases := []struct {
+		name    string
+		files   fstest.MapFS
+		wantErr string // "" = must load
+		want    int
+	}{
+		{name: "green: two one-row files", files: fstest.MapFS{
+			dir + "/a__x.go__F.tsv": row("a/x"+goExt+":F", "DRIVER: probe"),
+			dir + "/a__y.go__G.tsv": row("a/y"+goExt+":G", "HTTP: unmigrated"),
+		}, want: 2},
+		{name: "green: README and other non-tsv files are ignored", files: fstest.MapFS{
+			dir + "/README.md":      {Data: []byte("a/x" + goExt + ":F\twould be a row")},
+			dir + "/a__x.go__F.tsv": row("a/x"+goExt+":F", "DRIVER: probe"),
+		}, want: 1},
+		{name: "green: comment and blank lines around the row", files: fstest.MapFS{
+			dir + "/a__x.go__F.tsv": {Data: []byte("# why\n\na/x" + goExt + ":F\tDRIVER: probe\n")},
+		}, want: 1},
+		{name: "red: two rows in one file", files: fstest.MapFS{
+			dir + "/a__x.go__F.tsv": {Data: []byte("a/x" + goExt + ":F\tr1\na/x" + goExt + ":G\tr2\n")},
+		}, wantErr: "holds 2 rows"},
+		{name: "red: empty file", files: fstest.MapFS{
+			dir + "/a__x.go__F.tsv": {Data: []byte("# nothing\n")},
+		}, wantErr: "holds 0 rows"},
+		{name: "red: file name does not match its key", files: fstest.MapFS{
+			dir + "/other.tsv": row("a/x"+goExt+":F", "DRIVER: probe"),
+		}, wantErr: "must live in a file named a__x.go__F.tsv"},
+		{name: "red: a second file for the same key", files: fstest.MapFS{
+			dir + "/a__x.go__F.tsv":      row("a/x"+goExt+":F", "DRIVER: probe"),
+			dir + "/a__x.go__F.tsv.copy": row("a/x"+goExt+":F", "dup"), // ignored: not .tsv
+			dir + "/b__x.go__F.tsv":      row("a/x"+goExt+":F", "dup"),
+		}, wantErr: "must live in a file named a__x.go__F.tsv"},
+		{name: "red: empty reason", files: fstest.MapFS{
+			dir + "/a__x.go__F.tsv": {Data: []byte("a/x" + goExt + ":F\t  \n")},
+		}, wantErr: "non-empty reason"},
+		{name: "red: no tab", files: fstest.MapFS{
+			dir + "/a__x.go__F.tsv": {Data: []byte("a/x" + goExt + ":F reason\n")},
+		}, wantErr: "non-empty reason"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := loadErrTextExceptionsFS(tc.files, dir)
+			if tc.wantErr == "" {
+				if err != nil || len(got) != tc.want {
+					t.Fatalf("want %d rows and no error, got %d rows, err=%v", tc.want, len(got), err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want an error containing %q, got rows=%v err=%v", tc.wantErr, got, err)
+			}
+		})
+	}
 }
 
 func TestNoErrorTextClassification(t *testing.T) {
@@ -337,7 +454,7 @@ func TestNoErrorTextClassification(t *testing.T) {
 		g.Errorf("%s: classify with errors.Is / errors.As on a sentinel (wrap or return one where the refusal is made; "+
 			"see storage.ErrInvalidGroupRequest and core.ErrPermissionDenied). An untyped storage or driver error can contain "+
 			"any word, and the text is translated. If the text is one this function built itself, or a driver dialect probe, "+
-			"add the function to %s with the reason", m, errTextExceptionsFile)
+			"add a one-row file for the function under %s/ with the reason (see its README.md)", m, errTextExceptionsDir)
 	}
 	var stale []string
 	for key, why := range exceptions {

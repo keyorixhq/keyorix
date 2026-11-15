@@ -29,7 +29,7 @@ func TestGetCompliancePosture_RollsUpControls(t *testing.T) {
 	require.NoError(t, h.DB.Model(&models.User{}).Where("id = ?", 10).Update("mfa_enabled", true).Error)
 
 	// alice holds a role grant in project 2 with no secret activity → dormant.
-	h.AssignUserRole(t, 10, 3, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectDeveloper, uptr(proj))
 	// An open campaign on project 2.
 	_, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "Q4")
 	require.NoError(t, err)
@@ -152,7 +152,10 @@ func TestCompliancePosture_RecentActivityNotDormant(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj))
+	// The dormancy tier follows the role's permissions, and project_developer also holds
+	// secrets.delete, so the legacy editor bundle is kept as a project-tier custom role.
+	writer := h.CreateProjectRoleWithPermissions(t, "posture-writer", 21, "secrets.read", "secrets.write", "users.read")
+	h.AssignUserRole(t, 10, writer.ID, uptr(proj))
 
 	aid := uint(10)
 	pid := proj
@@ -182,7 +185,10 @@ func TestCompliancePosture_WriteOnlyActivityNotDormant(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor: secrets.read + secrets.write
+	// Kept as the legacy editor bundle (secrets.read + secrets.write, no delete): the
+	// dormancy tier follows the role's permissions and project_developer also deletes.
+	writer := h.CreateProjectRoleWithPermissions(t, "posture-writer", 21, "secrets.read", "secrets.write", "users.read")
+	h.AssignUserRole(t, 10, writer.ID, uptr(proj))
 
 	aid := uint(10)
 	pid := proj
@@ -222,8 +228,8 @@ func TestCompliancePosture_DormantRoleGrants_AdminTierGrantNotMaskedByReadActivi
 	// alice holds both a read-tier grant (role 4, "viewer": secrets.read) and a
 	// separate admin-tier grant (role 2, "admin": seeded with secrets.delete +
 	// roles.assign among others) in the same project.
-	h.AssignUserRole(t, 10, 4, uptr(proj))
-	h.AssignUserRole(t, 10, 2, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectViewer, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectAdmin, uptr(proj))
 
 	// She reads secrets weekly — recent, ordinary activity exercising the viewer
 	// grant — but never performs an admin-tier action (no role.assigned/removed or
@@ -255,8 +261,8 @@ func TestCompliancePosture_DormantRoleGrants_AdminTierGrantNotDormantWhenExercis
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
-	h.AssignUserRole(t, 10, 4, uptr(proj))
-	h.AssignUserRole(t, 10, 2, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectViewer, uptr(proj))
+	h.AssignUserRole(t, 10, testhelper.RoleProjectAdmin, uptr(proj))
 
 	aid := uint(10)
 	pid := proj

@@ -1,0 +1,1 @@
+TestEgressEveryDirectDependencyIsClassified	internal/egressguard	#4215	sibling of TestEgressSitesAreInventoried: every direct go.mod dependency of every module is classified client or local, so a new client library cannot bypass the scanner's import list (EGRESS-INVENTORY-1), report-only until its first green nightly on main

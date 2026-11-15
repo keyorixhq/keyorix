@@ -1,0 +1,1 @@
+legal-hold-lift-conditional-release-pg-001	./internal/core	TestCTAReview_LegalHoldLift_SecondLifterRefused_CrossReplicaPostgres	pg-gated	pending-merge	4210	Postgres twin of legal-hold-lift-conditional-release-001: two replicas on independent pools, B lifts between A read and write; A is refused, B reason survives, one lift audit row.

@@ -21,6 +21,11 @@ type EncryptionConfig struct {
 	// run under a PostgreSQL advisory lock. The key directory may then be a
 	// shared ReadWriteMany volume without working flock, or read-only.
 	KeyDirLock string `yaml:"key_dir_lock"`
+	// KeyPathBase is the absolute directory a relative key-material path is
+	// defined against: Load's config base, the one storage.database.path
+	// resolves against (#4249, key_paths.go). Set by Load; "" for a config
+	// built in code, which CheckRelativeKeyPathBase then does not judge.
+	KeyPathBase string `yaml:"-"`
 }
 
 // Key-directory lock modes (EncryptionConfig.KeyDirLock).

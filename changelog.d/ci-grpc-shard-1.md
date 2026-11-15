@@ -1,2 +1,0 @@
-### Internal
-- **server/grpc runs on three CI legs.** The gRPC dead-credential walk is split into `TestEveryGRPCMethodRejectsDeadCredential_G0..G3` (every state/cold-warm case in exactly one group, proven by `TestDeadWalkGroups_PartitionTheCases`; the checked combinations are unchanged), and `server/grpc` moves out of `root-1` into `grpc-1..3` (`scripts/ci-test-legs.sh`, `scripts/ci-test-weights.tsv`, `ci.yml`).

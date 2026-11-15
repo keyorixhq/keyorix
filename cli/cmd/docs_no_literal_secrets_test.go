@@ -16,7 +16,8 @@
 //     prose is not scanned, so "the --password flag" is fine.
 //   - Go and NOTES.txt: any line that is a quoted/$/<..> value after the flag, or
 //     any value on a line that mentions `keyorix`.
-//   - Shell scripts (scripts/**/*.sh, deploy/**/*.sh; SCRIPTS-SECRETS-1): an argv
+//   - Shell scripts (scripts/**/*.sh, deploy/**/*.sh, demo/**/*.sh; SCRIPTS-SECRETS-1,
+//     demo/ added by SECRETS-ARGV-RESIDUE-1): an argv
 //     is visible in ps and CI logs whether or not a human reads the script, so any
 //     secretFlags flag followed by a value on a non-comment line is a hit. There is
 //     no allowlist: a script that needs a secret uses KEYORIX_* env vars (the
@@ -40,6 +41,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -162,6 +164,7 @@ func scanShellForSecrets(content string) []docsSecretHit {
 	var hits []docsSecretHit
 	hits = append(hits, scanShellForVarBodies(content)...)
 	hits = append(hits, scanShellForJqArgs(content)...)
+	hits = append(hits, scanShellForHeaderVars(content)...)
 	for i, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
@@ -205,8 +208,11 @@ func scanShellForSecrets(content string) []docsSecretHit {
 // body flag (the same list as above) whose value is a bare variable (`$NAME`, `${NAME}`,
 // `${NAME:-x}`, `$1`, `$@`) on the logical line, backslash continuations joined.
 //
-// NOT recognised, so a green run is not more than this: a header held in a variable
-// ("$hdr") or built by a function; a body built by a function or command substitution
+// Also recognised (SCRIPTS-SECRETS-4, scanShellForHeaderVars, shell scripts only): a credential
+// header assigned to a variable in the same file and passed as `-H "$NAME"`.
+//
+// NOT recognised, so a green run is not more than this: a header built by a function or from
+// several variables, or defined in another file; a body built by a function or command substitution
 // (`-d "$(...)"`) or mixed with literal text (`-d "x=$v"`); a curl invoked through a
 // variable or array (`"${CURL[@]}" -d "$b"`); wget --post-data; curl -F/--form; a header
 // split from its flag by a line continuation; a helm --set whose key is held in a
@@ -375,6 +381,42 @@ func scanShellForJqArgs(content string) []docsSecretHit {
 	return hits
 }
 
+// SCRIPTS-SECRETS-4: a credential header held in a shell variable and handed to curl/wget as
+// `-H "$NAME"`. credHeaderFlagRE only sees a header NAME written next to the flag, so
+// `AUTH_HDR="Authorization: Bearer $TOKEN"` followed by `curl -H "$AUTH_HDR"` put the token
+// on argv unseen (demo/vault-migration/run.sh). Recognised, per file: an assignment
+// (`NAME=`, `local NAME=`, `export NAME=`, `declare [-flags] NAME=`, `readonly NAME=`) whose
+// value starts with a credential header name (the credHeaderFlagRE set), and a later
+// `-H` / `--header` (space, `=` or attached quote) whose value is `$NAME` / `${NAME}`. The hit is
+// reported on the USE line. Not recognised: a header assembled from several variables
+// (`H="$K: $V"`), an array element (`H=(-H "X-Vault-Token: $T")` is already caught by
+// credHeaderFlagRE), a header read from a file or stdin (the safe forms), and a variable
+// defined in another file. A header that is not a credential opts out with the usual marker.
+var (
+	credHeaderAssignRE = regexp.MustCompile(`(?i)^\s*(?:(?:local|export|readonly)\s+|declare\s+(?:-[A-Za-z]+\s+)?)?([A-Za-z_][A-Za-z0-9_]*)=["']?(?:Authorization|Proxy-Authorization|Cookie|X-[A-Za-z0-9-]*(?:Token|Key|Secret|Auth|Password)[A-Za-z0-9-]*)\s*:`)
+)
+
+func scanShellForHeaderVars(content string) []docsSecretHit {
+	var hits []docsSecretHit
+	lines := shellLogicalLines(content)
+	names := map[string]bool{}
+	for _, l := range lines {
+		if m := credHeaderAssignRE.FindStringSubmatch(l.joined); m != nil {
+			names[m[1]] = true
+		}
+	}
+	for name := range names {
+		useRE := regexp.MustCompile(`(?:^|[\s(])(?:-H|--header)(?:(?:=|\s+)["']?|["'])\$(?:` + regexp.QuoteMeta(name) + `|\{` + regexp.QuoteMeta(name) + `\})["']?(?:\s|$|\))`)
+		for _, l := range lines {
+			if m := useRE.FindString(l.joined); m != "" {
+				hits = append(hits, docsSecretHit{l.first + 1, "credential header held in $" + name + " on argv (write it to a 0600 file and use -H @file): " + strings.TrimSpace(m), l.text})
+			}
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].line < hits[j].line })
+	return hits
+}
+
 var docsSecretsSkipDirs = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, ".scratch": true,
 	"dist": true, "build": true, ".next": true, "target": true,
@@ -383,7 +425,7 @@ var docsSecretsSkipDirs = map[string]bool{
 // TestDocsShowNoLiteralSecretOnCommandLine is the guard. See the file header.
 func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 	root := repoRoot(t)
-	scanned := 0
+	scanned, demoScripts := 0, 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -401,7 +443,7 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 		relSh, _ := filepath.Rel(root, path)
 		relSh = filepath.ToSlash(relSh)
 		isShell := strings.HasSuffix(name, ".sh") &&
-			(strings.HasPrefix(relSh, "scripts/") || strings.HasPrefix(relSh, "deploy/"))
+			(strings.HasPrefix(relSh, "scripts/") || strings.HasPrefix(relSh, "deploy/") || strings.HasPrefix(relSh, "demo/"))
 		if !isMD && !isNotes && !isGo && !isShell {
 			return nil
 		}
@@ -410,6 +452,9 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 			return rerr
 		}
 		scanned++
+		if isShell && strings.HasPrefix(relSh, "demo/") {
+			demoScripts++
+		}
 		var hits []docsSecretHit
 		switch {
 		case isMD:
@@ -437,6 +482,9 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 	// Liveness: a walk that matched nothing would pass vacuously.
 	if scanned < 20 {
 		t.Fatalf("scanned only %d files under %s; the walk is not reaching the docs", scanned, root)
+	}
+	if demoScripts == 0 {
+		t.Fatalf("no demo/**/*.sh script scanned under %s; the walk lost the demo/ root", root)
 	}
 }
 

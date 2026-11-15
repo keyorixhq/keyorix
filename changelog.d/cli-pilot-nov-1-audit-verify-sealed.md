@@ -1,0 +1,2 @@
+### Fixed
+- **`keyorix audit verify` on a sealed audit chain.** It printed "audit chain verification FAILED (first broken id 0): " with an empty reason (#4230). It now prints `Audit chain: SEALED` with the server's `state_reason` (seal number, time, operator), in text and in `--json`, and exits 4, the code `keyorix-server admin verify-audit` uses for SEALED. 4 is also the CLI's permission-denied code, so read the printed status when a script branches on it.

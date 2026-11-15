@@ -551,6 +551,9 @@ func (s *Service) AcquireExclusiveKeyLock() error {
 	if s.serverLock != nil {
 		return nil
 	}
+	if s.keyPathErr != nil {
+		return s.keyPathErr // #4249: the lock would be another file than every other process's
+	}
 	f, err := acquireExclusiveKeyLock(s.keyManager.baseDir, s.keyManager.dekPath)
 	if err != nil {
 		return err

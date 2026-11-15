@@ -71,3 +71,39 @@ func TestPostureOrigin_EveryDeprecatedAliasReadsAsExplicit(t *testing.T) {
 		})
 	}
 }
+
+// #2925, the other two arms of the table: for every deprecated alias, a file that
+// writes NOTHING is not explicit (the shipped default), and a file that writes BOTH
+// the old and the new spelling is explicit.
+func TestPostureOrigin_DeprecatedAliasSilentAndBothArms(t *testing.T) {
+	for _, pair := range config.DeprecatedSettingAliasPaths() {
+		oldPath, newPath := pair[0], pair[1]
+		t.Run(oldPath, func(t *testing.T) {
+			want := strings.ReplaceAll(newPath, "[]", "")
+			var owner *config.InsecureSetting
+			for i := range config.InsecureSettingsRegistry {
+				for _, p := range config.InsecureSettingsRegistry[i].SourcePaths {
+					if p == want {
+						owner = &config.InsecureSettingsRegistry[i]
+					}
+				}
+			}
+			require.NotNil(t, owner, "no registry entry owns %q", want)
+
+			write := func(doc string) map[string]bool {
+				cfgPath := filepath.Join(t.TempDir(), "keyorix.yaml")
+				require.NoError(t, os.WriteFile(cfgPath, []byte(doc), 0o600))
+				explicit, err := config.ExplicitlySetPaths(cfgPath)
+				require.NoError(t, err)
+				return explicit
+			}
+			assert.False(t, writesAnyOf(write("# nothing\n"), owner.SourcePaths),
+				"%s: a file that writes nothing must read as shipped default", owner.Name)
+			// Concatenated documents repeat top-level keys; ExplicitlySetPaths
+			// reads the file as a yaml.Node, which keeps both.
+			bothDoc := postureYAMLWritingPath(oldPath) + postureYAMLWritingPath(newPath)
+			assert.True(t, writesAnyOf(write(bothDoc), owner.SourcePaths),
+				"%s: a file writing both spellings is explicit", owner.Name)
+		})
+	}
+}

@@ -1,0 +1,2 @@
+### Fixed
+- **A refused `--new-passphrase-file` named `--passphrase-file`.** The refusals for a passphrase file or descriptor (missing, group- or world-readable, foreign owner, empty, unreadable fd) and the "not set" hint printed the primary flag's name even for the second passphrase of `admin encryption rotate-kek` and `migrate-provider` (#4217). They now name the flag that was given (`--new-passphrase-file`, `--new-passphrase-fd`, `--new-passphrase-stdin`).
