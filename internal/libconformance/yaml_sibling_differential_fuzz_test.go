@@ -52,18 +52,18 @@ func FuzzYAMLSiblingDifferential(f *testing.F) {
 		"null",
 		"x: 1",
 		"x: 1\ny: 2\n",
-		"x: 1\nx: 2\n",            // duplicate key (both expected to reject)
-		"- 1\n- 2\n- 3\n",         // sequence
-		"a:\n  b:\n    c: 1\n",     // nested maps
-		"foo: !!str 123\n",        // explicit tag
-		"n: .nan\ni: .inf\n",      // float specials
+		"x: 1\nx: 2\n",              // duplicate key (both expected to reject)
+		"- 1\n- 2\n- 3\n",           // sequence
+		"a:\n  b:\n    c: 1\n",      // nested maps
+		"foo: !!str 123\n",          // explicit tag
+		"n: .nan\ni: .inf\n",        // float specials
 		"big: 0x7fffffffffffffff\n", // hex int
-		"t: true\nf: no\n",        // bools / yaml 1.1 vs 1.2
-		"s: 2020-01-02\n",         // timestamp
-		"anchor: &a 1\nref: *a\n",  // anchor/alias
+		"t: true\nf: no\n",          // bools / yaml 1.1 vs 1.2
+		"s: 2020-01-02\n",           // timestamp
+		"anchor: &a 1\nref: *a\n",   // anchor/alias
 		"key: |\n  multi\n  line\n", // block scalar
-		"? [a, b]\n: val\n",        // complex mapping key
-		"'': empty-key\n",          // empty key
+		"? [a, b]\n: val\n",         // complex mapping key
+		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
 	}

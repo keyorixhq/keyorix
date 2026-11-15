@@ -70,21 +70,21 @@ func FuzzJSONStrictDecodeDifferential(f *testing.F) {
 	seeds := [][]byte{
 		[]byte(`{"name":"x"}`),
 		[]byte(`{"name":"x","ttl":5}`),
-		[]byte(`{"name":"x"}{"name":"y"}`),           // trailing second value (smuggling)
-		[]byte(`{"name":"x"}  `),                      // trailing whitespace only
-		[]byte(`{"name":"x"}garbage`),                 // trailing garbage
-		[]byte(`{"name":"x","unknown":1}`),            // unknown field
-		[]byte(`{"ttl":"not-an-int"}`),                // type mismatch on int
+		[]byte(`{"name":"x"}{"name":"y"}`), // trailing second value (smuggling)
+		[]byte(`{"name":"x"}  `),           // trailing whitespace only
+		[]byte(`{"name":"x"}garbage`),      // trailing garbage
+		[]byte(`{"name":"x","unknown":1}`), // unknown field
+		[]byte(`{"ttl":"not-an-int"}`),     // type mismatch on int
 		[]byte(`{"nested":{"enabled":true}}`),
 		[]byte(`{"scopes":["a","b"]}`),
-		[]byte(`   {"name":"x"}`),                      // leading whitespace
-		[]byte(`[1,2,3]`),                              // wrong top-level type
+		[]byte(`   {"name":"x"}`), // leading whitespace
+		[]byte(`[1,2,3]`),         // wrong top-level type
 		[]byte(`null`),
 		[]byte(`{"name":"x","meta":{"k":"v"}}`),
 		[]byte(`{"raw":{"anything":[1,2]}}`),
 		[]byte(``),
-		[]byte(`{"ttl":1e309}`),                        // number overflow
-		[]byte("{\"name\":\"x\"}\n{\"name\":\"y\"}"),  // newline-separated (NDJSON smuggle)
+		[]byte(`{"ttl":1e309}`),                      // number overflow
+		[]byte("{\"name\":\"x\"}\n{\"name\":\"y\"}"), // newline-separated (NDJSON smuggle)
 	}
 	for _, s := range seeds {
 		f.Add(s)
@@ -206,8 +206,7 @@ func isTypeOrTrailingReject(err error, trailing bool) bool {
 	if trailing {
 		return true
 	}
-	var ute *json.UnmarshalTypeError
-	if errors.As(err, &ute) {
+	if _, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 		return true
 	}
 	// Overflow of a numeric field surfaces as a *strconv.NumError wrapped in a
@@ -224,8 +223,7 @@ func isSchemalessMaterializationReject(err error) bool {
 	if err == nil {
 		return false
 	}
-	var ute *json.UnmarshalTypeError
-	if errors.As(err, &ute) {
+	if _, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 		return true
 	}
 	return containsAny(err.Error(), "cannot unmarshal number", "overflow", "out of range")

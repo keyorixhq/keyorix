@@ -136,8 +136,8 @@ func FuzzJSONSchemaValidatorDifferential(f *testing.F) {
 	f.Add(byte(1), []byte(`{"role":"root"}`)) // not in enum
 	f.Add(byte(1), []byte(`{"role":5}`))      // wrong type
 	f.Add(byte(2), []byte(`["a","b"]`))
-	f.Add(byte(2), []byte(`[]`))        // minItems
-	f.Add(byte(2), []byte(`["a",1]`))   // item type
+	f.Add(byte(2), []byte(`[]`))      // minItems
+	f.Add(byte(2), []byte(`["a",1]`)) // item type
 	f.Add(byte(2), []byte(`"notarray"`))
 
 	pairs := compileDiffSchemas()
