@@ -1,0 +1,11 @@
+# Allow-list for scripts/docs/check-cli-flags.sh. Tab separated: <file glob> <what> <reason>.
+# <what> is a --flag, cmd:<command words as reported> or * (every finding in the matching files).
+# Every row needs a reason; a row that matches nothing is reported as stale on stderr.
+#
+# Documents whose own banner says the commands they use are not built yet (ADR "Proposed").
+# Remove the row when the command ships; the check then guards the script against the real CLI.
+docs/demo/attenuating-agent-tokens.md	*	banner: NOT IMPLEMENTED, written against ADR-120 (Proposed); `keyorix aat` does not exist
+docs/demo/rd-audit-ckpt.md	*	banner: NOT IMPLEMENTED, acceptance script for ADR-116 (Proposed); audit signing-key / evidence-bundle do not exist
+docs/demo/tpm-sealed-kek.md	*	banner: NOT IMPLEMENTED, written against ADR-117 (Proposed); `admin encryption tpm` does not exist
+# A design document listing a flag of the proposed CLI surface that was not built.
+docs/design-b3-backup-v2.md	--anchor	section 10 proposes `admin restore --anchor`; restore compares the host's .audit-highwater-witness instead (audit-chain-break-runbook.md 4e)

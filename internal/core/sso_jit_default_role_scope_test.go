@@ -47,7 +47,7 @@ func TestProvisionSSOUser_DefaultRoleReadErrorFailsClosed(t *testing.T) {
 	real := c.storage
 	c.storage = fs
 	_, err := c.provisionSSOUser(ctx, &SSOProvider{Name: "okta", AutoProvision: true, DefaultRole: "project_developer"},
-		"okta|frank", "frank@example.com", true, "Frank")
+		"okta|frank", "frank@example.com", true, "Frank", "")
 	c.storage = real
 
 	require.True(t, fs.Fired(), "the role read must have been attempted and faulted")
@@ -58,7 +58,7 @@ func TestProvisionSSOUser_DefaultRoleReadErrorFailsClosed(t *testing.T) {
 
 	// Calibration: without the fault the same provision is refused for its scope.
 	_, err = c.provisionSSOUser(ctx, &SSOProvider{Name: "okta", AutoProvision: true, DefaultRole: "project_developer"},
-		"okta|frank", "frank@example.com", true, "Frank")
+		"okta|frank", "frank@example.com", true, "Frank", "")
 	require.ErrorIs(t, err, ErrRoleScopeInvalid)
 }
 
@@ -91,14 +91,14 @@ func TestProvisionSSOUser_DefaultRoleNarrowedBeforeGrantIsRefused(t *testing.T) 
 	p := &SSOProvider{Name: "okta", AutoProvision: true, DefaultRole: w.customAny.Name}
 
 	// Positive control: while the role is assignable anywhere, JIT works.
-	u, err := c.provisionSSOUser(ctx, p, "okta|gina", "gina@example.com", true, "Gina")
+	u, err := c.provisionSSOUser(ctx, p, "okta|gina", "gina@example.com", true, "Gina", "")
 	require.NoError(t, err)
 	require.Contains(t, w.grantRows(t), fmtGrant("user", u.ID, w.customAny.ID, 0, 0))
 
 	before := w.grantRows(t)
 	real := c.storage
 	c.storage = narrowOnTx(real, w.customAny.ID)
-	_, err = c.provisionSSOUser(ctx, p, "okta|hank", "hank@example.com", true, "Hank")
+	_, err = c.provisionSSOUser(ctx, p, "okta|hank", "hank@example.com", true, "Hank", "")
 	c.storage = real
 
 	require.ErrorIs(t, err, ErrRoleScopeInvalid, "a default_role narrowed to project-only must refuse the provision")

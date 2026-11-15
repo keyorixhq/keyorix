@@ -169,31 +169,8 @@ func runVault(cmd *cobra.Command, _ []string) error {
 		})
 	}
 
-	planEntries := make([]plan.Entry, 0, len(entries))
-	for _, e := range entries {
-		name := sanitizeSecretName(e.Path)
-		if e.Field != "" {
-			name = sanitizeSecretName(e.Path + "-" + e.Field)
-		}
-		humanPath := "vault:" + vaultMount + "/" + e.Path
-		if e.Field != "" {
-			humanPath += "#" + e.Field
-		}
-		version := ""
-		if e.Version != 0 {
-			version = strconv.Itoa(e.Version)
-		}
-		planEntries = append(planEntries, plan.Entry{
-			SourceKind:      "vault",
-			Path:            humanPath,
-			Name:            name,
-			Value:           e.Value,
-			Metadata:        e.Metadata,
-			SourceID:        plan.SourceID(addr, vaultMount, e.Path, valueOr(e.Field, "value")),
-			SourceVersion:   version,
-			SourceCreatedAt: e.CreatedAt,
-		})
-	}
+	planEntries, emptyNameSkips := buildVaultPlanEntries(addr, vaultMount, entries)
+	skippedItems = append(skippedItems, emptyNameSkips...)
 	// sanitizeSecretName is lossy: two distinct Vault paths can sanitize to the same Keyorix
 	// name (e.g. "a/b/c" and "a/b-c" both become "a-b-c"), so this same intra-batch collision
 	// guard cloud sources need for --split-json applies here too — plan.BuildPlan's independent
@@ -278,4 +255,46 @@ func valueOr(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// buildVaultPlanEntries maps walked Vault entries to plan entries. An entry whose path/field
+// normalises to an empty Keyorix name (only separators/control chars) is returned as a Skip with
+// emptyDerivedNameSkipReason instead of being planned under an empty name (the vault-side twin
+// of buildCloudPlanEntries in cmd/cloud_common.go).
+func buildVaultPlanEntries(addr, mount string, entries []vaultsource.Entry) ([]plan.Entry, []plan.Item) {
+	planEntries := make([]plan.Entry, 0, len(entries))
+	var skipped []plan.Item
+	for _, e := range entries {
+		name := sanitizeSecretName(e.Path)
+		if e.Field != "" {
+			name = sanitizeSecretName(e.Path + "-" + e.Field)
+		}
+		humanPath := "vault:" + mount + "/" + e.Path
+		if e.Field != "" {
+			humanPath += "#" + e.Field
+		}
+		if name == "" {
+			skipped = append(skipped, plan.Item{
+				Entry:   plan.Entry{SourceKind: "vault", Path: humanPath},
+				Outcome: plan.Skip,
+				Reason:  emptyDerivedNameSkipReason,
+			})
+			continue
+		}
+		version := ""
+		if e.Version != 0 {
+			version = strconv.Itoa(e.Version)
+		}
+		planEntries = append(planEntries, plan.Entry{
+			SourceKind:      "vault",
+			Path:            humanPath,
+			Name:            name,
+			Value:           e.Value,
+			Metadata:        e.Metadata,
+			SourceID:        plan.SourceID(addr, mount, e.Path, valueOr(e.Field, "value")),
+			SourceVersion:   version,
+			SourceCreatedAt: e.CreatedAt,
+		})
+	}
+	return planEntries, skipped
 }
