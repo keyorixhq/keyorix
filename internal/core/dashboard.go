@@ -209,8 +209,6 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	if hasAuditRead {
 		// audit.read (honoured through AuthorizePrincipal, so a restricted PAT has it
 		// only at global scope) authorizes the deployment-wide log, as on GET /audit.
-		// Scheduler heartbeats are not activity here either (#4272, as #4184 did for
-		// /dashboard/activity).
 		events, _, err = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{Page: 1, PageSize: dashboardRecentActivity, Count: storage.AuditCountNone, ExcludeSystemJobEvents: true})
 	} else {
 		events, err = c.ownRecentActivity(ctx, userID)
