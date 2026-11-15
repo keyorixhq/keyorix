@@ -63,7 +63,7 @@ func TestRFC4226Vectors(t *testing.T) {
 }
 
 type totpVec struct {
-	t                   int64
+	t                    int64
 	sha1, sha256, sha512 string
 }
 

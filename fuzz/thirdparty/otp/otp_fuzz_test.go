@@ -72,13 +72,13 @@ func FuzzOTPURLRoundTrip(f *testing.F) {
 // lowercase. The oracle fails if (a) strict accepts but pquerna rejects, or
 // (b) pquerna accepts something NOT explained by {trim, pad, upper}.
 func FuzzOTPBase32Secret(f *testing.F) {
-	f.Add("JBSWY3DPEHPK3PXP")       // valid, unpadded (len 16, %8==0)
-	f.Add("jbswy3dpehpk3pxp")       // lowercase
-	f.Add("  JBSWY3DPEHPK3PXP  ")   // surrounding whitespace
-	f.Add("ME")                     // needs padding
-	f.Add("MFRA====")               // padded
-	f.Add("JBSWY3DP0189")           // invalid base32 chars 0,1,8,9
-	f.Add("MFRGG ZDFMZTWQ2L")       // internal whitespace
+	f.Add("JBSWY3DPEHPK3PXP")     // valid, unpadded (len 16, %8==0)
+	f.Add("jbswy3dpehpk3pxp")     // lowercase
+	f.Add("  JBSWY3DPEHPK3PXP  ") // surrounding whitespace
+	f.Add("ME")                   // needs padding
+	f.Add("MFRA====")             // padded
+	f.Add("JBSWY3DP0189")         // invalid base32 chars 0,1,8,9
+	f.Add("MFRGG ZDFMZTWQ2L")     // internal whitespace
 	f.Fuzz(func(t *testing.T, secret string) {
 		var pErr error
 		fuzzutil.Guard(t.Fatalf, "hotp.GenerateCodeCustom(secret)", func() {
@@ -153,8 +153,8 @@ func base32LeniencyExplained(secret string) bool {
 func FuzzHOTPGenerate(f *testing.F) {
 	f.Add([]byte("12345678901234567890"), uint64(0), uint8(6), uint8(0))
 	f.Add([]byte("12345678901234567890"), ^uint64(0), uint8(8), uint8(2)) // counter overflow edge
-	f.Add([]byte{}, uint64(1), uint8(0), uint8(1))                         // empty secret, digits 0
-	f.Add([]byte("x"), uint64(5), uint8(20), uint8(0))                     // digits out of range
+	f.Add([]byte{}, uint64(1), uint8(0), uint8(1))                        // empty secret, digits 0
+	f.Add([]byte("x"), uint64(5), uint8(20), uint8(0))                    // digits out of range
 	f.Fuzz(func(t *testing.T, secret []byte, counter uint64, digitsSel uint8, algSel uint8) {
 		s := base32.StdEncoding.EncodeToString(secret)
 		digits := otp.Digits(digitsSel)

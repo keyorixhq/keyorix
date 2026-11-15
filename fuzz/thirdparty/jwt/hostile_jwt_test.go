@@ -379,13 +379,13 @@ func seedJWTCorpus(f *testing.F) {
 		h(`{"alg":"none"}`) + "." + h(`{"sub":"x"}`) + ".",
 		h(`{"alg":"HS256"}`) + "." + h(`{"sub":"x"}`) + ".sig",
 		h(`{"alg":"RS256","crit":["b64"]}`) + "." + h(`{"sub":"x"}`) + ".sig",
-		h(`{"alg":"RS256","alg":"none"}`) + "." + h(`{"sub":"x"}`) + ".sig",  // dup key
-		h(`{"alg":"RS256"}`) + "." + h(`{"exp":"not-a-number"}`) + ".sig",     // exp string
-		h(`{"alg":"RS256"}`) + "." + h(`{"aud":["a","b"]}`) + ".sig",          // aud array
-		h(`{"alg":"RS256"}`) + "." + h(`{"aud":{"x":1}}`) + ".sig",            // aud object -> type err
-		h(`{"alg":"ES256"}`) + "." + h(`[1,2,3]`) + ".sig",                    // payload array
-		h(`{}`) + "." + h(`{}`) + ".sig",                                      // alg missing
-		strings.Repeat(".", 1024),                                             // many segments
+		h(`{"alg":"RS256","alg":"none"}`) + "." + h(`{"sub":"x"}`) + ".sig", // dup key
+		h(`{"alg":"RS256"}`) + "." + h(`{"exp":"not-a-number"}`) + ".sig",   // exp string
+		h(`{"alg":"RS256"}`) + "." + h(`{"aud":["a","b"]}`) + ".sig",        // aud array
+		h(`{"alg":"RS256"}`) + "." + h(`{"aud":{"x":1}}`) + ".sig",          // aud object -> type err
+		h(`{"alg":"ES256"}`) + "." + h(`[1,2,3]`) + ".sig",                  // payload array
+		h(`{}`) + "." + h(`{}`) + ".sig",                                    // alg missing
+		strings.Repeat(".", 1024),                                           // many segments
 	}
 	for _, s := range seeds {
 		f.Add(s)
