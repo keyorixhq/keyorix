@@ -23,13 +23,14 @@ import (
 //
 // The waiver families, what each matches, and what it does not detect:
 //
-//   - Core allows (known-02, known-03, known-04): the core leg allows, REST
+//   - Core allows (known-02, known-04): the core leg allows, REST
 //     denies and gRPC denies or is absent. A transport that allows never
 //     matches. known-02 also requires a counterfactual model decision
 //     (caseResult.ModelIfActive), so it absorbs only the exact condition it was
-//     established on; known-03 is limited to two ops, one target and one
-//     principal. Not detected: a core leg that allows while every present
-//     transport denies (see below).
+//     established on. Not detected: a core leg that allows while every present
+//     transport denies (see below). The former known-03 (core let a secret's
+//     owner update/delete it without secrets.write/secrets.delete, #4160) was
+//     fixed in core (TestCoreOwnerWithoutPermissionIsRefused).
 //   - Core returns an error the model does not map (known-08, known-09): core
 //     returns an untyped error, and the model denies (known-09) or the case is
 //     a machine principal on the listed ops (known-08). Not detected: on those
@@ -75,10 +76,6 @@ func explain(r *caseResult) string {
 	case pk == pkSuspended && r.ModelIfActive == Allowed && is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc):
 		return "known-02"
 
-	case (r.Op == "secret.update" || r.Op == "secret.delete") && r.Arg == 1 && r.Target == "A" &&
-		pk == pkViewer && is(core, Allowed) && is(rest, Denied) && is(grpc, Denied):
-		return "known-03"
-
 	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
 		return "known-04"
 
@@ -99,7 +96,6 @@ func explain(r *caseResult) string {
 // is a decision recorded on its issue, not a date bump.
 var waivers = []struct{ id, issue, expires string }{
 	{"known-02", "#4159", "2027-02-13"},
-	{"known-03", "#4160", "2027-02-13"},
 	{"known-04", "#4161", "2027-02-13"},
 	{"known-08", "#4162", "2027-02-13"},
 	{"known-09", "#4163", "2027-02-13"},
