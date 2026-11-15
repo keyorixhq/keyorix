@@ -156,11 +156,11 @@ var foldSeeds = [][2]string{
 	{"admin", "admin"},
 	{"ADMIN", "admin"},
 	{"café", "café"},
-	{"ＡＤＭＩＮ", "admin"},   // width-compat-mapping (allowlisted, red-proof)
-	{"ﬀ", "ff"},            // keyorix-accepts-rfc8265-rejects (ligature)
-	{"ß", "ss"},            // both keep distinct (agree) / casefold seed
+	{"ＡＤＭＩＮ", "admin"},         // width-compat-mapping (allowlisted, red-proof)
+	{"ﬀ", "ff"},                // keyorix-accepts-rfc8265-rejects (ligature)
+	{"ß", "ss"},                // both keep distinct (agree) / casefold seed
 	{"role name", "role name"}, // space: Keyorix accepts, RFC rejects
-	{"Σ", "σ"},             // sigma case
+	{"Σ", "σ"},                 // sigma case
 	{"a", "b"},
 }
 

@@ -6,10 +6,10 @@ import "testing"
 // (xmlCompare / walkCompare). It pins both directions so the oracle is not "a guard
 // nobody has watched fail":
 //
-//   GREEN — inputs both libraries read identically yield no mismatch.
-//   RED   — a genuine divergence is DETECTED and classified, including a DECLARED-
-//           namespace disagreement built by hand (the dangerous class the allowlist must
-//           NOT swallow), proving the oracle fires on exactly the shape it exists for.
+//	GREEN — inputs both libraries read identically yield no mismatch.
+//	RED   — a genuine divergence is DETECTED and classified, including a DECLARED-
+//	        namespace disagreement built by hand (the dangerous class the allowlist must
+//	        NOT swallow), proving the oracle fires on exactly the shape it exists for.
 //
 // The natural undeclared-prefix divergence (`<x:a/>`) is red-proven here too; it is the
 // documented, allowlisted class, so the FUZZ target tolerates it while this test confirms

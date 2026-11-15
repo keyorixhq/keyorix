@@ -365,12 +365,12 @@ var yamlSeeds = [][]byte{
 	[]byte(`{"s":"yes"}`),
 	[]byte(`{"nested":{"b":[true,false]}}`),
 	[]byte(`"plain"`),
-	[]byte(`{"a":1,"a":2}`),                  // dup key: exercises yaml-rejects-json-dup-key
-	[]byte(`{"n":12345678901234567890}`),     // big int: exercises number-precision
-	[]byte(`{"k":"0x10"}`),                    // quoted hex-like string stays a string in both
-	[]byte(`{"a":{"b":1},"a":2}`),            // nested then dup key (detector regression seed)
-	[]byte("\"\xba\""),                        // invalid UTF-8 string: yaml rejects, json accepts
-	[]byte("\t\t\t0"),                         // leading tabs: yaml rejects (no tab indentation), json accepts
+	[]byte(`{"a":1,"a":2}`),              // dup key: exercises yaml-rejects-json-dup-key
+	[]byte(`{"n":12345678901234567890}`), // big int: exercises number-precision
+	[]byte(`{"k":"0x10"}`),               // quoted hex-like string stays a string in both
+	[]byte(`{"a":{"b":1},"a":2}`),        // nested then dup key (detector regression seed)
+	[]byte("\"\xba\""),                   // invalid UTF-8 string: yaml rejects, json accepts
+	[]byte("\t\t\t0"),                    // leading tabs: yaml rejects (no tab indentation), json accepts
 	[]byte("\"\""),                      // NEL in a string: yaml folds the line break, json keeps it
 }
 

@@ -93,9 +93,9 @@ func jsVerdict(schemaBytes, instanceBytes []byte) (valid, ok, panicked bool) {
 }
 
 type schemaVerdictMismatch struct {
-	key           string
-	kinV, jsV     bool
-	schema, inst  string
+	key          string
+	kinV, jsV    bool
+	schema, inst string
 }
 
 // openapiCompare is the pure oracle core.

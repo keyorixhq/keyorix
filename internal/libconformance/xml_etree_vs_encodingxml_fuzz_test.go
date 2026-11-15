@@ -277,8 +277,8 @@ var xmlSeeds = [][]byte{
 		`<Assertion ID="_a"><Subject><NameID>admin</NameID></Subject></Assertion></Response>`),
 	[]byte(`<a xmlns="urn:d"><b>1</b></a>`),
 	[]byte(`<a><b/><b/><b/></a>`),
-	[]byte(`<x:a/>`),                // undeclared prefix: exercises the undeclared-prefix-ns allowlist entry
-	[]byte(`<x:a><y:b/></x:a>`),     // nested undeclared prefixes
+	[]byte(`<x:a/>`),            // undeclared prefix: exercises the undeclared-prefix-ns allowlist entry
+	[]byte(`<x:a><y:b/></x:a>`), // nested undeclared prefixes
 }
 
 func FuzzXMLEtreeVsEncodingXML(f *testing.F) {
