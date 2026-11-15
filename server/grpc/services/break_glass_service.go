@@ -171,7 +171,8 @@ func breakGlassError(err error) error {
 			st = withInfo
 		}
 		return st.Err()
-	case errors.Is(err, core.ErrBreakGlassNotProjectMember):
+	case errors.Is(err, core.ErrBreakGlassNotProjectMember),
+		errors.Is(err, core.ErrPermissionDenied): // a typed core refusal (#4159: an inactive actor)
 		return status.Error(codes.PermissionDenied, "access denied")
 	case errors.Is(err, storage.ErrBreakGlassNotActive):
 		return status.Error(codes.FailedPrecondition, "activation is not in a valid state for this operation") // GRPC-005: was msg

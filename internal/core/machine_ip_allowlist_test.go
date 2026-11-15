@@ -34,6 +34,7 @@ func TestIssueMachineToken_StoresCIDRs(t *testing.T) {
 	c.now = func() time.Time { return fixed }
 
 	cidrs := []string{"10.0.0.0/8", "192.0.2.0/24"}
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.IssueMachineToken(context.Background(), 2, 1, 9, IssueMachineTokenParams{Name: "ci", AllowedCIDRs: cidrs})
 	require.NoError(t, err)
 
@@ -69,6 +70,7 @@ func TestIssueMachineToken_NilCIDRsOmitted(t *testing.T) {
 	c := NewKeyorixCore(store)
 	c.now = func() time.Time { return fixed }
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.IssueMachineToken(context.Background(), 2, 1, 9, IssueMachineTokenParams{Name: "ci"})
 	require.NoError(t, err)
 

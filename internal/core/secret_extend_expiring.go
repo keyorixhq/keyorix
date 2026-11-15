@@ -34,6 +34,9 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 	if newWindowDays > maxExpiringWindowDays {
 		newWindowDays = maxExpiringWindowDays
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return 0, false, err
+	}
 	newExpiry := c.now().Add(time.Duration(newWindowDays) * 24 * time.Hour).UTC()
 
 	secrets, truncated, err := c.ListExpiringSecrets(ctx, projectID, withinDays)

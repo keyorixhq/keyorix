@@ -178,6 +178,9 @@ func (c *KeyorixCore) requireMachineCallerMayIssue(ctx context.Context, callerID
 // is stored. params.AllowedCIDRs, when non-nil and non-empty, restricts the token
 // to requests whose source IP falls within one of the listed CIDR blocks.
 func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineID, actorID uint, params IssueMachineTokenParams) (*IssueMachineTokenResult, error) {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	m, err := c.machineInProject(ctx, projectID, machineID)
 	if err != nil {
 		return nil, err
@@ -680,6 +683,9 @@ func (c *KeyorixCore) requireEnvironmentInProject(ctx context.Context, scope Sco
 // (also actorID==0) from the true actorID==0 system pseudo-actor — distinct from
 // machineID, the role's TARGET.
 func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID uint, scope Scope, actorID uint, actorIsMachine bool) error {
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
 	m, err := c.machineInProject(ctx, scope.ProjectID, machineID)
 	if err != nil {
 		return err

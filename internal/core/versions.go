@@ -435,6 +435,9 @@ const EventSecretRolledBack = "secret.rolled_back"
 // scoped secrets.write. Unlike a value read, this fetches the historical version
 // directly (no max-reads / expiry guard) since a restore is a write, not a use.
 func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetVersion int, actorID uint, actorName string) (*models.SecretNode, error) {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	version, err := c.GetSecretVersion(ctx, secretID, targetVersion)
 	if err != nil {
 		return nil, err

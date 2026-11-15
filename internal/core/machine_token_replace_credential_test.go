@@ -89,6 +89,7 @@ func TestIssueMachineToken_ReplaceCredential_EndToEnd(t *testing.T) {
 
 	c := NewKeyorixCore(store)
 	c.now = func() time.Time { return fixed }
+	stubActiveActors(store) // the acting user is active (#4159)
 	res, err := c.IssueMachineToken(context.Background(), 2, 1, 7, IssueMachineTokenParams{
 		Name: "rotated-ci", ReplaceCredentialID: 50,
 	})

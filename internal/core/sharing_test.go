@@ -368,6 +368,7 @@ func TestKeyorixCore_RevokeShare(t *testing.T) {
 	mockStorage.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(&models.Notification{}, nil)
 
 	// Execute
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	err := core.RevokeShare(ctx, 1, 1)
 
 	// Assert
@@ -408,6 +409,7 @@ func TestKeyorixCore_RevokeShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
 	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
 	mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(errors.New("storage unavailable"))
 
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	err := core.RevokeShare(ctx, 1, 1)
 
 	require.Error(t, err)
@@ -635,6 +637,7 @@ func TestKeyorixCore_RevokeShare_DepartedOwnerDenied(t *testing.T) {
 		mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
 		mockStorage.On("IsProjectMember", ctx, uint(1), uint(5)).Return(false, nil)
 
+		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		err := core.RevokeShare(ctx, 1, 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), i18n.T("ErrorPermissionDenied", nil))
@@ -652,6 +655,7 @@ func TestKeyorixCore_RevokeShare_DepartedOwnerDenied(t *testing.T) {
 		mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
 		mockStorage.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(&models.Notification{}, nil)
 
+		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		err := core.RevokeShare(ctx, 1, 1)
 		require.NoError(t, err)
 	})

@@ -325,6 +325,9 @@ func shareUpdateWidens(oldPerm string, oldExp *time.Time, newPerm string, newExp
 // holder of secrets.manage (or an admin-bypass role) at the secret's scope; the
 // transports' route gates also require secrets.write there.
 func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy uint) error {
+	if err := c.requireActorActive(ctx, revokedBy); err != nil { // #4159
+		return err
+	}
 	shareRecord, err := c.storage.GetShareRecord(ctx, shareID)
 	if err != nil {
 		return err

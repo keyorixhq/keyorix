@@ -264,7 +264,8 @@ func TestRBACRoutes_DuplicateIs409InEveryLocale(t *testing.T) {
 	for _, lang := range errorClassLocales {
 		for _, c := range cases {
 			t.Run(lang+"/"+c.name, func(t *testing.T) {
-				h, _, db := setupRBACTestWithDB(t)
+				h, cs, db := setupRBACTestWithDB(t)
+				ensureActiveActorUser(t, cs.Storage(), rbacAdminID) // the admin acts through core (#4159)
 				withErrorTextLocale(t, lang)
 				w := c.call(t, h, db)
 				assert.Equal(t, http.StatusConflict, w.Code, "body: %s", w.Body.String())

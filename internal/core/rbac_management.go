@@ -543,6 +543,9 @@ func (c *KeyorixCore) withOrderedUserSoDLocks(ctx context.Context, ids []uint, f
 // this closes that sibling instance by threading the real value through
 // instead of hardcoding false.
 func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope, actorIsMachine bool) error {
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
 	return c.assignUserRole(ctx, noTxFence, actorID, userID, roleID, scope, actorIsMachine)
 }
 

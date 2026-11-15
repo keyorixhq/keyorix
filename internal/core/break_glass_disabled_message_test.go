@@ -17,6 +17,7 @@ func TestActivateBreakGlass_DisabledSaysSoAndHowToEnable(t *testing.T) {
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
 	// No SetBreakGlassPolicy: the default policy is disabled.
+	h.CreateTestUser(t, "oncall", 1) // the activating user is an active account (#4159)
 
 	act, err := h.CoreService.ActivateBreakGlass(context.Background(), 1, 1, "database is down, paging oncall", "1h")
 	require.Error(t, err, "disabled break-glass must still refuse")

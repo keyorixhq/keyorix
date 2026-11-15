@@ -28,6 +28,9 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 	if secretID == 0 || actorID == 0 {
 		return nil, secretInvalidInput(fmt.Errorf("%s: secret ID and actor ID are required", i18n.T("ErrorValidation", nil)))
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 
 	// Authorization: the actor must be able to write the secret.
 	if _, err := c.EnforceSecretWritePermission(ctx, secretID, actorID); err != nil {

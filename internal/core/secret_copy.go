@@ -32,6 +32,9 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	if sourceID == 0 || targetEnvID == 0 {
 		return nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "source secret ID and target environment ID are required")
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 
 	// #G14: authorize read access to the source BEFORE the cross-project
 	// existence/collision check below. GetSecret itself does no authorization

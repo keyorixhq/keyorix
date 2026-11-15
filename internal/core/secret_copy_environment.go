@@ -30,6 +30,9 @@ func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sou
 	if sourceEnvID == targetEnvID {
 		return 0, 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source and target environments must differ"))
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return 0, 0, err
+	}
 
 	// Both environments must belong to the authorized project — so the project-scoped
 	// write gate the caller passed actually covers this copy (no cross-project bypass).

@@ -57,6 +57,11 @@ func seedRolesAssignGrant(t *testing.T, db *gorm.DB, actorID, permissionID, role
 			Attrs(models.Project{Name: "seeded-scope-project"}).FirstOrCreate(&models.Project{}).Error)
 	}
 	require.NoError(t, db.Create(&models.UserRole{UserID: actorID, RoleID: roleID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID}).Error)
+	// The granting actor is an active account (#4159: core refuses an inactive actor).
+	name := fmt.Sprintf("seeded-actor-%d", actorID)
+	require.NoError(t, db.Where(models.User{ID: actorID}).
+		Attrs(models.User{Username: name, UsernameFolded: name, Email: name + "@example.com", EmailFolded: name + "@example.com", IsActive: true}).
+		FirstOrCreate(&models.User{}).Error)
 }
 
 func TestRBACAuditTrail_AssignAndRemove(t *testing.T) {

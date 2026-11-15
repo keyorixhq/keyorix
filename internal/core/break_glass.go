@@ -259,6 +259,9 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	if patRestrictionFromContext(ctx) != nil {
 		return nil, ErrRestrictedPATCannotBreakGlass
 	}
+	if err := c.requireActorActive(ctx, userID); err != nil { // #4159
+		return nil, err
+	}
 	if !c.breakGlassPolicy.Enabled {
 		// Disabled is the secure default, but "permission denied" alone looks like
 		// a role problem. Say it is off and which key turns it on (#2943). The

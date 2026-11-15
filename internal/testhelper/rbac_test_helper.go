@@ -280,6 +280,16 @@ func (h *RBACTestHelper) CreateTestUser(t *testing.T, username string, userID ui
 		EmailFolded:    strings.ToLower(username) + "@test.com",
 	}
 
+	// A placeholder EnsureActiveUser created for this ID (a role was granted
+	// first) becomes this user.
+	var placeholder int64
+	require.NoError(t, h.DB.Model(&models.User{}).Where("id = ? AND username = ?", userID, fmt.Sprintf("fixture-actor-%d", userID)).Count(&placeholder).Error)
+	if placeholder > 0 {
+		require.NoError(t, h.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]any{
+			"username": user.Username, "username_folded": user.UsernameFolded, "email": user.Email, "email_folded": user.EmailFolded,
+		}).Error)
+		return user
+	}
 	result := h.DB.Create(user)
 	require.NoError(t, result.Error)
 
@@ -500,4 +510,16 @@ func (h *RBACTestHelper) QueryRawSQL(t *testing.T, query string, args ...any) *s
 	rows, err := h.SqlDB.Query(query, args...)
 	require.NoError(t, err)
 	return rows
+}
+
+// EnsureActiveUser creates an active user with userID unless one exists. Core
+// refuses a mutation by an actor whose account is missing or not active (#4159), so
+// a fixture that acts as userID through a mutating core method needs the account.
+func (h *RBACTestHelper) EnsureActiveUser(t *testing.T, userID uint) {
+	t.Helper()
+	var n int64
+	require.NoError(t, h.DB.Model(&models.User{}).Where("id = ?", userID).Count(&n).Error)
+	if n == 0 {
+		h.CreateTestUser(t, fmt.Sprintf("fixture-actor-%d", userID), userID)
+	}
 }

@@ -655,6 +655,9 @@ func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *
 	if req.UserID == 0 {
 		return nil, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking"))
 	}
+	if err := c.requireActorActive(ctx, req.UserID); err != nil { // #4159
+		return nil, err
+	}
 	action := c.updateSecretAction(ctx, req)
 	pc, secret, err := c.checkSecretPermission(ctx, req.ID, req.UserID, PermissionWrite, action) // EnforceSecretActionPermission
 	if err != nil {
@@ -931,6 +934,9 @@ func (c *KeyorixCore) DeleteSecret(ctx context.Context, id uint) error {
 func (c *KeyorixCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, userID uint) error {
 	if userID == 0 {
 		return secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking"))
+	}
+	if err := c.requireActorActive(ctx, userID); err != nil { // #4159
+		return err
 	}
 	pc, secret, err := c.checkSecretPermission(ctx, id, userID, PermissionOwner, "") // EnforceSecretOwnerPermission
 	if err != nil {
