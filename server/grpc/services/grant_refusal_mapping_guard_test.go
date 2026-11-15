@@ -161,6 +161,33 @@ func TestEveryGrantingServiceMapsPermissionDenied(t *testing.T) {
 	}
 }
 
+// TestGrantRefusalStatusGuardCalibration_SharedSetReachesNonPhraseCeilings runs the
+// scan with the REAL shared granting set over a planted IssueMachineToken call whose
+// mapper has no ErrPermissionDenied branch. IssueMachineToken refuses only with the
+// machine privilege ceiling (no "cannot grant this role" text); a derivation that
+// loses it drops machine_identity_service.go:IssueMachineToken from this guard.
+func TestGrantRefusalStatusGuardCalibration_SharedSetReachesNonPhraseCeilings(t *testing.T) {
+	granting := readGrantCeilingReachingMethods(t)
+	for _, must := range []string{"IssueMachineToken", "RestoreProject", "RestoreEnvironment"} {
+		if !granting[must] {
+			t.Fatalf("%s does not list %s: the derivation lost a ceiling refused with other wording", grantCeilingReachingMethodsFile, must)
+		}
+	}
+	dir := t.TempDir()
+	src := `package services
+func (s *S) Issue(ctx C, req R) error { if _, err := s.core.IssueMachineToken(); err != nil { return mapPlain(err) }; return nil }
+func mapPlain(err error) error { return err }
+`
+	if err := os.WriteFile(filepath.Join(dir, "synthetic.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	violations, seen := grantRefusalStatusViolations(t, dir, granting, nil)
+	want := []string{"synthetic.go:Issue -> IssueMachineToken"}
+	if seen != 1 || !slices.Equal(violations, want) {
+		t.Fatalf("calibration: seen=%d violations=%v, want 1 and exactly %v", seen, violations, want)
+	}
+}
+
 func TestGrantRefusalStatusGuardCalibration(t *testing.T) {
 	dir := t.TempDir()
 	src := `package services
