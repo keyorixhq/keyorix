@@ -1,0 +1,25 @@
+# Local development configuration used by `make run`.
+#
+# Connects to the PostgreSQL instance defined in docker-compose.yml (`make run`
+# starts it automatically). Credentials are NEVER stored here — they come from
+# the environment (KEYORIX_DB_PASSWORD / KEYORIX_MASTER_PASSWORD), which the
+# `run` target sets to the docker-compose dev defaults.
+#
+# This is a committed, secret-free dev config. For a personal/local override,
+# copy configs/keyorix.yaml.tpl to ./keyorix.yaml (gitignored) and run the
+# server with KEYORIX_CONFIG_PATH=./keyorix.yaml.
+environment: development
+server:
+  http:
+    enabled: true
+    port: "8080"
+storage:
+  type: postgres
+  database:
+    host: localhost
+    port: "5432"
+    name: keyorix
+    user: keyorix
+    ssl_mode: disable
+encryption:
+  enabled: true
