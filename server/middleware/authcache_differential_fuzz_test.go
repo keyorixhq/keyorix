@@ -573,24 +573,43 @@ func acCheckRoleLookupFault(t *testing.T, w *acWorld, st *acIterState) {
 	}
 }
 
-// acdMaxPasswordChangesPerProgram caps how many password-change ops (op%13==8,
-// ChangePassword → bcrypt) a single fuzz program actually executes. bcrypt is
-// deliberately expensive (hundreds of ms per hash at the default cost), so a
-// program that is almost entirely password-changes — e.g. the #119 input, one
-// op-10 byte followed by 47 op-8 bytes — runs tens of seconds per execution
-// (85s on the CI host that reported it), well over Go's per-input fuzz-worker
-// hang limit. The worker then reports "fuzzing process hung or terminated
-// unexpectedly", a harness artefact, NOT an auth-cache/DB divergence. Three
-// password changes per program still exercise the cache-vs-storage differential
-// around a credential change (which invalidates sessions) several times over;
-// the 4th-plus repeat only re-pays the bcrypt cost for a differential of the
-// same shape. The cap lives in the fuzz driver only — acRunOp's semantics are
-// unchanged, so the hand-written tests that call it directly are unaffected.
-const acdMaxPasswordChangesPerProgram = 3
+// acdMaxBcryptOpsPerKind caps how many of EACH bcrypt-heavy op a single fuzz
+// program actually executes. Two ops in acRunOp spend a full bcrypt at the
+// default cost (hundreds of ms each):
+//
+//   - op%13==0 login: core.Login runs bcrypt.CompareHashAndPassword on every
+//     attempt (internal/core/auth.go), including a dummy compare for a missing
+//     or locked account, so it is just as expensive whether it succeeds or not.
+//   - op%13==8 password change: ChangePassword runs bcrypt generate.
+//
+// A program that is almost entirely either kind — e.g. the #119 input (one
+// op-10 byte then 47 op-8 bytes), or the equivalent 48-login program — runs
+// tens of seconds per execution (85s on the host that reported #119), over Go's
+// per-input fuzz-worker hang limit. The worker then reports "fuzzing process
+// hung or terminated unexpectedly": a harness artefact, NOT an auth-cache/DB
+// divergence. Three of each kind still exercise the cache-vs-storage
+// differential around a re-login and a credential change (both session-
+// invalidating) several times over; the 4th-plus repeat only re-pays the bcrypt
+// cost for a differential of the same shape.
+//
+// Unlike server/authzdiff (which sets bcrypt.MinCost package-wide in
+// main_test.go) this package runs real bcrypt, so the cap, not a cheaper cost,
+// is what keeps the storm bounded. It lives in the fuzz driver only — acRunOp's
+// semantics are unchanged, so the hand-written tests that call it directly are
+// unaffected.
+const acdMaxBcryptOpsPerKind = 3
+
+// acIsBcryptHeavyOp reports whether op dispatches to a full-cost bcrypt call
+// (login or password change). Keep in sync with acRunOp's op%13 switch.
+func acIsBcryptHeavyOp(op byte) bool {
+	k := op % 13
+	return k == 0 || k == 8
+}
 
 // acRunProgram resets the victim's state and runs one fuzz program through
-// acRunOp, applying acdMaxPasswordChangesPerProgram. Shared by the fuzz body
-// and the #119 regression test so both exercise the exact same cap.
+// acRunOp, applying acdMaxBcryptOpsPerKind to each bcrypt-heavy op kind. Shared
+// by the fuzz body and the #119 regression tests so both exercise the exact
+// same cap.
 func acRunProgram(t *testing.T, w *acWorld, program []byte) {
 	t.Helper()
 	if len(program) == 0 {
@@ -598,18 +617,19 @@ func acRunProgram(t *testing.T, w *acWorld, program []byte) {
 	}
 	st := w.resetIteration(t)
 	maxOps := min(len(program), 48)
-	pwChanges := 0
+	bcryptOps := map[byte]int{} // executions so far, per bcrypt-heavy op%13 kind
 	for i := range maxOps {
 		op := program[i]
-		if op%13 == 8 { // password change (ChangePassword → bcrypt)
-			if pwChanges >= acdMaxPasswordChangesPerProgram {
-				// Skip the surplus hash but KEEP scanning the program: a
+		if acIsBcryptHeavyOp(op) {
+			k := op % 13
+			if bcryptOps[k] >= acdMaxBcryptOpsPerKind {
+				// Skip the surplus bcrypt but KEEP scanning the program: a
 				// `continue` preserves the surrounding op sequence (the later
 				// authenticated-request differentials this fuzzer exists to run),
 				// where a `break` would drop every remaining op.
 				continue
 			}
-			pwChanges++
+			bcryptOps[k]++
 		}
 		acRunOp(t, w, st, op)
 	}

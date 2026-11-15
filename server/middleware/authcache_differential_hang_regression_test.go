@@ -44,3 +44,25 @@ func TestAuthCacheDifferential_PasswordChangeStormIsCapped(t *testing.T) {
 	}
 	t.Logf("#119 capped storm elapsed=%s (uncapped replay of the same input was ~85s)", elapsed)
 }
+
+// TestAuthCacheDifferential_LoginStormIsCapped is the #119-class guard for the
+// OTHER bcrypt-heavy op: login (op%13==0) runs bcrypt.CompareHashAndPassword on
+// every attempt, so a 48-login program would hang exactly like the password-
+// change storm. 0x00 decodes to op 0; the cap must bound it the same way.
+func TestAuthCacheDifferential_LoginStormIsCapped(t *testing.T) {
+	w := acBuildWorld(t)
+
+	program := make([]byte, 48) // all zero → 48 login ops
+	if program[0]%13 != 0 {
+		t.Fatalf("precondition: 0x00 must decode to op 0 (login), got %d", program[0]%13)
+	}
+
+	start := time.Now()
+	acRunProgram(t, w, program)
+	elapsed := time.Since(start)
+
+	if elapsed > 10*time.Second {
+		t.Fatalf("capped login storm took %s, want < 10s — the login cap did not engage", elapsed)
+	}
+	t.Logf("#119-class login storm elapsed=%s (uncapped would be ~48 bcrypt compares)", elapsed)
+}
