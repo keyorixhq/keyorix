@@ -23,9 +23,9 @@ func (m *MockStorage) GetActiveLegalHold(ctx context.Context) (*models.LegalHold
 	return args.Get(0).(*models.LegalHold), args.Error(1)
 }
 
-func (m *MockStorage) UpdateLegalHold(ctx context.Context, h *models.LegalHold) error {
-	args := m.Called(ctx, h)
-	return args.Error(0)
+func (m *MockStorage) ReleaseLegalHold(ctx context.Context, id, releasedBy uint, releasedAt time.Time, reason string) (bool, error) {
+	args := m.Called(ctx, id, releasedBy, releasedAt, reason)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) CreateRiskException(ctx context.Context, e *models.RiskException) (*models.RiskException, error) {

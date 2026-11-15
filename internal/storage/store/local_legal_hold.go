@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -57,9 +58,29 @@ func (ls *LocalStorage) GetActiveLegalHold(ctx context.Context) (*models.LegalHo
 	return &h, nil
 }
 
-func (ls *LocalStorage) UpdateLegalHold(ctx context.Context, h *models.LegalHold) error {
-	if err := ls.db.WithContext(ctx).Save(h).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+// ReleaseLegalHold lifts hold id with one conditional, column-scoped UPDATE:
+// SET released, released_by, released_at, release_reason WHERE id = ? AND
+// released = false. It replaces the former UpdateLegalHold, an unconditional
+// full-row Save that would write back whatever struct it was handed: a struct read
+// before another replica lifted the hold, still saying released=false, re-activated
+// the lifted hold (#4210). Now only the four release columns are written, and only
+// while the row is still active, so a released hold can never be made active again
+// through this method and a second, racing lifter matches no row instead of
+// overwriting the first lifter's attribution. The bool reports whether the row
+// matched; false means the hold was already released (or does not exist).
+// releasedAt is stored in UTC: this map update runs no BeforeSave hook
+// (STORE-STALE-TAILS-2).
+func (ls *LocalStorage) ReleaseLegalHold(ctx context.Context, id, releasedBy uint, releasedAt time.Time, reason string) (bool, error) {
+	result := ls.db.WithContext(ctx).Model(&models.LegalHold{}).
+		Where("id = ? AND released = ?", id, false).
+		Updates(map[string]any{
+			"released":       true,
+			"released_by":    releasedBy,
+			"released_at":    releasedAt.UTC(),
+			"release_reason": reason,
+		})
+	if result.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
-	return nil
+	return result.RowsAffected == 1, nil
 }

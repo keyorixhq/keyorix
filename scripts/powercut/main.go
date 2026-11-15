@@ -122,6 +122,11 @@ func commitAll(st corestorage.Storage, n, workers int, acked func(i int, d time.
 		wg.Go(func() {
 			for i := range work {
 				t0 := time.Now()
+				// audit-direct-ok: SQLITE-FDATASYNC-1: scripts/powercut is the dm-flakey power-cut and
+				// commit-latency tool, a standalone dev/test binary never linked into the server. It
+				// writes only fixed powercut.commit events with no ActorType, UserID or
+				// MachineIdentityID, so it can never emit a machine-identity-typed event that needs the
+				// emitAudit stamp; the rows only exist to be counted and hash-chain-verified after the cut.
 				if err := st.LogAuditEvent(ctx, event(i)); err != nil {
 					// A failed commit is not acknowledged; the power cut makes these expected.
 					continue

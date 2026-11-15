@@ -61,6 +61,10 @@ func TestAdminKeyLockRefusal_MessageMatchesTheCause(t *testing.T) {
 			dir := t.TempDir()
 			chdirTest(t, dir)
 			require.NoError(t, os.Mkdir("keys", 0o700))
+			// A live holder has its key files (diagnose reports missing key files
+			// before it tries the lock, and never creates them).
+			require.NoError(t, os.WriteFile("keys/kek.salt", make([]byte, 32), 0o600))
+			require.NoError(t, os.WriteFile("keys/dek.key", make([]byte, 60), 0o600))
 			holder := encryption.NewService(&encCfg, dir)
 			require.NoError(t, holder.AcquireExclusiveKeyLock())
 			defer holder.Shutdown()

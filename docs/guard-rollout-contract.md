@@ -5,7 +5,7 @@ A repo-wide guard is a test that walks the repository (go/parser, go/ast,
 registry that most PRs touch. One red guard fails every merge-queue entry
 behind it, so a guard must not go red because of something the PR in front of
 it did not do. Between 27 Sep and 24 Oct 2026 this class (A in the merge-queue
-month analysis) failed the queue for days at a time. The two rules below cover
+month analysis) failed the queue for days at a time. Rules 1 and 2 cover
 the instances caused by the calendar or by a new or widened guard; the table at
 the end says which instances need another measure.
 
@@ -58,6 +58,16 @@ Not covered, by design: guards in the `cli/` and `operator/` modules (they
 cannot import `internal/guardrules`; rule 1 is still checked there by the
 calendar guard), and shell or workflow checks (the CI `exclusion-freshness` job
 reads dates in shell; the workflow change moves it to the nightly schedule).
+
+## Rule 3: no hand edit when an unrelated PR adds a site
+
+A guard must not need a hand edit when an unrelated PR adds a site: use inline
+markers (a `// <guard>-ok: <reason>` comment on or above the site, so the PR that
+adds the site carries its own justification) or derive the expectation from the
+code. A hand-kept `path:func` list or total compared with a scan of the whole
+repo goes red in the merge queue whenever another PR adds, renames or removes a
+site. Example: `TestDirectLogAuditEventCallersAreSafe` (`audit-direct-ok:`
+markers, #3687); the hand-kept total of #4237 was removed the same way.
 
 ## The history behind each rule
 

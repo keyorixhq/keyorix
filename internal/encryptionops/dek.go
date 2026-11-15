@@ -85,6 +85,11 @@ func pendingDEKExists(cfg *config.Config, baseDir string) bool {
 
 // missingKeysError is requireExistingKeys' refusal.
 func missingKeysError(cfg *config.Config, baseDir string) error {
+	// #4249: from another directory than the config's, "no DEK here" would send
+	// the operator to the wrong fix; say why the path names other files instead.
+	if err := cfg.Storage.Encryption.CheckRelativeKeyPathBase(baseDir); err != nil {
+		return err
+	}
 	if abs, err := filepath.Abs(baseDir); err == nil {
 		baseDir = abs
 	}
@@ -252,6 +257,7 @@ func RotateWithConfig(cfg *config.Config, confirm bool, dryRun bool, passSrc cry
 		return fmt.Errorf("this is a write-locking operation. Re-run with --confirm")
 	}
 
+	// Advisory, stays (#4270 sweep): a pre-flight banner; the rotation proceeds and reports its own errors.
 	fmt.Println("⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.")
 
 	baseDir, _ := os.Getwd()
@@ -401,13 +407,13 @@ func ValidateWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) err
 
 	service, err := InitLocalKeyOpService(cfg, baseDir, passphrase, false)
 	if err != nil {
-		fmt.Printf("❌ %v\n", err)
+		fmt.Printf("❌ %v\n", err) // returns err: already correct (#4270 sweep)
 		return err
 	}
 	defer service.Shutdown()
 
 	if err := service.ValidateKeyFiles(); err != nil {
-		fmt.Printf("❌ Key file validation failed: %v\n", err)
+		fmt.Printf("❌ Key file validation failed: %v\n", err) // returns err: already correct (#4270 sweep)
 		fmt.Println("💡 Run `encryption fix-perms` to fix permissions")
 		return err
 	}
@@ -420,7 +426,8 @@ func ValidateWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) err
 func InitWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) error {
 	if !cfg.Storage.Encryption.Enabled {
 		fmt.Println("❌ Encryption is disabled in configuration")
-		return nil
+		// Fix (#4270 sweep): init creates no keys here, so it cannot do its job; exit non-zero like fix-perms.
+		return fmt.Errorf("encryption is disabled in configuration")
 	}
 
 	baseDir, _ := os.Getwd()
@@ -442,11 +449,12 @@ func InitWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) error {
 }
 
 // StatusWithConfig is the testable core of `encryption status`. Read-only:
-// never modifies the database or key files. Unlike the other *WithConfig
-// functions here, most failures are reported (printed) rather than returned —
-// matching the original CLI behavior of always exiting 0 for a status check,
-// since a status command reporting "not initialized" or "wrong passphrase" IS
-// its successful, intended output, not a command failure.
+// never modifies the database or key files. Like ValidateWithConfig, a failure
+// to read the key state (no keys yet, i.e. no wrapped DEK; wrong passphrase; no
+// passphrase source; a live server holding the DEK lock) prints its diagnostic
+// line and then RETURNS the error, so the command exits non-zero: a preflight
+// `status && rotate --confirm` must not continue past a failed state check
+// (#4270). Enabled: false and a healthy key set return nil.
 func StatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) error {
 	fmt.Println("🔐 Encryption Status")
 	fmt.Println("==================")
@@ -462,13 +470,13 @@ func StatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) error
 	passphrase, err := MasterPassphrase(cfg, passSrc)
 	if err != nil {
 		fmt.Printf("⚠️  %v\n", err)
-		return nil
+		return err
 	}
 
 	service, err := InitLocalKeyOpService(cfg, baseDir, passphrase, false)
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
-		return nil
+		return err
 	}
 	defer service.Shutdown()
 
