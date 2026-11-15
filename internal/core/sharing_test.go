@@ -34,6 +34,7 @@ func TestKeyorixCore_ShareSecret(t *testing.T) {
 	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
 	core := &KeyorixCore{
 		storage: mockStorage,
@@ -89,6 +90,7 @@ func TestKeyorixCore_ShareSecret_ValidationError(t *testing.T) {
 	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	core := &KeyorixCore{
 		storage: mockStorage,
 	}
@@ -174,6 +176,7 @@ func TestKeyorixCore_ShareSecret_StorageError(t *testing.T) {
 	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	core := &KeyorixCore{
 		storage: mockStorage,
 	}
@@ -204,6 +207,7 @@ func TestKeyorixCore_ShareSecret_StorageError(t *testing.T) {
 func TestKeyorixCore_ShareSecret_RejectsSelfShare(t *testing.T) {
 	t.Parallel()
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	core := &KeyorixCore{storage: mockStorage}
 	ctx := context.Background()
 
@@ -253,6 +257,7 @@ func TestKeyorixCore_ShareSecret_RejectsGroupShare(t *testing.T) {
 	t.Parallel()
 	for _, recipient := range []uint{1, 7} { // 1 coincides with SharedBy, 7 does not
 		mockStorage := new(MockStorage)
+		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		core := &KeyorixCore{storage: mockStorage}
 		_, err := core.ShareSecret(context.Background(), &ShareSecretRequest{
 			SecretID:    1,
@@ -274,6 +279,7 @@ func TestKeyorixCore_UpdateSharePermission(t *testing.T) {
 	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
 	core := &KeyorixCore{
 		storage: mockStorage,
@@ -332,6 +338,7 @@ func TestKeyorixCore_RevokeShare(t *testing.T) {
 	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
 	core := &KeyorixCore{
 		storage: mockStorage,
@@ -383,6 +390,7 @@ func TestKeyorixCore_RevokeShare(t *testing.T) {
 func TestKeyorixCore_RevokeShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
 	t.Parallel()
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	core := &KeyorixCore{
 		storage: mockStorage,
 		now:     time.Now,
@@ -422,6 +430,7 @@ func TestKeyorixCore_ListSharedSecrets(t *testing.T) {
 	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	core := &KeyorixCore{
 		storage: mockStorage,
 		now:     time.Now,
@@ -450,6 +459,7 @@ func TestKeyorixCore_ListSecretShares(t *testing.T) {
 	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	core := &KeyorixCore{
 		storage: mockStorage,
 		now:     time.Now,
@@ -488,6 +498,7 @@ func TestKeyorixCore_ListSecretShares_FiltersExpired(t *testing.T) {
 	past := now.Add(-1 * time.Hour)
 	future := now.Add(1 * time.Hour)
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return now }}
 	ctx := context.Background()
 
@@ -511,6 +522,7 @@ func TestKeyorixCore_ListSharesByUser(t *testing.T) {
 	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	core := &KeyorixCore{
 		storage: mockStorage,
 		now:     time.Now,
@@ -550,6 +562,7 @@ func TestKeyorixCore_ShareSecret_DepartedOwnerDenied(t *testing.T) {
 
 	t.Run("departed owner is denied", func(t *testing.T) {
 		mockStorage := new(MockStorage)
+		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
 		ctx := context.Background()
 		mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
@@ -564,6 +577,7 @@ func TestKeyorixCore_ShareSecret_DepartedOwnerDenied(t *testing.T) {
 
 	t.Run("live owner still succeeds", func(t *testing.T) {
 		mockStorage := new(MockStorage)
+		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
 		ctx := context.Background()
 		shareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, Permission: "read"}
@@ -592,6 +606,7 @@ func TestKeyorixCore_UpdateSharePermission_DepartedOwnerDenied(t *testing.T) {
 
 	t.Run("departed owner is denied", func(t *testing.T) {
 		mockStorage := new(MockStorage)
+		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
 		ctx := context.Background()
 		mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
@@ -606,6 +621,7 @@ func TestKeyorixCore_UpdateSharePermission_DepartedOwnerDenied(t *testing.T) {
 
 	t.Run("live owner still succeeds", func(t *testing.T) {
 		mockStorage := new(MockStorage)
+		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
 		ctx := context.Background()
 		updatedShareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "write"}
@@ -631,6 +647,7 @@ func TestKeyorixCore_RevokeShare_DepartedOwnerDenied(t *testing.T) {
 
 	t.Run("departed owner is denied", func(t *testing.T) {
 		mockStorage := new(MockStorage)
+		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
 		ctx := context.Background()
 		mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
@@ -646,6 +663,7 @@ func TestKeyorixCore_RevokeShare_DepartedOwnerDenied(t *testing.T) {
 
 	t.Run("live owner still succeeds", func(t *testing.T) {
 		mockStorage := new(MockStorage)
+		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
 		ctx := context.Background()
 		mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
@@ -665,6 +683,7 @@ func TestKeyorixCore_CheckSharePermission(t *testing.T) {
 	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
+	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	core := &KeyorixCore{
 		storage: mockStorage,
 		now:     time.Now,

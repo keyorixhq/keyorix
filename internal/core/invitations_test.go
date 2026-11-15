@@ -653,6 +653,7 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	// roles.assign baseline before the per-permission loop this test's
 	// throttling behavior actually exercises.
 	stubAuthorizedPrincipal(store, 9, Scope{}, "roles.assign")
+	stubActiveActors(store) // the inviting admin is active (#4159)
 
 	inv1, prov1, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9, 0)
 	require.NoError(t, err)

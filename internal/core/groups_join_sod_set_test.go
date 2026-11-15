@@ -63,6 +63,7 @@ func TestAddUserToGroup_BlocksSoDViolationAcrossGroupRoleSet(t *testing.T) {
 	// FIX-1 permission-derived ceiling) so only the SoD gate under test is
 	// exercised, not requireGranterHoldsRolePermissions.
 	h.AssignUserRole(t, 71, 1, nil)
+	h.EnsureActiveUser(t, 71) // the acting user is active (#4159)
 	err = h.CoreService.AddUserToGroup(ctx, 71, false, 70, 50, 0)
 	require.Error(t, err, "joining a group whose OWN role grants combine into a toxic pair must be refused")
 	assert.Contains(t, err.Error(), "separation-of-duties")
@@ -106,6 +107,7 @@ func TestAddUserToGroup_BlocksSoDViolationWithExistingRole(t *testing.T) {
 	// FIX-1 permission-derived ceiling) so only the SoD gate under test is
 	// exercised, not requireGranterHoldsRolePermissions.
 	h.AssignUserRole(t, 73, 1, nil)
+	h.EnsureActiveUser(t, 73) // the acting user is active (#4159)
 	err = h.CoreService.AddUserToGroup(ctx, 73, false, 72, 51, 0)
 	require.Error(t, err, "joining a group that grants a role completing a policy with an already-held role must be refused")
 	assert.Contains(t, err.Error(), "separation-of-duties")
@@ -139,6 +141,7 @@ func TestAddUserToGroup_AllowsNonViolatingGroupJoin(t *testing.T) {
 	// FIX-1 permission-derived ceiling) so only the SoD gate under test is
 	// exercised, not requireGranterHoldsRolePermissions.
 	h.AssignUserRole(t, 75, 1, nil)
+	h.EnsureActiveUser(t, 75) // the acting user is active (#4159)
 	err = h.CoreService.AddUserToGroup(ctx, 75, false, 74, 52, 0)
 	require.NoError(t, err, "a non-violating group join must succeed unimpeded")
 
