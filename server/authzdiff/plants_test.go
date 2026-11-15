@@ -309,6 +309,21 @@ var fixRegressionPlants = []plant{
 		repl:           "\t// PLANT: #4332 restricted-PAT refusal reverted\n",
 		op:             "machine.token.issue",
 		minUnexplained: 2,
+		// #4332 (S1 issuer-cannot-widen sweep): the MACHINE-target plant above
+		// reverts requireMachineActorHoldsTargetPermissions (the machine-caller
+		// ceiling). #4332 added the twin rule for a USER caller:
+		// requireActorHoldsTargetPermissions(ActorTypeUser) — a user holding
+		// roles.assign@project but not every permission the target machine holds
+		// may not mint a token for it. This plant reverts that user-caller rule,
+		// so the differential harness keeps a red case for it exactly as it does
+		// for the machine-caller twin. Floor set below the count measured at
+		// introduction (see docs/findings/2026-11-15-issuer-cannot-widen-sweep.md).
+		name:           "fix-4332-user-target-ceiling-removed",
+		file:           "internal/core/authz.go",
+		anchor:         "\t\treturn c.requireActorHoldsTargetPermissions(ctx, ActorTypeUser, principalID, machineID)\n",
+		repl:           "\t\t_ = principalID // PLANT: #4332 user-target ceiling reverted\n",
+		op:             "machine.token.issue",
+		minUnexplained: 4, // 8 cases at introduction (custom-role user holding roles.assign@P but not the target machine's perms), floored below per AUTHZDIFF-TAILS-1
 	},
 }
 

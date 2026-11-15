@@ -248,6 +248,23 @@ func (m model) allowed(p *principal, req requirement) bool {
 			return false
 		}
 	}
+	// #4332 (S1 issuer-cannot-widen): a USER caller is held to the SAME
+	// target-permission ceiling (requireActorHoldsTargetPermissions for
+	// ActorTypeUser, authz.go) — it must hold every permission every role the
+	// target machine holds, at the target's scope. The one difference from the
+	// machine path: a global admin may still issue (the IsGlobalAdmin branch of
+	// requireMachinePrivilegeCeiling), and holds() already reports a bypass-role
+	// user as holding every permission, so machineCovers passes for it; the
+	// explicit holdsAdminRoleAt exemption additionally covers an admin-tier
+	// TARGET, which machineCovers short-circuits to "not covered" regardless of
+	// caller. Before this the model only guarded machine callers (p.machineID !=
+	// 0), so after #4332 landed the clean tree showed 8 over-denials on
+	// machine.token.issue for a custom-role user that holds roles.assign but not
+	// the target's permissions — a stale-oracle gap, not a core defect.
+	if req.tokenForMachineID != 0 && p.machineID == 0 && p.userID != 0 &&
+		!m.holdsAdminRoleAt(p, 0) && !m.machineCovers(p, req.tokenForMachineID) {
+		return false
+	}
 	for _, r := range req.ceiling {
 		perms, _ := m.rolePerms(r.roleID)
 		for _, perm := range perms {
