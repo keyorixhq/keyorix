@@ -161,6 +161,12 @@ func (c *KeyorixCore) emitAuditOn(ctx context.Context, tgt auditTarget, event *m
 		tgt.sink.owed = append(tgt.sink.owed, event)
 		return true
 	}
+	// audit-direct-ok: #2676: emitAuditOn is emitAudit against an explicit storage handle (the
+	// transaction-scoped one the access-review revoke path needs). It is NOT a bypass of the
+	// attribution stamp: it calls the SAME prepareAuditEventForEmit(ctx, event) immediately before
+	// this write, which stamps MachineIdentityID and clears UserID for a machine-typed event. Only
+	// the storage handle differs and off-box side effects are deferred until commit; with no sink it
+	// delegates to emitAudit outright. Verified by TestEmitAuditOn_StampsMachineAttributionLikeEmitAudit.
 	if err := tgt.st.LogAuditEvent(ctx, event); err != nil {
 		logAuditEmitFailure(ctx, event, err)
 		tgt.sink.fail(event.EventType, err)

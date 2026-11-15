@@ -122,6 +122,9 @@ func auditConnectorProjectBindingCreate(ctx context.Context, st corestorage.Stor
 		EventTime:   time.Now(),
 		ActorType:   core.ActorTypeSystem,
 	}
+	// audit-direct-ok: hardcodes ActorType core.ActorTypeSystem and never sets UserID (zero value
+	// nil) -- an unattended boot-time binding-creation event with no actor, same shape as the
+	// anomaly.go auditBusinessHoursConfig site.
 	if err := st.LogAuditEvent(ctx, event); err != nil {
 		log.Printf("SECURITY: failed to persist audit event %q for connector %q: %v", core.EventConnectorProjectBindingCreate, b.Connector, err)
 	}
