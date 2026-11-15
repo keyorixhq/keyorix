@@ -30,7 +30,10 @@ once instead of failing later at runtime:
 | `storage.encryption.key_provider.type: aws-kms`, `gcp-kms`, `azure-kms` | `encryption key_provider type "<type>" is not available in this build` | `password`, `file`, `env`, `exec`, `shamir` or `tpm` |
 | `server.http.tls.auto_cert: true` (ACME / Let's Encrypt) | `server.http.tls.auto_cert: true is not available in this build` | static certificate files (`cert_file`, `key_file`) from your internal CA |
 
-Both are listed in [operator/startup-refusals.md](operator/startup-refusals.md). Other
+The `auto_cert` refusal is listed in [operator/startup-refusals.md](operator/startup-refusals.md);
+the KMS one is not yet. It comes from the encryption service, after the key lock is taken, so
+with another server on the same data it is the "another process already holds the DEK lock"
+error that shows first. Other
 opt-in features that reach out when configured (SSO discovery, webhooks, SIEM sinks) are
 not refused: they only contact the destination you configure.
 
@@ -127,8 +130,9 @@ keyorix-server admin audit export-checkpoint --output /path/to/checkpoint-$(date
 ```
 
 This packages the most recently **signed** checkpoint (written periodically by
-the audit-checkpoint scheduler — see `audit_checkpoints.schedule` in your
-config, default 24h) into a small JSON file. Copy that file to write-once or
+the audit-checkpoint scheduler — `audit_checkpoints.schedule`, default 24h; the
+config `admin init` writes has no `audit_checkpoints:` block, so add
+`audit_checkpoints:` with `schedule: "1h"` (a Go duration) to change it) into a small JSON file. Copy that file to write-once or
 otherwise-external media (a burned CD/DVD, a WORM-mode USB stick, an
 object-lock bucket) — **held OUTSIDE this host**, ideally not alongside the
 backup archive itself. An anchor genuinely held externally is the one check
@@ -205,7 +209,10 @@ keyorix-server admin diagnose --passphrase-file /path/to/master_password
 ### Cross-checking against the externally-held anchor
 
 If you exported a checkpoint anchor before things went wrong, verify the
-restored database against it directly:
+restored database against it directly. Like the other `admin` commands this takes the
+database lock, so run it with the server stopped (with a server attached it exits 3 and
+names the lock file); to check beside a running server, point it at a detached copy with
+`--db <sqlite file>`:
 
 ```sh
 keyorix-server admin verify-audit --json --anchor /path/to/checkpoint-2026-09-20.json
