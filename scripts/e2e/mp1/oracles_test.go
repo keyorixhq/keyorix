@@ -284,12 +284,30 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	}
 	t.Logf("surviving replica committed a write %s after the SIGKILL (bound %s)", time.Since(start).Round(time.Millisecond), bound)
 
+	// ── Oracle #6 (restart half): the SIGKILLed replica reopens the shared
+	// store without hand repair. ──────────────────────────────────────────────
+	//
+	// Restart the SAME victim process (same config dir, same port, same key
+	// material) and confirm it becomes healthy and serves a fresh authenticated
+	// write against the shared DB. A clean reopen requires the replica to
+	// re-derive the KEK from the master password + on-disk salt, unseal the DEK,
+	// re-attach to the already-migrated schema, and rebuild its connection pool —
+	// all with no manual intervention. If the prior SIGKILL had left the store in
+	// a state needing repair, the boot or the first write would fail here.
+	serverEnv := append(append([]string{}, vs.Env...), "KEYORIX_CONFIG_PATH=./keyorix.yaml")
+	harness.StartBackgroundProcess(t, vs, serverEnv)
+	harness.WaitHealthy(t, vs)
+	if st, uerr := c.updateSecret(vs, id, fmt.Sprintf("post-restart-%d", time.Now().UnixNano())); uerr != nil || st != http.StatusOK {
+		t.Fatalf("restarted replica did not serve a write: status=%d err=%v — store did not reopen cleanly after SIGKILL", st, uerr)
+	}
+	t.Logf("SIGKILLed replica restarted, became healthy, and served a write against the shared store (no hand repair)")
+
 	// And the chain still verifies (no fork/gap left by the torn-down replica).
 	out := c.verifyAudit(t)
 	if !strings.Contains(out, `"verdict"`) && !strings.Contains(strings.ToUpper(out), "VALID") {
-		t.Fatalf("after SIGKILL, verify-audit produced no VALID verdict:\n%s", out)
+		t.Fatalf("after SIGKILL+restart, verify-audit produced no VALID verdict:\n%s", out)
 	}
-	t.Logf("after SIGKILL, verify-audit: %s", strings.TrimSpace(out))
+	t.Logf("after SIGKILL+restart, verify-audit: %s", strings.TrimSpace(out))
 }
 
 // ── Oracle: no secret value or key bytes appear in any replica log (canary) ──
