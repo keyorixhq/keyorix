@@ -53,17 +53,17 @@ import (
 //   - It uses the default EncMode. A canonical/CTAP2 EncMode could expose ordering
 //     differences this value-level comparison is blind to by construction.
 func FuzzCBORRoundTrip(f *testing.F) {
-	f.Add([]byte{0xa0})                               // empty map
-	f.Add([]byte{0x80})                               // empty array
-	f.Add([]byte{0x9f, 0x01, 0x02, 0x03, 0xff})       // indefinite array → definite
-	f.Add([]byte{0xa2, 0x01, 0x02, 0x01, 0x03})       // duplicate map key 1
-	f.Add([]byte{0xc2, 0x49, 0x01, 0, 0, 0, 0, 0, 0, 0, 0}) // bignum 2^64
-	f.Add([]byte{0xf9, 0x7e, 0x00})                   // NaN
-	f.Add([]byte{0xfb, 0x7f, 0xf0, 0, 0, 0, 0, 0, 0}) // +Inf
-	f.Add([]byte{0xc1, 0x30})                         // E11: tag1(epoch) int -17 (fuzz-found datetime-tag class)
+	f.Add([]byte{0xa0})                                                                                                                               // empty map
+	f.Add([]byte{0x80})                                                                                                                               // empty array
+	f.Add([]byte{0x9f, 0x01, 0x02, 0x03, 0xff})                                                                                                       // indefinite array → definite
+	f.Add([]byte{0xa2, 0x01, 0x02, 0x01, 0x03})                                                                                                       // duplicate map key 1
+	f.Add([]byte{0xc2, 0x49, 0x01, 0, 0, 0, 0, 0, 0, 0, 0})                                                                                           // bignum 2^64
+	f.Add([]byte{0xf9, 0x7e, 0x00})                                                                                                                   // NaN
+	f.Add([]byte{0xfb, 0x7f, 0xf0, 0, 0, 0, 0, 0, 0})                                                                                                 // +Inf
+	f.Add([]byte{0xc1, 0x30})                                                                                                                         // E11: tag1(epoch) int -17 (fuzz-found datetime-tag class)
 	f.Add([]byte{0xc0, 0x74, 0x32, 0x30, 0x32, 0x36, 0x2d, 0x30, 0x31, 0x2d, 0x30, 0x31, 0x54, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x5a}) // E11: tag0 RFC3339
-	f.Add([]byte{0xc8, 0xfb, 0x7f, 0xf0, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30}) // E1: NaN inside tag 8 (fuzz-found)
-	f.Add([]byte{0x63, 0x66, 0x6f, 0x6f})             // text "foo"
+	f.Add([]byte{0xc8, 0xfb, 0x7f, 0xf0, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30})                                                                         // E1: NaN inside tag 8 (fuzz-found)
+	f.Add([]byte{0x63, 0x66, 0x6f, 0x6f})                                                                                                             // text "foo"
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {

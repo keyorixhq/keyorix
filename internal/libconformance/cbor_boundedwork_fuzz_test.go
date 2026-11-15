@@ -64,8 +64,8 @@ func FuzzCBORBoundedWork(f *testing.F) {
 	f.Add(deep)
 	// tag 2 (positive bignum) with a huge declared byte-string payload:
 	f.Add([]byte{0xc2, 0x5b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
-	f.Add([]byte{0xa0})       // empty map
-	f.Add([]byte{0x80})       // empty array
+	f.Add([]byte{0xa0})             // empty map
+	f.Add([]byte{0x80})             // empty array
 	f.Add([]byte{0xf9, 0x7e, 0x00}) // NaN (float16)
 	f.Add([]byte{})
 

@@ -58,10 +58,10 @@ import (
 //     top-level type dispatch these five exercise.
 func FuzzTPMUnmarshalBoundedWork(f *testing.F) {
 	f.Add([]byte{})
-	f.Add([]byte{0x00, 0x00})                   // TPM2B with zero length
-	f.Add([]byte{0xff, 0xff})                   // TPM2B length 65535, no payload (short)
+	f.Add([]byte{0x00, 0x00})                         // TPM2B with zero length
+	f.Add([]byte{0xff, 0xff})                         // TPM2B length 65535, no payload (short)
 	f.Add([]byte{0x00, 0x04, 0x00, 0x0b, 0x00, 0x22}) // plausible TPMT_PUBLIC head
-	f.Add([]byte{0xff, 0xff, 0xff, 0xff})       // oversized union/length head
+	f.Add([]byte{0xff, 0xff, 0xff, 0xff})             // oversized union/length head
 	f.Add([]byte{0xff, 0x54, 0x43, 0x47, 0x80, 0x18}) // TPM_GENERATED-ish attest head
 
 	f.Fuzz(func(t *testing.T, data []byte) {
