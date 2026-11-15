@@ -38,3 +38,12 @@ version must survive an upstream credential change that already happened. Proof:
 (`server/faultops/secret_mutation_audit_fail_closed_test.go`, which covers rollback).
 Residual, not a defect: `docs/atomicity-exempt.tsv` has no write-count row for the
 backend-bound path.
+
+## #3377 FlushSecretReadDenials is never called on graceful shutdown
+
+FIXED by 71efc1ebf, bounded to 10s by 636b9b5ce (#3602). `server/main.go` has one deferred
+call, `flushSecretReadDenialsOnShutdown(coreService)`, with the logic in
+`server/shutdown.go`. Defers run LIFO after the servers drained, so the denial rows reach
+the audit log before the forwarder closes. Proof:
+`TestShutdown_FlushesOpenSecretReadDenialSummary` and
+`TestShutdown_SecretReadDenialFlushIsBoundedOnSlowDatabase` (`server/shutdown_flush_test.go`).
