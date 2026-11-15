@@ -1,0 +1,15 @@
+# Fuzz findings re-check against main (2026-11, FUZZ-FINDINGS-RECHECK-NOV-1)
+
+Five old open findings, re-checked on `origin/main` e550eb75e. Each verdict names the
+fixing commit and the test that proves it; each proving test was run at that SHA and
+passes.
+
+## #3105 gRPC DeleteSecret reports an error after the delete committed
+
+FIXED by a65c00ff2 (#3508). The post-commit purge-date read-back
+(`DeletedSecretPurgeAt` -> `GetSecretIncludingDeleted`) now runs through
+`besteffort.Run`, so a panic or error leaves `PurgeAt` unset and the RPC answers success.
+Proof: `TestSecretService_DeleteSecret_PurgeAtReadbackFault_DoesNotUndoCompletedDelete`
+(`server/grpc/services/secret_delete_readback_fault_test.go`), panic and error armed on
+`GetSecretIncludingDeleted#1`, asserts success, soft-deleted row and the
+`secret.deleted` audit row.
