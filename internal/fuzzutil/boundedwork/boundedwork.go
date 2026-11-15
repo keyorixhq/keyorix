@@ -21,16 +21,18 @@
 //
 // Method. Given a base input and a scaler, Check builds variants at factors
 // 1, 2, 4, 8 (repeat / nest / widen the base, capped at MaxInputLen), measures
-// median wall-clock time and median GC-independent allocation (runtime.MemStats
-// TotalAlloc, a monotonic counter) for each, and fits the cost exponent p in
+// best-of-N process CPU time and median GC-independent allocation
+// (runtime.MemStats TotalAlloc, a monotonic counter) for each, and fits the cost exponent p in
 // cost ~ len^p. A linear parser has p ~ 1; a quadratic one has p ~ 2. Check
 // fails when the per-doubling cost multiplier (2^p) exceeds Config.MaxDoubling
 // (default 3x, i.e. p ~ 1.585) averaged geometrically over the doubling steps.
 //
 // Determinism and false positives. TotalAlloc for a deterministic function is
 // itself deterministic and GC-independent, so the MEMORY arm red-proofs cleanly.
-// Wall-clock time is noisy, handled by median-of-repeats plus the 3x margin
-// (linear ~2x, quadratic ~4x, threshold 3x sits between them). Absolute floors
+// Time is noisy; the time arm uses process CPU time (not wall time), the minimum
+// over repeats, and measures sizes round-robin, so host load does not bend the
+// curve (see measure), plus the 3x margin (linear ~2x, quadratic ~4x, threshold
+// 3x sits between them). Absolute floors
 // (TimeFloor, AllocFloor) mean a variant whose largest measurement is tiny is
 // never judged — a fast, small parse cannot false-trip regardless of curve
 // shape. The oracle therefore only fires when the cost is BOTH large in
@@ -117,7 +119,9 @@ func (c Config) withDefaults() Config {
 // Measurement is the cost of calling the function under test on one scaled input.
 type Measurement struct {
 	InputLen   int
-	Nanos      int64  // median wall-clock over Config.Repeats
+	Nanos      int64  // time arm: minimum over Config.Repeats, on the clock in Verdict.TimeClock
+	CPUNanos   int64  // minimum process CPU time over Config.Repeats (0 if the clock is unavailable)
+	WallNanos  int64  // minimum wall-clock time over Config.Repeats
 	AllocBytes uint64 // median TotalAlloc delta over Config.Repeats (GC-independent)
 }
 
@@ -133,8 +137,12 @@ type Verdict struct {
 	AllocDoubling float64
 	TimeJudged    bool // time arm was above its floor and thus evaluated
 	AllocJudged   bool
-	SuperLinear   bool
-	Reason        string
+	// TimeClock is the clock the time arm used: "cpu" (process CPU time) or
+	// "wall" (fallback: no CPU clock here, or the cheapest point too short to
+	// resolve on it; see cpuClockMinNanos).
+	TimeClock   string
+	SuperLinear bool
+	Reason      string
 }
 
 // RepeatBytes is the default scaler: the base bytes concatenated factor times.
@@ -182,7 +190,7 @@ func ScaleRepeat(minUnit int) func(base []byte, factor int) []byte {
 // factor) builds the input for a given factor; pass RepeatBytes for the common
 // "repeat the corpus bytes" growth, or a structural scaler (nest / widen) when
 // raw repetition would not grow the work. call runs the function under test on
-// one input and discards the result — only wall-clock time and allocation are
+// one input and discards the result — only CPU time and allocation are
 // observed, so a call that returns an error still contributes a measurement.
 //
 // What Check does NOT verify:
@@ -219,13 +227,16 @@ func Analyze(label string, base []byte, scale func(base []byte, factor int) []by
 	cfg = cfg.withDefaults()
 	v := Verdict{Label: label}
 
+	var inputs [][]byte
 	for _, f := range cfg.Factors {
 		in := scale(base, f)
 		if len(in) > cfg.MaxInputLen {
 			break
 		}
-		m := measure(in, call, cfg.Repeats)
-		v.Measurements = append(v.Measurements, m)
+		inputs = append(inputs, in)
+	}
+	if len(inputs) >= 3 {
+		v.Measurements, v.TimeClock = measure(inputs, call, cfg.Repeats)
 	}
 	if len(v.Measurements) < 3 {
 		v.Reason = "fewer than 3 usable size points (input cap reached early)"
@@ -250,7 +261,7 @@ func Analyze(label string, base []byte, scale func(base []byte, factor int) []by
 	var reasons []string
 	if v.TimeJudged && v.TimeDoubling > cfg.MaxDoubling {
 		arms++
-		reasons = append(reasons, fmt.Sprintf("time grows %.2fx per input-doubling (>%.2fx)", v.TimeDoubling, cfg.MaxDoubling))
+		reasons = append(reasons, fmt.Sprintf("%s time grows %.2fx per input-doubling (>%.2fx)", v.TimeClock, v.TimeDoubling, cfg.MaxDoubling))
 	}
 	if v.AllocJudged && v.AllocDoubling > cfg.MaxDoubling {
 		arms++
@@ -267,26 +278,85 @@ func Analyze(label string, base []byte, scale func(base []byte, factor int) []by
 	return v
 }
 
-// measure runs call on in, Repeats times, returning the median time and median
-// allocation. runtime.GC before each run gives TotalAlloc a clean, comparable
-// baseline (TotalAlloc is a monotonic cumulative counter, so GC does not reset
-// it — the GC is only to keep per-run heap state from drifting the time arm).
-func measure(in []byte, call func(input []byte), repeats int) Measurement {
-	times := make([]int64, 0, repeats)
-	allocs := make([]uint64, 0, repeats)
+// measure runs call on every input, Repeats rounds, and returns one Measurement
+// per input: the median allocation and the MINIMUM (best-of-N) time.
+//
+// Time is noise-robust by construction rather than by margin:
+//   - It is process CPU time (processCPUNanos), not wall time, wherever the
+//     platform has it and it resolves the curve (cpuClockMinNanos), so time
+//     spent descheduled on a loaded host is not counted. Otherwise the whole
+//     curve falls back to wall time; the returned clock says which was used.
+//   - It is the minimum over repeats, not the median: contention, preemption,
+//     cache eviction and GC interference only ever ADD cost to a run, so the
+//     cheapest run is the best estimate of the call's own cost.
+//   - The inputs are measured round-robin (every size once per round) rather
+//     than size after size, so a load burst or a frequency change lands on all
+//     sizes alike instead of inflating whichever size was running at the time.
+//
+// Why: PR #4284's merge-queue round read 3.23x/doubling on wall-clock
+// median-of-3; locally, 20 parallel runs under a busy loop read 3.88-7.32x
+// (20/20 over 3.0) on wall time against 3.04-3.34x on this measure, the same
+// spread as an idle host. A genuinely quadratic call is quadratic in its own
+// CPU time, so none of this blunts the time arm;
+// TestCalib_PlantedQuadraticTime_FiresRed (internal/libconformance) holds that.
+//
+// runtime.GC before each run gives TotalAlloc a clean, comparable baseline
+// (TotalAlloc is a monotonic cumulative counter, so GC does not reset it — the
+// GC is only to keep per-run heap state from drifting the time arm).
+func measure(inputs [][]byte, call func(input []byte), repeats int) ([]Measurement, string) {
+	cpus := make([][]int64, len(inputs))
+	walls := make([][]int64, len(inputs))
+	allocs := make([][]uint64, len(inputs))
 	var m0, m1 runtime.MemStats
 	for range repeats {
-		runtime.GC()
-		runtime.ReadMemStats(&m0)
-		start := time.Now()
-		call(in)
-		elapsed := time.Since(start).Nanoseconds()
-		runtime.ReadMemStats(&m1)
-		times = append(times, elapsed)
-		allocs = append(allocs, m1.TotalAlloc-m0.TotalAlloc)
+		for i, in := range inputs {
+			runtime.GC()
+			runtime.ReadMemStats(&m0)
+			c0, cpuOK := processCPUNanos()
+			start := time.Now()
+			call(in)
+			wall := time.Since(start).Nanoseconds()
+			c1, cpuOK1 := processCPUNanos()
+			runtime.ReadMemStats(&m1)
+			cpu := int64(0)
+			if cpuOK && cpuOK1 {
+				cpu = c1 - c0
+			}
+			cpus[i] = append(cpus[i], cpu)
+			walls[i] = append(walls[i], wall)
+			allocs[i] = append(allocs[i], m1.TotalAlloc-m0.TotalAlloc)
+		}
 	}
-	return Measurement{InputLen: len(in), Nanos: medianInt64(times), AllocBytes: medianUint64(allocs)}
+	out := make([]Measurement, len(inputs))
+	clock := "cpu"
+	for i, in := range inputs {
+		out[i] = Measurement{
+			InputLen:   len(in),
+			CPUNanos:   slices.Min(cpus[i]),
+			WallNanos:  slices.Min(walls[i]),
+			AllocBytes: medianUint64(allocs[i]),
+		}
+		if out[i].CPUNanos < cpuClockMinNanos {
+			clock = "wall"
+		}
+	}
+	for i := range out {
+		out[i].Nanos = out[i].WallNanos
+		if clock == "cpu" {
+			out[i].Nanos = out[i].CPUNanos
+		}
+	}
+	return out, clock
 }
+
+// cpuClockMinNanos is the shortest best-of-N CPU reading the time arm trusts.
+// The process CPU clock ticks in 1 us on macOS, so a curve whose cheapest point
+// is under 50 us (2% quantisation) is fit on wall time instead, for the whole
+// curve: one clock per curve, never a mix. This never weakens the production
+// path: with the default 3 ms TimeFloor a judged linear curve's cheapest point
+// over factors 1..8 is ~375 us, and a curve this cheap is short enough that
+// preemption, the load effect the CPU clock exists to remove, rarely hits it.
+const cpuClockMinNanos = 50_000
 
 // tailFraction selects the asymptotic regime for the fit: measurements whose
 // cost is below maxCost/tailFraction are dropped before fitting. Super-linearity
@@ -354,11 +424,6 @@ func doublingMultiplier(ms []Measurement, cost func(Measurement) float64) float6
 	return math.Exp(p * math.Log(2)) // 2^p
 }
 
-func medianInt64(xs []int64) int64 {
-	slices.Sort(xs)
-	return xs[len(xs)/2]
-}
-
 func medianUint64(xs []uint64) uint64 {
 	slices.Sort(xs)
 	return xs[len(xs)/2]
@@ -381,7 +446,7 @@ func formatMeasurements(ms []Measurement) string {
 		if i > 0 {
 			out += " "
 		}
-		out += fmt.Sprintf("{len=%d t=%s alloc=%d}", m.InputLen, time.Duration(m.Nanos), m.AllocBytes)
+		out += fmt.Sprintf("{len=%d cpu=%s wall=%s alloc=%d}", m.InputLen, time.Duration(m.CPUNanos), time.Duration(m.WallNanos), m.AllocBytes)
 	}
 	return out + "]"
 }
