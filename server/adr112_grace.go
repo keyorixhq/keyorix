@@ -173,7 +173,7 @@ func recordADR112MFAGraceWindow(db *gorm.DB, now time.Time) (core.MFAUpgradeGrac
 		Columns:   []clause.Column{{Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
 	}).Create(&models.SystemMetadata{
-		Key: config.ADR112RequireMFAGraceClockKey, Value: floor.UTC().Format(time.RFC3339), UpdatedAt: now,
+		Key: config.ADR112RequireMFAGraceClockKey, Value: floor.UTC().Format(time.RFC3339), UpdatedAt: now.UTC(),
 	}).Error; err != nil {
 		return core.MFAUpgradeGraceWindow{}, 0, err
 	}
@@ -349,7 +349,7 @@ func recordADR112Enforced(db *gorm.DB, key string, now time.Time) error {
 	return db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&models.SystemMetadata{
 		Key:       key,
 		Value:     now.UTC().Format(time.RFC3339),
-		UpdatedAt: now,
+		UpdatedAt: now.UTC(),
 	}).Error
 }
 

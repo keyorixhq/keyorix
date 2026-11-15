@@ -112,8 +112,8 @@ func (c *KeyorixCore) CreateSecretTemplate(ctx context.Context, req *CreateSecre
 		DescriptionPattern:    req.DescriptionPattern,
 		RotationHintDays:      req.RotationHintDays,
 		CreatedBy:             req.CreatedBy,
-		CreatedAt:             time.Now(),
-		UpdatedAt:             time.Now(),
+		CreatedAt:             time.Now().UTC(),
+		UpdatedAt:             time.Now().UTC(),
 	}
 
 	if err := c.storage.CreateSecretTemplate(ctx, tmpl); err != nil {
