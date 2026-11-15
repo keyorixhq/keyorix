@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { ALL_CAN } from '../../../test/can';
-import { render, screen, fireEvent } from '../../../test/test-utils';
+import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { SecretDetailView } from '../SecretDetailView';
 import { apiClient } from '../../../services/client';
 import { Secret } from '../../../types';
@@ -130,5 +130,40 @@ describe('SecretDetailView Reveal against the real hooks (#2450)', () => {
             expect(screen.getByText(reason)).toBeInTheDocument();
             expect(screen.queryByText('sup3r-secret')).not.toBeInTheDocument();
         });
+
+        // The #2450 crash took the whole page down. A failing reveal must not unmount the
+        // page: every other control stays mounted and working, Hide clears the alert and a
+        // later Reveal succeeds once the refusal is gone.
+        it('leaves the rest of the page mounted and usable', async () => {
+            render(<SecretDetailView secret={makeSecret()} />);
+            clickReveal();
+            await screen.findByText('Failed to load secret value');
+
+            expect(screen.getByRole('heading', { name: 'db-password' })).toBeInTheDocument();
+            fireEvent.change(screen.getByLabelText('Classification'), { target: { value: 'restricted' } });
+            expect(screen.getByTestId('classification-badge')).toHaveTextContent('Restricted');
+
+            fireEvent.click(screen.getByRole('button', { name: /^Hide$/i }));
+            await waitFor(() => expect(screen.queryByText('Failed to load secret value')).not.toBeInTheDocument());
+            expect(screen.getByText(/Secret value is hidden/i)).toBeInTheDocument();
+
+            valueReply = { kind: 'value', value: 'sup3r-secret' };
+            clickReveal();
+            expect(await screen.findByText('sup3r-secret')).toBeInTheDocument();
+        });
+    });
+
+    it('does not throw out of render when the value response carries no value field', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        valueReply = { kind: 'raw', data: { secret: makeSecret() } };
+        render(<SecretDetailView secret={makeSecret()} />);
+
+        expect(() => clickReveal()).not.toThrow();
+
+        // The query settles into its error state; the page itself stays up.
+        await waitFor(() => expect(screen.getByText('Failed to load secret value')).toBeInTheDocument());
+        expect(screen.getByLabelText('Classification')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^Hide$/i })).toBeInTheDocument();
+        consoleErrorSpy.mockRestore();
     });
 });
