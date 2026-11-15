@@ -67,8 +67,9 @@ reviewed`, and refuses the activator themselves (403) and an activation that is 
 `keyorix compliance report` shows the count under "Emergency access (break-glass)" as
 `active / total activations : 1 / 1`. The JSON from `GET /api/v1/compliance/posture` carries
 `emergency_access.{active_activations, total_activations, unreviewed_activations,
-oldest_unreviewed_age_hours, review_window_hours}`; `unreviewed_activations` counts ended
-activations still unreviewed after `review_window`.
+oldest_unreviewed_age_hours, review_window_hours}`; `unreviewed_activations` counts every
+unreviewed activation, still active or ended, once it is older than `review_window`, and
+every unreviewed degraded activation (section 2) at once.
 
 ## 2. Degraded mode: the audit log refuses the activation
 
@@ -96,11 +97,9 @@ within the audit write path's 10-second bound), the server does this instead:
      (`security.audit_owed`) counts its owed rows too;
    - the activation carries `"degraded": true` in the API (HTTP and gRPC) and a
      **Degraded · audit owed** badge in the project's break-glass tab.
-4. Its post-activation **review is mandatory at once**: a degraded activation is listed in
-   the review reminder and in `security.break_glass_degraded` from the moment it exists, with
-   no grace window. The compliance posture counter `emergency_access.unreviewed_activations`
-   does not (yet) treat it differently: it counts a degraded activation only after
-   `review_window`, like any other (verified: still 0 after the degraded activation ended).
+4. Its post-activation **review is mandatory at once**: a degraded activation is listed as
+   a posture deviation (`emergency_access.unreviewed_activations`), in the review reminder
+   and in `security.break_glass_degraded` from the moment it exists, with no grace window.
 
 The activator sees the shortened expiry. The web UI adds a note that the audit log was not
 accepting writes; the CLI prints the same text as for a normal activation (only the shorter
