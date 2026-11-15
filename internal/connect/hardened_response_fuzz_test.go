@@ -11,8 +11,8 @@
 // repeating them.
 //
 // Every oracle is a NAMED self-consistency law or a differential against an
-// INDEPENDENT reference (a regexp engine, a map-walk decoder, a counting model),
-// never "does not panic" alone. What each oracle does NOT verify is stated in its
+// INDEPENDENT reference (a regexp engine, a counting model, a re-derivation on the
+// drained prefix), never "does not panic" alone. What each oracle does NOT verify is stated in its
 // doc comment and in /mnt/data/wave4/out/gp1-REPORT.md.
 //
 // Reachability (live callers, no production change):
@@ -47,36 +47,31 @@ import (
 // error.code of [A-Za-z0-9_.-], 1..64 bytes.
 var refErrorCodeRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
-// refExtractErrorCode is an INDEPENDENT extractor of the top-level error.code a
-// hostile body carries, using a map-of-RawMessage walk (a different decode shape
-// than scrubbedErrorBody's typed nested struct). It returns the code and whether
-// a string-typed error.code was present at all. Shared-decoder caveat: both this
-// and production use encoding/json, so a json quirk (duplicate-key last-wins,
-// number-vs-string coercion) is shared and this differential cannot catch it —
-// stated in the report's "does not verify" column; the charset/JSON-validity
-// laws below are what hold independently of the decoder.
+// refExtractErrorCode is a reference extractor of the top-level string-typed
+// error.code a hostile body carries. It uses pointer fields so "code absent" and
+// "code present but null/non-string" are distinguished from "code: \"\"".
+//
+// Shared-decoder caveat (honest, and the reason the FIRST map-walk attempt was a
+// harness bug): the top-level error.code the contract refers to is DEFINED by
+// encoding/json's decode rules — which match struct tags CASE-INSENSITIVELY and
+// resolve \uXXXX escapes and duplicate keys last-wins. An earlier version walked a
+// map[string]json.RawMessage with case-SENSITIVE key lookups and so disagreed with
+// production on a hostile {"error":{"Code":...}} — a reference bug, not a Keyorix
+// defect (the extracted code is still charset-bounded by L3). This reference
+// therefore decodes with encoding/json too, so a pure json quirk is shared and the
+// L4 differential cannot catch it; L1/L2/L3/L5 are the laws that hold independently
+// of the decoder, and L4 still catches any bug in the validErrorCode gating, the
+// UpstreamError fallback, or a mangled/truncated/wrong-field value (e.g. Plant D).
 func refExtractErrorCode(original []byte) (code string, present bool) {
-	var top map[string]json.RawMessage
-	if json.Unmarshal(original, &top) != nil {
+	var d struct {
+		Error *struct {
+			Code *string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(original, &d) != nil || d.Error == nil || d.Error.Code == nil {
 		return "", false
 	}
-	errRaw, ok := top["error"]
-	if !ok {
-		return "", false
-	}
-	var errObj map[string]json.RawMessage
-	if json.Unmarshal(errRaw, &errObj) != nil {
-		return "", false
-	}
-	codeRaw, ok := errObj["code"]
-	if !ok {
-		return "", false
-	}
-	var s string
-	if json.Unmarshal(codeRaw, &s) != nil {
-		return "", false // code present but not a string
-	}
-	return s, true
+	return *d.Error.Code, true
 }
 
 // scrubbedShape is the exact structure scrubbedErrorBody must always emit.
@@ -167,6 +162,8 @@ func FuzzScrubbedErrorBody(f *testing.F) {
 		`{"error":{"code":"` + "a" + `"}}`,
 		`{"error":{"code":"ThisCodeIsWayTooLongToBeAcceptedByTheSixtyFourByteCapRuleRight0000"}}`,
 		`{"error":{"code":"ok"},"error":{"code":"second"}}`,
+		`{"error":{"Code":"CaseInsensitiveMatch"}}`,           // encoding/json matches tags case-insensitively
+		`{"error":{"code":"SecretNotFound"},"extra":[1,2,3]}`, // unknown top-level fields tolerated
 		`{"error":"not an object"}`,
 		`{"error":{"code":"ünïçödé"}}`,
 		"{\"error\":{\"code\":\"a\\u0000b\"}}",
