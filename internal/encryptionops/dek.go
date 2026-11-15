@@ -445,11 +445,11 @@ func InitWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) error {
 
 // StatusWithConfig is the testable core of `encryption status`. Read-only:
 // never modifies the database or key files. Like ValidateWithConfig, a failure
-// to read the key state (wrong passphrase, no passphrase source, a live server
-// holding the DEK lock) prints its diagnostic line and then RETURNS the error,
-// so the command exits non-zero: a preflight `status && rotate --confirm` must
-// not continue past a failed state check (#4270). Enabled: false and a healthy
-// key set return nil.
+// to read the key state (no keys yet, i.e. no wrapped DEK; wrong passphrase; no
+// passphrase source; a live server holding the DEK lock) prints its diagnostic
+// line and then RETURNS the error, so the command exits non-zero: a preflight
+// `status && rotate --confirm` must not continue past a failed state check
+// (#4270). Enabled: false and a healthy key set return nil.
 func StatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) error {
 	fmt.Println("🔐 Encryption Status")
 	fmt.Println("==================")
