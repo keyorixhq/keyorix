@@ -658,8 +658,8 @@ func (c *KeyorixCore) requireStillAuthorizedToImpersonate(ctx context.Context, a
 //     existence," not picked independently per call site. A machine actor
 //     minting for an existing machine must in addition hold every permission
 //     the target holds, at each scope it holds it
-//     (requireMachineActorHoldsTargetPermissions). The user path has no such
-//     check yet (INV-CORE-01 follow-up).
+//     (requireMachineActorHoldsTargetPermissions); a user is held to the same
+//     rule (requireActorHoldsTargetPermissions), INV-CORE-01.
 func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorType string, principalID, projectID, machineID uint) error {
 	if machineID != 0 {
 		roles, err := c.storage.GetMachineRoles(ctx, machineID)
@@ -722,6 +722,14 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorT
 	if actorType == ActorTypeMachine && machineID != 0 {
 		return c.requireMachineActorHoldsTargetPermissions(ctx, principalID, machineID)
 	}
+	if actorType == ActorTypeUser && machineID != 0 {
+		// A user is held to the same rule (INV-CORE-01: no authority a
+		// caller does not hold). A user with roles.assign at the project but
+		// without the target's permissions could otherwise mint a token for a
+		// peer carrying them and act as that peer. A global admin holds
+		// every permission, so the check passes for it without a special case.
+		return c.requireActorHoldsTargetPermissions(ctx, ActorTypeUser, principalID, machineID)
+	}
 	return nil
 }
 
@@ -739,6 +747,12 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorT
 // closed: every lookup error is returned, and every refusal wraps
 // ErrMachinePrivilegeCeilingDenied.
 func (c *KeyorixCore) requireMachineActorHoldsTargetPermissions(ctx context.Context, actorID, targetID uint) error {
+	return c.requireActorHoldsTargetPermissions(ctx, ActorTypeMachine, actorID, targetID)
+}
+
+// requireActorHoldsTargetPermissions is the rule above for either actor type;
+// actorType selects whose permissions AuthorizePrincipal evaluates.
+func (c *KeyorixCore) requireActorHoldsTargetPermissions(ctx context.Context, actorType string, actorID, targetID uint) error {
 	scopes, err := c.storage.GetMachineRoleScopes(ctx, targetID)
 	if err != nil {
 		return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
@@ -754,7 +768,7 @@ func (c *KeyorixCore) requireMachineActorHoldsTargetPermissions(ctx context.Cont
 				return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
 			}
 			for _, p := range perms {
-				ok, err := c.AuthorizePrincipal(ctx, ActorTypeMachine, actorID, p.Name, scope)
+				ok, err := c.AuthorizePrincipal(ctx, actorType, actorID, p.Name, scope)
 				if err != nil {
 					return fmt.Errorf("failed to verify actor authority: %w", err)
 				}

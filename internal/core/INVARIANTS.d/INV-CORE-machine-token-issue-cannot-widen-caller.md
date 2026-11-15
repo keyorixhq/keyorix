@@ -21,9 +21,13 @@
   **Not covered**: the calling credential's expiry, so an unrestricted credential that
   expires can still issue a non-expiring token for a peer the caller fully covers; permissions
   the target gains after the token is issued (a later grant is checked against its granter,
-  not against whoever holds the target's tokens); a user caller authenticated by a CIDR-only restricted PAT;
-  and the user path's non-admin branch, which requires only `roles.assign` and not that the
-  actor holds what the target holds (INV-CORE-01 follow-up issue).
+  not against whoever holds the target's tokens).
+  **User callers (fuzz-corpus#91):** a user caller is held to the same rule: a non-admin
+  user must hold, at each scope where the target holds a role grant, every permission those
+  roles bundle (`requireActorHoldsTargetPermissions`, shared with the machine path), and a
+  user authenticated by a restricted PAT (ADR-042, any dimension) is refused outright, since
+  the minted token carries none of the restriction. Guard:
+  `machine_token_user_actor_ceiling_test.go`.
   **Mint-time ceiling only (by design, Andrei 2026-11-08, PAT-SCOPE-TAILS-1 item 4):** the
   privilege ceiling above is checked when the token is minted and never again. A machine
   credential records no issuer; its authority is the machine identity's own roles,
