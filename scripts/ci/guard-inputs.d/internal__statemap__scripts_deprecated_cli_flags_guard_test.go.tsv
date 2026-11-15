@@ -1,0 +1,1 @@
+internal/statemap/scripts_deprecated_cli_flags_guard_test.go	scripts/**/*.sh,cli/**/*.go,cli/go.mod,cli/go.sum,!**	PILOT-AIRGAP-WALK-1: builds ./cli and scans shell under scripts/ for deprecated CLI flags
