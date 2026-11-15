@@ -42,7 +42,10 @@
   writer may legitimately fail OR be swept; what it may not do is leave a live child.
   Structural, default-ci: `internal/core/guards/project_child_liveness_guard_test.go`
   (`TestProjectChildWrites_RecheckProjectLivenessInATransaction`, with the derivation above
-  written into the list it iterates, and `TestLockLiveProject_GoesThroughLockLiveParent`).
+  written into the list it iterates: the re-check must be a later direct statement of the
+  same transaction closure as the child write, proven by
+  `TestProjectChildWrites_PlacementCalibration` on two mutated copies of `CreateFolder`;
+  and `TestLockLiveProject_GoesThroughLockLiveParent`).
   **Not covered**: the opposite interleaving, where the writer's `FOR SHARE` lands first and
   the cascade blocks on it. `lockLiveParent`'s doc argues that order is safe; the
   `beforeA` hook these tests use can only produce the order that caused the bug.
