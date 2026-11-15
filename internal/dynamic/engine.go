@@ -74,7 +74,20 @@ func registerCloudEngine(backendType string, ctor cloudEngineCtor) {
 // refuse a connection that isn't using TLS. The cloud-IAM engines and
 // Kubernetes (in-cluster/explicit api_server) don't dial an admin_dsn host
 // the same way and ignore both parameters.
+//
+// Every engine returned is wrapped by Contain: a panic inside a third-party client
+// library on a malformed target reply comes back as ErrEngineClientPanic instead of
+// unwinding through core code that holds a lease row or an audit step. New is the
+// only place engines are constructed, so the wrapper cannot be forgotten by a caller.
 func New(backendType string, allowPrivateNetwork, allowInsecureTransport bool) (CredentialEngine, error) {
+	eng, err := newEngine(backendType, allowPrivateNetwork, allowInsecureTransport)
+	if err != nil {
+		return nil, err
+	}
+	return Contain(eng), nil
+}
+
+func newEngine(backendType string, allowPrivateNetwork, allowInsecureTransport bool) (CredentialEngine, error) {
 	switch backendType {
 	case "postgres":
 		return &PostgresEngine{allowPrivateNetwork: allowPrivateNetwork}, nil
