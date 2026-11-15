@@ -87,6 +87,9 @@ func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*model
 // identity instead. Creating a binding is therefore gated on GLOBAL admin
 // authority, matching the scope of what it actually claims.
 func (c *KeyorixCore) CreateOIDCBinding(ctx context.Context, projectID, machineID uint, issuer, subject string, actorID uint) (*models.MachineIdentityOIDCBinding, error) {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	if strings.TrimSpace(issuer) == "" || strings.TrimSpace(subject) == "" {
 		return nil, validationErrorf("issuer and subject are required")
 	}

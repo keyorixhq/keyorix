@@ -13,10 +13,11 @@ import (
 // grant. #4159 (authzdiff known-02): the transports refuse a suspended account at
 // authentication, but the core methods they call took the actor's roles at face
 // value, so a direct core call as a suspended actor succeeded. The mutating entry
-// points the authzdiff harness binds call this first, so the account state is
-// checked in one place (INV-CORE-mutation-refuses-inactive-actor). It is not
-// universal: ShareSecret, UpdateSharePermission, GrantSecretACL and CreateSecret do
-// not call it, and a new mutating entry point must call it itself.
+// points the authzdiff harness binds that take the acting user's ID call this
+// first, so the account state is checked in one place
+// (INV-CORE-mutation-refuses-inactive-actor). It is not universal: CreateSecret
+// takes no acting-user ID and does not call it, and a new mutating entry point
+// must call it itself.
 //
 // Not checked: actorID 0 (the local/system pseudo-actor, and every machine token,
 // whose UserID is 0) and a machine actor tagged on ctx (WithActorType), whose own

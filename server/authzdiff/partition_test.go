@@ -28,8 +28,9 @@ import (
 //     matches. known-02 also requires a counterfactual model decision
 //     (caseResult.ModelIfActive), so it absorbs only the exact condition it was
 //     established on, and since #4159 only the value reads in
-//     suspendedReadPathOps (every mutating core entry point refuses a suspended
-//     actor, TestCoreRefusesSuspendedActor). Not detected: a core leg that allows while every present
+//     suspendedReadPathOps (every other bound core-enforced op refuses a
+//     suspended actor, and TestCoreRefusesSuspendedActor fails an op it has no
+//     checked case for). Not detected: a core leg that allows while every present
 //     transport denies (see below). The former known-03 (core let a secret's
 //     owner update/delete it without secrets.write/secrets.delete, #4160) was
 //     fixed in core (TestCoreOwnerWithoutPermissionIsRefused).

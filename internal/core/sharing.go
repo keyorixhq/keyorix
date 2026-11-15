@@ -46,6 +46,9 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 		if err := refuseMachineActor(ctx, req.SharedBy); err != nil { // #4162
 			return nil, err
 		}
+		if err := c.requireActorActive(ctx, req.SharedBy); err != nil { // #4159
+			return nil, err
+		}
 	}
 	if err := c.validateShareSecretRequest(req); err != nil {
 		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
@@ -137,6 +140,9 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 func (c *KeyorixCore) UpdateSharePermission(ctx context.Context, req *UpdateShareRequest) (*models.ShareRecord, error) {
 	if req != nil {
 		if err := refuseMachineActor(ctx, req.UpdatedBy); err != nil { // #4162
+			return nil, err
+		}
+		if err := c.requireActorActive(ctx, req.UpdatedBy); err != nil { // #4159
 			return nil, err
 		}
 	}

@@ -505,6 +505,9 @@ func (c *KeyorixCore) buildGlobalInvite(ctx context.Context, email, systemRole s
 // prior PROJECT-scoped invite to that address (there is no narrower boundary to draw
 // here; CORE-INVITATIONS-003 is specifically about project-vs-project interference).
 func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
+	if err := c.requireActorActive(ctx, invitedBy); err != nil { // #4159
+		return nil, nil, err
+	}
 	invCtx, inv, sysRole, clean, err := c.buildGlobalInvite(ctx, email, systemRole, assignments, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err

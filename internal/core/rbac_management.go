@@ -88,6 +88,9 @@ func (c *KeyorixCore) GetRoleWithPermissions(ctx context.Context, roleID uint) (
 // has no user ID 0 to find roles for). actorID==0 with actorIsMachine==true now
 // falls into the check below, which correctly fails closed the same way.
 func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleID, permissionID uint, actorIsMachine bool) error {
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
 	role, err := c.storage.GetRole(ctx, roleID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
@@ -219,6 +222,9 @@ func (c *KeyorixCore) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*
 // trusted system pseudo-actor); actorIsMachine distinguishes a machine-credential
 // caller (also actorID==0) from that true unauthenticated case.
 func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope, actorIsMachine bool) error {
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
@@ -450,6 +456,9 @@ func (c *KeyorixCore) GetUserPermissionsByID(ctx context.Context, userID uint) (
 // Each part is all or nothing: the call never leaves a role set that is neither
 // the old one, the old one minus the removals, nor the new one.
 func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, roleIDs []uint, scope Scope, actorIsMachine bool) error {
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
 	return c.replaceUserRoleSet(ctx, roleSetReplace{
 		actorID: actorID, userID: userID, scope: scope, actorIsMachine: actorIsMachine, want: roleIDs,
 	})

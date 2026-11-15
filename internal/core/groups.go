@@ -206,6 +206,9 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 // admin-conferring group that was soft-deleted (e.g. an incident-response
 // revocation) could restore it and get their admin access back.
 func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) (*models.Group, error) {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	if id == 0 {
 		return nil, invalidGroupRequest(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required"))
 	}
@@ -378,6 +381,9 @@ func (c *KeyorixCore) domainAllowedForGroupJoin(ctx context.Context, userID, gro
 }
 
 func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsMachine bool, userID, groupID, projectID uint) error {
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
 	if userID == 0 || groupID == 0 {
 		return invalidGroupRequest(fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil)))
 	}
