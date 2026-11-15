@@ -104,7 +104,9 @@ func refIsSSRF(ip net.IP) bool {
 }
 
 func privOrLinkLocal(ip net.IP) bool {
-	return !ip.IsLoopback() && (ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast())
+	// Multicast is deliberately not in the production policy (netutil): it is not
+	// a unicast TCP target, so the oracle must not flag it either.
+	return !ip.IsLoopback() && (ip.IsPrivate() || ip.IsLinkLocalUnicast())
 }
 
 // ipFromBytes maps a fuzz byte slice to an IPv4 (4 bytes) or IPv6 (16 bytes)
