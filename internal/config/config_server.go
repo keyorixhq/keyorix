@@ -351,7 +351,9 @@ func validateBindHost(field, host string) error {
 	if host == "" || net.ParseIP(host) != nil || host == "localhost" {
 		return nil
 	}
-	return fmt.Errorf("%s %q is not an IP address (use 127.0.0.1, 0.0.0.0, ::1, :: or a specific interface IP)", field, host)
+	// The rejected value is deliberately not echoed: ${VAR} expansion can put an
+	// env-sourced secret into host, and error text reaches logs.
+	return fmt.Errorf("%s is not an IP address (use 127.0.0.1, 0.0.0.0, ::1, :: or a specific interface IP)", field)
 }
 
 // validateAllowedOrigins rejects a misconfigured CORS allowlist (server.http.
