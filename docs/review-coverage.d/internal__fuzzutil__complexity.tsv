@@ -1,0 +1,1 @@
+internal/fuzzutil/complexity	none	-	test-only allocation-cost oracle (linear vs quadratic classifier) imported only by fuzz targets; self-tested by cost_test.go; not part of any shipped build	test-helper
