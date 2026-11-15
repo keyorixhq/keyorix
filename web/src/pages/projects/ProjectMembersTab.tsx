@@ -225,7 +225,12 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
     const [inviteOpen, setInviteOpen] = useState(false);
     const [expandedMemberId, setExpandedMemberId] = useState<number | null>(null);
 
-    const allUsers = useMemo(() => usersResp?.data ?? [], [usersResp]);
+    // GET /users sends the rows under `users` with a snake_case display_name; the picker
+    // and the pending sections read the camelCase displayName the UI models use.
+    const allUsers = useMemo(
+        () => (usersResp?.users ?? []).map((u) => (u.display_name ? { ...u, displayName: u.display_name } : u)),
+        [usersResp]
+    );
 
     const memberIds = useMemo(() => new Set(members.map((m) => m.userId)), [members]);
     const candidates = useMemo(() => allUsers.filter((u: any) => !memberIds.has(u.id)), [allUsers, memberIds]);
