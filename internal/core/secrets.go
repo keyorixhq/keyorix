@@ -682,6 +682,11 @@ func (c *KeyorixCore) requireOwnerHoldsGatePermission(ctx context.Context, pc *P
 	}
 	d, err := c.AuthorizeSecretAction(ctx, userID, secret.ID, perm, action, secret)
 	if err != nil {
+		// A role/ACL read FAULT answers retry (503), not a 500; a positive not-found
+		// or an already-typed error keeps its class (STORAGE-ERR-CLASS-4).
+		if !isPositiveNotFound(err) && !errors.Is(err, ErrStorageReadUnavailable) && !errors.Is(err, ErrPermissionDenied) {
+			err = &storageReadFault{cause: err}
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	if d.Allowed {
