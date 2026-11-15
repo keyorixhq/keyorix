@@ -573,6 +573,48 @@ func acCheckRoleLookupFault(t *testing.T, w *acWorld, st *acIterState) {
 	}
 }
 
+// acdMaxPasswordChangesPerProgram caps how many password-change ops (op%13==8,
+// ChangePassword → bcrypt) a single fuzz program actually executes. bcrypt is
+// deliberately expensive (hundreds of ms per hash at the default cost), so a
+// program that is almost entirely password-changes — e.g. the #119 input, one
+// op-10 byte followed by 47 op-8 bytes — runs tens of seconds per execution
+// (85s on the CI host that reported it), well over Go's per-input fuzz-worker
+// hang limit. The worker then reports "fuzzing process hung or terminated
+// unexpectedly", a harness artefact, NOT an auth-cache/DB divergence. Three
+// password changes per program still exercise the cache-vs-storage differential
+// around a credential change (which invalidates sessions) several times over;
+// the 4th-plus repeat only re-pays the bcrypt cost for a differential of the
+// same shape. The cap lives in the fuzz driver only — acRunOp's semantics are
+// unchanged, so the hand-written tests that call it directly are unaffected.
+const acdMaxPasswordChangesPerProgram = 3
+
+// acRunProgram resets the victim's state and runs one fuzz program through
+// acRunOp, applying acdMaxPasswordChangesPerProgram. Shared by the fuzz body
+// and the #119 regression test so both exercise the exact same cap.
+func acRunProgram(t *testing.T, w *acWorld, program []byte) {
+	t.Helper()
+	if len(program) == 0 {
+		return
+	}
+	st := w.resetIteration(t)
+	maxOps := min(len(program), 48)
+	pwChanges := 0
+	for i := range maxOps {
+		op := program[i]
+		if op%13 == 8 { // password change (ChangePassword → bcrypt)
+			if pwChanges >= acdMaxPasswordChangesPerProgram {
+				// Skip the surplus hash but KEEP scanning the program: a
+				// `continue` preserves the surrounding op sequence (the later
+				// authenticated-request differentials this fuzzer exists to run),
+				// where a `break` would drop every remaining op.
+				continue
+			}
+			pwChanges++
+		}
+		acRunOp(t, w, st, op)
+	}
+}
+
 func FuzzAuthCacheDifferential(f *testing.F) {
 	w := acBuildWorld(f)
 
@@ -596,14 +638,7 @@ func FuzzAuthCacheDifferential(f *testing.F) {
 	f.Add([]byte{2, 12, 7, 12, 7, 12})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
-		if len(program) == 0 {
-			return
-		}
-		st := w.resetIteration(t)
-		maxOps := min(len(program), 48)
-		for i := range maxOps {
-			acRunOp(t, w, st, program[i])
-		}
+		acRunProgram(t, w, program)
 	})
 }
 
