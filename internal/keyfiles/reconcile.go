@@ -145,6 +145,12 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 			dekPending = resolve(baseDir, clean) + ".pending"
 		}
 	}
+	saltPending := ""
+	if enc.SaltPath != "" {
+		if clean, serr := SafePath("KEK salt", enc.SaltPath); serr == nil {
+			saltPending = resolve(baseDir, clean) + ".pending"
+		}
+	}
 	renamed := map[string]bool{}
 	for _, r := range res.Renamed {
 		renamed[r.From] = true
@@ -152,6 +158,13 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 	for _, l := range st.Leftovers {
 		switch {
 		case renamed[l]:
+		case l == saltPending:
+			// Boot leaves this file, and `admin backup` refuses while it exists
+			// (#4105), so the line says so: "can be deleted" alone read as optional.
+			res.Warnings = append(res.Warnings, fmt.Sprintf(
+				"%s is a staging file left over from a key operation that was interrupted before it changed the active "+
+					"key set; the set is coherent without it and the file can be deleted. `admin backup` will refuse until %s is "+
+					"moved away (move it out of the key directory with no `admin encryption rotate-kek` running)", l, l))
 		case l == dekPending:
 			res.Warnings = append(res.Warnings, fmt.Sprintf(
 				"%s is left over from an interrupted DEK operation; the active key set is coherent without it, and the "+
