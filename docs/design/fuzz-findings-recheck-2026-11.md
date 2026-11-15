@@ -13,3 +13,15 @@ Proof: `TestSecretService_DeleteSecret_PurgeAtReadbackFault_DoesNotUndoCompleted
 (`server/grpc/services/secret_delete_readback_fault_test.go`), panic and error armed on
 `GetSecretIncludingDeleted#1`, asserts success, soft-deleted row and the
 `secret.deleted` audit row.
+
+## #3225 POST /users/ creates the user, then returns an error
+
+FIXED by 80a43afe5 (lost-ack read-back in `internal/core/users.go`), widened to the
+sibling insert sites by 69c4e3fd9 and guarded by cf71fe49c. A commit whose
+acknowledgement was lost is read back and answered as success; a rolled-back create stays
+an error. This is the PARTIAL-COMMIT-NOV-2 family fix, so no new pattern was added.
+Proof: `TestPartialCommit_UserCreateLostAckAnswersSuccess`,
+`TestPartialCommit_UserCreateRolledBackStaysAnError` and
+`TestPartialCommit_EveryUserCreateSiteHandlesLostAck`
+(`server/faultops/partial_commit_user_create_test.go`). PARTIAL-COMMIT-TAILS-NOV-3 has
+nothing left to own here.
