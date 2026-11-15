@@ -74,7 +74,7 @@ func challengeRepro(t *testing.T, challenge string) (panicked bool) {
 func TestReproChallengePanic_Minimal(t *testing.T) {
 	const challenge = `Bearer authorization="x" resource="https://vault.azure.net"`
 	// Replay 3 times to confirm determinism.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !challengeRepro(t, challenge) {
 			t.Fatalf("run %d: expected index-out-of-range panic, got none", i)
 		}

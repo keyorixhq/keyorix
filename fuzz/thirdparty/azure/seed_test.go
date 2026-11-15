@@ -115,7 +115,7 @@ func seedCorpus(f *testing.F) {
 	f.Add(encodeSeeds([]seedSpec{{status: 200, ctSel: ctXML, body: []byte(`<secret><value>x</value></secret>`)}}))
 	// deeply nested JSON
 	deep := []byte(`{"value":`)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		deep = append(deep, '[')
 	}
 	f.Add(encodeSeeds([]seedSpec{{status: 200, ctSel: ctJSON, body: deep}}))

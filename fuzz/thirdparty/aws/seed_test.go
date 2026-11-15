@@ -94,7 +94,7 @@ func seedCorpus(f *testing.F) {
 	f.Add(encodeSeeds([]seedSpec{{status: 200, ctSel: 0, chunked: true, truncateInChunk: true, body: []byte(`{"SecretString":"chunktrunc`)}}))
 	// deeply nested JSON (parser stack)
 	deep := []byte(`{"a":`)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		deep = append(deep, '[')
 	}
 	f.Add(encodeSeeds([]seedSpec{{status: 200, ctSel: 0, body: deep}}))

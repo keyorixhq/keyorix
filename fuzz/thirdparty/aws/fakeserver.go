@@ -54,7 +54,7 @@ func decodeSpecs(data []byte) []respSpec {
 		"text/plain",
 		"",
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var s respSpec
 		flags := r.u8()
 		s.raw = flags&0x01 != 0
@@ -111,12 +111,9 @@ func (r *reader) u16() int {
 
 // lenPrefixed reads a 2-byte length (capped at max) then that many bytes.
 func (r *reader) lenPrefixed(max int) []byte {
-	n := r.u16()
-	if n > max {
-		n = max
-	}
+	n := min(r.u16(), max)
 	out := make([]byte, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		if r.pos >= len(r.b) {
 			break
 		}
@@ -228,7 +225,7 @@ func (fs *fakeServer) serve() {
 }
 
 func (fs *fakeServer) handle(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	br := bufio.NewReader(conn)
 	// Minimally consume the request: read the request line + headers until the
 	// blank line. We ignore the body (the SDK sends small signed JSON/query
