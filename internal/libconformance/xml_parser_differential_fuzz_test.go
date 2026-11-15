@@ -207,14 +207,14 @@ const xmlReservedNS = "http://www.w3.org/XML/1998/namespace"
 // function IS the machine-checked form of that catalogue. A difference NOT removed here
 // survives to the failing assertion, so a genuinely new class still fires.
 //
-//   N1 undeclared-prefix: encoding/xml leaves an undeclared prefix verbatim in Name.Space
-//     ("a" for <a:x> with no xmlns:a); etree drops it to "". Such a prefix is not a real
-//     namespace URI (no "://", not "urn:"). A signed element can never carry one past
-//     goxmldsig's C14N (etreeutils errors on an unresolvable prefix), so this is malformed-
-//     input representation, not signature-vs-application confusion. Drop the "{pfx}" wrapper.
-//   N2 reserved xml: namespace — drop the "{http://www.w3.org/XML/1998/namespace}" wrapper
-//     (both layers agree the attribute/element exists; they differ only on attaching the
-//     always-bound reserved URI).
+//	N1 undeclared-prefix: encoding/xml leaves an undeclared prefix verbatim in Name.Space
+//	  ("a" for <a:x> with no xmlns:a); etree drops it to "". Such a prefix is not a real
+//	  namespace URI (no "://", not "urn:"). A signed element can never carry one past
+//	  goxmldsig's C14N (etreeutils errors on an unresolvable prefix), so this is malformed-
+//	  input representation, not signature-vs-application confusion. Drop the "{pfx}" wrapper.
+//	N2 reserved xml: namespace — drop the "{http://www.w3.org/XML/1998/namespace}" wrapper
+//	  (both layers agree the attribute/element exists; they differ only on attaching the
+//	  always-bound reserved URI).
 func normalizeName(s string) string {
 	for {
 		open := strings.IndexByte(s, '{')
@@ -245,10 +245,10 @@ func normalizeName(s string) string {
 // normalizeAttrs normalizes each "\x1f"-joined resolved attribute name (via normalizeName)
 // and de-duplicates identical names.
 //
-//   N3 duplicate-attribute-name: a document with a repeated attribute name (<a b="1" b="2"/>)
-//     is not well-formed XML. etree keeps one; encoding/xml (Strict=false) keeps both. Both
-//     see the malformedness; collapsing to the set of distinct names removes only that
-//     representational count difference, not any element-identity signal.
+//	N3 duplicate-attribute-name: a document with a repeated attribute name (<a b="1" b="2"/>)
+//	  is not well-formed XML. etree keeps one; encoding/xml (Strict=false) keeps both. Both
+//	  see the malformedness; collapsing to the set of distinct names removes only that
+//	  representational count difference, not any element-identity signal.
 func normalizeAttrs(attrs string) string {
 	if attrs == "" {
 		return ""

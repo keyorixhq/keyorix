@@ -46,10 +46,10 @@ func TestXMLParserDifferential_Baseline(t *testing.T) {
 // <a:x/>, a REAL input where etree (drops the undeclared prefix to no-namespace) and
 // encoding/xml (keeps the prefix as a pseudo-namespace) genuinely disagree. It proves:
 //
-//   RED  — the raw comparator SEES the divergence (skeletons differ). So the oracle is not
-//          blind: a genuine etree-vs-encoding/xml disagreement does reach the comparison.
-//   GREEN— the shipped oracle normalizes it away via the catalogued N1 rule (and only N1),
-//          so the live fuzz path is green on this known-benign class.
+//	RED  — the raw comparator SEES the divergence (skeletons differ). So the oracle is not
+//	       blind: a genuine etree-vs-encoding/xml disagreement does reach the comparison.
+//	GREEN— the shipped oracle normalizes it away via the catalogued N1 rule (and only N1),
+//	       so the live fuzz path is green on this known-benign class.
 //
 // The catalogue is therefore load-bearing: were a NEW, uncatalogued divergence to appear,
 // normalizeSkeleton would not remove it and the oracle WOULD fire.
