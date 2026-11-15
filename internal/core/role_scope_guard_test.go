@@ -243,7 +243,7 @@ func roleScopeEntryPoints(w *roleScopeWorld) map[string]func(ctx context.Context
 		},
 		"provisionSSOUser default_role": func(ctx context.Context) error {
 			_, err := c.provisionSSOUser(ctx, &SSOProvider{Name: "okta", AutoProvision: true, DefaultRole: "project_developer"},
-				"okta|dave", "dave@example.com", true, "Dave")
+				"okta|dave", "dave@example.com", true, "Dave", "")
 			return err
 		},
 		// Environment-only scopes, which apply nowhere sensible.
@@ -309,7 +309,7 @@ func runRoleScopeEntryPoints(t *testing.T, c *KeyorixCore) {
 	// is not refused for it (like an escalation block).
 	p := &SSOProvider{Name: "okta", GroupRoleMap: map[string]string{"idp-devs": "project_developer", "idp-viewers": "system_auditor"}}
 	before := w.grantRows(t)
-	require.NoError(t, c.reconcileSSORoles(ctx, p, w.userID, []string{"idp-devs", "idp-viewers"}))
+	require.NoError(t, c.reconcileSSORoles(ctx, p, w.userID, []string{"idp-devs", "idp-viewers"}, ""))
 	auditor, err := c.storage.GetRoleByName(ctx, "system_auditor")
 	require.NoError(t, err)
 	require.ElementsMatch(t, append(before, fmtGrant("user", w.userID, auditor.ID, 0, 0)), w.grantRows(t),
