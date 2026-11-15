@@ -47,3 +47,11 @@ call, `flushSecretReadDenialsOnShutdown(coreService)`, with the logic in
 the audit log before the forwarder closes. Proof:
 `TestShutdown_FlushesOpenSecretReadDenialSummary` and
 `TestShutdown_SecretReadDenialFlushIsBoundedOnSlowDatabase` (`server/shutdown_flush_test.go`).
+
+## #3429 gRPC failed-auth IP limiter sweeps its whole map on every call
+
+FIXED by fc18b443f. The gRPC limiter's idle sweep is amortised on the HTTP limiters'
+schedule (`server/grpc/interceptors/rate_limit.go`). Proof:
+`TestRateLimitSweepParity_GRPCMatchesHTTP`
+(`server/grpc/interceptors/rate_limit_parity_test.go`), which counts sweeps, not time.
+HARDEN-HTTP-1 was not consulted because nothing needed editing.
