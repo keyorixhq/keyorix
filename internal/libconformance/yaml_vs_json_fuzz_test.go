@@ -29,7 +29,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/big"
 	"strings"
 	"testing"
@@ -37,8 +36,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
-
-func newBytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
 // containsYAMLBreakRunes reports whether s holds a character YAML treats as a line break
 // and folds in scalar content — CR, NEL (U+0085), LINE SEPARATOR (U+2028), PARAGRAPH
@@ -76,20 +73,6 @@ func stripYAMLWS(s string) string {
 }
 
 func yamlWSFoldEqual(a, b string) bool { return stripYAMLWS(a) == stripYAMLWS(b) }
-
-// normalizeYAMLBreaks maps every character YAML treats as a line break — CR, NEL (U+0085),
-// LINE SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029) — plus CRLF to a single '\n', so
-// two strings that differ only in YAML's line-break folding compare equal.
-func normalizeYAMLBreaks(s string) string {
-	r := strings.NewReplacer(
-		"\r\n", "\n",
-		"\r", "\n",
-		"", "\n",
-		" ", "\n",
-		" ", "\n",
-	)
-	return r.Replace(s)
-}
 
 // hasDuplicateJSONKey reports whether any JSON object in data declares the same member
 // name twice (the construct encoding/json silently accepts last-wins and yaml.v3 rejects).
@@ -371,7 +354,7 @@ var yamlSeeds = [][]byte{
 	[]byte(`{"a":{"b":1},"a":2}`),        // nested then dup key (detector regression seed)
 	[]byte("\"\xba\""),                   // invalid UTF-8 string: yaml rejects, json accepts
 	[]byte("\t\t\t0"),                    // leading tabs: yaml rejects (no tab indentation), json accepts
-	[]byte("\"\""),                      // NEL in a string: yaml folds the line break, json keeps it
+	[]byte("\"\u0085\""),                 // NEL in a string: yaml folds the line break, json keeps it
 }
 
 func FuzzYAMLVsJSON(f *testing.F) {

@@ -183,8 +183,8 @@ func collectDeclaredNS(el *etree.Element, out map[string]bool) {
 
 // splitNS splits an "uri|local" canonical name.
 func splitNS(name string) (uri, local string) {
-	if i := strings.IndexByte(name, '|'); i >= 0 {
-		return name[:i], name[i+1:]
+	if before, after, ok := strings.Cut(name, "|"); ok {
+		return before, after
 	}
 	return "", name
 }
