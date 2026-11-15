@@ -2201,6 +2201,232 @@ jobs:
             print "OK: coverage " pct "% meets the " floor "% floor"
           }'
 
+  # fuzz-changed (MQ-LEVERS-1 P1; was .github/workflows/fuzz-changed.yml):
+  # regression fuzzing of the targets a PR affects, ONCE PER PR HEAD and only
+  # after that head's quick checks are green. The workflow used to start on
+  # every push in parallel with this one, so a head that then failed lint or
+  # preflight, or was superseded 5 minutes later, had already paid up to 5
+  # shards (about 25 to 35 runner-minutes). Now fuzz-plan needs build-and-test
+  # (the aggregate of preflight, test-quick-*, static-analysis, repo-guards),
+  # and this workflow's own concurrency group (one per PR, cancel-in-progress
+  # on pull_request) cancels the whole run, fuzz shards included, when a newer
+  # head arrives. The context names `fuzz-changed` and `fuzz (shard N)` are
+  # unchanged. Not run on merge_group, push, schedule or dispatch (it never was).
+  #
+  # `labeled` (any label) starts a new FAST run of this workflow; only the
+  # ci:full label supersedes the PR's in-flight run, so only that one may fuzz
+  # (otherwise a triage label would re-fuzz an unchanged head).
+  #
+  # Skipped, not red, when build-and-test did not succeed or did not run
+  # (docs_only/web_only/go_unaffected/operator_only PRs): a skipped job
+  # satisfies a required context, the same convention as base-branch-check
+  # above. The plan only reads *.go and go.mod/go.sum of the diff, so a PR that
+  # build-and-test skips has nothing to fuzz.
+  fuzz-plan:
+    needs: [build-and-test]
+    if: github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      count: ${{ steps.plan.outputs.count }}
+      shards: ${{ steps.shard.outputs.shards }}
+    env:
+      FUZZ_SHARDS: 6  # max parallel fuzz jobs
+      FUZZ_MAX_SHARD_SECONDS: 480  # open another shard (up to FUZZ_SHARDS) above this estimated work per shard
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Determine fuzz targets to run
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
+          fuzzplan="$RUNNER_TEMP/fuzzplan"
+          go build -o "$fuzzplan" ./scripts/ci/fuzzplan
+
+          dep_changed=0
+          if git diff --name-only "$base"...HEAD | grep -qE '^(go\.mod|go\.sum)$'; then
+            dep_changed=1
+          fi
+          prod_go_changed=0
+          if git diff --name-only "$base"...HEAD -- '*.go' | grep -vE '_test\.go$' | grep -q .; then
+            prod_go_changed=1
+          fi
+
+          # emit "pkg|FuncName" for every real fuzz target in a package dir ($1 = ./dir).
+          # fuzzplan reads the test files instead of compiling them; a dir it cannot
+          # resolve (a `//go:build ignore` tool, the separate ./cli module) contributes
+          # nothing and is logged. It exits non-zero only on bad usage or a failed
+          # write, which must fail this step.
+          emit_all_in_pkg() {
+            "$fuzzplan" list "$1"
+          }
+
+          # list_modules_at ref: the resolved module graph (`go list -m all`) as of
+          # ref, WITHOUT disturbing the actual checkout (which must stay at HEAD for
+          # every other step in this job, including the code-change tier below). Runs
+          # in an isolated temp dir seeded with just that ref's go.mod/go.sum -- `-m
+          # all` only needs the requirement graph, not the source tree, and this repo
+          # has no `replace` directives pointing at local paths that a bare go.mod/
+          # go.sum copy would break.
+          list_modules_at() {
+            local ref="$1" dir out
+            dir="$(mktemp -d)"
+            if ! git show "${ref}:go.mod" > "$dir/go.mod" 2>/dev/null; then
+              rm -rf "$dir"; return 0
+            fi
+            git show "${ref}:go.sum" > "$dir/go.sum" 2>/dev/null || true
+            out="$(cd "$dir" && go list -m all 2>/dev/null)" || out=""
+            rm -rf "$dir"
+            printf '%s\n' "$out"
+          }
+
+          plan_file="$(mktemp)"
+
+          # Code-change tier (mutually exclusive: narrowest sufficient scope for what
+          # the PR's OWN files changed).
+          if [ "$prod_go_changed" = 1 ]; then
+            echo "Production .go changed — fuzzing ALL targets in each changed package."
+            git diff --name-only "$base"...HEAD -- '*.go' | xargs -r -n1 dirname | sort -u \
+              | while IFS= read -r d; do emit_all_in_pkg "./${d#./}"; done >> "$plan_file"
+          else
+            echo "No non-test .go changes — fuzzing ONLY the targets defined in changed *_test.go files."
+            git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*_test.go' \
+              | while IFS= read -r f; do
+                  [ -f "$f" ] || continue
+                  d="./$(dirname "$f")"
+                  # targets defined in this file, intersected with real listed targets
+                  defined="$(grep -oE '^func +Fuzz[A-Za-z0-9_]+' "$f" | awk '{print $2}' | sort -u || true)"
+                  [ -n "$defined" ] || continue
+                  listed="$("$fuzzplan" list "$d" | cut -d'|' -f2 | sort -u)"
+                  comm -12 <(printf '%s\n' "$defined") <(printf '%s\n' "$listed") \
+                    | while IFS= read -r fn; do printf '%s|%s\n' "$d" "$fn"; done
+                done >> "$plan_file"
+          fi
+
+          # Dependency tier (additive: layered on top of the code-change tier's
+          # result above whenever go.mod/go.sum changed, never replacing it).
+          if [ "$dep_changed" = 1 ]; then
+            base_modules="$(list_modules_at "$base" | sort -u)"
+            head_modules="$(list_modules_at HEAD | sort -u)"
+            # Only ADDED-or-version-bumped entries -- a REMOVED module implies the
+            # importing code also changed (import statements can't compile
+            # otherwise), which the code-change tier above already covers.
+            changed_modules="$(comm -13 <(printf '%s\n' "$base_modules") <(printf '%s\n' "$head_modules") | awk 'NF{print $1}' | sort -u)"
+            if [ -z "$changed_modules" ]; then
+              echo "go.mod/go.sum touched but the resolved module graph didn't change — 0 extra targets from the dependency tier."
+            else
+              echo "Dependency tier — changed modules:"
+              printf '%s\n' "$changed_modules" | sed 's/^/  /'
+              git ls-files -- '*_test.go' | { xargs -r grep -lE '^func Fuzz' || true; } | xargs -r -n1 dirname | sort -u \
+                | while IFS= read -r d; do
+                    pkg="./${d#./}"
+                    # NON-TEST dependency graph only (go list -deps has no -test flag
+                    # here) -- a test-only dependency (e.g. porcupine, used only by a
+                    # fuzz harness itself) can never show up in this list, so it
+                    # contributes 0 extra targets from this tier by construction.
+                    # A package outside the root module (e.g. ./cli/..., its own go.mod) makes go list fail;
+                    # under pipefail that killed the whole step. Same guard as emit_all_in_pkg above: 0 targets.
+                    pkg_modules="$(go list -deps -f '{{with .Module}}{{.Path}}{{end}}' "$pkg" 2>/dev/null | sort -u)" || pkg_modules=""
+                    [ -n "$pkg_modules" ] || continue
+                    if comm -12 <(printf '%s\n' "$changed_modules") <(printf '%s\n' "$pkg_modules") | grep -q .; then
+                      emit_all_in_pkg "$pkg"
+                    fi
+                  done >> "$plan_file"
+            fi
+          fi
+
+          sort -u "$plan_file" -o "$plan_file"
+          count="$(grep -c . "$plan_file" || true)"
+          echo "Planned $count fuzz target(s):"
+          sed 's/^/  /' "$plan_file"
+          {
+            echo "plan<<__FUZZ_PLAN_EOF__"
+            cat "$plan_file"
+            echo "__FUZZ_PLAN_EOF__"
+          } >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+      - name: Split plan into shards
+        id: shard
+        env:
+          PLAN: ${{ steps.plan.outputs.plan }}
+        run: |
+          set -euo pipefail
+          shards="$(printf '%s\n' "$PLAN" | "$RUNNER_TEMP/fuzzplan" pack \
+            -shards "$FUZZ_SHARDS" -max-shard-seconds "$FUZZ_MAX_SHARD_SECONDS")"
+          echo "Shards: $shards"
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: [fuzz-plan]
+    if: needs.fuzz-plan.outputs.count != '0'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      FUZZTIME: 90s   # per fuzz target
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.fuzz-plan.outputs.shards) }}
+    name: fuzz (shard ${{ matrix.shard.id }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-corpus-${{ runner.os }}-${{ github.run_id }}-${{ matrix.shard.id }}
+          restore-keys: |
+            fuzz-corpus-${{ runner.os }}-
+      - name: Fuzz shard targets
+        env:
+          TARGETS: ${{ matrix.shard.targets }}
+        run: |
+          set -euo pipefail
+          for entry in $TARGETS; do
+            pkg="${entry%%|*}"; fn="${entry#*|}"
+            if [ -z "$pkg" ] || [ -z "$fn" ]; then continue; fi
+            echo "::group::fuzz $fn ($pkg) for $FUZZTIME"
+            go test "$pkg" -run='^$' -fuzz="^${fn}$" -fuzztime="$FUZZTIME"
+            echo "::endgroup::"
+          done
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashers-shard-${{ matrix.shard.id }}
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore
+
+  # Single, stable check name regardless of shard count (or zero targets).
+  # Runs (green or red) only when fuzz-plan ran; when build-and-test failed or
+  # was skipped, or the event is not a PR push, this job is skipped (no runner).
+  fuzz-changed:
+    needs: [build-and-test, fuzz-plan, fuzz]
+    if: always() && github.event_name == 'pull_request' && needs.build-and-test.result == 'success' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Aggregate shard results
+        env:
+          PLAN_RESULT: ${{ needs.fuzz-plan.result }}
+          FUZZ_RESULT: ${{ needs.fuzz.result }}
+          COUNT: ${{ needs.fuzz-plan.outputs.count }}
+        run: |
+          echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT"
+          [ "$PLAN_RESULT" = "success" ] || exit 1
+          case "$FUZZ_RESULT" in success|skipped) exit 0 ;; *) exit 1 ;; esac
+
   # Fresh-install API smoke, SQLite leg (Session I, 2026-09-28): boots a real
   # server on a freshly migrated database and calls every REST route, failing
   # on any 5xx. It exists for the bug class #2258 fixed (7 shipped features
