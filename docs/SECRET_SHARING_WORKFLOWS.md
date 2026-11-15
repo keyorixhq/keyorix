@@ -138,6 +138,12 @@ keyorix group add-member --group developers --user alice.dev
 keyorix group add-member --group developers --user bob.dev
 keyorix group add-member --group developers --user charlie.dev
 
+# Give the group a role in the secrets' project: a share only reaches project
+# members, so without this the share below is refused ("The recipient group has
+# no role in this secret's project")
+keyorix rbac assign-role-to-group --group developers \
+  --role project_viewer --project payments
+
 # Find the group's ID
 keyorix group get developers
 
@@ -173,7 +179,8 @@ creating a duplicate, so these commands are safe to re-run.
 
 **Implementation**:
 ```bash
-# Backend team lead shares API secrets with the frontend-team group (group 8)
+# Backend team lead shares API secrets with the frontend-team group (group 8).
+# The group needs a role in the secrets' project first, see Workflow 3.
 keyorix share create \
   --secret-id 201 \
   --recipient-id 8 --is-group \
@@ -301,10 +308,9 @@ keyorix group members developers
 ```bash
 #!/bin/bash
 # Incident response script for compromised account
-# Usage: ./respond.sh <user id> <your admin email>
+# Usage: ./respond.sh <user id>
 
 COMPROMISED_USER_ID="$1"
-ADMIN_EMAIL="$2"
 INCIDENT_ID="INC-2025-001"
 
 echo "Starting incident response for user id: $COMPROMISED_USER_ID"
@@ -506,7 +512,8 @@ keyorix system info
 keyorix usage show --days 1
 
 # 3. Look for bursts of sharing events
-keyorix audit search --action secret.shared --limit 200 --since 2026-01-01T00:00:00Z
+keyorix audit search --action share_created --limit 200 --since 2026-01-01T00:00:00Z
+keyorix audit search --action group_share_created --limit 200 --since 2026-01-01T00:00:00Z
 ```
 
 For latency and database-level metrics use the server's Prometheus metrics

@@ -24,7 +24,7 @@ but its images were never published: go from 0.96.1 to 0.96.3 directly.
 | Release | Schema epoch | Floor it records | Runs on a database last migrated by |
 |---|---|---|---|
 | v0.96.0, v0.96.1, v0.96.3 | 2 | 2 | any v0.96.x |
-| `main` / v0.97.0 | 5 | 3 | v0.96.x or newer; once it has started, **no** v0.96.x binary starts on that database again |
+| `main` / v0.97.0 | 10 | 3 | v0.96.x or newer; once it has started, **no** v0.96.x binary starts on that database again |
 
 The schema epoch and the floor are stored in `system_metadata`. A server
 refuses to start when the floor recorded there is above its own epoch. Between v0.96.1
@@ -38,10 +38,18 @@ TOTP format change. This was checked as follows:
 So within v0.96.x you can swap the binary or image in either direction (§4A). Going
 from v0.96.x to v0.97.0 is one-way for the binary: going back means restoring a
 backup (§4B and [UPGRADING.md §6q](../UPGRADING.md)). The v0.96.x binary refuses with
-`database declares a minimum compatible schema epoch of 3`.
+`database declares a minimum compatible schema epoch of 3 (database schema epoch 10), above this binary's schema epoch 2`
+and exits 1 (run against a database the current binary had migrated, with the v0.96.3 release binary).
 
 `admin restore` refuses an archive whose schema epoch is newer than its own binary's
-epoch. A v0.97 backup therefore cannot be restored with a v0.96.x binary.
+epoch. A v0.97 backup therefore cannot be restored with a v0.96.x binary:
+
+```
+Error: backup archive's schema epoch 10 is newer than this binary's schema epoch 2 (ADR-097) -- this backup was taken by a newer version of Keyorix; upgrade this binary before restoring it
+```
+
+The other direction works: an archive taken with the v0.96.3 binary restores with the
+current one (`Restored 78 table(s) ...`, then `verify-audit on the restored database: VALID`).
 
 ## 2. Before the upgrade: the backup, concretely
 
@@ -179,8 +187,11 @@ docker compose run --rm -v "$PWD/keyorix-backup-pre-upgrade.tar.gz:/tmp/backup.t
 docker compose up -d
 ```
 
-- **Empty the database first.** `--overwrite-existing` does not empty a PostgreSQL
-  database (see "What not to do").
+- **Empty the database first.** The v0.96.x binaries this rollback restores with do not
+  empty a PostgreSQL database under `--overwrite-existing` (see "What not to do"). The
+  current binary does: its load transaction empties the target's tables itself (a restore
+  with it over an initialised, populated database ended `verify-audit on the restored
+  database: VALID`), so the `DROP SCHEMA` is only for a v0.96.x binary.
 - **`--overwrite-existing`** is needed because the key files on the `keyorix_keys`
   volume already exist. The old ones are kept as `*.pre-restore-<timestamp>`.
 - **`--allow-rollback`** is needed because this host's audit trail is ahead of the
@@ -209,8 +220,9 @@ After any 4B restore, run `admin verify-audit` with the binary you rolled back t
 
 ## 5. What not to do
 
-- **Do not run `admin restore --overwrite-existing` over a PostgreSQL database that
-  still holds data.** The restore replaces the key files first and then fails loading
+- **Do not run a v0.96.x `admin restore --overwrite-existing` over a PostgreSQL database that
+  still holds data** (the current binary empties the tables first, so this does not apply to
+  it). The restore replaces the key files first and then fails loading
   the rows (`duplicate key value violates unique constraint "permissions_pkey"`). The
   rows are left unchanged, so the database stays as it was, but the keys now come from
   the backup. If the DEK was rotated after that backup, the running install can no

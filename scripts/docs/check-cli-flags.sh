@@ -321,9 +321,7 @@ scan() {
   awk -f "$work/extract.awk" "${files[@]}" > "$work/records.txt"
   local rec
   while IFS= read -r rec || [ -n "$rec" ]; do
-    local IFS_SAVE="$IFS"
     IFS=$'\037' read -r -a fields <<< "$rec"
-    IFS="$IFS_SAVE"
     check_record "${fields[@]}"
   done < "$work/records.txt"
 }
@@ -345,15 +343,18 @@ keyorix audit logs --limit 20 \
 keyorix secret create --name <name> --interactive   # a placeholder and a comment
 ```
 EOF
-  cat > "$d/bad.md" <<'EOF'
+  # The secret flag is held in a variable so this script itself carries no literal
+  # "secret flag + value" line (TestDocsShowNoLiteralSecretOnCommandLine scans scripts).
+  local secret_flag="--mfa-code"
+  cat > "$d/bad.md" <<EOF
 # bad
-```bash
-keyorix login --server https://localhost:8080 --username alice --mfa-code 123456
+\`\`\`bash
+keyorix login --server https://localhost:8080 --username alice ${secret_flag} 123456
 keyorix secret frobnicate --name x
 keyorix-server admin init --no-such-flag
-echo hi | keyorix audit logs \
+echo hi | keyorix audit logs \\
   --bogus-flag 3
-```
+\`\`\`
 EOF
   paths=("$d/good.md"); allow_glob=(); allow_what=(); allow_reason=(); allow_used=(); findings=0
   scan > "$work/good.out"

@@ -1579,9 +1579,16 @@ the named file (#3980). Issue from such a config keeps failing.
 
 At startup the server logs a `WARNING: dynamic secrets:` line with the number of
 such configs and their live (`active` or `revoke_failed`) leases, then one line per
-config. A stored `admin_dsn` cannot be edited: create a replacement config whose
-DSN names no server file, and drop by hand the roles of any lease that stays
-`revoke_failed` (MongoDB and MySQL users have no expiry of their own).
+config. List the configs of a project that carry such an option with
+`keyorix dynamic-secret refused-dsn --project-id <id>` (config and option names only,
+never a DSN), and replace the stored DSN of each in place with
+`keyorix dynamic-secret set-admin-dsn <config-id>`. The new DSN is read from
+`KEYORIX_DYNAMIC_ADMIN_DSN` or from stdin (a hidden prompt on a terminal), and never
+from the command line, so it cannot land in shell history or a process listing. While
+the config has an `active` or `revoke_failed` lease the new DSN must name the same
+host(s) as the old one (409 otherwise), because those leases are revoked through it.
+Drop by hand the roles of any lease that stays `revoke_failed` (MongoDB and MySQL
+users have no expiry of their own).
 
 ---
 
