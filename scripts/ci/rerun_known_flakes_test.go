@@ -232,7 +232,7 @@ func TestRerunKnownFlakes_NeverRerunsWhatIsNotListed(t *testing.T) {
 			return mutatedFixture(t, "canary-first.txt", func(s string) string {
 				var b strings.Builder
 				b.WriteString("--- FAIL: TestCorePGCanaryOracleCatchesPlantedLeaks (6.56s)\n")
-				for i := 0; i < 6; i++ {
+				for i := range 6 {
 					b.WriteString("    --- FAIL: TestCorePGCanaryOracleCatchesPlantedLeaks/case-" + string(rune('a'+i)) + " (0.1s)\n")
 				}
 				b.WriteString("FAIL\nFAIL\tgithub.com/keyorixhq/keyorix/internal/core\t679.278s\n")
@@ -296,7 +296,7 @@ func TestKnownFlakesAllowlist(t *testing.T) {
 			continue
 		}
 		pkg, test := f[0], f[1]
-		top := strings.SplitN(test, "/", 2)[0]
+		top, _, _ := strings.Cut(test, "/")
 		if strings.HasPrefix(top, "Fuzz") {
 			t.Errorf("entry %q: a fuzz test is never rerun", l)
 		}
