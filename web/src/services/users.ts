@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, User, Recipient } from '../types';
+import { ApiResponse, User, Recipient } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 // SetupLinkResult mirrors the backend ADR-028 credential-delivery outcome. In
@@ -54,6 +54,18 @@ export interface AdminUser {
     login_locked_until?: string | null;
 }
 
+// UserListResponse is GET /users's `data` as the server sends it (openapi listUsers):
+// the rows are under `users` and the paging keys are snake_case. It is NOT the
+// `{data, pageSize, totalPages}` PaginatedResponse the UI models use; typing it so made
+// ProjectMembersTab read `.data` and see an empty user list on a real server.
+export interface UserListResponse {
+    users: AdminUser[];
+    page: number;
+    page_size: number;
+    total: number;
+    total_pages: number;
+}
+
 // UserMembership is one row of a user's project-assignments view: one entry per
 // project the user holds a live project-scoped role grant in.
 //
@@ -96,8 +108,8 @@ export interface ProjectAssignment {
 export const SYSTEM_ROLES = ['system_admin', 'system_auditor', 'system_viewer'] as const;
 
 export const usersApi = {
-    async list(params?: { page?: number; pageSize?: number; search?: string }): Promise<PaginatedResponse<User>> {
-        const response = await apiClient.get<ApiResponse<PaginatedResponse<User>>>(API_ENDPOINTS.USERS.LIST, {
+    async list(params?: { page?: number; pageSize?: number; search?: string }): Promise<UserListResponse> {
+        const response = await apiClient.get<ApiResponse<UserListResponse>>(API_ENDPOINTS.USERS.LIST, {
             params,
         });
         return response.data.data;

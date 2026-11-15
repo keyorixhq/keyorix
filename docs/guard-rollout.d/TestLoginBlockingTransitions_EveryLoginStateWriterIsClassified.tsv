@@ -1,0 +1,1 @@
+TestLoginBlockingTransitions_EveryLoginStateWriterIsClassified	internal/core/guards	#4309	every core account_state/is_active writer is a row of the login-blocking revoke table or classified (REVOKE-GUARDS-NOV-1); report-only until its first green nightly on main

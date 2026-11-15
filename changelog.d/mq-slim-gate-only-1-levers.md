@@ -1,0 +1,2 @@
+### Testing
+- **Merge-queue slimming can be enforced one lever at a time.** `scripts/ci/mq_slim.py` reads a new `MQ_SLIM_LEVERS` (comma list of `gate`, `testreach`); with `MQ_SLIM_MODE=enforce` only the named levers write outputs (`gate` writes `gate_edge`/`gate_e2e_smoke`/`gate_smoke`, `testreach` writes `leg_tests`), the others are still computed and logged as shadow. Unset keeps today's behaviour; a value naming no known lever enforces nothing. Guarded by `scripts/ci/mq_slim_test.go`.
