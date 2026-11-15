@@ -501,6 +501,7 @@ func TestStoreTimeBindScanner_Calibration(t *testing.T) {
 	}
 }
 
+// dir-listing-ok: lists internal/storage/store (the readers it scans), not core sources
 func storeSourceFiles(t testing.TB) (paths []string) {
 	t.Helper()
 	dir := filepath.Join(srcpath.RepoRoot(), "internal", "storage", "store")
