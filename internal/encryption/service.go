@@ -39,6 +39,12 @@ type Service struct {
 	// keyBaseDir is the base directory NewService resolved the configured key
 	// paths against (keyfiles.RequiredKeyFilePaths' baseDir), for ReconcileKeySet.
 	keyBaseDir string
+	// keyPathErr: the config's relative key paths are not defined for this
+	// process's working directory (config.EncryptionConfig.CheckRelativeKeyPathBase).
+	keyPathErr error
+	// adoptAfterInit: ReconcileKeySet deferred adopting a manifest-less key set
+	// until Initialize has opened it (keyfiles.AdoptProvenKeySet). Guarded by mu.
+	adoptAfterInit bool
 }
 
 // NewService creates a new encryption Service.
@@ -64,16 +70,34 @@ func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
 	} else if ks != nil {
 		km.keySet = ks
 	}
+	// #4249: a relative key path opened from another directory than the
+	// config's names other key files and another DEK lock. Refused before
+	// anything opens them (AcquireExclusiveKeyLock, Initialize).
+	keyPathErr := cfg.CheckRelativeKeyPathBase(baseDir)
+	if keyPathErr != nil {
+		km.configErr = keyPathErr
+	}
 	return &Service{
 		config:     cfg,
 		keyManager: km,
 		keyBaseDir: baseDir,
+		keyPathErr: keyPathErr,
 	}
 }
 
 // Initialize sets up the encryption service.
 // passphrase is used to derive the KEK via PBKDF2 — never stored.
 func (s *Service) Initialize(passphrase string) error {
+	if err := s.initialize(passphrase); err != nil {
+		return err
+	}
+	// The DEK unwrapped under the on-disk KEK: the active set opens together, so
+	// a manifest-less set ReconcileKeySet would not adopt can be adopted now.
+	s.adoptDeferredKeySet()
+	return nil
+}
+
+func (s *Service) initialize(passphrase string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

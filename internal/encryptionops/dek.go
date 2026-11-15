@@ -85,6 +85,11 @@ func pendingDEKExists(cfg *config.Config, baseDir string) bool {
 
 // missingKeysError is requireExistingKeys' refusal.
 func missingKeysError(cfg *config.Config, baseDir string) error {
+	// #4249: from another directory than the config's, "no DEK here" would send
+	// the operator to the wrong fix; say why the path names other files instead.
+	if err := cfg.Storage.Encryption.CheckRelativeKeyPathBase(baseDir); err != nil {
+		return err
+	}
 	if abs, err := filepath.Abs(baseDir); err == nil {
 		baseDir = abs
 	}
