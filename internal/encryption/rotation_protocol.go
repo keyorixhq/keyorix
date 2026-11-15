@@ -10,12 +10,12 @@
 //
 // The database therefore records the newest rotation protocol any binary that
 // served or rotated it implements: system_metadata[dekRotationProtocolKey], an
-// integer only ever raised (every server start, in StartDEKEpochGuard on
-// PostgreSQL and SQLite alike, and every rotation's sweep transaction on any
-// database). RotateDEKWithSweep refuses when the recorded protocol is newer
-// than its own (or unreadable), before it writes a key file or a row; `admin
-// restore` refuses the same way for its target (CheckRecordedRotationProtocol),
-// before it changes anything.
+// integer only ever raised (every server start with encryption enabled on a
+// local database, in StartDEKEpochGuard on PostgreSQL and SQLite alike, and
+// every rotation's sweep transaction on any database). RotateDEKWithSweep
+// refuses when the recorded protocol is newer than its own (or unreadable),
+// before it writes a key file or a row; `admin restore` refuses the same way
+// for its target (CheckRecordedRotationProtocol), before it changes anything.
 //
 // Bump dekRotationProtocol whenever a change to the rotation (sweep, fence,
 // epoch, redo marker, key-file promotion) would be unsafe if an older binary

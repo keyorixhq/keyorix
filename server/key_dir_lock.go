@@ -93,7 +93,7 @@ func initializeKeysAndStartEpochGuard(cfg *config.Config, svc *encryption.Servic
 
 // startDEKEpochGuard starts svc's DEK epoch guard on keyDB. PostgreSQL only:
 // the guard keeps keyDB (one connection) and closes it on Shutdown. On SQLite
-// it is a no-op and keyDB is closed here.
+// it only records the rotation protocol; keyDB is closed here.
 func startDEKEpochGuard(svc *encryption.Service, keyDB *gorm.DB) error {
 	if keyDB == nil {
 		return nil

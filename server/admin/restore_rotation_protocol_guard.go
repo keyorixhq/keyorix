@@ -2,8 +2,8 @@
 // database records a DEK rotation protocol newer than this binary's
 // (KEY-ROTATION-TAILS-NOV-1 item 3, internal/encryption/rotation_protocol.go).
 //
-// Every server start records the protocol it implements (PostgreSQL and
-// SQLite). A restore by an older admin binary over that target replaces key
+// Every server start with encryption enabled on a local database records the
+// protocol it implements (PostgreSQL and SQLite). A restore by an older admin binary over that target replaces key
 // files and rows with a binary that predates part of the protocol the
 // deployment's servers rely on, the same hazard `admin encryption rotate`
 // already refuses. The check runs with the other target refusals, before the
