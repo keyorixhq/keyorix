@@ -242,16 +242,7 @@ function awaitedReturnShape(file: string, container: string, method: string): Sh
  * Each entry must still suppress a real finding (the staleness check below), so a
  * fixed type forces its entry out.
  */
-const USER_LIST_TYPED_AS_PAGINATED =
-    'usersApi.list / adminApi.getUsers are typed PaginatedResponse<User> but GET /users sends {users, page, page_size, total, total_pages}; ProjectMembersTab read `.data` and so always saw an empty user list. Remove when the return type is the wire shape.';
-const KNOWN_DRIFT: Record<string, string> = {
-    'usersApi.list.data': USER_LIST_TYPED_AS_PAGINATED,
-    'usersApi.list.pageSize': USER_LIST_TYPED_AS_PAGINATED,
-    'usersApi.list.totalPages': USER_LIST_TYPED_AS_PAGINATED,
-    'adminApi.getUsers.data': USER_LIST_TYPED_AS_PAGINATED,
-    'adminApi.getUsers.pageSize': USER_LIST_TYPED_AS_PAGINATED,
-    'adminApi.getUsers.totalPages': USER_LIST_TYPED_AS_PAGINATED,
-};
+const KNOWN_DRIFT: Record<string, string> = {};
 
 /**
  * Fields the secret-row mapper reads WITH a fallback that the schema does not define.
