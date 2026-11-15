@@ -25,3 +25,16 @@ Proof: `TestPartialCommit_UserCreateLostAckAnswersSuccess`,
 `TestPartialCommit_EveryUserCreateSiteHandlesLostAck`
 (`server/faultops/partial_commit_user_create_test.go`). PARTIAL-COMMIT-TAILS-NOV-3 has
 nothing left to own here.
+
+## #2842 oracle (a) flags RotateSecret's non-transactional version write
+
+FIXED by 68b81eea2 (AUDIT-MUTATION-TX-1). A rotation with no rotation backend, and every
+rollback, now commits the version, the timestamp and the audit row in one transaction
+(`internal/core/secrets.go`), and the last `#2842` fuzz tolerance was removed. No oracle
+exemption was needed. A backend-bound rotation stays two writes by design: the new
+version must survive an upstream credential change that already happened. Proof:
+`TestSecretMutationAudit_RowExistsIffMutationCommitted` (`internal/core`) and
+`TestSecretMutationAuditFailure_FailsClosedChangesNothing`
+(`server/faultops/secret_mutation_audit_fail_closed_test.go`, which covers rollback).
+Residual, not a defect: `docs/atomicity-exempt.tsv` has no write-count row for the
+backend-bound path.
