@@ -603,6 +603,11 @@ func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.S
 // classification-restricted secret with a gate enabled, never that the
 // rotation itself is blocked.
 func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValue []byte, actorID uint, rotatedBy string) (*models.SecretNode, error) {
+	// #4161: the route gate's per-secret secrets.write, in core (actorID 0, the
+	// bulk rotation's per-secret call, is the system actor: its route gate ran).
+	if err := c.requireSecretGate(ctx, actorID, id, SecretActionRotate); err != nil {
+		return nil, err
+	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
@@ -708,8 +713,8 @@ type AutoRotateSpec struct {
 
 // SetSecretAutoRotate configures automated rotation for a secret and audits the change.
 // Enable only for secrets whose value Keyorix owns, OR point Backend at an executor that
-// rotates the upstream credential too (ADR-047). The caller (transport) must have
-// enforced scoped secrets.write.
+// rotates the upstream credential too (ADR-047). The actor needs the route gate's
+// per-secret secrets.write (requireSecretGate, #4161).
 func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec AutoRotateSpec, actorID uint) error { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	if !knownRotationCharset(spec.Charset) {
 		return fmt.Errorf("unknown rotation charset %q (want alphanumeric|lower_alphanumeric|hex|alphanumeric_symbols)", spec.Charset)
@@ -739,6 +744,10 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 		if _, ok := c.rotationManager.Get(spec.Backend); !ok {
 			return fmt.Errorf("unknown rotation backend %q", spec.Backend)
 		}
+	}
+	// #4161: the route/RPC gate's per-secret secrets.write, in core.
+	if err := c.requireSecretGate(ctx, actorID, id, SecretActionSetAutoRotate); err != nil {
+		return err
 	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {

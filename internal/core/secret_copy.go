@@ -19,8 +19,8 @@ import (
 
 // CopySecret creates a new secret in targetEnvID with the source secret's value and
 // metadata (type, classification, description). newName defaults to the source name
-// when empty. The actor must be able to read the source (enforced here) and — checked
-// by the transport — to create in the target environment. The target environment must
+// when empty. The actor must be able to read the source and to create in the target
+// environment (secrets.write there, #4161), both enforced here. The target environment must
 // belong to the same project as the source. Records the source read and the
 // destination create in the audit trail (audit_events + secret_access_logs, #126/#290)
 // — CreateSecret alone leaves no trace that a copy also read the source value, and
@@ -104,6 +104,11 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	}
 	if err != nil || targetEnv.ProjectID != source.ProjectID {
 		return nil, errSecretTargetInvalidf("%s: target environment %d is not an environment of the source's project", i18n.T("ErrorValidation", nil), targetEnvID)
+	}
+	// #4161: creating in the target environment needs secrets.write there — the
+	// check the REST handler makes before calling here, now in core too.
+	if err := c.requireActorPermissions(ctx, actorID, Scope{ProjectID: source.ProjectID, EnvironmentID: targetEnvID}, permSecretsWrite); err != nil {
+		return nil, err
 	}
 	// SESSION-PERF #2403 follow-up (item 3): fail closed, matching this function's
 	// own stated reason for auditing the source read at all — a copy whose audit

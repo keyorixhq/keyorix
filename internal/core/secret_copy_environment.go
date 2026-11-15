@@ -30,6 +30,12 @@ func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sou
 	if sourceEnvID == targetEnvID {
 		return 0, 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source and target environments must differ"))
 	}
+	// #4161: the route gate (secrets.write on the project, secrets.read on the
+	// source environment), before any environment is read. Without it a caller with
+	// neither had every per-secret copy refused and still got a successful answer.
+	if err := c.requireEnvironmentCopyGate(ctx, actorID, projectID, sourceEnvID); err != nil {
+		return 0, 0, err
+	}
 
 	// Both environments must belong to the authorized project — so the project-scoped
 	// write gate the caller passed actually covers this copy (no cross-project bypass).

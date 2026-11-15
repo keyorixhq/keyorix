@@ -570,6 +570,9 @@ func (c *KeyorixCore) revokeProjectDynamicSecretLeases(ctx context.Context, proj
 // event per identity, actor = actorID. An identity an admin suspended, or acted on
 // during the deletion window, stays as the admin left it.
 func (c *KeyorixCore) RestoreProject(ctx context.Context, actorID, id uint) error {
+	if err := c.requireProjectRestoreGate(ctx, actorID, id); err != nil { // #4161
+		return err
+	}
 	if err := c.requireAuthorityToReinstateProjectRoles(ctx, actorID, id, "project"); err != nil {
 		return err
 	}

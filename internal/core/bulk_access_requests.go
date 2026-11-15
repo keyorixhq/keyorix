@@ -112,6 +112,9 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 	if len(requestIDs) > maxBulkAccessRequestBatchSize {
 		return nil, fmt.Errorf("request_ids exceeds the maximum batch size of %d", maxBulkAccessRequestBatchSize)
 	}
+	if err := k.requireBulkApprovalGate(ctx, approverID); err != nil { // #4161
+		return nil, err
+	}
 
 	// Pre-fetch all requests in one query so we can resolve projectID per item
 	// without N individual GetAccessRequest round trips.

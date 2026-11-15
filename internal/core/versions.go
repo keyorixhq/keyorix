@@ -431,10 +431,13 @@ const EventSecretRolledBack = "secret.rolled_back"
 
 // RollbackSecret restores a secret to the value of a prior version by re-instating that
 // value as a NEW version — version history stays append-only (the rollback itself is a
-// new version, so it too can be undone). The caller (transport) must have enforced
-// scoped secrets.write. Unlike a value read, this fetches the historical version
+// new version, so it too can be undone). The actor needs the route gate's per-secret
+// secrets.write (requireSecretGate, #4161). Unlike a value read, this fetches the historical version
 // directly (no max-reads / expiry guard) since a restore is a write, not a use.
 func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetVersion int, actorID uint, actorName string) (*models.SecretNode, error) {
+	if err := c.requireSecretGate(ctx, actorID, secretID, SecretActionRollback); err != nil {
+		return nil, err
+	}
 	version, err := c.GetSecretVersion(ctx, secretID, targetVersion)
 	if err != nil {
 		return nil, err

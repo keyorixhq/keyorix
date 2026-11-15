@@ -225,6 +225,14 @@ func (c *KeyorixCore) CreateRoleWithScope(ctx context.Context, actorID uint, nam
 // of each independently sequencing AssignPermissionToRole/RemovePermissionFromRole
 // around a bare role-row update.
 func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models.Role, newPermissionIDs *[]uint) (*models.Role, []*models.Permission, error) {
+	if err := c.requireRoleAdminGate(ctx, actorID); err != nil { // #4161
+		return nil, nil, err
+	}
+	if newPermissionIDs != nil {
+		if err := c.requireActorHoldsRolePermissions(ctx, actorID, *newPermissionIDs); err != nil {
+			return nil, nil, err
+		}
+	}
 	if IsBuiltinRole(role.Name) {
 		c.LogRoleUpdateDenied(ctx, actorID, role.ID, role.Name, "target is a built-in role")
 		return nil, nil, permissionDeniedf("%s: cannot update %w: %s", i18n.T("ErrorPermissionDenied", nil), ErrBuiltinRole, role.Name)
@@ -454,6 +462,9 @@ func (c *KeyorixCore) updateRoleTx(ctx context.Context, tx storage.Storage, role
 // roles table, so the orphan row never grants anything. Not worth a named
 // lock for an inert outcome.
 func (c *KeyorixCore) DeleteRole(ctx context.Context, actorID, id uint) error {
+	if err := c.requireRoleAdminGate(ctx, actorID); err != nil { // #4161
+		return err
+	}
 	role, err := c.storage.GetRole(ctx, id)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

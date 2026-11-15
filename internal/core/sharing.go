@@ -322,8 +322,9 @@ func shareUpdateWidens(oldPerm string, oldExp *time.Time, newPerm string, newExp
 }
 
 // RevokeShare revokes a share. The secret's owner can revoke it, and so can a
-// holder of secrets.manage (or an admin-bypass role) at the secret's scope; the
-// transports' route gates also require secrets.write there.
+// holder of secrets.manage (or an admin-bypass role) at the secret's scope; either
+// also needs secrets.write there, the transports' route gate (#4161: enforced here
+// too, requireSecretScopeGate).
 func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy uint) error {
 	shareRecord, err := c.storage.GetShareRecord(ctx, shareID)
 	if err != nil {
@@ -332,6 +333,9 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 
 	secret, err := c.storage.GetSecret(ctx, shareRecord.SecretID)
 	if err != nil {
+		return err
+	}
+	if err := c.requireSecretScopeGate(ctx, revokedBy, secret.ProjectID, secret.EnvironmentID); err != nil {
 		return err
 	}
 	// Owner authority also requires live project membership — see ShareSecret.

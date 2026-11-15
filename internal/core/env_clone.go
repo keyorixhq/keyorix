@@ -49,6 +49,11 @@ func (c *KeyorixCore) CloneEnvironment(ctx context.Context, projectID, srcEnvID,
 	if srcEnvID == dstEnvID {
 		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "source and destination environments must differ")
 	}
+	// #4161: the route gate (secrets.write on the project, secrets.read on the
+	// source environment), as in CopyEnvironmentSecrets.
+	if err := c.requireEnvironmentCopyGate(ctx, actorID, projectID, srcEnvID); err != nil {
+		return nil, err
+	}
 
 	// Verify both environments belong to the authorised project.
 	srcEnv, err := c.storage.GetEnvironment(ctx, srcEnvID)

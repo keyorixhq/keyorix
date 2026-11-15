@@ -257,6 +257,9 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 // actorIsMachine: the actor is a machine identity (actorID is then 0); the
 // transport tags ctx with WithSelfMachineGranter so its own permissions count.
 func (c *KeyorixCore) CreateUserAudited(ctx context.Context, req *CreateUserRequest, actorID uint, actorIsMachine bool) (*models.User, error) {
+	if err := c.requireUserAdminGate(ctx, actorID); err != nil { // #4161
+		return nil, err
+	}
 	if err := c.requireBaselineRoleGrantAuthority(ctx, actorID, actorIsMachine); err != nil {
 		return nil, err
 	}
@@ -470,6 +473,16 @@ const maxUserCreateAssignments = 500
 func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *CreateUserRequest, systemRole string, assignments []ProjectAssignment, actorID uint, actorIsMachine bool) (*models.User, error) {
 	if len(assignments) > maxUserCreateAssignments {
 		return nil, fmt.Errorf("assignments exceeds the maximum batch size of %d", maxUserCreateAssignments)
+	}
+	// #4161: the route gate (install-wide users.read + users.write) and the
+	// handler's roles.assign at each assignment's project, in core.
+	if err := c.requireUserAdminGate(ctx, actorID); err != nil {
+		return nil, err
+	}
+	for _, a := range assignments {
+		if err := c.requireActorPermissions(ctx, actorID, Scope{ProjectID: a.ProjectID}, permRolesAssign); err != nil {
+			return nil, err
+		}
 	}
 	user, hash, err := c.buildUserForCreate(ctx, req)
 	if err != nil {

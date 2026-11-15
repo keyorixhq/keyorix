@@ -389,6 +389,9 @@ func (c *KeyorixCore) buildGlobalInvite(ctx context.Context, email, systemRole s
 	if email == "" {
 		return ctx, nil, "", nil, fmt.Errorf("email is required")
 	}
+	if err := c.requireGlobalInvitationGate(ctx, invitedBy); err != nil { // #4161
+		return ctx, nil, "", nil, err
+	}
 	if !c.domainAllowed(email) {
 		return ctx, nil, "", nil, fmt.Errorf("email domain is not on the allowlist")
 	}

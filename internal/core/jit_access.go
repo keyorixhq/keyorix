@@ -81,6 +81,9 @@ func (c *KeyorixCore) assignUserRoleWithExpirySkipSoD(ctx context.Context, actor
 // actorIsMachine distinguishes a machine-credential caller (also actorID==0) from
 // the true actorID==0 system pseudo-actor.
 func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, groupID, roleID uint, scope Scope, expiresAt time.Time, actorIsMachine bool) error {
+	if err := c.requireIdentityGrantGate(ctx, actorID); err != nil { // #4161
+		return err
+	}
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
