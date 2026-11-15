@@ -620,7 +620,7 @@ the upgraded database, and the only way back is restoring the pre-upgrade backup
 [operator/upgrade-rollback.md](operator/upgrade-rollback.md) is the step-by-step
 runbook, verified on v0.96.1 → v0.96.3 with the published images (SQLite and
 PostgreSQL). It covers the version/schema matrix, timings and what not to do. v0.96.2
-images were never published; go from 0.96.1 to 0.96.3. See
+images were never published; go from v0.96.1 to v0.96.3. See
 [UPGRADING.md](UPGRADING.md) for what changes on upgrade. In particular, from this
 release on, an upgraded deployment whose config never set `security.require_mfa` gets a
 grace period before MFA is enforced. It ends at the first administrator MFA enrolment
@@ -759,7 +759,7 @@ export that root and point the CLI at it:
 `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`
 then `keyorix --ca-file $PWD/caddy-root.crt login --server https://localhost ...`, or
 store it once with `keyorix config set ca_file $PWD/caddy-root.crt` (CLI releases
-after 0.95.3; with an older CLI, `SSL_CERT_FILE=$PWD/caddy-root.crt` works on Linux
+after v0.95.3; with an older CLI, `SSL_CERT_FILE=$PWD/caddy-root.crt` works on Linux
 only). When running the `tls` profile,
 don't also expose web's `8088` publicly — front everything through Caddy on
 80/443.
@@ -846,7 +846,7 @@ curl -si -H 'X-Forwarded-Proto: https' -H 'Content-Type: application/json' \
 Invalid values (anything that is not an IP/CIDR, a bad mode, a non-numeric
 `max-age`) stop the container at start rather than trusting more than intended.
 These variables need a `web` image that contains this feature (releases after
-0.95.3); older images ignore them and send no HSTS.
+v0.95.3); older images ignore them and send no HSTS.
 
 Helm: the chart's Ingress routes every path to `web`, so browsers only ever see
 the web nginx's HSTS decision (the backend's header is stripped from proxied API
