@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -56,8 +57,9 @@ func TestLegalHold_ActiveIndexAllowsNewHoldAfterRelease(t *testing.T) {
 	first, err := ls.CreateLegalHold(ctx, &models.LegalHold{Reason: "first", PlacedBy: 1})
 	require.NoError(t, err)
 
-	first.Released = true
-	require.NoError(t, ls.UpdateLegalHold(ctx, first))
+	released, err := ls.ReleaseLegalHold(ctx, first.ID, 1, time.Now(), "done")
+	require.NoError(t, err)
+	require.True(t, released)
 
 	_, err = ls.CreateLegalHold(ctx, &models.LegalHold{Reason: "second", PlacedBy: 1})
 	require.NoError(t, err, "a new hold is allowed once the prior one is released")

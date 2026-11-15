@@ -115,6 +115,10 @@ func performResetMFA(ctx context.Context, store corestorage.Storage, ref, rawRec
 		summary.effect = eff
 		uid := locked.ID
 		ok := true
+		// audit-direct-ok: hardcodes ActorType adminActorType ("admin_cli") for `keyorix-server admin
+		// reset-mfa` (RECOVERY-MFA-RESET-1), written through the reset's own transaction -- host-side,
+		// no network listener (ADR-108 §B). UserID is the TARGET account; the actor is the host OS
+		// user, never a machine identity.
 		if err := tx.LogAuditEvent(ctx, &models.AuditEvent{
 			EventType:   eventAdminResetMFA,
 			UserID:      &uid,
@@ -169,6 +173,9 @@ func resetMFAAuditDescription(s *resetMFASummary, expiresAt time.Time) string {
 func recordResetMFAKeyMismatch(ctx context.Context, store corestorage.Storage, s *resetMFASummary, keyVersion int) {
 	uid := s.userID
 	failed := false
+	// audit-direct-ok: hardcodes ActorType adminActorType ("admin_cli") for a refused `keyorix-server
+	// admin reset-mfa` (recovery key did not match). UserID is only the target, never an acting
+	// identity; host-side, no network listener (ADR-108 §B).
 	if err := store.LogAuditEvent(ctx, &models.AuditEvent{
 		EventType: eventAdminResetMFAFailed,
 		UserID:    &uid,

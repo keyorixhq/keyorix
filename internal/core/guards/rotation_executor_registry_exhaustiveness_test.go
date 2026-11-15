@@ -145,6 +145,7 @@ func TestRotationExecutorRegistry_AllKnownConstructorsRegisterAndResolve(t *test
 // Reads the directory and parses each file individually (rather than go/parser's
 // ParseDir, deprecated since Go 1.25) so this stays simple dependency-free source
 // inspection, matching account_state_exhaustiveness_guard_test.go's per-file idiom.
+// dir-listing-ok: internal/rotation (and a synthetic dir), not core
 func discoverRotationExecutorConstructors(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

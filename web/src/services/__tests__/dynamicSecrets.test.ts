@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the shared axios instance before importing the service under test.
-vi.mock('../client', () => ({
+// The real error helpers (apiErrorMessage) stay: only the axios instance is replaced.
+vi.mock('../client', async (importActual) => ({
+    ...(await importActual<typeof import('../client')>()),
     apiClient: {
         get: vi.fn(),
         post: vi.fn(),
@@ -9,8 +11,9 @@ vi.mock('../client', () => ({
     },
 }));
 
+import { AxiosError } from 'axios';
 import { apiClient } from '../client';
-import { dynamicSecretsApi } from '../dynamicSecrets';
+import { dynamicSecretsApi, AdminDsnUpdateError, ADMIN_DSN_FORBIDDEN_MESSAGE } from '../dynamicSecrets';
 
 const mocked = apiClient as unknown as {
     get: ReturnType<typeof vi.fn>;
@@ -382,5 +385,139 @@ describe('dynamicSecretsApi.revokeAll', () => {
         const result = await dynamicSecretsApi.revokeAll(4);
 
         expect(result).toEqual({ revoked: 0, failed: 0 });
+    });
+});
+
+// ── refused admin DSN ───────────────────────────────────────────────────────
+
+const SECRET_DSN = 'postgres://admin:hunter2-s3cret@db.internal:5432/app?sslrootcert=/etc/ca.pem';
+
+// A failed axios request, shaped like the real one: the request body (the DSN) is on `config.data`.
+const axiosFailure = (status: number, body: Record<string, unknown>) => {
+    const config = { data: JSON.stringify({ admin_dsn: SECRET_DSN }) } as never;
+    return new AxiosError(
+        'Request failed with status code ' + status,
+        'ERR_BAD_REQUEST',
+        config,
+        {},
+        {
+            status,
+            statusText: '',
+            headers: {},
+            config,
+            data: body,
+        }
+    );
+};
+
+describe('dynamicSecretsApi.listRefusedAdminDsn', () => {
+    it('GETs the project report and normalizes rows (option names only)', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: {
+                    configs: [
+                        {
+                            id: 7,
+                            name: 'prod-pg',
+                            project_id: 3,
+                            environment_id: 5,
+                            backend_type: 'postgres',
+                            refused_options: ['sslrootcert'],
+                            live_leases: 2,
+                        },
+                    ],
+                    unreadable: 1,
+                },
+            },
+        });
+
+        const report = await dynamicSecretsApi.listRefusedAdminDsn(3);
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/dynamic-secrets/configs/refused-admin-dsn', {
+            params: { project_id: 3 },
+        });
+        expect(report).toEqual({
+            configs: [
+                {
+                    id: 7,
+                    name: 'prod-pg',
+                    projectId: 3,
+                    environmentId: 5,
+                    backendType: 'postgres',
+                    refusedOptions: ['sslrootcert'],
+                    liveLeases: 2,
+                },
+            ],
+            unreadable: 1,
+        });
+    });
+
+    it('tolerates an empty body', async () => {
+        mocked.get.mockResolvedValueOnce({ data: {} });
+        expect(await dynamicSecretsApi.listRefusedAdminDsn(3)).toEqual({ configs: [], unreadable: 0 });
+    });
+});
+
+describe('dynamicSecretsApi.updateAdminDsn', () => {
+    it('PATCHes {admin_dsn} to the config and resolves with nothing (the DSN is never echoed back)', async () => {
+        mocked.patch.mockResolvedValueOnce({ data: { data: { id: 7 } } });
+
+        await expect(dynamicSecretsApi.updateAdminDsn(7, SECRET_DSN)).resolves.toBeUndefined();
+
+        expect(mocked.patch).toHaveBeenCalledWith('/api/v1/dynamic-secrets/configs/7/admin-dsn', {
+            admin_dsn: SECRET_DSN,
+        });
+    });
+
+    it.each([
+        [400, 'refused'],
+        [409, 'conflict'],
+        [503, 'audit_unavailable'],
+        [500, 'unknown'],
+    ])('maps HTTP %i to the typed kind %s with the server message', async (status, kind) => {
+        mocked.patch.mockRejectedValueOnce(axiosFailure(status, { message: `server says ${status}` }));
+
+        const err = await dynamicSecretsApi.updateAdminDsn(7, SECRET_DSN).catch((e) => e);
+
+        expect(err).toBeInstanceOf(AdminDsnUpdateError);
+        expect(err.kind).toBe(kind);
+        expect(err.status).toBe(status);
+        expect(err.message).toBe(`server says ${status}`);
+    });
+
+    // INV-WEB-06: a missing config and a missing authority must read the same.
+    it.each([403, 404])(
+        'maps HTTP %i to forbidden with one fixed message, dropping the server wording',
+        async (status) => {
+            mocked.patch.mockRejectedValueOnce(axiosFailure(status, { message: `server says ${status}` }));
+
+            const err = await dynamicSecretsApi.updateAdminDsn(7, SECRET_DSN).catch((e) => e);
+
+            expect(err).toBeInstanceOf(AdminDsnUpdateError);
+            expect(err.kind).toBe('forbidden');
+            expect(err.message).toBe(ADMIN_DSN_FORBIDDEN_MESSAGE);
+        }
+    );
+
+    it('lets out an error that carries no request body, and scrubs a DSN the server echoed into its message', async () => {
+        mocked.patch.mockRejectedValueOnce(axiosFailure(400, { message: `refused option in ${SECRET_DSN}` }));
+
+        const err = await dynamicSecretsApi.updateAdminDsn(7, SECRET_DSN).catch((e) => e);
+
+        expect(err.message).toBe('refused option in [redacted]');
+        // The raw AxiosError (config.data = the request body) must not be reachable from what is thrown.
+        expect(Object.keys(err).sort()).toEqual(['kind', 'name', 'status']);
+        expect(JSON.stringify(err)).not.toContain('hunter2');
+        expect(String(err.stack)).not.toContain('hunter2');
+    });
+
+    it('maps a failure with no response (network) to unknown', async () => {
+        mocked.patch.mockRejectedValueOnce(new Error('Network Error'));
+
+        const err = await dynamicSecretsApi.updateAdminDsn(7, SECRET_DSN).catch((e) => e);
+
+        expect(err).toBeInstanceOf(AdminDsnUpdateError);
+        expect(err.kind).toBe('unknown');
+        expect(err.status).toBeUndefined();
     });
 });

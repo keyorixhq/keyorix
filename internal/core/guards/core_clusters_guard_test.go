@@ -25,6 +25,7 @@ const kernelCluster = "kernel"
 
 // readClusters parses every <cluster>.txt in dir: one filepath.Match pattern per
 // line, '#' comment lines and blank lines ignored. kernel.txt takes exact names.
+// dir-listing-ok: CLUSTERS.d/*.txt
 func readClusters(dir string) (map[string][]string, error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "*.txt"))
 	if err != nil {
@@ -123,6 +124,7 @@ func clusterViolations(files []string, clusters map[string][]string) []string {
 	return msgs
 }
 
+// dir-listing-ok: R4 is about package core itself, not the family
 func TestEveryCoreFileHasOneCluster(t *testing.T) {
 	coreDir := filepath.Join(srcpath.RepoRoot(), filepath.FromSlash(srcpath.CoreDir))
 	clusters, err := readClusters(filepath.Join(coreDir, "CLUSTERS.d"))

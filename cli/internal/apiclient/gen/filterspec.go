@@ -203,6 +203,8 @@ var keptPaths = []string{
 	// PR 1 (docs/cli-split-inventory.md §7) -- dynamic-secret, rotation, breakglass.
 	"/api/v1/dynamic-secrets/configs",
 	"/api/v1/dynamic-secrets/configs/{id}",
+	"/api/v1/dynamic-secrets/configs/refused-admin-dsn",
+	"/api/v1/dynamic-secrets/configs/{id}/admin-dsn",
 	"/api/v1/dynamic-secrets/configs/{id}/classification",
 	"/api/v1/dynamic-secrets/configs/{id}/issue",
 	"/api/v1/dynamic-secrets/configs/{id}/leases",

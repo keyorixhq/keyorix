@@ -138,6 +138,7 @@ type StoreHooks struct {
 	RecordDynamicSecretLeaseRevocation        func(next storage.Storage, ctx context.Context, leaseID string, status string, revokeReason string, revokeError string, revokedAt *time.Time) (bool, error)
 	RecordLoginAttempt                        func(next storage.Storage, ctx context.Context, ip string, at time.Time) error
 	RecordPendingAuditEventFailure            func(next storage.Storage, ctx context.Context, id uint, reason string) error
+	ReleaseLegalHold                          func(next storage.Storage, ctx context.Context, id uint, releasedBy uint, releasedAt time.Time, reason string) (bool, error)
 	ReleaseLoginAttempt                       func(next storage.Storage, ctx context.Context, id uint) error
 	RemoveAllProjectRoleGrants                func(next storage.Storage, ctx context.Context, userID uint, projectID uint) error
 	RemoveRole                                func(next storage.Storage, ctx context.Context, userID uint, roleID uint, scope storage.Scope) error

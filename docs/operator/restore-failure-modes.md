@@ -171,13 +171,14 @@ installed. Do not delete the journal and start the server on the files as they a
 
 ## Where the journal is, and who checks it
 
-- **Working directory.** A relative SQLite `database.path` is resolved against the config
-  file's directory, but a relative `dek_path` or `salt_path` is resolved against the working
-  directory (#4249), and so is the journal's location on PostgreSQL (it sits next to the first
-  key file). Use absolute paths (recommended), or run `admin restore`, `admin restore
-  --recover` and the server from the same directory. A `--recover` run from another directory
-  refuses the journal (its entries name other files); a server started from another directory
-  uses other key files and does not see the journal.
+- **Working directory.** A relative SQLite `database.path` and a relative `dek_path` or
+  `salt_path` are both defined against the config file's directory, but key files are opened
+  from the working directory. With relative key paths the server (and the `admin encryption`
+  commands) started from any other directory is refused, naming the key and the fix (#4249);
+  `admin restore` is not, and writes the key files under the directory it runs in, which is
+  also where the journal sits on PostgreSQL (next to the first key file). Use absolute paths
+  (recommended), or run `admin restore`, `admin restore --recover` and the server from the
+  config file's directory.
 - **Changing the config between a crash and the restart hides the journal.** It is found
   through the configured database path (SQLite) or the first key file's path (PostgreSQL).
   If those change before `--recover` runs, the server and admin commands look elsewhere

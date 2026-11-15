@@ -1,0 +1,1 @@
+server/grpc/services/role_service.go:isUntypedDuplicateRoleName	GRPC/DRIVER: the raw 'UNIQUE constraint failed: roles.name_folded' index message; typed once the roles table returns a duplicate-name sentinel

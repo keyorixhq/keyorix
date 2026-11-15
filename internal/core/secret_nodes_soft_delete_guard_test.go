@@ -373,6 +373,7 @@ func TestSecretNodesSoftDelete_ScannerFixture(t *testing.T) {
 // delete one real `deleted_at IS NULL` predicate in the COPY, and require the
 // scan to report that function. The anchor must occur exactly once, so a
 // refactor that moves it fails here instead of making the proof vacuous.
+// dir-listing-ok: copies internal/storage/store, not core
 func TestSecretNodesSoftDelete_MutationKillsPredicate(t *testing.T) {
 	t.Parallel()
 	const file, anchor, wantFn = "local_secrets.go",

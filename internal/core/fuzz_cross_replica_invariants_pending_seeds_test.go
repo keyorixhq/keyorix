@@ -35,6 +35,7 @@ import (
 // into this literal.
 var pendingSeedFix = map[string]int{}
 
+// dir-listing-ok: fuzz seed dirs under testdata/fuzz-pending
 func TestPendingSeedsPromotedAfterFix(t *testing.T) {
 	token := os.Getenv("GH_TOKEN")
 	if token == "" {
