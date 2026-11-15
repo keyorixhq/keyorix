@@ -729,7 +729,7 @@ func (w *pcrashPGWorld) checkBackupAfterKilledRotation(t *testing.T, killAt int6
 	if err != nil {
 		t.Fatalf("read archive: %v", err)
 	}
-	restoreArgs := []string{"restore", "--config", "./keyorix.yaml", "--input", "./post.tar.gz", "--overwrite-existing", "--allow-rollback"}
+	restoreArgs := []string{"restore", "--config", "./keyorix.yaml", "--input", "./post.tar.gz", "--overwrite-existing", "--replace-existing-data", "--allow-rollback"}
 	if err := w.srv.quiesce(ctx, inst.db); err != nil {
 		t.Fatal(err)
 	}
@@ -774,7 +774,7 @@ func (w *pcrashPGWorld) checkCleanHostRestore(t *testing.T, archive []byte, labe
 	if err := os.WriteFile(filepath.Join(target.dir, "post.tar.gz"), archive, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r, err := runPCrashChild(target.dir, pcrashPass, "admin", []string{"restore", "--config", "./keyorix.yaml", "--input", "./post.tar.gz", "--overwrite-existing", "--allow-rollback"}, 0)
+	r, err := runPCrashChild(target.dir, pcrashPass, "admin", []string{"restore", "--config", "./keyorix.yaml", "--input", "./post.tar.gz", "--overwrite-existing", "--replace-existing-data", "--allow-rollback"}, 0)
 	if err != nil {
 		t.Fatalf("clean-host restore: %v", err)
 	}

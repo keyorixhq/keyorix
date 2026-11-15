@@ -1,0 +1,1 @@
+TestProjectChildWrites_RecheckProjectLivenessInATransaction	internal/core/guards	#4309	widened: the LockLiveProject re-check must follow the child write inside the same transaction closure (REVOKE-GUARDS-NOV-1); report-only until its first green nightly on main

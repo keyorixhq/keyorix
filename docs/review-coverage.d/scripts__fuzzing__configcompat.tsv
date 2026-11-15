@@ -1,0 +1,1 @@
+scripts/fuzzing/configcompat	none	-	test-only harness: cross-release config compatibility fuzzer (FuzzConfigCompat) over the server configuration surface; developer and CI tooling, not linked into any shipped binary	test-helper
