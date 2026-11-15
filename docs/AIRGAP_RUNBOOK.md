@@ -95,8 +95,12 @@ command, rather than risk an inconsistent snapshot, so stop the server first.
 On PostgreSQL it reads through one `REPEATABLE READ` snapshot and works beside a
 live server; pass `--exclusive` (server stopped) for the stronger lock before a
 major upgrade. The master passphrase is read from `KEYORIX_MASTER_PASSWORD`,
+`KEYORIX_MASTER_PASSWORD_FILE` (a file path, as the install procedure sets it),
 `--passphrase-file`, `--passphrase-fd` or `--passphrase-stdin`, because the
-archive manifest is signed with a key derived from it.
+archive manifest is signed with a key derived from it. `admin restore`,
+`admin diagnose` and `admin audit export-checkpoint-key` need the same passphrase
+from the same sources; `admin audit export-checkpoint` and `admin verify-audit`
+do not.
 
 **`--output` must not already exist** — each backup is a distinct,
 timestamped artifact; the date-stamped filename above is not optional
@@ -109,7 +113,9 @@ or an object-lock bucket before you consider the backup done.
 
 ## Exporting an audit-chain anchor (do this too, not instead)
 
-A backup archive's manifest is HMAC-signed with a key derived from the master
+Like every `admin` command this needs the database to itself, so run it with the
+server stopped (with a server attached it refuses and names the lock file). A backup
+archive's manifest is HMAC-signed with a key derived from the master
 passphrase, and `admin restore` verifies it before writing anything, so a
 tampered or corrupted archive is refused. That does not tell you whether the
 *contents* are the history you expect: for that, the ADR-029 audit hash chain
@@ -131,6 +137,9 @@ checkpoint signing key (see `docs/design-b4-offline-audit-verify.md` §2). If
 no checkpoint has been written yet, this command fails rather than fabricate
 one — wait for the scheduler's next cycle (its interval is logged at server
 startup), or lower `audit_checkpoints.schedule` if you need one sooner.
+The scheduler runs inside the server, but on SQLite the export takes the same
+exclusive database lock as `admin backup` and is refused while the server is
+running: let the server write a checkpoint, stop it, then export.
 
 ## Restoring (drill, or the real thing)
 
@@ -140,11 +149,22 @@ Restore into a **fresh, empty data directory**, with the **same config**
 `keyorix.db*` and `keys/` on the same host and restore a backup that is behind the
 host's last state, restore refuses with "this backup's audit trail is N event(s)
 BEHIND" and needs `--allow-rollback` (a replacement host has no witness and is
-not checked, see SELF_HOSTING.md §5):
+not checked, see SELF_HOSTING.md §5).
+
+The archive holds the database and the key files only. A fresh install directory must
+already contain the config (`keyorix.yaml`), `certs/`, `secrets/master_password` (the same
+passphrase) and every other file the config names, such as `secrets/metrics_token`: without
+them the restore stops before writing anything (for example `secret file security:
+server.http.metrics_token_file ... no such file or directory`). Run it from that
+directory, or pass `--config`:
 
 ```sh
-keyorix-server admin restore --input /path/to/keyorix-backup-2026-09-25.tar.gz
+keyorix-server admin restore --input /path/to/keyorix-backup-2026-09-25.tar.gz \
+  --passphrase-file /path/to/master_password
 ```
+
+The master passphrase is needed to check the manifest signature (same sources as
+`admin backup`; without one, restore stops with "no master passphrase available").
 
 What this does, in order:
 
@@ -173,7 +193,7 @@ What this does, in order:
 Confirm the restore further:
 
 ```sh
-keyorix-server admin diagnose
+keyorix-server admin diagnose --passphrase-file /path/to/master_password
 ```
 
 ### Cross-checking against the externally-held anchor
@@ -205,10 +225,9 @@ overwrite an existing path. It is never printed; the command prints only the key
 version a checkpoint records, so you can match the two. **It is a shared secret:**
 anyone holding it plus the database can forge a validly-checkpointed history. Keep
 it with the offline auditor's media, not on the audited host, and delete it after
-the check. Without it a drill sees `supplied: true, authenticated: false`; a
-supplied-but-unauthenticated anchor still cross-checks the chain's head/
-chained-event count against the external copy, just without cryptographic
-proof it came from this exact key. Read the full report's "What this run
+the check. Without it a drill sees `supplied: true, authenticated: false`, and then the anchor
+is advisory only: the report's `not_proven` list says its claims "were not cross-checked
+against this database". Do not count an unauthenticated anchor as a check. Read the full report's "What this run
 does NOT prove" section (or `--help`) — a compliance claim from this tool
 should always be read alongside what it explicitly did not check, not just
 the top-line verdict.

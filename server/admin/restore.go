@@ -106,6 +106,11 @@ SAME config (same key-material paths) the backup was taken from. With
 <path>.pre-restore-<timestamp> rather than truncated or overwritten in
 place, so an unrecoverable mistake during the restore still has a way back;
 on PostgreSQL the target's tables are emptied inside the load transaction.
+--overwrite-existing alone is for re-running a restore into an empty
+(migrated) database: a target database that holds data (any row outside
+system_metadata) is refused, with nothing changed, unless
+--replace-existing-data is given as well. On PostgreSQL those rows are
+deleted and only a backup of the target keeps them: take one first.
 
 Rollback protection: restoring an OLDER backup
 than this host has already progressed past can silently resurrect access an
@@ -126,13 +131,16 @@ under the current format when convenient (a v1 archive can only be restored
 into SQLite). The target may be SQLite or PostgreSQL, whichever backend the
 config points at, regardless of the backend the v2 archive came from; for
 PostgreSQL the target database must already exist, and be empty unless
---overwrite-existing is given.`,
+--overwrite-existing (and, if it holds data, --replace-existing-data) is
+given.`,
 	RunE: runAdminRestore,
 }
 
 func init() {
 	restoreCmd.Flags().StringVar(&restoreInput, "input", "", "Path to the backup archive to restore from (required)")
 	restoreCmd.Flags().BoolVar(&restoreOverwriteExisting, "overwrite-existing", false, "Overwrite an existing, non-empty database or key file (dangerous)")
+	restoreCmd.Flags().BoolVar(&restoreReplaceExistingData, "replace-existing-data", false,
+		"With --overwrite-existing: also replace a target database that holds data (PostgreSQL: its rows are deleted; dangerous)")
 	restoreCmd.Flags().BoolVar(&restoreAllowRollback, "allow-rollback", false, "Proceed even though this backup is behind this host's own audit trail (dangerous -- see the rollback-protection note above)")
 	restoreCmd.Flags().Int64Var(&restoreMaxEntryBytes, "max-entry-bytes", defaultMaxRestoreEntryBytes,
 		"Reject the archive if any single entry decompresses to more than this many bytes")
@@ -269,6 +277,9 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 			return err
 		}
 	} else if err := refuseNonEmptyExisting("database", dbPath); err != nil {
+		return err
+	}
+	if err := refusePopulatedRestoreTarget(cfg, dbPath); err != nil {
 		return err
 	}
 	targetKeyPaths, err := expectedKeyFilePaths(cfg)
@@ -798,6 +809,9 @@ func runAdminRestoreV1(cfg *config.Config) error {
 	if err := refuseNonEmptyExisting("database", dbPath); err != nil {
 		return err
 	}
+	if err := refusePopulatedRestoreTarget(cfg, dbPath); err != nil {
+		return err
+	}
 
 	targetKeyPaths, err := expectedKeyFilePaths(cfg)
 	if err != nil {
@@ -1075,6 +1089,16 @@ func destinationEventsNewerThan(dbPath string, archiveHead int64) (int64, error)
 	return n, nil
 }
 
+// openExistingSQLiteReadOnly opens the restore target's existing SQLite
+// database read-only (mode=ro), for the checks restore runs before it writes.
+func openExistingSQLiteReadOnly(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return nil, fmt.Errorf("open %q read-only: %w", dbPath, err)
+	}
+	return db, nil
+}
+
 func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
 	info, statErr := os.Stat(dbPath)
 	if statErr != nil {
@@ -1087,9 +1111,9 @@ func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
 		return 0, nil
 	}
 
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	db, err := openExistingSQLiteReadOnly(dbPath)
 	if err != nil {
-		return 0, fmt.Errorf("open %q read-only: %w", dbPath, err)
+		return 0, err
 	}
 	defer db.Close() //nolint:errcheck
 

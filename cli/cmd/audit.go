@@ -42,16 +42,20 @@ var (
 
 var auditVerifyCmd = &cobra.Command{
 	Use:   "verify",
-	Short: "Report the audit hash chain's integrity (non-zero exit if broken, sealed or not proven)",
+	Short: "Report the audit hash chain's integrity (non-zero exit unless valid)",
 	Long: `Report the audit hash chain's integrity.
 
 By default this reads the server's incremental verification: the rolling full
 re-walk (every row re-hashed at least once per cycle) plus a check of the rows
-after the latest signed checkpoint. Status is VALID, BROKEN, NOT PROVEN (no
-recent full verification covers the older rows yet) or SEALED (a loss of audit
-events was accepted with the checkpoint key; the seal text names each seal, and
-the chain is never reported VALID again). Every status except VALID exits 1.
---full runs a full walk on the server now, as a background job, and waits for it.`,
+after the latest signed checkpoint. Status is VALID, BROKEN, NOT PROVEN
+(no recent full verification covers the older rows yet) or SEALED (the rows
+that remain verify, but an audit loss was accepted with "admin audit
+accept-loss"; the reason names the seal). --full runs a full walk on the
+server now, as a background job, and waits for it.
+
+Exit codes: 0 VALID; 1 BROKEN or NOT PROVEN; 4 SEALED (the same code
+"keyorix-server admin verify-audit" uses for SEALED; note that 4 is also this
+CLI's "permission denied" code, so check the printed status when it matters).`,
 	SilenceUsage: true,
 	RunE:         runAuditVerify,
 }
@@ -67,13 +71,13 @@ type verifyResult struct {
 	Status                    string `json:"status,omitempty"`
 	Mode                      string `json:"mode,omitempty"`
 	NotProvenReason           string `json:"not_proven_reason,omitempty"`
+	StateReason               string `json:"state_reason,omitempty"`
 	ChainedEvents             int    `json:"chained_events"`
 	UnchainedEvents           int    `json:"unchained_events"`
 	HeadHash                  string `json:"head_hash"`
 	HeadID                    uint   `json:"head_id"`
 	FirstBrokenID             uint   `json:"first_broken_id"`
 	Reason                    string `json:"reason"`
-	StateReason               string `json:"state_reason,omitempty"`
 	Checkpointed              bool   `json:"checkpointed"`
 	CheckpointReason          string `json:"checkpoint_reason"`
 	AnchorToken               string `json:"anchor_token,omitempty"`
@@ -100,23 +104,6 @@ func (v *verifyResult) verifyStatus() string {
 		return "valid"
 	}
 	return "broken"
-}
-
-// sealedFallbackText is shown when a sealed answer carries no seal text at all.
-const sealedFallbackText = "the audit chain is sealed: a loss of audit events was accepted with the checkpoint key; " +
-	"the chain is not whole and is never reported valid again " +
-	"(`keyorix-server admin verify-audit --checkpoint-key-file ...` lists each seal)"
-
-// sealText is what a sealed result says about its seals: the server's state_reason (seal
-// number, time and operator), else its reason, else a fixed sentence, never empty.
-func (v *verifyResult) sealText() string {
-	switch {
-	case v.StateReason != "":
-		return v.StateReason
-	case v.Reason != "":
-		return v.Reason
-	}
-	return sealedFallbackText
 }
 
 type verifyJob struct {
@@ -151,11 +138,6 @@ func runAuditVerify(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	status := v.verifyStatus()
-	if status == "sealed" {
-		// A sealed chain is not a break: the loss was accepted and recorded. Its answer is
-		// the seal text, in `reason` too so a client that renders reason is never left empty.
-		v.Reason = v.sealText()
-	}
 
 	if auditVerifyJSON {
 		b, err := json.Marshal(v)
@@ -192,11 +174,11 @@ func runAuditVerify(_ *cobra.Command, _ []string) error {
 		case "broken":
 			fmt.Printf("  first broken id:  %d\n", v.FirstBrokenID)
 			fmt.Printf("  reason:           %s\n", v.Reason)
-		case "sealed":
-			fmt.Printf("  seal:             %s\n", cliout.SanitizeForTerminal(v.Reason))
 		case "not_proven":
 			fmt.Printf("  not proven:       %s\n", v.NotProvenReason)
 			fmt.Println("  hint:             'keyorix audit verify --full' runs a full walk now")
+		case "sealed":
+			fmt.Printf("  sealed:           %s\n", sealedReason(v))
 		default:
 			if v.CheckpointReason != "" {
 				fmt.Printf("  note:             %s\n", v.CheckpointReason)
@@ -220,12 +202,25 @@ func runAuditVerify(_ *cobra.Command, _ []string) error {
 	case "not_proven":
 		return fmt.Errorf("audit chain integrity NOT PROVEN: %s", v.NotProvenReason)
 	case "sealed":
-		// Exit status 1 like BROKEN and NOT PROVEN (fail closed for scripts). The offline
-		// verifier's SEALED is exit 4 there; here 4 already means "permission denied".
-		return fmt.Errorf("audit chain is SEALED: %s", cliout.SanitizeForTerminal(v.Reason))
+		// Exit 4 matches "keyorix-server admin verify-audit" (SEALED). It is also the CLI's
+		// permission-denied code; the printed status tells the two apart.
+		return withExitCode(exitSealed, fmt.Errorf("audit chain SEALED: %s", sealedReason(v)))
 	default:
 		return fmt.Errorf("audit chain verification FAILED (first broken id %d): %s", v.FirstBrokenID, v.Reason)
 	}
+}
+
+// exitSealed is the exit code of `audit verify` on a sealed chain: the one the offline
+// verifier (auditverify.VerdictSealed) uses.
+const exitSealed = 4
+
+// sealedReason is the server's state_reason for a sealed chain (seal number, time,
+// operator), or a fixed sentence when an older server sent none.
+func sealedReason(v *verifyResult) string {
+	if v.StateReason != "" {
+		return v.StateReason
+	}
+	return "an audit loss was accepted with 'admin audit accept-loss' (the server gave no details)"
 }
 
 // runAuditVerifyFullJob starts a server-side full walk (?full=true) and polls

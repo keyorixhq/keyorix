@@ -196,7 +196,7 @@ func checkSchemaEpochFor(db *gorm.DB, binaryEpoch int) error {
 					"If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this "+
 					"binary was rolled back, roll forward to a version with schema epoch %d or later, or restore a "+
 					"backup taken before the newer version ran. Refusing to start (ADR-101)",
-				floor, m.Value, binaryEpoch, floorRow.UpdatedAt.Format(time.RFC3339),
+				floor, m.Value, binaryEpoch, floorRow.UpdatedAt.UTC().Format(time.RFC3339),
 				time.Since(floorRow.UpdatedAt).Round(time.Second), floor)
 		}
 	}
@@ -243,7 +243,7 @@ func checkSchemaEpochFor(db *gorm.DB, binaryEpoch int) error {
 				"compatible schema epoch is recorded, so nothing declares this schema "+
 				"safe for an older binary. Refusing to start "+
 				"is the safe default in both cases (ADR-097, ADR-101)",
-			dbEpoch, binaryEpoch, m.UpdatedAt.Format(time.RFC3339), time.Since(m.UpdatedAt).Round(time.Second))
+			dbEpoch, binaryEpoch, m.UpdatedAt.UTC().Format(time.RFC3339), time.Since(m.UpdatedAt).Round(time.Second))
 	}
 	return nil
 }
@@ -299,7 +299,7 @@ func recordSchemaEpoch(db *gorm.DB) error {
 // The comparison is done in SQL, not read-then-write in Go, so two replicas
 // recording concurrently cannot interleave a lower value over a higher one.
 func recordSchemaEpochAs(db *gorm.DB, epoch, floor int) error {
-	now := time.Now()
+	now := time.Now().UTC() // GORM keeps a non-zero UpdatedAt, so NowFunc's UTC would not apply (#3914)
 	keepHigher := gorm.Expr("CASE WHEN CAST(system_metadata.value AS INTEGER) >= CAST(excluded.value AS INTEGER) " +
 		"THEN system_metadata.value ELSE excluded.value END")
 	keepHigherTime := gorm.Expr("CASE WHEN CAST(system_metadata.value AS INTEGER) >= CAST(excluded.value AS INTEGER) " +

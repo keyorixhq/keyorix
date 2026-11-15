@@ -280,9 +280,8 @@ HTTP-only too, pinned by `auditVerifyHTTPOnly` in
 
 ### CLI `keyorix audit verify`
 
-- Prints `VALID`, `BROKEN`, `NOT PROVEN` or `SEALED` (an accepted audit loss; the
-  seal text is printed) with the coverage lines. Exit status is 1 for BROKEN,
-  NOT PROVEN and SEALED (fail closed for scripts).
+- Prints `VALID`, `BROKEN` or `NOT PROVEN` with the coverage lines. Exit status
+  is non-zero for both BROKEN and NOT PROVEN (fail closed for scripts).
 - `--full` starts the job and polls the status endpoint until it finishes.
 
 ### Web compliance page

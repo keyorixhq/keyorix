@@ -18,7 +18,7 @@ triage, containment and evidence. Section 5 lists what does exist and what is mi
 
 | Where | Command / signal | Verdicts |
 |---|---|---|
-| Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`; non-zero exit on the last two |
+| Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`, `SEALED` (prints the seal's `state_reason`); non-zero exit unless `VALID`, and `SEALED` exits 4 like `keyorix-server admin verify-audit` |
 | Prometheus | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_discontinuity` (1 while a sticky state discontinuity is recorded), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
 | Compliance posture | `GET /api/v1/compliance/posture`, field `audit_integrity` | reads the persisted state, walks nothing |
 | Offline, independent code | `keyorix-server admin verify-audit` | exit `0` VALID, `1` BROKEN, `2` INDETERMINATE, `3` usage/input error |
@@ -147,7 +147,11 @@ keyorix audit verify --full
 ```
 
 It refuses a chain that is inconsistent under both encodings, so it cannot be used to paper
-over a real break.
+over a real break. Over the API the refusal is `409 Conflict` with the reason in `message`
+("refusing to re-encode the audit chain: event N's prev_hash does not link ...") and
+`details.code` = `audit_chain_reencode_refused`, for the preview and for `--confirm` alike;
+it is not a server error, so do not retry it: go to section 5. On a healthy
+chain the preview prints `DRY RUN — nothing was written.` with the rows it would migrate.
 
 **b. A copy that is not the database.** A SQLite file copied without its `-wal`/`-shm`, a
 backup mounted from the wrong date, a replica that has not caught up: all look like
@@ -349,13 +353,8 @@ after the break is not notarised: decide soon.
 
    | View | Reads |
    |---|---|
-   | `GET /api/v1/audit/verify`, posture | `not_proven` until a full verification completes, then `sealed` (`state_reason` names each seal); `valid` is false |
-   | `keyorix audit verify` | `NOT PROVEN` until a full verification completes (`--full` runs one), then `Audit chain: SEALED` with a `seal:` line (seal number, time, operator, rows lost) and exit status 1, like BROKEN and NOT PROVEN. `--json`: `status` is `sealed` and `reason` and `state_reason` both carry the seal text. It never prints `FAILED`: a sealed chain is an accepted loss, not an undetected break |
+   | `keyorix audit verify`, `GET /api/v1/audit/verify`, posture | `not_proven` until a full verification completes, then `sealed` (`state_reason` names each seal); `valid` is false |
    | `keyorix-server admin verify-audit --checkpoint-key-file ...` | `Verdict: SEALED`, exit code 4, the seals listed; without the key, BROKEN (a seal is only trusted with the key) |
-
-   The two verifiers use different exit statuses for SEALED on purpose: in the `keyorix` CLI, 4 already
-   means "permission denied" (`keyorix --help`), so a script that runs `keyorix audit verify` treats any
-   non-zero status as "not a clean chain" and reads the first line of the output for which one.
    | Deleted, altered, moved or replayed seal record, removed seal event, rows removed or put back around the gap | BROKEN, on both verifiers (except a rollback that reads as an unfinished acceptance, section 8) |
 
    `verify-audit` lists each seal with the rows it recorded as `unpinned` and the anchor it

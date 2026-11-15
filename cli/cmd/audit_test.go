@@ -79,6 +79,40 @@ func TestRunAuditVerify_NotProvenIsNeitherValidNorBroken(t *testing.T) {
 	}
 }
 
+// A sealed chain (an accepted audit loss, #4230) is neither valid nor broken: the text
+// output says SEALED with the server's state_reason, --json carries the same status and
+// reason, and the exit code is the offline verifier's 4 with a message that has the reason.
+func TestRunAuditVerify_SealedPrintsTheStateReasonAndExits4(t *testing.T) {
+	const reason = "seal #2 accepted 2026-11-10T09:30:00Z by admin@example.com"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"data":{"valid":false,"status":"sealed","state_reason":%q,"chained_events":9,"head_id":9,"head_hash":"h","checkpointed":true}}`, reason)
+	}))
+	defer srv.Close()
+	setAuditCreds(t, srv)
+	auditVerifyFull = false
+
+	for _, asJSON := range []bool{false, true} {
+		auditVerifyJSON = asJSON
+		var err error
+		out := captureStdout(t, func() { err = runAuditVerify(auditVerifyCmd, nil) })
+		if asJSON {
+			if !containsAll(out, `"status":"sealed"`, `"state_reason":"`+reason+`"`) {
+				t.Fatalf("--json output = %q, want status sealed and the state_reason", out)
+			}
+		} else if !containsAll(out, "Audit chain: SEALED", reason) {
+			t.Fatalf("text output = %q, want SEALED and the state_reason", out)
+		}
+		if err == nil || !containsAll(err.Error(), "SEALED", reason) || strings.Contains(err.Error(), "FAILED") {
+			t.Fatalf("json=%v: err = %v, want a SEALED error carrying the reason, not FAILED", asJSON, err)
+		}
+		if code, _ := classifyError(err, true); code != exitSealed || exitSealed != 4 {
+			t.Fatalf("json=%v: exit code = %d, want 4 (the offline verifier's SEALED code)", asJSON, code)
+		}
+	}
+	auditVerifyJSON = false
+}
+
 // --full starts the server-side job (?full=true → 202) and polls its status
 // until it finishes, then reports the job's result.
 func TestRunAuditVerify_FullPollsTheJob(t *testing.T) {

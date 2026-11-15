@@ -34,9 +34,13 @@ func warnIfRecoveryKeyMissing(store corestorage.Storage) {
 // enabled, a system-actor audit event (no UserID, never machine-identity-typed), so the
 // tamper-evident chain itself carries a repeated record of the weaker mode. Direct
 // LogAuditEvent: this runs before any request context exists, the same shape as
-// auditConnectorProjectBindingCreate (listed in core's auditAttributionAllowlist).
+// auditConnectorProjectBindingCreate (each carries an audit-direct-ok marker, checked by core/guards).
 func auditKeylessModeStartup(store corestorage.Storage) {
 	ok := true
+	// audit-direct-ok: hardcodes ActorType core.ActorTypeSystem and never sets UserID (absent from
+	// the struct literal) -- the boot-time keyless-mode warning event (docs/design-b2-recover-admin.md
+	// §5), emitted before any request context exists, same no-actor shape as
+	// auditConnectorProjectBindingCreate.
 	if err := store.LogAuditEvent(context.Background(), &models.AuditEvent{
 		EventType:   "admin.keyless_mode_enabled_at_startup",
 		Description: "server started with security.recover_admin.insecure_keyless_admin_recovery enabled -- recover-admin can restore any admin account on host access alone",
@@ -59,6 +63,10 @@ const auditReadsSkippedStartupEventType = "admin.audit_reads_skipped_at_startup"
 // reads were not being audited from this start on.
 func auditReadsSkippedStartup(store corestorage.Storage) {
 	ok := true
+	// audit-direct-ok: hardcodes ActorType core.ActorTypeSystem and never sets UserID (absent from
+	// the struct literal) -- the boot-time insecure_audit_skip_reads warning event (ADR-112
+	// Amendment 4), emitted before any request context exists, same no-actor shape as
+	// auditKeylessModeStartup and for the same reason.
 	if err := store.LogAuditEvent(context.Background(), &models.AuditEvent{
 		EventType: auditReadsSkippedStartupEventType,
 		Description: "server started with storage.database.insecure_audit_skip_reads enabled -- successful " +

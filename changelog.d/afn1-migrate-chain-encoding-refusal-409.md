@@ -1,0 +1,2 @@
+### Fixed
+- **`POST /api/v1/audit/migrate-chain-encoding` on a chain with a gap answers 409, not 500.** The pre-flight refusal ("refusing to re-encode the audit chain: event N's prev_hash does not link ...") is now returned as `409 Conflict` with the refusal text in `message` and `details.code` = `audit_chain_reencode_refused`, for the preview and the real run. It used to reach the client as "an internal error occurred" (#4230). Classified by the typed sentinel `storage.ErrAuditChainReencodeRefused`.
