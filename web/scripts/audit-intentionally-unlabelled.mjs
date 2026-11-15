@@ -26,8 +26,6 @@ export const INTENTIONALLY_UNLABELLED = {
     'auth.keep_session_lookup_failed': DIAG,
     'auth.rate_limit_error': DIAG,
     'auth.session_facts_unavailable': DIAG,
-    'auth.session_reuse_family_revoke_failed': DIAG,
-    'auth.session_revocation_failed': DIAG,
     'auth.session_revocation_panicked': DIAG,
     'auth.undelivered_session_revoked': SYS,
     'auth.undelivered_session_unresolved': DIAG,
@@ -42,8 +40,5 @@ export const INTENTIONALLY_UNLABELLED = {
     'secret.rotate_noop': SYS,
     'setup_token.consume_error': DIAG,
     'setup_token.consume_failed': DIAG,
-    'system.audit_purge': SYS,
     'system.audit_verification_state_rejected': DIAG,
-    'user.deactivation_cleanup_failed': DIAG,
-    'user.password_change_pat_revoke_failed': DIAG,
 };

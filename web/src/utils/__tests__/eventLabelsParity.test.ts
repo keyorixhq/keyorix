@@ -21,6 +21,12 @@ describe('audit event label parity', () => {
         expect(emitted.size).toBeGreaterThan(100);
         expect(emitted.has('auth.sso_login')).toBe(true);
         expect(emitted.has('secret.created')).toBe(true);
+        // Emitted through idioms the first extractor missed: a lower-case
+        // event constant, a lower-case audit helper, an identifier argument.
+        expect(emitted.has('system.audit_chain_verification_failed')).toBe(true);
+        expect(emitted.has('admin.reset_mfa')).toBe(true);
+        expect(emitted.has('access_request.approved')).toBe(true);
+        expect(emitted.has('machine_identity.oidc_bound')).toBe(true);
     });
 
     it('every emitted event has a label or an intentionallyUnlabelled entry', () => {
@@ -53,5 +59,31 @@ describe('audit event label parity', () => {
 
     it('extractor ignores commented-out examples', () => {
         expect(extractFromSource('// c.writeAuditEvent(ctx, "area.fake", nil)').size).toBe(0);
+        expect(extractFromSource('/* c.writeAuditEvent(ctx, "area.fake", nil)\n EventX = "area.fake2" */').size).toBe(
+            0
+        );
+    });
+
+    it.each([
+        ['lower-case audit helper', 'c.auditProjectScopedOn(ctx, tgt, "a.b", 1, 2, "d")', 'a.b'],
+        ['lower-case event constant', 'const eventAdminResetMFA = "a.reset"', 'a.reset'],
+        ['constant with Event as a suffix', 'auditSealEvent = "a.seal"', 'a.seal'],
+        ['recordAdminAction writer', 'recordAdminAction(cfg, "a.admin", "d", true)', 'a.admin'],
+        ['setAccountState writer', 'c.setAccountState(ctx, id, "a.state", actor)', 'a.state'],
+        ['logMachineEvent writer', 'c.logMachineEvent(ctx, "a.machine", m, actorID)', 'a.machine'],
+        ['writer call split over lines', 'c.writeAuditEventFull(ctx,\n\t\t"a.multiline", &aid)', 'a.multiline'],
+        ['dot prefix + word', 'action := "rotated"\nrecordAdminAction(cfg, "a.key."+action, d, true)', 'a.key.rotated'],
+    ])('extractor finds a %s', (_name, src, want) => {
+        expect(extractFromSource(src).has(want)).toBe(true);
+    });
+
+    it('extractor resolves an identifier argument against declarations it is given', () => {
+        const decls = new Map([['actionApproved', 'a.approved']]);
+        const src = 'c.writeAuditEvent(ctx, actionApproved, nil)\nx := AuditEvent{EventType: actionApproved}';
+        expect([...extractFromSource(src, decls)]).toEqual(['a.approved']);
+    });
+
+    it('extractor skips notification constants (not audit events)', () => {
+        expect(extractFromSource('NotificationEventSecretExpiring = "secret.expiring"').size).toBe(0);
     });
 });
