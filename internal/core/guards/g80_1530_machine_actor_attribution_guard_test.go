@@ -19,122 +19,62 @@
 // complete as the directories it looks in. (A second one,
 // server/http/handlers/audit_ingest_proxy.go's IngestAuditEventProxy, was
 // removed in ADR-108 Phase 6 step 14c along with the rest of the /system
-// proxy tier.) Still
-// allowlist-shaped, not a full AST walk (a `.LogAuditEvent(` substring match
-// per function, not real parsing), but now walks every non-test *.go file
-// in the repository.
+// proxy tier.) Still marker-shaped, not a full AST walk (a `.LogAuditEvent(`
+// substring match per function, not real parsing), but now walks every
+// non-test *.go file in the repository.
+//
+// Inline markers, not a hand-kept list (ALLOWLIST-INLINE-NOV-1, #3687): the
+// merge queue tests main + the PR together, so a guard that compares a
+// hand-kept "path:func" list against a scan of the whole repo fails a PR that
+// is green alone whenever another PR adds, renames or removes a site (the
+// list was edited about 9 times in 2026-10-19..25 and failed the queue 5
+// times). Each direct caller now carries its own justification:
+//
+//	// audit-direct-ok: <reason>
+//
+// either as a trailing comment on the call line or in the comment block that
+// ends on the line directly above it (a blank line or code line breaks the
+// block). A PR that adds a caller adds its marker in the same hunk; a PR that
+// removes one removes the marker with it; no unrelated PR has to touch this
+// file. The guard fails on (a) a direct caller with no marker, (b) a marker
+// with no reason text, and (c) a stale marker that does not annotate a direct
+// caller. Skipped by design, stated here so it is not mistaken for coverage:
+// calls inside emitAudit itself (the funnel), calls in _test.go files, calls
+// in a comment line, and a call outside any func (the scan keys on the
+// enclosing func).
 package guards
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
-// auditAttributionAllowlist is the exhaustive, reasoned inventory of every
-// direct storage.LogAuditEvent caller (bypassing emitAudit) reviewed as safe
-// -- either it never sets ActorType to "machine_identity" at all (a genuine
-// system/no-actor event), or it sets MachineIdentityID itself and leaves
-// UserID unset. Each entry needs a reason; TestDirectLogAuditEventCallersAreSafe
-// fails if a new direct caller appears unlisted, or if a listed entry no
-// longer matches what it claims. Keys are repo-root-relative "path:func".
-var auditAttributionAllowlist = map[string]string{
-	"scripts/migrate/migratecheck/main.go:seedAudit": "#3372 MIGRATE-VERIFY-1: seedAudit is the SQLite-to-PostgreSQL " +
-		"migration-check tool's synthetic-data generator (scripts/migrate/sqlite-to-pg-check.sh), a " +
-		"standalone dev/CI binary that is never linked into the server. It writes only fixed " +
-		"human-style event types (secret.read, auth.login, ...) with no ActorType, no UserID and no " +
-		"MachineIdentityID at all, so it can never emit a machine-identity-typed event that needs the " +
-		"emitAudit attribution stamp; the rows only exist to be counted and compared after the migration.",
-	"scripts/release-qa/scalegen/main.go:run": "#3462 UPGRADE-RESTORE-COMPAT-1: scalegen is the restore " +
-		"scale scenario's synthetic-data generator (scripts/release-qa/scenario_restore_scale.sh), a " +
-		"standalone dev binary that is never linked into the server. It writes only secret.read events " +
-		"with no ActorType, no UserID and no MachineIdentityID, so it can never emit a machine-identity-" +
-		"typed event that needs the emitAudit attribution stamp; the rows only exist to be backed up, " +
-		"restored and verified at volume.",
-	"scripts/powercut/main.go:commitAll": "SQLITE-FDATASYNC-1: scripts/powercut is the dm-flakey power-cut and " +
-		"commit-latency tool (scripts/powercut/run-dmflakey.sh), a standalone dev/test binary that is never " +
-		"linked into the server. It writes only fixed powercut.commit events with no ActorType, no UserID " +
-		"and no MachineIdentityID, so it can never emit a machine-identity-typed event that needs the " +
-		"emitAudit attribution stamp; the rows only exist to be counted and hash-chain-verified after the cut.",
-	"internal/core/audit_target.go:emitAuditOn": "#2676: emitAuditOn is emitAudit against an explicit " +
-		"storage handle (the transaction-scoped one the access-review revoke path needs so its evidence " +
-		"row commits or rolls back with the removal it describes). It is NOT a bypass of the attribution " +
-		"stamp this guard protects: it calls the SAME prepareAuditEventForEmit(ctx, event) immediately " +
-		"before the write, which is the function that stamps MachineIdentityID and clears UserID for a " +
-		"machine-typed event -- the correction emitAudit applies is applied here, by the same code, not " +
-		"re-implemented. The only differences are which storage handle receives the row and that the " +
-		"off-box side effects are deferred into an auditForwardSink until the transaction commits. It also " +
-		"delegates to emitAudit outright when no sink is set, so the non-transactional path is literally " +
-		"unchanged. Verified by TestEmitAuditOn_StampsMachineAttributionLikeEmitAudit " +
-		"(audit_target_attribution_test.go), which asserts the stamp on a row written through this path.",
-	"internal/faultstorage/faulty_storage_generated.go:LogAuditEvent": "generated, mechanical pass-through " +
-		"(w.real.LogAuditEvent(ctx, event)) inside a test/fuzz-harness-only storage.Storage wrapper " +
-		"(server/faultops's FuzzStorageFaultOperations) -- it forwards whatever *models.AuditEvent the real " +
-		"caller already constructed, unmodified, and never builds or mutates one itself, so it cannot be the " +
-		"site of an attribution bug: whatever emitAudit correction should have applied already happened " +
-		"upstream, before this call. Every one of the other 417 generated methods has the identical pass-" +
-		"through shape; this is the one storage.Storage method this guard's AST walk happens to care about.",
-	"internal/core/storage/storagetest/hook_audit.go:LogAuditEvent": "CORE-TESTKIT-1: the test double " +
-		"HookStore's per-method plumbing (moved verbatim from internal/core/hook_storage_methods_test.go, " +
-		"where this scan skipped it as a _test.go file). It runs the test's hook or forwards the " +
-		"*models.AuditEvent the caller already built, unmodified, and never builds or mutates one, so it " +
-		"cannot be the site of an attribution bug. The package is test-only: no production file may import " +
-		"it (ADR-121 R3, test_only_packages_guard_test.go).",
-	"internal/core/anomaly.go:auditBusinessHoursConfig": "hardcodes ActorType: \"system\" -- a " +
-		"scheduler/config-change event with no human or machine actor, correctly using the system-actor marker " +
-		"rather than a null. Never machine-identity-typed, so emitAudit's corrections would never apply to it " +
-		"anyway.",
-	"server/wire_connect.go:auditConnectorProjectBindingCreate": "hardcodes ActorType: core.ActorTypeSystem and never " +
-		"sets UserID (absent from the struct literal, so it's the zero value nil) -- an unattended boot-time " +
-		"binding-creation event with no actor, same shape as the anomaly.go entry above.",
-	"server/startup_audit_events.go:auditKeylessModeStartup": "hardcodes ActorType: core.ActorTypeSystem and never sets " +
-		"UserID (absent from the struct literal) -- the boot-time keyless-mode warning event " +
-		"(docs/design-b2-recover-admin.md §5), emitted before any request context exists, same " +
-		"no-actor shape as auditConnectorProjectBindingCreate above.",
-	"server/startup_audit_events.go:auditReadsSkippedStartup": "hardcodes ActorType: core.ActorTypeSystem and never sets " +
-		"UserID (absent from the struct literal) -- the boot-time insecure_audit_skip_reads warning event " +
-		"(ADR-112 Amendment 4), emitted before any request context exists, same no-actor shape as " +
-		"auditKeylessModeStartup above and for the same reason.",
-	"server/admin/admin.go:recordAdminAction": "hardcodes ActorType: adminActorType (\"admin_cli\", " +
-		"server/admin/admin.go) and never sets UserID (absent from the struct literal, so it's the zero value " +
-		"nil) -- a host-side `keyorix-server admin` CLI action with no HTTP/gRPC request context to derive a " +
-		"machine identity from in the first place (ADR-108 §B: no admin command starts a network listener), " +
-		"same never-machine-identity-typed shape as the anomaly.go and server boot-path entries above.",
-	"server/admin/recover_admin_logic.go:recordRecoveryAuditEvent": "hardcodes ActorType: adminActorType " +
-		"(\"admin_cli\"), same never-machine-identity-typed, no-network-listener shape as the recordAdminAction " +
-		"entry above (ADR-108 §B). UNLIKE recordAdminAction, this one DOES set UserID -- to the RECOVERED " +
-		"account's id (docs/design-b2-recover-admin.md §4: \"target user\" is part of the required audit " +
-		"content), not the acting identity emitAudit's UserID-clearing rule protects against, since the actor " +
-		"here is the host OS user (no Keyorix identity to attribute to, by definition -- design §4) and is never " +
-		"conflated with the target. ActorType never being \"machine_identity\" is what makes emitAudit's " +
-		"corrections inapplicable here, independent of what UserID holds.",
-	"server/admin/recover_admin_logic.go:recordRecoveryKeyMismatch": "hardcodes ActorType: adminActorType " +
-		"(\"admin_cli\") for the refused `keyorix-server admin recover-admin` attempt (recovery key did not " +
-		"match) -- same host-side, no-network-listener shape as recordRecoveryAuditEvent above (ADR-108 §B). " +
-		"UserID is set only to the TARGET account of the attempt, never to an acting identity: the actor is " +
-		"the host OS user, and ActorType is never \"machine_identity\", so emitAudit's MachineIdentityID " +
-		"stamp has nothing to correct here.",
-	"server/admin/recover_admin_logic.go:recordRecoveryBlockedRefusal": "hardcodes ActorType: adminActorType " +
-		"(\"admin_cli\") for a recover-admin attempt refused because the target is suspended or deprovisioned " +
-		"(#3991) -- same shape as recordRecoveryKeyMismatch above: UserID is only the target, never an acting identity.",
-	"server/admin/reset_mfa_logic.go:performResetMFA": "hardcodes ActorType: adminActorType " +
-		"(\"admin_cli\") for `keyorix-server admin reset-mfa` (RECOVERY-MFA-RESET-1), written through the " +
-		"reset's own transaction -- same host-side, no-network-listener shape as recordRecoveryAuditEvent " +
-		"(ADR-108 §B). UserID is the TARGET account; the actor is the host OS user, never a machine identity.",
-	"server/admin/reset_mfa_logic.go:recordResetMFAKeyMismatch": "hardcodes ActorType: adminActorType " +
-		"(\"admin_cli\") for a refused `keyorix-server admin reset-mfa` (recovery key did not match) -- same " +
-		"shape as recordRecoveryKeyMismatch above: UserID is only the target, never an acting identity.",
-	"server/admin/login_lockout.go:logLoginLockoutAudit": "hardcodes ActorType: adminActorType " +
-		"(\"admin_cli\") for `keyorix-server admin clear-login-lockout` (#2936) -- same host-side, " +
-		"no-network-listener shape as recordRecoveryAuditEvent above (ADR-108 §B). Like it, UserID is set only " +
-		"to the TARGET account whose login lockout was cleared (when --user is given), never to an acting " +
-		"identity: the actor is the host OS user, and ActorType is never \"machine_identity\".",
-}
+// auditDirectOKMarker is the per-site justification marker.
+const auditDirectOKMarker = "audit-direct-ok:"
+
+// auditStoreAllowlistPrefix is the one subtree that may still use the
+// hand-kept auditStoreAllowlist below instead of inline markers: the store
+// package holds the audit write path and the audit flusher, which
+// OPT-AUDIT-RT-1 owns while it is running.
+const auditStoreAllowlistPrefix = "internal/storage/store/"
+
+// auditStoreAllowlist is the small remaining hand-kept block, for direct
+// LogAuditEvent callers under internal/storage/store/ ONLY (the audit write
+// path and flusher). Keys are repo-root-relative "path:func".
+//
+// TODO(OPT-AUDIT-RT-1): move to inline markers after OPT-AUDIT-RT-1 merges,
+// then delete this block and auditStoreAllowlistPrefix. It is empty today:
+// no direct caller exists under the store package on main. An entry outside
+// the prefix is rejected, so this cannot grow back into the old repo-wide list.
+var auditStoreAllowlist = map[string]string{}
 
 var logAuditEventFuncRe = regexp.MustCompile(`^func\s+(?:\([^)]*\)\s*)?([A-Za-z0-9_]+)\(`)
 
@@ -146,14 +86,68 @@ func repoRootG1626() string {
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
 }
 
-// findDirectLogAuditEventCallers scans every non-test *.go file in the
-// repository for a `.LogAuditEvent(` call NOT inside emitAudit itself
-// (service.go's own funnel implementation is the one legitimate direct
-// caller of the storage interface method), returning "path:func" keys
-// relative to the repo root.
-func findDirectLogAuditEventCallers(t *testing.T, root string) map[string]bool {
+// auditDirectCall is one direct `.LogAuditEvent(` call outside emitAudit.
+type auditDirectCall struct {
+	key    string // repo-root-relative "path:func"
+	file   string
+	line   int // 1-based
+	marked bool
+}
+
+// auditMarker is one `// audit-direct-ok:` comment.
+type auditMarker struct {
+	file   string
+	line   int // 1-based
+	reason string
+	used   bool // annotates a direct call
+}
+
+type auditDirectScan struct {
+	calls   []auditDirectCall
+	markers []auditMarker
+}
+
+// callerKeys returns the "path:func" set of every direct caller.
+func (s auditDirectScan) callerKeys() map[string]bool {
+	keys := map[string]bool{}
+	for _, c := range s.calls {
+		keys[c.key] = true
+	}
+	return keys
+}
+
+// markerIndex returns the position of the marker in a line's trailing or
+// full-line `//` comment, or -1. A `//` preceded by an odd number of `"` on
+// the line sits inside a double-quoted string literal (a code generator that
+// emits the marker text, for one) and is not a comment; raw (backtick)
+// strings spanning lines are not tracked.
+func markerIndex(line string) int {
+	for from := 0; ; {
+		c := strings.Index(line[from:], "//")
+		if c < 0 {
+			return -1
+		}
+		c += from
+		if strings.Count(line[:c], `"`)%2 == 0 {
+			m := strings.Index(line[c:], auditDirectOKMarker)
+			if m < 0 {
+				return -1
+			}
+			return c + m
+		}
+		from = c + 2
+	}
+}
+
+// scanAuditDirectCallers scans every non-test *.go file under root for a
+// `.LogAuditEvent(` call NOT inside emitAudit itself (service.go's own funnel
+// implementation is the one legitimate direct caller of the storage interface
+// method) and for every audit-direct-ok marker, and pairs them: a call is
+// marked when the marker is a trailing comment on its line or in the
+// contiguous `//` block ending on the line above it.
+func scanAuditDirectCallers(t *testing.T, root string) auditDirectScan {
 	t.Helper()
-	found := map[string]bool{}
+	var scan auditDirectScan
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -178,46 +172,131 @@ func findDirectLogAuditEventCallers(t *testing.T, root string) map[string]bool {
 			rel = path
 		}
 		rel = filepath.ToSlash(rel)
+
+		lines := strings.Split(string(b), "\n")
+		markerAt := map[int]*auditMarker{} // 0-based line -> marker
+		var fileMarkers []*auditMarker
+		for i, line := range lines {
+			if m := markerIndex(line); m >= 0 {
+				mk := &auditMarker{
+					file:   rel,
+					line:   i + 1,
+					reason: strings.TrimSpace(line[m+len(auditDirectOKMarker):]),
+				}
+				markerAt[i] = mk
+				fileMarkers = append(fileMarkers, mk)
+			}
+		}
+		// findMarker: trailing marker on line i, else a marker in the
+		// contiguous // block ending on line i-1.
+		findMarker := func(i int) *auditMarker {
+			if mk, ok := markerAt[i]; ok {
+				return mk
+			}
+			for j := i - 1; j >= 0 && strings.HasPrefix(strings.TrimSpace(lines[j]), "//"); j-- {
+				if mk, ok := markerAt[j]; ok {
+					return mk
+				}
+			}
+			return nil
+		}
+
 		currentFunc := ""
-		for line := range strings.SplitSeq(string(b), "\n") {
+		for i, line := range lines {
 			if m := logAuditEventFuncRe.FindStringSubmatch(line); m != nil {
 				currentFunc = m[1]
 			}
 			if currentFunc == "emitAudit" {
 				continue // the funnel itself, not a bypass
 			}
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "//") {
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue
 			}
 			if strings.Contains(line, ".LogAuditEvent(") && currentFunc != "" {
-				found[rel+":"+currentFunc] = true
+				call := auditDirectCall{key: rel + ":" + currentFunc, file: rel, line: i + 1}
+				if mk := findMarker(i); mk != nil {
+					mk.used = true
+					call.marked = true
+				}
+				scan.calls = append(scan.calls, call)
 			}
+		}
+		for _, mk := range fileMarkers {
+			scan.markers = append(scan.markers, *mk)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walking repo for direct LogAuditEvent callers: %v", err)
 	}
-	return found
+	return scan
+}
+
+// auditDirectVerdict turns a scan into the guard's two failure lists.
+//
+//   - unjustified: a direct caller with neither a marker nor an entry in the
+//     store allowlist.
+//   - stale: a marker without a reason, a marker that annotates no direct
+//     caller, a store-allowlist entry that no longer matches a caller, or a
+//     store-allowlist entry outside auditStoreAllowlistPrefix.
+func auditDirectVerdict(scan auditDirectScan, storeAllowlist map[string]string) (unjustified, stale []string) {
+	callers := scan.callerKeys()
+	for _, c := range scan.calls {
+		if c.marked {
+			continue
+		}
+		if _, ok := storeAllowlist[c.key]; ok {
+			continue
+		}
+		unjustified = append(unjustified, fmt.Sprintf("%s:%d (%s)", c.file, c.line, c.key))
+	}
+	for _, mk := range scan.markers {
+		switch {
+		case mk.reason == "":
+			stale = append(stale, fmt.Sprintf("%s:%d marker has no reason text", mk.file, mk.line))
+		case !mk.used:
+			stale = append(stale, fmt.Sprintf("%s:%d marker does not sit on or directly above a direct LogAuditEvent call", mk.file, mk.line))
+		}
+	}
+	for key := range storeAllowlist {
+		switch {
+		case !strings.HasPrefix(key, auditStoreAllowlistPrefix):
+			stale = append(stale, key+" (store allowlist entries must be under "+auditStoreAllowlistPrefix+"; use an inline marker elsewhere)")
+		case !callers[key]:
+			stale = append(stale, key+" (no longer calls LogAuditEvent directly)")
+		}
+	}
+	sort.Strings(unjustified)
+	sort.Strings(stale)
+	return unjustified, stale
+}
+
+// writeAuditFixture writes one fixture file under root.
+func writeAuditFixture(t *testing.T, root, rel, src string) {
+	t.Helper()
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+		t.Fatalf("creating fixture dir: %v", err)
+	}
+	if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
+		t.Fatalf("writing fixture %s: %v", rel, err)
+	}
 }
 
 // TestDirectLogAuditEventCallersScannerDetectsBypass is this guard's
-// red-proof.
+// red-proof for the scanner.
 //
 // TestDirectLogAuditEventCallersAreSafe has no total-collapse tripwire at
 // all (unlike several sibling guards in this campaign) -- if
 // logAuditEventFuncRe stopped matching, or the emitAudit exclusion or the
-// "//"-comment skip became too permissive, actual would just come back
-// smaller or noisier, and the allowlist comparison would report either
-// nothing (a false "all safe") or unrelated staleness, never "the scanner
-// broke."
+// "//"-comment skip became too permissive, the scan would just come back
+// smaller or noisier and the verdict would report either nothing (a false
+// "all safe") or unrelated staleness, never "the scanner broke."
 func TestDirectLogAuditEventCallersScannerDetectsBypass(t *testing.T) {
 	root := t.TempDir()
-	// Line-scanned as plain text (findDirectLogAuditEventCallers is a
-	// substring scanner, not go/ast), so this fixture is never compiled
-	// either way -- undefined identifiers (storage, ev, ctx's type) are fine
-	// and deliberate.
+	// Line-scanned as plain text (scanAuditDirectCallers is a substring
+	// scanner, not go/ast), so this fixture is never compiled either way --
+	// undefined identifiers (storage, ev, ctx's type) are fine and deliberate.
 	const src = `package fixture
 
 // emitAudit is the funnel itself -- its own LogAuditEvent call must never
@@ -236,9 +315,7 @@ func commentedOut(ctx context.Context) {
 	// storage.LogAuditEvent(ctx, ev)
 }
 `
-	if err := os.WriteFile(filepath.Join(root, "fixture.go"), []byte(src), 0o600); err != nil {
-		t.Fatalf("writing the synthetic fixture: %v", err)
-	}
+	writeAuditFixture(t, root, "fixture.go", src)
 	// A _test.go file with an otherwise-matching bypass must be excluded —
 	// the scanner only walks non-test files, matching every real caller site.
 	const testSrc = `package fixture
@@ -247,21 +324,19 @@ func shouldNotAppear(ctx context.Context) {
 	storage.LogAuditEvent(ctx, ev)
 }
 `
-	if err := os.WriteFile(filepath.Join(root, "fixture_test.go"), []byte(testSrc), 0o600); err != nil {
-		t.Fatalf("writing the synthetic test-file fixture: %v", err)
-	}
+	writeAuditFixture(t, root, "fixture_test.go", testSrc)
 
-	found := findDirectLogAuditEventCallers(t, root)
+	found := scanAuditDirectCallers(t, root).callerKeys()
 
 	if !found["fixture.go:directBypass"] {
-		t.Errorf("findDirectLogAuditEventCallers must find fixture.go:directBypass; got %v", found)
+		t.Errorf("scanAuditDirectCallers must find fixture.go:directBypass; got %v", found)
 	}
 	if found["fixture.go:emitAudit"] {
-		t.Errorf("findDirectLogAuditEventCallers reported emitAudit's own call as a bypass — the funnel "+
+		t.Errorf("scanAuditDirectCallers reported emitAudit's own call as a bypass — the funnel "+
 			"exclusion has stopped working, got %v", found)
 	}
 	if found["fixture.go:commentedOut"] {
-		t.Errorf("findDirectLogAuditEventCallers reported a commented-out call — the \"//\" skip has "+
+		t.Errorf("scanAuditDirectCallers reported a commented-out call — the \"//\" skip has "+
 			"stopped working, got %v", found)
 	}
 	if len(found) != 1 {
@@ -270,35 +345,255 @@ func shouldNotAppear(ctx context.Context) {
 	}
 }
 
+// TestDirectLogAuditEventMarkerCalibration is the marker rules' calibration:
+// every red case must produce the named failure and every green case must
+// produce none, so a verdict that silently accepts everything (or rejects
+// everything) fails here instead of in somebody else's merge queue.
+func TestDirectLogAuditEventMarkerCalibration(t *testing.T) {
+	t.Parallel()
+	const (
+		wantUnjustified = "unjustified"
+		wantStale       = "stale"
+		wantClean       = "clean"
+	)
+	cases := []struct {
+		name      string
+		files     map[string]string
+		allowlist map[string]string
+		want      string // wantUnjustified | wantStale | wantClean
+	}{
+		{
+			name: "red: direct caller with no marker",
+			files: map[string]string{"pkg/a.go": `package pkg
+
+func record(ctx context.Context) {
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			want: wantUnjustified,
+		},
+		{
+			name: "red: stale marker on a line with no direct caller",
+			files: map[string]string{"pkg/a.go": `package pkg
+
+func record(ctx context.Context) {
+	// audit-direct-ok: this site used to write directly
+	emitAudit(ctx, ev)
+}
+`},
+			want: wantStale,
+		},
+		{
+			name: "red: marker with no reason text",
+			files: map[string]string{"pkg/a.go": `package pkg
+
+func record(ctx context.Context) {
+	// audit-direct-ok:
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			want: wantStale,
+		},
+		{
+			name: "red: blank line separates the marker from the call",
+			files: map[string]string{"pkg/a.go": `package pkg
+
+func record(ctx context.Context) {
+	// audit-direct-ok: system actor, never machine-typed
+
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			want: wantUnjustified,
+		},
+		{
+			name: "red: code line separates the marker from the call",
+			files: map[string]string{"pkg/a.go": `package pkg
+
+func record(ctx context.Context) {
+	// audit-direct-ok: system actor, never machine-typed
+	x := 1
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			want: wantUnjustified,
+		},
+		{
+			name: "red: marker above emitAudit's own call annotates nothing",
+			files: map[string]string{"pkg/service.go": `package pkg
+
+func emitAudit(ctx context.Context) {
+	// audit-direct-ok: the funnel
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			want: wantStale,
+		},
+		{
+			name: "red: marker in a _test.go file is not scanned, caller beside it still needs one",
+			files: map[string]string{
+				"pkg/a.go": `package pkg
+
+func record(ctx context.Context) {
+	st.LogAuditEvent(ctx, ev)
+}
+`,
+				"pkg/a_test.go": `package pkg
+
+// audit-direct-ok: wrong file
+func helper() {}
+`},
+			want: wantUnjustified,
+		},
+		{
+			name: "red: store allowlist entry outside the store prefix",
+			files: map[string]string{"pkg/a.go": `package pkg
+
+func record(ctx context.Context) {
+	// audit-direct-ok: system actor
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			allowlist: map[string]string{"pkg/a.go:record": "must use a marker"},
+			want:      wantStale,
+		},
+		{
+			name: "red: store allowlist entry whose caller is gone",
+			files: map[string]string{"internal/storage/store/x.go": `package store
+
+func other() {}
+`},
+			allowlist: map[string]string{"internal/storage/store/x.go:flush": "gone"},
+			want:      wantStale,
+		},
+		{
+			name: "green: marker in the comment block directly above the call",
+			files: map[string]string{"pkg/a.go": `package pkg
+
+func record(ctx context.Context) {
+	ev := &models.AuditEvent{ActorType: "system"}
+	// audit-direct-ok: ActorType is system, never machine-typed, so
+	// emitAudit's stamp would never apply (reason continues here).
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			want: wantClean,
+		},
+		{
+			name: "green: trailing marker on the call line",
+			files: map[string]string{"pkg/a.go": `package pkg
+
+func record(ctx context.Context) {
+	st.LogAuditEvent(ctx, ev) // audit-direct-ok: system actor
+}
+`},
+			want: wantClean,
+		},
+		{
+			name: "green: two sites in one file each carry their own marker",
+			files: map[string]string{"pkg/a.go": `package pkg
+
+func one(ctx context.Context) {
+	// audit-direct-ok: first site
+	st.LogAuditEvent(ctx, ev)
+}
+
+func two(ctx context.Context) {
+	// audit-direct-ok: second site
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			want: wantClean,
+		},
+		{
+			name: "green: marker text inside a string literal is not a marker (code generators emit it)",
+			files: map[string]string{"gen/main.go": `package main
+
+func emit(buf *bytes.Buffer) {
+	fmt.Fprintf(buf, "%s// audit-direct-ok: emitted into generated code\n", indent)
+}
+`},
+			want: wantClean,
+		},
+		{
+			name: "green: emitAudit's own call needs no marker",
+			files: map[string]string{"pkg/service.go": `package pkg
+
+func emitAudit(ctx context.Context) {
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			want: wantClean,
+		},
+		{
+			name: "green: store caller covered by the store allowlist",
+			files: map[string]string{"internal/storage/store/x.go": `package store
+
+func flush(ctx context.Context) {
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			allowlist: map[string]string{"internal/storage/store/x.go:flush": "OPT-AUDIT-RT-1"},
+			want:      wantClean,
+		},
+		{
+			name: "green: store caller may also use an inline marker",
+			files: map[string]string{"internal/storage/store/x.go": `package store
+
+func flush(ctx context.Context) {
+	// audit-direct-ok: flusher writes already-attributed rows
+	st.LogAuditEvent(ctx, ev)
+}
+`},
+			want: wantClean,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for rel, src := range tc.files {
+				writeAuditFixture(t, root, rel, src)
+			}
+			unjustified, stale := auditDirectVerdict(scanAuditDirectCallers(t, root), tc.allowlist)
+			switch tc.want {
+			case wantUnjustified:
+				if len(unjustified) == 0 {
+					t.Errorf("expected an unjustified caller to be reported; got none (stale=%v)", stale)
+				}
+			case wantStale:
+				if len(stale) == 0 {
+					t.Errorf("expected a stale marker/entry to be reported; got none (unjustified=%v)", unjustified)
+				}
+			case wantClean:
+				if len(unjustified) != 0 || len(stale) != 0 {
+					t.Errorf("expected a clean verdict; got unjustified=%v stale=%v", unjustified, stale)
+				}
+			}
+		})
+	}
+}
+
 // TestDirectLogAuditEventCallersAreSafe is #1530's guard: every direct
 // storage.LogAuditEvent caller (bypassing emitAudit's MachineIdentityID
-// stamp) must be in auditAttributionAllowlist with a reason, or the test
-// fails -- a new bypass site is exactly how this gap would reappear.
+// stamp) must carry an `// audit-direct-ok: <reason>` marker on or directly
+// above the call (or, under internal/storage/store/ only, an entry in
+// auditStoreAllowlist), and every marker must annotate such a caller -- a new
+// bypass site is exactly how this gap would reappear, and the justification
+// travels in the PR that adds the site.
 func TestDirectLogAuditEventCallersAreSafe(t *testing.T) {
 	t.Parallel()
-	actual := findDirectLogAuditEventCallers(t, repoRootG1626())
+	scan := scanAuditDirectCallers(t, repoRootG1626())
+	unjustified, stale := auditDirectVerdict(scan, auditStoreAllowlist)
 
-	var unjustified []string
-	for key := range actual {
-		if _, ok := auditAttributionAllowlist[key]; !ok {
-			unjustified = append(unjustified, key)
-		}
-	}
 	if len(unjustified) > 0 {
 		t.Errorf("%d direct storage.LogAuditEvent caller(s) bypass emitAudit's MachineIdentityID stamp with no "+
-			"reasoned allowlist entry: %v\nEither route through emitAudit instead, or add a reasoned entry to "+
-			"auditAttributionAllowlist explaining why this site can never emit a machine-identity-typed event "+
-			"without attribution.", len(unjustified), unjustified)
-	}
-
-	var stale []string
-	for key := range auditAttributionAllowlist {
-		if !actual[key] {
-			stale = append(stale, key+" (no longer calls LogAuditEvent directly)")
-		}
+			"`// %s <reason>` marker: %v\nEither route through emitAudit instead, or add the marker on the call "+
+			"line or in the comment block directly above it, explaining why this site can never emit a "+
+			"machine-identity-typed event without attribution.", len(unjustified), auditDirectOKMarker, unjustified)
 	}
 	if len(stale) > 0 {
-		t.Errorf("auditAttributionAllowlist entr(y/ies) no longer reproduce: %v\nRemove the entry -- it's either "+
-			"been fixed to route through emitAudit, or the direct call was removed.", stale)
+		t.Errorf("stale or malformed audit-direct-ok marker(s)/entries: %v\nRemove the marker -- it's either "+
+			"been fixed to route through emitAudit, or the direct call was removed or moved away from it.", stale)
 	}
 }

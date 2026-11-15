@@ -1,0 +1,2 @@
+### Testing
+- **Test-only change, no behaviour change.** The `TestNoErrorTextClassification` exceptions are now one file per function under `internal/core/guards/testdata/errtext_classification_exceptions.d/` instead of one shared TSV, so a PR that migrates a handler family and a PR that adds a function can no longer fail each other in the merge queue. A new `TestNoNewSingleFileAllowlist` fails when a new flat `*exempt*`/`*exception*`/`*allowlist*` data file or a new non-empty guard allowlist map is added without a per-entry layout.

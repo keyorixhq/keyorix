@@ -184,6 +184,12 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 	if enc == nil {
 		return &KeySetState{Fresh: true}, nil
 	}
+	// #4249: from another directory than the config's, relative key paths name
+	// other files; judging those would report a "fresh" or partial set that is
+	// not the one every other process uses.
+	if err := enc.CheckRelativeKeyPathBase(baseDir); err != nil {
+		return nil, err
+	}
 	paths, err := RequiredKeyFilePaths(enc, baseDir)
 	if err != nil {
 		return nil, err
@@ -219,6 +225,13 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 		st.Fresh = true // first-boot generation will create these shortly
 		return st, nil
 	}
+	// Before the manifest: with no manifest, they are what tells boot that an
+	// interrupted rotation may have left the active set incoherent.
+	for _, p := range paths {
+		if _, err := os.Stat(p + ".pending"); err == nil {
+			st.Leftovers = append(st.Leftovers, p+".pending")
+		}
+	}
 
 	m, err := LoadManifest(manifestPath)
 	if err != nil {
@@ -247,11 +260,6 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 			st.Unrecorded = append(st.Unrecorded, p)
 		}
 		st.Files = append(st.Files, f)
-	}
-	for _, p := range paths {
-		if _, err := os.Stat(p + ".pending"); err == nil {
-			st.Leftovers = append(st.Leftovers, p+".pending")
-		}
 	}
 	if len(foreign) == 0 && m.Next != nil {
 		if err := st.classifyIntent(); err != nil {

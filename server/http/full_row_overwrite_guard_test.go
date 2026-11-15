@@ -117,8 +117,10 @@ var fullRowOverwriteMethods = map[string]bool{
 	// SetWebAuthnCredentialCounterState). Same reasoning, and the
 	// replacements take an id plus scalars or a field struct, never a
 	// caller-built *models.X.
-	"UpdateProject":   true,
-	"UpdateLegalHold": true,
+	"UpdateProject": true,
+	// UpdateLegalHold was here until STORE-STALE-NOV-2 replaced it with
+	// ReleaseLegalHold (#4210): a conditional, column-scoped lift taking an id
+	// plus scalars, not a caller-built *models.LegalHold.
 	// UpdateDynamicSecretConfig was here until STORE-CLEANUP-1 deleted it, and
 	// UpdateDynamicSecretLease until STORE-STALE-WRITE-1: no caller was left after
 	// #2675/#2698/#2825 moved every write onto column-scoped methods.

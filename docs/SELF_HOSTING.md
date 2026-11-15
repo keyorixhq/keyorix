@@ -247,6 +247,12 @@ single transaction.  If the server crashes mid-sweep, the orphaned pending key
 file is detected and cleaned up automatically on the next `--confirm` run.
 Back up the `keyorix_keys` volume after a successful rotation.
 
+**There is no command that undoes a rotation.** `admin encryption` has no reverse subcommand
+and `rotate` takes only `--confirm` and `--dry-run`. The way back is `admin backup` taken
+*before* the rotation, restored with `admin restore` (every write made since the archive is
+lost), so take that backup first; otherwise roll forward by rotating again. See
+[operator/key-rotation-runbook.md](operator/key-rotation-runbook.md) §6 "Rollback".
+
 With several server replicas on one PostgreSQL database, stop all of them, and
 copy the new key files to every replica before starting it: a replica with the
 old `dek.key` refuses to start. See [`operator/j6-key-rotation.md`](operator/j6-key-rotation.md)
@@ -581,8 +587,9 @@ path.
 ## 6. Upgrades
 
 ```sh
-# docker-compose.yml pins both images to one release tag (e.g. :0.96.0, no
-# leading "v"). `pull` alone fetches nothing new: first edit the `backend` and
+# docker-compose.yml pins both images to one release tag (release v0.97.0 is
+# image :0.97.0: the image tag has no leading "v"). `pull` alone fetches nothing
+# new: first edit the `backend` and
 # `web` tags to the release you are moving to, then:
 docker compose pull          # fetch the published images for those tags
 docker compose up -d         # recreate with the new images
@@ -611,15 +618,15 @@ kept. Across a floor change (v0.96.x → v0.97.0), the old release refuses to st
 the upgraded database, and the only way back is restoring the pre-upgrade backup.
 
 [operator/upgrade-rollback.md](operator/upgrade-rollback.md) is the step-by-step
-runbook, verified on 0.96.1 → 0.96.3 with the published images (SQLite and
+runbook, verified on v0.96.1 → v0.96.3 with the published images (SQLite and
 PostgreSQL). It covers the version/schema matrix, timings and what not to do. v0.96.2
-images were never published; go from 0.96.1 to 0.96.3. See
+images were never published; go from v0.96.1 to v0.96.3. See
 [UPGRADING.md](UPGRADING.md) for what changes on upgrade. In particular, from this
 release on, an upgraded deployment whose config never set `security.require_mfa` gets a
 grace period before MFA is enforced. It ends at the first administrator MFA enrolment
 or 30 days after the first start on the new release, whichever comes first
 ([details](UPGRADING.md#mfa-after-an-upgrade-the-grace-period-and-its-banner)). An
-upgrade within v0.96.x logs no grace line: 0.96.1 → 0.96.3 kept MFA enforced.
+upgrade within v0.96.x logs no grace line: v0.96.1 → v0.96.3 kept MFA enforced.
 
 ### Running more than one replica
 
@@ -752,7 +759,7 @@ export that root and point the CLI at it:
 `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`
 then `keyorix --ca-file $PWD/caddy-root.crt login --server https://localhost ...`, or
 store it once with `keyorix config set ca_file $PWD/caddy-root.crt` (CLI releases
-after 0.95.3; with an older CLI, `SSL_CERT_FILE=$PWD/caddy-root.crt` works on Linux
+after v0.95.3; with an older CLI, `SSL_CERT_FILE=$PWD/caddy-root.crt` works on Linux
 only). When running the `tls` profile,
 don't also expose web's `8088` publicly — front everything through Caddy on
 80/443.
@@ -839,7 +846,7 @@ curl -si -H 'X-Forwarded-Proto: https' -H 'Content-Type: application/json' \
 Invalid values (anything that is not an IP/CIDR, a bad mode, a non-numeric
 `max-age`) stop the container at start rather than trusting more than intended.
 These variables need a `web` image that contains this feature (releases after
-0.95.3); older images ignore them and send no HSTS.
+v0.95.3); older images ignore them and send no HSTS.
 
 Helm: the chart's Ingress routes every path to `web`, so browsers only ever see
 the web nginx's HSTS decision (the backend's header is stripped from proxied API

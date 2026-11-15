@@ -655,8 +655,12 @@ func refusePendingKeyRotation(cfg *config.Config) error {
 	}
 	paths := make([]string, len(pending))
 	saltAdvice := ""
+	dek := false
 	for i, p := range pending {
 		paths[i] = p.Path
+		if !p.Salt {
+			dek = true
+		}
 		if p.Salt {
 			saltAdvice = fmt.Sprintf(" %[1]s is the KEK salt's staging file. After an interrupted rotate-kek the start may need it and the "+
 				"new passphrase, and if it is refused, follow the recovery it prints. A server start that succeeds and leaves %[1]s in "+
@@ -666,7 +670,7 @@ func refusePendingKeyRotation(cfg *config.Config) error {
 				"directory>), back up again, and delete the moved copy once that backup and a server start have succeeded.", p.Path)
 		}
 	}
-	return &pendingRotationRefusal{paths: paths, msg: fmt.Sprintf("backup refused: a key rotation is running or was interrupted (found %s). "+
+	return &pendingRotationRefusal{paths: paths, dek: dek, msg: fmt.Sprintf("backup refused: a key rotation is running or was interrupted (found %s). "+
 		"An archive taken now would include that staging file and `admin restore` would refuse it on any other host, so no archive was "+
 		"written and no key file was changed. If a rotation is running, wait for it to finish. Otherwise start the server once so boot "+
 		"recovery completes the rotation, then back up again.%s Never delete a DEK's .pending file by hand: it can be the only copy of the "+
@@ -678,6 +682,7 @@ func refusePendingKeyRotation(cfg *config.Config) error {
 // files are present (not a failed check).
 type pendingRotationRefusal struct {
 	paths []string
+	dek   bool // the DEK's staging file is among them: never removed by hand
 	msg   string
 }
 

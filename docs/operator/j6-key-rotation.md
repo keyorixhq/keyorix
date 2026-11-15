@@ -41,13 +41,18 @@ Expected:
 ```
 ⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
 🔄 Rotating DEK with full re-encryption sweep...
-[sweep] pre-commit verification: all N re-encrypted values decrypt under the new DEK
-✅ Sweep committed: 3 secret_versions, 0 api_tokens, ... re-encrypted (0 legacy AAD upgraded)
-✅ DEK rotated and full re-encryption sweep complete. New version: v1790408589
+2026/11/14 14:25:08 [sweep] secret_versions: 3 rows processed
+2026/11/14 14:25:08 [sweep] pre-commit verification: all 3 re-encrypted values decrypt under the new DEK
+2026/11/14 14:25:08 ✅ Sweep committed: 3 secret_versions, 0 api_tokens, ... re-encrypted (0 legacy AAD upgraded)
+✅ DEK rotated and full re-encryption sweep complete. New version: v1794662708
+✅ DEK rotated successfully
+📋 New key version: v1794662708
+📋 secret_versions: 3, api_tokens: 0, api_clients: 0, ... (legacy AAD upgraded: 0)
+ran `keyorix-server admin encryption rotate` (full DEK re-encryption sweep)
 ```
 
 (On PostgreSQL a line `DEK rotation: encrypted writes are now refused on every replica; waiting 10s ...`
-comes first. The command ends with a second summary line like the dry run's.)
+comes first. The last summary line is the dry run's. Exit status 0.)
 
 A kill at any point during this is safe — the design guarantees exactly one of the old or
 new DEK stays consistently active and every row stays decryptable under it, never a
@@ -104,8 +109,11 @@ the old DEK, or by re-running `rotate`. SQLite (single server) is unchanged.
 This re-wraps the DEK under a new passphrase; it does **not** touch any database row.
 It still opens the database (read only, to finish an interrupted DEK rotation first, and to
 take the exclusive presence lock, #3513), so the database must be reachable with the
-configured `storage` settings: on PostgreSQL the server must be reachable, on SQLite run it
-from the directory the configured path is relative to. When it is not, `rotate-kek` fails with
+configured `storage` settings: on PostgreSQL the server must be reachable; on SQLite a relative
+`database.path` is taken relative to the config file. Give `encryption.dek_path` and
+`salt_path` as absolute paths: relative ones are defined against the config file's
+directory, and the command refuses to run from any other directory, naming the key (#4249). When the
+database is not reachable, `rotate-kek` fails with
 `cannot connect to the database to check for a running server`, although only key files change.
 Bring the database up first; `--force` is not a fix for this (see the runbook).
 `admin encryption migrate-provider` opens it the same way.
@@ -162,6 +170,24 @@ An archive carries its own wrapped DEK, so one taken before a DEK or KEK rotatio
 still restores: after `rotate-kek`, restore it with the passphrase that was current
 when it was taken. Keep each old passphrase for as long as you keep the archives that
 need it.
+
+## When `admin backup` stops after an interrupted rotation
+
+A `rotate-kek` that was interrupted before it changed any active key leaves
+`keys/kek.salt.pending`. A server start that succeeds proves the active keys open without
+it and leaves the file in place, and every later `admin backup` is refused while it
+exists. The refusal exits with status **4** (every other backup failure exits 1) and prints
+`keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="keys/kek.salt.pending"`
+on stderr, so a cron wrapper can match either. The server's start log says it too:
+a `[WARN] key set:` line containing ``admin backup` will refuse until keys/kek.salt.pending is moved away``,
+and `keyorix-server admin diagnose` prints `[WARN] backups would be refused: staging file
+present (keys/kek.salt.pending)` followed by the same steps as the refusal. Those are: check
+that no `rotate-kek` is running, `mv keys/kek.salt.pending` to a directory outside the key
+directory, back up, and delete the moved copy once that backup and a server start have
+succeeded. A `keys/dek.key.pending` is different: never delete it by hand (it can be the only
+copy of the new DEK); start the server so boot recovery settles it. Boot never removes
+either file itself. All of this was run on a throwaway SQLite install with a leftover
+`kek.salt.pending`; the DEK variant of the `diagnose` line is covered by a test only.
 
 ## Rehearse it: `scripts/drills/key-rotation.sh`
 

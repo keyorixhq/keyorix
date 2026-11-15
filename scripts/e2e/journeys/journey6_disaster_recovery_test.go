@@ -524,7 +524,7 @@ func TestJourney_DisasterRecovery(t *testing.T) {
 		}
 
 		out2, err2 := harness.RunAdminCmd(serverBin, rollbackDir, rollbackEnv,
-			"restore", "--config", "./keyorix.yaml", "--input", backupPath, "--overwrite-existing")
+			"restore", "--config", "./keyorix.yaml", "--input", backupPath, "--overwrite-existing", "--replace-existing-data")
 		if err2 == nil {
 			t.Fatal("restoring an OLDER backup without --allow-rollback succeeded -- should have been refused")
 		}

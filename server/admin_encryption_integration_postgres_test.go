@@ -235,10 +235,11 @@ func TestAdminEncryptionStatus_Postgres_DoesNotCreateKeys(t *testing.T) {
 		t.Fatalf("mkdir keys: %v", err)
 	}
 
-	// status reports a missing install and exits 0 (its output IS the answer).
+	// status reports a missing install and exits non-zero (#4270): a preflight
+	// `status && rotate --confirm` must stop when there are no keys.
 	out, err := runAdmin(t, bin, dir, env, "encryption", "status", "--config", "./keyorix.yaml")
-	if err != nil {
-		t.Fatalf("encryption status must exit 0 on a missing install: %v\n%s", err, out)
+	if err == nil {
+		t.Errorf("encryption status must exit non-zero on a missing install, got success:\n%s", out)
 	}
 	if !strings.Contains(out, "no wrapped DEK") {
 		t.Errorf("expected status to say there is no wrapped DEK, got:\n%s", out)

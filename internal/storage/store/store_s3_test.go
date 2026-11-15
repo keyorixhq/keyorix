@@ -1276,8 +1276,9 @@ func TestGetActiveLegalHold(t *testing.T) {
 	assert.Equal(t, h.ID, hold2.ID)
 
 	// Release the hold.
-	h.Released = true
-	require.NoError(t, ls.UpdateLegalHold(ctx, h))
+	released, err := ls.ReleaseLegalHold(ctx, h.ID, 1, time.Now(), "done")
+	require.NoError(t, err)
+	require.True(t, released)
 
 	// No longer active.
 	hold3, err := ls.GetActiveLegalHold(ctx)

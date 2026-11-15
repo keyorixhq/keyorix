@@ -83,6 +83,12 @@ you already downloaded), `--skip-binaries` (skip the ~540 MB of binaries; SBOMs 
 checked), `--offline` (never call api.github.com), `--cosign-args "..."` (extra cosign
 flags). `scripts/release/verify-release.sh --help` lists all of them.
 
+`--skip-binaries` together with `--assets-dir DIR` does not yet cover the file list: if the
+14 binaries are not in `DIR`, `release.assets` reports them as missing and the run FAILs
+(exit 1, #4269), although the same flags without `--assets-dir` pass. Put the binaries in
+`DIR`, or drop `--assets-dir` on a connected host; do not read that FAIL as a statement
+about the release.
+
 Open issues labelled `release-blocker` are not part of a verification: they are about the
 next release, not the tag you check, and the script does not look at them unless a
 maintainer passes `--check-blockers` before tagging (see `RELEASING.md`).

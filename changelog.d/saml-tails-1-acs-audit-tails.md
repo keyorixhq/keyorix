@@ -1,0 +1,3 @@
+### Security
+- **SSO login audit events name the client.** The `auth.sso_login` event of a SAML or OIDC login now records the same client IP as its session (the forwarded client behind a configured trusted proxy); it used to record none. Guarded by `server/http/handlers/sso_login_audit_client_ip_test.go`. (#2934)
+- **An SSO login whose session cannot be created is audited.** When a SAML or OIDC login has provisioned or reconciled the account and the session insert then fails, a failed `auth.sso_login_session_failed` event names the account and the client. The account and its grants are kept, and the next login reuses them without duplicating either. Guarded by `internal/core/sso_login_session_failed_test.go`. (#2839)
