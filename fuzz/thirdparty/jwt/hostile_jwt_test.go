@@ -98,15 +98,6 @@ type strictResult struct {
 	reasons []string
 }
 
-func (s strictResult) has(r string) bool {
-	for _, x := range s.reasons {
-		if x == r {
-			return true
-		}
-	}
-	return false
-}
-
 // strictDecode applies a strict RFC 7515/7519/8725 structural reading. It does NOT
 // verify signatures (no keys available for arbitrary fuzz input). It returns the
 // full set of reasons it would reject on (not short-circuited past the leniency
