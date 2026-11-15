@@ -13,7 +13,7 @@ import (
 // TestSuspendedActorRefusedAtEntryPoints: the entry points REVIEW-4336-DEEP-1 F1
 // found unchecked refuse a suspended human actor with ErrPermissionDenied before
 // they read or write anything else (#4159). The mock answers only GetUser, so any
-// other storage call (the share, role or ACL write among them) fails the test:
+// other storage call (the share or role write among them) fails the test:
 // the assertion is on the absence of the effect, not only on the error.
 func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 	const actor uint = 42
@@ -26,9 +26,6 @@ func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 		"UpdateSharePermission": func(c *KeyorixCore) error {
 			_, err := c.UpdateSharePermission(context.Background(), &UpdateShareRequest{ShareID: 1, Permission: "write", UpdatedBy: actor})
 			return err
-		},
-		"GrantSecretACL": func(c *KeyorixCore) error {
-			return c.GrantSecretACL(context.Background(), actor, 1, 2, []string{"read"})
 		},
 		"SetUserRoles": func(c *KeyorixCore) error {
 			return c.SetUserRoles(context.Background(), actor, 2, []uint{7}, Scope{}, false)

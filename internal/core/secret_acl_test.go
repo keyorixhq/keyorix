@@ -39,9 +39,6 @@ func newACLCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	}
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
-	for _, actor := range []uint{1, 99} {
-		ensureActiveActor(t, c.storage, actor) // the granting users are active (#4159)
-	}
 	return c, db
 }
 

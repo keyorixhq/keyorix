@@ -13,7 +13,7 @@
   bound core-enforced op as two suspended principals, project_admin@A and the fixture global
   admin/secret owner, failing any op with no checked case) and
   `internal/core/actor_active_entrypoints_test.go` (`TestSuspendedActorRefusedAtEntryPoints`,
-  the share, ACL, role, group, user, invitation, OIDC-binding and restore entry points, refused
+  the share, role, group, user, invitation, OIDC-binding and restore entry points, refused
   before any other storage call).
   The per-secret read entry point `GetSecretForRead` (and `GetSecretForValueRead`, which delegates)
   makes the same refusal (#4336, Andrei's option 2): it calls `requireActorActive` first, except
@@ -22,5 +22,6 @@
   pays no extra statement. Guard: `TestGetSecretForRead_RefusesInactiveActor`.
   **Not covered**: `CreateSecret`, which takes no acting-user
   ID (only the new secret's `OwnerID` and a `CreatedBy` name) and makes no authorization decision
-  in core; and entry points the harness does not bind (a new mutating entry point must call
+  in core; `GrantSecretACL`, which makes no authorization decision in core either (the
+  transports authorize the grant; authzdiff matrix `core_refusal: none`); and entry points the harness does not bind (a new mutating entry point must call
   `requireActorActive` itself; no static guard enforces that).
