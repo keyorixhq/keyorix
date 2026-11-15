@@ -41,7 +41,7 @@ on:
   schedule:
     # Weekly deep scan: catches newly-published CodeQL query packs against
     # unchanged code, not just what a push/PR diff touches.
-    - cron: '17 3 * * 1'
+    - cron: '17 7 * * 1'
 
 # Workflow-level default: read-only, except the one permission CodeQL's own
 # upload step needs (security-events: write, to publish SARIF results to the
