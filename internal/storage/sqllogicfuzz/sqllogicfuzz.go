@@ -97,7 +97,7 @@ func (s *stream) byte() byte {
 		// Deterministic padding once input is exhausted; keeps generation
 		// bounded and total without panicking on short inputs.
 		s.pos++
-		return byte(s.pos * 31)
+		return byte((s.pos * 31) & 0xff)
 	}
 	v := s.b[s.pos]
 	s.pos++
