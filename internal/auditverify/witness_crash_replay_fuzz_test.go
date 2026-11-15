@@ -52,6 +52,7 @@ package auditverify_test
 //	ROBUSTNESS — ParseHighWater/ReadWitness never panic on arbitrary bytes.
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,16 +72,16 @@ var witnessFuzzKey = []byte("fs1-witness-crash-replay-hmac-k0")
 // key — the on-disk shape of an attacker/torn higher mark.
 var witnessFuzzWrongKey = []byte("fs1-witness-crash-replay-WRONGke")
 
-// countOpenFDs returns the number of entries in /proc/self/fd (Linux). The
-// witness read/write helpers all close deterministically, so a per-call leak
-// would show as monotonic growth across the oracle-(e) loop below.
-func countOpenFDs(t *testing.T) int {
-	t.Helper()
+// countOpenFDs returns the number of entries in /proc/self/fd (Linux), or
+// ok=false where it is missing (darwin), in which case only oracle (e) is
+// skipped. The witness read/write helpers all close deterministically, so a
+// per-call leak would show as monotonic growth across the oracle-(e) loop below.
+func countOpenFDs() (n int, ok bool) {
 	ents, err := os.ReadDir("/proc/self/fd")
 	if err != nil {
-		t.Skipf("cannot read /proc/self/fd (not Linux?): %v", err)
+		return 0, false
 	}
-	return len(ents)
+	return len(ents), true
 }
 
 // sanitizeField strips the separator and NUL bytes a fuzzer might inject into a
@@ -99,6 +100,7 @@ func FuzzWitnessCrashReplay(f *testing.F) {
 	f.Add(int64(100), uint64(200), "key-2", "abc123", byte(2), uint16(1), int64(50))
 	f.Add(int64(1<<40), uint64(1<<40), "v9", strings.Repeat("f", 64), byte(3), uint16(9999), int64(1))
 	f.Add(int64(-3), uint64(1), "neg", "0", byte(4), uint16(2), int64(0))
+	f.Add(int64(42), uint64(7), "v1", "cafe", byte(6), uint16(0), int64(3))
 
 	f.Fuzz(func(t *testing.T, chained int64, headID uint64, keyVer, headHashIn string, mutSel byte, truncK uint16, advance int64) {
 		dir := t.TempDir()
@@ -137,7 +139,8 @@ func FuzzWitnessCrashReplay(f *testing.F) {
 		if err != nil {
 			t.Fatalf("read baseline witness bytes: %v", err)
 		}
-		mutated, kind := mutateWitness(orig, int(mutSel), int(truncK), cp1, chained, advance)
+		mutated, kind, rewound := mutateWitness(orig, int(mutSel), int(truncK), cp1, chained, advance)
+		signedByUs := string(mutated) == string(orig) || (rewound != "" && string(mutated) == rewound)
 		if err := os.WriteFile(path, mutated, 0o600); err != nil { //nolint:gosec // harness temp path
 			t.Fatalf("write mutated witness: %v", err)
 		}
@@ -158,12 +161,17 @@ func FuzzWitnessCrashReplay(f *testing.F) {
 			t.Fatalf("SILENT-ABSENT (oracle c): an existing witness file (%s) read back as found=false,nil — a corrupted witness treated as 'no witness' is exactly the rollback-protection bypass this must reject; bytes=%q", kind, mutated)
 		default:
 			// Parsed OK. Oracle (b): it may verify under the real key ONLY if
-			// the bytes are byte-identical to a value we legitimately signed
-			// under witnessFuzzKey. Any torn/forged byte sequence that verifies
-			// is an HMAC integrity break.
+			// the bytes are byte-identical to a value the harness itself signed
+			// under witnessFuzzKey: v1 (orig), or the rewound value. "Signed by
+			// us" comes from the harness's own record, never from
+			// HighWaterSigMatches, the function under test. Any other byte
+			// sequence that verifies is an HMAC integrity break.
 			verifies := auditverify.HighWaterSigMatches(cp, sig, witnessFuzzKey)
-			if verifies && string(mutated) != string(orig) && !isLegitSignedValue(string(mutated), cp, sig) {
-				t.Fatalf("INTEGRITY (oracle b): a tampered/torn witness (%s) parsed AND verified under the real key though its bytes differ from any value signed by us: %q", kind, mutated)
+			if verifies && !signedByUs {
+				t.Fatalf("INTEGRITY (oracle b): a tampered/torn witness (%s) parsed AND verified under the real key though the harness never signed those bytes: %q", kind, mutated)
+			}
+			if !verifies && signedByUs {
+				t.Fatalf("INTEGRITY (oracle b): a witness the harness signed under the real key (%s) does not verify", kind)
 			}
 		}
 
@@ -208,12 +216,16 @@ func FuzzWitnessCrashReplay(f *testing.F) {
 		}
 
 		// ── oracle (e): no fd leak across repeated read/write cycles ──────
-		before := countOpenFDs(t)
+		before, fdOK := countOpenFDs()
 		for range 16 {
 			_, _, _, _ = auditverify.ReadWitness(path)
 			_, _ = auditverify.WriteWitnessIfHigher(path, v2)
 		}
-		after := countOpenFDs(t)
+		if !fdOK {
+			t.Log("no /proc/self/fd: oracle (e) skipped")
+			return
+		}
+		after, _ := countOpenFDs()
 		if after > before+2 {
 			t.Fatalf("FD LEAK (oracle e): open fd count grew %d→%d across 16 read/write cycles (%s)", before, after, kind)
 		}
@@ -227,41 +239,32 @@ func parseOK(b []byte) (string, bool) {
 	return sig, ok
 }
 
-// isLegitSignedValue reports whether value is one the harness itself signed
-// under witnessFuzzKey (so a verify is legitimate, not an integrity break).
-// Because EncodeHighWater+SignCheckpoint is deterministic, re-encoding the
-// parsed checkpoint with a fresh signature under the real key and comparing is
-// the exact "was this produced by us" test.
-func isLegitSignedValue(value string, cp *auditverify.Checkpoint, sig string) bool {
-	return auditverify.EncodeHighWater(cp, sig) == value &&
-		auditverify.HighWaterSigMatches(cp, sig, witnessFuzzKey)
-}
-
 // mutateWitness turns the baseline witness bytes into a post-crash / tampered
-// shape chosen by sel. It returns the new bytes and a human-readable kind for
-// failure messages.
-func mutateWitness(orig []byte, sel, truncK int, cp1 *auditverify.Checkpoint, chained, advance int64) ([]byte, string) {
-	switch sel % 6 {
+// shape chosen by sel. It returns the new bytes, a human-readable kind for
+// failure messages and, for the rewound kind only, the value the harness
+// signed under the real key (empty otherwise).
+func mutateWitness(orig []byte, sel, truncK int, cp1 *auditverify.Checkpoint, chained, advance int64) ([]byte, string, string) {
+	switch sel % 7 {
 	case 0:
 		// unchanged — the "clean replay, rename landed" state.
-		return append([]byte(nil), orig...), "unchanged"
+		return append([]byte(nil), orig...), "unchanged", ""
 	case 1:
 		// truncated at K (a short/torn write that a NON-atomic writer could
 		// leave; the real writer is atomic, so this models external corruption).
 		k := min(truncK, len(orig))
-		return append([]byte(nil), orig[:k]...), "truncated"
+		return append([]byte(nil), orig[:k]...), "truncated", ""
 	case 2:
 		// a single bit flipped (bit rot / partial sector).
 		b := append([]byte(nil), orig...)
 		if len(b) > 0 {
 			b[truncK%len(b)] ^= 0x40
 		}
-		return b, "bitflip"
+		return b, "bitflip", ""
 	case 3:
 		// garbage appended after a valid value (a splice).
 		b := append([]byte(nil), orig...)
 		b = append(b, []byte("\x1fTRAILING-GARBAGE")...)
-		return b, "appended"
+		return b, "appended", ""
 	case 4:
 		// a forged HIGHER mark signed under the WRONG key — parses, orders
 		// higher, but must not verify under the real key.
@@ -272,11 +275,27 @@ func mutateWitness(orig []byte, sel, truncK int, cp1 *auditverify.Checkpoint, ch
 			KeyVersion:    cp1.KeyVersion,
 		}
 		v := auditverify.EncodeHighWater(forged, auditverify.SignCheckpoint(forged, witnessFuzzWrongKey))
-		return []byte(v), "forged-higher"
-	default:
+		return []byte(v), "forged-higher", ""
+	case 5:
 		// empty file (a crash between create and first write — real writer uses
 		// a temp file so this cannot happen at the final path, but external
 		// truncation to zero can).
-		return []byte{}, "empty"
+		return []byte{}, "empty", ""
+	default:
+		// rewound to a LOWER mark, correctly signed under the real key (an old
+		// witness copied back over the current one). It verifies; oracle (a)
+		// then checks the advance still leaves the mark >= cp1.
+		lower := chained
+		if lower > math.MinInt64 {
+			lower--
+		}
+		rew := &auditverify.Checkpoint{
+			ChainedEvents: lower,
+			HeadID:        cp1.HeadID,
+			HeadHash:      cp1.HeadHash,
+			KeyVersion:    cp1.KeyVersion,
+		}
+		v := auditverify.EncodeHighWater(rew, auditverify.SignCheckpoint(rew, witnessFuzzKey))
+		return []byte(v), "rewound", v
 	}
 }
