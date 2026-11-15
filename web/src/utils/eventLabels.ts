@@ -12,6 +12,7 @@ const EVENT_LABELS: Record<string, string> = {
     'auth.password_changed': 'Password changed',
     'auth.password_reset': 'Password reset',
     'auth.sso_login': 'SSO login',
+    'auth.sso_login_session_failed': 'SSO login failed to start a session',
     'auth.sso_jit_provisioned': 'SSO user provisioned',
     'auth.sso_groups_synced': 'SSO groups synced',
     'auth.sso_roles_synced': 'SSO roles synced',
