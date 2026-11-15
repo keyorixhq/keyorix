@@ -46,6 +46,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -283,9 +284,7 @@ func checkCase(realReplica http.Handler, inv []routeEntry, method, rawpath strin
 
 	// CH1-C routing differential: compare chi's dispatch to the independent matcher.
 	if a.matched != "" {
-		for _, v := range differentialViolations(inv, method, rawpath, a.matched) {
-			out = append(out, v)
-		}
+		out = append(out, differentialViolations(inv, method, rawpath, a.matched)...)
 	}
 	return out
 }
@@ -380,10 +379,8 @@ func patternMatches(pattern string, reqSegs []string) bool {
 // the reference matcher must route it the same way chi does (a '#' inside a segment
 // is part of that segment's {param} value), not slice the path off at it.
 func stripQuery(p string) string {
-	if i := strings.IndexByte(p, '?'); i >= 0 {
-		return p[:i]
-	}
-	return p
+	before, _, _ := strings.Cut(p, "?")
+	return before
 }
 
 // differentialViolations classifies any disagreement between chi's dispatch and the
@@ -391,13 +388,7 @@ func stripQuery(p string) string {
 // EXPECTED-DIFFERENCE set.
 func differentialViolations(inv []routeEntry, method, rawpath, chiMatched string) []oracleViolation {
 	ref := referenceMatch(inv, method, rawpath)
-	agree := false
-	for _, r := range ref {
-		if r == chiMatched {
-			agree = true
-			break
-		}
-	}
+	agree := slices.Contains(ref, chiMatched)
 	if agree && len(ref) == 1 {
 		return nil // unambiguous agreement
 	}
