@@ -1,0 +1,44 @@
+{
+  "target": "backupfmt_extract",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 8,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 71240,
+      "per_byte": 91.80412371134021
+    },
+    "cpu_ns": {
+      "floor": 793000,
+      "per_byte": 1021.9072164948453
+    },
+    "disk_blocks": {
+      "floor": 8,
+      "per_byte": 0.010309278350515464
+    },
+    "disk_bytes": {
+      "floor": 2240,
+      "per_byte": 2.88659793814433
+    },
+    "disk_files": {
+      "floor": 5,
+      "per_byte": 0.006443298969072165
+    },
+    "live_heap": {
+      "floor": 1842688,
+      "per_byte": 2374.59793814433
+    },
+    "mallocs": {
+      "floor": 233,
+      "per_byte": 0.3002577319587629
+    },
+    "wall_ns": {
+      "floor": 536232,
+      "per_byte": 691.020618556701
+    },
+    "write_bytes": {
+      "floor": 4096,
+      "per_byte": 5.278350515463917
+    }
+  }
+}
