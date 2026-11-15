@@ -1236,6 +1236,11 @@ var osVolatileReadColls = map[string]bool{
 	"backup": true, "posture": true, "dashboard": true, "summary": true, "activity": true,
 	"crypto-inventory": true, "credential-trends": true, "trends": true, "inventory": true,
 	"permission-changes": true, "sbom": true, "bom": true,
+	// The compliance controls CSV embeds a live audit-event count in its detail column
+	// ("... 815 events"); the first read is itself audited, so the second read legitimately
+	// differs. Unlike the JSON report it carries no generated_at marker to skip on, and the
+	// collection key is the last path segment ("controls.csv"), not "compliance".
+	"controls.csv": true,
 }
 
 func osOracleIdempotentRead(t *testing.T, w *osWorld, o *osOp, princ int, req *http.Request, rec *httptest.ResponseRecorder) {
