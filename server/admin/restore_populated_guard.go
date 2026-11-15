@@ -68,16 +68,16 @@ func refusePopulatedRestoreTarget(cfg *config.Config, dbPath string) error {
 
 // restoreTargetTablesWithRows names the registry tables (system_metadata
 // excluded) that hold at least one row in the restore target. A missing
-// database or table holds nothing.
+// database or table holds nothing; whether a table exists is read from the
+// catalog, not inferred from a query's error.
 func restoreTargetTablesWithRows(cfg *config.Config, dbPath string) ([]string, error) {
+	isPG := isPostgresStorage(cfg)
 	var db *sql.DB
-	var undefined func(error) bool
-	if isPostgresStorage(cfg) {
+	if isPG {
 		var err error
 		if db, err = postgresOpenSQL(cfg); err != nil {
 			return nil, err
 		}
-		undefined = isPostgresUndefinedTable
 	} else {
 		info, err := os.Stat(dbPath)
 		if errors.Is(err, os.ErrNotExist) {
@@ -92,10 +92,15 @@ func restoreTargetTablesWithRows(cfg *config.Config, dbPath string) ([]string, e
 		if db, err = openExistingSQLiteReadOnly(dbPath); err != nil {
 			return nil, err
 		}
-		undefined = func(err error) bool { return strings.Contains(err.Error(), "no such table") }
 	}
 	defer db.Close() //nolint:errcheck
 
+	existsQ := "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?"
+	adminQ := "SELECT 1 FROM audit_events WHERE actor_type IS NULL OR actor_type <> ? LIMIT 1"
+	if isPG {
+		existsQ = "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1"
+		adminQ = "SELECT 1 FROM audit_events WHERE actor_type IS NULL OR actor_type <> $1 LIMIT 1"
+	}
 	var out []string
 	for _, m := range storage.AllModels() {
 		s, err := schema.Parse(m, &postgresResyncSchemaCache, schema.NamingStrategy{})
@@ -106,16 +111,19 @@ func restoreTargetTablesWithRows(cfg *config.Config, dbPath string) ([]string, e
 			continue
 		}
 		var one int
+		err = db.QueryRow(existsQ, s.Table).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue // not created yet: holds nothing
+		}
+		if err != nil {
+			return nil, fmt.Errorf("look up table %q: %w", s.Table, err)
+		}
 		if s.Table == "audit_events" {
 			// The admin commands an operator runs on a fresh host before a
 			// restore (init, migrate, encryption init, a rolled-back
 			// restore --recover) each record an admin_cli event: bookkeeping
 			// of this host, not deployment data.
-			q := "SELECT 1 FROM audit_events WHERE actor_type IS NULL OR actor_type <> ? LIMIT 1"
-			if isPostgresStorage(cfg) {
-				q = "SELECT 1 FROM audit_events WHERE actor_type IS NULL OR actor_type <> $1 LIMIT 1"
-			}
-			err = db.QueryRow(q, adminActorType).Scan(&one)
+			err = db.QueryRow(adminQ, adminActorType).Scan(&one)
 		} else {
 			// #nosec G202 -- s.Table comes from storage.AllModels()'s compiled-in Go structs, quoted by quoteIdentPG
 			err = db.QueryRow("SELECT 1 FROM " + quoteIdentPG(s.Table) + " LIMIT 1").Scan(&one) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- registry table name, never archive or request content
@@ -123,7 +131,7 @@ func restoreTargetTablesWithRows(cfg *config.Config, dbPath string) ([]string, e
 		switch {
 		case err == nil:
 			out = append(out, s.Table)
-		case errors.Is(err, sql.ErrNoRows), undefined(err):
+		case errors.Is(err, sql.ErrNoRows):
 		default:
 			return nil, fmt.Errorf("read table %q: %w", s.Table, err)
 		}
