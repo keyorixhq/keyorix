@@ -30,6 +30,27 @@
 // characters as part of the underlying PRECIS class restrictions (RFC 8264) —
 // this is the first character-set validation several of these fields have
 // ever had, independent of the normalization fix itself.
+//
+// # Why NFC and not NFKC
+//
+// Both profiles normalize with NFC (canonical equivalence), not NFKC
+// (compatibility equivalence), and that is a decision, not an omission. NFC
+// merges only strings that are the same text in different encodings (a
+// precomposed letter versus a base letter plus a combining mark). NFKC would
+// also merge strings that are distinct but look alike or behave alike:
+// fullwidth and ASCII letters, ligatures, roman numerals, circled digits. For
+// an access-review identity that widens the set of names treated as one
+// principal and makes two accounts a human reviewer sees as different collapse
+// into one, which is a worse failure than the reverse.
+//
+// The consequence callers must know: the fullwidth form of "admin" and the
+// ASCII form are two different principals here. Where an external identity
+// provider (SSO, SCIM) maps its identifiers to principals and folds
+// differently, the mapping layer must fold or reject at its own boundary
+// before calling these constructors; this package does not guess the
+// provider's rules. FoldedName also accepts characters that RFC 8265 rejects
+// (ligatures, roman numerals, circled digits, spaces) so that existing names
+// keep working; that is the same trade-off, taken deliberately.
 package identity
 
 import (
