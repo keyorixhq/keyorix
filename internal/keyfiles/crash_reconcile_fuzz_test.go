@@ -112,7 +112,7 @@ func verifyCoherent(t *testing.T, enc *config.EncryptionConfig, dir, context str
 }
 
 func FuzzKeySetCrashReconcile(f *testing.F) {
-	for s := byte(0); s < 7; s++ {
+	for s := range byte(7) {
 		f.Add(s, []byte("salt-0000000000000000"), []byte("dek-00000000000000000000000000000000"), []byte("NEWVAL"))
 	}
 	f.Add(byte(3), []byte{}, []byte{0x00}, []byte{})

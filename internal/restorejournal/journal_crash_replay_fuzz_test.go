@@ -105,10 +105,7 @@ func FuzzRestoreJournalCrashReplay(f *testing.F) {
 			}
 		case 1:
 			// truncated — must NOT match (unless it was already empty).
-			k := int(truncK)
-			if k > len(stagedA) {
-				k = len(stagedA)
-			}
+			k := min(int(truncK), len(stagedA))
 			if err := os.WriteFile(stagedAPath, stagedA[:k], 0o600); err != nil {
 				t.Fatalf("truncate stagedA: %v", err)
 			}
@@ -183,10 +180,7 @@ func mutateJournal(t *testing.T, jpath string, sel, truncK int) ([]byte, string)
 	case 0:
 		return orig, "unchanged"
 	case 1:
-		k := truncK
-		if k > len(orig) {
-			k = len(orig)
-		}
+		k := min(truncK, len(orig))
 		return orig[:k], "truncated"
 	case 2:
 		b := append([]byte(nil), orig...)

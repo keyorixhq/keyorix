@@ -169,10 +169,7 @@ func FuzzWitnessCrashReplay(f *testing.F) {
 
 		// ── oracle (a): a legitimate higher advance over the replayed state ─
 		// cp2 strictly higher than cp1 by ChainedEvents (advance >= 1).
-		delta := advance
-		if delta < 1 {
-			delta = 1
-		}
+		delta := max(advance, 1)
 		var nextChained int64
 		if chained > 0 && chained > (1<<62)-delta {
 			nextChained = chained // avoid overflow; keep well-formed
@@ -251,10 +248,7 @@ func mutateWitness(orig []byte, sel, truncK int, cp1 *auditverify.Checkpoint, ch
 	case 1:
 		// truncated at K (a short/torn write that a NON-atomic writer could
 		// leave; the real writer is atomic, so this models external corruption).
-		k := truncK
-		if k > len(orig) {
-			k = len(orig)
-		}
+		k := min(truncK, len(orig))
 		return append([]byte(nil), orig[:k]...), "truncated"
 	case 2:
 		// a single bit flipped (bit rot / partial sector).

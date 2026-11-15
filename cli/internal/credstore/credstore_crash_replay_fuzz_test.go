@@ -152,10 +152,7 @@ func mutateCreds(orig []byte, sel, truncK int) ([]byte, string) {
 	case 0:
 		return orig, "unchanged"
 	case 1:
-		k := truncK
-		if k > len(orig) {
-			k = len(orig)
-		}
+		k := min(truncK, len(orig))
 		return orig[:k], "truncated"
 	case 2:
 		b := append([]byte(nil), orig...)
