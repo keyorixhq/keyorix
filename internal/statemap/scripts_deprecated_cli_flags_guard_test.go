@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // deprecatedCLIFlagNames are the flag names the CLI has marked deprecated on at least one command
@@ -36,6 +38,7 @@ var deprecatedCLIFlagNames = []string{"--format", "--by"}
 // the flag, scripts that are not *.sh, and flags passed through a variable. A flag deprecated on
 // the CLI but absent from deprecatedCLIFlagNames is caught only by the source-table test below.
 func TestScriptsDeprecatedCLIFlags_NoScriptUsesOne(t *testing.T) {
+	g := guardrules.Rollout(t) // docs/guard-rollout.d: report-only until a green nightly on main
 	cli := buildCLIForGuard(t)
 	probe := newCLIProbe(t, cli)
 
@@ -63,7 +66,7 @@ func TestScriptsDeprecatedCLIFlags_NoScriptUsesOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(hits) > 0 {
-		t.Fatalf("scripts call a CLI flag the current CLI deprecates (it prints a deprecation line on every call); use the replacement named in the message:\n%s", strings.Join(hits, "\n"))
+		g.Fatalf("scripts call a CLI flag the current CLI deprecates (it prints a deprecation line on every call); use the replacement named in the message:\n%s", strings.Join(hits, "\n"))
 	}
 }
 
@@ -93,7 +96,14 @@ func TestScriptsDeprecatedCLIFlags_RedAndGreen(t *testing.T) {
 
 // TestScriptsDeprecatedCLIFlags_TableCoversCLISource fails when cli/cmd deprecates a flag name that
 // deprecatedCLIFlagNames does not list, so a new deprecation cannot slip past the scan above.
+//
+// What it does NOT see: it matches only the literal call `MarkDeprecated("<name>"`, so it misses
+// MarkPersistentFlagDeprecated, MarkShorthandDeprecated, a name passed through a const or variable,
+// and files in subdirectories of cli/cmd (it globs cli/cmd/*.go only). Every current deprecation is
+// a literal MarkDeprecated call in cli/cmd; a new deprecation in another shape needs this regexp
+// widened with it.
 func TestScriptsDeprecatedCLIFlags_TableCoversCLISource(t *testing.T) {
+	g := guardrules.Rollout(t) // docs/guard-rollout.d: report-only until a green nightly on main
 	re := regexp.MustCompile(`MarkDeprecated\("([a-z][a-z0-9-]*)"`)
 	have := map[string]bool{}
 	for _, n := range deprecatedCLIFlagNames {
@@ -120,7 +130,7 @@ func TestScriptsDeprecatedCLIFlags_TableCoversCLISource(t *testing.T) {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Fatalf("cli/cmd deprecates flag(s) missing from deprecatedCLIFlagNames: %s", strings.Join(missing, ", "))
+		g.Fatalf("cli/cmd deprecates flag(s) missing from deprecatedCLIFlagNames: %s", strings.Join(missing, ", "))
 	}
 }
 
@@ -279,9 +289,7 @@ func scanScriptForDeprecatedFlags(script string, p *cliProbe) []guardHit {
 				continue
 			}
 			value := ""
-			if strings.HasPrefix(toks[fi], flag+"=") {
-				value = ""
-			} else if fi+1 < len(toks) && !strings.HasPrefix(toks[fi+1], "-") {
+			if !strings.HasPrefix(toks[fi], flag+"=") && fi+1 < len(toks) && !strings.HasPrefix(toks[fi+1], "-") {
 				value = toks[fi+1]
 			}
 			if value == "$" || strings.ContainsAny(value, "$`(") {

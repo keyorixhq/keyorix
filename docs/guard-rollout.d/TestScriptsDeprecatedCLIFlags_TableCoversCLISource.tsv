@@ -1,0 +1,1 @@
+TestScriptsDeprecatedCLIFlags_TableCoversCLISource	internal/statemap	#4306	new guard: every flag name cli/cmd deprecates via MarkDeprecated must be listed in deprecatedCLIFlagNames; green on main
