@@ -263,6 +263,7 @@ var g5CorpusDir = filepath.Join("testdata", "fuzz", "FuzzCrossReplicaInvariants"
 // g5PendingIssues lists the issue dirs under testdata/fuzz-pending/. An absent
 // directory means nothing is pending (main deletes it once the last seed is
 // promoted), not an error; any other read error still fails.
+// dir-listing-ok: fuzz seed dirs under testdata/fuzz-pending
 func g5PendingIssues(t *testing.T) []string {
 	t.Helper()
 	entries, err := os.ReadDir(g5PendingDir)
@@ -289,6 +290,7 @@ func (c g5SeedCase) order() interleaveOrder {
 
 // g5SeedFile returns the path of this row's seed: the named live-corpus file
 // once promoted, else the single file in testdata/fuzz-pending/<issue>/.
+// dir-listing-ok: fuzz seed files under testdata/fuzz-pending
 func (c g5SeedCase) g5SeedFile(t *testing.T) string {
 	t.Helper()
 	if c.corpus != "" {

@@ -14219,7 +14219,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data: status (valid|broken|not_proven|sealed; sealed: an audit loss was accepted with admin audit accept-loss, state_reason names it), valid (true only for status=valid), mode (incremental|full), chained_events, unchained_events, head_id, head_hash, checkpointed; when broken also first_broken_id and reason; when not_proven not_proven_reason; in incremental mode coverage {checkpoint_id, tail_from_id, tail_through_id, tail_complete}, last_full_verification_at (null if none), last_full_verification_started_at, last_full_verification_through_id, last_full_verification_source (rolling|job|checkpoint-full), rolling_cycle {started_at, target_id, verified_through_id}, state_reason. */
+            /** @description Envelope {data, message}. data: status (valid|broken|not_proven|sealed; sealed: an audit loss was accepted with admin audit accept-loss, state_reason names it), valid (true only for status=valid), mode (incremental|full), chained_events, unchained_events, head_id, head_hash, checkpointed; when broken also first_broken_id and reason; when sealed also reason (the seal text, as in state_reason; never empty); when not_proven not_proven_reason; in incremental mode coverage {checkpoint_id, tail_from_id, tail_through_id, tail_complete}, last_full_verification_at (null if none), last_full_verification_started_at, last_full_verification_through_id, last_full_verification_source (rolling|job|checkpoint-full), rolling_cycle {started_at, target_id, verified_through_id}, state_reason. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -14328,6 +14328,13 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            /** @description The pre-flight refused the chain (a gap, a broken link or a changed row), for a preview and dry_run=false alike: Error envelope, message = the refusal text, details.code = audit_chain_reencode_refused. Investigate (audit-chain-break runbook 4a); do not retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listAnomalyAlerts: {

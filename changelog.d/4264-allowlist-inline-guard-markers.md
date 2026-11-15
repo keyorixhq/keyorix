@@ -1,0 +1,2 @@
+### Testing
+- **Guards no longer need a hand edit when an unrelated PR adds a site.** `TestDirectLogAuditEventCallersAreSafe` and `TestNoAdHocCoreDirListing` now read inline `// audit-direct-ok: <reason>` / `// dir-listing-ok: <reason>` markers at each site instead of a hand-kept `path:func` list, so the merge queue (main + PR) can no longer fail a PR that is green alone. The rule is documented in `docs/guard-rollout-contract.md` (rule 3).
