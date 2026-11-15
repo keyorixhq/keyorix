@@ -1,4 +1,4 @@
-- **INV-LIBCONFORMANCE-xml-etree-encodingxml-agree** For any input both beevik/etree and
+- **INV-LIBCONF-xml-etree-encodingxml-agree** For any input both beevik/etree and
   encoding/xml accept, their namespace-resolved canonical trees (element {namespace-URI,
   local-name}, attributes, text, child order) must be identical, except for the single
   documented difference that an UNDECLARED namespace prefix resolves differently (etree →

@@ -1,4 +1,4 @@
-- **INV-LIBCONFORMANCE-openapi-jsonschema-verdict** For a JSON Schema restricted to the
+- **INV-LIBCONF-openapi-jsonschema-verdict** For a JSON Schema restricted to the
   common keyword subset (type/properties/required/enum/min*/max*/pattern/items/
   additionalProperties) and any instance both getkin/kin-openapi and
   santhosh-tekuri/jsonschema/v6 can process, the two validators must return the SAME

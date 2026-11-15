@@ -1,22 +1,6 @@
 # internal/libconformance invariants
 
 Read this before changing anything in `internal/libconformance`. The package has no
-non-test code (see `doc.go`): it holds fuzz targets that pin the behaviour Keyorix relies
-on in third-party parsing/crypto libraries, calling only the libraries so the fuzz
-binary's coverage map stays small. The DF1 cross-library parser-differential targets live
-here: each feeds ONE input to two independent library readings and fails on a disagreement
-that is not on an EXPECTED-DIFFERENCE allowlist (reason per entry), with a companion
-dead-entry test so a stale allowlist row cannot hide a regression.
-
-Format: `INV-LIBCONFORMANCE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
-
-## DF1 cross-library parser differentials
-
-New invariants go in `INVARIANTS.d/INV-LIBCONFORMANCE-<kebab-slug>.md`, one per file.
-This package holds differential and conformance fuzz targets that pin the behaviour
-Keyorix relies on in third-party parsing / crypto / schema libraries. It has no
-non-test code (see `doc.go`): the targets call only the libraries, never Keyorix
-code, so the package links a minimal coverage map.
 non-test code (see `doc.go`): it holds fuzz targets that pin the behaviour keyorix relies
 on in third-party parsing and crypto libraries (beevik/etree, crewjam/saml's xmlenc,
 digitorus/pkcs7, golang-jwt, mattermost/xml-roundtrip-validator) on keyorix's SAML and
@@ -31,3 +15,8 @@ New invariants go in `INVARIANTS.d/INV-LIBCONF-<kebab-slug>.md`, one per file, p
 root `CLAUDE.md` convention. The package links a minimal coverage map because the targets
 call only the libraries, never Keyorix code. It also holds the differential and
 conformance fuzz targets over sibling parsing / schema libraries.
+
+The DF1 cross-library parser-differential targets live here: each feeds ONE input to two
+independent library readings and fails on a disagreement that is not on an
+EXPECTED-DIFFERENCE allowlist (reason per entry), with a companion dead-entry test so a
+stale allowlist row cannot hide a regression.

@@ -1,4 +1,4 @@
-- **INV-LIBCONFORMANCE-yaml-json-agree** For any input encoding/json (default float64
+- **INV-LIBCONF-yaml-json-agree** For any input encoding/json (default float64
   decode) accepts, gopkg.in/yaml.v3 must decode the same bytes to the same value (numbers
   compared by mathematical value), except for two documented splits on the allowlist with
   reasons: a duplicate JSON object key (RFC 8259 last-wins vs YAML 1.2 reject) and a JSON
