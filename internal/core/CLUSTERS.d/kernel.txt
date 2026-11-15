@@ -6,6 +6,7 @@ account_sessions.go
 account_setup.go
 account_state.go
 account_state_metrics.go
+actor_active.go
 admin_posture.go
 alerts_write_role_reconcile.go
 auth.go

@@ -201,6 +201,9 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 		if spec.globalHandler {
 			routerMu.Unlock()
 		}
+		if r.Detail == "Too Many Requests" {
+			return &legOutcome{NA: limiterNA}
+		}
 		return &legOutcome{Outcome: r.Outcome, Detail: r.Detail}
 	case layerGRPC:
 		if spec.grpc == nil {
@@ -214,10 +217,20 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 			return &legOutcome{NA: "ID-3: gRPC cannot express this target"}
 		}
 		r := grpcOutcome(err)
+		if r.Detail == "ResourceExhausted" {
+			return &legOutcome{NA: limiterNA}
+		}
 		return &legOutcome{Outcome: r.Outcome, Detail: r.Detail}
 	}
 	return &legOutcome{NA: "unknown layer"}
 }
+
+// limiterNA marks a leg the per-IP invalid-token limiter answered instead of the
+// authorization layer (a suspended principal's token is rejected, and the budget is a
+// process-global bucket keyed by the constant test peer, so a long fuzz run exhausts
+// it). Such an answer says nothing about authorisation: n/a, as the sequence harness
+// records it (seq_run_test.go).
+const limiterNA = "invalid-token rate limiter"
 
 // ---------- positive control (OUTCOMES.md precondition 2) ----------
 
