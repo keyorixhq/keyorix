@@ -269,7 +269,7 @@ func runtime(c *Core, name string) { c.writeAuditEvent(ctx, name) }
 	scan := func(src string, allowed map[string]string) failureScan {
 		t.Helper()
 		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, "synthetic.go", src, 0)
+		f, err := parser.ParseFile(fset, "synthetic-source", src, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
