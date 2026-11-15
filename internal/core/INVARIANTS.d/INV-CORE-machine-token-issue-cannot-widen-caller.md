@@ -27,7 +27,13 @@
   roles bundle (`requireActorHoldsTargetPermissions`, shared with the machine path), and a
   user authenticated by a restricted PAT (ADR-042, any dimension) is refused outright, since
   the minted token carries none of the restriction. Guard:
-  `machine_token_user_actor_ceiling_test.go`.
+  `machine_token_user_actor_ceiling_test.go`; the cross-layer differential (S1
+  issuer-cannot-widen sweep, 2026-11-15) adds `server/authzdiff`'s
+  `fix-4332-user-target-ceiling-removed` plant, which reverts the user-caller
+  target-permission ceiling and confirms the sweep produces 8 `unexplained`
+  `machine.token.issue` cases without it (twin of `fix-3993` for the machine
+  caller); `server/authzdiff/model_test.go` encodes the user-caller rule so the
+  clean tree stays green.
   **Mint-time ceiling only (by design, Andrei 2026-11-08, PAT-SCOPE-TAILS-1 item 4):** the
   privilege ceiling above is checked when the token is minted and never again. A machine
   credential records no issuer; its authority is the machine identity's own roles,
