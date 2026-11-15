@@ -151,19 +151,16 @@ func FuzzRestoreJournalCrashReplay(f *testing.F) {
 				t.Fatalf("SURFACED-WRONG: a parseable v1 journal (%s) failed Read: found=%v err=%v", kind, rfound, rerr)
 			}
 		default:
-			// Not a well-formed v1 journal. Since the file exists and is
-			// non-empty-ish, Read must EITHER surface an error OR (for a
-			// legitimately empty/absent file) report not-found — but NEVER
-			// return found=true with a nil error and a non-v1 journal.
-			if rerr == nil && rfound && rj.Version != restorejournal.Version {
-				t.Fatalf("SILENT-ACCEPT(c): Read returned found,nil for a journal whose version is %d, not %d (%s)", rj.Version, restorejournal.Version, kind)
+			// Not a well-formed v1 journal, and the file EXISTS (it was just
+			// written above), including the empty and whitespace-only shapes.
+			// Read must surface an error and report the file as found: an
+			// existing journal read as found=false,nil makes `admin restore
+			// --recover` remove the staged files a forward recovery needs.
+			if rerr == nil {
+				t.Fatalf("SILENT(c): an existing non-v1 journal (%s) read back with no error: found=%v version=%d bytes=%q", kind, rfound, rj.Version, truncForMsg(mutated))
 			}
-			if rerr == nil && !rfound && len(mutated) > 0 {
-				// An existing non-empty file read as absent is only acceptable
-				// if it is genuinely empty bytes; flag a truly non-empty one.
-				if !allSpace(mutated) {
-					t.Fatalf("SILENT-ABSENT(c): an existing non-empty journal (%s) read back as found=false,nil: %q", kind, truncForMsg(mutated))
-				}
+			if !rfound {
+				t.Fatalf("SILENT-ABSENT(c): an existing journal (%s) errored but reported found=false: %v", kind, rerr)
 			}
 		}
 	})
@@ -196,15 +193,6 @@ func mutateJournal(t *testing.T, jpath string, sel, truncK int) ([]byte, string)
 	default:
 		return []byte{}, "empty"
 	}
-}
-
-func allSpace(b []byte) bool {
-	for _, c := range b {
-		if c != ' ' && c != '\n' && c != '\t' && c != '\r' {
-			return false
-		}
-	}
-	return true
 }
 
 func truncForMsg(b []byte) string {
