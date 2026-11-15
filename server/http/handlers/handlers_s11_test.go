@@ -635,9 +635,10 @@ func TestConsumeSetup_HappyPath_S11(t *testing.T) {
 func TestAddGroupMember_NotFound_S11(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS11(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
-	// No bootstrap: user 1 doesn't exist, so AddUserToGroup returns "not found" → 404.
+	// Group 99999 doesn't exist, so AddUserToGroup returns "not found" → 404.
 	uc := &middleware.UserContext{UserID: 1, Username: "nouser"}
 	body := `{"user_id":1}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
@@ -1701,6 +1702,7 @@ func TestGetUserByUsername_HappyPath_S11(t *testing.T) {
 func TestRestoreProject_HappyPath_S11(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS11(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
 
@@ -1762,6 +1764,7 @@ func TestDeleteProject_HappyPath_S11(t *testing.T) {
 func TestRestoreEnvironment_HappyPath_S11(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS11(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
 

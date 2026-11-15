@@ -623,7 +623,9 @@ func TestUpdateUserRoles_InvalidRoleID_S13(t *testing.T) {
 // nil for GetUserRoleIDsExact with no rows, SetUserRoles is a no-op, and
 // GetUserRolesByID returns an empty slice — no error path is triggered).
 func TestUpdateUserRoles_NonExistentUser_S13(t *testing.T) {
-	h := newUsersRolesHandlerS13(t)
+	cs := freshCoreS12(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
+	h := NewUsersRolesHandler(cs)
 	body := bytes.NewBufferString(`{"role_ids":[]}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/9999/roles", body)
 	req.Header.Set("Content-Type", "application/json")

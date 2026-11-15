@@ -47,6 +47,11 @@ func rbacRealIDs(t *testing.T, db *gorm.DB) rbacIDs {
 	role := mustCreateRole(t, db, "fx-role")
 	perm := mustCreatePermission(t, db, "fx.perm", "fx", "perm")
 	group := mustCreateGroup(t, db, "fx-group")
+	// rbacPlainID is a real, active account with no role: core refuses an actor whose
+	// account is missing or not active before any permission check (#4159).
+	require.NoError(t, db.Where(models.User{ID: rbacPlainID}).
+		Attrs(models.User{Username: "fx-plain", UsernameFolded: "fx-plain", Email: "fx-plain@example.com", EmailFolded: "fx-plain@example.com", IsActive: true}).
+		FirstOrCreate(&models.User{}).Error)
 	return rbacIDs{
 		role:  strconv.FormatUint(uint64(role.ID), 10),
 		perm:  strconv.FormatUint(uint64(perm.ID), 10),
