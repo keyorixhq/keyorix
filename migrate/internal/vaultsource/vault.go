@@ -34,6 +34,14 @@ const clientTimeout = 30 * time.Second
 // trees/secrets, still bounded against a malicious or misbehaving Vault response.
 const maxResponseBytes = 10 << 20 // 10MB
 
+// maxWalkDepth bounds how deep Walk recurses into a KV tree. A hostile or misconfigured Vault
+// that returns a folder key at every level (LIST /a -> ["b/"], LIST /a/b -> ["b/"], ...) would
+// otherwise drive unbounded-depth recursion -> unbounded requests and stack growth. 64 is far
+// deeper than any realistic operator KV layout (Vault's own UI and most tooling treat paths
+// this deep as pathological), so hitting it means the tree is adversarial, not legitimate.
+// See INV-VAULTSOURCE-walk-depth-bounded.
+const maxWalkDepth = 64
+
 // Config holds every connection/auth setting a Client needs. Exactly one of Token or
 // (RoleID, SecretID) must be set; namespace and KV version are optional (KV version is
 // auto-detected per mount when zero, via resolveKVMountVersion).
@@ -66,13 +74,15 @@ type Client struct {
 	token     string
 	hc        *http.Client
 
-	// mountVersionsMu guards mountVersions: a per-client cache of KV mount version (1 or 2),
-	// keyed by the mount path Vault itself reports (e.g. "secret/") — ported from
-	// internal/connect/vault.go's resolveKVMountVersion, see its doc comment there for why
-	// querying the mount directly (not sniffing response shape) is required for correctness,
-	// not just a performance nicety.
-	mountVersionsMu sync.Mutex
-	mountVersions   map[string]int
+	// mountVersionMu guards mountVersion: a per-client cache of the KV mount version (1 or 2).
+	// A Client targets exactly one mount (c.mount), so the version is a single constant for the
+	// Client's lifetime — resolved once (0 means "not yet resolved") and reused for every path,
+	// rather than re-queried per read/list. Querying the mount directly (not sniffing response
+	// shape) is ported from internal/connect/vault.go's resolveKVMountVersion; see its doc
+	// comment there for why that is required for correctness, not just a performance nicety.
+	// See INV-VAULTSOURCE-mount-version-resolved-once.
+	mountVersionMu sync.Mutex
+	mountVersion   int
 }
 
 // New builds a Client, performing AppRole login immediately if configured (so a bad
@@ -192,8 +202,10 @@ func (c *Client) appRoleLogin(ctx context.Context, roleID, secretID string) (str
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("AppRole login returned HTTP %d", resp.StatusCode)
+	// Only 200 is a successful login, as in do()/doRawRead(): an un-followed 3xx or another 2xx
+	// must not have its body decoded and its client_token adopted for the whole import.
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("AppRole login returned HTTP %d (only 200 is a successful login; a 3xx is never followed and its body is never read)", resp.StatusCode)
 	}
 	var result struct {
 		Auth struct {
@@ -272,13 +284,16 @@ func (c *Client) Walk(ctx context.Context, root string, allVersions bool) ([]Ent
 	}
 	var entries []Entry
 	var skipped []Skipped
-	if err := c.walk(ctx, strings.Trim(root, "/"), &entries, &skipped); err != nil {
+	if err := c.walk(ctx, strings.Trim(root, "/"), 0, &entries, &skipped); err != nil {
 		return nil, nil, err
 	}
 	return entries, skipped, nil
 }
 
-func (c *Client) walk(ctx context.Context, prefix string, out *[]Entry, skipped *[]Skipped) error {
+func (c *Client) walk(ctx context.Context, prefix string, depth int, out *[]Entry, skipped *[]Skipped) error {
+	if depth > maxWalkDepth {
+		return fmt.Errorf("vault KV tree exceeds the maximum walk depth of %d at %q — refusing to recurse further (a Vault that returns a folder at every level would otherwise drive unbounded recursion)", maxWalkDepth, prefix)
+	}
 	keys, err := c.list(ctx, prefix)
 	if err != nil {
 		return err
@@ -294,7 +309,7 @@ func (c *Client) walk(ctx context.Context, prefix string, out *[]Entry, skipped 
 			child = strings.TrimSuffix(k, "/")
 		}
 		if strings.HasSuffix(k, "/") {
-			if err := c.walk(ctx, child, out, skipped); err != nil {
+			if err := c.walk(ctx, child, depth+1, out, skipped); err != nil {
 				return err
 			}
 			continue
@@ -504,11 +519,18 @@ func (c *Client) doRawRead(ctx context.Context, url string) (int, []byte, error)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
-	if resp.StatusCode == http.StatusForbidden {
+	// Only 200 and 404 are statuses read() interprets (read's doc comment needs the 404 body).
+	// Every other status — including a 3xx the client refused to follow (CheckRedirect =
+	// ErrUseLastResponse) — is an error, never a parsed body: a redirect's (or any non-200's)
+	// body must never be consumed as authoritative secret data. See
+	// INV-VAULTSOURCE-non-2xx-read-is-an-error.
+	switch resp.StatusCode {
+	case http.StatusForbidden:
 		return resp.StatusCode, nil, fmt.Errorf("vault denied access (HTTP 403) for %s — check token/AppRole permissions", url)
-	}
-	if resp.StatusCode >= 400 && resp.StatusCode != http.StatusNotFound {
-		return resp.StatusCode, nil, fmt.Errorf("vault returned HTTP %d for %s", resp.StatusCode, url)
+	case http.StatusOK, http.StatusNotFound:
+		// fall through and read the body
+	default:
+		return resp.StatusCode, nil, fmt.Errorf("vault returned HTTP %d for %s (only 200 and 404 are accepted; a 3xx redirect is never followed and its body is never read as a secret)", resp.StatusCode, url)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
@@ -521,17 +543,18 @@ func (c *Client) doRawRead(ctx context.Context, url string) (int, []byte, error)
 // Vault's sys/internal/ui/mounts/<path> API directly, exactly as internal/connect/vault.go
 // does (ported unchanged — see that file's doc comment for the two response-shape-sniffing
 // bugs this avoids: a v1 secret whose own fields are literally named "data"/"metadata", and a
-// soft-deleted v2 version's null-data envelope). Cached per mount path for this Client's
-// lifetime.
+// soft-deleted v2 version's null-data envelope). A Client targets exactly one mount, so the
+// version is resolved at most once and then reused for every path (c.mountVersion), rather than
+// issuing a redundant mounts round-trip before each list/read. See
+// INV-VAULTSOURCE-mount-version-resolved-once.
 func (c *Client) resolveKVMountVersion(ctx context.Context, path string) (int, error) {
-	c.mountVersionsMu.Lock()
-	for mountPath, version := range c.mountVersions {
-		if strings.HasPrefix(path, mountPath) || path == strings.TrimSuffix(mountPath, "/") {
-			c.mountVersionsMu.Unlock()
-			return version, nil
-		}
+	c.mountVersionMu.Lock()
+	if c.mountVersion != 0 {
+		v := c.mountVersion
+		c.mountVersionMu.Unlock()
+		return v, nil
 	}
-	c.mountVersionsMu.Unlock()
+	c.mountVersionMu.Unlock()
 
 	full := c.mount
 	if path != "" {
@@ -540,7 +563,6 @@ func (c *Client) resolveKVMountVersion(ctx context.Context, path string) (int, e
 	reqURL := c.addr + "/v1/sys/internal/ui/mounts/" + escapePath(full)
 	var mountResp struct {
 		Data struct {
-			Path    string `json:"path"`
 			Options struct {
 				Version string `json:"version"`
 			} `json:"options"`
@@ -554,16 +576,9 @@ func (c *Client) resolveKVMountVersion(ctx context.Context, path string) (int, e
 	if mountResp.Data.Options.Version == "2" {
 		version = 2
 	}
-	mountPath := mountResp.Data.Path
-	if mountPath == "" {
-		mountPath = c.mount + "/"
-	}
-	c.mountVersionsMu.Lock()
-	if c.mountVersions == nil {
-		c.mountVersions = make(map[string]int)
-	}
-	c.mountVersions[mountPath] = version
-	c.mountVersionsMu.Unlock()
+	c.mountVersionMu.Lock()
+	c.mountVersion = version
+	c.mountVersionMu.Unlock()
 	return version, nil
 }
 
@@ -589,8 +604,11 @@ func (c *Client) do(ctx context.Context, method, url string, out any) (int, erro
 	if resp.StatusCode == http.StatusForbidden {
 		return resp.StatusCode, fmt.Errorf("vault denied access (HTTP 403) for %s — check token/AppRole permissions", url)
 	}
-	if resp.StatusCode >= 400 {
-		return resp.StatusCode, fmt.Errorf("vault returned HTTP %d for %s", resp.StatusCode, url)
+	// Any status other than 200 (and the 404 handled above) is an error, never a decoded body —
+	// including a 3xx the client refused to follow: a redirect's body must never be parsed as a
+	// mount/list response. See INV-VAULTSOURCE-non-2xx-read-is-an-error.
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, fmt.Errorf("vault returned HTTP %d for %s (only 200 and 404 are accepted; a 3xx redirect is never followed and its body is never decoded)", resp.StatusCode, url)
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))

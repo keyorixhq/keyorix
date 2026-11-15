@@ -56,9 +56,12 @@ func TestBuildCloudPlanEntries_SanitizesNameAndExplodesField(t *testing.T) {
 		{RawName: "team a/db password", Value: "v1", Locator: "loc1"},
 		{RawName: "creds", Field: "username", Value: "alice", Locator: "loc2"},
 	}
-	out := buildCloudPlanEntries("aws", entries, func(e cloudentry.Entry) string { return "sid-" + e.RawName })
+	out, nameSkipped := buildCloudPlanEntries("aws", entries, func(e cloudentry.Entry) string { return "sid-" + e.RawName })
 	if len(out) != 2 {
 		t.Fatalf("out = %+v, want 2", out)
+	}
+	if len(nameSkipped) != 0 {
+		t.Fatalf("nameSkipped = %+v, want none for well-formed names", nameSkipped)
 	}
 	if out[0].Name != "team-a-db-password" {
 		t.Errorf("out[0].Name = %q, want sanitized team-a-db-password", out[0].Name)
@@ -174,7 +177,7 @@ func TestCloudEntryResumeThroughPlan(t *testing.T) {
 		{RawName: "s1", Value: "v1", Locator: "aws-secrets-manager:us-east-1/s1"},
 		{RawName: "s2", Value: "v2", Locator: "aws-secrets-manager:us-east-1/s2"},
 	}
-	planEntries := buildCloudPlanEntries("aws", cloudEntries, func(e cloudentry.Entry) string {
+	planEntries, _ := buildCloudPlanEntries("aws", cloudEntries, func(e cloudentry.Entry) string {
 		return plan.SourceID("aws", "us-east-1", e.RawName, "value")
 	})
 
