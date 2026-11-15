@@ -1,4 +1,4 @@
-- **INV-LIBCONFORMANCE-binary-parsers-bounded-work** Every binary-format decoder
+- **INV-LIBCONF-binary-parsers-bounded-work** Every binary-format decoder
   Keyorix reaches — `pkcs7.Parse` (BER), `cbor.Unmarshal` (fxamacker/cbor/v2, the
   go-webauthn attestation/COSE codec), `tpm2.Unmarshal[TPM2B*/TPMT*/TPMS*]` (the TPM
   sealed-KEK / attestation reader) and `webauthncose.ParsePublicKey` (the COSE

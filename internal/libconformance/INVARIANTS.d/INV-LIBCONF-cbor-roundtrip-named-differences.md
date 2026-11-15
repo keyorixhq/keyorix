@@ -1,4 +1,4 @@
-- **INV-LIBCONFORMANCE-cbor-roundtrip-named-differences** fxamacker/cbor/v2
+- **INV-LIBCONF-cbor-roundtrip-named-differences** fxamacker/cbor/v2
   value-level re-encode is idempotent: for any input the default DecMode accepts,
   `v1 := decode(data); b := encode(v1); v2 := decode(b)` yields `v2` equal to `v1`
   under numeric/NaN-aware comparison. Every way the two can legitimately disagree is a
