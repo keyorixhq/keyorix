@@ -89,8 +89,8 @@ func restoreTargetTablesWithRows(cfg *config.Config, dbPath string) ([]string, e
 		if info.Size() == 0 {
 			return nil, nil
 		}
-		if db, err = sql.Open("sqlite", "file:"+dbPath+"?mode=ro"); err != nil {
-			return nil, fmt.Errorf("open %q read-only: %w", dbPath, err)
+		if db, err = openExistingSQLiteReadOnly(dbPath); err != nil {
+			return nil, err
 		}
 		undefined = func(err error) bool { return strings.Contains(err.Error(), "no such table") }
 	}

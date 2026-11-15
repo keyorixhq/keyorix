@@ -1089,6 +1089,16 @@ func destinationEventsNewerThan(dbPath string, archiveHead int64) (int64, error)
 	return n, nil
 }
 
+// openExistingSQLiteReadOnly opens the restore target's existing SQLite
+// database read-only (mode=ro), for the checks restore runs before it writes.
+func openExistingSQLiteReadOnly(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return nil, fmt.Errorf("open %q read-only: %w", dbPath, err)
+	}
+	return db, nil
+}
+
 func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
 	info, statErr := os.Stat(dbPath)
 	if statErr != nil {
@@ -1101,9 +1111,9 @@ func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
 		return 0, nil
 	}
 
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	db, err := openExistingSQLiteReadOnly(dbPath)
 	if err != nil {
-		return 0, fmt.Errorf("open %q read-only: %w", dbPath, err)
+		return 0, err
 	}
 	defer db.Close() //nolint:errcheck
 
