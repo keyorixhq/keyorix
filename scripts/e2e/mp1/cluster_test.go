@@ -117,13 +117,15 @@ func (tg pgTarget) storageYAML(dbName string) string {
 // mp1DBCounter makes every created database name unique within this process.
 var mp1DBCounter atomic.Int64
 
-// createIsolatedDB creates a fresh, empty `mp1_<pid>_<n>` database on tg and
-// returns its DSN. The DROP is registered on the package teardown list, not on
-// t.Cleanup, so the database outlives the fuzz iteration that happened to
-// create the cluster. Only `mp1_*` databases are ever created or dropped.
+// createIsolatedDB creates a fresh, empty `i1c_mp1_<pid>_<n>` database on tg
+// and returns its DSN. The DROP is registered on the package teardown list, not
+// on t.Cleanup, so the database outlives the fuzz iteration that happened to
+// create the cluster. The `i1c_` prefix keeps every database this harness
+// creates inside the task's own namespace on a shared Postgres host, so it can
+// only ever create or drop its own databases, never another session's.
 func createIsolatedDB(t *testing.T, tg pgTarget) (dsn, name string) {
 	t.Helper()
-	name = fmt.Sprintf("mp1_%d_%d", os.Getpid(), mp1DBCounter.Add(1))
+	name = fmt.Sprintf("i1c_mp1_%d_%d", os.Getpid(), mp1DBCounter.Add(1))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	conn, err := pgx.Connect(ctx, tg.raw)

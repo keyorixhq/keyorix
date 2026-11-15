@@ -19,7 +19,7 @@ import (
 func jsonUnmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
 
 // TestMain builds once, runs the suite, then kills every server process this
-// package started and drops every mp1_ database it created, before removing
+// package started and drops every i1c_mp1_ database it created, before removing
 // the shared build dir. The cluster is started lazily by the first test/fuzz
 // iteration that needs it (startSharedOnce) and lives until here — NOT tied to
 // any one iteration's t.Cleanup, which would tear the servers down after the

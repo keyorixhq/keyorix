@@ -66,6 +66,69 @@ func TestRedProof_Canary(t *testing.T) {
 	t.Logf("canary oracle: red on a leaking log (hit %v), green on a clean log", hits)
 }
 
+// TestRedProof_AuditCount: the per-op audit-count check must flag a dropped
+// (0) or duplicated (>=2) audit row and accept exactly one.
+func TestRedProof_AuditCount(t *testing.T) {
+	if bad, _ := auditCountViolation(map[int]int{1: 1, 2: 1, 3: 1}); bad {
+		t.Fatal("green case misfired: exactly-one-per-op was flagged a violation")
+	}
+	if bad, _ := auditCountViolation(map[int]int{1: 1, 2: 2, 3: 1}); !bad {
+		t.Fatal("RED PROOF FAILED: a duplicated audit row (count 2) was NOT flagged — the audit-count oracle would miss a double-write")
+	}
+	if bad, _ := auditCountViolation(map[int]int{1: 1, 2: 0, 3: 1}); !bad {
+		t.Fatal("RED PROOF FAILED: a dropped audit row (count 0) was NOT flagged — the audit-count oracle would miss a lost append")
+	}
+	t.Log("audit-count oracle: red on a duplicated or dropped row, green on exactly one per op")
+}
+
+// TestRedProof_Uniqueness: the uniqueness check must flag a run with two
+// winners or a disagreeing row count (red) and accept exactly-one/exactly-one
+// (green).
+func TestRedProof_Uniqueness(t *testing.T) {
+	if bad, _ := uniquenessViolation(1, 1); bad {
+		t.Fatal("green case misfired: exactly one winner + one row was flagged a violation")
+	}
+	if bad, _ := uniquenessViolation(2, 2); !bad {
+		t.Fatal("RED PROOF FAILED: two winners + two rows was NOT flagged — the uniqueness oracle is vacuous")
+	}
+	if bad, _ := uniquenessViolation(1, 2); !bad {
+		t.Fatal("RED PROOF FAILED: one ack but two surviving rows was NOT flagged — the uniqueness oracle misses a split-brain insert")
+	}
+	if bad, _ := uniquenessViolation(0, 0); !bad {
+		t.Fatal("RED PROOF FAILED: zero winners was NOT flagged — a total-failure run would pass silently")
+	}
+	t.Log("uniqueness oracle: red on two-winners / ack-row mismatch / zero-winners, green on exactly-one")
+}
+
+// TestRedProof_UniquenessLive is a LIVE red proof: it confirms the DB unique
+// constraint the oracle leans on is actually enforced, by creating a name and
+// then creating the SAME name again (sequentially, on a different replica). The
+// second create MUST be rejected and the active-row count MUST stay 1. If a
+// second create succeeded, the uniqueness oracle would (correctly) fire — this
+// proves its "exactly one" demand is meaningful against the real schema, not
+// vacuous. PG-gated.
+func TestRedProof_UniquenessLive(t *testing.T) {
+	requirePG(t)
+	c := getSharedCluster(t)
+
+	name := fmt.Sprintf("mp1-uniqlive-%d", time.Now().UnixNano())
+	st1, err := c.createProject(c.Replica(0), name)
+	if err != nil || (st1 != http.StatusCreated && st1 != http.StatusOK) {
+		t.Fatalf("first create should succeed: status=%d err=%v", st1, err)
+	}
+	st2, err := c.createProject(c.Replica(1%len(c.Replicas)), name)
+	if err != nil {
+		t.Fatalf("second create transport error: %v", err)
+	}
+	if st2 == http.StatusCreated || st2 == http.StatusOK {
+		t.Fatalf("RED PROOF FAILED: a duplicate project name was accepted (HTTP %d) on a second replica — the unique constraint the oracle relies on is NOT enforced", st2)
+	}
+	if rows := c.countActiveProjects(t, name); rows != 1 {
+		t.Fatalf("RED PROOF FAILED: after a duplicate create attempt there are %d active rows, want 1", rows)
+	}
+	t.Logf("uniqueness constraint live: duplicate rejected (HTTP %d), still exactly one active row", st2)
+}
+
 // TestRedProof_RevokedPATLive is a LIVE red proof against the real cluster: it
 // confirms the revoke-visibility oracle is not vacuous by showing the opposite
 // of a revoke — a PAT that is NEVER revoked stays accepted across the full
