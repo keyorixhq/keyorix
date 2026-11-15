@@ -74,7 +74,7 @@ func f(err error) bool { return errors.Is(err, core.ErrPermissionDenied) }`
 	assert.Empty(t, grantCeilingTextMatches(t, "now", now))
 }
 
-// TestEveryGrantRouteMapsTheCeilingRefusalTo403 drives each handler that grants a role (fourteen routes)
+// TestEveryGrantRouteMapsTheCeilingRefusalTo403 drives each handler that grants a role (sixteen routes)
 // as an actor who holds roles.assign but not the permissions of the role it grants.
 // Core refuses (core.ErrPermissionDenied); every route must answer 403, never 500/400.
 func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
@@ -137,6 +137,23 @@ func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
 	require.NoError(t, fw.db.Create(membership).Error)
 	accessReq := &models.AccessRequest{ProjectID: proj.ID, UserID: target.ID, SuggestedRole: "fam6-powerful", State: "pending", CreatedAt: time.Now()}
 	require.NoError(t, fw.db.Create(accessReq).Error)
+
+	// N1 (#4214): restoring a soft-deleted project or group reinstates its grants, so a
+	// set holding an admin-tier role refuses a non-global-admin actor with the same
+	// sentinel (requireGlobalAdminToReinstateAdminRolesOn).
+	adminName, err := identity.NewFoldedName("fam6-admin-tier")
+	require.NoError(t, err)
+	adminTier, err := local.CreateRole(ctx, adminName, "")
+	require.NoError(t, err)
+	require.NoError(t, fw.db.Model(&models.Role{}).Where("id = ?", adminTier.ID).Update("bypasses_permission_checks", true).Error)
+	delProj := &models.Project{Name: "fam6-restore-proj"}
+	require.NoError(t, fw.db.Create(delProj).Error)
+	require.NoError(t, fw.db.Create(&models.UserRole{UserID: target.ID, RoleID: adminTier.ID, ProjectID: delProj.ID}).Error)
+	require.NoError(t, fw.db.Delete(delProj).Error)
+	delGrp := &models.Group{Name: "fam6-restore-group", NameFolded: "fam6-restore-group"}
+	require.NoError(t, fw.db.Create(delGrp).Error)
+	require.NoError(t, fw.db.Create(&models.GroupRole{GroupID: delGrp.ID, RoleID: adminTier.ID}).Error)
+	require.NoError(t, fw.db.Delete(delGrp).Error)
 
 	cat := NewCatalogHandler(fw.cs)
 	users, err := NewUserHandler(fw.cs)
@@ -224,11 +241,26 @@ func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
 			cat.TransitionMembership(w, suReq(http.MethodPut, `{"action":"activate"}`, map[string]string{"id": pid, "membershipId": suID(membership.ID)}))
 			return w
 		}},
+		// N1 (#4214): RestoreGroup answered the reinstate ceiling 500.
+		{"POST /projects/{id}/restore", func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			cat.RestoreProject(w, suReq(http.MethodPost, "", map[string]string{"id": suID(delProj.ID)}))
+			return w
+		}},
+		{"POST /groups/{id}/restore", func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			groups.RestoreGroup(w, suReq(http.MethodPost, "", map[string]string{"id": suID(delGrp.ID)}))
+			return w
+		}},
 	}
 	for _, rt := range routes {
 		t.Run(rt.name, func(t *testing.T) {
 			w := rt.call()
 			assert.Equal(t, http.StatusForbidden, w.Code, "a role the actor cannot grant is a refusal: %s", w.Body.String())
+			if strings.HasSuffix(rt.name, "/restore") {
+				// The reinstate ceiling refused, not the route gate: core's own text.
+				assert.Contains(t, w.Body.String(), "only an administrator can restore a ")
+			}
 		})
 	}
 }
