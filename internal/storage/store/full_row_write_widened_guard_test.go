@@ -39,14 +39,27 @@ import (
 	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
-// fullRowWidenedExcluded are repo-relative trees the widened sweep skips, each with why.
+// fullRowWidenedExcluded are the trees the widened sweep skips, each with why, keyed by
+// import path. Import paths, not repo-relative paths: scripts/ci/select-affected.py
+// (rule 3) reads every string literal of a test file as a path it may read, and a
+// literal "scripts" or "internal/testutil" here would make every change under those
+// trees select this package's tests.
 var fullRowWidenedExcluded = map[string]string{
-	"internal/storage/store": "swept recursively by the original guard",
-	"internal/core":          "swept recursively by the original guard",
-	"internal/testutil":      "test fixtures (fuzzworld, pgcanary, ...), linked only into test binaries",
-	"internal/testhelper":    "test fixtures, linked only into test binaries",
-	"scripts":                "dev and CI tooling, not shipped in the server binary",
-	"examples":               "sample programs, not shipped",
+	"github.com/keyorixhq/keyorix/internal/storage/store": "swept recursively by the original guard",
+	"github.com/keyorixhq/keyorix/internal/core":          "swept recursively by the original guard",
+	"github.com/keyorixhq/keyorix/internal/testutil":      "test fixtures (fuzzworld, pgcanary, ...), linked only into test binaries",
+	"github.com/keyorixhq/keyorix/internal/testhelper":    "test fixtures, linked only into test binaries",
+	"github.com/keyorixhq/keyorix/scripts":                "dev and CI tooling, not shipped in the server binary",
+	"github.com/keyorixhq/keyorix/examples":               "sample programs, not shipped",
+}
+
+// fullRowModule is the root module's import path prefix.
+const fullRowModule = "github.com/keyorixhq/keyorix/"
+
+// fullRowImportPath is dir's import path in the root module.
+func fullRowImportPath(t *testing.T, dir string) string {
+	t.Helper()
+	return strings.TrimSuffix(fullRowModule+repoRelPath(t, dir), "/.")
 }
 
 const fullRowRepoRoot = "../../.."
@@ -63,13 +76,12 @@ func fullRowWidenedRoots(t *testing.T) []string {
 		if !d.IsDir() {
 			return nil
 		}
-		rel := repoRelPath(t, path)
 		if path != fullRowRepoRoot {
 			name := d.Name()
 			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "testdata" || name == "vendor" {
 				return filepath.SkipDir
 			}
-			if _, ok := fullRowWidenedExcluded[rel]; ok {
+			if _, ok := fullRowWidenedExcluded[fullRowImportPath(t, path)]; ok {
 				return filepath.SkipDir
 			}
 			if _, serr := os.Stat(filepath.Join(path, "go.mod")); serr == nil {
@@ -159,20 +171,28 @@ func TestFullRowWriteGuard_WidenedScanNoStaleFullRowWrite(t *testing.T) {
 func TestFullRowWriteGuard_WidenedRootsAreDerived(t *testing.T) {
 	got := map[string]bool{}
 	for _, r := range fullRowWidenedRoots(t) {
-		got[repoRelPath(t, r)] = true
+		got[fullRowImportPath(t, r)] = true
 		t.Logf("widened root: %s", repoRelPath(t, r))
 	}
 	for ex, why := range fullRowWidenedExcluded {
-		t.Logf("skipped tree: %s (%s)", ex, why)
+		t.Logf("skipped tree: %s (%s)", strings.TrimPrefix(ex, fullRowModule), why)
 	}
-	for _, want := range []string{"internal/encryption", "internal/encryptionops", "internal/storage", "server", "server/admin"} {
+	for _, want := range []string{
+		"github.com/keyorixhq/keyorix/internal/encryption", "github.com/keyorixhq/keyorix/internal/encryptionops",
+		"github.com/keyorixhq/keyorix/internal/storage", "github.com/keyorixhq/keyorix/server",
+		"github.com/keyorixhq/keyorix/server/admin",
+	} {
 		require.Truef(t, got[want], "%s holds gorm writes of models but is not derived as a widened root", want)
 	}
+	// Other modules (cli/, operator/) have their own go.mod and are never walked.
+	others := []string{"github.com/keyorixhq/keyorix/cli", "github.com/keyorixhq/keyorix/operator"}
 	for r := range got {
 		for ex := range fullRowWidenedExcluded {
 			require.Falsef(t, r == ex || strings.HasPrefix(r, ex+"/"), "%s is under excluded tree %s", r, ex)
 		}
-		require.Falsef(t, r == "cli" || strings.HasPrefix(r, "cli/") || strings.HasPrefix(r, "operator/"), "%s belongs to another module", r)
+		for _, o := range others {
+			require.Falsef(t, r == o || strings.HasPrefix(r, o+"/"), "%s belongs to another module", r)
+		}
 	}
 }
 
