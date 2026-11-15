@@ -34,7 +34,7 @@ import (
 //
 // It asserts: DeleteSecret and deleteProjectCascade sweep the same per-secret
 // tables; every per-secret table is swept, or exempt with a reason in
-// secretIDTableExempt (a table that carries secret_id but grants nothing); an
+// testdata/secret_id_table_exempt.d (a table that carries secret_id but grants nothing); an
 // exemption is still a per-secret table and still unswept. A new per-secret
 // grant table is therefore red until DeleteSecret sweeps it, and then red until
 // deleteProjectCascade does too.
@@ -47,11 +47,52 @@ import (
 
 const storeDir = "../../storage/store"
 
-// secretIDTableExempt: tables with a secret_id column that are not grants, so
-// neither delete path sweeps them. table -> reason.
-var secretIDTableExempt = map[string]string{
-	"access_review_items":     "a review campaign's frozen snapshot of a grant plus the reviewer's decision (evidence); no permission check reads it, the live grant it mirrors is swept or kept on its own",
-	"secret_version_comments": "free-text comments on a secret version, restored with the secret; grants nothing",
+// secretIDTableExemptDir holds the tables with a secret_id column that are not
+// grants, so neither delete path sweeps them: one file per table
+// (testdata/secret_id_table_exempt.d/<table>.tsv, row `table<TAB>reason`), so a PR
+// edits only its own table's file. See the README.md in the directory.
+const secretIDTableExemptDir = "testdata/secret_id_table_exempt.d"
+
+// loadSecretIDTableExempt reads table -> reason from every *.tsv in dir. A file
+// holds exactly one row and is named for its table, so a table cannot sit in two
+// files.
+//
+// dir-listing-ok: the exemption fragments in testdata, not internal/core's sources
+func loadSecretIDTableExempt(t testing.TB, dir string) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.FromSlash(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tsv") {
+			continue // README.md
+		}
+		b, err := os.ReadFile(filepath.Join(filepath.FromSlash(dir), e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rows [][2]string
+		for i, line := range strings.Split(string(b), "\n") {
+			if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			table, reason, ok := strings.Cut(line, "\t")
+			if !ok || strings.TrimSpace(table) == "" || strings.TrimSpace(reason) == "" {
+				t.Fatalf("%s:%d: want `table<TAB>reason` with a non-empty reason, got %q", e.Name(), i+1, line)
+			}
+			rows = append(rows, [2]string{table, strings.TrimSpace(reason)})
+		}
+		if len(rows) != 1 {
+			t.Fatalf("%s: holds %d rows; a fragment holds exactly one", e.Name(), len(rows))
+		}
+		if want := rows[0][0] + ".tsv"; e.Name() != want {
+			t.Fatalf("%s: the row for table %q must live in a file named %s", e.Name(), rows[0][0], want)
+		}
+		out[rows[0][0]] = rows[0][1]
+	}
+	return out
 }
 
 // secretIDTables returns, sorted, the struct name -> table name of every model
@@ -173,19 +214,19 @@ func secretSweepParityViolations(t testing.TB, files map[string]string, populati
 		case !inSingle && !inCascade:
 			if reason, ok := exempt[table]; !ok {
 				out = append(out, "per-secret table "+table+" ("+st+") carries secret_id and neither DeleteSecret nor deleteProjectCascade sweeps it: "+
-					"if it grants access, sweep it in both; otherwise add it to secretIDTableExempt with the reason it grants nothing")
+					"if it grants access, sweep it in both; otherwise add testdata/secret_id_table_exempt.d/"+table+".tsv with the reason it grants nothing")
 			} else if strings.TrimSpace(reason) == "" {
-				out = append(out, "secretIDTableExempt["+table+"] has no reason")
+				out = append(out, "secret_id_table_exempt.d/"+table+".tsv has no reason")
 			}
 		default:
 			if _, ok := exempt[table]; ok {
-				out = append(out, "secretIDTableExempt lists "+table+", which both paths now sweep: remove the exemption")
+				out = append(out, "secret_id_table_exempt.d lists "+table+", which both paths now sweep: delete "+table+".tsv")
 			}
 		}
 	}
 	for table := range exempt {
 		if !tables[table] {
-			out = append(out, "secretIDTableExempt lists "+table+", which is no longer a table with a secret_id column: remove it")
+			out = append(out, "secret_id_table_exempt.d lists "+table+", which is no longer a table with a secret_id column: delete "+table+".tsv")
 		}
 	}
 	slices.Sort(out)
@@ -238,14 +279,15 @@ func TestSecretGrantSweep_DeleteSecretAndProjectCascadeSweepTheSameTables(t *tes
 			t.Fatalf("the sweep derivation does not see DeleteSecret reach %s (got %v): the call-following is broken", k, single)
 		}
 	}
+	exempt := loadSecretIDTableExempt(t, secretIDTableExemptDir)
 	t.Logf("per-secret tables (secret_id): %v; exempt: %v", population, slices.Sorted(func(yield func(string) bool) {
-		for k := range secretIDTableExempt {
+		for k := range exempt {
 			if !yield(k) {
 				return
 			}
 		}
 	}))
-	if v := secretSweepParityViolations(t, files, population, secretIDTableExempt); len(v) > 0 {
+	if v := secretSweepParityViolations(t, files, population, exempt); len(v) > 0 {
 		g.Errorf("per-secret grant sweep parity:\n  %s", strings.Join(v, "\n  "))
 	}
 }
@@ -284,8 +326,9 @@ func deleteProjectCascade(tx *gorm.DB, id uint, d int) error {
 	}
 	third := `tx.Delete(&models.SecretVersionComment{})`
 	exemptWithoutThird := map[string]string{"access_review_items": "x"}
+	realExempt := loadSecretIDTableExempt(t, secretIDTableExemptDir)
 
-	if v := secretSweepParityViolations(t, mk("", ""), population, secretIDTableExempt); len(v) != 0 {
+	if v := secretSweepParityViolations(t, mk("", ""), population, realExempt); len(v) != 0 {
 		t.Fatalf("green case: the real sweep set on both sides must pass, got %v", v)
 	}
 	for _, tc := range []struct {
@@ -296,7 +339,7 @@ func deleteProjectCascade(tx *gorm.DB, id uint, d int) error {
 		{"third_table_single_only", third, "", exemptWithoutThird, "DeleteSecret sweeps per-secret table secret_version_comments"},
 		{"third_table_cascade_only", "", third, exemptWithoutThird, "deleteProjectCascade sweeps per-secret table secret_version_comments"},
 		{"third_table_unswept_unexempt", "", "", exemptWithoutThird, "per-secret table secret_version_comments (SecretVersionComment) carries secret_id and neither"},
-		{"acl_dropped_from_cascade", "", "", secretIDTableExempt, ""},
+		{"acl_dropped_from_cascade", "", "", realExempt, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			files := mk(tc.single, tc.cascade)
