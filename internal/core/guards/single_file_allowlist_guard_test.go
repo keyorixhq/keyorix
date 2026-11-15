@@ -118,7 +118,7 @@ func scanSingleFileAllowlists(t *testing.T, root string) (files, maps []string) 
 			if err != nil {
 				return err
 			}
-			for _, line := range strings.Split(string(b), "\n") {
+			for line := range strings.SplitSeq(string(b), "\n") {
 				if m := nonEmptyAllowlistMapRe.FindStringSubmatch(line); m != nil {
 					maps = append(maps, d.Name()+":"+m[1])
 				}
