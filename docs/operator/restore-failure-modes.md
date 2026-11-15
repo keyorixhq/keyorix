@@ -49,9 +49,13 @@ a line on stderr at every table boundary and every 10 seconds inside a large tab
 restore of millions of rows does not look hung:
 
 ```
-restore progress: table=audit_events (7/31) loading rows=1250000/4800000 elapsed=4m10s
+restore progress: table=audit_events (7/80) start rows=0/4800000 elapsed=3m
+restore progress: table=audit_events (7/80) loading rows=1250000/4800000 elapsed=4m10s
+restore progress: table=audit_events (7/80) done rows=4800000/4800000 elapsed=6m2s
 ```
 
+Each table prints `start` and `done` (the second number of `(n/N)` is the archive's table
+count, 80 on the current schema) and, inside a large table, `loading` every 10 seconds.
 The lines carry table names and row counts only. They appear when stderr is a terminal, or
 anywhere with `--verbose`; the summary on stdout is unchanged.
 
@@ -179,12 +183,13 @@ installed. Do not delete the journal and start the server on the files as they a
 
 ## Where the journal is, and who checks it
 
-- **Working directory.** Relative `database.path`, `dek_path` and `salt_path` resolve
-  against the working directory, for the server and every admin command alike, and so does
-  the journal's location. Run `admin restore`, `admin restore --recover` and the server
-  from the same directory, or use absolute paths (recommended). A `--recover` run from
-  another directory refuses the journal (its entries name other files); a server started
-  from another directory uses other key files and does not see the journal.
+- **Working directory.** A relative SQLite `database.path` is resolved against the config
+  file's directory, but a relative `dek_path` or `salt_path` is resolved against the working
+  directory (#4249), and so is the journal's location on PostgreSQL (it sits next to the first
+  key file). Use absolute paths (recommended), or run `admin restore`, `admin restore
+  --recover` and the server from the same directory. A `--recover` run from another directory
+  refuses the journal (its entries name other files); a server started from another directory
+  uses other key files and does not see the journal.
 - **Changing the config between a crash and the restart hides the journal.** It is found
   through the configured database path (SQLite) or the first key file's path (PostgreSQL).
   If those change before `--recover` runs, the server and admin commands look elsewhere

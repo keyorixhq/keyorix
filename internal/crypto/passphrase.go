@@ -58,15 +58,14 @@ type PassphraseSource struct {
 	// internal/cli/secret/create.go and siblings), or a raw read until EOF
 	// when stdin is piped/redirected.
 	Stdin bool
-	// FlagPrefix is the prefix of the flag names this source was registered
-	// under ("" for --passphrase-file, "new-" for --new-passphrase-file), set by
-	// RegisterPassphraseFlags. Refusals and Describe name the flag the operator
-	// actually typed with it. Empty means the unprefixed names.
+	// FlagPrefix is the prefix RegisterPassphraseFlags gave the flags that fill this source
+	// ("" for --passphrase-file, "new-" for --new-passphrase-file), so a refusal names the
+	// flag the operator actually typed (#4217).
 	FlagPrefix string
 }
 
-// flagName returns the "--<prefix>passphrase-<kind>" flag this source was
-// registered under (kind is "fd", "file" or "stdin").
+// flagName is the command-line name of this source's flag (kind: "fd", "file" or
+// "stdin"), e.g. "--new-passphrase-file".
 func (src PassphraseSource) flagName(kind string) string {
 	return "--" + src.FlagPrefix + "passphrase-" + kind
 }
@@ -83,9 +82,9 @@ func (src PassphraseSource) flagName(kind string) string {
 func ResolvePassphrase(src PassphraseSource, envVarName string) ([]byte, error) {
 	switch {
 	case src.FDSet:
-		return readPassphraseFD(src.FD, src.flagName("fd"))
+		return readPassphraseFDNamed(src.flagName("fd"), src.FD)
 	case src.FilePath != "":
-		return readPassphraseFile(src.FilePath, src.flagName("file"))
+		return readPassphraseFileNamed(src.flagName("file"), src.FilePath)
 	case src.Stdin:
 		return readPassphraseStdin()
 	}
@@ -107,8 +106,7 @@ func ResolvePassphrase(src PassphraseSource, envVarName string) ([]byte, error) 
 		v = strings.TrimSpace(raw)
 	}
 	if !found || v == "" {
-		return nil, fmt.Errorf("%s is not set (and no %s/%s/%s was given; %s%s works too)", envVarName,
-			src.flagName("fd"), src.flagName("file"), src.flagName("stdin"), envVarName, secretenv.FileSuffix)
+		return nil, fmt.Errorf("%s is not set (and no %s/%s/%s was given; %s%s works too)", envVarName, src.flagName("fd"), src.flagName("file"), src.flagName("stdin"), envVarName, secretenv.FileSuffix)
 	}
 	return []byte(v), nil
 }
@@ -131,7 +129,7 @@ func (src PassphraseSource) Describe(envVarName string) string {
 	return envVarName
 }
 
-func readPassphraseFD(fd int, flag string) ([]byte, error) {
+func readPassphraseFDNamed(flag string, fd int) ([]byte, error) {
 	f := os.NewFile(uintptr(fd), "passphrase-fd")
 	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(f)
@@ -149,10 +147,13 @@ func readPassphraseFD(fd int, flag string) ([]byte, error) {
 // target) and check permissions via fstat on the SAME fd used to read, so
 // there is no window between the permission check and the read for the file
 // to be swapped out from under it.
-//
-// flag is the flag the operator gave ("--passphrase-file" or
-// "--new-passphrase-file"); it only names the flag in refusals.
-func readPassphraseFile(path, flag string) ([]byte, error) {
+func readPassphraseFile(path string) ([]byte, error) {
+	return readPassphraseFileNamed("--passphrase-file", path)
+}
+
+// readPassphraseFileNamed is readPassphraseFile for the flag the operator gave (flag is
+// the full "--...-file" name, used in every refusal).
+func readPassphraseFileNamed(flag, path string) ([]byte, error) {
 	// OpenRegular adds O_NONBLOCK and refuses a non-regular file on the same fd: a
 	// 0600 FIFO would otherwise pass the mode check below and hang in open(2)/read.
 	f, info, err := secretenv.OpenRegular(path, syscall.O_NOFOLLOW)

@@ -247,6 +247,12 @@ single transaction.  If the server crashes mid-sweep, the orphaned pending key
 file is detected and cleaned up automatically on the next `--confirm` run.
 Back up the `keyorix_keys` volume after a successful rotation.
 
+**There is no command that undoes a rotation.** `admin encryption` has no reverse subcommand
+and `rotate` takes only `--confirm` and `--dry-run`. The way back is `admin backup` taken
+*before* the rotation, restored with `admin restore` (every write made since the archive is
+lost), so take that backup first; otherwise roll forward by rotating again. See
+[operator/key-rotation-runbook.md](operator/key-rotation-runbook.md) §6 "Rollback".
+
 With several server replicas on one PostgreSQL database, stop all of them, and
 copy the new key files to every replica before starting it: a replica with the
 old `dek.key` refuses to start. See [`operator/j6-key-rotation.md`](operator/j6-key-rotation.md)
@@ -303,7 +309,11 @@ On a binary install (no Docker), run the same commands directly:
 **every** command, as for the server itself. The replacement host needs the config,
 the certificates and the secrets files, not `keys/`: restore installs the key files
 from the archive. Server stopped is only required for restore (and for
-`admin audit export-checkpoint`, `admin verify-audit` and `--exclusive`).
+`admin audit export-checkpoint`, `admin verify-audit`, `admin validate` and
+`--exclusive`): `admin validate --posture` beside a live server is refused like those
+(`a Keyorix server (or another admin command) appears to be using this database`).
+That includes the posture check the stale-staging-file paragraph below points at: it
+cannot be polled from a monitor while the server runs.
 
 On Postgres, this reads through a single `REPEATABLE READ` snapshot
 transaction by default — every table sees the identical point-in-time view,
@@ -577,8 +587,9 @@ path.
 ## 6. Upgrades
 
 ```sh
-# docker-compose.yml pins both images to one release tag (e.g. :0.96.0, no
-# leading "v"). `pull` alone fetches nothing new: first edit the `backend` and
+# docker-compose.yml pins both images to one release tag (release v0.97.0 is
+# image :0.97.0: the image tag has no leading "v"). `pull` alone fetches nothing
+# new: first edit the `backend` and
 # `web` tags to the release you are moving to, then:
 docker compose pull          # fetch the published images for those tags
 docker compose up -d         # recreate with the new images
@@ -607,7 +618,7 @@ kept. Across a floor change (v0.96.x → v0.97.0), the old release refuses to st
 the upgraded database, and the only way back is restoring the pre-upgrade backup.
 
 [operator/upgrade-rollback.md](operator/upgrade-rollback.md) is the step-by-step
-runbook, verified on 0.96.1 → 0.96.3 with the published images (SQLite and
+runbook, verified on v0.96.1 → v0.96.3 with the published images (SQLite and
 PostgreSQL). It covers the version/schema matrix, timings and what not to do. v0.96.2
 images were never published; go from 0.96.1 to 0.96.3. See
 [UPGRADING.md](UPGRADING.md) for what changes on upgrade. In particular, from this
@@ -615,7 +626,7 @@ release on, an upgraded deployment whose config never set `security.require_mfa`
 grace period before MFA is enforced. It ends at the first administrator MFA enrolment
 or 30 days after the first start on the new release, whichever comes first
 ([details](UPGRADING.md#mfa-after-an-upgrade-the-grace-period-and-its-banner)). An
-upgrade within v0.96.x logs no grace line: 0.96.1 → 0.96.3 kept MFA enforced.
+upgrade within v0.96.x logs no grace line: v0.96.1 → v0.96.3 kept MFA enforced.
 
 ### Running more than one replica
 

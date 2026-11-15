@@ -28,6 +28,7 @@ func TestListConfigsWithRefusedAdminDSN(t *testing.T) {
 	assert.Zero(t, rep.Unreadable)
 	require.Len(t, rep.Configs, 1)
 	assert.Equal(t, RefusedAdminDSNConfig{
-		ConfigID: legacy.ID, ProjectID: 1, Name: "legacy-db", BackendType: "postgres", Option: "sslrootcert", LiveLeases: 1,
+		ConfigID: legacy.ID, ProjectID: 1, EnvironmentID: 2, Name: "legacy-db", BackendType: "postgres",
+		Option: "sslrootcert", Options: []string{"sslrootcert"}, LiveLeases: 1,
 	}, rep.Configs[0])
 }

@@ -122,6 +122,7 @@ func TestJSONLogs_ShapeCorrelationAndNoSecrets(t *testing.T) {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
 	injectServerLogFormat(t, filepath.Join(dir, "keyorix.yaml"))
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
 	}

@@ -44,6 +44,8 @@ func TestSCIMWriteErrorStatus_Classes(t *testing.T) {
 		{wrap(corestorage.ErrSQLiteWriteContention), http.StatusServiceUnavailable, ""},
 		{wrap(core.ErrUserActiveStateConflict), http.StatusServiceUnavailable, ""},
 		{wrap(core.ErrUserAccountStateConflict), http.StatusServiceUnavailable, ""},
+		// #3225: a create that may have committed is retryable, not a plain 500.
+		{wrap(fmt.Errorf("%w: %w", core.ErrUserCreateOutcomeUnknown, errors.New("conn reset"))), http.StatusServiceUnavailable, ""},
 		{context.Canceled, http.StatusInternalServerError, ""},
 		{context.DeadlineExceeded, http.StatusInternalServerError, ""},
 		{errors.New("anything else"), http.StatusInternalServerError, ""},
