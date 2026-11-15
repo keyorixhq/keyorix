@@ -260,6 +260,7 @@ func wholeStorageEmbeddingViolations(t *testing.T, files map[string][]byte) []st
 // relative to root. The test-only dirs are srcpath.CoreTestOnlyDirs in the real
 // guard, so a double that moves to internal/core/coretests stays in the scan
 // (ADR-121 R5).
+// dir-listing-ok: lists the TEST files of internal/core and of srcpath.CoreTestOnlyDirs (re-pointed when the black-box tests moved to coretests), not core's sources
 func coreTestFiles(t *testing.T, root string, testOnlyDirs []string) map[string][]byte {
 	t.Helper()
 	files := map[string][]byte{}

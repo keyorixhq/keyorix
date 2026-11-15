@@ -99,3 +99,15 @@ func TestParseDSNHosts_UnrecognisedStillNil(t *testing.T) {
 		}
 	}
 }
+
+// TestParseDSNHosts_EmptyBracketHostStaysCandidate: "host=[]" strips to an empty
+// host; it must stay a candidate (as written) because the driver still sees it.
+func TestParseDSNHosts_EmptyBracketHostStaysCandidate(t *testing.T) {
+	got := ParseDSNHosts("host=[] user=u dbname=d")
+	if len(got) != 1 || got[0] != "[]" {
+		t.Fatalf("ParseDSNHosts(host=[]) = %q, want [\"[]\"]", got)
+	}
+	if got := SplitDSNHostList("[::1],[]"); len(got) != 2 || got[0] != "::1" || got[1] != "[]" {
+		t.Fatalf("SplitDSNHostList = %q", got)
+	}
+}

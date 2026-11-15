@@ -10,6 +10,7 @@ import (
 	"github.com/keyorixhq/keyorix/configs"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
+	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -62,7 +63,9 @@ no SQLite path, so init never creates a SQLite file for a PostgreSQL
 deployment. Set storage.database.dsn (or host/name/user plus
 KEYORIX_DB_PASSWORD) in the config, then run init again to finish. It applies
 only to a config init writes: with an existing config whose storage.type
-differs, init refuses instead of changing it.
+differs, init refuses instead of changing it. On PostgreSQL init leaves the
+database alone (no table is created, and init is recorded in the audit chain
+only when the schema already exists): 'admin migrate' creates the schema.
 
 Exit codes: 0 on success, 1 on any failure (see the printed error message).`,
 	RunE: runAdminInit,
@@ -156,16 +159,50 @@ func runAdminInit(cmd *cobra.Command, args []string) error { // NOSONAR -- cogni
 		}
 	}
 
+	// Before the closing hints (#3523): on SQLite this audit write opens the
+	// database and creates its -wal/-shm files, so the hints that tell an
+	// operator which files to delete come after everything init created.
+	recordInitAction(cfg, configPath)
+
 	fmt.Println("\nKeyorix system initialization completed successfully.")
 	fmt.Printf("Config file: %s\n", configPath)
 	if cfg.Storage.Type == "local" || cfg.Storage.Type == "sqlite" {
-		fmt.Println("Using PostgreSQL instead? Delete the SQLite file created here and run 'keyorix-server admin init --storage-type postgres' in a fresh directory (or set storage.type: postgres and storage.database.dsn in the config BEFORE the steps below).")
+		fmt.Printf("Using PostgreSQL instead? Delete the SQLite files created here (%[1]s, %[1]s-wal, %[1]s-shm and %[1]s.*.lock) "+
+			"and run 'keyorix-server admin init --storage-type postgres' in a fresh directory (or set storage.type: postgres and "+
+			"storage.database.dsn in the config BEFORE the steps below).\n", filepath.Base(cfg.Storage.Database.Path))
 	}
 	printInitNextSteps()
 
-	recordAdminAction(cfg, "admin.init", fmt.Sprintf("ran `keyorix-server admin init` (config=%s)", configPath), true)
-
 	return nil
+}
+
+// recordInitAction records `admin init` in the audit chain. On PostgreSQL it
+// does so only when the database already has its schema: opening
+// storage migrates it, and init leaves a PostgreSQL database alone until
+// `admin migrate` (#3523). Like recordAdminAction, it never fails init.
+func recordInitAction(cfg *config.Config, configPath string) {
+	description := fmt.Sprintf("ran `keyorix-server admin init` (config=%s)", configPath)
+	if isPostgresStorage(cfg) {
+		migrated, err := databaseHasAuditSchema(cfg)
+		if err != nil || !migrated {
+			fmt.Println(description)
+			fmt.Println("note: not recorded to the audit chain: the database has no schema yet, and init leaves it alone; " +
+				"'keyorix-server admin migrate' creates it")
+			return
+		}
+	}
+	recordAdminAction(cfg, "admin.init", description, true)
+}
+
+// databaseHasAuditSchema reports whether the configured database already holds
+// the audit_events table, without migrating anything.
+func databaseHasAuditSchema(cfg *config.Config) (bool, error) {
+	db, err := storage.OpenGormDB(cfg)
+	if err != nil {
+		return false, err
+	}
+	defer closeGormDB(db)
+	return db.Migrator().HasTable("audit_events"), nil
 }
 
 // printInitNextSteps lists what to run after `admin init`, in the order that works:

@@ -1334,22 +1334,22 @@ func refuseIfAuditChainBroken(tx *gorm.DB, anchor *storage.AuditChainAnchor) err
 				started = true
 			}
 			if e.EntryHash == "" {
-				return fmt.Errorf("refusing to re-encode the audit chain: event %d has no entry_hash, so "+
+				return fmt.Errorf("%w: event %d has no entry_hash, so "+
 					"chain data was removed after it was written. Re-encoding would rewrite the chain around "+
-					"this gap and produce a chain that verifies. Investigate before migrating", e.ID)
+					"this gap and produce a chain that verifies. Investigate before migrating", storage.ErrAuditChainReencodeRefused, e.ID)
 			}
 			if e.PrevHash != prevHash {
-				return fmt.Errorf("refusing to re-encode the audit chain: event %d's prev_hash does not link "+
+				return fmt.Errorf("%w: event %d's prev_hash does not link "+
 					"to the preceding event, so a row was inserted, deleted, or reordered. Re-encoding "+
 					"rewrites prev_hash for every row and would repair this break invisibly. Investigate "+
-					"before migrating", e.ID)
+					"before migrating", storage.ErrAuditChainReencodeRefused, e.ID)
 			}
 			if !auditEntryHashMatchesAnyKnownEncoding(e) {
-				return fmt.Errorf("refusing to re-encode the audit chain: event %d's entry_hash matches "+
-					"neither the current encoding nor the pre-#1452 one, so its contents changed after it "+
+				return fmt.Errorf("%w: event %d's recorded entry_hash "+
+					"does not match the row's contents, so the row was changed after it "+
 					"was written -- this is not a stale encoding. Re-encoding would re-hash the modified "+
 					"contents and leave the chain verifying, destroying the evidence. Investigate before "+
-					"migrating", e.ID)
+					"migrating", storage.ErrAuditChainReencodeRefused, e.ID)
 			}
 			prevHash = e.EntryHash
 		}
@@ -1374,8 +1374,8 @@ func refuseIfAuditRowsOutsideWalk(tx *gorm.DB, lastID uint, walked int) error {
 	if err != nil || held == want {
 		return err
 	}
-	return fmt.Errorf("refusing to re-encode the audit chain: %s. Investigate before migrating",
-		auditRowsOutsideWalkReason(held, want, lastID))
+	return fmt.Errorf("%w: %s. Investigate before migrating",
+		storage.ErrAuditChainReencodeRefused, auditRowsOutsideWalkReason(held, want, lastID))
 }
 
 // errAuditMigrationDryRun is a sentinel used to force MigrateAuditChainEncoding's
@@ -1430,8 +1430,8 @@ func verifyBatchEvents(batch []*models.AuditEvent, prevHash string, started bool
 					"refuses if it finds a row that matches neither encoding")
 				return prevHash, headID, started, true
 			}
-			brokenChain(result, e.ID, "entry_hash matches neither the current encoding nor the pre-#1452 "+
-				"one, so this event's contents changed after it was written (event modified)")
+			brokenChain(result, e.ID, "the recorded entry_hash does not match this row's contents, "+
+				"so the row was changed after it was written (event modified)")
 			return prevHash, headID, started, true
 		}
 		prevHash = e.EntryHash

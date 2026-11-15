@@ -55,6 +55,10 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else if isPermissionRefusal(err) {
 			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
+		} else if errors.Is(err, core.ErrValidation) || errors.Is(err, core.ErrSecretInvalidInput) {
+			// "secret ID is required": a refusal of the request, not a fault (was 500). The
+			// permission check's own refusal is the secrets family's ErrSecretInvalidInput.
+			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get secret versions", http.StatusInternalServerError, nil)
 		}

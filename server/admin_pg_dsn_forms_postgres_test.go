@@ -334,7 +334,8 @@ func TestDSNFormsOf_KeepsBaseHostAndTLS(t *testing.T) {
 				require.Equal(t, want.Port, got.Port, f.name)
 				require.Equal(t, want.Database, got.Database, f.name)
 				require.Equal(t, "kx role", got.User, f.name)
-				require.Equal(t, dsnFormsPassword, got.Password, f.name)
+				// Not require.Equal: a failure would print both passwords.
+				require.Truef(t, dsnFormsPassword == got.Password, "%s: passwords differ", f.name)
 				if f.name == "url-no-query" {
 					require.Nil(t, want.TLSConfig, "url-no-query only exists for a TLS-disabled base")
 					continue

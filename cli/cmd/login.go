@@ -44,9 +44,11 @@ prompt. With no terminal and neither variable set, login stops with an error.
 
 When the account has TOTP multi-factor authentication enabled, /auth/login answers with a
 second-factor challenge instead of a token; login then asks for an authenticator code (or
-an unused recovery code) and completes the challenge via POST /auth/mfa/verify. Pass
---mfa-code to supply it non-interactively. The code is used for that one request only: it
-is never echoed, never logged, and never written to the credential file.`,
+an unused recovery code) and completes the challenge via POST /auth/mfa/verify. To
+supply it non-interactively set KEYORIX_MFA_CODE, or KEYORIX_MFA_CODE_FILE to a file that
+holds it (the --mfa-code flag is refused: a code on the command line shows in ps and in
+shell history). The code is used for that one request only: it is never echoed, never
+logged, and never written to the credential file.`,
 	RunE: runLogin,
 }
 

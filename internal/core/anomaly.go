@@ -311,6 +311,9 @@ func (d *AnomalyDetector) auditBusinessHoursConfig(ctx context.Context, tz strin
 		ActorType: "system",
 		EventTime: time.Now(),
 	}
+	// audit-direct-ok: hardcodes ActorType "system" -- a scheduler/config-change event with no human
+	// or machine actor, correctly using the system-actor marker rather than a null. Never
+	// machine-identity-typed, so emitAudit's corrections would never apply to it anyway.
 	if err := d.storage.LogAuditEvent(ctx, event); err != nil {
 		log.Printf("SECURITY: anomaly business-hours config: failed to write audit event: %v", err)
 	}

@@ -177,6 +177,7 @@ func TestAuditDurability_SQLiteDefaultBootIsStrict(t *testing.T) {
 	if out, err := runAdmin(t, bin, dir, env, "init", "--dev", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
+	adminEncryptionInit(t, bin, dir, env)
 	// Deliberately NO config edit: this is what `admin init` generates.
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)

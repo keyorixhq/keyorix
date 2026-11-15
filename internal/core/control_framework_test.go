@@ -2,11 +2,14 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // findControl returns the control with the given id (or fails the test).
@@ -108,6 +111,38 @@ func TestEvaluateControls_EmergencyAccessIndependentReviewerGapsWithOneAdmin(t *
 	gapC := findControl(t, EvaluateControls(impossible), "emergency-access-independent-reviewer")
 	assert.Equal(t, ControlStatusGap, gapC.Status)
 	assert.Contains(t, gapC.Detail, "independent post-activation review is not currently possible")
+}
+
+// TestEvaluateControls_EmergencyAccessDegradedCollectionIsUnknownNeverPass is the
+// guard CORE-PILOT-TAILS-NOV-1 left open (BREAKGLASS-POSTURE-NOV-1 item 3): when
+// the break-glass activations of a project could not be read, the posture
+// degrades with "emergency_access:project=N" and both break-glass controls must
+// say Unknown. Zero unreviewed activations is what an unread collection looks
+// like, so a Pass there would certify a count nobody collected. The degradation
+// is produced by the real accumulateBreakGlassPosture, not hand-written, so the
+// reason prefix the controls look for is the one production emits.
+func TestEvaluateControls_EmergencyAccessDegradedCollectionIsUnknownNeverPass(t *testing.T) {
+	t.Parallel()
+	ids := []string{"emergency-access", "emergency-access-independent-reviewer"}
+
+	p := &CompliancePosture{}
+	c := NewKeyorixCore(new(MockStorage))
+	c.accumulateBreakGlassPosture(p, 1, &complianceSnapshot{
+		breakGlassByProject:    map[uint][]*models.BreakGlassActivation{},
+		breakGlassErrByProject: map[uint]error{1: errors.New("simulated db failure")},
+	})
+	require.True(t, p.DegradedArea("emergency_access:"), "precondition: the failed read degrades the posture, got %v", p.DegradedReasons)
+	require.Zero(t, p.EmergencyAccess.UnreviewedActivations, "precondition: an unread collection looks like zero unreviewed")
+	for _, id := range ids {
+		assert.Equal(t, ControlStatusUnknown, findControl(t, EvaluateControls(p), id).Status, "%s must be unknown, never pass", id)
+	}
+
+	// Known-good direction: the same posture without the degradation passes, so
+	// the degradation is what flips the status and not an always-unknown control.
+	healthy := &CompliancePosture{}
+	for _, id := range ids {
+		assert.Equal(t, ControlStatusPass, findControl(t, EvaluateControls(healthy), id).Status, "%s on a healthy posture", id)
+	}
 }
 
 // #396: the data-classification control must fold ALL FOUR classifiable surfaces —

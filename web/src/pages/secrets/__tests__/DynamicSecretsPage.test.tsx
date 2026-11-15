@@ -41,6 +41,9 @@ vi.mock('../../../features/dynamic-secrets/api', () => ({
     }),
     useCreateDynamicConfig: () => ({ mutate: createConfigMutate, isPending: false }),
     useClassifyDynamicConfig: () => ({ mutate: classifyMutate, isPending: false }),
+    // The admin-DSN banner and form have their own coverage (DynamicSecretsPageAdminDsn.test.tsx).
+    useRefusedAdminDsn: () => ({ data: undefined, error: null }),
+    useUpdateDynamicConfigAdminDSN: () => ({ mutateAsync: vi.fn(), reset: vi.fn(), isPending: false }),
 }));
 
 // LeasesPanel has its own dedicated coverage; here it's stubbed to a marker element so

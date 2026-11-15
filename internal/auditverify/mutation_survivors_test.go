@@ -363,8 +363,14 @@ func TestVerify_HashMismatchReasonNamesTheEncoding(t *testing.T) {
 	db, _ = survivorDB(t, rows...)
 	r = verifyWithKey(t, db, Options{})
 	assert.Equal(t, VerdictBroken, r.Verdict)
-	assert.Contains(t, r.Reason, "matches neither the current encoding nor the pre-#1452 one")
+	assert.Contains(t, r.Reason, "event #1's recorded entry_hash does not match the row's contents")
+	assert.Contains(t, r.Reason, "the row was changed after it was written")
 	assert.NotContains(t, r.Reason, "valid under the pre-#1452")
+	// Operator-facing text: no internal references.
+	assert.NotRegexp(t, `#[0-9]{3,}`, r.Reason)
+	for _, internal := range []string{"design §", "ADR-", "pre-#", "§", "matches neither"} {
+		assert.NotContains(t, r.Reason, internal)
+	}
 }
 
 func TestVerify_BrokenWalkStillReportsTheCheckpoint(t *testing.T) {

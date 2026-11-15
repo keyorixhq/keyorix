@@ -34,14 +34,14 @@ func TestRemoveUserRole_RefusesLastGlobalAdmin(t *testing.T) {
 	// all — recoverable by a global admin, but still an availability risk this
 	// fix now refuses outright, mirroring SetProjectMemberRole/
 	// RemoveProjectMember's identical stance for direct grants).
-	h.AssignUserRole(t, 100, superAdminRoleID, ptrUint(2))
-	err = h.CoreService.RemoveUserRole(ctx, 0, 100, superAdminRoleID, core.Scope{ProjectID: 2})
+	h.AssignUserRole(t, 100, testhelper.RoleProjectAdmin, ptrUint(2))
+	err = h.CoreService.RemoveUserRole(ctx, 0, 100, testhelper.RoleProjectAdmin, core.Scope{ProjectID: 2})
 	require.Error(t, err, "user 100 is project 2's only roles.assign holder")
 	assert.Contains(t, err.Error(), "last administrator")
 
 	// Once a second project admin exists, the first can be removed.
-	h.AssignUserRole(t, 101, superAdminRoleID, ptrUint(2))
-	require.NoError(t, h.CoreService.RemoveUserRole(ctx, 0, 100, superAdminRoleID, core.Scope{ProjectID: 2}),
+	h.AssignUserRole(t, 101, testhelper.RoleProjectAdmin, ptrUint(2))
+	require.NoError(t, h.CoreService.RemoveUserRole(ctx, 0, 100, testhelper.RoleProjectAdmin, core.Scope{ProjectID: 2}),
 		"a project-scoped admin role can be removed once another project admin survives")
 
 	// Add a SECOND global admin; now the first can be removed.

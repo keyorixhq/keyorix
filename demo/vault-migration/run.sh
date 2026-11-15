@@ -21,7 +21,7 @@ KM="${KEYORIX_MIGRATE_BIN:-keyorix-migrate}"
 KEYORIX_URL="http://localhost:8088"
 VAULT_PORT="8200"
 VAULT_ADDR="http://localhost:${VAULT_PORT}"
-VAULT_TOKEN="root"
+VAULT_TOKEN="root" # docs-secrets:allow (lab-only fixture: the throwaway dev Vault's fixed root token, never a real credential)
 
 # Throwaway demo credentials (compose bootstraps the admin from these). The stack
 # reads its credentials from Docker secrets files, not the environment, so write
@@ -30,7 +30,7 @@ VAULT_TOKEN="root"
 # written here and adds the Postgres TLS pair the compose file also needs. The
 # server refuses a secret file owned by anyone but root or its own uid, so the
 # files are then handed to root (keeping the group): that needs sudo.
-KEYORIX_ADMIN_PASSWORD="Admin123!"
+KEYORIX_ADMIN_PASSWORD="Admin123!" # docs-secrets:allow (lab-only fixture: the demo stack's fixed admin password, never a real credential)
 export KEYORIX_ADMIN_USERNAME="admin"
 export KEYORIX_ADMIN_EMAIL="admin@keyorix.local"
 DEMO_SECRETS_DIR="$(mktemp -d)"
@@ -77,8 +77,10 @@ printf 'Waiting for Keyorix to bootstrap'
 TOKEN=""
 set +e  # the early attempts fail while the backend boots — don't let that exit
 for _ in $(seq 1 60); do
-  TOKEN="$(curl -s -X POST "${KEYORIX_URL}/auth/login" -H 'Content-Type: application/json' \
-    -d "{\"username\":\"${KEYORIX_ADMIN_USERNAME}\",\"password\":\"${KEYORIX_ADMIN_PASSWORD}\"}" \
+  # The login body (it carries the password) goes to curl on stdin, never on argv. printf is a
+  # shell builtin, so its arguments do not reach ps either.
+  TOKEN="$(printf '{"username":"%s","password":"%s"}' "${KEYORIX_ADMIN_USERNAME}" "${KEYORIX_ADMIN_PASSWORD}" \
+    | curl -s -X POST "${KEYORIX_URL}/auth/login" -H 'Content-Type: application/json' --data-binary @- \
     2>/dev/null | jq -r '.data.token // empty')"
   [[ -n "$TOKEN" ]] && break
   printf '.'; sleep 2
@@ -90,13 +92,18 @@ ok "Keyorix is up — logged in as ${KEYORIX_ADMIN_USERNAME}"
 
 c "2/5  Starting a throwaway HashiCorp Vault and seeding it"
 docker rm -f keyorix-demo-vault >/dev/null 2>&1 || true
+# The dev root token reaches the container through --env-file and curl through -H @file (both
+# 0600, inside the demo secrets dir that is removed on exit), never as an argv value.
+(umask 077
+  printf 'VAULT_DEV_ROOT_TOKEN_ID=%s\nVAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200\n' "$VAULT_TOKEN" > "${DEMO_SECRETS_DIR}/vault.env"
+  printf 'X-Vault-Token: %s\n' "$VAULT_TOKEN" > "${DEMO_SECRETS_DIR}/vault.hdr")
 docker run -d --name keyorix-demo-vault -p "${VAULT_PORT}:8200" \
-  -e "VAULT_DEV_ROOT_TOKEN_ID=${VAULT_TOKEN}" -e "VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200" \
+  --env-file "${DEMO_SECRETS_DIR}/vault.env" \
   hashicorp/vault:latest >/dev/null
 set +e
 for _ in $(seq 1 30); do curl -sf "${VAULT_ADDR}/v1/sys/health" >/dev/null 2>&1 && break; sleep 1; done
 set -e
-vault_put() { local path="$1"; local data="$2"; curl -s -H "X-Vault-Token: ${VAULT_TOKEN}" -X POST "${VAULT_ADDR}/v1/secret/data/$path" -d "$data" >/dev/null; }
+vault_put() { local path="$1"; local data="$2"; printf '%s' "$data" | curl -s -H "@${DEMO_SECRETS_DIR}/vault.hdr" -X POST "${VAULT_ADDR}/v1/secret/data/$path" --data-binary @- >/dev/null; }
 vault_put demo/prod/database '{"data":{"username":"app_user","password":"REPLACE_WITH_YOUR_DB_PASSWORD"}}'
 vault_put demo/prod/stripe   '{"data":{"value":"REPLACE_WITH_YOUR_STRIPE_KEY"}}'
 vault_put demo/prod/redis    '{"data":{"url":"redis://cache.prod.internal:6379"}}'
@@ -109,10 +116,12 @@ echo "  secret/demo/prod/redis     → url"
 
 c "4/5  Migrating EVERY secret into Keyorix — one command"
 # keyorix-migrate takes numeric project/environment IDs: look up "default" / "production".
-AUTH_HDR="Authorization: Bearer ${TOKEN}"
-PROJECT_ID="$(curl -sf -H "$AUTH_HDR" "${KEYORIX_URL}/api/v1/projects" | jq -r '.data.projects[] | select(.name=="default") | .id' | head -1)"
+# The admin token goes to curl as a header file (-H @file), not as a -H value: a value would show in ps.
+AUTH_HDR_FILE="${DEMO_SECRETS_DIR}/auth.hdr"
+(umask 077; printf 'Authorization: Bearer %s\n' "$TOKEN" > "$AUTH_HDR_FILE")
+PROJECT_ID="$(curl -sf -H "@${AUTH_HDR_FILE}" "${KEYORIX_URL}/api/v1/projects" | jq -r '.data.projects[] | select(.name=="default") | .id' | head -1)"
 [[ -n "$PROJECT_ID" ]] || { echo "could not find the 'default' project on ${KEYORIX_URL}"; exit 1; }
-ENV_ID="$(curl -sf -H "$AUTH_HDR" "${KEYORIX_URL}/api/v1/projects/${PROJECT_ID}/environments" | jq -r '.data.environments[] | select(.name=="production") | .id' | head -1)"
+ENV_ID="$(curl -sf -H "@${AUTH_HDR_FILE}" "${KEYORIX_URL}/api/v1/projects/${PROJECT_ID}/environments" | jq -r '.data.environments[] | select(.name=="production") | .id' | head -1)"
 [[ -n "$ENV_ID" ]] || { echo "could not find the 'production' environment in project ${PROJECT_ID}"; exit 1; }
 # Both tokens go in 0600 files inside the demo secrets dir (removed on exit): a flag value
 # would show in ps and shell history.

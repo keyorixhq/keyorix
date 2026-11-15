@@ -19,6 +19,9 @@
 # K8S_NS (namespace of the sync agent, default keyorix-e2e-j4), K8S_SECRET (target Secret name,
 # default k8s-e2e-sync-target), KX_SECRET_ID (the mapped Keyorix secret id), SYNC_WAIT (seconds
 # to wait for the agent's reconcile, default 90).
+#
+# Exit codes (as scripts/demo/catalogue-check.sh reads them): 0 passed, 1 failed, 2 SKIPPED (one
+# of KEYORIX_SERVER, KEYORIX_TOKEN, KX_SECRET_ID is not set), 3 PENDING (needs Docker/kind/kubectl).
 set -euo pipefail
 
 need() { command -v "$1" >/dev/null 2>&1 || missing="${missing:-} $1"; }
@@ -30,7 +33,12 @@ if [ -n "${missing:-}" ]; then
   echo "On the e2e VM:  KEEP=1 make k8s-e2e   then   KEYORIX_SERVER=... KEYORIX_TOKEN=... KX_SECRET_ID=... $0" >&2
   exit 3
 fi
-: "${KEYORIX_SERVER:?set KEYORIX_SERVER}" "${KEYORIX_TOKEN:?set KEYORIX_TOKEN}" "${KX_SECRET_ID:?set KX_SECRET_ID}"
+unset_inputs=""
+for v in KEYORIX_SERVER KEYORIX_TOKEN KX_SECRET_ID; do [ -n "${!v:-}" ] || unset_inputs="${unset_inputs} $v"; done
+if [ -n "$unset_inputs" ]; then
+  echo "SKIPPED: this scenario needs KEYORIX_SERVER, KEYORIX_TOKEN and KX_SECRET_ID; not set:${unset_inputs}" >&2
+  exit 2
+fi
 NS="${K8S_NS:-keyorix-e2e-j4}"; SECRET="${K8S_SECRET:-k8s-e2e-sync-target}"; WAIT="${SYNC_WAIT:-90}"
 CLI="${CLI_BIN:-bin/keyorix}"
 step() { printf '==> %s\n' "$1"; }

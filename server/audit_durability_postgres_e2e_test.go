@@ -112,7 +112,8 @@ func TestAuditDurability_PostgresEndToEnd(t *testing.T) {
 	port := freeTCPPort(t)
 	writePostgresAuditDurabilityConfig(t, dir, baseDSN, schema, port)
 
-	// `diagnose` creates the encryption key files and validates the config.
+	adminEncryptionInit(t, bin, dir, env)
+	// `encryption init` creates the key files; `diagnose` validates the config.
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed on a default POSTGRES config: %v\n%s", err, out)
 	}

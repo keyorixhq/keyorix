@@ -23,6 +23,7 @@ import (
 // in internal/cli/common's much larger, CLI-specific dependency surface
 // (internal/core, internal/storage, internal/delivery, internal/i18n).
 func RegisterPassphraseFlags(fs *pflag.FlagSet, src *PassphraseSource, prefix, human string) (fdFlag, fileFlag, stdinFlag string) {
+	src.FlagPrefix = prefix
 	fdFlag = prefix + "passphrase-fd"
 	fileFlag = prefix + "passphrase-file"
 	stdinFlag = prefix + "passphrase-stdin"
