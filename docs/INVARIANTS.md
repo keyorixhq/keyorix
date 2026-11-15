@@ -46,6 +46,7 @@ silently removing it.
 | `migrate/internal/vaultsource` | [migrate/internal/vaultsource/INVARIANTS.md](../migrate/internal/vaultsource/INVARIANTS.md) | 4 | 4 | 0 |
 | `scripts/fuzzing/time-travel` | [scripts/fuzzing/time-travel/INVARIANTS.md](../scripts/fuzzing/time-travel/INVARIANTS.md) | 2 | 1 | 1 |
 | `fuzz/thirdparty` | [fuzz/thirdparty/INVARIANTS.md](../fuzz/thirdparty/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 1 | 1 | 0 |
 
 ## Highest-priority UNGUARDED gaps
 
