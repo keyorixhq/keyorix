@@ -219,7 +219,7 @@ var crashOps = []crashOp{
 		return []string{"backup", "--config", "./keyorix.yaml", "--output", "./b.tar.gz"}
 	}},
 	{name: "restore", args: func(string) []string {
-		return []string{"restore", "--config", "./keyorix.yaml", "--input", "./archiveA.tar.gz", "--overwrite-existing", "--allow-rollback"}
+		return []string{"restore", "--config", "./keyorix.yaml", "--input", "./archiveA.tar.gz", "--overwrite-existing", "--replace-existing-data", "--allow-rollback"}
 	}, prep: func(w *crashRun, dir string) {
 		copyTree2(w.t, w.archiveA, filepath.Join(dir, "archiveA.tar.gz"))
 	}},
@@ -333,7 +333,7 @@ func (w *crashRun) recoverAndCheck(op crashOp, dir string, allowed []crashLedger
 		if _, err := os.Stat(filepath.Join(dir, "b.tar.gz")); err == nil {
 			tgt := w.t.TempDir()
 			copyTree(w.t, w.dir, tgt)
-			out, rerr := runAdminBounded(w.bin, tgt, w.env(passes[0]), "restore", "--config", "./keyorix.yaml", "--input", filepath.Join(dir, "b.tar.gz"), "--overwrite-existing", "--allow-rollback")
+			out, rerr := runAdminBounded(w.bin, tgt, w.env(passes[0]), "restore", "--config", "./keyorix.yaml", "--input", filepath.Join(dir, "b.tar.gz"), "--overwrite-existing", "--replace-existing-data", "--allow-rollback")
 			if rerr == nil {
 				o, up, lg := w.bootAndObserve(tgt, passes[0], ids)
 				if !up {
