@@ -245,6 +245,7 @@ func TestAdminRestore_Postgres_OverwriteExisting_PopulatedTarget_ReplacesAllThre
 
 	restoreInput = archive
 	restoreOverwriteExisting = true
+	restoreReplaceExistingData = true // the target holds data (restore_populated_refusal_test.go: refused without it)
 	restoreMaxEntryBytes, restoreMaxTotalBytes = 0, 0
 	out, err := captureStdout(t, func() error { return runAdminRestore(nil, nil) })
 	require.NoError(t, err, "output was:\n%s", out)
@@ -444,6 +445,7 @@ func TestAdminRestore_SQLite_OverwriteExisting_LoadFailure_LeavesOldDatabase(t *
 	injected := failRestoreBeforeCommit(t)
 	restoreInput = archive
 	restoreOverwriteExisting = true
+	restoreReplaceExistingData = true // reach the load: the target holds data
 	restoreMaxEntryBytes, restoreMaxTotalBytes = 0, 0
 	out, err = captureStdout(t, func() error { return runAdminRestore(nil, nil) })
 	require.ErrorIs(t, err, injected, "output was:\n%s", out)

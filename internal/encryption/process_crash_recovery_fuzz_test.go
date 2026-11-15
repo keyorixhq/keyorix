@@ -72,7 +72,7 @@ var pcrashOps = []pcrashOp{
 	{name: "backup", admin: []string{"backup", "--config", "./keyorix.yaml", "--output", "./b.tar.gz"}, after: pcrashSame},
 	{
 		name:  "restore",
-		admin: []string{"restore", "--config", "./keyorix.yaml", "--input", "./archive.tar.gz", "--overwrite-existing", "--allow-rollback"},
+		admin: []string{"restore", "--config", "./keyorix.yaml", "--input", "./archive.tar.gz", "--overwrite-existing", "--replace-existing-data", "--allow-rollback"},
 		after: func(_, seed pcrashLedger) pcrashLedger { return seed.clone() },
 	},
 	{name: "secret-create", after: func(before, _ pcrashLedger) pcrashLedger {
@@ -807,7 +807,7 @@ func (w *pcrashWorld) checkBackupAfterKilledRotation(t *testing.T, killAt int64,
 	if err := pcrashCopyTree(dir, target); err != nil {
 		t.Fatalf("copy the killed install: %v", err)
 	}
-	r, err := runPCrashChild(target, pcrashPass, "admin", []string{"restore", "--config", "./keyorix.yaml", "--input", "./post.tar.gz", "--overwrite-existing", "--allow-rollback"}, 0)
+	r, err := runPCrashChild(target, pcrashPass, "admin", []string{"restore", "--config", "./keyorix.yaml", "--input", "./post.tar.gz", "--overwrite-existing", "--replace-existing-data", "--allow-rollback"}, 0)
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}
@@ -863,7 +863,7 @@ func (w *pcrashWorld) checkCleanHostRestore(t *testing.T, dir, label string, st 
 	if err := os.WriteFile(filepath.Join(target, "post.tar.gz"), archive, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r, err := runPCrashChild(target, pcrashPass, "admin", []string{"restore", "--config", "./keyorix.yaml", "--input", "./post.tar.gz", "--overwrite-existing", "--allow-rollback"}, 0)
+	r, err := runPCrashChild(target, pcrashPass, "admin", []string{"restore", "--config", "./keyorix.yaml", "--input", "./post.tar.gz", "--overwrite-existing", "--replace-existing-data", "--allow-rollback"}, 0)
 	if err != nil {
 		t.Fatalf("clean-host restore: %v", err)
 	}
