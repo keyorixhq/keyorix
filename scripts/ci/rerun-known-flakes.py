@@ -145,12 +145,13 @@ def run_regex(leaf):
 def stream(cmd, env=None):
     """Run cmd, echo its output live, return (rc, lines)."""
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, errors="replace", env=env)
+                            env=env)
     lines = []
-    for line in proc.stdout:
+    for raw in proc.stdout:
+        line = raw.decode("utf-8", "replace")
         sys.stdout.write(line)
         sys.stdout.flush()
-        lines.append(line.rstrip("\n"))
+        lines.append(line.rstrip("\r\n"))
     return proc.wait(), lines
 
 
