@@ -1,0 +1,2 @@
+### Changed
+- **CI test-leg weights refreshed from a verbose run.** `scripts/ci-test-weights.tsv` was regenerated from the per-test times of the verbose dispatch run 43721759352 (all sharded legs). On that run the longest test-time leg drops from core-4 at 1649 s to 1318 s, encryption-2 from 1459 s to 1260 s and admin-2 from 972 s to 811 s; the shards of each package end within about 2% of each other. Weights only: which test lands in which shard changes, never whether it runs.
