@@ -1,0 +1,1 @@
+fuzz/thirdparty/smtp	none	-	test-only hostile SMTP server fuzz harness for the mail client; not part of any shipped build	test-helper

@@ -191,7 +191,10 @@ docker compose up -d
   empty a PostgreSQL database under `--overwrite-existing` (see "What not to do"). The
   current binary does: its load transaction empties the target's tables itself (a restore
   with it over an initialised, populated database ended `verify-audit on the restored
-  database: VALID`), so the `DROP SCHEMA` is only for a v0.96.x binary.
+  database: VALID`), so the `DROP SCHEMA` is only for a v0.96.x binary. The current binary
+  replaces a database that holds data only when `--replace-existing-data` is given as well;
+  with `--overwrite-existing` alone it refuses (`the restore target database holds data`)
+  and changes nothing. A v0.96.x binary does not know that flag: do not pass it there.
 - **`--overwrite-existing`** is needed because the key files on the `keyorix_keys`
   volume already exist. The old ones are kept as `*.pre-restore-<timestamp>`.
 - **`--allow-rollback`** is needed because this host's audit trail is ahead of the
