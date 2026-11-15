@@ -46,6 +46,7 @@ type ledgerRow struct {
 // and fragment file NAMES (scripts/ledgers/migrate-to-fragments.sh names them
 // after the key, but a hand-added fragment may be named anything ending .tsv —
 // uniqueness is enforced on the key, not the file name).
+// dir-listing-ok: ledger fragment *.tsv files
 func readLedgerRows(legacyPath, fragDir string, minFields int) (rows []ledgerRow, legacyDups []string, err error) {
 	parse := func(path string, data []byte) ([]ledgerRow, error) {
 		var out []ledgerRow

@@ -209,7 +209,7 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	if hasAuditRead {
 		// audit.read (honoured through AuthorizePrincipal, so a restricted PAT has it
 		// only at global scope) authorizes the deployment-wide log, as on GET /audit.
-		events, _, err = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{Page: 1, PageSize: dashboardRecentActivity, Count: storage.AuditCountNone})
+		events, _, err = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{Page: 1, PageSize: dashboardRecentActivity, Count: storage.AuditCountNone, ExcludeSystemJobEvents: true})
 	} else {
 		events, err = c.ownRecentActivity(ctx, userID)
 	}

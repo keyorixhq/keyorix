@@ -353,6 +353,7 @@ func TestHookInventory_SeesTheRealHooks(t *testing.T) {
 	}
 }
 
+// dir-listing-ok: lists internal/storage/models (the BeforeSave hooks), not core sources
 func modelHookInventory(t testing.TB) map[string]map[string]bool {
 	t.Helper()
 	dir := filepath.Join(srcpath.RepoRoot(), "internal", "storage", "models")

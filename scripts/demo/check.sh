@@ -462,7 +462,7 @@ mkdir -p "$CHECK_STATE_DIR"
 
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"   # the Postgres seed leaves its MFA session here
 ALICE_TOKEN=""
-VERIFY_PROJECT_ID=""
+VERIFY_PROJECT_ID="" VERIFY_PROJECT_NAME=""
 VERIFY_ENV_ID=""
 VERIFY_SECRET_ID=""
 
@@ -648,6 +648,7 @@ step_alice_dashboard_secret_count() {
 
 step_verify_create() {
   local name="demo-check-verify-$$"
+  VERIFY_PROJECT_NAME="$name"
   req POST /api/v1/projects "$ADMIN_TOKEN" "{\"name\":\"$name\",\"description\":\"scripts/demo/check.sh scratch project\"}"
   [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || { echo "POST /api/v1/projects returned $HTTP_CODE: $RESP_BODY"; return 1; }
   VERIFY_PROJECT_ID="$(jget 'd["data"]["id"]')"
@@ -892,7 +893,15 @@ LAST_P50_MS=""
 step_latency() {
   local n=50 times_file="$SCRATCH/latencies.txt"
   : > "$times_file"
-  local ref; ref="$(urlenc "default/development/stripe-api-key")"
+  # Read check.sh's own scratch secret (verify-write, still alive here), not a seeded one: 50
+  # reads in a burst raise frequency_spike/cumulative_rate, and on a seeded secret those stay
+  # open on the demo (the anomaly step ignores only "check-secret"). Alone, fall back to the seed.
+  local ref
+  if [ -n "$VERIFY_SECRET_ID" ] && [ -n "$VERIFY_PROJECT_NAME" ]; then
+    ref="$(urlenc "$VERIFY_PROJECT_NAME/development/check-secret")"
+  else
+    ref="$(urlenc "default/development/stripe-api-key")"
+  fi
   ( umask 077; printf 'Authorization: Bearer %s\n' "$ADMIN_TOKEN" >"$SCRATCH/latency.hdr" )
   for _ in $(seq 1 "$n"); do
     curl -s -o /dev/null -w '%{time_total}\n' --max-time 5 \
@@ -1021,6 +1030,7 @@ run_step "alice: dashboard secret count"      step_alice_dashboard_secret_count
 run_step "verify-write: create project/env/secret" step_verify_create
 run_step "verify-write: read back"            step_verify_read_back
 run_step "verify-write: rotate"               step_verify_rotate
+run_step "latency: p50 secret read"   step_latency   # before the cleanup below: it reads the scratch secret
 run_step "verify-write: version history"      step_verify_history
 run_step "acl: alice can read backend-api secret"   step_acl_can_read
 run_step "acl: alice cannot read default secret"    step_acl_cannot_read
@@ -1030,7 +1040,6 @@ run_step "audit: log shows actions"   step_audit_logs
 run_step "audit: machine value read is attributed to ci-app" step_machine_read_audited
 run_step "audit: chain verify"        step_audit_verify
 run_step "posture report"             step_posture
-run_step "latency: p50 secret read"   step_latency
 
 if [ "$OFFLINE" = true ]; then
   run_step "offline guarantee (airgap-e2e)" step_offline
