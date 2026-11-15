@@ -150,7 +150,8 @@ It refuses a chain that is inconsistent under both encodings, so it cannot be us
 over a real break. Over the API the refusal is `409 Conflict` with the reason in `message`
 ("refusing to re-encode the audit chain: event N's prev_hash does not link ...") and
 `details.code` = `audit_chain_reencode_refused`, for the preview and for `--confirm` alike;
-it is not a server error, so do not retry it: go to section 5.
+it is not a server error, so do not retry it: go to section 5. On a healthy
+chain the preview prints `DRY RUN — nothing was written.` with the rows it would migrate.
 
 **b. A copy that is not the database.** A SQLite file copied without its `-wal`/`-shm`, a
 backup mounted from the wrong date, a replica that has not caught up: all look like

@@ -101,10 +101,11 @@ within the audit write path's 10-second bound), the server does this instead:
    a posture deviation (`emergency_access.unreviewed_activations`), in the review reminder
    and in `security.break_glass_degraded` from the moment it exists, with no grace window.
 
-The activator sees the shortened expiry. The web UI adds a note that the audit log was not
-accepting writes; the CLI prints the same text as for a normal activation (only the shorter
-`until` time tells them), and `keyorix break-glass list` does not mark it. The HTTP response
-carries `"degraded": true`.
+The user who activated sees the shortened expiry in the usual "until ..." line of
+`keyorix break-glass activate`; the CLI prints no separate note and `keyorix break-glass list` has
+no degraded column. The marker is `"degraded": true` on the activation in the API
+(`GET /api/v1/projects/{id}/break-glass`) and the web badge; the log line, notification and
+banner above are what tell an operator.
 
 ### What an operator should do
 

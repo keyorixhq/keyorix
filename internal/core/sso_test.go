@@ -322,7 +322,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("AssignRole", mock.Anything, uint(42), uint(3), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada Lovelace")
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada Lovelace", "")
 		require.NoError(t, err)
 		assert.Equal(t, uint(42), u.ID)
 		// Active (not pending_first_login — an SSO user must not be trapped in a
@@ -337,7 +337,7 @@ func TestProvisionSSOUser(t *testing.T) {
 
 	t.Run("refuses when the IdP returned no email", func(t *testing.T) {
 		c, _, _, p := ssoTestCore(t)
-		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "", true, "Ada")
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "", true, "Ada", "")
 		require.Error(t, err)
 	})
 
@@ -349,7 +349,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
 		c.SetMembershipDomainAllowlist([]string{"allowed.com"})
 
-		_, err := c.provisionSSOUser(context.Background(), p, "okta|999", "mallory@evil.com", true, "Mallory")
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|999", "mallory@evil.com", true, "Mallory", "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not on the allowlist")
 		store.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
@@ -375,7 +375,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("AssignRole", mock.Anything, uint(99), uint(3), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		u, err := c.provisionSSOUser(context.Background(), p, "evil|999", "victim@corp.com", false /* email NOT verified */, "Mallory")
+		u, err := c.provisionSSOUser(context.Background(), p, "evil|999", "victim@corp.com", false /* email NOT verified */, "Mallory", "")
 		require.NoError(t, err)
 		assert.Equal(t, uint(99), u.ID, "must be the fresh account, not the victim (id 7)")
 		require.NotNil(t, created)
@@ -387,7 +387,7 @@ func TestProvisionSSOUser(t *testing.T) {
 	t.Run("reuses an existing user instead of duplicating", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
 		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return(&models.User{ID: 5}, nil)
-		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada", "")
 		require.NoError(t, err)
 		assert.Equal(t, uint(5), u.ID)
 		store.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
@@ -407,7 +407,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("AssignRole", mock.Anything, uint(7), uint(9), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada", "")
 		require.NoError(t, err)
 		store.AssertCalled(t, "GetRoleByName", mock.Anything, "system_auditor")
 	})
@@ -427,7 +427,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("CreateUser", mock.Anything, mock.Anything).Return(&models.User{ID: 8}, nil)
 		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil), notFound())
 
-		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada", "")
 		require.Error(t, err)
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
@@ -500,7 +500,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		store.On("GetUser", mock.Anything, mock.Anything).Return(nil, assert.AnError).Maybe()
 		store.On("GetGroup", mock.Anything, mock.Anything).Return(nil, assert.AnError).Maybe()
 
-		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw))
+		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw, ""))
 
 		store.AssertCalled(t, "AddUserToGroup", mock.Anything, uint(7), uint(1), uint(0))
 		store.AssertCalled(t, "RemoveUserFromGroup", mock.Anything, uint(7), uint(3), uint(0))
@@ -516,7 +516,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		store.On("ListGroups", mock.Anything).Return([]*models.Group{{ID: 1, Name: "admins"}}, nil)
 		store.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{}, nil)
 
-		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw))
+		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw, ""))
 		store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
@@ -525,7 +525,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		p.GroupSync = true
 		raw := signToken(t, key, "kid-1", jwt.MapClaims{"sub": "okta|123"}) // no groups claim
 
-		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw))
+		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw, ""))
 		// Returns before listing groups — so an IdP that omits groups in the id_token
 		// can't strip a user's memberships.
 		store.AssertNotCalled(t, "ListGroups", mock.Anything)
@@ -562,7 +562,7 @@ func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
 	// direction (#2839 item 1 made real failures an error; a blocked escalation
 	// deliberately is not one, or an install whose GroupRoleMap names an admin
 	// group could never log that user in).
-	require.NoError(t, c.reconcileSSOGroups(ctx, &SSOProvider{Name: "okta"}, 7, []string{"keyorix-admins", "engineers"}))
+	require.NoError(t, c.reconcileSSOGroups(ctx, &SSOProvider{Name: "okta"}, 7, []string{"keyorix-admins", "engineers"}, ""))
 
 	groups, err := ls.GetUserGroups(ctx, 7)
 	require.NoError(t, err)
@@ -608,7 +608,7 @@ func TestSyncSSORoles(t *testing.T) {
 		// evictUserSessionCache: evicts the removed-role user's cached sessions.
 		store.On("ListSessionTokenHashesForUser", mock.Anything, uint(7)).Return([]string{}, nil)
 
-		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw, ""))
 
 		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // secrets_writer granted
 		store.AssertCalled(t, "RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything)    // system_auditor revoked
@@ -629,7 +629,7 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw, ""))
 
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
@@ -639,7 +639,7 @@ func TestSyncSSORoles(t *testing.T) {
 		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin"}
 		raw := signToken(t, key, "kid-1", jwt.MapClaims{"sub": "okta|1"}) // no groups claim
 
-		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw, ""))
 		store.AssertNotCalled(t, "GetUserRoles", mock.Anything, mock.Anything)
 		store.AssertNotCalled(t, "RemoveRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
@@ -654,7 +654,7 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil),
 			fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrRoleNotFound))
 
-		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw, ""))
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 }
@@ -678,7 +678,7 @@ func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
 	p := &SSOProvider{Name: "okta", GroupRoleMap: map[string]string{"keyorix-auditors": "system_auditor"}}
 
 	// IdP asserts keyorix-auditors → system_auditor should be granted.
-	require.NoError(t, c.reconcileSSORoles(ctx, p, 7, []string{"keyorix-auditors"}))
+	require.NoError(t, c.reconcileSSORoles(ctx, p, 7, []string{"keyorix-auditors"}, ""))
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
@@ -695,7 +695,7 @@ func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
 	assert.Equal(t, uint(10), *assigned.RoleID)
 
 	// A later login with no group asserted must revoke system_admin, also audited.
-	require.NoError(t, c.reconcileSSORoles(ctx, p, 7, nil))
+	require.NoError(t, c.reconcileSSORoles(ctx, p, 7, nil, ""))
 
 	entries, _, err = c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
