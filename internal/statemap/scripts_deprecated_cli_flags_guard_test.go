@@ -144,7 +144,7 @@ func newCLIProbe(t *testing.T, bin string) *cliProbe {
 		t.Fatalf("keyorix --help: %v", err)
 	}
 	in := false
-	for _, l := range strings.Split(stdout, "\n") {
+	for l := range strings.SplitSeq(stdout, "\n") {
 		switch {
 		case strings.HasPrefix(l, "Available Commands:"):
 			in = true
@@ -213,7 +213,7 @@ func (p *cliProbe) deprecation(path []string, flag, value string) string {
 	args = append(args, "--help")
 	_, stderr, _ := p.run(args...)
 	msg := ""
-	for _, l := range strings.Split(stderr, "\n") {
+	for l := range strings.SplitSeq(stderr, "\n") {
 		if strings.Contains(l, "has been deprecated") {
 			msg = strings.TrimSpace(l)
 			break
