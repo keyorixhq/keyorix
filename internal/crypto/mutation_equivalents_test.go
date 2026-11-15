@@ -31,23 +31,23 @@ package crypto
 //
 //   - exec_provider.go:16:27, kms_provider.go:48:27  `30 * time.Second`
 //     (TestTimeoutConstants pins both values).
-//   - shamir_provider.go:39:40, :44  kekFrameLen (TestKEKFrameLen pins it, and
-//     every SplitKEK/combineKEK test depends on it).
-//   - passphrase.go:76:20, :111:20  `case src.FilePath != ""` in
+//   - shamir_provider.go:39:40  kekFrameLen (TestKEKFrameLen pins it,
+//     and every SplitKEK/combineKEK test depends on it).
+//   - passphrase.go:86:20, :121:20  `case src.FilePath != ""` in
 //     ResolvePassphrase / Describe. Both behaviours are asserted
 //     (TestResolvePassphrase_File*, TestPassphraseSource_Describe); the case
 //     expression is simply not a coverage block.
 //   - shamir_provider.go:39:44  `+ KEKSize` -> `- KEKSize` makes the const
 //     negative, so the package no longer compiles (gremlins: not viable).
 //
-// NOT COVERED, REACHABLE ONLY WITH A TERMINAL:
+// NOT COVERED IN A SANDBOX WITHOUT A PTY (killed by a test that skips there):
 //
-//   - passphrase.go:181:10, :184:13  the term.ReadPassword error / empty-input
-//     branches of readPassphraseStdin run only when stdin is a TTY. Exercising
-//     them needs a pty. MUTANT-RESIDUAL-1 tried one (no new dependency: x/sys
-//     is already direct): opening /dev/ptmx fails with "operation not permitted"
-//     in the macOS sandbox these sessions run in, so no pty test is committed
-//     (an unrun test proves nothing). A pty test is the way to kill them where
-//     /dev/ptmx opens: type "s3cret\n", "\n" and Ctrl-D on the master with the
-//     slave as os.Stdin and expect the passphrase, "no passphrase entered" and
-//     "reading passphrase from terminal: ...".
+//   - passphrase.go:199:10, :202:13  the term.ReadPassword error / empty-input
+//     branches of readPassphraseStdin run only when stdin is a TTY.
+//     TestResolvePassphrase_Stdin_Terminal (passphrase_tty_test.go) drives them
+//     through a pty ("s3cret pass\n", "\n" and a hung-up master, expecting the
+//     passphrase, "no passphrase entered" and "reading passphrase from
+//     terminal: ..."). It skips with "open /dev/ptmx: operation not permitted"
+//     in the macOS sandbox these sessions run in, so a gremlins run there
+//     reports the two mutants NOT COVERED; run it where /dev/ptmx opens (CI,
+//     a Linux host) for the real verdict.

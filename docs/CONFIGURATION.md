@@ -476,8 +476,7 @@ state `sslmode` itself and it must equal `ssl_mode`, or the server refuses to
 start (`ssl=true` in a URL dsn is the driver's alias for `sslmode=require`).
 Leaving `ssl_mode` out next to a `dsn` is fine.
 
-**The effective sslmode.** With a `dsn`, the sslmode is the dsn's own; when
-the dsn has none, `PGSSLMODE`; otherwise the driver's default, `prefer`. With
+**The effective sslmode.** It is resolved by the order below, and with
 `sslrootcert=system` the driver always runs `verify-full`. Start-up
 validation, the insecure-settings warnings and `admin validate --posture` all
 read this effective value, so a dsn with `sslmode=disable` is reported as
@@ -2799,13 +2798,13 @@ curl -s -H "Authorization: Bearer $KEYORIX_TOKEN" \
   "https://<host>/api/v1/users/by-email?email=leaver@example.com"
 
 # 2. Suspend: login is blocked and every session and PAT of the user is revoked at once.
-keyorix user suspend --id <user-id> --by admin@example.com
+keyorix user suspend --id <user-id>
 #    API equivalent:
 curl -s -X POST -H "Authorization: Bearer $KEYORIX_TOKEN" \
   "https://<host>/api/v1/users/<user-id>/suspend"
 
 # 3. Or remove the account (soft delete; sessions and PATs are revoked in the same step).
-keyorix user delete --id <user-id> --by admin@example.com --force
+keyorix user delete --id <user-id> --force
 #    API equivalent: DELETE /api/v1/users/<user-id>
 ```
 

@@ -111,8 +111,8 @@ It still opens the database (read only, to finish an interrupted DEK rotation fi
 take the exclusive presence lock, #3513), so the database must be reachable with the
 configured `storage` settings: on PostgreSQL the server must be reachable; on SQLite a relative
 `database.path` is taken relative to the config file. Give `encryption.dek_path` and
-`salt_path` as absolute paths: relative ones are resolved against the directory you run the
-command from, so another directory gets (and writes) a different key set (#4249). When the
+`salt_path` as absolute paths: relative ones are defined against the config file's
+directory, and the command refuses to run from any other directory, naming the key (#4249). When the
 database is not reachable, `rotate-kek` fails with
 `cannot connect to the database to check for a running server`, although only key files change.
 Bring the database up first; `--force` is not a fix for this (see the runbook).
@@ -170,6 +170,24 @@ An archive carries its own wrapped DEK, so one taken before a DEK or KEK rotatio
 still restores: after `rotate-kek`, restore it with the passphrase that was current
 when it was taken. Keep each old passphrase for as long as you keep the archives that
 need it.
+
+## When `admin backup` stops after an interrupted rotation
+
+A `rotate-kek` that was interrupted before it changed any active key leaves
+`keys/kek.salt.pending`. A server start that succeeds proves the active keys open without
+it and leaves the file in place, and every later `admin backup` is refused while it
+exists. The refusal exits with status **4** (every other backup failure exits 1) and prints
+`keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="keys/kek.salt.pending"`
+on stderr, so a cron wrapper can match either. The server's start log says it too:
+a `[WARN] key set:` line containing ``admin backup` will refuse until keys/kek.salt.pending is moved away``,
+and `keyorix-server admin diagnose` prints `[WARN] backups would be refused: staging file
+present (keys/kek.salt.pending)` followed by the same steps as the refusal. Those are: check
+that no `rotate-kek` is running, `mv keys/kek.salt.pending` to a directory outside the key
+directory, back up, and delete the moved copy once that backup and a server start have
+succeeded. A `keys/dek.key.pending` is different: never delete it by hand (it can be the only
+copy of the new DEK); start the server so boot recovery settles it. Boot never removes
+either file itself. All of this was run on a throwaway SQLite install with a leftover
+`kek.salt.pending`; the DEK variant of the `diagnose` line is covered by a test only.
 
 ## Rehearse it: `scripts/drills/key-rotation.sh`
 
