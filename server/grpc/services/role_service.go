@@ -449,13 +449,14 @@ func roleErrorTexts(err error) coreErrorTexts {
 	texts := coreErrorTexts{
 		// The roles.assign grant ceiling (core/authz.go) is typed (permissionDeniedf).
 		errclass.PermissionDenied: "insufficient privileges for this operation",
-		errclass.NotFound:         "role not found",
 	}
 	switch {
 	// GetUserRoles: core.GetUserRoleAssignment wraps storage's GetUser miss. Assign/remove
 	// never return a user, project or environment not-found: storage writes the grant row
-	// without looking them up, and a missing environment is a RoleScopeError.
+	// without looking them up, and a missing environment is a RoleScopeError. Any other
+	// not-found gets the classifier's default text, not "role not found".
 	case errors.Is(err, storage.ErrRoleNotFound), errors.Is(err, storage.ErrPermissionNotFound):
+		texts[errclass.NotFound] = "role not found"
 	case errors.Is(err, storage.ErrUserNotFound):
 		texts[errclass.NotFound] = "user not found"
 	// #4020: the grant itself is absent (RemoveRole) or already present (AssignRole),

@@ -240,15 +240,21 @@ func groupMemberToProto(u *models.User) *pb.GroupMember {
 // authorization refusal (ERRSTRING-CLASS-1). An untyped error is Internal until it
 // is typed; a transient authorization-storage fault is Unavailable (retryable).
 func groupError(err error) error {
-	texts := coreErrorTexts{
-		errclass.NotFound:         "group not found",
-		errclass.Conflict:         "group name already in use",
-		errclass.Precondition:     "cannot remove the last administrator",
-		errclass.InvalidInput:     "invalid group request",
-		errclass.PermissionDenied: "access denied",
-	}
-	if errors.Is(err, storage.ErrUserNotFound) {
+	// Each family text is keyed on the sentinel it describes; any other sentinel of
+	// the class gets the classifier's default text (a project not-found is not
+	// "group not found").
+	texts := coreErrorTexts{errclass.PermissionDenied: "access denied"}
+	switch {
+	case errors.Is(err, storage.ErrGroupNotFound):
+		texts[errclass.NotFound] = "group not found"
+	case errors.Is(err, storage.ErrUserNotFound):
 		texts[errclass.NotFound] = "user not found"
+	case errors.Is(err, storage.ErrDuplicateGroupName):
+		texts[errclass.Conflict] = "group name already in use"
+	case errors.Is(err, core.ErrLastAdminGroupGuard), errors.Is(err, storage.ErrWouldStrandLastAdmin):
+		texts[errclass.Precondition] = "cannot remove the last administrator"
+	case errors.Is(err, storage.ErrInvalidGroupRequest):
+		texts[errclass.InvalidInput] = "invalid group request"
 	}
 	// The classifier answers an audit outage and a typed storage read fault Unavailable
 	// (retry), and a transient authorization-storage fault Unavailable with the gates'

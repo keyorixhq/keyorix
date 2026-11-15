@@ -2,12 +2,14 @@ package services
 
 import (
 	"context"
+	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/errclass"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
@@ -40,11 +42,16 @@ func mapProjectError(err error) error {
 	if err.Error() == "project not found" {
 		return status.Error(codes.NotFound, "project not found")
 	}
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "project operation", texts: coreErrorTexts{
-		errclass.NotFound:         "project not found",
-		errclass.Conflict:         "a project with this name already exists",
-		errclass.PermissionDenied: "access denied",
-	}})
+	// Family texts keyed on the sentinels they describe; any other sentinel of the
+	// class gets the classifier's default text.
+	texts := coreErrorTexts{errclass.PermissionDenied: "access denied"}
+	switch {
+	case errors.Is(err, storage.ErrProjectNotFound), errors.Is(err, storage.ErrEnvironmentNotFound):
+		texts[errclass.NotFound] = "project not found"
+	case errors.Is(err, storage.ErrDuplicateProjectName):
+		texts[errclass.Conflict] = "a project with this name already exists"
+	}
+	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "project operation", texts: texts})
 }
 
 // ListProjects returns the projects the CALLER CAN READ, matching the HTTP route
