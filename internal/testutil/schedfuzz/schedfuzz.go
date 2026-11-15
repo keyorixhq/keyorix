@@ -97,7 +97,7 @@ func Decode(program []byte, maxGoroutines, maxOpsPerG, maxKeys int) Program {
 		flags := body[i+2]
 		goroutines[gi] = append(goroutines[gi], Op{
 			Kind:  body[i],
-			Key:   body[i+1] % byte(maxKeys),
+			Key:   body[i+1] % byte(maxKeys), // #nosec G115 -- maxKeys is the callers' small poolNumKeys constant (1..255), test-only
 			Val:   body[i+3],
 			Yield: flags&1 == 1,
 			Sleep: flags&2 == 2,
