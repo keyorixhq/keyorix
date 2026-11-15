@@ -229,13 +229,7 @@ func (r *chunkedReader) Read(p []byte) (int, error) {
 	if r.pos >= len(r.data) {
 		return 0, io.EOF
 	}
-	n := len(r.data) - r.pos
-	if n > r.chunk {
-		n = r.chunk
-	}
-	if n > len(p) {
-		n = len(p)
-	}
+	n := min(len(r.data)-r.pos, r.chunk, len(p))
 	copy(p, r.data[r.pos:r.pos+n])
 	r.pos += n
 	if r.pos >= len(r.data) && r.eofWithData {
@@ -290,10 +284,7 @@ func FuzzCappedBodyReader(f *testing.F) {
 		}
 
 		// Reference model.
-		lim := capN
-		if int64(len(body)) < lim {
-			lim = int64(len(body))
-		}
+		lim := min(capN, int64(len(body)))
 		want := body[:lim]
 		tooLarge := int64(len(body)) > capN
 
