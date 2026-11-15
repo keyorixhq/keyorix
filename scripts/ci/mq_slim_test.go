@@ -2,9 +2,12 @@ package ci_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -17,6 +20,14 @@ import (
 
 func runSelectEnv(t *testing.T, mode string, files ...string) (map[string]string, string) {
 	t.Helper()
+	return runSelectWith(t, []string{"MQ_SLIM_MODE=" + mode}, files...)
+}
+
+// runSelectWith runs select-affected.py with extra environment entries (they
+// win over the defaults below; MQ_SLIM_LEVERS is cleared so a developer's own
+// value never leaks into a test).
+func runSelectWith(t *testing.T, env []string, files ...string) (map[string]string, string) {
+	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not on PATH")
 	}
@@ -28,11 +39,11 @@ func runSelectEnv(t *testing.T, mode string, files ...string) (map[string]string
 	args := append([]string{"scripts/ci/select-affected.py", "--github-output", out, "--changed"}, files...)
 	cmd := exec.Command("python3", args...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "MQ_SLIM_MODE="+mode, "GITHUB_EVENT_NAME=merge_group", "GITHUB_RUN_NUMBER=7")
+	cmd.Env = append(append(os.Environ(), "MQ_SLIM_LEVERS=", "GITHUB_EVENT_NAME=merge_group", "GITHUB_RUN_NUMBER=7"), env...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("select-affected.py (%s): %v\n%s", mode, err, stderr.String())
+		t.Fatalf("select-affected.py (%v): %v\n%s", env, err, stderr.String())
 	}
 	raw, err := os.ReadFile(out)
 	if err != nil {
@@ -112,6 +123,226 @@ func TestMQSlim_EnforceAddsOutputsOnly(t *testing.T) {
 	for leg, rx := range legTests {
 		if rx != "-" && !(strings.HasPrefix(rx, "^(") && strings.HasSuffix(rx, ")$")) {
 			t.Errorf("leg_tests[%s]=%q, want \"-\" or ^(...)$", leg, rx)
+		}
+	}
+}
+
+// shadowRecords returns the MQ-SHADOW records of a select-affected log.
+func shadowRecords(t *testing.T, log string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for line := range strings.SplitSeq(log, "\n") {
+		_, rec, ok := strings.Cut(line, "MQ-SHADOW ")
+		if !ok {
+			continue
+		}
+		var r map[string]any
+		if err := json.Unmarshal([]byte(rec), &r); err != nil {
+			t.Fatalf("MQ-SHADOW line is not JSON: %q", line)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// decisions is the sorted lever/check/decision list of a log: what each lever
+// decided, without the per-run fields.
+func decisions(t *testing.T, log string) []string {
+	t.Helper()
+	var out []string
+	for _, r := range shadowRecords(t, log) {
+		out = append(out, fmt.Sprintf("%v %v %v", r["lever"], r["check"], r["decision"]))
+	}
+	slices.Sort(out)
+	return out
+}
+
+var gateKeys = []string{"gate_edge", "gate_e2e_smoke", "gate_smoke"}
+
+// MQ_SLIM_MODE=enforce with MQ_SLIM_LEVERS=gate: the gate lever skips, the
+// testreach lever is computed and logged but writes no leg_tests, and nothing
+// else the script writes moves.
+func TestMQSlim_GateOnlyEnforce(t *testing.T) {
+	off, _ := runSelectEnv(t, "off", slimCase...)
+	all, allLog := runSelectEnv(t, "enforce", slimCase...)
+	gate, gateLog := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=gate"}, slimCase...)
+
+	// Not vacuous: with every lever enforced the case does narrow legs.
+	if all["leg_tests"] == "" || all["leg_tests"] == "{}" {
+		t.Fatalf("fixture no longer exercises testreach: leg_tests=%q", all["leg_tests"])
+	}
+	if v, ok := gate["leg_tests"]; ok {
+		t.Errorf("levers=gate wrote leg_tests=%q; testreach must stay shadow", v)
+	}
+	for _, k := range gateKeys {
+		if v, ok := gate[k]; !ok || v != all[k] {
+			t.Errorf("levers=gate: %s=%q (present=%v), enforce-all has %q", k, v, ok, all[k])
+		}
+	}
+	for k, v := range off {
+		if gate[k] != v {
+			t.Errorf("levers=gate changed output %s: %q -> %q", k, v, gate[k])
+		}
+	}
+	if len(gate) != len(off)+len(gateKeys) {
+		t.Errorf("levers=gate writes %d outputs, want %d (off) + %d gate keys: %v", len(gate), len(off), len(gateKeys), keys(gate))
+	}
+
+	// Both levers keep deciding and logging; only the reported mode differs.
+	if g, a := decisions(t, gateLog), decisions(t, allLog); !slices.Equal(g, a) {
+		t.Errorf("levers=gate decisions differ from enforce-all:\n gate: %v\n all:  %v", g, a)
+	}
+	seen := map[string]int{}
+	for _, r := range shadowRecords(t, gateLog) {
+		lever, _ := r["lever"].(string)
+		seen[lever]++
+		want := "shadow"
+		if lever == "gate" {
+			want = "enforce"
+		}
+		if r["mode"] != want {
+			t.Errorf("record of lever %s reports mode %v, want %s: %v", lever, r["mode"], want, r)
+		}
+	}
+	if seen["testreach"] == 0 || seen["gate"] != 3 {
+		t.Errorf("records per lever = %v, want testreach>0 and gate=3", seen)
+	}
+	if !strings.Contains(gateLog, "MQ-SLIM: enforcing gate;") {
+		t.Errorf("no line saying which levers are enforced:\n%s", gateLog)
+	}
+}
+
+// With MQ_SLIM_LEVERS unset, blank, or naming every lever, enforce is today's
+// enforce: same outputs, same records, no new log line.
+func TestMQSlim_LeversUnsetIsToday(t *testing.T) {
+	base, baseLog := runSelectEnv(t, "enforce", slimCase...)
+	for name, val := range map[string]string{
+		"blank":           "  ",
+		"both":            "gate,testreach",
+		"case and spaces": " Gate , TESTREACH ",
+		"with guards":     "gate,testreach,guards",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, gotLog := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=" + val}, slimCase...)
+			if !maps.Equal(got, base) {
+				t.Errorf("outputs differ from levers unset:\n got:  %v\n base: %v", got, base)
+			}
+			if g, b := decisions(t, gotLog), decisions(t, baseLog); !slices.Equal(g, b) {
+				t.Errorf("decisions differ from levers unset:\n got:  %v\n base: %v", g, b)
+			}
+			for _, r := range shadowRecords(t, gotLog) {
+				if r["mode"] != "enforce" {
+					t.Errorf("record mode %v, want enforce: %v", r["mode"], r)
+				}
+			}
+		})
+	}
+	if strings.Contains(baseLog, "MQ-SLIM:") {
+		t.Errorf("levers unset added a log line:\n%s", baseLog)
+	}
+	for _, r := range shadowRecords(t, baseLog) {
+		if r["mode"] != "enforce" {
+			t.Errorf("levers unset: record mode %v, want enforce: %v", r["mode"], r)
+		}
+	}
+}
+
+// A value that names no known lever enforces nothing (never "everything"):
+// outputs equal shadow's and the unknown name is said out loud.
+func TestMQSlim_UnknownLeversEnforceNothing(t *testing.T) {
+	shadow, _ := runSelectEnv(t, "shadow", slimCase...)
+	for name, val := range map[string]string{"typo": "gates", "comma only": ",", "guards only": "guards"} {
+		t.Run(name, func(t *testing.T) {
+			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=" + val}, slimCase...)
+			if !maps.Equal(got, shadow) {
+				t.Errorf("MQ_SLIM_LEVERS=%q wrote outputs beyond shadow's: %v", val, got)
+			}
+			if !strings.Contains(log, "MQ-SLIM: enforcing (no lever)") {
+				t.Errorf("no 'enforcing (no lever)' line:\n%s", log)
+			}
+			if name == "typo" && !strings.Contains(log, "unknown lever(s) gates") {
+				t.Errorf("typo not reported:\n%s", log)
+			}
+		})
+	}
+}
+
+// The sampled full run (run number divisible by 10) opens everything whatever
+// levers are enforced, and is off when no lever is enforced.
+func TestMQSlim_SampledFullRun(t *testing.T) {
+	for name, tc := range map[string]struct {
+		levers   string
+		wantMode string
+	}{
+		"unset":     {"", "full"},
+		"gate only": {"gate", "full"},
+		"testreach": {"testreach", "full"},
+		"typo":      {"gates", "selected"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, _ := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=" + tc.levers, "GITHUB_RUN_NUMBER=10"}, slimCase...)
+			if got["mode"] != tc.wantMode {
+				t.Fatalf("mode=%q, want %q", got["mode"], tc.wantMode)
+			}
+			if tc.wantMode == "full" {
+				if got["legs"] != "{}" {
+					t.Errorf("full run lists legs %q", got["legs"])
+				}
+				for _, k := range append(gateKeys, "leg_tests") {
+					if _, ok := got[k]; ok {
+						t.Errorf("full run wrote %s; ci.yml's defaults (run everything) must apply", k)
+					}
+				}
+				for _, k := range []string{"gate_helm", "gate_web_e2e", "gate_fuzz_reach"} {
+					if got[k] != "true" {
+						t.Errorf("full run: %s=%q, want true", k, got[k])
+					}
+				}
+			}
+		})
+	}
+}
+
+// MQ_SLIM_LEVERS parsing, called directly.
+func TestMQSlim_LeverParsing(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const prog = "import sys, json; sys.path.insert(0, 'scripts/ci'); import mq_slim as m; print(json.dumps([sorted(m.enforced_levers()), m.unknown_levers()]))"
+	for _, tc := range []struct {
+		val     string
+		enforce []string
+		unknown []string
+	}{
+		{"", []string{"gate", "testreach"}, []string{}},
+		{"   ", []string{"gate", "testreach"}, []string{}},
+		{"gate", []string{"gate"}, []string{}},
+		{"testreach", []string{"testreach"}, []string{}},
+		{"gate,testreach", []string{"gate", "testreach"}, []string{}},
+		{" GATE ,, Testreach ", []string{"gate", "testreach"}, []string{}},
+		{"gate,guards", []string{"gate"}, []string{}},
+		{"gate,bogus", []string{"gate"}, []string{"bogus"}},
+		{"gates", []string{}, []string{"gates"}},
+		{",", []string{}, []string{}},
+		{"guards", []string{}, []string{}},
+	} {
+		cmd := exec.Command("python3", "-I", "-c", prog)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "MQ_SLIM_LEVERS="+tc.val)
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%q: %v", tc.val, err)
+		}
+		var got [2][]string
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("%q: %v: %s", tc.val, err, raw)
+		}
+		if !slices.Equal(got[0], tc.enforce) || !slices.Equal(got[1], tc.unknown) {
+			t.Errorf("MQ_SLIM_LEVERS=%q: enforce=%v unknown=%v, want %v %v", tc.val, got[0], got[1], tc.enforce, tc.unknown)
 		}
 	}
 }

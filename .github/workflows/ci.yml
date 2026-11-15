@@ -370,6 +370,17 @@ jobs:
       # as `skipped` by build-and-test may be listed here.
       proven_preflight: ${{ steps.proof.outputs.proven_preflight }}
       proven_lint: ${{ steps.proof.outputs.proven_lint }}
+      # MQ-TEST-SLIM-1: 'true' only on merge_group with the repository variable
+      # MQ_SLIM_MODE=enforce. Then the FAST-profile path gates above (computed on
+      # the WHOLE stack for merge_group, so HEADGREEN cannot hide an entry) also
+      # gate the queue. Rollback: set the variable to shadow (or delete it).
+      # MQ-SLIM-GATE-ONLY-1: these skips have no MQ-SHADOW decision behind them,
+      # so they are their own lever, `guards`, in MQ_SLIM_LEVERS (comma list, no
+      # spaces; unset = gate,testreach,guards = the behaviour above). Andrei's
+      # `MQ_SLIM_LEVERS=gate` keeps every one of them running. A run whose number
+      # ends in 0 is the sampled full run (mq_slim.SAMPLE_EVERY=10, same number as
+      # GITHUB_RUN_NUMBER): it runs these too.
+      slim_enforce: ${{ github.event_name == 'merge_group' && vars.MQ_SLIM_MODE == 'enforce' && contains(format(',{0},', vars.MQ_SLIM_LEVERS || 'gate,testreach,guards'), ',guards,') && !endsWith(format('{0}', github.run_number), '0') }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -672,6 +683,12 @@ jobs:
       gate_migrate: ${{ steps.sel.outputs.gate_migrate || 'true' }}
       gate_fuzz_targets: ${{ steps.sel.outputs.gate_fuzz_targets || 'true' }}
       gate_fuzz_reach: ${{ steps.sel.outputs.gate_fuzz_reach || 'true' }}
+      # MQ-TEST-SLIM-1 (scripts/ci/mq_slim.py): written only with
+      # MQ_SLIM_MODE=enforce; absent = run everything as before.
+      leg_tests: ${{ steps.sel.outputs.leg_tests || '{}' }}
+      gate_edge: ${{ steps.sel.outputs.gate_edge || 'true' }}
+      gate_e2e_smoke: ${{ steps.sel.outputs.gate_e2e_smoke || 'true' }}
+      gate_smoke: ${{ steps.sel.outputs.gate_smoke || 'true' }}
     steps:
       - name: Does this run select? (merge_group, or workflow_dispatch with select_base)
         id: scope
@@ -726,6 +743,11 @@ jobs:
         if: steps.scope.outputs.select == 'true'
         env:
           BASE: ${{ steps.scope.outputs.base }}
+          # off | shadow | enforce (scripts/ci/mq_slim.py). Unset = shadow: the
+          # levers are computed and logged (MQ-SHADOW lines), nothing changes.
+          MQ_SLIM_MODE: ${{ vars.MQ_SLIM_MODE || 'shadow' }}
+          # Which levers enforce acts on: gate, testreach (empty = both).
+          MQ_SLIM_LEVERS: ${{ vars.MQ_SLIM_LEVERS }}
         run: |
           # The base is the queue entry ahead of this one (or main); depth 1
           # is enough for a two-tree diff. If it cannot be fetched the script
@@ -926,7 +948,7 @@ jobs:
       # the negation of its self-test's, so one of the two always runs
       # (pathgate_test.go checks it). FULL runs keep both steps as before.
       - name: Self-test the closure guard (must be able to go red)
-        if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.closure_selftest_relevant == 'true')
+        if: needs.changes.outputs.docs_only != 'true' && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.closure_selftest_relevant == 'true')
         run: ./scripts/check-closures.sh --self-test
 
       # This job never sets KEYORIX_TEST_PG_DSN, so every pg-gated row in
@@ -935,15 +957,15 @@ jobs:
       # job's `core-1` leg below runs this SAME script again, WITH the DSN, and
       # is what actually proves those rows.
       - name: Verify every security closure claim names a passing test
-        if: needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
+        if: (needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
         run: ./scripts/check-closures.sh
 
       - name: Self-test the ADR conformance guard (must be able to go red)
-        if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.closure_selftest_relevant == 'true')
+        if: needs.changes.outputs.docs_only != 'true' && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.closure_selftest_relevant == 'true')
         run: ./scripts/check-adr-conformance.sh --self-test
 
       - name: Verify every ADR conformance claim names a passing test
-        if: needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
+        if: (needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
         run: ./scripts/check-adr-conformance.sh
 
       - name: Self-test the review-coverage guard (must be able to go red both ways)
@@ -1609,6 +1631,7 @@ jobs:
         env:
           MODE: ${{ needs.select.outputs.mode }}
           LEGS: ${{ needs.select.outputs.legs }}
+          LEG_TESTS: ${{ needs.select.outputs.leg_tests }}
           LEG: ${{ matrix.leg }}
         run: |
           if [ "$MODE" != "selected" ]; then
@@ -1621,6 +1644,18 @@ jobs:
             echo "Merge-queue selection: no package of leg $LEG is affected by this group; skipping its tests (the leg reports success)."
             echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          # MQ-TEST-SLIM-1 (enforce only; leg_tests is {} otherwise): no test of
+          # this leg can reach the changed input ("-"), or only these can.
+          rx=$(jq -r --arg l "$LEG" '.[$l] // ""' <<<"$LEG_TESTS")
+          if [ "$rx" = "-" ]; then
+            echo "MQ-TEST-SLIM-1: no test of leg $LEG reaches the changed non-code input (see the select job's MQ-SHADOW lines); skipping its tests."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$rx" ]; then
+            echo "MQ-TEST-SLIM-1: leg $LEG runs only the tests that reach the changed input: $rx"
+            echo "tests=$rx" >> "$GITHUB_OUTPUT"
           fi
           echo "run=true" >> "$GITHUB_OUTPUT"
           if [ "$pkgs" = "*" ]; then
@@ -1663,6 +1698,7 @@ jobs:
         if: steps.leg.outputs.run == 'true'
         env:
           LEG_ONLY: ${{ steps.leg.outputs.only }}
+          LEG_TESTS_RX: ${{ steps.leg.outputs.tests }}
           VERBOSE_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.verbose_tests || false }}
         run: |
           # Which packages each leg runs, and why each excluded package is
@@ -1766,6 +1802,9 @@ jobs:
           #
           # -v only on a workflow_dispatch with verbose_tests=true (per-test
           # timings for scripts/ci-test-weights.tsv); never on PR/queue/push.
+          if [ -n "$LEG_TESTS_RX" ]; then
+            run_filter="$LEG_TESTS_RX"
+          fi
           verbose_flag=""
           if [ "$VERBOSE_TESTS" = "true" ]; then
             verbose_flag="-v"
@@ -1953,7 +1992,7 @@ jobs:
       # nothing else can change which shard a test lands in), CI-PATHGATE-1.
       # The package-level steps above and below always run.
       - name: Assert every test of every sharded package runs in exactly one shard
-        if: needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.shard_layout_relevant == 'true'
+        if: (needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.shard_layout_relevant == 'true'
         run: |
           source scripts/ci-test-legs.sh
           assert_all_shards_complete
@@ -2441,8 +2480,8 @@ jobs:
   # slower PostgreSQL, upgrade-path and web UI legs run nightly in
   # e2e-nightly.yml.
   e2e-smoke:
-    needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_e2e == 'true')
+    needs: [changes, select]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_e2e == 'true') && needs.select.outputs.gate_e2e_smoke != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -2820,8 +2859,8 @@ jobs:
   # already passed that exact SHA (queue_verified), like test-suite. Not a
   # required context, so it cannot stall the queue on its own.
   smoke:
-    needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.full_profile == 'true'
+    needs: [changes, select]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_smoke != 'false'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -3678,7 +3717,7 @@ jobs:
     # root and operator modules' dependency licenses, and an operator-only
     # diff could add a new operator/go.mod dependency.
     # FAST profile: only when a go.mod/go.sum changed; FULL: always (CI-LIGHT-1). Required context: skipped satisfies it on the PR, the merge queue runs it.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.deps_changed == 'true')
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.deps_changed == 'true')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -4382,7 +4421,7 @@ jobs:
   # required context. Measured over 3 days / 82 merge_group runs: 0 failures.
   openapi-lint:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.openapi_changed == 'true')
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.openapi_changed == 'true')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -4425,8 +4464,8 @@ jobs:
   # on the ref and each step says so and passes: the step's job is to run
   # them once they exist, not to prove their absence.
   edge-builds:
-    needs: [changes]
-    if: needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    needs: [changes, select]
+    if: needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.select.outputs.gate_edge != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
