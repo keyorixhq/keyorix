@@ -60,7 +60,13 @@ func FuzzSecureWriteUnderFault(f *testing.F) {
 	f.Add(byte(6), "not-a-dir/leaf.dat", []byte("data"), uint16(0))
 
 	f.Fuzz(func(t *testing.T, faultSel byte, relRaw string, data []byte, depth uint16) {
-		base := t.TempDir()
+		// base sits one level below parent, so a write that escapes base by one
+		// ".." lands in parent, where assertNothingOutsideBase can see it.
+		parent := t.TempDir()
+		base := filepath.Join(parent, "base")
+		if err := os.Mkdir(base, 0o700); err != nil {
+			t.Fatalf("mkdir base: %v", err)
+		}
 
 		// Keep the relative path bounded and free of NUL (which open rejects at
 		// the syscall layer anyway); the fuzzer still gets to pick traversal,
@@ -114,6 +120,7 @@ func FuzzSecureWriteUnderFault(f *testing.F) {
 			if err == nil {
 				t.Fatalf("SURFACED(c): a path escaping the base was NOT refused: %q", rel2)
 			}
+			assertNothingOutsideBase(t, parent, "escape")
 
 		case 3:
 			// Arbitrary (possibly deep / traversal) fuzzer path. Either it is
@@ -126,16 +133,23 @@ func FuzzSecureWriteUnderFault(f *testing.F) {
 					t.Fatalf("OLD-OR-NEW(d): claimed-success write has partial content: got=%q want=%q", got, data)
 				}
 			}
+			assertNothingOutsideBase(t, parent, "arbitrary-path")
 
 		case 4:
 			// A symlink as an intermediate component MUST be refused by the
-			// per-component O_NOFOLLOW walk (never written through).
-			if err := os.Symlink("/tmp", filepath.Join(base, "via-symlink")); err != nil {
+			// per-component O_NOFOLLOW walk (never written through). The link
+			// points at a second temp dir, so a regression writes there and
+			// not into the runner's real /tmp.
+			outside := t.TempDir()
+			if err := os.Symlink(outside, filepath.Join(base, "via-symlink")); err != nil {
 				t.Skipf("cannot symlink: %v", err)
 			}
 			err := securefiles.SecureWriteFileSync(base, "via-symlink/key.dat", data, 0o600)
 			if err == nil {
 				t.Fatalf("SURFACED(c): wrote THROUGH a symlinked component")
+			}
+			if _, serr := os.Lstat(filepath.Join(outside, "key.dat")); serr == nil {
+				t.Fatalf("SURFACED(c): a file appeared in the symlink target although the write was refused")
 			}
 
 		case 5:
@@ -180,8 +194,26 @@ func FuzzSecureWriteUnderFault(f *testing.F) {
 // (write succeeded) — never a partial/torn prefix.
 func assertOldOrNew(t *testing.T, context string, writeErr error, got, old, newData []byte) {
 	t.Helper()
+	if writeErr == nil && string(got) != string(newData) {
+		t.Fatalf("OLD-OR-NEW(d): [%s] write reported success but the content is not the new bytes: got=%q new=%q", context, got, newData)
+	}
 	if string(got) == string(old) || string(got) == string(newData) {
 		return
 	}
 	t.Fatalf("OLD-OR-NEW(d): [%s] after write (err=%v) content is neither old nor new: got=%q old=%q new=%q", context, writeErr, got, old, newData)
+}
+
+// assertNothingOutsideBase fails if parent holds anything besides the base
+// directory: a write that escaped base by one ".." would land there.
+func assertNothingOutsideBase(t *testing.T, parent, context string) {
+	t.Helper()
+	ents, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatalf("read parent of base: %v", err)
+	}
+	for _, e := range ents {
+		if e.Name() != "base" {
+			t.Fatalf("SURFACED(c): [%s] %q was created outside the base", context, e.Name())
+		}
+	}
 }

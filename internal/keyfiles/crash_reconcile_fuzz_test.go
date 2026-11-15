@@ -52,7 +52,7 @@ import (
 // ksEnc is the two-file (salt + DEK) key set the fuzzer works with: the minimal
 // RequiredKeyFilePaths set (no write-capable provider, no shamir), which is
 // enough to exercise every classification branch (fresh/partial/foreign/
-// finishable/completed/abandoned/stuck/adopt).
+// finishable/completed/stuck/adopt).
 func ksEnc() *config.EncryptionConfig {
 	return &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
 }
@@ -181,6 +181,12 @@ func FuzzKeySetCrashReconcile(f *testing.F) {
 				t.Fatalf("remove salt: %v", err)
 			}
 			mustRefuse(t, enc, dir, "partial-missing-salt")
+			if string(ksRead(t, dekPath)) != string(oldDek) {
+				t.Fatalf("OLD-OR-NEW(d): a refused reconcile modified the dek of a partial set")
+			}
+			if _, serr := os.Lstat(saltPath); serr == nil {
+				t.Fatalf("OLD-OR-NEW(d): a refused reconcile recreated the missing salt")
+			}
 
 		case 3:
 			// FINISHABLE interrupted rotate-kek: both files staged to new
@@ -229,6 +235,12 @@ func FuzzKeySetCrashReconcile(f *testing.F) {
 			ksWrite(t, saltPath, newSalt) // salt new
 			// dek stays old; no dek.key.pending written → stuck.
 			mustRefuse(t, enc, dir, "stuck-incoherent")
+			if string(ksRead(t, saltPath)) != string(newSalt) {
+				t.Fatalf("OLD-OR-NEW(d): a refused reconcile modified the salt of a stuck set")
+			}
+			if string(ksRead(t, dekPath)) != string(oldDek) {
+				t.Fatalf("OLD-OR-NEW(d): a refused reconcile modified the dek of a stuck set")
+			}
 
 		case 6:
 			// TORN manifest — the manifest file itself is garbage (a crash mid

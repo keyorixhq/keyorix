@@ -57,13 +57,14 @@ func credField(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func fdCount(t *testing.T) int {
-	t.Helper()
+// fdCount returns the open fd count, or ok=false without /proc/self/fd
+// (darwin), in which case only the fd-leak sub-check is skipped.
+func fdCount() (n int, ok bool) {
 	ents, err := os.ReadDir("/proc/self/fd")
 	if err != nil {
-		t.Skipf("no /proc/self/fd: %v", err)
+		return 0, false
 	}
-	return len(ents)
+	return len(ents), true
 }
 
 func FuzzCredStoreCrashReplay(f *testing.F) {
@@ -107,8 +108,6 @@ func FuzzCredStoreCrashReplay(f *testing.F) {
 			t.Fatalf("write mutated creds: %v", err)
 		}
 
-		before := fdCount(t)
-
 		// ── oracle (c): Load must error iff the bytes don't decode ────────
 		// Probe through a yaml.Decoder (not yaml.Unmarshal), mirroring Load's
 		// exact decode path: on EMPTY input Unmarshal returns nil (zero value)
@@ -137,10 +136,15 @@ func FuzzCredStoreCrashReplay(f *testing.F) {
 		}
 
 		// ── robustness / fd leak ──────────────────────────────────────────
+		before, fdOK := fdCount()
 		for range 16 {
 			_, _ = store.Load()
 		}
-		after := fdCount(t)
+		if !fdOK {
+			t.Log("no /proc/self/fd: fd-leak sub-check skipped")
+			return
+		}
+		after, _ := fdCount()
 		if after > before+2 {
 			t.Fatalf("FD LEAK: fd count grew %d→%d across 16 Loads (%s)", before, after, kind)
 		}
