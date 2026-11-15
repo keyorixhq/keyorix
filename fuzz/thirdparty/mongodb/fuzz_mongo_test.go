@@ -373,12 +373,12 @@ func FuzzMongoReply(f *testing.F) {
 	f.Add(uint8(1), uint8(0), uint8(0), uint8(0), append([]byte{0, 0, 0, 0, 0}, errDoc...))
 
 	// known-bad shapes
-	f.Add(uint8(0), uint8(0), uint8(1), uint8(0), []byte{0, 0, 0, 0, 0})              // declared len >> sent
-	f.Add(uint8(0), uint8(0), uint8(2), uint8(0), []byte{0, 0, 0, 0, 0})              // declared header-only
-	f.Add(uint8(0), uint8(1), uint8(0), uint8(0), []byte{1, 2, 3, 4})                 // OP_REPLY opcode, garbage
-	f.Add(uint8(0), uint8(9), uint8(0), uint8(0), []byte{1, 2, 3, 4})                 // garbage opcode
-	f.Add(uint8(0), uint8(0), uint8(0), uint8(0), []byte{})                           // empty body
-	f.Add(uint8(0), uint8(0), uint8(0), uint8(0), []byte{5, 0, 0, 0, 0})              // minimal empty BSON doc fragment
+	f.Add(uint8(0), uint8(0), uint8(1), uint8(0), []byte{0, 0, 0, 0, 0})                // declared len >> sent
+	f.Add(uint8(0), uint8(0), uint8(2), uint8(0), []byte{0, 0, 0, 0, 0})                // declared header-only
+	f.Add(uint8(0), uint8(1), uint8(0), uint8(0), []byte{1, 2, 3, 4})                   // OP_REPLY opcode, garbage
+	f.Add(uint8(0), uint8(9), uint8(0), uint8(0), []byte{1, 2, 3, 4})                   // garbage opcode
+	f.Add(uint8(0), uint8(0), uint8(0), uint8(0), []byte{})                             // empty body
+	f.Add(uint8(0), uint8(0), uint8(0), uint8(0), []byte{5, 0, 0, 0, 0})                // minimal empty BSON doc fragment
 	f.Add(uint8(0), uint8(0), uint8(0), uint8(0), []byte{0, 0, 0, 0, 0, 0xff, 0, 0, 0}) // bad BSON length
 
 	f.Fuzz(func(t *testing.T, mode, opSel, lenMode, driveMode uint8, body []byte) {
