@@ -504,15 +504,27 @@ func writeMethod(buf *bytes.Buffer, m methodInfo) {
 		rvNames = append(rvNames, fmt.Sprintf("rv%d", i+1))
 	}
 	call := fmt.Sprintf("%s.real.%s(%s)", receiverName, m.name, strings.Join(callArgs, ", "))
+	// The wrapper for the one method TestDirectLogAuditEventCallersAreSafe
+	// (internal/core/guards) cares about carries that guard's inline marker
+	// above each direct call, so regenerating keeps the justification.
+	auditMarker := func(indent string) {
+		if m.name == "LogAuditEvent" {
+			fmt.Fprintf(buf, "%s// audit-direct-ok: generated pass-through inside the test/fuzz-harness-only wrapper; it\n", indent)
+			fmt.Fprintf(buf, "%s// forwards the *models.AuditEvent the real caller already built, unmodified, and never\n", indent)
+			fmt.Fprintf(buf, "%s// builds or mutates one, so it cannot be the site of an attribution bug.\n", indent)
+		}
+	}
 	if len(rvNames) > 0 {
 		fmt.Fprintf(buf, "\t\t\t%s, _ := %s\n", strings.Join(rvNames, ", "), call)
 		fmt.Fprintf(buf, "\t\t\treturn %s, injected\n", strings.Join(rvNames, ", "))
 	} else {
+		auditMarker("\t\t\t")
 		fmt.Fprintf(buf, "\t\t\t_ = %s\n", call)
 		fmt.Fprintf(buf, "\t\t\treturn injected\n")
 	}
 	fmt.Fprintf(buf, "\t\t}\n")
 	fmt.Fprintf(buf, "\t}\n")
+	auditMarker("\t")
 	fmt.Fprintf(buf, "\treturn %s\n", call)
 	fmt.Fprintf(buf, "}\n\n")
 }

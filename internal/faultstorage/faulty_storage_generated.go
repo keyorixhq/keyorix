@@ -5974,10 +5974,16 @@ func (w *FaultyStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 		case KindError:
 			return injected
 		case KindEffectThenError:
+			// audit-direct-ok: generated pass-through inside the test/fuzz-harness-only wrapper; it
+			// forwards the *models.AuditEvent the real caller already built, unmodified, and never
+			// builds or mutates one, so it cannot be the site of an attribution bug.
 			_ = w.real.LogAuditEvent(ctx, event)
 			return injected
 		}
 	}
+	// audit-direct-ok: generated pass-through inside the test/fuzz-harness-only wrapper; it
+	// forwards the *models.AuditEvent the real caller already built, unmodified, and never
+	// builds or mutates one, so it cannot be the site of an attribution bug.
 	return w.real.LogAuditEvent(ctx, event)
 }
 

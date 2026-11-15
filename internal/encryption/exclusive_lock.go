@@ -76,10 +76,10 @@ func keyLockDisplayPath(baseDir, dekPath string) string {
 
 // RelativeKeyPathWarning returns a one-line startup warning naming the resolved
 // absolute key paths and the dek.lock path when dek_path or salt_path is
-// relative, and "" when both are absolute or unset. Relative key paths resolve
-// against the process working directory (not the config directory, unlike a
-// relative database.path), so a server started from another directory looks for
-// its keys, and takes its lock, somewhere else.
+// relative, and "" when both are absolute or unset. Relative key paths are
+// defined against the config file's directory, like a relative database.path,
+// and are opened from the working directory, so a process started anywhere
+// else is refused (config.EncryptionConfig.CheckRelativeKeyPathBase, #4249).
 func RelativeKeyPathWarning(dekPath, saltPath string) string {
 	rel := func(p string) bool { return p != "" && !filepath.IsAbs(p) }
 	if !rel(dekPath) && !rel(saltPath) {
@@ -95,8 +95,9 @@ func RelativeKeyPathWarning(dekPath, saltPath string) string {
 		}
 		return a
 	}
-	return fmt.Sprintf("WARNING: storage.encryption.dek_path/salt_path are relative and resolve against the current directory, not the config directory: "+
-		"dek_path -> %s, salt_path -> %s, DEK lock -> %s. Use absolute paths, or always start Keyorix (and `admin` commands) from the same directory.",
+	return fmt.Sprintf("WARNING: storage.encryption.dek_path/salt_path are relative to the config file's directory: "+
+		"dek_path -> %s, salt_path -> %s, DEK lock -> %s. Keyorix and every `admin` command must be started from that directory "+
+		"(any other is refused); use absolute paths to remove the dependency.",
 		abs(dekPath), abs(saltPath), abs(lockRelPath(dekPath)))
 }
 

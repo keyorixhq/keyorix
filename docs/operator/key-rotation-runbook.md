@@ -40,9 +40,13 @@ does. That matters for the audit chain: section 5.
    keyorix-server admin encryption validate --config ./keyorix.yaml
    ```
 
-   Read the output; do not rely on the exit status of `status`. It prints `❌ ...` and still
-   exits 0 when it cannot read the key state (wrong passphrase, key directory in use, #4270);
-   `validate` exits 1 in the same cases.
+   Stop the server first: a live server holds the DEK lock, and `status` then prints
+   `❌ another process holds the DEK lock exclusively ...`. A failed `status` exits non-zero
+   (1), like `validate`: no keys yet (`❌ no wrapped DEK at ...`, for example the wrong
+   directory or `dek_path`), a wrong passphrase (`❌ ... failed to unwrap DEK`), a missing
+   passphrase source (`⚠️  KEYORIX_MASTER_PASSWORD is not set ...`) and the held lock all print
+   their line and exit 1, so `status && rotate --confirm` stops at a failed check. A healthy
+   key set exits 0 (and so does `Enabled: false`).
 
 3. **Baseline the audit chain** so any change afterwards is yours to explain, and write a fresh
    external anchor (details in [audit-chain-break-runbook.md](audit-chain-break-runbook.md) §2, §7):
