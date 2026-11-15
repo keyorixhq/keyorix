@@ -103,16 +103,16 @@ const makeMember = (overrides: Partial<ProjectMember> = {}): ProjectMember => ({
     ...overrides,
 });
 
+// GET /users row exactly as the server sends it (openapi UserSummary): snake_case, rows under
+// `users`. The tab used to be tested against a `{data: [...]}` envelope the server never
+// produces, which is how it shipped reading `.data` and showing no candidates for real.
 const otherUser = {
     id: 5,
     username: 'bob',
-    displayName: 'Bob Baker',
+    display_name: 'Bob Baker',
     email: 'bob@example.com',
-    role: 'user',
-    roles: [],
-    permissions: [],
-    preferences: {},
-    lastLogin: '',
+    active: true,
+    account_state: 'active',
 };
 
 function mockMembers(members: ProjectMember[], overrides: Partial<{ isLoading: boolean }> = {}) {
@@ -128,7 +128,7 @@ beforeEach(() => {
     usersApiListMock.mockReset();
 
     useProjectMock.mockReturnValue({ data: { id: 1, name: 'Payments API' } });
-    usersApiListMock.mockResolvedValue({ data: [otherUser], total: 1, page: 1, pageSize: 200, totalPages: 1 });
+    usersApiListMock.mockResolvedValue({ users: [otherUser], total: 1, page: 1, page_size: 200, total_pages: 1 });
     mockMembers([]);
 });
 
@@ -390,13 +390,14 @@ describe('ProjectMembersTab', () => {
         });
 
         it('falls back to username and omits the email parenthetical for a candidate with neither', async () => {
-            // displayName uses `??`, which only falls through on null/undefined (not '').
+            // The server sends display_name "" for a user without one; the tab maps that to
+            // undefined so the label falls back to the username.
             usersApiListMock.mockResolvedValue({
-                data: [{ ...otherUser, id: 6, username: 'eve', displayName: undefined, email: '' }],
+                users: [{ ...otherUser, id: 6, username: 'eve', display_name: '', email: '' }],
                 total: 1,
                 page: 1,
-                pageSize: 200,
-                totalPages: 1,
+                page_size: 200,
+                total_pages: 1,
             });
             mockMembers([]);
             render(<ProjectMembersTab projectId={1} />);
