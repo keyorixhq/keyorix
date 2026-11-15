@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -113,12 +114,7 @@ func containsTime(v any) bool {
 	case cbor.Tag:
 		return containsTime(x.Content)
 	case []any:
-		for _, e := range x {
-			if containsTime(e) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(x, containsTime)
 	case map[any]any:
 		for k, val := range x {
 			if containsTime(k) || containsTime(val) {
