@@ -124,7 +124,7 @@ if [ "$DRILL_BACKEND" = "sqlite" ] || [ -n "${DRILL_PG_DSN_FILE3:-}" ]; then
 fi
 
 step "negative: restoring this old backup onto the host that has moved on is refused"
-if inst_admin "$SRC" restore --input "$EXT/backup.tar.gz" --overwrite-existing >"$DRILL_DIR/neg-rollback.log" 2>&1; then
+if inst_admin "$SRC" restore --input "$EXT/backup.tar.gz" --overwrite-existing --replace-existing-data >"$DRILL_DIR/neg-rollback.log" 2>&1; then
     fail "restore of a stale backup over a newer database succeeded without --allow-rollback"
 fi
 grep -qiE 'rollback|behind|high-water' "$DRILL_DIR/neg-rollback.log" \

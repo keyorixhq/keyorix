@@ -1268,6 +1268,42 @@ With Docker Compose, run admin commands in a throwaway container while the serve
 `single_writer`, `--force` is refused outright (`--force cannot override it`, from code).
 **In place:** stop first. [j7](j7-troubleshooting.md#an-admin-command-while-the-server-is-still-running).
 
+### `admin backup` refused: a key-rotation staging file is present
+
+Real output (SQLite, a leftover `keys/kek.salt.pending` that a successful server start had
+left in place; `admin backup --output out1.kxb`, exit status **4**):
+
+```
+keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="keys/kek.salt.pending"
+Error: backup refused: a key rotation is running or was interrupted (found keys/kek.salt.pending). An archive taken now would include that staging file and `admin restore` would refuse it on any other host, so no archive was written and no key file was changed. If a rotation is running, wait for it to finish. Otherwise start the server once so boot recovery completes the rotation, then back up again. keys/kek.salt.pending is the KEK salt's staging file. ...
+```
+
+(the rest of the line is the salt steps below). Every other backup failure exits 1, so a cron
+wrapper can match status 4 or the first line. The same server start logs:
+
+```
+[WARN] key set: keys/kek.salt.pending is a staging file left over from a key operation that was interrupted before it changed the active key set; the set is coherent without it and the file can be deleted. `admin backup` will refuse until keys/kek.salt.pending is moved away (move it out of the key directory with no `admin encryption rotate-kek` running)
+```
+
+and `keyorix-server admin diagnose`, which changes nothing, prints (after `config parse`):
+
+```
+[WARN] backups would be refused: staging file present (keys/kek.salt.pending). backup refused: a key rotation is running or was interrupted (found keys/kek.salt.pending). ...
+```
+
+followed by the same text as the refusal. With a `dek.key.pending` it adds a line saying to
+never delete it by hand and to recover with the rotate-kek recovery (covered by a test, not
+run on a real install here).
+
+**Match:** `keyorix-backup-refused reason=key-rotation-staging-file`, `a key rotation is running or was interrupted`, `backups would be refused`, `will refuse until`
+
+**Cause / fix.** A key rotation is running or was interrupted. Wait for a running one, or
+start the server once so boot recovery settles it. If `kek.salt.pending` is still there after
+a start that succeeded, it is unused: check that no `rotate-kek` is running, move it out of
+the key directory, back up, and delete the moved copy once that backup and a server start
+have succeeded. Never delete a `dek.key.pending` by hand.
+**In place:** [j6-key-rotation.md](j6-key-rotation.md#when-admin-backup-stops-after-an-interrupted-rotation).
+
 ### An admin command cannot open the server lock file — from code
 
 ```
@@ -1309,8 +1345,8 @@ Error: database "<datadir>/keyorix.db" already exists and is not empty -- restor
 **Match:** `restore refuses to overwrite it`
 
 **Cause.** Restore will not replace a live database. **Fix.** Restore into an empty data
-directory and switch over, or `--overwrite-existing` for a disaster recovery (and read the
-rollback entry above: it may follow). The same message exists for a non-empty PostgreSQL
+directory and switch over, or `--overwrite-existing --replace-existing-data` for a disaster
+recovery over a database that holds data (and read the rollback entry above: it may follow). The same message exists for a non-empty PostgreSQL
 target. **In place:** no. [drill-backup-restore.md](drill-backup-restore.md).
 
 ### Other restore and backup refusals — from code
@@ -1318,6 +1354,7 @@ target. **In place:** no. [drill-backup-restore.md](drill-backup-restore.md).
 | Match | What it means |
 |---|---|
 | `restore refuses to mix formats` | the archive format differs from what this binary expects; use the release that wrote it |
+| `the restore target database holds data` | `admin restore --overwrite-existing` found rows in the target database (outside `system_metadata`, and audit events other than `admin_cli` bookkeeping); nothing was changed. `--overwrite-existing` alone is for re-running a restore into an empty database. To replace the data on purpose, back it up first and add `--replace-existing-data` (on PostgreSQL the rows are deleted) |
 | `restore refuses to mix backends` | an SQLite archive into PostgreSQL, or the reverse; see [SELF_HOSTING.md "Moving from SQLite to Postgres"](../SELF_HOSTING.md#moving-from-sqlite-to-postgres) |
 | `changed during the backup` | a key file changed while the backup ran (rotation in progress); nothing was written, retry |
 | `could not read the rollback-protection witness file` | the host's witness file is unreadable or corrupt; investigate before restoring, it is not treated as absent |
@@ -1402,7 +1439,8 @@ a full disk) stops with the journal kept so the same command can be run again.
 **Fix.** Stop every server on this data. Read the named file and the journal; do **not** delete
 the journal and start the server on the files as they are. For an unvouched staged file, keep
 the journal and every `*.restoring-*` and `*.pre-restore-*` file for inspection (move them out
-of the data directory), then restore the archive again with `--overwrite-existing`. For an
+of the data directory), then restore the archive again with `--overwrite-existing
+--replace-existing-data` (the committed load left the archive's rows in the database). For an
 install failure, remove its cause and run `admin restore --recover` again with the same config
 and working directory. **In place:** no, stop first.
 [restore-failure-modes.md](restore-failure-modes.md#recovery-refuses-a-staged-file-it-cannot-vouch-for),
