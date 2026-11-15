@@ -50,6 +50,7 @@ silently removing it.
 | `internal/secrettemplate` | [internal/secrettemplate/INVARIANTS.md](../internal/secrettemplate/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 1 | 1 | 0 |
+| `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
 
 ## Highest-priority UNGUARDED gaps
 
