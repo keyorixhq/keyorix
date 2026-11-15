@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -623,12 +624,46 @@ var allPerms = uint16(1<<len(customPermUniverse) - 1)
 
 var defaultVariation = variation{Mask: allPerms, Route: "user", Scope: "A"}
 
+// scopeProject maps a variation scope token to its project. Besides "A"/"B"/
+// "global", a token "A@prod"/"A@stg" (and the B forms) names a project PLUS an
+// environment (see scopeEnv) — the project part is the same "A"/"B".
 func (fx *fixtures) scopeProject(s string) uint {
-	switch s {
+	switch scopeProjectToken(s) {
 	case "A":
 		return fx.A.projectID
 	case "B":
 		return fx.B.projectID
+	}
+	return 0
+}
+
+// scopeProjectToken strips an "@env" suffix, leaving the project token.
+func scopeProjectToken(s string) string {
+	if i := strings.IndexByte(s, '@'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// scopeEnv maps an environment-scoped variation token to its environment id. A
+// token with no "@env" suffix is project-wide (environment 0, the wildcard).
+//
+//	"<proj>@prod" -> that project's prod environment (perProject.envID)
+//	"<proj>@stg"  -> that project's second environment ("staging2", sx.targetEnvID)
+func (fx *fixtures) scopeEnv(s string) uint {
+	i := strings.IndexByte(s, '@')
+	if i < 0 {
+		return 0
+	}
+	pp := &fx.A
+	if scopeProjectToken(s) == "B" {
+		pp = &fx.B
+	}
+	switch s[i+1:] {
+	case "prod":
+		return pp.envID
+	case "stg":
+		return pp.sx.targetEnvID
 	}
 	return 0
 }
@@ -651,23 +686,24 @@ func (lg *leg) applyVariation(tb testing.TB, v variation) {
 		_ = err // assigning an already-held / removing an absent permission may error; the model reads the result
 	}
 	proj := fx.scopeProject(v.Scope)
+	env := fx.scopeEnv(v.Scope) // non-zero only for an "@prod"/"@stg" token (V5b)
 	cust := fx.principals[pkCustom]
 	lg.db.Exec("DELETE FROM user_roles WHERE user_id = ? AND role_id = ?", cust.userID, fx.customRoleID)
 	lg.db.Exec("DELETE FROM group_roles WHERE group_id = ?", fx.customGroupID)
 	switch v.Route {
 	case "user":
-		if e := lg.db.Create(&models.UserRole{UserID: cust.userID, RoleID: fx.customRoleID, ProjectID: proj}).Error; e != nil {
+		if e := lg.db.Create(&models.UserRole{UserID: cust.userID, RoleID: fx.customRoleID, ProjectID: proj, EnvironmentID: env}).Error; e != nil {
 			tb.Fatalf("variation user grant: %v", e)
 		}
 	case "group":
-		if e := lg.db.Create(&models.GroupRole{GroupID: fx.customGroupID, RoleID: fx.customRoleID, ProjectID: proj}).Error; e != nil {
+		if e := lg.db.Create(&models.GroupRole{GroupID: fx.customGroupID, RoleID: fx.customRoleID, ProjectID: proj, EnvironmentID: env}).Error; e != nil {
 			tb.Fatalf("variation group grant: %v", e)
 		}
 	case "machine":
 		if proj == 0 {
 			tb.Fatalf("variation: a machine role cannot be global")
 		}
-		lg.db.Exec("UPDATE machine_identity_roles SET project_id = ? WHERE machine_identity_id = ? AND role_id = ?", proj, fx.principals[pkMachine].machineID, fx.customRoleID)
+		lg.db.Exec("UPDATE machine_identity_roles SET project_id = ?, environment_id = ? WHERE machine_identity_id = ? AND role_id = ?", proj, env, fx.principals[pkMachine].machineID, fx.customRoleID)
 	}
 }
 

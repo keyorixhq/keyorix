@@ -176,6 +176,28 @@ var plants = append([]plant{
 		op:             "riskexception.create",
 		minUnexplained: 10,
 	},
+	{
+		// V5b area 1: removes the ENVIRONMENT clause from userPrincipalPermissionSQL
+		// — the predicate core.Authorize resolves through
+		// (ResolveUserPermissionAt) that makes a role grant scoped to
+		// environment E apply only
+		// when the check's target environment is E (the exact shape INV-CORE-15
+		// and #2857 turned on: a grant at {project, env X} must not satisfy a
+		// check in a different environment). With the clause gone, an
+		// environment-scoped grant becomes an all-environments wildcard, so a
+		// principal granted secrets.read ONLY in prod can read the staging2 secret
+		// of the same project — core, REST and gRPC all allow it (all resolve
+		// through this one query), and the model, which still matches the
+		// environment, denies: a transport-allows-over-model-denies case no waiver
+		// absorbs ("unexplained"). The cross-environment grants the sweep offers
+		// (envVariations) are what expose it; a clean sweep records none.
+		name:           "env-scope-clause-removed",
+		file:           "internal/storage/store/local_principal_permission.go",
+		anchor:         "   AND (user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.id IS NOT NULL AND environments.deleted_at IS NULL))",
+		repl:           "   AND (user_roles.environment_id = ? OR 1 = 1) /* PLANT: env-scope clause removed */",
+		op:             "secret.read.env",
+		minUnexplained: 2,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after
