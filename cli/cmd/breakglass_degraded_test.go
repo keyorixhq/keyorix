@@ -129,3 +129,25 @@ func TestRunBGList_NoDegradedRowsLeavesTheListUnchanged(t *testing.T) {
 		t.Fatalf("list output changed.\n got: %q\nwant: %q", out, want)
 	}
 }
+
+// The justification is free text written by whoever activated break-glass and is shown
+// in an admin's terminal: control characters (an ESC sequence here) are stripped in
+// both list layouts, with and without the AUDIT column.
+func TestRunBGList_JustificationIsSanitizedForTheTerminal(t *testing.T) {
+	const evil = `"justification":"x\u001b]0;pwned\u0007\u001b[2Jy"`
+	cases := map[string]string{
+		"no degraded row": strings.Replace(bgActivationNormal, `"justification":"incident INC-1"`, evil, 1),
+		"degraded row":    strings.Replace(bgActivationDegraded, `"justification":"audit down"`, evil, 1),
+	}
+	for name, act := range cases {
+		t.Run(name, func(t *testing.T) {
+			out := runBGListOut(t, `{"success":true,"data":{"activations":[`+act+`],"count":1}}`)
+			if strings.ContainsAny(out, "\x1b\x07") {
+				t.Fatalf("justification reached the terminal with control characters: %q", out)
+			}
+			if !strings.Contains(out, "x]0;pwned[2Jy") {
+				t.Fatalf("sanitized justification missing from the list: %q", out)
+			}
+		})
+	}
+}

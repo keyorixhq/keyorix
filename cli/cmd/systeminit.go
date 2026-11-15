@@ -222,8 +222,11 @@ const errCodeValidation = "ValidationError"
 // systemInitValidationField reports whether the answer is a refusal of the admin
 // details sent (not of the bootstrap token) and which input it names ("" when the
 // server did not say). A server that predates the typed code answers the same
-// refusal 403 with the generic "Error" code and "Validation error: ..." text; it is
-// recognised too so the operator is not sent to "request access".
+// refusal 403 with the generic "Error" code and core's wrapped text ("failed to create
+// admin user: Validation error: ..."), so the text is matched anywhere, not as a
+// prefix; it is recognised too so the operator is not sent to "request access".
+// Neither token refusal ("invalid bootstrap token", "system initialisation over the
+// API is disabled: ...") contains "Validation error", so neither is re-labelled.
 func systemInitValidationField(status int, body []byte) (field string, ok bool) {
 	var eb struct {
 		Error   string `json:"error"`
@@ -238,7 +241,7 @@ func systemInitValidationField(status int, body []byte) (field string, ok bool) 
 	switch {
 	case status == http.StatusBadRequest && eb.Error == errCodeValidation:
 		return eb.Details.Field, true
-	case status == http.StatusForbidden && eb.Error == "Error" && strings.HasPrefix(eb.Message, "Validation error"):
+	case status == http.StatusForbidden && eb.Error == "Error" && strings.Contains(eb.Message, "Validation error"):
 		lower := strings.ToLower(eb.Message)
 		for _, f := range []string{"email", "username"} {
 			if strings.Contains(lower, f) {

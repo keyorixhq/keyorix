@@ -81,10 +81,12 @@ func TestRunSystemInit_ValidationRefusalHasNoAccessHint(t *testing.T) {
 			`{"error":"ValidationError","message":"Validation error: username must be between 3 and 64 characters","details":{"field":"username"}}`,
 			"--admin-username",
 		},
-		// A server from before the typed code answers every validation failure 403 "Error".
+		// A server from before the typed code answers every validation failure 403 "Error",
+		// with core's "failed to create admin user: " wrap in front (the body an
+		// origin/main 59873ae6 server sends for --admin-email bad).
 		"older server 403": {
 			http.StatusForbidden,
-			`{"error":"Error","message":"Validation error: Validation error: Email"}`,
+			`{"error":"Error","message":"failed to create admin user: Validation error: Validation error: Email"}`,
 			"--admin-email",
 		},
 	}
@@ -112,6 +114,21 @@ func TestRunSystemInit_TokenRefusalKeepsItsHint(t *testing.T) {
 	}
 	if strings.Contains(got, "--admin-email") {
 		t.Fatalf("token refusal talks about the email: %q", got)
+	}
+}
+
+// A server with API initialisation disabled answers 403 "Error" too; the older-server
+// validation fallback must not re-label it as a refusal of the admin details.
+func TestRunSystemInit_DisabledTokenRefusalIsNotValidation(t *testing.T) {
+	got := runInitAgainst(t, http.StatusForbidden,
+		`{"error":"Error","message":"system initialisation over the API is disabled: invalid bootstrap token"}`)
+	if !containsAll(got, "system initialisation over the API is disabled", "403") {
+		t.Fatalf("disabled-API refusal lost its text: %q", got)
+	}
+	for _, bad := range []string{"--admin-email", "--admin-username"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("disabled-API refusal is labelled a validation refusal (%s): %q", bad, got)
+		}
 	}
 }
 

@@ -220,7 +220,7 @@ func runBGList(_ *cobra.Command, _ []string) error {
 		fmt.Printf("%-5s %-*s %-9s %-*s %-20s %s\n", "ID", userW, "USER", "STATE", roleW, "ROLE", "EXPIRES (UTC)", "JUSTIFICATION")
 		for i, a := range activations {
 			fmt.Printf("%-5d %-*s %-9s %-*s %-20s %s\n", derefUint32(a.Id), userW, users[i],
-				derefStr((*string)(a.State)), roleW, cliout.SanitizeForTerminal(derefStr(a.RoleName)), shortTime(derefStr(a.ExpiresAt)), derefStr(a.Justification))
+				derefStr((*string)(a.State)), roleW, cliout.SanitizeForTerminal(derefStr(a.RoleName)), shortTime(derefStr(a.ExpiresAt)), cliout.SanitizeForTerminal(derefStr(a.Justification)))
 		}
 		return nil
 	}
@@ -228,7 +228,7 @@ func runBGList(_ *cobra.Command, _ []string) error {
 	for i, a := range activations {
 		fmt.Printf("%-5d %-*s %-9s %-*s %-20s %-*s %s\n", derefUint32(a.Id), userW, users[i],
 			derefStr((*string)(a.State)), roleW, cliout.SanitizeForTerminal(derefStr(a.RoleName)), shortTime(derefStr(a.ExpiresAt)),
-			auditW, audits[i], derefStr(a.Justification))
+			auditW, audits[i], cliout.SanitizeForTerminal(derefStr(a.Justification)))
 	}
 	fmt.Println("\nDEGRADED = granted while the audit log refused writes: its audit rows are owed (written when the log recovers) and its review is mandatory.")
 	return nil
