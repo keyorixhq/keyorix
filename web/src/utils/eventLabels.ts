@@ -4,7 +4,7 @@
 // all use it, so a new server event never shows up as a raw identifier on one
 // screen and a friendly label on another.
 
-const EVENT_LABELS: Record<string, string> = {
+export const EVENT_LABELS: Record<string, string> = {
     // Auth
     'auth.login': 'Login',
     'auth.logout': 'Logout',
