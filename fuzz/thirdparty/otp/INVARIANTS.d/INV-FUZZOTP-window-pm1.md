@@ -1,8 +1,11 @@
-- **INV-FUZZOTP-window-pm1** Keyorix's TOTP acceptance window is exactly ±1 30-second step:
-  a code from the previous, current, or next step is accepted, and a code two or more steps
-  away is rejected. The library primitive `totp.ValidateCustom` honours its `Skew` boundary
-  (Skew=1 accepts ±1 and rejects ±2; Skew=0 rejects neighbours). Why: `validateTOTPStep`
-  (`internal/core/mfa.go:822`) loops `delta ∈ {0,-1,+1}` rather than using the library's
-  `Skew`, so the window is a Keyorix property pinned here against the primitive it is built
-  on; a wider window would enlarge the replay/brute-force surface. Guard:
+- **INV-FUZZOTP-window-pm1** The library primitive behaves as Keyorix's ±1-step loop assumes:
+  `totp.ValidateCustom` honours its `Skew` boundary (Skew=1 accepts the previous, current and
+  next 30-second step and rejects ±2; Skew=0 rejects neighbours), and a code generated for a
+  step is accepted by an in-test `accepts` predicate that mirrors the `delta ∈ {0,-1,+1}` loop.
+  Why: `validateTOTPStep` (`KeyorixCore.validateTOTPStep`, `internal/core`) loops over those
+  deltas rather than using the library's `Skew`, so it depends on the primitive generating and
+  comparing codes per step exactly as pinned here. This invariant does NOT guard the Keyorix
+  property itself (the test checks its own mirror predicate and never calls `validateTOTPStep`,
+  so it stays green if production widens the window); that property is guarded by
+  `INV-CORE-totp-verify-accepts-only-window-codes` (`internal/core/INVARIANTS.d`). Guard:
   `TestKeyorixWindow_PlusMinusOneStep`, `TestSkewWindowBoundary` (`fuzz/thirdparty/otp`).

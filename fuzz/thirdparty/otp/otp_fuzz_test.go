@@ -134,7 +134,10 @@ func strictBase32OK(secret string) bool {
 
 // base32LeniencyExplained reproduces pquerna's exact pre-decode normalisation
 // (TrimSpace, pad-to-%8 with '=', ToUpper). If the normalised form decodes under a
-// strict decoder, the acceptance is one of the documented leniencies, not a new one.
+// stdlib decoder, pquerna's acceptance is unchanged. NOTE: this uses the same lenient
+// stdlib decoder pquerna does, so it is a PIN against a change in pquerna's
+// normalisation, NOT a check that acceptance stays within {trim, pad, upper}: an
+// internal '\r' or '\n' (which the stdlib decoder skips) also counts as "explained".
 func base32LeniencyExplained(secret string) bool {
 	s := strings.TrimSpace(secret)
 	if n := len(s) % 8; n != 0 {

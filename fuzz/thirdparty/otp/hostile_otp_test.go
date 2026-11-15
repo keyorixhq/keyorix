@@ -1,7 +1,7 @@
 // RFC-vector + boundary oracles for github.com/pquerna/otp (v1.5.0), the HOTP/TOTP
 // library Keyorix uses for MFA. LIVE callers:
 //   - MFA enrolment: internal/core/mfa.go:126 totp.Generate (Period=30, Digits=6, SHA1).
-//   - MFA activation / login / step-up: internal/core/mfa.go:825
+//   - MFA activation / login / step-up: internal/core KeyorixCore.validateTOTPStep
 //     totp.GenerateCodeCustom via validateTOTPStep, with Keyorix's OWN ±1-step window
 //     (it loops delta ∈ {0,-1,+1} at Period=30, Skew=0, Digits=6, SHA1) and a
 //     constant-time compare; the matched step is returned for single-use/anti-replay.
@@ -133,7 +133,7 @@ func TestRFC6238_OracleFiresOnWrongParams(t *testing.T) {
 	}
 }
 
-// Oracle: Keyorix's ±1-step window (mfa.go:822 loops delta ∈ {0,-1,+1}) accepts a
+// Oracle: Keyorix's ±1-step window (KeyorixCore.validateTOTPStep loops delta ∈ {0,-1,+1}) accepts a
 // code from the previous, current, and next 30s step, and REJECTS a code two steps
 // away. Modelled here against the library primitive exactly as validateTOTPStep does.
 func TestKeyorixWindow_PlusMinusOneStep(t *testing.T) {

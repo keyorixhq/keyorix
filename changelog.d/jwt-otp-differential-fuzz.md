@@ -7,7 +7,7 @@
   asymmetric-only alg-confusion posture of the two live verify paths
   (`internal/oidcverify`, SSO login) with red proofs, and guards against the
   header memory-exhaustion CVE class (CVE-2025-30204). The OTP harness pins the
-  RFC 4226/6238 vectors for SHA1/256/512 × 6/7/8 digits, round-trips `otpauth://`
+  RFC 4226 (SHA1, 6 digits) and RFC 6238 (8 digits) vectors, round-trips `otpauth://`
   URLs, and documents base32-secret leniency versus a strict decoder. Disagreement
   classes are enumerated in committed `EXPECTED-DIFFERENCE.md` tables so only a NEW
   class fails. No production code changed.

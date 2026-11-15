@@ -7,7 +7,7 @@
 // configurations are built entirely in-test; NO production code is modified.
 //
 // Reachability: the Keyorix configuration mirrored here is the exact one in
-// internal/oidcverify/oidc.go:152 and internal/core/sso.go:1391 — the two live
+// internal/oidcverify OIDCVerifier.VerifyWithExpiry and internal/core KeyorixCore.verifyIDToken — the two live
 // JWT verification paths (machine-token federation and SSO human login).
 //
 // What this does NOT verify: the real JWKS fetch/caching (internal/oidcverify/

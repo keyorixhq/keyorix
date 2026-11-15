@@ -1,9 +1,9 @@
 // Differential + bounded-work fuzz harness for github.com/golang-jwt/jwt/v5
 // (v5.3.1), the JWT parser Keyorix authenticates with on two LIVE paths:
 //
-//   - OIDC / machine-token federation: internal/oidcverify/oidc.go:186
+//   - OIDC / machine-token federation: internal/oidcverify OIDCVerifier.VerifyWithExpiry
 //     (parser.ParseWithClaims), reached from middleware/auth.go handleAuthRequest.
-//   - SSO human login (OIDC id_token): internal/core/sso.go:1422
+//   - SSO human login (OIDC id_token): internal/core KeyorixCore.verifyIDToken
 //     (parser.ParseWithClaims), reached from GET /auth/sso/{provider}/callback.
 //
 // Both construct the parser with an ASYMMETRIC-ONLY method allowlist
@@ -27,9 +27,10 @@
 //     nonce) — those are internal/oidcverify and internal/core tests' job.
 //   - NOT JWE, NOT nested JWT, NOT unencoded-payload (RFC 7797): the compact JWS
 //     3-segment shape only.
-//   - The bounded-work oracle measures process-wide TotalAlloc deltas; it catches
-//     order-of-magnitude blow-ups (the CVE-2025-30204 class), NOT small constant
-//     over-allocation, and is not a tight per-byte accounting.
+//   - FuzzJWTBoundedWork measures process-wide TotalAlloc deltas against a loose
+//     ceiling; it catches order-of-magnitude blow-ups only, NOT the ~16 B/byte
+//     CVE-2025-30204 class. That CVE is pinned by the deterministic
+//     TestBoundedWork_ManyPeriods_CVE202530204.
 package jwthostile
 
 import (
@@ -48,7 +49,7 @@ import (
 )
 
 // keyorixMethodAllowlist mirrors the exact WithValidMethods set used by both live
-// Keyorix callers (oidc.go:152, sso.go:1391). Asymmetric only.
+// Keyorix callers (OIDCVerifier.VerifyWithExpiry, KeyorixCore.verifyIDToken). Asymmetric only.
 var keyorixMethodAllowlist = map[string]bool{
 	"RS256": true, "RS384": true, "RS512": true,
 	"ES256": true, "ES384": true, "ES512": true,
@@ -383,13 +384,68 @@ func seedJWTCorpus(f *testing.F) {
 	}
 }
 
-// ---- Oracle C: bounded work (CVE-2025-30204 class) --------------------------
+// ---- Oracle C: bounded work -------------------------------------------------
 //
-// A short attacker-supplied token must not drive super-linear allocation in the
-// parser (the many-periods header-memory CVE, fixed upstream in v5.2.2+; this
-// pins the fix and guards against regression in a vendored bump). The oracle:
-// allocation is bounded by a generous linear function of input length, and each
-// parse returns inside the fuzzutil.Guard wall-clock budget.
+// measureAlloc returns the process-wide TotalAlloc delta of fn with GC off. Both
+// the deterministic CVE pin and the fuzz target use it.
+func measureAlloc(fn func()) uint64 {
+	var before, after runtime.MemStats
+	old := debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(old)
+	runtime.ReadMemStats(&before)
+	fn()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+var splitSink []string
+
+// TestBoundedWork_ManyPeriods_CVE202530204 is the deterministic pin for the
+// many-periods header-memory CVE (CVE-2025-30204, fixed upstream in v5.2.2+; this
+// repo vendors v5.3.1). The vulnerable shape is strings.Split(token, ".") inside
+// the parser: O(n) allocation at about 16 B per input byte. The fixed parser
+// allocates a small constant for these inputs, independent of n.
+//
+// The fuzz target below cannot pin this CVE: its ceiling (64 KiB + 512 B/byte) is
+// about 32x looser than the 16 B/byte the CVE costs.
+//
+// RED PROOF (in-test): the pre-fix strings.Split shape, measured the same way,
+// must EXCEED the ceiling, so the measurement is shown to see this class.
+func TestBoundedWork_ManyPeriods_CVE202530204(t *testing.T) {
+	const ceiling = 4 * 1024 // bytes; v5.3.1 measures a constant ~256 B here
+	inputs := map[string]string{
+		"all-periods":  strings.Repeat(".", 100000),
+		"A-period-run": strings.Repeat("A.", 50000),
+	}
+	for name, tok := range inputs {
+		t.Run(name, func(t *testing.T) {
+			// Best of 3: process-wide TotalAlloc can pick up unrelated runtime
+			// allocations; the parser's own cost is the minimum.
+			best := ^uint64(0)
+			for range 3 {
+				a := measureAlloc(func() {
+					_, _, _ = jwt.NewParser().ParseUnverified(tok, jwt.MapClaims{})
+				})
+				best = min(best, a)
+			}
+			if best > ceiling {
+				t.Errorf("GUARD FAILED: ParseUnverified allocated %d bytes for %d-byte many-periods input, ceiling %d (CVE-2025-30204 class)", best, len(tok), ceiling)
+			}
+
+			// RED PROOF: the pre-fix shape must exceed the same ceiling.
+			pre := measureAlloc(func() { splitSink = strings.Split(tok, ".") })
+			if pre <= ceiling {
+				t.Fatalf("RED PROOF INVALID: pre-fix strings.Split shape allocated %d bytes, not above ceiling %d; the measurement cannot see this class", pre, ceiling)
+			}
+			t.Logf("pre-fix shape alloc > ceiling: %d > %d (v5.3.1 parser: %d)", pre, ceiling, best)
+		})
+	}
+}
+
+// FuzzJWTBoundedWork catches ORDER-OF-MAGNITUDE allocation blow-ups only: allocation
+// is bounded by a generous linear function of input length, and each parse returns
+// inside the fuzzutil.Guard wall-clock budget. It does NOT pin CVE-2025-30204 (see
+// TestBoundedWork_ManyPeriods_CVE202530204, which does).
 func FuzzJWTBoundedWork(f *testing.F) {
 	f.Add(strings.Repeat(".", 100000))
 	f.Add(strings.Repeat("A", 100000))
@@ -397,16 +453,13 @@ func FuzzJWTBoundedWork(f *testing.F) {
 	f.Add("eyJhbGciOiJSUzI1NiJ9." + strings.Repeat("A", 50000) + ".sig")
 	f.Fuzz(func(t *testing.T, token string) {
 		parser := jwt.NewParser()
-		var before, after runtime.MemStats
-		old := debug.SetGCPercent(-1)
-		defer debug.SetGCPercent(old)
-		runtime.ReadMemStats(&before)
-		fuzzutil.Guard(t.Fatalf, "jwt.ParseUnverified(bounded)", func() {
-			_, _, _ = parser.ParseUnverified(token, jwt.MapClaims{})
+		alloc := measureAlloc(func() {
+			fuzzutil.Guard(t.Fatalf, "jwt.ParseUnverified(bounded)", func() {
+				_, _, _ = parser.ParseUnverified(token, jwt.MapClaims{})
+			})
 		})
-		runtime.ReadMemStats(&after)
-		alloc := after.TotalAlloc - before.TotalAlloc
-		// Generous linear ceiling: 64 KiB fixed + 512 bytes per input byte.
+		// Generous linear ceiling: 64 KiB fixed + 512 bytes per input byte
+		// (order-of-magnitude detector; deliberately NOT a CVE-2025-30204 pin).
 		ceiling := uint64(64*1024) + 512*uint64(len(token))
 		if alloc > ceiling {
 			t.Errorf("super-linear allocation: input=%d bytes allocated=%d bytes ceiling=%d (possible amplification)", len(token), alloc, ceiling)

@@ -1,14 +1,19 @@
 package jwthostile
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"strings"
 	"testing"
 
 	jwt "github.com/golang-jwt/jwt/v5"
+
+	"github.com/keyorixhq/keyorix/internal/oidcverify"
 )
 
 func ed25519KeyPair() (ed25519.PublicKey, ed25519.PrivateKey, error) {
@@ -41,65 +46,133 @@ func reSignHeaderAlg(t *testing.T, token, newAlg string) string {
 	return base64.RawURLEncoding.EncodeToString(nb) + "." + parts[1] + "." + parts[2]
 }
 
-// Oracle: Keyorix's keyfunc selects a key by issuer+kid ONLY. jku/x5u/jwk headers
-// (attacker-supplied key locations/material) are never dereferenced: an unknown
-// kid yields no key regardless of what jku/x5u/jwk say, so the token is rejected.
-// This models internal/oidcverify/oidc.go:174-184 (kid-only JWKS lookup).
+// recordingJWKS is an oidcverify.JWKSResolver stub. It serves exactly one trusted
+// key under one (issuer, kid) and records every (issuer, kid) it is asked for. The
+// resolver interface carries no URL, so "never received a URL" is structural; what
+// the recording proves is that key selection is driven by (iss, kid) alone.
+type recordingJWKS struct {
+	issuer, kid string
+	key         any
+	asked       [][2]string
+}
+
+func (r *recordingJWKS) Key(_ context.Context, issuer, kid string) (any, error) {
+	r.asked = append(r.asked, [2]string{issuer, kid})
+	if issuer == r.issuer && kid == r.kid {
+		return r.key, nil
+	}
+	return nil, errNoKey
+}
+
+// rsaJWK renders an RSA public key as the JWK object an attacker would embed in a
+// "jwk" header.
+func rsaJWK(pub *rsa.PublicKey) map[string]any {
+	e := big.NewInt(int64(pub.E)).Bytes()
+	return map[string]any{
+		"kty": "RSA",
+		"n":   base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(e),
+	}
+}
+
+// Oracle: Keyorix selects the verification key by issuer+kid ONLY. jku/x5u/jwk
+// headers (attacker-supplied key locations/material) are never dereferenced: an
+// unknown kid yields no key regardless of what jku/x5u/jwk say, so the token is
+// rejected.
 //
-// RED PROOF: a keyfunc that trusted an embedded "jwk" header would accept a
-// self-signed token; the Keyorix-shaped keyfunc does not.
+// GREEN half drives the REAL internal/oidcverify.OIDCVerifier (the production
+// OIDC keyfunc, OIDCVerifier.VerifyWithExpiry) over a recording JWKSResolver stub.
+// The attack token uses an ALLOWED alg (RS256), is signed by the attacker's key
+// (whose real public half is embedded in the "jwk" header), and carries an unknown
+// kid plus hostile jku/x5u/jwk. It must be rejected, and the resolver must have
+// been asked only for (issuer, "attacker-kid").
+//
+// The token MUST use an allowed alg: golang-jwt checks the alg allowlist BEFORE it
+// calls the keyfunc, so a token with a disallowed alg (e.g. EdDSA) fails on the
+// method alone and the keyfunc never runs — which made an earlier version of this
+// test unable to go red for a jwk-trusting keyfunc.
+//
+// POSITIVE CONTROL: a legitimate token with kid=known-kid IS accepted and the
+// resolver IS consulted, so the resolver is reachable and the rejection above is
+// attributable to kid-only selection, not to an unrelated failure.
+//
+// RED PROOF: the same attack token under the same allowlist parser
+// (keyorixParser) with a jwk-TRUSTING keyfunc IS accepted (err == nil), so the
+// attack token is genuinely dangerous to a vulnerable keyfunc and the GREEN
+// rejection is not an artefact of a malformed token.
 func TestHeaderInjection_JkuX5uJwkIgnored(t *testing.T) {
-	_, priv, err := ed25519KeyPair()
-	if err != nil {
-		t.Fatalf("keygen: %v", err)
-	}
-	// Mint an EdDSA token (alg is irrelevant: it must be rejected before/at key
-	// selection because the kid is unknown and jku/x5u/jwk are ignored).
-	tokObj := jwt.NewWithClaims(jwt.SigningMethodEdDSA, validClaims())
-	tokObj.Header["kid"] = "attacker-kid-not-in-jwks"
-	tokObj.Header["jku"] = "https://attacker.example/jwks.json"
-	tokObj.Header["x5u"] = "https://attacker.example/cert.pem"
-	tokObj.Header["jwk"] = map[string]any{"kty": "OKP", "crv": "Ed25519", "x": "AAAA"}
-	raw, err := tokObj.SignedString(priv)
-	if err != nil {
-		t.Fatalf("mint: %v", err)
+	const issuer = "https://issuer.example"
+	const aud = "keyorix"
+
+	attackerKey := mustRSA(t)
+	trustedKey := mustRSA(t)
+
+	claims := func() jwt.RegisteredClaims {
+		c := validClaims()
+		c.Issuer = issuer
+		c.Audience = jwt.ClaimStrings{aud}
+		return c
 	}
 
-	// Keyorix-shaped keyfunc: kid-only lookup against a fixed JWKS map.
-	jwks := map[string]any{"known-kid": struct{}{}}
-	selections := 0
-	keyorixKeyfunc := func(tok *jwt.Token) (any, error) {
-		kid, _ := tok.Header["kid"].(string)
-		k, ok := jwks[kid]
-		if !ok {
-			return nil, errNoKey
+	attackTok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims())
+	attackTok.Header["kid"] = "attacker-kid"
+	attackTok.Header["jku"] = "https://attacker.example/jwks.json"
+	attackTok.Header["x5u"] = "https://attacker.example/cert.pem"
+	attackTok.Header["jwk"] = rsaJWK(&attackerKey.PublicKey)
+	attackRaw, err := attackTok.SignedString(attackerKey)
+	if err != nil {
+		t.Fatalf("mint attack token: %v", err)
+	}
+
+	legitTok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims())
+	legitTok.Header["kid"] = "known-kid"
+	legitRaw, err := legitTok.SignedString(trustedKey)
+	if err != nil {
+		t.Fatalf("mint legit token: %v", err)
+	}
+
+	newVerifier := func(res *recordingJWKS) *oidcverify.OIDCVerifier {
+		v, err := oidcverify.NewOIDCVerifier(
+			[]oidcverify.OIDCTrustedIssuer{{Issuer: issuer, Audiences: []string{aud}}}, res)
+		if err != nil {
+			t.Fatalf("NewOIDCVerifier: %v", err)
 		}
-		selections++
-		return k, nil
+		return v
 	}
 
-	if _, err := keyorixParser().Parse(raw, keyorixKeyfunc); err == nil {
+	// POSITIVE CONTROL.
+	ctlRes := &recordingJWKS{issuer: issuer, kid: "known-kid", key: &trustedKey.PublicKey}
+	if _, sub, err := newVerifier(ctlRes).Verify(context.Background(), legitRaw); err != nil || sub != "alice" {
+		t.Fatalf("POSITIVE CONTROL FAILED: legit token with known kid rejected (sub=%q err=%v); the GREEN half would be vacuous", sub, err)
+	}
+	if len(ctlRes.asked) != 1 || ctlRes.asked[0] != [2]string{issuer, "known-kid"} {
+		t.Fatalf("POSITIVE CONTROL FAILED: resolver asked %v, want exactly one (iss, known-kid) lookup", ctlRes.asked)
+	}
+
+	// GREEN: attack token rejected; selection driven by (iss, kid) only.
+	res := &recordingJWKS{issuer: issuer, kid: "known-kid", key: &trustedKey.PublicKey}
+	if _, _, err := newVerifier(res).Verify(context.Background(), attackRaw); err == nil {
 		t.Fatalf("GUARD FAILED: token with attacker jku/x5u/jwk and unknown kid was accepted")
 	}
-	if selections != 0 {
-		t.Fatalf("GUARD FAILED: a key was selected for an unknown kid (jku/x5u/jwk must never drive selection)")
+	if len(res.asked) != 1 || res.asked[0] != [2]string{issuer, "attacker-kid"} {
+		t.Fatalf("GUARD FAILED: resolver asked %v, want exactly one (iss, attacker-kid) lookup (jku/x5u/jwk must never drive selection)", res.asked)
 	}
 
-	// RED PROOF: a jwk-trusting keyfunc (the vulnerable shape) would return a key
-	// derived from the attacker-embedded header, proving the oracle is not vacuous.
+	// RED PROOF: a jwk-trusting keyfunc (the vulnerable shape) under the SAME
+	// allowlist parser accepts the SAME attack token.
 	vulnSelections := 0
 	vulnKeyfunc := func(tok *jwt.Token) (any, error) {
 		if _, ok := tok.Header["jwk"]; ok {
 			vulnSelections++
-			return priv.Public(), nil // trust the embedded key material (DO NOT DO THIS)
+			return &attackerKey.PublicKey, nil // trust the embedded key material (DO NOT DO THIS)
 		}
 		return nil, errNoKey
 	}
-	// EdDSA is outside Keyorix's allowlist, so parse still fails on method; but the
-	// key-selection side effect fires, which is the thing the red proof asserts.
-	_, _ = jwt.NewParser().Parse(raw, vulnKeyfunc)
-	if vulnSelections == 0 {
-		t.Fatalf("RED PROOF INVALID: the jwk-trusting keyfunc never fired on the embedded header")
+	if _, err := keyorixParser().Parse(attackRaw, vulnKeyfunc); err != nil {
+		t.Fatalf("RED PROOF INVALID: a jwk-trusting keyfunc did not accept the attack token (err=%v); the token cannot distinguish a vulnerable keyfunc", err)
+	}
+	if vulnSelections != 1 {
+		t.Fatalf("RED PROOF INVALID: jwk-trusting keyfunc fired %d times, want 1", vulnSelections)
 	}
 }
 
