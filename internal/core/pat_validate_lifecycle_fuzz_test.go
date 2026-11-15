@@ -109,6 +109,7 @@ func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixture
 	}
 	if sqlDB, e := db.DB(); e == nil {
 		sqlDB.SetMaxOpenConns(1) // :memory: gives each conn its own DB otherwise
+		t.Cleanup(func() { _ = sqlDB.Close() })
 	}
 	if err := db.AutoMigrate(
 		&models.User{}, &models.PersonalAccessToken{}, &models.Notification{},
