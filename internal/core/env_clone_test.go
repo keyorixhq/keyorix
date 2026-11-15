@@ -43,6 +43,9 @@ func newCloneTestCore(t *testing.T) *KeyorixCore {
 	// IsProjectMember (RBAC-001). The first project created in each test gets ID=1;
 	// seed actor 1 as a project member so the copy read passes.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	// Actor 1 holds the clone route's gate (secrets.read + secrets.write, #4161);
+	// global, as the tests create their projects after this.
+	grantRouteGatePerms(t, db, 1, 0, "secrets.read", "secrets.write")
 	return &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 }
 
@@ -229,6 +232,7 @@ func TestCloneEnvironment_ListSecretsError(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("ListSecrets", mock.Anything, mock.Anything).
 		Return(nil, int64(0), errors.New("db unavailable"))
+	mockRouteGate(ms, 1, permSecretsRead, permSecretsWrite) // the clone route's gate (#4161)
 	c := NewKeyorixCore(mockEnvCloneStorage(ms))
 
 	// Both envs have ProjectID=1 (returned by the override above), so the project

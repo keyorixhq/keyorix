@@ -29,6 +29,7 @@ func TestSecretTags(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "mallory", Email: "m@t.com"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	grantRouteGatePerms(t, db, 1, 0, "secrets.write") // the owner holds the tags route gate (#4161); user 2 holds nothing
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()

@@ -339,7 +339,7 @@ func TestRollbackSecret_VersionNotFound(t *testing.T) {
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1}, nil)
 	ms.On("GetSecretVersions", mock.Anything, uint(1)).Return([]*models.SecretVersion{}, nil)
 	c := NewKeyorixCore(ms)
-	_, err := c.RollbackSecret(context.Background(), 1, 3, 1, "actor")
+	_, err := c.RollbackSecret(context.Background(), 1, 3, 0, "actor") // system actor: the route gate (#4161) is not what this tests
 	require.Error(t, err)
 	// GetSecretVersion fails because no versions exist with versionNumber=3.
 }

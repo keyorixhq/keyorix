@@ -135,7 +135,7 @@ func TestMaxReads_SurvivesRotateAndRollback(t *testing.T) {
 	assert.Contains(t, err.Error(), i18n.T("ErrorMaxReadsExceeded", nil))
 
 	// Rolling back to version 1 also creates a new version — same requirement.
-	_, err = c.RollbackSecret(ctx, id, 1, 1, "actor")
+	_, err = c.RollbackSecret(ctx, id, 1, 0, "actor") // system actor, as the rotate above: the actor's gate (#4161) is not what this tests
 	require.NoError(t, err)
 	_, err = c.GetSecretValue(ctx, id)
 	require.Error(t, err, "rolling back must not grant a fresh read budget either")

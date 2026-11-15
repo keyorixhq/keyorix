@@ -335,9 +335,6 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 	if err != nil {
 		return err
 	}
-	if err := c.requireSecretScopeGate(ctx, revokedBy, secret.ProjectID, secret.EnvironmentID); err != nil {
-		return err
-	}
 	// Owner authority also requires live project membership — see ShareSecret.
 	// A holder of secrets.manage at the secret's scope may also revoke a share on
 	// a secret they do not own (the permission that already governs per-secret ACL
@@ -357,6 +354,11 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 			return err
 		}
 		byManager = true
+	}
+	// After the owner/manager rule, so its refusal (ErrShareNotOwner) is unchanged
+	// for everyone it refuses; an owner or manager also needs the route gate.
+	if err := c.requireSecretScopeGate(ctx, revokedBy, secret.ProjectID, secret.EnvironmentID); err != nil {
+		return err
 	}
 
 	// Wrapped in a transaction (not a bare c.storage.DeleteShareRecord call) so a

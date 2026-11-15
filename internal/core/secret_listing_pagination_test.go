@@ -48,6 +48,7 @@ func TestListSecretsInScope_PaginationSurvivesPostFetchTagFilter(t *testing.T) {
 	e, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	grantRouteGatePerms(t, db, 1, p.ID, "secrets.write") // the owner holds the tags route gate (#4161)
 
 	mk := func(name string, keep bool) {
 		s, err := c.storage.CreateSecret(ctx, &models.SecretNode{

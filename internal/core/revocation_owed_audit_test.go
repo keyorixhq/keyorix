@@ -196,7 +196,11 @@ func revKinds() []revKind {
 			mutate: func(w *satWorld, c *KeyorixCore, s any) error {
 				return c.RemoveProjectMember(ctx, w.f.adminID, w.f.projectID, userID(s))
 			}},
-		{name: "revoke-share", prepare: share,
+		{name: "revoke-share", prepare: func(w *satWorld) any {
+			// The owner needs the route gate's secrets.write at the secret's scope (#4161).
+			grantRouteGatePerms(w.t, w.db, w.member.ID, w.f.projectID, "secrets.write")
+			return share(w)
+		},
 			mutate: func(w *satWorld, c *KeyorixCore, s any) error {
 				return c.RevokeShare(ctx, s.([2]any)[1].(*models.ShareRecord).ID, w.member.ID)
 			}},

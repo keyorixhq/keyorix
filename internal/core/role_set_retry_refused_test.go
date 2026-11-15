@@ -26,6 +26,8 @@ func TestReplaceUserRoleSet_CeilingLostBetweenCommits_NotRetrySafe(t *testing.T)
 		require.NoError(t, err)
 
 		a := w.newUser("race-a", "project_admin")
+
+		grantRouteGatePerms(t, w.db, a.ID, 0, "users.read", "roles.assign") // the /users/{id}/roles gate (#4161)
 		w.newUser("race-b", "project_admin")
 		target := w.newUser("race-t", "project_developer")
 

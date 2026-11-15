@@ -140,6 +140,7 @@ func TestRoleSetReplace_GranterWhoCanGrantKeepsNoOpAndNarrowing(t *testing.T) {
 			require.NoError(t, err)
 			other := emptyRoleForCeilingTest(t, f)
 			require.NoError(t, f.st.AssignRole(ctx, f.actor, role.ID, op.scope), "the actor now holds the role's permissions")
+			grantRouteGatePerms(t, f.st.DB(), f.actor, 0, "users.read") // with mgr's roles.assign: SetUserRoles' /users gate (#4161)
 
 			noop := ceilingTestUser(t, f, "ceiling-noop")
 			require.NoError(t, f.st.AssignRole(ctx, noop, role.ID, op.scope))
@@ -166,6 +167,7 @@ func TestRoleSetReplace_GranterWhoCanGrantKeepsNoOpAndNarrowing(t *testing.T) {
 		require.NoError(t, err)
 		other := emptyRoleForCeilingTest(t, f)
 
+		grantRouteGatePerms(t, f.st.DB(), f.actor, 0, "users.read") // with mgr's roles.assign: SetUserRoles' /users gate (#4161)
 		target := ceilingTestUser(t, f, "ceiling-remove-beyond")
 		require.NoError(t, f.st.AssignRole(ctx, target, viewer.ID, scope))
 		require.NoError(t, f.st.AssignRole(ctx, target, other, scope))

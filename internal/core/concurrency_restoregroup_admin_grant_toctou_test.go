@@ -126,6 +126,13 @@ func TestConcurrency_RestoreGroup_AdminGrantRace_TOCTOU_Deterministic(t *testing
 	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "sneaky_admin", BypassesPermissionChecks: true, AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "nonadmin", UsernameFolded: "nonadmin", AccountState: core.AccountActive}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "g1", NameFolded: "g1", DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}}).Error)
+	// Actor 2 holds RestoreGroup's route gate (users.read + roles.assign, #4161)
+	// through a role that bypasses nothing: still an ordinary, non-global-admin user.
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "users.read"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 20, Name: "group_operator", NameFolded: "group_operator", AssignableScope: models.RoleAssignableAny}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 20, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 20, PermissionID: 2}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 20}).Error)
 
 	realStorage := store.NewLocalStorage(db)
 	wrapped := &delayedRestoreGroupStorage{

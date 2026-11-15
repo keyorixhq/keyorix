@@ -150,6 +150,7 @@ func TestCreateUserWithOneTimePassword_RecordsExpiry(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ms := new(MockStorage)
+			mockRouteGate(ms, 7, permUsersRead, permUsersWrite) // the /users route gate of actor 7 (#4161)
 			c := NewKeyorixCore(ms)
 			fixed := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 			c.now = func() time.Time { return fixed }

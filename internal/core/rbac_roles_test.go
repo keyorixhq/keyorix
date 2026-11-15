@@ -36,6 +36,10 @@ func newRoleCRUDTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		// cascade (SESSION-AT AT1 row 2) deletes from every RoleID-referencing
 		// table, so any test exercising a real (non-404) DeleteRole needs all five.
 		&models.UserRole{}, &models.GroupRole{}, &models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{}))
+	// The tests' actors (1, 9) hold the /roles route gate (roles.read + roles.write, #4161).
+	for _, actor := range []uint{1, 9} {
+		grantRouteGatePerms(t, db, actor, 0, "roles.read", "roles.write")
+	}
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 

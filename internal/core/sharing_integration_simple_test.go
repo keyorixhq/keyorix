@@ -57,6 +57,9 @@ func TestSharingIntegrationSimple(t *testing.T) {
 	for i := 10; i <= 20; i++ {
 		require.NoError(t, db.Create(&models.UserRole{UserID: uint(i), RoleID: 1, ProjectID: 1}).Error)
 	}
+	// The owner holds the share routes' secrets.write (RevokeShare checks it since
+	// #4161); global, as this world has no project rows for a scoped grant.
+	grantRouteGatePerms(t, db, 1, 0, "secrets.write")
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group"}).Error)
 	// ShareSecretWithGroup verifies the group is scoped to the secret's project (1).
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1, ProjectID: 1}).Error)

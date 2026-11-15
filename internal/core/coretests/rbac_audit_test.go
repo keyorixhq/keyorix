@@ -156,6 +156,7 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 	seedRolesAssignGrant(t, db, 5, 100, 100, core.Scope{ProjectID: 3})
+	seedRouteGateGrant(t, db, 5, 9001, "users.read", "roles.assign") // AssignRoleToGroup's route gate (#4161)
 
 	require.NoError(t, c.AssignRoleToGroup(ctx, 5, 7, 2, core.Scope{ProjectID: 3}, false))
 
@@ -219,6 +220,7 @@ func TestRBACAuditTrail_SetUserRolesEmitsPerChange(t *testing.T) {
 	c, db := newRBACAuditCore(t)
 	ctx := context.Background()
 	seedRolesAssignGrant(t, db, 9, 100, 100, core.Scope{})
+	seedRouteGateGrant(t, db, 9, 9001, "users.read") // SetUserRoles' route gate (#4161); roles.assign is seeded above
 
 	// From {} to {1,2}: two assignments.
 	require.NoError(t, c.SetUserRoles(ctx, 9, 20, []uint{1, 2}, core.Scope{}, false))

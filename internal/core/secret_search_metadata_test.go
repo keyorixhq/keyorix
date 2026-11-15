@@ -28,6 +28,7 @@ func TestSecretSearch_NameDescriptionTags(t *testing.T) {
 	p, _ := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
 	e, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	grantRouteGatePerms(t, db, 1, p.ID, "secrets.write") // the owner sets tags: the tags route gate (#4161)
 
 	mk := func(name, desc string, tags ...string) {
 		s, err := c.CreateSecret(ctx, &CreateSecretRequest{

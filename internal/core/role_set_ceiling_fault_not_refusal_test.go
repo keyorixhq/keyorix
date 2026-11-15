@@ -30,6 +30,8 @@ func TestReplaceUserRoleSet_GranterReadFaultInCommit2_IsRetrySafeFault(t *testin
 		scope := Scope{ProjectID: w.f.projectID}
 
 		a := w.newUser("fault-a", "project_admin")
+
+		grantRouteGatePerms(t, w.db, a.ID, 0, "users.read", "roles.assign") // the /users/{id}/roles gate (#4161)
 		w.newUser("fault-b", "project_admin")
 		target := w.newUser("fault-t", "project_developer")
 

@@ -50,6 +50,8 @@ func TestAddUserToGroup_MachineGranterHoldingRolePermissionsAllowed(t *testing.T
 	require.NoError(t, st.AssignMachineRole(ctx, granter.ID, adminRole.ID, storage.Scope{ProjectID: 1}))
 	require.NoError(t, st.AssignRoleToGroupWithExpiry(ctx, grp.ID, devRole.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour)))
 
+	grantMachineRouteGatePerms(t, st.DB(), granter.ID, "users.read", "roles.assign") // the group route's install-wide gate (#4161)
+
 	grantCtx := WithSelfMachineGranter(ctx, granter.ID)
 	err = c.AddUserToGroup(grantCtx, 0, true, target.ID, grp.ID, 1)
 	require.NoError(t, err, "a machine granter that already holds every permission the group's role bundles must be allowed to add a member")
@@ -75,6 +77,8 @@ func TestAddUserToGroup_MachineGranterMissingRolePermissionsBlocked(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, st.AssignMachineRole(ctx, granter.ID, viewerRole.ID, storage.Scope{ProjectID: 1}))
 	require.NoError(t, st.AssignRoleToGroupWithExpiry(ctx, grp.ID, adminRole.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour)))
+
+	grantMachineRouteGatePerms(t, st.DB(), granter.ID, "users.read", "roles.assign") // the group route's install-wide gate (#4161)
 
 	grantCtx := WithSelfMachineGranter(ctx, granter.ID)
 	err = c.AddUserToGroup(grantCtx, 0, true, target.ID, grp.ID, 1)

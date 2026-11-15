@@ -645,6 +645,7 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	// throttling behavior actually exercises.
 	stubAuthorizedPrincipal(store, 9, Scope{}, "roles.assign")
 
+	mockRouteGateLate(store, 9, permUsersWrite) // the inviter holds POST /invitations' users.write (#4161)
 	inv1, prov1, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9, 0)
 	require.NoError(t, err)
 	require.NotNil(t, inv1)

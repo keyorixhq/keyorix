@@ -46,6 +46,7 @@ func TestCopySecret_SourceReadFaultIsNotNotFoundAndWritesNoRefusalRow(t *testing
 	prod, err := base.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p1.ID})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p1.ID}).Error)
+	grantRouteGatePerms(t, db, 1, p1.ID, "secrets.read", "secrets.write") // the copy routes' gates (#4161)
 	src, err := c.CreateSecret(ctx, &CreateSecretRequest{
 		Name: "db-url", Value: []byte("postgres://secret"), ProjectID: p1.ID, EnvironmentID: staging.ID,
 		Type: "connection-string", CreatedBy: "owner", OwnerID: 1,

@@ -58,6 +58,7 @@ func TestResendAccountSetupLink(t *testing.T) {
 
 	newCore := func(d delivery.CredentialDelivery) (*KeyorixCore, *MockStorage) {
 		ms := new(MockStorage)
+		mockRouteGate(ms, 7, permUsersRead, permUsersWrite) // the /users route gate of actor 7 (#4161)
 		c := NewKeyorixCore(ms)
 		c.now = func() time.Time { return fixed }
 		c.SetCredentialDelivery(d, testBaseURL)
@@ -149,6 +150,7 @@ func TestProvisionRequiresBaseURL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
+	mockRouteGate(ms, 7, permUsersRead, permUsersWrite) // the /users route gate of actor 7 (#4161)
 	c := NewKeyorixCore(ms)
 	c.SetCredentialDelivery(&fakeDeliverer{}, "") // no base URL
 
@@ -166,6 +168,7 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 	ms := new(MockStorage)
+	mockRouteGate(ms, 7, permUsersRead, permUsersWrite) // the /users route gate of actor 7 (#4161)
 	c := NewKeyorixCore(ms)
 	fixed := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
 	c.now = func() time.Time { return fixed }
@@ -213,6 +216,7 @@ func TestCreateUserWithSetupLink_ThrottlesCreateDeleteRecreateLoop(t *testing.T)
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 	ms := new(MockStorage)
+	mockRouteGate(ms, 7, permUsersRead, permUsersWrite) // the /users route gate of actor 7 (#4161)
 	c := NewKeyorixCore(ms)
 	fixed := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
 	c.now = func() time.Time { return fixed }
@@ -266,6 +270,7 @@ func TestCreateUserWithOneTimePassword(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 	ms := new(MockStorage)
+	mockRouteGate(ms, 7, permUsersRead, permUsersWrite) // the /users route gate of actor 7 (#4161)
 	c := NewKeyorixCore(ms)
 	anyAudit(ms)
 

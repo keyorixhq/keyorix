@@ -95,6 +95,10 @@ func setupBulkAccessDB(t *testing.T) (k *KeyorixCore, db *gorm.DB, approverID, r
 	approverID = 10
 	// Grant approver the admin role at the project scope.
 	require.NoError(t, db.Exec("INSERT INTO user_roles (user_id,role_id,project_id) VALUES (10,1,?)", projectID).Error)
+	// And the bulk route's install-wide roles.assign gate (#4161), through a role of its own.
+	require.NoError(t, db.Exec("INSERT INTO roles (id,name,name_folded,description) VALUES (3,'bulk_gate','bulk_gate','roles.assign only')").Error)
+	require.NoError(t, db.Exec("INSERT INTO role_permissions (role_id,permission_id) VALUES (3,9)").Error)
+	require.NoError(t, db.Exec("INSERT INTO user_roles (user_id,role_id,project_id) VALUES (10,3,0)").Error)
 
 	// Requester user (no role yet).
 	require.NoError(t, db.Exec("INSERT INTO users (id,username,username_folded,email,email_folded) VALUES (11,'requester','requester','requester@example.com','requester@example.com')").Error)

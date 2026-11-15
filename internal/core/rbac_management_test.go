@@ -44,13 +44,14 @@ func TestAssignPermissionToRole_RequiresActorHoldPermission(t *testing.T) {
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
 
-	const attacker = uint(9) // holds ONLY roles.write in the real exploit scenario, no roles at all here
+	const attacker = uint(9) // holds ONLY the /roles route gate (roles.read, roles.write), as in the real exploit
+	grantRouteGatePerms(t, db, attacker, 0, "roles.read", "roles.write")
 	err := c.AssignPermissionToRole(ctx, attacker, 1, 1, false)
 	require.Error(t, err, "an actor who doesn't hold system.write must not be able to bundle it into a role")
 	assert.Contains(t, err.Error(), "do not hold it yourself")
 
 	var count int64
-	require.NoError(t, db.Model(&models.RolePermission{}).Count(&count).Error)
+	require.NoError(t, db.Model(&models.RolePermission{}).Where("role_id = ?", 1).Count(&count).Error)
 	assert.Zero(t, count, "the permission must not have been assigned")
 }
 
@@ -131,6 +132,7 @@ func TestAssignPermissionToRole_HolderMaySelfBundle(t *testing.T) {
 
 	const holder = uint(9)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 2}).Error) // global grant
+	grantRouteGatePerms(t, db, holder, 0, "roles.read", "roles.write")
 
 	require.NoError(t, c.AssignPermissionToRole(ctx, holder, 1, 1, false))
 
@@ -300,6 +302,7 @@ func TestAssignPermissionToRole_NonBuiltinRole_NoSignal(t *testing.T) {
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 	const holder = uint(9)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 2}).Error)
+	grantRouteGatePerms(t, db, holder, 0, "roles.read", "roles.write")
 
 	logOutput := captureLog(t, func() {
 		require.NoError(t, c.AssignPermissionToRole(ctx, holder, 1, 1, false))

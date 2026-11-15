@@ -108,6 +108,7 @@ func psDeleteRestore(t *testing.T, backend string) {
 	w := newC4World(t, backend)
 	c, db, ctx := w.core, w.db, context.Background()
 	admin := w.user()
+	grantRouteGatePerms(t, w.db, admin.ID, 0, "roles.assign") // RestoreProject's gate (#4161)
 
 	doomed, live, dead := w.project(), w.project(), w.project()
 	require.NoError(t, c.storage.DeleteProject(ctx, dead.ID)) // already deleted before the case under test
@@ -232,6 +233,7 @@ func TestDeleteProject_NonForce_SuspendsOnlyWhenDeleted(t *testing.T) {
 			w := newC4World(t, backend)
 			c, db, ctx := w.core, w.db, context.Background()
 			admin := w.user()
+			grantRouteGatePerms(t, w.db, admin.ID, 0, "roles.assign") // RestoreProject's gate (#4161)
 
 			blocked := w.project()
 			env := w.env(blocked.ID)
@@ -260,6 +262,7 @@ func TestDeleteProject_MachineSuspendStepIsAtomicWithTheCascade(t *testing.T) {
 			w := newC4World(t, backend)
 			db, ctx := w.db, context.Background()
 			admin := w.user()
+			grantRouteGatePerms(t, w.db, admin.ID, 0, "roles.assign") // RestoreProject's gate (#4161)
 			faulty := faultstorage.NewFaultyStorage(w.core.storage, nil)
 			c := NewKeyorixCore(faulty)
 

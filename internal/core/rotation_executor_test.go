@@ -26,10 +26,18 @@ func rotationExecCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{},
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.UserRole{},
 		&models.GroupRole{}, &models.UserGroup{}, &models.Group{},
+		&models.Permission{}, &models.RolePermission{}, &models.SecretACL{}, &models.ShareRecord{}, &models.User{}, &models.SystemMetadata{},
 	))
 	// ListSecrets(ProjectID) JOINs environments, so the scope needs a real env row.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
+	// The tests' actor 9 holds the route gate's secrets.write at the project
+	// (SetSecretAutoRotate checks it since #4161); role 900 stays clear of the
+	// role IDs the tests create.
+	require.NoError(t, db.Create(&models.Role{ID: 900, Name: "route-gate-writer", NameFolded: "route-gate-writer"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 900, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 900, PermissionID: 900}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 900, ProjectID: 1}).Error)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	fixed := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
 	c.now = func() time.Time { return fixed }

@@ -39,12 +39,12 @@ func TestBulkAccessRequests_OtherProjectRequestAnswersLikeMissingID(t *testing.T
 	require.NoError(t, err)
 	const missing = uint(999999)
 
+	// Since #4161 core applies the bulk-approve route's gate (install-wide
+	// roles.assign) first: this project-scoped approver is refused for the whole
+	// call, with no per-item answer at all, so no item can be an existence oracle.
 	approveRes, err := c.BulkApproveAccessRequests(ctx, []uint{inB.ID, missing}, approver.ID, 0)
-	require.NoError(t, err)
-	require.Empty(t, approveRes.Approved)
-	require.Len(t, approveRes.Failed, 2)
-	assert.Equal(t, approveRes.Failed[1].Error, approveRes.Failed[0].Error,
-		"a request in another project must answer like a missing ID: %+v", approveRes.Failed)
+	require.ErrorIs(t, err, ErrPermissionDenied)
+	require.Nil(t, approveRes, "a refused call answers nothing per item")
 
 	rejectRes, err := c.BulkRejectAccessRequests(ctx, []uint{inB.ID, missing}, approver.ID, 0, "no")
 	require.NoError(t, err)

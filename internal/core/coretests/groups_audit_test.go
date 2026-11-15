@@ -61,6 +61,8 @@ func TestGroupCRUDAudit(t *testing.T) {
 	n, _ = lastActor(core.EventGroupDeleted)
 	assert.Equal(t, int64(1), n)
 
+	seedRouteGateGrant(t, db, 42, 9001, "users.read", "roles.assign") // RestoreGroup's route gate (#4161)
+
 	_, err = c.RestoreGroup(ctx, 42, g.ID)
 	require.NoError(t, err)
 	n, actor = lastActor(core.EventGroupRestored)
@@ -92,6 +94,7 @@ func TestGroupMembershipAudit(t *testing.T) {
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
+	seedRouteGateGrant(t, db, 42, 9001, "users.read", "roles.assign") // AddUserToGroup's route gate (#4161)
 	require.NoError(t, c.AddUserToGroup(ctx, 42, false, 11, 7, 0))
 
 	entries, total, err := c.ListRBACAuditLogs(ctx, 1, 50)

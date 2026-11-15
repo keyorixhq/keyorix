@@ -37,6 +37,7 @@ func TestReplaceUserRoleSet_SelfReplaceCommit2CeilingFault_IsRetrySafe(t *testin
 				// {project_admin, project_viewer}: commit 1 removes developer, commit 2
 				// adds viewer, judged on the authority P keeps through project_admin.
 				p := w.newUser("self-f", "project_admin")
+				grantRouteGatePerms(t, w.db, p.ID, 0, "users.read", "roles.assign") // the /users/{id}/roles gate (#4161)
 				w.newUser("self-f2", "project_admin")
 				require.NoError(t, st.AssignRole(ctx, p.ID, w.devRole.ID, scope))
 				want := []uint{admin.ID, w.viewerRole.ID}

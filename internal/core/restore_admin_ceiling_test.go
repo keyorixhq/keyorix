@@ -37,6 +37,11 @@ func newRestoreCeilingCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "nonadmin", IsActive: true}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "globaladmin", IsActive: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1}).Error) // user 2 = global admin
+	// Both actors pass the restore routes' gates (users.read + roles.assign, #4161)
+	// through a role that bypasses nothing: actor 1 stays a non-admin.
+	for _, actor := range []uint{1, 2} {
+		grantRouteGatePerms(t, db, actor, 0, "users.read", "roles.assign")
+	}
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 

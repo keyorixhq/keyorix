@@ -55,7 +55,7 @@ func TestValidationTyped_VersionsAndEnvCloneRefusals(t *testing.T) {
 }
 
 func TestValidationTyped_EnvCloneReadsOfTheNamedEnvironments(t *testing.T) {
-	_, base := errFamily7SecretWorld(t)
+	db, base := errFamily7SecretWorld(t)
 	ctx := context.Background()
 	p1, err := base.CreateProject(ctx, &models.Project{Name: "p1"})
 	require.NoError(t, err)
@@ -68,6 +68,8 @@ func TestValidationTyped_EnvCloneReadsOfTheNamedEnvironments(t *testing.T) {
 	other, err := base.CreateEnvironment(ctx, &models.Environment{Name: "other", ProjectID: p2.ID})
 	require.NoError(t, err)
 	c := &KeyorixCore{storage: base, now: time.Now}
+	// The actor holds the clone's route gate (#4161), so the environment reads run.
+	grantRouteGatePerms(t, db, 1, p1.ID, "secrets.read", "secrets.write")
 
 	t.Run("a missing environment is a typed not-found refusal with its text", func(t *testing.T) {
 		for _, which := range []struct {

@@ -89,6 +89,11 @@ func TestErrFamily7_CopySecretEnvironmentReadFaultIsNotValidation(t *testing.T) 
 	prod, err := base.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p1.ID})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p1.ID}).Error)
+	// Role 1 grants secrets.write: CopySecret checks it at the target (#4161).
+	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.GroupRole{}))
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "writer", NameFolded: "writer"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	src, err := c.CreateSecret(ctx, &CreateSecretRequest{
 		Name: "db-url", Value: []byte("postgres://secret"), ProjectID: p1.ID, EnvironmentID: staging.ID,
 		Type: "connection-string", CreatedBy: "owner", OwnerID: 1,

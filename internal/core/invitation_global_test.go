@@ -47,6 +47,7 @@ func TestInviteGlobal_ValidatesAndSnapshotsAssignments(t *testing.T) {
 		return e.EventType == "invitation.created"
 	})).Return(nil)
 
+	mockRouteGateLate(store, 9, permUsersWrite) // POST /invitations' users.write (#4161)
 	inv, err := c.InviteGlobal(ctx, "carol@acme.io", "system_auditor", []ProjectAssignment{
 		{ProjectID: 1, Role: "project_developer"},
 		{ProjectID: 2, Role: "project_viewer"},
@@ -70,6 +71,7 @@ func TestInviteGlobal_RejectsUnknownRole(t *testing.T) {
 	// systemRole is left empty (the mandatory, non-discretionary system_viewer
 	// default) -- see invitations.go's InviteGlobal comment for the full reasoning.
 
+	mockRouteGateLate(store, 9, permUsersWrite) // POST /invitations' users.write (#4161)
 	_, err := c.InviteGlobal(ctx, "carol@acme.io", "", []ProjectAssignment{
 		{ProjectID: 1, Role: "bogus_role"},
 	}, 9, 0)
@@ -89,6 +91,7 @@ func TestInviteGlobal_RejectsDisallowedDomain(t *testing.T) {
 	c.SetMembershipDomainAllowlist([]string{"acme.com"})
 	ctx := context.Background()
 
+	mockRouteGateLate(store, 9, permUsersWrite) // POST /invitations' users.write (#4161)
 	_, err := c.InviteGlobal(ctx, "carol@evil.example", "", nil, 9, 0)
 
 	require.Error(t, err)
@@ -107,6 +110,7 @@ func TestInviteGlobal_RejectsAssignmentMissingRole(t *testing.T) {
 	// systemRole is left empty (the mandatory, non-discretionary system_viewer
 	// default) -- see invitations.go's InviteGlobal comment for the full reasoning.
 
+	mockRouteGateLate(store, 9, permUsersWrite) // POST /invitations' users.write (#4161)
 	_, err := c.InviteGlobal(ctx, "carol@acme.io", "", []ProjectAssignment{
 		{ProjectID: 1, Role: ""},
 	}, 9, 0)
@@ -128,6 +132,7 @@ func TestInviteGlobal_RejectsNonAdminGrantingGlobalAdminRole(t *testing.T) {
 	// A non-admin actor holding only roles.write-adjacent permissions (project_developer,
 	// no admin-tier role anywhere) must not be able to mint an "admin" invitation.
 	nonAdminID := seedUserWithRole(t, st, "non-admin-inviter", "project_developer", storage.Scope{})
+	grantRouteGatePerms(t, st.DB(), nonAdminID, 0, "users.write") // passes POST /invitations' gate (#4161): the ceiling is what is tested
 
 	_, err := c.InviteGlobal(ctx, "mallory@acme.io", "admin", nil, nonAdminID, 0)
 	require.Error(t, err)
@@ -144,6 +149,8 @@ func TestInviteGlobal_RejectsNonAdminGrantingProjectAdminAssignment(t *testing.T
 	ctx := context.Background()
 
 	nonAdminID := seedUserWithRole(t, st, "non-admin-inviter-2", "project_developer", storage.Scope{})
+
+	grantRouteGatePerms(t, st.DB(), nonAdminID, 0, "users.write") // passes POST /invitations' gate (#4161): the ceiling is what is tested
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "target-project"})
 	require.NoError(t, err)
 
@@ -171,6 +178,7 @@ func TestInviteGlobal_DefaultsSystemViewer(t *testing.T) {
 	})).Return(&models.ProjectInvitation{ID: 13, State: InvitationPending}, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
+	mockRouteGateLate(store, 9, permUsersWrite) // POST /invitations' users.write (#4161)
 	_, err := c.InviteGlobal(ctx, "dave@acme.io", "", nil, 9, 0)
 	require.NoError(t, err)
 	store.AssertExpectations(t)

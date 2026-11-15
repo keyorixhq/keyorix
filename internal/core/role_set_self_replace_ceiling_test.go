@@ -43,6 +43,7 @@ func TestReplaceUserRoleSet_SelfReplacementLosingRolesAssign_RefusedUpFront(t *t
 				// P is a project admin; a second project admin exists, so the last-admin
 				// guard lets P drop their own admin role.
 				p := w.newUser("self-p", "project_admin")
+				grantRouteGatePerms(t, w.db, p.ID, 0, "users.read", "roles.assign") // the /users/{id}/roles gate (#4161)
 				w.newUser("self-q", "project_admin")
 				require.Equal(t, []uint{admin.ID}, w.exactRoles(p.ID, scope))
 				removedRows, assignedRows := w.eventRows(EventRoleRemoved), w.eventRows(EventRoleAssigned)
@@ -66,6 +67,7 @@ func TestReplaceUserRoleSet_SelfReplacementLosingRolesAssign_RefusedUpFront(t *t
 			// P also holds project_admin at the project through a group: the
 			// replacement removes only the direct grant, so P can still grant viewer.
 			p := w.newUser("self-g", "project_admin")
+			grantRouteGatePerms(t, w.db, p.ID, 0, "users.read", "roles.assign") // the /users/{id}/roles gate (#4161)
 			w.newUser("self-g2", "project_admin")
 			grp, err := w.f.setup.CreateGroup(ctx, w.f.adminID, &CreateGroupRequest{Name: w.tag("self-grp")})
 			require.NoError(t, err)

@@ -46,6 +46,31 @@ func actingPrincipal(ctx context.Context, actorID uint) (kind string, id uint, s
 	return ActorTypeUser, actorID, false, nil
 }
 
+// machineGateCtx returns the ctx a route gate decides on when the entry point was
+// told about a machine actor explicitly (a machine ID argument, or an actorIsMachine
+// flag) but ctx carries no machine tag: tagged with that machine (for a flag, the
+// WithSelfMachineGranter identity), so the gate decides for the machine and never
+// for the system actor its actorID 0 would otherwise read as. A flag with no
+// identity anywhere on ctx leaves ctx as it is: that caller (a relay acting for no
+// one machine) keeps main's behaviour, and every privilege-conferring check after
+// the gate (requireGranterHoldsRolePermissions, the self-bundle rule, the baseline
+// ceiling) refuses an untagged machine itself. The returned ctx is for the gate
+// only: callers keep their own ctx for everything else.
+func machineGateCtx(ctx context.Context, machineID uint, isMachine bool) (context.Context, error) {
+	if actorTypeFromContext(ctx) == ActorTypeMachine {
+		return ctx, nil
+	}
+	if machineID == 0 && isMachine {
+		if id, ok := selfMachineGranterFromContext(ctx); ok {
+			machineID = id
+		}
+	}
+	if machineID == 0 {
+		return ctx, nil
+	}
+	return WithMachineActor(WithActorType(ctx, ActorTypeMachine), machineID), nil
+}
+
 // requireActorPermissions refuses unless the acting principal holds every one of
 // perms at scope. It is the one primitive the family gates below share.
 func (c *KeyorixCore) requireActorPermissions(ctx context.Context, actorID uint, scope Scope, perms ...string) error {

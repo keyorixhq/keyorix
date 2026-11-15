@@ -59,6 +59,7 @@ func TestAddUserToGroup_CeilingRefusalMatchesErrPermissionDenied(t *testing.T) {
 	require.NoError(t, st.AssignMachineRole(ctx, granter.ID, viewerRole.ID, storage.Scope{ProjectID: 1}))
 	require.NoError(t, st.AssignRoleToGroupWithExpiry(ctx, grp.ID, adminRole.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour)))
 
+	grantMachineRouteGatePerms(t, st.DB(), granter.ID, "users.read", "roles.assign") // the group route's install-wide gate (#4161)
 	err = c.AddUserToGroup(WithSelfMachineGranter(ctx, granter.ID), 0, true, target.ID, grp.ID, 1)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPermissionDenied, "the roles.assign ceiling refusal is a typed authorization refusal")

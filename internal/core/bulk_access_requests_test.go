@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,13 @@ func newBulkTestCore(t *testing.T) *KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	m := &MockStorage{}
+	// Every approver here holds the bulk route's install-wide roles.assign gate
+	// (#4161), through role 900; the per-item checks at a request's project are each
+	// test's own expectations.
+	m.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, storage.Scope{}).Return([]uint{900}, nil).Maybe()
+	m.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, storage.Scope{}).Return([]uint{}, nil).Maybe()
+	m.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{900}).Return(false, nil).Maybe()
+	m.On("RoleSetHasPermission", mock.Anything, []uint{900}, "roles.assign").Return(true, nil).Maybe()
 	return &KeyorixCore{storage: m, now: time.Now}
 }
 

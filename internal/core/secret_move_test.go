@@ -46,6 +46,9 @@ func newMoveFixture(t *testing.T) (c *KeyorixCore, secretID, folderID uint, db *
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@test.com"}).Error)
 	// IsProjectMember gates CheckSecretPermission (RBAC-001); owner must be a member of project 1.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	// Ownership alone no longer satisfies the move's per-secret secrets.write gate
+	// (#4161); global, as this world has no project rows for a scoped grant.
+	grantRouteGatePerms(t, db, 1, 0, "secrets.write")
 
 	c = &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()

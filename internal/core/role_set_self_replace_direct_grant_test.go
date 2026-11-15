@@ -41,6 +41,7 @@ func TestReplaceUserRoleSet_SelfReplacementKeepingRolesAssignDirectly_Allowed(t 
 				// P holds project_admin and project_developer directly; a second project
 				// admin exists, so the last-admin guard is not in play.
 				p := w.newUser("self-d", "project_admin")
+				grantRouteGatePerms(t, w.db, p.ID, 0, "users.read", "roles.assign") // the /users/{id}/roles gate (#4161)
 				w.newUser("self-d2", "project_admin")
 				require.NoError(t, st.AssignRole(ctx, p.ID, w.devRole.ID, scope))
 				require.Equal(t, sortedIDs(admin.ID, w.devRole.ID), w.exactRoles(p.ID, scope))

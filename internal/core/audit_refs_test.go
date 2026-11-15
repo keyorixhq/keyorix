@@ -40,6 +40,7 @@ func TestAuditDescriptionsCarryNames(t *testing.T) {
 		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	grantRouteGatePerms(t, db, 42, 0, "users.read", "roles.assign") // the restore routes' gates (#4161)
 	ctx := context.Background()
 
 	lastDescription := func(eventType string) string {

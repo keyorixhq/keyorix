@@ -31,6 +31,7 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 	p2, _ := c.storage.CreateProject(ctx, &models.Project{Name: "p2"})
 	otherEnv, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p2.ID})
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	grantRouteGatePerms(t, db, 1, p.ID, "secrets.read", "secrets.write") // the copy routes' gates (#4161)
 
 	mk := func(envID uint, name string) {
 		_, err := c.CreateSecret(ctx, &CreateSecretRequest{

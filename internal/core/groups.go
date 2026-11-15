@@ -384,7 +384,9 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsM
 	if userID == 0 || groupID == 0 {
 		return invalidGroupRequest(fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil)))
 	}
-	if err := c.requireIdentityGrantGate(ctx, actorID); err != nil { // #4161
+	if gctx, err := machineGateCtx(ctx, 0, actorIsMachine); err != nil {
+		return err
+	} else if err := c.requireIdentityGrantGate(gctx, actorID); err != nil { // #4161
 		return err
 	}
 	// #PM-006: a group membership confers every role the group holds at the

@@ -455,6 +455,7 @@ func TestAssignGroupRoleWithExpiry_RoleNotFound(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
+	mockRouteGate(ms, 1, permUsersRead, permRolesAssign) // the group route's gate (#4161)
 	c := NewKeyorixCore(ms)
 	err := c.AssignGroupRoleWithExpiry(context.Background(), 1, 2, 99, Scope{}, time.Now().Add(time.Hour), false)
 	require.Error(t, err)

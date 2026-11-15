@@ -85,6 +85,14 @@ func newBulkMachineApproverWorld(t *testing.T) (*testhelper.RBACTestHelper, uint
 		ProjectID: bulkProjectID, UserID: bulkRequesterID, SuggestedRole: "project_developer", State: "pending",
 	})
 	require.NoError(t, err)
+	// Every approver here also holds the bulk route's install-wide roles.assign
+	// gate (#4161), through role 197 at the global scope: the humans by a user
+	// role, the machines by a raw machine-role row (core grants a machine only in
+	// its project, but the rule under test is the per-item ceiling, not that).
+	h.CreateProjectRoleWithPermissions(t, "bulk-route-gate", 197, "roles.assign")
+	for _, m := range []uint{bulkMachineFullID, bulkMachinePartialID} {
+		require.NoError(t, h.DB.Create(&models.MachineIdentityRole{MachineIdentityID: m, RoleID: 197}).Error)
+	}
 	return h, req.ID
 }
 
@@ -209,6 +217,7 @@ func TestBulkApprove_HumanApproverStillWorksUnchanged(t *testing.T) {
 	const approverID = uint(11)
 	h.CreateTestUser(t, "approver", approverID)
 	h.AssignUserRole(t, approverID, bulkAdminRoleID, ptrUintBulk(bulkProjectID))
+	h.AssignUserRole(t, approverID, 197, nil) // the bulk route's install-wide roles.assign gate (#4161)
 
 	res, err := h.CoreService.BulkApproveAccessRequests(ctx, []uint{reqID}, approverID, 0)
 	require.NoError(t, err)
@@ -235,6 +244,7 @@ func TestBulkApprove_HumanApproverMissingPermission_StillRefused(t *testing.T) {
 		SELECT r.id, p.id FROM roles r, permissions p WHERE r.name = ? AND p.name = ?`,
 		"assigner-only", "roles.assign")
 	h.AssignUserRole(t, approverID, 98, ptrUintBulk(bulkProjectID))
+	h.AssignUserRole(t, approverID, 98, nil) // the bulk route's install-wide roles.assign gate (#4161); the ceiling is still project-scoped
 
 	res, err := h.CoreService.BulkApproveAccessRequests(ctx, []uint{reqID}, approverID, 0)
 	require.NoError(t, err)
