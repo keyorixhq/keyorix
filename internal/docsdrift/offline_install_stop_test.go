@@ -92,7 +92,11 @@ func startSleeper(t *testing.T) *exec.Cmd {
 	if err := p.Start(); err != nil {
 		t.Skipf("cannot start a helper process: %v", err)
 	}
-	t.Cleanup(func() { _ = p.Process.Kill(); _ = p.Wait() })
+	// Exactly one goroutine calls Wait (concurrent Wait calls on one exec.Cmd race). It also
+	// reaps the process, so `kill -0` in the script sees it gone once it has been stopped.
+	done := make(chan struct{})
+	go func() { _ = p.Wait(); close(done) }()
+	t.Cleanup(func() { _ = p.Process.Kill(); <-done })
 	return p
 }
 
@@ -129,7 +133,6 @@ func TestOfflineInstallStopServer(t *testing.T) {
 
 	t.Run("kill works: stops the process, removes server.pid", func(t *testing.T) {
 		p := startSleeper(t)
-		go func() { _ = p.Wait() }() // reap it so kill -0 sees it gone
 		dir, pidFile := writePid(t, p.Process.Pid)
 		out, err := stopServerHarness(t, script, dir, true).CombinedOutput()
 		if err != nil || !strings.Contains(string(out), "server stopped") {
