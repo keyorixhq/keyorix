@@ -627,7 +627,9 @@ interrupted before it changed any active file only logs that its staging files c
 deleted.) An interrupted `admin restore` is not reported here: it installs its key files and
 the key-set manifest through its restore journal, and the journal check below runs first.
 **Fix.** Re-run the operation, or restore the whole set from one backup with `keyorix-server
-admin restore --overwrite-existing`. **In place:** no.
+admin restore --overwrite-existing --replace-existing-data` (this host's database holds data, so
+`--overwrite-existing` alone is refused; the restore replaces that data with the backup's).
+**In place:** no.
 
 ### Interrupted restore — from code
 
