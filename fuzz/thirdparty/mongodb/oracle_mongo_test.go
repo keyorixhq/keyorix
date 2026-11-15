@@ -60,7 +60,7 @@ func (s *seqServer) serve() {
 		s.wg.Add(1)
 		go func(c net.Conn) {
 			defer s.wg.Done()
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			if tcp, ok := c.(*net.TCPConn); ok {
 				_ = tcp.SetLinger(0)
 			}

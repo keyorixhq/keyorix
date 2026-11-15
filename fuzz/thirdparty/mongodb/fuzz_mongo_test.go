@@ -204,7 +204,7 @@ func (s *hostileServer) serve() {
 		s.wg.Add(1)
 		go func(c net.Conn) {
 			defer s.wg.Done()
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			if tcp, ok := c.(*net.TCPConn); ok {
 				_ = tcp.SetLinger(0) // avoid TIME_WAIT buildup on this shared host
 			}
@@ -297,14 +297,14 @@ func containsCanary(s string) bool {
 
 // drive runs one public-API interaction and returns the error plus a formatted view
 // of any returned value. mode byte selects Ping vs a RunCommand.
-func drive(ctx context.Context, c *mongo.Client, mode byte) (error, string) {
+func drive(ctx context.Context, c *mongo.Client, mode byte) (string, error) {
 	switch mode % 2 {
 	case 0:
-		return c.Ping(ctx, nil), "ping"
+		return "ping", c.Ping(ctx, nil)
 	default:
 		var res bson.M
 		err := c.Database("admin").RunCommand(ctx, bson.D{{Key: "createUser", Value: "x"}, {Key: "pwd", Value: canaryPassword}, {Key: "roles", Value: bson.A{}}}).Decode(&res)
-		return err, fmt.Sprintf("%+v", res)
+		return fmt.Sprintf("%+v", res), err
 	}
 }
 
@@ -337,7 +337,7 @@ func runInteraction(t *testing.T, mode, opSel, lenMode, driveMode byte, body []b
 	}
 	ch := make(chan res, 1)
 	go func() {
-		e, f := drive(ctx, client, driveMode)
+		f, e := drive(ctx, client, driveMode)
 		ch <- res{e, f}
 	}()
 
