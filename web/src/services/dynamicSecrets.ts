@@ -1,4 +1,5 @@
-import { apiClient } from './client';
+import { isAxiosError } from 'axios';
+import { apiClient, apiErrorMessage } from './client';
 
 // ADR-035 dynamic secrets: an operator registers a target database (a
 // DynamicSecretConfig, project+environment scoped); callers issue short-lived
@@ -77,6 +78,77 @@ export interface CreateDynamicConfigPayload {
     classification: string;
 }
 
+// A config whose stored admin DSN names a driver option the server has refused since #3952
+// (GET .../configs/refused-admin-dsn). It carries option NAMES only, never a DSN or a value.
+export interface RefusedAdminDsnConfig {
+    id: number;
+    name: string;
+    projectId: number;
+    environmentId: number;
+    backendType: string;
+    refusedOptions: string[];
+    liveLeases: number;
+}
+
+export interface RefusedAdminDsnReport {
+    configs: RefusedAdminDsnConfig[];
+    // Configs whose admin DSN could not be decrypted, so they were not checked.
+    unreadable: number;
+}
+
+// How PATCH .../configs/{id}/admin-dsn failed (see updateDynamicSecretConfigAdminDSN):
+// 400 the server refused the new DSN, 409 live leases and the new DSN names a different host,
+// 503 the audit log cannot record the change (nothing changed). Every other 4xx is
+// 'forbidden': a caller without admin authority is answered 403 for a config that exists and
+// for one that does not, and the UI must not tell the two apart (INV-WEB-06), so both read
+// the same fixed text and the server's wording is dropped.
+export type AdminDsnErrorKind = 'refused' | 'forbidden' | 'conflict' | 'audit_unavailable' | 'unknown';
+
+export const ADMIN_DSN_FORBIDDEN_MESSAGE = 'You do not have admin authority on this config, or it no longer exists.';
+
+const adminDsnErrorKind = (status: number | undefined): AdminDsnErrorKind => {
+    if (status === undefined) return 'unknown';
+    if (status === 400) return 'refused';
+    if (status === 409) return 'conflict';
+    if (status === 503) return 'audit_unavailable';
+    if (status >= 400 && status < 500) return 'forbidden';
+    return 'unknown';
+};
+
+// The only error the admin-DSN update lets out. An AxiosError carries the request body
+// (`config.data`), which here IS the DSN, and react-query keeps a failed mutation's error in
+// its MutationCache, so the raw error must never leave the service layer: this one holds a
+// kind, a status and a message with the DSN scrubbed out of it, nothing else.
+export class AdminDsnUpdateError extends Error {
+    readonly kind: AdminDsnErrorKind;
+    readonly status: number | undefined;
+
+    constructor(kind: AdminDsnErrorKind, status: number | undefined, message: string) {
+        super(message);
+        this.name = 'AdminDsnUpdateError';
+        this.kind = kind;
+        this.status = status;
+    }
+}
+
+const toAdminDsnUpdateError = (error: unknown, adminDsn: string): AdminDsnUpdateError => {
+    const status = isAxiosError(error) ? error.response?.status : undefined;
+    const kind = adminDsnErrorKind(status);
+    if (kind === 'forbidden') return new AdminDsnUpdateError(kind, status, ADMIN_DSN_FORBIDDEN_MESSAGE);
+    const message = apiErrorMessage(error, 'Failed to replace the admin DSN.');
+    return new AdminDsnUpdateError(kind, status, adminDsn ? message.split(adminDsn).join('[redacted]') : message);
+};
+
+const normalizeRefused = (c: any): RefusedAdminDsnConfig => ({
+    id: c.id ?? 0,
+    name: c.name ?? '',
+    projectId: c.project_id ?? 0,
+    environmentId: c.environment_id ?? 0,
+    backendType: c.backend_type ?? '',
+    refusedOptions: Array.isArray(c.refused_options) ? c.refused_options.map(String) : [],
+    liveLeases: c.live_leases ?? 0,
+});
+
 const normalizeConfig = (c: any): DynamicSecretConfig => ({
     id: c.id ?? c.ID ?? 0,
     name: c.name ?? c.Name ?? '',
@@ -134,6 +206,27 @@ export const dynamicSecretsApi = {
             classification,
         });
         return normalizeConfig(unwrap(resp));
+    },
+
+    async listRefusedAdminDsn(projectId: number): Promise<RefusedAdminDsnReport> {
+        const resp = await apiClient.get('/api/v1/dynamic-secrets/configs/refused-admin-dsn', {
+            params: { project_id: projectId },
+        });
+        const d = unwrap(resp) ?? {};
+        return {
+            configs: (Array.isArray(d.configs) ? d.configs : []).map(normalizeRefused),
+            unreadable: d.unreadable ?? 0,
+        };
+    },
+
+    // Replaces the stored admin DSN in place. The response is the sanitized config; it is
+    // not returned, since the caller only needs to know it worked.
+    async updateAdminDsn(id: number, adminDsn: string): Promise<void> {
+        try {
+            await apiClient.patch(`/api/v1/dynamic-secrets/configs/${id}/admin-dsn`, { admin_dsn: adminDsn });
+        } catch (error) {
+            throw toAdminDsnUpdateError(error, adminDsn);
+        }
     },
 
     async issue(id: number, ttlSeconds?: number): Promise<IssuedCredential> {

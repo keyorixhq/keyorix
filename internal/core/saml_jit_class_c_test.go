@@ -179,7 +179,7 @@ func TestReconcileSSORoles_UnknownRoleNameSkipsButLookupFailureDoesNot(t *testin
 		store.On("GetRoleByName", mock.Anything, "ghost_role").Return(nil,
 			fmt.Errorf("role not found: %w", storage.ErrRoleNotFound))
 
-		require.NoError(t, c.reconcileSSORoles(context.Background(), p, 7, []string{"engineers"}),
+		require.NoError(t, c.reconcileSSORoles(context.Background(), p, 7, []string{"engineers"}, ""),
 			"a GroupRoleMap entry naming a nonexistent role is a config fact, not a failure")
 	})
 
@@ -189,7 +189,7 @@ func TestReconcileSSORoles_UnknownRoleNameSkipsButLookupFailureDoesNot(t *testin
 		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{}, nil)
 		store.On("GetRoleByName", mock.Anything, "ghost_role").Return(nil, errors.New("injected: database unreachable"))
 
-		err := c.reconcileSSORoles(context.Background(), p, 7, []string{"engineers"})
+		err := c.reconcileSSORoles(context.Background(), p, 7, []string{"engineers"}, "")
 		require.Error(t, err, "a lookup FAILURE leaves it unknown whether a mapped role should be revoked")
 		assert.ErrorIs(t, err, ErrSSOReconcileIncomplete)
 	})

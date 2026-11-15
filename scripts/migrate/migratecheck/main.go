@@ -206,6 +206,11 @@ func seedAudit(cfg *config.Config, n, ageDays int, tag string, restamp int) {
 					Success:     &ok,
 					EventTime:   base.Add(time.Duration(i) * time.Second),
 				}
+				// audit-direct-ok: #3372 MIGRATE-VERIFY-1: seedAudit is the SQLite-to-PostgreSQL
+				// migration-check tool's synthetic-data generator, a standalone dev/CI binary never
+				// linked into the server. It writes only fixed human-style event types with no
+				// ActorType, UserID or MachineIdentityID, so it can never emit a machine-identity-typed
+				// event that needs the emitAudit stamp; the rows only exist to be counted and compared.
 				if err := st.LogAuditEvent(ctx, ev); err != nil {
 					mu.Lock()
 					if firstErr == nil {

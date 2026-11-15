@@ -67,7 +67,7 @@ func (c *KeyorixCore) checkSecretExpiryClockNotRegressed(now time.Time) error {
 // GetSecretVersions retrieves all versions of a secret.
 func (c *KeyorixCore) GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error) {
 	if secretID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
 	if _, err := c.storage.GetSecret(ctx, secretID); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
@@ -82,7 +82,7 @@ func (c *KeyorixCore) GetSecretVersions(ctx context.Context, secretID uint) ([]*
 // GetSecretVersionsWithPermissionCheck retrieves all versions of a secret with permission validation.
 func (c *KeyorixCore) GetSecretVersionsWithPermissionCheck(ctx context.Context, secretID, userID uint) ([]*models.SecretVersion, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
 	if _, err := c.EnforceSecretReadPermission(ctx, secretID, userID); err != nil {
 		return nil, err
@@ -93,10 +93,10 @@ func (c *KeyorixCore) GetSecretVersionsWithPermissionCheck(ctx context.Context, 
 // GetSecretVersion retrieves a specific version of a secret.
 func (c *KeyorixCore) GetSecretVersion(ctx context.Context, secretID uint, versionNumber int) (*models.SecretVersion, error) {
 	if secretID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
 	if versionNumber <= 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "version number must be positive")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "version number must be positive")
 	}
 	versions, err := c.storage.GetSecretVersions(ctx, secretID)
 	if err != nil {
@@ -113,7 +113,7 @@ func (c *KeyorixCore) GetSecretVersion(ctx context.Context, secretID uint, versi
 // GetSecretVersionWithPermissionCheck retrieves a specific version of a secret with permission validation.
 func (c *KeyorixCore) GetSecretVersionWithPermissionCheck(ctx context.Context, secretID, userID uint, versionNumber int) (*models.SecretVersion, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
 	if _, err := c.EnforceSecretReadPermission(ctx, secretID, userID); err != nil {
 		return nil, err
@@ -124,7 +124,7 @@ func (c *KeyorixCore) GetSecretVersionWithPermissionCheck(ctx context.Context, s
 // GetLatestSecretVersion retrieves the latest version of a secret.
 func (c *KeyorixCore) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
 	if secretID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
 	versions, err := c.storage.GetSecretVersions(ctx, secretID)
 	if err != nil {
@@ -140,7 +140,7 @@ func (c *KeyorixCore) GetLatestSecretVersion(ctx context.Context, secretID uint)
 // GetLatestSecretVersionWithPermissionCheck retrieves the latest version of a secret with permission validation.
 func (c *KeyorixCore) GetLatestSecretVersionWithPermissionCheck(ctx context.Context, secretID, userID uint) (*models.SecretVersion, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
 	if _, err := c.ValidateSecretAccess(ctx, secretID, userID); err != nil {
 		return nil, err
@@ -246,7 +246,7 @@ func (c *KeyorixCore) enforceSecretReadGuardsWith(ctx context.Context, secret *m
 // preResolved.ID, so the two can never disagree by construction.
 func (c *KeyorixCore) getSecretValueForUser(ctx context.Context, secretID, userID uint, preResolved *models.SecretNode, preState *storage.SecretScheduleAndLatestVersion) ([]byte, error) {
 	if secretID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
 	secret := preResolved
 	if secret == nil {
@@ -289,7 +289,7 @@ func (c *KeyorixCore) getSecretValueForUser(ctx context.Context, secretID, userI
 func (c *KeyorixCore) GetSecretValueWithPermissionCheck(ctx context.Context, secretID, userID uint) (value []byte, err error) {
 	defer func() { noteValueReadErr(ctx, err, secretID) }()
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
 	if _, err := c.ValidateSecretAccess(ctx, secretID, userID); err != nil {
 		return nil, err
@@ -387,7 +387,7 @@ func (c *KeyorixCore) GetPermittedSecretValue(ctx context.Context, p *ReadPermit
 		}
 	}()
 	if p == nil || p.secret == nil || p.userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
 	return c.getSecretValueForUser(ctx, p.secret.ID, p.userID, p.secret, p.state)
 }
@@ -404,10 +404,10 @@ func (c *KeyorixCore) GetSecretValueByVersion(ctx context.Context, secretID uint
 // classification gate keyed on userID (0 = no identifiable user).
 func (c *KeyorixCore) getSecretValueByVersionForUser(ctx context.Context, secretID uint, versionNumber int, userID uint) ([]byte, error) {
 	if secretID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
 	if versionNumber <= 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "version number must be positive")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "version number must be positive")
 	}
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
@@ -476,7 +476,7 @@ func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetV
 func (c *KeyorixCore) GetSecretValueByVersionWithPermissionCheck(ctx context.Context, secretID, userID uint, versionNumber int) (value []byte, err error) {
 	defer func() { noteValueReadErr(ctx, err, secretID) }()
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
 	if _, err := c.ValidateSecretAccess(ctx, secretID, userID); err != nil {
 		return nil, err

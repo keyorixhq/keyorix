@@ -510,6 +510,14 @@ func Load(path string) (*Config, error) {
 		cfg.Storage.Database.SSLRootCert = resolvedRootCert
 	}
 
+	// #4249: relative key-material paths are defined against that same base;
+	// the code that opens key files refuses to run anywhere else
+	// (EncryptionConfig.CheckRelativeKeyPathBase), so the DEK lock beside the
+	// DEK is one file for every process reading this config.
+	if absBase, aerr := filepath.Abs(baseDir); aerr == nil {
+		cfg.Storage.Encryption.KeyPathBase = absBase
+	}
+
 	// ADR-112 Amendment 3: the old boolean is an alias with a value mapping,
 	// not a key rename, so resolveDeprecatedAliases cannot translate it; it
 	// still decodes, and Validate refuses a conflict with audit_durability.

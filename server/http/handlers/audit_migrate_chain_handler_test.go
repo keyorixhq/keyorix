@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -102,4 +103,42 @@ func TestAuditHandler_MigrateChainEncoding_ExplicitFalseAppliesForReal(t *testin
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.False(t, body.Data.DryRun)
 	assert.Contains(t, body.Message, "applied")
+}
+
+// A chain with a gap (a deleted row) is refused by the migration's pre-flight.
+// That is a precondition failure the operator must investigate, not a server
+// error: the handler answers 409 with the refusal text and a typed code, never
+// the generic 500 "an internal error occurred" (#4230 part 2).
+func TestAuditHandler_MigrateChainEncoding_GappedChainIs409WithReason(t *testing.T) {
+	db := openAuditChainTestDB(t)
+	ls := store.NewLocalStorage(db)
+	ctx := t.Context()
+	var ids []uint
+	for _, et := range []string{"first.event", "second.event", "third.event"} {
+		ok := true
+		ev := &models.AuditEvent{EventType: et, Success: &ok, ActorType: "user"}
+		require.NoError(t, ls.LogAuditEvent(ctx, ev))
+		ids = append(ids, ev.ID)
+	}
+	require.NoError(t, db.Where("id = ?", ids[1]).Delete(&models.AuditEvent{}).Error)
+
+	h := NewAuditHandler(core.NewKeyorixCore(ls))
+	for _, q := range []string{"", "?dry_run=false"} {
+		req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/audit/migrate-chain-encoding"+q, nil))
+		w := httptest.NewRecorder()
+		h.MigrateAuditChainEncoding(w, req)
+
+		require.Equal(t, http.StatusConflict, w.Code, "query %q: body %s", q, w.Body.String())
+		var body struct {
+			Message string `json:"message"`
+			Details struct {
+				Code string `json:"code"`
+			} `json:"details"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Contains(t, body.Message, "refusing to re-encode the audit chain")
+		assert.Contains(t, body.Message, fmt.Sprintf("event %d's prev_hash does not link", ids[2]))
+		assert.Equal(t, "audit_chain_reencode_refused", body.Details.Code)
+		assert.NotContains(t, w.Body.String(), "an internal error occurred")
+	}
 }

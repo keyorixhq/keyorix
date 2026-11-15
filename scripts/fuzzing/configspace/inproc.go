@@ -244,7 +244,7 @@ func CheckInProc(m *Model, c *Case, r InProcResult) []Finding {
 			tokens = append(tokens, cf.Names...)
 		}
 		if len(tokens) > 0 && !errNames(r.Err, tokens) {
-			add("I2", "S3", "refusal-unnamed:"+firstAssign(c), "refusal does not name the offending option", "error: "+r.Err)
+			add("I2", "S3", refusalKey(r.Err), "refusal does not name the offending option", "error: "+r.Err)
 		}
 	}
 	return fs

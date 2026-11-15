@@ -259,7 +259,7 @@ func TestProvisionSSOUser_NonASCIIEmailProvisions(t *testing.T) {
 	ctx := context.Background()
 	p := &SSOProvider{Name: "corp", AutoProvision: true}
 	for i, email := range idpUserNames {
-		u, err := c.provisionSSOUser(ctx, p, "sub-"+string(rune('a'+i)), email, true, "Ünïcødé Näme")
+		u, err := c.provisionSSOUser(ctx, p, "sub-"+string(rune('a'+i)), email, true, "Ünïcødé Näme", "")
 		require.NoError(t, err, "SSO/SAML JIT must not break on %q", email)
 		require.Regexp(t, derivedUsernameShape, u.Username, email)
 	}

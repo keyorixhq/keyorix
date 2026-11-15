@@ -15,7 +15,6 @@ import (
 const (
 	roleSuperAdmin = uint(1)
 	roleAdmin      = uint(2)
-	roleEditor     = uint(3) // secrets.read, secrets.write
 	roleViewer     = uint(4) // secrets.read
 )
 
@@ -34,7 +33,7 @@ func TestAuthorize_ProjectScopedDeniesOtherProjects(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "viewerA", 100)
-	h.AssignUserRole(t, u.ID, roleViewer, ptr(1)) // viewer on project 1 (all envs)
+	h.AssignUserRole(t, u.ID, testhelper.RoleProjectViewer, ptr(1)) // viewer on project 1 (all envs)
 
 	ctx := context.Background()
 	allowed, err := h.CoreService.Authorize(ctx, u.ID, "secrets.read", core.Scope{ProjectID: 1})
@@ -55,7 +54,7 @@ func TestAuthorize_ProjectWideGrantCoversAllEnvironments(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "editorP", 101)
-	h.AssignUserRole(t, u.ID, roleEditor, ptr(1)) // editor on project 1, all envs
+	h.AssignUserRole(t, u.ID, testhelper.RoleProjectDeveloper, ptr(1)) // developer on project 1, all envs
 
 	ctx := context.Background()
 	for _, env := range []uint{1, 2, 3} {
@@ -70,7 +69,7 @@ func TestAuthorize_EnvironmentScopedIsExact(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "editorProd", 102)
-	assignScoped(t, h, u.ID, roleEditor, 1, 1) // editor only on project 1 / env 1
+	assignScoped(t, h, u.ID, testhelper.RoleProjectDeveloper, 1, 1) // developer only on project 1 / env 1
 
 	ctx := context.Background()
 
@@ -95,7 +94,7 @@ func TestAuthorize_GroupInheritedRole(t *testing.T) {
 	g := h.CreateTestGroup(t, "readers", "readers group", 50)
 	h.AssignUserToGroup(t, u.ID, g.ID)
 	require.NoError(t, h.DB.Create(&models.GroupRole{
-		GroupID: g.ID, RoleID: roleViewer, ProjectID: 2, EnvironmentID: 0,
+		GroupID: g.ID, RoleID: testhelper.RoleProjectViewer, ProjectID: 2, EnvironmentID: 0,
 	}).Error)
 
 	ctx := context.Background()
@@ -128,7 +127,7 @@ func TestAuthorize_ProjectScopedAdminDoesNotBypassElsewhere(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "projadmin", 105)
-	h.AssignUserRole(t, u.ID, roleAdmin, ptr(1)) // admin only on project 1
+	h.AssignUserRole(t, u.ID, testhelper.RoleProjectAdmin, ptr(1)) // project admin only on project 1
 
 	ctx := context.Background()
 	allowed, err := h.CoreService.Authorize(ctx, u.ID, "secrets.delete", core.Scope{ProjectID: 1, EnvironmentID: 2})

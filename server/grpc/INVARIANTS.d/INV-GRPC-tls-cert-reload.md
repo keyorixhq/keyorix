@@ -8,11 +8,20 @@
   and the RSA-only suite list failed every TLS 1.2 handshake for an ECDSA certificate.
   Guard: `tls_reload_test.go:TestNewServer_TLS_ECDSAOverTLS12_H2_AndCertReload`,
   `server/tls_reload_ecdsa_test.go:TestStartHTTPServer_TLSReloadsRotatedCertificateAndNegotiatesH2`,
-  `internal/tlsreload/tlsreload_test.go`, and
+  `internal/tlsreload/tlsreload_test.go`,
+  `internal/tlsreload/tlsreload_identity_test.go` (a replacement that keeps the old
+  mtime, keeps size and inode, or arrives through a Kubernetes `..data` symlink swap is
+  served on the next check, and a cert-first or key-first mismatch window never serves a
+  mismatched pair), and
   `internal/tlsreload/reloader_failclosed_fuzz_test.go:FuzzReloaderFailClosed` (fuzzes
-  valid/expired/not-yet-valid/mismatched/half-rotated/truncated/empty/deleted/symlink
-  file-state sequences against a stdlib-loader differential: a cert/key mismatch is never
-  served and the previous good pair is always retained on a bad reload). Not covered: an
-  open gRPC connection keeps its certificate until `max_connection_age` recycles it; and
-  rotation is detected by mtime, so an mtime-preserving replacement is served stale (see
-  the HARDENING note in the V4 report).
+  valid/expired/not-yet-valid/mismatched/half-rotated/truncated/empty/deleted/symlink and
+  mtime-preserving file-state sequences against a stdlib-loader differential: a cert/key
+  mismatch is never served and the previous good pair is always retained on a bad reload).
+  A change is detected from the content of both files and the identity of each (size,
+  mtime, `os.SameFile`), not from the mtime alone, and the pair that is served is parsed
+  from the same bytes that were compared; neither key bytes nor the content digest are
+  logged. Not covered: an open gRPC connection keeps its certificate until
+  `max_connection_age` recycles it; a file larger than 1 MiB is treated as unreadable and
+  the previous pair stays in service; and the check happens at most once per
+  `CheckInterval`, so a replacement is served at the first handshake after that interval,
+  not immediately.

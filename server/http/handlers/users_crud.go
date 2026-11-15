@@ -130,7 +130,7 @@ func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, 
 			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
 			return
 		}
-		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+		if errors.Is(err, core.ErrValidation) {
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 			return
 		}
@@ -163,7 +163,7 @@ func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Req
 			sendError(w, "ConfigError", err.Error(), http.StatusBadRequest, nil)
 			return
 		}
-		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+		if errors.Is(err, core.ErrValidation) {
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 			return
 		}
@@ -215,9 +215,7 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		case errors.Is(err, core.ErrPermissionDenied):
 			// The grant ceiling (a role the actor cannot grant): a refusal, not a fault.
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
-		case strings.Contains(err.Error(), "unknown role"), strings.Contains(err.Error(), "unknown project"),
-			strings.Contains(err.Error(), "each project assignment"),
-			strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
+		case errors.Is(err, core.ErrValidation):
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			sendError(w, "InternalError", errFailedCreateUser, http.StatusInternalServerError, nil)
@@ -436,7 +434,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			// admin got a useless "Failed to update user" (HTTP 500) instead of
 			// the readable refusal `user delete` on the same target already got.
 			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
-		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
+		case errors.Is(err, core.ErrValidation):
 			// Core's rename rule (validateUsernameCharset) and other core-only
 			// checks the request-body tags do not repeat; same mapping as CreateUser.
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
@@ -477,6 +475,9 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "last install administrator"):
 			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
+		case errors.Is(err, core.ErrValidation):
+			// "user ID is required": a refusal of the request, not a fault (was 500).
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			sendError(w, "InternalError", "Failed to delete user", http.StatusInternalServerError, nil)
 		}
@@ -507,6 +508,8 @@ func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
 		case errors.Is(err, storage.ErrUserNotFound):
 			sendError(w, "NotFound", "User not found or not soft-deleted", http.StatusNotFound, nil)
+		case errors.Is(err, core.ErrValidation):
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			sendError(w, "InternalError", "Failed to restore user", http.StatusInternalServerError, nil)
 		}
@@ -691,7 +694,7 @@ func (h *UserHandler) ReissueOneTimePassword(w http.ResponseWriter, r *http.Requ
 			// The typed sentinel, not the "not found" substring: a storage fault is a
 			// 500, never a 404 the admin would read as "no such user".
 			sendError(w, "Error", errNotFound, http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
+		case errors.Is(err, core.ErrValidation):
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			log.Printf("reissue one-time password error for user %d: %v", uint(id), err)

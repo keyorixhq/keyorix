@@ -234,6 +234,34 @@ Other things the clock touches:
 - **Licence.** Evaluated locally against the device clock, offline, and degrades
   rather than denies ([ADR-094](adr-094-time-handling.md)).
 
+### 5b. Footprint and architectures
+
+Four scripts guard what a small ARM board depends on. They are regression guards:
+each fails when something grows or stops being static, and none of them is a
+performance claim. Budgets are ceilings with headroom, kept in the repository,
+and raised in the PR that causes growth.
+
+| Script | What it checks | Runs the server? |
+|---|---|---|
+| `scripts/cgo-dependency-guard.sh` | No shipped binary can pick up cgo: every non-stdlib dependency is scanned for `import "C"` per OS, release build commands set `CGO_ENABLED=0`, and `--binaries DIR` checks built binaries with `go version -m`. | No |
+| `scripts/edge/crossbuild-check.sh` | The same cgo scan and static check for the server and the CLI on exactly the edge targets, `linux/arm64` and `linux/arm` (armv7). It catches cgo files that only apply to one architecture. `--self-test` shows it fails on a package that imports `"C"`. | No (cross-compile only) |
+| `scripts/edge/footprint.sh` | Stripped server size per platform and build profile (full and air-gapped), and peak memory of an idle SQLite server on the host, against `scripts/edge/footprint-budget.tsv`. | Host only |
+| `scripts/ci/footprint-check.sh` | Stripped server and CLI size and idle peak memory of a secure-baseline SQLite server against `scripts/ci/footprint-budget.json`; `--self-test` shows it fails on a tiny budget. | Host only |
+
+Run them from the repository root:
+
+```sh
+scripts/edge/crossbuild-check.sh              # or --self-test
+scripts/edge/footprint.sh --targets linux/arm64,linux/arm
+scripts/ci/footprint-check.sh --self-test
+```
+
+Memory is measured only for the platform the script runs on, so a budget for a
+platform with no memory row is skipped with a message, never passed. Nothing in
+this repository has run the server on a Raspberry Pi: the ARM targets are
+proven to compile and link, and the commissioning checklist
+([§10](#10-commissioning-checklist)) on your own device is what proves they run.
+
 ## 6. Backup and restore
 
 A complete backup is the database **and** the key-material files, bundled in

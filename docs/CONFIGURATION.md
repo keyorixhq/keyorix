@@ -476,8 +476,7 @@ state `sslmode` itself and it must equal `ssl_mode`, or the server refuses to
 start (`ssl=true` in a URL dsn is the driver's alias for `sslmode=require`).
 Leaving `ssl_mode` out next to a `dsn` is fine.
 
-**The effective sslmode.** With a `dsn`, the sslmode is the dsn's own; when
-the dsn has none, `PGSSLMODE`; otherwise the driver's default, `prefer`. With
+**The effective sslmode.** It is resolved by the order below, and with
 `sslrootcert=system` the driver always runs `verify-full`. Start-up
 validation, the insecure-settings warnings and `admin validate --posture` all
 read this effective value, so a dsn with `sslmode=disable` is reported as
@@ -1579,9 +1578,16 @@ the named file (#3980). Issue from such a config keeps failing.
 
 At startup the server logs a `WARNING: dynamic secrets:` line with the number of
 such configs and their live (`active` or `revoke_failed`) leases, then one line per
-config. A stored `admin_dsn` cannot be edited: create a replacement config whose
-DSN names no server file, and drop by hand the roles of any lease that stays
-`revoke_failed` (MongoDB and MySQL users have no expiry of their own).
+config. List the configs of a project that carry such an option with
+`keyorix dynamic-secret refused-dsn --project-id <id>` (config and option names only,
+never a DSN), and replace the stored DSN of each in place with
+`keyorix dynamic-secret set-admin-dsn <config-id>`. The new DSN is read from
+`KEYORIX_DYNAMIC_ADMIN_DSN` or from stdin (a hidden prompt on a terminal), and never
+from the command line, so it cannot land in shell history or a process listing. While
+the config has an `active` or `revoke_failed` lease the new DSN must name the same
+host(s) as the old one (409 otherwise), because those leases are revoked through it.
+Drop by hand the roles of any lease that stays `revoke_failed` (MongoDB and MySQL
+users have no expiry of their own).
 
 ---
 
@@ -2792,13 +2798,13 @@ curl -s -H "Authorization: Bearer $KEYORIX_TOKEN" \
   "https://<host>/api/v1/users/by-email?email=leaver@example.com"
 
 # 2. Suspend: login is blocked and every session and PAT of the user is revoked at once.
-keyorix user suspend --id <user-id> --by admin@example.com
+keyorix user suspend --id <user-id>
 #    API equivalent:
 curl -s -X POST -H "Authorization: Bearer $KEYORIX_TOKEN" \
   "https://<host>/api/v1/users/<user-id>/suspend"
 
 # 3. Or remove the account (soft delete; sessions and PATs are revoked in the same step).
-keyorix user delete --id <user-id> --by admin@example.com --force
+keyorix user delete --id <user-id> --force
 #    API equivalent: DELETE /api/v1/users/<user-id>
 ```
 

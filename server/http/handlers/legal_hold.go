@@ -6,10 +6,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -88,7 +90,11 @@ func (h *DashboardHandler) LiftLegalHold(w http.ResponseWriter, r *http.Request)
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "no legal hold") || strings.Contains(msg, "a reason is required"):
+		// A lift that lost a race to another lift (#4210) is the same client
+		// situation as "no legal hold is active": nothing is left to lift. 400, as
+		// for that case, so the documented responses stay unchanged.
+		case strings.Contains(msg, "no legal hold") || strings.Contains(msg, "a reason is required") ||
+			errors.Is(err, storage.ErrLegalHoldAlreadyReleased):
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "only the placing admin"):
 			status = http.StatusForbidden
