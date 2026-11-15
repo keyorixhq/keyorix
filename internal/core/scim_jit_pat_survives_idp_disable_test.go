@@ -29,7 +29,7 @@ func TestJITOffboardingGap_PATSurvivesSCIMDeactivation(t *testing.T) {
 
 	// The user is created by the real JIT path, not seeded by hand.
 	p := &SSOProvider{Name: "okta", AutoProvision: true}
-	jit, err := c.ensureSSOUser(ctx, p, nil, "okta|jit-leaver", "leaver@x.io", true, "Leaver")
+	jit, err := c.ensureSSOUser(ctx, p, nil, "okta|jit-leaver", "leaver@x.io", true, "Leaver", "")
 	require.NoError(t, err)
 	require.Equal(t, ssoExternalID("okta", "okta|jit-leaver"), jit.ExternalID)
 
