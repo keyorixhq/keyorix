@@ -107,4 +107,3 @@ func Fuzz_lib_yaml_v2_RoundTrip(f *testing.F) {
 		}
 	})
 }
-

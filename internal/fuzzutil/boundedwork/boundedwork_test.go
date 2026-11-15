@@ -57,8 +57,8 @@ func testCfg() Config {
 		Factors:     []int{1, 2, 4, 8, 16},
 		Repeats:     3,
 		MaxInputLen: 1 << 20,
-		TimeFloor:   0,         // judge regardless of absolute time
-		AllocFloor:  1,         // judge regardless of absolute alloc
+		TimeFloor:   0, // judge regardless of absolute time
+		AllocFloor:  1, // judge regardless of absolute alloc
 		MaxDoubling: 3.0,
 	}
 }
@@ -111,8 +111,8 @@ func TestOracle_RedOnQuadraticTime(t *testing.T) {
 // than a linear one — the structural anti-false-positive guarantee.
 func TestOracle_BelowFloorNotJudged(t *testing.T) {
 	cfg := testCfg()
-	cfg.TimeFloor = time.Hour     // nothing reaches this
-	cfg.AllocFloor = 1 << 62      // nor this
+	cfg.TimeFloor = time.Hour // nothing reaches this
+	cfg.AllocFloor = 1 << 62  // nor this
 	v := Analyze("tiny", base(64), scaleFactor, quadraticAlloc, cfg)
 	if v.Judged {
 		t.Fatalf("expected no verdict below floors, but Judged=true (%s)", v.Reason)

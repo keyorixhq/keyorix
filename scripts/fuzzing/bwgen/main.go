@@ -437,14 +437,14 @@ func emitRoundTrip(b *strings.Builder, rt rtpair) {
 // nested-open run, a deep bracket, repeated separators, plus trivial values.
 func seeds() []string {
 	return []string{
-		"a: 1\n",                 // YAML duplicate-key line (the calibration shape)
-		"{\"a\":1}",              // JSON object
-		"a = 1\n",                // TOML line
-		"[[[[[[[[",               // nested open brackets
-		"{{{{{{{{",               // nested open braces
-		",,,,,,,,",               // repeated separators
-		"0",                      // trivial scalar
-		"aaaaaaaa",               // repeated bytes
+		"a: 1\n",    // YAML duplicate-key line (the calibration shape)
+		"{\"a\":1}", // JSON object
+		"a = 1\n",   // TOML line
+		"[[[[[[[[",  // nested open brackets
+		"{{{{{{{{",  // nested open braces
+		",,,,,,,,",  // repeated separators
+		"0",         // trivial scalar
+		"aaaaaaaa",  // repeated bytes
 	}
 }
 

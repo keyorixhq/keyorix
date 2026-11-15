@@ -28,7 +28,10 @@ func Fuzz_lib_encoding_json_NewDecoder_BoundedWork(f *testing.F) {
 			return
 		}
 		boundedwork.Check(t.Fatalf, "json.NewDecoder", data, boundedwork.ScaleRepeat(512),
-			func(in []byte) { defer func() { _ = recover() }(); _ = lib_encoding_json.NewDecoder(bytes.NewReader(in)) }, boundedwork.Config{})
+			func(in []byte) {
+				defer func() { _ = recover() }()
+				_ = lib_encoding_json.NewDecoder(bytes.NewReader(in))
+			}, boundedwork.Config{})
 	})
 }
 
@@ -107,4 +110,3 @@ func Fuzz_lib_encoding_json_RoundTrip(f *testing.F) {
 		}
 	})
 }
-
