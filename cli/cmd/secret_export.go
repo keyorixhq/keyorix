@@ -13,7 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
 )

@@ -3,7 +3,7 @@ package configs
 import (
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // TestDefaultConfigTemplate_NonEmptyAndValidYAML guards the vacuity failure
