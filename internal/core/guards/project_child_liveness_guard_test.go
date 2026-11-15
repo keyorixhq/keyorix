@@ -36,6 +36,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // projectChildWriters is every entry point that creates or revives a row whose
@@ -99,10 +101,11 @@ var projectLivenessCheckNames = map[string]bool{
 }
 
 func TestProjectChildWrites_RecheckProjectLivenessInATransaction(t *testing.T) {
+	g := guardrules.Rollout(t)
 	for _, w := range projectChildWriters {
 		_, fd := projectGuardFunc(t, w.file, w.recvType, w.fn)
 		if msg := liveCheckPlacement(fd, w.write); msg != "" {
-			t.Errorf("%s.%s: %s — the project re-check is only sound after the child write and in the same "+
+			g.Errorf("%s.%s: %s — the project re-check is only sound after the child write and in the same "+
 				"transaction; deleteProjectCascade takes no named lock that would serialize them "+
 				"(#2702/#2710/#2711/#2712)", w.recvType, w.fn, msg)
 		}
