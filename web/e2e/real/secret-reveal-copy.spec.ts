@@ -171,7 +171,7 @@ test("the list's Copy value copies exactly the plaintext and the list stays up",
 });
 
 test("Reveal then the detail view's Copy copies exactly the plaintext", async () => {
-    await page.evaluate(() => navigator.clipboard.writeText('stale'));
+    await page.evaluate(() => navigator.clipboard.writeText('stale')); // nosemgrep: semgrep.keyorix-raw-clipboard-write -- test seeds a non-secret sentinel so the assertion proves the app overwrote it
     const row = await openList();
     await row.getByTitle('View').click();
     await page.getByRole('button', { name: 'Reveal', exact: true }).click();
