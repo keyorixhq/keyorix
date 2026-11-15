@@ -39,6 +39,9 @@ func (c *KeyorixCore) GetSecretTags(ctx context.Context, secretID, actorID uint)
 // lowercased, de-duplicated, and bounded (≤20 tags, ≤50 chars each); empties are
 // dropped. Audited as secret.tags_updated.
 func (c *KeyorixCore) SetSecretTags(ctx context.Context, secretID, actorID uint, tags []string) ([]string, error) {
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4162
+		return nil, err
+	}
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return nil, err
 	}

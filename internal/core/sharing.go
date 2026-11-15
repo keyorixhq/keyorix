@@ -42,6 +42,11 @@ type UpdateShareRequest struct {
 
 // ShareSecret shares a secret with another user or group.
 func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) (*models.ShareRecord, error) {
+	if req != nil {
+		if err := refuseMachineActor(ctx, req.SharedBy); err != nil { // #4162
+			return nil, err
+		}
+	}
 	if err := c.validateShareSecretRequest(req); err != nil {
 		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
@@ -130,6 +135,11 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 
 // UpdateSharePermission updates the permission level of an existing share.
 func (c *KeyorixCore) UpdateSharePermission(ctx context.Context, req *UpdateShareRequest) (*models.ShareRecord, error) {
+	if req != nil {
+		if err := refuseMachineActor(ctx, req.UpdatedBy); err != nil { // #4162
+			return nil, err
+		}
+	}
 	if err := c.validateUpdateShareRequest(req); err != nil {
 		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}

@@ -47,3 +47,18 @@ func humanActorID(actorID uint, actorIsMachine bool) uint {
 	}
 	return actorID
 }
+
+// refuseMachineActor refuses a machine actor at a human-only core operation (its
+// actor is a user: shares, ACL grants, tags, descriptions, moves, copies,
+// certificate inspection, expiry extension, access requests, break-glass) with a
+// typed refusal. #4162 (authzdiff known-08): a machine's UserID 0 used to fall
+// through to the operation's own "actor ID is required" validation, an untyped
+// error that REST answered 400 or 500 and gRPC InvalidArgument or Internal. Whether
+// a machine should be allowed any of these is a separate product decision; this
+// only types the refusal it already got.
+func refuseMachineActor(ctx context.Context, actorID uint) error {
+	if actorID == 0 && actorTypeFromContext(ctx) == ActorTypeMachine {
+		return permissionDeniedf("%s: a machine identity cannot perform this operation; it needs a user account", i18n.T("ErrorPermissionDenied", nil))
+	}
+	return nil
+}

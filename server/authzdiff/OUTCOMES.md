@@ -69,6 +69,7 @@ those operations:
 | ID-1 | Actor id 0 is a core-only principal | Core treats actor 0 as the trusted system/internal caller (the existing parity fuzzer grants roles as actor 0). No session or token can be issued for it, so REST and gRPC can never present it. Core leg only; no transport comparison. |
 | ID-2 | `transport-enforced` operations (core refusal = none) | See above. |
 | ID-3 | Operation present in REST but not gRPC | ADR-105 (accepted 2026-09-09): gRPC is a partial data-plane surface by decision. Missing-in-gRPC is a matrix gap result, not a disagreement. |
+| ID-4 | Human-only operations refuse a machine actor | Secret ACL grant, share, tags, description, move, copy, certificate inspection, extend-expiring and access-request create act as a user (ownership, attribution). Core refuses a machine actor with `ErrPermissionDenied` (`refuseMachineActor`, #4162) and REST/gRPC answer 403/PermissionDenied. Keeping them refused is a decision (ask 4162-machine-human-only-ops, 2026-11-15); the model encodes it (`requirement.humanOnly`, `humanOnlyOps`), so it agrees and nothing is reported. |
 
 ## Disagreement classes in the report
 

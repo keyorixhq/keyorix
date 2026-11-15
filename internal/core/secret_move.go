@@ -25,6 +25,9 @@ const EventSecretMoved = "secret.moved"
 //   - newParentID == nil moves the node to the root (no parent).
 //   - newParentID != nil validates that the target is a folder (IsSecret == false).
 func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, newParentID *uint) (*models.SecretNode, error) {
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4162
+		return nil, err
+	}
 	if secretID == 0 || actorID == 0 {
 		return nil, secretInvalidInput(fmt.Errorf("%s: secret ID and actor ID are required", i18n.T("ErrorValidation", nil)))
 	}

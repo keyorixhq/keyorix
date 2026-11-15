@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -80,7 +81,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else if reason, ok := core.ShareRefusalMessage(shareErr); ok {
 			h.sendError(w, "Forbidden", reason, http.StatusForbidden, nil)
-		} else if strings.Contains(shareErr.Error(), errPermissionDenied) {
+		} else if errors.Is(shareErr, core.ErrPermissionDenied) || strings.Contains(shareErr.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", "Not authorized to share this secret", http.StatusForbidden, nil)
 		} else if strings.Contains(shareErr.Error(), "expiry must be in the future") {
 			h.sendError(w, "ValidationError", "Share expiry must be in the future", http.StatusBadRequest, nil)
@@ -141,7 +142,7 @@ func (h *ShareHandler) UpdateSharePermission(w http.ResponseWriter, r *http.Requ
 			h.sendError(w, "NotFound", "Share not found", http.StatusNotFound, nil)
 		} else if reason, ok := core.ShareRefusalMessage(err); ok {
 			h.sendError(w, "Forbidden", reason, http.StatusForbidden, nil)
-		} else if strings.Contains(err.Error(), errPermissionDenied) {
+		} else if errors.Is(err, core.ErrPermissionDenied) || strings.Contains(err.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", "Not authorized to update this share", http.StatusForbidden, nil)
 		} else if strings.Contains(err.Error(), "expiry must be in the future") {
 			h.sendError(w, "ValidationError", "Share expiry must be in the future", http.StatusBadRequest, nil)

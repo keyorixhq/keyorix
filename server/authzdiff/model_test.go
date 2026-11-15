@@ -142,6 +142,9 @@ func (m model) allowed(p *principal, req requirement) bool {
 	if p.suspended {
 		return false // a suspended account may do nothing (account_state.go)
 	}
+	if req.humanOnly && p.isMachine() {
+		return false // a human-only op refuses a machine actor (core refuseMachineActor)
+	}
 	for _, perm := range req.perms {
 		if !m.holds(p, perm, req.scope) {
 			return false
@@ -239,9 +242,12 @@ type roleAt struct{ roleID, scope uint }
 
 // requirement is what an op needs for one concrete (target) call.
 type requirement struct {
-	perms   []string
-	scope   uint     // project id the perms are checked at, 0 = global
-	ceiling []roleAt // roles the op grants (a group join grants all the group's roles); nil = not a grant
+	// humanOnly: the op's actor must be a user; a machine principal is refused
+	// whatever it holds (humanOnlyOps, set by withDerived).
+	humanOnly bool
+	perms     []string
+	scope     uint     // project id the perms are checked at, 0 = global
+	ceiling   []roleAt // roles the op grants (a group join grants all the group's roles); nil = not a grant
 	// ownerUserID != 0: a documented owner-only rule applies (see allowed).
 	ownerUserID uint
 	// ownerOrPerm, with ownerUserID: a NON-owner USER holding this permission

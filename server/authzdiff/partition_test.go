@@ -33,14 +33,13 @@ import (
 //     transport denies (see below). The former known-03 (core let a secret's
 //     owner update/delete it without secrets.write/secrets.delete, #4160) was
 //     fixed in core (TestCoreOwnerWithoutPermissionIsRefused).
-//   - Core returns an error the model does not map (known-08, known-09): core
-//     returns an untyped error, and the model denies (known-09) or the case is
-//     a machine principal on the listed ops (known-08). Not detected: on those
-//     shapes, whether REST answers 400/500 instead of a typed deny; and for
-//     known-08, a transport that denies or errors where the model allows (an
-//     over-denial). A typed core refusal (ErrPermissionDenied) that REST
-//     answers 400/500 is never waived: the former known-07 was fixed in the
-//     four handlers it matched (TestCeilingRefusalIsForbiddenOnREST).
+//   - An untyped core error is never waived. The former known-08 (machine
+//     actors on nine human-only ops, #4162) and known-09 (untyped refusals on
+//     secret.copy, membership.transition, share.update and break-glass, #4163)
+//     were typed in core (TestCoreRefusalsAreTyped). A typed core refusal
+//     (ErrPermissionDenied) that REST answers 400/500 is never waived either:
+//     the former known-07 was fixed in the four handlers it matched
+//     (TestCeilingRefusalIsForbiddenOnREST).
 //
 // The plants (plants_test.go) are exactly the shapes these waivers exclude:
 // core+REST allow (plant 1), gRPC allows a non-group op (plant 2), REST allows
@@ -67,12 +66,8 @@ func explain(r *caseResult) string {
 	is := func(lo *legOutcome, o Outcome) bool { return lo != nil && lo.NA == "" && lo.Outcome == o }
 	na := func(lo *legOutcome) bool { return lo == nil || lo.NA != "" }
 	deniedOrNA := func(lo *legOutcome) bool { return na(lo) || is(lo, Denied) }
-	restBadStatus := is(rest, Other) && (rest.Detail == "Internal Server Error" || rest.Detail == "Bad Request")
 	pk := r.Principal
 	modelDenies := r.Model == Denied || r.Model == ModelNA
-	// transportAllowsDenied: a present transport leg allows what the model
-	// denies. No waiver may match such a case.
-	transportAllowsDenied := modelDenies && (is(rest, Allowed) || is(grpc, Allowed))
 
 	switch {
 	case pk == pkSuspended && (r.Op == "secret.value.byid" || r.Op == "secret.value.byref") && r.ModelIfActive == Allowed && is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc):
@@ -81,13 +76,6 @@ func explain(r *caseResult) string {
 	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
 		return "known-04"
 
-	case pk == pkMachine && slices.Contains([]string{"secret.acl.grant", "secret.share", "accessrequest.create",
-		"secret.certificate", "secret.tags", "secret.description", "secret.move", "secret.copy", "secret.extend.expiring"}, r.Op) &&
-		is(core, Other) && core.Detail == "untyped-error" && !transportAllowsDenied:
-		return "known-08"
-
-	case is(core, Other) && core.Detail == "untyped-error" && (is(rest, Denied) || restBadStatus) && modelDenies && !transportAllowsDenied:
-		return "known-09"
 	}
 	return "unexplained"
 }
@@ -99,8 +87,6 @@ func explain(r *caseResult) string {
 var waivers = []struct{ id, issue, expires string }{
 	{"known-02", "#4159", "2027-02-13"},
 	{"known-04", "#4161", "2027-02-13"},
-	{"known-08", "#4162", "2027-02-13"},
-	{"known-09", "#4163", "2027-02-13"},
 }
 
 // waiverIDs is waivers' ids (the dead-waiver check's population).

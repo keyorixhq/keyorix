@@ -85,8 +85,26 @@ func coreRefusal(tb testing.TB, row string) string {
 func withDerived(tb testing.TB, specs []opSpec) []opSpec {
 	for i := range specs {
 		specs[i].coreEnforced = coreRefusal(tb, specs[i].row) != "none"
+		if humanOnlyOps[specs[i].name] {
+			req := specs[i].req
+			specs[i].req = func(fx *fixtures, t tgt, a byte) requirement {
+				r := req(fx, t, a)
+				r.humanOnly = true
+				return r
+			}
+		}
 	}
 	return specs
+}
+
+// humanOnlyOps are the ops whose actor must be a user: core refuses a machine
+// actor with ErrPermissionDenied (refuseMachineActor, #4162), and so do REST and
+// gRPC. Keeping them refused for machines is a decision (Andrei, ask
+// 4162-machine-human-only-ops, 2026-11-15: option a), recorded in OUTCOMES.md.
+var humanOnlyOps = map[string]bool{
+	"secret.acl.grant": true, "secret.share": true, "accessrequest.create": true, "secret.certificate": true,
+	"secret.tags": true, "secret.description": true, "secret.move": true, "secret.copy": true,
+	"secret.extend.expiring": true,
 }
 
 // ---------- legs ----------

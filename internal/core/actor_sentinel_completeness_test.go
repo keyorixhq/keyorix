@@ -114,6 +114,10 @@ var actorSentinelAllowlist = map[string]actorSentinelEntry{
 		class: classPerActorCeiling, status: statusReasonedSafe,
 		note: "#4159: skips the human account-state check for actorID==0 (the local/system pseudo-actor and every machine token, UserID 0). Escalation delta: none. The check refuses a suspended/deprovisioned/inactive USER account; a machine actor has no user account, its own lifecycle state is enforced by machine authentication (inactive identities and revoked tokens never authenticate), and every authorization the entry point makes after this call still applies to the machine unchanged. Skipping it therefore grants a machine nothing it did not already have before #4159.",
 	},
+	"actor_active.go:refuseMachineActor": {
+		class: classPerActorCeiling, status: statusEnforced,
+		note: "#4162: actorID==0 together with a machine actor type on ctx is REFUSED (typed ErrPermissionDenied) at the human-only entry points that call it; actorID==0 without a machine tag (local/system caller) falls through to the operation's own validation, unchanged.",
+	},
 	"anomaly_alerting.go:AcknowledgeAnomalyAlert": {
 		class: classAuditOnly,
 		note:  "attribution-only audit pointer; the write-permission gate at the transport already authorized the call.",

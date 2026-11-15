@@ -153,7 +153,10 @@ func explainLiterals(t *testing.T) (ops, details []string) {
 			}
 		}
 	}
-	if len(ops) == 0 || len(details) == 0 {
+	// Since #4162/#4163 explain compares no detail literal (no waiver matches
+	// an untyped core error any more), so only an empty parse of both is a
+	// broken parser.
+	if len(ops) == 0 && len(details) == 0 {
 		t.Fatalf("no literals parsed from explain (ops=%v details=%v)", ops, details)
 	}
 	return ops, details
