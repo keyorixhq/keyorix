@@ -123,6 +123,7 @@ func RotateKEKWithConfig(cfg *config.Config, confirm bool, oldSrc, newSrc crypto
 func warnLeftoverMigrateBackups(cfg *config.Config, baseDir string) {
 	backups, err := FindMigrateBackups(baseDir, cfg.Storage.Encryption.DEKPath)
 	if err != nil {
+		// Advisory, stays (#4270 sweep): runs after the KEK rotation already succeeded; the scan is a courtesy.
 		fmt.Printf("⚠️  Could not check for leftover migrate-backup files: %v\n", err)
 		return
 	}
@@ -130,6 +131,7 @@ func warnLeftoverMigrateBackups(cfg *config.Config, baseDir string) {
 		return
 	}
 	fmt.Println()
+	// Advisory, stays (#4270 sweep): the rotation succeeded; this lists files for the operator to clean up.
 	fmt.Printf("⚠️  %d migrate-backup file(s) still hold the DEK wrapped under an OLDER KEK:\n", len(backups))
 	for _, b := range backups {
 		fmt.Printf("     %s\n", b)
