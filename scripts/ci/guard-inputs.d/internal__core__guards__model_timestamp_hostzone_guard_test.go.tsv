@@ -1,0 +1,1 @@
+internal/core/guards/model_timestamp_hostzone_guard_test.go	internal/**/*.go,server/**/*.go,!operator/**,!cli/**	walks the non-test .go files under internal/ and server/; operator/ and cli/ (separate modules) are not walked
