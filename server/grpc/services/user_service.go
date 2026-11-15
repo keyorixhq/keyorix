@@ -379,6 +379,18 @@ func optStringValue(s string) *string {
 // supplies (role scope, password policy). The texts are this family's own and fixed
 // (GRPC-003: never an internal role name or a policy threshold).
 func mapUserError(err error) error {
+	// STORAGE-ERR-CLASS-2: an outage (partial mutation, audit, storage read fault) is
+	// answered before the typed refusals below, in coreErrorStatus's own order, so a
+	// refusal that wraps a failed read is retryable, not a terminal refusal.
+	if perr, ok := partialMutationStatus(err); ok {
+		return perr
+	}
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
+	if serr, ok := storageUnavailableStatus(err); ok {
+		return serr
+	}
 	// S1 (CLI-split inventory #2012): checked via errors.Is, so the specific permission
 	// name requireEqualOrGreaterAdminAuthority wraps into the error text never reaches
 	// the client.
