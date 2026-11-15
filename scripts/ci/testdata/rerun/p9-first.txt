@@ -1,0 +1,9 @@
+--- FAIL: TestPlantedDefectsDetectedByDirectedPrograms (23.90s)
+    --- FAIL: TestPlantedDefectsDetectedByDirectedPrograms/P9_unbounded_decompression (15.58s)
+        selftest_test.go:270: planted defect "P9 unbounded decompression" NOT detected by O4; violations: [O2 HANG: toy did not return within 4s of a 4s context deadline]
+FAIL
+coverage: 79.2% of statements
+FAIL	github.com/keyorixhq/keyorix/internal/fuzzutil/hostile	72.171s
+	github.com/keyorixhq/keyorix/internal/fuzzutil/taint		coverage: 0.0% of statements
+ok  	github.com/keyorixhq/keyorix/internal/guardrules	11.833s	coverage: 87.3% of statements
+ok  	github.com/keyorixhq/keyorix/internal/hardening	1.135s	coverage: 100.0% of statements

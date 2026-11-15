@@ -1610,6 +1610,8 @@ jobs:
           LEG_ONLY: ${{ steps.leg.outputs.only }}
           LEG_TESTS_RX: ${{ steps.leg.outputs.tests }}
           VERBOSE_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.verbose_tests || false }}
+          # Merge queue only (MQ-LEVERS-2 P2): see the go test line below.
+          KNOWN_FLAKE_RERUN: ${{ github.event_name == 'merge_group' && '1' || '' }}
         run: |
           # Which packages each leg runs, and why each excluded package is
           # excluded, now lives in one place (scripts/ci-test-legs.sh) shared
@@ -1719,8 +1721,17 @@ jobs:
           if [ "$VERBOSE_TESTS" = "true" ]; then
             verbose_flag="-v"
           fi
+          # MQ-LEVERS-2 P2: a merge-queue entry is ejected as soon as a required
+          # job fails, so a failed test that is on scripts/ci/known-flakes.txt
+          # (and nothing else) is rerun ONCE inside this step. The wrapper
+          # passes go test's output and exit code through unchanged unless
+          # KNOWN_FLAKE_RERUN=1 (merge_group only; PR, push and the nightly
+          # never rerun), prints `FLAKE-RERUN <test> passed on retry` plus a
+          # `FLAKE-RERUN-COUNT` line and a job-summary entry for every rerun,
+          # and never touches the coverage profile. A test that fails twice,
+          # or is not listed, fails the leg as before.
           # shellcheck disable=SC2086
-          go test -race $verbose_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+          python3 scripts/ci/rerun-known-flakes.py --label "${{ matrix.leg }}" -- go test -race $verbose_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       - name: Upload coverage artifact
         if: steps.leg.outputs.run == 'true'
@@ -2431,6 +2442,10 @@ jobs:
           go-version: '1.27.4'
 
       - name: Every repo-wide guard
+        # Merge queue only: a failed test on scripts/ci/known-flakes.txt is rerun
+        # once inside run-guards.sh (MQ-LEVERS-2 P2); pull requests never rerun.
+        env:
+          KNOWN_FLAKE_RERUN: ${{ github.event_name == 'merge_group' && '1' || '' }}
         run: scripts/ci/run-guards.sh
 
   # Guards whose inputs are not Go code (CI-GUARD-TRIGGERS-1). Every Go job
