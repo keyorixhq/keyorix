@@ -84,8 +84,8 @@ func FuzzAzureKeysResponse(f *testing.F) {
 	f.Add(403, []byte(`{"error":{"code":"Forbidden"}}`))
 	f.Add(500, []byte(``))
 	f.Add(200, []byte(`not json`))
-	f.Add(200, []byte(`{"value":`))        // truncated
-	f.Add(200, []byte(`{"value":12345}`))  // wrong type
+	f.Add(200, []byte(`{"value":`))       // truncated
+	f.Add(200, []byte(`{"value":12345}`)) // wrong type
 	f.Add(429, []byte(`{"error":{"code":"TooManyRequests"}}`))
 
 	f.Fuzz(func(t *testing.T, status int, body []byte) {

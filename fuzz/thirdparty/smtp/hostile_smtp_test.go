@@ -79,13 +79,13 @@ func FuzzSMTPDialogue(f *testing.F) {
 		"221 bye\r\n"))
 	f.Add([]byte("220 ok\r\n250 SIZE 0\r\n")) // truncated after EHLO
 	f.Add([]byte("421 service not available\r\n"))
-	f.Add([]byte("200 wrong-code greeting\r\n"))       // non-standard greeting code
-	f.Add([]byte("250-a\r\n250-b\r\n250-c\r\n250 d\r\n")) // no 220 greeting at all
-	f.Add([]byte("220 \r\n"))                            // empty-text greeting
-	f.Add([]byte(""))                                    // empty: immediate EOF
-	f.Add([]byte("220-multi\r\n220-line\r\n220 greeting\r\n250 ok\r\n")) // multiline greeting
+	f.Add([]byte("200 wrong-code greeting\r\n"))                                 // non-standard greeting code
+	f.Add([]byte("250-a\r\n250-b\r\n250-c\r\n250 d\r\n"))                        // no 220 greeting at all
+	f.Add([]byte("220 \r\n"))                                                    // empty-text greeting
+	f.Add([]byte(""))                                                            // empty: immediate EOF
+	f.Add([]byte("220-multi\r\n220-line\r\n220 greeting\r\n250 ok\r\n"))         // multiline greeting
 	f.Add(append([]byte("220 ok\r\n250 "), bytes.Repeat([]byte("X"), 70000)...)) // over-long EHLO line
-	f.Add([]byte("220 ok\r\n250 AUTH PLAIN LOGIN\r\n"))                            // advertise cleartext auth under NoTLS
+	f.Add([]byte("220 ok\r\n250 AUTH PLAIN LOGIN\r\n"))                          // advertise cleartext auth under NoTLS
 
 	f.Fuzz(func(t *testing.T, script []byte) {
 		var recordedMu = make(chan struct{}, 1)

@@ -71,16 +71,16 @@ const (
 )
 
 func FuzzKMSResponse(f *testing.F) {
-	f.Add(200, []byte(`{"CiphertextBlob":"AQIDAAE="}`))            // Encrypt success-shaped
-	f.Add(200, []byte(`{"Plaintext":"c2VjcmV0"}`))                 // Decrypt success-shaped
+	f.Add(200, []byte(`{"CiphertextBlob":"AQIDAAE="}`)) // Encrypt success-shaped
+	f.Add(200, []byte(`{"Plaintext":"c2VjcmV0"}`))      // Decrypt success-shaped
 	f.Add(200, []byte(`{"KeyMetadata":{"Arn":"arn:aws:kms:us-east-1:111122223333:key/abc"}}`))
-	f.Add(200, []byte(`{}`))                                       // empty object
+	f.Add(200, []byte(`{}`)) // empty object
 	f.Add(400, []byte(`{"__type":"NotFoundException","message":"x"}`))
 	f.Add(403, []byte(`{"__type":"AccessDeniedException"}`))
 	f.Add(500, []byte(``))
 	f.Add(200, []byte(`not json at all`))
-	f.Add(200, []byte(`{"CiphertextBlob":`))                       // truncated JSON
-	f.Add(200, []byte(`{"CiphertextBlob":"!!!not-base64!!!"}`))    // invalid blob encoding
+	f.Add(200, []byte(`{"CiphertextBlob":`))                    // truncated JSON
+	f.Add(200, []byte(`{"CiphertextBlob":"!!!not-base64!!!"}`)) // invalid blob encoding
 	f.Add(307, []byte(``))
 	f.Add(308, []byte(``))
 	f.Add(200, []byte(`{"KeyMetadata":{"Arn":null}}`))

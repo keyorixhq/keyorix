@@ -67,12 +67,12 @@ const (
 )
 
 func FuzzS3PutObjectResponse(f *testing.F) {
-	f.Add(200, []byte(``))                                                          // typical PutObject success (metadata in headers)
+	f.Add(200, []byte(``)) // typical PutObject success (metadata in headers)
 	f.Add(403, []byte(`<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>no</Message></Error>`))
 	f.Add(404, []byte(`<?xml version="1.0"?><Error><Code>NoSuchBucket</Code></Error>`))
 	f.Add(500, []byte(`<?xml version="1.0"?><Error><Code>InternalError</Code></Error>`))
 	f.Add(400, []byte(`not xml at all`))
-	f.Add(400, []byte(`<Error><Code>Trunc`))                                        // truncated XML
+	f.Add(400, []byte(`<Error><Code>Trunc`)) // truncated XML
 	f.Add(400, []byte(`<?xml version="1.0"?><Error><Code>X</Code><Message>&lt;nested&gt;</Message></Error>`))
 	f.Add(503, []byte(`<?xml version="1.0"?><Error><Code>SlowDown</Code></Error>`)) // retryable
 	f.Add(307, []byte(``))
