@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -81,7 +82,16 @@ func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 			c := setupTestCore(t)
 			m := c.storage.(*MockStorage)
 			m.On("GetUser", mock.Anything, actor).Return(&models.User{ID: actor, IsActive: false, AccountState: AccountSuspended}, nil)
-			err := call(c)
+			err := func() (err error) {
+				// An unexpected storage call panics in the mock: report it as this
+				// entry point acting past the check, not as a crash of the binary.
+				defer func() {
+					if r := recover(); r != nil {
+						err = fmt.Errorf("acted past the account check: %v", r)
+					}
+				}()
+				return call(c)
+			}()
 			require.ErrorIs(t, err, ErrPermissionDenied)
 			m.AssertExpectations(t)
 		})
