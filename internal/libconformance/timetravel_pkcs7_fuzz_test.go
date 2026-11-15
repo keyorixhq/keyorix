@@ -244,11 +244,11 @@ func FuzzPKCS7TimeTravelOracle(f *testing.F) {
 
 func nestIndef(d int) []byte {
 	var b []byte
-	for i := 0; i < d; i++ {
+	for range d {
 		b = append(b, 0x30, 0x80)
 	}
 	b = append(b, 0x05, 0x00)
-	for i := 0; i < d; i++ {
+	for range d {
 		b = append(b, 0x00, 0x00)
 	}
 	return b
