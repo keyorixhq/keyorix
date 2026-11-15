@@ -43,7 +43,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -355,12 +355,12 @@ func doublingMultiplier(ms []Measurement, cost func(Measurement) float64) float6
 }
 
 func medianInt64(xs []int64) int64 {
-	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
+	slices.Sort(xs)
 	return xs[len(xs)/2]
 }
 
 func medianUint64(xs []uint64) uint64 {
-	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
+	slices.Sort(xs)
 	return xs[len(xs)/2]
 }
 
