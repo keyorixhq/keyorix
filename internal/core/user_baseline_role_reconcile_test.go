@@ -262,7 +262,7 @@ func TestReconcileUserBaselineRoles_SkipsSSOJITNonDefaultRoleUser(t *testing.T) 
 	ctx := context.Background()
 
 	p := &SSOProvider{Name: "okta", DefaultRole: "admin"}
-	jit, err := c.provisionSSOUser(ctx, p, "okta|999", "jit@example.com", true, "JIT User")
+	jit, err := c.provisionSSOUser(ctx, p, "okta|999", "jit@example.com", true, "JIT User", "")
 	require.NoError(t, err)
 	require.True(t, userHasRoleName(t, c, jit.ID, "admin"), "sanity: JIT provisioning granted the configured role")
 	require.False(t, userHasRoleName(t, c, jit.ID, "system_viewer"), "sanity: JIT provisioning did not grant system_viewer")

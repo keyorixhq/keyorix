@@ -170,7 +170,7 @@ func TestProvisionSSOUser_UsernameRaceLoserLeavesNothing(t *testing.T) {
 		jit := w.auditCount(t, EventSSOJITProvision)
 
 		_, err := w.racingCore().provisionSSOUser(context.Background(),
-			&SSOProvider{Name: "okta", AutoProvision: true}, "okta|loser", "racer@loser.example.com", true, "Loser")
+			&SSOProvider{Name: "okta", AutoProvision: true}, "okta|loser", "racer@loser.example.com", true, "Loser", "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "a user with this username already exists")
 		assert.NotContains(t, err.Error(), "username_folded", "the raw constraint text must not reach the caller")
