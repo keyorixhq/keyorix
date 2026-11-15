@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -487,6 +488,10 @@ func (h *AuditHandler) writeAuditVerifyReport(w http.ResponseWriter, r *http.Req
 	sendSuccess(w, auditVerifyResponse(v), "")
 }
 
+// auditSealedFallbackReason is the `reason` of a sealed report whose state text is
+// empty (it should not be: state_reason carries the seal text).
+const auditSealedFallbackReason = "the audit chain is sealed: it is not whole, though the rows since each seal verify"
+
 // auditVerifyResponse renders a verification report. The pre-incremental keys
 // keep their names and presence rules; valid is true only for status "valid".
 func auditVerifyResponse(v *core.AuditVerifyReport) map[string]any {
@@ -507,6 +512,11 @@ func auditVerifyResponse(v *core.AuditVerifyReport) map[string]any {
 	if v.Status == core.AuditVerifyStatusBroken {
 		resp["first_broken_id"] = v.FirstBrokenID
 		resp["reason"] = v.Reason
+	}
+	if v.Status == core.AuditVerifyStatusSealed {
+		// Sealed is not a failed walk, but a client that renders `reason` must
+		// never print an empty one: carry the seal text there too (#4230).
+		resp["reason"] = cmp.Or(v.StateReason, auditSealedFallbackReason)
 	}
 	if v.NotProvenReason != "" {
 		resp["not_proven_reason"] = v.NotProvenReason
@@ -685,6 +695,13 @@ func (h *AuditHandler) MigrateAuditChainEncoding(w http.ResponseWriter, r *http.
 
 	result, err := h.coreService.MigrateAuditChainEncoding(r.Context(), userCtx.UserID, dryRun)
 	if err != nil {
+		// The pre-flight refused a chain with a gap, a broken link or a changed row:
+		// a precondition failure the operator must investigate (runbook 4a), not a
+		// server error. Classified by the typed sentinel, never by the text.
+		if errors.Is(err, storage.ErrAuditChainReencodeRefused) {
+			sendError(w, "Conflict", err.Error(), http.StatusConflict, map[string]string{"code": "audit_chain_reencode_refused"})
+			return
+		}
 		log.Printf("Error migrating audit chain encoding: %v", err)
 		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 		return

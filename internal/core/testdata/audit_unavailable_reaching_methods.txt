@@ -89,6 +89,7 @@ TransitionMembership
 UnlockUser
 UpdateAlertEscalationPolicy
 UpdateAnomalyConfig
+UpdateDynamicSecretConfigAdminDSN
 UpdateGroup
 UpdateNotificationChannel
 UpdateOwnProfile

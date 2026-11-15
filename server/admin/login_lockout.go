@@ -178,5 +178,9 @@ func logLoginLockoutAudit(ctx context.Context, store corestorage.Storage, eventT
 		uid := target.ID
 		ev.UserID = &uid
 	}
+	// audit-direct-ok: hardcodes ActorType adminActorType ("admin_cli") for `keyorix-server admin
+	// clear-login-lockout` (#2936) -- host-side, no network listener (ADR-108 §B). UserID is set only
+	// to the TARGET account whose lockout was cleared (when --user is given), never an acting
+	// identity; ActorType is never "machine_identity".
 	return store.LogAuditEvent(ctx, ev)
 }

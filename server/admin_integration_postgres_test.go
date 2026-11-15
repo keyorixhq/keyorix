@@ -68,6 +68,31 @@ func adminPgIsolatedDatabaseDSN(t *testing.T, base string) string {
 	return replaceAdminDBName(base, dbName)
 }
 
+// adminKeysWithoutOpeningStorage creates dir/keys (kek.salt, dek.key) without
+// opening the configured PostgreSQL database. `admin encryption init` records an
+// audit event, and opening storage through the factory migrates the schema,
+// which would void a "not yet migrated" premise. So the keys are created by a
+// throwaway SQLite install (same passphrase, same keys/ layout) and copied in.
+func adminKeysWithoutOpeningStorage(t *testing.T, bin, dir string, env []string) {
+	t.Helper()
+	keyDir := t.TempDir()
+	if out, err := runAdmin(t, bin, keyDir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init (throwaway SQLite install for keys) failed: %v\n%s", err, out)
+	}
+	adminEncryptionInit(t, bin, keyDir, env)
+	entries, err := os.ReadDir(filepath.Join(keyDir, "keys"))
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "keys"), 0o750))
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "dek.lock" {
+			continue
+		}
+		data, rerr := os.ReadFile(filepath.Join(keyDir, "keys", e.Name())) // #nosec G304 -- test-created path
+		require.NoError(t, rerr)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "keys", e.Name()), data, 0o600))
+	}
+}
+
 // replaceAdminDBName points base at newName for either DSN form
 // KEYORIX_TEST_PG_DSN may take (keyword/value or postgres:// URL); see
 // pgdsn.PGReplaceDBName.
@@ -110,7 +135,8 @@ server:
 		t.Fatalf("create keys dir: %v", err)
 	}
 
-	// First diagnose derives the KEK (first-boot key derivation) against a
+	adminKeysWithoutOpeningStorage(t, bin, dir, env)
+	// First diagnose derives the KEK (from the keys created above) against a
 	// not-yet-migrated database -- migration state is expected to WARN here,
 	// not pass; see TestAdminDiagnose_UnmigratedDatabase for that behavior
 	// covered directly against SQLite.
@@ -182,6 +208,7 @@ server:
 		t.Fatalf("create keys dir: %v", err)
 	}
 
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
 	}
@@ -260,6 +287,7 @@ server:
 		t.Fatalf("create keys dir: %v", err)
 	}
 
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
 	}
@@ -384,6 +412,7 @@ server:
 		t.Fatalf("create keys dir: %v", err)
 	}
 
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
 	}

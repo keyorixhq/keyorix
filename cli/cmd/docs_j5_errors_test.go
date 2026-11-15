@@ -28,7 +28,13 @@ func TestJ5Doc_ErrorLinesMatchWhatTheCLIPrints(t *testing.T) {
 	}
 	for _, m := range lines {
 		status, _ := strconv.Atoi(m[3])
-		body, _ := json.Marshal(map[string]any{"message": m[2], "code": status})
+		fields := map[string]any{"message": m[2], "code": status}
+		if status == 403 {
+			// The server sends this code with the setup-gate 403 (auth middleware
+			// accountSetupRequiredResponse); the CLI picks its hint from it.
+			fields["error"] = errCodePasswordChangeRequired
+		}
+		body, _ := json.Marshal(fields)
 		want := "Error: " + httpStatusError(m[1], status, body).Error()
 		if m[0] != want {
 			t.Errorf("doc line differs from the CLI's output\n doc: %s\nreal: %s", m[0], want)

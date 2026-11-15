@@ -194,6 +194,7 @@ func TestNamedLockOrder_PendingNotExpired(t *testing.T) {
 // namedLockStorageSources lists the non-test sources of the two storage
 // packages that also build named-lock keys (internal/core/storage and
 // internal/storage/store). The core family part comes from coreFamilySources.
+// dir-listing-ok: internal/core/storage and internal/storage/store; the core part comes from coreFamilySources
 func namedLockStorageSources(t *testing.T) []string {
 	t.Helper()
 	var out []string

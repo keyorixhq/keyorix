@@ -22,8 +22,9 @@ keyorix login --server https://keyorix.example.com --username alice
 `~/.config/keyorix/credentials.yaml`, on macOS
 `~/Library/Application Support/keyorix/credentials.yaml`). If the account has MFA
 enrolled it asks for an authenticator code (or an unused recovery code) after the
-password; `--mfa-code` supplies it non-interactively. Prefer the prompts over
-`--password` on a command line, where it is visible in `ps` and shell history.
+password; for a script set `KEYORIX_MFA_CODE` (or `KEYORIX_MFA_CODE_FILE`): the `--mfa-code`
+flag is refused, like `--password`, because a code on a command line is visible in `ps` and
+shell history. Prefer the prompts, or `KEYORIX_PASSWORD_FILE`, over `--password`.
 
 `keyorix logout` revokes the stored session and forgets it (the token only: the server URL and `ca_file` stay, so the next `keyorix login` needs neither again). `keyorix status` shows the
 configured server, whether you are logged in, and the server/CLI version-skew check.
@@ -34,8 +35,10 @@ Do not script a user's password. Use a token:
 
 - A personal access token: `keyorix pat create --name ci --scope secrets.read
   --project-id <id> --expires 2027-01-01` prints the token once.
-- A machine identity token: `keyorix machine token issue <name>` (see
-  [operator/demo.md](operator/demo.md) step 5). It prints the token once; add
+- A machine identity token: `keyorix machine token issue <identity> --project <project>
+  --name <token label>` (create the identity first with `keyorix machine create`; see
+  [operator/demo.md](operator/demo.md) step 5). `--name` and a project (`--project` or
+  `KEYORIX_PROJECT`) are required. It prints the token once; add
   `--output-file ./ci.token` to write it to a new file instead (mode 0600, refuses to
   overwrite an existing file, created before the token is minted), so the token never
   passes through your terminal scrollback or shell history.
