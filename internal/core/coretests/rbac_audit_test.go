@@ -193,6 +193,7 @@ func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
 	// being bundled — make actor 5 a global admin so the bypass applies.
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 1}).Error)
+	seedActiveActor(t, db, 5) // the acting admin is active (#4159)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
