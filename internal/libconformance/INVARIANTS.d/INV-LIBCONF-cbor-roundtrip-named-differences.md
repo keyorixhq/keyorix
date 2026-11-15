@@ -5,7 +5,8 @@
   NAMED class in the committed EXPECTED-DIFFERENCE table (`EXPECTED-DIFFERENCE.md`):
   NaN≠NaN under `reflect.DeepEqual`, bignum↔int64/uint64 re-typing, and the first
   decode's normalization of indefinite-length / duplicate-map-key / non-canonical
-  integer encodings. ONLY a new, unnamed disagreement class fails the target — that is
+  integer encodings. Values containing a datetime tag (0/1) anywhere are NOT compared
+  for equality (E11): they are only asserted re-decodable. ONLY a new, unnamed disagreement class fails the target — that is
   the "one bug class, many libraries" slide. The property is stated on `v1↔v2`, NOT
   `data↔v1`: CBOR has many encodings per value and Keyorix never relies on byte-exact
   CBOR round-trip, so `data↔v1` fidelity is deliberately out of scope. Why: the

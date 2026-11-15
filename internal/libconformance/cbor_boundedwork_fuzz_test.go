@@ -28,19 +28,21 @@ import (
 //     make([]any, declaredCount) for a 9-byte "array of 2^64-1" head would blow
 //     three orders of magnitude past this instantly.
 //
-// We decode with cbor.Unmarshal (the DEFAULT DecMode — exactly what go-webauthn
-// uses via cbor.Unmarshal). The default mode ships hard caps (MaxNestedLevels=32,
-// MaxArrayElements=131072, MaxMapPairs=131072), so the EXPECTED result today is
-// that this passes: the oracle confirms those caps hold, and only fires if a
-// future bump removes them or Keyorix switches to an unbounded custom DecMode.
+// We decode with cbor.Unmarshal (the DEFAULT DecMode). go-webauthn does NOT use
+// that mode: v0.18.2 decodes via webauthncbor.Unmarshal, whose ctap2CBORDecMode is
+// stricter (MaxNestedLevels=5, indefinite length and tags forbidden,
+// DupMapKeyEnforcedAPF). The default mode is therefore a conservative superset of
+// the live one. It ships hard caps (MaxNestedLevels=32, MaxArrayElements=131072,
+// MaxMapPairs=131072), so the EXPECTED result today is that this passes: the
+// oracle confirms those caps hold, and only fires if a future bump removes them.
 //
 // What this does NOT verify:
 //   - Nothing about the decoded VALUE — not that a valid COSE key / attestation
 //     round-trips, not any WebAuthn semantic. Only the upper bound on work.
-//   - It does not prove go-webauthn uses the default DecMode forever; if
+//   - It does not fuzz webauthncbor.Unmarshal (the live mode) directly; if
 //     go-webauthn adopted a DecMode with raised limits, THIS target (default mode)
-//     would still pass while the real path regressed. The reachability claim is
-//     "the default mode is what the live caller uses TODAY" — re-verify on bump.
+//     would still pass while the real path regressed. The claim is only "the live
+//     mode is stricter than the default mode TODAY" — re-verify on a go-webauthn bump.
 //   - It bounds per-input work only. It does NOT bound aggregate memory across
 //     many concurrent requests (that is the server's connection/body-size limit's
 //     job, not the codec's), and it does not model the streaming cbor.Decoder.
