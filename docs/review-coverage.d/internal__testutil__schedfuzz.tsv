@@ -1,0 +1,1 @@
+internal/testutil/schedfuzz	none	-	PR #4326: test-only helper that decodes fuzz bytes into a bounded multi-goroutine schedule program for the pool schedule-race fuzzers; imported only by fuzz/thirdparty/pools *_test.go files, no production import	test-helper

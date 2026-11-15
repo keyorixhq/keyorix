@@ -1,4 +1,4 @@
-- **INV-LIBCONFORMANCE-differential-oracle-enumerates-divergences** Every
+- **INV-LIBCONF-differential-oracle-enumerates-divergences** Every
   sibling-implementation differential fuzz target in this package
   (`FuzzYAMLSiblingDifferential`, `FuzzJSONSchemaValidatorDifferential`,
   `FuzzJSONStrictDecodeDifferential`) must fail on any accept/reject or
