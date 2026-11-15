@@ -79,7 +79,7 @@ func openPgxPool(t testing.TB) (*pgxpool.Pool, string) {
 // pgxpool: after the concurrent phase no connection may still be acquired.
 func assertPgxPoolDrained(t *testing.T, pool *pgxpool.Pool, where string) {
 	t.Helper()
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		if pool.Stat().AcquiredConns() == 0 {
 			return
 		}

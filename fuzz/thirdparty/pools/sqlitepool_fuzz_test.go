@@ -111,7 +111,7 @@ func openSQLitePool(t testing.TB) *sql.DB {
 // connections within a short settle window. Shared by the fatal oracle below
 // and by the connection-leak red/green proof (oracles_test.go).
 func sqlPoolDrains(db *sql.DB) bool {
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		if db.Stats().InUse == 0 {
 			return true
 		}

@@ -135,7 +135,7 @@ func gormWorlds(t testing.TB) []*fuzzworld.World {
 // so each iteration starts from counterModel's Init state.
 func resetCounters(t *testing.T, w *fuzzworld.World) {
 	t.Helper()
-	for k := 0; k < poolNumKeys; k++ {
+	for k := range poolNumKeys {
 		kStr := fmt.Sprintf("k%d", k)
 		if err := w.DB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "k"}},

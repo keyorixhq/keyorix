@@ -98,7 +98,7 @@ func TestOracle_Isolation_FiresWithoutLock(t *testing.T) {
 	var mu sync.Mutex
 	start := time.Now()
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		wg.Add(1)
 		go func(gi int) {
 			defer wg.Done()
@@ -137,11 +137,11 @@ func TestOracle_Isolation_GreenWithLock(t *testing.T) {
 	var mu sync.Mutex
 	start := time.Now()
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		wg.Add(1)
 		go func(gi int) {
 			defer wg.Done()
-			for j := 0; j < 5; j++ {
+			for range 5 {
 				call := time.Since(start).Nanoseconds()
 				n, err := gormIncrement(context.Background(), w.DB, "k0")
 				ret := time.Since(start).Nanoseconds()
@@ -165,7 +165,7 @@ func TestOracle_Isolation_GreenWithLock(t *testing.T) {
 
 func TestOracle_ConnLeak_FiresOnLeakedConn(t *testing.T) {
 	db := openSQLitePool(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	// GREEN: a normal query returns its connection; InUse drains to 0.
 	if _, err := db.Exec(`INSERT INTO kv(k,v) VALUES('x','1') ON CONFLICT(k) DO UPDATE SET v='1'`); err != nil {
 		t.Fatalf("exec: %v", err)

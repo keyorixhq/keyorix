@@ -71,10 +71,7 @@ func Decode(program []byte, maxGoroutines, maxOpsPerG, maxKeys int) Program {
 	// the process above its core budget regardless of which value the corpus
 	// picks — the same role the in-tree harness's KEYORIX_CL_GOMAXPROCS override
 	// plays. A local/CI run with no cap keeps the full {2,4,NumCPU} variety.
-	ceiling := runtime.GOMAXPROCS(0)
-	if ceiling < 2 {
-		ceiling = 2
-	}
+	ceiling := max(runtime.GOMAXPROCS(0), 2)
 	var gomaxprocs int
 	switch program[1] % 3 {
 	case 0:
@@ -144,13 +141,13 @@ func RunBounded(t testing.TB, n int, timeout time.Duration, fn func(gi int)) boo
 	done := make(chan struct{})
 	go func() {
 		var wg = make(chan struct{}, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			go func(gi int) {
 				defer func() { wg <- struct{}{} }()
 				fn(gi)
 			}(i)
 		}
-		for i := 0; i < n; i++ {
+		for range n {
 			<-wg
 		}
 		close(done)
@@ -171,7 +168,7 @@ func RunBounded(t testing.TB, n int, timeout time.Duration, fn func(gi int)) boo
 // out. Pair it with AssertNoGoroutineLeak after the concurrent phase.
 func GoroutineBaseline() int {
 	prev := runtime.NumGoroutine()
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		time.Sleep(2 * time.Millisecond)
 		runtime.GC()
 		n := runtime.NumGoroutine()
@@ -189,7 +186,7 @@ func GoroutineBaseline() int {
 // legitimately outlive a single operation but are bounded. A count that stays
 // above baseline+slack after the settle window is a goroutine LEAK.
 func SettleGoroutines(baseline, slack int) (int, bool) {
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		runtime.GC()
 		n := runtime.NumGoroutine()
 		if n <= baseline+slack {
