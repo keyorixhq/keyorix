@@ -476,8 +476,7 @@ state `sslmode` itself and it must equal `ssl_mode`, or the server refuses to
 start (`ssl=true` in a URL dsn is the driver's alias for `sslmode=require`).
 Leaving `ssl_mode` out next to a `dsn` is fine.
 
-**The effective sslmode.** With a `dsn`, the sslmode is the dsn's own; when
-the dsn has none, `PGSSLMODE`; otherwise the driver's default, `prefer`. With
+**The effective sslmode.** It is resolved by the order below, and with
 `sslrootcert=system` the driver always runs `verify-full`. Start-up
 validation, the insecure-settings warnings and `admin validate --posture` all
 read this effective value, so a dsn with `sslmode=disable` is reported as
