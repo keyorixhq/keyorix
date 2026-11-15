@@ -121,7 +121,12 @@ keyorix-server admin restore --input ./backup.tar.gz --overwrite-existing --conf
    (`target Postgres database already has N table(s) ... pass --overwrite-existing`).
    While the journal exists, a plain restore is refused earlier, with the message above.
 2. **`--overwrite-existing`** skips only the "target is not empty" refusals (tables, key
-   files, key-set manifest). Everything else runs as for any restore: archive signature,
+   files, key-set manifest). It does not skip the data check: a target whose tables hold
+   rows (anything outside `system_metadata`, and audit events other than the `admin_cli`
+   ones admin commands such as `--recover` write) is refused with `the restore target
+   database holds data (tables with rows: ...)` before anything is staged, unless
+   `--replace-existing-data` is given too. The schema a rolled-back attempt leaves holds no
+   rows, so this recovery does not need it. Everything else runs as for any restore: archive signature,
    schema epoch, key-file set and rollback protection, all before anything is written. The
    load transaction then empties the target's tables, loads the archive, and the key files
    are installed after it commits; any existing key file is kept as
@@ -133,9 +138,11 @@ the kill happened after the load committed, `--recover` rolls forward instead (`
 forward: ...`) and the second command is not needed. If a plain `admin restore` is accepted
 after `--recover` (the kill came before the migrations), the flag is not needed either.
 
-`--overwrite-existing` empties the target's tables, so rows that were in the database
-before the first attempt are replaced too; restore into a database that held nothing you
-want to keep.
+`--overwrite-existing` empties the target's tables. If the database held rows before the
+first attempt, the second command is refused (`the restore target database holds data`)
+and the key files, the manifest and the rows stay as they are. Replacing those rows takes
+`--replace-existing-data` as well, and on PostgreSQL deletes them: back the database up
+first.
 
 Checked against a real `kill -9` and a `SIGTERM` during the load of a large archive into
 PostgreSQL by `scripts/migrate/scale-kill-check.sh`: the killed load left the journal and
