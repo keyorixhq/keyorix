@@ -86,7 +86,7 @@ func TestLegCompletenessAssertionsRunInStaticAnalysis(t *testing.T) {
 	for _, fn := range want {
 		var hits []foldStep
 		for _, s := range sa.Steps {
-			for _, line := range strings.Split(s.Run, "\n") {
+			for line := range strings.SplitSeq(s.Run, "\n") {
 				if strings.TrimSpace(line) == fn {
 					hits = append(hits, s)
 				}
