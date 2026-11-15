@@ -14,9 +14,9 @@ name: Demo readiness (full)
 #     so attributing a tag's failure to "main is NOT READY" would mislead).
 on:
   schedule:
-    # 03:07 UTC nightly, off the round minute (matches e2e-nightly.yml's own
+    # 06:57 UTC nightly, off the round minute (matches e2e-nightly.yml's own
     # off-round convention).
-    - cron: '7 3 * * *'
+    - cron: '57 6 * * *'
   push:
     tags:
       - 'v*-rc*'

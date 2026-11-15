@@ -12,9 +12,9 @@ name: Guard expiry and rollout (nightly)
 #            something to do, closed when clear (scripts/ci/failure-issue.sh).
 on:
   schedule:
-    # 04:23 UTC, off the round minute and clear of the other nightly slots
-    # (fault-tolerance 4:09, anchore-syft 4:12, sonarcloud 4:27, pg-race 4:47).
-    - cron: '23 4 * * *'
+    # 07:53 UTC, off the round minute and clear of the other nightly slots
+    # (fault-tolerance 7:29, anchore-syft 7:41, sonarcloud 8:07, pg-race 8:27).
+    - cron: '53 7 * * *'
   workflow_dispatch: {}
 
 permissions: {}
