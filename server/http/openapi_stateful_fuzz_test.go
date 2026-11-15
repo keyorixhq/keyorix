@@ -1277,6 +1277,10 @@ var osVolatileKeys = map[string]bool{
 	"since": true, "until": true, "as_of": true, "window_start": true, "window_end": true,
 	"from_time": true, "to_time": true, "generated_at": true, "queried_at": true,
 	"requested_at": true, "computed_at": true,
+	// A secret read is itself counted (read_count against max_reads), so two back-to-back
+	// GETs of one secret legitimately differ in this one field. The counter's behaviour is
+	// asserted by the max_reads tests; the idempotence oracle must not call it a defect.
+	"read_count": true,
 }
 
 // osCanonJSON parses JSON and re-emits it with volatile keys removed, for stable comparison.
