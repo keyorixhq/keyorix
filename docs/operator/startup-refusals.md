@@ -138,11 +138,12 @@ gRPC equivalent is below). **In place:** yes.
 ```
 gRPC server is enabled but no port is specified
 gRPC TLS is enabled but cert_file or key_file is missing
-gRPC TLS auto_cert is not supported; provide cert_file and key_file
+server.grpc.tls.auto_cert: true is not supported: automatic (ACME) certificates are only available for the HTTP listener (server.http.tls.auto_cert). Remove server.grpc.tls.auto_cert and set server.grpc.tls.cert_file and key_file, or terminate gRPC TLS at a proxy
 ```
 
 **Match:** `gRPC server is enabled but no port is specified`,
-`gRPC TLS is enabled but cert_file or key_file is missing`
+`gRPC TLS is enabled but cert_file or key_file is missing`,
+`server.grpc.tls.auto_cert: true is not supported`
 
 **Cause / fix.** Same as the HTTP entries; gRPC cannot use `auto_cert`. **In place:** yes.
 
@@ -1345,8 +1346,8 @@ Error: database "<datadir>/keyorix.db" already exists and is not empty -- restor
 **Match:** `restore refuses to overwrite it`
 
 **Cause.** Restore will not replace a live database. **Fix.** Restore into an empty data
-directory and switch over, or `--overwrite-existing` for a disaster recovery (and read the
-rollback entry above: it may follow). The same message exists for a non-empty PostgreSQL
+directory and switch over, or `--overwrite-existing --replace-existing-data` for a disaster
+recovery over a database that holds data (and read the rollback entry above: it may follow). The same message exists for a non-empty PostgreSQL
 target. **In place:** no. [drill-backup-restore.md](drill-backup-restore.md).
 
 ### Other restore and backup refusals — from code
@@ -1354,6 +1355,7 @@ target. **In place:** no. [drill-backup-restore.md](drill-backup-restore.md).
 | Match | What it means |
 |---|---|
 | `restore refuses to mix formats` | the archive format differs from what this binary expects; use the release that wrote it |
+| `the restore target database holds data` | `admin restore --overwrite-existing` found rows in the target database (outside `system_metadata`, and audit events other than `admin_cli` bookkeeping); nothing was changed. `--overwrite-existing` alone is for re-running a restore into an empty database. To replace the data on purpose, back it up first and add `--replace-existing-data` (on PostgreSQL the rows are deleted) |
 | `restore refuses to mix backends` | an SQLite archive into PostgreSQL, or the reverse; see [SELF_HOSTING.md "Moving from SQLite to Postgres"](../SELF_HOSTING.md#moving-from-sqlite-to-postgres) |
 | `changed during the backup` | a key file changed while the backup ran (rotation in progress); nothing was written, retry |
 | `could not read the rollback-protection witness file` | the host's witness file is unreadable or corrupt; investigate before restoring, it is not treated as absent |
@@ -1438,7 +1440,8 @@ a full disk) stops with the journal kept so the same command can be run again.
 **Fix.** Stop every server on this data. Read the named file and the journal; do **not** delete
 the journal and start the server on the files as they are. For an unvouched staged file, keep
 the journal and every `*.restoring-*` and `*.pre-restore-*` file for inspection (move them out
-of the data directory), then restore the archive again with `--overwrite-existing`. For an
+of the data directory), then restore the archive again with `--overwrite-existing
+--replace-existing-data` (the committed load left the archive's rows in the database). For an
 install failure, remove its cause and run `admin restore --recover` again with the same config
 and working directory. **In place:** no, stop first.
 [restore-failure-modes.md](restore-failure-modes.md#recovery-refuses-a-staged-file-it-cannot-vouch-for),

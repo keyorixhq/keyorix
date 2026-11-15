@@ -31,8 +31,8 @@ import (
 // resetVerifyAuditAndExportFlags in audit_offline_anchor_test.go).
 func resetRestoreOverwriteFlag(t *testing.T) {
 	t.Helper()
-	orig := restoreOverwriteExisting
-	t.Cleanup(func() { restoreOverwriteExisting = orig })
+	orig, origReplace := restoreOverwriteExisting, restoreReplaceExistingData
+	t.Cleanup(func() { restoreOverwriteExisting, restoreReplaceExistingData = orig, origReplace })
 }
 
 // buildTestManifest builds a backupManifest whose DBFile/KeyFiles entries

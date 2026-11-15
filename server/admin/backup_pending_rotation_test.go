@@ -155,6 +155,7 @@ func requireRestores(t *testing.T, archive string, overwrite bool) {
 	t.Helper()
 	restoreInput = archive
 	restoreOverwriteExisting = overwrite
+	restoreReplaceExistingData = overwrite // the same-host target holds the source's data
 	restoreMaxEntryBytes = 0
 	restoreMaxTotalBytes = 0
 	out, err := captureStdout(t, func() error { return runAdminRestore(nil, nil) })

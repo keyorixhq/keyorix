@@ -1,5 +1,6 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, User } from '../types';
+import { ApiResponse, PaginatedResponse } from '../types';
+import type { UserListResponse } from './users';
 import type { Permission } from '../types/rbac';
 
 // Normalize role object — handles Go-serialized uppercase field names
@@ -19,8 +20,8 @@ export const adminApi = {
         return response.data.data;
     },
 
-    async getUsers(params?: { page?: number; pageSize?: number; search?: string }): Promise<PaginatedResponse<User>> {
-        const response = await apiClient.get<ApiResponse<PaginatedResponse<User>>>('/api/v1/users', { params });
+    async getUsers(params?: { page?: number; pageSize?: number; search?: string }): Promise<UserListResponse> {
+        const response = await apiClient.get<ApiResponse<UserListResponse>>('/api/v1/users', { params });
         return response.data.data;
     },
 

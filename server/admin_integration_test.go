@@ -901,8 +901,9 @@ func TestAdminRestore_RefusesNonEmptyTargetWithoutOverwrite(t *testing.T) {
 		t.Errorf("expected the non-empty-target refusal message, got:\n%s", out)
 	}
 
-	// --overwrite-existing must let it through.
-	out, err = runAdmin(t, bin, dir, env, "restore", "--config", "./keyorix.yaml", "--input", "./backup.tar.gz", "--overwrite-existing")
+	// --overwrite-existing with --replace-existing-data (the database holds
+	// data) must let it through.
+	out, err = runAdmin(t, bin, dir, env, "restore", "--config", "./keyorix.yaml", "--input", "./backup.tar.gz", "--overwrite-existing", "--replace-existing-data")
 	if err != nil {
 		t.Fatalf("admin restore --overwrite-existing failed: %v\n%s", err, out)
 	}

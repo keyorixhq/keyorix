@@ -33,16 +33,24 @@ silently removing it.
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/audit/siem` | [internal/audit/siem/INVARIANTS.md](../internal/audit/siem/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/notifychan` | [internal/notifychan/INVARIANTS.md](../internal/notifychan/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/rotation` | [internal/rotation/INVARIANTS.md](../internal/rotation/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/fuzzutil/complexity` | [internal/fuzzutil/complexity/INVARIANTS.md](../internal/fuzzutil/complexity/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 2 | 2 | 0 |
 | `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
 | `migrate/internal/splitjson` | [migrate/internal/splitjson/INVARIANTS.md](../migrate/internal/splitjson/INVARIANTS.md) | 1 | 1 | 0 |
 | `migrate/internal/vaultsource` | [migrate/internal/vaultsource/INVARIANTS.md](../migrate/internal/vaultsource/INVARIANTS.md) | 4 | 4 | 0 |
+| `scripts/fuzzing/time-travel` | [scripts/fuzzing/time-travel/INVARIANTS.md](../scripts/fuzzing/time-travel/INVARIANTS.md) | 2 | 1 | 1 |
+| `fuzz/thirdparty` | [fuzz/thirdparty/INVARIANTS.md](../fuzz/thirdparty/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/secrettemplate` | [internal/secrettemplate/INVARIANTS.md](../internal/secrettemplate/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 1 | 1 | 0 |
 
 ## Highest-priority UNGUARDED gaps
 

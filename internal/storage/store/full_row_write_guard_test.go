@@ -33,6 +33,11 @@
 //   - An argument whose type cannot be resolved syntactically: that FAILS the guard
 //     (fail closed) rather than being skipped.
 //
+// Widened sibling (STALE-ROW-WRITES-NOV-1, #2704): full_row_write_widened_guard_test.go
+// applies the same rule to every other production package that imports gorm (derived,
+// not listed) and also reports UpdateColumns(x) and CreateInBatches under UpdateAll.
+// It is report-only until its first green nightly (docs/guard-rollout.d).
+//
 // Sibling, per-operation guards added by the race-fix PRs (#2664, #2666, #2668:
 // internal/core/*_column_scoped_guard_test.go) pin individual fixed operations; this
 // one is the class-wide sweep. Consolidating them is left to a follow-up.
@@ -122,6 +127,24 @@ var fullRowWriteRoots = []string{".", "../../core"}
 
 func fullRowWriteHits(t *testing.T, roots []string) (hits []fullRowHit, nonSecurity []fullRowHit) {
 	t.Helper()
+	return fullRowWriteScan(t, fullRowScanOpts{roots: roots})
+}
+
+// fullRowScanOpts selects what fullRowWriteScan sweeps. The zero value plus roots is
+// the original guard (recursive roots, Save / Updates / Create+UpdateAll).
+type fullRowScanOpts struct {
+	roots []string
+	// flat scans each root's own .go files only, not its subdirectories (the derived
+	// package roots of the widened guard, see fullRowWidenedRoots).
+	flat bool
+	// widened also reports UpdateColumns(x) (Updates without hooks, same full-row
+	// effect) and CreateInBatches(x, n) under an UpdateAll upsert.
+	widened bool
+}
+
+func fullRowWriteScan(t *testing.T, o fullRowScanOpts) (hits []fullRowHit, nonSecurity []fullRowHit) {
+	t.Helper()
+	roots := o.roots
 	sec := securityStateModels()
 	all := map[string]bool{}
 	for _, m := range models.AllTestModels() {
@@ -132,10 +155,13 @@ func fullRowWriteHits(t *testing.T, roots []string) (hits []fullRowHit, nonSecur
 		all[tt.Name()] = true
 	}
 	for _, root := range roots {
-		results := fullRowResultIndex(t, root)
+		results := fullRowResultIndex(t, root, o.flat)
 		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
+			}
+			if o.flat && info.IsDir() && path != root {
+				return filepath.SkipDir
 			}
 			if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
@@ -161,18 +187,28 @@ func fullRowWriteHits(t *testing.T, roots []string) (hits []fullRowHit, nonSecur
 						return true
 					}
 					sel, ok := ce.Fun.(*ast.SelectorExpr)
-					if !ok || len(ce.Args) != 1 {
+					if !ok {
 						return true
 					}
 					call := sel.Sel.Name
+					nargs := 1
+					if call == "CreateInBatches" {
+						nargs = 2 // (rows, batchSize)
+					}
+					if len(ce.Args) != nargs {
+						return true
+					}
 					switch {
 					case call == "Save" || call == "Updates":
+					case call == "UpdateColumns" && o.widened:
 					case call == "Create" && chainHasUpdateAllUpsert(sel.X):
 						call = "Create+UpdateAll"
+					case call == "CreateInBatches" && o.widened && chainHasUpdateAllUpsert(sel.X):
+						call = "CreateInBatches+UpdateAll"
 					default:
 						return true
 					}
-					if call == "Updates" && updatesIsColumnScoped(sel.X, ce.Args[0], env) {
+					if (call == "Updates" || call == "UpdateColumns") && updatesIsColumnScoped(sel.X, ce.Args[0], env) {
 						return true
 					}
 					model := env.modelOf(ce.Args[0])
@@ -274,11 +310,14 @@ type typeEnv struct {
 // file under root to its first result type, so `x, err := ls.GetShareRecord(...)`
 // resolves x. A name declared twice with different result types is dropped
 // (ambiguous: the guard then fails closed on it).
-func fullRowResultIndex(t *testing.T, root string) map[string]ast.Expr {
+func fullRowResultIndex(t *testing.T, root string, flat bool) map[string]ast.Expr {
 	t.Helper()
 	idx := map[string]ast.Expr{}
 	ambiguous := map[string]bool{}
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err == nil && flat && info.IsDir() && path != root {
+			return filepath.SkipDir
+		}
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return err
 		}
@@ -558,6 +597,11 @@ func TestFullRowWriteGuard_NoStaleFullRowWriteOnSecurityStateModels(t *testing.T
 	sort.Strings(bad)
 	if len(bad) > 0 {
 		t.Errorf("%d stale full-row write(s) on security-state models:\n  %s", len(bad), strings.Join(bad, "\n  "))
+	}
+	// A row may exempt a site only the widened sibling sees
+	// (TestFullRowWriteGuard_WidenedScanNoStaleFullRowWrite); that is not a stale row.
+	for _, h := range fullRowWidenedHits(t) {
+		matched[h.key()] = true
 	}
 	var stale []string
 	for _, r := range rows {
