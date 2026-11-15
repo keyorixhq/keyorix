@@ -458,16 +458,6 @@ type osState struct {
 	deleted map[string][]uint
 }
 
-func (w *osWorld) newState() *osState {
-	s := &osState{pools: map[string][]uint{}, deleted: map[string][]uint{}}
-	for k, v := range w.seedPools {
-		cp := make([]uint, len(v))
-		copy(cp, v)
-		s.pools[k] = cp
-	}
-	return s
-}
-
 func (s *osState) add(coll string, id uint) {
 	if id == 0 || coll == "" {
 		return
