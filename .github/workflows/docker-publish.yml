@@ -9,7 +9,7 @@ on:
     # Nightly `main`/`latest` image rebuild instead of one per push to main --
     # runner capacity, 2026-09-26. A real `v*` release tag (above) still always
     # runs this workflow regardless of what it touches.
-    - cron: '41 4 * * *'
+    - cron: '21 8 * * *'
   workflow_dispatch:
 
 # Lock down GITHUB_TOKEN defaults: no permissions at the top level; each job
