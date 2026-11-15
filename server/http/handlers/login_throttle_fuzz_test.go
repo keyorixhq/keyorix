@@ -142,6 +142,11 @@ func buildLoginThrottleFixture(t *testing.T) (*AuthHandler, *core.KeyorixCore, *
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
 	// A bare ":memory:" DSN gives EACH new connection its own separate, empty
 	// database -- gorm's connection pool opening a second connection mid-test
 	// would silently see a blank DB (missing every AutoMigrate'd table). Cap to

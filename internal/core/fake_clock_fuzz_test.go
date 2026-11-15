@@ -177,6 +177,11 @@ func buildFkcWorldWithEncryption(t testing.TB, start time.Time, enc *encryption.
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
 		t.Fatal(err)
 	}
