@@ -187,10 +187,8 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 	// #4249: from another directory than the config's, relative key paths name
 	// other files; judging those would report a "fresh" or partial set that is
 	// not the one every other process uses.
-	if !filepath.IsAbs(baseDir) {
-		if err := enc.CheckRelativeKeyPathBase(); err != nil {
-			return nil, err
-		}
+	if err := enc.CheckRelativeKeyPathBase(baseDir); err != nil {
+		return nil, err
 	}
 	paths, err := RequiredKeyFilePaths(enc, baseDir)
 	if err != nil {

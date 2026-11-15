@@ -111,6 +111,7 @@ var notKeyMaterialCallees = map[string]string{
 	"NewKeyManager":            "KeyManager object",
 	"ReconcileKeySet":          "key-set manifest result (warnings, renamed paths), not key bytes",
 	"AdoptProvenKeySet":        "key-set manifest result (warnings, adopted paths), not key bytes",
+	"CheckRelativeKeyPathBase": "a key-path configuration error (#4249), not key bytes",
 }
 
 // retainingCallees keep the key slice they are passed: passing v to one hands

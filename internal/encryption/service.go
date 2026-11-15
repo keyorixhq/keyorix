@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -74,11 +73,9 @@ func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
 	// #4249: a relative key path opened from another directory than the
 	// config's names other key files and another DEK lock. Refused before
 	// anything opens them (AcquireExclusiveKeyLock, Initialize).
-	var keyPathErr error
-	if !filepath.IsAbs(baseDir) {
-		if keyPathErr = cfg.CheckRelativeKeyPathBase(); keyPathErr != nil {
-			km.configErr = keyPathErr
-		}
+	keyPathErr := cfg.CheckRelativeKeyPathBase(baseDir)
+	if keyPathErr != nil {
+		km.configErr = keyPathErr
 	}
 	return &Service{
 		config:     cfg,

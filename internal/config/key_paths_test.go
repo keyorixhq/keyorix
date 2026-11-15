@@ -42,7 +42,7 @@ func TestCheckRelativeKeyPathBase_FromAnotherCwd_Refused(t *testing.T) {
 	if enc.DEKPath != "keys/dek.key" || enc.SaltPath != "keys/kek.salt" {
 		t.Fatalf("Load rewrote the key paths: %q %q", enc.DEKPath, enc.SaltPath)
 	}
-	err := enc.CheckRelativeKeyPathBase()
+	err := enc.CheckRelativeKeyPathBase(".")
 	if err == nil {
 		t.Fatal("relative key paths from a cwd that is not the config's directory must be refused")
 	}
@@ -67,7 +67,7 @@ func TestCheckRelativeKeyPathBase_RelativeProviderPath_Refused(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfgPath := writeKeyPathConfig(t, t.TempDir(), "    enabled: true\n    dek_path: "+filepath.Join(keyDir, "dek.key")+
 				"\n    salt_path: "+filepath.Join(keyDir, "kek.salt")+"\n    key_provider:\n"+tc.yaml)
-			err := loadKeyPaths(t, t.TempDir(), cfgPath).CheckRelativeKeyPathBase()
+			err := loadKeyPaths(t, t.TempDir(), cfgPath).CheckRelativeKeyPathBase(".")
 			if err == nil || !strings.Contains(err.Error(), tc.key) {
 				t.Fatalf("CheckRelativeKeyPathBase = %v, want a refusal naming %s", err, tc.key)
 			}
@@ -91,7 +91,7 @@ func TestCheckRelativeKeyPathBase_FromConfigDir_Accepted(t *testing.T) {
 		"relative path through a link": {link, "keyorix.yaml"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := loadKeyPaths(t, tc.cwd, tc.path).CheckRelativeKeyPathBase(); err != nil {
+			if err := loadKeyPaths(t, tc.cwd, tc.path).CheckRelativeKeyPathBase("."); err != nil {
 				t.Fatalf("CheckRelativeKeyPathBase: %v", err)
 			}
 		})
@@ -102,7 +102,7 @@ func TestCheckRelativeKeyPathBase_AbsoluteKeyPaths_AcceptedFromAnyCwd(t *testing
 	keyDir := t.TempDir()
 	cfgPath := writeKeyPathConfig(t, t.TempDir(), "    enabled: true\n    dek_path: "+filepath.Join(keyDir, "data.key")+
 		"\n    salt_path: "+filepath.Join(keyDir, "kek.salt")+"\n")
-	if err := loadKeyPaths(t, t.TempDir(), cfgPath).CheckRelativeKeyPathBase(); err != nil {
+	if err := loadKeyPaths(t, t.TempDir(), cfgPath).CheckRelativeKeyPathBase("."); err != nil {
 		t.Fatalf("absolute key paths must be accepted from any cwd: %v", err)
 	}
 }
@@ -110,7 +110,7 @@ func TestCheckRelativeKeyPathBase_AbsoluteKeyPaths_AcceptedFromAnyCwd(t *testing
 // With encryption disabled the key paths are not used: no refusal.
 func TestCheckRelativeKeyPathBase_EncryptionDisabled_NotJudged(t *testing.T) {
 	cfgPath := writeKeyPathConfig(t, t.TempDir(), "    enabled: false\n    dek_path: keys/dek.key\n    salt_path: keys/kek.salt\n")
-	if err := loadKeyPaths(t, t.TempDir(), cfgPath).CheckRelativeKeyPathBase(); err != nil {
+	if err := loadKeyPaths(t, t.TempDir(), cfgPath).CheckRelativeKeyPathBase("."); err != nil {
 		t.Fatalf("CheckRelativeKeyPathBase with encryption disabled: %v", err)
 	}
 }
@@ -119,7 +119,28 @@ func TestCheckRelativeKeyPathBase_EncryptionDisabled_NotJudged(t *testing.T) {
 func TestCheckRelativeKeyPathBase_ConfigNotFromLoad_NotJudged(t *testing.T) {
 	enc := &EncryptionConfig{Enabled: true, DEKPath: "keys/dek.key", SaltPath: "keys/kek.salt"}
 	t.Chdir(t.TempDir())
-	if err := enc.CheckRelativeKeyPathBase(); err != nil {
+	if err := enc.CheckRelativeKeyPathBase("."); err != nil {
 		t.Fatalf("CheckRelativeKeyPathBase on a config without KeyPathBase: %v", err)
+	}
+}
+
+// The base a caller opens key files against decides whether it is judged: the
+// working directory however it is spelled ("." or os.Getwd(), as
+// `admin encryption status` passes) is; another directory the caller chose
+// (backup's staging directory, a test's) is not.
+func TestCheckRelativeKeyPathBase_OpenBase(t *testing.T) {
+	cwd := t.TempDir()
+	enc := loadKeyPaths(t, cwd, writeKeyPathConfig(t, t.TempDir(), relativeKeys))
+	abs, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, base := range []string{".", abs, cwd} {
+		if err := enc.CheckRelativeKeyPathBase(base); err == nil || !strings.Contains(err.Error(), "#4249") {
+			t.Errorf("CheckRelativeKeyPathBase(%q) = %v, want the refusal: %q is the working directory", base, err, base)
+		}
+	}
+	if err := enc.CheckRelativeKeyPathBase(t.TempDir()); err != nil {
+		t.Errorf("an explicit base directory other than the cwd is the caller's choice, not judged: %v", err)
 	}
 }

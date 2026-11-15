@@ -14,10 +14,11 @@ package config
 // backup archives record the configured key paths and restore matches them
 // against the config, so a rewrite would make every existing archive (recorded
 // as e.g. "keys/kek.salt") unrestorable. Instead the code that opens key files
-// (encryption.NewService, keyfiles.InspectKeySet) refuses a relative key path
-// whenever the working directory is not that base, so a relative key path, and
-// the lock beside it, can only ever mean one place. Load itself does not
-// refuse: it also parses configs that never open a key.
+// (encryption.NewService, keyfiles.InspectKeySet, the server's boot) refuses a
+// relative key path it would resolve against the working directory whenever
+// that is not the base, so a relative key path, and the lock beside it, can
+// only ever mean one place. Load itself does not refuse: it also parses
+// configs that never open a key.
 
 import (
 	"fmt"
@@ -48,12 +49,15 @@ func (e *EncryptionConfig) keyMaterialPaths() [][2]string {
 	return out
 }
 
-// CheckRelativeKeyPathBase refuses a relative key-material path when the
-// process working directory is not KeyPathBase, naming the key and both fixes.
-// Absolute and empty paths, disabled encryption, and a config not produced by
-// Load (KeyPathBase ""), are never refused. Callers that open key files
-// through a relative base directory call it first.
-func (e *EncryptionConfig) CheckRelativeKeyPathBase() error {
+// CheckRelativeKeyPathBase refuses a relative key-material path that a caller
+// is about to resolve against the process working directory when that is not
+// KeyPathBase, naming the key and both fixes. openBase is the directory the
+// caller resolves relative key paths against: "." or os.Getwd() (every server
+// and admin path) is judged; any other directory (backup's staging directory,
+// a test's) is the caller's explicit choice and is not. Absolute and empty
+// paths, disabled encryption, and a config not produced by Load (KeyPathBase
+// ""), are never refused.
+func (e *EncryptionConfig) CheckRelativeKeyPathBase(openBase string) error {
 	if e == nil || !e.Enabled || e.KeyPathBase == "" {
 		return nil
 	}
@@ -68,8 +72,14 @@ func (e *EncryptionConfig) CheckRelativeKeyPathBase() error {
 		return nil
 	}
 	cwd, err := os.Getwd()
-	if err != nil || sameDir(e.KeyPathBase, cwd) {
+	if err != nil {
 		return nil // an unreadable cwd: nothing to compare against
+	}
+	if !filepath.IsAbs(openBase) {
+		openBase = filepath.Join(cwd, openBase)
+	}
+	if !sameDir(openBase, cwd) || sameDir(e.KeyPathBase, cwd) {
+		return nil
 	}
 	base := e.KeyPathBase
 	return fmt.Errorf("%s %q is relative, and relative key paths are resolved against the config file's directory (%s), "+
