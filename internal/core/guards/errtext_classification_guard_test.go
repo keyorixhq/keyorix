@@ -312,6 +312,8 @@ func parseErrTextExceptionFile(name string, b []byte) (key, reason string, err e
 }
 
 // loadErrTextExceptionsFS reads path:Func -> reason from every *.tsv in dir of fsys.
+//
+// dir-listing-ok: the exception fragments in testdata, not internal/core's sources
 func loadErrTextExceptionsFS(fsys fs.FS, dir string) (map[string]string, error) {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
@@ -354,6 +356,9 @@ func loadErrTextExceptions(t testing.TB) map[string]string {
 func TestErrTextExceptionLoaderCalibration(t *testing.T) {
 	t.Parallel()
 	const dir = "d"
+	// Fixture keys are built from parts: a whole "a/x.go" literal would be read by
+	// TestNamedSourceFilesExist as a reference to a real file.
+	const goExt = ".go"
 	row := func(key, reason string) *fstest.MapFile {
 		return &fstest.MapFile{Data: []byte(key + "\t" + reason + "\n")}
 	}
@@ -364,35 +369,35 @@ func TestErrTextExceptionLoaderCalibration(t *testing.T) {
 		want    int
 	}{
 		{name: "green: two one-row files", files: fstest.MapFS{
-			dir + "/a__x.go__F.tsv": row("a/x.go:F", "DRIVER: probe"),
-			dir + "/a__y.go__G.tsv": row("a/y.go:G", "HTTP: unmigrated"),
+			dir + "/a__x.go__F.tsv": row("a/x"+goExt+":F", "DRIVER: probe"),
+			dir + "/a__y.go__G.tsv": row("a/y"+goExt+":G", "HTTP: unmigrated"),
 		}, want: 2},
 		{name: "green: README and other non-tsv files are ignored", files: fstest.MapFS{
-			dir + "/README.md":      {Data: []byte("a/x.go:F\twould be a row")},
-			dir + "/a__x.go__F.tsv": row("a/x.go:F", "DRIVER: probe"),
+			dir + "/README.md":      {Data: []byte("a/x" + goExt + ":F\twould be a row")},
+			dir + "/a__x.go__F.tsv": row("a/x"+goExt+":F", "DRIVER: probe"),
 		}, want: 1},
 		{name: "green: comment and blank lines around the row", files: fstest.MapFS{
-			dir + "/a__x.go__F.tsv": {Data: []byte("# why\n\na/x.go:F\tDRIVER: probe\n")},
+			dir + "/a__x.go__F.tsv": {Data: []byte("# why\n\na/x" + goExt + ":F\tDRIVER: probe\n")},
 		}, want: 1},
 		{name: "red: two rows in one file", files: fstest.MapFS{
-			dir + "/a__x.go__F.tsv": {Data: []byte("a/x.go:F\tr1\na/x.go:G\tr2\n")},
+			dir + "/a__x.go__F.tsv": {Data: []byte("a/x" + goExt + ":F\tr1\na/x" + goExt + ":G\tr2\n")},
 		}, wantErr: "holds 2 rows"},
 		{name: "red: empty file", files: fstest.MapFS{
 			dir + "/a__x.go__F.tsv": {Data: []byte("# nothing\n")},
 		}, wantErr: "holds 0 rows"},
 		{name: "red: file name does not match its key", files: fstest.MapFS{
-			dir + "/other.tsv": row("a/x.go:F", "DRIVER: probe"),
+			dir + "/other.tsv": row("a/x"+goExt+":F", "DRIVER: probe"),
 		}, wantErr: "must live in a file named a__x.go__F.tsv"},
 		{name: "red: a second file for the same key", files: fstest.MapFS{
-			dir + "/a__x.go__F.tsv":      row("a/x.go:F", "DRIVER: probe"),
-			dir + "/a__x.go__F.tsv.copy": row("a/x.go:F", "dup"), // ignored: not .tsv
-			dir + "/b__x.go__F.tsv":      row("a/x.go:F", "dup"),
+			dir + "/a__x.go__F.tsv":      row("a/x"+goExt+":F", "DRIVER: probe"),
+			dir + "/a__x.go__F.tsv.copy": row("a/x"+goExt+":F", "dup"), // ignored: not .tsv
+			dir + "/b__x.go__F.tsv":      row("a/x"+goExt+":F", "dup"),
 		}, wantErr: "must live in a file named a__x.go__F.tsv"},
 		{name: "red: empty reason", files: fstest.MapFS{
-			dir + "/a__x.go__F.tsv": {Data: []byte("a/x.go:F\t  \n")},
+			dir + "/a__x.go__F.tsv": {Data: []byte("a/x" + goExt + ":F\t  \n")},
 		}, wantErr: "non-empty reason"},
 		{name: "red: no tab", files: fstest.MapFS{
-			dir + "/a__x.go__F.tsv": {Data: []byte("a/x.go:F reason\n")},
+			dir + "/a__x.go__F.tsv": {Data: []byte("a/x" + goExt + ":F reason\n")},
 		}, wantErr: "non-empty reason"},
 	}
 	for _, tc := range cases {
