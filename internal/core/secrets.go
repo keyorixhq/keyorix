@@ -252,8 +252,8 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		CreatedBy:              req.CreatedBy,
 		OwnerID:                req.OwnerID,
 		OwnerMachineIdentityID: req.OwnerMachineIdentityID,
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
+		CreatedAt:              time.Now().UTC(),
+		UpdatedAt:              time.Now().UTC(),
 	}
 	if req.ParentID != nil && *req.ParentID != 0 {
 		secret.ParentID = req.ParentID
@@ -1084,8 +1084,8 @@ func (c *KeyorixCore) CreateFolder(
 		Status:        "active",
 		CreatedBy:     fmt.Sprintf("%d", actorID),
 		OwnerID:       actorID,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 
 	// SESSION-AT AT1/AT3 (coordinator review, PR #2353): a folder counts
