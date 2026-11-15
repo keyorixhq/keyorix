@@ -398,6 +398,9 @@ var derivedFieldExemptions = map[string]string{
 	"DeprecatedSettingWarnings": "text only: the start-up warnings resolveDeprecatedAliases collected for old keys " +
 		"it already translated to the current insecure_ key before decoding. It changes no setting's value or " +
 		"effect, so no InEffect/Value could depend on it (server/main.go warnDeprecatedSettingAliases only logs it).",
+	"storage.encryption.KeyPathBase": "a location, not a setting: the directory Load read the config from, against which relative " +
+		"key paths are defined (#4249). It weakens nothing; CheckRelativeKeyPathBase uses it only to refuse a " +
+		"process whose working directory is elsewhere, so no InEffect/Value could depend on it.",
 }
 
 // configDerivedFields returns every yaml:"-" field reachable from Config, as

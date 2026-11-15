@@ -22,6 +22,8 @@ import {
     useClassifyDynamicConfig,
 } from '../../features/dynamic-secrets/api';
 import { LeasesPanel } from '../../features/dynamic-secrets/LeasesPanel';
+import { RefusedAdminDsnBanner } from '../../features/dynamic-secrets/RefusedAdminDsnBanner';
+import { ReplaceAdminDsnModal, ReplaceAdminDsnTarget } from '../../features/dynamic-secrets/ReplaceAdminDsnModal';
 
 /**
  * Dynamic Secrets console (ADR-035). Configs are project + environment scoped, and
@@ -54,6 +56,10 @@ const DynamicSecretsPage: React.FC = () => {
 
     const [expanded, setExpanded] = useState<number | null>(null);
     const [showCreate, setShowCreate] = useState(false);
+    // Which config the "Replace admin DSN" form is open for (an id and a name, never a DSN),
+    // and the name of the one just replaced, for the confirmation line.
+    const [replaceTarget, setReplaceTarget] = useState<ReplaceAdminDsnTarget | null>(null);
+    const [replacedName, setReplacedName] = useState('');
 
     const reclassify = (id: number, classification: string, current: string) => {
         if (classification === current) return;
@@ -105,6 +111,19 @@ const DynamicSecretsPage: React.FC = () => {
                                     </span>
                                 </span>
                             </button>
+                            {canWrite && (
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    aria-label={`Replace admin DSN for ${c.name}`}
+                                    onClick={() =>
+                                        setReplaceTarget({ id: c.id, name: c.name, backendType: c.backendType })
+                                    }
+                                >
+                                    Replace admin DSN
+                                </Button>
+                            )}
                             {canWrite ? (
                                 <select
                                     aria-label={`Classification for ${c.name}`}
@@ -184,6 +203,21 @@ const DynamicSecretsPage: React.FC = () => {
                 </div>
             </div>
 
+            {replacedName && (
+                <div className="mb-4" role="status">
+                    <Alert type="success" message={`Admin DSN replaced for ${replacedName}.`} />
+                </div>
+            )}
+
+            <RefusedAdminDsnBanner
+                projectId={projectId}
+                canManage={canWrite}
+                onReplace={(target) => {
+                    setReplacedName('');
+                    setReplaceTarget(target);
+                }}
+            />
+
             {error ? (
                 <Alert
                     type="error"
@@ -191,6 +225,14 @@ const DynamicSecretsPage: React.FC = () => {
                 />
             ) : (
                 loadingOrContent
+            )}
+
+            {replaceTarget && (
+                <ReplaceAdminDsnModal
+                    config={replaceTarget}
+                    onClose={() => setReplaceTarget(null)}
+                    onReplaced={setReplacedName}
+                />
             )}
 
             {showCreate && (

@@ -1,0 +1,1 @@
+server/admin/restore_postgres.go:isPostgresUndefinedTable	DRIVER: Postgres 42P01 / 'does not exist' dialect probe during restore; no typed driver error is available

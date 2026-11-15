@@ -117,6 +117,7 @@ func readReviewLedgerRows(t *testing.T, path string) []reviewLedgerRow {
 // key (the keyCols columns) that appears twice where at least one of the two
 // rows is a fragment, naming both places; a key repeated only inside the flat
 // file is not reported, as before.
+// dir-listing-ok: ledger fragment *.tsv files under docs/<name>.d/
 func readExemptLedgerRows(t *testing.T, dir, name string, keyCols []int) (rows []reviewLedgerRow, dups []string) {
 	t.Helper()
 	flat := "docs/" + name
@@ -181,6 +182,7 @@ func checkReviewed(addedBy, reviewedBy string) string {
 	return ""
 }
 
+// dir-listing-ok: ledger *.tsv files under docs/
 func discoverExemptLedgers(t *testing.T, dir string) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(dir, "*exempt*.tsv"))

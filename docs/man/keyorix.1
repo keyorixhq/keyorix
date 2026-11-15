@@ -539,11 +539,13 @@ Filter by exact actor user ID
 \fB\-\-wide\fR
 Add the REQUEST\-ID column
 .SS keyorix audit verify
-Report the audit hash chain's integrity (non\-zero exit if broken or not proven)
+Report the audit hash chain's integrity (non\-zero exit unless valid)
 .PP
 Report the audit hash chain's integrity.
 .PP
-By default this reads the server's incremental verification: the rolling full re\-walk (every row re\-hashed at least once per cycle) plus a check of the rows after the latest signed checkpoint. Status is VALID, BROKEN, or NOT PROVEN (no recent full verification covers the older rows yet). \-\-full runs a full walk on the server now, as a background job, and waits for it.
+By default this reads the server's incremental verification: the rolling full re\-walk (every row re\-hashed at least once per cycle) plus a check of the rows after the latest signed checkpoint. Status is VALID, BROKEN, NOT PROVEN (no recent full verification covers the older rows yet) or SEALED (the rows that remain verify, but an audit loss was accepted with "admin audit accept\-loss"; the reason names the seal). \-\-full runs a full walk on the server now, as a background job, and waits for it.
+.PP
+Exit codes: 0 VALID; 1 BROKEN or NOT PROVEN; 4 SEALED (the same code "keyorix\-server admin verify\-audit" uses for SEALED; note that 4 is also this CLI's "permission denied" code, so check the printed status when it matters).
 .PP
 Usage: \fBkeyorix audit verify [flags]\fR
 .PP
@@ -1798,7 +1800,7 @@ login exchanges a username and password for a session token via POST /auth/login
 .PP
 The password is read from, in order: \-\-password (insecure: visible in ps and shell history), KEYORIX_PASSWORD or the file named by KEYORIX_PASSWORD_FILE, then a no\-echo prompt. With no terminal and neither variable set, login stops with an error.
 .PP
-When the account has TOTP multi\-factor authentication enabled, /auth/login answers with a second\-factor challenge instead of a token; login then asks for an authenticator code (or an unused recovery code) and completes the challenge via POST /auth/mfa/verify. Pass \-\-mfa\-code to supply it non\-interactively. The code is used for that one request only: it is never echoed, never logged, and never written to the credential file.
+When the account has TOTP multi\-factor authentication enabled, /auth/login answers with a second\-factor challenge instead of a token; login then asks for an authenticator code (or an unused recovery code) and completes the challenge via POST /auth/mfa/verify. To supply it non\-interactively set KEYORIX_MFA_CODE, or KEYORIX_MFA_CODE_FILE to a file that holds it (the \-\-mfa\-code flag is refused: a code on the command line shows in ps and in shell history). The code is used for that one request only: it is never echoed, never logged, and never written to the credential file.
 .PP
 Usage: \fBkeyorix login [flags]\fR
 .PP
@@ -4277,7 +4279,9 @@ Encrypted imports (\-\-decrypt\-with):
   as a standard JSON payload.
 .fi
 .PP
-Importing from a live source (Vault/AWS/Azure/GCP) is not supported by this command \(em use the old CLI's 'secret import \-\-source' until the dedicated migration tool exists.
+An encrypted export given without \-\-decrypt\-with is refused; nothing is imported.
+.PP
+Importing from a live source (Vault/AWS/Azure/GCP) is not supported by this command \(em use keyorix\-migrate (docs/migrate\-from\-vault.md, docs/migrate\-from\-cloud.md).
 .PP
 Usage: \fBkeyorix secret import [flags]\fR
 .PP

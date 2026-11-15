@@ -115,6 +115,11 @@ func run(cfgPath string, secrets, versions, audits, valueBytes int) error {
 			Description:  fmt.Sprintf("scalegen read %d", i),
 			EventTime:    time.Now().UTC(),
 		}
+		// audit-direct-ok: #3462 UPGRADE-RESTORE-COMPAT-1: scalegen is the restore scale scenario's
+		// synthetic-data generator, a standalone dev binary never linked into the server. It writes
+		// only secret.read events with no ActorType, UserID or MachineIdentityID, so it can never emit
+		// a machine-identity-typed event that needs the emitAudit stamp; the rows only exist to be
+		// backed up, restored and verified at volume.
 		if err := st.LogAuditEvent(ctx, ev); err != nil {
 			return fmt.Errorf("audit event %d: %w", i, err)
 		}

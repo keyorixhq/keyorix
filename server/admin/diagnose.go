@@ -58,6 +58,10 @@ func runAdminDiagnose(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 	}
 	fmt.Println("[ OK ] config parse and schema validation")
 
+	// Before the key lock and the key checks: an interrupted rotation is also what
+	// can make those fail, and this line is the one that explains the backups.
+	diagnoseBackupRefusal(cfg)
+
 	lock, err := acquireDatabaseLock(cfg)
 	if err != nil {
 		return err
@@ -100,6 +104,28 @@ func runAdminDiagnose(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 		fmt.Println("The database schema is behind this binary; run `keyorix-server admin migrate` before starting.")
 	}
 	return nil
+}
+
+// diagnoseBackupRefusal reports, non-fatally, that `admin backup` would be
+// refused because a key-rotation staging file is present (#4105). It runs the
+// backup's own check (refusePendingKeyRotation), read-only, so the line and the
+// refusal cannot disagree, and prints the refusal's path and safe-removal steps.
+// A [WARN]: it does not stop the server from starting, only backups.
+func diagnoseBackupRefusal(cfg *config.Config) {
+	err := refusePendingKeyRotation(cfg)
+	if err == nil {
+		return
+	}
+	r, ok := errors.AsType[*pendingRotationRefusal](err)
+	if !ok {
+		fmt.Printf("[WARN] backups would be refused: %v\n", err)
+		return
+	}
+	fmt.Printf("[WARN] backups would be refused: staging file present (%s). %s\n", strings.Join(r.paths, ", "), r.msg)
+	if r.dek {
+		fmt.Println("       the DEK's .pending file: never delete by hand; recover with rotate-kek recovery " +
+			"(docs/operator/key-rotation-runbook.md, \"Interrupted rotate-kek or migrate-provider\")")
+	}
 }
 
 // diagnoseRecoveryKey reports, non-fatally, whether `recover-admin` is

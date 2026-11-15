@@ -177,6 +177,16 @@ func randFuzzSAMLToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// fuzzSAMLSubject is the asserted subject (and, with the domain, the email)
+// every world's Setup signs. It MUST return the same value in the reference
+// world and the faulted world (#2934 (a)): the subject becomes the JIT account's
+// Username/Email/ExternalID, and oracle (a)'s success branch compares the two
+// worlds' User tables, so a per-world value makes every successful faulted run a
+// guaranteed false positive. A var only so
+// TestSAMLACSOp_OracleASeesAPerWorldSubject can show that sensitivity; nothing
+// else may replace it.
+var fuzzSAMLSubject = func() string { return "fuzz-saml-user" }
+
 type samlFuzzState struct {
 	relayState      string
 	samlResponseB64 string
@@ -228,7 +238,7 @@ func init() {
 			if err := seedFuzzSSORole(w, fuzzSAMLRoleEngineer); err != nil {
 				return nil, fmt.Errorf("setup seed role: %w", err)
 			}
-			const subject = "fuzz-saml-user"
+			subject := fuzzSAMLSubject()
 			resp, err := samltest.SignedResponse(fixture, fuzzSAMLIdPEntityID, spMetadata,
 				subject, subject+"@fuzz-saml.example", "Fuzz SAML User", []string{fuzzSAMLGroupEngineers}, relayState)
 			if err != nil {

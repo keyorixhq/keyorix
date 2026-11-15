@@ -238,6 +238,7 @@ func scanTransportFoldsInSource(t testing.TB, file, src string) []foldedRead {
 
 // scanTransportSources scans every non-test file of the transport dirs. A directory that no
 // longer exists fails the glob floor, so a move cannot leave the widening silently empty.
+// dir-listing-ok: lists server/http/handlers and server/grpc/services (the transports it scans), not core sources
 func scanTransportSources(t testing.TB) []foldedRead {
 	t.Helper()
 	var hits []foldedRead
