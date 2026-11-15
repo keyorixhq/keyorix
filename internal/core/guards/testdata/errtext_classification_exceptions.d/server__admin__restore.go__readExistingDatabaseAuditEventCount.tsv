@@ -1,0 +1,1 @@
+server/admin/restore.go:readExistingDatabaseAuditEventCount	DRIVER: 'no such table' probe on a restore-time DB error (SQLite message); admin restore, no status class decided

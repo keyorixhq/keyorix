@@ -2,7 +2,7 @@ package store
 
 // full_row_writer_interleave_test.go — TEST-GUARDS-NOV-1 item 1.
 //
-// docs/full-row-write-exempt.tsv still lists eight full-row writers (Save, or
+// docs/full-row-write-exempt.tsv listed eight full-row writers (Save, or
 // Select("*").Updates) of security-state rows. Each is exempt because a conditional WHERE
 // (state, decision, revoked/approved flags) is argued to stop a stale struct from
 // reverting a concurrent narrow write. These tests turn that argument into an
@@ -24,8 +24,9 @@ package store
 //
 // What this does NOT cover: the core callers' own locks (they only add safety), writers
 // that are not on the exempt list, and the reverse order for writers with no second
-// writer (a transition has nothing narrower to lose). Findings: see
-// TestUpdateLegalHold_StaleUnreleasedSave_KnownOpen below.
+// writer (a transition has nothing narrower to lose). The one finding,
+// UpdateLegalHold's unconditional Save (#4210), is fixed by ReleaseLegalHold; see
+// TestReleaseLegalHold_StaleUnreleasedWriteCannotReactivate below.
 
 import (
 	"context"
@@ -341,9 +342,11 @@ func TestFullRowWriters_NarrowWriteSurvivesStaleTransition_ApproveRiskExceptionI
 	})
 }
 
-// UpdateLegalHold is a plain Save (upsert). Its one caller, LiftLegalHold, always writes
-// released=true, so a stale lift cannot re-activate a hold and cannot touch another hold.
-func TestFullRowWriters_NarrowWriteSurvivesStaleTransition_UpdateLegalHold(t *testing.T) {
+// ReleaseLegalHold (formerly UpdateLegalHold, a plain Save) is a conditional,
+// column-scoped lift: WHERE id AND released=false. A lift built on a pre-lift read
+// matches no row, cannot touch another hold, and does not overwrite the first
+// lifter's attribution (#4210; the former RESIDUAL is gone).
+func TestFullRowWriters_NarrowWriteSurvivesStaleTransition_ReleaseLegalHold(t *testing.T) {
 	forEachInterleaveBackend(t, func(t *testing.T, env *interleaveEnv) {
 		ctx := context.Background()
 		seed := &models.LegalHold{Reason: "case 1", PlacedBy: 1, PlacedAt: interleaveNow()}
@@ -353,55 +356,41 @@ func TestFullRowWriters_NarrowWriteSurvivesStaleTransition_UpdateLegalHold(t *te
 		require.NoError(t, env.a.db.First(&stale, seed.ID).Error)
 
 		// B: lifts hold 1, then places hold 2.
-		var fresh models.LegalHold
-		require.NoError(t, env.b.db.First(&fresh, seed.ID).Error)
-		releasedAt := interleaveNow().Add(time.Minute)
-		fresh.Released, fresh.ReleasedBy, fresh.ReleasedAt, fresh.ReleaseReason = true, 9, &releasedAt, "B lifts"
-		require.NoError(t, env.b.UpdateLegalHold(ctx, &fresh))
+		ok, err := env.b.ReleaseLegalHold(ctx, seed.ID, 9, interleaveNow().Add(time.Minute), "B lifts")
+		require.NoError(t, err)
+		require.True(t, ok)
 		second, err := env.b.CreateLegalHold(ctx, &models.LegalHold{Reason: "case 2", PlacedBy: 9, PlacedAt: interleaveNow().Add(2 * time.Minute)})
 		require.NoError(t, err)
 
-		// A: its lift (released=true, as LiftLegalHold always writes) lands last.
-		lateAt := interleaveNow().Add(3 * time.Minute)
-		stale.Released, stale.ReleasedBy, stale.ReleasedAt, stale.ReleaseReason = true, 1, &lateAt, "A lifts"
-		require.NoError(t, env.a.UpdateLegalHold(ctx, &stale))
+		// A: its lift of the hold it read lands last.
+		ok, err = env.a.ReleaseLegalHold(ctx, stale.ID, 1, interleaveNow().Add(3*time.Minute), "A lifts")
+		require.NoError(t, err)
+		assert.False(t, ok, "a lift built on a pre-lift read must match no row")
 
 		var got models.LegalHold
 		require.NoError(t, env.db.First(&got, seed.ID).Error)
 		assert.True(t, got.Released, "hold 1 must stay lifted")
+		assert.Equal(t, uint(9), got.ReleasedBy, "the losing lift overwrote the first lifter's attribution")
+		assert.Equal(t, "B lifts", got.ReleaseReason)
 		active, err := env.b.GetActiveLegalHold(ctx)
 		require.NoError(t, err)
 		require.NotNil(t, active, "hold 2, placed by B in between, was dropped by A's stale write")
 		assert.Equal(t, second.ID, active.ID)
 		assert.False(t, active.Released)
-		// Known residual (full-row-write-exempt.tsv, RESIDUAL): the second lift overwrites
-		// released_by / release_reason. Logged, not asserted: it is by-design noise.
-		t.Logf("residual: released_by=%d release_reason=%q (B wrote 9/%q)", got.ReleasedBy, got.ReleaseReason, "B lifts")
 	})
 }
 
-// TestUpdateLegalHold_StaleUnreleasedSave_KnownOpen is the one red interleaving found by
-// this file, kept green as a known-open pin. The primitive is a full-row Save with no
-// conditional WHERE: if a caller hands it a struct read BEFORE another replica lifted the
-// hold, and that struct still says released=false, the lift is reverted and the hold is
-// active again (the reverse also holds: a stale released=true struct would lift a hold a
-// concurrent writer had re-opened by row edit).
-//
-// Reachability (CLAUDE.md: a storage-layer demonstration is not application-level
-// reachability): none today. LiftLegalHold, the only caller, always sets released=true
-// before the write, so no production path hands the primitive an unreleased stale struct.
-// The class is latent: any new caller that edits a hold in place and saves it would
-// silently re-activate or drop a hold.
-//
-// Tracked by #4210. Proposed fix (not applied: this PR is tests only): replace Save with a conditional,
-// column-scoped lift, `UPDATE legal_holds SET released=true, released_by=?, released_at=?,
-// release_reason=? WHERE id=? AND released=false`, returning whether a row matched. That
-// also removes the double-lift residual (second lifter gets matched=false).
-//
-// This test asserts the CURRENT (unsafe) behaviour. When the primitive is fixed it fails
-// on purpose: convert it into the positive assertion (the lift survives) and delete the
-// _KnownOpen suffix, as TestKnownOpenTolerances_AreLoadBearing does for its entries.
-func TestUpdateLegalHold_StaleUnreleasedSave_KnownOpen(t *testing.T) {
+// TestReleaseLegalHold_StaleUnreleasedWriteCannotReactivate was
+// TestUpdateLegalHold_StaleUnreleasedSave_KnownOpen (TEST-GUARDS-NOV-1), the red
+// interleaving of this file: UpdateLegalHold was a full-row Save, so a struct read
+// before another replica lifted the hold, still saying released=false and saved
+// after some in-place edit, re-activated the lifted hold. The primitive is now
+// ReleaseLegalHold, which takes no struct and writes only the release columns
+// under released=false, so no write through the legal-hold storage surface can
+// set released back to false (#4210). The interleaving is kept with the stale
+// struct's id, edit and released=false, and the assertion is now positive: the
+// lift survives, the edit is not written, and the stale writer is told it lost.
+func TestReleaseLegalHold_StaleUnreleasedWriteCannotReactivate(t *testing.T) {
 	forEachInterleaveBackend(t, func(t *testing.T, env *interleaveEnv) {
 		ctx := context.Background()
 		seed := &models.LegalHold{Reason: "case 1", PlacedBy: 1, PlacedAt: interleaveNow()}
@@ -410,21 +399,23 @@ func TestUpdateLegalHold_StaleUnreleasedSave_KnownOpen(t *testing.T) {
 		var stale models.LegalHold
 		require.NoError(t, env.a.db.First(&stale, seed.ID).Error)
 
-		var fresh models.LegalHold
-		require.NoError(t, env.b.db.First(&fresh, seed.ID).Error)
-		releasedAt := interleaveNow().Add(time.Minute)
-		fresh.Released, fresh.ReleasedBy, fresh.ReleasedAt = true, 9, &releasedAt
-		require.NoError(t, env.b.UpdateLegalHold(ctx, &fresh))
+		ok, err := env.b.ReleaseLegalHold(ctx, seed.ID, 9, interleaveNow().Add(time.Minute), "B lifts")
+		require.NoError(t, err)
+		require.True(t, ok)
 
-		stale.Reason = "case 1 (edited)" // a hypothetical in-place edit by A, still released=false
-		require.NoError(t, env.a.UpdateLegalHold(ctx, &stale))
+		stale.Reason = "case 1 (edited)" // A's in-place edit of its pre-lift copy, still released=false
+		require.False(t, stale.Released)
+		ok, err = env.a.ReleaseLegalHold(ctx, stale.ID, stale.PlacedBy, interleaveNow().Add(2*time.Minute), stale.Reason)
+		require.NoError(t, err)
+		assert.False(t, ok, "the stale writer must learn the hold was already released")
 
 		var got models.LegalHold
 		require.NoError(t, env.db.First(&got, seed.ID).Error)
-		if got.Released {
-			t.Fatalf("UpdateLegalHold now keeps a concurrent lift (released=true survived a stale released=false Save): " +
-				"the known-open finding is fixed. Turn this test into the positive assertion and drop the _KnownOpen suffix.")
-		}
-		t.Logf("known open (latent, no production caller): stale released=false Save reverted another replica's lift")
+		assert.True(t, got.Released, "a stale write re-activated a lifted legal hold")
+		assert.Equal(t, uint(9), got.ReleasedBy)
+		assert.Equal(t, "case 1", got.Reason, "the stale struct's edit was written")
+		active, err := env.b.GetActiveLegalHold(ctx)
+		require.NoError(t, err)
+		assert.Nil(t, active, "the lifted hold is active again")
 	})
 }

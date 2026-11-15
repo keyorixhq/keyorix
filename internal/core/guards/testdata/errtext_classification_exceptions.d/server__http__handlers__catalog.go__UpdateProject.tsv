@@ -1,0 +1,1 @@
+server/http/handlers/catalog.go:UpdateProject	HTTP: unmigrated handler family (INV-HTTP-classify-errors-by-sentinel-not-text, ERRLOSS-SENTINELS-1 task 3); classifies core/storage errors by text; outside this session's paths (server/http)

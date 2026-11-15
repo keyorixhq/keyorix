@@ -440,6 +440,14 @@ check-growth:
 check-growth-selftest:
 	scripts/ci/check-growth-guards.sh --self-test
 	scripts/ci/check-no-new-ledger.sh --self-test
+# --- docs ---
+# docs-cli-check: every fenced `keyorix` / `keyorix-server` command line in the docs must name
+# a command and flags the built binaries accept (scripts/docs/check-cli-flags.sh; placeholders
+# in scripts/docs/check-cli-flags.allow). The self-test plants bad lines and must see them.
+.PHONY: docs-cli-check
+docs-cli-check: build
+	scripts/docs/check-cli-flags.sh --self-test --cli $(BUILD_DIR)/$(BINARY_CLI) --server $(BUILD_DIR)/$(BINARY_SERVER)
+	scripts/docs/check-cli-flags.sh --cli $(BUILD_DIR)/$(BINARY_CLI) --server $(BUILD_DIR)/$(BINARY_SERVER)
 test:
 	go test -race ./...
 test-cover:

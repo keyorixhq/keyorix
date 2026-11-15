@@ -44,7 +44,7 @@ want() { case " $DRILL_SCENARIOS " in *" $1 "*) return 0 ;; esac; return 1; }
 list_names() {
     local off=0 page n
     while :; do
-        page="$(cli "$1" "$2" secret list --project 1 --format json --limit 100 --offset "$off" \
+        page="$(cli "$1" "$2" secret list --project 1 --output json --limit 100 --offset "$off" \
             | jq -r '.. | objects | select(has("name") and has("id")) | .name')"
         [ -n "$page" ] || break
         echo "$page"

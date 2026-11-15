@@ -52,16 +52,7 @@ func TestMasterPassphrase_NonPasswordProvider_ReturnsEmptyNoError(t *testing.T) 
 
 // --- InitWithConfig -----------------------------------------------------
 
-func TestInitWithConfig_Disabled_NoError(t *testing.T) {
-	chdirTemp(t)
-	cfg := testConfig(false)
-	if err := InitWithConfig(cfg, zeroPassSrc()); err != nil {
-		t.Fatalf("expected nil error when encryption disabled, got %v", err)
-	}
-	if _, err := os.Stat("dek.key"); err == nil {
-		t.Fatal("dek.key must not be created when encryption is disabled")
-	}
-}
+// The disabled-encryption refusal lives in init_disabled_exit_test.go.
 
 func TestInitWithConfig_CreatesKeyFilesWithRestrictivePerms(t *testing.T) {
 	chdirTemp(t)
@@ -356,28 +347,12 @@ func TestStatusWithConfig_DisabledReturnsNilNeverErrors(t *testing.T) {
 	chdirTemp(t)
 	cfg := testConfig(false)
 	if err := StatusWithConfig(cfg, zeroPassSrc()); err != nil {
-		t.Fatalf("StatusWithConfig must always return nil, got %v", err)
+		t.Fatalf("StatusWithConfig with encryption disabled must return nil, got %v", err)
 	}
 }
 
-func TestStatusWithConfig_WrongPassphraseStillReturnsNil(t *testing.T) {
-	chdirTemp(t)
-	cfg := testConfig(true)
-	setPassphraseEnv(t, testBaselinePassphrase)
-	if err := InitWithConfig(cfg, zeroPassSrc()); err != nil {
-		t.Fatalf("bootstrap: %v", err)
-	}
-	setPassphraseEnv(t, testWrongPassphrase)
-	stdout, err := captureOutput(t, func() error {
-		return StatusWithConfig(cfg, zeroPassSrc())
-	})
-	if err != nil {
-		t.Fatalf("StatusWithConfig must always return nil (status is read-only reporting), got %v", err)
-	}
-	if strings.Contains(stdout, testWrongPassphrase) || strings.Contains(stdout, testBaselinePassphrase) {
-		t.Fatal("passphrase leaked into status output")
-	}
-}
+// The failing-state cases (wrong passphrase, held lock, no passphrase source)
+// live in status_exit_test.go.
 
 func TestFixPermsWithConfig_Disabled_Refuses(t *testing.T) {
 	chdirTemp(t)

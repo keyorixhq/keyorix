@@ -327,11 +327,11 @@ var operationOverrides = map[string]overrideEntry{
 	"GRPC keyorix.v1.DynamicSecretService.RenewLease":                {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.RenewLease\" — E3"},
 	"GRPC keyorix.v1.DynamicSecretService.RevokeLease":               {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.RevokeLease\" — E3"},
 	"GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases":           {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.RevokeAllLeases\" — E3"},
-	// DYNAMIC-ADMIN-DSN-1: admin_dsn replace. Not in opCatalog yet; its audit-failure and
-	// non-admin paths are driven by internal/core TestDynamicSecrets_UpdateAdminDSN_* and the
-	// REST/gRPC tests (server/http/dynamic_secret_admin_dsn_test.go, services/dynamic_admin_dsn_test.go).
-	"REST PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn": {StatusPending, "new in DYNAMIC-ADMIN-DSN-1; opCatalog entry is a follow-up"},
-	"GRPC keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN": {StatusPending, "new in DYNAMIC-ADMIN-DSN-1; opCatalog entry is a follow-up"},
+	// DYNAMIC-ADMIN-DSN-1: admin_dsn replace, registered in ops_dynamic_admin_dsn_test.go (DYNAMIC-DSN-TAILS-1).
+	// Its non-admin and live-lease host-pin paths are driven by internal/core TestDynamicSecrets_UpdateAdminDSN_*
+	// and the REST/gRPC tests (server/http/dynamic_secret_admin_dsn_test.go, services/dynamic_admin_dsn_test.go).
+	"REST PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn": {StatusFuzzed, "opCatalog key \"REST PATCH .../admin-dsn\" — ops_dynamic_admin_dsn_test.go"},
+	"GRPC keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN": {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.UpdateConfigAdminDSN\" — ops_dynamic_admin_dsn_test.go"},
 
 	// SESSION-AT AT5: /scim/v2 was never reachable through liveOperationKeys's
 	// own router construction (cfg.SCIM.Enabled was never set anywhere in this

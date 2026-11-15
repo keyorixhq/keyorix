@@ -431,6 +431,7 @@ func (r *coreCanaryRun) opRead(id uint, flag byte) {
 	}
 }
 
+// dir-listing-ok: lists the compliance-evidence export directory the test itself just wrote under its temp dir, not core sources
 func (r *coreCanaryRun) opEvidence() {
 	dir := filepath.Join(r.dir, "evidence")
 	res, err := r.c.ExportComplianceEvidence(r.ctx, dir)

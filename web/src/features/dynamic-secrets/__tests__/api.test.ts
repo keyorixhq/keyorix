@@ -12,12 +12,16 @@ vi.mock('../../../services/dynamicSecrets', () => ({
         issue: vi.fn(),
         revokeLease: vi.fn(),
         revokeAll: vi.fn(),
+        listRefusedAdminDsn: vi.fn(),
+        updateAdminDsn: vi.fn(),
     },
 }));
 
 import { dynamicSecretsApi } from '../../../services/dynamicSecrets';
 import {
     DYNAMIC_SECRET_KEYS,
+    useRefusedAdminDsn,
+    useUpdateDynamicConfigAdminDSN,
     useDynamicConfigs,
     useDynamicLeases,
     useCreateDynamicConfig,
@@ -35,6 +39,8 @@ const mock = dynamicSecretsApi as unknown as {
     issue: ReturnType<typeof vi.fn>;
     revokeLease: ReturnType<typeof vi.fn>;
     revokeAll: ReturnType<typeof vi.fn>;
+    listRefusedAdminDsn: ReturnType<typeof vi.fn>;
+    updateAdminDsn: ReturnType<typeof vi.fn>;
 };
 
 function createWrapper() {
@@ -184,5 +190,131 @@ describe('useRevokeAllLeases', () => {
 
         expect(mock.revokeAll).toHaveBeenCalledWith(3);
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: DYNAMIC_SECRET_KEYS.leases(3) });
+    });
+});
+
+const SECRET_DSN = 'postgres://admin:hunter2-s3cret@db.internal:5432/app';
+
+describe('useRefusedAdminDsn', () => {
+    it('fetches the project report under a key made of ids only', async () => {
+        mock.listRefusedAdminDsn.mockResolvedValueOnce({ configs: [{ id: 7 }], unreadable: 0 });
+        const { wrapper, queryClient } = createWrapper();
+        const { result } = renderHook(() => useRefusedAdminDsn(5), { wrapper });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        expect(mock.listRefusedAdminDsn).toHaveBeenCalledWith(5);
+        expect(
+            queryClient
+                .getQueryCache()
+                .getAll()
+                .map((q) => q.queryKey)
+        ).toEqual([DYNAMIC_SECRET_KEYS.refusedAdminDsn(5)]);
+    });
+
+    it('does not fetch without a project, or when disabled (roles that cannot manage configs)', async () => {
+        renderHook(() => useRefusedAdminDsn(0), { wrapper: createWrapper().wrapper });
+        renderHook(() => useRefusedAdminDsn(5, false), { wrapper: createWrapper().wrapper });
+        await act(async () => {});
+        expect(mock.listRefusedAdminDsn).not.toHaveBeenCalled();
+    });
+
+    it('does not retry a refusal (a 403 must not thrash)', async () => {
+        mock.listRefusedAdminDsn.mockRejectedValue(new Error('403'));
+        const { result } = renderHook(() => useRefusedAdminDsn(5), { wrapper: createWrapper().wrapper });
+        await waitFor(() => expect(result.current.isError).toBe(true));
+        expect(mock.listRefusedAdminDsn).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('useUpdateDynamicConfigAdminDSN', () => {
+    it('replaces the DSN and invalidates every dynamic-secrets query (configs list and refused report)', async () => {
+        mock.updateAdminDsn.mockResolvedValueOnce(undefined);
+        const { wrapper, queryClient } = createWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useUpdateDynamicConfigAdminDSN(), { wrapper });
+
+        act(() => {
+            result.current.mutate({ id: 7, adminDsn: SECRET_DSN });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        expect(mock.updateAdminDsn).toHaveBeenCalledWith(7, SECRET_DSN);
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: DYNAMIC_SECRET_KEYS.all });
+        expect(DYNAMIC_SECRET_KEYS.list(5, 2).slice(0, DYNAMIC_SECRET_KEYS.all.length)).toEqual(
+            DYNAMIC_SECRET_KEYS.all
+        );
+        expect(DYNAMIC_SECRET_KEYS.refusedAdminDsn(5).slice(0, DYNAMIC_SECRET_KEYS.all.length)).toEqual(
+            DYNAMIC_SECRET_KEYS.all
+        );
+    });
+
+    it('surfaces a failure and does not invalidate', async () => {
+        const failure = new Error('refused');
+        mock.updateAdminDsn.mockRejectedValueOnce(failure);
+        const { wrapper, queryClient } = createWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useUpdateDynamicConfigAdminDSN(), { wrapper });
+
+        act(() => {
+            result.current.mutate({ id: 7, adminDsn: SECRET_DSN });
+        });
+        await waitFor(() => expect(result.current.isError).toBe(true));
+
+        expect(result.current.error).toBe(failure);
+        expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
+    it('never puts the DSN in a query cache key, and drops the mutation (variables included) on unmount', async () => {
+        mock.updateAdminDsn.mockResolvedValueOnce(undefined);
+        mock.list.mockResolvedValue([]);
+        mock.listRefusedAdminDsn.mockResolvedValue({ configs: [], unreadable: 0 });
+        const { wrapper, queryClient } = createWrapper();
+        const { result, unmount } = renderHook(
+            () => ({
+                configs: useDynamicConfigs(5, 2),
+                refused: useRefusedAdminDsn(5),
+                update: useUpdateDynamicConfigAdminDSN(),
+            }),
+            { wrapper }
+        );
+        await waitFor(() => expect(result.current.refused.isSuccess).toBe(true));
+
+        act(() => {
+            result.current.update.mutate({ id: 7, adminDsn: SECRET_DSN });
+        });
+        await waitFor(() => expect(result.current.update.isSuccess).toBe(true));
+
+        const keys = JSON.stringify(
+            queryClient
+                .getQueryCache()
+                .getAll()
+                .map((q) => q.queryKey)
+        );
+        expect(keys).not.toContain('hunter2');
+        expect(keys).not.toContain('postgres://');
+
+        unmount();
+        await waitFor(() => expect(queryClient.getMutationCache().getAll()).toHaveLength(0));
+    });
+});
+
+describe('useUpdateDynamicConfigAdminDSN forbidden', () => {
+    it('invalidates the lists on forbidden (which covers a config that is gone), but not for other failures', async () => {
+        const { wrapper, queryClient } = createWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useUpdateDynamicConfigAdminDSN(), { wrapper });
+
+        mock.updateAdminDsn.mockRejectedValueOnce(Object.assign(new Error('refused'), { kind: 'refused' }));
+        act(() => {
+            result.current.mutate({ id: 7, adminDsn: SECRET_DSN });
+        });
+        await waitFor(() => expect(result.current.isError).toBe(true));
+        expect(invalidateSpy).not.toHaveBeenCalled();
+
+        mock.updateAdminDsn.mockRejectedValueOnce(Object.assign(new Error('gone'), { kind: 'forbidden' }));
+        act(() => {
+            result.current.mutate({ id: 7, adminDsn: SECRET_DSN });
+        });
+        await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: DYNAMIC_SECRET_KEYS.all }));
     });
 });

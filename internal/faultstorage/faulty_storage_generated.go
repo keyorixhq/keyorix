@@ -5974,10 +5974,16 @@ func (w *FaultyStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 		case KindError:
 			return injected
 		case KindEffectThenError:
+			// audit-direct-ok: generated pass-through inside the test/fuzz-harness-only wrapper; it
+			// forwards the *models.AuditEvent the real caller already built, unmodified, and never
+			// builds or mutates one, so it cannot be the site of an attribution bug.
 			_ = w.real.LogAuditEvent(ctx, event)
 			return injected
 		}
 	}
+	// audit-direct-ok: generated pass-through inside the test/fuzz-harness-only wrapper; it
+	// forwards the *models.AuditEvent the real caller already built, unmodified, and never
+	// builds or mutates one, so it cannot be the site of an attribution bug.
 	return w.real.LogAuditEvent(ctx, event)
 }
 
@@ -6462,6 +6468,23 @@ func (w *FaultyStorage) RecordPendingAuditEventFailure(ctx context.Context, id u
 		}
 	}
 	return w.real.RecordPendingAuditEventFailure(ctx, id, reason)
+}
+
+func (w *FaultyStorage) ReleaseLegalHold(ctx context.Context, id uint, releasedBy uint, releasedAt time.Time, reason string) (bool, error) {
+	fire, kind, injected := w.check("ReleaseLegalHold")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ReleaseLegalHold(ctx, id, releasedBy, releasedAt, reason)
+			return rv1, injected
+		}
+	}
+	return w.real.ReleaseLegalHold(ctx, id, releasedBy, releasedAt, reason)
 }
 
 func (w *FaultyStorage) ReleaseLoginAttempt(ctx context.Context, id uint) error {
@@ -7644,22 +7667,6 @@ func (w *FaultyStorage) UpdateLastLogin(ctx context.Context, userID uint, loginA
 		}
 	}
 	return w.real.UpdateLastLogin(ctx, userID, loginAt)
-}
-
-func (w *FaultyStorage) UpdateLegalHold(ctx context.Context, h *models.LegalHold) error {
-	fire, kind, injected := w.check("UpdateLegalHold")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			return injected
-		case KindEffectThenError:
-			_ = w.real.UpdateLegalHold(ctx, h)
-			return injected
-		}
-	}
-	return w.real.UpdateLegalHold(ctx, h)
 }
 
 func (w *FaultyStorage) UpdateLoginLockoutState(ctx context.Context, id uint, attempts int, lastFailedAt *time.Time, lockedUntil *time.Time, lockoutCount int) error {

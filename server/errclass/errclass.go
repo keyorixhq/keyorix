@@ -210,6 +210,7 @@ var sentinelTable = []Sentinel{
 	{"storage.ErrDuplicateSecretDependency", storage.ErrDuplicateSecretDependency, Conflict},
 	{"storage.ErrDuplicateActiveMembership", storage.ErrDuplicateActiveMembership, Conflict},
 	{"storage.ErrLegalHoldAlreadyActive", storage.ErrLegalHoldAlreadyActive, Conflict},
+	{"storage.ErrLegalHoldAlreadyReleased", storage.ErrLegalHoldAlreadyReleased, Conflict},
 	{"storage.ErrBreakGlassAlreadyActive", storage.ErrBreakGlassAlreadyActive, Conflict},
 	{"storage.ErrBreakGlassAlreadyReviewed", storage.ErrBreakGlassAlreadyReviewed, Conflict},
 	{"core.ErrUserAlreadyExists", core.ErrUserAlreadyExists, Conflict},

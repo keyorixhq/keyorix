@@ -145,6 +145,7 @@ func AuthStatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) e
 	if status["enabled"].(bool) {
 		fmt.Println("✅ Status: ENABLED")
 	} else {
+		// Report, stays (#4270 sweep): the configuration says disabled; like `status` with Enabled: false, that is the answer, not a failure.
 		fmt.Println("❌ Status: DISABLED")
 	}
 	if status["initialized"].(bool) {
@@ -153,9 +154,11 @@ func AuthStatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) e
 			fmt.Printf("🔑 Key Version: %s\n", keyVersion)
 		}
 	} else {
+		// Report, stays (#4270 sweep): Initialize above succeeded, so this only shows for a disabled configuration.
 		fmt.Println("❌ Initialized: NO")
 	}
 	if err := ShowAuthEncryptionStats(db, status["enabled"].(bool)); err != nil {
+		// Advisory, stays (#4270 sweep): the optional row counts; the key state above was already read.
 		fmt.Printf("⚠️  Warning: Could not retrieve statistics: %v\n", err)
 	}
 	return nil
@@ -401,6 +404,7 @@ func ValidateAuthEncryptionWithConfig(cfg *config.Config, verbose bool, passSrc 
 	// A non-zero unmigrated count is reported per-row above and turns this
 	// into a non-zero exit rather than a silent pass (#292).
 	if unmigrated > 0 {
+		// Returns an error right below: already correct (#4270 sweep).
 		fmt.Printf("❌ %d authentication row(s) still hold a plaintext value with no encrypted counterpart — run `auth-encryption migrate`\n", unmigrated)
 		return fmt.Errorf("%d authentication row(s) need migration to encrypted storage", unmigrated)
 	}

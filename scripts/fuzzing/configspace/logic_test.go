@@ -502,7 +502,7 @@ func TestCheckInProc(t *testing.T) {
 	})
 	t.Run("refusal names the option or not", func(t *testing.T) {
 		c := base(map[string]int{"p_bad": 1})
-		wantKeys(t, CheckInProc(m, c, InProcResult{Err: "boom"}), "I2/S3/refusal-unnamed:p_bad")
+		wantKeys(t, CheckInProc(m, c, InProcResult{Err: "boom"}), "I2/S3/refusal-unnamed:boom")
 		wantKeys(t, CheckInProc(m, c, InProcResult{Err: "server.tls.min_version is not valid"}))
 		// no known fault and no live conflict: nothing to name
 		wantKeys(t, CheckInProc(m, base(map[string]int{"p_other": 0}), InProcResult{Err: "boom"}))
@@ -544,7 +544,7 @@ func TestCheckProc(t *testing.T) {
 	t.Run("refusals", func(t *testing.T) {
 		// refused with exit 0, naming nothing
 		wantKeys(t, CheckProc(m, mk(map[string]int{"p_bad": 1}, nil), InProcResult{}, ProcResult{Log: "no idea"}),
-			"I2/S3/refusal-exit0:p_bad", "I2/S3/proc-refusal-unnamed:p_bad")
+			"I2/S3/refusal-exit0:p_bad", "I2/S3/proc-refusal-unnamed:no idea")
 		// refused properly, naming the option
 		wantKeys(t, CheckProc(m, mk(map[string]int{"p_bad": 1}, nil), InProcResult{}, ProcResult{Exit: 1, Log: "server.tls.min_version is invalid"}))
 		// a refusal the in-process check did not predict

@@ -11,7 +11,7 @@ mistakes that cost data. Every command below was checked against the cobra defin
 | You need to... | Run | What changes | What does not |
 |---|---|---|---|
 | Replace the key that encrypts the data (suspected DEK exposure, policy) | `admin encryption rotate` | A new DEK; every DEK-encrypted row is re-encrypted in **one** transaction (secret versions, API tokens and clients, password resets, MFA secrets, dynamic-secret configs and leases, notification channels). | The master passphrase. |
-| Change the master passphrase (departure, exposure, policy) | `admin encryption rotate-kek` | The wrapped DEK, under a KEK derived from the new passphrase and a fresh salt. The evidence-signing and audit-checkpoint keys change with it. | No database row; the DEK value. The database must still be reachable: it is read to finish an interrupted DEK rotation first. |
+| Change the master passphrase (departure, exposure, policy) | `admin encryption rotate-kek` | The wrapped DEK, under a KEK derived from the new passphrase and a fresh salt. The evidence-signing and audit-checkpoint keys change with it. | No data row and not the DEK value. The audit chain does change: a `system.audit_key_transition` event is appended and the verification state is re-signed under the new key (section 5). The database must still be reachable: it is read to finish an interrupted DEK rotation first. |
 | Move the KEK to another provider (password, file, env, exec, shamir, tpm, aws-kms, gcp-kms, azure-kms) | `admin encryption migrate-provider --to-type ... --confirm` | The DEK wrapping only; the previous wrapped DEK is kept as `<dek_path>.migrate-backup.*`. | Secret values. Like `rotate-kek`, it needs the database reachable. |
 | Replace the lost-admin recovery key | `admin recovery-key rotate` | The recovery verifier; the old key stops working at once. See [j5-lost-admin.md](j5-lost-admin.md). | Not an encryption key. |
 
@@ -30,12 +30,23 @@ does. That matters for the audit chain: section 5.
    stop the server first; on PostgreSQL it works beside a live server, but fails and leaves no
    archive if a rotation is in progress. `--output` must not exist. The passphrase comes from
    `KEYORIX_MASTER_PASSWORD`, `--passphrase-file`, `--passphrase-fd` or `--passphrase-stdin`.
-2. **Check the current state.** Both are read-only and take no lock:
+2. **Check the current state.** Both are read-only and do not take the database lock, but
+   they read the key directory, which a running server holds exclusively: beside a live server
+   they print `another process holds the DEK lock exclusively (a live server, or an in-progress
+   rotation/migrate-provider)` instead of a result. Stop the servers first (step 4):
 
    ```bash
    keyorix-server admin encryption status --config ./keyorix.yaml
    keyorix-server admin encryption validate --config ./keyorix.yaml
    ```
+
+   Stop the server first: a live server holds the DEK lock, and `status` then prints
+   `❌ another process holds the DEK lock exclusively ...`. A failed `status` exits non-zero
+   (1), like `validate`: no keys yet (`❌ no wrapped DEK at ...`, for example the wrong
+   directory or `dek_path`), a wrong passphrase (`❌ ... failed to unwrap DEK`), a missing
+   passphrase source (`⚠️  KEYORIX_MASTER_PASSWORD is not set ...`) and the held lock all print
+   their line and exit 1, so `status && rotate --confirm` stops at a failed check. A healthy
+   key set exits 0 (and so does `Enabled: false`).
 
 3. **Baseline the audit chain** so any change afterwards is yours to explain, and write a fresh
    external anchor (details in [audit-chain-break-runbook.md](audit-chain-break-runbook.md) §2, §7):
@@ -170,6 +181,20 @@ carried over, not cleared.
   With the new key alone, `verify-audit` reads `VALID` and lists the transition's old-key
   signature under "not proven". With the previous key it also proves that a holder of the
   new key alone did not forge the pre-rotation state.
+- **Older checkpoints and the key you verify with.** `rotate-kek` writes the fresh checkpoint
+  itself ("a fresh checkpoint is signed under it when the chain verified"); no separate command
+  is needed. What reads differently afterwards is which key you hand to `verify-audit`
+  (reproduced on SQLite with the native binary, one checkpoint exported before the rotation):
+
+  | `verify-audit` run against the rotated database | Result |
+  |---|---|
+  | `--anchor <pre-rotation export> --checkpoint-key-file <old key>` | `Verdict: BROKEN`, exit 1: `audit high-water mark fails its signature under the supplied checkpoint key (claims key version "ack-<new>") — the high-water row was tampered with, or the wrong key was supplied`. The database now carries state signed under the new key; the old key no longer authenticates it. This is the key mismatch, not tampering. |
+  | `--anchor <pre-rotation export> --checkpoint-key-file <new key>` | `Verdict: VALID`, but the anchor is `present but UNAUTHENTICATED`: it was signed under the old key, so its claims are advisory and not cross-checked. |
+  | the same, plus `--previous-checkpoint-key-file <old key>` | `Verdict: VALID`; the anchor is `authenticated and cross-checked against the live chain`, and `old-key signatures checked: 1`. |
+
+  So after a `rotate-kek`, verify with the **new** key and pass the old one as
+  `--previous-checkpoint-key-file`. To anchor going forward, export a new anchor with
+  `admin audit export-checkpoint` as above.
 - `compliance verify` still reports evidence packs signed before the rotation as "superseded
   key version", not tampered (the evidence-signing key is not carried over).
 
@@ -325,8 +350,14 @@ event count.
   turns off the mixed-set check for that start.
 - **Do not delete `*.migrate-backup.*` or `*.pre-restore-*` files** until the result is verified.
   `admin encryption migrate-provider cleanup --dry-run`, then `--confirm`, is the supported
-  deletion. It takes the key-directory lock (`dek.lock`) exclusively, so it refuses while a
-  server or a `migrate-provider`/rotation runs, `--force` or not: stop the server first.
+  deletion of the `*.migrate-backup.*` files (and of a leftover `<backup>.restoring`, section
+  6.3); it finds nothing else (`No migrate-backup files found — nothing to clean up.` while
+  `dek.key.pre-restore-<timestamp>` sits next to it). It takes the key-directory lock
+  (`dek.lock`) exclusively, so it refuses while a server or a `migrate-provider`/rotation
+  runs, `--force` or not: stop the server first. No command removes the `*.pre-restore-*`
+  files that `admin restore --overwrite-existing` leaves (the previous database, `-wal`/`-shm`
+  and key files, including a `dek.key` copy): delete them yourself once the restored instance
+  is verified and you hold the archive you still need.
 - **Do not put a passphrase on a command line, in shell history or in a shared log.** Use a
   `0600` file, a descriptor, or stdin; the new passphrase on a `migrate-provider` back to the
   password provider comes from `KEYORIX_NEW_MASTER_PASSWORD` or the `--new-passphrase-*` flags.

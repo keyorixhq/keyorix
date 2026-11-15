@@ -23,15 +23,18 @@ CSK-016	EXPECTED-DIFFERENCE	I2	inproc	invalid-fallback:grpc.keepalive.time:-1m	g
 CSK-017	EXPECTED-DIFFERENCE	I2	inproc	invalid-fallback:grpc.keepalive.time:five minutes	grpc.keepalive.time=4	as CSK-016
 CSK-018	HARDENING	I2	inproc	invalid-fallback:sec.lockout.max:-3	sec.lockout.max=4	falls back to the default (not weaker); not refused
 CSK-019	HARDENING	I2	inproc	invalid-fallback:sec.lockout.window:15 minutes	sec.lockout.window=4	falls back to the default (not weaker); not refused
-CSK-020	DEFECT	I2	inproc	refusal-unnamed:http.enabled	http.enabled=3	YAML type error names a line number, not the key
-CSK-021	DEFECT	I2	proc	proc-refusal-unnamed:http.enabled	http.enabled=3	as CSK-020, process stage
-CSK-022	DEFECT	I2	inproc	refusal-unnamed:http.maxbody	http.maxbody=5	as CSK-020
-CSK-023	DEFECT	I2	proc	proc-refusal-unnamed:enc.dek	enc.dek=3	boot refusal names the file path, not the key
-CSK-024	DEFECT	I2	proc	proc-refusal-unnamed:enc.salt	enc.salt=3	as CSK-023
-CSK-025	DEFECT	I2	proc	proc-refusal-unnamed:grpc.tls.cert	grpc.tls.cert=3	as CSK-023
-CSK-026	DEFECT	I2	proc	proc-refusal-unnamed:http.tls.cert	http.tls.cert=3	as CSK-023
-CSK-027	DEFECT	I2	proc	proc-refusal-unnamed:http.tls.key	http.tls.key=3	TLS key-pair load error names neither key nor path
-CSK-028	DEFECT	I2	proc	proc-refusal-unnamed:accesslog.stall+breakglass.enabled+breakglass.role	accesslog.stall=1,breakglass.enabled=1,breakglass.role=1,ckpt.disable=1,ckpt.disable.alias=1,enc.dek=0,enc.dirlock=0,enc.enabled=0,enc.fallbackweak=1,enc.fallbackweak.alias=1,enc.provider=3,enc.salt=1,http.tls.autocert=0,http.tls.cert=0,http.tls.ciphers=0,http.tls.domains=2,http.tls.enabled=2,http.tls.key=0	minimised case: an empty salt_path is checked as "."; original case: a blank storage.type is refused at boot
+# M42C: the refusal-unnamed class is keyed on a MASKED SIGNATURE of the refusal text
+# (see refusalsig.go), not on the case's first three option ids. The old firstAssign key
+# collapsed unrelated pair-all refusals into one key and let minimisation drift between
+# causes. Rows below carry the masked signature; CSK-025/026 merged into CSK-023 and the
+# former CSK-028 accesslog-trio row merged into CSK-024 (all three are one refusal under
+# the cause-tied key).
+CSK-020	DEFECT	I2	inproc	refusal-unnamed:failed to unmarshal config yaml unmarshal errors line cannot unmarshal str into bool	http.enabled=3	YAML bool type error names a line number, not the key
+CSK-021	DEFECT	I2	proc	proc-refusal-unnamed:failed to load configuration failed to unmarshal config yaml unmarshal errors line cannot unmarshal str into bool	http.enabled=3	as CSK-020, process stage
+CSK-022	DEFECT	I2	inproc	refusal-unnamed:failed to unmarshal config yaml unmarshal errors line cannot unmarshal str into int	http.maxbody=5	as CSK-020, an int64 field
+CSK-023	DEFECT	I2	proc	proc-refusal-unnamed:startup validation file permission validation failed permissions or ownership audit found unresolved issues cannot open no such file or directory	http.tls.cert=3	boot permission audit names the missing file path, not the key; one refusal shared by a missing cert_file/dek_path/grpc cert_file (merged CSK-023/025/026)
+CSK-024	DEFECT	I2	proc	proc-refusal-unnamed:startup validation encryption validation failed kek salt file has invalid size bytes expected	enc.salt=3	boot encryption validation names the salt file size, not the key (absorbs former CSK-028)
+CSK-027	DEFECT	I2	proc	proc-refusal-unnamed:http server error http server failed to start failed to create tls config failed to load tls certificate tls found a certificate rather than a key in the pem fo	http.tls.key=3	TLS key-pair load error names neither key nor path
 CSK-029	DEFECT	I2	proc	boot-refusal:accesslog.stall+breakglass.enabled+breakglass.role	accesslog.stall=1,breakglass.enabled=0,breakglass.role=0,ckpt.disable=0,ckpt.disable.alias=0,enc.dek=1	minimised case: an empty dek_path; original case: storage.database.path ":memory:" refused by the permission audit
 CSK-030	HARDENING	I3	inproc	posture-default:P03	http.metrics.file=1	no token is the code default for /metrics; documented, warned at boot
 CSK-031	HARDENING	I3	inproc	posture-default:P04	enc.enabled=2	encryption off is the zero-value default; documented, warned at boot
@@ -76,3 +79,12 @@ CSK-069	EXPECTED-DIFFERENCE	I2	inproc	invalid-accepted:http.tls.cert:$FX:missing
 CSK-070	HARDENING	I2	inproc	invalid-accepted:http.tls.key:$FX:garbage	http.tls.key=4	as CSK-068
 CSK-071	HARDENING	I2	inproc	invalid-accepted:http.tls.key:certs/server.crt	http.tls.key=3	as CSK-068
 CSK-072	HARDENING	I2	inproc	invalid-accepted:siem.endpoint:not a url	siem.endpoint=5	not validated as a URL; refused only by the TLS rule with a misleading message
+# M42C triage (2026-11-13): (a) the surviving posture-default:P02, and proc-stage
+# refusal-unnamed causes newly separated by the cause-tied key (same DEFECT family as
+# CSK-020..027 -- the boot refuses (fails closed) but the message does not name the key).
+CSK-073	HARDENING	I3	inproc	posture-default:P02	http.tls.enabled=2,sec.transport=1	TLS off on an enabled listener is the default when security.require_transport_tls is unset; refused by that key (C15) else warned at boot "CLEARTEXT (no TLS)" (server/startup_checks.go:73); same family as CSK-030/031/032
+CSK-074	DEFECT	I2	proc	proc-refusal-unnamed:failed to load configuration failed to unmarshal config yaml unmarshal errors line cannot unmarshal str into int	http.maxbody=5	process stage of CSK-022 (int64 field)
+CSK-075	DEFECT	I2	proc	proc-refusal-unnamed:http server error http server failed to start failed to create tls config failed to load tls certificate tls failed to find any pem data in certificate input	http.tls.cert=4	garbage cert_file: TLS load error names neither key nor path
+CSK-076	DEFECT	I2	proc	proc-refusal-unnamed:http server error http server failed to start failed to create tls config failed to load tls certificate tls failed to find any pem data in key input	http.tls.key=4	garbage key_file: as CSK-075
+CSK-077	DEFECT	I2	proc	proc-refusal-unnamed:startup validation encryption validation failed wrapped dek file is too small bytes to be a valid wrapped key	enc.dek=4	garbage dek_path: boot encryption validation names the file size, not the key
+CSK-078	DEFECT	I2	proc	proc-refusal-unnamed:startup validation file permission validation failed permissions or ownership audit found unresolved issues cannot open secret file is not a regular file	http.tls.cert=5	a directory as cert_file: boot audit names the path, not the key
