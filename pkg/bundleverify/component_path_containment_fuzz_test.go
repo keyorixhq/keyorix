@@ -33,10 +33,32 @@ func FuzzComponentPathContainment(f *testing.F) {
 	// A fixed absolute destination the extractor would stage under.
 	destDir := filepath.Join(string(filepath.Separator)+"tmp", "kx-bundle-dest")
 
+	// Always-benign names: relative, normalized, not reserved, not ".." — correct
+	// code accepts every one of these unconditionally.
+	benign := []string{"a", "a/b/c", "sub/dir/file.bin", "comp.bin"}
+
 	f.Fuzz(func(t *testing.T, p string) {
+		// LIVENESS (accept direction). The no-escape assertion below only inspects
+		// names cleanComponentPath ACCEPTS, so a mutant that rejects more (an inverted
+		// guard, a shifted reserved-name/dot comparison) is invisible to it. Pinning
+		// that a fixed set of always-safe names stays accepted and contained closes
+		// the over-rejection blind spot without false-positiving: these names are
+		// unconditionally valid, so this can only fail under a genuine regression.
+		for _, b := range benign {
+			clean, berr := cleanComponentPath(b)
+			if berr != nil {
+				t.Fatalf("LIVENESS: cleanComponentPath rejected always-benign %q: %v", b, berr)
+			}
+			bfull := filepath.Join(destDir, filepath.FromSlash(clean))
+			brel, rerr := filepath.Rel(destDir, bfull)
+			if rerr != nil || filepath.IsAbs(clean) || brel == ".." || strings.HasPrefix(brel, ".."+string(filepath.Separator)) {
+				t.Fatalf("LIVENESS: benign %q accepted as %q but did not resolve inside destDir (rel=%q, err=%v)", b, clean, brel, rerr)
+			}
+		}
+
 		name, err := cleanComponentPath(p)
 		if err != nil {
-			return // rejected — always safe; we never assert "must accept"
+			return // rejected — always safe; we never assert "must accept" for fuzzed input
 		}
 
 		// An accepted name must be relative (never absolute / leading-slash).

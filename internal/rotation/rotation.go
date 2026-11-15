@@ -59,7 +59,7 @@ func NewManager(execs []Executor) *Manager {
 	m := &Manager{execs: make(map[string]Executor, len(execs))}
 	for _, e := range execs {
 		if e != nil {
-			m.execs[e.Name()] = e
+			m.execs[e.Name()] = containExecutor(e)
 		}
 	}
 	return m

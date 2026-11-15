@@ -1,0 +1,1 @@
+fuzz/thirdparty/awskms	none	-	test-only hostile-server fuzz harness for the AWS KMS SDK client; not part of any shipped build	test-helper
