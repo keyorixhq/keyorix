@@ -1,0 +1,6 @@
+# I2 default-posture allowlist: posture predicates that legitimately hold on a
+# DEFAULTS-ONLY (empty) config at HEAD, each with a reason. See
+# posture_defaults.go and TestI2_DefaultPostureMatchesAllowlist. Columns:
+# <posture-id>\t<reason>
+P04	storage encryption defaults off — a documented backward-compatible default (operators opt in with storage.encryption.enabled)
+P09	no absolute session ceiling by default — documented backward-compatible behaviour (session.absolute_ttl opts in; the shipped template sets 12h)
