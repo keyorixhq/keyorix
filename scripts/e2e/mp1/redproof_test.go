@@ -5,8 +5,12 @@ package mp1
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
 
 // This file is the RED-PROOF suite required by the repo's "a guard nobody has
@@ -66,6 +70,87 @@ func TestRedProof_Canary(t *testing.T) {
 	t.Logf("canary oracle: red on a leaking log (hit %v), green on a clean log", hits)
 }
 
+// TestRedProof_PostRunScan: the post-run scan TestMain runs must flag a
+// recorded value or key bytes in any log of any cluster, including a
+// preserved pre-restart log, and an unreadable log (red), and pass clean logs
+// (green). It uses planted temp logs, not a live cluster.
+func TestRedProof_PostRunScan(t *testing.T) {
+	values := []string{"CANARY-post-run-value-7f3a", "fuzz-written-value-55c1"}
+	writeLog := func(path, text string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatalf("write planted log: %v", err)
+		}
+	}
+	newCluster := func() *Cluster {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "keys"), 0o700); err != nil {
+			t.Fatalf("mkdir keys: %v", err)
+		}
+		writeLog(filepath.Join(dir, "keys", "dek.key"), "planted-dek-bytes-0123456789abcdef")
+		c := &Cluster{}
+		for i := range 2 {
+			s := &harness.Server{Dir: dir, LogPath: filepath.Join(dir, fmt.Sprintf("server-%d.log", i))}
+			writeLog(s.LogPath, "INFO served GET /api/v1/secrets/42 200\n")
+			c.Replicas = append(c.Replicas, s)
+		}
+		pre := filepath.Join(dir, "server-1.log.pre-restart")
+		writeLog(pre, "INFO served PUT /api/v1/secrets/42 200\n")
+		c.extraLogs = append(c.extraLogs, pre)
+		return c
+	}
+
+	// GREEN: clean logs in two clusters.
+	clean := []*Cluster{newCluster(), newCluster()}
+	if problems, logs := postRunCanaryScan(clean, values); len(problems) != 0 || logs != 6 {
+		t.Fatalf("green case misfired: clean logs gave problems=%v logs=%d (want none, 6)", problems, logs)
+	}
+
+	// RED: a value leaked into the second cluster's preserved pre-restart log
+	// (the SIGKILL cluster's shape), which no Test-time scan of the shared
+	// cluster ever reads.
+	leakPre := []*Cluster{newCluster(), newCluster()}
+	writeLog(leakPre[1].extraLogs[0], "DEBUG value=fuzz-written-value-55c1\n")
+	if problems, _ := postRunCanaryScan(leakPre, values); len(problems) != 1 {
+		t.Fatalf("RED PROOF FAILED: a recorded value in a pre-restart log gave problems=%v, want exactly 1 hit", problems)
+	}
+
+	// RED: key bytes in a current replica log.
+	leakKey := []*Cluster{newCluster()}
+	writeLog(leakKey[0].Replicas[0].LogPath, "DEBUG dek=planted-dek-bytes-0123456789abcdef\n")
+	if problems, _ := postRunCanaryScan(leakKey, values); len(problems) == 0 {
+		t.Fatal("RED PROOF FAILED: raw key bytes in a replica log were NOT flagged")
+	}
+
+	// RED: an unreadable (missing) log is a problem, not a silent skip.
+	missing := []*Cluster{newCluster()}
+	missing[0].extraLogs = append(missing[0].extraLogs, filepath.Join(t.TempDir(), "gone.log"))
+	if problems, _ := postRunCanaryScan(missing, values); len(problems) != 1 {
+		t.Fatalf("RED PROOF FAILED: a missing log gave problems=%v, want exactly 1", problems)
+	}
+	t.Log("post-run canary scan: red on a value in a pre-restart log, on key bytes, on a missing log; green on clean logs")
+}
+
+// TestRedProof_AuditVerdict: the verify-audit verdict check must accept only
+// the exact VALID verdict (green) and reject BROKEN, INVALID and a report with
+// no verdict (red), even when the word VALID appears elsewhere.
+func TestRedProof_AuditVerdict(t *testing.T) {
+	if !auditVerdictValid("{\n  \"verdict\": \"VALID\",\n  \"chained_events\": 12\n}") {
+		t.Fatal("green case misfired: a VALID report was rejected")
+	}
+	for _, out := range []string{
+		"{\n  \"verdict\": \"BROKEN\",\n  \"reason\": \"chain VALID up to id 7\"\n}",
+		"{\n  \"verdict\": \"INVALID\"\n}",
+		"warning: checkpoint key short; VALID chain unknown",
+	} {
+		if auditVerdictValid(out) {
+			t.Fatalf("RED PROOF FAILED: a non-VALID report passed the verdict check:\n%s", out)
+		}
+	}
+	t.Log("audit verdict check: red on BROKEN / INVALID / no verdict, green on VALID")
+}
+
 // TestRedProof_AuditCount: the per-op audit-count check must flag a dropped
 // (0) or duplicated (>=2) audit row and accept exactly one.
 func TestRedProof_AuditCount(t *testing.T) {
@@ -85,19 +170,28 @@ func TestRedProof_AuditCount(t *testing.T) {
 // winners or a disagreeing row count (red) and accept exactly-one/exactly-one
 // (green).
 func TestRedProof_Uniqueness(t *testing.T) {
-	if bad, _ := uniquenessViolation(1, 1); bad {
+	if bad, _ := uniquenessViolation(1, 0, 1); bad {
 		t.Fatal("green case misfired: exactly one winner + one row was flagged a violation")
 	}
-	if bad, _ := uniquenessViolation(2, 2); !bad {
+	if bad, _ := uniquenessViolation(0, 1, 1); bad {
+		t.Fatal("green case misfired: the winner's response was lost in transport but one row exists, flagged a violation")
+	}
+	if bad, _ := uniquenessViolation(2, 0, 2); !bad {
 		t.Fatal("RED PROOF FAILED: two winners + two rows was NOT flagged — the uniqueness oracle is vacuous")
 	}
-	if bad, _ := uniquenessViolation(1, 2); !bad {
+	if bad, _ := uniquenessViolation(1, 0, 2); !bad {
 		t.Fatal("RED PROOF FAILED: one ack but two surviving rows was NOT flagged — the uniqueness oracle misses a split-brain insert")
 	}
-	if bad, _ := uniquenessViolation(0, 0); !bad {
+	if bad, _ := uniquenessViolation(0, 0, 0); !bad {
 		t.Fatal("RED PROOF FAILED: zero winners was NOT flagged — a total-failure run would pass silently")
 	}
-	t.Log("uniqueness oracle: red on two-winners / ack-row mismatch / zero-winners, green on exactly-one")
+	if bad, _ := uniquenessViolation(0, 1, 0); !bad {
+		t.Fatal("RED PROOF FAILED: a lost response with zero surviving rows was NOT flagged — a transport error would hide a total failure")
+	}
+	if bad, _ := uniquenessViolation(2, 1, 2); !bad {
+		t.Fatal("RED PROOF FAILED: two winners next to a lost response was NOT flagged — a transport error would hide a double win")
+	}
+	t.Log("uniqueness oracle: red on two-winners / ack-row mismatch / zero-winners (with or without a lost response), green on exactly-one")
 }
 
 // TestRedProof_UniquenessLive is a LIVE red proof: it confirms the DB unique

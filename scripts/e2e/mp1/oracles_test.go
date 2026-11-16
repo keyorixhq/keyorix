@@ -178,19 +178,15 @@ func TestAuditChainVerifies(t *testing.T) {
 	c := getSharedCluster(t)
 
 	// Drive a short concurrent cross-replica burst so there is fresh audit
-	// activity attributable to this test even if run in isolation.
-	for i := range 5 {
-		name := fmt.Sprintf("mp1-audit-%d-%d", time.Now().UnixNano(), i)
-		v := "audit-" + name
-		recordCanary(v)
-		rep := c.Replica(i % len(c.Replicas))
-		if _, st, err := c.createSecret(rep, name, v); err != nil || (st != http.StatusCreated && st != http.StatusOK) {
-			t.Fatalf("audit-burst create: st=%d err=%v", st, err)
-		}
+	// activity attributable to this test even if run in isolation: the creates
+	// run at the same time on different replicas, so their appends contend for
+	// the advisory lock.
+	if _, errs := c.concurrentCreateSecrets("mp1-audit", 6); len(errs) > 0 {
+		t.Fatalf("audit-burst creates failed: %v", errs)
 	}
 
 	out := c.verifyAudit(t)
-	if !strings.Contains(out, `"verdict"`) && !strings.Contains(strings.ToUpper(out), "VALID") {
+	if !auditVerdictValid(out) {
 		t.Fatalf("verify-audit produced no VALID verdict:\n%s", out)
 	}
 	t.Logf("verify-audit: %s", strings.TrimSpace(out))
@@ -212,6 +208,15 @@ func (c *Cluster) verifyAudit(t *testing.T) string {
 		t.Fatalf("admin verify-audit exited non-zero: %v\n%s", err, out)
 	}
 	return string(out)
+}
+
+// auditVerdictValid reports whether verify-audit's --json report carries the
+// exact VALID verdict. It matches the whole `"verdict": "VALID"` pair (the
+// json.MarshalIndent form printVerifyAuditReport emits), so a BROKEN or any
+// other verdict does not pass on the word VALID appearing elsewhere. verifyAudit
+// also fails on a non-zero exit; this check does not rely on that alone.
+func auditVerdictValid(out string) bool {
+	return strings.Contains(out, `"verdict": "VALID"`)
 }
 
 // ── Oracle: a SIGKILLed replica leaves no stuck lock ────────────────────────
@@ -294,6 +299,13 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	// re-attach to the already-migrated schema, and rebuild its connection pool —
 	// all with no manual intervention. If the prior SIGKILL had left the store in
 	// a state needing repair, the boot or the first write would fail here.
+	// The restart truncates vs.LogPath, so keep the pre-SIGKILL log for the
+	// post-run canary scan first.
+	preKill := vs.LogPath + ".pre-restart"
+	if err := os.Rename(vs.LogPath, preKill); err != nil {
+		t.Fatalf("preserve the victim's pre-restart log: %v", err)
+	}
+	c.extraLogs = append(c.extraLogs, preKill)
 	serverEnv := append(append([]string{}, vs.Env...), "KEYORIX_CONFIG_PATH=./keyorix.yaml")
 	harness.StartBackgroundProcess(t, vs, serverEnv)
 	harness.WaitHealthy(t, vs)
@@ -304,7 +316,7 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 
 	// And the chain still verifies (no fork/gap left by the torn-down replica).
 	out := c.verifyAudit(t)
-	if !strings.Contains(out, `"verdict"`) && !strings.Contains(strings.ToUpper(out), "VALID") {
+	if !auditVerdictValid(out) {
 		t.Fatalf("after SIGKILL+restart, verify-audit produced no VALID verdict:\n%s", out)
 	}
 	t.Logf("after SIGKILL+restart, verify-audit: %s", strings.TrimSpace(out))
@@ -312,11 +324,14 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 
 // ── Oracle: no secret value or key bytes appear in any replica log (canary) ──
 //
-// Every value written by this package is recorded as a canary. This test adds
-// a fresh, highly-distinctive canary of its own, then scans every replica's
-// log file for ANY recorded canary value and for the raw DEK/salt key bytes.
-// A hit means a secret value or key material leaked into a log — a serious
-// confidentiality defect.
+// Every value written by this package is recorded as a canary. The scan that
+// guards the invariant runs in TestMain after m.Run() (postRunCanaryScan), so it
+// covers every Test, the Fuzz seed corpora and, under -fuzz, the fuzzing
+// worker's own iterations, across every cluster this process started. Go runs
+// Tests in source order and Fuzz targets after them, so a Test alone could not
+// see what the fuzz targets wrote, and under `-run '^$' -fuzz ...` no Test runs
+// at all. This test adds a fresh, highly-distinctive canary of its own and scans
+// the logs written so far; it is a fast early signal, not the full guard.
 func TestZZCanaryNoSecretInLogs(t *testing.T) {
 	requirePG(t)
 	c := getSharedCluster(t)
@@ -333,34 +348,62 @@ func TestZZCanaryNoSecretInLogs(t *testing.T) {
 	}
 
 	values := canarySnapshot()
-	// Also treat the raw key bytes as canaries.
-	keyCanaries := c.keyByteCanaries(t)
+	problems, logs := scanClusterLogs(c, values)
+	for _, p := range problems {
+		t.Error(p)
+	}
+	t.Logf("canary scan: %d distinct secret values checked against %d replica logs", len(values), logs)
+}
 
-	for _, s := range c.Replicas {
-		raw, err := os.ReadFile(s.LogPath) //nolint:gosec // harness-controlled path
+// canaryMinLen is the shortest recorded value the log scan looks for; shorter
+// values would match unrelated log text.
+const canaryMinLen = 6
+
+// scanClusterLogs scans every log file of c (logPaths) for any of values and
+// for c's raw DEK/salt key bytes. It returns one problem line per hit, and per
+// log it could not read (an unscanned log is not a clean one), plus the number
+// of logs it read.
+func scanClusterLogs(c *Cluster, values []string) (problems []string, logs int) {
+	keyCanaries := c.keyByteCanaries()
+	for _, path := range c.logPaths() {
+		raw, err := os.ReadFile(path) //nolint:gosec // harness-controlled path
 		if err != nil {
-			t.Logf("replica log %s unreadable (skipping): %v", s.LogPath, err)
+			problems = append(problems, fmt.Sprintf("replica log %s unreadable, not scanned: %v", path, err))
 			continue
 		}
+		logs++
 		log := string(raw)
-		for _, v := range scanLogForSecrets(log, values, 6) {
-			t.Errorf("CANARY HIT: secret value %q found in replica log %s", v, s.LogPath)
+		for _, v := range scanLogForSecrets(log, values, canaryMinLen) {
+			problems = append(problems, fmt.Sprintf("CANARY HIT: secret value %q found in replica log %s", v, path))
 		}
 		for label, kc := range keyCanaries {
 			if kc != "" && strings.Contains(log, kc) {
-				t.Errorf("CANARY HIT: key material (%s) found in replica log %s", label, s.LogPath)
+				problems = append(problems, fmt.Sprintf("CANARY HIT: key material (%s) found in replica log %s", label, path))
 			}
 		}
 	}
-	t.Logf("canary scan: %d distinct secret values checked against %d replica logs", len(values), len(c.Replicas))
+	return problems, logs
+}
+
+// postRunCanaryScan is the confidentiality guard TestMain runs after m.Run():
+// scanClusterLogs over every cluster, with every value recorded during the run.
+func postRunCanaryScan(clusters []*Cluster, values []string) (problems []string, logs int) {
+	for _, c := range clusters {
+		p, n := scanClusterLogs(c, values)
+		problems = append(problems, p...)
+		logs += n
+	}
+	return problems, logs
 }
 
 // keyByteCanaries returns distinctive substrings of the raw on-disk key files
 // (dek.key, kek.salt) to search logs for. A hex-encoded chunk is used so a
 // match is unambiguous even if the file bytes are not printable.
-func (c *Cluster) keyByteCanaries(t *testing.T) map[string]string {
-	t.Helper()
+func (c *Cluster) keyByteCanaries() map[string]string {
 	out := map[string]string{}
+	if len(c.Replicas) == 0 {
+		return out
+	}
 	dir := c.Replica(0).Dir
 	for _, name := range []string{"dek.key", "kek.salt"} {
 		raw, err := os.ReadFile(dir + "/keys/" + name) //nolint:gosec // harness temp path
@@ -368,7 +411,7 @@ func (c *Cluster) keyByteCanaries(t *testing.T) map[string]string {
 			continue
 		}
 		if len(raw) > 8 {
-			out[name+"(hex)"] = fmt.Sprintf("%x", raw[:16])
+			out[name+"(hex)"] = fmt.Sprintf("%x", raw[:min(16, len(raw))])
 			out[name+"(raw)"] = string(raw)
 		}
 	}

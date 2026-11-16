@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,7 +18,8 @@ import (
 //
 // Companion to TestAuditChainVerifies (which proves the chain is valid and
 // gap/fork-free). This proves the COUNT invariant: every acknowledged
-// secret.created, written across different replica processes, lands EXACTLY ONE
+// secret.created, written concurrently by different replica processes (so
+// their appends contend for the advisory lock), lands EXACTLY ONE
 // audit row — never zero (a dropped append) and never two (a double-write under
 // the ADR-029 serialize-append advisory lock). core.secrets.go writes the
 // secret.created row as the last statement of the same WithTransaction that
@@ -70,35 +73,55 @@ func (c *Cluster) auditCreatedCounts(t *testing.T, ids []int) map[int]int {
 	return out
 }
 
-// TestAuditCountExactlyOne is the live Oracle #5b: create a burst of secrets
-// across all replica processes, then assert each produced exactly one
-// secret.created audit row in the shared DB.
+// concurrentCreateSecrets creates n secrets at the same time, create i on
+// replica i%len(Replicas), so the appends of different replica processes
+// contend for the ADR-029 advisory lock. It returns the ids of the
+// acknowledged creates and one line per create that was not acknowledged with a
+// 2xx and an id (transport error, other status, no id).
+func (c *Cluster) concurrentCreateSecrets(prefix string, n int) (ids []int, errs []string) {
+	stamp := time.Now().UnixNano()
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for i := range n {
+		name := fmt.Sprintf("%s-%d-%d", prefix, stamp, i)
+		v := strings.TrimPrefix(prefix, "mp1-") + "-" + name
+		recordCanary(v)
+		wg.Go(func() {
+			id, st, err := c.createSecret(c.Replica(i), name, v)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err != nil || (st != http.StatusCreated && st != http.StatusOK):
+				errs = append(errs, fmt.Sprintf("create %d on replica %d: st=%d err=%v", i, i%len(c.Replicas), st, err))
+			case id == 0:
+				errs = append(errs, fmt.Sprintf("create %d on replica %d: acknowledged but no id parsed", i, i%len(c.Replicas)))
+			default:
+				ids = append(ids, id)
+			}
+		})
+	}
+	wg.Wait()
+	return ids, errs
+}
+
+// TestAuditCountExactlyOne is the live Oracle #5b: fire bursts of concurrent
+// secret creates spread over all replica processes, then assert each
+// acknowledged create produced exactly one secret.created audit row in the
+// shared DB.
 func TestAuditCountExactlyOne(t *testing.T) {
 	requirePG(t)
 	c := getSharedCluster(t)
 
-	const burst = 9
-	ids := make([]int, 0, burst)
-	for i := range burst {
-		name := fmt.Sprintf("mp1-auditcount-%d-%d", time.Now().UnixNano(), i)
-		v := "auditcount-" + name
-		recordCanary(v)
-		rep := c.Replica(i % len(c.Replicas))
-		id, st, err := c.createSecret(rep, name, v)
-		if err != nil || (st != http.StatusCreated && st != http.StatusOK) {
-			t.Fatalf("burst create %d: st=%d err=%v", i, st, err)
+	const burst, rounds = 12, 3
+	for round := range rounds {
+		ids, errs := c.concurrentCreateSecrets(fmt.Sprintf("mp1-auditcount-r%d", round), burst)
+		if len(errs) > 0 {
+			t.Fatalf("round %d: %d of %d concurrent creates not acknowledged: %v", round, len(errs), burst, errs)
 		}
-		if id == 0 {
-			t.Fatalf("burst create %d: no id parsed", i)
+		counts := c.auditCreatedCounts(t, ids)
+		if bad, why := auditCountViolation(counts); bad {
+			t.Fatalf("round %d: audit-count oracle: %s (counts=%v) — an acknowledged create did not map to exactly one audit row", round, why, counts)
 		}
-		ids = append(ids, id)
+		t.Logf("round %d: %d concurrent acknowledged creates across %d replicas each produced exactly one secret.created row", round, burst, len(c.Replicas))
 	}
-
-	// Allow a brief moment for the committed rows to be queryable (they commit
-	// with the secret, so this is belt-and-braces, not a staleness window).
-	counts := c.auditCreatedCounts(t, ids)
-	if bad, why := auditCountViolation(counts); bad {
-		t.Fatalf("audit-count oracle: %s (counts=%v) — an acknowledged create did not map to exactly one audit row", why, counts)
-	}
-	t.Logf("audit-count oracle: %d acknowledged creates across %d replicas each produced exactly one secret.created row", burst, len(c.Replicas))
 }

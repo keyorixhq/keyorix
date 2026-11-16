@@ -117,15 +117,15 @@ func (tg pgTarget) storageYAML(dbName string) string {
 // mp1DBCounter makes every created database name unique within this process.
 var mp1DBCounter atomic.Int64
 
-// createIsolatedDB creates a fresh, empty `i1c_mp1_<pid>_<n>` database on tg
-// and returns its DSN. The DROP is registered on the package teardown list, not
-// on t.Cleanup, so the database outlives the fuzz iteration that happened to
-// create the cluster. The `i1c_` prefix keeps every database this harness
-// creates inside the task's own namespace on a shared Postgres host, so it can
-// only ever create or drop its own databases, never another session's.
+// createIsolatedDB creates a fresh, empty `mp1_<pid>_<n>` database on tg and
+// returns its DSN. The DROP is registered on the package teardown list, not on
+// t.Cleanup, so the database outlives the fuzz iteration that happened to
+// create the cluster. The `mp1_` prefix plus the test process's pid keeps every
+// database this harness creates distinguishable on a shared Postgres host, and
+// the teardown drops only the exact names this process created.
 func createIsolatedDB(t *testing.T, tg pgTarget) (dsn, name string) {
 	t.Helper()
-	name = fmt.Sprintf("i1c_mp1_%d_%d", os.Getpid(), mp1DBCounter.Add(1))
+	name = fmt.Sprintf("mp1_%d_%d", os.Getpid(), mp1DBCounter.Add(1))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	conn, err := pgx.Connect(ctx, tg.raw)
@@ -159,6 +159,41 @@ type Cluster struct {
 	ProjID     int
 	EnvID      int
 	ProjName   string
+
+	// extraLogs are earlier log files of this cluster's replicas that a
+	// restart would otherwise overwrite (harness.startProcess truncates
+	// LogPath). The post-run canary scan reads them too.
+	extraLogs []string
+}
+
+// startedClusters is every cluster StartCluster booted in this test process
+// (the shared one and any test-owned one, e.g. the SIGKILL cluster), so the
+// post-run canary scan in TestMain reads every replica log ever written.
+var (
+	clustersMu      sync.Mutex
+	startedClusters []*Cluster
+)
+
+func registerCluster(c *Cluster) {
+	clustersMu.Lock()
+	startedClusters = append(startedClusters, c)
+	clustersMu.Unlock()
+}
+
+func clustersSnapshot() []*Cluster {
+	clustersMu.Lock()
+	defer clustersMu.Unlock()
+	return slices.Clone(startedClusters)
+}
+
+// logPaths returns every log file this cluster's replicas have written: the
+// current one of each replica plus any preserved pre-restart log.
+func (c *Cluster) logPaths() []string {
+	out := make([]string, 0, len(c.Replicas)+len(c.extraLogs))
+	for _, s := range c.Replicas {
+		out = append(out, s.LogPath)
+	}
+	return append(out, c.extraLogs...)
 }
 
 // Replica returns replica i (wrapping, so a fuzz byte can address any).
@@ -266,6 +301,7 @@ func StartCluster(t *testing.T, n int, anomalySchedule string) *Cluster {
 	c := &Cluster{
 		ServerBin: serverBin, DSN: dsn, DBName: dbName, Target: tg, DBPassword: dbPassword,
 	}
+	registerCluster(c)
 
 	env := append(harness.BaseServerEnv(""), "KEYORIX_MASTER_PASSWORD="+masterPassword,
 		"KEYORIX_DB_PASSWORD="+dbPassword)

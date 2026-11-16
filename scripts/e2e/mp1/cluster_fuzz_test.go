@@ -18,14 +18,31 @@ import (
 // jsonUnmarshal is a thin alias so the op helpers read cleanly.
 func jsonUnmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
 
-// TestMain builds once, runs the suite, then kills every server process this
-// package started and drops every i1c_mp1_ database it created, before removing
-// the shared build dir. The cluster is started lazily by the first test/fuzz
-// iteration that needs it (startSharedOnce) and lives until here — NOT tied to
-// any one iteration's t.Cleanup, which would tear the servers down after the
-// first fuzz input.
+// TestMain builds once, runs the suite, scans every replica log for canaries
+// (postRunCanaryScan), then kills every server process this package started and
+// drops every mp1_ database it created, before removing the shared build dir.
+// The cluster is started lazily by the first test/fuzz iteration that needs it
+// (startSharedOnce) and lives until here — NOT tied to any one iteration's
+// t.Cleanup, which would tear the servers down after the first fuzz input.
+//
+// The scan runs here, after m.Run(), because only here has every Test, every
+// Fuzz seed and (in a -fuzz worker process, which runs TestMain too) every
+// fuzzed iteration already written its values. Any hit or unreadable log
+// fails the run.
 func TestMain(m *testing.M) {
 	code := m.Run()
+	if clusters := clustersSnapshot(); len(clusters) > 0 {
+		values := canarySnapshot()
+		problems, logs := postRunCanaryScan(clusters, values)
+		fmt.Printf("canary scan (post-run): %d values, %d logs, %d clusters\n", len(values), logs, len(clusters))
+		for _, p := range problems {
+			fmt.Println(p)
+		}
+		if len(problems) > 0 {
+			fmt.Println("FAIL: post-run canary scan found secret or key material in a replica log (or a log it could not read)")
+			code = 1
+		}
+	}
 	runTeardowns()
 	harness.CleanupBinaries()
 	os.Exit(code)
@@ -140,9 +157,11 @@ func (c *Cluster) readSecretValue(s *harness.Server, id int) (value string, stat
 // ── canary bookkeeping ──────────────────────────────────────────────────────
 //
 // Every secret value the harness ever writes is a canary: it must never appear
-// in any replica's log. The set is scanned in TestZZCanaryNoSecretInLogs (which
-// sorts after the fuzz corpus run alphabetically) and in the dedicated canary
-// oracle test.
+// in any replica's log. The full set is scanned by TestMain after m.Run()
+// (postRunCanaryScan), which is the only point after every Test and Fuzz
+// target. TestZZCanaryNoSecretInLogs scans the logs written so far as an early
+// signal; Go runs Tests in source order and Fuzz targets after all Tests, so it
+// never sees the fuzz targets' values.
 
 var (
 	canaryMu     sync.Mutex

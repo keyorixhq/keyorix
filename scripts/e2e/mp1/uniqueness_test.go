@@ -39,9 +39,13 @@ import (
 // uniquenessViolation is the pure oracle decision shared by the live oracle and
 // the red proof: a correct run has exactly one acknowledged create AND exactly
 // one surviving active row. Anything else (two winners, zero winners, a row
-// count that disagrees with the ack count) is a violation.
-func uniquenessViolation(created, dbRows int) (bool, string) {
-	if created != 1 {
+// count that disagrees with the ack count) is a violation. lost is the number
+// of creates whose response never arrived (transport error): one of them may
+// have been the winner, so with lost > 0 zero acknowledged creates is not by
+// itself a violation, but more than one acknowledged create and any row count
+// other than 1 still are.
+func uniquenessViolation(created, lost, dbRows int) (bool, string) {
+	if created > 1 || (created == 0 && lost == 0) {
 		return true, fmt.Sprintf("expected exactly 1 acknowledged create, got %d", created)
 	}
 	if dbRows != 1 {
@@ -85,8 +89,9 @@ func (c *Cluster) countActiveProjects(t *testing.T, name string) int {
 
 // concurrentCreate fires one create of name at each replica in reps
 // concurrently and returns the per-replica statuses. A 5xx is reported via
-// fault (non-empty = a server fault occurred).
-func (c *Cluster) concurrentCreate(name string, reps []int) (statuses []int, fault string) {
+// fault (non-empty = a server fault occurred). A transport error leaves status
+// 0 and is counted in lost: the create may still have committed.
+func (c *Cluster) concurrentCreate(name string, reps []int) (statuses []int, lost int, fault string) {
 	statuses = make([]int, len(reps))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -96,7 +101,8 @@ func (c *Cluster) concurrentCreate(name string, reps []int) (statuses []int, fau
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				statuses[i] = 0 // transport error: ignore, not a winner
+				statuses[i] = 0 // transport error: outcome unknown
+				lost++
 				return
 			}
 			statuses[i] = st
@@ -106,7 +112,7 @@ func (c *Cluster) concurrentCreate(name string, reps []int) (statuses []int, fau
 		})
 	}
 	wg.Wait()
-	return statuses, fault
+	return statuses, lost, fault
 }
 
 func count2xx(statuses []int) int {
@@ -133,13 +139,13 @@ func TestUniqueNameExactlyOneWinner(t *testing.T) {
 		for i := range reps {
 			reps[i] = i
 		}
-		statuses, fault := c.concurrentCreate(name, reps)
+		statuses, lost, fault := c.concurrentCreate(name, reps)
 		if fault != "" {
 			t.Errorf("trial %d: %s (statuses=%v) — server fault under concurrent same-name create", trial, fault, statuses)
 		}
 		created := count2xx(statuses)
 		dbRows := c.countActiveProjects(t, name)
-		if bad, why := uniquenessViolation(created, dbRows); bad {
+		if bad, why := uniquenessViolation(created, lost, dbRows); bad {
 			t.Fatalf("trial %d: uniqueness violated: %s (statuses=%v, dbRows=%d) — concurrent cross-replica creates of %q did not resolve to exactly one",
 				trial, why, statuses, dbRows, name)
 		}
@@ -148,7 +154,7 @@ func TestUniqueNameExactlyOneWinner(t *testing.T) {
 }
 
 // FuzzMP1UniqueCreate fuzzes Oracle #1: the input chooses how many concurrent
-// creators (2..3*n) and which replica each targets. Every creator races to
+// creators (2..maxCreators, i.e. 2..6) and which replica each targets. Every creator races to
 // insert the SAME fresh name; the result must always be exactly one winner and
 // exactly one active row.
 func FuzzMP1UniqueCreate(f *testing.F) {
@@ -181,14 +187,14 @@ func FuzzMP1UniqueCreate(f *testing.F) {
 		}
 		iter := fuzzIter.Add(1)
 		name := fmt.Sprintf("mp1-fuzzuniq-%d", iter)
-		statuses, fault := c.concurrentCreate(name, reps)
+		statuses, lost, fault := c.concurrentCreate(name, reps)
 		if fault != "" {
 			t.Fatalf("%s (statuses=%v, reps=%v)", fault, statuses, reps)
 		}
 		created := count2xx(statuses)
 		dbRows := c.countActiveProjects(t, name)
-		if bad, why := uniquenessViolation(created, dbRows); bad {
-			t.Fatalf("uniqueness violated: %s (reps=%v, statuses=%v, dbRows=%d)", why, reps, statuses, dbRows)
+		if bad, why := uniquenessViolation(created, lost, dbRows); bad {
+			t.Fatalf("uniqueness violated: %s (reps=%v, statuses=%v, lost=%d, dbRows=%d)", why, reps, statuses, lost, dbRows)
 		}
 	})
 }
