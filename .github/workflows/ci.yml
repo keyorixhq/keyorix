@@ -1806,11 +1806,17 @@ jobs:
             run_filter="$LEG_TESTS_RX"
           fi
           verbose_flag=""
+          # MQ-LEG-STEPS-1: measurement only (workflow_dispatch + verbose_tests):
+          # cmd/go's hidden -debug-actiongraph writes one JSON object per build
+          # action (start/end time, cache hit, package), which splits the
+          # "compile, vet, link" part of this step; uploaded below.
+          ag_flag=""
           if [ "$VERBOSE_TESTS" = "true" ]; then
             verbose_flag="-v"
+            ag_flag="-debug-actiongraph=$RUNNER_TEMP/actiongraph-${{ matrix.leg }}.json"
           fi
           # shellcheck disable=SC2086
-          go test -race $verbose_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+          go test -race $verbose_flag $ag_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       - name: Upload coverage artifact
         if: steps.leg.outputs.run == 'true'
@@ -1819,6 +1825,15 @@ jobs:
           name: coverage-${{ matrix.leg }}
           path: ${{ matrix.coverage-file }}
           retention-days: 1
+
+      - name: Upload action graph (measurement)
+        if: always() && steps.leg.outputs.run == 'true' && github.event_name == 'workflow_dispatch' && inputs.verbose_tests
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: actiongraph-${{ matrix.leg }}
+          path: ${{ runner.temp }}/actiongraph-${{ matrix.leg }}.json
+          retention-days: 3
+          if-no-files-found: warn
 
   # pg-gated security closures, proven with a real Postgres DSN. This job and
   # test-suite are the only ones with a Postgres service container, so this is
@@ -1959,53 +1974,28 @@ jobs:
   # nothing red anywhere to catch it. Independent of test-suite: this only
   # needs `go list` (package discovery), not an actual test run, so it's
   # fast and doesn't wait on the (up to 30-minute) test-suite matrix.
+  #
+  # MQ-LEG-OVERHEAD-1 P2: the assertions are now steps of `static-analysis`
+  # (same needs, same job-level condition), so one runner, one checkout/setup-go
+  # and one runner wait fewer per round. They are NOT in `preflight`: the shard
+  # proof takes about 4.5 min and preflight gates closures-pg (the longest
+  # chain of a round), while static-analysis ends about 14 min before
+  # closures-pg. This job stays only because the ruleset requires the context
+  # `assert-leg-completeness`: a job skipped by its `if` reports `skipped`,
+  # which satisfies a required context (ci.yml relies on this for
+  # base-branch-check, exclusion-freshness and others), and it takes no runner.
+  # The blocking power moved with the steps: a red assertion turns
+  # static-analysis red, which is itself required and which build-and-test
+  # requires to be `success` (see its gate step).
   assert-leg-completeness:
-    needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    # Never true: github.event_name is never 'placeholder'. (A literal `false`
+    # is rejected by actionlint's if-cond check.)
+    if: github.event_name == 'placeholder'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.4'
-
-      - name: Assert every package is covered by exactly the CI matrix or an enumerated exclusion
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_leg_completeness
-
-      - name: Assert every leg-pinned package exists in go list and is pinned exactly once
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_pinned_leg_packages_valid
-
-      # CI-SHARD-BALANCE-1: one proof for every package split by test name
-      # (core, http, handlers, encryption, faultops), built from the same
-      # weighted_run_filter the legs run. Before, only faultops and core had
-      # one, each with its own hand-written filter.
-      # On a FAST pull_request it runs only when shard_layout_relevant (a test
-      # file of a sharded package, the leg table or the weights file changed:
-      # nothing else can change which shard a test lands in), CI-PATHGATE-1.
-      # The package-level steps above and below always run.
-      - name: Assert every test of every sharded package runs in exactly one shard
-        if: (needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.shard_layout_relevant == 'true'
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_all_shards_complete
-
-      - name: Assert the shard weights file is well formed
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_test_weights_valid
-
-      - name: Assert the test-suite matrix, the leg table and the coverage merge agree
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_matrix_consistent .github/workflows/ci.yml
+      - run: echo "assert-leg-completeness now runs as steps of static-analysis"
 
   # Independent of test execution/coverage -- both tools statically analyze
   # source, so this runs in parallel with test-suite instead of waiting for it
@@ -2049,13 +2039,58 @@ jobs:
           [ -x ~/go/bin/govulncheck ] || go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 # NOSONAR githubactions:S8545 -- version is pinned to v1.8.0
           scripts/ci/check-govulncheck.sh
 
+      # Every step below carries `success() || failure()` (= not cancelled; a
+      # leading `!` would need quoting in YAML): a red step must not hide the
+      # others (govulncheck, gosec and the leg-completeness assertions are
+      # independent checks and the job still ends red if any one failed).
       - name: gosec
+        if: success() || failure()
         run: |
           [ -x ~/go/bin/gosec ] || scripts/ci/install-gosec.sh ~/go/bin/gosec
           # -exclude-generated skips files with the "DO NOT EDIT" header
           # (generated protobuf code), whose *_FullMethodName string constants
           # otherwise trip G101 (hardcoded-credential) false positives.
           gosec -severity medium -exclude-generated ./...
+
+      # Moved here from the assert-leg-completeness job (MQ-LEG-OVERHEAD-1 P2,
+      # see that job's comment). Same commands, same order, same conditions.
+      - name: Assert every package is covered by exactly the CI matrix or an enumerated exclusion
+        if: success() || failure()
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_leg_completeness
+
+      - name: Assert every leg-pinned package exists in go list and is pinned exactly once
+        if: success() || failure()
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_pinned_leg_packages_valid
+
+      # CI-SHARD-BALANCE-1: one proof for every package split by test name
+      # (core, http, handlers, encryption, faultops), built from the same
+      # weighted_run_filter the legs run. Before, only faultops and core had
+      # one, each with its own hand-written filter.
+      # On a FAST pull_request it runs only when shard_layout_relevant (a test
+      # file of a sharded package, the leg table or the weights file changed:
+      # nothing else can change which shard a test lands in), CI-PATHGATE-1.
+      # The package-level steps above and below always run.
+      - name: Assert every test of every sharded package runs in exactly one shard
+        if: (success() || failure()) && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.shard_layout_relevant == 'true')
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_all_shards_complete
+
+      - name: Assert the shard weights file is well formed
+        if: success() || failure()
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_test_weights_valid
+
+      - name: Assert the test-suite matrix, the leg table and the coverage merge agree
+        if: success() || failure()
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_matrix_consistent .github/workflows/ci.yml
 
   # Aggregates test-suite (both matrix legs) and static-analysis: merges the
   # two coverage profiles and checks the floor. Kept as its own job named
@@ -2263,7 +2298,8 @@ jobs:
   # build-and-test skips has nothing to fuzz.
   fuzz-plan:
     needs: [build-and-test]
-    if: github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
+    # !cancelled() (not always()): a status function turns off the implicit success(), which also looks at build-and-test's skipped ancestors and would skip this job and leave fuzz-changed red. Unlike always() it is false once the run is cancelled, so a newer push still cancels this job and the fuzz shards (concurrency group, cancel-in-progress).
+    if: ${{ !cancelled() && needs.build-and-test.result == 'success' && github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -2405,7 +2441,7 @@ jobs:
 
   fuzz:
     needs: [fuzz-plan]
-    if: needs.fuzz-plan.outputs.count != '0'
+    if: ${{ !cancelled() && needs.fuzz-plan.result == 'success' && needs.fuzz-plan.outputs.count != '0' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read

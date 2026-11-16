@@ -93,7 +93,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 
 - [x] `GRPC keyorix.v1.SecretService.CreateSecret` — secret.create
 - [x] `GRPC keyorix.v1.SecretService.DeleteSecret` — secret.delete
-- [x] `GRPC keyorix.v1.SecretService.GetSecretValue` — secret.value.byref, secret.value.byid
+- [x] `GRPC keyorix.v1.SecretService.GetSecretValue` — secret.value.byref, secret.value.byid, secret.read.env
 - [x] `GRPC keyorix.v1.SecretService.GrantSecretACL` — secret.acl.grant
 - [x] `GRPC keyorix.v1.SecretService.RevokeSecretACL` — secret.acl.revoke
 - [x] `GRPC keyorix.v1.SecretService.SetSecretAutoRotate` — secret.autorotate
@@ -109,7 +109,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [x] `REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}` — secret.comment.delete
 - [x] `REST DELETE /api/v1/shares/{id}` — share.revoke
 - [x] `REST GET /api/v1/secrets/value` — secret.value.byref
-- [x] `REST GET /api/v1/secrets/{id}` — secret.value.byid
+- [x] `REST GET /api/v1/secrets/{id}` — secret.value.byid, secret.read.env
 - [x] `REST GET /api/v1/secrets/{id}/certificate` — secret.certificate
 - [x] `REST PATCH /api/v1/secrets/{id}/auto-rotate` — secret.autorotate
 - [ ] `REST PATCH /api/v1/secrets/{id}/classification` — model: restricted-classification gate rules are not in the reference model

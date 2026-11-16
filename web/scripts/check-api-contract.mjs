@@ -95,7 +95,6 @@ const KNOWN_VIOLATIONS = {
     },
     'rbac.ts GET /api/v1/groups/{dyn}/shared-secrets': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
     'secrets.ts POST /api/v1/secrets/{dyn}/transfer-ownership': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
-    'users.ts POST /api/v1/users/{dyn}/unlock': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
 };
 
 // ---------------------------------------------------------------------------

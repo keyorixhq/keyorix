@@ -11,6 +11,13 @@ guard into a comment.
 These are regression tripwires on third-party behaviour at the Keyorix construction
 site, not proofs Keyorix owns the behaviour — stated as such in each fragment.
 
+The reachability-first targets (bcrypt, precis, ssh, webauthn, yaml; leads from
+`scripts/fuzzing/reachgen`) are hostile-INPUT harnesses: they feed fuzzer-controlled
+bytes straight into the library call Keyorix makes, with no loopback server. Each
+fragment records what its oracle checks AND what it does not. A package's
+`INVARIANTS.md` declares exactly one prefix, so they carry `INV-FUZZCLOUD-` too,
+although they are not cloud targets.
+
 Format: `INV-FUZZCLOUD-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
 (the `NN` is a placeholder — fragment IDs use a descriptive `-<slug>` suffix, not a
 number, per `docs/INVARIANTS.md`'s slug convention).

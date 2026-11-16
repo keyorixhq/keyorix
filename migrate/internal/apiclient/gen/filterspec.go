@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // keptPaths is the worklist: as migrate wires new command groups (AWS/Azure/GCP sources,

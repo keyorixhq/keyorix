@@ -53,8 +53,7 @@ The fix is always an edit to the file (or env var) and a restart: **in place: ye
 Real output:
 
 ```
-Failed to load configuration: failed to unmarshal config: yaml: unmarshal errors:
-  line 189: unknown key "webauthn" under security (check its spelling and section in docs/CONFIGURATION.md)
+Failed to load configuration: failed to unmarshal config: yaml: construct errors: line 189: unknown key "webauthn" under security (check its spelling and section in docs/CONFIGURATION.md)
 ```
 
 **Match:** `failed to unmarshal config`, `check its spelling and section in docs/CONFIGURATION.md`
@@ -628,7 +627,9 @@ interrupted before it changed any active file only logs that its staging files c
 deleted.) An interrupted `admin restore` is not reported here: it installs its key files and
 the key-set manifest through its restore journal, and the journal check below runs first.
 **Fix.** Re-run the operation, or restore the whole set from one backup with `keyorix-server
-admin restore --overwrite-existing`. **In place:** no.
+admin restore --overwrite-existing --replace-existing-data` (this host's database holds data, so
+`--overwrite-existing` alone is refused; the restore replaces that data with the backup's).
+**In place:** no.
 
 ### Interrupted restore — from code
 

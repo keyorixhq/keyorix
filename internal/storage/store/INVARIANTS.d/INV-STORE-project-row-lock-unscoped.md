@@ -28,11 +28,14 @@
   fix the cascade holds the project row from its first statement and the hooked restore would
   block inside the cascade's own callback and hang. The mechanism (mutual exclusion on the
   row) is asserted instead of the forbidden state. See that file's header.
-  **Second path in #2724, left open**: `RestoreProject` does not take
-  `EnvironmentSecretGuardLockKey`, so in principle `DeleteEnvironment`'s count-then-delete
-  pair could straddle a restore. Its precondition is a LIVE environment under a DELETED
-  project — `DeleteEnvironment`'s own `Delete` is default-scoped and errors "environment not
-  found" on an already-deleted row, and the cascade's env sweep leaves none live — and that
-  state is what #2702/#2710 produce and #2881 closes. So this rests on #2881; it is recorded
-  rather than fixed here, and taking N environment locks would additionally require making
-  the `environment-secret-guard` family `Nestable` in `storage.NamedLockOrder`.
+  **Second path in #2724, closed by #4287**: `RestoreProject` does not take
+  `EnvironmentSecretGuardLockKey`, so `DeleteEnvironment`'s count-then-delete pair could
+  straddle a restore (count before the restore commits, UPDATE after, deleting a revived
+  environment that now holds active secrets). `LocalStorage.DeleteEnvironment` now takes an
+  unscoped `FOR UPDATE` on the environment row (`lockEnvironmentRowUnscoped`) before the
+  count, in the same transaction as the soft-delete; `RestoreProject`'s UPDATE of that row
+  contends with it. Taking N environment guard locks in `RestoreProject` instead would have
+  required making the `environment-secret-guard` family `Nestable` in
+  `storage.NamedLockOrder`. Guard (pg-gated, end state):
+  `delete_environment_vs_restore_project_postgres_test.go`
+  `TestDeleteEnvironment_CannotDeleteEnvironmentRevivedByConcurrentRestoreProject_Postgres`.
