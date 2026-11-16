@@ -1,0 +1,23 @@
+{
+  "target": "smtp_dialogue",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 12,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 16560,
+      "per_byte": 806.8,
+      "abs_max": 66240
+    },
+    "net_bytes_in": {
+      "floor": 127,
+      "per_byte": 1,
+      "abs_max": 508
+    },
+    "net_bytes_out": {
+      "floor": 12,
+      "per_byte": 0.6,
+      "abs_max": 48
+    }
+  }
+}

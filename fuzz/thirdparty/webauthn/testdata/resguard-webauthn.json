@@ -1,0 +1,33 @@
+{
+  "target": "webauthn_cose",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 40,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 7736,
+      "per_byte": 1368,
+      "abs_max": 30944
+    },
+    "cpu_ns": {
+      "floor": 551000,
+      "per_byte": 551000,
+      "abs_max": 2204000
+    },
+    "live_heap": {
+      "floor": 539536,
+      "per_byte": 539536,
+      "abs_max": 2158144
+    },
+    "mallocs": {
+      "floor": 45,
+      "per_byte": 22,
+      "abs_max": 180
+    },
+    "wall_ns": {
+      "floor": 52563,
+      "per_byte": 31152,
+      "abs_max": 210252
+    }
+  }
+}

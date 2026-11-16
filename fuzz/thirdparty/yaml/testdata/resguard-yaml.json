@@ -1,0 +1,33 @@
+{
+  "target": "yaml_decode",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 24,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 1976952,
+      "per_byte": 2636,
+      "abs_max": 7907808
+    },
+    "cpu_ns": {
+      "floor": 22515000,
+      "per_byte": 128000,
+      "abs_max": 90060000
+    },
+    "live_heap": {
+      "floor": 607344,
+      "per_byte": 288272,
+      "abs_max": 2429376
+    },
+    "mallocs": {
+      "floor": 42561,
+      "per_byte": 13,
+      "abs_max": 170244
+    },
+    "wall_ns": {
+      "floor": 22383000,
+      "per_byte": 7469.5,
+      "abs_max": 89532000
+    }
+  }
+}

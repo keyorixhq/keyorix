@@ -1,0 +1,33 @@
+{
+  "target": "bcrypt_roundtrip",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 16,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 10976,
+      "per_byte": 10896,
+      "abs_max": 43904
+    },
+    "cpu_ns": {
+      "floor": 2767000,
+      "per_byte": 2115000,
+      "abs_max": 11068000
+    },
+    "live_heap": {
+      "floor": 529296,
+      "per_byte": 494960,
+      "abs_max": 2117184
+    },
+    "mallocs": {
+      "floor": 25,
+      "per_byte": 25,
+      "abs_max": 100
+    },
+    "wall_ns": {
+      "floor": 2052203,
+      "per_byte": 1980081,
+      "abs_max": 8208812
+    }
+  }
+}

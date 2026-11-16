@@ -1,0 +1,33 @@
+{
+  "target": "gotpm_unmarshal",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 36,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 17744,
+      "per_byte": 540,
+      "abs_max": 70976
+    },
+    "cpu_ns": {
+      "floor": 586000,
+      "per_byte": 293000,
+      "abs_max": 2344000
+    },
+    "live_heap": {
+      "floor": 535576,
+      "per_byte": 267788,
+      "abs_max": 2142304
+    },
+    "mallocs": {
+      "floor": 6212,
+      "per_byte": 21.333333333333332,
+      "abs_max": 24848
+    },
+    "wall_ns": {
+      "floor": 300706,
+      "per_byte": 15381.333333333334,
+      "abs_max": 1202824
+    }
+  }
+}

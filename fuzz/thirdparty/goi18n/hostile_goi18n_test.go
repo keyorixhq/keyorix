@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"gopkg.in/yaml.v3"
 )
@@ -51,6 +52,12 @@ func FuzzGoI18nParseMessageFile(f *testing.F) {
 	f.Add(uint8(0), []byte(`{"":{"":""}}`))
 
 	exts := []string{"json", "toml", "yaml"}
+
+	// PK2: resguard resource oracle (see resguard_goi18n_test.go).
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, sel uint8, data []byte) {
 		if len(data) > 64*1024 {
 			return
@@ -58,14 +65,21 @@ func FuzzGoI18nParseMessageFile(f *testing.F) {
 		ext := exts[int(sel)%len(exts)]
 		path := "active." + ext
 		done := make(chan struct{})
+		var c resguard.Cost
 		go func() {
 			defer close(done)
 			// Return value intentionally ignored: an error on hostile input is
 			// expected and fine; only a panic or hang is a finding.
-			_, _ = i18n.ParseMessageFileBytes(data, path, unmarshalFuncs())
+			c = rgProbe.Measure(len(data), func() {
+				_, _ = i18n.ParseMessageFileBytes(data, path, unmarshalFuncs())
+			})
 		}()
 		select {
 		case <-done:
+			resguard.FeedCoverage(c)
+			if rgHaveBudget {
+				rgBudget.Check(t.Fatalf, c)
+			}
 		case <-time.After(15 * time.Second):
 			t.Fatalf("bounded-work: ParseMessageFileBytes(%s) did not return in 15s for %d-byte input", ext, len(data))
 		}

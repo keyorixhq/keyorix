@@ -1,0 +1,33 @@
+{
+  "target": "gopsutil_proc",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 16,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 108792,
+      "per_byte": 164.327868852459,
+      "abs_max": 435168
+    },
+    "cpu_ns": {
+      "floor": 636000,
+      "per_byte": 10426.22950819672,
+      "abs_max": 2544000
+    },
+    "live_heap": {
+      "floor": 542304,
+      "per_byte": 8890.22950819672,
+      "abs_max": 2169216
+    },
+    "mallocs": {
+      "floor": 625,
+      "per_byte": 0.4918032786885246,
+      "abs_max": 2500
+    },
+    "wall_ns": {
+      "floor": 252718,
+      "per_byte": 1374,
+      "abs_max": 1010872
+    }
+  }
+}

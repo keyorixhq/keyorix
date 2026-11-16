@@ -1,0 +1,33 @@
+{
+  "target": "toml_decode",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 24,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 2974688,
+      "per_byte": 1749.7142857142858,
+      "abs_max": 11898752
+    },
+    "cpu_ns": {
+      "floor": 16435000,
+      "per_byte": 61785.71428571428,
+      "abs_max": 65740000
+    },
+    "live_heap": {
+      "floor": 615376,
+      "per_byte": 43955.42857142857,
+      "abs_max": 2461504
+    },
+    "mallocs": {
+      "floor": 50558,
+      "per_byte": 11.642857142857142,
+      "abs_max": 202232
+    },
+    "wall_ns": {
+      "floor": 15870409,
+      "per_byte": 8266.92857142857,
+      "abs_max": 63481636
+    }
+  }
+}

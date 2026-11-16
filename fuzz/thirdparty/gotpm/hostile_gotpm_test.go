@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 // rt decodes data as T, and if that succeeds performs the round-trip-stability
@@ -67,29 +68,41 @@ func FuzzGoTPMUnmarshal(f *testing.F) {
 	f.Add(uint8(4), []byte{0xff, 0xff, 0x01, 0x02}) // lying size prefix
 	f.Add(uint8(0), []byte{})
 
+	// PK2: resguard resource oracle (see resguard_gotpm_test.go).
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, sel uint8, data []byte) {
 		if len(data) > 64*1024 {
 			return
 		}
 		errc := make(chan error, 1)
+		var c resguard.Cost
 		go func() {
 			var err error
-			switch sel % 5 {
-			case 0:
-				err = rt[tpm2.TPM2BPublic](data)
-			case 1:
-				err = rt[tpm2.TPM2BPrivate](data)
-			case 2:
-				err = rt[tpm2.TPMTPublic](data)
-			case 3:
-				err = rt[tpm2.TPM2BData](data)
-			case 4:
-				err = rt[tpm2.TPM2BName](data)
-			}
+			c = rgProbe.Measure(len(data), func() {
+				switch sel % 5 {
+				case 0:
+					err = rt[tpm2.TPM2BPublic](data)
+				case 1:
+					err = rt[tpm2.TPM2BPrivate](data)
+				case 2:
+					err = rt[tpm2.TPMTPublic](data)
+				case 3:
+					err = rt[tpm2.TPM2BData](data)
+				case 4:
+					err = rt[tpm2.TPM2BName](data)
+				}
+			})
 			errc <- err
 		}()
 		select {
 		case err := <-errc:
+			resguard.FeedCoverage(c)
+			if rgHaveBudget {
+				rgBudget.Check(t.Fatalf, c)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

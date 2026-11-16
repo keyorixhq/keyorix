@@ -1,0 +1,33 @@
+{
+  "target": "precis_enforce",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 36,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 37680,
+      "per_byte": 4186.666666666667,
+      "abs_max": 150720
+    },
+    "cpu_ns": {
+      "floor": 642000,
+      "per_byte": 128400,
+      "abs_max": 2568000
+    },
+    "live_heap": {
+      "floor": 546456,
+      "per_byte": 105889.6,
+      "abs_max": 2185824
+    },
+    "mallocs": {
+      "floor": 13,
+      "per_byte": 1.4444444444444444,
+      "abs_max": 52
+    },
+    "wall_ns": {
+      "floor": 256549,
+      "per_byte": 11164.222222222223,
+      "abs_max": 1026196
+    }
+  }
+}

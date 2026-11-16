@@ -1,0 +1,33 @@
+{
+  "target": "ssh_authorizedkey",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 92,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 976,
+      "per_byte": 42.43478260869565,
+      "abs_max": 3904
+    },
+    "cpu_ns": {
+      "floor": 589000,
+      "per_byte": 6391.304347826087,
+      "abs_max": 2356000
+    },
+    "live_heap": {
+      "floor": 543840,
+      "per_byte": 24375.272727272728,
+      "abs_max": 2175360
+    },
+    "mallocs": {
+      "floor": 11,
+      "per_byte": 0.4782608695652174,
+      "abs_max": 44
+    },
+    "wall_ns": {
+      "floor": 9969,
+      "per_byte": 431.8695652173913,
+      "abs_max": 39876
+    }
+  }
+}

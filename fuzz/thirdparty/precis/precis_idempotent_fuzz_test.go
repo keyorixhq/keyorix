@@ -36,6 +36,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	"golang.org/x/text/secure/precis"
 	"golang.org/x/text/unicode/norm"
 )
@@ -60,7 +61,19 @@ func FuzzPrecisProfileIdempotent(f *testing.F) {
 		"folded":  foldedProfile,
 		"address": addressProfile,
 	}
+
+	// PK2: resguard resource oracle (see resguard_precis_test.go). Meters the same
+	// surface calibration does (both profiles' String enforcement).
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, s string) {
+		c := rgProbe.Measure(len(s), func() { rgRun(s) })
+		resguard.FeedCoverage(c)
+		if rgHaveBudget {
+			rgBudget.Check(t.Fatalf, c)
+		}
 		if !utf8.ValidString(s) {
 			// precis legitimately errors on invalid UTF-8; such inputs can't
 			// exercise idempotence. Still assert no panic by calling once.
