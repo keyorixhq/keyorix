@@ -164,6 +164,27 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// as D5/D9). Found by the DF2 fuzz run at "{!}". Not a Keyorix defect (v4 has no
 	// live caller). Keyed on the v3 flow-ws error alone.
 	"v3-rejects:flow-ws": true,
+
+	// A tag (`!`, `!local`) on an EMPTY node inside a FLOW SEQUENCE ("[!x]", "[0:
+	// !]", "[a: !x]", "[1: !]"). v3.0.5 REJECTS ("did not find expected ',' or ']'")
+	// -- its flow scanner cannot handle a tag with no node content before the
+	// separator; v4.0.0 ACCEPTS, resolving the tagged-empty node to "". A tag on a
+	// NON-empty flow scalar ("[0: !t 1]") is accepted by BOTH, so only the
+	// tagged-EMPTY-in-flow case splits. Found by the DF3 struct fuzzer at
+	// "0: [0: !0000000]". Same v4-lenient flow family as D11 ("{!}"), different
+	// container and error. v4 accepts what v3 rejects (the security-relevant
+	// direction) but benignly (empty-string value). Not a Keyorix defect (v4 has no
+	// live caller); a forward-looking flow-leniency migration note. Keyed on the v3
+	// error substring "',' or ']'" alone.
+	"v3-rejects:flow-seq-tagged-empty": true,
+
+	// An EMPTY key/node in FLOW context ("[: 1]"). v3.0.5 REJECTS ("did not find
+	// expected node content"); v4.0.0 ACCEPTS it as a null-keyed single-pair map
+	// element. The flow-context analogue of D2 (block empty-implicit-key). Found by
+	// the DF3 fuzz run. v4 accepts what v3 rejects (benign — a null key). Not a
+	// Keyorix defect (v4 has no live caller); a forward-looking flow-leniency
+	// migration note. Keyed on the v3 error "did not find expected node content".
+	"v3-rejects:flow-node-content": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -313,12 +334,14 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		if !yamlV4ExpectedDiff[class] {
 			t.Fatalf("empty-implicit-key class must be listed (tolerated)")
 		}
-		// RED: a DIFFERENT v3 syntax rejection must not be silenced by this class.
-		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected node content"}, nil)
+		// RED: a DIFFERENT v3 syntax rejection must not be silenced by this class and
+		// must stay the untolerated generic :syntax (use a directive error, which is
+		// not one of the specifically-classed flow/tag/key messages).
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected directive name"}, nil)
 		if other == "v3-rejects:empty-implicit-key" {
 			t.Fatalf("an unrelated v3 syntax rejection was wrongly absorbed into empty-implicit-key")
 		}
-		if yamlV4ExpectedDiff[other] {
+		if other != "v3-rejects:syntax" || yamlV4ExpectedDiff[other] {
 			t.Fatalf("the generic syntax split (%q) must NOT be tolerated", other)
 		}
 		t.Logf("oracle-2 empty-implicit-key gating proven: ':' tolerated; other syntax splits still fail (%q)", other)
@@ -582,6 +605,55 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("flow-ws class must be listed (tolerated)")
 		}
 		t.Logf("oracle-2 flow-ws gating proven")
+	}
+
+	// ---- Oracle 2 class gating: tagged-empty node in a flow sequence (D15) ----
+	{
+		for _, in := range []string{"[!x]", "[0: !]", "[a: !x]", "[1: !]"} {
+			var v3v, v4v any
+			err3 := v3yaml.Unmarshal([]byte(in), &v3v)
+			err4 := v4yaml.Unmarshal([]byte(in), &v4v)
+			if err3 == nil || err4 != nil {
+				t.Fatalf("precondition %q: must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", in, err3, err4)
+			}
+			class := classifyYAMLV4Split(err3, err4)
+			if class != "v3-rejects:flow-seq-tagged-empty" {
+				t.Fatalf("%q split must class as v3-rejects:flow-seq-tagged-empty, got %q", in, class)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("flow-seq-tagged-empty class must be listed (tolerated)")
+			}
+		}
+		// A tag on a NON-empty flow scalar is accepted by BOTH (no split).
+		var w1, w2 any
+		if v3yaml.Unmarshal([]byte("[0: !t 1]"), &w1) != nil || v4yaml.Unmarshal([]byte("[0: !t 1]"), &w2) != nil {
+			t.Fatalf("precondition: a tag on a NON-empty flow scalar must be accepted by BOTH")
+		}
+		t.Logf("oracle-2 flow-seq-tagged-empty gating proven: tagged-EMPTY-in-flow tolerated; tag-on-non-empty agrees")
+	}
+
+	// ---- Oracle 2 class gating: empty key in a flow sequence (D16) ----
+	{
+		in := []byte("[: 1]")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: '[: 1]' must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:flow-node-content" {
+			t.Fatalf("'[: 1]' split must class as v3-rejects:flow-node-content, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("flow-node-content class must be listed (tolerated)")
+		}
+		// RED: a generic v3 syntax rejection must still fall through to :syntax (untolerated).
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected directive"}, nil)
+		if other != "v3-rejects:syntax" || yamlV4ExpectedDiff[other] {
+			t.Fatalf("a generic v3 syntax error must stay the untolerated :syntax class, got %q", other)
+		}
+		t.Logf("oracle-2 flow-node-content gating proven: '[: 1]' tolerated; generic syntax still fails")
 	}
 }
 

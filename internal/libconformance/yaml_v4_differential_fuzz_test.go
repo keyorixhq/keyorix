@@ -110,6 +110,10 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"o: &!0000",                 // anchor name with '!' (v3 rejects / v4 lenient)
 		"- -0",                      // -0: v3 int 0 / v4 float -0.0
 		"{!}",                       // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
+		"[!x]",                      // tagged empty node in flow seq (v3 rejects / v4 "")
+		"[0: !]",                    // tagged empty value in flow seq (v3 rejects / v4 "")
+		"[0: !t 1]",                 // NOT a split: tag on NON-empty flow scalar agrees
+		"[: 1]",                     // empty key in flow seq (v3 rejects / v4 null key)
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
@@ -234,6 +238,21 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// with this v3 error (`@`, backtick) are rejected by BOTH, so only the
 		// leading-TAB-ish case actually splits.
 		return side + ":token-start"
+	case strings.Contains(msg, "',' or ']'"):
+		// A tag (`!`, `!local`) applied to an EMPTY node inside a FLOW SEQUENCE
+		// (`[!x]`, `[0: !]`, `[a: !x]`). v3's flow scanner cannot handle a tag with
+		// no node content before the `,`/`]` and rejects ("did not find expected ','
+		// or ']'"); v4 accepts it, resolving the tagged-empty node to "". A tag on a
+		// NON-empty flow scalar (`[0: !t 1]`) is accepted by BOTH, so only the
+		// tagged-EMPTY-in-flow case splits. Same v4-lenient flow family as D11 (`{!}`),
+		// different container/error. v4 accepts what v3 rejects.
+		return side + ":flow-seq-tagged-empty"
+	case strings.Contains(msg, "did not find expected node content"):
+		// An EMPTY key/node in FLOW context (`[: 1]`). v3 rejects ("did not find
+		// expected node content"); v4 accepts it as a null-keyed single-pair map
+		// element. The flow-context analogue of D2 (block empty-implicit-key). v4
+		// accepts what v3 rejects.
+		return side + ":flow-node-content"
 	case strings.Contains(msg, "did not find expected") || strings.Contains(msg, "could not find expected"):
 		return side + ":syntax"
 	case strings.Contains(msg, "control characters are not allowed"):
