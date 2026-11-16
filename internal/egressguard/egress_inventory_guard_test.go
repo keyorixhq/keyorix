@@ -910,6 +910,7 @@ var dependencyKinds = map[string]string{
 	"google.golang.org/genproto/googleapis/rpc":                         "local: protobuf types",
 	"google.golang.org/grpc":                                            "client",
 	"google.golang.org/protobuf":                                        "local: protobuf runtime",
+	"go.yaml.in/yaml/v2":                                                "local: YAML parsing (test-only bounded-work sweep in internal/boundedworksweep)",
 	"go.yaml.in/yaml/v3":                                                "local: YAML parsing (test-only sibling-differential fuzzers in internal/libconformance)",
 	"go.yaml.in/yaml/v4":                                                "local: YAML parsing",
 	"gopkg.in/yaml.v3":                                                  "local: YAML parsing (tests and scripts/ tooling only: libconformance, CI guard inputs, configcompat; not imported by production code)",

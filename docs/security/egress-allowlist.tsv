@@ -80,4 +80,5 @@ operator/internal/keyorix/client.go	E15	Kubernetes operator reads secrets from t
 scripts/	DEV	Build, CI, e2e, fuzzing, drill and demo tooling, never built into a release artifact
 server/admin/restore.go	E01	Opens a local SQLite file read-only during restore (no network)
 server/admin/restore_postgres.go	E01	`admin restore` into a PostgreSQL target database
+server/boot_exit.go	E11	Azure sign-in probe for azure-kms at boot: imports azcore/azidentity only to classify the key provider's boot error into exit 75/78, no connection of its own
 server/wire_sso.go	E08	OIDC discovery at boot and the SSO HTTP client, sso.providers[]

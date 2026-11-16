@@ -1,0 +1,40 @@
+# Packages scanned by bwgen for the BW1 ecosystem bounded-work sweep.
+# All resolvable OFFLINE from the module cache (GOPROXY=off). One import path
+# per line; # starts a comment. See scripts/fuzzing/bwgen/main.go.
+
+# --- third-party decoders / parsers / validators (keyorix go.mod) ---
+gopkg.in/yaml.v3
+go.yaml.in/yaml/v3
+go.yaml.in/yaml/v2
+github.com/BurntSushi/toml
+github.com/fxamacker/cbor/v2
+github.com/golang-jwt/jwt/v5
+github.com/google/uuid
+github.com/go-viper/mapstructure/v2
+# needs network: these do not resolve under GOPROXY=off in this cache
+#   github.com/json-iterator/go       (dep modern-go/reflect2 not fully in cache)
+#   github.com/russross/blackfriday/v2 (module lookup disabled by GOPROXY=off)
+#   github.com/yuin/goldmark           (module lookup disabled by GOPROXY=off)
+github.com/santhosh-tekuri/jsonschema/v6
+github.com/digitorus/pkcs7
+github.com/mattermost/xml-roundtrip-validator
+github.com/oasdiff/yaml
+github.com/oasdiff/yaml3
+github.com/go-openapi/jsonpointer
+
+# --- Go standard-library parsers (single-arg (T,error) and Unmarshal shapes) ---
+encoding/json
+encoding/xml
+encoding/csv
+encoding/pem
+encoding/asn1
+encoding/base32
+encoding/base64
+encoding/hex
+net/url
+net/http
+regexp
+time
+strconv
+mime
+math/big
