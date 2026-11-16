@@ -79,11 +79,18 @@ func (s *Sentinel) ScanTempDir() {
 	if s.tempDir == "" {
 		return
 	}
-	_ = filepath.WalkDir(s.tempDir, func(p string, d fs.DirEntry, err error) error {
+	// Walk and open through an os.Root so a symlink swapped in mid-walk cannot
+	// redirect the open outside TempDir (gosec G122).
+	root, err := os.OpenRoot(s.tempDir)
+	if err != nil {
+		return
+	}
+	defer func() { _ = root.Close() }()
+	_ = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
-		f, e := os.Open(p) // #nosec G304 -- p comes from walking the test's own TempDir
+		f, e := root.Open(p)
 		if e != nil {
 			return nil
 		}

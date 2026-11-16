@@ -34,25 +34,35 @@ func CostSink() uint8 { return costSink }
 
 // FeedCoverage runs every meter's magnitude through the bucket switch.
 func FeedCoverage(c Cost) {
-	feedBucket(uint64(c.Wall))
-	feedBucket(uint64(c.CPU))
+	feedBucket(nonNegU64(int64(c.Wall)))
+	feedBucket(nonNegU64(int64(c.CPU)))
 	feedBucket(c.AllocBytes)
 	feedBucket(c.Mallocs)
 	feedBucket(c.LiveHeap)
-	feedBucket(uint64(nonNeg(c.Goroutines)))
-	feedBucket(uint64(nonNeg(c.Threads)))
-	feedBucket(uint64(nonNeg(c.OpenFDs)))
+	feedBucket(nonNegU64(int64(c.Goroutines)))
+	feedBucket(nonNegU64(int64(c.Threads)))
+	feedBucket(nonNegU64(int64(c.OpenFDs)))
 	feedBucket(c.WriteBytes)
-	feedBucket(uint64(nonNeg64(c.DiskBytes)))
-	feedBucket(uint64(nonNeg64(c.DiskBlocks)))
-	feedBucket(uint64(nonNeg(c.DiskFiles)))
-	feedBucket(uint64(c.Dials))
-	feedBucket(uint64(c.NonLoopbackDials))
-	feedBucket(uint64(nonNeg64(c.NetBytesOut)))
-	feedBucket(uint64(c.Sleep))
-	feedBucket(uint64(nonNeg64(c.LogBytes)))
-	feedBucket(uint64(c.DBQueries))
-	feedBucket(uint64(nonNeg64(c.DBRows)))
+	feedBucket(nonNegU64(c.DiskBytes))
+	feedBucket(nonNegU64(c.DiskBlocks))
+	feedBucket(nonNegU64(int64(c.DiskFiles)))
+	feedBucket(nonNegU64(int64(c.Dials)))
+	feedBucket(nonNegU64(int64(c.NonLoopbackDials)))
+	feedBucket(nonNegU64(c.NetBytesOut))
+	feedBucket(nonNegU64(int64(c.Sleep)))
+	feedBucket(nonNegU64(c.LogBytes))
+	feedBucket(nonNegU64(int64(c.DBQueries)))
+	feedBucket(nonNegU64(c.DBRows))
+}
+
+// nonNegU64 converts a signed meter to uint64, flooring negatives at 0 (a
+// negative delta is a measurement artefact, not a cost). The explicit check is
+// what makes the conversion safe (gosec G115).
+func nonNegU64(v int64) uint64 {
+	if v < 0 {
+		return 0
+	}
+	return uint64(v)
 }
 
 // feedBucket runs the base-2 magnitude of v through a switch with one case per
