@@ -47,7 +47,9 @@ import (
 // MFA (no fixture project requires it). The machine-token target check
 // (machineCovers) treats only the bypass flag as admin-tier: the fixture's
 // target machines hold project_auditor, which is admin-tier by none of core's
-// tests, so the name- and bundle-based variants are not exercised.
+// tests, so the name- and bundle-based variants are not exercised. That
+// target check is applied to a USER caller as well as a machine one (#4332);
+// a restricted-PAT user caller is refused the mint outright (see allowed).
 
 type grant struct {
 	roleID    uint
@@ -217,12 +219,29 @@ func (m model) allowed(p *principal, req requirement) bool {
 		}
 	}
 	if req.tokenForMachineID != 0 {
-		// A restricted PAT cannot mint (the minted token would carry none of its
-		// restrictions): IssueMachineToken refuses it before the ceiling (#4332).
-		if p.machineID == 0 && p.pat != nil {
+		// Minting a token for an EXISTING machine: the caller must hold every
+		// permission that machine holds, at each scope it holds it. A machine
+		// caller has followed this rule since #3993; a USER caller is held to
+		// the SAME rule since #4332 (fuzz-corpus#91): a user with
+		// roles.assign@project but lacking one of the target's permissions could
+		// otherwise mint a token for a peer that carries it and act as that peer
+		// (core.requireMachinePrivilegeCeiling → requireActorHoldsTargetPermissions,
+		// which calls AuthorizePrincipal with the USER actor type at the
+		// target's scope — modelled by machineCovers' per-scope m.holds, whose
+		// global-grant-applies-to-any-project rule mirrors that authorization's
+		// inheritance). A global admin holds every permission, so it passes with
+		// no special case.
+		if !m.machineCovers(p, req.tokenForMachineID) {
 			return false
 		}
-		if !m.machineCovers(p, req.tokenForMachineID) {
+		// A user caller authenticated by a restricted PAT (ADR-042) cannot mint
+		// a machine token at all: the minted kx_machine_ token carries NONE of
+		// the PAT's restrictions (project/environment/permission/CIDR), so it
+		// would be a one-call escape from every one of them (#4332,
+		// machine_token.go, the counterpart of PAT-GUARD-1). Only a user caller
+		// ever carries a PAT restriction (p.pat is nil for a machine), so this
+		// is implicitly user-only.
+		if p.pat != nil {
 			return false
 		}
 	}
@@ -237,18 +256,16 @@ func (m model) allowed(p *principal, req requirement) bool {
 	return true
 }
 
-// machineCovers: caller p may control target's credential (see
+// machineCovers: machine caller p may control target's credential (see
 // requirement.tokenForMachineID). The target's grants are read from the
-// grant tables like any principal's. A machine caller is additionally refused a
-// target that holds an admin role (machines never hold the override); a user is
-// held to the permissions alone (#4332, requireActorHoldsTargetPermissions).
+// grant tables like any principal's.
 func (m model) machineCovers(p *principal, target uint) bool {
 	if p.machineID == target {
 		return false
 	}
 	for _, g := range m.grants(&principal{machineID: target}) {
 		perms, adminRole := m.rolePerms(g.roleID)
-		if adminRole && p.machineID != 0 {
+		if adminRole {
 			return false
 		}
 		for _, perm := range perms {
@@ -304,11 +321,12 @@ type requirement struct {
 	// refusal is absorbed by known-09 at the partition.
 	memberOnly bool
 	// tokenForMachineID != 0: the op mints a credential for that machine. The
-	// caller must then cover the target (#3993, user callers since #4332): it is
-	// not the target itself, and it holds every permission of every role the
-	// target holds, at the scope the target holds it. A MACHINE caller is also
-	// refused a target holding a role that bypasses permission checks; a user
-	// authenticated by a restricted PAT is refused outright.
+	// caller must then cover the target: it is not the target itself, the
+	// target holds no role that bypasses permission checks, and the caller
+	// holds every permission of every role the target holds, at the scope the
+	// target holds it. A MACHINE caller has followed this since #3993; a USER
+	// caller is held to the same rule since #4332 (fuzz-corpus#91), and a USER
+	// caller on a restricted PAT is refused outright (see allowed).
 	tokenForMachineID uint
 }
 
