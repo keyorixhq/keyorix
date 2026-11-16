@@ -261,6 +261,29 @@ var fixRegressionPlants = []plant{
 		op:             "machine.token.issue",
 		minUnexplained: 2,
 	},
+	{
+		// #4332 (fuzz-corpus#91): a USER issuing a token for a machine is not
+		// held to that machine's permissions — the same hole #3993 closed for
+		// machine callers, re-opened for users (false positive f1be67fcde954c04:
+		// a user with {secrets.read,secrets.delete,roles.assign} minting a token
+		// for a project_auditor machine it does not fully cover). Reverting the
+		// user branch makes the model over-allow where core/REST/gRPC deny.
+		name: "fix-4332-user-target-ceiling-removed",
+		file: "internal/core/authz.go",
+		anchor: "\tif actorType == ActorTypeUser && machineID != 0 {\n" +
+			"\t\t// A user is held to the same rule (INV-CORE-01: no authority a\n" +
+			"\t\t// caller does not hold). A user with roles.assign at the project but\n" +
+			"\t\t// without the target's permissions could otherwise mint a token for a\n" +
+			"\t\t// peer carrying them and act as that peer. A global admin holds\n" +
+			"\t\t// every permission, so the check passes for it without a special case.\n" +
+			"\t\treturn c.requireActorHoldsTargetPermissions(ctx, ActorTypeUser, principalID, machineID)\n\t}\n",
+		repl: "\t// PLANT: #4332 reverted\n",
+		op:   "machine.token.issue",
+		// 8 unexplained cases at introduction (the custom-role user across the
+		// sweep's mask/scope/route variations that leave it short of the target
+		// machine's project_auditor bundle); control sweep without the plant: 0.
+		minUnexplained: 8,
+	},
 }
 
 func TestPlantsAreDetected(t *testing.T) {
