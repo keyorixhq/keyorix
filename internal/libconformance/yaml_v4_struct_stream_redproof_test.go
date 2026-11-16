@@ -236,6 +236,25 @@ func TestYAMLV4StructStreamRedGreen(t *testing.T) {
 		t.Logf("S3 per-doc divergence proven: each doc's `!`-tag split classes as the tolerated nonspecific-tag class")
 	}
 
+	// Stream-context doc-start divergence (class v3-rejects:doc-start): a folded
+	// block scalar with under-indented content makes v3's stream Decoder reject
+	// while v4's Loader accepts one document.
+	{
+		in := []byte(">\n0")
+		_, e3 := decodeStreamV3(in)
+		d4, e4 := decodeStreamV4(in)
+		if e3 == nil || e4 != nil {
+			t.Fatalf("precondition: `>\\n0` stream must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", e3, e4)
+		}
+		if class := classifyYAMLV4Split(e3, nil); class != "v3-rejects:doc-start" || !yamlV4ExpectedDiff[class] {
+			t.Fatalf("`>\\n0` stream split must class as the tolerated v3-rejects:doc-start, got %q", class)
+		}
+		if len(d4) != 1 {
+			t.Fatalf("v4 must accept `>\\n0` as exactly 1 document, got %d", len(d4))
+		}
+		t.Logf("S3 stream doc-start divergence proven: v3 Decoder rejects `>\\n0`, v4 Loader accepts 1 doc")
+	}
+
 	// ========================= S2: round-trip oracle =========================
 
 	// GREEN: a simple document is a round-trip fixed point in both libraries.

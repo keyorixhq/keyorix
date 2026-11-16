@@ -102,6 +102,15 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// no live caller). Keyed on the v3 error substring "directive".
 	"v3-rejects:directive": true,
 
+	// The doc-start error in the v3-rejecting direction (the mirror of D4's
+	// v4-rejects:doc-start). A folded/literal block scalar with under-indented
+	// content in a STREAM decode (`>\n0`) makes v3's Decoder loop reject with "did
+	// not find expected <document start>" while v4's Loader accepts it as one
+	// document. Found by the DF3 multi-doc fuzzer at `>\n0`. v4 accepts what v3
+	// rejects, benignly. Not a Keyorix defect (v4 has no live caller). Keyed on the
+	// "expected <document start>" error with the v3-rejecting side.
+	"v3-rejects:doc-start": true,
+
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
 	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null

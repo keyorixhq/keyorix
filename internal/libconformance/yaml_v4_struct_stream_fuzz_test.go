@@ -296,6 +296,7 @@ func FuzzYAMLV4MultiDocDifferential(f *testing.F) {
 		"--- a\n--- b\n",
 		"0\n---\n: ",         // doc2 is the D2 empty-implicit-key: v3 stream errors, v4 accepts
 		"a: 1\n---\n! 00\n", // doc2 is a D12 nonspecific-tag value divergence
+		">\n0",              // folded block scalar under-indented: v3 stream rejects / v4 accepts
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
