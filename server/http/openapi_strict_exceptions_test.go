@@ -101,6 +101,8 @@ func osStrictReproducers(w *osWorld) map[string]func(t *testing.T) int {
 	sA := strconv.FormatUint(uint64(w.seedPools["secrets"][0]), 10)
 	mach := w.tokens[osPrincMachine]
 	admin := w.tokens[osPrincGlobalAdmin]
+	projB := strconv.FormatUint(uint64(w.seedPools["projects"][1]), 10)
+	envA := strconv.FormatUint(uint64(w.seedPools["environments"][0]), 10)
 
 	// Family A: a machine principal on a secret read-metadata route reaches the
 	// legacy default:500 branch (the admin gets 200).
@@ -127,6 +129,13 @@ func osStrictReproducers(w *osWorld) map[string]func(t *testing.T) int {
 		"listAccessors":                 machineRead("access"),
 		"createSecretTemplate":          dupCreate("/api/v1/secret-templates", `{"name":"osf-strict-dup"}`),
 		"createRejectionReasonTemplate": dupCreate("/api/v1/rejection-reason-templates", `{"name":"osf-strict-dup","reason":"because"}`),
+		// An environment-scoped rotation policy whose environment (project A) does not
+		// belong to the supplied project (B) hits core's PLAIN cross-tenant error, which
+		// the handler's ErrInvalidInput-only check maps to an undeclared 500.
+		"createRotationPolicy": func(t *testing.T) int {
+			body := fmt.Sprintf(`{"name":"osf-strict-rp","scope":"environment","project_id":%s,"environment_id":%s,"interval_days":30}`, projB, envA)
+			return do(http.MethodPost, "/api/v1/rotation-policies", admin, body)
+		},
 		"startImpersonation": func(t *testing.T) int {
 			// A suspended/inactive target is refused "cannot impersonate a suspended
 			// or inactive user" — not "yourself", not ErrUserNotFound — so the

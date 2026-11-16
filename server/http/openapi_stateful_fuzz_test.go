@@ -1109,6 +1109,16 @@ var osKnownUndeclared5xx = []struct {
 	// uniqueness violation (missing-sentinel class). owner: catalog / secret-template handlers.
 	{id: "OPENAPI-STATEFUL-9", opID: "createSecretTemplate", princ: -1, code: 500, reason: "duplicate template name -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (missing Conflict sentinel in core). See TestOpenAPIStrictExceptions."},
 	{id: "OPENAPI-STATEFUL-9", opID: "createRejectionReasonTemplate", princ: -1, code: 500, reason: "duplicate rejection-reason-template name -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (missing Conflict sentinel in core). See TestOpenAPIStrictExceptions."},
+
+	// OPENAPI-STATEFUL-10 (NEW, caught by the STRICT fuzz pass itself, not the sweep — the
+	// nightly gate working as intended): createRotationPolicy answers an undeclared 500 when
+	// core.CreateRotationPolicy returns a PLAIN fmt.Errorf (not invalidInput) for an
+	// environment-scoped policy whose environment does not exist (rotation_policies.go:85) or
+	// whose environment/project pair cross tenants (rotation_policies.go:88). The handler only
+	// maps core.ErrInvalidInput -> 422; every other error falls to 500 (rotation_policies_handler.go:196).
+	// Deterministically reproduced (cross-project env/project pair) by TestOpenAPIStrictExceptions.
+	// Fix: wrap those two refusals in invalidInput (or a NotFound sentinel), then they render 422/404.
+	{id: "OPENAPI-STATEFUL-10", opID: "createRotationPolicy", princ: -1, code: 500, reason: "env-scoped policy with a cross-project or non-existent environment -> plain core error (rotation_policies.go:85/88) not caught by the handler's ErrInvalidInput check -> undeclared 500; should be 422/404. See TestOpenAPIStrictExceptions."},
 }
 
 // --- Oracle 2: response conformance ----------------------------------------
