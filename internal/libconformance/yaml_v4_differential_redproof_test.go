@@ -129,6 +129,13 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// live caller). Scoped to inputs containing `:}`/`:,`.
 	"flow-map-colon-nospace": true,
 
+	// A `?` complex-key indicator in a context v3 forbids — e.g. `&0?` (anchor then
+	// `?`). v3.0.5 REJECTS ("mapping keys are not allowed in this context"); v4.0.0
+	// ACCEPTS leniently. Found by the DF3 multi-doc fuzzer at `&0?`. v4 accepts what
+	// v3 rejects (migration-hazard direction). Not a Keyorix defect (v4 has no live
+	// caller). Keyed on the v3 error "mapping keys are not allowed".
+	"v3-rejects:mapping-key-context": true,
+
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
 	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null

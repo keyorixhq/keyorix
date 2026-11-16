@@ -277,6 +277,11 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		return side + ":tag-char"
 	case strings.Contains(msg, "mapping values are not allowed"):
 		return side + ":mapping-context"
+	case strings.Contains(msg, "mapping keys are not allowed"):
+		// A `?` complex-key / mapping-key indicator in a context v3 forbids — e.g.
+		// `&0?` (an anchor followed by `?`). v3 REJECTS ("mapping keys are not allowed
+		// in this context"); v4 is lenient and ACCEPTS. v4 accepts what v3 rejects.
+		return side + ":mapping-key-context"
 	case strings.Contains(msg, "directive"):
 		// A `%`-introduced directive v3 rejects — e.g. under-indented block-scalar
 		// content `%0` (`|\n%0`) that v3 re-scans as a document directive ("found
