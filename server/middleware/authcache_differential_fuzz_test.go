@@ -58,6 +58,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -595,14 +596,24 @@ func FuzzAuthCacheDifferential(f *testing.F) {
 	f.Add([]byte{2, 12, 5, 2, 12})
 	f.Add([]byte{2, 12, 7, 12, 7, 12})
 
+	probe, budget, haveBudget := authcacheResguardProbe(f)
 	f.Fuzz(func(t *testing.T, program []byte) {
 		if len(program) == 0 {
 			return
 		}
 		st := w.resetIteration(t)
 		maxOps := min(len(program), 48)
-		for i := range maxOps {
-			acRunOp(t, w, st, program[i])
+		// resguard meters the op-program's allocation (+ advisory CPU) against a
+		// per-byte-slope budget (more ops -> more work); existing differential
+		// oracles inside acRunOp are UNCHANGED.
+		cost := probe.Measure(len(program), func() {
+			for i := range maxOps {
+				acRunOp(t, w, st, program[i])
+			}
+		})
+		resguard.FeedCoverage(cost)
+		if haveBudget {
+			budget.Check(t.Fatalf, cost)
 		}
 	})
 }
