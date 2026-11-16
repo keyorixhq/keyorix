@@ -71,6 +71,10 @@ func main() {
 		untrusted = append(untrusted, e)
 	}
 
+	if len(res.SkippedTestSupport) > 0 {
+		fmt.Fprintf(os.Stderr, "reachgen: skipped %d test-support package(s) (non-test files import testing/testify): %s\n",
+			len(res.SkippedTestSupport), strings.Join(res.SkippedTestSupport, ", "))
+	}
 	md := renderMarkdown(untrusted, *top, len(res.Entries), res.LoadErrors)
 	if *mdPath != "" {
 		if err := os.WriteFile(*mdPath, []byte(md), 0o644); err != nil { // #nosec G306 -- generated report, not a secret

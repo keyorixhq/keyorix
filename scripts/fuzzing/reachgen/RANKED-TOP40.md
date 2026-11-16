@@ -2,6 +2,10 @@
 
 Total distinct third-party exported funcs called: 496. Shown: top 40 UNCOVERED entries with at least one untrusted-provenance call site.
 
+Phase-0 snapshot, generated before reachgen skipped test-support packages
+(`isTestSupport`): row 2 (testify `Mock.Called`) comes only from
+`internal/core/storage/storagetest` and drops out on a re-run.
+
 | # | Module | Package | Function | Sites | Untrusted | Provenance | Fuzzable |
 |---|--------|---------|----------|------:|----------:|------------|:--------:|
 | 1 | github.com/go-chi/chi/v5 | · | `URLParam(*http.Request, string)` | 181 | 181 | request-body×181 | no |

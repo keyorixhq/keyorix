@@ -28,6 +28,9 @@ go build -o /tmp/reachgen ./scripts/fuzzing/reachgen/cmd/reachgen
 ## How it ranks
 
 1. `go/packages` loads every Keyorix package with full type info.
+   A test-support package (its non-test files import `testing` or testify,
+   e.g. `internal/core/storage/storagetest`) is skipped and named on stderr;
+   a test helper that imports neither is still scanned.
 2. For each `CallExpr` whose callee is an **exported** func/method of a
    **third-party** package (dotted first path segment, not under the Keyorix
    module), reachgen records a call site.

@@ -107,6 +107,9 @@ type Result struct {
 	Entries []Entry
 	// LoadErrors carries non-fatal package load diagnostics (offline builds etc.).
 	LoadErrors []string
+	// SkippedTestSupport lists own packages not scanned because their non-test
+	// files import "testing" or testify (see isTestSupport).
+	SkippedTestSupport []string
 }
 
 // Config controls a scan.
@@ -204,10 +207,27 @@ func Scan(cfg Config) (*Result, error) {
 		if !strings.HasPrefix(p.PkgPath, cfg.ModulePrefix) {
 			continue
 		}
+		if isTestSupport(p) {
+			res.SkippedTestSupport = append(res.SkippedTestSupport, p.PkgPath)
+			continue
+		}
 		s.scanPkg(p)
 	}
 	res.Entries = s.ranked()
 	return res, nil
+}
+
+// isTestSupport reports whether a package's non-test files import "testing"
+// or a testify package: a test-support package (mocks, storagetest) that ships
+// in no build, so its third-party calls are not Keyorix reachability. It does
+// NOT recognise a test helper that imports neither.
+func isTestSupport(p *packages.Package) bool {
+	for path := range p.Imports {
+		if path == "testing" || strings.HasPrefix(path, "github.com/stretchr/testify/") {
+			return true
+		}
+	}
+	return false
 }
 
 type scanner struct {

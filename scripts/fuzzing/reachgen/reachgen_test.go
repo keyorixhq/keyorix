@@ -198,3 +198,20 @@ func keys(m map[string]Entry) []string {
 	}
 	return out
 }
+
+// TestScan_SkipsTestSupportPackages pins review finding L3 on #4366: testify's
+// Mock.Called ranked #2 because internal/core/storage/storagetest (non-test
+// files, test-only package) was scanned like shipped code.
+func TestScan_SkipsTestSupportPackages(t *testing.T) {
+	m := scanFixture(t)
+	for _, e := range m {
+		for _, s := range e.Sites {
+			if s.Pkg == "example.com/app/apptest" {
+				t.Errorf("%s.%s: site in test-support package %s:%d was counted", e.Pkg, e.Func, s.File, s.Line)
+			}
+		}
+	}
+	if _, ok := m["example.com/lib\x00ParseRequest"]; !ok {
+		t.Fatalf("ParseRequest from the shipped fixture package must still be recorded; have: %v", keys(m))
+	}
+}
