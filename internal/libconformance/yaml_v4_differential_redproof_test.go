@@ -67,6 +67,17 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// carrying a `!` tag. v4 has no live caller — forward-looking migration hazard.
 	"nonspecific-tag-structural": true,
 
+	// A `:` inside an anchor NAME (`&a:b`, `&00:00000`, `k: &00:00000`). v3.0.5 ends
+	// the anchor name at the `:` (so `&a:b` → anchor `a`, content ":b"); v4.0.0
+	// absorbs the `:` into the name (anchor `a:b`, EMPTY node → nil). BOTH accept but
+	// the decoded values differ. Found by the DF3 struct fuzzer at `&00:00000`. Same
+	// anchor-name-character family as D9 (`&!0000`), but here both accept and
+	// disagree on the value rather than v3 rejecting. Recognised CAUSALLY by
+	// isAnchorColonBoundaryDivergence (stripping the anchor makes the two agree and
+	// leaves v3's value unchanged), so a genuine divergence that merely contains an
+	// anchor is never absorbed. v4 has no live caller — forward-looking.
+	"anchor-name-colon-boundary": true,
+
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
 	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null
@@ -631,6 +642,42 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("the structural class must require a `!` tag in the input, got %q", noTag)
 		}
 		t.Logf("oracle-3 D17 structural gating proven: `!`-tag KEY divergence tolerated; genuine key/value diffs and untagged inputs still fail")
+	}
+
+	// ---- Oracle 3 class gating: colon inside an anchor name (D18) ----
+	{
+		for _, in := range []string{"&a:b", "&00:00000", "k: &00:00000"} {
+			var v3v, v4v any
+			if err := v3yaml.Unmarshal([]byte(in), &v3v); err != nil {
+				t.Fatalf("%q: v3 unmarshal: %v", in, err)
+			}
+			if err := v4yaml.Unmarshal([]byte(in), &v4v); err != nil {
+				t.Fatalf("%q: v4 unmarshal: %v", in, err)
+			}
+			cb3, _ := v3yaml.Marshal(v3v)
+			cb4, _ := v3yaml.Marshal(v4v)
+			if reflect.DeepEqual(cb3, cb4) {
+				t.Fatalf("precondition %q: v3 and v4 must DISAGREE (v3=%q v4=%q)", in, cb3, cb4)
+			}
+			class := classifyYAMLV4ValueSplit([]byte(in), v3v, v4v)
+			if class != "anchor-name-colon-boundary" {
+				t.Fatalf("%q: want class anchor-name-colon-boundary, got %q (v3=%#v v4=%#v)", in, class, v3v, v4v)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("anchor-name-colon-boundary must be tolerated")
+			}
+		}
+		// RED: a genuine divergence that merely CONTAINS an anchor (no colon-in-name
+		// cause) must NOT be absorbed. `&a 1` vs a forced different value: stripping
+		// `&a` does not make them agree.
+		if isAnchorColonBoundaryDivergence([]byte("x: &a 1"), map[string]any{"x": 1}, map[string]any{"x": 2}) {
+			t.Fatalf("a genuine value diff that merely contains an anchor must NOT be recognised")
+		}
+		// RED: an input with no anchor cannot be this class.
+		if isAnchorColonBoundaryDivergence([]byte("a: 1"), map[string]any{"a": 1}, map[string]any{"a": 2}) {
+			t.Fatalf("an input with no anchor must not be recognised as anchor-colon")
+		}
+		t.Logf("oracle-3 D18 anchor-colon gating proven: `&a:b`-style tolerated causally; genuine/anchorless diffs still fail")
 	}
 
 	// ---- Oracle 2 class gating: flow-context whitespace leniency ----

@@ -95,6 +95,9 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"! abc",                     // NOT a split: ! on a string-resolving scalar agrees
 		"! : 00",                    // ! on an empty KEY: v3 {nil:0} / v4 {"":"00"} (D17 structural)
 		"! 00 : x",                  // ! on a non-empty KEY (D17 structural)
+		"&a:b",                      // colon in anchor name: v3 ":b" / v4 nil (D18)
+		"&00:00000",                 // colon in anchor name (D18)
+		"k: &00:00000",              // colon in anchor name under a key (D18)
 		"a: !\nb: !!str\n",          // mixed: ! diverges, !!str agrees
 		":",                         // empty implicit key (v3 rejects / v4 null key)
 		"- :\n",                     // empty implicit key inside a sequence
@@ -314,6 +317,12 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if diffs, ok := nonspecificTagNonEmptyScalarOnly(v3val, v4val); ok && diffs > 0 && inputHasNonSpecificTag(data) {
 		return "nonspecific-tag-nonempty-scalar"
 	}
+	// A colon inside an anchor NAME (`&a:b`, `&00:00000`). v3 ends the anchor name
+	// at the `:` (so `&a:b` → anchor `a`, content ":b"); v4 absorbs the `:` into the
+	// name (anchor `a:b`, EMPTY node → nil). Both accept, values differ.
+	if isAnchorColonBoundaryDivergence(data, v3val, v4val) {
+		return "anchor-name-colon-boundary"
+	}
 	// Structural nonspecific-tag divergence that the value-only walkers above miss:
 	// the `!`-tag re-resolution landing in a KEY position (`! : 00`, `! 00: x`),
 	// where v3 and v4 produce DIFFERENT map keys (v3 nil / typed vs v4 raw string)
@@ -323,6 +332,41 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 		return "nonspecific-tag-structural"
 	}
 	return "value-mismatch"
+}
+
+// v3AnchorTokenRe matches the anchor token as v3 scans it: `&` plus the
+// anchor-name characters up to (but not including) a flow/`:`/whitespace boundary.
+var v3AnchorTokenRe = regexp.MustCompile(`&[^\s:,\[\]{}]+`)
+
+// isAnchorColonBoundaryDivergence reports whether a v3/v4 value divergence is
+// caused solely by a `:` inside an anchor name — v3 ends the name at the colon,
+// v4 absorbs it. It is a CAUSAL test, not a shape guess: it strips the first
+// v3-anchor token (which must be immediately followed by `:` in the input, the
+// disputed boundary) and requires that (a) the two libraries then AGREE on the
+// stripped input, and (b) v3's value is unchanged by the strip (an unused anchor
+// is just a label, so removing it must not alter v3's decode). Only when removing
+// the anchor makes the divergence vanish is the anchor-name extent proven to be
+// the cause, so a genuine divergence that merely contains an anchor is never
+// absorbed. Scoped by construction to block context; the flow-sequence
+// anchor-colon combo (`[&a:b]`) is a separate, compounded divergence left in the
+// residual tail.
+func isAnchorColonBoundaryDivergence(data []byte, v3val, v4val any) bool {
+	loc := v3AnchorTokenRe.FindIndex(data)
+	if loc == nil || loc[1] >= len(data) || data[loc[1]] != ':' {
+		return false
+	}
+	stripped := append(append([]byte{}, data[:loc[0]]...), data[loc[1]:]...)
+	var m3, m4 any
+	if v3yaml.Unmarshal(stripped, &m3) != nil || v4yaml.Unmarshal(stripped, &m4) != nil {
+		return false
+	}
+	c3m, err3 := v3yaml.Marshal(m3)
+	c4m, err4 := v3yaml.Marshal(m4)
+	if err3 != nil || err4 != nil || !reflect.DeepEqual(c3m, c4m) {
+		return false
+	}
+	co3, err := v3yaml.Marshal(v3val)
+	return err == nil && reflect.DeepEqual(co3, c3m)
 }
 
 // nonspecificTagEq reports whether a (v3) and b (v4) are identical up to the
