@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -96,6 +97,8 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"!<a,b>",                    // NOT a split: verbatim tag accepted by both
 		"|#0",                       // comment without preceding whitespace (v3 lenient / v4 rejects)
 		"\t",                        // leading tab (v3 rejects / v4 accepts as nil)
+		"|\n00",                     // under-indented block scalar (v3 drops to "" / v4 keeps "00")
+		"|\n  00",                   // NOT a split: properly indented block scalar agrees
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
@@ -157,7 +160,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 			return
 		}
 		if !reflect.DeepEqual(canon3, canon4) {
-			class := classifyYAMLV4ValueSplit(v3val, v4val)
+			class := classifyYAMLV4ValueSplit(data, v3val, v4val)
 			if !yamlV4ExpectedDiff[class] {
 				t.Fatalf("decoded-value disagreement [class=%q]\n  input=%q\n  v3 canonical=%q\n  v4 canonical=%q",
 					class, data, canon3, canon4)
@@ -241,11 +244,92 @@ func classifyYAMLV4Split(err3, err4 error) string {
 // shape of difference — a different number, a different key set, a non-empty
 // string mismatch — falls through to the generic "value-mismatch", which is NOT
 // in the table and therefore fails the target.
-func classifyYAMLV4ValueSplit(v3val, v4val any) string {
+func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if diffs, ok := nilVsEmptyStringOnly(v3val, v4val); ok && diffs > 0 {
 		return "nonspecific-tag-empty-scalar"
 	}
+	// Under-indented block-scalar content: v3 drops it to the empty string where v4
+	// captures it. Recognised only when (a) every differing leaf is v3-"" vs a
+	// NON-empty v4 string, and (b) the input actually carries a block-scalar header
+	// (`|`/`>`), so a value divergence of this exact shape from any OTHER cause is
+	// not absorbed.
+	if diffs, ok := v3EmptyVsV4NonEmptyStringOnly(v3val, v4val); ok && diffs > 0 && inputHasBlockScalarHeader(data) {
+		return "block-scalar-underindent"
+	}
 	return "value-mismatch"
+}
+
+// blockScalarHeaderRe matches a block-scalar header (`|` or `>`, optional indent
+// digit, optional chomping `+`/`-`) at the end of a line, optionally after a
+// `key:` or `- ` indicator — the shape that introduces literal/folded content.
+var blockScalarHeaderRe = regexp.MustCompile(`(?m)(^|[:\-] *)[|>][0-9]*[+\-]?[ \t]*$`)
+
+func inputHasBlockScalarHeader(data []byte) bool {
+	return blockScalarHeaderRe.Match(data)
+}
+
+// v3EmptyVsV4NonEmptyStringOnly reports whether a and b are structurally identical
+// except that wherever they differ, a is the EMPTY string and b is a non-empty
+// string (the block-scalar under-indentation drop). Mirrors nilVsEmptyStringOnly
+// but for the "" -> non-empty shape.
+func v3EmptyVsV4NonEmptyStringOnly(a, b any) (int, bool) {
+	if as, ok := a.(string); ok {
+		bs, ok := b.(string)
+		if !ok {
+			return 0, false
+		}
+		if as == bs {
+			return 0, true
+		}
+		if as == "" && bs != "" {
+			return 1, true
+		}
+		return 0, false
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if a == nil || b == nil {
+		return 0, reflect.DeepEqual(a, b)
+	}
+	if ra.Kind() != rb.Kind() {
+		return 0, false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for _, k := range ra.MapKeys() {
+			bval := rb.MapIndex(k)
+			if !bval.IsValid() {
+				return 0, false
+			}
+			n, ok := v3EmptyVsV4NonEmptyStringOnly(ra.MapIndex(k).Interface(), bval.Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for i := range ra.Len() {
+			n, ok := v3EmptyVsV4NonEmptyStringOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	default:
+		if reflect.DeepEqual(a, b) {
+			return 0, true
+		}
+		return 0, false
+	}
 }
 
 // nilVsEmptyStringOnly reports whether a and b are structurally identical except

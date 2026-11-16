@@ -106,6 +106,20 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// Found by the DF2 fuzz run at "\t". Not a Keyorix defect (v4 has no live
 	// caller). Keyed on the v3 error "cannot start any token" alone.
 	"v3-rejects:token-start": true,
+
+	// Under-indented block-scalar content. When a `|` or `>` block scalar is
+	// followed by content at insufficient indentation (e.g. "|\n00", ">\nx",
+	// "|-\n0\n1" — content at column 0), v3.0.5 decodes the scalar as the EMPTY
+	// string, SILENTLY DROPPING the content; v4.0.0 captures it ("00", "x",
+	// "0\n1"). Properly-indented block scalars ("|\n  00") agree in BOTH. This is a
+	// value-level divergence in the SECURITY-RELEVANT, REACHABLE direction: the
+	// library Keyorix tooling uses (v3) silently loses block-scalar content on a
+	// mis-indented document. It is NOT a Keyorix defect today (no code feeds such
+	// malformed YAML to a security decision) but it is a genuine v3 silent-data-loss
+	// footgun worth reporting upstream. Recognised ONLY when every differing leaf is
+	// v3-"" vs a non-empty v4 string AND the input carries a block-scalar header, so
+	// no other value divergence is absorbed. Found by the DF2 fuzz run at "|\n00".
+	"block-scalar-underindent": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -208,7 +222,7 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		// The actual decoded shapes for "a: !": v3 -> {"a": nil}, v4 -> {"a": ""}.
 		v3shape := map[string]any{"a": nil}
 		v4shape := map[string]any{"a": ""}
-		class := classifyYAMLV4ValueSplit(v3shape, v4shape)
+		class := classifyYAMLV4ValueSplit([]byte("a: !"), v3shape, v4shape)
 		if class != "nonspecific-tag-empty-scalar" {
 			t.Fatalf("expected the `!`-empty divergence to class as nonspecific-tag-empty-scalar, got %q", class)
 		}
@@ -216,7 +230,7 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("the nonspecific-tag class must be listed (tolerated) in the table")
 		}
 		// RED: an unrelated value diff must NOT be absorbed by the class.
-		other := classifyYAMLV4ValueSplit(map[string]any{"a": 1}, map[string]any{"a": 2})
+		other := classifyYAMLV4ValueSplit([]byte("a: 1"), map[string]any{"a": 1}, map[string]any{"a": 2})
 		if other != "value-mismatch" {
 			t.Fatalf("an unrelated int divergence must class as value-mismatch, got %q", other)
 		}
@@ -224,13 +238,13 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("value-mismatch must NOT be tolerated (else the oracle is blind)")
 		}
 		// A nil-vs-NON-empty-string diff must also fall through (not the `!` class).
-		nonEmpty := classifyYAMLV4ValueSplit(map[string]any{"a": nil}, map[string]any{"a": "x"})
+		nonEmpty := classifyYAMLV4ValueSplit([]byte("a: x"), map[string]any{"a": nil}, map[string]any{"a": "x"})
 		if nonEmpty != "value-mismatch" {
 			t.Fatalf("nil-vs-non-empty-string must class as value-mismatch, got %q", nonEmpty)
 		}
 		// The int-key case ("0: !") decodes into map[any]any, which the classifier
 		// must still recognise (found by the fuzzer at "0: ! ").
-		intKey := classifyYAMLV4ValueSplit(map[any]any{0: nil}, map[any]any{0: ""})
+		intKey := classifyYAMLV4ValueSplit([]byte("0: !"), map[any]any{0: nil}, map[any]any{0: ""})
 		if intKey != "nonspecific-tag-empty-scalar" {
 			t.Fatalf("the int-key `!`-empty case must class as nonspecific-tag-empty-scalar, got %q", intKey)
 		}
@@ -376,6 +390,35 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("token-start class must be listed (tolerated)")
 		}
 		t.Logf("oracle-2 token-start gating proven")
+	}
+
+	// ---- Oracle 3 class gating: block-scalar under-indentation (v3 data loss) ----
+	{
+		in := []byte("|\n00")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatal(err)
+		}
+		if v3v != "" || v4v != "00" {
+			t.Fatalf("precondition: '|\\n00' must decode to \"\" in v3 and \"00\" in v4; got v3=%#v v4=%#v", v3v, v4v)
+		}
+		class := classifyYAMLV4ValueSplit(in, v3v, v4v)
+		if class != "block-scalar-underindent" {
+			t.Fatalf("block-scalar divergence must class as block-scalar-underindent, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("block-scalar-underindent must be listed (tolerated)")
+		}
+		// RED: the SAME empty-vs-nonempty shape WITHOUT a block-scalar header must
+		// NOT be absorbed (stays value-mismatch -> fails).
+		noHeader := classifyYAMLV4ValueSplit([]byte("a: b"), map[string]any{"a": ""}, map[string]any{"a": "x"})
+		if noHeader != "value-mismatch" {
+			t.Fatalf("empty-vs-nonempty WITHOUT a block header must stay value-mismatch, got %q", noHeader)
+		}
+		t.Logf("oracle-3 block-scalar gating proven: v3 drops to \"\", v4 keeps \"00\"; non-block empty-vs-nonempty still fails")
 	}
 }
 

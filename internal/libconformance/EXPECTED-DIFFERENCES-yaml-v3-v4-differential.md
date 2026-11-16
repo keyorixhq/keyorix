@@ -36,6 +36,8 @@ class reaches the failing assertion.
 
 | D7 | `v3-rejects:token-start` | a leading character v3's scanner refuses to start a token with — notably a bare **TAB** (`"\t"`) | **rejects** (`found character that cannot start any token`) | **accepts** as an empty document (`nil`) | Other chars with the same v3 error (`@`, backtick) are rejected by BOTH; only the leading-TAB case splits. v4 accepts what v3 rejects, but benignly (empty/nil doc). **Not a Keyorix defect** (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 error `cannot start any token` ALONE. |
 
+| D8 | `block-scalar-underindent` | a `|`/`>` block scalar followed by content at **insufficient indentation** (`|\n00`, `>\nx`, `|-\n0\n1` — content at column 0) | decodes the scalar as the **empty string**, **silently dropping** the content | **captures** the content (`"00"`, `"x"`, `"0\n1"`) | A **value-level divergence in the reachable, security-relevant direction**: the library Keyorix tooling uses (v3) **silently loses block-scalar content** on a mis-indented document. Properly-indented block scalars (`|\n  00`) agree in BOTH. **Not a Keyorix defect today** (no code feeds such malformed YAML to a security decision), but a genuine **v3 silent-data-loss footgun** worth reporting upstream. | `classifyYAMLV4ValueSplit` — recognised ONLY when every differing leaf is v3-`""` vs a non-empty v4 string AND `inputHasBlockScalarHeader(data)` matches; the red/green proves the same empty-vs-nonempty shape WITHOUT a block header stays `value-mismatch` (fails). |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that
