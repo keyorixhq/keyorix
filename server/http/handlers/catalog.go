@@ -191,7 +191,14 @@ func (h *CatalogHandler) RestoreProject(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.coreService.RestoreProject(r.Context(), actorID(r), id); err != nil {
-		answerCoreError(w, r, err, catalogAnswer(fmt.Sprintf("restoring project %d", id), "Project not found", err))
+		// A permission refusal is the authority to reinstate the project's role
+		// assignments: a refusal, not a fault. Core's own text is kept, as in
+		// RestoreEnvironment.
+		answer := catalogAnswer(fmt.Sprintf("restoring project %d", id), "Project not found", err)
+		if errors.Is(err, core.ErrPermissionDenied) {
+			answer.texts[errclass.PermissionDenied] = err.Error()
+		}
+		answerCoreError(w, r, err, answer)
 		return
 	}
 	sendSuccess(w, nil, "Project restored")

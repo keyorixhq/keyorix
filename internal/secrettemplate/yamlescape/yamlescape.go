@@ -3,7 +3,7 @@
 // double-quoted YAML scalar.
 //
 // It lives in its own leaf package, importing secrettemplate (never the reverse), so
-// that gopkg.in/yaml.v3 stays out of the dependency closure of secrettemplate and
+// that go.yaml.in/yaml/v4 stays out of the dependency closure of secrettemplate and
 // therefore of internal/core, which reaches secrettemplate for plain Render only.
 // TestCoreStaysLeanOfHeavyThirdParty (internal/core/ports) enforces that.
 package yamlescape
@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/secrettemplate"
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // EscapeYAMLString escapes val so it can be embedded inside a double-quoted YAML
