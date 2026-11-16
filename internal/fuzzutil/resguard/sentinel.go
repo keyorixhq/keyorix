@@ -30,6 +30,9 @@ import (
 // It scans only channels it is given: a secret written somewhere the Probe has
 // no seam for (a third file tree, a syscall-level socket) is invisible. Stated
 // so the oracle is never read as "proves the secret never leaked anywhere".
+// The net hook scans each Write chunk on its own, so a sentinel split across
+// two writes is missed, and over TLS it sees ciphertext, so it is blind to
+// HTTPS payloads. No pilot wires the net hook yet.
 type Sentinel struct {
 	value   string
 	tempDir string

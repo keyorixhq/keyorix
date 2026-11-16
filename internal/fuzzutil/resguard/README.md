@@ -52,5 +52,5 @@ func FuzzThing(f *testing.F) {
 }
 ```
 
-Each oracle's limits are documented in its doc comment and in the RSG1 report
-(`docs/fuzz/rsg1-resource-guard.md`): what it measures, and what it does NOT.
+Each oracle's limits are documented in its doc comment: what it measures, and
+what it does NOT.

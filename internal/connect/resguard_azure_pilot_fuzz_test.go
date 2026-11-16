@@ -24,8 +24,7 @@ package connect
 //     the response byte volume is metered. (Bytes are counted at the TCP conn, so
 //     under TLS they are CIPHERTEXT bytes — a response-SIZE signal, not plaintext.)
 //
-// What this pilot does NOT verify: see the oracle notes in the RSG2 report. In
-// short — SleepClock sees only the delay the SDK LOGS (a future SDK that sleeps
+// What this pilot does NOT verify: SleepClock sees only the delay the SDK LOGS (a future SDK that sleeps
 // without logging the delay is invisible to it; the context deadline + the
 // wall-clock Guard are the backstop); NetMeter sees only dials routed through its
 // DialContext, counts ciphertext under TLS, and treats a hostname needing DNS as
@@ -149,9 +148,8 @@ func FuzzResguardAzureConnectorResponse(f *testing.F) {
 	probe := resguard.New(f, resguard.Options{SampleEvery: 32, Net: nm, Clock: azureSleepClock})
 
 	budget, err := resguard.LoadBudget(azurePilotBudgetPath)
-	haveBudget := err == nil
-	if !haveBudget {
-		f.Logf("no committed budget at %s (run TestResguardAzureCalibrate with RESGUARD_CALIBRATE=1); metering without a ceiling", azurePilotBudgetPath)
+	if err != nil {
+		f.Fatalf("no usable committed budget at %s (regenerate with TestResguardAzureCalibrate and RESGUARD_CALIBRATE=1): %v", azurePilotBudgetPath, err)
 	}
 
 	f.Fuzz(func(t *testing.T, status int, body []byte) {
@@ -198,9 +196,7 @@ func FuzzResguardAzureConnectorResponse(f *testing.F) {
 			t.Fatalf("AIR-GAP: connector made %d non-loopback dial(s)", cost.NonLoopbackDials)
 		}
 		// Virtual-sleep budget: the metered intended backoff must stay bounded.
-		if haveBudget {
-			budget.Check(t.Fatalf, cost)
-		}
+		budget.Check(t.Fatalf, cost)
 		if n := runtime.NumGoroutine(); n > connectLeakCeiling {
 			t.Fatalf("goroutine leak: %d goroutines", n)
 		}

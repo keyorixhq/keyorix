@@ -25,10 +25,10 @@ import (
 // schemas. It preserves keepPID (pass os.Getpid()), the live worker's own
 // schemas. See JanitorSchemas.
 //
-// Schemas carry no creation timestamp in the catalog, so age is derived from the
-// pid embedded in the name, not from a clock: a schema whose pid is neither the
-// caller's nor a live process is from a dead worker. keepPID covers the common
-// single-live-process case; LivePIDs lets a caller preserve several.
+// There is NO liveness check: every schema whose pid is not in keepPIDs is
+// dropped. Under `go test -fuzz` each worker is its own process, and other hosts
+// may share the server and prefix, so passing only SelfPID drops their LIVE
+// schemas. Call it only when no other worker uses prefix (no caller yet).
 
 // ErrUnsafePrefix is returned when a janitor prefix could match a schema the
 // janitor must never drop.
@@ -36,10 +36,10 @@ var ErrUnsafePrefix = errors.New("fuzzworld janitor: refusing an unsafe/empty pr
 
 var reservedSchemaPrefixes = []string{"public", "pg_", "information_schema"}
 
-// JanitorSchemas drops every PostgreSQL schema under prefix that belongs to a
-// pid other than one in keepPIDs. It returns the dropped schema names. dsn is a
-// server DSN (any database); schemas are server-scoped per database, so the DSN
-// must point at the same database the workers used.
+// JanitorSchemas drops every PostgreSQL schema under prefix whose pid is not in
+// keepPIDs, live or not (see the caveat above). It returns the dropped names. dsn
+// is a server DSN; schemas are scoped per database, so the DSN must point at
+// the same database the workers used.
 func JanitorSchemas(dsn, prefix string, keepPIDs ...int) ([]string, error) {
 	if err := validatePrefix(prefix); err != nil {
 		return nil, err

@@ -17,8 +17,7 @@ import "testing"
 // Both fail (t.Fatalf) the instant n reaches amplifyThreshold, so "wall time to
 // failure" is "time to reach the amplifier". Run each several times at a fixed
 // -fuzztime and compare: the buckets build should reach the amplifier markedly
-// sooner. The RSG1 report records the result — and says so plainly if it does
-// not, per the brief.
+// sooner.
 
 const (
 	amplifyThreshold = 32 // matches (see toyWork)
