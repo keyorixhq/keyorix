@@ -61,6 +61,8 @@ class reaches the failing assertion.
 
 | D22 | `merge-key-handling` | the `<<` merge-key indicator used where it is not a valid map-merge (`<<`, `a: <<`, `- <<`) | keeps the literal string `"<<"` | treats it as a merge directive and **silently drops** the entry/element (empty container / nil) | Found by the DF3 struct fuzzer at `<<`. A **v4 silent-data-loss** footgun (the reverse direction from the v3 data-loss of D4/D8). Recognised causally by `isMergeKeyDivergence` (single-quoting every `<<` makes the two agree and reproduces v3's value), so a genuine divergence merely containing `<<` is never absorbed. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4ValueSplit`/`isMergeKeyDivergence`. |
 
+| D23 | `flow-map-colon-nospace` | a flow-mapping entry whose `:` is immediately followed by `}`/`,` with no space (`{0:}`, `0: {0:}`) | keeps the `:` IN the key (key `"0:"`) | treats the `:` as the key/value separator (key `0`, null) | Found by the DF3 fuzz run at `0: {0:}`. Recognised causally by `isFlowColonNoSpaceDivergence` (adding a space after the `:` makes v3 agree with v4, which is unchanged). Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4ValueSplit`/`isFlowColonNoSpaceDivergence`. |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that

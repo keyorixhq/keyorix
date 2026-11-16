@@ -119,6 +119,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"|\n%0",                     // block scalar + %0: v3 rejects directive / v4 accepts (D21)
 		"<<",                        // bare merge key: v3 "<<" / v4 drops to nil (D22)
 		"a: <<",                     // merge key w/o map value: v3 keeps / v4 drops entry (D22)
+		"0: {0:} ",                  // flow-map colon no space: v3 key "0:" / v4 key 0 (D23)
 		"{!}",                       // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
 		"[!x]",                      // tagged empty node in flow seq (v3 rejects / v4 "")
 		"[0: !]",                    // tagged empty value in flow seq (v3 rejects / v4 "")
@@ -335,6 +336,13 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if diffs, ok := nonspecificTagNonEmptyScalarOnly(v3val, v4val); ok && diffs > 0 && inputHasNonSpecificTag(data) {
 		return "nonspecific-tag-nonempty-scalar"
 	}
+	// A flow-mapping entry whose `:` is immediately followed by `}` or `,` with no
+	// space (`{0:}`): v3 keeps the `:` IN the key (key `"0:"`), v4 treats the `:` as
+	// the key/value separator (key `0`, null value). Recognised causally: inserting a
+	// space after such a `:` makes v3 agree with v4 (and v4 is unchanged).
+	if isFlowColonNoSpaceDivergence(data, v3val, v4val) {
+		return "flow-map-colon-nospace"
+	}
 	// The `<<` merge-key indicator used where it is not a valid map-merge (`<<`,
 	// `a: <<`, `- <<`): v3 keeps the literal string "<<", v4 treats it as a merge
 	// directive and SILENTLY DROPS the entry/element (empty container / nil).
@@ -365,6 +373,32 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 		return "nonspecific-tag-structural"
 	}
 	return "value-mismatch"
+}
+
+// isFlowColonNoSpaceDivergence causally confirms the flow-mapping `:`-no-space
+// divergence (`{0:}`): inserting a space after every `:}`/`:, ` turns the disputed
+// `:` into an unambiguous separator. If after that v4 is UNCHANGED (it already read
+// the `:` as a separator) and v3 now equals v4, then v3's keeping of the `:` in the
+// key was the sole cause. A genuine divergence that merely contains `:}` is not
+// absorbed (v4 would change, or v3 would not come to match).
+func isFlowColonNoSpaceDivergence(data []byte, v3val, v4val any) bool {
+	s := string(data)
+	mod := strings.ReplaceAll(strings.ReplaceAll(s, ":}", ": }"), ":,", ": ,")
+	if mod == s {
+		return false
+	}
+	var m3, m4 any
+	if v3yaml.Unmarshal([]byte(mod), &m3) != nil || v4yaml.Unmarshal([]byte(mod), &m4) != nil {
+		return false
+	}
+	cm3, e3 := v3yaml.Marshal(m3)
+	cm4, e4 := v3yaml.Marshal(m4)
+	co4, e4b := v3yaml.Marshal(v4val)
+	if e3 != nil || e4 != nil || e4b != nil {
+		return false
+	}
+	// v4 unchanged by the space, and v3 now matches v4.
+	return reflect.DeepEqual(cm4, co4) && reflect.DeepEqual(cm3, cm4)
 }
 
 // isMergeKeyDivergence causally confirms a `<<` merge-key divergence: single-quote

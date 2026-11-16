@@ -121,6 +121,14 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// `<<`.
 	"merge-key-handling": true,
 
+	// A flow-mapping entry whose `:` is immediately followed by `}`/`,` with no space
+	// (`{0:}`, `0: {0:}`): v3 keeps the `:` in the key (`"0:"`), v4 treats it as the
+	// key/value separator (key `0`, null). Found by the DF3 fuzz run at `0: {0:}`.
+	// Recognised causally by isFlowColonNoSpaceDivergence (adding a space after the
+	// `:` makes v3 agree with v4, which is unchanged). Not a Keyorix defect (v4 has no
+	// live caller). Scoped to inputs containing `:}`/`:,`.
+	"flow-map-colon-nospace": true,
+
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
 	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null
@@ -685,6 +693,31 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("the structural class must require a `!` tag in the input, got %q", noTag)
 		}
 		t.Logf("oracle-3 D17 structural gating proven: `!`-tag KEY divergence tolerated; genuine key/value diffs and untagged inputs still fail")
+	}
+
+	// ---- Oracle 3 class gating: flow-map colon-no-space (D23) ----
+	{
+		in := []byte("0: {0:} ")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatal(err)
+		}
+		cb3, _ := v3yaml.Marshal(v3v)
+		cb4, _ := v3yaml.Marshal(v4v)
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("precondition: `0: {0:}` v3/v4 must disagree (v3=%q v4=%q)", cb3, cb4)
+		}
+		if class := classifyYAMLV4ValueSplit(in, v3v, v4v); class != "flow-map-colon-nospace" || !yamlV4ExpectedDiff[class] {
+			t.Fatalf("`0: {0:}` must class as the tolerated flow-map-colon-nospace, got %q", class)
+		}
+		// RED: an input without a flow colon-no-space must not be recognised.
+		if isFlowColonNoSpaceDivergence([]byte("a: 1"), map[string]any{"a": 1}, map[string]any{"a": 2}) {
+			t.Fatalf("an input without `:}`/`:,` must not be recognised as flow-map-colon-nospace")
+		}
+		t.Logf("oracle-3 D23 flow-map-colon gating proven")
 	}
 
 	// ---- Oracle 3 class gating: `<<` merge-key handling (D22) ----
