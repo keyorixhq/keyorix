@@ -13,7 +13,6 @@ import (
 
 	_ "github.com/go-sql-driver/mysql" // registers the "mysql" sql driver
 
-	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/rotation/quote"
 )
 
@@ -57,8 +56,7 @@ func (e *MySQLExecutor) conn(ctx context.Context) (mysqlConn, error) {
 
 // Rotate sets account `ref`'s password to newValue via ALTER USER. ref is the account
 // name as `user` or `user@host` (host defaults to '%').
-func (e *MySQLExecutor) Rotate(ctx context.Context, ref, newValue string) (err error) {
-	defer netutil.ContainDriverPanic("mysql rotate", &err)
+func (e *MySQLExecutor) Rotate(ctx context.Context, ref, newValue string) error {
 	if ref == "" {
 		return fmt.Errorf("mysql: account name (ref) is required")
 	}
