@@ -56,6 +56,9 @@ the target has had). Prior fuzz time is inferred from cached-corpus size and com
 |--------|---------:|------:|----------------:|---------:|--------|
 | `FuzzAuthzDiff` (server/authzdiff) | 27 | ~37,600 | +230 (corpus 3563→3793) | 0 | PASS, 0 unexplained/uncalibrated |
 | `FuzzAuthzSeq` (server/authzdiff) | 18 | ~211 (≈11/min, each exec is a full multi-step stateful scenario) | +29 (corpus 51→80) | 0 | PASS, 0 unexplained |
+| `FuzzChiAuthzRouteDifferential` (server/middleware) | 18 | ~2.1M | +3 (corpus 213→216) | 0 | PASS — saturated (router-gate vs matrix) |
+| `FuzzGRPCRESTSecretReadAuthzParity` (server/http) | 18 | ~17,800 | +95 (corpus 11→106) | 0 | PASS — still growing (under-explored; see leftovers) |
+| `FuzzPATRestrictionAllows` (internal/core/rules) | 18 | ~13.8M | +47 (corpus 5→52) | 0 | PASS — saturated at 18m |
 | _(more below as chunks complete)_ | | | | | |
 
 ## §3 membership.invite crasher classification
