@@ -95,6 +95,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"0: !,",                     // flow char in tag suffix (v3 lenient / v4 rejects)
 		"!<a,b>",                    // NOT a split: verbatim tag accepted by both
 		"|#0",                       // comment without preceding whitespace (v3 lenient / v4 rejects)
+		"\t",                        // leading tab (v3 rejects / v4 accepts as nil)
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
@@ -203,6 +204,12 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// accepts it as a null key. Kept distinct from the generic syntax class so
 		// tolerating it does NOT tolerate every other v3 syntax rejection.
 		return side + ":empty-implicit-key"
+	case strings.Contains(msg, "cannot start any token"):
+		// A leading character v3's scanner refuses to start a token with — notably a
+		// bare TAB ("\t"), which v4 accepts as an empty document (nil). Other chars
+		// with this v3 error (`@`, backtick) are rejected by BOTH, so only the
+		// leading-TAB-ish case actually splits.
+		return side + ":token-start"
 	case strings.Contains(msg, "did not find expected") || strings.Contains(msg, "could not find expected"):
 		return side + ":syntax"
 	case strings.Contains(msg, "control characters are not allowed"):
