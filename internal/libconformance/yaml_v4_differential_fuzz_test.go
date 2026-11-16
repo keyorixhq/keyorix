@@ -102,6 +102,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"|\n  00",                   // NOT a split: properly indented block scalar agrees
 		"o: &!0000",                 // anchor name with '!' (v3 rejects / v4 lenient)
 		"- -0",                      // -0: v3 int 0 / v4 float -0.0
+		"{!}",                       // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
@@ -210,6 +211,11 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// accepts it as a null key. Kept distinct from the generic syntax class so
 		// tolerating it does NOT tolerate every other v3 syntax rejection.
 		return side + ":empty-implicit-key"
+	case strings.Contains(msg, "expected whitespace or line break"):
+		// A tag/node in flow context without the whitespace v3 requires after it
+		// (e.g. "{!}" — a `!`-tagged empty node inside a flow mapping). v3 rejects;
+		// v4 is lenient and accepts. v4 accepts what v3 rejects (benign flow leniency).
+		return side + ":flow-ws"
 	case strings.Contains(msg, "expected alphabetic or numeric character"):
 		// An anchor/alias name containing a character v3 forbids there (e.g. "&!0000"
 		// — an anchor name with `!`). v3 rejects the non-alphanumeric anchor char; v4
