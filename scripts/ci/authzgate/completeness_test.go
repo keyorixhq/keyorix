@@ -44,24 +44,45 @@ func TestEveryRootReferenceIsInTheTriggerSet(t *testing.T) {
 	}
 }
 
-// Red and green for the guard itself, on a module that has both shapes.
+// calibrationCore has both shapes: Direct and newChecker name the root and
+// are in the trigger set by name; Gate and viaParam reach it only through a
+// function value and must be reported. Written to a temporary module at test
+// time (a go.mod under scripts/ would be a nested module every repo walker
+// sees).
+const calibrationCore = `package core
+
+type KeyorixCore struct{}
+
+func (c *KeyorixCore) Authorize() bool { return true }
+
+type checker struct{ check func() bool }
+
+func newChecker(c *KeyorixCore) checker { return checker{check: c.Authorize} }
+
+func (k checker) Gate() bool { return k.check() }
+
+func Direct(c *KeyorixCore) bool { return c.Authorize() }
+
+func viaParam(f func() bool) bool { return f() }
+
+func Caller(c *KeyorixCore) bool { return viaParam(c.Authorize) }
+`
+
+// Red and green for the guard itself.
 func TestEveryRootReferenceIsInTheTriggerSet_Calibration(t *testing.T) {
-	dir, err := filepath.Abs(filepath.Join("testdata", "aliasmod"))
-	if err != nil {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "internal", "core"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	tr := tree{"server/authzdiff/matrix.json": []byte(`{"rows":[{"core":"Gate"}]}`)}
-	err = filepath.WalkDir(dir, func(p string, e os.DirEntry, err error) error {
-		if err != nil || e.IsDir() || !strings.HasSuffix(p, ".go") {
-			return err
-		}
-		rel, _ := filepath.Rel(dir, p)
-		b, err := os.ReadFile(p) //nolint:gosec // testdata
-		tr[filepath.ToSlash(rel)] = b
-		return err
-	})
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module aliasmod\n\ngo 1.27\n"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "internal", "core", "core.go"), []byte(calibrationCore), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tr := tree{
+		"server/authzdiff/matrix.json": []byte(`{"rows":[{"core":"Gate"}]}`),
+		"internal/core/core.go":        []byte(calibrationCore),
 	}
 	m, err := newModel(tr)
 	if err != nil {
@@ -70,8 +91,8 @@ func TestEveryRootReferenceIsInTheTriggerSet_Calibration(t *testing.T) {
 	pkgs := loadTyped(t, dir, []string{"GOWORK=off"}, "./...")
 	misses, refs := uncoveredRootRefs(pkgs, m, dir)
 	want := []string{
-		"internal/core/core.go:15 checker.Gate references Authorize through check",
-		"internal/core/core.go:19 viaParam references Authorize through f",
+		"internal/core/core.go:11 checker.Gate references Authorize through check",
+		"internal/core/core.go:15 viaParam references Authorize through f",
 	}
 	if !slices.Equal(misses, want) {
 		t.Fatalf("misses (%d refs):\n%s\nwant:\n%s", refs, strings.Join(misses, "\n"), strings.Join(want, "\n"))
