@@ -34,11 +34,11 @@ func ValidateShareRecord(share *ShareRecord) error {
 	}
 
 	if share.CreatedAt.IsZero() {
-		share.CreatedAt = time.Now()
+		share.CreatedAt = time.Now().UTC()
 	}
 
 	if share.UpdatedAt.IsZero() {
-		share.UpdatedAt = time.Now()
+		share.UpdatedAt = time.Now().UTC()
 	}
 
 	return nil
