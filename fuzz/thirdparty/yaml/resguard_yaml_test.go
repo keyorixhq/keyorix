@@ -96,7 +96,14 @@ func rgCalibrate(tb testing.TB) resguard.Budget {
 			costs = append(costs, p.Measure(len(s), func() { rgParse(s) }))
 		}
 	}
-	return resguard.Calibrate("yaml_decode", costs, resguard.DefaultFactor)
+	b := resguard.Calibrate("yaml_decode", costs, resguard.DefaultFactor)
+	// live_heap is a post-GC process-heap SNAPSHOT, not a per-input delta: inside a
+	// fuzz worker that runs many inputs per process it reflects residual heap, not
+	// this input's fault (RSG2 KeepOnly lesson). Drop it from the fatal budget —
+	// cross-input heap growth is Drift's job. alloc_bytes/mallocs (per-input
+	// ReadMemStats deltas) stay and carry the #510 signal.
+	delete(b.Meters, "live_heap")
+	return b
 }
 
 // dupKeyBomb returns a #510-shaped document: n duplicate keys in one mapping,

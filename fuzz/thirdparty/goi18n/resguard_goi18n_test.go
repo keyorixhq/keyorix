@@ -78,7 +78,9 @@ func rgCalibrate(tb testing.TB) resguard.Budget {
 			costs = append(costs, p.Measure(len(s.data), func() { rgRun(s.sel, s.data) }))
 		}
 	}
-	return resguard.Calibrate("goi18n_parse", costs, resguard.DefaultFactor)
+	b := resguard.Calibrate("goi18n_parse", costs, resguard.DefaultFactor)
+	delete(b.Meters, "live_heap") // non-attributable process-heap snapshot (see yaml)
+	return b
 }
 
 func TestResguardGoI18nCalibrate(t *testing.T) {

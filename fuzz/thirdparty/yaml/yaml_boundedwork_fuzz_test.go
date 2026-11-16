@@ -30,6 +30,7 @@
 package yamlhostile
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,12 @@ func FuzzYAMLDecodeBoundedWork(f *testing.F) {
 	// trip the bound.
 	f.Add([]byte("0: &a\n1: &b [00,00,00,&0,&0,&0,&0,&0,00]\n2: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b]\n7: [*c,*c,*c,*c,*c,*c,*c,*c,*c]"))
 	f.Add([]byte("0: &a [0,0,0,0,0,0]\n1: &b [*a,*a,*a,*a,*a,*a,*a,*a]\n2: &c [*b,*b,*b,*b,*b,*b]\n7: [*c,*c,*c,*c,*c,*c,*c]"))
+	// PK2: a BENIGN small duplicate-key mapping (20 dup keys, ~100 B, allocates
+	// trivially and passes every oracle — it is NOT the amplifier). It seeds the
+	// go-yaml #510 duplicate-key SHAPE so the cost-guided mutator can grow it toward
+	// the quadratic-alloc amplifier the resguard oracle catches; the amplifier
+	// itself is mutation-discovered, not seeded. Keeps the #510 regression path hot.
+	f.Add([]byte("a: 1\n" + strings.Repeat("a: 1\n", 19)))
 
 	// PK2: resguard resource oracle (see resguard_yaml_test.go). Loaded, not
 	// hand-tuned; metering continues even without a committed budget.

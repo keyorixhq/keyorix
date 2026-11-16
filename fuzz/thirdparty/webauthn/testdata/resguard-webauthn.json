@@ -10,14 +10,9 @@
       "abs_max": 30944
     },
     "cpu_ns": {
-      "floor": 551000,
-      "per_byte": 551000,
-      "abs_max": 2204000
-    },
-    "live_heap": {
-      "floor": 539536,
-      "per_byte": 539536,
-      "abs_max": 2158144
+      "floor": 896000,
+      "per_byte": 896000,
+      "abs_max": 3584000
     },
     "mallocs": {
       "floor": 45,
@@ -25,9 +20,9 @@
       "abs_max": 180
     },
     "wall_ns": {
-      "floor": 52563,
-      "per_byte": 31152,
-      "abs_max": 210252
+      "floor": 101169,
+      "per_byte": 101169,
+      "abs_max": 404676
     }
   }
 }
