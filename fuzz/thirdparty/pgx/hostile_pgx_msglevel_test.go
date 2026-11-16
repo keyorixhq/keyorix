@@ -10,7 +10,8 @@
 //   - NoticeResponse / ErrorResponse field-level content,
 //   - unexpected message order (DataRow before RowDescription, missing ReadyForQuery).
 //
-// Oracles (sound only; each is also covered by a red proof — see msglevel_redproof_test):
+// Oracles (sound only; the parity and mixing red proofs were run by hand and are not
+// committed; the committed red proof in this package is the TLS one in hostile_pgx_tls_test.go):
 //  1. No panic escapes pgx's error path; bounded time (runWithOracles).
 //  4. No credential leak: the canary password/DSN never appears in any error pgx
 //     returns to the caller (scanned with internal/fuzzutil/canary).
@@ -20,11 +21,15 @@
 //  6. Response mixing: a hostile reply to statement A never contaminates the decoded
 //     result of statement B on the same connection (FuzzPgxResponseMixing).
 //
-// What these oracles do NOT verify: see the report (.scratch/pp1-REPORT.md).
+// What these oracles do NOT verify: type-aware decode correctness (parity compares raw
+// bytes, not Go-typed values); parity is skipped for illegal message orders; and mixing
+// only fires when statement B succeeds (a poisoned connection that fails B counts as clean).
 package pgxhostile
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net"
 	"testing"
 
@@ -157,7 +162,12 @@ func FuzzPgxMessageLevel(f *testing.F) {
 	f.Add([]byte{0x08, 0x02, 0x07, 0x02, 0x01, 'a'})      // omit RFQ, jsonb+... OIDs
 	f.Fuzz(func(t *testing.T, in []byte) {
 		scanner, pw := newLeakScanner(in)
-		var genData [][]byte
+		// genResponse is deterministic in its input, so the expected DataRow bytes are
+		// computed here, before the server starts, and only read afterwards. Assigning
+		// them from the handler goroutine raced with the client's read in assertParity
+		// (socket I/O is no happens-before edge for the race detector) and could let
+		// the client compare against a not-yet-set nil, silently skipping the oracle.
+		genData := genResponse(pgproto3.NewBackend(bytes.NewReader(nil), io.Discard), &cursor{b: in})
 		srv := hostile.NewServer(t, func(c net.Conn) {
 			if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
 				return
@@ -165,7 +175,7 @@ func FuzzPgxMessageLevel(f *testing.F) {
 			sendSimpleHandshake(c)
 			drainBriefly(c) // drain the client's Query
 			be := pgproto3.NewBackend(c, c)
-			genData = genResponse(be, &cursor{b: in})
+			genResponse(be, &cursor{b: in})
 			drainBriefly(c)
 		})
 		defer srv.Close()
@@ -208,22 +218,10 @@ func assertParity(t *testing.T, want, got [][]byte) {
 		return
 	}
 	for i := range want {
-		if !bytesEqual(want[i], got[i]) {
+		if !bytes.Equal(want[i], got[i]) {
 			t.Errorf("ORACLE parity: column %d: pgx=%q harness=%q", i, got[i], want[i])
 		}
 	}
-}
-
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // assertNoLeak fails if the canary password appears in channel (oracle 4).

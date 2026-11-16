@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"net"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
@@ -38,7 +39,10 @@ func FuzzMySQLResponseMixing(f *testing.F) {
 	f.Fuzz(func(t *testing.T, in []byte) {
 		respA, _ := buildResultSet(&cursor{b: in})
 		respB := sentinelResultSet()
-		state := 0
+		// answeredA is shared by every handler goroutine: hostile.NewServer runs one per
+		// connection, and the driver reconnects after a hostile A poisons the socket. The
+		// first COM_QUERY on any connection gets A, every later one gets B.
+		var answeredA atomic.Bool
 		srv := hostile.NewServer(t, func(c net.Conn) {
 			r := bufio.NewReader(c)
 			if err := completeHandshake(c, r); err != nil {
@@ -48,9 +52,8 @@ func FuzzMySQLResponseMixing(f *testing.F) {
 				if _, _, err := readOnePacket(r, capBytes); err != nil { // a COM_QUERY
 					return
 				}
-				if state == 0 {
+				if answeredA.CompareAndSwap(false, true) {
 					_, _ = c.Write(respA)
-					state = 1
 				} else {
 					_, _ = c.Write(respB)
 				}

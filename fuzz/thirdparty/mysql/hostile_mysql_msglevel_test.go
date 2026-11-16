@@ -8,7 +8,8 @@
 // semantic disagreements (column-def type vs row bytes, declared vs delivered column
 // count) that a raw-byte seed rarely reaches.
 //
-// Oracles (sound only; each has a red proof in hostile_mysql_msglevel_redproof_test.go):
+// Oracles (sound only; committed red proofs: TestPanicOracleRedProof for 1; the parity
+// red proof was run by hand and is not committed):
 //  1. No panic escapes the driver's error path (except the ALREADY-KNOWN short-packet
 //     class, recorded by isKnownShortPacketPanic); bounded time (runWithOracles).
 //  4. No credential leak: the canary password never appears in any error the driver
@@ -19,7 +20,8 @@
 //
 // Oracle 3 (LOCAL INFILE) is in hostile_mysql_localinfile_canary_test.go; oracle 6
 // (response mixing) in hostile_mysql_mixing_test.go; oracle 2 (TLS) in
-// hostile_mysql_tls_test.go. What these do NOT verify: see the report.
+// hostile_mysql_tls_test.go. What these do NOT verify: type-aware decode correctness
+// (parity compares raw bytes), and parity is only asserted for a coherent one-column row.
 package mysqlhostile
 
 import (

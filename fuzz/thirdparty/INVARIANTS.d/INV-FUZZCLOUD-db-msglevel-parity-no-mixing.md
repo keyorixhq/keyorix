@@ -9,8 +9,9 @@
   statements per connection; a mis-framed value or cross-statement bleed would corrupt a
   rotated password or a dynamic-credential readback. Guard: `FuzzPgxMessageLevel` /
   `FuzzMySQLMessageLevel` (parity), `FuzzPgxResponseMixing` / `FuzzMySQLResponseMixing`
-  (mixing); each oracle is red-proven (parity: corrupt the expected bytes; mixing: have the
-  server send a non-sentinel B row) with a committed coherent seed that actually reaches the
-  oracle. Does NOT assert type-aware decode correctness (it compares raw bytes, not Go-typed
+  (mixing), each with a committed coherent seed that actually reaches the oracle. The red
+  proofs (parity: corrupt the expected bytes; mixing: have the server send a non-sentinel B
+  row) were run by hand and are NOT committed, so a regression that makes either oracle
+  vacuous would not be caught automatically. Does NOT assert type-aware decode correctness (it compares raw bytes, not Go-typed
   values), and the mixing oracle only fires when B's query succeeds — a poisoned connection
   that fails B is treated as no contamination.
