@@ -12,6 +12,12 @@ finding. If you discover or add an invariant while working in a package, add it 
 package's file in the same PR; if a change would have to break one, stop and ask rather than
 silently removing it.
 
+Separate module, not counted in the table below: the reusable differential-fuzzing kit
+[`fuzzkit/diffkit/INVARIANTS.md`](../fuzzkit/diffkit/INVARIANTS.md) lives in the standalone `fuzzkit/`
+module (built with `GOWORK=off`, like `cli/` and `operator/`). Its invariants
+(`INV-FUZZDIFF-*`) are guarded by that module's own package tests and are deliberately
+excluded from the counts table, which tracks production packages only.
+
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
 | `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 154 | 154 | 0 |

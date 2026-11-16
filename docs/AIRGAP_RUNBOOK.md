@@ -185,6 +185,12 @@ What this does, in order:
    file unless `--overwrite-existing` is given; with that flag, the existing
    file is moved aside to `<path>.pre-restore-<timestamp>` rather than
    truncated, so an unrecoverable mistake still has a way back.
+   `--overwrite-existing` alone is for re-running a restore into an empty
+   database (key files or an empty schema left by an interrupted restore):
+   over a database that holds data the restore still refuses (`the restore
+   target database holds data`) and changes nothing. To replace a
+   deployment's data on purpose, back it up first and pass
+   `--overwrite-existing --replace-existing-data`.
 4. Pending migrations are applied (idempotent) — so a backup taken on an
    older binary and restored onto a newer one ends up ready to start, not
    merely restored to its old schema.
