@@ -125,6 +125,31 @@ func controlStatus(degraded, bad bool) ControlStatus {
 	return gapIf(bad)
 }
 
+// emergencyAccessStatus is the emergency-access control's status. A failed
+// collection ("emergency_access:", "evidence:break_glass:") is Unknown, as for
+// every control. Owed audit rows ("emergency_access_audit:") are not a failed
+// collection: the activations were read, so a known unreviewed activation stays
+// a Gap (#4248 review F1). The owed rows only turn an otherwise passing control
+// Unknown, because the audit record is not complete until the backfill settles
+// them.
+func emergencyAccessStatus(p *CompliancePosture) ControlStatus {
+	status := controlStatus(p.DegradedArea("emergency_access:", "evidence:break_glass:"), p.EmergencyAccess.UnreviewedActivations > 0)
+	if status == ControlStatusPass && p.DegradedArea("emergency_access_audit:") {
+		return ControlStatusUnknown
+	}
+	return status
+}
+
+// emergencyAccessDetail says "all audited" only when no activation has owed
+// audit rows.
+func emergencyAccessDetail(e EmergencyAccessPosture) string {
+	audited := "all audited"
+	if e.DegradedActivations > 0 {
+		audited = fmt.Sprintf("%d with audit rows still owed", e.DegradedActivations)
+	}
+	return fmt.Sprintf("%d active, %d total activations (%s), %d unreviewed past the window", e.ActiveActivations, e.TotalActivations, audited, e.UnreviewedActivations)
+}
+
 // gapIf returns Gap when bad is true, else Pass — the common two-state evaluation.
 func gapIf(bad bool) ControlStatus {
 	if bad {
@@ -206,10 +231,8 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			// matrix may silently read a real posture deviation as passing. A
 			// failed collection still needs to surface as unknown, not a default
 			// Pass or a false Gap.
-			// "emergency_access_audit:" (owed audit rows) makes only this control
-			// Unknown: its "all audited" detail is not true until they settle.
-			Status:     controlStatus(p.DegradedArea("emergency_access:", "emergency_access_audit:", "evidence:break_glass:"), p.EmergencyAccess.UnreviewedActivations > 0),
-			Detail:     fmt.Sprintf("%d active, %d total activations (all audited), %d unreviewed past the window", p.EmergencyAccess.ActiveActivations, p.EmergencyAccess.TotalActivations, p.EmergencyAccess.UnreviewedActivations),
+			Status:     emergencyAccessStatus(p),
+			Detail:     emergencyAccessDetail(p.EmergencyAccess),
 			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{ctrlOpAcc4, "op.exp.7"}},
 		},
 		{

@@ -165,6 +165,42 @@ func TestEvaluateControls_OwedBreakGlassAuditKeepsIndependentReviewerGap(t *test
 	assert.Equal(t, ControlStatusGap, findControl(t, controls, "emergency-access-independent-reviewer").Status)
 }
 
+// TestEvaluateControls_OwedUnreviewedBreakGlassIsGapNotUnknown is review
+// finding F1 on #4248: owed audit rows must not mask a known Gap. A degraded
+// activation is unreviewed from the moment it exists (BREAKGLASS-OWED-1), so
+// the posture that carries the owed-audit reason also counts it unreviewed;
+// the activations were read, so that count is known and the control is a Gap
+// (INV-CORE-break-glass-unreviewed-reported-never-blocks-activation). The
+// posture comes from the real accumulateBreakGlassPosture so the pairing of
+// reason and count is the one production emits. Only a failed collection
+// turns a Gap into Unknown.
+func TestEvaluateControls_OwedUnreviewedBreakGlassIsGapNotUnknown(t *testing.T) {
+	t.Parallel()
+	fixed := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	c := NewKeyorixCore(new(MockStorage))
+	c.now = func() time.Time { return fixed }
+	c.SetBreakGlassPolicy(BreakGlassPolicy{ReviewWindow: 72 * time.Hour})
+
+	p := &CompliancePosture{}
+	c.accumulateBreakGlassPosture(p, 1, &complianceSnapshot{
+		breakGlassByProject: map[uint][]*models.BreakGlassActivation{1: {
+			{ID: 7, ProjectID: 1, State: BreakGlassActive, CreatedAt: fixed.Add(-time.Minute), Degraded: true},
+		}},
+		breakGlassErrByProject: map[uint]error{},
+	})
+	require.True(t, p.DegradedArea("emergency_access_audit:"), "precondition: owed rows degrade the posture, got %v", p.DegradedReasons)
+	require.Equal(t, 1, p.EmergencyAccess.UnreviewedActivations, "precondition: the owed activation is unreviewed")
+
+	ctrl := findControl(t, EvaluateControls(p), "emergency-access")
+	assert.Equal(t, ControlStatusGap, ctrl.Status, "a known unreviewed activation must stay a Gap while its audit rows are owed")
+	assert.NotContains(t, ctrl.Detail, "all audited", "the detail must not claim a complete audit record while rows are owed")
+	assert.Contains(t, ctrl.Detail, "1 with audit rows still owed")
+
+	// A failed collection in another project still wins: the count is partial.
+	p.degrade("emergency_access:project=2", errors.New("simulated db failure"))
+	assert.Equal(t, ControlStatusUnknown, findControl(t, EvaluateControls(p), "emergency-access").Status)
+}
+
 // TestAccumulateBreakGlassPosture_DegradedActivationCountsWithNoGraceWindow is
 // BREAKGLASS-POSTURE-NOV-1 item 1: a degraded activation (BREAKGLASS-OWED-1) has a
 // mandatory review from the moment it exists, so a one-minute-old one is
