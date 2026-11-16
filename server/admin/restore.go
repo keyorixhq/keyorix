@@ -282,6 +282,9 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	if err := refusePopulatedRestoreTarget(cfg, dbPath); err != nil {
 		return err
 	}
+	if err := refuseNewerRotationProtocolAtRestoreTarget(cfg, dbPath); err != nil {
+		return err
+	}
 	targetKeyPaths, err := expectedKeyFilePaths(cfg)
 	if err != nil {
 		return err
@@ -810,6 +813,9 @@ func runAdminRestoreV1(cfg *config.Config) error {
 		return err
 	}
 	if err := refusePopulatedRestoreTarget(cfg, dbPath); err != nil {
+		return err
+	}
+	if err := refuseNewerRotationProtocolAtRestoreTarget(cfg, dbPath); err != nil {
 		return err
 	}
 
