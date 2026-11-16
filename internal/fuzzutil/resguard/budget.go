@@ -81,33 +81,44 @@ type Budget struct {
 }
 
 type meterDesc struct {
-	name        string
-	sampledOnly bool // measured only on sampled inputs
-	advisory    bool // reported but never fatal
-	get         func(Cost) float64
+	name string
+	// measured reports whether c carries a measurement of this meter; nil means
+	// it is measured on every input. A Cost for which it is false holds a
+	// structural zero and is skipped by both Calibrate and Check.
+	measured func(Cost) bool
+	advisory bool // reported but never fatal
+	get      func(Cost) float64
 }
+
+func allocMeasured(c Cost) bool    { return c.AllocSampled }
+func liveHeapMeasured(c Cost) bool { return c.Sampled }
+
+// skip reports whether c holds no measurement of m (a structural zero).
+func (m meterDesc) skip(c Cost) bool { return m.measured != nil && !m.measured(c) }
 
 // meterDescs is the single source of truth both Calibrate and Check iterate, so
 // a meter cannot be calibrated under one name and checked under another.
 var meterDescs = []meterDesc{
-	{"alloc_bytes", true, false, func(c Cost) float64 { return float64(c.AllocBytes) }},
-	{"mallocs", true, false, func(c Cost) float64 { return float64(c.Mallocs) }},
-	{"live_heap", true, false, func(c Cost) float64 { return float64(c.LiveHeap) }},
+	// alloc_bytes/mallocs only when complexity.Measure ran (AllocSampled): a
+	// slow-promoted input is Sampled but its alloc fields are unmeasured.
+	{"alloc_bytes", allocMeasured, false, func(c Cost) float64 { return float64(c.AllocBytes) }},
+	{"mallocs", allocMeasured, false, func(c Cost) float64 { return float64(c.Mallocs) }},
+	{"live_heap", liveHeapMeasured, false, func(c Cost) float64 { return float64(c.LiveHeap) }},
 	// Disk + write-bytes are measured on EVERY input (cheap walk), not sampled.
-	{"write_bytes", false, false, func(c Cost) float64 { return float64(c.WriteBytes) }},
-	{"disk_bytes", false, false, func(c Cost) float64 { return float64(nonNeg64(c.DiskBytes)) }},
-	{"disk_blocks", false, false, func(c Cost) float64 { return float64(nonNeg64(c.DiskBlocks)) }},
-	{"disk_files", false, false, func(c Cost) float64 { return float64(nonNeg(c.DiskFiles)) }},
-	{"dials", false, false, func(c Cost) float64 { return float64(c.Dials) }},
-	{"net_bytes_in", false, false, func(c Cost) float64 { return float64(nonNeg64(c.NetBytesIn)) }},
-	{"net_bytes_out", false, false, func(c Cost) float64 { return float64(nonNeg64(c.NetBytesOut)) }},
-	{"sleep_ns", false, false, func(c Cost) float64 { return float64(c.Sleep) }},
-	{"log_bytes", false, false, func(c Cost) float64 { return float64(nonNeg64(c.LogBytes)) }},
-	{"db_queries", false, false, func(c Cost) float64 { return float64(c.DBQueries) }},
-	{"db_rows", false, false, func(c Cost) float64 { return float64(nonNeg64(c.DBRows)) }},
-	{"wall_ns", false, true, func(c Cost) float64 { return float64(c.Wall) }},
-	{"cpu_ns", false, true, func(c Cost) float64 { return float64(c.CPU) }},
-	{"goroutines", false, true, func(c Cost) float64 { return float64(nonNeg(c.Goroutines)) }},
+	{"write_bytes", nil, false, func(c Cost) float64 { return float64(c.WriteBytes) }},
+	{"disk_bytes", nil, false, func(c Cost) float64 { return float64(nonNeg64(c.DiskBytes)) }},
+	{"disk_blocks", nil, false, func(c Cost) float64 { return float64(nonNeg64(c.DiskBlocks)) }},
+	{"disk_files", nil, false, func(c Cost) float64 { return float64(nonNeg(c.DiskFiles)) }},
+	{"dials", nil, false, func(c Cost) float64 { return float64(c.Dials) }},
+	{"net_bytes_in", nil, false, func(c Cost) float64 { return float64(nonNeg64(c.NetBytesIn)) }},
+	{"net_bytes_out", nil, false, func(c Cost) float64 { return float64(nonNeg64(c.NetBytesOut)) }},
+	{"sleep_ns", nil, false, func(c Cost) float64 { return float64(c.Sleep) }},
+	{"log_bytes", nil, false, func(c Cost) float64 { return float64(nonNeg64(c.LogBytes)) }},
+	{"db_queries", nil, false, func(c Cost) float64 { return float64(c.DBQueries) }},
+	{"db_rows", nil, false, func(c Cost) float64 { return float64(nonNeg64(c.DBRows)) }},
+	{"wall_ns", nil, true, func(c Cost) float64 { return float64(c.Wall) }},
+	{"cpu_ns", nil, true, func(c Cost) float64 { return float64(c.CPU) }},
+	{"goroutines", nil, true, func(c Cost) float64 { return float64(nonNeg(c.Goroutines)) }},
 }
 
 // DefaultFactor is the slack over p99 a calibrated budget allows before it
@@ -118,7 +129,8 @@ const DefaultFactor = 4.0
 // Calibrate derives a Budget from the costs measured over a seed corpus. Pass
 // factor <= 0 for DefaultFactor. Meters with no non-zero sample get a zero
 // budget, which Check treats as "not metered for this target" (never a
-// spurious fail). For a sampledOnly meter, only sampled costs contribute.
+// spurious fail). For a sampled meter, only costs that carry a measurement of
+// it contribute (AllocSampled for alloc_bytes/mallocs, Sampled for live_heap).
 func Calibrate(target string, samples []Cost, factor float64) Budget {
 	if factor <= 0 {
 		factor = DefaultFactor
@@ -133,7 +145,7 @@ func Calibrate(target string, samples []Cost, factor float64) Budget {
 	for _, m := range meterDescs {
 		var vals, ratios []float64
 		for _, c := range samples {
-			if m.sampledOnly && !c.Sampled {
+			if m.skip(c) {
 				continue
 			}
 			v := m.get(c)
@@ -216,15 +228,22 @@ func (b Budget) WriteJSON(path string) error {
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
-// LoadBudget reads a Budget written by WriteJSON.
+// LoadBudget reads a Budget written by WriteJSON. It rejects a budget whose
+// factor is not positive: Check multiplies every slope ceiling by it, so a
+// missing or zero factor would silently disarm every slope meter.
 func LoadBudget(path string) (Budget, error) {
 	var b Budget
 	data, err := os.ReadFile(path) // #nosec G304 -- path is a test-file constant
 	if err != nil {
 		return b, err
 	}
-	err = json.Unmarshal(data, &b)
-	return b, err
+	if err := json.Unmarshal(data, &b); err != nil {
+		return b, err
+	}
+	if !(b.Factor > 0) {
+		return b, fmt.Errorf("resguard budget %s: factor %v must be > 0", path, b.Factor)
+	}
+	return b, nil
 }
 
 // Check reports every fatal meter over budget for input c via fatalf (pass
@@ -241,7 +260,7 @@ func (b Budget) Check(fatalf func(format string, args ...any), c Cost) bool {
 	}
 
 	for _, m := range meterDescs {
-		if m.sampledOnly && !c.Sampled {
+		if m.skip(c) {
 			continue
 		}
 		mb, ok := b.Meters[m.name]

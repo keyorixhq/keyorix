@@ -25,15 +25,15 @@ func TestMeasureCheapAndSampled(t *testing.T) {
 	p := New(t, Options{SampleEvery: 2})
 	// input 0: sampled; input 1: cheap; input 2: sampled …
 	c0 := p.Measure(10, func() { allocSink = make([]byte, 1<<16) })
-	if !c0.Sampled {
-		t.Fatalf("input 0 should be sampled")
+	if !c0.Sampled || !c0.AllocSampled {
+		t.Fatalf("input 0 should be sampled with an alloc measurement: %+v", c0)
 	}
 	if c0.AllocBytes < 1<<16 {
 		t.Fatalf("sampled input should see the 64 KiB alloc, got %d", c0.AllocBytes)
 	}
 	c1 := p.Measure(10, func() { allocSink = make([]byte, 1<<16) })
-	if c1.Sampled {
-		t.Fatalf("input 1 should be cheap (not sampled)")
+	if c1.Sampled || c1.AllocSampled {
+		t.Fatalf("input 1 should be cheap (not sampled): %+v", c1)
 	}
 	if c1.AllocBytes != 0 {
 		t.Fatalf("cheap input must not read memstats, got AllocBytes=%d", c1.AllocBytes)
@@ -43,7 +43,7 @@ func TestMeasureCheapAndSampled(t *testing.T) {
 // TestExpensiveSampleOverhead records, on this host, the wall overhead the
 // expensive sample path adds over the cheap path. It never fails on a number
 // (that would be a calendar-at-PR-time guard); it only asserts the expensive
-// path is not absurdly slower and logs the measured ratio for the report.
+// path is not absurdly slower and logs the measured ratio.
 func TestExpensiveSampleOverhead(t *testing.T) {
 	const iters = 200
 	tmp := t.TempDir()
@@ -66,7 +66,8 @@ func TestExpensiveSampleOverhead(t *testing.T) {
 	t.Logf("expensive-sample overhead: cheap=%s expensive=%s ratio=%.1fx (per-input cheap=%s expensive=%s)",
 		cheapDur, expDur, float64(expDur)/float64(cheapDur), cheapDur/iters, expDur/iters)
 	if expDur < cheapDur {
-		t.Fatalf("expensive path should cost at least as much as cheap")
+		// Wall-clock comparison on a shared host: logged, never fatal.
+		t.Logf("expensive path measured faster than cheap (host noise)")
 	}
 }
 
@@ -76,7 +77,7 @@ func TestBudgetCalibrateAndCheck(t *testing.T) {
 	// Benign seed corpus: alloc ~ 8·N bytes, no disk/net.
 	var seeds []Cost
 	for n := 10; n <= 100; n += 10 {
-		seeds = append(seeds, Cost{InputLen: n, Sampled: true, AllocBytes: uint64(8 * n), Wall: time.Millisecond})
+		seeds = append(seeds, Cost{InputLen: n, Sampled: true, AllocSampled: true, AllocBytes: uint64(8 * n), Wall: time.Millisecond})
 	}
 	b := Calibrate("toy", seeds, DefaultFactor)
 	if _, ok := b.Meters["alloc_bytes"]; !ok {
@@ -84,7 +85,7 @@ func TestBudgetCalibrateAndCheck(t *testing.T) {
 	}
 
 	// GREEN: a benign input within the slope passes.
-	green := Cost{InputLen: 50, Sampled: true, AllocBytes: 8 * 50, Wall: time.Millisecond}
+	green := Cost{InputLen: 50, Sampled: true, AllocSampled: true, AllocBytes: 8 * 50, Wall: time.Millisecond}
 	var greenFired bool
 	b.Check(func(string, ...any) { greenFired = true }, green)
 	if greenFired {
@@ -92,7 +93,7 @@ func TestBudgetCalibrateAndCheck(t *testing.T) {
 	}
 
 	// RED: a 100-byte input that allocates 50 MiB (amplification) fails.
-	red := Cost{InputLen: 100, Sampled: true, AllocBytes: 50 << 20, Wall: 5 * time.Millisecond}
+	red := Cost{InputLen: 100, Sampled: true, AllocSampled: true, AllocBytes: 50 << 20, Wall: 5 * time.Millisecond}
 	var redMsg string
 	fired := b.Check(func(f string, a ...any) { redMsg = sprintf(f, a...) }, red)
 	if !fired {
@@ -197,15 +198,61 @@ func TestBudgetAbsMaxFallsBackToSlopeWhenUncalibrated(t *testing.T) {
 // TestBudgetSkipsUnsampledSampleOnlyMeters guards that a cheap (unsampled)
 // input never fails on a sampled-only meter whose fields are zero.
 func TestBudgetSkipsUnsampledSampleOnlyMeters(t *testing.T) {
-	b := Calibrate("toy", []Cost{{InputLen: 10, Sampled: true, AllocBytes: 80}}, DefaultFactor)
+	b := Calibrate("toy", []Cost{{InputLen: 10, Sampled: true, AllocSampled: true, AllocBytes: 80}}, DefaultFactor)
 	cheap := Cost{InputLen: 10, Sampled: false, AllocBytes: 0}
 	if b.Check(func(string, ...any) {}, cheap) {
 		t.Fatalf("unsampled input must not be judged on alloc_bytes")
 	}
 }
 
+// TestMeasureSlowPromotionMarksAllocUnmeasured guards that a slow-promoted
+// input (off the cadence, over SlowWall) is Sampled for live_heap but carries no
+// alloc measurement, and that Check does not judge its structural-zero alloc.
+// The behavioural red/green is TestMeasureSlowPromotionDoesNotFakeAlloc.
+func TestMeasureSlowPromotionMarksAllocUnmeasured(t *testing.T) {
+	p := New(t, Options{SampleEvery: 1000, SlowWall: 20 * time.Millisecond})
+	_ = p.Measure(10, func() {}) // input #0: on the cadence
+	slow := p.Measure(10, func() {
+		allocSink = make([]byte, 1<<20)
+		time.Sleep(50 * time.Millisecond)
+	})
+	if !slow.Sampled || slow.LiveHeap == 0 {
+		t.Fatalf("slow input must be promoted to a live-heap sample: %+v", slow)
+	}
+	if slow.AllocSampled || slow.AllocBytes != 0 || slow.Mallocs != 0 {
+		t.Fatalf("slow-promoted input must not claim an alloc measurement: %+v", slow)
+	}
+	b := Budget{Target: "promo", Factor: DefaultFactor, Meters: map[string]MeterBudget{
+		"alloc_bytes": {Floor: 1}, "mallocs": {Floor: 1},
+	}}
+	var msg string
+	slow.AllocBytes = 1 << 30 // a value that would fire if the meter were judged
+	if b.Check(func(format string, args ...any) { msg = fmt.Sprintf(format, args...) }, slow) {
+		t.Fatalf("Check judged an unmeasured alloc field: %s", msg)
+	}
+}
+
+// TestLoadBudgetRejectsNonPositiveFactor guards that a budget file with a
+// missing or zero factor is refused rather than loaded with every slope meter
+// disarmed (factor·(Floor + PerByte·N) == 0 never fires).
+func TestLoadBudgetRejectsNonPositiveFactor(t *testing.T) {
+	for _, body := range []string{
+		`{"target":"x","meters":{"alloc_bytes":{"floor":10}}}`,
+		`{"target":"x","factor":0,"meters":{"alloc_bytes":{"floor":10}}}`,
+		`{"target":"x","factor":-1,"meters":{"alloc_bytes":{"floor":10}}}`,
+	} {
+		path := filepath.Join(t.TempDir(), "resguard.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadBudget(path); err == nil {
+			t.Fatalf("LoadBudget accepted a non-positive factor: %s", body)
+		}
+	}
+}
+
 func TestBudgetWriteLoadRoundTrip(t *testing.T) {
-	b := Calibrate("rt", []Cost{{InputLen: 10, Sampled: true, AllocBytes: 80, DiskBytes: 100}}, 3)
+	b := Calibrate("rt", []Cost{{InputLen: 10, Sampled: true, AllocSampled: true, AllocBytes: 80, DiskBytes: 100}}, 3)
 	path := filepath.Join(t.TempDir(), "resguard.json")
 	if err := b.WriteJSON(path); err != nil {
 		t.Fatalf("write: %v", err)

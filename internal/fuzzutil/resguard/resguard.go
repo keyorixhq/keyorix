@@ -24,15 +24,18 @@
 // goroutines, OS threads, open fds. They cost a getrusage and two small /proc
 // reads (~microseconds) and are read as deltas.
 //
-// Expensive meters run on a SAMPLE: runtime.ReadMemStats (a stop-the-world),
-// live-heap-after-GC (a full GC), and the TempDir walk. They fire when
-// (input index % SampleEvery == 0) OR the cheap wall clock already showed the
-// input was slow (over SlowWall) — a slow or large input is exactly the one
-// worth paying to measure. The stock `go test -fuzz` engine does not expose
-// "this input found new coverage" to the target, so that third trigger from the
-// task is approximated by the slow-wall trigger (documented, not silently
-// dropped). Measured overhead of the expensive path on this host is recorded in
-// the package test (TestExpensiveSampleOverhead) and the RSG1 report.
+// Expensive meters run on a SAMPLE: the alloc delta (runtime.ReadMemStats, a
+// stop-the-world, taken around fn) and live-heap-after-GC (a full GC, taken
+// after fn). An input is sampled when (input index % SampleEvery == 0) OR the
+// cheap wall clock already showed it was slow (over SlowWall) — a slow or large
+// input is exactly the one worth paying to measure. A slow-promoted input gets
+// only the live-heap sample: fn has already run without the alloc delta, so its
+// AllocBytes/Mallocs stay a structural zero and Cost.AllocSampled is false. The
+// stock `go test -fuzz` engine does not expose "this input found new coverage"
+// to the target, so that third trigger from the task is approximated by the
+// slow-wall trigger (documented, not silently dropped). Measured overhead of the
+// expensive path on this host is logged by the package test
+// (TestExpensiveSampleOverhead).
 //
 // # Application meters are seams, not magic
 //
@@ -65,11 +68,17 @@ type procStats struct {
 }
 
 // Cost is the measured cost of a single fuzz input. Fields measured only on a
-// sampled input (see package doc) are zero on an unsampled input; Sampled says
-// which it was, so a budget never compares an unsampled zero against a ceiling.
+// sampled input (see package doc) are zero on an unsampled input; Sampled and
+// AllocSampled say which were measured, so a budget never compares an
+// unmeasured zero against a ceiling.
 type Cost struct {
 	InputLen int
-	Sampled  bool
+	// Sampled: LiveHeap was measured (an on-cadence or slow-promoted input).
+	Sampled bool
+	// AllocSampled: AllocBytes/Mallocs were measured (complexity.Measure ran
+	// around fn). Only on-cadence inputs; a slow-promoted input has Sampled
+	// true and AllocSampled false.
+	AllocSampled bool
 
 	// Cheap meters (every input). CPU/Threads/OpenFDs are process-wide deltas
 	// and advisory under -parallel>1 (see platform_linux.go caveat).
@@ -79,7 +88,8 @@ type Cost struct {
 	Threads    int
 	OpenFDs    int
 
-	// Expensive meters (sampled): alloc/live-heap force a ReadMemStats/GC.
+	// Expensive meters: AllocBytes/Mallocs when AllocSampled, LiveHeap when
+	// Sampled (they force a ReadMemStats/GC).
 	AllocBytes uint64
 	Mallocs    uint64
 	LiveHeap   uint64 // HeapAlloc after a forced GC
@@ -189,11 +199,14 @@ func (p *Probe) Measure(inputLen int, fn func()) Cost {
 		c.Wall = cc.Wall
 		c.AllocBytes = cc.AllocBytes
 		c.Mallocs = cc.AllocObjects
+		c.AllocSampled = true
 	} else {
 		start := time.Now()
 		fn()
 		c.Wall = time.Since(start)
-		// A cheap input that turned out slow earns the expensive (alloc) sample.
+		// A cheap input that turned out slow earns the live-heap sample. It does
+		// NOT get an alloc sample: fn ran without complexity.Measure, so the alloc
+		// fields stay unmeasured and AllocSampled stays false.
 		if c.Wall > p.opts.SlowWall {
 			expensive = true
 		}
