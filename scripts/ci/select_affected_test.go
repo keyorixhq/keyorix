@@ -217,6 +217,45 @@ func TestSelectAffected_GitFailureFallsBackToFull(t *testing.T) {
 	}
 }
 
+// CANARY-SELECT-1: the selector must give the same answer when the checkout is
+// reached through a symlink, as the main-canary's /tmp/wt-canary is on macOS
+// (/tmp -> /private/tmp). go list derives Dir from $PWD, python's getcwd is the
+// resolved path; when they disagreed no file had an owning package and every
+// bare "internal" literal in code selected its package. Linux CI never has a
+// symlinked checkout, so only this test (and the canary) sees the difference.
+func TestSelectAffected_SymlinkedCheckoutSelectsLikeTheRealPath(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "checkout")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skipf("cannot symlink: %v", err)
+	}
+	const guard = "internal/testutil/sqlitetest/shared_cache_literal_guard_test.go"
+	cmd := exec.Command("python3", "scripts/ci/select-affected.py", "--json", "--changed", guard)
+	cmd.Dir = link
+	cmd.Env = append(os.Environ(), "PWD="+link) // what a shell cd'd through the link exports
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("select-affected.py via symlink: %v\n%s", err, stderr.String())
+	}
+	var s selection
+	if err := json.Unmarshal(out, &s); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out)
+	}
+	want := changed(t, guard)
+	if s.Mode != want.Mode || !slices.Equal(legNames(s), legNames(want)) || len(s.Seeds) != len(want.Seeds) {
+		t.Errorf("via symlink: mode=%s legs=%v seeds=%d; via real path: mode=%s legs=%v seeds=%d",
+			s.Mode, legNames(s), len(s.Seeds), want.Mode, legNames(want), len(want.Seeds))
+	}
+}
+
 // A _test.go file compiles into its own package's test binary only, so a
 // test-only change selects that package's leg and nothing that imports it.
 func TestSelectAffected_TestOnlyChangeSelectsItsPackageOnly(t *testing.T) {
