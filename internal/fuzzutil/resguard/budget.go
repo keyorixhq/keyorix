@@ -23,14 +23,52 @@ import (
 // but never fail an input on their own (CLAUDE.md: wall time false-fires under
 // load). The fatal meters are the ones attributable to a single input.
 
-// MeterBudget is Floor + PerByte·N, both derived by Calibrate.
+// Budget-check modes (MeterBudget.Mode). The default ("" / ModeSlope) is the
+// per-byte slope every RSG1 meter used. ModeAbsolute judges a meter by its
+// input-size-INDEPENDENT absolute ceiling (AbsMax) alone — the correct model for
+// a DECOMPRESSION or image target, where the compression ratio is scale-invariant
+// so a per-byte slope calibrated on small benign inputs false-positives on a
+// legitimately-larger one (RSG1 Pilot #1: a 457-byte archive expanding to
+// 65 823 bytes, 144×, tripped the slope although it is within the product's own
+// cap). See INV-RES-absmax-for-decompression.
+const (
+	ModeSlope    = "" // per-byte slope: factor·(Floor + PerByte·N)
+	ModeAbsolute = "absolute"
+)
+
+// MeterBudget is Floor + PerByte·N (the per-byte slope) PLUS AbsMax, an absolute
+// ceiling independent of input size. Calibrate derives all three. Mode selects
+// which ceiling Check applies (default: the slope).
 type MeterBudget struct {
 	Floor   float64 `json:"floor"`
 	PerByte float64 `json:"per_byte"`
+	// AbsMax is the absolute ceiling: p99(value across the corpus)·factor, with
+	// NO per-byte term. 0 means "not calibrated" (legacy budgets) and Check then
+	// falls back to the slope even in ModeAbsolute, so an old budget never loses
+	// its guard. Because it is already multiplied by factor it is applied
+	// directly, not re-scaled, at Check time.
+	AbsMax float64 `json:"abs_max,omitempty"`
+	// Mode is ModeSlope ("") or ModeAbsolute. A target sets it via
+	// Budget.UseAbsolute for a decompression-shaped meter.
+	Mode string `json:"mode,omitempty"`
 }
 
-func (mb MeterBudget) allowed(n int, factor float64) float64 {
+// slopeAllowed is the per-byte ceiling factor·(Floor + PerByte·N).
+func (mb MeterBudget) slopeAllowed(n int, factor float64) float64 {
 	return factor * (mb.Floor + mb.PerByte*float64(n))
+}
+
+// exceeded reports whether value v for an input of n bytes is over this meter's
+// ceiling, and returns the ceiling that was applied (for the failure message).
+// ModeAbsolute uses AbsMax alone; it falls back to the slope when AbsMax is 0
+// (an uncalibrated/legacy budget), so switching mode never silently disarms a
+// meter. ModeSlope uses the per-byte ceiling.
+func (mb MeterBudget) exceeded(v float64, n int, factor float64) (bool, float64) {
+	if mb.Mode == ModeAbsolute && mb.AbsMax > 0 {
+		return v > mb.AbsMax, mb.AbsMax
+	}
+	allowed := mb.slopeAllowed(n, factor)
+	return allowed > 0 && v > allowed, allowed
 }
 
 // Budget is a calibrated set of per-meter ceilings for one target.
@@ -61,6 +99,7 @@ var meterDescs = []meterDesc{
 	{"disk_blocks", false, false, func(c Cost) float64 { return float64(nonNeg64(c.DiskBlocks)) }},
 	{"disk_files", false, false, func(c Cost) float64 { return float64(nonNeg(c.DiskFiles)) }},
 	{"dials", false, false, func(c Cost) float64 { return float64(c.Dials) }},
+	{"net_bytes_in", false, false, func(c Cost) float64 { return float64(nonNeg64(c.NetBytesIn)) }},
 	{"net_bytes_out", false, false, func(c Cost) float64 { return float64(nonNeg64(c.NetBytesOut)) }},
 	{"sleep_ns", false, false, func(c Cost) float64 { return float64(c.Sleep) }},
 	{"log_bytes", false, false, func(c Cost) float64 { return float64(nonNeg64(c.LogBytes)) }},
@@ -110,9 +149,50 @@ func Calibrate(target string, samples []Cost, factor float64) Budget {
 		if floor == 0 && perByte == 0 {
 			continue // meter never fired across the corpus
 		}
-		b.Meters[m.name] = MeterBudget{Floor: floor, PerByte: perByte}
+		// AbsMax is the input-size-INDEPENDENT ceiling: p99(value)·factor. It is
+		// only meaningful if the seed corpus contains a representative
+		// legitimately-large sample (else it is calibrated too small and a
+		// decompression target in ModeAbsolute false-positives exactly as the
+		// per-byte slope did). The adopter is responsible for that corpus; the
+		// report states the limitation.
+		b.Meters[m.name] = MeterBudget{Floor: floor, PerByte: perByte, AbsMax: floor * factor}
 	}
 	return b
+}
+
+// KeepOnly drops every calibrated meter except the named ones, so Check judges
+// only them. Use it for a target where some meters are not per-input attributable
+// — e.g. a target that drives a live concurrent server (TLS buffers, server
+// goroutines, connection pools) makes the process-global memory meters
+// (alloc_bytes/mallocs/live_heap, measured by a whole-process ReadMemStats + GC)
+// noisy and not the fault of a single input. Air-gap (NonLoopbackDials) is checked
+// independently of the meter set and is never dropped by this. Unknown names are
+// ignored. State in the target's report which meters were kept and why.
+func (b Budget) KeepOnly(meters ...string) {
+	keep := make(map[string]bool, len(meters))
+	for _, m := range meters {
+		keep[m] = true
+	}
+	for name := range b.Meters {
+		if !keep[name] {
+			delete(b.Meters, name)
+		}
+	}
+}
+
+// UseAbsolute switches the named meters to ModeAbsolute (AbsMax ceiling only,
+// no per-byte slope). Use it for a decompression/image target whose output size
+// is bounded by an absolute product cap, not proportional to the input — the
+// per-byte slope is the wrong model there (RSG1 Pilot #1). Unknown names are
+// ignored so a target can list every candidate meter without caring which the
+// corpus actually exercised. See INV-RES-absmax-for-decompression.
+func (b Budget) UseAbsolute(meters ...string) {
+	for _, name := range meters {
+		if mb, ok := b.Meters[name]; ok {
+			mb.Mode = ModeAbsolute
+			b.Meters[name] = mb
+		}
+	}
 }
 
 // p99 returns the 99th-percentile value (nearest-rank). Empty -> 0.
@@ -175,11 +255,15 @@ func (b Budget) Check(fatalf func(format string, args ...any), c Cost) bool {
 			continue
 		}
 		v := m.get(c)
-		allowed := mb.allowed(c.InputLen, b.Factor)
-		if allowed <= 0 || v <= allowed {
+		over, allowed := mb.exceeded(v, c.InputLen, b.Factor)
+		if !over {
 			continue
 		}
-		line := fmt.Sprintf("%s=%.0f budget=%.0f amp=%.1fx", m.name, v, allowed, v/allowed)
+		mode := ""
+		if mb.Mode == ModeAbsolute {
+			mode = " abs"
+		}
+		line := fmt.Sprintf("%s=%.0f budget=%.0f%s amp=%.1fx", m.name, v, allowed, mode, v/allowed)
 		if m.advisory {
 			context = append(context, line)
 		} else {
