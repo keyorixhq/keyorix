@@ -11,10 +11,10 @@ name: Fault-tolerance issue state (nightly)
 # server/faultops/ still gets caught -- just not on every PR in between.
 on:
   schedule:
-    # 04:09 UTC nightly, off the round minute, clear of this repo's other
-    # nightly cron slots (anchore-syft 4:12, sonarcloud 4:27, pg-race-tests
-    # 4:47).
-    - cron: '9 4 * * *'
+    # 07:29 UTC nightly, off the round minute, clear of this repo's other
+    # nightly cron slots (anchore-syft 7:41, sonarcloud 8:07, pg-race-tests
+    # 8:27).
+    - cron: '29 7 * * *'
   workflow_dispatch: {}
 
 permissions: {}

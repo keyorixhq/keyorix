@@ -35,6 +35,12 @@ type secretFixtures struct {
 	targetEnvID uint // live, empty environment "staging2" (copy / clone target)
 	shareID     uint // multiVerID shared read -> the ACL recipient
 	plainID     uint // a plain admin-owned secret the metadata ops edit
+	// envAltSecretID is an admin-owned, no-ACL/no-share secret living in the
+	// SECOND live environment (targetEnvID, "staging2") rather than prod. Paired
+	// with plainID (prod), it lets the environment-scoped grant op (V5b) read the
+	// same project in two different environments, so a grant scoped to one
+	// environment is visibly refused in the other.
+	envAltSecretID uint
 }
 
 // userFixtures are install-wide.
@@ -130,6 +136,17 @@ func seedSecretFixtures(ctx context.Context, c *core.KeyorixCore, fx *fixtures) 
 		if sx.plainID, err = mk("plain", "password", fmt.Appendf(nil, "synthetic-plain-%d", i), nil); err != nil {
 			return err
 		}
+		// envAlt: same project, the SECOND environment (staging2). Admin-owned,
+		// no ACL/share, so a principal's access to it is decided by RBAC at the
+		// {project, staging2} scope alone (V5b environment-scoped grant op).
+		envAlt, err := c.CreateSecret(ctx, &core.CreateSecretRequest{
+			Name: "envalt", Value: fmt.Appendf(nil, "synthetic-envalt-%d", i), ProjectID: pp.projectID,
+			EnvironmentID: sx.targetEnvID, Type: "password", CreatedBy: "kxadmin", OwnerID: fx.adminID,
+		})
+		if err != nil {
+			return fmt.Errorf("env-alt secret fixture: %w", err)
+		}
+		sx.envAltSecretID = envAlt.ID
 	}
 	return nil
 }

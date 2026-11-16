@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // deprecatedSettingAlias names one ADR-112 rename: a security-weakening

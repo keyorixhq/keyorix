@@ -31,6 +31,9 @@ silently removing it.
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/keyfiles` | [internal/keyfiles/INVARIANTS.md](../internal/keyfiles/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/restorejournal` | [internal/restorejournal/INVARIANTS.md](../internal/restorejournal/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/securefiles` | [internal/securefiles/INVARIANTS.md](../internal/securefiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 1 | 1 | 0 |
@@ -50,7 +53,10 @@ silently removing it.
 | `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/secrettemplate` | [internal/secrettemplate/INVARIANTS.md](../internal/secrettemplate/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
-| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 4 | 4 | 0 |
+| `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 4 | 4 | 0 |
+| `fuzz/thirdparty/otp` | [fuzz/thirdparty/otp/INVARIANTS.md](../fuzz/thirdparty/otp/INVARIANTS.md) | 5 | 5 | 0 |
+| `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
 
 ## Highest-priority UNGUARDED gaps
 
