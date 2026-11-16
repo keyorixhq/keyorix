@@ -639,10 +639,8 @@ func (fx *fixtures) scopeProject(s string) uint {
 
 // scopeProjectToken strips an "@env" suffix, leaving the project token.
 func scopeProjectToken(s string) string {
-	if i := strings.IndexByte(s, '@'); i >= 0 {
-		return s[:i]
-	}
-	return s
+	proj, _, _ := strings.Cut(s, "@")
+	return proj
 }
 
 // scopeEnv maps an environment-scoped variation token to its environment id. A
@@ -651,15 +649,15 @@ func scopeProjectToken(s string) string {
 //	"<proj>@prod" -> that project's prod environment (perProject.envID)
 //	"<proj>@stg"  -> that project's second environment ("staging2", sx.targetEnvID)
 func (fx *fixtures) scopeEnv(s string) uint {
-	i := strings.IndexByte(s, '@')
-	if i < 0 {
+	_, env, found := strings.Cut(s, "@")
+	if !found {
 		return 0
 	}
 	pp := &fx.A
 	if scopeProjectToken(s) == "B" {
 		pp = &fx.B
 	}
-	switch s[i+1:] {
+	switch env {
 	case "prod":
 		return pp.envID
 	case "stg":
