@@ -1,4 +1,4 @@
-// Reachability-first fuzz harness for gopkg.in/yaml.v3, the YAML decoder
+// Reachability-first fuzz harness for go.yaml.in/yaml/v4, the YAML decoder
 // Keyorix uses to read operator configuration and the CLI credential store.
 //
 // Live callers (traced from reachgen, prov=config):
@@ -14,7 +14,7 @@
 //   - must return within a generous wall-clock bound, and
 //   - if it SUCCEEDS, the re-marshaled result must not be wildly larger than the
 //     input (bounded expansion). A YAML anchor/alias "billion laughs" bomb that
-//     the decoder EXPANDED instead of rejecting would blow this bound; yaml.v3
+//     the decoder EXPANDED instead of rejecting would blow this bound; yaml v4
 //     caps alias expansion, so the oracle is here to notice a regression.
 //
 // What this oracle does NOT verify:
@@ -33,17 +33,17 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 const decodeDeadline = 2 * time.Second
 
-// Bounded-output backstop. yaml.v3's anti-"billion-laughs" protection is an
+// Bounded-output backstop. yaml v4's anti-"billion-laughs" protection is an
 // ABSOLUTE alias-work budget, NOT a fixed expansion ratio: it rejects a document
 // ("document contains excessive aliasing") once total alias resolution exceeds a
 // threshold, so the maximum output an aliased small input can produce is bounded
-// in ABSOLUTE terms (measured ~38 KiB across a branch×depth sweep — see report
-// §Findings), not as a ratio of input size. An input-relative ratio bound is the
+// in ABSOLUTE terms (measured on v4: ~38 KiB, 38292 B, across a branch×depth
+// sweep — see report §Findings), not as a ratio of input size. An input-relative ratio bound is the
 // WRONG shape and false-positives on legitimately-budgeted expansions (two such
 // were found and triaged during this campaign). So we bound output absolutely:
 //
@@ -52,7 +52,7 @@ const decodeDeadline = 2 * time.Second
 // remarshalGrowth covers ordinary re-serialisation growth of a NON-alias doc;
 // aliasHeadroom (1 MiB, ~27x above the measured ~38 KiB ceiling) covers the
 // alias budget's full legitimate contribution with wide margin. The bound never
-// fires on yaml.v3's sanctioned behaviour, and DOES fire if the alias budget is
+// fires on yaml v4's sanctioned behaviour, and DOES fire if the alias budget is
 // removed/grossly loosened (a few-level 9-way nest then amplifies a <1 KiB input
 // to many MiB). It does NOT catch a SMALL loosening of the budget.
 const (
@@ -60,7 +60,7 @@ const (
 	aliasHeadroom   = 1 << 20
 )
 
-// aliasBomb is a classic YAML "billion laughs"; yaml.v3 should REJECT it (its
+// aliasBomb is a classic YAML "billion laughs"; yaml v4 should REJECT it (its
 // alias budget is exceeded), not expand it. Used as a seed to keep that path hot.
 const aliasBomb = `
 a: &a ["x","x","x","x","x","x","x","x","x"]
@@ -77,11 +77,11 @@ func FuzzYAMLDecodeBoundedWork(f *testing.F) {
 	f.Add([]byte(""))
 	f.Add([]byte("- - - - - - - - - -")) // deep flow nesting
 	// Triaged ARTIFACT seeds (see report §Findings): nested 9-way alias docs that
-	// yaml.v3 LEGITIMATELY expands (~103x and ~313x respectively, to ~11 KiB and
-	// ~32 KiB — both ABSOLUTELY bounded by yaml.v3's alias budget, which rejects
+	// yaml v4 LEGITIMATELY expands (measured on v4: ~103x and ~313x
+	// respectively, to ~11 KiB and ~32 KiB — both ABSOLUTELY bounded by yaml v4's alias budget, which rejects
 	// deeper nests outright). Both exposed that an input-relative ratio bound is
 	// the wrong shape; kept as regression seeds under the absolute bound. A
-	// removal of yaml.v3's alias budget would let these amplify to many MiB and
+	// removal of yaml v4's alias budget would let these amplify to many MiB and
 	// trip the bound.
 	f.Add([]byte("0: &a\n1: &b [00,00,00,&0,&0,&0,&0,&0,00]\n2: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b]\n7: [*c,*c,*c,*c,*c,*c,*c,*c,*c]"))
 	f.Add([]byte("0: &a [0,0,0,0,0,0]\n1: &b [*a,*a,*a,*a,*a,*a,*a,*a]\n2: &c [*b,*b,*b,*b,*b,*b]\n7: [*c,*c,*c,*c,*c,*c,*c]"))

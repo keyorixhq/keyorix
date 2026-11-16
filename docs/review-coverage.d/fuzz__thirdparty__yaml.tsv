@@ -1,1 +1,1 @@
-fuzz/thirdparty/yaml	none	-	test-only reachability-first fuzz harness for gopkg.in/yaml.v3 decoding; not part of any shipped build	test-helper
+fuzz/thirdparty/yaml	none	-	test-only reachability-first fuzz harness for go.yaml.in/yaml/v4 decoding; not part of any shipped build	test-helper
