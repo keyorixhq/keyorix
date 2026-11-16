@@ -1,0 +1,78 @@
+# Expected-difference table — YAML v3→v4 differential oracle (DF2)
+
+Oracle `FuzzYAMLV4Differential` (`yaml_v4_differential_fuzz_test.go`) asserts, for the same
+input bytes, that the two go.yaml.in implementations this module links behave identically:
+
+- **`go.yaml.in/yaml/v3` v3.0.5** — the ecosystem's canonical home for the YAML library
+  Keyorix tooling imports (byte-identical to the `go.yaml.in/yaml/v3` side traced live in
+  `FuzzYAMLSiblingDifferential`). **Reachable.**
+- **`go.yaml.in/yaml/v4` v4.0.0** — the major-version rewrite the ecosystem is migrating to,
+  already in this module's graph. **No live Keyorix caller today** — a forward-looking
+  migration-risk oracle.
+
+Three oracles (all non-panic; a panic in either library is a native finding):
+
+1. **Bounded work** — each `Unmarshal` metered with resguard; a super-linear alloc/malloc
+   blow-up in EITHER library (relative to a calibrated absolute ceiling) fails.
+2. **Accept/reject parity** — a split accept/reject verdict fails unless its class is listed
+   below (`yamlV4ExpectedDiff`).
+3. **Decoded-value equality** — when both accept, the two decoded values must canonicalise
+   (one fixed v3 encoder) to the same bytes, unless the divergence class is listed below.
+
+This table is the talk slide **"where a major-version rewrite of the same library quietly
+changes behaviour."** Every row is a divergence that is KNOWN and justified, so only a NEW
+class reaches the failing assertion.
+
+## Accept/reject and value divergences (the table)
+
+| id | class key | what diverges | v3.0.5 | v4.0.0 | why it is tolerated | enforced by |
+|----|-----------|---------------|--------|--------|---------------------|-------------|
+| D1 | `nonspecific-tag-empty-scalar` | the non-specific tag `!` applied to an **empty** scalar node (`!`, `a: !`, `- !`) | resolves to **null** | resolves to the **empty string** (`!!str`) | v4 is the more spec-aligned reading: the `!` non-specific tag forces resolution off the null default, and the failsafe schema resolves a `!`-tagged scalar as `!!str`. A deliberate v4 rewrite change, **not a Keyorix defect** — v4 has no live caller. Plain empty nodes (`a:`, `~`, `null`) decode to null in BOTH; an explicit `!!str` decodes to `""` in BOTH; only the bare `!` diverges. | `classifyYAMLV4ValueSplit` / `nilVsEmptyStringOnly` — tolerates ONLY null-vs-`""` leaves with otherwise-identical structure; any other value diff (different number, key set, or a nil-vs-**non-empty**-string) stays `value-mismatch` and fails. |
+
+No accept/reject (`*-rejects:*`) class is currently listed: across the seed corpus and the
+DF2 fuzz run, v3.0.5 and v4.0.0 agreed on every accept/reject verdict (duplicate keys,
+complex keys, excessive aliasing, syntax errors — all rejected by both; v4 only re-worded the
+error text, which `classifyYAMLV4Split` normalises away). An accept/reject split the fuzzer
+finds is a finding until triaged and listed here.
+
+## What this oracle does NOT verify (scope / "not verified")
+
+- **S1 — Struct decoding, `WithKnownFields`/strict mode, custom `Unmarshaler`s.** Only the
+  schemaless `Unmarshal(data, &any)` path is compared. v4's new `Load`/`Dump` + options API
+  (`WithKnownFields`, `WithIndent`, `WithAllDocuments`) is a distinct surface and is out of
+  scope. A config decoded into a *typed struct* could diverge where the `any` decode does not.
+- **S2 — Encoding (`Marshal`/`Dump`) parity.** Only decode is differentiated. The canonical
+  re-encoder is v3's `Marshal` applied to BOTH decoded values, so an encoding divergence in
+  v4's own `Marshal` is invisible here (by construction — it is used as a comparison oracle,
+  not a subject). Round-trip (`decode→encode→decode`) idempotence is not asserted.
+- **S3 — Multi-document streams.** `Unmarshal` decodes only the FIRST document; a divergence
+  in how v3 vs v4 split or decode the 2nd+ document of a `---`-separated stream is not seen.
+  The `Loader`/`Decoder` streaming API is out of scope.
+- **S4 — Inputs > 8 KiB.** Bounded to keep a pathological expansion in one library from
+  masquerading as a disagreement and to keep the resource model meaningful. A divergence that
+  only manifests on megabyte inputs is not covered.
+- **S5 — Bounded-work meters.** FATAL meters are `alloc_bytes` and `mallocs` only (the
+  ReadMemStats deltas attributable to one input), judged by an ABSOLUTE ceiling. `wall`/`cpu`
+  are advisory (process-wide, noisy under load). `live_heap` is NOT fatal (it is the
+  whole-process post-GC heap, not a per-input delta — it false-fired at 106 MiB on a 28-byte
+  input during DF2 bring-up). Disk/net/sleep/log/DB are not metered (an in-memory parse
+  touches none). So a CPU-only quadratic that does not also allocate is seen only via the
+  advisory wall/cpu context line, never as a hard fail.
+- **S6 — The bounded-work oracle fires on EITHER library, not on a v3-vs-v4 *difference*.**
+  An accepted alias fan-out that amplifies memory in BOTH libraries (go.yaml's flat-alias
+  fan-out is bounded by its excessive-aliasing cap only for *nested* aliases, not flat ones)
+  is a shared go.yaml property, not a v3/v4 divergence. Such a hit is a HARDENING observation
+  about go.yaml, reachable via `scripts/fuzzing/configspace`, and is classified as such — not
+  as a parser-differential bypass.
+
+## How this list was established to be complete *as of the seeds + DF2 run*
+
+D1 is the only decoded-value divergence and the only split of any kind observed between
+v3.0.5 and v4.0.0 across: the 24-entry seed corpus (which exercises duplicate keys, aliases,
+merge keys, YAML 1.1/1.2 bool/octal/binary, floats/specials, timestamps, complex keys, block
+scalars, multi-doc, the `=` value, and the `!` tag) PLUS the foreground fuzz run recorded in
+the DF2 report (`/mnt/data/wave4/out/df2-REPORT.md`). The classifier vocabulary
+(`classifyYAMLV4Split`, `classifyYAMLV4ValueSplit`) names every shape the oracle can emit, so
+a reviewer can read the full set of recognised classes rather than infer them. A class not in
+this table fails the target by construction — the table can only be widened by naming and
+justifying a class, never by loosening an assertion.
