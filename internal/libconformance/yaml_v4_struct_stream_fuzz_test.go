@@ -294,6 +294,8 @@ func FuzzYAMLV4MultiDocDifferential(f *testing.F) {
 		"{}\n---\n[]\n",
 		"\n---\n\n",
 		"--- a\n--- b\n",
+		"0\n---\n: ",         // doc2 is the D2 empty-implicit-key: v3 stream errors, v4 accepts
+		"a: 1\n---\n! 00\n", // doc2 is a D12 nonspecific-tag value divergence
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -305,13 +307,17 @@ func FuzzYAMLV4MultiDocDifferential(f *testing.F) {
 		docs3, err3 := decodeStreamV3(data)
 		docs4, err4 := decodeStreamV4(data)
 
-		// Stream-level accept/reject parity.
+		// Stream-level accept/reject parity. The split can be driven by ANY document
+		// of the stream (e.g. "0\n---\n: " where doc 1 agrees but doc 2 is the D2
+		// empty-implicit-key that v3 rejects and v4 accepts), so it must be classified
+		// from the STREAM error directly with the accept/reject vocabulary — NOT tied
+		// to the first-document any-path verdict, which only sees doc 1.
 		a3, a4 := err3 == nil, err4 == nil
 		if a3 != a4 {
-			anyClass, anyTol := anyPathVerdict(data)
-			if fail, reason := structSplitVerdict(anyClass, anyTol); fail {
-				t.Fatalf("multi-doc stream accept/reject split: %s\n  input=%q\n  v3 docs=%d err=%v\n  v4 docs=%d err=%v",
-					reason, data, len(docs3), err3, len(docs4), err4)
+			class := classifyYAMLV4Split(err3, err4)
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("multi-doc stream accept/reject split [class=%q]\n  input=%q\n  v3 docs=%d err=%v\n  v4 docs=%d err=%v",
+					class, data, len(docs3), err3, len(docs4), err4)
 			}
 			return
 		}
