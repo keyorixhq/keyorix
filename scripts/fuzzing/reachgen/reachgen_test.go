@@ -1,9 +1,44 @@
 package reachgen
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// materialiseFixtures copies testdata into a temp dir, dropping the .tmpl
+// suffix from every file (go.mod.tmpl -> go.mod, app.go.tmpl -> app.go). The
+// fixture modules are stored that way so the repo-wide guards and linters that
+// walk the tree see neither nested modules nor Go sources that do not build in
+// the root module; the relative replace paths still resolve inside the copy.
+func materialiseFixtures(t *testing.T) string {
+	t.Helper()
+	dst := t.TempDir()
+	err := filepath.WalkDir("testdata", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel("testdata", p)
+		if err != nil {
+			return err
+		}
+		out := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(out, 0o750)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(strings.TrimSuffix(out, ".tmpl"), b, 0o600)
+	})
+	if err != nil {
+		t.Fatalf("materialise fixtures: %v", err)
+	}
+	return dst
+}
 
 // scanFixture loads the testdata fixture module (offline, local replaces) and
 // returns the entries keyed by "pkg\x00Func".
@@ -12,7 +47,7 @@ func scanFixture(t *testing.T) map[string]Entry {
 	res, err := Scan(Config{
 		ModulePrefix: "example.com/app",
 		Patterns:     []string{"./..."},
-		Dir:          "testdata/fixturemod",
+		Dir:          filepath.Join(materialiseFixtures(t), "fixturemod"),
 		// The parent repo uses a go.work; the fixture module is not part of it.
 		Env: append(os.Environ(), "GOWORK=off", "GOFLAGS="),
 	})
