@@ -1,4 +1,4 @@
-- **INV-THIRDPARTY-yaml-decode-bounded** `gopkg.in/yaml.v3` decoding, as
+- **INV-FUZZCLOUD-yaml-decode-bounded** `gopkg.in/yaml.v3` decoding, as
   `internal/config` and `cli/internal/credstore` run it on operator-provided
   config/credential files, is bounded: arbitrary bytes decode without panic and
   within a generous time bound, and a *successful* decode re-marshals to a

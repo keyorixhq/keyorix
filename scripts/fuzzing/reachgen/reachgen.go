@@ -47,11 +47,11 @@ import (
 type Provenance string
 
 const (
-	ProvRequest Provenance = "request-body"      // a string/[]byte/io.Reader/*http.Request param reaches the arg
-	ProvUpload  Provenance = "uploaded-file"     // a multipart.File / multipart.FileHeader reaches the arg
-	ProvConfig  Provenance = "config"            // a config-typed value, os.Getenv, or internal/config value reaches the arg
-	ProvBackend Provenance = "backend-response"  // a value returned by a DB/driver/cloud-backend call reaches the arg
-	ProvStatic  Provenance = "static"            // nothing untrusted detected (literal/const/internal only)
+	ProvRequest Provenance = "request-body"     // a string/[]byte/io.Reader/*http.Request param reaches the arg
+	ProvUpload  Provenance = "uploaded-file"    // a multipart.File / multipart.FileHeader reaches the arg
+	ProvConfig  Provenance = "config"           // a config-typed value, os.Getenv, or internal/config value reaches the arg
+	ProvBackend Provenance = "backend-response" // a value returned by a DB/driver/cloud-backend call reaches the arg
+	ProvStatic  Provenance = "static"           // nothing untrusted detected (literal/const/internal only)
 )
 
 // untrustedProv is the set of provenance labels that make a call site a fuzz lead.

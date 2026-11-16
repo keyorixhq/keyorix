@@ -28,12 +28,12 @@ import (
 
 func main() {
 	var (
-		patterns = flag.String("patterns", "./...", "comma-separated go/packages load patterns")
-		dir      = flag.String("dir", ".", "module directory to scan")
-		top      = flag.Int("top", 40, "how many ranked uncovered entries to print")
-		mdPath   = flag.String("md", "", "write ranked markdown table here (default: stdout)")
-		outDir   = flag.String("out", "", "if set, emit draft harness skeletons here")
-		coverDir = flag.String("coverroot", ".", "root to scan for existing Fuzz test files")
+		patterns       = flag.String("patterns", "./...", "comma-separated go/packages load patterns")
+		dir            = flag.String("dir", ".", "module directory to scan")
+		top            = flag.Int("top", 40, "how many ranked uncovered entries to print")
+		mdPath         = flag.String("md", "", "write ranked markdown table here (default: stdout)")
+		outDir         = flag.String("out", "", "if set, emit draft harness skeletons here")
+		coverDir       = flag.String("coverroot", ".", "root to scan for existing Fuzz test files")
 		includeCovered = flag.Bool("include-covered", false, "include already-covered entries in the table")
 	)
 	flag.Parse()
@@ -73,7 +73,7 @@ func main() {
 
 	md := renderMarkdown(untrusted, *top, len(res.Entries), res.LoadErrors)
 	if *mdPath != "" {
-		if err := os.WriteFile(*mdPath, []byte(md), 0o644); err != nil {
+		if err := os.WriteFile(*mdPath, []byte(md), 0o644); err != nil { // #nosec G306 -- generated report, not a secret
 			fmt.Fprintln(os.Stderr, "reachgen: write md:", err)
 			os.Exit(1)
 		}
@@ -99,7 +99,7 @@ func splitComma(s string) []string {
 }
 
 func modulePath(dir string) (string, error) {
-	b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	b, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304 -- developer tool reads the scanned module go.mod
 	if err != nil {
 		return "", err
 	}
@@ -226,7 +226,7 @@ func provString(agg map[reachgen.Provenance]int) string {
 
 // emitDrafts writes a reviewable harness skeleton per fuzzable entry.
 func emitDrafts(entries []reachgen.Entry, outDir string, top int) int {
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0o755); err != nil { // #nosec G301 -- generated draft directory for a developer tool, not a secret
 		fmt.Fprintln(os.Stderr, "reachgen: mkdir out:", err)
 		return 0
 	}
@@ -243,7 +243,7 @@ func emitDrafts(entries []reachgen.Entry, outDir string, top int) int {
 		}
 		name := draftName(e)
 		path := filepath.Join(outDir, name+".txt")
-		if err := os.WriteFile(path, []byte(draftSource(e, name)), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(draftSource(e, name)), 0o644); err != nil { // #nosec G306 -- generated draft, not a secret
 			continue
 		}
 		n++

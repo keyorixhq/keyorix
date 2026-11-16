@@ -9,9 +9,11 @@ logic — the oracles live in each target and guard a property of the dependency
 deliberately, what it does not, so a green run is never mistaken for more than
 it proves.
 
-Format: `INV-THIRDPARTY-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
+The reachability-first targets (bcrypt, precis, ssh, webauthn, yaml) record their
+invariants in the same `INVARIANTS.d/` directory. A package's `INVARIANTS.md`
+declares exactly one prefix, so they carry `INV-FUZZCLOUD-` too, although they are
+not cloud targets.
 
-New invariants go in `INVARIANTS.d/INV-THIRDPARTY-<slug>.md`, one per file.
 Read this before changing the hostile-SERVER fuzz harnesses under `fuzz/thirdparty`.
 These targets drive the REAL third-party clients Keyorix uses (DB drivers, and the
 cloud SDKs / SMTP client under `smtp`, `awskms`, `awss3`, `azurekeys`) against a

@@ -1,4 +1,4 @@
-- **INV-THIRDPARTY-webauthn-cose-bounded** go-webauthn's
+- **INV-FUZZCLOUD-webauthn-cose-bounded** go-webauthn's
   `webauthncose.ParsePublicKey`, which `internal/cryptoinventory/webauthn.go`
   runs on a credential COSE/CBOR public key (attacker-supplied at WebAuthn
   registration, re-parsed from storage), is total and bounded: arbitrary bytes

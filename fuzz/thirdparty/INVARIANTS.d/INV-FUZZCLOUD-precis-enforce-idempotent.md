@@ -1,4 +1,4 @@
-- **INV-THIRDPARTY-precis-enforce-idempotent** The two PRECIS profiles
+- **INV-FUZZCLOUD-precis-enforce-idempotent** The two PRECIS profiles
   `internal/identity` uses — `NewFreeform(LowerCase(), Norm(NFC))` (folded names)
   and `OpaqueString` (address names) — enforce *idempotently and
   deterministically*: for any input `s`, if `p.String(s)` succeeds with `out`

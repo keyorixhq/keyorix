@@ -1,4 +1,4 @@
-- **INV-THIRDPARTY-ssh-authorizedkey-roundtrip** `golang.org/x/crypto/ssh`
+- **INV-FUZZCLOUD-ssh-authorizedkey-roundtrip** `golang.org/x/crypto/ssh`
   authorized-key parsing is a stable fixed point as `server/admin/
   recovery_key_encrypt.go` uses it: if `ParseAuthorizedKey` accepts input and
   yields a key, then `MarshalAuthorizedKey` of that key re-parses to a key with

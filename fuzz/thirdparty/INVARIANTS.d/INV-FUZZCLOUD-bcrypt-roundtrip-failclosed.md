@@ -1,4 +1,4 @@
-- **INV-THIRDPARTY-bcrypt-roundtrip-failclosed** `golang.org/x/crypto/bcrypt` as
+- **INV-FUZZCLOUD-bcrypt-roundtrip-failclosed** `golang.org/x/crypto/bcrypt` as
   `internal/core` uses it round-trips and fails closed: a hash from
   `GenerateFromPassword(pw, MinCost)` verifies `pw` (`CompareHashAndPassword`
   returns nil) and REJECTS any different password (returns non-nil); and
