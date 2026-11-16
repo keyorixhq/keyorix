@@ -97,6 +97,15 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// (v4 has no live caller); a forward-looking strictness change. Keyed on the v4
 	// error "comment without preceding whitespace" alone.
 	"v4-rejects:comment-ws": true,
+
+	// A leading character v3's scanner refuses to start any token with — notably a
+	// bare TAB ("\t"). v3.0.5 REJECTS ("found character that cannot start any
+	// token"); v4.0.0 ACCEPTS it as an empty document (nil). Other chars with the
+	// same v3 error (`@`, backtick) are rejected by BOTH, so only the leading-TAB
+	// case splits. v4 accepts what v3 rejects (benign — an empty/nil document).
+	// Found by the DF2 fuzz run at "\t". Not a Keyorix defect (v4 has no live
+	// caller). Keyed on the v3 error "cannot start any token" alone.
+	"v3-rejects:token-start": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -349,6 +358,24 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("comment-ws class must be listed (tolerated)")
 		}
 		t.Logf("oracle-2 comment-ws gating proven")
+	}
+
+	// ---- Oracle 2 class gating: the leading-TAB token-start divergence ----
+	{
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal([]byte("\t"), &v3v)
+		err4 := v4yaml.Unmarshal([]byte("\t"), &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: leading TAB must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:token-start" {
+			t.Fatalf("leading-TAB split must class as v3-rejects:token-start, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("token-start class must be listed (tolerated)")
+		}
+		t.Logf("oracle-2 token-start gating proven")
 	}
 }
 
