@@ -12,6 +12,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
@@ -32,15 +33,11 @@ func NewDynamicSecretService(coreService *core.KeyorixCore) *DynamicSecretGRPCSe
 	return &DynamicSecretGRPCService{core: coreService}
 }
 
+// mapDynamicError translates core/storage dynamic-secret errors into gRPC status codes
+// through the shared classifier (coreErrorStatus), classified by sentinel, never by
+// err.Error() text: a backend or driver message that happens to say "permission" or
+// "required" is a backend failure, not a caller refusal.
 func mapDynamicError(err error) error {
-	// STORAGE-ERR-CLASS-1: a lease/config read fault is Unavailable with the stable
-	// storage_unavailable reason, not the backend-failure bucket below.
-	if serr, ok := storageUnavailableStatus(err); ok {
-		return serr
-	}
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
-	}
 	// An admin_dsn refused by policy (the caller's on create/update, the stored one on issue/
 	// renew/revoke): REST answers 400 with the same texts. No DSN in them: ForbiddenOptionError
 	// names only the option, ClientMessage only the DSN's host (never the resolved address).
@@ -50,26 +47,28 @@ func mapDynamicError(err error) error {
 	if refused, ok := errors.AsType[*core.DynamicSecretTargetRefusedError](err); ok {
 		return status.Error(codes.InvalidArgument, refused.ClientMessage())
 	}
-	// ERR-CLASS-LEFTOVERS-1: classified by sentinel (errors.Is), never by err.Error() text.
-	// A backend or driver message that happens to say "permission" or "required" is a
-	// backend failure, not a caller refusal.
-	switch {
-	case errors.Is(err, core.ErrDynamicSecretNotFound):
-		return status.Error(codes.NotFound, "config or lease not found")
-	case errors.Is(err, core.ErrValidation):
+	// Issue/renew/revoke reach the target database: an error the classifier does not
+	// know is backend trouble, answered Unavailable (this family's code for it, where
+	// the classifier's own answer would be Internal). A storage or audit fault is
+	// typed and answered by coreErrorStatus below (storage_unavailable / audit_unavailable).
+	if _, ok := storageUnavailableStatus(err); !ok && errclass.Of(err) == errclass.Internal {
+		if _, ok := auditUnavailableStatus(err); !ok {
+			return status.Error(codes.Unavailable, "dynamic-secret backend operation failed")
+		}
+	}
+	texts := coreErrorTexts{
+		errclass.NotFound: "config or lease not found",
 		// Fixed string, as in mapUserError/mapMachineError (GRPC-004): the wrapped text can
 		// carry submitted values or enum lists, so it is not echoed to the client.
-		return status.Error(codes.InvalidArgument, "invalid request parameters")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "access denied")
-	case errors.Is(err, core.ErrDynamicSecretPrecondition):
+		errclass.InvalidInput:     "invalid request parameters",
+		errclass.PermissionDenied: "access denied",
+	}
+	if errors.Is(err, core.ErrDynamicSecretPrecondition) {
 		// The config or lease state refuses the call (disabled config, lease not active
 		// or expired, active-lease limit, ...). Core's own text, no driver detail.
-		return status.Error(codes.FailedPrecondition, err.Error()) // nosemgrep: keyorix-raw-error-to-client -- matched by errors.Is(core.ErrDynamicSecretPrecondition), built only by core's dynamicPreconditionf from core's own words (no driver/storage text); REST sends the same text with its 409
-	default:
-		// Issue/renew/revoke reach the target database; surface backend trouble as Unavailable.
-		return status.Error(codes.Unavailable, "dynamic-secret backend operation failed")
+		texts[errclass.Precondition] = err.Error() // nosemgrep: keyorix-raw-error-to-client -- matched by errors.Is(core.ErrDynamicSecretPrecondition), built only by core's dynamicPreconditionf from core's own words (no driver/storage text); REST sends the same text with its 409
 	}
+	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "dynamic-secret operation", texts: texts})
 }
 
 // loadConfigScoped loads a config by ID and authorizes perm at its project/env

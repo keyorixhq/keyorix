@@ -157,7 +157,7 @@ func bumpRolePermissionsGenerationTx(ctx context.Context, tx *LocalStorage) erro
 	// value rather than reset to zero — a reset would make a cache entry stamped
 	// with an earlier, higher value start matching again.
 	if err := tx.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&models.SystemMetadata{
-		Key: rolePermissionsGenerationKey, Value: "0", UpdatedAt: time.Now(),
+		Key: rolePermissionsGenerationKey, Value: "0", UpdatedAt: time.Now().UTC(),
 	}).Error; err != nil {
 		return err
 	}
