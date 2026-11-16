@@ -1,6 +1,9 @@
 package resguard
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // Cost-guided fuzzing A/B demonstration (PerfFuzz idea on the stock
 // `go test -fuzz` engine).
@@ -14,14 +17,18 @@ import "testing"
 // gradient it will climb straight to the amplifier.
 //
 // FuzzToyAmplifyBuckets calls FeedCoverage; FuzzToyAmplifyNoBuckets does not.
-// Both fail (t.Fatalf) the instant n reaches amplifyThreshold, so "wall time to
-// failure" is "time to reach the amplifier". Run each several times at a fixed
-// -fuzztime and compare: the buckets build should reach the amplifier markedly
-// sooner.
+// With KEYORIX_RESGUARD_TOY_AB=1 both fail (t.Fatalf) the instant n reaches
+// amplifyThreshold, so "wall time to failure" is "time to reach the amplifier".
+// Run each several times at a fixed -fuzztime and compare: the buckets build
+// should reach the amplifier markedly sooner. Without the variable (the
+// continuous rig and the CI fuzz shards, which run every declared target) the
+// amplifier is only logged: reaching it is the expected A/B outcome, not a
+// finding, and must not be reported as a crash.
 
 const (
 	amplifyThreshold = 32 // matches (see toyWork)
 	toyMatchCap      = 64
+	toyABEnv         = "KEYORIX_RESGUARD_TOY_AB"
 )
 
 var toyAllocSink []byte
@@ -62,6 +69,7 @@ func fuzzToy(f *testing.F, useBuckets bool) {
 	f.Add([]byte{0, 1, 2, 3})            // 4 matches — seeds the gradient
 	f.Add(make([]byte, 16))              // index 0 matches; a length to grow from
 	p := New(f, Options{SampleEvery: 1}) // sample every input so alloc is always metered
+	abRun := os.Getenv(toyABEnv) == "1"
 	f.Fuzz(func(t *testing.T, data []byte) {
 		var n int
 		c := p.Measure(len(data), func() { n = toyWork(data) })
@@ -69,6 +77,10 @@ func fuzzToy(f *testing.F, useBuckets bool) {
 			FeedCoverage(c)
 		}
 		if n >= amplifyThreshold {
+			if !abRun {
+				t.Logf("reached amplifier: n=%d (input %d bytes, alloc≈%d); set %s=1 to fail here", n, len(data), c.AllocBytes, toyABEnv)
+				return
+			}
 			t.Fatalf("reached amplifier: n=%d (input %d bytes, alloc≈%d)", n, len(data), c.AllocBytes)
 		}
 	})
