@@ -1600,10 +1600,7 @@ jobs:
     # gated test silently skipped here, indefinitely (the same shape as the 13
     # HA-lock branches this container also exists to exercise: a mechanism
     # that only ever runs against SQLite verifies nothing about the Postgres
-    # path it was written for). Declared job-level (not leg-conditional) to
-    # keep this diff to "add the container + the DSN," matching every other
-    # leg's already-generous-timeout precedent rather than hand-picking which
-    # legs need it. MQ-LEG-STEPS-1: the container is no longer a job-level
+    # path it was written for). MQ-LEG-STEPS-1: the container is no longer a job-level
     # `services:` entry (that starts, serially and BEFORE the first step, in
     # about 22 s on every leg, including a leg the merge-queue selection then
     # skips). It is started in the background by "Start Postgres" below, only
@@ -1660,11 +1657,20 @@ jobs:
         if: steps.leg.outputs.run == 'true'
         run: |
           # Same image, credentials, port and database as the former
-          # `services: postgres`. The pull and the start run detached; the
-          # step returns at once.
-          setsid nohup docker run --rm --name pg-leg -p 5432:5432 \
+          # `services: postgres`. The pull (retried, as the runner's own
+          # service pull is) and the start run detached; the step returns at once.
+          # If all three pulls fail, `docker run` pulls once more and fails; the
+          # Wait step then prints the log and exits 1, so it still fails closed.
+          cat > "$RUNNER_TEMP/pg-leg.sh" <<'EOS'
+          for d in 0 15 45; do
+            sleep "$d"
+            docker pull -q postgres:16 && break
+          done
+          exec docker run --rm --name pg-leg -p 5432:5432 \
             -e POSTGRES_USER=keyorix -e POSTGRES_PASSWORD=keyorix123 -e POSTGRES_DB=keyorix \
-            postgres:16 > "$RUNNER_TEMP/pg-leg.log" 2>&1 &
+            postgres:16
+          EOS
+          setsid nohup bash "$RUNNER_TEMP/pg-leg.sh" > "$RUNNER_TEMP/pg-leg.log" 2>&1 &
           echo "Postgres start requested in the background at $(date -u +%T)"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1701,14 +1707,22 @@ jobs:
       - name: Wait for Postgres
         if: steps.leg.outputs.run == 'true'
         run: |
-          for i in $(seq 1 90); do
+          for i in $(seq 1 150); do
             if docker exec pg-leg pg_isready -h 127.0.0.1 -p 5432 -U keyorix -d keyorix -q 2>/dev/null; then
               echo "Postgres ready (waited ${i} s after the previous step)."
               exit 0
             fi
+            # `docker inspect` fails while the container does not exist yet (the
+            # pull is still running); 2>/dev/null plus the compare keeps that
+            # from ending the loop.
+            if [ "$(docker inspect -f '{{.State.Status}}' pg-leg 2>/dev/null)" = "exited" ]; then
+              echo "::error::Postgres container exited; log follows"
+              cat "$RUNNER_TEMP/pg-leg.log" || true
+              exit 1
+            fi
             sleep 1
           done
-          echo "::error::Postgres not ready after 90 s; container log follows"
+          echo "::error::Postgres not ready after 150 s; container log follows"
           cat "$RUNNER_TEMP/pg-leg.log" || true
           exit 1
 
