@@ -94,6 +94,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"0\n:",                      // scalar then ':' next line (v3 accepts+truncates / v4 rejects)
 		"0: !,",                     // flow char in tag suffix (v3 lenient / v4 rejects)
 		"!<a,b>",                    // NOT a split: verbatim tag accepted by both
+		"|#0",                       // comment without preceding whitespace (v3 lenient / v4 rejects)
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
@@ -215,6 +216,11 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		return side + ":tag-char"
 	case strings.Contains(msg, "mapping values are not allowed"):
 		return side + ":mapping-context"
+	case strings.Contains(msg, "comment without preceding whitespace"):
+		// A `#` not preceded by whitespace (e.g. "|#0", "a#b" in some contexts). The
+		// YAML spec requires a comment to be preceded by whitespace; v4 enforces this
+		// and rejects, v3 is lenient. v4 is the more spec-correct side.
+		return side + ":comment-ws"
 	default:
 		return side + ":other"
 	}
