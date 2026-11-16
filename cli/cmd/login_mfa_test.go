@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	yaml "go.yaml.in/yaml/v4"
 	"golang.org/x/term"
-	"gopkg.in/yaml.v3"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
 )

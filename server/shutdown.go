@@ -8,14 +8,22 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 )
 
-// flushLastUsedOnShutdown writes the last-used stamps the core has recorded
-// but not yet flushed (internal/core/last_used_coalescer.go). It is bounded by
-// its own 10 s context, including the wait for a background flush that is
-// stuck in a slow write.
+// flushLastUsedOnShutdown stops the last-used coalescer on graceful shutdown:
+// it writes the stamps the core recorded but has not yet flushed
+// (internal/core/last_used_coalescer.go) and latches the coalescer shut so no
+// new timer or background flush starts after this returns; a background flush
+// in flight is cancelled and waited for within the same deadline (only a store
+// call that ignores cancellation can outlive it, see lastUsedCoalescer.Stop).
+// StopLastUsed (not FlushLastUsed) is used deliberately: the servers
+// have already drained here, but a plain flush leaves the coalescer able to
+// re-arm its timer on any late stamp, and a failed final flush re-arms it from
+// finishFlush — either would touch the store after the process considers
+// last-used bookkeeping finished. Bounded by its own 10 s context, including
+// the wait for a background flush stuck in a slow write.
 func flushLastUsedOnShutdown(coreService *core.KeyorixCore) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	coreService.FlushLastUsed(ctx)
+	coreService.StopLastUsed(ctx)
 }
 
 // secretReadDenialFlushTimeout bounds flushSecretReadDenialsOnShutdown, like
