@@ -5,7 +5,7 @@ on:
     tags: ['v*']
   schedule:
     # Nightly instead of every push to main -- runner capacity, 2026-09-26.
-    - cron: '12 4 * * *'
+    - cron: '41 7 * * *'
   workflow_dispatch:
 
 permissions: {}

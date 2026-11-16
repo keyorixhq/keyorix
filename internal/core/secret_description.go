@@ -22,7 +22,7 @@ const maxSecretDescriptionLen = 1024
 // metadata field can't be used to bloat storage. Empty is allowed.
 func validateDescription(description string) error {
 	if len(strings.TrimSpace(description)) > maxSecretDescriptionLen {
-		return fmt.Errorf("description exceeds %d characters", maxSecretDescriptionLen)
+		return validationError(fmt.Errorf("description exceeds %d characters", maxSecretDescriptionLen))
 	}
 	return nil
 }
