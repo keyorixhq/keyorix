@@ -216,8 +216,15 @@ func (m model) allowed(p *principal, req requirement) bool {
 			return false
 		}
 	}
-	if req.tokenForMachineID != 0 && p.machineID != 0 && !m.machineCovers(p, req.tokenForMachineID) {
-		return false
+	if req.tokenForMachineID != 0 {
+		// A restricted PAT cannot mint (the minted token would carry none of its
+		// restrictions): IssueMachineToken refuses it before the ceiling (#4332).
+		if p.machineID == 0 && p.pat != nil {
+			return false
+		}
+		if !m.machineCovers(p, req.tokenForMachineID) {
+			return false
+		}
 	}
 	for _, r := range req.ceiling {
 		perms, _ := m.rolePerms(r.roleID)
@@ -230,16 +237,18 @@ func (m model) allowed(p *principal, req requirement) bool {
 	return true
 }
 
-// machineCovers: machine caller p may control target's credential (see
+// machineCovers: caller p may control target's credential (see
 // requirement.tokenForMachineID). The target's grants are read from the
-// grant tables like any principal's.
+// grant tables like any principal's. A machine caller is additionally refused a
+// target that holds an admin role (machines never hold the override); a user is
+// held to the permissions alone (#4332, requireActorHoldsTargetPermissions).
 func (m model) machineCovers(p *principal, target uint) bool {
 	if p.machineID == target {
 		return false
 	}
 	for _, g := range m.grants(&principal{machineID: target}) {
 		perms, adminRole := m.rolePerms(g.roleID)
-		if adminRole {
+		if adminRole && p.machineID != 0 {
 			return false
 		}
 		for _, perm := range perms {
@@ -294,11 +303,12 @@ type requirement struct {
 	// a permission denial, so the model denies it here and the untyped-core
 	// refusal is absorbed by known-09 at the partition.
 	memberOnly bool
-	// tokenForMachineID != 0: the op mints a credential for that machine. A
-	// MACHINE caller must then cover the target (#3993): it is not the target
-	// itself, the target holds no role that bypasses permission checks, and the
-	// caller holds every permission of every role the target holds, at the
-	// scope the target holds it. A user caller is not checked against it.
+	// tokenForMachineID != 0: the op mints a credential for that machine. The
+	// caller must then cover the target (#3993, user callers since #4332): it is
+	// not the target itself, and it holds every permission of every role the
+	// target holds, at the scope the target holds it. A MACHINE caller is also
+	// refused a target holding a role that bypasses permission checks; a user
+	// authenticated by a restricted PAT is refused outright.
 	tokenForMachineID uint
 }
 
