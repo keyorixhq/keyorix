@@ -18,6 +18,17 @@ Format: `INV-FUZZKIN-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
 New invariants go in `INVARIANTS.d/INV-FUZZKIN-<kebab-slug>.md` (one per file).
 
 ## Oracles
+Standalone SCHEMA target (`schema_boundedwork_fuzz_test.go`):
 - O-KIN-1 no panic, O-KIN-2 bounded work (fuzzutil.Guard + resguard alloc/mallocs
   ceiling + O-KIN-2b superlinear wall), O-KIN-3 schema MarshalJSON idempotence. See the
   package doc comment for what each does and does NOT verify.
+
+FULL-DOCUMENT loader targets (KO3, `loader_*_test.go`):
+- O-LOAD-1 no panic, O-LOAD-2 bounded work (Guard + resguard + O-LOAD-2b superlinear
+  wall), O-LOAD-3 load→marshal→load idempotence, O-LOAD-4 external refs never read when
+  disallowed (NetMeter air-gap + hostile httptest server + file/SSRF canaries, Config A
+  default loader), O-LOAD-5 resolved-vs-plain-json-round-trip marshal differential. The
+  loader resolves `$ref` (recursive/circular/deep/fan-out), which the standalone-schema
+  target never does. See `INV-FUZZKIN-loader-bounded-and-airgapped` and the
+  `loader_boundedwork_fuzz_test.go` / `loader_noexternalread_fuzz_test.go` doc comments
+  for what each does and does NOT verify.
