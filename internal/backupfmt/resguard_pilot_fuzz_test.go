@@ -235,6 +235,15 @@ func FuzzResguardExtractArchive(f *testing.F) {
 
 	budget, err := resguard.LoadBudget(pilotBudgetPath)
 	haveBudget := err == nil
+	if haveBudget {
+		// live_heap is the whole-process HeapAlloc after a forced GC. Under `go test
+		// -fuzz` the worker also holds the engine's coverage and corpus state (~100 MiB
+		// observed), so a 5-byte input reads 14x over a budget calibrated in a plain
+		// test process (1.8 MiB). It is not attributable to the input here, so it is
+		// not judged in this target; alloc_bytes/mallocs (per-input deltas) and the
+		// disk meters still are, and Drift still tracks heap growth across inputs.
+		delete(budget.Meters, "live_heap")
+	}
 	if !haveBudget {
 		f.Logf("no committed budget at %s (run with RESGUARD_CALIBRATE=1); metering without a ceiling", pilotBudgetPath)
 	}
