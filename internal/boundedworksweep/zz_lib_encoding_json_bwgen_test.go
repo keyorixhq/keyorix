@@ -14,80 +14,51 @@ import (
 	lib_encoding_json "encoding/json"
 )
 
-func Fuzz_lib_encoding_json_NewDecoder_BoundedWork(f *testing.F) {
-	f.Add([]byte("a: 1\n"))
-	f.Add([]byte("{\"a\":1}"))
-	f.Add([]byte("a = 1\n"))
-	f.Add([]byte("[[[[[[[["))
-	f.Add([]byte("{{{{{{{{"))
-	f.Add([]byte(",,,,,,,,"))
-	f.Add([]byte("0"))
-	f.Add([]byte("aaaaaaaa"))
-	f.Fuzz(func(t *testing.T, data []byte) {
-		if len(data) == 0 {
-			return
-		}
-		boundedwork.Check(t.Fatalf, "json.NewDecoder", data, boundedwork.ScaleRepeat(512),
-			func(in []byte) {
-				defer func() { _ = recover() }()
-				_ = lib_encoding_json.NewDecoder(bytes.NewReader(in))
-			}, boundedwork.Config{})
-	})
+var bw_lib_encoding_json_Unmarshal = bwTarget{
+	fuzz:  "Fuzz_lib_encoding_json_Unmarshal_BoundedWork",
+	label: "json.Unmarshal",
+	scale: boundedwork.ScaleJSONArray(16 << 10),
+	call: func(in []byte) {
+		defer func() { _ = recover() }()
+		var v any
+		_ = lib_encoding_json.Unmarshal(in, &v)
+	},
 }
+
+func init() { bwRegister(&bw_lib_encoding_json_Unmarshal) }
 
 func Fuzz_lib_encoding_json_Unmarshal_BoundedWork(f *testing.F) {
-	f.Add([]byte("a: 1\n"))
-	f.Add([]byte("{\"a\":1}"))
-	f.Add([]byte("a = 1\n"))
-	f.Add([]byte("[[[[[[[["))
-	f.Add([]byte("{{{{{{{{"))
-	f.Add([]byte(",,,,,,,,"))
-	f.Add([]byte("0"))
-	f.Add([]byte("aaaaaaaa"))
+	bwAddSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) == 0 {
 			return
 		}
-		boundedwork.Check(t.Fatalf, "json.Unmarshal", data, boundedwork.ScaleRepeat(512),
-			func(in []byte) { defer func() { _ = recover() }(); var v any; _ = lib_encoding_json.Unmarshal(in, &v) }, boundedwork.Config{})
+		bw_lib_encoding_json_Unmarshal.check(t, data)
 	})
 }
 
-func Fuzz_lib_encoding_json_Valid_BoundedWork(f *testing.F) {
-	f.Add([]byte("a: 1\n"))
-	f.Add([]byte("{\"a\":1}"))
-	f.Add([]byte("a = 1\n"))
-	f.Add([]byte("[[[[[[[["))
-	f.Add([]byte("{{{{{{{{"))
-	f.Add([]byte(",,,,,,,,"))
-	f.Add([]byte("0"))
-	f.Add([]byte("aaaaaaaa"))
-	f.Fuzz(func(t *testing.T, data []byte) {
-		if len(data) == 0 {
-			return
-		}
-		boundedwork.Check(t.Fatalf, "json.Valid", data, boundedwork.ScaleRepeat(512),
-			func(in []byte) { defer func() { _ = recover() }(); _ = lib_encoding_json.Valid(in) }, boundedwork.Config{})
-	})
+var bw_lib_encoding_json_RoundTrip = bwTarget{
+	fuzz:  "Fuzz_lib_encoding_json_RoundTrip",
+	label: "json.Unmarshal",
+	scale: boundedwork.ScaleJSONArray(16 << 10),
+	call: func(in []byte) {
+		defer func() { _ = recover() }()
+		var v any
+		_ = lib_encoding_json.Unmarshal(in, &v)
+	},
 }
+
+func init() { bwRegister(&bw_lib_encoding_json_RoundTrip) }
 
 func Fuzz_lib_encoding_json_RoundTrip(f *testing.F) {
-	f.Add([]byte("a: 1\n"))
-	f.Add([]byte("{\"a\":1}"))
-	f.Add([]byte("a = 1\n"))
-	f.Add([]byte("[[[[[[[["))
-	f.Add([]byte("{{{{{{{{"))
-	f.Add([]byte(",,,,,,,,"))
-	f.Add([]byte("0"))
-	f.Add([]byte("aaaaaaaa"))
+	bwAddSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) == 0 {
 			return
 		}
 		defer func() { _ = recover() }()
 		// Bounded-work on decode.
-		boundedwork.Check(t.Fatalf, "json.Unmarshal", data, boundedwork.ScaleRepeat(512),
-			func(in []byte) { defer func() { _ = recover() }(); var v any; _ = lib_encoding_json.Unmarshal(in, &v) }, boundedwork.Config{})
+		bw_lib_encoding_json_RoundTrip.check(t, data)
 		// Decode∘encode stability (idempotence) — a correctness oracle.
 		var v any
 		if lib_encoding_json.Unmarshal(data, &v) != nil {

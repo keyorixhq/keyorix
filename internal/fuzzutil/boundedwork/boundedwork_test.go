@@ -1,6 +1,7 @@
 package boundedwork
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -134,5 +135,46 @@ func TestCheck_FailsViaFatalf(t *testing.T) {
 	Check(func(string, ...any) { fired = true }, "lin", base(256), scaleFactor, linearWork, testCfg())
 	if fired {
 		t.Fatal("Check called fatalf on a linear function")
+	}
+}
+
+// TestScaleJSONArray_KeepsJSONValidAndGrowsElements pins the structural JSON
+// scaler: every variant is one valid JSON array, factor-1 reaches minUnit, and
+// factor k holds k times the factor-1 element count. Plain repetition
+// (ScaleRepeat) of a JSON value is invalid after the first value, so a decoder
+// stops early and its work never grows with the factor.
+func TestScaleJSONArray_KeepsJSONValidAndGrowsElements(t *testing.T) {
+	scale := ScaleJSONArray(512)
+	for _, seed := range []string{`{"a":1}`, "0", `"x"`, "[1,2]"} {
+		var n1 int
+		for _, f := range []int{1, 2, 4, 8} {
+			in := scale([]byte(seed), f)
+			var arr []json.RawMessage
+			if err := json.Unmarshal(in, &arr); err != nil {
+				t.Fatalf("seed %q factor %d: not a valid JSON array: %v", seed, f, err)
+			}
+			if f == 1 {
+				n1 = len(arr)
+				if len(in) < 512 {
+					t.Fatalf("seed %q: factor-1 variant is %d bytes, want >= 512", seed, len(in))
+				}
+			}
+			if len(arr) != n1*f {
+				t.Fatalf("seed %q factor %d: %d elements, want %d", seed, f, len(arr), n1*f)
+			}
+		}
+	}
+	// Not one valid JSON value: nothing to measure. `{":0} ` (from a fuzz run) has
+	// an odd quote count, so an array of an even number of copies parses and an
+	// odd number does not; scaling it bent a linear curve to 3.32x.
+	for _, bad := range []string{"", `{":0} `, "a: 1\n", "[[[[", `{"a":1}{"a":1}`} {
+		for _, f := range []int{1, 2, 4, 8} {
+			if got := scale([]byte(bad), f); len(got) != 0 {
+				t.Fatalf("base %q factor %d: got %d bytes, want 0 (not a single JSON value)", bad, f, len(got))
+			}
+		}
+	}
+	if got := ScaleRepeat(512)([]byte(`{"a":1}`), 2); json.Valid(got) {
+		t.Fatalf("control: ScaleRepeat of a JSON object is expected to be invalid JSON")
 	}
 }

@@ -14,77 +14,74 @@ import (
 	lib_yaml_v2 "go.yaml.in/yaml/v2"
 )
 
-func Fuzz_lib_yaml_v2_NewDecoder_BoundedWork(f *testing.F) {
-	f.Add([]byte("a: 1\n"))
-	f.Add([]byte("{\"a\":1}"))
-	f.Add([]byte("a = 1\n"))
-	f.Add([]byte("[[[[[[[["))
-	f.Add([]byte("{{{{{{{{"))
-	f.Add([]byte(",,,,,,,,"))
-	f.Add([]byte("0"))
-	f.Add([]byte("aaaaaaaa"))
-	f.Fuzz(func(t *testing.T, data []byte) {
-		if len(data) == 0 {
-			return
-		}
-		boundedwork.Check(t.Fatalf, "yaml.NewDecoder", data, boundedwork.ScaleRepeat(512),
-			func(in []byte) { defer func() { _ = recover() }(); _ = lib_yaml_v2.NewDecoder(bytes.NewReader(in)) }, boundedwork.Config{})
-	})
+var bw_lib_yaml_v2_Unmarshal = bwTarget{
+	fuzz:  "Fuzz_lib_yaml_v2_Unmarshal_BoundedWork",
+	label: "yaml.Unmarshal",
+	scale: boundedwork.ScaleRepeat(512),
+	call: func(in []byte) {
+		defer func() { _ = recover() }()
+		var v any
+		_ = lib_yaml_v2.Unmarshal(in, &v)
+	},
 }
+
+func init() { bwRegister(&bw_lib_yaml_v2_Unmarshal) }
 
 func Fuzz_lib_yaml_v2_Unmarshal_BoundedWork(f *testing.F) {
-	f.Add([]byte("a: 1\n"))
-	f.Add([]byte("{\"a\":1}"))
-	f.Add([]byte("a = 1\n"))
-	f.Add([]byte("[[[[[[[["))
-	f.Add([]byte("{{{{{{{{"))
-	f.Add([]byte(",,,,,,,,"))
-	f.Add([]byte("0"))
-	f.Add([]byte("aaaaaaaa"))
+	bwAddSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) == 0 {
 			return
 		}
-		boundedwork.Check(t.Fatalf, "yaml.Unmarshal", data, boundedwork.ScaleRepeat(512),
-			func(in []byte) { defer func() { _ = recover() }(); var v any; _ = lib_yaml_v2.Unmarshal(in, &v) }, boundedwork.Config{})
+		bw_lib_yaml_v2_Unmarshal.check(t, data)
 	})
 }
+
+var bw_lib_yaml_v2_UnmarshalStrict = bwTarget{
+	fuzz:  "Fuzz_lib_yaml_v2_UnmarshalStrict_BoundedWork",
+	label: "yaml.UnmarshalStrict",
+	scale: boundedwork.ScaleRepeat(512),
+	call: func(in []byte) {
+		defer func() { _ = recover() }()
+		var v any
+		_ = lib_yaml_v2.UnmarshalStrict(in, &v)
+	},
+}
+
+func init() { bwRegister(&bw_lib_yaml_v2_UnmarshalStrict) }
 
 func Fuzz_lib_yaml_v2_UnmarshalStrict_BoundedWork(f *testing.F) {
-	f.Add([]byte("a: 1\n"))
-	f.Add([]byte("{\"a\":1}"))
-	f.Add([]byte("a = 1\n"))
-	f.Add([]byte("[[[[[[[["))
-	f.Add([]byte("{{{{{{{{"))
-	f.Add([]byte(",,,,,,,,"))
-	f.Add([]byte("0"))
-	f.Add([]byte("aaaaaaaa"))
+	bwAddSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) == 0 {
 			return
 		}
-		boundedwork.Check(t.Fatalf, "yaml.UnmarshalStrict", data, boundedwork.ScaleRepeat(512),
-			func(in []byte) { defer func() { _ = recover() }(); var v any; _ = lib_yaml_v2.UnmarshalStrict(in, &v) }, boundedwork.Config{})
+		bw_lib_yaml_v2_UnmarshalStrict.check(t, data)
 	})
 }
 
+var bw_lib_yaml_v2_RoundTrip = bwTarget{
+	fuzz:  "Fuzz_lib_yaml_v2_RoundTrip",
+	label: "yaml.Unmarshal",
+	scale: boundedwork.ScaleRepeat(512),
+	call: func(in []byte) {
+		defer func() { _ = recover() }()
+		var v any
+		_ = lib_yaml_v2.Unmarshal(in, &v)
+	},
+}
+
+func init() { bwRegister(&bw_lib_yaml_v2_RoundTrip) }
+
 func Fuzz_lib_yaml_v2_RoundTrip(f *testing.F) {
-	f.Add([]byte("a: 1\n"))
-	f.Add([]byte("{\"a\":1}"))
-	f.Add([]byte("a = 1\n"))
-	f.Add([]byte("[[[[[[[["))
-	f.Add([]byte("{{{{{{{{"))
-	f.Add([]byte(",,,,,,,,"))
-	f.Add([]byte("0"))
-	f.Add([]byte("aaaaaaaa"))
+	bwAddSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) == 0 {
 			return
 		}
 		defer func() { _ = recover() }()
 		// Bounded-work on decode.
-		boundedwork.Check(t.Fatalf, "yaml.Unmarshal", data, boundedwork.ScaleRepeat(512),
-			func(in []byte) { defer func() { _ = recover() }(); var v any; _ = lib_yaml_v2.Unmarshal(in, &v) }, boundedwork.Config{})
+		bw_lib_yaml_v2_RoundTrip.check(t, data)
 		// Decode∘encode stability (idempotence) — a correctness oracle.
 		var v any
 		if lib_yaml_v2.Unmarshal(data, &v) != nil {

@@ -12,10 +12,14 @@
   scan (offline) that finds decoder/parser/validator functions
   (`func([]byte|string|io.Reader)(T,error)` and `Unmarshal`-style) in the module
   cache and emits bounded-work + Marshal/Unmarshal round-trip fuzz targets. A BW1
-  sweep of ~23 libraries (86 function targets) found a 0/78 false-positive rate;
-  the committed green subset (`internal/boundedworksweep`: `encoding/json`,
-  `go.yaml.in/yaml/v2`) are permanent linear-growth regression guards with
-  `targets.d` entries.
+  sweep of ~23 libraries (86 function targets) found a 0/78 false-positive rate.
+  The committed linear-growth regression guards (`internal/boundedworksweep`,
+  with `targets.d` entries) are `json.Unmarshal` (scaled as a valid JSON array,
+  `boundedwork.ScaleJSONArray`), yaml/v2 `Unmarshal` and `UnmarshalStrict`, and
+  the json and yaml/v2 Marshal/Unmarshal round-trip targets.
+  `TestBoundedWorkSweep_EveryTargetJudgesASeed` fails if any committed target
+  can never reach a verdict; bwgen skips functions that cannot (reader-wrapping
+  `New*` constructors, `json.Valid`).
 
 ### Internal
 - **BW1 finding: yaml.v3-family duplicate-key quadratic (library defect).** Both

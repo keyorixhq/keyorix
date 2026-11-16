@@ -23,9 +23,10 @@
 // 1, 2, 4, 8 (repeat / nest / widen the base, capped at MaxInputLen), measures
 // best-of-N process CPU time and median GC-independent allocation
 // (runtime.MemStats TotalAlloc, a monotonic counter) for each, and fits the cost exponent p in
-// cost ~ len^p. A linear parser has p ~ 1; a quadratic one has p ~ 2. Check
-// fails when the per-doubling cost multiplier (2^p) exceeds Config.MaxDoubling
-// (default 3x, i.e. p ~ 1.585) averaged geometrically over the doubling steps.
+// cost ~ len^p by least squares over the asymptotic tail of the curve (see
+// doublingMultiplier). A linear parser has p ~ 1; a quadratic one has p ~ 2.
+// Check fails when the per-doubling cost multiplier (2^p) exceeds
+// Config.MaxDoubling (default 3x, i.e. p ~ 1.585).
 //
 // Determinism and false positives. TotalAlloc for a deterministic function is
 // itself deterministic and GC-independent, so the MEMORY arm red-proofs cleanly.
@@ -42,6 +43,7 @@
 package boundedwork
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"runtime"
@@ -58,8 +60,9 @@ type Config struct {
 	// without a verdict rather than guessing from two points.
 	Factors []int
 
-	// Repeats is how many times each factor is measured; the median is kept, to
-	// damp scheduler and GC noise in the time arm. Default 5.
+	// Repeats is how many times each factor is measured. The time arm keeps the
+	// minimum (best-of-N) and the memory arm the median, to damp scheduler and GC
+	// noise. Default 5.
 	Repeats int
 
 	// MaxInputLen caps the scaled input size. A factor whose scaled input would
@@ -69,16 +72,16 @@ type Config struct {
 	MaxInputLen int
 
 	// TimeFloor and AllocFloor are the absolute signal floors. If the LARGEST
-	// factor's median time is below TimeFloor AND its median allocation is below
+	// factor's best-of-N time is below TimeFloor AND its median allocation is below
 	// AllocFloor, the call is too cheap to judge and Check returns without a
 	// verdict — this is what makes a small, fast parse structurally unable to
 	// false-trip. Defaults: TimeFloor 3ms, AllocFloor 1<<20 (1 MiB).
 	TimeFloor  time.Duration
 	AllocFloor uint64
 
-	// MaxDoubling is the largest per-doubling cost multiplier tolerated, averaged
-	// (geometric mean) over the doubling steps, in whichever arm (time or memory)
-	// is above its floor. 2x is ideal-linear; the disclosed quadratic is ~4x.
+	// MaxDoubling is the largest per-doubling cost multiplier tolerated, from the
+	// least-squares log-log fit over the curve's tail, in whichever arm (time or
+	// memory) is above its floor. 2x is ideal-linear; the disclosed quadratic is ~4x.
 	// Default 3.0 sits between. Only an arm above its floor is judged, so a parse
 	// that is super-linear in time but trivial in memory is still caught, and
 	// vice versa.
@@ -132,7 +135,7 @@ type Verdict struct {
 	Label        string
 	Measurements []Measurement
 	Judged       bool // false => below floors, no conclusion drawn
-	// Per-doubling multipliers (geometric mean, normalised to a 2x length step).
+	// Per-doubling multipliers (2^p from the tail fit, normalised to a 2x length step).
 	TimeDoubling  float64
 	AllocDoubling float64
 	TimeJudged    bool // time arm was above its floor and thus evaluated
@@ -182,6 +185,38 @@ func ScaleRepeat(minUnit int) func(base []byte, factor int) []byte {
 			return unit
 		}
 		return RepeatBytes(unit, factor)
+	}
+}
+
+// ScaleJSONArray returns a structural scaler for JSON decoders: it emits a JSON
+// array whose elements are copies of base, `[base,base,...]`, with enough
+// elements that the factor-1 variant is at least minUnit bytes and factor times
+// as many elements for larger factors. Unlike ScaleRepeat it keeps a valid JSON
+// value valid, so a decoder walks the whole scaled input instead of stopping at
+// the end of the first top-level value (where plain repetition turns the input
+// invalid and the work stops growing).
+//
+// If base is empty or is not itself one valid JSON value, the scaler returns an
+// empty slice for every factor, so Check draws no conclusion. An array of copies
+// of a non-value is valid or invalid depending on the copy count (an odd number
+// of quotes in base makes every other count parse), so the decoder would do a
+// scan-only error path at one size and a full decode at the next: a cost jump
+// that reads as super-linear without being it.
+func ScaleJSONArray(minUnit int) func(base []byte, factor int) []byte {
+	return func(base []byte, factor int) []byte {
+		if len(base) == 0 || !json.Valid(base) {
+			return nil
+		}
+		n := max((minUnit+len(base))/(len(base)+1), 1) * max(factor, 1)
+		out := make([]byte, 0, n*(len(base)+1)+1)
+		out = append(out, '[')
+		for i := range n {
+			if i > 0 {
+				out = append(out, ',')
+			}
+			out = append(out, base...)
+		}
+		return append(out, ']')
 	}
 }
 
