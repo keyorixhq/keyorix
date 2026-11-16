@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 )
 
 // ──────────────────────────── PostgresEngine metadata ──────────────────────
@@ -250,6 +252,36 @@ func TestConnectRedis_InvalidURI(t *testing.T) {
 	_, err := connectRedis(context.Background(), "not-a-redis-uri://whatever", false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "redis admin URI")
+}
+
+// skip_verify=true in the DSN would satisfy the TLS requirement while turning
+// certificate verification off; it is refused unless the operator allowed
+// insecure transport.
+func TestConnectRedis_RefusesSkipVerify(t *testing.T) {
+	for _, d := range []string{
+		"rediss://:pass@redis.example.com:6380/0?skip_verify=true",
+		"rediss://:pass@redis.example.com:6380/0?skip_verify=1",
+	} {
+		_, err := connectRedis(context.Background(), d, true, false)
+		var fe *dsn.ForbiddenOptionError
+		require.ErrorAs(t, err, &fe, d)
+		assert.Equal(t, "skip_verify", fe.Option)
+		assert.NotContains(t, err.Error(), "pass", "the error must not quote the DSN")
+	}
+}
+
+func TestConnectRedis_SkipVerifyFalseIsNotRefused(t *testing.T) {
+	_, err := connectRedis(context.Background(), "rediss://:pass@localhost:19999/0?skip_verify=false", true, false)
+	require.Error(t, err) // unreachable host, but not a forbidden-option refusal
+	var fe *dsn.ForbiddenOptionError
+	assert.False(t, errors.As(err, &fe))
+}
+
+func TestRedisDSNWithoutSkipVerify(t *testing.T) {
+	assert.Equal(t, "rediss://:pass@h:6380/0", redisDSNWithoutSkipVerify("rediss://:pass@h:6380/0?skip_verify=true"))
+	assert.Equal(t, "rediss://:pass@h:6380/0?db=1", redisDSNWithoutSkipVerify("rediss://:pass@h:6380/0?skip_verify=true&db=1"))
+	assert.Equal(t, "rediss://:pass@h:6380/0", redisDSNWithoutSkipVerify("rediss://:pass@h:6380/0"))
+	assert.Equal(t, "%zz", redisDSNWithoutSkipVerify("%zz"))
 }
 
 func TestConnectRedis_UnreachableHost(t *testing.T) {
