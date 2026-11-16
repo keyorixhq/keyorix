@@ -868,6 +868,7 @@ var dependencyKinds = map[string]string{
 	"github.com/crewjam/saml":                                           "client",
 	"github.com/digitorus/pkcs7":                                        "local: parses and verifies PKCS#7",
 	"github.com/digitorus/timestamp":                                    "local: builds and parses RFC 3161 messages; the request is sent by internal/notary with an http.Client",
+	"github.com/fxamacker/cbor/v2":                                      "local: CBOR encoder/decoder, no network",
 	"github.com/getkin/kin-openapi":                                     "local: OpenAPI document handling",
 	"github.com/go-chi/chi/v5":                                          "local: HTTP router for inbound requests",
 	"github.com/go-chi/cors":                                            "local: CORS middleware for inbound requests",
