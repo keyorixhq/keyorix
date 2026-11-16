@@ -1,0 +1,8 @@
+go test fuzz v1
+byte('\x13')
+byte('\x04')
+byte(')')
+byte('\x10')
+uint16(517)
+byte('C')
+byte('\x14')

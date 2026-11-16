@@ -1,0 +1,1 @@
+internal/fuzzutil/resguard	none	-	PR #4367 (fuzz/rsg2-absmax-connector): shared resource-measurement layer (budgets, buckets, AbsMax) imported only by fuzz and pilot tests; internal/fuzzutil/resguard/importonly_test.go fails if a non-test file imports it; no production import, no auth, storage or network decisions in the product	test-helper

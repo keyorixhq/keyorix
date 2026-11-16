@@ -250,14 +250,14 @@ func scramClientNonce(b64 string, nonce *string) {
 // sendViaPipe sends req the way DeliverSetupLink does (SMTPDelivery.newClient,
 // SMTPDelivery.buildMessage, DialAndSendWithContext) with one change: the
 // client's dialer is replaced by a net.Pipe to serveSMTP, because the sandbox
-// these harnesses were written in refuses loopback listeners. It returns the
-// send error and how long the send took.
-func sendViaPipe(t *testing.T, cfg SMTPSettings, req SetupLinkRequest, sc *smtpScript, rec *smtpRecord) (error, time.Duration) {
+// these harnesses were written in refuses loopback listeners. It returns how
+// long the send took and the send error.
+func sendViaPipe(t *testing.T, cfg SMTPSettings, req SetupLinkRequest, sc *smtpScript, rec *smtpRecord) (time.Duration, error) {
 	t.Helper()
 	d := &SMTPDelivery{cfg: cfg}
 	msg, err := d.buildMessage(req)
 	if err != nil {
-		return err, 0
+		return 0, err
 	}
 	client, err := d.newClient()
 	if err != nil {
@@ -288,7 +288,7 @@ func sendViaPipe(t *testing.T, cfg SMTPSettings, req SetupLinkRequest, sc *smtpS
 	}
 	mu.Unlock()
 	wg.Wait()
-	return serr, took
+	return took, serr
 }
 
 // FuzzSetupLinkSMTPWireRoundTrip sends the setup-link email through go-mail's
@@ -334,7 +334,7 @@ func FuzzSetupLinkSMTPWireRoundTrip(f *testing.F) {
 		}
 		rec := &smtpRecord{}
 		cfg := SMTPSettings{Host: "relay.test", Port: 2525, From: fuzzFrom, TLS: smtpTLSNone}
-		err, took := sendViaPipe(t, cfg, req, &smtpScript{}, rec)
+		took, err := sendViaPipe(t, cfg, req, &smtpScript{}, rec)
 		checkSMTPWire(t, req, wantRcpt.Address, rec, err, took)
 	})
 }
@@ -460,7 +460,7 @@ func FuzzSetupLinkHostileSMTPServer(f *testing.F) {
 		}
 		req := SetupLinkRequest{RecipientEmail: "alice@example.com", DisplayName: "Alice", Link: "https://k.example/auth/setup/SECRETTOKEN"}
 		rec := &smtpRecord{}
-		err, took := sendViaPipe(t, cfg, req, sc, rec)
+		took, err := sendViaPipe(t, cfg, req, sc, rec)
 		checkHostileSMTP(t, cfg, rec, err, took)
 	})
 }

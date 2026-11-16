@@ -10,10 +10,9 @@ import (
 	"strings"
 	"unicode"
 
-	yaml "go.yaml.in/yaml/v4"
-
 	"github.com/keyorixhq/keyorix/cli/internal/cliout"
 	"github.com/keyorixhq/keyorix/cli/internal/regularfile"
+	"github.com/keyorixhq/keyorix/internal/yamlsafe"
 )
 
 // maxImportFileBytes caps how much of an untrusted --file import gets read into memory
@@ -194,7 +193,7 @@ func parseVault(path string) ([]secretEntry, error) {
 	}
 
 	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	if err := yamlsafe.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("invalid YAML: %w", err)
 	}
 

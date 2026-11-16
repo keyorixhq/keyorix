@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"chained_events\":10,\"head_id\":5,\"head_hash\":\"abc123\",\"key_version\":\"v1\",\"signature\":\"sig123\"}")
