@@ -38,6 +38,8 @@ class reaches the failing assertion.
 
 | D8 | `block-scalar-underindent` | a `|`/`>` block scalar followed by content at **insufficient indentation** (`|\n00`, `>\nx`, `|-\n0\n1` — content at column 0) | decodes the scalar as the **empty string**, **silently dropping** the content | **captures** the content (`"00"`, `"x"`, `"0\n1"`) | A **value-level divergence in the reachable, security-relevant direction**: the library Keyorix tooling uses (v3) **silently loses block-scalar content** on a mis-indented document. Properly-indented block scalars (`|\n  00`) agree in BOTH. **Not a Keyorix defect today** (no code feeds such malformed YAML to a security decision), but a genuine **v3 silent-data-loss footgun** worth reporting upstream. | `classifyYAMLV4ValueSplit` — recognised ONLY when every differing leaf is v3-`""` vs a non-empty v4 string AND `inputHasBlockScalarHeader(data)` matches; the red/green proves the same empty-vs-nonempty shape WITHOUT a block header stays `value-mismatch` (fails). |
 
+| D9 | `v3-rejects:anchor-char` | an anchor/alias **name** containing a character v3 forbids there (`&!0000` — anchor name with `!`) | **rejects** (`did not find expected alphabetic or numeric character`) | **accepts** (lenient anchor naming) | v4 accepts what v3 rejects, but benignly — the anchor name does not affect the resolved value. **Not a Keyorix defect** (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 anchor-char error ALONE. |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that
