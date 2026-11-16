@@ -20,6 +20,10 @@
     but **rejected by v4** (cannot construct the kept string `"00"` into an `int` field),
     invisible to the `any`-path oracle. All forward-looking (v4 has no live Keyorix caller).
     Enforced by `INV-LIBCONF-yaml-v4-struct-stream-differential`.
+  - The fuzz run drained a long v3/v4 tail — **13 further classes (D12–D23 plus a stream-context
+    D4 mirror, a `v3-rejects:mapping-key-context`, and a `roundtrip:marshal-dup-key` footgun
+    affecting BOTH libraries), each red/green proven and documented**. Highlights below; see
+    `EXPECTED-DIFFERENCES-yaml-v3-v4-differential.md` for the full table.
   - The fuzz run also drained a further any-path tail (all red/green proven, documented): **D15**
     `v3-rejects:flow-seq-tagged-empty` (`[!x]`), **D16** `v3-rejects:flow-node-content` (`[: 1]`),
     **D17** `nonspecific-tag-structural` (the `!`-tag divergence in a KEY, `! : 00`), **D18**
