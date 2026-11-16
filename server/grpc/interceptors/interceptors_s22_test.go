@@ -14,6 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -438,7 +439,7 @@ func TestStreamAuthInterceptor_S22_PATAuthenticatesAndEnforcesScope(t *testing.T
 
 	h.CreateTestUser(t, "stream-pat-user", 8300)
 	proj3 := uint(3)
-	h.AssignUserRole(t, 8300, 3, &proj3) // editor in project 3
+	h.AssignUserRole(t, 8300, testhelper.RoleProjectDeveloper, &proj3) // project_developer in project 3
 
 	res, err := h.CoreService.CreateOwnPAT(context.Background(), 8300, "stream-ci", nil, []string{"secrets.read"}, 3, 0, nil)
 	require.NoError(t, err)
@@ -509,7 +510,7 @@ func TestStreamAuthInterceptor_S22_MachineTokenAuthenticates(t *testing.T) {
 	// hold roles.assign at the target project scope before it can mint a token —
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2stream := uint(2)
-	h.AssignUserRole(t, 1, 2, &proj2stream)
+	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2stream)
 	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(tok.PlainToken, "kx_machine_"))

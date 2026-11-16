@@ -114,6 +114,10 @@ type ExternalAnchorStatus struct {
 type Result struct {
 	Verdict Verdict `json:"verdict"`
 	Reason  string  `json:"reason,omitempty"`
+	// ReasonCode is a stable machine-readable code for the reason, set only for
+	// the reasons a caller must act on without parsing Reason (ReasonCode*
+	// constants); empty otherwise.
+	ReasonCode string `json:"reason_code,omitempty"`
 
 	Range         Range `json:"range"`
 	ChainedEvents int64 `json:"chained_events"`
@@ -186,11 +190,22 @@ type Result struct {
 // current verdict — BROKEN always wins over INDETERMINATE, which always
 // wins over VALID, regardless of which check ran first.
 func (r *Result) escalate(v Verdict, reason string) {
+	r.escalateCode(v, "", reason)
+}
+
+// escalateCode is escalate for a reason that carries a ReasonCode*.
+func (r *Result) escalateCode(v Verdict, code, reason string) {
 	if verdictRank[v] > verdictRank[r.Verdict] {
 		r.Verdict = v
 		r.Reason = reason
+		r.ReasonCode = code
 	}
 }
+
+// ReasonCodeLegacyHashEncoding marks a chain whose rows are hashed with the
+// pre-#1452 encoding: an upgrade step that was not run, not tampering. The fix
+// is `keyorix audit migrate-chain-encoding`.
+const ReasonCodeLegacyHashEncoding = "legacy_hash_encoding"
 
 // ExitCode maps this run's verdict to the process exit code
 // docs/design-b4-offline-audit-verify.md §6 specifies: 0 VALID, 1 BROKEN
@@ -501,11 +516,11 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 				id := e.ID
 				result.FirstBrokenID = &id
 				if ComputeEntryHashPre1452(e, e.PrevHash) == e.EntryHash {
-					result.escalate(VerdictBroken, fmt.Sprintf(
-						"event #%d's entry_hash is valid under the pre-#1452 audit-hash encoding but not the "+
-							"current one — this chain has not been re-encoded since the 2026-08-16 format change. "+
-							"This is an un-migrated upgrade, NOT evidence of tampering; run the server's one-time "+
-							"chain-encoding migration", e.ID))
+					result.escalateCode(VerdictBroken, ReasonCodeLegacyHashEncoding, fmt.Sprintf(
+						"event #%d was hashed with the old audit-hash format (used before 2026-08-16) and has not been "+
+							"converted to the current one. This is an upgrade step that was not run, not evidence of "+
+							"tampering. To fix it, run `keyorix audit migrate-chain-encoding` to preview, then add "+
+							"--confirm, in a maintenance window with no other writers", e.ID))
 				} else {
 					result.escalate(VerdictBroken, fmt.Sprintf(
 						"event #%d's recorded entry_hash does not match the row's contents — "+
