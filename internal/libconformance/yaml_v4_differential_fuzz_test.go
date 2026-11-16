@@ -86,6 +86,13 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"key: |\n  multi\n  line\n", // block scalar
 		"? [a, b]\n: val\n",         // complex mapping key (both reject)
 		"!",                         // non-specific tag on empty scalar (v3 null / v4 "")
+		"! 00",                      // ! on NON-empty scalar: v3 int 0 / v4 "00" (D12)
+		"! true",                    // ! on bool-looking scalar: v3 bool / v4 "true" (D12)
+		"! null",                    // ! on null text: v3 nil / v4 "null" (D12)
+		"! 1.5",                     // ! on float-looking scalar: v3 1.5 / v4 "1.5" (D12)
+		"a: ! 123",                  // ! on non-empty under a key (D12)
+		"- ! 00",                    // ! on non-empty in a sequence (D12)
+		"! abc",                     // NOT a split: ! on a string-resolving scalar agrees
 		"a: !\nb: !!str\n",          // mixed: ! diverges, !!str agrees
 		":",                         // empty implicit key (v3 rejects / v4 null key)
 		"- :\n",                     // empty implicit key inside a sequence
@@ -274,7 +281,104 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if diffs, ok := negZeroIntVsFloatOnly(v3val, v4val); ok && diffs > 0 {
 		return "negative-zero-int-vs-float"
 	}
+	// The non-specific tag `!` applied to a NON-empty scalar (`! 00`, `! true`,
+	// `! 1.5`, …). v3 ignores the `!` and applies its normal implicit schema (so
+	// `! 00` → int 0, `! true` → bool); v4 treats `!` as forcing the failsafe
+	// `!!str` resolution and keeps the raw string (`"00"`, `"true"`). This is the
+	// same root cause as the empty-scalar D1 class, generalised to non-empty
+	// scalars. Recognised ONLY when every differing leaf is "v4 kept the raw
+	// string s, and v3's value is exactly the v3 implicit resolution of s" AND the
+	// input carries a non-specific `!` tag — so an unrelated value divergence is
+	// not absorbed.
+	if diffs, ok := nonspecificTagNonEmptyScalarOnly(v3val, v4val); ok && diffs > 0 && inputHasNonSpecificTag(data) {
+		return "nonspecific-tag-nonempty-scalar"
+	}
 	return "value-mismatch"
+}
+
+// nonSpecificTagRe matches a standalone non-specific `!` tag: a `!` that is a
+// complete tag token (not the `!!x` explicit-tag form, not the `!<…>` verbatim
+// form, not a `!local` named tag), preceded by start-of-line or a
+// whitespace/flow/indicator character and followed by whitespace or end-of-line.
+// Those are exactly the positions where `!` applies the non-specific tag to the
+// following (or empty) scalar: `! 00`, `x: !`, `- ! v`, `{a: !}`.
+var nonSpecificTagRe = regexp.MustCompile(`(?m)(^|[ \t:\-\[\]{},])!([ \t]|$)`)
+
+func inputHasNonSpecificTag(data []byte) bool {
+	return nonSpecificTagRe.Match(data)
+}
+
+// nonspecificTagNonEmptyScalarOnly reports whether a (v3) and b (v4) are
+// structurally identical except that wherever they differ, b is a NON-empty
+// string s and a is exactly the v3 implicit resolution of s (i.e. v4 kept the
+// `!`-tagged scalar as a raw string while v3 resolved it by the normal schema).
+// It returns the count of such differing leaves and whether every difference
+// matched that exact shape. The empty-string case (a=nil, b="") is intentionally
+// NOT handled here — that is the separate D1 nilVsEmptyStringOnly class.
+func nonspecificTagNonEmptyScalarOnly(a, b any) (int, bool) {
+	if bs, ok := b.(string); ok {
+		if bs == "" {
+			// Empty-string leaf belongs to D1 (nil-vs-""), not this class; only
+			// accept it here if a is an identical empty string (no divergence).
+			if as, ok := a.(string); ok && as == "" {
+				return 0, true
+			}
+			return 0, false
+		}
+		if as, ok := a.(string); ok && as == bs {
+			return 0, true // identical non-empty strings — not a divergence
+		}
+		// The divergence shape: a must equal the v3 implicit resolution of s.
+		var resolved any
+		if err := v3yaml.Unmarshal([]byte(bs), &resolved); err == nil && reflect.DeepEqual(resolved, a) {
+			return 1, true
+		}
+		return 0, false
+	}
+	if a == nil || b == nil {
+		return 0, reflect.DeepEqual(a, b)
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return 0, false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for _, k := range ra.MapKeys() {
+			bval := rb.MapIndex(k)
+			if !bval.IsValid() {
+				return 0, false
+			}
+			n, ok := nonspecificTagNonEmptyScalarOnly(ra.MapIndex(k).Interface(), bval.Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for i := range ra.Len() {
+			n, ok := nonspecificTagNonEmptyScalarOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	default:
+		if reflect.DeepEqual(a, b) {
+			return 0, true
+		}
+		return 0, false
+	}
 }
 
 // negZeroIntVsFloatOnly reports whether a and b are structurally identical except

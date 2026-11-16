@@ -44,6 +44,8 @@ class reaches the failing assertion.
 
 | D11 | `v3-rejects:flow-ws` | a tag/node in **flow context** lacking the whitespace v3 requires after it (`{!}` — a `!`-tagged empty node in a flow mapping) | **rejects** (`did not find expected whitespace or line break`) | **accepts** (lenient) | v4 accepts what v3 rejects — same flow/tag-leniency family as D5/D9, benign. **Not a Keyorix defect** (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 flow-ws error ALONE. |
 
+| D12 | `nonspecific-tag-nonempty-scalar` | the non-specific tag `!` applied to a **NON-empty** scalar (`! 00`, `! 123`, `! true`, `! null`, `! 1.5`, `a: ! 123`, `- ! 00`) | v3 **ignores** the `!` and applies its normal implicit schema (`! 00`→int `0`, `! true`→bool, `! null`→nil, `! 1.5`→float) | v4 treats `!` as forcing the failsafe **`!!str`** resolution and keeps the **raw string** (`"00"`, `"true"`, `"null"`, `"1.5"`) | The **generalisation of D1** from the empty scalar to any non-empty one (DF2 leftover #1). Same root cause: v4 honours the non-specific tag as `!!str`, v3 does not. `! abc` agrees (both `"abc"`) because `abc` resolves to a string in v3 anyway. The live caller (`gopkg.in/yaml.v3` v3.0.1) was verified byte-identical to v3.0.5 on every case here, so the v3 side is the reachable one. **Not a Keyorix defect** (v4 has no live caller); a forward-looking migration hazard (a config `key: ! 00` flips from int `0` to `"00"`). | `classifyYAMLV4ValueSplit` / `nonspecificTagNonEmptyScalarOnly` — recognised ONLY when every differing leaf is "v4 kept the raw string `s` and v3's value is exactly the v3 implicit resolution of `s`" AND the input carries a non-specific `!` tag; a non-resolving int-vs-string diff (v3 `5` vs v4 `"6"`) or the same shape WITHOUT a `!` tag stays `value-mismatch` and fails. |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that
@@ -62,19 +64,52 @@ complex keys, excessive aliasing, the other syntax errors) was rejected by BOTH;
 re-worded the error text, which `classifyYAMLV4Split` normalises away. A further accept/reject
 split the fuzzer finds is a finding until triaged and listed here.
 
-## What this oracle does NOT verify (scope / "not verified")
+## Companion oracles (DF3): struct decode, multi-document streams, round-trip
 
-- **S1 — Struct decoding, `WithKnownFields`/strict mode, custom `Unmarshaler`s.** Only the
-  schemaless `Unmarshal(data, &any)` path is compared. v4's new `Load`/`Dump` + options API
-  (`WithKnownFields`, `WithIndent`, `WithAllDocuments`) is a distinct surface and is out of
-  scope. A config decoded into a *typed struct* could diverge where the `any` decode does not.
-- **S2 — Encoding (`Marshal`/`Dump`) parity.** Only decode is differentiated. The canonical
-  re-encoder is v3's `Marshal` applied to BOTH decoded values, so an encoding divergence in
-  v4's own `Marshal` is invisible here (by construction — it is used as a comparison oracle,
-  not a subject). Round-trip (`decode→encode→decode`) idempotence is not asserted.
-- **S3 — Multi-document streams.** `Unmarshal` decodes only the FIRST document; a divergence
-  in how v3 vs v4 split or decode the 2nd+ document of a `---`-separated stream is not seen.
-  The `Loader`/`Decoder` streaming API is out of scope.
+The three scope gaps S1/S2/S3 below are now **partially covered** by companion targets in
+`yaml_v4_struct_stream_fuzz_test.go` (red/green: `TestYAMLV4StructStreamRedGreen`). Each ties
+a typed/stream/round-trip divergence back to the single-doc `any`-path classes above, so it
+reuses this whole table rather than inventing a parallel one. The tie: a typed-struct or
+per-document divergence is a **finding unless the `any`-path for the same bytes also diverges
+by an already-tolerated class** (`structSplitVerdict`); a typed/stream split where the
+`any`-path AGREED is new and fails.
+
+- **`FuzzYAMLV4StructDifferential` (S1).** Decodes the same bytes into the real
+  `internal/config.Config` family (the server's live strict-load target) and a synthetic
+  struct, under v3 and v4 (lenient), plus v3 `KnownFields(true)` vs v4 `WithKnownFields()`
+  (strict). New finding surfaced and tolerated: `int: ! 00` → v3 resolves int `0`, v4 keeps
+  `"00"` and **cannot construct it into an `int` field, so v4 rejects where v3 accepts** —
+  invisible to the `any` path (both accept there), tied to the tolerated D12 class. Strict
+  mode also surfaced `v4-strict-rejects:empty-doc` (below).
+- **`FuzzYAMLV4MultiDocDifferential` (S3).** Decodes EVERY document of a `---` stream (v3
+  `Decoder` loop vs v4 `Loader` loop) and compares the sequence. A differing **document
+  count** is class `multidoc:count-mismatch` (NOT in the table → a finding until triaged);
+  per-document value splits reuse `classifyYAMLV4ValueSplit`.
+- **`FuzzYAMLV4RoundTrip` (S2).** Within EACH library, `decode→encode→decode` and assert the
+  re-decode canonicalises to the first decode (idempotence). A non-idempotent round-trip is a
+  genuine library footgun; the round-trip tolerance table `yamlV4RoundTripExpectedDiff` is
+  EMPTY on purpose.
+
+Strict-mode divergence tolerated by the struct oracle:
+
+| id | class key | what diverges | v3.0.5 (strict `Decoder`) | v4.0.0 (strict `Load`) | why tolerated | enforced by |
+|----|-----------|---------------|---------------------------|-------------------------|---------------|-------------|
+| D13 | `v4-strict-rejects:empty-doc` | an empty / document-less input decoded in strict mode | **accepts** — `Decoder.Decode` returns `io.EOF`, which `Config.Load` treats as a valid **all-default** config | **rejects** — one-shot `Load(..., WithKnownFields())` returns `yaml: no documents in stream` | A real **migration gotcha of v4's recommended strict `Load` API**, not a field-strictness divergence: an empty config file that loads fine today (all defaults) would be rejected if the loader naively switched to `yaml.Load(data, &cfg, WithKnownFields())`. Not a Keyorix defect (v4 has no live caller; and the equivalent v4 streaming `Loader` would behave like v3). | `isV4StrictEmptyDocSplit` — v3-accepts + v4-rejects + the exact `no documents in stream` message; a real unknown-field rejection is NOT absorbed. |
+
+## What the companion oracles STILL do NOT verify (residual scope)
+
+- **S1-residual.** `config.Config` typed VALUE equality is only canonical-marshal compared when
+  BOTH libraries accept; a nested type with a decode divergence that both still *accept* into
+  the same canonical bytes is invisible. Custom `UnmarshalYAML` is not exercised (there are
+  none in `internal/`). The synthetic struct covers a fixed field-type spread, not every Go
+  kind (no `*int`, `int8`, `uintptr`, embedded-struct-promotion, or `,inline` tag).
+- **S2-residual.** Round-trip uses v3's `Marshal` as the fixed canonical comparator, so a
+  divergence purely in v4's `Marshal` byte output (indent, quoting, flow style) that still
+  re-decodes to the same value is not seen — only value idempotence is asserted, not encoded-
+  byte parity between v3 and v4.
+- **S3-residual.** The multi-doc oracle compares document COUNT and per-document VALUE; it does
+  not assert anything about comments, document-boundary byte positions, or directives
+  (`%YAML`, `%TAG`) that do not change the decoded value.
 - **S4 — Inputs > 8 KiB.** Bounded to keep a pathological expansion in one library from
   masquerading as a disagreement and to keep the resource model meaningful. A divergence that
   only manifests on megabyte inputs is not covered.

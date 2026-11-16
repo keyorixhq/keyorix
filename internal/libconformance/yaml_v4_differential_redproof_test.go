@@ -1,6 +1,7 @@
 package libconformance
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -35,6 +36,25 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// differential.md and the DF2 report. Enforced structurally by
 	// classifyYAMLV4ValueSplit/nilVsEmptyStringOnly (null-vs-"" leaves only).
 	"nonspecific-tag-empty-scalar": true,
+
+	// The non-specific tag `!` applied to a NON-empty scalar. v3.0.5 ignores the
+	// `!` and resolves the scalar by its normal implicit schema ("! 00" -> int 0,
+	// "! true" -> bool true, "! null" -> nil, "! 1.5" -> float 1.5); v4.0.0 treats
+	// `!` as forcing the failsafe !!str resolution and keeps the RAW STRING ("00",
+	// "true", "null", "1.5"). "! abc" agrees (both "abc") because abc resolves to a
+	// string in v3 anyway. This is the SAME root cause as nonspecific-tag-empty-
+	// scalar (D1), generalised from the empty scalar to any non-empty one -- the
+	// D1 classifier left out of DF2 (df2 leftover #1). The live caller
+	// (gopkg.in/yaml.v3 v3.0.1) was verified to match go.yaml.in/yaml/v3 v3.0.5
+	// byte-for-byte on every case here, so the reachable behaviour is the v3 side.
+	// v4 has no live caller, so this is a forward-looking migration hazard: a
+	// config `key: ! 00` would flip from int 0 to the string "00" on a v3->v4 bump.
+	// Enforced structurally by classifyYAMLV4ValueSplit/nonspecificTagNonEmptyScalar
+	// Only -- recognised ONLY when every differing leaf is "v4 kept the raw string s
+	// and v3's value is exactly the v3 implicit resolution of s" AND the input
+	// carries a non-specific `!` tag, so an unrelated value mismatch (e.g. v3 int 5
+	// vs v4 string "6") still classes as value-mismatch and fails.
+	"nonspecific-tag-nonempty-scalar": true,
 
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
@@ -487,6 +507,62 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("a non-negzero int-vs-float diff must stay value-mismatch, got %q", notNegZero)
 		}
 		t.Logf("oracle-3 negative-zero gating proven")
+	}
+
+	// ---- Oracle 3 class gating: non-specific `!` tag on a NON-empty scalar (D12) ----
+	// The DF2 leftover #1: generalise D1 from the empty scalar to a non-empty one.
+	{
+		for _, tc := range []struct {
+			in     string
+			wantV3 any
+			wantV4 any
+		}{
+			{"! 00", 0, "00"},
+			{"! true", true, "true"},
+			{"! null", nil, "null"},
+			{"! 1.5", 1.5, "1.5"},
+		} {
+			var v3v, v4v any
+			if err := v3yaml.Unmarshal([]byte(tc.in), &v3v); err != nil {
+				t.Fatalf("%q: v3 unmarshal: %v", tc.in, err)
+			}
+			if err := v4yaml.Unmarshal([]byte(tc.in), &v4v); err != nil {
+				t.Fatalf("%q: v4 unmarshal: %v", tc.in, err)
+			}
+			if !reflect.DeepEqual(v3v, tc.wantV3) || !reflect.DeepEqual(v4v, tc.wantV4) {
+				t.Fatalf("precondition %q: want v3=%#v v4=%#v, got v3=%#v v4=%#v", tc.in, tc.wantV3, tc.wantV4, v3v, v4v)
+			}
+			class := classifyYAMLV4ValueSplit([]byte(tc.in), v3v, v4v)
+			if class != "nonspecific-tag-nonempty-scalar" {
+				t.Fatalf("%q: want class nonspecific-tag-nonempty-scalar, got %q", tc.in, class)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("nonspecific-tag-nonempty-scalar must be listed (tolerated)")
+			}
+		}
+		// RED #1: a genuine int-vs-string mismatch where the string does NOT resolve
+		// (in v3) to the int must stay value-mismatch (v3 int 5 vs v4 string "6").
+		bad := classifyYAMLV4ValueSplit([]byte("x: ! 5"), map[string]any{"x": 5}, map[string]any{"x": "6"})
+		if bad != "value-mismatch" {
+			t.Fatalf("a non-resolving int-vs-string diff must stay value-mismatch, got %q", bad)
+		}
+		// RED #2: the exact D12 shape but WITHOUT a non-specific `!` tag in the input
+		// must NOT be absorbed (scoping gate) -- stays value-mismatch.
+		noTag := classifyYAMLV4ValueSplit([]byte("x: 00"), map[string]any{"x": 0}, map[string]any{"x": "00"})
+		if noTag != "value-mismatch" {
+			t.Fatalf("the D12 value shape WITHOUT a `!` tag must stay value-mismatch, got %q", noTag)
+		}
+		// GREEN scoping: the same shape WITH a `!` tag is tolerated.
+		withTag := classifyYAMLV4ValueSplit([]byte("x: ! 00"), map[string]any{"x": 0}, map[string]any{"x": "00"})
+		if withTag != "nonspecific-tag-nonempty-scalar" {
+			t.Fatalf("the D12 shape WITH a `!` tag must be tolerated, got %q", withTag)
+		}
+		// The empty-scalar D1 case must still class as the ORIGINAL class, not D12.
+		empty := classifyYAMLV4ValueSplit([]byte("x: !"), map[string]any{"x": nil}, map[string]any{"x": ""})
+		if empty != "nonspecific-tag-empty-scalar" {
+			t.Fatalf("the empty `!` case must stay nonspecific-tag-empty-scalar, got %q", empty)
+		}
+		t.Logf("oracle-3 D12 gating proven: `! <scalar>` tolerated; non-resolving/untagged diffs still fail; D1 unchanged")
 	}
 
 	// ---- Oracle 2 class gating: flow-context whitespace leniency ----
