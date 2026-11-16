@@ -101,8 +101,12 @@ fi
 # dismiss the wrong thing if it only checked "is there a nosemgrep here".
 line_text="$(sed -n "${start_line}p" "$REPO_ROOT/$path")"
 rule_id_escaped="$(printf '%s' "$rule_id" | sed 's/[.[\*^$/]/\\&/g')"
+# Custom rules from .semgrep/*.yml are reported by code scanning as `semgrep.<id>`, but `nosemgrep:` names them by the bare
+# `<id>` (that is what makes the local rerun clean). Accept both spellings for those; every other rule id stays exact.
+rule_alt="$rule_id_escaped"
+case "$rule_id" in semgrep.?*) rule_alt="$rule_id_escaped|$(printf '%s' "${rule_id#semgrep.}" | sed 's/[.[\*^$/]/\\&/g')";; esac
 suppression_present=0
-if printf '%s' "$line_text" | grep -qE "(#|//)[[:space:]]*nosemgrep:[[:space:]]*([A-Za-z0-9_.,\ -]*,)?${rule_id_escaped}(,|[[:space:]]|--|$)"; then
+if printf '%s' "$line_text" | grep -qE "(#|//)[[:space:]]*nosemgrep:[[:space:]]*([A-Za-z0-9_.,\ -]*,)?(${rule_alt})(,|[[:space:]]|--|$)"; then
     suppression_present=1
     note "line $start_line carries a nosemgrep matching $rule_id"
 else
