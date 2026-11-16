@@ -26,9 +26,9 @@ func initializeKeys(svc *encryption.Service, passphrase, providerType string) er
 		if providerType == "" || providerType == "password" {
 			// Name the source (BOOT-REFUSALS-1 item 7): with several ways to pass the
 			// passphrase, "wrong passphrase" alone does not say which one was read.
-			return fmt.Errorf("KEK derivation from the master passphrase read from %s failed: %w", masterPassphraseSource.Describe("KEYORIX_MASTER_PASSWORD"), err)
+			return operatorFix(fmt.Errorf("KEK derivation from the master passphrase read from %s failed: %w", masterPassphraseSource.Describe("KEYORIX_MASTER_PASSWORD"), err))
 		}
-		return fmt.Errorf("KEK from key provider %q failed: %w", providerType, err)
+		return operatorFixUnlessUnreachable(fmt.Errorf("KEK from key provider %q failed: %w", providerType, err))
 	}
 	return nil
 }
