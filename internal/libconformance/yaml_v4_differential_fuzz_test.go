@@ -296,6 +296,33 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	return "value-mismatch"
 }
 
+// mapLookupByLogicalKey looks up key k (taken from map a) in map m by LOGICAL key
+// value, tolerating a key-TYPE mismatch between the two maps. yaml decodes a
+// mapping with all-string keys into map[string]any but a mapping with any
+// non-string key into map[any]any, so comparing a v3 and a v4 document can pair a
+// map[string]any against a map[any]any for the same logical mapping; a naive
+// rb.MapIndex(stringKeyFromInterfaceMap) panics ("interface {} is not assignable
+// to type string"). This unwraps an interface key to its concrete value (and
+// relies on Go's auto-boxing for the concrete→interface direction) so the
+// structural walk compares the same logical entries. It does NOT equate maps that
+// genuinely differ — a missing logical key still returns ok=false; and the
+// classifier is only ever reached once the canonical-marshal bytes already differ,
+// where map[string]any vs map[any]any with identical entries canonicalise equal.
+func mapLookupByLogicalKey(m, k reflect.Value) (reflect.Value, bool) {
+	kt := m.Type().Key()
+	if k.Type().AssignableTo(kt) {
+		v := m.MapIndex(k)
+		return v, v.IsValid()
+	}
+	if k.Kind() == reflect.Interface {
+		if e := k.Elem(); e.IsValid() && e.Type().AssignableTo(kt) {
+			v := m.MapIndex(e)
+			return v, v.IsValid()
+		}
+	}
+	return reflect.Value{}, false
+}
+
 // nonSpecificTagRe matches a standalone non-specific `!` tag: a `!` that is a
 // complete tag token (not the `!!x` explicit-tag form, not the `!<…>` verbatim
 // form, not a `!local` named tag), preceded by start-of-line or a
@@ -349,8 +376,8 @@ func nonspecificTagNonEmptyScalarOnly(a, b any) (int, bool) {
 		}
 		total := 0
 		for _, k := range ra.MapKeys() {
-			bval := rb.MapIndex(k)
-			if !bval.IsValid() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
 				return 0, false
 			}
 			n, ok := nonspecificTagNonEmptyScalarOnly(ra.MapIndex(k).Interface(), bval.Interface())
@@ -411,8 +438,8 @@ func negZeroIntVsFloatOnly(a, b any) (int, bool) {
 		}
 		total := 0
 		for _, k := range ra.MapKeys() {
-			bval := rb.MapIndex(k)
-			if !bval.IsValid() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
 				return 0, false
 			}
 			n, ok := negZeroIntVsFloatOnly(ra.MapIndex(k).Interface(), bval.Interface())
@@ -484,8 +511,8 @@ func v3EmptyVsV4NonEmptyStringOnly(a, b any) (int, bool) {
 		}
 		total := 0
 		for _, k := range ra.MapKeys() {
-			bval := rb.MapIndex(k)
-			if !bval.IsValid() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
 				return 0, false
 			}
 			n, ok := v3EmptyVsV4NonEmptyStringOnly(ra.MapIndex(k).Interface(), bval.Interface())
@@ -546,8 +573,8 @@ func nilVsEmptyStringOnly(a, b any) (int, bool) {
 		}
 		total := 0
 		for _, k := range ra.MapKeys() {
-			bval := rb.MapIndex(k)
-			if !bval.IsValid() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
 				return 0, false
 			}
 			n, ok := nilVsEmptyStringOnly(ra.MapIndex(k).Interface(), bval.Interface())
