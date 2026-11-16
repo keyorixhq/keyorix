@@ -174,10 +174,12 @@ type Cluster struct {
 	reported map[string]bool
 }
 
-// addExtraLog adds path to the logs the canary scan reads.
+// addExtraLog adds path to the logs the canary scan reads (once).
 func (c *Cluster) addExtraLog(path string) {
 	c.logMu.Lock()
-	c.extraLogs = append(c.extraLogs, path)
+	if !slices.Contains(c.extraLogs, path) {
+		c.extraLogs = append(c.extraLogs, path)
+	}
 	c.logMu.Unlock()
 }
 
