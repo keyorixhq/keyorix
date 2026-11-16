@@ -1,0 +1,1 @@
+fuzz/thirdparty/goi18n	none	-	test-only hostile-input fuzz harness for nicksnyder/go-i18n; not part of any shipped build	test-helper
