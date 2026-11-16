@@ -116,6 +116,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"- -0",                      // -0: v3 int 0 / v4 float -0.0
 		"-0:",                       // -0 as a KEY: v3 int-0 key / v4 float-negzero key (D19)
 		"|\n\"",                     // block scalar + lone quote: v3 rejects EOS / v4 accepts (D20)
+		"|\n%0",                     // block scalar + %0: v3 rejects directive / v4 accepts (D21)
 		"{!}",                       // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
 		"[!x]",                      // tagged empty node in flow seq (v3 rejects / v4 "")
 		"[0: !]",                    // tagged empty value in flow seq (v3 rejects / v4 "")
@@ -273,6 +274,12 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		return side + ":tag-char"
 	case strings.Contains(msg, "mapping values are not allowed"):
 		return side + ":mapping-context"
+	case strings.Contains(msg, "directive"):
+		// A `%`-introduced directive v3 rejects — e.g. under-indented block-scalar
+		// content `%0` (`|\n%0`) that v3 re-scans as a document directive ("found
+		// unknown directive name"). v3 REJECTS; v4 is lenient and ACCEPTS. Same
+		// v4-lenient direction as D20; v4 accepts what v3 rejects on malformed input.
+		return side + ":directive"
 	case strings.Contains(msg, "unexpected end of stream"):
 		// A truncated / unterminated construct — e.g. a block scalar followed by a
 		// lone `"` at column 0 (`|\n"`), which v3 reads as an unterminated

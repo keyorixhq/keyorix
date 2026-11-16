@@ -57,6 +57,8 @@ class reaches the failing assertion.
 
 | D20 | `v3-rejects:unexpected-eos` | a truncated / unterminated construct — e.g. a block scalar followed by a lone `"` at column 0 (`|\n"`), read by v3 as an unterminated double-quoted scalar | **rejects** (`found unexpected end of stream`) | **accepts** (lenient on the truncated input) | Found by the DF3 fuzz run at `|\n"`. **v4 accepts what v3 rejects** (the migration-hazard direction, like D2/D3) but on malformed/truncated input. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 error `unexpected end of stream`. |
 
+| D21 | `v3-rejects:directive` | a `%`-introduced directive v3 rejects — e.g. under-indented block-scalar content `%0` (`|\n%0`) re-scanned by v3 as a document directive | **rejects** (`found unknown directive name`) | **accepts** (lenient) | Found by the DF3 fuzz run at `|\n%0`. Same v4-lenient direction as D20 (v3 re-scans under-indented block content as a doc-level token and rejects). Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 error substring `directive`. |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that

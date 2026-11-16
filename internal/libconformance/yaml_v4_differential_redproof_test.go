@@ -95,6 +95,13 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// end of stream".
 	"v3-rejects:unexpected-eos": true,
 
+	// A `%`-introduced directive v3 rejects — e.g. under-indented block-scalar
+	// content `%0` (`|\n%0`) that v3 re-scans as a document directive ("found
+	// unknown directive name"). v3.0.5 REJECTS; v4.0.0 ACCEPTS. Found by the DF3 fuzz
+	// run at `|\n%0`. Same v4-lenient direction as D20. Not a Keyorix defect (v4 has
+	// no live caller). Keyed on the v3 error substring "directive".
+	"v3-rejects:directive": true,
+
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
 	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null
@@ -376,7 +383,7 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		// RED: a DIFFERENT v3 syntax rejection must not be silenced by this class and
 		// must stay the untolerated generic :syntax (use a directive error, which is
 		// not one of the specifically-classed flow/tag/key messages).
-		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected directive name"}, nil)
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected '-' indicator"}, nil)
 		if other == "v3-rejects:empty-implicit-key" {
 			t.Fatalf("an unrelated v3 syntax rejection was wrongly absorbed into empty-implicit-key")
 		}
@@ -659,6 +666,21 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("the structural class must require a `!` tag in the input, got %q", noTag)
 		}
 		t.Logf("oracle-3 D17 structural gating proven: `!`-tag KEY divergence tolerated; genuine key/value diffs and untagged inputs still fail")
+	}
+
+	// ---- Oracle 2 class gating: v3 rejects a directive (D21) ----
+	{
+		in := []byte("|\n%0")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: `|\\n%%0` must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		if class := classifyYAMLV4Split(err3, err4); class != "v3-rejects:directive" || !yamlV4ExpectedDiff[class] {
+			t.Fatalf("`|\\n%%0` split must class as the tolerated v3-rejects:directive, got %q", class)
+		}
+		t.Logf("oracle-2 directive gating proven")
 	}
 
 	// ---- Oracle 2 class gating: truncated construct, v3 rejects EOS (D20) ----
