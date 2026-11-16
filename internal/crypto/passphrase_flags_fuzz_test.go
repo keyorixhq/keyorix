@@ -14,9 +14,11 @@ package crypto
 //
 // Oracles:
 //   - a sentinel is planted inside the content of every source kind; it must
-//     not appear in any returned error, in Describe, in the flag set's usage
-//     text or in pflag's parse error, whatever the surrounding bytes, permissions
-//     or combination of sources;
+//     not appear in any returned error or in Describe, whatever the surrounding
+//     bytes, permissions or combination of sources. The flag set's usage text and
+//     pflag's parse error are not checked: the parse side never sees the content,
+//     so the sentinel could only reach them as user-typed argv, the echo allowed
+//     below;
 //   - an error never comes with bytes (a half-read passphrase);
 //   - success returns exactly the content with one trailing "\n" then one "\r"
 //     removed (the environment variable: whitespace-trimmed), from the first
@@ -74,8 +76,8 @@ func ppExpect(sources uint8, content []byte, filePerm os.FileMode) (want []byte,
 }
 
 // ppCheck is the oracle over one resolution.
-func ppCheck(res []byte, err error, describe, usage, parseErr string, sources uint8, content []byte, filePerm os.FileMode) error {
-	for name, text := range map[string]string{"describe": describe, "usage": usage, "parse error": parseErr, "error": fmt.Sprint(err)} {
+func ppCheck(res []byte, err error, describe string, sources uint8, content []byte, filePerm os.FileMode) error {
+	for name, text := range map[string]string{"describe": describe, "error": fmt.Sprint(err)} {
 		if strings.Contains(text, ppSentinel) {
 			return fmt.Errorf("the passphrase appeared in the %s text: %q", name, text)
 		}
@@ -220,7 +222,7 @@ func FuzzPassphraseSources(f *testing.F) {
 			err error
 		)
 		fuzzutil.Guard(t.Fatalf, "ResolvePassphrase", func() { res, err = ResolvePassphrase(s, ppEnv) })
-		if oerr := ppCheck(res, err, s.Describe(ppEnv), fs.FlagUsages(), parseOut.String()+fmt.Sprint(parseErr), sources, content, filePerm); oerr != nil {
+		if oerr := ppCheck(res, err, s.Describe(ppEnv), sources, content, filePerm); oerr != nil {
 			t.Fatal(oerr)
 		}
 	})
@@ -230,22 +232,20 @@ func FuzzPassphraseSources(f *testing.F) {
 func TestPassphraseOracle_RedProof(t *testing.T) {
 	content := []byte("pre" + ppSentinel + "post\n")
 	good := func() error {
-		return ppCheck([]byte("pre"+ppSentinel+"post"), nil, "--passphrase-file \"/x\"", "usage", "", 2, content, 0o600)
+		return ppCheck([]byte("pre"+ppSentinel+"post"), nil, "--passphrase-file \"/x\"", 2, content, 0o600)
 	}
 	if err := good(); err != nil {
 		t.Fatalf("oracle rejects a correct resolution: %v", err)
 	}
 	leak := errors.New("reading --passphrase-file: bad passphrase " + ppSentinel)
 	for name, err := range map[string]error{
-		"sentinel in the returned error": ppCheck(nil, leak, "d", "u", "", 2, content, 0o600),
-		"sentinel in Describe":           ppCheck(nil, errors.New("e"), "file "+ppSentinel, "u", "", 2, content, 0o600),
-		"sentinel in usage":              ppCheck([]byte("x"), nil, "d", "u"+ppSentinel, "", 2, content, 0o600),
-		"sentinel in the parse error":    ppCheck(nil, errors.New("e"), "d", "u", "unknown "+ppSentinel, 2, content, 0o600),
-		"bytes with an error":            ppCheck([]byte("half"), errors.New("e"), "d", "u", "", 2, content, 0o600),
-		"group-readable file accepted":   ppCheck([]byte("pre"+ppSentinel+"post"), nil, "d", "u", "", 2, content, 0o640),
-		"empty source accepted":          ppCheck(nil, nil, "d", "u", "", 4, nil, 0),
-		"wrong bytes":                    ppCheck([]byte("pre"+ppSentinel+"post\n"), nil, "d", "u", "", 2, content, 0o600),
-		"readable source refused":        ppCheck(nil, errors.New("e"), "d", "u", "", 1, content, 0),
+		"sentinel in the returned error": ppCheck(nil, leak, "d", 2, content, 0o600),
+		"sentinel in Describe":           ppCheck(nil, errors.New("e"), "file "+ppSentinel, 2, content, 0o600),
+		"bytes with an error":            ppCheck([]byte("half"), errors.New("e"), "d", 2, content, 0o600),
+		"group-readable file accepted":   ppCheck([]byte("pre"+ppSentinel+"post"), nil, "d", 2, content, 0o640),
+		"empty source accepted":          ppCheck(nil, nil, "d", 4, nil, 0),
+		"wrong bytes":                    ppCheck([]byte("pre"+ppSentinel+"post\n"), nil, "d", 2, content, 0o600),
+		"readable source refused":        ppCheck(nil, errors.New("e"), "d", 1, content, 0),
 	} {
 		if err == nil {
 			t.Errorf("oracle missed planted fault: %s", name)

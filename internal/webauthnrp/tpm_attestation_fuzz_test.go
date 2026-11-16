@@ -358,8 +358,12 @@ func checkTPMAccepted(fx *tpmFixture, st tpmStatement, requireRoot bool) error {
 	if err != nil {
 		return err
 	}
-	if !bytes.Contains(st.pubArea, raw[1:33]) || !bytes.Contains(st.pubArea, raw[33:65]) {
-		return errors.New("accepted a pubArea that does not carry the credential public key")
+	x, y, err := readECCUnique(st.pubArea)
+	if err != nil {
+		return fmt.Errorf("accepted a pubArea the oracle cannot read: %w", err)
+	}
+	if !bytes.Equal(x, raw[1:33]) || !bytes.Equal(y, raw[33:65]) {
+		return errors.New("accepted a pubArea whose unique.ecc is not the credential public key")
 	}
 	// 4. TCG AIK certificate rules (WebAuthn 8.3.1).
 	if cert.Version != 3 || len(cert.RawSubject) != 2 {
@@ -428,6 +432,69 @@ func readCertify(b []byte) (extra, name []byte, err error) {
 	return extra, name, nil
 }
 
+// readECCUnique returns unique.ecc.x and .y of an ECC P-256 TPMT_PUBLIC (TPM 2.0
+// Part 2, 12.2.4 and 12.2.3.6), refusing any other type, curve or trailing bytes.
+func readECCUnique(b []byte) (x, y []byte, err error) {
+	p := b
+	u16 := func() (uint16, bool) {
+		if len(p) < 2 {
+			return 0, false
+		}
+		v := binary.BigEndian.Uint16(p)
+		p = p[2:]
+		return v, true
+	}
+	sized := func() ([]byte, bool) {
+		n, ok := u16()
+		if !ok || len(p) < int(n) {
+			return nil, false
+		}
+		v := p[:n]
+		p = p[n:]
+		return v, true
+	}
+	// algOrNull reads an algorithm id and, unless it is TPM_ALG_NULL, the n
+	// further u16 fields its union carries.
+	algOrNull := func(n int) bool {
+		alg, ok := u16()
+		for i := 0; ok && alg != 0x0010 && i < n; i++ {
+			_, ok = u16()
+		}
+		return ok
+	}
+	if typ, ok := u16(); !ok || typ != 0x0023 {
+		return nil, nil, errors.New("not an ECC TPMT_PUBLIC")
+	}
+	if _, ok := u16(); !ok { // nameAlg
+		return nil, nil, errors.New("short nameAlg")
+	}
+	if len(p) < 4 {
+		return nil, nil, errors.New("short objectAttributes")
+	}
+	p = p[4:]
+	if _, ok := sized(); !ok {
+		return nil, nil, errors.New("short authPolicy")
+	}
+	// TPMS_ECC_PARMS: symmetric (keyBits, mode), scheme (hashAlg), curveID, kdf (hashAlg).
+	if !algOrNull(2) || !algOrNull(1) {
+		return nil, nil, errors.New("short symmetric/scheme")
+	}
+	if curve, ok := u16(); !ok || curve != 0x0003 {
+		return nil, nil, errors.New("curve is not NIST P-256")
+	}
+	if !algOrNull(1) {
+		return nil, nil, errors.New("short kdf")
+	}
+	var ok bool
+	if x, ok = sized(); !ok {
+		return nil, nil, errors.New("short unique.x")
+	}
+	if y, ok = sized(); !ok || len(p) != 0 {
+		return nil, nil, errors.New("short unique.y or trailing bytes")
+	}
+	return x, y, nil
+}
+
 // tpmName is nameAlg(2) || H_nameAlg(pubArea) for a TPMT_PUBLIC (TPM 2.0 Part 1, 16).
 func tpmName(pubArea []byte) ([]byte, error) {
 	if len(pubArea) < 4 {
@@ -487,6 +554,43 @@ func TestTPMOracle_RedProof(t *testing.T) {
 		return s
 	}
 	base := fx.seedStatement()
+	// A pubArea that carries the credential key's X and Y only in its authPolicy,
+	// with another key in unique.ecc, certified (Name and AIK signature) for real:
+	// a byte search finds the credential key in it, a decode does not.
+	smuggled, certSmuggled, sigSmuggled := func() ([]byte, []byte, []byte) {
+		raw, err := fx.credKey.PublicKey.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := tpmDetKey(t, "other credential").PublicKey.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		pub, err := tpm2.Unmarshal[tpm2.TPMTPublic](fx.pubArea)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldName, err := tpm2.ObjectName(pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pub.AuthPolicy = tpm2.TPM2BDigest{Buffer: raw[1:65]}
+		pub.Unique = tpm2.NewTPMUPublicID(tpm2.TPMAlgECC, &tpm2.TPMSECCPoint{
+			X: tpm2.TPM2BECCParameter{Buffer: other[1:33]},
+			Y: tpm2.TPM2BECCParameter{Buffer: other[33:65]},
+		})
+		newName, err := tpm2.ObjectName(pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ci := bytes.Replace(fx.certInfo, oldName.Buffer, newName.Buffer, 1)
+		d := sha256.Sum256(ci)
+		sig, err := ecdsa.SignASN1(rand.Reader, tpmDetKey(t, "aik"), d[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tpm2.Marshal(pub), ci, sig
+	}()
 	// extraData is the 32 bytes after the 6-byte header and the 2B-prefixed qualifiedSigner (2+34).
 	extraOff := 6 + 2 + 34 + 2
 	tests := []struct {
@@ -498,6 +602,9 @@ func TestTPMOracle_RedProof(t *testing.T) {
 		{"certInfo not signed by the AIK", func(s *tpmStatement) { s.certInfo = flip(s.certInfo, 10) }, false},
 		{"signature by a different key", func(s *tpmStatement) { s.sig = otherSig(s.certInfo) }, false},
 		{"pubArea of a different key", func(s *tpmStatement) { s.pubArea = flip(s.pubArea, len(s.pubArea)-1) }, false},
+		{"certified pubArea with the credential key outside unique.ecc", func(s *tpmStatement) {
+			s.pubArea, s.certInfo, s.sig = smuggled, certSmuggled, sigSmuggled
+		}, false},
 		{"wrong alg", func(s *tpmStatement) { s.alg = -35 }, false},
 		{"wrong version", func(s *tpmStatement) { s.ver = "1.2" }, false},
 		{"truncated certInfo", func(s *tpmStatement) { s.certInfo = s.certInfo[:len(s.certInfo)-1] }, false},

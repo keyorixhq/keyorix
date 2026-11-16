@@ -14,7 +14,8 @@ package auditverify
 // every file SQLite's URI parser could mistake it for (the name cut at each "?",
 // "#" or "%", and the name with its %HH escapes decoded). Whatever
 // OpenSQLiteReadOnly opens must be NAME (PRAGMA database_list), it must not have
-// created or changed any file, and a successful open must be of NAME's own bytes.
+// created or changed any file, and the connection must be read-only: a CREATE
+// TABLE through it is refused (mode=ro reached SQLite, whatever the name).
 
 import (
 	"database/sql"
@@ -53,6 +54,14 @@ func uriDecoys(name string) []string {
 		b.WriteByte(name[i])
 	}
 	return append(out, b.String())
+}
+
+// acceptsWrite reports whether a CREATE TABLE through db succeeds. The probe
+// runs before the directory snapshot, so a write that did land on disk is also
+// caught there.
+func acceptsWrite(db *sql.DB) bool {
+	_, err := db.Exec(`CREATE TABLE keyorix_fuzz_ro_probe (x INTEGER)`)
+	return err == nil
 }
 
 // openedFile returns the main database file OpenSQLiteReadOnly's connection has.
@@ -99,8 +108,9 @@ func FuzzOpenSQLiteReadOnlyPath(f *testing.F) {
 		}
 		before := dirSnapshot(t, dir)
 		var (
-			opened string
-			err    error
+			opened   string
+			writable bool
+			err      error
 		)
 		fuzzutil.Guard(t.Fatalf, "OpenSQLiteReadOnly(path)", func() {
 			db, e := OpenSQLiteReadOnly(filepath.Join(dir, name))
@@ -109,7 +119,9 @@ func FuzzOpenSQLiteReadOnlyPath(f *testing.F) {
 				return
 			}
 			defer func() { _ = db.Close() }()
-			opened, err = openedFile(db)
+			if opened, err = openedFile(db); err == nil {
+				writable = acceptsWrite(db.sql)
+			}
 		})
 		if after := dirSnapshot(t, dir); !equalSnapshots(before, after) {
 			t.Fatalf("opening %q read-only changed the directory", name)
@@ -123,6 +135,9 @@ func FuzzOpenSQLiteReadOnlyPath(f *testing.F) {
 		}
 		if got, _ := filepath.EvalSymlinks(opened); got != want {
 			t.Fatalf("OpenSQLiteReadOnly(%q) opened %q, not the named file", name, opened)
+		}
+		if writable {
+			t.Fatalf("OpenSQLiteReadOnly(%q) returned a connection that accepts writes", name)
 		}
 	})
 }
@@ -160,10 +175,14 @@ func TestOpenSQLiteReadOnlyPathOracle_RedProof(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, err := openedFile(unescaped)
-		_ = unescaped.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
+		// The dropped mode=ro is visible to the write probe too.
+		if !acceptsWrite(unescaped.sql) {
+			t.Errorf("planted unescaped DSN for %q refused a write; the read-only probe cannot see this fault", name)
+		}
+		_ = unescaped.Close()
 		want, _ := filepath.EvalSymlinks(filepath.Join(dir, name))
 		if g, _ := filepath.EvalSymlinks(got); g == want {
 			t.Errorf("planted unescaped DSN for %q still opened the named file; the oracle cannot see this fault", name)
@@ -174,10 +193,13 @@ func TestOpenSQLiteReadOnlyPathOracle_RedProof(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, err = openedFile(db)
-		_ = db.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
+		if acceptsWrite(db.sql) {
+			t.Errorf("OpenSQLiteReadOnly(%q) accepted a write", name)
+		}
+		_ = db.Close()
 		if g, _ := filepath.EvalSymlinks(got); g != want {
 			t.Errorf("OpenSQLiteReadOnly(%q) opened %q", name, got)
 		}

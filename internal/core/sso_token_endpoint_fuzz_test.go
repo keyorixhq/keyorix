@@ -21,8 +21,9 @@ package core
 // external id it was asked about and then fails, so no deeper mock is needed and
 // the login is never completed.
 //
-// Oracle. The harness holds the only signing key and mints exactly one valid
-// id_token (subject okta|55, the stored nonce, exp in the future). Reaching the
+// Oracle. The harness holds the only signing key and has exactly one valid
+// id_token, ssoFuzzValidToken (subject okta|55, the stored nonce, exp in the
+// future of the harness clock). Reaching the
 // subject lookup therefore implies, independently of anything oauth2 or
 // verifyIDToken decided:
 //   - the callback named the provider, the state row belongs to it, and the row
@@ -30,20 +31,29 @@ package core
 //   - the callback carried exactly the state the harness issued;
 //   - the IdP answered 2xx (an error status with a valid token in its body is not
 //     a login);
-//   - the valid token's bytes are in the response body (no other string verifies);
+//   - the response body carries the valid token, raw or in the form/JSON
+//     encoding oauth2 decodes (no other string verifies);
 //   - the subject looked up is the signed token's own, "sso:okta:okta|55".
+//
+// Replay. The key is derived from a fixed label, the core's clock is fixed at
+// ssoFuzzNow and the valid token is a literal, so a saved crasher (whose body
+// carries the token bytes the finding process saw) verifies the same way in any
+// later process: TestSSOTokenEndpointSeed_Replayable pins that.
 
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +76,111 @@ const (
 )
 
 var errSSOFuzzStop = errors.New("harness: identity lookup reached")
+
+// ssoFuzzNow is the clock of every core the harness builds: token expiry and the
+// state row's expiry are judged against it, never against the wall clock.
+var ssoFuzzNow = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// ssoFuzzValidToken is ssoFuzzMint(nil) output under ssoFuzzKey, pasted in: the
+// one id_token that verifies (ES256, exp = ssoFuzzNow + 1h). ECDSA signatures
+// are randomised, so a freshly minted token would differ in every process; a
+// literal keeps the oracle's notion of "the valid token" the same bytes a saved
+// crasher carries. Regenerate it with ssoFuzzMint if the claims change.
+const ssoFuzzValidToken = "eyJhbGciOiJFUzI1NiIsImtpZCI6ImtpZC0xIiwidHlwIjoiSldUIn0." +
+	"eyJhdWQiOiJjbGllbnQtMSIsImVtYWlsIjoiYWRhQHguaW8iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiZXhwIjoxNzY3MjI5MjAwLCJpc3MiOiJodHRwczovL2lkcC50ZXN0Iiwibm9uY2UiOiJub25jZS1pc3N1ZWQiLCJzdWIiOiJva3RhfDU1In0." +
+	"QE9XnCHztP1MuD6_B0Oqg1TXykevLpenopE1rD6lOLzQAHb7maVmoGLHDQPWpiaid-JqD672l8w25X1EjYGWAg"
+
+// ssoFuzzKey is the harness's only signing key, derived from a fixed label so
+// every process holds the same one.
+func ssoFuzzKey(tb testing.TB) *ecdsa.PrivateKey {
+	tb.Helper()
+	d := sha256.Sum256([]byte("keyorix sso fuzz key"))
+	k, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), d[:])
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return k
+}
+
+// ssoFuzzMint signs the harness claims (mutated by mut) with method and signKey.
+func ssoFuzzMint(tb testing.TB, mut func(jwt.MapClaims), method jwt.SigningMethod, signKey any) string {
+	tb.Helper()
+	claims := jwt.MapClaims{
+		"iss": ssoFuzzIssuer, "aud": ssoFuzzClientID, "sub": ssoFuzzSubject, "email": "ada@x.io",
+		"email_verified": true, "nonce": ssoFuzzNonce, "exp": ssoFuzzNow.Add(time.Hour).Unix(),
+	}
+	if mut != nil {
+		mut(claims)
+	}
+	tok := jwt.NewWithClaims(method, claims)
+	tok.Header["kid"] = "kid-1"
+	s, err := tok.SignedString(signKey)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return s
+}
+
+// newSSOFuzzCore builds a core whose only provider exchanges codes at tokenURL,
+// whose storage resolves only the issued state (once) to a row of rowProvider
+// expiring rowExpiresIn seconds after ssoFuzzNow, and whose subject lookup
+// records the external id in *reached and then fails.
+func newSSOFuzzCore(key *ecdsa.PrivateKey, tokenURL, rowProvider string, rowExpiresIn int64, reached *string) *KeyorixCore {
+	st := new(MockStorage)
+	row := &models.SSOLoginState{Provider: rowProvider, Nonce: ssoFuzzNonce, ReturnTo: "/dash",
+		ExpiresAt: ssoFuzzNow.Add(time.Duration(rowExpiresIn) * time.Second)}
+	// Single use, exact match: only the issued state resolves, and only once.
+	st.On("ConsumeSSOLoginState", mock.Anything, ssoFuzzState).Return(row, nil).Once()
+	st.On("ConsumeSSOLoginState", mock.Anything, mock.Anything).Return((*models.SSOLoginState)(nil), errors.New("not found"))
+	st.On("GetUserByExternalID", mock.Anything, mock.Anything).Run(func(a mock.Arguments) {
+		*reached = a.String(1)
+	}).Return((*models.User)(nil), errSSOFuzzStop)
+	p := &SSOProvider{
+		Name: "okta", Issuer: ssoFuzzIssuer, ClientID: ssoFuzzClientID,
+		OAuth: &oauth2.Config{
+			ClientID: ssoFuzzClientID, ClientSecret: "s3cret",
+			Endpoint:    oauth2.Endpoint{AuthURL: ssoFuzzIssuer + "/authorize", TokenURL: tokenURL},
+			RedirectURL: "https://keyorix.test/auth/sso/okta/callback", Scopes: []string{"openid", "email"},
+		},
+	}
+	return &KeyorixCore{
+		storage: st, now: func() time.Time { return ssoFuzzNow },
+		ssoJWKS:      staticResolver{kid: "kid-1", key: &key.PublicKey},
+		ssoProviders: map[string]*SSOProvider{"okta": p},
+	}
+}
+
+// ssoFuzzProbe runs one issued-state callback against an IdP answering 200 with
+// ctype and body, and returns the external id the subject lookup was asked for.
+func ssoFuzzProbe(key *ecdsa.PrivateKey, idp *ssoFuzzIdP, tokenURL, ctype string, body []byte) string {
+	idp.set(200, ctype, body)
+	var reached string
+	_, _, _, _ = newSSOFuzzCore(key, tokenURL, "okta", 300, &reached).CompleteSSO(context.Background(), "okta", "auth-code", ssoFuzzState, "ua", "203.0.113.9")
+	return reached
+}
+
+func ssoFuzzJSON(id string) []byte {
+	return fmt.Appendf(nil, `{"access_token":"at","token_type":"Bearer","expires_in":3600,"id_token":%q}`, id)
+}
+
+func ssoFuzzForm(id string) []byte {
+	return []byte("access_token=at&token_type=Bearer&expires_in=3600&id_token=" + url.QueryEscape(id))
+}
+
+// ssoBodyCarries reports whether body carries token: as raw bytes, as a
+// form-encoded id_token value (%2E for "."), or as a top-level JSON id_token
+// string (\u002e for "."), the encodings oauth2 decodes a token response from.
+func ssoBodyCarries(body []byte, token string) bool {
+	if bytes.Contains(body, []byte(token)) {
+		return true
+	}
+	if q, _ := url.ParseQuery(string(body)); slices.Contains(q["id_token"], token) {
+		return true
+	}
+	var m map[string]json.RawMessage
+	var s string
+	return json.Unmarshal(body, &m) == nil && json.Unmarshal(m["id_token"], &s) == nil && s == token
+}
 
 type ssoFuzzIdP struct {
 	mu     sync.Mutex
@@ -122,7 +237,7 @@ func ssoReachedSubject(reached, validToken string, in ssoFuzzInput) string {
 		return fmt.Sprintf("accepted a callback with state %q, the issued one is %q", in.state, ssoFuzzState)
 	case in.status < 200 || in.status > 299:
 		return fmt.Sprintf("accepted a token response with HTTP status %d", in.status)
-	case !bytes.Contains(in.body, []byte(validToken)):
+	case !ssoBodyCarries(in.body, validToken):
 		return "accepted an id_token that is not the one the harness signed"
 	case reached != "sso:okta:"+ssoFuzzSubject:
 		return fmt.Sprintf("looked up subject %q, the signed token says %q", reached, "sso:okta:"+ssoFuzzSubject)
@@ -132,36 +247,17 @@ func ssoReachedSubject(reached, validToken string, in ssoFuzzInput) string {
 
 type ssoFuzzInput struct {
 	callbackProvider, rowProvider, state string
-	rowExpiresIn                         int64 // seconds from now, as stored
+	rowExpiresIn                         int64 // seconds after ssoFuzzNow, as stored
 	status                               int
 	body                                 []byte
 }
 
 func FuzzCompleteSSOTokenEndpoint(f *testing.F) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		f.Fatal(err)
-	}
-	mint := func(mut func(jwt.MapClaims), method jwt.SigningMethod, signKey any) string {
-		claims := jwt.MapClaims{
-			"iss": ssoFuzzIssuer, "aud": ssoFuzzClientID, "sub": ssoFuzzSubject, "email": "ada@x.io",
-			"email_verified": true, "nonce": ssoFuzzNonce, "exp": time.Now().Add(time.Hour).Unix(),
-		}
-		if mut != nil {
-			mut(claims)
-		}
-		tok := jwt.NewWithClaims(method, claims)
-		tok.Header["kid"] = "kid-1"
-		s, err := tok.SignedString(signKey)
-		if err != nil {
-			f.Fatal(err)
-		}
-		return s
-	}
-	valid := mint(nil, jwt.SigningMethodRS256, key)
-	expired := mint(func(c jwt.MapClaims) { c["exp"] = time.Now().Add(-time.Hour).Unix() }, jwt.SigningMethodRS256, key)
-	wrongNonce := mint(func(c jwt.MapClaims) { c["nonce"] = "other" }, jwt.SigningMethodRS256, key)
-	algNone := mint(nil, jwt.SigningMethodNone, jwt.UnsafeAllowNoneSignatureType)
+	key := ssoFuzzKey(f)
+	valid := ssoFuzzValidToken
+	expired := ssoFuzzMint(f, func(c jwt.MapClaims) { c["exp"] = ssoFuzzNow.Add(-time.Hour).Unix() }, jwt.SigningMethodES256, key)
+	wrongNonce := ssoFuzzMint(f, func(c jwt.MapClaims) { c["nonce"] = "other" }, jwt.SigningMethodES256, key)
+	algNone := ssoFuzzMint(f, nil, jwt.SigningMethodNone, jwt.UnsafeAllowNoneSignatureType)
 	b64 := base64.RawURLEncoding.EncodeToString
 	hs256 := b64([]byte(`{"alg":"HS256","kid":"kid-1","typ":"JWT"}`)) + "." + strings.SplitN(valid, ".", 3)[1] + ".c2ln"
 
@@ -169,12 +265,7 @@ func FuzzCompleteSSOTokenEndpoint(f *testing.F) {
 	srv := httptest.NewServer(idp)
 	f.Cleanup(srv.Close)
 
-	js := func(id string) []byte {
-		return fmt.Appendf(nil, `{"access_token":"at","token_type":"Bearer","expires_in":3600,"id_token":%q}`, id)
-	}
-	form := func(id string) []byte {
-		return []byte("access_token=at&token_type=Bearer&expires_in=3600&id_token=" + url.QueryEscape(id))
-	}
+	js, form := ssoFuzzJSON, ssoFuzzForm
 	type seed struct {
 		prov, rowProv, state string
 		exp                  int64
@@ -207,39 +298,9 @@ func FuzzCompleteSSOTokenEndpoint(f *testing.F) {
 		f.Add(s.prov, s.rowProv, s.state, s.exp, s.status, s.ctype, s.body)
 	}
 
-	newCore := func(rowProvider string, rowExpiresIn int64, reached *string) *KeyorixCore {
-		st := new(MockStorage)
-		row := &models.SSOLoginState{Provider: rowProvider, Nonce: ssoFuzzNonce, ReturnTo: "/dash",
-			ExpiresAt: time.Now().Add(time.Duration(rowExpiresIn) * time.Second)}
-		// Single use, exact match: only the issued state resolves, and only once.
-		st.On("ConsumeSSOLoginState", mock.Anything, ssoFuzzState).Return(row, nil).Once()
-		st.On("ConsumeSSOLoginState", mock.Anything, mock.Anything).Return((*models.SSOLoginState)(nil), errors.New("not found"))
-		st.On("GetUserByExternalID", mock.Anything, mock.Anything).Run(func(a mock.Arguments) {
-			*reached = a.String(1)
-		}).Return((*models.User)(nil), errSSOFuzzStop)
-		p := &SSOProvider{
-			Name: "okta", Issuer: ssoFuzzIssuer, ClientID: ssoFuzzClientID,
-			OAuth: &oauth2.Config{
-				ClientID: ssoFuzzClientID, ClientSecret: "s3cret",
-				Endpoint:    oauth2.Endpoint{AuthURL: ssoFuzzIssuer + "/authorize", TokenURL: srv.URL},
-				RedirectURL: "https://keyorix.test/auth/sso/okta/callback", Scopes: []string{"openid", "email"},
-			},
-		}
-		return &KeyorixCore{
-			storage: st, now: time.Now,
-			ssoJWKS:      staticResolver{kid: "kid-1", key: &key.PublicKey},
-			ssoProviders: map[string]*SSOProvider{"okta": p},
-		}
-	}
-
 	// Liveness: the seeds start where they claim. The valid token, JSON or form
 	// encoded, reaches the subject lookup; every flawed one stops before it.
-	probe := func(ctype string, body []byte) string {
-		idp.set(200, ctype, body)
-		var reached string
-		_, _, _, _ = newCore("okta", 300, &reached).CompleteSSO(context.Background(), "okta", "auth-code", ssoFuzzState, "ua", "203.0.113.9")
-		return reached
-	}
+	probe := func(ctype string, body []byte) string { return ssoFuzzProbe(key, idp, srv.URL, ctype, body) }
 	for name, c := range map[string]struct {
 		ctype string
 		body  []byte
@@ -267,7 +328,7 @@ func FuzzCompleteSSOTokenEndpoint(f *testing.F) {
 		in := ssoFuzzInput{callbackProvider, rowProvider, state, rowExpiresIn, 200 + int(status)%400, body}
 		idp.set(in.status, ssoFuzzCtype(ctype), body)
 		var reached string
-		c := newCore(rowProvider, rowExpiresIn, &reached)
+		c := newSSOFuzzCore(key, srv.URL, rowProvider, rowExpiresIn, &reached)
 		var session any
 		fuzzutil.Guard(t.Fatalf, "CompleteSSO", func() {
 			s, _, _, _ := c.CompleteSSO(context.Background(), callbackProvider, "auth-code", state, "ua", "203.0.113.9")
@@ -312,6 +373,40 @@ func TestSSOTokenEndpointOracle_RedProof(t *testing.T) {
 		reached := mut(&in)
 		if ssoReachedSubject(reached, valid, in) == "" {
 			t.Errorf("oracle missed planted acceptance: %s", name)
+		}
+	}
+	// The valid token in an encoding oauth2 decodes is still the valid token: an
+	// escaped "." must not read as a foreign id_token.
+	for name, body := range map[string][]byte{
+		"form, %2E escapes":     []byte("id_token=" + strings.ReplaceAll(valid, ".", "%2E")),
+		"json, \\u002e escapes": []byte(`{"id_token":"` + strings.ReplaceAll(valid, ".", `\u002e`) + `"}`),
+	} {
+		in := ok
+		in.body = body
+		if msg := ssoReachedSubject(subj, valid, in); msg != "" {
+			t.Errorf("oracle rejects the valid token sent as %s: %s", name, msg)
+		}
+	}
+}
+
+// TestSSOTokenEndpointSeed_Replayable: the valid token is a literal and still
+// reaches the subject lookup, so the key and the clock are the same in every
+// process and a saved crasher carrying it replays the path that found it. With a
+// per-process key (or a wall-clock exp) this fails.
+func TestSSOTokenEndpointSeed_Replayable(t *testing.T) {
+	idp := &ssoFuzzIdP{}
+	srv := httptest.NewServer(idp)
+	t.Cleanup(srv.Close)
+	key := ssoFuzzKey(t)
+	for name, c := range map[string]struct {
+		ctype string
+		body  []byte
+	}{
+		"json": {"application/json", ssoFuzzJSON(ssoFuzzValidToken)},
+		"form": {"application/x-www-form-urlencoded", ssoFuzzForm(ssoFuzzValidToken)},
+	} {
+		if got, want := ssoFuzzProbe(key, idp, srv.URL, c.ctype, c.body), "sso:okta:"+ssoFuzzSubject; got != want {
+			t.Errorf("%s: the literal valid token reached subject lookup %q, want %q", name, got, want)
 		}
 	}
 }
