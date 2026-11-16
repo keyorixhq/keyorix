@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/cli/internal/regularfile"
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // FileStore is the plaintext-file credential store (ADR-108 PR 0 decision, see this
