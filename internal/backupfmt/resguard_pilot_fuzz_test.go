@@ -45,6 +45,26 @@ func realArchiveBytes(tb testing.TB) []byte {
 	return buf.Bytes()
 }
 
+// largeBenignArchiveBytes returns a LEGITIMATELY-large archive: ~1 MiB of
+// low-compressibility content (input ≈ output, ratio ~1 — a real large backup,
+// NOT a bomb). It is in the calibration corpus so the AbsMax ceiling reflects the
+// real maximum disk a legitimate archive can produce, not just the tiny real
+// archive. Without such a sample AbsMax is calibrated too small and the
+// decompression FP persists (INV-RES-absmax-for-decompression, guard rail 1).
+// The content is deterministic pseudo-random bytes so gzip barely shrinks it.
+func largeBenignArchiveBytes(tb testing.TB) []byte {
+	tb.Helper()
+	payload := make([]byte, 1<<20)
+	// A cheap deterministic LCG — incompressible enough that the archive stays
+	// ~1 MiB, so this is a genuine ~1:1 large archive, not a hidden amplifier.
+	var x uint32 = 0x9e3779b9
+	for i := range payload {
+		x = x*1664525 + 1013904223
+		payload[i] = byte(x >> 24)
+	}
+	return craftArchive(tb, "tables/large.ndjson", payload)
+}
+
 func measureExtract(tb testing.TB, p *resguard.Probe, data []byte) resguard.Cost {
 	tb.Helper()
 	dir := tb.TempDir()
@@ -54,18 +74,33 @@ func measureExtract(tb testing.TB, p *resguard.Probe, data []byte) resguard.Cost
 	})
 }
 
-// calibrateBackupfmt derives a budget from the benign corpus. The corpus is
-// small (the real archive is the only reliably-accepted benign shape available
-// in-package); the factor absorbs that, and the report names the limitation.
+// calibrateBackupfmt derives a budget from the benign corpus and switches the
+// byte-volume disk meters to ModeAbsolute (AbsMax), the correct model for a
+// decompression target (INV-RES-absmax-for-decompression). The corpus is the
+// small real archive repeated (to average GC/alloc noise into p99) PLUS one
+// legitimately-large benign archive, so AbsMax reflects the real maximum disk a
+// benign archive produces — not just the tiny real one, which is what made RSG1's
+// per-byte slope false-positive at 144×. alloc/live-heap stay on the per-byte
+// slope: that IS the right model for the parser work, which does not scale with
+// the decompressed output volume.
 func calibrateBackupfmt(tb testing.TB) resguard.Budget {
 	tb.Helper()
 	real := realArchiveBytes(tb)
 	var costs []resguard.Cost
-	for range 8 { // repeat the same benign input to average GC/alloc noise into p99
+	for range 8 {
 		p := resguard.New(tb, resguard.Options{SampleEvery: 1})
 		costs = append(costs, measureExtract(tb, p, real))
 	}
-	return resguard.Calibrate("backupfmt_extract", costs, resguard.DefaultFactor)
+	// One legitimately-large benign archive lifts the absolute disk ceiling.
+	pl := resguard.New(tb, resguard.Options{SampleEvery: 1})
+	costs = append(costs, measureExtract(tb, pl, largeBenignArchiveBytes(tb)))
+
+	b := resguard.Calibrate("backupfmt_extract", costs, resguard.DefaultFactor)
+	// Disk byte-volume meters are decompression-shaped: judge them by an absolute,
+	// input-size-independent ceiling so a padded archive cannot buy more disk
+	// budget. disk_files/dirs keep the slope (bounded by archive structure).
+	b.UseAbsolute("disk_bytes", "disk_blocks", "write_bytes")
+	return b
 }
 
 // TestResguardBackupfmtCalibrate regenerates the committed budget when
@@ -122,6 +157,67 @@ func TestResguardBackupfmtDiskRedGreen(t *testing.T) {
 		t.Fatalf("disk amplification (%d bytes on disk for a %d-byte input) did not trip the budget", red.DiskBytes, len(bomb))
 	}
 	t.Logf("RED tripped as expected (input %d bytes -> %d bytes on disk): %s", len(bomb), red.DiskBytes, redMsg)
+}
+
+// TestResguardBackupfmtAbsMaxRedGreen is the committed proof for RSG2's AbsMax
+// conversion: the 144×-shape false positive RSG1 documented DISAPPEARS under the
+// RSG2 absolute budget while the 8 MiB disk bomb still fires. The RSG2 budget
+// differs from RSG1's in TWO ways, both part of "convert to AbsMax": the corpus
+// gains a representative large benign archive (so any absolute ceiling is sized
+// right — the dominant reason the FP goes away) AND the disk meters switch to
+// ModeAbsolute (the unique added value of which — resistance to input-padding
+// evasion that still defeats a slope — is isolated and proven in
+// resguard.TestBudgetAbsMaxForDecompression Part C, not re-proven here).
+// `calibrateBackupfmtSlopeOnly` is RSG1's exact small-corpus slope budget, used
+// only to reproduce the original FP as the precondition.
+func TestResguardBackupfmtAbsMaxRedGreen(t *testing.T) {
+	abs := calibrateBackupfmt(t) // disk meters in ModeAbsolute
+
+	// The same calibration corpus, but WITHOUT UseAbsolute — RSG1's per-byte slope.
+	slope := calibrateBackupfmtSlopeOnly(t)
+
+	// The 144× shape: a tiny, highly-compressible archive expanding to ~64 KiB on
+	// disk — harmless (far under the 16 MiB product cap) but high-ratio.
+	super := craftArchive(t, "tables/super.ndjson", bytes.Repeat([]byte{'a'}, 64<<10))
+	ps := resguard.New(t, resguard.Options{SampleEvery: 1})
+	superCost := measureExtract(t, ps, super)
+	if superCost.DiskBytes < 32<<10 {
+		t.Fatalf("expected the 144× archive to write tens of KiB, got %d (input %d)", superCost.DiskBytes, len(super))
+	}
+
+	// RED under the SLOPE (reproduces RSG1's false positive): the harmless 64 KiB
+	// archive trips the per-byte disk budget calibrated where input≈output.
+	if !slope.Check(func(string, ...any) {}, superCost) {
+		t.Fatalf("precondition: the 144× archive must trip the SLOPE budget (that is the FP being fixed) — input %d disk %d", len(super), superCost.DiskBytes)
+	}
+	// GREEN under ABSOLUTE: the same input passes — the FP is gone.
+	if abs.Check(func(string, ...any) {}, superCost) {
+		t.Fatalf("ABSMAX: the 144×-shape archive (%d bytes on disk) must NOT trip the absolute ceiling; FP should be gone", superCost.DiskBytes)
+	}
+
+	// RED still fires for a genuine bomb under ABSOLUTE: 8 MiB on disk > AbsMax.
+	bomb := craftArchive(t, "tables/bomb.ndjson", bytes.Repeat([]byte{'a'}, 8<<20))
+	pb := resguard.New(t, resguard.Options{SampleEvery: 1})
+	bombCost := measureExtract(t, pb, bomb)
+	var bombMsg string
+	if !abs.Check(func(f string, a ...any) { bombMsg = fmt.Sprintf(f, a...) }, bombCost) {
+		t.Fatalf("ABSMAX: the 8 MiB bomb (input %d) must still trip the absolute ceiling", len(bomb))
+	}
+	t.Logf("super-ratio (input %d -> %d disk) passes abs; bomb (input %d -> %d disk) fires abs: %s",
+		len(super), superCost.DiskBytes, len(bomb), bombCost.DiskBytes, bombMsg)
+}
+
+// calibrateBackupfmtSlopeOnly is calibrateBackupfmt without UseAbsolute — RSG1's
+// per-byte model, used only by the red/green test to show the FP under the slope.
+func calibrateBackupfmtSlopeOnly(tb testing.TB) resguard.Budget {
+	tb.Helper()
+	real := realArchiveBytes(tb)
+	var costs []resguard.Cost
+	for range 8 {
+		p := resguard.New(tb, resguard.Options{SampleEvery: 1})
+		costs = append(costs, measureExtract(tb, p, real))
+	}
+	return resguard.Calibrate("backupfmt_extract", costs, resguard.DefaultFactor)
 }
 
 // FuzzResguardExtractArchive is the pilot fuzz target: it meters every input and

@@ -103,6 +103,97 @@ func TestBudgetCalibrateAndCheck(t *testing.T) {
 	}
 }
 
+// TestBudgetAbsMaxForDecompression is the red/green proof for the AbsMax ceiling
+// and ModeAbsolute (RSG1 Pilot #1's leftover #1), reproducing the
+// decompression-ratio story in miniature with three honest parts.
+//
+// Part A — the false positive. With a corpus of only small benign archives
+// (input≈output, as RSG1's pilot had), the per-byte SLOPE trips the 144×-shape
+// input (457 bytes in, 65 KiB on disk) although its output is harmless — because
+// the slope was calibrated where input≈output, a high compression ratio reads as
+// super-linear growth. This is the FP the leftover is about.
+//
+// Part B — AbsMax needs a representative corpus. On that same small-only corpus,
+// ModeAbsolute does NOT fix the FP (AbsMax = p99(2.3 KiB)·4 ≈ 9 KiB, still below
+// 65 KiB). AbsMax is only as good as its calibration corpus — stated so the
+// mechanism is never oversold. Enriching the corpus with one legitimately-large
+// benign archive (1 MiB in, 1 MiB on disk — ratio ~1, not a bomb) lifts AbsMax to
+// ~4 MiB, and NOW the 144× input passes while an 8 MiB bomb still fires.
+//
+// Part C — why absolute, not just a bigger slope. The slope's PerByte·N term is
+// an attacker lever for a decompression target: compressed input size is cheap to
+// inflate, so a padded bomb (3 MiB of junk in, 8 MiB on disk) buys a ~40 MiB
+// slope ceiling and EVADES it — while the flat 4 MiB absolute ceiling still fires.
+func TestBudgetAbsMaxForDecompression(t *testing.T) {
+	small := func() []Cost {
+		var s []Cost
+		for range 8 { // input 800 B -> 2300 B on disk (ratio ~2.9), like the real archive
+			s = append(s, Cost{InputLen: 800, Sampled: true, DiskBytes: 2300})
+		}
+		return s
+	}
+	superRatio := Cost{InputLen: 457, Sampled: true, DiskBytes: 65000}   // the 144× shape
+	bomb := Cost{InputLen: 16 << 10, Sampled: true, DiskBytes: 8 << 20}  // unpadded bomb
+	padded := Cost{InputLen: 3 << 20, Sampled: true, DiskBytes: 8 << 20} // bomb padded to evade the slope
+
+	// Part A: slope on the small-only corpus FALSE-POSITIVES on the 144× shape.
+	bSmall := Calibrate("decomp", small(), DefaultFactor)
+	disk := bSmall.Meters["disk_bytes"]
+	if fired, _ := disk.exceeded(float64(superRatio.DiskBytes), superRatio.InputLen, bSmall.Factor); !fired {
+		t.Fatalf("Part A: slope on the small-only corpus should (wrongly) trip the 144×-shape input — the FP the leftover is about")
+	}
+
+	// Part B(i): absolute mode on the SAME poor corpus does NOT rescue it.
+	bSmall.UseAbsolute("disk_bytes")
+	if !bSmall.Check(func(string, ...any) {}, superRatio) {
+		t.Fatalf("Part B: on a poor corpus AbsMax is calibrated too small; the FP must persist (AbsMax is only as good as its corpus)")
+	}
+
+	// Part B(ii): enrich the corpus with one legitimately-large benign archive.
+	enriched := append(small(), Cost{InputLen: 1 << 20, Sampled: true, DiskBytes: 1 << 20})
+	b := Calibrate("decomp", enriched, DefaultFactor)
+	if am := b.Meters["disk_bytes"].AbsMax; am < 4<<20-1 || am > 4<<20+1 {
+		t.Fatalf("AbsMax=%v want ~4 MiB (p99 1 MiB · factor 4)", am)
+	}
+	b.UseAbsolute("disk_bytes", "disk_blocks", "write_bytes")
+
+	if b.Check(func(string, ...any) {}, superRatio) {
+		t.Fatalf("Part B: enriched + absolute — the 144× input (65 KiB) must NOT trip the 4 MiB ceiling; FP should be gone")
+	}
+	var bombMsg string
+	if !b.Check(func(f string, a ...any) { bombMsg = sprintf(f, a...) }, bomb) {
+		t.Fatalf("Part B: the 8 MiB bomb must still trip the absolute ceiling")
+	}
+	if !contains(bombMsg, "disk_bytes") || !contains(bombMsg, "abs") {
+		t.Fatalf("bomb message should name disk_bytes and the absolute ceiling: %q", bombMsg)
+	}
+
+	// Part C: a padded bomb (3 MiB of junk in, 8 MiB on disk) buys a ~40 MiB
+	// slope ceiling and EVADES the slope — but the flat 4 MiB absolute ceiling
+	// still fires it. This proves absolute's input-independence is load-bearing.
+	slopeMB := b.Meters["disk_bytes"]
+	slopeMB.Mode = ModeSlope // same Floor/PerByte, judged as a slope
+	if fired, allowed := slopeMB.exceeded(float64(padded.DiskBytes), padded.InputLen, b.Factor); fired {
+		t.Fatalf("Part C: the padded bomb should EVADE the slope (allowed=%v) — that is the point of the demo", allowed)
+	}
+	if !b.Check(func(string, ...any) {}, padded) { // b is still ModeAbsolute
+		t.Fatalf("Part C: ModeAbsolute must still fire the padded bomb that evaded the slope")
+	}
+	t.Logf("Part C confirmed: padded bomb (3 MiB in, 8 MiB disk) evades the slope but trips the 4 MiB absolute ceiling")
+}
+
+// TestBudgetAbsMaxFallsBackToSlopeWhenUncalibrated guards the legacy path: a
+// budget with Mode=absolute but AbsMax=0 (an old JSON that predates AbsMax)
+// must not silently disarm — it falls back to the per-byte slope.
+func TestBudgetAbsMaxFallsBackToSlopeWhenUncalibrated(t *testing.T) {
+	mb := MeterBudget{Floor: 1000, PerByte: 1, AbsMax: 0, Mode: ModeAbsolute}
+	// 10 000 for a 100-byte input: slope allows 4·(1000+1·100)=4400, so this fires.
+	fired, allowed := mb.exceeded(10000, 100, 4)
+	if !fired || allowed != 4400 {
+		t.Fatalf("uncalibrated absolute meter must fall back to slope (allowed=%v fired=%v)", allowed, fired)
+	}
+}
+
 // TestBudgetSkipsUnsampledSampleOnlyMeters guards that a cheap (unsampled)
 // input never fails on a sampled-only meter whose fields are zero.
 func TestBudgetSkipsUnsampledSampleOnlyMeters(t *testing.T) {
