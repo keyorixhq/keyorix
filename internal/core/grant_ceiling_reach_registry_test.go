@@ -17,8 +17,17 @@ package core
 // a typed ErrPermissionDenied refusal), so a new sibling ceiling is a root without
 // anyone listing it. The walk is deriveCoreMethodsReaching
 // (audit_unavailable_reach_registry_test.go), with the same call forms followed,
-// the same blind spots, and the same harmless over-approximation by name. A
-// ceiling refused with other wording is not a root.
+// the same blind spots, and the same harmless over-approximation by name.
+//
+// Two ceilings refuse with other wording and are rooted explicitly, or the phrase
+// walk would miss every method reaching only them (it once dropped
+// IssueMachineToken, RestoreProject and RestoreEnvironment from both transport
+// guards): any body that mentions ErrMachinePrivilegeCeilingDenied (the machine
+// privilege ceiling, "requires administrative authority" / "requires roles.assign")
+// and grantCeilingRoots below (the reinstate-on-restore ceiling, "only an
+// administrator can restore ..."). A new ceiling with its own wording must be added
+// to one of these; the population tripwire in
+// TestGrantCeilingReachingMethodsFileIsCurrent names one entry point per root.
 
 import (
 	"go/ast"
@@ -34,11 +43,22 @@ import (
 
 const grantCeilingReachFile = "testdata/grant_ceiling_reaching_methods.txt"
 
+// grantCeilingRoots are the ceiling checks whose refusal is typed
+// ErrPermissionDenied but does not say grantCeilingPhrase.
+var grantCeilingRoots = []string{
+	"requireGlobalAdminToReinstateAdminRolesOn",
+}
+
 func deriveGrantCeilingReachingMethods(t *testing.T, paths []string) []string {
 	t.Helper()
-	return deriveCoreMethodsReaching(t, paths, nil, func(n ast.Node) bool {
-		lit, ok := n.(*ast.BasicLit)
-		return ok && lit.Kind == token.STRING && strings.Contains(lit.Value, grantCeilingPhrase)
+	return deriveCoreMethodsReaching(t, paths, grantCeilingRoots, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.BasicLit:
+			return x.Kind == token.STRING && strings.Contains(x.Value, grantCeilingPhrase)
+		case *ast.Ident:
+			return x.Name == "ErrMachinePrivilegeCeilingDenied"
+		}
+		return false
 	})
 }
 
@@ -54,7 +74,10 @@ func TestGrantCeilingReachingMethodsFileIsCurrent(t *testing.T) {
 	got := deriveGrantCeilingReachingMethods(t, paths)
 	// Population tripwire: the grant entry points must be found, or the derivation
 	// is broken (an empty set would pass the transport guard).
-	for _, must := range []string{"AssignUserRole", "AssignUserRoleWithExpiry", "AssignRoleToGroup", "AssignMachineRole", "AddProjectMember"} {
+	// IssueMachineToken (machine privilege ceiling) and RestoreProject /
+	// RestoreEnvironment (reinstate ceiling) prove the non-phrase roots still fire.
+	for _, must := range []string{"AssignUserRole", "AssignUserRoleWithExpiry", "AssignRoleToGroup", "AssignMachineRole", "AddProjectMember",
+		"IssueMachineToken", "RestoreProject", "RestoreEnvironment"} {
 		if !slices.Contains(got, must) {
 			t.Fatalf("derivation lost %s (got %d methods): the call-graph scan is broken", must, len(got))
 		}
