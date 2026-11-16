@@ -169,9 +169,14 @@ func checkStructDecode[T any](t *testing.T, data []byte, label, anyClass string,
 	a3, a4 := e3 == nil, e4 == nil
 
 	if a3 != a4 {
+		// Typed-specific tolerances first (a split the any-path cannot explain
+		// because it lives purely in field-type construction).
+		if yamlV4StructExpectedDiff[classifyTypedSplit(e3, e4)] {
+			return
+		}
 		if fail, reason := structSplitVerdict(anyClass, anyTol); fail {
-			t.Fatalf("struct accept/reject split [%s]: %s\n  input=%q\n  v3 accept=%v err=%v\n  v4 accept=%v err=%v\n  any-path class=%q tolerated=%v",
-				label, reason, data, a3, e3, a4, e4, anyClass, anyTol)
+			t.Fatalf("struct accept/reject split [%s]: %s\n  input=%q\n  v3 accept=%v err=%v\n  v4 accept=%v err=%v\n  any-path class=%q tolerated=%v  typed-class=%q",
+				label, reason, data, a3, e3, a4, e4, anyClass, anyTol, classifyTypedSplit(e3, e4))
 		}
 		return
 	}
@@ -211,14 +216,10 @@ func checkStrictDecode(t *testing.T, data []byte, anyClass string, anyTol bool) 
 	if a3 == a4 {
 		return // agree on accept/reject (strict mode value equality is covered by the lenient struct check)
 	}
-	// Known strict-API divergence (class v4-strict-rejects:empty-doc): v4's one-shot
-	// strict Load rejects a document-less stream ("no documents in stream") where
-	// v3's strict Decoder returns io.EOF, which Config.Load (and this harness) treat
-	// as a valid ALL-DEFAULT config. This is a documented migration gotcha of v4's
-	// recommended strict Load API, not a field-strictness divergence. Scoped tightly
-	// to v4-rejects + that exact message + v3-accepts, so a real unknown-field split
-	// is never absorbed.
-	if isV4StrictEmptyDocSplit(e3, e4) {
+	// Known typed/strict-API divergences first (empty-doc, non-integral float into
+	// an int field) — scoped tightly by classifyTypedSplit so a real unknown-field
+	// split is never absorbed.
+	if yamlV4StructExpectedDiff[classifyTypedSplit(e3, e4)] {
 		return
 	}
 	// An unknown-field rejection on one side only is a strict-mode-specific split;
@@ -234,11 +235,51 @@ func checkStrictDecode(t *testing.T, data []byte, anyClass string, anyTol bool) 
 	}
 }
 
-// isV4StrictEmptyDocSplit reports whether a v3-accepts/v4-rejects strict-mode
-// split is exactly the tolerated empty-document divergence: v3 accepted (EOF →
-// all-default config) and v4's strict Load reported a document-less stream.
-func isV4StrictEmptyDocSplit(e3, e4 error) bool {
-	return e3 == nil && e4 != nil && strings.Contains(e4.Error(), "no documents in stream")
+// yamlV4StructExpectedDiff lists tolerated TYPED-decode divergence classes that
+// live purely in field-type construction (invisible to the any-path). EMPTY of
+// field-strictness divergences on purpose — the two entries are v4-strict/typed
+// construction gotchas found by the DF3 struct fuzzer, each red/green proven and
+// documented in EXPECTED-DIFFERENCES (D13, D14). A class not here (classifyTyped
+// Split → "typed:other") falls through to the any-path tie-in and is a finding.
+var yamlV4StructExpectedDiff = map[string]bool{
+	// v4's one-shot strict Load rejects a document-less stream ("no documents in
+	// stream") where v3's strict Decoder returns io.EOF, which Config.Load treats
+	// as a valid all-default config. A migration gotcha of v4's strict Load API.
+	"v4-strict-rejects:empty-doc": true,
+
+	// A NON-INTEGRAL float value decoded into an INTEGER struct field (e.g.
+	// `int: 0.1`). v3 silently COERCES it, truncating 0.1 -> int 0 (DATA LOSS);
+	// v4 REJECTS ("cannot construct !!float `0.1` into int"). Integral floats
+	// (5.0, 1e3) are accepted by BOTH, so only a non-integral float splits. v3 is
+	// the reachable, LENIENT, data-losing side (same footgun family as the D8
+	// block-scalar / D4 truncation silent drops); v4 is strict. Not a Keyorix
+	// defect (v4 has no live caller), and a config int field receiving a fractional
+	// float is exotic -- but a genuine v3 silent-data-loss footgun worth noting.
+	"v4-strict-rejects:nonintegral-float-into-int": true,
+}
+
+// classifyTypedSplit names a typed-decode accept/reject split (exactly one of
+// e3/e4 is non-nil). It keys on the rejecting side and a coarse reason so a
+// tolerated class is recognised without matching volatile line/column text. A
+// shape it does not recognise returns "typed:other", which is NOT tolerated.
+func classifyTypedSplit(e3, e4 error) string {
+	msg, rejecter := "", ""
+	switch {
+	case e3 != nil && e4 == nil:
+		msg, rejecter = strings.ToLower(e3.Error()), "v3"
+	case e4 != nil && e3 == nil:
+		msg, rejecter = strings.ToLower(e4.Error()), "v4"
+	default:
+		return "typed:none" // not a split
+	}
+	switch {
+	case rejecter == "v4" && strings.Contains(msg, "no documents in stream"):
+		return "v4-strict-rejects:empty-doc"
+	case rejecter == "v4" && strings.Contains(msg, "float") && strings.Contains(msg, "into int"):
+		return "v4-strict-rejects:nonintegral-float-into-int"
+	default:
+		return "typed:other"
+	}
 }
 
 // FuzzYAMLV4MultiDocDifferential — S3. Decode EVERY document of a stream.

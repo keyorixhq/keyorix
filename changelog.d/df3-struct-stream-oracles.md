@@ -13,6 +13,9 @@
   - **D13 `v4-strict-rejects:empty-doc`** — v4's one-shot strict `Load` rejects an empty stream
     (`no documents in stream`) where v3's strict `Decoder` returns `io.EOF` and `Config.Load`
     treats it as a valid all-default config — a forward-looking config-loader migration gotcha.
+  - **D14 `v4-strict-rejects:nonintegral-float-into-int`** — `int: 0.1` is silently coerced by
+    v3 (truncating `0.1`→ int `0`, a data-loss footgun) but **rejected by v4**; integral floats
+    agree. Found by the struct fuzzer; invisible to the `any`-path.
   - Surfaced via the typed path and tolerated via D12: `int: ! 00` is accepted by v3 (int `0`)
     but **rejected by v4** (cannot construct the kept string `"00"` into an `int` field),
     invisible to the `any`-path oracle. All forward-looking (v4 has no live Keyorix caller).

@@ -137,15 +137,51 @@ func TestYAMLV4StructStreamRedGreen(t *testing.T) {
 		if e4 == nil {
 			t.Fatalf("precondition: v4 strict Load must REJECT empty")
 		}
-		if !isV4StrictEmptyDocSplit(e3, e4) {
-			t.Fatalf("the empty-doc strict split must be recognised (class v4-strict-rejects:empty-doc); got e4=%v", e4)
+		if c := classifyTypedSplit(e3, e4); c != "v4-strict-rejects:empty-doc" || !yamlV4StructExpectedDiff[c] {
+			t.Fatalf("the empty-doc strict split must class as the tolerated v4-strict-rejects:empty-doc; got %q e4=%v", c, e4)
 		}
-		// RED: a REAL unknown-field strict split must NOT be absorbed by this class.
+		// RED: a REAL unknown-field strict split must NOT be absorbed by any tolerated class.
 		unknownErr := &yamlErr{"yaml: construct errors: line 1: field nope not found in type config.Config"}
-		if isV4StrictEmptyDocSplit(nil, unknownErr) {
-			t.Fatalf("an unknown-field strict rejection must NOT be absorbed by the empty-doc class")
+		if c := classifyTypedSplit(nil, unknownErr); yamlV4StructExpectedDiff[c] {
+			t.Fatalf("an unknown-field strict rejection must NOT be absorbed by a tolerated typed class, got %q", c)
 		}
 		t.Logf("S1 strict empty-doc divergence proven: v3 accepts empty (EOF), v4 strict Load rejects; unknown-field split not absorbed")
+	}
+
+	// Non-integral float into an int field (class v4-strict-rejects:nonintegral-
+	// float-into-int): v3 silently truncates 0.1 -> int 0 (data loss), v4 rejects.
+	{
+		in := []byte("v: 0.1")
+		type I struct {
+			V int `yaml:"v"`
+		}
+		var i3, i4 I
+		e3 := v3yaml.Unmarshal(in, &i3)
+		e4 := v4yaml.Unmarshal(in, &i4)
+		if e3 != nil {
+			t.Fatalf("precondition: v3 must ACCEPT `v: 0.1` into an int field (silent truncate), got %v", e3)
+		}
+		if e4 == nil {
+			t.Fatalf("precondition: v4 must REJECT `v: 0.1` into an int field")
+		}
+		if i3.V != 0 {
+			t.Fatalf("precondition: v3 must truncate 0.1 -> int 0 (data loss), got %d", i3.V)
+		}
+		if c := classifyTypedSplit(e3, e4); c != "v4-strict-rejects:nonintegral-float-into-int" || !yamlV4StructExpectedDiff[c] {
+			t.Fatalf("`v: 0.1` into int must class as the tolerated nonintegral-float-into-int, got %q", c)
+		}
+		// RED #1: an INTEGRAL float (5.0) into an int field does NOT split (both accept),
+		// so the oracle never reaches the table for it — confirm the shared-accept precond.
+		var j3, j4 I
+		if v3yaml.Unmarshal([]byte("v: 5.0"), &j3) != nil || v4yaml.Unmarshal([]byte("v: 5.0"), &j4) != nil {
+			t.Fatalf("precondition: integral float 5.0 into int must be accepted by BOTH (no split)")
+		}
+		// RED #2: an unrelated typed rejection (e.g. the `!`-tag into int) must NOT be
+		// absorbed by the float class — it has no "float" in its message.
+		if c := classifyTypedSplit(nil, &yamlErr{"yaml: construct errors: line 1: cannot construct ! `00` into int"}); c == "v4-strict-rejects:nonintegral-float-into-int" {
+			t.Fatalf("a `!`-tag-into-int rejection must NOT be absorbed by the float class, got %q", c)
+		}
+		t.Logf("S1 float-into-int divergence proven: v3 truncates 0.1->0 (data loss), v4 rejects; integral floats agree; `!`-tag not absorbed")
 	}
 
 	// ========================= S3: multi-doc oracle =========================
