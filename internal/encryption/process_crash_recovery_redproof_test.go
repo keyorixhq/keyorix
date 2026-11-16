@@ -179,6 +179,8 @@ func pcrashWant(t *testing.T, v []string, name string) {
 }
 
 // TestProcessCrashRedProof needs child processes but is quick, so it runs by default.
+// Each subtest works on its own copy of the template (the calibration cache is
+// locked), so they run in parallel, as TestProcessCrashExhaustive's do.
 func TestProcessCrashRedProof(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns real child processes")
@@ -187,111 +189,152 @@ func TestProcessCrashRedProof(t *testing.T) {
 	dek := pcrashOps[0]
 	update := pcrashOps[5]
 
-	t.Run("control-unbroken-kill-is-clean", func(t *testing.T) {
-		if v := pcrashRedProof(t, w, dek, "rotate-dek-nosplit", 0, nil); len(v) > 0 {
-			t.Fatalf("the unsplit sweep killed at the same statement must be clean: %v", v)
-		}
-	})
-	t.Run("I3-split-transaction", func(t *testing.T) {
-		pcrashWant(t, pcrashRedProof(t, w, dek, "rotate-dek-split", 0, nil), "I3")
-	})
-	t.Run("I1-database-destroyed", func(t *testing.T) {
-		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-			for _, f := range []string{"keyorix.db-wal", "keyorix.db-shm"} {
-				_ = os.Remove(filepath.Join(dir, f))
-			}
-			if err := os.WriteFile(filepath.Join(dir, "keyorix.db"), []byte("this is not a sqlite database at all"), 0o600); err != nil {
-				t.Fatal(err)
+	// One serial group around the parallel subtests, so this test's reported time
+	// includes them (scripts/ci/gen-test-weights.py reads the top-level line).
+	t.Run("oracles", func(t *testing.T) {
+		t.Run("control-unbroken-kill-is-clean", func(t *testing.T) {
+			t.Parallel()
+			if v := pcrashRedProof(t, w, dek, "rotate-dek-nosplit", 0, nil); len(v) > 0 {
+				t.Fatalf("the unsplit sweep killed at the same statement must be clean: %v", v)
 			}
 		})
-		pcrashWant(t, v, "I1")
-	})
-	t.Run("I2-version-row-lost", func(t *testing.T) {
-		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-			pcrashExecSQL(t, dir, "DELETE FROM secret_versions WHERE id = (SELECT MAX(v.id) FROM secret_versions v JOIN secret_nodes n ON n.id = v.secret_node_id WHERE n.name = 'pcrash-base-2')")
+		t.Run("I3-split-transaction", func(t *testing.T) {
+			t.Parallel()
+			pcrashWant(t, pcrashRedProof(t, w, dek, "rotate-dek-split", 0, nil), "I3")
 		})
-		pcrashWant(t, v, "I2")
-	})
-	t.Run("I3-half-created-role", func(t *testing.T) {
-		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-			pcrashExecSQL(t, dir, "INSERT INTO roles (name, name_folded, description) VALUES ('pcrash-planted', 'pcrash-planted', 'planted')")
-		})
-		pcrashWant(t, v, "I3")
-	})
-	t.Run("I3-undecryptable-version", func(t *testing.T) {
-		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-			pcrashExecSQL(t, dir, "UPDATE secret_versions SET encrypted_value = randomblob(64) WHERE id = (SELECT MAX(id) FROM secret_versions)")
-		})
-		pcrashWant(t, v, "I3")
-	})
-	t.Run("I3-two-passphrases-open", func(t *testing.T) {
-		// A real install cannot be opened by two passphrases on demand, so this
-		// proves only the counting branch: the same passphrase offered twice.
-		twice := update
-		twice.kek = true
-		twice.passes = []string{pcrashPass, pcrashPass}
-		pcrashWant(t, pcrashRedProof(t, w, twice, "", 1, nil), "I3")
-	})
-	t.Run("I4-privilege-widened", func(t *testing.T) {
-		v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-			pcrashExecSQL(t, dir, "INSERT INTO user_roles (user_id, role_id, project_id, environment_id) SELECT u.id, r.id, 0, 0 FROM users u, roles r WHERE u.username = 'pcrash-bob' AND r.name = 'admin'")
-		})
-		pcrashWant(t, v, "I4")
-	})
-	t.Run("I5-migration-schema-differs", func(t *testing.T) {
-		if v := w.runPCrashMigrate(t, 1, nil); len(v) > 0 {
-			t.Fatalf("control: an undamaged migration must be clean: %v", v)
-		}
-		v := w.runPCrashMigrate(t, 1, func(dir string) {
-			pcrashExecSQL(t, dir, "DROP TABLE secret_tags")
-		})
-		pcrashWant(t, v, "I5")
-	})
-	t.Run("backup-after-kill-control-and-damage", func(t *testing.T) {
-		// Since BACKUP-PENDING-ROTATION-1 a backup is refused at every kill point
-		// that leaves a .pending file, and a refusal checks nothing. So the oracle
-		// can only be proved at a kill point where the backup is taken and
-		// restored: find one instead of assuming it, and fail if none exists.
-		for killAt := int64(1); killAt <= pcrashBackupScanMax; killAt++ {
-			v := w.checkBackupAfterKilledRotation(t, killAt, 1, func(target string) {
-				pcrashExecSQL(t, target, "UPDATE secret_versions SET encrypted_value = randomblob(64) WHERE id = (SELECT MAX(id) FROM secret_versions)")
+		t.Run("I1-database-destroyed", func(t *testing.T) {
+			t.Parallel()
+			v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+				for _, f := range []string{"keyorix.db-wal", "keyorix.db-shm"} {
+					_ = os.Remove(filepath.Join(dir, f))
+				}
+				if err := os.WriteFile(filepath.Join(dir, "keyorix.db"), []byte("this is not a sqlite database at all"), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			})
-			if len(v) == 0 {
-				continue // backup or restore refused here: nothing was checked
-			}
-			if !strings.Contains(v[0], "backup made after a kill") {
-				t.Fatalf("kill point %d: unexpected violation: %v", killAt, v)
-			}
-			if c := w.checkBackupAfterKilledRotation(t, killAt, 1, nil); len(c) > 0 {
-				t.Fatalf("control at kill point %d: an undamaged restore must be clean: %v", killAt, c)
-			}
-			t.Logf("fired as expected at kill point %d: %s", killAt, pcrashTail(v[0]))
-			return
-		}
-		t.Fatalf("no kill point in 1..%d gave a backup that was taken and restored, so the backup-after-kill oracle was never exercised", pcrashBackupScanMax)
-	})
-	for _, c := range []struct{ name, action, want string }{
-		{"I5-rerun-panics", "rerun-panic", "I5"},
-		{"I5-rerun-corrupts", "rerun-corrupt", "I5"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := pcrashCopyTree(w.dir, dir); err != nil {
-				t.Fatal(err)
-			}
-			st, err := w.prepare(dir, 1)
-			if err != nil {
-				t.Fatal(err)
-			}
-			broken := pcrashOp{name: c.action, after: pcrashSame}
-			cal := w.calibrate(t, pcrashOps[6])
-			after := &pcrashModel{Ledger: st.before.Ledger.clone(), Roles: cal.ref.Roles, Authz: st.before.Authz}
-			m := &pcrashModel{Ledger: st.before.Ledger, Roles: st.before.Roles, Authz: st.before.Authz}
-			pcrashWant(t, w.checkRerun(t, broken, dir, pcrashPass, st, after, m), c.want)
+			pcrashWant(t, v, "I1")
 		})
-	}
+		t.Run("I2-version-row-lost", func(t *testing.T) {
+			t.Parallel()
+			v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+				pcrashExecSQL(t, dir, "DELETE FROM secret_versions WHERE id = (SELECT MAX(v.id) FROM secret_versions v JOIN secret_nodes n ON n.id = v.secret_node_id WHERE n.name = 'pcrash-base-2')")
+			})
+			pcrashWant(t, v, "I2")
+		})
+		t.Run("I3-half-created-role", func(t *testing.T) {
+			t.Parallel()
+			v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+				pcrashExecSQL(t, dir, "INSERT INTO roles (name, name_folded, description) VALUES ('pcrash-planted', 'pcrash-planted', 'planted')")
+			})
+			pcrashWant(t, v, "I3")
+		})
+		t.Run("I3-undecryptable-version", func(t *testing.T) {
+			t.Parallel()
+			v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+				pcrashExecSQL(t, dir, "UPDATE secret_versions SET encrypted_value = randomblob(64) WHERE id = (SELECT MAX(id) FROM secret_versions)")
+			})
+			pcrashWant(t, v, "I3")
+		})
+		t.Run("I3-two-passphrases-open", func(t *testing.T) {
+			t.Parallel()
+			// A real install cannot be opened by two passphrases on demand, so this
+			// proves only the counting branch: the same passphrase offered twice.
+			// The calibration cache is keyed by name, and a kek op reopens with the new
+			// passphrase: calibrate the plain update first, as the serial order did.
+			w.calibrate(t, update)
+			twice := update
+			twice.kek = true
+			twice.passes = []string{pcrashPass, pcrashPass}
+			pcrashWant(t, pcrashRedProof(t, w, twice, "", 1, nil), "I3")
+		})
+		t.Run("I4-privilege-widened", func(t *testing.T) {
+			t.Parallel()
+			v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+				pcrashExecSQL(t, dir, "INSERT INTO user_roles (user_id, role_id, project_id, environment_id) SELECT u.id, r.id, 0, 0 FROM users u, roles r WHERE u.username = 'pcrash-bob' AND r.name = 'admin'")
+			})
+			pcrashWant(t, v, "I4")
+		})
+		t.Run("I5-migration-schema-differs", func(t *testing.T) {
+			t.Parallel()
+			if v := w.runPCrashMigrate(t, 1, nil); len(v) > 0 {
+				t.Fatalf("control: an undamaged migration must be clean: %v", v)
+			}
+			v := w.runPCrashMigrate(t, 1, func(dir string) {
+				pcrashExecSQL(t, dir, "DROP TABLE secret_tags")
+			})
+			pcrashWant(t, v, "I5")
+		})
+		t.Run("backup-after-kill-control-and-damage", func(t *testing.T) {
+			t.Parallel()
+			// Since BACKUP-PENDING-ROTATION-1 a backup is refused at every kill point
+			// that leaves a .pending file, and a refusal checks nothing. So the oracle
+			// can only be proved at a kill point where the backup is taken and
+			// restored: find one instead of assuming it, and fail if none exists.
+			// Kill points are probed pcrashBackupScanBatch at a time, in order, and the
+			// lowest one that is taken is used: the same kill point a one-by-one scan
+			// finds (all earlier batches had none), only the probes run side by side.
+			for lo := int64(1); lo <= pcrashBackupScanMax; lo += pcrashBackupScanBatch {
+				hi := min(lo+pcrashBackupScanBatch-1, pcrashBackupScanMax)
+				found := make([][]string, hi-lo+1)
+				t.Run(fmt.Sprintf("kill-points-%d-%d", lo, hi), func(t *testing.T) {
+					for killAt := lo; killAt <= hi; killAt++ {
+						t.Run(fmt.Sprintf("%d", killAt), func(t *testing.T) {
+							t.Parallel()
+							found[killAt-lo] = w.checkBackupAfterKilledRotation(t, killAt, 1, func(target string) {
+								pcrashExecSQL(t, target, "UPDATE secret_versions SET encrypted_value = randomblob(64) WHERE id = (SELECT MAX(id) FROM secret_versions)")
+							})
+						})
+					}
+				})
+				if t.Failed() {
+					return
+				}
+				for i, v := range found {
+					if len(v) == 0 {
+						continue // backup or restore refused here: nothing was checked
+					}
+					killAt := lo + int64(i)
+					if !strings.Contains(v[0], "backup made after a kill") {
+						t.Fatalf("kill point %d: unexpected violation: %v", killAt, v)
+					}
+					if c := w.checkBackupAfterKilledRotation(t, killAt, 1, nil); len(c) > 0 {
+						t.Fatalf("control at kill point %d: an undamaged restore must be clean: %v", killAt, c)
+					}
+					t.Logf("fired as expected at kill point %d: %s", killAt, pcrashTail(v[0]))
+					return
+				}
+			}
+			t.Fatalf("no kill point in 1..%d gave a backup that was taken and restored, so the backup-after-kill oracle was never exercised", pcrashBackupScanMax)
+		})
+		for _, c := range []struct{ name, action, want string }{
+			{"I5-rerun-panics", "rerun-panic", "I5"},
+			{"I5-rerun-corrupts", "rerun-corrupt", "I5"},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				if err := pcrashCopyTree(w.dir, dir); err != nil {
+					t.Fatal(err)
+				}
+				st, err := w.prepare(dir, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				broken := pcrashOp{name: c.action, after: pcrashSame}
+				cal := w.calibrate(t, pcrashOps[6])
+				after := &pcrashModel{Ledger: st.before.Ledger.clone(), Roles: cal.ref.Roles, Authz: st.before.Authz}
+				m := &pcrashModel{Ledger: st.before.Ledger, Roles: st.before.Roles, Authz: st.before.Authz}
+				pcrashWant(t, w.checkRerun(t, broken, dir, pcrashPass, st, after, m), c.want)
+			})
+		}
+	})
 }
 
 // pcrashBackupScanMax bounds the search for a kill point whose backup is not
 // refused; a kill point past the last seam lets the rotation finish.
 const pcrashBackupScanMax = 60
+
+// pcrashBackupScanBatch is how many kill points are probed at once. Four matches
+// the standard CI runner; a batch past the first taken kill point costs at most
+// three extra probes.
+const pcrashBackupScanBatch = 4
