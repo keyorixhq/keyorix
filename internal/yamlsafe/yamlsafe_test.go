@@ -152,7 +152,7 @@ func TestUnmarshal_DistinctKeysLinear(t *testing.T) {
 		t.Skip("timing measurement; skipped in -short")
 	}
 	var b strings.Builder
-	for i := 0; i < 100000; i++ {
+	for i := range 100000 {
 		fmt.Fprintf(&b, "k%d: v\n", i)
 	}
 	var m map[string]string
