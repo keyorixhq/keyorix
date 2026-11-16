@@ -76,6 +76,35 @@ func TestRestoreBackup_CrashBeforeRenameLeavesTheActiveDEKIntact(t *testing.T) {
 	}
 }
 
+// A restore whose staging write fails must leave the active DEK as it was. The failure
+// is deterministic and platform-independent: a non-empty directory sits where the
+// staging file ("<backup>.restoring") must go, so the write cannot succeed. (The earlier
+// version lowered RLIMIT_FSIZE; on macOS that window could swallow a Go testlog flush and
+// fail the whole package run.) When RestoreBackup rewrote the active file in place
+// (O_TRUNC, then write), a failed write left it truncated: neither the old nor the new
+// wrapped DEK (REVIEW-ENCRYPTIONOPS-1 R1).
+func TestRestoreBackup_FailedWriteLeavesTheActiveDEKIntact(t *testing.T) {
+	dir := chdirTemp(t)
+	backup := bytes.Repeat([]byte("B"), 64)
+	active := bytes.Repeat([]byte("A"), 64)
+	writeTestFile(t, filepath.Join(dir, "backup.bin"), backup)
+	writeTestFile(t, filepath.Join(dir, "active.bin"), active)
+	block := filepath.Join(dir, "backup.bin.restoring")
+	if err := os.Mkdir(block, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(block, "keep"), []byte("x"))
+
+	RestoreBackup(dir, "backup.bin", "active.bin", nil)
+
+	if got := readTestFile(t, filepath.Join(dir, "active.bin")); !bytes.Equal(got, active) {
+		t.Fatalf("a failed restore write tore the active DEK: got %d bytes %q, want the previous %d bytes", len(got), got, len(active))
+	}
+	if got := readTestFile(t, filepath.Join(dir, "backup.bin")); !bytes.Equal(got, backup) {
+		t.Fatalf("a failed restore changed the backup: got %q", got)
+	}
+}
+
 // Two backups taken in the same instant (the old name had one-second
 // resolution) get different names, and neither overwrites the other.
 func TestCreateMigrateBackup_SameInstantGetsDistinctNamesAndNeverOverwrites(t *testing.T) {

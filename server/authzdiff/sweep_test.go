@@ -166,12 +166,38 @@ func genVariations(R []string, t tgt) []struct {
 	return out
 }
 
+// envVariations offers the custom principal an ENVIRONMENT-scoped grant for an
+// env-aware op (opSpec.envScoped), at both of the op's environments: the role
+// granted only in prod, and only in staging2. For every other op it is empty, so
+// only env ops pay the extra cases. These are the grants that make a
+// cross-environment refusal visible — and that the env-scope plant flips. V5b.
+func envVariations(spec opSpec, t tgt) []struct {
+	pk principalKind
+	v  variation
+} {
+	if !spec.envScoped || t == tGlobal {
+		return nil
+	}
+	have := maskOf([]string{"secrets.read"})
+	proj := t.String() // "A" or "B"
+	return []struct {
+		pk principalKind
+		v  variation
+	}{
+		{pkCustom, variation{Mask: have, Route: "user", Scope: proj + "@prod"}}, // read only in prod
+		{pkCustom, variation{Mask: have, Route: "user", Scope: proj + "@stg"}},  // read only in staging2
+	}
+}
+
 func argsFor(spec opSpec) []byte {
 	if spec.secretArgs {
 		return []byte{0, 1, 2, 3}
 	}
 	if spec.grantArgs {
 		return []byte{0, 1, 2, 3}
+	}
+	if spec.envScoped {
+		return []byte{0, 1} // arg 0 = prod secret, arg 1 = staging2 secret (V5b)
 	}
 	return []byte{0}
 }
@@ -344,6 +370,9 @@ func TestAuthzDiffSweep(t *testing.T) {
 					for _, g := range genVariations(requirementPerms(probe, spec, tg, arg), tg) {
 						run(g.pk, g.v)
 					}
+					for _, g := range envVariations(spec, tg) {
+						run(g.pk, g.v)
+					}
 				}
 			}
 		})
@@ -362,6 +391,12 @@ func FuzzAuthzDiff(f *testing.F) {
 		v := defaultVariation
 		if pk == pkCustom || pk == pkMachine {
 			scopes := genScopes(tg)
+			if spec.envScoped && pk == pkCustom && tg != tGlobal {
+				// env-scoped grant tokens participate for an env-aware op (V5b),
+				// so the fuzzer can place the custom grant in one environment and
+				// drive the op in another.
+				scopes = append(scopes, tg.String()+"@prod", tg.String()+"@stg")
+			}
 			s := scopes[int(scopeSel)%len(scopes)]
 			route := []string{"user", "group"}[int(routeSel)%2]
 			if pk == pkMachine {

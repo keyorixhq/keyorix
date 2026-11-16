@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -92,6 +93,159 @@ func TestAccumulateBreakGlassPosture_CountsUnreviewedPastTheWindow(t *testing.T)
 		"the age reported must be the WORST outstanding one -- a bare count cannot tell 'a day late' from 'ignored for a year'")
 	assert.Equal(t, 72, p.EmergencyAccess.ReviewWindowHours,
 		"the threshold must travel with the counts, or the report is uninterpretable without the deployment's config")
+}
+
+// TestAccumulateBreakGlassPosture_DegradedActivationIsNotClean
+// (POSTURE-DEGRADED-NOV-1): an activation committed while the audit log refused
+// its rows, with those rows still owed, must be counted and must flip the
+// snapshot's Degraded flag; once the backfill settles it, it is clean again.
+func TestAccumulateBreakGlassPosture_DegradedActivationIsNotClean(t *testing.T) {
+	t.Parallel()
+	fixed := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	settled := fixed.Add(-time.Hour)
+
+	c := NewKeyorixCore(new(MockStorage))
+	c.now = func() time.Time { return fixed }
+
+	run := func(acts ...*models.BreakGlassActivation) *CompliancePosture {
+		p := &CompliancePosture{}
+		c.accumulateBreakGlassPosture(p, 1, &complianceSnapshot{
+			breakGlassByProject:    map[uint][]*models.BreakGlassActivation{1: acts},
+			breakGlassErrByProject: map[uint]error{},
+		})
+		return p
+	}
+
+	owed := run(
+		&models.BreakGlassActivation{ID: 7, ProjectID: 1, State: BreakGlassActive, CreatedAt: fixed.Add(-time.Hour), Degraded: true},
+		&models.BreakGlassActivation{ID: 8, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-time.Hour)},
+	)
+	assert.Equal(t, 1, owed.EmergencyAccess.DegradedActivations)
+	assert.True(t, owed.Degraded, "an activation with owed audit rows is an incomplete audit record, not a clean posture")
+	require.Len(t, owed.DegradedReasons, 1)
+	assert.Contains(t, owed.DegradedReasons[0], "emergency_access_audit:project=1")
+	assert.Contains(t, owed.DegradedReasons[0], "1 break-glass activation(s)")
+	assert.Contains(t, owed.DegradedReasons[0], "first id 7")
+	assert.True(t, owed.DegradedArea("emergency_access_audit:"))
+	assert.False(t, owed.DegradedArea("emergency_access:"), "owed audit rows are not a failed emergency-access collection")
+
+	// A long audit outage can leave many activations owed: one reason per
+	// project, not one per activation.
+	many := run(
+		&models.BreakGlassActivation{ID: 9, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-3 * time.Hour), Degraded: true},
+		&models.BreakGlassActivation{ID: 7, ProjectID: 1, State: BreakGlassActive, CreatedAt: fixed.Add(-time.Hour), Degraded: true},
+		&models.BreakGlassActivation{ID: 8, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-2 * time.Hour), Degraded: true},
+	)
+	assert.Equal(t, 3, many.EmergencyAccess.DegradedActivations)
+	require.Len(t, many.DegradedReasons, 1, "reasons must be aggregated per project")
+	assert.Contains(t, many.DegradedReasons[0], "3 break-glass activation(s)")
+	assert.Contains(t, many.DegradedReasons[0], "first id 7")
+
+	clean := run(
+		&models.BreakGlassActivation{ID: 7, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-2 * time.Hour), Degraded: true, AuditSettledAt: &settled},
+		&models.BreakGlassActivation{ID: 8, ProjectID: 1, State: BreakGlassRevoked, CreatedAt: fixed.Add(-time.Hour)},
+	)
+	assert.Equal(t, 0, clean.EmergencyAccess.DegradedActivations, "a settled degraded activation has its rows in the chain")
+	assert.False(t, clean.Degraded)
+	assert.Empty(t, clean.DegradedReasons)
+}
+
+// TestEvaluateControls_OwedBreakGlassAuditKeepsIndependentReviewerGap
+// (POSTURE-DEGRADED-NOV-1 review): an activation with owed audit rows makes
+// the emergency-access control Unknown (its "all audited" detail is not true
+// yet), but must not hide a real IndependentReviewImpossible gap behind
+// Unknown: reviewer availability does not depend on the audit log.
+func TestEvaluateControls_OwedBreakGlassAuditKeepsIndependentReviewerGap(t *testing.T) {
+	t.Parallel()
+	p := &CompliancePosture{EmergencyAccess: EmergencyAccessPosture{IndependentReviewImpossible: true}}
+	p.degrade("emergency_access_audit:project=1", errors.New("1 break-glass activation(s) still owed"))
+
+	controls := EvaluateControls(p)
+	assert.Equal(t, ControlStatusUnknown, findControl(t, controls, "emergency-access").Status)
+	assert.Equal(t, ControlStatusGap, findControl(t, controls, "emergency-access-independent-reviewer").Status)
+}
+
+// TestEvaluateControls_OwedUnreviewedBreakGlassIsGapNotUnknown is review
+// finding F1 on #4248: owed audit rows must not mask a known Gap. A degraded
+// activation is unreviewed from the moment it exists (BREAKGLASS-OWED-1), so
+// the posture that carries the owed-audit reason also counts it unreviewed;
+// the activations were read, so that count is known and the control is a Gap
+// (INV-CORE-break-glass-unreviewed-reported-never-blocks-activation). The
+// posture comes from the real accumulateBreakGlassPosture so the pairing of
+// reason and count is the one production emits. Only a failed collection
+// turns a Gap into Unknown.
+func TestEvaluateControls_OwedUnreviewedBreakGlassIsGapNotUnknown(t *testing.T) {
+	t.Parallel()
+	fixed := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	c := NewKeyorixCore(new(MockStorage))
+	c.now = func() time.Time { return fixed }
+	c.SetBreakGlassPolicy(BreakGlassPolicy{ReviewWindow: 72 * time.Hour})
+
+	p := &CompliancePosture{}
+	c.accumulateBreakGlassPosture(p, 1, &complianceSnapshot{
+		breakGlassByProject: map[uint][]*models.BreakGlassActivation{1: {
+			{ID: 7, ProjectID: 1, State: BreakGlassActive, CreatedAt: fixed.Add(-time.Minute), Degraded: true},
+		}},
+		breakGlassErrByProject: map[uint]error{},
+	})
+	require.True(t, p.DegradedArea("emergency_access_audit:"), "precondition: owed rows degrade the posture, got %v", p.DegradedReasons)
+	require.Equal(t, 1, p.EmergencyAccess.UnreviewedActivations, "precondition: the owed activation is unreviewed")
+
+	ctrl := findControl(t, EvaluateControls(p), "emergency-access")
+	assert.Equal(t, ControlStatusGap, ctrl.Status, "a known unreviewed activation must stay a Gap while its audit rows are owed")
+	assert.NotContains(t, ctrl.Detail, "all audited", "the detail must not claim a complete audit record while rows are owed")
+	assert.Contains(t, ctrl.Detail, "1 with audit rows still owed")
+
+	// A failed collection in another project still wins: the count is partial.
+	p.degrade("emergency_access:project=2", errors.New("simulated db failure"))
+	assert.Equal(t, ControlStatusUnknown, findControl(t, EvaluateControls(p), "emergency-access").Status)
+}
+
+// TestAccumulateBreakGlassPosture_DegradedActivationCountsWithNoGraceWindow is
+// BREAKGLASS-POSTURE-NOV-1 item 1: a degraded activation (BREAKGLASS-OWED-1) has a
+// mandatory review from the moment it exists, so a one-minute-old one is
+// unreviewed in the posture too, and it feeds the oldest-age figure. A normal
+// activation of the same age stays inside the grace window, and a reviewed
+// degraded one is never counted.
+func TestAccumulateBreakGlassPosture_DegradedActivationCountsWithNoGraceWindow(t *testing.T) {
+	t.Parallel()
+	fixed := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	reviewedAt := fixed.Add(-time.Minute)
+
+	c := NewKeyorixCore(new(MockStorage))
+	c.now = func() time.Time { return fixed }
+	c.SetBreakGlassPolicy(BreakGlassPolicy{ReviewWindow: 72 * time.Hour})
+
+	acts := []*models.BreakGlassActivation{
+		{ID: 1, ProjectID: 1, UserID: 10, State: BreakGlassActive, CreatedAt: fixed.Add(-time.Minute), Degraded: true},
+		// Same age, normal: inside the window, not yet a deviation.
+		{ID: 2, ProjectID: 1, UserID: 11, State: BreakGlassRevoked, CreatedAt: fixed.Add(-time.Minute)},
+		// Degraded but reviewed: closed out.
+		{ID: 3, ProjectID: 1, UserID: 12, State: BreakGlassRevoked, CreatedAt: fixed.Add(-time.Minute), Degraded: true, ReviewedBy: 99, ReviewedAt: &reviewedAt},
+	}
+	p := &CompliancePosture{}
+	snap := &complianceSnapshot{
+		breakGlassByProject:    map[uint][]*models.BreakGlassActivation{1: acts},
+		breakGlassErrByProject: map[uint]error{},
+	}
+	c.accumulateBreakGlassPosture(p, 1, snap)
+
+	assert.Equal(t, 3, p.EmergencyAccess.TotalActivations)
+	assert.Equal(t, 1, p.EmergencyAccess.UnreviewedActivations,
+		"a degraded activation is unreviewed from the moment it exists; the fresh normal and the reviewed degraded one are not")
+
+	// And it feeds the age: a degraded activation 100h old (still unreviewed) and a
+	// fresh one -> the oldest is the 100h one, a fresh one reads 0h, not "absent".
+	old := []*models.BreakGlassActivation{
+		{ID: 4, ProjectID: 2, UserID: 13, State: BreakGlassRevoked, CreatedAt: fixed.Add(-100 * time.Hour), Degraded: true},
+	}
+	p2 := &CompliancePosture{}
+	c.accumulateBreakGlassPosture(p2, 2, &complianceSnapshot{
+		breakGlassByProject:    map[uint][]*models.BreakGlassActivation{2: old},
+		breakGlassErrByProject: map[uint]error{},
+	})
+	assert.Equal(t, 1, p2.EmergencyAccess.UnreviewedActivations)
+	assert.Equal(t, 100, p2.EmergencyAccess.OldestUnreviewedAgeHours)
 }
 
 // TestAccumulateBreakGlassPosture_SingleAdminDeploymentFlagsIndependentReviewImpossible

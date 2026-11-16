@@ -235,6 +235,10 @@ func (h *GroupHandler) RestoreGroup(w http.ResponseWriter, r *http.Request) {
 		if sendAuditUnavailable(w, err) {
 			return
 		}
+		// The authority to reinstate the group's admin-tier role grants: a refusal, not a fault.
+		if sendGrantCeilingRefusal(w, err) {
+			return
+		}
 		log.Printf("Error restoring group: %v", err)
 		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), "not deleted") {
 			sendError(w, "NotFound", "Group not found or not deleted", http.StatusNotFound, nil)

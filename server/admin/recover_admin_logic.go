@@ -287,6 +287,10 @@ func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, su
 
 	uid := summary.userID
 	ok := true
+	// audit-direct-ok: hardcodes ActorType adminActorType ("admin_cli") -- host-side, no network
+	// listener (ADR-108 §B). Sets UserID to the RECOVERED account's id (docs/design-b2-recover-admin.md
+	// §4: "target user" is required audit content), not an acting identity: the actor is the host OS
+	// user. ActorType is never "machine_identity", so emitAudit's corrections do not apply here.
 	writeErr := store.LogAuditEvent(ctx, &models.AuditEvent{
 		EventType:   "admin.recover_admin",
 		UserID:      &uid,
@@ -310,6 +314,10 @@ func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, su
 func recordRecoveryKeyMismatch(ctx context.Context, store corestorage.Storage, summary *recoverAdminSummary, keyVersion int) {
 	uid := summary.userID
 	failed := false
+	// audit-direct-ok: hardcodes ActorType adminActorType ("admin_cli") for a refused `keyorix-server
+	// admin recover-admin` attempt (recovery key did not match) -- host-side, no network listener
+	// (ADR-108 §B). UserID is only the TARGET account, never an acting identity, and ActorType is never
+	// "machine_identity", so emitAudit's stamp has nothing to correct here.
 	err := store.LogAuditEvent(ctx, &models.AuditEvent{
 		EventType: "admin.recover_admin_failed",
 		UserID:    &uid,
@@ -332,6 +340,9 @@ func recordRecoveryKeyMismatch(ctx context.Context, store corestorage.Storage, s
 func recordRecoveryBlockedRefusal(ctx context.Context, store corestorage.Storage, summary *recoverAdminSummary, state string) {
 	uid := summary.userID
 	failed := false
+	// audit-direct-ok: hardcodes ActorType adminActorType ("admin_cli") for a recover-admin attempt
+	// refused because the target is suspended or deprovisioned (#3991) -- same shape as
+	// recordRecoveryKeyMismatch: UserID is only the target, never an acting identity.
 	err := store.LogAuditEvent(ctx, &models.AuditEvent{
 		EventType: "admin.recover_admin_failed",
 		UserID:    &uid,

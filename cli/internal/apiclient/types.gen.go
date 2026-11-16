@@ -1758,6 +1758,16 @@ type CreateDynamicSecretConfigJSONBody struct {
 // CreateDynamicSecretConfigJSONBodyClassification defines parameters for CreateDynamicSecretConfig.
 type CreateDynamicSecretConfigJSONBodyClassification string
 
+// ListDynamicSecretConfigsWithRefusedAdminDSNParams defines parameters for ListDynamicSecretConfigsWithRefusedAdminDSN.
+type ListDynamicSecretConfigsWithRefusedAdminDSNParams struct {
+	ProjectId int `form:"project_id" json:"project_id"`
+}
+
+// UpdateDynamicSecretConfigAdminDSNJSONBody defines parameters for UpdateDynamicSecretConfigAdminDSN.
+type UpdateDynamicSecretConfigAdminDSNJSONBody struct {
+	AdminDsn *string `json:"admin_dsn,omitempty"`
+}
+
 // ClassifyDynamicSecretConfigJSONBody defines parameters for ClassifyDynamicSecretConfig.
 type ClassifyDynamicSecretConfigJSONBody struct {
 	Classification *ClassifyDynamicSecretConfigJSONBodyClassification `json:"classification,omitempty"`
@@ -2630,6 +2640,9 @@ type VerifyComplianceEvidenceJSONRequestBody VerifyComplianceEvidenceJSONBody
 
 // CreateDynamicSecretConfigJSONRequestBody defines body for CreateDynamicSecretConfig for application/json ContentType.
 type CreateDynamicSecretConfigJSONRequestBody CreateDynamicSecretConfigJSONBody
+
+// UpdateDynamicSecretConfigAdminDSNJSONRequestBody defines body for UpdateDynamicSecretConfigAdminDSN for application/json ContentType.
+type UpdateDynamicSecretConfigAdminDSNJSONRequestBody UpdateDynamicSecretConfigAdminDSNJSONBody
 
 // ClassifyDynamicSecretConfigJSONRequestBody defines body for ClassifyDynamicSecretConfig for application/json ContentType.
 type ClassifyDynamicSecretConfigJSONRequestBody ClassifyDynamicSecretConfigJSONBody

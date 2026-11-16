@@ -1,0 +1,3 @@
+### Documentation
+
+- Eight more operator runbooks walked against native binaries (PILOT-RUNBOOK-WALK-3): `postgres-tls.md`, `j7-troubleshooting.md`, `j6-key-rotation.md`, `upgrade-rollback.md`, `upgrade-checklist-v0.97.md`, `backup-restore-scale.md`, `restore-failure-modes.md` and `startup-refusals-inventory.md`. The expired-certificate section no longer says the server does not check its certificate (it warns at start), the schema epoch is 10, and the v0.96.x refusals quote what the v0.96.3 release binary prints. A product defect found on the way (relative `dek_path` resolves against the working directory) is #4249.

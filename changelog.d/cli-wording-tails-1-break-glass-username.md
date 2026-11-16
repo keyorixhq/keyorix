@@ -1,3 +1,0 @@
-### Changed
-- **`keyorix break-glass list` and the project Break-glass tab name the activating user.** The CLI's USER column prints the username (the ID when the server sends none, e.g. a deleted user); the web page uses the username for a user who is no longer in the project's member directory, and `User #<id>` only when there is neither. The gRPC break-glass list is unchanged (it carries no username).
-- **`keyorix audit search --actor` help says what the server matches:** a case-insensitive partial match on a user's username or a machine identity's name. `docs/cli-reference.md` and the man page are regenerated.

@@ -1,0 +1,2 @@
+### Changed
+- **Dependency bump: `github.com/wneessen/go-mail` v0.8.1 to v0.8.2.** v0.8.2 fixes two go-mail advisories: GHSA-f82v-42xw-72cj (out-of-bounds read panic in the EML parser) and GHSA-w8w6-94hg-2qpm (CRLF header injection in the List-Unsubscribe helper, v0.8.1). Keyorix calls neither the EML parser nor the List-Unsubscribe helper, so neither is reachable here; this keeps the SMTP dependency current, with the connection-closing fixes in the same release.

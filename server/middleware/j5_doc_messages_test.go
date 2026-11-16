@@ -32,8 +32,11 @@ func TestJ5Doc_SetupRefusalMessagesAreQuoted(t *testing.T) {
 
 	owed := httptest.NewRecorder()
 	accountSetupRequiredResponse(owed, []string{core.SetupStepChangePassword, core.SetupStepEnrollMFA})
+	// Once setup is complete the old session is revoked, so the next call is refused by
+	// the token check with the generic message (the runbook walk shows this, not the
+	// reauthenticationRequiredResponse text).
 	done := httptest.NewRecorder()
-	reauthenticationRequiredResponse(done, true)
+	unauthorizedResponse(done, "Invalid or expired token")
 
 	for name, msg := range map[string]string{
 		"403 while both steps are owed":  messageOf(owed),

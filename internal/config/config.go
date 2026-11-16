@@ -14,7 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 type Config struct {
@@ -508,6 +508,14 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("invalid storage.database.ssl_root_cert: %w", rerr)
 		}
 		cfg.Storage.Database.SSLRootCert = resolvedRootCert
+	}
+
+	// #4249: relative key-material paths are defined against that same base;
+	// the code that opens key files refuses to run anywhere else
+	// (EncryptionConfig.CheckRelativeKeyPathBase), so the DEK lock beside the
+	// DEK is one file for every process reading this config.
+	if absBase, aerr := filepath.Abs(baseDir); aerr == nil {
+		cfg.Storage.Encryption.KeyPathBase = absBase
 	}
 
 	// ADR-112 Amendment 3: the old boolean is an alias with a value mapping,

@@ -107,6 +107,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"suspendUser":                        reasonSchemaNotYetWritten, // post /api/v1/users/{id}/suspend
 	"transitionMachineIdentity":          reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/machine-identities/{machineId}
 	"transitionMembership":               reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/memberships/{membershipId}
+	"unlockUser":                         reasonSchemaNotYetWritten, // post /api/v1/users/{id}/unlock
 	"updateAuthProfile":                  reasonSchemaNotYetWritten, // put /api/v1/auth/profile
 	"updateProjectMember":                reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/members/{userId}
 	"updateRotationPolicy":               reasonSchemaNotYetWritten, // put /api/v1/rotation-policies/{id}
@@ -390,4 +391,7 @@ var exercisingTests = map[string][]string{
 	// #2781 (one definition of project membership) --
 	// users_memberships_2781_test.go.
 	"getUserMembershipsForUser": {"TestContract2781_GetUserMembershipsForUser"},
+	// DYNAMIC-ADMIN-DSN-1 -- openapi_contract_dynamic_admin_dsn_test.go.
+	"updateDynamicSecretConfigAdminDSN":           {"TestContractDynamicAdminDSN_UpdateDynamicSecretConfigAdminDSN"},
+	"listDynamicSecretConfigsWithRefusedAdminDSN": {"TestContractDynamicAdminDSN_ListDynamicSecretConfigsWithRefusedAdminDSN"},
 }

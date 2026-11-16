@@ -62,6 +62,35 @@ needs room for a second copy of the database.
 - **One transaction.** A PostgreSQL restore loads everything in one transaction, so the database
   holds either none of the archive's rows or all of them.
 
+## Large database: before you move one
+
+The move between backends (SQLite to PostgreSQL, and PostgreSQL to SQLite) and a restore of a
+large backup read the archive table by table and insert rows in batches of 200, so the memory
+they use does not depend on how big a table is. Tested sizes: the in-process tests
+(`go test ./server/admin -run 'TestMigrateScale_|TestRestoreScale_'`, PostgreSQL legs with
+`KEYORIX_TEST_PG_DSN`) move a seeded instance in both directions and run each leg at two sizes,
+up to 10,000 secrets with 3 versions each (30,000 versions), 200,000 audit events and the users,
+roles, shares and access-log rows that go with them; the larger run may not use more memory
+than the smaller one beyond a fixed allowance. On the target every table has the source's row
+count, `verify-audit` accepts the chain, and every secret version decrypts with the key files the
+restore installed. `scripts/migrate/scale-check.sh` repeats this with the real binaries at the
+sizes in its header. Larger databases are not tested; the memory behaviour above is what to expect
+from them, and growth with the table size is a bug to report.
+
+Before you move one:
+
+1. Stop the server (SQLite) and run `admin verify-audit` on the source. A chain that is broken
+   before the move is still broken after it.
+2. Check free space: `$TMPDIR` (about four times the archive), and for SQLite the target
+   filesystem (a second copy of the database).
+3. Raise `--max-entry-bytes` and `--max-total-bytes` if the archive is larger than the defaults
+   (see Limits).
+4. Create the target database empty. A restore into a populated database is refused unless you
+   pass `--overwrite-existing`, and then the target's data is replaced.
+5. After the restore, read its `verify-audit ... VALID` line and start the server on the target.
+
+The container and Helm variants of this move are pending a run on the e2e VM.
+
 ## If a large restore or backup is killed
 
 Verified on a large data set with SIGTERM and SIGKILL (`scripts/migrate/scale-kill-check.sh`):

@@ -1,0 +1,1 @@
+fuzz/thirdparty/webauthn	none	-	test-only reachability-first fuzz harness for go-webauthn COSE public-key parsing; not part of any shipped build	test-helper

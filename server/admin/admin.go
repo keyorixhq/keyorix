@@ -348,6 +348,10 @@ func recordAdminAction(cfg *config.Config, eventType, description string, succes
 	fmt.Println(description)
 	err := withUsableStorage(cfg, func(st corestorage.Storage) error {
 		ok := success
+		// audit-direct-ok: hardcodes ActorType adminActorType ("admin_cli") and never sets UserID --
+		// a host-side `keyorix-server admin` CLI action with no HTTP/gRPC request context to derive a
+		// machine identity from (ADR-108 §B: no admin command starts a network listener), so never
+		// machine-identity-typed.
 		return st.LogAuditEvent(context.Background(), &models.AuditEvent{
 			EventType:   eventType,
 			Description: withLockBypassNote(description),

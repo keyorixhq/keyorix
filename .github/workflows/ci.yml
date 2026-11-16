@@ -53,7 +53,8 @@ on:
   # nightly-failure-issue job at the end files an issue when the run fails.
   # Scheduled runs always use the default branch (main).
   schedule:
-    - cron: '17 2 * * *'
+    # 06:17 UTC: moved out of the 02-05 UTC merge-queue peak (MQ-RUNNER-LOAD-1).
+    - cron: '17 6 * * *'
 
 # Workflow-level default: zero permissions. No job here writes to the repo,
 # comments on PRs, or publishes anything — a compromised dependency/action in
@@ -359,6 +360,27 @@ jobs:
       # repo-guards is deliberately not gated: see its own comment.
       closure_selftest_relevant: ${{ steps.filter.outputs.closure_selftest_relevant }}
       shard_layout_relevant: ${{ steps.filter.outputs.shard_layout_relevant }}
+      # Merge-queue tree proof (MQ-RUNNER-LOAD-1 P2). 'true' only on a merge_group
+      # run whose group commit has the byte-identical git TREE that a ci.yml
+      # pull_request run of the PR head tested, AND that run passed this job.
+      # Empty (= run the job) on every other event and on any lookup error.
+      # Only jobs that behave identically on a FAST PR run and in the queue
+      # (no full_profile / *_relevant / gate_* dependence), that read nothing
+      # but the checked-out tree and pinned tools, and whose result is not read
+      # as `skipped` by build-and-test may be listed here.
+      proven_preflight: ${{ steps.proof.outputs.proven_preflight }}
+      proven_lint: ${{ steps.proof.outputs.proven_lint }}
+      # MQ-TEST-SLIM-1: 'true' only on merge_group with the repository variable
+      # MQ_SLIM_MODE=enforce. Then the FAST-profile path gates above (computed on
+      # the WHOLE stack for merge_group, so HEADGREEN cannot hide an entry) also
+      # gate the queue. Rollback: set the variable to shadow (or delete it).
+      # MQ-SLIM-GATE-ONLY-1: these skips have no MQ-SHADOW decision behind them,
+      # so they are their own lever, `guards`, in MQ_SLIM_LEVERS (comma list, no
+      # spaces; unset = gate,testreach,guards = the behaviour above). Andrei's
+      # `MQ_SLIM_LEVERS=gate` keeps every one of them running. A run whose number
+      # ends in 0 is the sampled full run (mq_slim.SAMPLE_EVERY=10, same number as
+      # GITHUB_RUN_NUMBER): it runs these too.
+      slim_enforce: ${{ github.event_name == 'merge_group' && vars.MQ_SLIM_MODE == 'enforce' && contains(format(',{0},', vars.MQ_SLIM_LEVERS || 'gate,testreach,guards'), ',guards,') && !endsWith(format('{0}', github.run_number), '0') }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -553,6 +575,75 @@ jobs:
             echo "operator_only=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Tree proof, PR side (MQ-RUNNER-LOAD-1 P2). A pull_request run does not
+      # test the PR head: actions/checkout fetches GitHub's test merge commit
+      # (github.sha, a merge of the head into the base at that moment), and the
+      # runs API does not expose that SHA. Print its tree so the merge-queue run
+      # below can read it back from this job's log. Read-only: no new permission.
+      - name: Record the tested tree (pull_request only)
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          tree=$(gh api "repos/$REPO/git/commits/$TESTED_SHA" --jq '.tree.sha') || tree=""
+          echo "MQ-PROOF tested-tree=${tree:-unknown}"
+
+      # Tree proof, queue side (MQ-RUNNER-LOAD-1 P2). A job that is a pure
+      # function of the checked-out tree and pinned tool versions has the same
+      # result on any commit with the same git tree. This is the analogue of
+      # queue_verified, which binds on the exact SHA (a push to main of the very
+      # commit the queue tested); a PR run and a queue run never share a SHA, so
+      # the binding is the git tree: it must equal, byte for byte, the tree that
+      # a ci.yml pull_request run of this PR's head recorded above, and that run
+      # must have passed the job. Any entry stacked ahead in the group, or any
+      # commit that landed on main after that run, changes the tree and the job
+      # runs as before. Fails toward running: a missing value, API error or
+      # non-success leaves the output false.
+      # NOT usable for: static-analysis (govulncheck reads a live vulnerability
+      # database), adr-numbers (reads GitHub issue state and the PR base ref),
+      # docs-guards (base-relative), repo-guards and anything whose behaviour
+      # differs between the FAST PR profile and the queue.
+      - name: Prove tree-identical checks on the PR head (merge_group only)
+        id: proof
+        if: github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          MG_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          proven_preflight=false
+          proven_lint=false
+          pr="${REF#refs/heads/gh-readonly-queue/}"
+          pr="${pr#*/pr-}"
+          pr="${pr%%-*}"
+          if [[ "$pr" =~ ^[0-9]+$ ]]; then
+            pr_head=$(gh api "repos/$REPO/pulls/$pr" --jq '.head.sha') || pr_head=""
+            mg_tree=$(gh api "repos/$REPO/git/commits/$MG_HEAD_SHA" --jq '.tree.sha') || mg_tree=""
+            echo "PR #$pr head=$pr_head; merge group head=$MG_HEAD_SHA tree=$mg_tree"
+            run_ids=""
+            if [ -n "$pr_head" ] && [ -n "$mg_tree" ]; then
+              run_ids=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$pr_head&per_page=10" --jq '.workflow_runs[].id') || run_ids=""
+            fi
+            for run_id in $run_ids; do
+              row=$(gh api "repos/$REPO/actions/runs/$run_id/jobs?filter=latest&per_page=100" --jq '[(.jobs[] | select(.name == "changes") | .id), ([.jobs[] | select(.name == "preflight" and .conclusion == "success")] | length), ([.jobs[] | select(.name == "lint" and .conclusion == "success")] | length)] | @tsv') || row=""
+              read -r changes_id preflight_ok lint_ok <<< "$row"
+              [ -n "${changes_id:-}" ] || continue
+              tested_tree=$(gh api "repos/$REPO/actions/jobs/$changes_id/logs" | grep -o 'MQ-PROOF tested-tree=[0-9a-f]\{40\}' | head -n 1 | cut -d= -f2) || tested_tree=""
+              echo "PR run $run_id tested tree=${tested_tree:-unknown} preflight_ok=${preflight_ok:-0} lint_ok=${lint_ok:-0}"
+              if [ -n "$tested_tree" ] && [ "$tested_tree" = "$mg_tree" ]; then
+                if [ "${preflight_ok:-0}" -ge 1 ] 2>/dev/null; then proven_preflight=true; fi
+                if [ "${lint_ok:-0}" -ge 1 ] 2>/dev/null; then proven_lint=true; fi
+              fi
+            done
+          else
+            echo "Could not parse a PR number from $REF: nothing is proven, every job runs."
+          fi
+          echo "proven_preflight=$proven_preflight" >> "$GITHUB_OUTPUT"
+          echo "proven_lint=$proven_lint" >> "$GITHUB_OUTPUT"
+
   # Merge-queue selection (CI-SELECT-1; see the comment above `changes`).
   # Runs on every event so every job can depend on it; outside merge_group
   # (and a workflow_dispatch without select_base) it only reports mode=full
@@ -592,6 +683,12 @@ jobs:
       gate_migrate: ${{ steps.sel.outputs.gate_migrate || 'true' }}
       gate_fuzz_targets: ${{ steps.sel.outputs.gate_fuzz_targets || 'true' }}
       gate_fuzz_reach: ${{ steps.sel.outputs.gate_fuzz_reach || 'true' }}
+      # MQ-TEST-SLIM-1 (scripts/ci/mq_slim.py): written only with
+      # MQ_SLIM_MODE=enforce; absent = run everything as before.
+      leg_tests: ${{ steps.sel.outputs.leg_tests || '{}' }}
+      gate_edge: ${{ steps.sel.outputs.gate_edge || 'true' }}
+      gate_e2e_smoke: ${{ steps.sel.outputs.gate_e2e_smoke || 'true' }}
+      gate_smoke: ${{ steps.sel.outputs.gate_smoke || 'true' }}
     steps:
       - name: Does this run select? (merge_group, or workflow_dispatch with select_base)
         id: scope
@@ -646,6 +743,11 @@ jobs:
         if: steps.scope.outputs.select == 'true'
         env:
           BASE: ${{ steps.scope.outputs.base }}
+          # off | shadow | enforce (scripts/ci/mq_slim.py). Unset = shadow: the
+          # levers are computed and logged (MQ-SHADOW lines), nothing changes.
+          MQ_SLIM_MODE: ${{ vars.MQ_SLIM_MODE || 'shadow' }}
+          # Which levers enforce acts on: gate, testreach (empty = both).
+          MQ_SLIM_LEVERS: ${{ vars.MQ_SLIM_LEVERS }}
         run: |
           # The base is the queue entry ahead of this one (or main); depth 1
           # is enough for a two-tree diff. If it cannot be fetched the script
@@ -846,7 +948,7 @@ jobs:
       # the negation of its self-test's, so one of the two always runs
       # (pathgate_test.go checks it). FULL runs keep both steps as before.
       - name: Self-test the closure guard (must be able to go red)
-        if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.closure_selftest_relevant == 'true')
+        if: needs.changes.outputs.docs_only != 'true' && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.closure_selftest_relevant == 'true')
         run: ./scripts/check-closures.sh --self-test
 
       # This job never sets KEYORIX_TEST_PG_DSN, so every pg-gated row in
@@ -855,15 +957,15 @@ jobs:
       # job's `core-1` leg below runs this SAME script again, WITH the DSN, and
       # is what actually proves those rows.
       - name: Verify every security closure claim names a passing test
-        if: needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
+        if: (needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
         run: ./scripts/check-closures.sh
 
       - name: Self-test the ADR conformance guard (must be able to go red)
-        if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.closure_selftest_relevant == 'true')
+        if: needs.changes.outputs.docs_only != 'true' && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.closure_selftest_relevant == 'true')
         run: ./scripts/check-adr-conformance.sh --self-test
 
       - name: Verify every ADR conformance claim names a passing test
-        if: needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
+        if: (needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
         run: ./scripts/check-adr-conformance.sh
 
       - name: Self-test the review-coverage guard (must be able to go red both ways)
@@ -984,14 +1086,21 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Proven on the PR head (merge_group tree proof)
+        if: needs.changes.outputs.proven_preflight == 'true'
+        run: echo "preflight (go build, go vet, go mod verify) already passed on the byte-identical tree of the PR head; skipping the work."
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.proven_preflight != 'true'
 
       - name: Set up Go
+        if: needs.changes.outputs.proven_preflight != 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.4'
 
       - name: Check for invalid UTF-8 (U+FFFD replacement characters)
+        if: needs.changes.outputs.proven_preflight != 'true'
         run: |
           if grep -rPl '\xef\xbf\xbd' \
                --include='*.go' --include='*.yml' --include='*.yaml' \
@@ -1005,15 +1114,18 @@ jobs:
           fi
 
       - name: go mod verify
+        if: needs.changes.outputs.proven_preflight != 'true'
         run: go mod verify
 
       # go build before go vet: a compile error turns this job red in about a
       # minute instead of after the full vet pass, and vet reuses the build
       # cache this step fills.
       - name: go build
+        if: needs.changes.outputs.proven_preflight != 'true'
         run: go build ./...
 
       - name: go vet
+        if: needs.changes.outputs.proven_preflight != 'true'
         run: go vet ./...
 
   # Quick-tier feedback for a pull_request push: `go test -short`, no -race,
@@ -1519,6 +1631,7 @@ jobs:
         env:
           MODE: ${{ needs.select.outputs.mode }}
           LEGS: ${{ needs.select.outputs.legs }}
+          LEG_TESTS: ${{ needs.select.outputs.leg_tests }}
           LEG: ${{ matrix.leg }}
         run: |
           if [ "$MODE" != "selected" ]; then
@@ -1531,6 +1644,18 @@ jobs:
             echo "Merge-queue selection: no package of leg $LEG is affected by this group; skipping its tests (the leg reports success)."
             echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          # MQ-TEST-SLIM-1 (enforce only; leg_tests is {} otherwise): no test of
+          # this leg can reach the changed input ("-"), or only these can.
+          rx=$(jq -r --arg l "$LEG" '.[$l] // ""' <<<"$LEG_TESTS")
+          if [ "$rx" = "-" ]; then
+            echo "MQ-TEST-SLIM-1: no test of leg $LEG reaches the changed non-code input (see the select job's MQ-SHADOW lines); skipping its tests."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$rx" ]; then
+            echo "MQ-TEST-SLIM-1: leg $LEG runs only the tests that reach the changed input: $rx"
+            echo "tests=$rx" >> "$GITHUB_OUTPUT"
           fi
           echo "run=true" >> "$GITHUB_OUTPUT"
           if [ "$pkgs" = "*" ]; then
@@ -1573,6 +1698,7 @@ jobs:
         if: steps.leg.outputs.run == 'true'
         env:
           LEG_ONLY: ${{ steps.leg.outputs.only }}
+          LEG_TESTS_RX: ${{ steps.leg.outputs.tests }}
           VERBOSE_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.verbose_tests || false }}
         run: |
           # Which packages each leg runs, and why each excluded package is
@@ -1676,12 +1802,21 @@ jobs:
           #
           # -v only on a workflow_dispatch with verbose_tests=true (per-test
           # timings for scripts/ci-test-weights.tsv); never on PR/queue/push.
+          if [ -n "$LEG_TESTS_RX" ]; then
+            run_filter="$LEG_TESTS_RX"
+          fi
           verbose_flag=""
+          # MQ-LEG-STEPS-1: measurement only (workflow_dispatch + verbose_tests):
+          # cmd/go's hidden -debug-actiongraph writes one JSON object per build
+          # action (start/end time, cache hit, package), which splits the
+          # "compile, vet, link" part of this step; uploaded below.
+          ag_flag=""
           if [ "$VERBOSE_TESTS" = "true" ]; then
             verbose_flag="-v"
+            ag_flag="-debug-actiongraph=$RUNNER_TEMP/actiongraph-${{ matrix.leg }}.json"
           fi
           # shellcheck disable=SC2086
-          go test -race $verbose_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+          go test -race $verbose_flag $ag_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       - name: Upload coverage artifact
         if: steps.leg.outputs.run == 'true'
@@ -1690,6 +1825,15 @@ jobs:
           name: coverage-${{ matrix.leg }}
           path: ${{ matrix.coverage-file }}
           retention-days: 1
+
+      - name: Upload action graph (measurement)
+        if: always() && steps.leg.outputs.run == 'true' && github.event_name == 'workflow_dispatch' && inputs.verbose_tests
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: actiongraph-${{ matrix.leg }}
+          path: ${{ runner.temp }}/actiongraph-${{ matrix.leg }}.json
+          retention-days: 3
+          if-no-files-found: warn
 
   # pg-gated security closures, proven with a real Postgres DSN. This job and
   # test-suite are the only ones with a Postgres service container, so this is
@@ -1830,53 +1974,28 @@ jobs:
   # nothing red anywhere to catch it. Independent of test-suite: this only
   # needs `go list` (package discovery), not an actual test run, so it's
   # fast and doesn't wait on the (up to 30-minute) test-suite matrix.
+  #
+  # MQ-LEG-OVERHEAD-1 P2: the assertions are now steps of `static-analysis`
+  # (same needs, same job-level condition), so one runner, one checkout/setup-go
+  # and one runner wait fewer per round. They are NOT in `preflight`: the shard
+  # proof takes about 4.5 min and preflight gates closures-pg (the longest
+  # chain of a round), while static-analysis ends about 14 min before
+  # closures-pg. This job stays only because the ruleset requires the context
+  # `assert-leg-completeness`: a job skipped by its `if` reports `skipped`,
+  # which satisfies a required context (ci.yml relies on this for
+  # base-branch-check, exclusion-freshness and others), and it takes no runner.
+  # The blocking power moved with the steps: a red assertion turns
+  # static-analysis red, which is itself required and which build-and-test
+  # requires to be `success` (see its gate step).
   assert-leg-completeness:
-    needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    # Never true: github.event_name is never 'placeholder'. (A literal `false`
+    # is rejected by actionlint's if-cond check.)
+    if: github.event_name == 'placeholder'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.4'
-
-      - name: Assert every package is covered by exactly the CI matrix or an enumerated exclusion
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_leg_completeness
-
-      - name: Assert every leg-pinned package exists in go list and is pinned exactly once
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_pinned_leg_packages_valid
-
-      # CI-SHARD-BALANCE-1: one proof for every package split by test name
-      # (core, http, handlers, encryption, faultops), built from the same
-      # weighted_run_filter the legs run. Before, only faultops and core had
-      # one, each with its own hand-written filter.
-      # On a FAST pull_request it runs only when shard_layout_relevant (a test
-      # file of a sharded package, the leg table or the weights file changed:
-      # nothing else can change which shard a test lands in), CI-PATHGATE-1.
-      # The package-level steps above and below always run.
-      - name: Assert every test of every sharded package runs in exactly one shard
-        if: needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.shard_layout_relevant == 'true'
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_all_shards_complete
-
-      - name: Assert the shard weights file is well formed
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_test_weights_valid
-
-      - name: Assert the test-suite matrix, the leg table and the coverage merge agree
-        run: |
-          source scripts/ci-test-legs.sh
-          assert_matrix_consistent .github/workflows/ci.yml
+      - run: echo "assert-leg-completeness now runs as steps of static-analysis"
 
   # Independent of test execution/coverage -- both tools statically analyze
   # source, so this runs in parallel with test-suite instead of waiting for it
@@ -1920,13 +2039,58 @@ jobs:
           [ -x ~/go/bin/govulncheck ] || go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 # NOSONAR githubactions:S8545 -- version is pinned to v1.8.0
           scripts/ci/check-govulncheck.sh
 
+      # Every step below carries `success() || failure()` (= not cancelled; a
+      # leading `!` would need quoting in YAML): a red step must not hide the
+      # others (govulncheck, gosec and the leg-completeness assertions are
+      # independent checks and the job still ends red if any one failed).
       - name: gosec
+        if: success() || failure()
         run: |
           [ -x ~/go/bin/gosec ] || scripts/ci/install-gosec.sh ~/go/bin/gosec
           # -exclude-generated skips files with the "DO NOT EDIT" header
           # (generated protobuf code), whose *_FullMethodName string constants
           # otherwise trip G101 (hardcoded-credential) false positives.
           gosec -severity medium -exclude-generated ./...
+
+      # Moved here from the assert-leg-completeness job (MQ-LEG-OVERHEAD-1 P2,
+      # see that job's comment). Same commands, same order, same conditions.
+      - name: Assert every package is covered by exactly the CI matrix or an enumerated exclusion
+        if: success() || failure()
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_leg_completeness
+
+      - name: Assert every leg-pinned package exists in go list and is pinned exactly once
+        if: success() || failure()
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_pinned_leg_packages_valid
+
+      # CI-SHARD-BALANCE-1: one proof for every package split by test name
+      # (core, http, handlers, encryption, faultops), built from the same
+      # weighted_run_filter the legs run. Before, only faultops and core had
+      # one, each with its own hand-written filter.
+      # On a FAST pull_request it runs only when shard_layout_relevant (a test
+      # file of a sharded package, the leg table or the weights file changed:
+      # nothing else can change which shard a test lands in), CI-PATHGATE-1.
+      # The package-level steps above and below always run.
+      - name: Assert every test of every sharded package runs in exactly one shard
+        if: (success() || failure()) && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.shard_layout_relevant == 'true')
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_all_shards_complete
+
+      - name: Assert the shard weights file is well formed
+        if: success() || failure()
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_test_weights_valid
+
+      - name: Assert the test-suite matrix, the leg table and the coverage merge agree
+        if: success() || failure()
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_matrix_consistent .github/workflows/ci.yml
 
   # Aggregates test-suite (both matrix legs) and static-analysis: merges the
   # two coverage profiles and checks the floor. Kept as its own job named
@@ -2111,6 +2275,233 @@ jobs:
             print "OK: coverage " pct "% meets the " floor "% floor"
           }'
 
+  # fuzz-changed (MQ-LEVERS-1 P1; was .github/workflows/fuzz-changed.yml):
+  # regression fuzzing of the targets a PR affects, ONCE PER PR HEAD and only
+  # after that head's quick checks are green. The workflow used to start on
+  # every push in parallel with this one, so a head that then failed lint or
+  # preflight, or was superseded 5 minutes later, had already paid up to 5
+  # shards (about 25 to 35 runner-minutes). Now fuzz-plan needs build-and-test
+  # (the aggregate of preflight, test-quick-*, static-analysis, repo-guards),
+  # and this workflow's own concurrency group (one per PR, cancel-in-progress
+  # on pull_request) cancels the whole run, fuzz shards included, when a newer
+  # head arrives. The context names `fuzz-changed` and `fuzz (shard N)` are
+  # unchanged. Not run on merge_group, push, schedule or dispatch (it never was).
+  #
+  # `labeled` (any label) starts a new FAST run of this workflow; only the
+  # ci:full label supersedes the PR's in-flight run, so only that one may fuzz
+  # (otherwise a triage label would re-fuzz an unchanged head).
+  #
+  # Skipped, not red, when build-and-test did not succeed or did not run
+  # (docs_only/web_only/go_unaffected/operator_only PRs): a skipped job
+  # satisfies a required context, the same convention as base-branch-check
+  # above. The plan only reads *.go and go.mod/go.sum of the diff, so a PR that
+  # build-and-test skips has nothing to fuzz.
+  fuzz-plan:
+    needs: [build-and-test]
+    # !cancelled() (not always()): a status function turns off the implicit success(), which also looks at build-and-test's skipped ancestors and would skip this job and leave fuzz-changed red. Unlike always() it is false once the run is cancelled, so a newer push still cancels this job and the fuzz shards (concurrency group, cancel-in-progress).
+    if: ${{ !cancelled() && needs.build-and-test.result == 'success' && github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      count: ${{ steps.plan.outputs.count }}
+      shards: ${{ steps.shard.outputs.shards }}
+    env:
+      FUZZ_SHARDS: 6  # max parallel fuzz jobs
+      FUZZ_MAX_SHARD_SECONDS: 480  # open another shard (up to FUZZ_SHARDS) above this estimated work per shard
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Determine fuzz targets to run
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
+          fuzzplan="$RUNNER_TEMP/fuzzplan"
+          go build -o "$fuzzplan" ./scripts/ci/fuzzplan
+
+          dep_changed=0
+          if git diff --name-only "$base"...HEAD | grep -qE '^(go\.mod|go\.sum)$'; then
+            dep_changed=1
+          fi
+          prod_go_changed=0
+          if git diff --name-only "$base"...HEAD -- '*.go' | grep -vE '_test\.go$' | grep -q .; then
+            prod_go_changed=1
+          fi
+
+          # emit "pkg|FuncName" for every real fuzz target in a package dir ($1 = ./dir).
+          # fuzzplan reads the test files instead of compiling them; a dir it cannot
+          # resolve (a `//go:build ignore` tool, the separate ./cli module) contributes
+          # nothing and is logged. It exits non-zero only on bad usage or a failed
+          # write, which must fail this step.
+          emit_all_in_pkg() {
+            "$fuzzplan" list "$1"
+          }
+
+          # list_modules_at ref: the resolved module graph (`go list -m all`) as of
+          # ref, WITHOUT disturbing the actual checkout (which must stay at HEAD for
+          # every other step in this job, including the code-change tier below). Runs
+          # in an isolated temp dir seeded with just that ref's go.mod/go.sum -- `-m
+          # all` only needs the requirement graph, not the source tree, and this repo
+          # has no `replace` directives pointing at local paths that a bare go.mod/
+          # go.sum copy would break.
+          list_modules_at() {
+            local ref="$1" dir out
+            dir="$(mktemp -d)"
+            if ! git show "${ref}:go.mod" > "$dir/go.mod" 2>/dev/null; then
+              rm -rf "$dir"; return 0
+            fi
+            git show "${ref}:go.sum" > "$dir/go.sum" 2>/dev/null || true
+            out="$(cd "$dir" && go list -m all 2>/dev/null)" || out=""
+            rm -rf "$dir"
+            printf '%s\n' "$out"
+          }
+
+          plan_file="$(mktemp)"
+
+          # Code-change tier (mutually exclusive: narrowest sufficient scope for what
+          # the PR's OWN files changed).
+          if [ "$prod_go_changed" = 1 ]; then
+            echo "Production .go changed — fuzzing ALL targets in each changed package."
+            git diff --name-only "$base"...HEAD -- '*.go' | xargs -r -n1 dirname | sort -u \
+              | while IFS= read -r d; do emit_all_in_pkg "./${d#./}"; done >> "$plan_file"
+          else
+            echo "No non-test .go changes — fuzzing ONLY the targets defined in changed *_test.go files."
+            git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*_test.go' \
+              | while IFS= read -r f; do
+                  [ -f "$f" ] || continue
+                  d="./$(dirname "$f")"
+                  # targets defined in this file, intersected with real listed targets
+                  defined="$(grep -oE '^func +Fuzz[A-Za-z0-9_]+' "$f" | awk '{print $2}' | sort -u || true)"
+                  [ -n "$defined" ] || continue
+                  listed="$("$fuzzplan" list "$d" | cut -d'|' -f2 | sort -u)"
+                  comm -12 <(printf '%s\n' "$defined") <(printf '%s\n' "$listed") \
+                    | while IFS= read -r fn; do printf '%s|%s\n' "$d" "$fn"; done
+                done >> "$plan_file"
+          fi
+
+          # Dependency tier (additive: layered on top of the code-change tier's
+          # result above whenever go.mod/go.sum changed, never replacing it).
+          if [ "$dep_changed" = 1 ]; then
+            base_modules="$(list_modules_at "$base" | sort -u)"
+            head_modules="$(list_modules_at HEAD | sort -u)"
+            # Only ADDED-or-version-bumped entries -- a REMOVED module implies the
+            # importing code also changed (import statements can't compile
+            # otherwise), which the code-change tier above already covers.
+            changed_modules="$(comm -13 <(printf '%s\n' "$base_modules") <(printf '%s\n' "$head_modules") | awk 'NF{print $1}' | sort -u)"
+            if [ -z "$changed_modules" ]; then
+              echo "go.mod/go.sum touched but the resolved module graph didn't change — 0 extra targets from the dependency tier."
+            else
+              echo "Dependency tier — changed modules:"
+              printf '%s\n' "$changed_modules" | sed 's/^/  /'
+              git ls-files -- '*_test.go' | { xargs -r grep -lE '^func Fuzz' || true; } | xargs -r -n1 dirname | sort -u \
+                | while IFS= read -r d; do
+                    pkg="./${d#./}"
+                    # NON-TEST dependency graph only (go list -deps has no -test flag
+                    # here) -- a test-only dependency (e.g. porcupine, used only by a
+                    # fuzz harness itself) can never show up in this list, so it
+                    # contributes 0 extra targets from this tier by construction.
+                    # A package outside the root module (e.g. ./cli/..., its own go.mod) makes go list fail;
+                    # under pipefail that killed the whole step. Same guard as emit_all_in_pkg above: 0 targets.
+                    pkg_modules="$(go list -deps -f '{{with .Module}}{{.Path}}{{end}}' "$pkg" 2>/dev/null | sort -u)" || pkg_modules=""
+                    [ -n "$pkg_modules" ] || continue
+                    if comm -12 <(printf '%s\n' "$changed_modules") <(printf '%s\n' "$pkg_modules") | grep -q .; then
+                      emit_all_in_pkg "$pkg"
+                    fi
+                  done >> "$plan_file"
+            fi
+          fi
+
+          sort -u "$plan_file" -o "$plan_file"
+          count="$(grep -c . "$plan_file" || true)"
+          echo "Planned $count fuzz target(s):"
+          sed 's/^/  /' "$plan_file"
+          {
+            echo "plan<<__FUZZ_PLAN_EOF__"
+            cat "$plan_file"
+            echo "__FUZZ_PLAN_EOF__"
+          } >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+      - name: Split plan into shards
+        id: shard
+        env:
+          PLAN: ${{ steps.plan.outputs.plan }}
+        run: |
+          set -euo pipefail
+          shards="$(printf '%s\n' "$PLAN" | "$RUNNER_TEMP/fuzzplan" pack \
+            -shards "$FUZZ_SHARDS" -max-shard-seconds "$FUZZ_MAX_SHARD_SECONDS")"
+          echo "Shards: $shards"
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: [fuzz-plan]
+    if: ${{ !cancelled() && needs.fuzz-plan.result == 'success' && needs.fuzz-plan.outputs.count != '0' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      FUZZTIME: 90s   # per fuzz target
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.fuzz-plan.outputs.shards) }}
+    name: fuzz (shard ${{ matrix.shard.id }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-corpus-${{ runner.os }}-${{ github.run_id }}-${{ matrix.shard.id }}
+          restore-keys: |
+            fuzz-corpus-${{ runner.os }}-
+      - name: Fuzz shard targets
+        env:
+          TARGETS: ${{ matrix.shard.targets }}
+        run: |
+          set -euo pipefail
+          for entry in $TARGETS; do
+            pkg="${entry%%|*}"; fn="${entry#*|}"
+            if [ -z "$pkg" ] || [ -z "$fn" ]; then continue; fi
+            echo "::group::fuzz $fn ($pkg) for $FUZZTIME"
+            go test "$pkg" -run='^$' -fuzz="^${fn}$" -fuzztime="$FUZZTIME"
+            echo "::endgroup::"
+          done
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashers-shard-${{ matrix.shard.id }}
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore
+
+  # Single, stable check name regardless of shard count (or zero targets).
+  # Runs (green or red) only when fuzz-plan ran; when build-and-test failed or
+  # was skipped, or the event is not a PR push, this job is skipped (no runner).
+  fuzz-changed:
+    needs: [build-and-test, fuzz-plan, fuzz]
+    if: always() && github.event_name == 'pull_request' && needs.build-and-test.result == 'success' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Aggregate shard results
+        env:
+          PLAN_RESULT: ${{ needs.fuzz-plan.result }}
+          FUZZ_RESULT: ${{ needs.fuzz.result }}
+          COUNT: ${{ needs.fuzz-plan.outputs.count }}
+        run: |
+          echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT"
+          [ "$PLAN_RESULT" = "success" ] || exit 1
+          case "$FUZZ_RESULT" in success|skipped) exit 0 ;; *) exit 1 ;; esac
+
   # Fresh-install API smoke, SQLite leg (Session I, 2026-09-28): boots a real
   # server on a freshly migrated database and calls every REST route, failing
   # on any 5xx. It exists for the bug class #2258 fixed (7 shipped features
@@ -2125,8 +2516,8 @@ jobs:
   # slower PostgreSQL, upgrade-path and web UI legs run nightly in
   # e2e-nightly.yml.
   e2e-smoke:
-    needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_e2e == 'true')
+    needs: [changes, select]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_e2e == 'true') && needs.select.outputs.gate_e2e_smoke != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -2451,7 +2842,7 @@ jobs:
 
   lint:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.proven_lint != 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -2504,8 +2895,8 @@ jobs:
   # already passed that exact SHA (queue_verified), like test-suite. Not a
   # required context, so it cannot stall the queue on its own.
   smoke:
-    needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.full_profile == 'true'
+    needs: [changes, select]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_smoke != 'false'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -3179,7 +3570,7 @@ jobs:
   #     entry (e.g. after a rename/removal) that no longer matches any target
   #     in the tree.
   # Also skipped on web_only PRs: every target here is a Go `func FuzzXxx` in
-  # internal/** (or operator/**), and `go test -list` output for those
+  # internal/** (or operator/**, cli/**, migrate/**, fuzzkit/**), and `go test -list` output for those
   # packages cannot change from a diff that only touches web/ -- ADR-070
   # merged the frontend into this repo, but the fuzz targets themselves stay
   # Go-only (there's no JS/TS equivalent to Go's native fuzzing engine), so a
@@ -3187,8 +3578,8 @@ jobs:
   fuzz-targets:
     needs: [changes, select]
     # Deliberately NOT gated on operator_only -- this job checks FuzzXxx
-    # functions in BOTH the root and operator modules, and an operator-only
-    # diff could add/remove/rename one there.
+    # functions in the root AND the operator/cli/migrate/fuzzkit modules, and
+    # an operator-only diff could add/remove/rename one there.
     # FULL profile only (CI-LIGHT-1). Required context: skipped satisfies it on a FAST PR run, the merge queue runs it.
     # Merge-queue gate (CI-SELECT-1): gate_fuzz_targets -- scripts/fuzzing/**,
     # or a changed .go file (any module) that has a `func Fuzz` line before
@@ -3223,9 +3614,9 @@ jobs:
           # summary line. Only the ROOT module prefix is stripped (never the
           # operator/cli/migrate submodule's own path segment) -- each
           # submodule's import path is
-          # "github.com/keyorixhq/keyorix/<operator|cli|migrate>/...",
-          # so stripping just the root leaves "operator/...", "cli/..." or
-          # "migrate/..."
+          # "github.com/keyorixhq/keyorix/<operator|cli|migrate|fuzzkit>/...",
+          # so stripping just the root leaves "operator/...", "cli/...",
+          # "migrate/..." or "fuzzkit/..."
           # already disambiguated from the root module's own package paths;
           # re-adding that segment as a separate prefix would double it
           # (e.g. "cli/cli/internal/skew").
@@ -3265,12 +3656,19 @@ jobs:
           # pass or the entries are wrongly reported as stale.
           echo "== true FuzzXxx functions: migrate module (GOWORK=off) =="
           (cd migrate && GOWORK=off go test -list '^Fuzz' ./...) | tee migrate-fuzz-list.txt
+          # fuzzkit (module github.com/keyorixhq/keyorix/fuzzkit, the
+          # differential-fuzzing kit and its instances) is likewise a separate
+          # module absent from go.work: without this pass its
+          # targets.d/fuzzkit-*__Fuzz*.conf entries are reported as stale.
+          echo "== true FuzzXxx functions: fuzzkit module (GOWORK=off) =="
+          (cd fuzzkit && GOWORK=off go test -list '^Fuzz' ./...) | tee fuzzkit-fuzz-list.txt
 
           {
             extract_fuzz_targets < root-fuzz-list.txt
             extract_fuzz_targets < operator-fuzz-list.txt
             extract_fuzz_targets < cli-fuzz-list.txt
             extract_fuzz_targets < migrate-fuzz-list.txt
+            extract_fuzz_targets < fuzzkit-fuzz-list.txt
           } > true-targets.txt
           sort -u true-targets.txt -o true-targets.txt
 
@@ -3355,7 +3753,7 @@ jobs:
     # root and operator modules' dependency licenses, and an operator-only
     # diff could add a new operator/go.mod dependency.
     # FAST profile: only when a go.mod/go.sum changed; FULL: always (CI-LIGHT-1). Required context: skipped satisfies it on the PR, the merge queue runs it.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.deps_changed == 'true')
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.deps_changed == 'true')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -4059,7 +4457,7 @@ jobs:
   # required context. Measured over 3 days / 82 merge_group runs: 0 failures.
   openapi-lint:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.openapi_changed == 'true')
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.openapi_changed == 'true')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -4102,8 +4500,8 @@ jobs:
   # on the ref and each step says so and passes: the step's job is to run
   # them once they exist, not to prove their absence.
   edge-builds:
-    needs: [changes]
-    if: needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    needs: [changes, select]
+    if: needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.select.outputs.gate_edge != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:

@@ -1,0 +1,1 @@
+awssm-non200-success-refused-001	./internal/connect	TestAWSSM_GetSecret_SuccessOnlyOn200	default-ci	396819285	-	AWSSecretsManagerConnector.GetSecret returned a 201/202/204/206 body as the secret (smithy awsJson1_1 treats any 2xx as success); fixed by status200Client/requireHTTP200 per call; found by FuzzAWSSMHostileEndpoint (HK-AWSSM-ANY-2XX, seed 38e0af3f2466b371)

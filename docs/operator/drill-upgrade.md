@@ -60,8 +60,9 @@ v0.96.1 to main, SQLite and PostgreSQL 16: every check passed. The new binary
 logged the audit index rebuild on PostgreSQL and (PostgreSQL only) the
 `audit durability: standard` line described in `UPGRADING.md` §6c. The v0.96.1
 binary started on the migrated data (the two releases shared schema epoch 2).
-That run predates the floor. Main now records schema epoch 5 with compatibility floor 3
-(`UPGRADING.md` §6q), so a v0.96.x binary must refuse in step 5.
+That run predates the floor. Main now records schema epoch 10 with compatibility floor 3
+(`UPGRADING.md` §6q; the epoch grows with releases, `internal/storage/factory_schema_epoch.go`
+has the current value), so a v0.96.x binary must refuse in step 5.
 
 Re-run against main `ecd5ce7c1` (2026-10-22, e2e VM), SQLite and PostgreSQL 16, with the
 `keyorix-server` binaries taken from the published v0.96.1 and v0.96.3 images: all four

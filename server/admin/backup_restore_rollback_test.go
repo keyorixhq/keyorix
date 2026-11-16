@@ -283,7 +283,8 @@ func TestAdminRestore_LiteralRepro_NoCheckpointNoWitness_RefusesOverwrite(t *tes
 		EventTime:   time.Now(),
 	}))
 
-	restoreOverwriteExisting = true // the target DB now genuinely exists and is non-empty
+	restoreOverwriteExisting = true   // the target DB now genuinely exists and is non-empty
+	restoreReplaceExistingData = true // and holds data: reach the rollback check
 	restoreAllowRollback = false
 	restoreMaxEntryBytes = 0
 	restoreMaxTotalBytes = 0

@@ -23,7 +23,7 @@ only the CLI (Linux and macOS). For the server and CLI, pick your platform's suf
 `linux_arm64`):
 
 ```bash
-V=v0.96.3   # the release you want (any release from v0.96.0 has `admin generate-secrets` and `mfa enroll`)
+V=v0.97.0   # the release you want (any release from v0.96.0 has `admin generate-secrets` and `mfa enroll`)
 P=darwin_arm64   # your platform
 BASE=https://github.com/keyorixhq/keyorix/releases/download/$V
 curl -fsSLO $BASE/keyorix-server_$P
@@ -41,7 +41,7 @@ current directory, drop the `bin/`: `./keyorix`, `./keyorix-server`.
 A release binary is the release's own behaviour: this page tracks `main`, so a
 command below can be newer than the release. For example `keyorix mfa enroll`
 does not exist in v0.95.3, and the v0.96.3 CLI has no `KEYORIX_PASSWORD_FILE`, `KEYORIX_MFA_CODE`,
-`KEYORIX_MFA_CODE_FILE` or `keyorix doctor` (only `main` does): with a release CLI, type the password
+`KEYORIX_MFA_CODE_FILE` or `keyorix doctor` (they arrive in v0.97.0, which also refuses the `--mfa-code` flag): with a v0.96.x CLI, type the password
 and the code at the prompts, or in a script pipe the password on stdin and pass the one-time code with the `--mfa-code` flag (it is visible in the process list, so prefer the prompt for interactive use).
 `keyorix-server --version` (or `keyorix-server admin version`)
 prints the version, commit, build date and Go version. The server itself has no
@@ -174,15 +174,23 @@ export KEYORIX_ADMIN_PASSWORD
 
 Two things about this command are not obvious from `--help` alone:
 
-- **Pass `--admin-email` explicitly.** The flag's own default (`admin@localhost`)
-  fails the server's email validation (no dot after `@`), so omitting it makes
-  bootstrap fail with a confusing `Validation error: Validation error: Email`.
-- **Pick a password with an uppercase letter, a digit, and that does not contain
-  the username.** The one `keyorix-server admin generate-secrets` writes to
-  `secrets/admin_password` satisfies all three.
+- **Pass your own `--admin-email` if you want password-reset mail.** The flag's
+  default (`admin@keyorix.local`) is a placeholder that passes the server's email
+  validation but has no mailbox. A rejected address is answered `400` and the CLI
+  says which flag to fix.
+- **Pick a password that meets the policy: at least 16 characters with an
+  uppercase letter, a lowercase letter, a digit and a special character, not
+  containing the username, email or display name, and not a commonly-used
+  password.** Anything shorter fails with `Validation error: password must be at
+  least 16 characters, contain a special character (HTTP 400)` (the message lists
+  every rule that failed). The one `keyorix-server admin generate-secrets` writes to
+  `secrets/admin_password` satisfies all of them;
+  `keyorix-server admin check-admin-password --username admin --email <email> < <file>`
+  tells you before you start whether a password would be accepted.
 
-`system init --server` is safe to run more than once — it is idempotent, and
-reports `already_initialized` on every call after the first. It creates the
+`system init --server` is safe to run more than once — it is idempotent: every call
+after the first prints `Server at <url> is already initialised.` (the API answers
+`already_initialized: true`) and changes nothing. It creates the
 admin user, default RBAC roles, and a default workspace (a project with three
 seeded environments — development, staging, production — as IDs 1/2/3) in one
 call. Without `KEYORIX_BOOTSTRAP_TOKEN` (or `KEYORIX_BOOTSTRAP_TOKEN_FILE`) set
@@ -222,9 +230,10 @@ ignores it. For the bundled Caddy `tls` profile the CA is
 
 What you will see on first start, and what it means:
 
-- **`WARNING: HTTP protocol_versions is set but NOT honored`.** Informational:
-  the TLS 1.2 minimum is fixed in code. (A `--dev` config also prints cleartext
-  and `trusted_proxies` warnings: TLS is off there.)
+- **`WARNING: HTTP protocol_versions is set but NOT honored`** appears only if you
+  set `server.http.protocol_versions` yourself (the generated config does not).
+  Informational: the TLS 1.2 minimum is fixed in code. (A `--dev` config also
+  prints cleartext and `trusted_proxies` warnings: TLS is off there.)
 - **`Automatic file-permission fixing is on (security.auto_fix_file_permissions ...)`.**
   Informational. The generated config turns the setting on, so it is printed on
   every start. A permission change is reported separately as `[FIXED] <path>`; if
@@ -257,23 +266,24 @@ directory: on Linux set `XDG_CONFIG_HOME=<dir>` for every `keyorix` command of t
 install (the file is then `<dir>/keyorix/credentials.yaml`); macOS ignores
 `XDG_CONFIG_HOME`, so use a separate `HOME` there. `KEYORIX_SERVER` and
 `KEYORIX_TOKEN_FILE` override the stored server and token without touching the file.
-`keyorix logout` deletes this file, `ca_file` included: run
-`keyorix config set ca_file ...` again before the next `login` (#3735).
+`keyorix logout` revokes the session and removes the token from this file; the server URL and
+`ca_file` stay (v0.96.3 and older deleted the whole file, `ca_file` included: there, run
+`keyorix config set ca_file ...` again before the next `login`, #3735).
 
 With no terminal (a script, CI), `login` reads `KEYORIX_PASSWORD` or the file named
-by `KEYORIX_PASSWORD_FILE` (a 0600 file; on `main`, not in the v0.96.3 release).
+by `KEYORIX_PASSWORD_FILE` (a 0600 file; v0.97.0 and later, not in v0.96.3).
 
 `login` asks for things in this order: **password first, then the authenticator code**
 (only when the account has MFA on). A script should not pipe both on stdin (the second
 line is lost); set `KEYORIX_PASSWORD_FILE` and `KEYORIX_MFA_CODE` (or
-`KEYORIX_MFA_CODE_FILE`) instead (on `main`; a release CLI takes the password on stdin
+`KEYORIX_MFA_CODE_FILE`) instead (v0.97.0 and later; a v0.96.x CLI takes the password on stdin
 and the `--mfa-code` flag). `keyorix mfa activate` asks in the opposite order:
 **code first, then the account password** (`KEYORIX_MFA_CODE` and
 `KEYORIX_PASSWORD[_FILE]` work there too).
 
 To check the connection at any time, run `keyorix status` (server URL, whether you are
-logged in, health, version compatibility), or `keyorix doctor` (on `main`, not in the
-v0.96.3 release) for a read-only checklist (reachability, TLS, version, clock, login,
+logged in, health, version compatibility), or `keyorix doctor` (v0.97.0 and later, not in
+v0.96.3) for a read-only checklist (reachability, TLS, version, clock, login,
 audit chain) that says what to do about each failure; it exits 1 when a check failed.
 On the server host, `keyorix-server admin diagnose` runs the checks
 server startup depends on (config parse, encryption-key access, database open,

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"time"
 
@@ -74,7 +75,7 @@ func validateUsernameCharset(username string) error {
 
 func validateEmailFormat(email string) error {
 	if !emailRegex.MatchString(email) {
-		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEmail", nil))
+		return validationErrorf("%s: email address is not valid (expected name@domain.tld)", i18n.T("ErrorValidation", nil))
 	}
 	return nil
 }
@@ -363,7 +364,13 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 		if errors.Is(err, storage.ErrDuplicateUsername) {
 			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
 		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// #3225: the transaction may have committed and still reported an error (a
+		// lost acknowledgement). Answering failure then leaves a user the client was
+		// told does not exist, and a retry meets a duplicate. Read the row back: if it
+		// is there, the create succeeded and continues down the success path.
+		if landed, answer := c.userCreateLanded(ctx, "users.CreateUser", createdUser, err); !landed {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), answer)
+		}
 	}
 
 	// Seed password history with the initial password so the no-reuse rule
@@ -384,6 +391,58 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 	// alongside the CreateUser write — see the fix/create-ops-atomicity comment there.
 
 	return createdUser, nil
+}
+
+// ErrUserCreateOutcomeUnknown marks a user create whose transaction reported an
+// error and whose read-back (userCreateLanded) failed too: the account may exist.
+// It wraps the transaction's error, so every existing classification of that error
+// still applies; the SCIM transport answers it 503 + Retry-After (a retry either
+// creates the account or finds it), the others keep their storage-error answer.
+var ErrUserCreateOutcomeUnknown = errors.New("the user create may have committed: its outcome could not be read back")
+
+// userCreateLanded reports whether the user the create transaction inserted is
+// present after the transaction returned writeErr (#3225: a commit whose
+// acknowledgement was lost). Every core path that inserts a user calls it on the
+// transaction's error (TestPartialCommit_EveryUserCreateSiteHandlesLostAck,
+// server/faultops); site names the caller in the log.
+//
+// created is the row the closure got back from the insert; nil means the insert
+// itself never succeeded, so nothing can have landed. The row is matched on ID and
+// username, so an ID reused after a rollback cannot be mistaken for ours. When it is
+// not there, answer is the error the caller returns: writeErr, or, when the lookup
+// itself failed (logged), writeErr wrapped in ErrUserCreateOutcomeUnknown. A failing
+// lookup never counts as landed (fail closed). Panic-safe.
+func (c *KeyorixCore) userCreateLanded(ctx context.Context, site string, created *models.User, writeErr error) (landed bool, answer error) {
+	if created == nil || created.ID == 0 {
+		return false, writeErr
+	}
+	// Unknown until the lookup answers: a panic in it leaves the outcome unknown.
+	answer = fmt.Errorf("%w: %w", ErrUserCreateOutcomeUnknown, writeErr)
+	besteffort.Run(ctx, site+".ReadBack", func() error {
+		got, err := c.storage.GetUser(ctx, created.ID)
+		if err != nil {
+			if isPositiveNotFound(err) {
+				answer = writeErr
+				return nil
+			}
+			log.Printf("%s: create of user %d reported %v and the read-back failed: %v; the user may exist", site, created.ID, writeErr, err)
+			return err
+		}
+		if got == nil {
+			// No row and no error is no answer either way: still unknown.
+			return nil
+		}
+		answer = writeErr
+		if got.ID == created.ID && got.Username == created.Username {
+			log.Printf("%s: create of user %d reported %v but the row is present; it committed and is delivered", site, created.ID, writeErr)
+			landed = true
+		}
+		return nil
+	})
+	if landed {
+		return true, nil
+	}
+	return false, answer
 }
 
 // maxUserCreateAssignments bounds how many project-scoped role assignments a
@@ -505,7 +564,11 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 		c.logUserCreatedOn(ctx, tgt, actorID, created.ID, created.Username)
 		return nil
 	}); err != nil {
-		return nil, err
+		// #3225: a commit whose acknowledgement was lost committed the user, its
+		// grants and user.created together; read it back (see CreateUser).
+		if landed, answer := c.userCreateLanded(ctx, "users.CreateUserWithAssignments", created, err); !landed {
+			return nil, answer
+		}
 	}
 
 	// Best-effort password-history seed, after the atomic create (ADR-025).
@@ -1480,19 +1543,19 @@ func (c *KeyorixCore) GetUserByExternalID(ctx context.Context, externalID string
 
 func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 	if req.Username == "" {
-		return fmt.Errorf("%s", i18n.T("LabelUsername", nil))
+		return refuseField("username", fmt.Errorf("%s", i18n.T("LabelUsername", nil)))
 	}
 	if err := validateUsernameFormat(req.Username); err != nil {
-		return err
+		return refuseField("username", err)
 	}
 	if err := validateUsernameCharset(req.Username); err != nil {
-		return err
+		return refuseField("username", err)
 	}
 	if req.Email == "" {
-		return fmt.Errorf("%s", i18n.T("LabelEmail", nil))
+		return refuseField("email", fmt.Errorf("%s", i18n.T("LabelEmail", nil)))
 	}
 	if err := validateEmailFormat(req.Email); err != nil {
-		return err
+		return refuseField("email", err)
 	}
 	// DisplayName is optional at this layer (buildUserForCreate defaults it to
 	// Username when blank) — only format-check it when the caller actually
@@ -1500,11 +1563,11 @@ func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 	// semantics without re-imposing that requirement here.
 	if req.DisplayName != "" {
 		if err := validateDisplayNameFormat(req.DisplayName); err != nil {
-			return err
+			return refuseField("display_name", err)
 		}
 	}
 	if req.Password == "" {
-		return fmt.Errorf("%s", i18n.T("LabelPassword", nil))
+		return refuseField("password", fmt.Errorf("%s", i18n.T("LabelPassword", nil)))
 	}
 	return nil
 }

@@ -93,6 +93,7 @@ func TestSingleWriter_Postgres_OperatorJourney(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "keys"), 0o750))
 	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-sw")
 	swWriteConfig(t, dir, dsn, true)
+	adminEncryptionInit(t, bin, dir, env)
 	out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml")
 	require.NoError(t, err, out)
 	out, err = runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml")

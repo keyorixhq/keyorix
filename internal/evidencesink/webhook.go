@@ -176,13 +176,24 @@ func refuseDisallowedHost(host string) error {
 	return nil
 }
 
-// isDisallowedIP reports whether ip is a private or link-local address (loopback
-// permitted).
+// isDisallowedIP reports whether ip is refused as an evidence-webhook target:
+// the shared webhook-tier SSRF policy (netutil.IsPrivateOrLinkLocalExceptLoopback)
+// — every private/link-local/IMDS/CGNAT range the backend tier refuses, in every
+// embedded-IPv4 IPv6 encoding, with loopback permitted (an evidence receiver may
+// legitimately run on the local host during dev/test).
+//
+// Delegating to the shared predicate rather than a package-local
+// `ip.IsPrivate() || ip.IsLinkLocal*()` closes two gaps the hand-rolled form had,
+// both reachable through the netutil.Dialer this function is wired into at
+// dial time (webhook.go:85-93): a NAT64 / NAT64-local / IPv4-compatible / 6to4 /
+// Teredo encoding of a private/link-local/IMDS IPv4 (stdlib folds only
+// IPv4-mapped, so those slipped past), and RFC-6598 CGNAT 100.64.0.0/10 (Alibaba
+// cloud IMDS 100.100.100.200), which ip.IsPrivate() does not cover. The sibling
+// webhook-tier guards (siem, notifychan) and the stricter core channel guard now
+// all route through the same netutil predicates, so a policy difference can no
+// longer become an encoding or range gap between them.
 func isDisallowedIP(ip net.IP) bool {
-	if ip.IsLoopback() {
-		return false
-	}
-	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+	return netutil.IsPrivateOrLinkLocalExceptLoopback(ip)
 }
 
 // refuseRedirect blocks a redirect to a different host or an https->http downgrade, so

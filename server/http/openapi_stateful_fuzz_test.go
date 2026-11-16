@@ -18,6 +18,16 @@ package http
 //   3. authz (unauth layer)       (osOracleAuthUnauth)
 //   4. canary non-leakage         (osOracleCanary)
 //   5. idempotent reads           (osOracleIdempotentRead)
+//   6. typed error mapper         (osOracleTypedError)       — see openapi_swarm_fuzz_test.go
+//   7. denial existence-indep.    (osOracleDenialExistence)  — see openapi_swarm_fuzz_test.go
+//
+// SWARM: each input decodes a per-input feature subset (osSelectFeatures, in
+// openapi_swarm_fuzz_test.go) from its leading bytes — which operations, which principals
+// and which resource kinds are enabled — so a short sequence concentrates on a small,
+// corpus-chosen slice of the 307-operation surface and reaches rare interactions that the
+// uniform generator drowns under common operations. All-features remains reachable (it is the
+// plain generator), so swarm never loses coverage; the equal-budget benefit is measured by
+// TestOpenAPISwarmReachProfile.
 //
 // Phase 1: SQLite-backed, CI-runnable. The Postgres backend is reachable by swapping the
 // core's DB exactly as the sibling fuzzers do (not wired here to keep the harness single-
@@ -62,7 +72,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -241,7 +250,7 @@ type osWorld struct {
 	seedPools map[string][]uint       // resource collection -> ids seeded at build time
 }
 
-func osBuildWorld(f *testing.F) *osWorld {
+func osBuildWorld(f testing.TB) *osWorld {
 	f.Helper()
 	if err := i18n.InitializeForTesting(); err != nil {
 		f.Fatalf("i18n: %v", err)
@@ -447,16 +456,6 @@ func (r *osReader) u16() int { return int(r.byte())<<8 | int(r.byte()) }
 type osState struct {
 	pools   map[string][]uint
 	deleted map[string][]uint
-}
-
-func (w *osWorld) newState() *osState {
-	s := &osState{pools: map[string][]uint{}, deleted: map[string][]uint{}}
-	for k, v := range w.seedPools {
-		cp := make([]uint, len(v))
-		copy(cp, v)
-		s.pools[k] = cp
-	}
-	return s
 }
 
 func (s *osState) add(coll string, id uint) {
@@ -839,6 +838,10 @@ func osInitSweep() {
 	// instead of halting in <1 min on a known bug. Strict mode is used by the oracle-1
 	// red-proof and is available to gate once the class is fixed. Oracles 2-5 are always fatal.
 	osStrict = os.Getenv("KEYORIX_OSF_STRICT") == "1"
+	// SWARM is ON by default (the committed harness is the swarm fuzzer). Setting
+	// KEYORIX_OSF_NOSWARM=1 forces the full feature set every input (the plain generator),
+	// used as the baseline arm of TestOpenAPISwarmReachProfile.
+	osSwarm = os.Getenv("KEYORIX_OSF_NOSWARM") != "1"
 }
 
 // osFindingsPath is where sweep mode appends findings: KEYORIX_OSF_FINDINGS, else a file in
@@ -936,24 +939,23 @@ func osBindResponse(st *osState, o *osOp, rec *httptest.ResponseRecorder, target
 	walk(top)
 }
 
-func osRunIteration(t *testing.T, w *osWorld, mask uint64, program []byte) {
+func osRunIteration(t *testing.T, w *osWorld, program []byte) {
 	t.Helper()
 	if len(osOps) == 0 {
 		return
 	}
-	// Swarm testing: mask enables a random SUBSET of the operation alphabet for
-	// this execution (internal/fuzzutil.Swarm). An all-ones mask enables every
-	// operation (the uniform generator), so a pre-swarm seed keeps its meaning.
-	// Operations outside the enabled subset are never selected this execution,
-	// which exercises op interactions a full-alphabet generator under-exercises.
-	sw := fuzzutil.NewSwarm(mask, len(osOps))
 	rd := &osReader{b: program}
-	princ := rd.intn(osNumPrincipals)
-	st := w.newState()
+	// SWARM: a per-input feature subset (which operations, principals and resource kinds
+	// are enabled) is decoded from the leading corpus bytes. In plain mode (osSwarm==false)
+	// the same bytes are consumed but the full feature set is returned, so a given corpus
+	// entry is comparable across both modes. See osSelectFeatures.
+	feat := osSelectFeatures(rd, osSwarm)
+	princ := feat.princs[rd.intn(len(feat.princs))]
+	st := w.newStateF(feat)
 	numSteps := 1 + rd.intn(12)
 
 	for range numSteps {
-		opIdx := sw.Pick(rd.u16())
+		opIdx := feat.ops[rd.u16()%len(feat.ops)]
 		o := &osOps[opIdx]
 		modeByte := rd.byte()
 		mode := 0
@@ -976,6 +978,8 @@ func osRunIteration(t *testing.T, w *osWorld, mask uint64, program []byte) {
 		osOracleAuthUnauth(t, w, st, o, princ, mode, rd, req, rec)
 		osOracleCanary(t, o, princ, rec)
 		osOracleIdempotentRead(t, w, o, princ, req, rec)
+		osOracleTypedError(t, o, princ, req, rec)         // oracle 6
+		osOracleDenialExistence(t, w, o, princ, req, rec) // oracle 7
 
 		osBindResponse(st, o, rec, targetID)
 	}
@@ -1068,22 +1072,10 @@ var osKnownUndeclared5xx = []struct {
 	bodyContains string // "" = any body
 	reason       string
 }{
-	// OPENAPI-STATEFUL-3 (CLASS): generic-CRUD handlers blanket-map ANY core error to an
-	// undeclared 500 instead of the appropriate 4xx. The clearest example is GetProjectStats:
-	// `stats, err := GetProjectStats(id); if err != nil { 500 }` — a not-found project id
-	// (e.g. one deleted earlier in the sequence) yields 500, never 404. The fuzzer observed
-	// the same shape (not-found / duplicate-name constraint / boundary input → 500) on each op
-	// below; the list is observed-via-fuzzing, likely non-exhaustive. See #4132
-	// (OPENAPI-STATEFUL-3).
-
-	{id: "OPENAPI-STATEFUL-3", opID: "deleteProject", princ: -1, code: 500, reason: "project-with-dependencies / not-found blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "updateProject", princ: -1, code: 500, reason: "duplicate-name constraint / not-found blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "createProjectEnvironment", princ: -1, code: 500, reason: "duplicate env-name constraint / not-found blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "restoreEnvironment", princ: -1, code: 500, reason: "restore of a non-deleted/absent environment blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "restoreSecret", princ: -1, code: 500, reason: "restore of a non-deleted/absent secret blanket-mapped to 500"},
-
-	{id: "OPENAPI-STATEFUL-3", opID: "renderSecretTemplate", princ: -1, code: 500, reason: "template render error on schema-valid input blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "shareSecret", princ: -1, code: 500, reason: "share error (self-share / duplicate / not-found) blanket-mapped to 500"},
+	// OPENAPI-STATEFUL-3 (CLASS, #4132) has no waiver left: every op it named (the project and
+	// environment routes, restoreSecret, renderSecretTemplate, shareSecret) answers its refusals
+	// through answerCoreError and is pinned by a handler table test (catalog_errmap_test.go,
+	// secrets_share_render_errmap_test.go).
 
 	// OPENAPI-STATEFUL-7: StartImpersonation's handler switch (admin_impersonation.go:92-99)
 	// maps only "yourself"->400 and storage.ErrUserNotFound->404; every OTHER core refusal
@@ -1232,6 +1224,11 @@ var osVolatileReadColls = map[string]bool{
 	"backup": true, "posture": true, "dashboard": true, "summary": true, "activity": true,
 	"crypto-inventory": true, "credential-trends": true, "trends": true, "inventory": true,
 	"permission-changes": true, "sbom": true, "bom": true,
+	// The compliance controls CSV embeds a live audit-event count in its detail column
+	// ("... 815 events"); the first read is itself audited, so the second read legitimately
+	// differs. Unlike the JSON report it carries no generated_at marker to skip on, and the
+	// collection key is the last path segment ("controls.csv"), not "compliance".
+	"controls.csv": true,
 }
 
 func osOracleIdempotentRead(t *testing.T, w *osWorld, o *osOp, princ int, req *http.Request, rec *httptest.ResponseRecorder) {
@@ -1284,6 +1281,10 @@ var osVolatileKeys = map[string]bool{
 	"since": true, "until": true, "as_of": true, "window_start": true, "window_end": true,
 	"from_time": true, "to_time": true, "generated_at": true, "queried_at": true,
 	"requested_at": true, "computed_at": true,
+	// A secret read is itself counted (read_count against max_reads), so two back-to-back
+	// GETs of one secret legitimately differ in this one field. The counter's behaviour is
+	// asserted by the max_reads tests; the idempotence oracle must not call it a defect.
+	"read_count": true,
 }
 
 // osCanonJSON parses JSON and re-emits it with volatile keys removed, for stable comparison.
@@ -1341,21 +1342,29 @@ func FuzzOpenAPIStateful(f *testing.F) {
 	}
 	f.Cleanup(i18n.ResetForTesting)
 
-	// Seeds: a mix of principals and simple op sequences. Byte 0 selects the principal;
-	// bytes thereafter drive step count, op selection (u16), per-step mode, and args.
-	// The swarm feature mask is the first fuzz argument; every pre-swarm seed keeps
-	// its meaning by prepending an all-ones mask ("every operation available").
-	const allOps = ^uint64(0)
-	f.Add(allOps, []byte{osPrincAnon, 0x00, 0x01, 0x00})
-	f.Add(allOps, []byte{osPrincGarbage, 0x00, 0x02, 0x00})
-	f.Add(allOps, []byte{osPrincGlobalAdmin, 0x05, 0x00, 0x10, 0x00, 0x00, 0x20, 0x00})
-	f.Add(allOps, []byte{osPrincProjAdminA, 0x03, 0x00, 0x30, 0x02, 0x00, 0x40, 0x03})
-	f.Add(allOps, []byte{osPrincViewer, 0x02, 0x01, 0x11, 0x00})
-	f.Add(allOps, []byte{osPrincExpired, 0x02, 0x00, 0x22, 0x00})
-	f.Add(allOps, []byte{osPrincMachine, 0x02, 0x00, 0x33, 0x00})
-	f.Add(allOps, []byte{})
+	// Seeds. The first 5 bytes are the SWARM feature header (density, op-salt hi/lo, principal
+	// mask, collection mask — see osSelectFeatures); a 0x00 density byte means "all operations"
+	// and a 0x00 principal/collection mask means "all principals/all resource kinds", so a
+	// leading {0,0,0,0,0,...} is the plain full-feature generator. Bytes thereafter drive the
+	// principal pick, step count, op selection (u16), per-step mode, and args.
+	//
+	// Full-feature seeds (behave like the pre-swarm harness regardless of osSwarm):
+	f.Add([]byte{0, 0, 0, 0, 0, osPrincAnon, 0x00, 0x01, 0x00})
+	f.Add([]byte{0, 0, 0, 0, 0, osPrincGarbage, 0x00, 0x02, 0x00})
+	f.Add([]byte{0, 0, 0, 0, 0, osPrincGlobalAdmin, 0x05, 0x00, 0x10, 0x00, 0x00, 0x20, 0x00})
+	f.Add([]byte{0, 0, 0, 0, 0, osPrincProjAdminA, 0x03, 0x00, 0x30, 0x02, 0x00, 0x40, 0x03})
+	f.Add([]byte{0, 0, 0, 0, 0, osPrincViewer, 0x02, 0x01, 0x11, 0x00})
+	f.Add([]byte{0, 0, 0, 0, 0, osPrincExpired, 0x02, 0x00, 0x22, 0x00})
+	f.Add([]byte{0, 0, 0, 0, 0, osPrincMachine, 0x02, 0x00, 0x33, 0x00})
+	// Swarm seeds: high density exponents (narrow op subsets) with varied salts and masks, so a
+	// coverage-guided engine starts from inputs that concentrate on rare operation slices.
+	f.Add([]byte{0x07, 0x11, 0x22, 0xff, 0xff, 0x05, 0x04, 0x00, 0x30, 0x01, 0x00, 0x40})
+	f.Add([]byte{0x06, 0xa5, 0x5a, 0x08, 0x07, 0x02, 0x06, 0x12, 0x34, 0x02, 0x00, 0x56})
+	f.Add([]byte{0x05, 0xde, 0xad, 0x10, 0x04, 0x03, 0x08, 0x00, 0x11, 0x03, 0x00, 0x22, 0x03})
+	f.Add([]byte{0x08, 0x01, 0x02, 0x04, 0x01, 0x04, 0x0c, 0x00, 0x02, 0x00})
+	f.Add([]byte{})
 
-	f.Fuzz(func(t *testing.T, mask uint64, program []byte) {
-		osRunIteration(t, w, mask, program)
+	f.Fuzz(func(t *testing.T, program []byte) {
+		osRunIteration(t, w, program)
 	})
 }

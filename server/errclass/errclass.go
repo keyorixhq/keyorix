@@ -186,6 +186,9 @@ var sentinelTable = []Sentinel{
 
 	// Precondition: the target's state refuses.
 	{"core.ErrSecretNotDeleted", core.ErrSecretNotDeleted, Precondition},
+	{"core.ErrProjectHasSecrets", core.ErrProjectHasSecrets, Precondition},
+	{"storage.ErrEnvironmentHasSecrets", storage.ErrEnvironmentHasSecrets, Precondition},
+	{"storage.ErrParentDeleted", storage.ErrParentDeleted, Precondition},
 	{"core.ErrMachineTransitionInvalid", core.ErrMachineTransitionInvalid, Precondition},
 	{"core.ErrMachineIdentityNotActive", core.ErrMachineIdentityNotActive, Precondition},
 	{"core.ErrDynamicSecretPrecondition", core.ErrDynamicSecretPrecondition, Precondition},
@@ -201,6 +204,8 @@ var sentinelTable = []Sentinel{
 	{"storage.ErrDuplicateEmail", storage.ErrDuplicateEmail, Conflict},
 	{"storage.ErrDuplicateUsername", storage.ErrDuplicateUsername, Conflict},
 	{"storage.ErrDuplicateProjectName", storage.ErrDuplicateProjectName, Conflict},
+	{"storage.ErrDuplicateEnvironmentName", storage.ErrDuplicateEnvironmentName, Conflict},
+	{"storage.ErrDuplicateRoleName", storage.ErrDuplicateRoleName, Conflict},
 	{"storage.ErrDuplicateGroupName", storage.ErrDuplicateGroupName, Conflict},
 	{"storage.ErrDuplicateNotificationChannelName", storage.ErrDuplicateNotificationChannelName, Conflict},
 	{"storage.ErrDuplicateSecretVersion", storage.ErrDuplicateSecretVersion, Conflict},
@@ -210,6 +215,7 @@ var sentinelTable = []Sentinel{
 	{"storage.ErrDuplicateSecretDependency", storage.ErrDuplicateSecretDependency, Conflict},
 	{"storage.ErrDuplicateActiveMembership", storage.ErrDuplicateActiveMembership, Conflict},
 	{"storage.ErrLegalHoldAlreadyActive", storage.ErrLegalHoldAlreadyActive, Conflict},
+	{"storage.ErrLegalHoldAlreadyReleased", storage.ErrLegalHoldAlreadyReleased, Conflict},
 	{"storage.ErrBreakGlassAlreadyActive", storage.ErrBreakGlassAlreadyActive, Conflict},
 	{"storage.ErrBreakGlassAlreadyReviewed", storage.ErrBreakGlassAlreadyReviewed, Conflict},
 	{"core.ErrUserAlreadyExists", core.ErrUserAlreadyExists, Conflict},

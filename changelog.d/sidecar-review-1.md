@@ -1,2 +1,0 @@
-### Internal
-- **Independent review recorded for three check-then-act lock exemptions.** `ReissueOneTimePassword`, `SetUserRoles` and `completeInvitationAccept` (fragments in `docs/check-then-act-lock-exempt.d/`, each self-classified SERIAL-EQUIV by the session that added it) were re-read against the code by a separate session. All three hold, and each now has a row in `docs/check-then-act-lock-exempt.reviewed.tsv`.

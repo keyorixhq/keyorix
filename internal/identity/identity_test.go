@@ -114,3 +114,30 @@ func TestFoldedName_StringImplementsStringer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "MyUser", n.String())
 }
+
+// TestNewFoldedName_CompatibilityFormsAreDistinctPrincipals pins the NFC (not
+// NFKC) decision documented in the package comment: compatibility variants of
+// a name are different principals, so they must not silently merge.
+func TestNewFoldedName_CompatibilityFormsAreDistinctPrincipals(t *testing.T) {
+	ascii, err := NewFoldedName("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, raw := range map[string]string{
+		"fullwidth":     "\uff41\uff44\uff4d\uff49\uff4e",
+		"ligature":      "\ufb01le",
+		"roman numeral": "\u2160",
+	} {
+		got, err := NewFoldedName(raw)
+		if err != nil {
+			continue // rejecting is also a safe outcome; merging is not
+		}
+		if got.Folded() == ascii.Folded() {
+			t.Errorf("%s form folded to the ASCII principal %q", name, ascii.Folded())
+		}
+	}
+	a, _ := NewFoldedName("\uff41dmin")
+	if a.Folded() == ascii.Folded() {
+		t.Errorf("fullwidth a + dmin merged with admin")
+	}
+}

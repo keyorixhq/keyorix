@@ -11,6 +11,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -585,31 +586,17 @@ func secretACLToProto(a *models.SecretACL) *pb.SecretACLEntry {
 	}
 }
 
-// mapSecretACLError translates core ACL errors into gRPC status codes.
+// mapSecretACLError translates core ACL errors into gRPC status codes through the
+// shared classifier (coreErrorStatus); the texts are this family's own and fixed, so a
+// driver error never reaches the client (matches mapUserError's GRPC-003 remediation).
 func mapSecretACLError(err error) error {
-	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
-	}
-	// CORE-GRPC-TAILS-1: not-found and not-authorized are classified by sentinel
-	// (errors.Is), not by err.Error() text; only the untyped validation cases below
-	// still read the message.
-	switch {
-	case errors.Is(err, storage.ErrSecretACLNotFound), errors.Is(err, storage.ErrSecretNotFound),
-		errors.Is(err, storage.ErrUserNotFound):
-		return status.Error(codes.NotFound, "ACL or secret not found")
-	// ERRSTRING-CLASS-1: GrantSecretACL's own validation is typed
-	// (storage.ErrInvalidSecretACLRequest). A raw SQL/driver error from the
-	// storage-layer paths that also reach this classifier can contain "invalid" or
-	// "required" and is a server fault. Fixed message, so a driver error never
-	// reaches the client verbatim (matches mapUserError's GRPC-003 remediation).
-	case errors.Is(err, storage.ErrInvalidSecretACLRequest):
-		return status.Error(codes.InvalidArgument, "invalid ACL request")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "not authorized to manage this secret's ACLs")
-	default:
-		return status.Error(codes.Internal, "ACL operation failed")
-	}
+	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "ACL operation", texts: coreErrorTexts{
+		errclass.NotFound: "ACL or secret not found",
+		// ERRSTRING-CLASS-1: GrantSecretACL's own validation is typed
+		// (storage.ErrInvalidSecretACLRequest).
+		errclass.InvalidInput:     "invalid ACL request",
+		errclass.PermissionDenied: "not authorized to manage this secret's ACLs",
+	}})
 }
 
 // ---------------------------------------------------------------------------
