@@ -1,1 +1,1 @@
-scripts/ci/fuzz_pr_gate_test.go	.github/workflows/ci.yml,scripts/ci/testdata/fuzzgate/*.json	fuzz PR gate test reads the gate block in ci.yml and the recorded PR file lists
+scripts/ci/fuzz_pr_gate_test.go	scripts/fuzzing/**/*.json,scripts/fuzzing/README.md,scripts/fuzzing/targets.conf	fuzz PR gate reads the fuzz target list and README
