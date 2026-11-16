@@ -1,0 +1,1 @@
+internal/fuzzutil/resguard/importonly_test.go	operator/**/*.go	walks every non-test .go file in the repo for an import of resguard (skips .git, vendor, node_modules), including operator/

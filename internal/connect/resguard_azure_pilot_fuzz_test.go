@@ -71,11 +71,11 @@ func installAzureRetryDelayListener() {
 			if e != azlog.EventRetryPolicy {
 				return
 			}
-			i := strings.Index(msg, "Delay=")
-			if i < 0 { // only the pre-sleep "End Try #N, Delay=%v" line carries it
+			_, after, found := strings.Cut(msg, "Delay=")
+			if !found { // only the pre-sleep "End Try #N, Delay=%v" line carries it
 				return
 			}
-			d, err := time.ParseDuration(strings.TrimSpace(msg[i+len("Delay="):]))
+			d, err := time.ParseDuration(strings.TrimSpace(after))
 			if err != nil {
 				return
 			}

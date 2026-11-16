@@ -44,7 +44,7 @@ func readThreads() int {
 	if err != nil {
 		return 0
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if v, ok := strings.CutPrefix(line, "Threads:"); ok {
 			n, _ := strconv.Atoi(strings.TrimSpace(v))
 			return n
@@ -69,7 +69,7 @@ func readWriteBytes() uint64 {
 	if err != nil {
 		return 0
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if v, ok := strings.CutPrefix(line, "write_bytes:"); ok {
 			n, _ := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
 			return n
