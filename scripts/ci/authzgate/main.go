@@ -18,15 +18,22 @@
 // permission-check code when it references a root or a permission constant,
 // names a permission, references a func or var that is permission-check code
 // (a fixpoint), or is transport code (server/**) calling an authzdiff row
-// whose core method is. A changed line inside such a declaration, on either
-// side of the diff, triggers the gate. `authzgate inventory` lists the set.
+// whose core method is. Also in the set: every func, var or const a decision
+// root reaches downward (closeDown: the PAT restriction Authorize consults,
+// the SQL a storage root runs), which references no root itself. A changed
+// line inside such a declaration, on either side of the diff, triggers the
+// gate: the base side is judged by the base revision's model, so a check
+// removed from a function that stays is seen. `authzgate inventory` lists the
+// set.
 //
 // Mode ops runs only the authzdiff operations whose op literal names the
 // changed declaration or one of its callers (and, for a handler, the rows it
 // calls). Mode full runs the whole strict sweep, chosen when the narrow
-// mapping cannot be trusted: a decision root, a permission constant or table,
-// request-wide transport authorization (middleware, interceptors, router) or
-// an RBAC migration changed; a relevant declaration was deleted; a caller has
+// mapping cannot be trusted: a decision root, a declaration below one, a
+// permission constant or table, request-wide transport authorization
+// (middleware, interceptors, router) or an RBAC migration changed; a relevant
+// declaration was deleted, or is no longer permission-check code at head (its
+// check was removed, REVIEW-4358 F1); a caller has
 // an ambiguous name the mapping cannot follow; the mapping selects most ops
 // anyway; or server/authzdiff or this gate changed. A ci.yml change runs two
 // canary ops, so the job's wiring is exercised without a full sweep.
@@ -45,6 +52,18 @@
 //     judge it.
 //   - code outside the index (the cli, operator and migrate modules,
 //     devtools, scripts) never triggers: authzdiff does not exercise it.
+//   - the downward closure starts at the decision roots only. A helper below
+//     another check site that references no root and names no permission (a
+//     predicate deciding whether that site's check applies) is not in the set,
+//     unless the site itself stops being permission-check code (then full).
+//     Seeding it from every check site was measured on the last 100 merges of
+//     main (2026-11-16): 1,263 more declarations and 4 more full plans, all
+//     on audit writers, input validation and the last-used coalescer.
+//   - the downward closure follows exported names globally, like the rest of
+//     the index, so it over-includes same-named declarations elsewhere (a
+//     change there plans full). Over the same 100 merges the downward
+//     closure changed one plan, #4283, from 4 ops to full: it edited the role
+//     permission cache generation, below the RBAC store roots.
 package main
 
 import (
@@ -230,6 +249,7 @@ func planFrom(hunks map[string]*fileHunks, ht, bt tree) (*plan, error) {
 		return nil, fmt.Errorf("no ops found in server/authzdiff: the op table moved, update authzgate")
 	}
 
+	var bm *model // the base model, built on the first base-side file
 	selected := map[string]bool{}
 	for _, f := range sortedKeys(hunks) {
 		h := hunks[f]
@@ -257,21 +277,37 @@ func planFrom(hunks map[string]*fileHunks, ht, bt tree) (*plan, error) {
 		// head side: the index's own declarations (an in-scope file at head is
 		// indexed), so the base side below can match them by identity
 		changed := touched(m.ix.byFile[f], h.newLines)
-		if src, ok := bt[f]; ok {
-			ds, err := parseDecls(f, src)
-			if err != nil {
-				return nil, err
+		if _, ok := bt[f]; ok {
+			// base side, judged by the base model: what the code was decides
+			// whether a change removed a check (REVIEW-4358 F1)
+			if bm == nil {
+				if bm, err = newModel(bt); err != nil {
+					return nil, err
+				}
 			}
-			for _, d := range touched(ds, h.oldLines) {
-				if r := m.reason(d); r != "" && !slices.ContainsFunc(m.ix.byFile[f], func(x *decl) bool { return x.name == d.name && x.recv == d.recv }) {
+			for _, d := range touched(bm.ix.byFile[f], h.oldLines) {
+				r := bm.reason(d)
+				if r == "" {
+					continue
+				}
+				i := slices.IndexFunc(m.ix.byFile[f], func(x *decl) bool { return x.name == d.name && x.recv == d.recv })
+				if i < 0 {
 					p.escalate(modeFull, fmt.Sprintf("%s: %s removed (%s)", f, d.name, r))
-				} else if r != "" {
-					// still present at head: judge the head declaration
-					for _, x := range m.ix.byFile[f] {
-						if x.name == d.name && x.recv == d.recv && !slices.Contains(changed, x) {
-							changed = append(changed, x)
-						}
-					}
+					continue
+				}
+				x := m.ix.byFile[f][i]
+				if m.reason(x) == "" {
+					// a check deleted inside a function that stays: like a
+					// removed declaration, the narrow mapping is not trusted
+					// with it
+					p.escalate(modeFull, fmt.Sprintf("%s: %s is no longer permission-check code (base: %s)", f, qual(x), r))
+					continue
+				}
+				// still a check at head (a refactor that moves a root call into a
+				// helper, as #4332 did, still reaches the set): judge the head
+				// declaration; its callers are the ops either way
+				if !slices.Contains(changed, x) {
+					changed = append(changed, x)
 				}
 			}
 		}
@@ -338,6 +374,8 @@ func (m *model) forcesFull(d *decl) string {
 		return "a permission table"
 	case slices.ContainsFunc(globalTransport, func(p string) bool { return strings.HasPrefix(d.file, p) }):
 		return "request-wide transport authorization"
+	case m.below[d] != "":
+		return "below every op"
 	}
 	return ""
 }
@@ -691,15 +729,17 @@ func inventory(w io.Writer, rev string) error {
 		return err
 	}
 	var b strings.Builder
-	direct, closure := 0, 0
+	direct, closure, below := 0, 0, 0
 	for _, d := range m.ix.decls {
-		r := m.why[d]
-		if r == "" {
+		r := m.reason(d)
+		switch {
+		case r == "":
 			continue
-		}
-		if strings.HasPrefix(r, "reaches ") {
+		case m.why[d] == "":
+			below++
+		case strings.HasPrefix(r, "reaches "):
 			closure++
-		} else {
+		default:
 			direct++
 		}
 		fmt.Fprintf(&b, "%s:%d\t%s\t%s\n", d.file, d.start, qual(d), r)
@@ -714,8 +754,8 @@ func inventory(w io.Writer, rev string) error {
 			fmt.Fprintf(&b, "# stop: %s:%d\t%s (%d declarations share the name)\n", d.file, d.start, qual(d), len(m.ix.byKey[d.key()]))
 		}
 	}
-	fmt.Fprintf(&b, "# %d declarations indexed, %d in the trigger set (%d direct, %d through the closure), %d roots, %d permission names, %d closure stops\n",
-		len(m.ix.decls), direct+closure, direct, closure, len(m.roots), len(m.perms), stops)
+	fmt.Fprintf(&b, "# %d declarations indexed, %d in the trigger set (%d direct, %d through the closure, %d only below a decision root), %d roots, %d permission names, %d closure stops\n",
+		len(m.ix.decls), direct+closure+below, direct, closure, below, len(m.roots), len(m.perms), stops)
 	_, err = io.WriteString(w, b.String())
 	return err
 }

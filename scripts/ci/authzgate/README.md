@@ -41,16 +41,19 @@ So the burst is not a PR gate: within 60 s it does not reliably reach the
 #4332 case, and it can fail on harness state that has nothing to do with the
 PR. It runs only on `ci:full`, report-only.
 
-Trigger rate over the last 100 merged PRs (#4251 … #4345, `git log
---first-parent --merges -100 origin/main`, plan of each merge against its first
-parent with this tool):
+Trigger rate over the last 100 merged PRs (`git log --first-parent --merges
+-100 origin/main` at 68d9352b8, #4289 … #4363; plan of each merge against its
+first parent with this tool, after the REVIEW-4358 F1/F2 fixes):
 
 | plan | PRs |
 |---|---|
-| none | 93 (8 of them touched permission-check code no authzdiff op reaches: SSO login, legal hold, admin CLI, start-up) |
-| ops | 2: #4332 (`machine.token.issue`), #4283 (4 ops) |
-| full | 2: #4203 (`LocalStorage.CreateRole`, a storage root), #4172 (`server/authzdiff` itself) |
-| ci.yml canary (2 ops) | 3: #4341, #4331, #4221 |
+| none | 87 (9 of them touched permission-check code no authzdiff op reaches: SSO login, legal hold, admin CLI, start-up) |
+| ops | 2: #4332 (`machine.token.issue`), #4214 (3 ops) |
+| full | 5: #4194 and #4368 (`server/authzdiff` itself), #4203 (`LocalStorage.CreateRole`, a storage root), #4283 (the role permission cache, below the RBAC store roots; 4 ops before the downward closure), #4172 (`server/authzdiff` itself) |
+| ci.yml canary (2 ops) | 6: #4360, #4354, #4347, #4341, #4331, #4221 |
+
+Of those 100, the F1/F2 fixes (base-side judging, the downward closure of the
+decision roots) changed one plan: #4283, ops to full.
 
 The CI runner cost of one triggering PR is in the introducing PR's body
 (measured on its own run).

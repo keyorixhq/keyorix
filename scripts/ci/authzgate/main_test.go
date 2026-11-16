@@ -211,6 +211,63 @@ func TestPlan_DeletedHelperIsFull(t *testing.T) {
 	}
 }
 
+// A check removed from a function that stays (REVIEW-4358 F1): the head
+// declaration is no longer permission-check code, so judging only the head
+// side planned none. The base side had the check: full. A refactor that moves
+// the root call behind a helper (the #4332 shape) still reaches the set at
+// head and keeps its narrow mapping.
+func TestPlan_LoosenedCheckIsFull(t *testing.T) {
+	helper := []byte("package core\nfunc (c *KeyorixCore) viaHelper() bool { ok, _ := c.AuthorizePrincipal(); return ok }\n")
+	for _, tc := range []struct {
+		name, body string
+		mode       mode
+		ops        []string
+	}{
+		{"check deleted, body kept", "\tok := true\n", modeFull, nil},
+		{"root call moved behind a helper", "\tok := c.viaHelper()\n", modeOps, []string{"machine.token.issue"}},
+		{"check kept", "\tok, _ := c.AuthorizePrincipal() // x\n", modeOps, []string{"machine.token.issue"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bt, ht := fixture(), fixture()
+			bt["internal/core/helper.go"], ht["internal/core/helper.go"] = helper, helper
+			ht["internal/core/authz.go"] = []byte(strings.Replace(string(bt["internal/core/authz.go"]), "\tok, _ := c.AuthorizePrincipal()\n", tc.body, 1))
+			p, err := planFrom(map[string]*fileHunks{"internal/core/authz.go": {oldLines: []int{4}, newLines: []int{4}}}, ht, bt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.mode != tc.mode || !slices.Equal(p.ops, tc.ops) {
+				t.Fatalf("mode=%s ops=%v, want %s %v\n%s", p.mode, p.ops, tc.mode, tc.ops, strings.Join(p.reasons, "\n"))
+			}
+		})
+	}
+}
+
+// What a decision root calls decides with it (REVIEW-4358 F2): the PAT
+// restriction Authorize consults, the SQL a storage root runs. Such a helper
+// references no root, so the upward closure never saw it and a change planned
+// none. It sits below every op: full.
+func TestPlan_BelowARootIsFull(t *testing.T) {
+	ft := fixture()
+	ft["internal/core/authz.go"] = []byte(strings.Replace(string(ft["internal/core/authz.go"]),
+		"c.storage.ResolveUserPermissionAt() == nil, nil", "c.storage.ResolveUserPermissionAt() == nil && c.pat.Allows(), nil", 1))
+	ft["internal/core/rules/pat.go"] = []byte("package rules\nfunc (r *PATRestriction) Allows() bool {\n\tif r.ProjectID != 0 { return false }\n\treturn true\n}\n")
+	ft["internal/storage/store/perm.go"] = []byte("package store\nfunc (s *LocalStorage) ResolveUserPermissionAt() error { return s.db.Raw(userPermSQL()).Error }\nfunc userPermSQL() string { return \"select 1\" }\n")
+	for name, h := range map[string]map[string]*fileHunks{
+		"PAT restriction":      {"internal/core/rules/pat.go": {oldLines: []int{3}, newLines: []int{3}}},
+		"storage root's query": {"internal/storage/store/perm.go": {oldLines: []int{3}, newLines: []int{3}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, err := planFrom(h, ft, ft)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.mode != modeFull {
+				t.Fatalf("mode=%s, want full\n%s", p.mode, strings.Join(p.reasons, "\n"))
+			}
+		})
+	}
+}
+
 // A caller with an ambiguous (or library-like) name stops the mapping: full,
 // never a narrower op set.
 func TestPlan_AmbiguousCallerIsFull(t *testing.T) {
@@ -372,6 +429,34 @@ func TestTriggerSetCoversTheNamedShapes(t *testing.T) {
 	}
 	if mw == 0 {
 		t.Error("no server/middleware declaration is in the trigger set")
+	}
+}
+
+// What the decision roots decide with is below every op and plans full
+// (REVIEW-4358 F2): the PAT restriction Authorize consults and the permission
+// SQL the user resolution root runs. A KeyorixCore operation that only shares
+// a storage root's name is not a seed: the audit write it calls stays out.
+func TestBelowDecisionRootsForceFull(t *testing.T) {
+	m, _ := realModel(t)
+	find := func(file, name string) *decl {
+		for _, d := range m.ix.byFile[file] {
+			if d.name == name {
+				return d
+			}
+		}
+		t.Fatalf("%s: %s not found (moved? update this list)", file, name)
+		return nil
+	}
+	for _, c := range []struct{ file, name string }{
+		{"internal/core/rules/pat_restriction.go", "Allows"},
+		{"internal/storage/store/local_principal_permission.go", "userPrincipalPermissionSQL"},
+	} {
+		if d := find(c.file, c.name); m.forcesFull(d) == "" {
+			t.Errorf("%s: %s does not force the full sweep (reason %q)", c.file, c.name, m.reason(d))
+		}
+	}
+	if d := find("internal/core/audit_target.go", "emitAuditOn"); m.below[d] != "" {
+		t.Errorf("emitAuditOn is below %s: a core operation named like a storage root seeded the downward closure", m.below[d])
 	}
 }
 

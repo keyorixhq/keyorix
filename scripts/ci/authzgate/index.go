@@ -405,6 +405,7 @@ type model struct {
 	rows     map[string]bool // authzdiff matrix rows (exported core method names)
 	helpers  map[string]bool // keys the closure propagates through
 	why      map[*decl]string
+	below    map[*decl]string // reached from a decision root: the root it is below
 }
 
 func newModel(t tree) (*model, error) {
@@ -420,7 +421,7 @@ func newModel(t tree) (*model, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &model{ix: ix, roots: map[string]bool{}, permDefs: map[string]bool{}, rows: rows, helpers: map[string]bool{}, why: map[*decl]string{}}
+	m := &model{ix: ix, roots: map[string]bool{}, permDefs: map[string]bool{}, rows: rows, helpers: map[string]bool{}, why: map[*decl]string{}, below: map[*decl]string{}}
 	for _, r := range coreDecisionRoots {
 		m.roots[keyOf(coreDir, r)] = true
 	}
@@ -465,6 +466,22 @@ func (m *model) carries(d *decl) bool {
 // RBAC store, it is judged by what it references.
 func (m *model) isRoot(d *decl) bool {
 	return m.roots[d.key()] && !strings.HasPrefix(d.file, "server/")
+}
+
+// isDownSeed: d is a root the downward closure starts from: a core decision
+// root in internal/core, or a storage root implemented outside internal/core
+// (the store, its caches and remote client). Not a KeyorixCore method that only
+// shares a storage root's name (RemoveMachineRole, AssignMachineRole): that is
+// an operation the oracle sweeps, not something every op passes through, and
+// what it calls (audit writes) is not below the other ops.
+func (m *model) isDownSeed(d *decl) bool {
+	if !m.isRoot(d) {
+		return false
+	}
+	if d.pkg == coreDir {
+		return slices.Contains(coreDecisionRoots, d.name)
+	}
+	return !strings.HasPrefix(d.file, coreDir+"/")
 }
 
 // directReason says why d is permission-check code without the closure, or "".
@@ -544,6 +561,41 @@ func (m *model) close() {
 			}
 		}
 	}
+	m.closeDown()
+}
+
+// closeDown is the downward closure of the decision roots: every func, var or
+// const a root references, transitively, following only propagatable keys
+// (REVIEW-4358 F2). Such a declaration references no root itself (the PAT
+// restriction Authorize consults, the SQL a storage root runs), so the upward
+// closure never sees it, yet it decides with the root, below every op. It is
+// in the trigger set (reason "below decision root"), forces the full sweep
+// (forcesFull), and does not propagate upward: its other callers are not
+// permission-check code because of it (a shared error helper would otherwise
+// pull in half the tree). Transport code is never below a root, and types are
+// not followed (a struct changes behaviour only through code that uses it).
+// Seeds: isDownSeed.
+func (m *model) closeDown() {
+	var queue []*decl
+	for _, d := range m.ix.decls {
+		if m.isDownSeed(d) {
+			m.below[d] = qual(d)
+			queue = append(queue, d)
+		}
+	}
+	for len(queue) > 0 {
+		d := queue[0]
+		queue = queue[1:]
+		for _, r := range sortedKeys(d.refs) {
+			for _, x := range m.ix.byKey[keyOf(d.pkg, r)] {
+				if m.below[x] != "" || x.kind == kindType || strings.HasPrefix(x.file, "server/") || !m.propagatable(x) {
+					continue
+				}
+				m.below[x] = m.below[d]
+				queue = append(queue, x)
+			}
+		}
+	}
 }
 
 func (m *model) reachedHelper(d *decl) string {
@@ -566,6 +618,9 @@ func (m *model) reason(d *decl) string {
 	}
 	if r := m.reachedHelper(d); r != "" {
 		return "reaches " + r
+	}
+	if r := m.below[d]; r != "" {
+		return "below decision root " + r
 	}
 	return ""
 }
