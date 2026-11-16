@@ -64,6 +64,18 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// v4's relaxed control-char validation. Keyed on the v3 error "control characters
 	// are not allowed", so it does not tolerate any other rejection.
 	"v3-rejects:control-char": true,
+
+	// A plain scalar followed by a value indicator `:` at the START of the next
+	// line ("0\n:", "a\n: b", "0\n: x"). v3.0.5 ACCEPTS it and keeps ONLY the
+	// leading scalar (decoding "0\n:" to the int 0), SILENTLY dropping the second
+	// line; v4.0.0 REJECTS the malformed document ("did not find expected
+	// <document start>"). Here v4 is the STRICTER/safer side, and v3 exhibits silent
+	// input truncation. Found by the DF2 fuzz run at "0\n:". The reachable library
+	// (v3) is the lenient one, so this is an upstream-style observation about v3's
+	// silent-drop behaviour on malformed multi-line scalars-vs-mapping input, not a
+	// Keyorix defect (no code feeds such malformed YAML to a security decision).
+	// Keyed on the v4 error "expected <document start>" alone.
+	"v4-rejects:doc-start": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -250,6 +262,29 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("precondition: a C0 NUL must be rejected by BOTH libraries")
 		}
 		t.Logf("oracle-2 control-char gating proven: DEL/C1 tolerated; C0 rejected by both")
+	}
+
+	// ---- Oracle 2 class gating: the doc-start divergence (v4 stricter) ----
+	{
+		in := []byte("0\n:")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: '0\\n:' must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:doc-start" {
+			t.Fatalf("doc-start split must class as v4-rejects:doc-start, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("doc-start class must be listed (tolerated)")
+		}
+		// Document the silent-truncation observation: v3 kept ONLY the leading scalar.
+		if v3v != 0 {
+			t.Fatalf("expected v3 to keep only the leading scalar 0 (silent drop), got %#v", v3v)
+		}
+		t.Logf("oracle-2 doc-start gating proven: v3 accepts+truncates to %#v, v4 rejects", v3v)
 	}
 }
 
