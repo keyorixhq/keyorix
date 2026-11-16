@@ -100,6 +100,7 @@ cli/internal/regularfile/regularfile.go (os.OpenFile)	file_write	cli/internal/re
 cli/internal/securefiles/securefiles.go (os.OpenFile)	file_write	cli/internal/securefiles	1
 cmd/statemapgen/main.go (os.WriteFile)	file_write	cmd/statemapgen	2
 devtools/authzmatrix/main.go (os.WriteFile)	file_write	devtools/authzmatrix	2
+fuzzkit/certdiff/certdiff.go (os.WriteFile)	file_write	fuzzkit/certdiff	2
 internal/audit/siem/spool.go (os.OpenFile)	file_write	internal/audit/siem	1
 internal/auditverify/witness.go (os.OpenFile)	file_write	internal/auditverify	1
 internal/backupfmt/reader.go (os.OpenFile)	file_write	internal/backupfmt	1
@@ -151,6 +152,7 @@ scripts/fuzzing/configspace/render.go (os.WriteFile)	file_write	scripts/fuzzing/
 scripts/fuzzing/configspace/runner.go (os.Create)	file_write	scripts/fuzzing/configspace	1
 scripts/fuzzing/configspace/runner.go (os.WriteFile)	file_write	scripts/fuzzing/configspace	2
 scripts/fuzzing/invariant-map/main.go (os.WriteFile)	file_write	scripts/fuzzing/invariant-map	1
+scripts/fuzzing/reachgen/cmd/reachgen/main.go (os.WriteFile)	file_write	scripts/fuzzing/reachgen/cmd/reachgen	2
 scripts/fuzzing/reencode-seeds.go (os.WriteFile)	file_write	scripts/fuzzing	1
 scripts/fuzzing/sinkmap/main.go (os.WriteFile)	file_write	scripts/fuzzing/sinkmap	2
 scripts/metrics/cfgkeys/main.go (os.WriteFile)	file_write	scripts/metrics/cfgkeys	1
