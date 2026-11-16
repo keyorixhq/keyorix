@@ -2,6 +2,7 @@ package dynamic
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -113,7 +114,12 @@ func (e *RedisEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	}
 	client, err := connectRedis(ctx, revokeDSN, e.allowPrivateNetwork, e.allowInsecureTransport)
 	if err != nil {
-		return err
+		if _, refused := errors.AsType[*dsn.ForbiddenOptionError](err); refused || revokeDSN == adminDSN {
+			return err
+		}
+		// Name the dropped option, so an operator reading revoke_failed knows
+		// why a target with an untrusted certificate now fails the handshake.
+		return fmt.Errorf("revoke ran without admin_dsn option skip_verify (the server certificate was verified): %w", err)
 	}
 	defer func() { _ = client.Close() }()
 
