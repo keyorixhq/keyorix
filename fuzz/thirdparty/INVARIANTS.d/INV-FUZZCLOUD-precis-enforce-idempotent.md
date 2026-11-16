@@ -7,9 +7,10 @@
   `NewFoldedName`/`NewAddressName` rely on when they store a folded name and
   later compare it against a freshly-folded candidate (RFC 8264 §7, RFC 8265).
   Does NOT check reject-completeness (which runes the profile should refuse) or
-  fold-collision soundness (that two inputs which should fold equal do). Why:
-  reachgen ranked `precis.Profile.String` the top uncovered untrusted-input
-  normalizer; a non-idempotent fold would silently split identities that must
+  fold-collision soundness (that two inputs which should fold equal do). Why: a
+  direct library-level complement to `FuzzFoldedNameOracles` /
+  `FuzzAddressNameOracles` (`internal/identity/fold_oracles_fuzz_test.go`),
+  which already check idempotence through Keyorix's wrappers; a non-idempotent fold would silently split identities that must
   compare equal. Guard: `FuzzPrecisProfileIdempotent`
   (`fuzz/thirdparty/precis/precis_idempotent_fuzz_test.go`), red-proofed with a
   planted non-idempotent transform.
