@@ -2525,7 +2525,8 @@ jobs:
   # scripts/ci/authzgate/README.md.
   authz-oracle:
     needs: [fuzz-plan]
-    if: needs.fuzz-plan.result == 'success' && needs.fuzz-plan.outputs.authz_mode != 'none' && needs.fuzz-plan.outputs.authz_mode != ''
+    # !cancelled(), as on fuzz-plan and fuzz: without a status function the implicit success() also looks at build-and-test's skipped ancestors and skips this job even when the plan asked for a sweep (seen on #4358's own run: mode=full, authz-oracle skipped).
+    if: ${{ !cancelled() && needs.fuzz-plan.result == 'success' && needs.fuzz-plan.outputs.authz_mode != 'none' && needs.fuzz-plan.outputs.authz_mode != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -2578,13 +2579,19 @@ jobs:
         run: |
           echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT authz-oracle=$AUTHZ_RESULT (mode=$AUTHZ_MODE gate=${AUTHZ_GATE:-report})"
           [ "$PLAN_RESULT" = "success" ] || exit 1
-          case "$AUTHZ_RESULT" in
+          # A skipped oracle is a pass only when the plan ran nothing: with
+          # mode ops or full it means the planned sweep never ran.
+          authz="$AUTHZ_RESULT"
+          if [ "$authz" = "skipped" ] && [ "$AUTHZ_MODE" != "none" ]; then
+            authz="skipped-with-mode-$AUTHZ_MODE"
+          fi
+          case "$authz" in
             success|skipped) ;;
             *)
               if [ "$AUTHZ_GATE" = "enforce" ]; then
                 exit 1
               fi
-              echo "::warning::authz-oracle is $AUTHZ_RESULT (report-only until AUTHZ_ORACLE_GATE=enforce)"
+              echo "::warning::authz-oracle is $authz (report-only until AUTHZ_ORACLE_GATE=enforce)"
               ;;
           esac
           case "$FUZZ_RESULT" in success|skipped) exit 0 ;; *) exit 1 ;; esac
