@@ -216,8 +216,15 @@ func (m model) allowed(p *principal, req requirement) bool {
 			return false
 		}
 	}
-	if req.tokenForMachineID != 0 && p.machineID != 0 && !m.machineCovers(p, req.tokenForMachineID) {
-		return false
+	if req.tokenForMachineID != 0 {
+		if p.pat != nil {
+			// a restricted PAT cannot mint: the minted token would carry none of
+			// its restrictions (core.IssueMachineToken, ErrMachinePrivilegeCeilingDenied)
+			return false
+		}
+		if !m.machineCovers(p, req.tokenForMachineID) {
+			return false
+		}
 	}
 	for _, r := range req.ceiling {
 		perms, _ := m.rolePerms(r.roleID)
@@ -230,16 +237,18 @@ func (m model) allowed(p *principal, req requirement) bool {
 	return true
 }
 
-// machineCovers: machine caller p may control target's credential (see
-// requirement.tokenForMachineID). The target's grants are read from the
-// grant tables like any principal's.
+// machineCovers: caller p (machine or user) may control target's credential
+// (see requirement.tokenForMachineID). The target's grants are read from the
+// grant tables like any principal's. A machine may not be the target itself and
+// is refused when the target holds an admin role; a user is held to the
+// target's permissions the same way, and an admin user holds them all.
 func (m model) machineCovers(p *principal, target uint) bool {
-	if p.machineID == target {
+	if p.machineID != 0 && p.machineID == target {
 		return false
 	}
 	for _, g := range m.grants(&principal{machineID: target}) {
 		perms, adminRole := m.rolePerms(g.roleID)
-		if adminRole {
+		if adminRole && p.machineID != 0 {
 			return false
 		}
 		for _, perm := range perms {
@@ -295,10 +304,11 @@ type requirement struct {
 	// refusal is absorbed by known-09 at the partition.
 	memberOnly bool
 	// tokenForMachineID != 0: the op mints a credential for that machine. A
-	// MACHINE caller must then cover the target (#3993): it is not the target
-	// itself, the target holds no role that bypasses permission checks, and the
-	// caller holds every permission of every role the target holds, at the
-	// scope the target holds it. A user caller is not checked against it.
+	// caller must then cover the target (#3993 for a machine, INV-CORE-01 for a
+	// user): the caller holds every permission of every role the target holds,
+	// at the scope the target holds it. A MACHINE caller is additionally not the
+	// target itself and the target holds no role that bypasses permission
+	// checks. A restricted PAT cannot mint at all.
 	tokenForMachineID uint
 }
 
