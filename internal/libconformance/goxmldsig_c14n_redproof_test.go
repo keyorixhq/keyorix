@@ -88,7 +88,17 @@ func calibrateGoxmldsigC14N(tb testing.TB) resguard.Budget {
 			}
 		}
 	}
-	return resguard.Calibrate("goxmldsig_c14n", costs, resguard.DefaultFactor)
+	b := resguard.Calibrate("goxmldsig_c14n", costs, resguard.DefaultFactor)
+	// Keep only the per-input DELTA meters. alloc_bytes/mallocs are TotalAlloc/Mallocs
+	// deltas measured around the canonicalisation (via complexity.Measure), so they are
+	// attributable to the single input and are the right amplification signal. live_heap is
+	// an ABSOLUTE post-GC HeapAlloc snapshot of the WHOLE process, so under the fuzz engine's
+	// ~100 MB baseline (coverage maps, corpus, worker state) it reflects process state, not
+	// the input — it false-fired at 10.9x on a 47-byte input in the first fuzz chunk. wall/cpu
+	// are advisory (never fatal) and process-noisy. Dropping them removes the FALSE meter, not
+	// the oracle: idempotence itself is unchanged (see INV-LIBCONF-goxmldsig-c14n-idempotent).
+	b.KeepOnly("alloc_bytes", "mallocs")
+	return b
 }
 
 // TestResguardGoxmldsigC14NCalibrate regenerates the committed budget when

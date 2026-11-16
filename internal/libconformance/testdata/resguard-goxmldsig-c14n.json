@@ -9,25 +9,10 @@
       "per_byte": 754.2857142857143,
       "abs_max": 126304
     },
-    "cpu_ns": {
-      "floor": 253000,
-      "per_byte": 4971.428571428572,
-      "abs_max": 1012000
-    },
-    "live_heap": {
-      "floor": 1043944,
-      "per_byte": 29825.6,
-      "abs_max": 4175776
-    },
     "mallocs": {
       "floor": 266,
       "per_byte": 3.8857142857142857,
       "abs_max": 1064
-    },
-    "wall_ns": {
-      "floor": 88055,
-      "per_byte": 1320.0857142857142,
-      "abs_max": 352220
     }
   }
 }

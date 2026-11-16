@@ -80,7 +80,14 @@ func calibrateGoxmldsigSig(tb testing.TB) resguard.Budget {
 			}))
 		}
 	}
-	return resguard.Calibrate("goxmldsig_sig", costs, resguard.DefaultFactor)
+	b := resguard.Calibrate("goxmldsig_sig", costs, resguard.DefaultFactor)
+	// Keep only the per-input delta meters (alloc_bytes/mallocs). live_heap is an absolute
+	// whole-process snapshot and false-fires under the fuzz engine's baseline; wall/cpu are
+	// advisory. RSA sign/verify dominates and is roughly input-independent, so the alloc floor
+	// carries the budget — the meter guards against a pathological input amplifying alloc far
+	// beyond that floor, not against the fixed signing cost. Oracle (tamper-rejection) unchanged.
+	b.KeepOnly("alloc_bytes", "mallocs")
+	return b
 }
 
 // TestResguardGoxmldsigSigCalibrate regenerates the committed budget when RESGUARD_CALIBRATE=1.

@@ -68,7 +68,14 @@ func calibrateDigitorusTimestamp(tb testing.TB) resguard.Budget {
 			}))
 		}
 	}
-	return resguard.Calibrate("digitorus_timestamp", costs, resguard.DefaultFactor)
+	b := resguard.Calibrate("digitorus_timestamp", costs, resguard.DefaultFactor)
+	// Keep only the per-input delta meters (alloc_bytes/mallocs). live_heap is an absolute
+	// whole-process post-GC snapshot and false-fires under the fuzz engine's baseline heap;
+	// wall/cpu are advisory and process-noisy. See the C14N target's calibrate comment. The
+	// bounded-work ORACLE (no amplification) is unchanged — alloc delta IS the amplification
+	// signal (the pkcs7 130 B→1.8 GB defect this guards against shows up as a TotalAlloc spike).
+	b.KeepOnly("alloc_bytes", "mallocs")
+	return b
 }
 
 // TestResguardDigitorusTimestampCalibrate regenerates the committed budget when
