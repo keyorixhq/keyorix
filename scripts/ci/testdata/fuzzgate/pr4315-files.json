@@ -1,0 +1,1 @@
+[{"filename":"changelog.d/bump-pkcs7.md","patch":"@@ -0,0 +1,2 @@","status":"added"},{"filename":"go.mod","patch":"@@ -23,7 +23,7 @@ require (","status":"modified"},{"filename":"go.sum","patch":"@@ -108,8 +108,8 @@ github.com/crewjam/saml v0.6.3/go.mod h1:7H5d46arM5wE5h/KXGIXFFEKq1Rv1H8jiwxzRUf","status":"modified"}]

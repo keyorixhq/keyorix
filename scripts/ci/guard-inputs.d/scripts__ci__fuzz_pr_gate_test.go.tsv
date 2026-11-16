@@ -1,0 +1,1 @@
+scripts/ci/fuzz_pr_gate_test.go	scripts/fuzzing/**/*.json,scripts/fuzzing/README.md,scripts/fuzzing/targets.conf	fuzz PR gate reads the fuzz target list and README
