@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -128,12 +129,9 @@ func assertTypedPanicError(t *testing.T, err error) {
 func assertDropped(t *testing.T, stmts []string) {
 	t.Helper()
 	want := "DROP USER IF EXISTS '" + createdUser(t, stmts) + "'@'%'"
-	for _, s := range stmts {
-		if s == want {
-			return
-		}
+	if !slices.Contains(stmts, want) {
+		t.Fatalf("account not dropped after the panic; statements: %q", stmts)
 	}
-	t.Fatalf("account not dropped after the panic; statements: %q", stmts)
 }
 
 func TestMySQLIssue_PanicInGrantDropsCreatedUser(t *testing.T) {

@@ -233,6 +233,6 @@ func killUserConnections(ctx context.Context, db *sql.DB, user string) {
 		}
 	}
 	for _, id := range ids {
-		_, _ = db.ExecContext(ctx, fmt.Sprintf("KILL %d", id))
+		_, _ = db.ExecContext(ctx, fmt.Sprintf("KILL %d", id)) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- id is an int64 rendered with %d
 	}
 }
