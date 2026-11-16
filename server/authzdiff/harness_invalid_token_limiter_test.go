@@ -3,6 +3,7 @@ package authzdiff
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -107,6 +108,12 @@ func TestRunLayer_InvalidTokenLimiterLeak_RecordedNA_Not_MappingGap(t *testing.T
 	_, fx := template(t)
 	susp := fx.principals[pkSuspended]
 	k := caseKey{Op: spec.name, Principal: pkSuspended, Target: tB.String(), Arg: 2, variation: defaultVariation}
+
+	// The limiter bucket is process-global (burst 10, refill 1/s) and this test
+	// leaves it empty; later tests (TestSeqControl) count a limited probe as a
+	// failure. There is no test reset hook on the gRPC side, so wait out a full
+	// refill before returning.
+	t.Cleanup(func() { time.Sleep(11 * time.Second) })
 
 	// (a) Pre-fix behaviour, demonstrated directly rather than by reverting
 	// production code: grpcOutcome is exactly the mapping the old runLayer gRPC
