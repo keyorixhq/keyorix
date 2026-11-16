@@ -193,16 +193,17 @@ No crashers were produced by any target (no files written to
 | Target | chunks × 540s | ~wall | approx execs | new crashers |
 |---|---|---|---|---|
 | FuzzValidate | 4 | ~36 min | ~15M (3.8M first chunk) | 0 |
-| FuzzCompile | 2 | ~18 min | ~7M | 0 |
-| FuzzFormats | 2 | ~18 min | ~4M | 0 |
-| FuzzUnmarshalJSON | 2 | ~18 min | ~5M | 0 |
-| **total** | **10** | **~90 min** | **~31M** | **0** |
+| FuzzCompile | 4 | ~36 min | ~14M (3.5M first chunk) | 0 |
+| FuzzFormats | 4 | ~36 min | ~8M (2.1M first chunk) | 0 |
+| FuzzUnmarshalJSON | 4 | ~36 min | ~10M (2.4M first chunk) | 0 |
+| **total** | **16** | **~144 min** | **~47M** | **0** |
 
-Interpretation: across ~31M executions covering the compile+validate pipeline,
+Interpretation: across ~47M executions covering the compile+validate pipeline,
 the JSON decoder, the full draft × Assert* option matrix, and all 18 built-in
 formats + regex, the only defect surfaced was Finding 1 (reached by direct
 API probing, not by byte-level fuzzing, because the byte path is depth-capped).
-"No finding" for the fuzzers is thus quantified at ~31M execs / ~90 min.
+"No finding" for the fuzzers is thus quantified at ~47M execs / ~144 min,
+4 chunks of 540 s per target (the task's minimum), -parallel=2.
 
 ## 6. Ranked leftovers (suggested minutes for vCD hosts)
 
