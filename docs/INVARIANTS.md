@@ -46,6 +46,8 @@ silently removing it.
 | `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 2 | 2 | 0 |
 | `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
+| `fuzz/thirdparty` | [fuzz/thirdparty/INVARIANTS.md](../fuzz/thirdparty/INVARIANTS.md) | 5 | 5 | 0 |
+| **Total** | | **526** | **521** | **5** |
 | `migrate/internal/splitjson` | [migrate/internal/splitjson/INVARIANTS.md](../migrate/internal/splitjson/INVARIANTS.md) | 1 | 1 | 0 |
 | `migrate/internal/vaultsource` | [migrate/internal/vaultsource/INVARIANTS.md](../migrate/internal/vaultsource/INVARIANTS.md) | 4 | 4 | 0 |
 | `scripts/fuzzing/time-travel` | [scripts/fuzzing/time-travel/INVARIANTS.md](../scripts/fuzzing/time-travel/INVARIANTS.md) | 2 | 1 | 1 |
@@ -53,7 +55,7 @@ silently removing it.
 | `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/secrettemplate` | [internal/secrettemplate/INVARIANTS.md](../internal/secrettemplate/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
-| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 4 | 4 | 0 |
 | `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 4 | 4 | 0 |
 | `fuzz/thirdparty/otp` | [fuzz/thirdparty/otp/INVARIANTS.md](../fuzz/thirdparty/otp/INVARIANTS.md) | 5 | 5 | 0 |
 
