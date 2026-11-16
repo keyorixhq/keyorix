@@ -15,15 +15,11 @@
 //     finding (not every decoded value is re-encodable, by design), only a
 //     mismatch or a failure to re-decode the library's own output is.
 //
-// KNOWN-OPEN UPSTREAM DEFECT (scoped out of the equality check, NOT silenced):
-// zone-less local date/time/datetime values round-trip non-idempotently on a
-// non-UTC host — each Unmarshal->Marshal drifts the value by the host's UTC
-// offset (internal/tz.go bakes localOffset into the decoded instant; encode.go
-// strips it back to UTC without re-applying it). Root cause, matrix, suggested
-// one-line fix and a self-contained reproducer are in the private record
-// .scratch/records/burntsushi-toml-1.md. So the round-trip EQUALITY assertion is
-// skipped when a decoded value contains a time.Time; no-panic, bounded-work and
-// round-trip equality for every NON-temporal value still apply to such inputs.
+// Temporal values are excluded from the equality check: a known-open upstream
+// round-trip defect, recorded privately. The round-trip EQUALITY assertion is
+// skipped for any document whose decoded value contains a time.Time (the whole
+// document, not only its temporal values); no-panic and bounded-work still apply
+// to such inputs.
 //
 // What this oracle does NOT verify: that the first decode is semantically
 // faithful to the TOML spec, allocation ceilings, the temporal-drift defect
@@ -75,7 +71,7 @@ func stability(data []byte) (fail string) {
 		// Not every decoded value round-trips through Marshal; not a finding.
 		return ""
 	}
-	// Scope out the known temporal-drift defect (see file header + record).
+	// Scope out the known temporal round-trip defect (see file header).
 	if containsTime(v1) {
 		return ""
 	}

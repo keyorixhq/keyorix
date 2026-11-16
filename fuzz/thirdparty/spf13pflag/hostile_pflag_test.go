@@ -41,21 +41,22 @@ func newFS() *flag.FlagSet {
 }
 
 func FuzzPflagParse(f *testing.F) {
-	f.Add("--name=x -o out --count 3 -vvv")
-	f.Add("--force --tag a --tag b -- positional")
-	f.Add("-dddd --label k=v --timeout 5s")
+	// argv elements are NUL-separated so empty arguments and arguments that
+	// contain spaces are reachable.
+	f.Add("--name=x\x00-o\x00out\x00--count\x003\x00-vvv")
+	f.Add("--force\x00--tag\x00a\x00--tag\x00b\x00--\x00positional")
+	f.Add("-dddd\x00--label\x00k=v\x00--timeout\x005s")
 	f.Add("--=--")
 	f.Add("-")
 	f.Add("--name")
 	f.Add("--count=notanint")
+	f.Add("--name\x00\x00a b")
 
 	f.Fuzz(func(t *testing.T, line string) {
 		if len(line) > 16*1024 {
 			return
 		}
-		// Split into argv on whitespace; NUL splits too, to reach token edges.
-		line = strings.ReplaceAll(line, "\x00", " ")
-		args := strings.Fields(line)
+		args := strings.Split(line, "\x00")
 		if len(args) > 4096 {
 			return
 		}

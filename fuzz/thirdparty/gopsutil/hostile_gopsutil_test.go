@@ -7,15 +7,9 @@
 // exact public functions Keyorix's call path reaches (cpu.Times/Percent read
 // /proc/stat; mem is the adjacent host-stats parser).
 //
-// KNOWN-OPEN UPSTREAM DEFECT (deliberately excluded, NOT silenced): load.Avg /
-// load.AvgWithContext panics with index-out-of-range on a readable but malformed
-// /proc/loadavg (fewer than 3 whitespace-separated fields: empty, whitespace, or
-// truncated); fileAvgWithContext indexes values[0..2] with no length check and
-// the panic unwinds past AvgWithContext's sysinfo fallback. Root cause, matrix,
-// suggested fix and a self-contained reproducer are in the private record
-// .scratch/records/gopsutil-1.md. The loadavg parser is therefore NOT fuzzed by
-// this committed target (it has a known standing panic that would red CI);
-// Keyorix does not call load.Avg anyway.
+// load.Avg is excluded: a known-open upstream robustness defect, recorded
+// privately. The loadavg parser is therefore NOT fuzzed by this committed target
+// (it would red CI); Keyorix does not call load.Avg anyway.
 //
 // REACHABILITY NOTE (recorded, does not gate a library finding): Keyorix only
 // calls cpu.Percent and disk.Usage against the LOCAL host's real /proc, which is
@@ -39,6 +33,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -56,6 +51,14 @@ var procDir = func() string {
 	return d
 }()
 
+// TestMain removes this process's fake HOST_PROC dir on exit so workers do not
+// leak one directory per run.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	_ = os.RemoveAll(procDir)
+	os.Exit(code)
+}
+
 func ctxWithProc() context.Context {
 	return context.WithValue(context.Background(), common.EnvKey,
 		common.EnvMap{common.HostProcEnvKey: procDir})
@@ -69,9 +72,13 @@ func FuzzGopsutilProc(f *testing.F) {
 	f.Add(uint8(0), []byte("cpu x y z\n"))
 	f.Add(uint8(1), []byte("MemFree 1 2 3\n"))
 
-	// load.Avg deliberately excluded — known-open upstream panic (see header +
-	// .scratch/records/gopsutil-1.md).
+	// load.Avg deliberately excluded (see header).
 	f.Fuzz(func(t *testing.T, sel uint8, data []byte) {
+		// On non-Linux hosts cpu/mem ignore HOST_PROC and read the real host, so
+		// the target would exercise nothing and still report green.
+		if runtime.GOOS != "linux" {
+			t.Skip("gopsutil HOST_PROC injection only applies on linux")
+		}
 		if len(data) > 64*1024 {
 			return
 		}
