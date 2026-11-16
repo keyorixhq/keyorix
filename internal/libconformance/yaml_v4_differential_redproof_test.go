@@ -35,6 +35,20 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// differential.md and the DF2 report. Enforced structurally by
 	// classifyYAMLV4ValueSplit/nilVsEmptyStringOnly (null-vs-"" leaves only).
 	"nonspecific-tag-empty-scalar": true,
+
+	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
+	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
+	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null
+	// value ({null: null}). Found by the DF2 fuzz run at input ":". Both readings
+	// are defensible (YAML permits an empty/implicit key); v4 is the more permissive
+	// one. This is the security-relevant DIRECTION (v4 accepts what v3 rejects): on a
+	// v3->v4 migration a config line that is rejected today would silently parse as a
+	// null-keyed mapping. Not a Keyorix defect today (v4 has no live caller); a
+	// forward-looking migration/validation-parity hazard, documented in
+	// EXPECTED-DIFFERENCES-yaml-v3-v4-differential.md. Scoped tightly to the v3 error
+	// "did not find expected key" so it does NOT tolerate any other v3 syntax
+	// rejection the fuzzer may find.
+	"v3-rejects:empty-implicit-key": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -157,7 +171,42 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		if nonEmpty != "value-mismatch" {
 			t.Fatalf("nil-vs-non-empty-string must class as value-mismatch, got %q", nonEmpty)
 		}
+		// The int-key case ("0: !") decodes into map[any]any, which the classifier
+		// must still recognise (found by the fuzzer at "0: ! ").
+		intKey := classifyYAMLV4ValueSplit(map[any]any{0: nil}, map[any]any{0: ""})
+		if intKey != "nonspecific-tag-empty-scalar" {
+			t.Fatalf("the int-key `!`-empty case must class as nonspecific-tag-empty-scalar, got %q", intKey)
+		}
 		t.Logf("oracle-3 class gating proven: `!`-empty tolerated; int/non-empty diffs still fail")
+	}
+
+	// ---- Oracle 2 class gating: the empty-implicit-key divergence ----
+	// Prove the real v3-rejects/v4-accepts split for ":" classifies to the tolerated
+	// empty-implicit-key class, and that an UNRELATED v3 syntax rejection does NOT
+	// get absorbed by it (it stays :syntax, absent from the table -> fails).
+	{
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal([]byte(":"), &v3v)
+		err4 := v4yaml.Unmarshal([]byte(":"), &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: ':' must be rejected by v3 and accepted by v4 (v3err=%v v4err=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:empty-implicit-key" {
+			t.Fatalf("':' split must class as v3-rejects:empty-implicit-key, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("empty-implicit-key class must be listed (tolerated)")
+		}
+		// RED: a DIFFERENT v3 syntax rejection must not be silenced by this class.
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected node content"}, nil)
+		if other == "v3-rejects:empty-implicit-key" {
+			t.Fatalf("an unrelated v3 syntax rejection was wrongly absorbed into empty-implicit-key")
+		}
+		if yamlV4ExpectedDiff[other] {
+			t.Fatalf("the generic syntax split (%q) must NOT be tolerated", other)
+		}
+		t.Logf("oracle-2 empty-implicit-key gating proven: ':' tolerated; other syntax splits still fail (%q)", other)
 	}
 }
 

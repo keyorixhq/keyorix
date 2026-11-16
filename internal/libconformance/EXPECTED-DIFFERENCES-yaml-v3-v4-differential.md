@@ -28,12 +28,13 @@ class reaches the failing assertion.
 | id | class key | what diverges | v3.0.5 | v4.0.0 | why it is tolerated | enforced by |
 |----|-----------|---------------|--------|--------|---------------------|-------------|
 | D1 | `nonspecific-tag-empty-scalar` | the non-specific tag `!` applied to an **empty** scalar node (`!`, `a: !`, `- !`) | resolves to **null** | resolves to the **empty string** (`!!str`) | v4 is the more spec-aligned reading: the `!` non-specific tag forces resolution off the null default, and the failsafe schema resolves a `!`-tagged scalar as `!!str`. A deliberate v4 rewrite change, **not a Keyorix defect** — v4 has no live caller. Plain empty nodes (`a:`, `~`, `null`) decode to null in BOTH; an explicit `!!str` decodes to `""` in BOTH; only the bare `!` diverges. | `classifyYAMLV4ValueSplit` / `nilVsEmptyStringOnly` — tolerates ONLY null-vs-`""` leaves with otherwise-identical structure; any other value diff (different number, key set, or a nil-vs-**non-empty**-string) stays `value-mismatch` and fails. |
+| D2 | `v3-rejects:empty-implicit-key` | a mapping entry with an **empty implicit key** — a line beginning with the value indicator `:` (`:`, `: `, `:\n`, `- :`, `a:\n:`) | **rejects** (`did not find expected key`) | **accepts** as a null key → null value (`{null: null}`) | Both readings are defensible — YAML permits an empty/implicit key — and v4 is the more permissive. This is the **security-relevant direction** (v4 accepts what v3 rejects): on a v3→v4 migration a config line rejected today would silently parse as a null-keyed mapping, so a validator-on-v3 / consumer-on-v4 split would be a parser-differential bypass. **Not a Keyorix defect today** (v4 has no live caller); a forward-looking migration/validation-parity hazard. | `classifyYAMLV4Split` — the class is keyed on the v3 error `did not find expected key` ALONE, so it does not tolerate any other v3 syntax rejection (`did not find expected node content`, `expected alphabetic…`, etc. stay `:syntax`, which is absent from the table and fails). |
 
-No accept/reject (`*-rejects:*`) class is currently listed: across the seed corpus and the
-DF2 fuzz run, v3.0.5 and v4.0.0 agreed on every accept/reject verdict (duplicate keys,
-complex keys, excessive aliasing, syntax errors — all rejected by both; v4 only re-worded the
-error text, which `classifyYAMLV4Split` normalises away). An accept/reject split the fuzzer
-finds is a finding until triaged and listed here.
+No OTHER accept/reject (`*-rejects:*`) class is listed: across the seed corpus and the DF2
+fuzz run, D2 was the only accept/reject split — every other malformed input (duplicate keys,
+complex keys, excessive aliasing, the other syntax errors) was rejected by BOTH; v4 only
+re-worded the error text, which `classifyYAMLV4Split` normalises away. A further accept/reject
+split the fuzzer finds is a finding until triaged and listed here.
 
 ## What this oracle does NOT verify (scope / "not verified")
 
