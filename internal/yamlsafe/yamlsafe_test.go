@@ -3,7 +3,6 @@ package yamlsafe
 import (
 	"fmt"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -70,12 +69,18 @@ func TestUnmarshal_AliasBombStaysCheap(t *testing.T) {
 	for i := 1; i < 9; i++ {
 		fmt.Fprintf(&b, "a%d: &a%d [*a%d, *a%d, *a%d, *a%d, *a%d, *a%d, *a%d, *a%d, *a%d]\n", i, i, i-1, i-1, i-1, i-1, i-1, i-1, i-1, i-1, i-1)
 	}
-	start := time.Now()
-	if err := CheckDuplicateKeysFromBytes([]byte(b.String())); err != nil {
-		t.Fatal(err)
-	}
-	if d := time.Since(start); d > 2*time.Second {
-		t.Fatalf("alias bomb walk took %v", d)
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- CheckDuplicateKeysFromBytes([]byte(b.String()))
+	}()
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("alias bomb walk timed out: possible exponential expansion or infinite hang")
 	}
 }
 
@@ -89,24 +94,23 @@ func CheckDuplicateKeysFromBytes(data []byte) error {
 }
 
 // TestUnmarshal_DuplicateKeyCostIsLinear is the regression proof for
-// https://github.com/yaml/go-yaml/issues/510: 20000 identical keys cost the
-// library about 1.4 GB and seconds; the pre-check must fail them in a few MB.
+// https://github.com/yaml/go-yaml/issues/510: the library's duplicate-key scan is
+// quadratic (about 2.3 million allocations for 1000 identical keys, 39 million for
+// 4000), while the pre-check rejects the same document in a few allocations per key.
+// The count is allocations, not bytes, so it does not depend on GC timing.
 func TestUnmarshal_DuplicateKeyCostIsLinear(t *testing.T) {
-	if testing.Short() {
-		t.Skip("allocation measurement; skipped in -short")
-	}
-	dup := []byte(strings.Repeat("k: v\n", 20000))
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	var v any
-	err := Unmarshal(dup, &v)
-	runtime.ReadMemStats(&after)
+	const keys = 2000
+	dup := []byte(strings.Repeat("k: v\n", keys))
+	var err error
+	allocs := testing.AllocsPerRun(2, func() {
+		var v any
+		err = Unmarshal(dup, &v)
+	})
 	if err == nil || !strings.Contains(err.Error(), "already defined") {
 		t.Fatalf("want a duplicate-key error, got %v", err)
 	}
-	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 64<<20 {
-		t.Fatalf("20000 duplicate keys allocated %d bytes; the library alone allocates ~1.4 GB, the pre-check must stay linear", alloc)
+	if limit := float64(20 * keys); allocs > limit {
+		t.Fatalf("%d duplicate keys took %.0f allocations (limit %.0f); the pre-check must stay linear", keys, allocs, limit)
 	}
 }
 
