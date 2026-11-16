@@ -331,10 +331,15 @@ func TestSeqSweep(t *testing.T) {
 }
 
 func FuzzAuthzSeq(f *testing.F) {
-	f.Add([]byte{0, 0, 0, 0, 0, 1, 0, 0, 0, 0})
-	f.Add([]byte{2, 0, 1, 0, 0, 3, 0, 1, 0, 0})
-	f.Fuzz(func(t *testing.T, data []byte) {
-		v := seqVerdict(t, decodeSeq(data), nil, nil)
+	// mask is the swarm feature mask (first fuzz argument): it selects the subset
+	// of the step-kind alphabet this execution may use (internal/fuzzutil.Swarm).
+	// Every pre-swarm seed keeps its meaning by prepending an all-ones mask —
+	// "every kind available", i.e. the uniform generator.
+	const allKinds = ^uint64(0)
+	f.Add(allKinds, []byte{0, 0, 0, 0, 0, 1, 0, 0, 0, 0})
+	f.Add(allKinds, []byte{2, 0, 1, 0, 0, 3, 0, 1, 0, 0})
+	f.Fuzz(func(t *testing.T, mask uint64, data []byte) {
+		v := seqVerdict(t, decodeSeqSwarm(mask, data), nil, nil)
 		switch v.kind {
 		case seqSingleStep:
 			t.Logf("single-step %s", v.key)
