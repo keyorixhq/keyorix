@@ -92,6 +92,8 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"\x7f",                      // DEL control char (v3 rejects / v4 accepts)
 		"k: a\x80b\n",               // C1 control embedded in a scalar value
 		"0\n:",                      // scalar then ':' next line (v3 accepts+truncates / v4 rejects)
+		"0: !,",                     // flow char in tag suffix (v3 lenient / v4 rejects)
+		"!<a,b>",                    // NOT a split: verbatim tag accepted by both
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
@@ -204,6 +206,13 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		return side + ":syntax"
 	case strings.Contains(msg, "control characters are not allowed"):
 		return side + ":control-char"
+	case strings.Contains(msg, "not allowed in a yaml tag"):
+		// A flow indicator (`,` `[` `]`) in a non-verbatim tag suffix (e.g. "!,",
+		// "!tag[", "!a,b c"). v4 strictly rejects it (flow chars are not valid tag
+		// characters); v3 leniently ends the tag before the flow char and treats the
+		// rest as content. `!{`/`!}` are rejected by BOTH; verbatim `!<a,b>` accepted
+		// by BOTH — only the non-verbatim flow-char suffix splits.
+		return side + ":tag-char"
 	case strings.Contains(msg, "mapping values are not allowed"):
 		return side + ":mapping-context"
 	default:
