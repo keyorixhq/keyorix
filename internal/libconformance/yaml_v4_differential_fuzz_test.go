@@ -93,6 +93,8 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"a: ! 123",                  // ! on non-empty under a key (D12)
 		"- ! 00",                    // ! on non-empty in a sequence (D12)
 		"! abc",                     // NOT a split: ! on a string-resolving scalar agrees
+		"! : 00",                    // ! on an empty KEY: v3 {nil:0} / v4 {"":"00"} (D17 structural)
+		"! 00 : x",                  // ! on a non-empty KEY (D17 structural)
 		"a: !\nb: !!str\n",          // mixed: ! diverges, !!str agrees
 		":",                         // empty implicit key (v3 rejects / v4 null key)
 		"- :\n",                     // empty implicit key inside a sequence
@@ -312,7 +314,84 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if diffs, ok := nonspecificTagNonEmptyScalarOnly(v3val, v4val); ok && diffs > 0 && inputHasNonSpecificTag(data) {
 		return "nonspecific-tag-nonempty-scalar"
 	}
+	// Structural nonspecific-tag divergence that the value-only walkers above miss:
+	// the `!`-tag re-resolution landing in a KEY position (`! : 00`, `! 00: x`),
+	// where v3 and v4 produce DIFFERENT map keys (v3 nil / typed vs v4 raw string)
+	// so the entries cannot be paired by key. nonspecificTagEq pairs entries across
+	// the tag transformation at any position; scoped to inputs carrying a `!` tag.
+	if inputHasNonSpecificTag(data) && nonspecificTagEq(v3val, v4val) {
+		return "nonspecific-tag-structural"
+	}
 	return "value-mismatch"
+}
+
+// nonspecificTagEq reports whether a (v3) and b (v4) are identical up to the
+// non-specific `!` tag rule applied at ANY scalar position — value OR key, nested
+// arbitrarily. Wherever a leaf differs, b must be a string s and a must be the v3
+// implicit resolution of s (the empty case a=nil,s="" included). Maps are paired
+// entry-by-entry allowing the key itself to differ by the same rule, which is why
+// this subsumes the KEY-position divergence the structural value-walkers (which
+// look keys up directly) cannot express. It never equates a genuine value diff:
+// the reparse of s must deep-equal a, so v3 `5` vs v4 `"6"` (reparse 6 ≠ 5) and
+// nil vs a non-empty string both return false.
+func nonspecificTagEq(a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	if bs, ok := b.(string); ok {
+		if a == nil && bs == "" {
+			return true
+		}
+		var r any
+		if err := v3yaml.Unmarshal([]byte(bs), &r); err == nil && reflect.DeepEqual(r, a) {
+			return true
+		}
+		return false
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		bkeys := rb.MapKeys()
+		used := make([]bool, len(bkeys))
+		for _, k3 := range ra.MapKeys() {
+			v3v := ra.MapIndex(k3).Interface()
+			matched := false
+			for i, k4 := range bkeys {
+				if used[i] {
+					continue
+				}
+				if nonspecificTagEq(k3.Interface(), k4.Interface()) && nonspecificTagEq(v3v, rb.MapIndex(k4).Interface()) {
+					used[i], matched = true, true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		for i := range ra.Len() {
+			if !nonspecificTagEq(ra.Index(i).Interface(), rb.Index(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(a, b)
+	}
 }
 
 // mapLookupByLogicalKey looks up key k (taken from map a) in map m by LOGICAL key

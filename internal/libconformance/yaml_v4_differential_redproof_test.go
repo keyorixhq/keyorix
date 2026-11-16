@@ -56,6 +56,17 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// vs v4 string "6") still classes as value-mismatch and fails.
 	"nonspecific-tag-nonempty-scalar": true,
 
+	// The non-specific `!` tag re-resolution landing in a KEY position (`! : 00`,
+	// `! 00: x`), where v3 and v4 produce DIFFERENT map keys (v3 nil/typed vs v4 raw
+	// string) so the value-only walkers cannot pair the entries and fall through to
+	// value-mismatch. Same root cause as D1/D12 (v4 honours `!` as `!!str`, v3 does
+	// not), just at a key. Found by the DF3 struct fuzzer at `! : 00`. Recognised by
+	// nonspecificTagEq, which pairs map entries across the tag transformation at any
+	// position and requires every differing leaf to be "v4 string s, v3 = v3-resolve
+	// (s)"; a genuine value diff (v3 5 vs v4 "6") is never equated. Scoped to inputs
+	// carrying a `!` tag. v4 has no live caller — forward-looking migration hazard.
+	"nonspecific-tag-structural": true,
+
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
 	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null
@@ -586,6 +597,40 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("the empty `!` case must stay nonspecific-tag-empty-scalar, got %q", empty)
 		}
 		t.Logf("oracle-3 D12 gating proven: `! <scalar>` tolerated; non-resolving/untagged diffs still fail; D1 unchanged")
+	}
+
+	// ---- Oracle 3 class gating: nonspecific-tag in a KEY position (D17 structural) ----
+	{
+		for _, in := range []string{"! : 00", "! 00 : x"} {
+			var v3v, v4v any
+			if err := v3yaml.Unmarshal([]byte(in), &v3v); err != nil {
+				t.Fatalf("%q: v3 unmarshal: %v", in, err)
+			}
+			if err := v4yaml.Unmarshal([]byte(in), &v4v); err != nil {
+				t.Fatalf("%q: v4 unmarshal: %v", in, err)
+			}
+			class := classifyYAMLV4ValueSplit([]byte(in), v3v, v4v)
+			if class != "nonspecific-tag-structural" {
+				t.Fatalf("%q: want class nonspecific-tag-structural, got %q (v3=%#v v4=%#v)", in, class, v3v, v4v)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("nonspecific-tag-structural must be tolerated")
+			}
+		}
+		// RED: a genuine key-set divergence must NOT be absorbed by nonspecificTagEq.
+		if nonspecificTagEq(map[string]any{"a": 1}, map[string]any{"b": 1}) {
+			t.Fatalf("different keys (a vs b, neither a tag reparse) must NOT be equated")
+		}
+		// RED: a value diff that is not a tag reparse must NOT be equated.
+		if nonspecificTagEq(map[string]any{"a": 5}, map[string]any{"a": "6"}) {
+			t.Fatalf("v3 5 vs v4 \"6\" (reparse 6 != 5) must NOT be equated")
+		}
+		// RED: the structural class must NOT fire without a `!` tag in the input.
+		noTag := classifyYAMLV4ValueSplit([]byte("a: 1"), map[any]any{nil: 0}, map[string]any{"": "00"})
+		if noTag == "nonspecific-tag-structural" {
+			t.Fatalf("the structural class must require a `!` tag in the input, got %q", noTag)
+		}
+		t.Logf("oracle-3 D17 structural gating proven: `!`-tag KEY divergence tolerated; genuine key/value diffs and untagged inputs still fail")
 	}
 
 	// ---- Oracle 2 class gating: flow-context whitespace leniency ----
