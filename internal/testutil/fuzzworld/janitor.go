@@ -82,7 +82,7 @@ func JanitorSchemas(dsn, prefix string, keepPIDs ...int) ([]string, error) {
 		if !strings.HasPrefix(name, prefix+"_") {
 			continue
 		}
-		if err := db.Exec("DROP SCHEMA IF EXISTS " + quoteSchemaIdent(name) + " CASCADE").Error; err != nil {
+		if err := db.Exec("DROP SCHEMA IF EXISTS " + quoteSchemaIdent(name) + " CASCADE").Error; err != nil { // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- DDL cannot be parameterized; name came from pg_namespace, matched the validated prefix and is quoted by quoteSchemaIdent
 			return dropped, fmt.Errorf("drop schema %s: %w", name, err)
 		}
 		dropped = append(dropped, name)
