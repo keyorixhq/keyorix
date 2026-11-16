@@ -392,7 +392,7 @@ func TestImpersonationEnd_HappyPath_RestoredAdminSession_S11(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set("Authorization", "Bearer "+impSession.SessionToken)
 	// Stash the admin's real session in the admin cookie.
-	req.AddCookie(&http.Cookie{Name: middleware.AdminSessionCookieName, Value: adminSessionToken})
+	req.AddCookie(&http.Cookie{Name: middleware.AdminSessionCookieName, Value: adminSessionToken}) // nosemgrep: go.lang.security.audit.net.cookie-missing-httponly.cookie-missing-httponly, go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- a request cookie the test client sends; HttpOnly/Secure are Set-Cookie attributes
 	w := httptest.NewRecorder()
 	h.End(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -496,7 +496,7 @@ func TestImpersonationEnd_MismatchedAdminCookie_NotRestored_S11(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+impSession.SessionToken)
 	// The admin cookie holds someone else's valid session, not the impersonating
 	// admin's own stashed token.
-	req.AddCookie(&http.Cookie{Name: middleware.AdminSessionCookieName, Value: otherSession.SessionToken})
+	req.AddCookie(&http.Cookie{Name: middleware.AdminSessionCookieName, Value: otherSession.SessionToken}) // nosemgrep: go.lang.security.audit.net.cookie-missing-httponly.cookie-missing-httponly, go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- a request cookie the test client sends; HttpOnly/Secure are Set-Cookie attributes
 	w := httptest.NewRecorder()
 	h.End(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
