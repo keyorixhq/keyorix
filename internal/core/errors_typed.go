@@ -51,6 +51,34 @@ func validationErrorf(format string, a ...any) error {
 	return validationError(fmt.Errorf(format, a...))
 }
 
+// fieldRefusal names the request field a validation refusal is about. It renders and
+// matches exactly as the wrapped error; ValidationField reads the field back.
+type fieldRefusal struct {
+	field string
+	err   error
+}
+
+func (e *fieldRefusal) Error() string { return e.err.Error() }
+func (e *fieldRefusal) Unwrap() error { return e.err }
+
+// refuseField tags err (nil stays nil) with the request field it is about.
+func refuseField(field string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &fieldRefusal{field: field, err: err}
+}
+
+// ValidationField returns the request field ("username", "email", "display_name",
+// "password") a user-field validation refusal names, or "" when err names none. A
+// transport uses it to tell the caller which input to fix, never the error text.
+func ValidationField(err error) string {
+	if f, ok := errors.AsType[*fieldRefusal](err); ok {
+		return f.field
+	}
+	return ""
+}
+
 // ErrMachineIdentityNotFound is matched (errors.Is) by every "the machine identity,
 // token, OIDC binding or role-binding environment this call names does not exist"
 // refusal of the machine-identity and machine-token paths, including a project or
