@@ -6,21 +6,22 @@
 //   - internal/core/account.go:123  bcrypt.CompareHashAndPassword(user.PasswordHash, password)
 //   - internal/core/users.go:131    bcrypt.GenerateFromPassword(req.Password, cost)
 //   - ...and the dummy-hash constant-time paths (auth.go:54/73, account.go:120).
+//
 // The hash bytes come from storage (a DB row) and the password from the login
 // request; both are untrusted in the relevant threat models.
 //
 // Oracles (sound):
-//   1. Round-trip + fail-closed: for any password p (<=72 bytes, bcrypt's own
-//      limit), h = GenerateFromPassword(p, MinCost) must verify p (err==nil)
-//      and must REJECT a different password (err!=nil). A hasher that accepts
-//      the wrong password, or rejects the right one, is broken.
-//   2. Hostile-hash robustness: CompareHashAndPassword on arbitrary bytes must
-//      not panic and must return (it may legitimately return nil IF the bytes
-//      happen to be a valid hash of p — so we assert no-panic/returns, not a
-//      verdict). Inputs whose DECLARED cost is large are skipped BEFORE the
-//      compare: bcrypt will actually run 2^cost rounds, so a cost=31 hash is a
-//      genuine CPU bomb — we bound the fuzzer instead of hanging it, and record
-//      the cost-bomb as a documented property (see report), not a library bug.
+//  1. Round-trip + fail-closed: for any password p (<=72 bytes, bcrypt's own
+//     limit), h = GenerateFromPassword(p, MinCost) must verify p (err==nil)
+//     and must REJECT a different password (err!=nil). A hasher that accepts
+//     the wrong password, or rejects the right one, is broken.
+//  2. Hostile-hash robustness: CompareHashAndPassword on arbitrary bytes must
+//     not panic and must return (it may legitimately return nil IF the bytes
+//     happen to be a valid hash of p — so we assert no-panic/returns, not a
+//     verdict). Inputs whose DECLARED cost is large are skipped BEFORE the
+//     compare: bcrypt will actually run 2^cost rounds, so a cost=31 hash is a
+//     genuine CPU bomb — we bound the fuzzer instead of hanging it, and record
+//     the cost-bomb as a documented property (see report), not a library bug.
 //
 // What these oracles do NOT verify:
 //   - NOT the cryptographic strength or constant-time property of bcrypt.

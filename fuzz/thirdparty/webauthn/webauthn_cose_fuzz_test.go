@@ -3,11 +3,11 @@
 //
 // Live caller (traced from reachgen, prov=request-body):
 //   - internal/cryptoinventory/webauthn.go:47 ClassifyWebAuthnKey
-//       -> webauthncose.ParsePublicKey(coseKey)
-//   `coseKey` is a COSE-encoded (CBOR) public key that originated from a
-//   WebAuthn registration ceremony (attacker-supplied at credential creation)
-//   and is later re-parsed from storage for the crypto inventory. It is
-//   untrusted, variable-length binary input to a CBOR decoder.
+//     -> webauthncose.ParsePublicKey(coseKey)
+//     `coseKey` is a COSE-encoded (CBOR) public key that originated from a
+//     WebAuthn registration ceremony (attacker-supplied at credential creation)
+//     and is later re-parsed from storage for the crypto inventory. It is
+//     untrusted, variable-length binary input to a CBOR decoder.
 //
 // Oracle (sound bounded-work + no-panic): ParsePublicKey on arbitrary bytes
 //   - must not panic, and

@@ -1,0 +1,1 @@
+fuzz/thirdparty/precis	none	-	test-only reachability-first fuzz harness for golang.org/x/text/secure/precis; not part of any shipped build	test-helper

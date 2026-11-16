@@ -3,9 +3,10 @@
 //
 // Live callers (traced from reachgen, prov=request-body):
 //   - internal/identity/identity.go:63  NewFoldedName  -> foldedProfile.String(raw)
-//       foldedProfile = precis.NewFreeform(precis.LowerCase(), precis.Norm(norm.NFC))
+//     foldedProfile = precis.NewFreeform(precis.LowerCase(), precis.Norm(norm.NFC))
 //   - internal/identity/identity.go:102 NewAddressName -> addressProfile.String(raw)
-//       addressProfile = precis.OpaqueString
+//     addressProfile = precis.OpaqueString
+//
 // `raw` in both is an operator/attacker-supplied name (machine-identity name,
 // address name) arriving on the API. These harnesses reconstruct the EXACT two
 // profiles and fuzz them with arbitrary UTF-8.
@@ -16,6 +17,7 @@
 //     and return out unchanged (enforcing an enforced string is a no-op);
 //   - p.String(s) must be deterministic (same output on a second call);
 //   - p.String must never panic.
+//
 // This is the invariant Keyorix relies on when it stores a folded name and
 // later compares against a freshly-folded candidate: a value that folded once
 // must fold to itself, or two "equal" names would mismatch on re-normalization.
@@ -48,10 +50,10 @@ func FuzzPrecisProfileIdempotent(f *testing.F) {
 	f.Add("Admin")
 	f.Add("PROD_KEY")
 	f.Add(" leading space ")
-	f.Add("café")             // combining vs precomposed (NFC)
-	f.Add("ﬀ")                // compatibility ligature
-	f.Add("İstanbul")         // Turkish dotted-I casefold
-	f.Add("Å")     // A + combining ring -> Å under NFC
+	f.Add("café")               // combining vs precomposed (NFC)
+	f.Add("ﬀ")                  // compatibility ligature
+	f.Add("İstanbul")           // Turkish dotted-I casefold
+	f.Add("Å")                 // A + combining ring -> Å under NFC
 	f.Add(string([]byte{0xff})) // invalid UTF-8
 
 	profiles := map[string]*precis.Profile{

@@ -1,0 +1,1 @@
+scripts/fuzzing/reachgen	none	-	test-only tooling: offline call-graph scanner that ranks third-party fuzz leads by input provenance; developer and CI tooling, not linked into any shipped binary	test-helper

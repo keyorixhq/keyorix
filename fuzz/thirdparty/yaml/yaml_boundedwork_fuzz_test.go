@@ -6,7 +6,7 @@
 //   - internal/config/insecure_settings_aliases.go yaml.Unmarshal(data, &root)
 //   - cli/internal/credstore/file.go:101           yaml.NewDecoder(f).Decode(...)
 //   - cli/internal/migrate/migrate.go              yaml.Unmarshal(data, &cfg)
-//   `data` is the contents of an operator-provided config / credential file.
+//     `data` is the contents of an operator-provided config / credential file.
 //
 // Oracle (sound bounded-work): yaml.Unmarshal of arbitrary bytes into a generic
 // value

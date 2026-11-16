@@ -37,6 +37,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"slices"
 	"sort"
 	"strings"
 
@@ -73,12 +74,7 @@ type CallSite struct {
 }
 
 func (c CallSite) Untrusted() bool {
-	for _, p := range c.Prov {
-		if untrustedProv(p) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(c.Prov, untrustedProv)
 }
 
 // Entry aggregates every call site of one third-party exported function.
@@ -173,8 +169,8 @@ func isStdlib(path string) bool {
 		return true
 	}
 	seg := path
-	if i := strings.IndexByte(path, '/'); i >= 0 {
-		seg = path[:i]
+	if before, _, ok := strings.Cut(path, "/"); ok {
+		seg = before
 	}
 	return !strings.Contains(seg, ".")
 }
@@ -474,8 +470,8 @@ func untrustedTypeLabel(t types.Type) Provenance {
 		}
 	case *types.Interface:
 		// io.Reader / io.ReadCloser etc: interface with a Read method.
-		for i := range u.NumMethods() {
-			if u.Method(i).Name() == "Read" {
+		for method := range u.Methods() {
+			if method.Name() == "Read" {
 				return ProvRequest
 			}
 		}
@@ -553,8 +549,8 @@ func signatureInfo(obj types.Object) (sig string, params []string, fuzzable bool
 	ps := s.Params()
 	var parts []string
 	allSimple := ps.Len() > 0
-	for i := range ps.Len() {
-		pt := ps.At(i).Type()
+	for v := range ps.Variables() {
+		pt := v.Type()
 		kind := paramKind(pt)
 		params = append(params, kind)
 		switch kind {
@@ -590,8 +586,8 @@ func paramKind(t types.Type) string {
 		}
 		return "other"
 	case *types.Interface:
-		for i := range u.NumMethods() {
-			if u.Method(i).Name() == "Read" {
+		for method := range u.Methods() {
+			if method.Name() == "Read" {
 				return "io.Reader"
 			}
 		}
@@ -618,8 +614,8 @@ func funcName(fd *ast.FuncDecl) string {
 }
 
 func baseName(p string) string {
-	if i := strings.LastIndexByte(p, '/'); i >= 0 {
-		return p[i+1:]
+	if _, after, ok := strings.CutLast(p, "/"); ok {
+		return after
 	}
 	return p
 }
@@ -702,8 +698,8 @@ func MarkCovered(entries []Entry, coveredPkgFuncs map[string]map[string]bool) {
 }
 
 func baseFuncToken(fn string) string {
-	if i := strings.LastIndexByte(fn, '.'); i >= 0 {
-		return fn[i+1:]
+	if _, after, ok := strings.CutLast(fn, "."); ok {
+		return after
 	}
 	return fn
 }

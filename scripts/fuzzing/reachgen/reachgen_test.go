@@ -8,10 +8,11 @@ import (
 	"testing"
 )
 
-// materialiseFixtures copies testdata into a temp dir, restoring each
-// go.mod.tmpl to go.mod. The fixture manifests are stored as .tmpl so the
-// repo-wide guards that walk the tree for go.mod files do not see nested
-// modules; the relative replace paths still resolve inside the copy.
+// materialiseFixtures copies testdata into a temp dir, dropping the .tmpl
+// suffix from every file (go.mod.tmpl -> go.mod, app.go.tmpl -> app.go). The
+// fixture modules are stored that way so the repo-wide guards and linters that
+// walk the tree see neither nested modules nor Go sources that do not build in
+// the root module; the relative replace paths still resolve inside the copy.
 func materialiseFixtures(t *testing.T) string {
 	t.Helper()
 	dst := t.TempDir()
@@ -31,10 +32,7 @@ func materialiseFixtures(t *testing.T) string {
 		if err != nil {
 			return err
 		}
-		if strings.HasSuffix(out, "go.mod.tmpl") {
-			out = strings.TrimSuffix(out, ".tmpl")
-		}
-		return os.WriteFile(out, b, 0o600)
+		return os.WriteFile(strings.TrimSuffix(out, ".tmpl"), b, 0o600)
 	})
 	if err != nil {
 		t.Fatalf("materialise fixtures: %v", err)

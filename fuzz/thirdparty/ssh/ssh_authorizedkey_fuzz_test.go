@@ -4,15 +4,16 @@
 //
 // Live caller (traced from reachgen, prov=request-body):
 //   - server/admin/recovery_key_encrypt.go:53 parseRecoveryKeyRecipient
-//       -> ssh.ParseAuthorizedKey(raw)
-//   `raw` is an authorized_keys line submitted by an administrator; it is
-//   attacker-influenced input to a parser.
+//     -> ssh.ParseAuthorizedKey(raw)
+//     `raw` is an authorized_keys line submitted by an administrator; it is
+//     attacker-influenced input to a parser.
 //
 // Oracle (sound round-trip stability): if ParseAuthorizedKey accepts input and
 // yields a key, then serializing that key with MarshalAuthorizedKey and parsing
 // the result again must:
 //   - succeed, and
 //   - produce a key with the SAME wire form (Marshal()) and SAME Type().
+//
 // i.e. parse∘marshal∘parse is a stable fixed point. A parser/serializer pair
 // that round-trips to a DIFFERENT key (or fails to re-parse its own output)
 // would let two representations of "the same" recipient diverge. Plus: no
