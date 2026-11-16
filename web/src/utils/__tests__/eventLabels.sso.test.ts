@@ -10,7 +10,7 @@ describe('SSO audit event labels', () => {
         ['auth.sso_jit_provisioned', 'SSO user provisioned'],
         ['auth.sso_groups_synced', 'SSO groups synced'],
         ['auth.sso_roles_synced', 'SSO roles synced'],
-        ['auth.sso_login_session_failed', 'SSO login failed to start a session'],
+        ['auth.sso_login_session_failed', 'SSO login failed: session not created'],
         ['auth.sso_reconcile_refused', 'SSO login refused: group or role sync incomplete'],
         ['auth.sso_reconcile_last_admin_removal_refused', 'SSO login refused: last administrator would be removed'],
     ])('%s -> %s', (raw, want) => {

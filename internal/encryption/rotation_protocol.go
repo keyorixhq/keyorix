@@ -10,10 +10,12 @@
 //
 // The database therefore records the newest rotation protocol any binary that
 // served or rotated it implements: system_metadata[dekRotationProtocolKey], an
-// integer only ever raised (StartDEKEpochGuard on PostgreSQL, and every
-// rotation's sweep transaction on any database). RotateDEKWithSweep refuses
-// when the recorded protocol is newer than its own (or unreadable), before it
-// writes a key file or a row.
+// integer only ever raised (every server start with encryption enabled on a
+// local database, in StartDEKEpochGuard on PostgreSQL and SQLite alike, and
+// every rotation's sweep transaction on any database). RotateDEKWithSweep
+// refuses when the recorded protocol is newer than its own (or unreadable),
+// before it writes a key file or a row; `admin restore` refuses the same way
+// for its target (CheckRecordedRotationProtocol), before it changes anything.
 //
 // Bump dekRotationProtocol whenever a change to the rotation (sweep, fence,
 // epoch, redo marker, key-file promotion) would be unsafe if an older binary
@@ -75,14 +77,27 @@ func refuseNewerRotationProtocol(db *gorm.DB) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	recorded, err := strconv.Atoi(rows[0].Value)
+	return CheckRecordedRotationProtocol(rows[0].Value, "rotate", "admin encryption rotate")
+}
+
+// DEKRotationProtocolKey is the system_metadata key of the recorded rotation
+// protocol, for callers that read it without a gorm handle (admin restore).
+const DEKRotationProtocolKey = dekRotationProtocolKey
+
+// CheckRecordedRotationProtocol is refuseNewerRotationProtocol's comparison
+// for a recorded value the caller read itself (admin restore reads its target
+// through database/sql). verb is what is refused ("rotate", "restore over
+// it"), command the command to run with the servers' version instead. A
+// database without the marker is not passed here.
+func CheckRecordedRotationProtocol(recordedValue, verb, command string) error {
+	recorded, err := strconv.Atoi(recordedValue)
 	if err != nil {
-		return fmt.Errorf("%w: the recorded DEK rotation protocol %q is not an integer; refusing to rotate rather than guess", ErrRotationProtocolTooOld, rows[0].Value)
+		return fmt.Errorf("%w: the recorded DEK rotation protocol %q is not an integer; refusing to %s rather than guess", ErrRotationProtocolTooOld, recordedValue, verb)
 	}
 	if recorded > dekRotationProtocol {
 		return fmt.Errorf("%w: this database records DEK rotation protocol %d (written by a newer Keyorix server or admin command), this binary implements %d. "+
-			"Rotating with it could leave the database in a state the newer servers refuse or misread. Run `admin encryption rotate` with the same version as the servers, never an older admin image",
-			ErrRotationProtocolTooOld, recorded, dekRotationProtocol)
+			"Refusing to %s: this binary could leave the database in a state the newer servers refuse or misread. Run `%s` with the same version as the servers, never an older admin image",
+			ErrRotationProtocolTooOld, recorded, dekRotationProtocol, verb, command)
 	}
 	return nil
 }

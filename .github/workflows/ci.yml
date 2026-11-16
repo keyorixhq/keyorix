@@ -1808,8 +1808,14 @@ jobs:
             run_filter="$LEG_TESTS_RX"
           fi
           verbose_flag=""
+          # MQ-LEG-STEPS-1: measurement only (workflow_dispatch + verbose_tests):
+          # cmd/go's hidden -debug-actiongraph writes one JSON object per build
+          # action (start/end time, cache hit, package), which splits the
+          # "compile, vet, link" part of this step; uploaded below.
+          ag_flag=""
           if [ "$VERBOSE_TESTS" = "true" ]; then
             verbose_flag="-v"
+            ag_flag="-debug-actiongraph=$RUNNER_TEMP/actiongraph-${{ matrix.leg }}.json"
           fi
           # MQ-LEVERS-2 P2: a merge-queue entry is ejected as soon as a required
           # job fails, so a failed test that is on scripts/ci/known-flakes.txt
@@ -1821,7 +1827,7 @@ jobs:
           # and never touches the coverage profile. A test that fails twice,
           # or is not listed, fails the leg as before.
           # shellcheck disable=SC2086
-          python3 scripts/ci/rerun-known-flakes.py --label "${{ matrix.leg }}" -- go test -race $verbose_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+          python3 scripts/ci/rerun-known-flakes.py --label "${{ matrix.leg }}" -- go test -race $verbose_flag $ag_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       - name: Upload coverage artifact
         if: steps.leg.outputs.run == 'true'
@@ -1830,6 +1836,15 @@ jobs:
           name: coverage-${{ matrix.leg }}
           path: ${{ matrix.coverage-file }}
           retention-days: 1
+
+      - name: Upload action graph (measurement)
+        if: always() && steps.leg.outputs.run == 'true' && github.event_name == 'workflow_dispatch' && inputs.verbose_tests
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: actiongraph-${{ matrix.leg }}
+          path: ${{ runner.temp }}/actiongraph-${{ matrix.leg }}.json
+          retention-days: 3
+          if-no-files-found: warn
 
   # pg-gated security closures, proven with a real Postgres DSN. This job and
   # test-suite are the only ones with a Postgres service container, so this is
