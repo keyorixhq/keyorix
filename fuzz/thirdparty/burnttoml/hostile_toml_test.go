@@ -33,6 +33,7 @@ package burnttomlhostile
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 	"time"
 
@@ -53,11 +54,7 @@ func containsTime(v any) bool {
 			}
 		}
 	case []any:
-		for _, e := range x {
-			if containsTime(e) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(x, containsTime)
 	case []map[string]any:
 		for _, e := range x {
 			if containsTime(e) {
