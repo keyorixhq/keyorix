@@ -6,28 +6,23 @@
   "meters": {
     "alloc_bytes": {
       "floor": 10976,
-      "per_byte": 10896,
+      "per_byte": 10880,
       "abs_max": 43904
     },
     "cpu_ns": {
-      "floor": 2767000,
-      "per_byte": 2115000,
-      "abs_max": 11068000
-    },
-    "live_heap": {
-      "floor": 529296,
-      "per_byte": 494960,
-      "abs_max": 2117184
+      "floor": 2670000,
+      "per_byte": 2176000,
+      "abs_max": 10680000
     },
     "mallocs": {
-      "floor": 25,
-      "per_byte": 25,
-      "abs_max": 100
+      "floor": 24,
+      "per_byte": 24,
+      "abs_max": 96
     },
     "wall_ns": {
-      "floor": 2052203,
-      "per_byte": 1980081,
-      "abs_max": 8208812
+      "floor": 2177776,
+      "per_byte": 2054424,
+      "abs_max": 8711104
     }
   }
 }

@@ -67,7 +67,9 @@ func rgCalibrate(tb testing.TB) resguard.Budget {
 			costs = append(costs, p.Measure(len(s.pw)+len(s.hash), func() { rgRun(s.pw, s.hash) }))
 		}
 	}
-	return resguard.Calibrate("bcrypt_roundtrip", costs, resguard.DefaultFactor)
+	b := resguard.Calibrate("bcrypt_roundtrip", costs, resguard.DefaultFactor)
+	delete(b.Meters, "live_heap") // non-attributable process-heap snapshot (see yaml)
+	return b
 }
 
 func TestResguardBcryptCalibrate(t *testing.T) {

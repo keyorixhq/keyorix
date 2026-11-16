@@ -58,7 +58,9 @@ func rgCalibrate(tb testing.TB) resguard.Budget {
 			costs = append(costs, p.Measure(len(s), func() { rgRun(s) }))
 		}
 	}
-	return resguard.Calibrate("ssh_authorizedkey", costs, resguard.DefaultFactor)
+	b := resguard.Calibrate("ssh_authorizedkey", costs, resguard.DefaultFactor)
+	delete(b.Meters, "live_heap") // non-attributable process-heap snapshot (see yaml)
+	return b
 }
 
 func TestResguardSSHCalibrate(t *testing.T) {

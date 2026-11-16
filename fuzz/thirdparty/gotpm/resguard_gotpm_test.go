@@ -68,7 +68,9 @@ func rgCalibrate(tb testing.TB) resguard.Budget {
 			costs = append(costs, p.Measure(len(s.data), func() { rgRun(s.sel, s.data) }))
 		}
 	}
-	return resguard.Calibrate("gotpm_unmarshal", costs, resguard.DefaultFactor)
+	b := resguard.Calibrate("gotpm_unmarshal", costs, resguard.DefaultFactor)
+	delete(b.Meters, "live_heap") // non-attributable process-heap snapshot (see yaml)
+	return b
 }
 
 func TestResguardGoTPMCalibrate(t *testing.T) {
