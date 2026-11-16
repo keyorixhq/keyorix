@@ -54,10 +54,7 @@ func (c *cursor) u8() byte {
 
 // blob reads a length byte then that many bytes (bounded to maxBlob) as a column value.
 func (c *cursor) blob(maxBlob int) []byte {
-	n := int(c.u8())
-	if n > maxBlob {
-		n = maxBlob
-	}
+	n := min(int(c.u8()), maxBlob)
 	out := make([]byte, 0, n)
 	for range n {
 		out = append(out, c.u8())

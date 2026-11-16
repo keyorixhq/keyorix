@@ -148,10 +148,7 @@ func (c *cursor) u8() byte {
 }
 
 func (c *cursor) blob(maxBlob int) []byte {
-	n := int(c.u8())
-	if n > maxBlob {
-		n = maxBlob
-	}
+	n := min(int(c.u8()), maxBlob)
 	out := make([]byte, 0, n)
 	for range n {
 		out = append(out, c.u8())
