@@ -109,3 +109,61 @@ func TestUnmarshal_DuplicateKeyCostIsLinear(t *testing.T) {
 		t.Fatalf("20000 duplicate keys allocated %d bytes; the library alone allocates ~1.4 GB, the pre-check must stay linear", alloc)
 	}
 }
+
+// TestUnmarshal_DuplicateShapesStayLinear covers the key shapes the pre-check
+// used to skip (a key that fails to decode, a merge key, a sequence key, a
+// mapping key). The library's own pairwise check compares them by kind and raw
+// value, so n repeats cost it O(n^2) memory: about 0.5 GB at n=2000.
+func TestUnmarshal_DuplicateShapesStayLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("allocation measurement; skipped in -short")
+	}
+	const n = 2000
+	shapes := map[string]string{
+		"int tag, value not an int": "!!int x: v\n",
+		"binary tag, bad base64":    "!!binary '%': v\n",
+		"merge key":                 "<<: {}\n",
+		"sequence key":              "? []\n: x\n",
+		"mapping key":               "? {}\n: x\n",
+	}
+	for name, unit := range shapes {
+		t.Run(name, func(t *testing.T) {
+			data := []byte(strings.Repeat(unit, n))
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			var v any
+			err := Unmarshal(data, &v)
+			runtime.ReadMemStats(&after)
+			if err == nil || !strings.Contains(err.Error(), "already defined") {
+				t.Fatalf("want a duplicate-key error, got %v", err)
+			}
+			if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 64<<20 {
+				t.Fatalf("%d repeats allocated %d bytes; the pre-check must reject them before the library's quadratic check runs", n, alloc)
+			}
+		})
+	}
+}
+
+// TestUnmarshal_DistinctKeysLinear: a document without duplicates must not pay
+// the library's O(n^2) pairwise key comparison either (100000 keys took ~2 minutes).
+func TestUnmarshal_DistinctKeysLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing measurement; skipped in -short")
+	}
+	var b strings.Builder
+	for i := 0; i < 100000; i++ {
+		fmt.Fprintf(&b, "k%d: v\n", i)
+	}
+	var m map[string]string
+	start := time.Now()
+	if err := Unmarshal([]byte(b.String()), &m); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("100000 distinct keys took %v; decoding must be linear", d)
+	}
+	if len(m) != 100000 {
+		t.Fatalf("decoded %d keys, want 100000", len(m))
+	}
+}

@@ -1,6 +1,7 @@
 package k8ssync
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -17,9 +18,16 @@ func TestLoadConfig_DuplicateKeyRejected(t *testing.T) {
 	require.Contains(t, err.Error(), "already defined")
 }
 
+// The library alone allocates about 1.4 GB for 20000 repeats, so roughly 14 MB
+// (quadratic) for 2000; the pre-check stays well under the 8 MiB bound.
 func TestLoadConfig_ManyDuplicateKeysFailQuickly(t *testing.T) {
-	p := writeConfig(t, strings.Repeat("interval: 1m\n", 20000))
+	p := writeConfig(t, strings.Repeat("interval: 1m\n", 2000))
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
 	_, err := LoadConfig(p)
+	runtime.ReadMemStats(&after)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "already defined")
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20))
 }
