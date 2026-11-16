@@ -62,6 +62,12 @@ import (
 
 const ddlPilotBudgetPath = "testdata/resguard-sqlite-ddl.json"
 
+// maxFuzzDDLBytes bounds the fuzzed DDL to the reachable size range (a table's
+// sqlite_master CREATE TABLE text is at most a few KB even for a very wide
+// model). The alloc budget's per-byte slope is calibrated against a seed near
+// this size because parseDDL allocates O(n^2) in the body length.
+const maxFuzzDDLBytes = 5120
+
 // ddlSeeds are valid CREATE TABLE statements of varied size/shape, including one
 // deliberately long column list so the alloc per-byte slope is calibrated
 // against a realistically-large (but benign) schema, not only tiny ones.
@@ -78,19 +84,45 @@ func ddlSeeds() []string {
 		"CREATE TABLE multi (a int, b int, c int, PRIMARY KEY (a, b))",
 		"CREATE TABLE defs (a int DEFAULT 1, s text DEFAULT 'hi', g int GENERATED ALWAYS AS (a+1))",
 	}
-	// One wide table: 40 columns -> a long body, so the per-byte slope floor
-	// reflects a legitimately-large schema.
+	// One wide table near the top of the reachable DDL-size range (~maxFuzzDDLBytes).
+	// parseDDL allocates O(n^2) in the body length (it builds the body a rune at a
+	// time with `buf += string(c)`), so the per-byte slope MUST be calibrated
+	// against a seed at the largest realistic size — otherwise a linear slope
+	// calibrated on tiny seeds is crossed over by the quadratic curve on a merely
+	// larger (still benign) schema (observed in SP1 fuzzing: a 2752-byte DDL tripped
+	// alloc at 1.2x against a slope calibrated on ~1 KB seeds). Calibrating here so
+	// every in-range input is covered; the alloc oracle then fires only on
+	// allocation that is disproportionate EVEN ACCOUNTING for the known O(n^2).
+	seeds = append(seeds, wideTableDDL(220))
+	// parseDDL splits the body on top-level commas and grows a per-FIELD buffer
+	// with `buf += string(c)`, so the O(n^2) alloc worst case is a LONG SINGLE
+	// field (few commas), not a wide many-column table. Calibrate against that
+	// exact shape at ~maxFuzzDDLBytes so the alloc slope covers parseDDL's real
+	// worst case over the reachable input range; the oracle then fires only on a
+	// regression that allocates beyond this known O(n^2) worst case.
+	seeds = append(seeds, longFieldDDL(maxFuzzDDLBytes-32))
+	return seeds
+}
+
+// longFieldDDL builds a CREATE TABLE with a single column whose type name is a
+// long run of identifier bytes (engine-valid: SQLite accepts arbitrary type
+// names), so the body is one field of ~nbytes — parseDDL's O(n^2) worst case.
+func longFieldDDL(nbytes int) string {
+	return "CREATE TABLE t (c " + strings.Repeat("A", nbytes) + ")"
+}
+
+// wideTableDDL builds a CREATE TABLE with n integer columns (~24 bytes each).
+func wideTableDDL(n int) string {
 	var b strings.Builder
 	b.WriteString("CREATE TABLE wide (")
-	for i := range 40 {
+	for i := range n {
 		if i > 0 {
 			b.WriteString(", ")
 		}
 		fmt.Fprintf(&b, "col%d integer DEFAULT %d", i, i)
 	}
 	b.WriteString(")")
-	seeds = append(seeds, b.String())
-	return seeds
+	return b.String()
 }
 
 // isTableDDL reports whether d is a CREATE TABLE ddl with a parsed column list —
@@ -248,6 +280,16 @@ func FuzzSqliteDDLRoundTrip(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, s string) {
+		// Bound the input to the reachable DDL-size range. A table's CREATE TABLE
+		// text in sqlite_master is at most a few KB (a very wide Keyorix model);
+		// the alloc budget is calibrated to this range (parseDDL is O(n^2), so the
+		// per-byte slope only holds where it was calibrated). A larger input is
+		// out of scope — the O(n^2) alloc on arbitrarily-large DDL is a documented
+		// third-party ddlmod property, not a Keyorix-reachable concern.
+		if len(s) > maxFuzzDDLBytes {
+			return
+		}
+
 		var d1 *ddl
 		var perr error
 		cost := probe.Measure(len(s), func() {

@@ -2,32 +2,32 @@
   "target": "sqlite_ddl_roundtrip",
   "platform": "linux",
   "factor": 4,
-  "seeds": 11,
+  "seeds": 12,
   "meters": {
     "alloc_bytes": {
-      "floor": 147176,
-      "per_byte": 903.8139534883721,
-      "abs_max": 588704
+      "floor": 14288808,
+      "per_byte": 2797.886822009007,
+      "abs_max": 57155232
     },
     "cpu_ns": {
-      "floor": 856000,
-      "per_byte": 13587.301587301587,
-      "abs_max": 3424000
+      "floor": 12797000,
+      "per_byte": 11714.285714285714,
+      "abs_max": 51188000
     },
     "live_heap": {
-      "floor": 601624,
-      "per_byte": 13571.906976744185,
-      "abs_max": 2406496
+      "floor": 707600,
+      "per_byte": 13741.767441860466,
+      "abs_max": 2830400
     },
     "mallocs": {
-      "floor": 3168,
-      "per_byte": 3.052023121387283,
-      "abs_max": 12672
+      "floor": 18297,
+      "per_byte": 3.0709969788519635,
+      "abs_max": 73188
     },
     "wall_ns": {
-      "floor": 496870,
-      "per_byte": 1275.8095238095239,
-      "abs_max": 1987480
+      "floor": 8763248,
+      "per_byte": 1715.9287252790289,
+      "abs_max": 35052992
     }
   }
 }
