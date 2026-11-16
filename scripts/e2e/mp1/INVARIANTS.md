@@ -21,7 +21,10 @@ exhausts the connection slots of a shared Postgres (SQLSTATE 53300).
 New invariants go in `INVARIANTS.d/INV-MPRACE-<slug>.md` (one per file); see
 `docs/invariants-fragments.md`.
 
-Format: `INV-MPRACE-<slug> <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
+Format: `INV-MPRACE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
+(The line above is the form the invariants guard derives the `INV-MPRACE`
+prefix from; every rule here lives in an `INVARIANTS.d/` fragment, whose ID
+is a slug, `INV-MPRACE-<slug>`, per `docs/invariants-fragments.md`.)
 
 ## Uniqueness
 
