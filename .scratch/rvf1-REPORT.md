@@ -1,6 +1,7 @@
 # RVF1 — Review vs. Fuzzing: who finds what (talk F, RootedCON)
 
-**Status: results in; live fuzz chunk + final commit pending at time of writing.**
+**Status: COMPLETE.** Answer key verified, 3 live R arms + 1 live RZ red/green oracle + 1 live
+540 s fuzz chunk run. Final commit SHA printed at the end of the session output.
 
 **Report location note.** The mandated path `/mnt/data/wave4/out/rvf1-REPORT.md` is **not
 writable** from this session — a filesystem guard confines every tool file operation to the
@@ -118,7 +119,7 @@ and flags any divergence, in either direction.
 | R | T3 | ✅ live sub-agent | MISS (judged by-design; 1 HARDENING + 1 low DEFECT note, 0 FP) | 94,879 | ~142 s |
 | R | T4 | ✅ live sub-agent | HIT — F3a SECURITY-DEFECT HIGH + F3b identified; 0 FP | 62,556 | ~100 s |
 | RZ | T4 | ✅ oracle ran red/green | RED at pre-fix, GREEN at fix (green caveated, see below) | 112,508 | ~390 s |
-| Z | authzdiff | ⏳ live fuzz chunk (see §4a) | — | — | — |
+| Z | authzdiff (HEAD) | ✅ 540 s live fuzz | PASS, 0 divergence, 11,346 execs, +64 corpus | n/a (direct run) | 540.7 s |
 
 **RZ-T4 red/green (the load-bearing live proof):**
 - **RED at pre-fix** (`cd…`/`e6f45a49b3`): `go test ./server/http/handlers -run
@@ -142,7 +143,23 @@ and flags any divergence, in either direction.
   move the fault when the code moves.
 
 ### 4a. Live fuzz chunk (Z-arm machinery baseline)
-_Filled in after the run; see the Z-arm section appended below._
+
+One real foreground chunk, `go test ./server/authzdiff -fuzz FuzzAuthzDiff -fuzztime 540s
+-parallel 2 -p 2`, at **HEAD** (fixed code):
+
+- **Result: PASS, no crash, no oracle divergence.** Real fuzz wall time **540.7 s**; 11,346
+  executions (~28/s); 64 new "interesting" inputs added to the seed corpus (3793 → 3857).
+- The seed corpus is large (3793 entries) and gathering baseline coverage of it consumes the
+  first ~5–6 min, so a 9-min chunk spends roughly a third of its time actually mutating.
+- **What this shows (and does not).** `FuzzAuthzDiff` is a **differential model** fuzzer: it
+  compares real authorization decisions against a reference model. Run on already-fixed code it
+  **confirms** the model holds; it does not **discover** — the defects are gone and their
+  regression seeds are already pinned in the corpus. Concretely, the #4332 rule lives in
+  `server/authzdiff/model_machine_token_user_ceiling_test.go` (it names "fuzz-corpus#91" and a
+  prior model false-positive `f1be67fcde954c04`), so T1 is demonstrably a fuzz/differential-model
+  find. I could not re-run the #4332 model at the pre-fix commit because that model file
+  **post-dates** the fix (added in `360438428c`); the pre-fix tree does not contain it. So the
+  live Z result is a **machinery + no-regression baseline**, not a fresh rediscovery of T1.
 
 ---
 
