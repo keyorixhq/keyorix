@@ -236,7 +236,7 @@ own ADR-gated change, scoped separately after #3852 merges.
 
 | | A. No command: roll forward, or restore the pre-rotation archive (documented) | B. `rotate --revert` with the previous DEK kept for N days | C. A, plus the rotation insists on a fresh archive |
 |---|---|---|---|
-| **Who runs it** | Host operator: `admin restore --input <archive> --overwrite-existing` | Host operator, master passphrase | Host operator, as A |
+| **Who runs it** | Host operator: `admin restore --input <archive> --overwrite-existing --replace-existing-data` | Host operator, master passphrase | Host operator, as A |
 | **What they need** | The archive, and the passphrase that was current when it was taken | The passphrase; the retained old DEK on disk | As A; `rotate` refuses without `--backup-output` (writes the archive itself) or an explicit `--no-backup` acknowledgement |
 | **Audited** | `admin.restore` and, if the archive is behind the witness, `admin.restore_rollback_override` | A new `admin.encryption.rotate_revert` | As A, plus the backup event |
 | **What an insider can do** | Nothing new. Restoring an archive is already possible for the same holder | A second live data key on disk and in every backup for N days. Anyone who gets the host in that window has the key the rotation was meant to retire. If the rotation answered a DEK exposure, the revert re-exposes everything | Nothing new |
