@@ -1,0 +1,1 @@
+fuzz/thirdparty/otp	none	-	test-only differential and bounded-work fuzz harness for pquerna/otp; not part of any shipped build	test-helper

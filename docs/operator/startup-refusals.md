@@ -53,8 +53,7 @@ The fix is always an edit to the file (or env var) and a restart: **in place: ye
 Real output:
 
 ```
-Failed to load configuration: failed to unmarshal config: yaml: unmarshal errors:
-  line 189: unknown key "webauthn" under security (check its spelling and section in docs/CONFIGURATION.md)
+Failed to load configuration: failed to unmarshal config: yaml: construct errors: line 189: unknown key "webauthn" under security (check its spelling and section in docs/CONFIGURATION.md)
 ```
 
 **Match:** `failed to unmarshal config`, `check its spelling and section in docs/CONFIGURATION.md`

@@ -21,7 +21,12 @@ InviteGlobalWithLink
 InviteMember
 InviteToProject
 InviteToProjectWithLink
+IssueMachineToken
 RequireGranterHoldsRolePermissions
+RequireMachinePrivilegeCeiling
+RestoreEnvironment
+RestoreGroup
+RestoreProject
 SetProjectMemberRole
 SetUserRoles
 TransitionMembership

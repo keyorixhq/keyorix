@@ -30,7 +30,15 @@ import (
 //     role bundles, at the target scope (the FIX-1 rule: derived from the
 //     role's permissions, never its name).
 //
-// Environment-scoped grants are not modelled: the harness never creates one.
+// Environment-scoped grants ARE modelled (V5b): a grant row carries an
+// environment_id, and a grant with environment_id E != 0 applies only when the
+// check's target environment is E (a soft-deleted environment voids it), while
+// environment_id 0 is the all-environments wildcard — the exact predicate of
+// GetUserRoleIDsAt's `environment_id = 0 OR (environment_id = ? AND the
+// environment is live)` clause (internal/storage/store/local_rbac.go). A
+// requirement names the environment its perms are checked at (requirement.env,
+// 0 = project-wide); secret operations authorize at the secret's own
+// environment (AuthorizeSecretAction builds Scope{project, secret.environment}).
 // PAT restrictions (ADR-042: the PAT principal's restriction narrows each
 // permission check, plus core's restricted-PAT ungated-write table) and
 // account state (a suspended principal may do nothing) ARE modelled.
@@ -44,6 +52,7 @@ import (
 type grant struct {
 	roleID    uint
 	projectID uint
+	envID     uint // environment the grant is scoped to; 0 = all environments
 	expires   *time.Time
 	// viaMemberAt: the grant comes from a group membership scoped to this
 	// project (user_groups.project_id); 0 = a direct grant or a global membership.
@@ -60,11 +69,11 @@ type model struct{ db *gorm.DB }
 func (m model) grants(p *principal) []grant {
 	var out []grant
 	if p.machineID != 0 {
-		rows, err := m.db.Raw(`SELECT role_id, project_id FROM machine_identity_roles WHERE machine_identity_id = ? AND environment_id = 0`, p.machineID).Rows()
+		rows, err := m.db.Raw(`SELECT role_id, project_id, environment_id FROM machine_identity_roles WHERE machine_identity_id = ?`, p.machineID).Rows()
 		if err == nil {
 			for rows.Next() {
 				var g grant
-				_ = rows.Scan(&g.roleID, &g.projectID)
+				_ = rows.Scan(&g.roleID, &g.projectID, &g.envID)
 				out = append(out, g)
 			}
 			_ = rows.Close()
@@ -74,19 +83,19 @@ func (m model) grants(p *principal) []grant {
 	if p.userID == 0 {
 		return nil
 	}
-	rows, err := m.db.Raw(`SELECT role_id, project_id, expires_at, 0 AS via FROM user_roles WHERE user_id = ? AND environment_id = 0
+	rows, err := m.db.Raw(`SELECT role_id, project_id, environment_id, expires_at, 0 AS via FROM user_roles WHERE user_id = ?
 		UNION ALL
-		SELECT gr.role_id, gr.project_id, gr.expires_at, ug.project_id AS via FROM group_roles gr
+		SELECT gr.role_id, gr.project_id, gr.environment_id, gr.expires_at, ug.project_id AS via FROM group_roles gr
 		  JOIN user_groups ug ON ug.group_id = gr.group_id
 		  JOIN groups g ON g.id = gr.group_id AND g.deleted_at IS NULL
-		 WHERE ug.user_id = ? AND gr.environment_id = 0`, p.userID, p.userID).Rows()
+		 WHERE ug.user_id = ?`, p.userID, p.userID).Rows()
 	if err != nil {
 		return nil
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var g grant
-		_ = rows.Scan(&g.roleID, &g.projectID, &g.expires, &g.viaMemberAt)
+		_ = rows.Scan(&g.roleID, &g.projectID, &g.envID, &g.expires, &g.viaMemberAt)
 		out = append(out, g)
 	}
 	return out
@@ -101,17 +110,35 @@ func (m model) projectLive(id uint) bool {
 	return n > 0
 }
 
+// environmentLive: an environment-scoped grant on a soft-deleted environment
+// does not apply (GetUserRoleIDsAt's `environments.deleted_at IS NULL`). envID 0
+// (all-environments) is never environment-pinned, so it is always "live".
+func (m model) environmentLive(id uint) bool {
+	if id == 0 {
+		return true
+	}
+	var n int64
+	m.db.Raw(`SELECT COUNT(*) FROM environments WHERE id = ? AND deleted_at IS NULL`, id).Scan(&n)
+	return n > 0
+}
+
 func (m model) rolePerms(roleID uint) (perms []string, adminRole bool) {
 	m.db.Raw(`SELECT p.name FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ?`, roleID).Scan(&perms)
 	m.db.Raw(`SELECT bypasses_permission_checks FROM roles WHERE id = ?`, roleID).Scan(&adminRole)
 	return perms, adminRole
 }
 
-// holds reports whether p holds perm at target project proj (0 = global).
-func (m model) holds(p *principal, perm string, proj uint) bool {
+// holds reports whether p holds perm at target project proj (0 = global) and
+// environment env (0 = project-wide / all-environments). A grant scoped to a
+// specific environment applies only when env matches it and that environment is
+// live; an env-0 grant is the all-environments wildcard.
+func (m model) holds(p *principal, perm string, proj, env uint) bool {
 	now := time.Now().UTC()
 	for _, g := range m.grants(p) {
 		if g.projectID != 0 && g.projectID != proj {
+			continue
+		}
+		if g.envID != 0 && g.envID != env {
 			continue
 		}
 		if !g.appliesAt(proj) {
@@ -120,7 +147,7 @@ func (m model) holds(p *principal, perm string, proj uint) bool {
 		if g.expires != nil && !g.expires.After(now) {
 			continue
 		}
-		if !m.projectLive(g.projectID) {
+		if !m.projectLive(g.projectID) || !m.environmentLive(g.envID) {
 			continue
 		}
 		perms, adminRole := m.rolePerms(g.roleID)
@@ -143,18 +170,19 @@ func (m model) allowed(p *principal, req requirement) bool {
 		return false // a suspended account may do nothing (account_state.go)
 	}
 	for _, perm := range req.perms {
-		if !m.holds(p, perm, req.scope) {
+		if !m.holds(p, perm, req.scope, req.env) {
 			return false
 		}
 		// A PAT narrows its owner (ADR-042, rules.PATRestriction.Allows) on the
-		// permission check; the grant ceiling reads the principal's OWN roles,
-		// independent of the PAT (authz.go principalHasScopedPermission).
-		if p.pat != nil && !p.pat.Allows(perm, core.Scope{ProjectID: req.scope}) {
+		// permission check, at the SAME scope core checks (including the
+		// environment: PAT-SCOPE-002); the grant ceiling reads the principal's OWN
+		// roles, independent of the PAT (authz.go principalHasScopedPermission).
+		if p.pat != nil && !p.pat.Allows(perm, core.Scope{ProjectID: req.scope, EnvironmentID: req.env}) {
 			return false
 		}
 	}
 	for _, perm := range req.globalPerms {
-		if !m.holds(p, perm, 0) || (p.pat != nil && !p.pat.Allows(perm, core.Scope{})) {
+		if !m.holds(p, perm, 0, 0) || (p.pat != nil && !p.pat.Allows(perm, core.Scope{})) {
 			return false
 		}
 	}
@@ -182,8 +210,8 @@ func (m model) allowed(p *principal, req requirement) bool {
 		// a live PROJECT-scoped grant there — a global role makes nobody a member.
 		// a machine caller reaches core as actor 0, which the manager path
 		// refuses (revokerMayManageSecret), so only a user can take it.
-		manager := req.ownerOrPerm != "" && p.machineID == 0 && p.userID != req.ownerUserID && m.holds(p, req.ownerOrPerm, req.scope) &&
-			(p.pat == nil || p.pat.Allows(req.ownerOrPerm, core.Scope{ProjectID: req.scope}))
+		manager := req.ownerOrPerm != "" && p.machineID == 0 && p.userID != req.ownerUserID && m.holds(p, req.ownerOrPerm, req.scope, req.env) &&
+			(p.pat == nil || p.pat.Allows(req.ownerOrPerm, core.Scope{ProjectID: req.scope, EnvironmentID: req.env}))
 		if !manager && (p.userID != req.ownerUserID || !m.memberOf(p, req.scope)) {
 			return false
 		}
@@ -194,7 +222,7 @@ func (m model) allowed(p *principal, req requirement) bool {
 	for _, r := range req.ceiling {
 		perms, _ := m.rolePerms(r.roleID)
 		for _, perm := range perms {
-			if !m.holds(p, perm, r.scope) {
+			if !m.holds(p, perm, r.scope, 0) {
 				return false
 			}
 		}
@@ -215,7 +243,7 @@ func (m model) machineCovers(p *principal, target uint) bool {
 			return false
 		}
 		for _, perm := range perms {
-			if !m.holds(p, perm, g.projectID) {
+			if !m.holds(p, perm, g.projectID, g.envID) {
 				return false
 			}
 		}
@@ -241,6 +269,7 @@ type roleAt struct{ roleID, scope uint }
 type requirement struct {
 	perms   []string
 	scope   uint     // project id the perms are checked at, 0 = global
+	env     uint     // environment id the perms are checked at, 0 = project-wide (all environments)
 	ceiling []roleAt // roles the op grants (a group join grants all the group's roles); nil = not a grant
 	// ownerUserID != 0: a documented owner-only rule applies (see allowed).
 	ownerUserID uint
