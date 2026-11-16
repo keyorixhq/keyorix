@@ -47,7 +47,31 @@ type xmlNode struct {
 	attrs    map[string]string // attribute local-name -> value
 	text     string            // concatenated direct character data, trimmed
 	children []*xmlNode
+
+	// prefix and prefixBound are filled by the etree builder only: the element's literal
+	// prefix and whether an xmlns:<prefix> declaration is in scope on the element or any
+	// ancestor. They let the classifier tell "undeclared prefix" from a real split.
+	prefix      string
+	prefixBound bool
 }
+
+// prefixInScope reports whether xmlns:<prefix> is declared on el or an ancestor.
+func prefixInScope(el *etree.Element, prefix string) bool {
+	if prefix == "" {
+		return false
+	}
+	for e := el; e != nil; e = e.Parent() {
+		for _, a := range e.Attr {
+			if a.Space == "xmlns" && a.Key == prefix {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// reservedXMLPrefix reports the prefixes the XML Namespaces spec reserves.
+func reservedXMLPrefix(p string) bool { return p == "xml" || p == "xmlns" }
 
 func (n *xmlNode) canon() string {
 	var b strings.Builder
@@ -82,7 +106,12 @@ func nsName(uri, local string) string { return uri + "|" + local }
 
 // buildFromEtree walks an etree document into the canonical tree.
 func buildFromEtree(el *etree.Element) *xmlNode {
-	n := &xmlNode{name: nsName(el.NamespaceURI(), el.Tag), attrs: map[string]string{}}
+	n := &xmlNode{
+		name:        nsName(el.NamespaceURI(), el.Tag),
+		attrs:       map[string]string{},
+		prefix:      el.Space,
+		prefixBound: prefixInScope(el, el.Space),
+	}
 	for _, a := range el.Attr {
 		// skip xmlns declarations: they are namespace machinery, not data
 		if a.Space == "xmlns" || (a.Space == "" && a.Key == "xmlns") {
@@ -166,21 +195,6 @@ type xmlMismatch struct {
 	a, b   string
 }
 
-// collectDeclaredNS gathers every namespace URI actually declared by an xmlns/xmlns:*
-// attribute anywhere in the etree document. A prefix whose resolved "URI" is NOT in this
-// set was never declared — it is a namespace-ill-formed document, and the two libraries
-// handle that case differently (see the undeclared-prefix allowlist entry).
-func collectDeclaredNS(el *etree.Element, out map[string]bool) {
-	for _, a := range el.Attr {
-		if a.Space == "xmlns" || (a.Space == "" && a.Key == "xmlns") {
-			out[a.Value] = true
-		}
-	}
-	for _, c := range el.ChildElements() {
-		collectDeclaredNS(c, out)
-	}
-}
-
 // splitNS splits an "uri|local" canonical name.
 func splitNS(name string) (uri, local string) {
 	if before, after, ok := strings.Cut(name, "|"); ok {
@@ -190,20 +204,26 @@ func splitNS(name string) (uri, local string) {
 }
 
 // walkCompare walks the etree reading (a) and the encoding/xml reading (b) in parallel
-// and returns the first precise mismatch, or nil if the trees are identical. declared is
-// the set of namespace URIs the document actually declares.
-func walkCompare(a, b *xmlNode, declared map[string]bool) *xmlMismatch {
+// and returns the first precise mismatch, or nil if the trees are identical. a must be the
+// etree node (it carries the literal prefix and its in-scope binding).
+func walkCompare(a, b *xmlNode) *xmlMismatch {
 	if a.name != b.name {
 		au, al := splitNS(a.name)
 		bu, bl := splitNS(b.name)
 		switch {
 		case al != bl:
 			return &xmlMismatch{key: "local-name-differs", detail: "element local name differs", a: a.name, b: b.name}
-		// undeclared prefix: encoding/xml keeps the literal prefix as the namespace,
-		// etree resolves it to "" — the non-empty side's "URI" was never declared, so it
-		// is a bare prefix token, not a real namespace. A DECLARED-vs-DECLARED mismatch
-		// (both URIs in `declared`) falls through to the dangerous class below.
-		case (au != "" && !declared[au]) || (bu != "" && !declared[bu]):
+		// Reserved prefixes (`xml`, `xmlns`) are implicitly bound by the spec, so a split
+		// on them is a namespace-binding split, never an "undeclared prefix". Own key, NOT
+		// allowlisted.
+		case reservedXMLPrefix(a.prefix):
+			return &xmlMismatch{key: "reserved-prefix-binding", detail: "reserved prefix `" + a.prefix + ":` resolved differently", a: a.name, b: b.name}
+		// undeclared prefix: encoding/xml keeps the literal prefix as the namespace, etree
+		// resolves it to "". Only when exactly one side is "", the other side's Space is the
+		// element's literal prefix, and no xmlns:<prefix> is in scope. Anything else
+		// (a declared prefix, both URIs non-empty) falls through to the dangerous class.
+		case a.prefix != "" && !a.prefixBound &&
+			((au == "" && bu == a.prefix) || (bu == "" && au == a.prefix)):
 			return &xmlMismatch{key: "undeclared-prefix-ns", detail: "undeclared namespace prefix resolved differently", a: a.name, b: b.name}
 		default:
 			return &xmlMismatch{key: "declared-namespace-uri-differs", detail: "DECLARED namespace URI differs", a: a.name, b: b.name}
@@ -224,7 +244,7 @@ func walkCompare(a, b *xmlNode, declared map[string]bool) *xmlMismatch {
 		return &xmlMismatch{key: "child-count-differs", detail: "child element count differs", a: a.canon(), b: b.canon()}
 	}
 	for i := range a.children {
-		if m := walkCompare(a.children[i], b.children[i], declared); m != nil {
+		if m := walkCompare(a.children[i], b.children[i]); m != nil {
 			return m
 		}
 	}
@@ -245,9 +265,7 @@ func xmlCompare(data []byte) *xmlMismatch {
 	if !ok {
 		return nil // only etree accepted — "stricter parser" is expected, not dangerous here
 	}
-	declared := map[string]bool{"": true} // "" (no namespace) is always in scope
-	collectDeclaredNS(root, declared)
-	return walkCompare(buildFromEtree(root), ex, declared)
+	return walkCompare(buildFromEtree(root), ex)
 }
 
 var xmlDiffAllow = func() *allowlist {

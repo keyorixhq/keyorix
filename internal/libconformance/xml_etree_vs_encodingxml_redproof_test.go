@@ -38,10 +38,9 @@ func TestXMLCompare_RedGreen(t *testing.T) {
 	// must NOT be absorbed by the undeclared-prefix allowlist entry. This is the
 	// signature-wrapping-relevant case: two readings bind the same local name to two
 	// different, both-declared namespaces.
-	declared := map[string]bool{"": true, "urn:good": true, "urn:evil": true}
 	aTree := &xmlNode{name: nsName("urn:good", "Assertion"), attrs: map[string]string{}}
 	bTree := &xmlNode{name: nsName("urn:evil", "Assertion"), attrs: map[string]string{}}
-	m := walkCompare(aTree, bTree, declared)
+	m := walkCompare(aTree, bTree)
 	if m == nil {
 		t.Fatal("RED: oracle failed to detect a DECLARED-namespace disagreement")
 	}
@@ -55,7 +54,7 @@ func TestXMLCompare_RedGreen(t *testing.T) {
 	// RED: a smuggled-text divergence fires.
 	tA := &xmlNode{name: "|NameID", attrs: map[string]string{}, text: "alice"}
 	tB := &xmlNode{name: "|NameID", attrs: map[string]string{}, text: "admin"}
-	if m := walkCompare(tA, tB, declared); m == nil || m.key != "text-differs" {
+	if m := walkCompare(tA, tB); m == nil || m.key != "text-differs" {
 		t.Fatalf("RED: text divergence not detected/classified (got %v)", m)
 	}
 }
