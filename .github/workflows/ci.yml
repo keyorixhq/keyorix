@@ -2270,6 +2270,8 @@ jobs:
     outputs:
       count: ${{ steps.plan.outputs.count }}
       shards: ${{ steps.shard.outputs.shards }}
+      authz_mode: ${{ steps.authzplan.outputs.mode }}
+      authz_ops: ${{ steps.authzplan.outputs.ops }}
     env:
       FUZZ_SHARDS: 6  # max parallel fuzz jobs
       FUZZ_MAX_SHARD_SECONDS: 480  # open another shard (up to FUZZ_SHARDS) above this estimated work per shard
@@ -2402,6 +2404,33 @@ jobs:
             -shards "$FUZZ_SHARDS" -max-shard-seconds "$FUZZ_MAX_SHARD_SECONDS")"
           echo "Shards: $shards"
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
+      # Authz oracle plan (AUTHZ-MODEL-GUARD-1, KFZ-2026-092). The targets above
+      # are the fuzzers INSIDE the changed packages; the authzdiff oracle lives
+      # in server/authzdiff and models permission rules implemented elsewhere
+      # (internal/core, server/http, server/grpc, storage), so #4332 changed a
+      # rule, kept every check green, and left the model stale until a fuzz lane
+      # found it. scripts/ci/authzgate maps the diff, by call shape, to the
+      # authzdiff ops whose rules it can change: mode none | ops | full (its
+      # header has the rules). A planner error fails toward full, never none.
+      - name: Plan the authz oracle sweep
+        id: authzplan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
+          if out="$(scripts/ci/authz-oracle.sh plan "$base" HEAD)"; then
+            mode="$(printf '%s\n' "$out" | sed -n 's/^mode=//p')"
+            ops="$(printf '%s\n' "$out" | sed -n 's/^ops=//p')"
+          else
+            echo "::warning::authzgate plan failed; running the full authz oracle sweep"
+            mode=full ops=""
+          fi
+          printf '%s\n' "$out" | grep '^# ' | head -50 || true
+          case "$mode" in none|ops|full) ;; *) echo "::warning::bad authzgate mode '$mode'; using full"; mode=full ops="" ;; esac
+          echo "Authz oracle: mode=$mode ops=${ops:-<none>}"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "ops=$ops" >> "$GITHUB_OUTPUT"
 
   fuzz:
     needs: [fuzz-plan]
@@ -2448,11 +2477,57 @@ jobs:
           path: '**/testdata/fuzz/**'
           if-no-files-found: ignore
 
+  # authz-oracle (AUTHZ-MODEL-GUARD-1, KFZ-2026-092): when fuzz-plan's authz
+  # plan says this PR changes permission-check code, run the authzdiff strict
+  # sweep (TestAuthzDiffSweep, AUTHZDIFF_STRICT=1) on the ops it maps to, or on
+  # every op, plus the FuzzAuthzDiff seed corpus. Red = the reference model and
+  # the product disagree on a case no waiver explains: update the model in the
+  # same PR. Deterministic on purpose: a fuzz burst is not a PR gate here (a
+  # 60s cold burst found an unrelated, state-dependent gRPC ResourceExhausted
+  # case on main in 10s, so it would fail unrelated PRs). The burst runs only
+  # with the ci:full label, report-only. Measured cost and trigger rate:
+  # scripts/ci/authzgate/README.md.
+  authz-oracle:
+    needs: [fuzz-plan]
+    if: needs.fuzz-plan.result == 'success' && needs.fuzz-plan.outputs.authz_mode != 'none' && needs.fuzz-plan.outputs.authz_mode != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Strict authzdiff sweep of the planned ops
+        env:
+          MODE: ${{ needs.fuzz-plan.outputs.authz_mode }}
+          OPS: ${{ needs.fuzz-plan.outputs.authz_ops }}
+          AUTHZ_ORACLE_LOG: ${{ runner.temp }}/authz-oracle.log
+        run: scripts/ci/authz-oracle.sh run "$MODE" "$OPS"
+      - name: FuzzAuthzDiff burst (ci:full only, report-only)
+        if: contains(github.event.pull_request.labels.*.name, 'ci:full')
+        continue-on-error: true
+        env:
+          GOMAXPROCS: '2'
+        run: go test ./server/authzdiff -run '^$' -fuzz '^FuzzAuthzDiff$' -fuzztime 60s
+      - name: Upload the sweep log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: authz-oracle-log
+          path: ${{ runner.temp }}/authz-oracle.log
+          if-no-files-found: ignore
+
   # Single, stable check name regardless of shard count (or zero targets).
   # Runs (green or red) only when fuzz-plan ran; when build-and-test failed or
   # was skipped, or the event is not a PR push, this job is skipped (no runner).
+  # authz-oracle reports here only with the repository variable
+  # AUTHZ_ORACLE_GATE=enforce (rollout: report-only until the #4332 model fix
+  # reaches main, since main itself is red at machine.token.issue until then);
+  # its own check is red either way.
   fuzz-changed:
-    needs: [build-and-test, fuzz-plan, fuzz]
+    needs: [build-and-test, fuzz-plan, fuzz, authz-oracle]
     if: always() && github.event_name == 'pull_request' && needs.build-and-test.result == 'success' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
     runs-on: ubuntu-24.04
     steps:
@@ -2461,9 +2536,21 @@ jobs:
           PLAN_RESULT: ${{ needs.fuzz-plan.result }}
           FUZZ_RESULT: ${{ needs.fuzz.result }}
           COUNT: ${{ needs.fuzz-plan.outputs.count }}
+          AUTHZ_RESULT: ${{ needs.authz-oracle.result }}
+          AUTHZ_MODE: ${{ needs.fuzz-plan.outputs.authz_mode }}
+          AUTHZ_GATE: ${{ vars.AUTHZ_ORACLE_GATE }}
         run: |
-          echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT"
+          echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT authz-oracle=$AUTHZ_RESULT (mode=$AUTHZ_MODE gate=${AUTHZ_GATE:-report})"
           [ "$PLAN_RESULT" = "success" ] || exit 1
+          case "$AUTHZ_RESULT" in
+            success|skipped) ;;
+            *)
+              if [ "$AUTHZ_GATE" = "enforce" ]; then
+                exit 1
+              fi
+              echo "::warning::authz-oracle is $AUTHZ_RESULT (report-only until AUTHZ_ORACLE_GATE=enforce)"
+              ;;
+          esac
           case "$FUZZ_RESULT" in success|skipped) exit 0 ;; *) exit 1 ;; esac
 
   # Fresh-install API smoke, SQLite leg (Session I, 2026-09-28): boots a real
