@@ -160,10 +160,37 @@ type Cluster struct {
 	EnvID      int
 	ProjName   string
 
+	// logMu guards extraLogs and scanned.
+	logMu sync.Mutex
 	// extraLogs are earlier log files of this cluster's replicas that a
 	// restart would otherwise overwrite (harness.startProcess truncates
-	// LogPath). The post-run canary scan reads them too.
+	// LogPath). The canary scan reads them too.
 	extraLogs []string
+	// scanned is, per log path, the file size at the last canary scan
+	// (scanNewLogOutput).
+	scanned map[string]int64
+	// reported are the problems already returned, so the overlap a scan
+	// re-reads does not report one hit twice.
+	reported map[string]bool
+}
+
+// addExtraLog adds path to the logs the canary scan reads.
+func (c *Cluster) addExtraLog(path string) {
+	c.logMu.Lock()
+	c.extraLogs = append(c.extraLogs, path)
+	c.logMu.Unlock()
+}
+
+// moveLog records that the log at from was renamed to to, keeping its scan
+// offset, and adds to to the scanned logs.
+func (c *Cluster) moveLog(from, to string) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if off, ok := c.scanned[from]; ok {
+		c.scanned[to] = off
+		delete(c.scanned, from)
+	}
+	c.extraLogs = append(c.extraLogs, to)
 }
 
 // startedClusters is every cluster StartCluster booted in this test process
@@ -187,7 +214,8 @@ func clustersSnapshot() []*Cluster {
 }
 
 // logPaths returns every log file this cluster's replicas have written: the
-// current one of each replica plus any preserved pre-restart log.
+// current one of each replica plus any preserved pre-restart log. The caller
+// holds logMu.
 func (c *Cluster) logPaths() []string {
 	out := make([]string, 0, len(c.Replicas)+len(c.extraLogs))
 	for _, s := range c.Replicas {
@@ -573,16 +601,4 @@ func allEqual(vals []string) bool {
 func serialEquivViolation(final string, success map[string]struct{}) bool {
 	_, ok := success[final]
 	return !ok
-}
-
-// scanLogForSecrets returns every canary value (length >= minLen) that appears
-// verbatim in logText. A non-empty result is a confidentiality leak.
-func scanLogForSecrets(logText string, values []string, minLen int) []string {
-	var hits []string
-	for _, v := range values {
-		if len(v) >= minLen && strings.Contains(logText, v) {
-			hits = append(hits, v)
-		}
-	}
-	return hits
 }

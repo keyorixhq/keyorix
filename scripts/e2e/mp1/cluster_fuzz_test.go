@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,23 +19,26 @@ import (
 // jsonUnmarshal is a thin alias so the op helpers read cleanly.
 func jsonUnmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
 
-// TestMain builds once, runs the suite, scans every replica log for canaries
-// (postRunCanaryScan), then kills every server process this package started and
+// TestMain builds once, runs the suite, scans the replica log output written
+// since the last canary scan (scanAllNewLogOutput), then kills every server process this package started and
 // drops every mp1_ database it created, before removing the shared build dir.
 // The cluster is started lazily by the first test/fuzz iteration that needs it
 // (startSharedOnce) and lives until here — NOT tied to any one iteration's
 // t.Cleanup, which would tear the servers down after the first fuzz input.
 //
-// The scan runs here, after m.Run(), because only here has every Test, every
-// Fuzz seed and (in a -fuzz worker process, which runs TestMain too) every
-// fuzzed iteration already written its values. Any hit or unreadable log
-// fails the run.
+// The post-run scan covers the log output written after the last in-run scan
+// (see the canary bookkeeping below); any hit or unreadable log fails the run.
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if clusters := clustersSnapshot(); len(clusters) > 0 {
-		values := canarySnapshot()
-		problems, logs := postRunCanaryScan(clusters, values)
-		fmt.Printf("canary scan (post-run): %d values, %d logs, %d clusters\n", len(values), logs, len(clusters))
+		var problems []string
+		var logs int
+		for _, c := range clusters {
+			p, n := scanAllNewLogOutput(c)
+			problems = append(problems, p...)
+			logs += n
+		}
+		fmt.Printf("canary scan (post-run): %d values, %d logs, %d clusters\n", len(canarySnapshot()), logs, len(clusters))
 		for _, p := range problems {
 			fmt.Println(p)
 		}
@@ -157,15 +161,22 @@ func (c *Cluster) readSecretValue(s *harness.Server, id int) (value string, stat
 // ── canary bookkeeping ──────────────────────────────────────────────────────
 //
 // Every secret value the harness ever writes is a canary: it must never appear
-// in any replica's log. The full set is scanned by TestMain after m.Run()
-// (postRunCanaryScan), which is the only point after every Test and Fuzz
-// target. TestZZCanaryNoSecretInLogs scans the logs written so far as an early
-// signal; Go runs Tests in source order and Fuzz targets after all Tests, so it
-// never sees the fuzz targets' values.
+// in any replica's log. recordCanary MUST be called before the value is sent
+// to a replica: the log scan is incremental (scanNewLogOutput reads only log
+// bytes written since its last pass), which is complete only because a replica
+// cannot log a value before the harness has recorded it.
+//
+// Where the scan runs: at the end of every FuzzMP1MultiProc and
+// FuzzMP1UniqueCreate iteration (a hit fails that iteration, so under -fuzz the
+// engine reports it and keeps the input), in TestZZCanaryNoSecretInLogs, and in
+// TestMain after m.Run() for whatever was written after the last of those.
+// Under -fuzz the per-iteration scan is the one that reports: a fuzz worker's
+// stdout goes to /dev/null and the coordinator stops it on a ~2s timer.
 
 var (
 	canaryMu     sync.Mutex
 	canaryValues = map[string]struct{}{}
+	canaryIdx    = newCanarySet(nil, canaryMinLen)
 )
 
 func recordCanary(values ...string) {
@@ -173,6 +184,7 @@ func recordCanary(values ...string) {
 	for _, v := range values {
 		if v != "" {
 			canaryValues[v] = struct{}{}
+			canaryIdx.add(v)
 		}
 	}
 	canaryMu.Unlock()
@@ -186,6 +198,31 @@ func canarySnapshot() []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// scanAllNewLogOutput runs scanNewLogOutput for c against every value recorded
+// so far.
+func scanAllNewLogOutput(c *Cluster) (problems []string, logs int) {
+	canaryMu.Lock()
+	defer canaryMu.Unlock()
+	return c.scanNewLogOutput(canaryIdx)
+}
+
+// plantCanaryLeak is the live red proof of the log scan
+// (KEYORIX_MP1_CANARY_PLANT=1, never set in normal runs): it writes a recorded
+// value into an extra log of c, which the next scan must report. The run is
+// then expected to FAIL.
+func plantCanaryLeak(t *testing.T, c *Cluster, value string) {
+	t.Helper()
+	if os.Getenv("KEYORIX_MP1_CANARY_PLANT") != "1" {
+		return
+	}
+	path := filepath.Join(c.Replica(0).Dir, "mp1-planted-leak.log")
+	if err := os.WriteFile(path, []byte("PLANTED value="+value+"\n"), 0o600); err != nil {
+		t.Fatalf("plant canary leak: %v", err)
+	}
+	c.addExtraLog(path)
+	t.Logf("KEYORIX_MP1_CANARY_PLANT=1: planted a recorded value in %s; the canary scan must now fail", path)
 }
 
 // maxConvergeNanos records the longest cross-replica convergence delay the fuzz
@@ -361,6 +398,13 @@ func FuzzMP1MultiProc(f *testing.F) {
 		if serialEquivViolation(final, success) {
 			t.Fatalf("final converged value %q was set by NO successful write (successful writes=%v) — serial-equivalence violation: a torn or phantom value survived",
 				final, keys(success))
+		}
+
+		// CONFIDENTIALITY: no recorded value or key byte in the log output
+		// written so far.
+		plantCanaryLeak(t, c, v0)
+		if problems, _ := scanAllNewLogOutput(c); len(problems) > 0 {
+			t.Fatalf("canary scan: %v", problems)
 		}
 	})
 }

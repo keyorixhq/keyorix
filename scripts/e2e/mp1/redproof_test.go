@@ -70,15 +70,22 @@ func TestRedProof_Canary(t *testing.T) {
 	t.Logf("canary oracle: red on a leaking log (hit %v), green on a clean log", hits)
 }
 
-// TestRedProof_PostRunScan: the post-run scan TestMain runs must flag a
-// recorded value or key bytes in any log of any cluster, including a
-// preserved pre-restart log, and an unreadable log (red), and pass clean logs
-// (green). It uses planted temp logs, not a live cluster.
-func TestRedProof_PostRunScan(t *testing.T) {
-	values := []string{"CANARY-post-run-value-7f3a", "fuzz-written-value-55c1"}
-	writeLog := func(path, text string) {
+// TestRedProof_IncrementalScan: the incremental log scan (scanNewLogOutput,
+// used per fuzz iteration, in TestZZ and in TestMain) must report a recorded
+// value or key bytes in any log of the cluster, including output appended
+// after an earlier clean pass, a value written across two passes, a renamed
+// pre-restart log, and an unreadable log (red), and pass clean logs (green).
+// It uses planted temp logs, not a live cluster.
+func TestRedProof_IncrementalScan(t *testing.T) {
+	set := newCanarySet([]string{"CANARY-post-run-value-7f3a", "fuzz-written-value-55c1"}, canaryMinLen)
+	appendLog := func(path, text string) {
 		t.Helper()
-		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // test temp path
+		if err != nil {
+			t.Fatalf("open planted log: %v", err)
+		}
+		defer f.Close() //nolint:errcheck
+		if _, err := f.WriteString(text); err != nil {
 			t.Fatalf("write planted log: %v", err)
 		}
 	}
@@ -88,48 +95,79 @@ func TestRedProof_PostRunScan(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, "keys"), 0o700); err != nil {
 			t.Fatalf("mkdir keys: %v", err)
 		}
-		writeLog(filepath.Join(dir, "keys", "dek.key"), "planted-dek-bytes-0123456789abcdef")
+		appendLog(filepath.Join(dir, "keys", "dek.key"), "planted-dek-bytes-0123456789abcdef")
 		c := &Cluster{}
 		for i := range 2 {
 			s := &harness.Server{Dir: dir, LogPath: filepath.Join(dir, fmt.Sprintf("server-%d.log", i))}
-			writeLog(s.LogPath, "INFO served GET /api/v1/secrets/42 200\n")
+			appendLog(s.LogPath, "INFO served GET /api/v1/secrets/42 200\n")
 			c.Replicas = append(c.Replicas, s)
 		}
-		pre := filepath.Join(dir, "server-1.log.pre-restart")
-		writeLog(pre, "INFO served PUT /api/v1/secrets/42 200\n")
-		c.extraLogs = append(c.extraLogs, pre)
 		return c
 	}
-
-	// GREEN: clean logs in two clusters.
-	clean := []*Cluster{newCluster(), newCluster()}
-	if problems, logs := postRunCanaryScan(clean, values); len(problems) != 0 || logs != 6 {
-		t.Fatalf("green case misfired: clean logs gave problems=%v logs=%d (want none, 6)", problems, logs)
+	scan := func(c *Cluster) []string {
+		t.Helper()
+		p, _ := c.scanNewLogOutput(set)
+		return p
 	}
 
-	// RED: a value leaked into the second cluster's preserved pre-restart log
-	// (the SIGKILL cluster's shape), which no Test-time scan of the shared
-	// cluster ever reads.
-	leakPre := []*Cluster{newCluster(), newCluster()}
-	writeLog(leakPre[1].extraLogs[0], "DEBUG value=fuzz-written-value-55c1\n")
-	if problems, _ := postRunCanaryScan(leakPre, values); len(problems) != 1 {
-		t.Fatalf("RED PROOF FAILED: a recorded value in a pre-restart log gave problems=%v, want exactly 1 hit", problems)
+	// GREEN: clean logs, scanned twice (the second pass reads only the overlap).
+	c := newCluster()
+	if p, logs := c.scanNewLogOutput(set); len(p) != 0 || logs != 2 {
+		t.Fatalf("green case misfired: clean logs gave problems=%v logs=%d (want none, 2)", p, logs)
+	}
+	if p := scan(c); len(p) != 0 {
+		t.Fatalf("green case misfired: a clean re-scan gave %v", p)
 	}
 
-	// RED: key bytes in a current replica log.
-	leakKey := []*Cluster{newCluster()}
-	writeLog(leakKey[0].Replicas[0].LogPath, "DEBUG dek=planted-dek-bytes-0123456789abcdef\n")
-	if problems, _ := postRunCanaryScan(leakKey, values); len(problems) == 0 {
+	// RED: a value appended after a clean pass is reported once, not again.
+	appendLog(c.Replicas[1].LogPath, "DEBUG value=fuzz-written-value-55c1\n")
+	if p := scan(c); len(p) != 1 {
+		t.Fatalf("RED PROOF FAILED: a value appended after a clean pass gave problems=%v, want exactly 1", p)
+	}
+	if p := scan(c); len(p) != 0 {
+		t.Fatalf("a hit was reported twice: %v", p)
+	}
+
+	// RED: a value whose bytes land in two passes is still seen (overlap).
+	c = newCluster()
+	appendLog(c.Replicas[0].LogPath, "DEBUG value=CANARY-post-run")
+	if p := scan(c); len(p) != 0 {
+		t.Fatalf("half a value was reported: %v", p)
+	}
+	appendLog(c.Replicas[0].LogPath, "-value-7f3a\n")
+	if p := scan(c); len(p) != 1 {
+		t.Fatalf("RED PROOF FAILED: a value written across two passes gave problems=%v, want exactly 1", p)
+	}
+
+	// RED: a renamed pre-restart log keeps being scanned (the SIGKILL
+	// cluster's shape: the restart would otherwise truncate it).
+	c = newCluster()
+	_ = scan(c)
+	pre := c.Replicas[1].LogPath + ".pre-restart"
+	if err := os.Rename(c.Replicas[1].LogPath, pre); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	c.moveLog(c.Replicas[1].LogPath, pre)
+	appendLog(c.Replicas[1].LogPath, "INFO restarted\n")
+	appendLog(pre, "DEBUG value=fuzz-written-value-55c1\n")
+	if p := scan(c); len(p) != 1 {
+		t.Fatalf("RED PROOF FAILED: a value in a moved pre-restart log gave problems=%v, want exactly 1", p)
+	}
+
+	// RED: key bytes in a replica log.
+	c = newCluster()
+	appendLog(c.Replicas[0].LogPath, "DEBUG dek=planted-dek-bytes-0123456789abcdef\n")
+	if p := scan(c); len(p) == 0 {
 		t.Fatal("RED PROOF FAILED: raw key bytes in a replica log were NOT flagged")
 	}
 
 	// RED: an unreadable (missing) log is a problem, not a silent skip.
-	missing := []*Cluster{newCluster()}
-	missing[0].extraLogs = append(missing[0].extraLogs, filepath.Join(t.TempDir(), "gone.log"))
-	if problems, _ := postRunCanaryScan(missing, values); len(problems) != 1 {
-		t.Fatalf("RED PROOF FAILED: a missing log gave problems=%v, want exactly 1", problems)
+	c = newCluster()
+	c.addExtraLog(filepath.Join(t.TempDir(), "gone.log"))
+	if p := scan(c); len(p) != 1 {
+		t.Fatalf("RED PROOF FAILED: a missing log gave problems=%v, want exactly 1", p)
 	}
-	t.Log("post-run canary scan: red on a value in a pre-restart log, on key bytes, on a missing log; green on clean logs")
+	t.Log("incremental canary scan: red on appended, split, moved-log, key-byte and missing-log cases; green on clean logs")
 }
 
 // TestRedProof_AuditVerdict: the verify-audit verdict check must accept only

@@ -3,8 +3,10 @@
 package mp1
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -235,7 +237,8 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	// Seed a secret and drive a brief burst so there is in-flight audit
 	// activity around the kill.
 	name := fmt.Sprintf("mp1-kill-%d", time.Now().UnixNano())
-	id, st, err := c.createSecret(c.Replica(0), name, "kill-v0")
+	recordCanary("kill-v0-" + name)
+	id, st, err := c.createSecret(c.Replica(0), name, "kill-v0-"+name)
 	if err != nil || (st != http.StatusCreated && st != http.StatusOK) {
 		t.Fatalf("seed create: st=%d err=%v", st, err)
 	}
@@ -244,7 +247,9 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	// then SIGKILL it mid-flight.
 	victim := 1
 	for i := range 3 {
-		go func(k int) { _, _ = c.updateSecret(c.Replica(victim), id, fmt.Sprintf("kill-inflight-%d", k)) }(i)
+		v := fmt.Sprintf("kill-inflight-%d-%s", i, name)
+		recordCanary(v)
+		go func() { _, _ = c.updateSecret(c.Replica(victim), id, v) }()
 	}
 	vs := c.Replicas[victim]
 	if vs.Cmd == nil || vs.Cmd.Process == nil {
@@ -271,14 +276,18 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	start := time.Now()
 	for time.Now().Before(deadline) {
 		survivor := c.Replica(0) // replica 0 always survives
-		st, uerr := c.updateSecret(survivor, id, fmt.Sprintf("post-kill-%d", time.Now().UnixNano()))
+		v := fmt.Sprintf("post-kill-%d", time.Now().UnixNano())
+		recordCanary(v)
+		st, uerr := c.updateSecret(survivor, id, v)
 		lastSt, lastErr = st, uerr
 		if uerr == nil && st == http.StatusOK {
 			progressed = true
 			break
 		}
 		// also try replica 2
-		if st2, uerr2 := c.updateSecret(c.Replica(2), id, fmt.Sprintf("post-kill2-%d", time.Now().UnixNano())); uerr2 == nil && st2 == http.StatusOK {
+		v2 := fmt.Sprintf("post-kill2-%d", time.Now().UnixNano())
+		recordCanary(v2)
+		if st2, uerr2 := c.updateSecret(c.Replica(2), id, v2); uerr2 == nil && st2 == http.StatusOK {
 			progressed = true
 			break
 		}
@@ -305,11 +314,13 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	if err := os.Rename(vs.LogPath, preKill); err != nil {
 		t.Fatalf("preserve the victim's pre-restart log: %v", err)
 	}
-	c.extraLogs = append(c.extraLogs, preKill)
+	c.moveLog(vs.LogPath, preKill)
 	serverEnv := append(append([]string{}, vs.Env...), "KEYORIX_CONFIG_PATH=./keyorix.yaml")
 	harness.StartBackgroundProcess(t, vs, serverEnv)
 	harness.WaitHealthy(t, vs)
-	if st, uerr := c.updateSecret(vs, id, fmt.Sprintf("post-restart-%d", time.Now().UnixNano())); uerr != nil || st != http.StatusOK {
+	vr := fmt.Sprintf("post-restart-%d", time.Now().UnixNano())
+	recordCanary(vr)
+	if st, uerr := c.updateSecret(vs, id, vr); uerr != nil || st != http.StatusOK {
 		t.Fatalf("restarted replica did not serve a write: status=%d err=%v — store did not reopen cleanly after SIGKILL", st, uerr)
 	}
 	t.Logf("SIGKILLed replica restarted, became healthy, and served a write against the shared store (no hand repair)")
@@ -324,14 +335,12 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 
 // ── Oracle: no secret value or key bytes appear in any replica log (canary) ──
 //
-// Every value written by this package is recorded as a canary. The scan that
-// guards the invariant runs in TestMain after m.Run() (postRunCanaryScan), so it
-// covers every Test, the Fuzz seed corpora and, under -fuzz, the fuzzing
-// worker's own iterations, across every cluster this process started. Go runs
-// Tests in source order and Fuzz targets after them, so a Test alone could not
-// see what the fuzz targets wrote, and under `-run '^$' -fuzz ...` no Test runs
-// at all. This test adds a fresh, highly-distinctive canary of its own and scans
-// the logs written so far; it is a fast early signal, not the full guard.
+// Every value written by this package is recorded as a canary (see the canary
+// bookkeeping in cluster_fuzz_test.go for where the scan runs). Go runs Tests
+// in source order and Fuzz targets after them, so this Test cannot see what
+// the fuzz targets write, and under `-run '^$' -fuzz ...` no Test runs at all:
+// the fuzz iterations and TestMain scan that output. This test adds a fresh,
+// highly-distinctive canary of its own and scans the log output written so far.
 func TestZZCanaryNoSecretInLogs(t *testing.T) {
 	requirePG(t)
 	c := getSharedCluster(t)
@@ -347,53 +356,136 @@ func TestZZCanaryNoSecretInLogs(t *testing.T) {
 		_, _, _ = c.readSecretValue(c.Replica(i), 0) // id 0 ignored; just exercise
 	}
 
-	values := canarySnapshot()
-	problems, logs := scanClusterLogs(c, values)
+	plantCanaryLeak(t, c, fresh)
+	problems, logs := scanAllNewLogOutput(c)
 	for _, p := range problems {
 		t.Error(p)
 	}
-	t.Logf("canary scan: %d distinct secret values checked against %d replica logs", len(values), logs)
+	t.Logf("canary scan: %d distinct secret values checked against %d replica logs", len(canarySnapshot()), logs)
 }
 
 // canaryMinLen is the shortest recorded value the log scan looks for; shorter
 // values would match unrelated log text.
 const canaryMinLen = 6
 
-// scanClusterLogs scans every log file of c (logPaths) for any of values and
-// for c's raw DEK/salt key bytes. It returns one problem line per hit, and per
-// log it could not read (an unscanned log is not a clean one), plus the number
-// of logs it read.
-func scanClusterLogs(c *Cluster, values []string) (problems []string, logs int) {
+// canarySet is an exact multi-substring matcher: values bucketed by length, so
+// a scan costs one map lookup per (window length, byte position), not one
+// substring search per value. Over a long fuzz campaign the value set reaches
+// hundreds of thousands, where a per-value strings.Contains over every log is
+// far too slow.
+type canarySet struct {
+	minLen int
+	byLen  map[int]map[string]struct{}
+	lens   []int
+	maxLen int
+}
+
+func newCanarySet(values []string, minLen int) *canarySet {
+	s := &canarySet{minLen: minLen, byLen: map[int]map[string]struct{}{}}
+	for _, v := range values {
+		s.add(v)
+	}
+	return s
+}
+
+func (s *canarySet) add(v string) {
+	if len(v) < s.minLen {
+		return
+	}
+	m, ok := s.byLen[len(v)]
+	if !ok {
+		m = map[string]struct{}{}
+		s.byLen[len(v)] = m
+		s.lens = append(s.lens, len(v))
+		s.maxLen = max(s.maxLen, len(v))
+	}
+	m[v] = struct{}{}
+}
+
+// find returns every distinct value of s that occurs in text.
+func (s *canarySet) find(text []byte) []string {
+	var hits []string
+	seen := map[string]bool{}
+	for _, l := range s.lens {
+		m := s.byLen[l]
+		for i := 0; i+l <= len(text); i++ {
+			if _, ok := m[string(text[i:i+l])]; ok && !seen[string(text[i:i+l])] {
+				v := string(text[i : i+l])
+				seen[v] = true
+				hits = append(hits, v)
+			}
+		}
+	}
+	return hits
+}
+
+// scanLogForSecrets returns every canary value (length >= minLen) that appears
+// verbatim in logText. A non-empty result is a confidentiality leak.
+func scanLogForSecrets(logText string, values []string, minLen int) []string {
+	return newCanarySet(values, minLen).find([]byte(logText))
+}
+
+// scanNewLogOutput scans the log output of c written since its previous call
+// (every log in logPaths, from the last scanned size minus an overlap of the
+// longest pattern, so a value written across two scans is still seen) for any
+// value in set and for c's raw DEK/salt key bytes. It returns one problem line
+// per new hit and per log it could not read (an unscanned log is not a clean
+// one), plus the number of logs it read. Complete only because every value is
+// recorded before it is sent (recordCanary).
+func (c *Cluster) scanNewLogOutput(set *canarySet) (problems []string, logs int) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if c.scanned == nil {
+		c.scanned = map[string]int64{}
+		c.reported = map[string]bool{}
+	}
 	keyCanaries := c.keyByteCanaries()
+	overlap := set.maxLen
+	for _, kc := range keyCanaries {
+		overlap = max(overlap, len(kc))
+	}
+	report := func(p string) {
+		if !c.reported[p] {
+			c.reported[p] = true
+			problems = append(problems, p)
+		}
+	}
 	for _, path := range c.logPaths() {
-		raw, err := os.ReadFile(path) //nolint:gosec // harness-controlled path
+		chunk, size, err := readFrom(path, max(0, c.scanned[path]-int64(overlap)))
 		if err != nil {
-			problems = append(problems, fmt.Sprintf("replica log %s unreadable, not scanned: %v", path, err))
+			report(fmt.Sprintf("replica log %s unreadable, not scanned: %v", path, err))
 			continue
 		}
+		c.scanned[path] = size
 		logs++
-		log := string(raw)
-		for _, v := range scanLogForSecrets(log, values, canaryMinLen) {
-			problems = append(problems, fmt.Sprintf("CANARY HIT: secret value %q found in replica log %s", v, path))
+		for _, v := range set.find(chunk) {
+			report(fmt.Sprintf("CANARY HIT: secret value %q found in replica log %s", v, path))
 		}
 		for label, kc := range keyCanaries {
-			if kc != "" && strings.Contains(log, kc) {
-				problems = append(problems, fmt.Sprintf("CANARY HIT: key material (%s) found in replica log %s", label, path))
+			if kc != "" && bytes.Contains(chunk, []byte(kc)) {
+				report(fmt.Sprintf("CANARY HIT: key material (%s) found in replica log %s", label, path))
 			}
 		}
 	}
 	return problems, logs
 }
 
-// postRunCanaryScan is the confidentiality guard TestMain runs after m.Run():
-// scanClusterLogs over every cluster, with every value recorded during the run.
-func postRunCanaryScan(clusters []*Cluster, values []string) (problems []string, logs int) {
-	for _, c := range clusters {
-		p, n := scanClusterLogs(c, values)
-		problems = append(problems, p...)
-		logs += n
+// readFrom returns the bytes of path from offset off to its current end, and
+// the end offset.
+func readFrom(path string, off int64) ([]byte, int64, error) {
+	f, err := os.Open(path) //nolint:gosec // harness-controlled path
+	if err != nil {
+		return nil, 0, err
 	}
-	return problems, logs
+	defer f.Close() //nolint:errcheck
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return nil, 0, err
+	}
+	chunk, err := io.ReadAll(f)
+	if err != nil {
+		return nil, 0, err
+	}
+	return chunk, off + int64(len(chunk)), nil
 }
 
 // keyByteCanaries returns distinctive substrings of the raw on-disk key files

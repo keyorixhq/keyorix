@@ -196,6 +196,9 @@ func FuzzMP1UniqueCreate(f *testing.F) {
 		if bad, why := uniquenessViolation(created, lost, dbRows); bad {
 			t.Fatalf("uniqueness violated: %s (reps=%v, statuses=%v, lost=%d, dbRows=%d)", why, reps, statuses, lost, dbRows)
 		}
+		if problems, _ := scanAllNewLogOutput(c); len(problems) > 0 {
+			t.Fatalf("canary scan: %v", problems)
+		}
 	})
 }
 
