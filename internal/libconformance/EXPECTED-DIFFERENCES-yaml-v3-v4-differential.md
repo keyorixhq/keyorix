@@ -42,6 +42,8 @@ class reaches the failing assertion.
 
 | D10 | `negative-zero-int-vs-float` | the literal **`-0`** | resolves to **int `0`** | resolves to **float64 negative zero** (`-0.0`) | Every other number tested (`+0`, `-0.0`, `0x0`, `010`, `1e3`, …) agrees in BOTH; only the bare `-0` splits. A genuine but tiny type/value divergence — a config `-0` would be an int in v3, a float in v4. **Not a Keyorix defect** (v4 has no live caller). | `classifyYAMLV4ValueSplit` — recognised only for int-`0`-vs-float-negative-zero leaves; a non-negzero int-vs-float diff stays `value-mismatch` (fails). |
 
+| D11 | `v3-rejects:flow-ws` | a tag/node in **flow context** lacking the whitespace v3 requires after it (`{!}` — a `!`-tagged empty node in a flow mapping) | **rejects** (`did not find expected whitespace or line break`) | **accepts** (lenient) | v4 accepts what v3 rejects — same flow/tag-leniency family as D5/D9, benign. **Not a Keyorix defect** (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 flow-ws error ALONE. |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that
