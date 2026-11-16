@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	yaml "go.yaml.in/yaml/v4"
 )
 
@@ -86,13 +87,24 @@ func FuzzYAMLDecodeBoundedWork(f *testing.F) {
 	f.Add([]byte("0: &a\n1: &b [00,00,00,&0,&0,&0,&0,&0,00]\n2: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b]\n7: [*c,*c,*c,*c,*c,*c,*c,*c,*c]"))
 	f.Add([]byte("0: &a [0,0,0,0,0,0]\n1: &b [*a,*a,*a,*a,*a,*a,*a,*a]\n2: &c [*b,*b,*b,*b,*b,*b]\n7: [*c,*c,*c,*c,*c,*c,*c]"))
 
+	// PK2: resguard resource oracle (see resguard_yaml_test.go). Loaded, not
+	// hand-tuned; metering continues even without a committed budget.
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > 1<<16 {
 			data = data[:1<<16]
 		}
 		start := time.Now()
 		var v any
-		err := decode(data, &v)
+		var err error
+		c := rgProbe.Measure(len(data), func() { err = decode(data, &v) })
+		resguard.FeedCoverage(c)
+		if rgHaveBudget {
+			rgBudget.Check(t.Fatalf, c)
+		}
 		if elapsed := time.Since(start); elapsed > decodeDeadline {
 			t.Fatalf("yaml decode took %v (> %v) on %d bytes — unbounded work", elapsed, decodeDeadline, len(data))
 		}

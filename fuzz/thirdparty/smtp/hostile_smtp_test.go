@@ -57,6 +57,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/cloudfuzz"
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 // smtpPasswordCanary is the password this harness's client is configured with —
@@ -86,6 +87,14 @@ func FuzzSMTPDialogue(f *testing.F) {
 	f.Add([]byte("220-multi\r\n220-line\r\n220 greeting\r\n250 ok\r\n"))         // multiline greeting
 	f.Add(append([]byte("220 ok\r\n250 "), bytes.Repeat([]byte("X"), 70000)...)) // over-long EHLO line
 	f.Add([]byte("220 ok\r\n250 AUTH PLAIN LOGIN\r\n"))                          // advertise cleartext auth under NoTLS
+
+	// PK2: resguard resource + air-gap oracle (see resguard_smtp_test.go). The
+	// NetMeter routes the client's dial so any non-loopback dial fails; alloc and
+	// net bytes are metered. Budget is loaded, not hand-tuned.
+	rgNet := resguard.NewNetMeter()
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16, Net: rgNet})
 
 	f.Fuzz(func(t *testing.T, script []byte) {
 		var recordedMu = make(chan struct{}, 1)
@@ -127,6 +136,7 @@ func FuzzSMTPDialogue(f *testing.F) {
 			mail.WithSMTPAuth(mail.SMTPAuthAutoDiscover),
 			mail.WithUsername(smtpUsername),
 			mail.WithPassword(smtpPasswordCanary),
+			mail.WithDialContextFunc(rgNet.DialContext), // PK2: air-gap + net metering
 		)
 		if err != nil {
 			t.Fatalf("harness bug: mail.NewClient failed: %v", err)
@@ -146,9 +156,15 @@ func FuzzSMTPDialogue(f *testing.F) {
 		defer cancel()
 
 		var sendErr error
-		cloudfuzz.RunGuarded(t, "go-mail DialAndSendWithContext", func() {
-			sendErr = client.DialAndSendWithContext(ctx, msg)
+		c := rgProbe.Measure(len(script), func() {
+			cloudfuzz.RunGuarded(t, "go-mail DialAndSendWithContext", func() {
+				sendErr = client.DialAndSendWithContext(ctx, msg)
+			})
 		})
+		resguard.FeedCoverage(c)
+		if rgHaveBudget {
+			rgBudget.Check(t.Fatalf, c)
+		}
 
 		// Oracle: the password must never have been written to the wire under NoTLS.
 		<-recordedMu

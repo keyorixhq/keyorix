@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	flag "github.com/spf13/pflag"
 )
 
@@ -55,6 +56,11 @@ func FuzzPflagParse(f *testing.F) {
 	f.Add("--count=notanint")
 	f.Add("--name\x00\x00a b")
 
+	// PK2: resguard resource oracle (see resguard_pflag_test.go).
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, line string) {
 		if len(line) > 16*1024 {
 			return
@@ -64,14 +70,21 @@ func FuzzPflagParse(f *testing.F) {
 			return
 		}
 		done := make(chan struct{})
+		var c resguard.Cost
 		go func() {
 			defer close(done)
-			fs := newFS()
-			fs.SetOutput(discard{})
-			_ = fs.Parse(args)
+			c = rgProbe.Measure(len(line), func() {
+				fs := newFS()
+				fs.SetOutput(discard{})
+				_ = fs.Parse(args)
+			})
 		}()
 		select {
 		case <-done:
+			resguard.FeedCoverage(c)
+			if rgHaveBudget {
+				rgBudget.Check(t.Fatalf, c)
+			}
 		case <-time.After(10 * time.Second):
 			t.Fatalf("bounded-work: pflag.Parse did not return in 10s for %d args", len(args))
 		}

@@ -37,6 +37,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	"github.com/shirou/gopsutil/v4/common"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -72,7 +73,14 @@ func FuzzGopsutilProc(f *testing.F) {
 	f.Add(uint8(0), []byte("cpu x y z\n"))
 	f.Add(uint8(1), []byte("MemFree 1 2 3\n"))
 
-	// load.Avg deliberately excluded (see header).
+	// load.Avg deliberately excluded — known-open upstream panic (see header +
+	// .scratch/records/gopsutil-1.md).
+
+	// PK2: resguard resource oracle (see resguard_gopsutil_test.go).
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, sel uint8, data []byte) {
 		// On non-Linux hosts cpu/mem ignore HOST_PROC and read the real host, so
 		// the target would exercise nothing and still report green.
@@ -90,18 +98,25 @@ func FuzzGopsutilProc(f *testing.F) {
 		}
 		ctx := ctxWithProc()
 		done := make(chan struct{})
+		var c resguard.Cost
 		go func() {
 			defer close(done)
-			switch which {
-			case 0:
-				_, _ = cpu.TimesWithContext(ctx, true)
-				_, _ = cpu.TimesWithContext(ctx, false)
-			case 1:
-				_, _ = mem.VirtualMemoryWithContext(ctx)
-			}
+			c = rgProbe.Measure(len(data), func() {
+				switch which {
+				case 0:
+					_, _ = cpu.TimesWithContext(ctx, true)
+					_, _ = cpu.TimesWithContext(ctx, false)
+				case 1:
+					_, _ = mem.VirtualMemoryWithContext(ctx)
+				}
+			})
 		}()
 		select {
 		case <-done:
+			resguard.FeedCoverage(c)
+			if rgHaveBudget {
+				rgBudget.Check(t.Fatalf, c)
+			}
 		case <-time.After(12 * time.Second):
 			t.Fatalf("bounded-work: gopsutil parse of %s did not return in 12s for %d-byte input", files[which], len(data))
 		}

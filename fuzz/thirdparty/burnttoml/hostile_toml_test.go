@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 // containsTime reports whether v (a decoded TOML value) contains any time.Time,
@@ -97,14 +98,29 @@ func FuzzBurntTOML(f *testing.F) {
 	f.Add([]byte("multi = \"\"\"\nline\n\"\"\"\n"))
 	f.Add([]byte(""))
 
+	// PK2: resguard resource oracle (see resguard_toml_test.go). Loaded, not
+	// hand-tuned; metering continues even without a committed budget.
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > 64*1024 {
 			return
 		}
 		res := make(chan string, 1)
-		go func() { res <- stability(data) }()
+		var c resguard.Cost
+		go func() {
+			var msg string
+			c = rgProbe.Measure(len(data), func() { msg = stability(data) })
+			res <- msg
+		}()
 		select {
 		case msg := <-res:
+			resguard.FeedCoverage(c)
+			if rgHaveBudget {
+				rgBudget.Check(t.Fatalf, c)
+			}
 			if msg != "" {
 				t.Fatal(msg)
 			}

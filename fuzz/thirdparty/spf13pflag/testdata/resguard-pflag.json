@@ -1,0 +1,33 @@
+{
+  "target": "pflag_parse",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 20,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 2223840,
+      "per_byte": 681.081081081081,
+      "abs_max": 8895360
+    },
+    "cpu_ns": {
+      "floor": 2096000,
+      "per_byte": 20300,
+      "abs_max": 8384000
+    },
+    "live_heap": {
+      "floor": 545056,
+      "per_byte": 18168.533333333333,
+      "abs_max": 2180224
+    },
+    "mallocs": {
+      "floor": 4566,
+      "per_byte": 2.1333333333333333,
+      "abs_max": 18264
+    },
+    "wall_ns": {
+      "floor": 1900929,
+      "per_byte": 1859.7333333333333,
+      "abs_max": 7603716
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "target": "goi18n_parse",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 28,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 875112,
+      "per_byte": 461.6470588235294,
+      "abs_max": 3500448
+    },
+    "cpu_ns": {
+      "floor": 3485000,
+      "per_byte": 41647.05882352941,
+      "abs_max": 13940000
+    },
+    "live_heap": {
+      "floor": 581240,
+      "per_byte": 34190.58823529412,
+      "abs_max": 2324960
+    },
+    "mallocs": {
+      "floor": 12464,
+      "per_byte": 2.7058823529411766,
+      "abs_max": 49856
+    },
+    "wall_ns": {
+      "floor": 3200433,
+      "per_byte": 4574.058823529412,
+      "abs_max": 12801732
+    }
+  }
+}
