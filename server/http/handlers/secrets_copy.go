@@ -69,6 +69,10 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.coreService.CopySecret(r.Context(), uint(id), reqBody.EnvironmentID, reqBody.Name, userCtx.Username, userCtx.UserID, clientIP(r), r.Header.Get("User-Agent"))
 	if err != nil {
+		// A read fault is a retry answer (503): the copy was not applied.
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if h.trySendSecretSizeError(w, err) {
 			return
 		}
