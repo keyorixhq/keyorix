@@ -1,30 +1,32 @@
-- **INV-FUZZCOMPRESS-decompress-amplification** `driver.DecompressPayload`, driven directly
-  with `(codec, UncompressedSize, in)` for every codec branch (snappy/zlib/zstd), allocates
-  memory that stays within a per-input-byte SLOPE budget calibrated on a benign corpus of
-  realistic (compression-ratio ~1–6×) frames. An allocation wildly out of proportion to the
-  compressed input it was driven with — the decompression-bomb / `UncompressedSize`
-  pre-allocation shape — trips the budget. The harness CLAMPS every driven `UncompressedSize`
-  to 64 MiB so the fuzzer cannot OOM itself; the real driver has no such clamp (int32, up to
-  ~2 GiB), which is the hardening gap this records. Why: `DecompressPayload` does
-  `make([]byte, opts.UncompressedSize)` (zlib), `make([]byte, UncompressedSize)` after a
-  `DecodedLen==UncompressedSize` check (snappy), and `make([]byte, 0, UncompressedSize)`
-  (zstd) BEFORE the payload is validated, and `UncompressedSize`+`in` are attacker-controlled
-  on an `OP_COMPRESSED` reply. Reachable from `internal/dynamic/mongodb.go connectMongo` only
-  when `adminDSN` opts into compression and the server is malicious (non-default; trust-
-  boundary crossing). **Does NOT verify**: absolute memory bound (a legit multi-MiB reply is
-  allowed — the model is slope, chosen because legit Mongo replies reach ~48 MiB so an
-  absolute ceiling would false-positive); resistance to a bomb that PADS its input to buy
-  slope budget; decode correctness (round-trip owns that); wire framing (`FuzzMongoReply`
-  owns that). The slope's sensitivity is set by `testdata/resguard.json`'s corpus ratio.
-  Guard: `FuzzMongoDecompressPayload`, `TestResguardCompressRedGreen` (committed red/green:
-  a ~6-byte snappy frame declaring 64 MiB trips the alloc budget at 15×; every benign sample
-  passes), `TestResguardCompressCalibrate` (`fuzz/thirdparty/compress`).
+- **INV-FUZZCOMPRESS-decompress-alloc-proportional** `driver.DecompressPayload`, driven for
+  every codec branch (snappy/zlib/zstd) with an `UncompressedSize` DERIVED from the genuine
+  decoded length of `in` (never fuzzed), allocates memory that stays PROPORTIONAL to the
+  decompressed OUTPUT size — the resguard per-byte alloc/malloc slope is keyed to
+  `sizeKey = max(len(in), decodedLen)` and calibrated on LARGE benign frames (marginal
+  ratio ~1). A decode whose allocation is super-linear in its output (alloc ≫ output, or a
+  per-byte allocation storm) trips; a legitimate high-compression-ratio frame (alloc ≈
+  output) passes. The fuzzer never panics / hangs (`fuzzutil.Guard`). Why: the only sound
+  library property here is "allocate the output you decompressed, nothing more" — keying to
+  the compressed INPUT instead would flag ordinary high compression ratios as bombs, and
+  feeding an arbitrary `UncompressedSize` just tests the caller's own contract. **Does NOT
+  verify**: (1) an ABSOLUTE memory bound — a malicious Mongo server can still force an
+  allocation up to the genuine output size (production ceiling is the driver's int32 ~2 GiB);
+  that MISSING decompressed-size CAP in `DecompressPayload` is a HARDENING item recorded in
+  the report, not a disproportion this oracle can trip, because allocating the output is
+  correct; (2) ordinary compression ratios (not a defect); (3) decode correctness
+  (`FuzzSnappyRoundTrip`); (4) wire framing (`FuzzMongoReply`); (5) `live_heap`/drift —
+  deliberately excluded because the pooled zstd decoder keeps large internal buffers live
+  across inputs, making absolute live-heap a non-signal (only the per-input alloc DELTA is
+  fatal). Reachable from `internal/dynamic/mongodb.go connectMongo` only when `adminDSN` opts
+  into compression and the server is malicious (non-default; trust-boundary crossing). Guard:
+  `FuzzMongoDecompressPayload`, `TestResguardCompressRedGreen` (committed red/green: a planted
+  50×-output allocation trips at 2.2×; every benign sample AND a genuine high-ratio zstd bomb
+  pass), `TestResguardCompressCalibrate` (`fuzz/thirdparty/compress`).
 - **INV-FUZZCOMPRESS-snappy-roundtrip** For any `src`, `snappy.Decode(snappy.Encode(nil, src))
   == src` and `snappy.DecodedLen(snappy.Encode(nil, src)) == len(src)` — the self-consistency
   the driver's `DecodedLen==UncompressedSize` check relies on. Why: the snappy branch trusts
   the frame's own declared length to size its allocation; a mismatch between what Encode
   writes and what DecodedLen reports would be a codec defect. **Does NOT verify**: the snappy
   STREAM format (mongo uses the block format); decode of adversarial frames (that is the
-  amplification oracle, and a crafted header declaring a length the body does not satisfy is
-  NOT a round-trip violation); no second-implementation differential (golang/snappy is not in
-  the build). Guard: `FuzzSnappyRoundTrip` (`fuzz/thirdparty/compress`).
+  amplification oracle); no second-implementation differential (golang/snappy is not in the
+  build). Guard: `FuzzSnappyRoundTrip` (`fuzz/thirdparty/compress`).

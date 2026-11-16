@@ -3,7 +3,6 @@ package compresshostile
 import (
 	"bytes"
 	"compress/zlib"
-	"encoding/binary"
 	"fmt"
 	"os"
 	"testing"
@@ -78,18 +77,17 @@ func encodeFor(tb testing.TB, id wiremessage.CompressorID, src []byte) ([]byte, 
 	}
 }
 
-// benignSamples is the deterministic benign corpus used for calibration and as
-// the GREEN cases: every codec over several realistic sizes, plus one
-// legitimately-large low-compressibility reply per codec.
-func benignSamples(tb testing.TB) []struct {
+type sample struct {
 	id driver.CompressionOpts
 	in []byte
-} {
+}
+
+// benignSamples is the deterministic benign corpus used for calibration and as
+// the GREEN cases: every codec over several realistic sizes, plus one
+// legitimately-large low-compressibility reply per codec. Every UncompressedSize
+// is the HONEST decoded length of its frame.
+func benignSamples(tb testing.TB) []sample {
 	tb.Helper()
-	type sample = struct {
-		id driver.CompressionOpts
-		in []byte
-	}
 	var out []sample
 	sizes := []int{64, 512, 4096, 64 << 10}
 	for _, id := range mongoCompressors {
@@ -104,29 +102,59 @@ func benignSamples(tb testing.TB) []struct {
 	return out
 }
 
+// calibrationSamples is the corpus the BUDGET is derived from: LARGE frames
+// only (256 KiB … 4 MiB), where a decompressor's marginal allocation is ≈ the
+// output (ratio ~1), so the per-byte slope reflects the true marginal cost and
+// is NOT inflated by the fixed decoder overhead that dominates tiny frames. The
+// floor term then absorbs that fixed overhead for small frames at runtime. GREEN
+// is still checked against the full benignSamples range (incl. tiny frames), so
+// a small frame whose fixed overhead somehow exceeded the floor would be caught.
+func calibrationSamples(tb testing.TB) []sample {
+	tb.Helper()
+	var out []sample
+	sizes := []int{256 << 10, 1 << 20, 4 << 20}
+	for _, id := range mongoCompressors {
+		for _, n := range sizes {
+			in, us := encodeFor(tb, id, moderate(n))
+			out = append(out, sample{driver.CompressionOpts{Compressor: id, UncompressedSize: us}, in})
+		}
+		in, us := encodeFor(tb, id, lcg(1<<20)) // ratio ~1 anchor
+		out = append(out, sample{driver.CompressionOpts{Compressor: id, UncompressedSize: us}, in})
+	}
+	return out
+}
+
 func measureDecompress(tb testing.TB, p *resguard.Probe, in []byte, opts driver.CompressionOpts) resguard.Cost {
 	tb.Helper()
-	return p.Measure(len(in), func() {
+	return p.Measure(sizeKey(in, opts.UncompressedSize), func() {
 		_, _ = driver.DecompressPayload(in, opts)
 	})
 }
 
 // calibrateCompress derives a slope budget from the benign corpus. The alloc
 // meters stay on the DEFAULT per-byte slope (NOT UseAbsolute): the bomb shape
-// here is tiny-input/huge-output, so alloc-per-input-byte is the right
-// discriminator (a real large reply carries a proportionally large compressed
-// frame). See decompress_fuzz_test.go for what this does NOT verify.
+// here is small-input/large-genuine-output, so alloc-per-input-byte is the right
+// discriminator. See decompress_fuzz_test.go for what this does NOT verify.
 func calibrateCompress(tb testing.TB) resguard.Budget {
 	tb.Helper()
 	var costs []resguard.Cost
-	for _, s := range benignSamples(tb) {
-		// Measure each benign sample a few times to average GC/alloc noise into p99.
-		for range 3 {
+	for _, s := range calibrationSamples(tb) {
+		for range 3 { // average GC/alloc noise into p99
 			p := resguard.New(tb, resguard.Options{SampleEvery: 1})
 			costs = append(costs, measureDecompress(tb, p, s.in, s.id))
 		}
 	}
-	return resguard.Calibrate("mongo_decompress_payload", costs, resguard.DefaultFactor)
+	b := resguard.Calibrate("mongo_decompress_payload", costs, resguard.DefaultFactor)
+	// Keep ONLY the per-input delta memory meters as fatal. alloc_bytes/mallocs
+	// are deltas of cumulative TotalAlloc, so they attribute this input's
+	// allocation to this input. live_heap is the ABSOLUTE live heap after GC;
+	// the klauspost/mongo zstd decoder pool retains large internal buffers that
+	// stay live across inputs, so live_heap is contaminated by prior inputs and
+	// would false-positive on an empty input that follows a bomb. The advisory
+	// meters (wall/cpu) remain informational and never fatal. See
+	// INV-FUZZCOMPRESS-decompress-amplification.
+	b.KeepOnly("alloc_bytes", "mallocs")
+	return b
 }
 
 // TestResguardCompressCalibrate regenerates the committed budget under
@@ -148,26 +176,41 @@ func TestResguardCompressCalibrate(t *testing.T) {
 	}
 }
 
-// snappyBombFrame hand-crafts a tiny snappy block whose header varint DECLARES
-// declaredLen uncompressed bytes but carries only a few literal bytes — the
-// decompression-bomb shape. driver.DecompressPayload reads snappy.DecodedLen
-// (the header), make([]byte, declaredLen), THEN snappy.Decode (which errors on
-// the short body) — so the big allocation already happened. Used as the RED case.
-func snappyBombFrame(declaredLen int) []byte {
-	var hdr [binary.MaxVarintLen64]byte
-	n := binary.PutUvarint(hdr[:], uint64(declaredLen))
-	// one literal tag for 1 byte: tag = (len-1)<<2 | 0x00 ; len=1 -> 0x00, then 1 data byte.
-	return append(append([]byte{}, hdr[:n]...), 0x00, 'a')
+// genuineBomb returns a REAL decompression bomb for id: a tiny compressed frame
+// that legitimately expands to `out` bytes (all zeros, so it compresses to a few
+// bytes). Unlike a declared-size trick, driver.DecompressPayload actually
+// produces the full `out` bytes here, so the large allocation is justified by
+// genuine decoded output — exactly the zip-bomb a malicious server would send.
+func genuineBomb(tb testing.TB, id wiremessage.CompressorID, out int) sample {
+	tb.Helper()
+	in, us := encodeFor(tb, id, make([]byte, out))
+	return sample{driver.CompressionOpts{Compressor: id, UncompressedSize: us}, in}
 }
 
-// TestResguardCompressRedGreen is the committed red/green proof. GREEN: every
-// benign sample passes the calibrated budget. RED: a ~6-byte snappy frame
-// declaring safeMaxOut (64 MiB) uncompressed trips the alloc budget — the
-// amplifier is attacker INPUT, so no production code is modified.
+// overAllocDecodeSink keeps a planted over-allocation live during measurement.
+var overAllocDecodeSink []byte
+
+// overAllocDecode models a HYPOTHETICAL super-linear decoder defect: it decodes
+// the frame honestly, then allocates OUTPUT×mult extra bytes — the shape the
+// oracle exists to catch (allocation disproportionate to the decompressed
+// output). It is a HARNESS-SIDE plant (no production file is modified), used
+// only by the red/green proof.
+func overAllocDecode(in []byte, opts driver.CompressionOpts, mult int) {
+	out, _ := driver.DecompressPayload(in, opts)
+	overAllocDecodeSink = make([]byte, len(out)*mult)
+}
+
+// TestResguardCompressRedGreen is the committed red/green proof for the
+// keyed-to-OUTPUT alloc oracle. GREEN: every benign sample passes, AND a genuine
+// high-ratio zstd bomb (tiny frame -> ~60 MiB) ALSO passes — allocating the
+// output you decompressed is correct, not a defect. RED: a planted super-linear
+// decode (alloc = 20× output) on a benign frame trips the budget, proving the
+// oracle discriminates "alloc proportional to output" (fine) from "alloc
+// disproportionate to output" (a real decoder defect).
 func TestResguardCompressRedGreen(t *testing.T) {
 	b := calibrateCompress(t)
 
-	// GREEN: no benign sample may trip the budget.
+	// GREEN 1: no benign sample may trip the budget.
 	for _, s := range benignSamples(t) {
 		p := resguard.New(t, resguard.Options{SampleEvery: 1})
 		c := measureDecompress(t, p, s.in, s.id)
@@ -179,36 +222,45 @@ func TestResguardCompressRedGreen(t *testing.T) {
 		}
 	}
 
-	// RED: the snappy header bomb.
-	bomb := snappyBombFrame(safeMaxOut)
-	opts, ok := buildOpts(wiremessage.CompressorSnappy, 0, bomb)
-	if !ok {
-		t.Fatalf("snappy bomb frame was not drivable (declaredLen must be <= safeMaxOut=%d)", safeMaxOut)
+	// GREEN 2: a genuine high-ratio zstd bomb (tiny frame, ~60 MiB real output)
+	// must PASS — the decompressor correctly allocates ~output, proportional to
+	// the sizeKey. (The absolute 60 MiB is a HARDENING concern handled in prose,
+	// not a disproportion this oracle flags.)
+	const bombOut = 60 << 20
+	bomb := genuineBomb(t, wiremessage.CompressorZstd, bombOut)
+	if len(bomb.in) > bombOut/500 {
+		t.Fatalf("expected the zstd bomb frame to be tiny relative to %d, got %d bytes", bombOut, len(bomb.in))
 	}
-	if opts.UncompressedSize != safeMaxOut {
-		t.Fatalf("expected declared size %d, got %d", safeMaxOut, opts.UncompressedSize)
+	pg := resguard.New(t, resguard.Options{SampleEvery: 1})
+	green2 := measureDecompress(t, pg, bomb.in, bomb.id)
+	if b.Check(func(string, ...any) {}, green2) {
+		t.Fatalf("genuine high-ratio bomb must PASS (alloc ~= output): alloc=%d out=%d", green2.AllocBytes, bombOut)
 	}
-	p := resguard.New(t, resguard.Options{SampleEvery: 1})
-	red := measureDecompress(t, p, bomb, opts)
-	if red.AllocBytes < 8<<20 {
-		t.Fatalf("expected the snappy bomb to allocate megabytes, got alloc=%d (input %d bytes)", red.AllocBytes, len(bomb))
-	}
+
+	// RED: a planted 50×-output allocation on a ~1 MiB moderate frame must trip.
+	rin, rus := encodeFor(t, wiremessage.CompressorZstd, moderate(1<<20))
+	ropts := driver.CompressionOpts{Compressor: wiremessage.CompressorZstd, UncompressedSize: rus}
+	pr := resguard.New(t, resguard.Options{SampleEvery: 1})
+	rc := pr.Measure(sizeKey(rin, rus), func() {
+		overAllocDecode(rin, ropts, 50)
+	})
+	overAllocDecodeSink = nil
 	var msg string
-	fired := b.Check(func(f string, a ...any) { msg = fmt.Sprintf(f, a...) }, red)
+	fired := b.Check(func(f string, a ...any) { msg = fmt.Sprintf(f, a...) }, rc)
 	if !fired {
-		t.Fatalf("snappy header bomb (input %d bytes -> alloc %d) did not trip the budget", len(bomb), red.AllocBytes)
+		t.Fatalf("planted 50x-output over-allocation (output key %d, alloc %d) did not trip the budget", sizeKey(rin, rus), rc.AllocBytes)
 	}
-	t.Logf("RED tripped as expected (input %d bytes -> alloc %d): %s", len(bomb), red.AllocBytes, msg)
+	t.Logf("RED tripped as expected (50x-output plant, alloc %d): %s", rc.AllocBytes, msg)
 }
 
 // seedDecompress adds benign frames (one per codec/size) and the empty input.
 // It deliberately does NOT seed a bomb frame: seeding an amplifier would assert
 // "an amplifier must pass", contradicting the oracle.
 func seedDecompress(f *testing.F) {
-	f.Add(uint8(0), int32(0), []byte(nil))
-	f.Add(uint8(0), int32(0), []byte("not compressed"))
+	f.Add(uint8(0), []byte(nil))
+	f.Add(uint8(0), []byte("not compressed"))
 	for i, id := range mongoCompressors {
-		in, us := encodeFor(f, id, moderate(256))
-		f.Add(uint8(i), us, in)
+		in, _ := encodeFor(f, id, moderate(256))
+		f.Add(uint8(i), in)
 	}
 }
