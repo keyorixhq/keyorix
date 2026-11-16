@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +39,7 @@ func cmdJSONTable(args []string) error {
 			return err
 		}
 		var v any
-		if json.NewDecoder(bytes.NewReader(b)).Decode(&v) == nil { // nosemgrep: semgrep.keyorix-unbounded-json-decoder -- operator-supplied local corpus file, not network input
+		if json.NewDecoder(io.LimitReader(bytes.NewReader(b), 64<<20)).Decode(&v) == nil {
 			res["go-decoder"][e.Name()] = "accept"
 		} else {
 			res["go-decoder"][e.Name()] = "reject"

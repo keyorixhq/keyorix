@@ -245,7 +245,7 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 		info.Reason, info.Exit = "oversize", fmt.Sprintf("driver answer longer than %d bytes, discarded", hMaxLine)
 		return nil, info
 	}
-	dec := json.NewDecoder(strings.NewReader(r.s)) // nosemgrep: semgrep.keyorix-unbounded-json-decoder -- r.s is already capped at hMaxLine above
+	dec := json.NewDecoder(io.LimitReader(strings.NewReader(r.s), int64(hMaxLine)))
 	dec.UseNumber()
 	var m map[string]any
 	if err := dec.Decode(&m); err != nil {
