@@ -88,6 +88,15 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// forward-looking strictness change. Keyed on the v4 error "not allowed in a YAML
 	// tag" alone.
 	"v4-rejects:tag-char": true,
+
+	// A `#` comment NOT preceded by whitespace ("|#0", and similar). The YAML spec
+	// requires a comment to be preceded by whitespace (or start of line); v4.0.0
+	// enforces this and REJECTS ("found a comment without preceding whitespace"),
+	// v3.0.5 is lenient and ACCEPTS. v4 is the more spec-correct side (same strictness
+	// direction as D4/D5). Found by the DF2 fuzz run at "|#0". Not a Keyorix defect
+	// (v4 has no live caller); a forward-looking strictness change. Keyed on the v4
+	// error "comment without preceding whitespace" alone.
+	"v4-rejects:comment-ws": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -321,6 +330,25 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("precondition: verbatim tag !<a,b> must be accepted by BOTH")
 		}
 		t.Logf("oracle-2 tag-char gating proven: non-verbatim flow-char tag tolerated; verbatim accepted by both")
+	}
+
+	// ---- Oracle 2 class gating: the comment-whitespace divergence (v4 stricter) ----
+	{
+		in := []byte("|#0")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: '|#0' must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:comment-ws" {
+			t.Fatalf("comment-ws split must class as v4-rejects:comment-ws, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("comment-ws class must be listed (tolerated)")
+		}
+		t.Logf("oracle-2 comment-ws gating proven")
 	}
 }
 
