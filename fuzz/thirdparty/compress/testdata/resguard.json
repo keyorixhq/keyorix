@@ -1,0 +1,33 @@
+{
+  "target": "mongo_decompress_payload",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 45,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 1089200,
+      "per_byte": 528.4155844155844,
+      "abs_max": 4356800
+    },
+    "cpu_ns": {
+      "floor": 1648000,
+      "per_byte": 5337.662337662337,
+      "abs_max": 6592000
+    },
+    "live_heap": {
+      "floor": 4422344,
+      "per_byte": 60509.253731343284,
+      "abs_max": 17689376
+    },
+    "mallocs": {
+      "floor": 31,
+      "per_byte": 0.18181818181818182,
+      "abs_max": 124
+    },
+    "wall_ns": {
+      "floor": 1377618,
+      "per_byte": 502.9220779220779,
+      "abs_max": 5510472
+    }
+  }
+}
