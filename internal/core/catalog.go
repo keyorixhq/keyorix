@@ -445,7 +445,7 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, actorID, id uint, force
 		return err
 	}
 	if blocking > 0 {
-		return fmt.Errorf("project has %d secret(s) — delete them first or use --force to cascade", blocking)
+		return errProjectHasSecrets(blocking)
 	}
 	for _, m := range suspended {
 		c.evictMachineIdentityCacheOrFlush(ctx, m.ID, MachineSuspended)
