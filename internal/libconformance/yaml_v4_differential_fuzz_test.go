@@ -91,6 +91,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"0: !",                      // ! on empty scalar under an INT key (map[any]any)
 		"\x7f",                      // DEL control char (v3 rejects / v4 accepts)
 		"k: a\x80b\n",               // C1 control embedded in a scalar value
+		"0\n:",                      // scalar then ':' next line (v3 accepts+truncates / v4 rejects)
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
@@ -186,6 +187,13 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		return side + ":type"
 	case strings.Contains(msg, "map key"):
 		return side + ":complex-key"
+	case strings.Contains(msg, "expected <document start>"):
+		// A plain scalar on one line followed by a value indicator `:` at the start
+		// of the next line (e.g. "0\n:"). v3 ACCEPTS it, keeping ONLY the leading
+		// scalar and silently dropping the `:` content; v4 REJECTS the malformed
+		// document. Distinct class so tolerating it does not tolerate other v4
+		// syntax rejections.
+		return side + ":doc-start"
 	case strings.Contains(msg, "did not find expected key"):
 		// A mapping entry whose implicit key is EMPTY (a line starting with the
 		// value indicator `:`, e.g. ":", ": ", "- :"). v3 rejects it here; v4
