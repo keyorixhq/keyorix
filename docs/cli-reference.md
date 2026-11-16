@@ -5928,7 +5928,7 @@ keyorix system init --server https://keyorix.example.com --admin-username admin 
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--admin-email` | `string` | `admin@localhost` | Admin email address |
+| `--admin-email` | `string` | `admin@keyorix.local` | Admin email address (default admin@keyorix.local is a placeholder with no mailbox; pass your own to receive password-reset mail) |
 | `--admin-username` | `string` | `admin` | Admin username to create |
 | `--server` | `string` | — | Server base URL to bootstrap (required) |
 

@@ -27,7 +27,7 @@ func resetSystemInitFlags() {
 	systemInitServer = ""
 	systemInitAdminUsername = "admin"
 	systemInitAdminPassword = ""
-	systemInitAdminEmail = "admin@localhost"
+	systemInitAdminEmail = defaultSystemInitAdminEmail
 	systemInitBootstrapToken = ""
 	resetSystemInitFlagChanged()
 }
