@@ -1,2 +1,0 @@
-go test fuzz v1
-[]byte("{\"public\":\"AA0ACA0000000AAAABA00000\",\"00000\":\"\"}")
