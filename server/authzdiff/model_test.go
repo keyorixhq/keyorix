@@ -223,6 +223,21 @@ func (m model) allowed(p *principal, req requirement) bool {
 			if !m.holds(p, perm, r.scope) {
 				return false
 			}
+			// A restricted PAT narrows the GRANTER ceiling too: the product checks
+			// every permission of the granted role through c.Authorize (authz.go
+			// checkGranterHoldsPermission → the default user branch), which applies
+			// the PAT restriction, so a PAT cannot grant a role bundling a
+			// permission the PAT itself may not exercise (else the grantee would
+			// receive, via a credential that cannot use it, an authority the
+			// credential is restricted from — a one-step escape past the PAT, the
+			// same reasoning as the req.perms loop above). Exposed by pkPATFull on
+			// member.setrole granting project_admin (which bundles secrets.write,
+			// outside the PAT's allowlist): fuzz seed 089fae899e68133c. No prior
+			// fixture PAT could reach a ceiling op — pkPAT fails the roles.assign
+			// gate first — so this stayed unmodelled until HF3.
+			if p.pat != nil && !p.pat.Allows(perm, core.Scope{ProjectID: r.scope}) {
+				return false
+			}
 		}
 	}
 	return true
