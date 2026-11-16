@@ -1,7 +1,8 @@
 # MGV1 — Vault→Keyorix migration fidelity & safety
 
 **Branch:** `fuzz/mgv1-vault-migration-fidelity` (append-only, not pushed).
-**Status:** oracles built, red/green proven, registered; fuzz chunks in progress (see §6).
+**Status:** COMPLETE — oracles built, red/green proven, registered; 8×540 s fuzz chunks all
+PASS, no findings (see §6).
 
 ## 0. Report location / environment constraints (read first)
 - `/mnt/data/wave4/out/` is **not writable** from this sandboxed session (hard filesystem
@@ -136,16 +137,40 @@ faithful stand-in for the real regression:
 Shakeout (green, pre-chunk): `FuzzVaultImportRoundTrip` 40 s / ~34k execs;
 `FuzzVaultImportConvergence` 40 s / ~15.7k execs. Two first-contact HARNESS bugs found & fixed
 (fake-server root-list trailing-slash; a `#`-in-path over-truncation in O-RT6) — oracle logic
-unchanged. Chunk log (4×540 s each target):
+unchanged. Chunk log (each chunk 540 s foreground, `-parallel 2`, GOMAXPROCS=2; total real fuzz wall
+≈ 72 min = 8×541 s). All PASS; corpus is cumulative across a target's chunks.
 
-| target | chunk | wall | execs | result |
-|--------|-------|------|-------|--------|
-| _pending_ | | | | |
+| target | chunk | wall | execs (this chunk) | corpus total | result |
+|--------|-------|------|--------------------|--------------|--------|
+| FuzzVaultImportRoundTrip | 1/4 | 541 s | ~190 194 | 277 | PASS |
+| FuzzVaultImportRoundTrip | 2/4 | 541 s | ~188 936 | 329 | PASS |
+| FuzzVaultImportRoundTrip | 3/4 | 541 s | ~181 792 | 365 | PASS |
+| FuzzVaultImportRoundTrip | 4/4 | 541 s | ~151 518 | 394 | PASS |
+| FuzzVaultImportConvergence | 1/4 | 541 s | ~171 028 | 250 | PASS |
+| FuzzVaultImportConvergence | 2/4 | 541 s | ~167 114 | 296 | PASS |
+| FuzzVaultImportConvergence | 3/4 | 541 s | ~73 893 | 322 | PASS |
+| FuzzVaultImportConvergence | 4/4 | 541 s | ~54 471 | 341 | PASS |
+
+(Convergence execs/chunk fall as the corpus accumulates larger multi-leaf trees + longer fault
+schedules — each exec does a full clean Walk + up to 4 plan/apply passes. Throughput is
+adequate; both oracles stayed green on every input explored.)
 
 ## 7. Classified findings
-_None yet._ Both oracles are GREEN on all inputs explored so far (shakeout + chunks). No
-VULNERABILITY/DEFECT/CANDIDATE. The two harness bugs were ARTIFACTs (test-harness only), fixed
-at first contact per the rules; the oracle was not weakened.
+**No VULNERABILITY / SECURITY-DEFECT / DEFECT / CANDIDATE / HARDENING found.** Both oracles are
+GREEN across ~72 min of fuzzing (≈1.18 M round-trip execs over corpus 394; ≈0.72 M convergence
+execs over corpus 341) plus the red/green suite. Interpretation: within the modelled surface,
+the migrate importer **does** preserve Vault KV v1/v2 fidelity (no silent drop/dup, versions +
+custom_metadata recorded, soft-deleted data never resurrected, hostile keys never escape the
+Keyorix namespace) and **does** converge idempotently after a partial write failure followed by
+a clean retry. This is a positive result bounded by §5 — notably it does NOT clear the
+non-atomic server-side write hazard (LEFTOVER L5).
+
+Two issues were hit at first contact; both classified **ARTIFACT** (test-harness only, fixed
+before commit, oracle not weakened):
+- fake-Vault root-list used a trailing-slash base that the no-slash root LIST/READ URL never
+  matched → 0 entries. Fixed the handler's base matching.
+- O-RT6 truncated a leaf path at the first `#`, but a path segment may legitimately contain
+  `#`; the soft-deleted/empty skip uses the plain path, so the truncation was removed.
 
 ## 8. Ranked LEFTOVERS (suggested minutes on the vCD hosts)
 1. **L5 — non-atomic create/metadata partial write (server-side).** Highest value: build a
