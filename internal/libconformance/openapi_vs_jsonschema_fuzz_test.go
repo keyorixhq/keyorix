@@ -31,6 +31,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"math/big"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -62,34 +67,47 @@ func kinVerdict(schemaBytes, instanceBytes []byte) (valid, ok, panicked bool) {
 	return s.VisitJSON(inst) == nil, true, false
 }
 
+// denyLoader refuses every external schema load: fuzz-chosen schemas must never make the
+// harness read files or fetch URLs ($ref to file:// or http://).
+type denyLoader struct{}
+
+func (denyLoader) Load(url string) (any, error) {
+	return nil, errors.New("external load denied: " + url)
+}
+
 // jsVerdict compiles schemaBytes with jsonschema/v6 and validates instance. It recovers
 // from a library panic because jsonschema/v6 v6.0.3 panics (nil *big.Rat deref) when a
 // huge-exponent number is range-checked against a numeric bound (DF1 Finding C-2); a panic
-// is reported via panicked=true so the oracle can classify the crash instead of dying.
-func jsVerdict(schemaBytes, instanceBytes []byte) (valid, ok, panicked bool) {
+// is reported via panicked=true (nilDeref says whether it was a nil-pointer runtime error)
+// so the oracle can classify the crash instead of dying.
+func jsVerdict(schemaBytes, instanceBytes []byte) (valid, ok, panicked, nilDeref bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			valid, ok, panicked = false, false, true
+			if re, isRT := r.(runtime.Error); isRT {
+				nilDeref = strings.Contains(re.Error(), "nil pointer dereference")
+			}
 		}
 	}()
 	schemaDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaBytes))
 	if err != nil {
-		return false, false, false
+		return false, false, false, false
 	}
 	c := jsonschema.NewCompiler()
+	c.UseLoader(denyLoader{})
 	const id = "mem://df1/schema.json"
 	if err := c.AddResource(id, schemaDoc); err != nil {
-		return false, false, false
+		return false, false, false, false
 	}
 	sch, err := c.Compile(id)
 	if err != nil {
-		return false, false, false
+		return false, false, false, false
 	}
 	instDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(instanceBytes))
 	if err != nil {
-		return false, false, false
+		return false, false, false, false
 	}
-	return sch.Validate(instDoc) == nil, true, false
+	return sch.Validate(instDoc) == nil, true, false, false
 }
 
 type schemaVerdictMismatch struct {
@@ -101,12 +119,13 @@ type schemaVerdictMismatch struct {
 // openapiCompare is the pure oracle core.
 func openapiCompare(schemaBytes, instanceBytes []byte) *schemaVerdictMismatch {
 	kinV, kinOK, kinPanic := kinVerdict(schemaBytes, instanceBytes)
-	jsV, jsOK, jsPanic := jsVerdict(schemaBytes, instanceBytes)
+	jsV, jsOK, jsPanic, jsNilDeref := jsVerdict(schemaBytes, instanceBytes)
 	// A crash in exactly one library is the most severe differential: one validator DoSes
 	// on an input the other handles.
 	switch {
 	case jsPanic && !kinPanic:
-		return &schemaVerdictMismatch{key: "jsonschema-numeric-bignum-panic", kinV: kinV, jsV: false, schema: string(schemaBytes), inst: string(instanceBytes)}
+		key := classifyJSPanic(panicShape{nilDeref: jsNilDeref, schema: schemaBytes, inst: instanceBytes})
+		return &schemaVerdictMismatch{key: key, kinV: kinV, jsV: false, schema: string(schemaBytes), inst: string(instanceBytes)}
 	case kinPanic && !jsPanic:
 		return &schemaVerdictMismatch{key: "kin-openapi-panic", kinV: false, jsV: jsV, schema: string(schemaBytes), inst: string(instanceBytes)}
 	case kinPanic && jsPanic:
@@ -119,7 +138,7 @@ func openapiCompare(schemaBytes, instanceBytes []byte) *schemaVerdictMismatch {
 		return nil
 	}
 	return &schemaVerdictMismatch{
-		key:    classifyVerdictDiff(schemaBytes, instanceBytes),
+		key:    classifyVerdictDiff(schemaBytes, instanceBytes, kinV, jsV),
 		kinV:   kinV,
 		jsV:    jsV,
 		schema: string(schemaBytes),
@@ -127,37 +146,161 @@ func openapiCompare(schemaBytes, instanceBytes []byte) *schemaVerdictMismatch {
 	}
 }
 
-// classifyVerdictDiff gives a stable allowlist key for a verdict disagreement. Keys are
-// chosen for the DIALECT MECHANISM that causes the split, not the instance shape, so a
-// documented split and a genuine bug never collapse to the same key.
-func classifyVerdictDiff(schemaBytes, instanceBytes []byte) string {
+// decodeJSONNumbers decodes b keeping numbers as json.Number (no float64 rounding).
+func decodeJSONNumbers(b []byte) (any, bool) {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// anyNode reports whether pred holds for v or any value nested in it.
+func anyNode(v any, pred func(any) bool) bool {
+	if pred(v) {
+		return true
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		for _, c := range t {
+			if anyNode(c, pred) {
+				return true
+			}
+		}
+	case []any:
+		for _, c := range t {
+			if anyNode(c, pred) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// schemaHasKey reports whether any object in the decoded schema has key with a value
+// accepted by valOK (nil accepts any). It walks structure, so a keyword name that only
+// appears inside a string value does not count.
+func schemaHasKey(schemaBytes []byte, key string, valOK func(any) bool) bool {
+	doc, ok := decodeJSONNumbers(schemaBytes)
+	if !ok {
+		return false
+	}
+	return anyNode(doc, func(n any) bool {
+		m, isMap := n.(map[string]any)
+		if !isMap {
+			return false
+		}
+		v, has := m[key]
+		return has && (valOK == nil || valOK(v))
+	})
+}
+
+func isEmptyArray(v any) bool { a, ok := v.([]any); return ok && len(a) == 0 }
+
+// instanceHasNull reports whether the instance contains a JSON null anywhere.
+func instanceHasNull(instanceBytes []byte) bool {
+	doc, ok := decodeJSONNumbers(instanceBytes)
+	return ok && anyNode(doc, func(n any) bool { return n == nil })
+}
+
+// numberCoerces reports whether float64 decoding changes the value of the JSON number
+// token (underflow, rounding, or out of float64 range) — the one mechanism number-coercion
+// names.
+func numberCoerces(tok string) bool {
+	f, err := strconv.ParseFloat(tok, 64)
+	if err != nil {
+		return true // out of float64 range: encoding/json would reject it, jsonschema keeps it
+	}
+	exact, ok := new(big.Rat).SetString(tok)
+	if !ok {
+		return true // too large for exact comparison, so certainly not float64-representable
+	}
+	fr := new(big.Rat).SetFloat64(f)
+	return fr == nil || fr.Cmp(exact) != 0
+}
+
+// instanceCoerces reports whether any number in the instance is changed by float64 decoding.
+func instanceCoerces(instanceBytes []byte) bool {
+	doc, ok := decodeJSONNumbers(instanceBytes)
+	return ok && anyNode(doc, func(n any) bool {
+		num, isNum := n.(json.Number)
+		return isNum && numberCoerces(num.String())
+	})
+}
+
+// hugeExponent reports whether tok is a JSON number whose decimal exponent exceeds 1e6.
+func hugeExponent(tok string) bool {
+	i := strings.IndexAny(tok, "eE")
+	if i < 0 {
+		return false
+	}
+	e, err := strconv.ParseInt(strings.TrimPrefix(tok[i+1:], "+"), 10, 64)
+	if err != nil {
+		return errors.Is(err, strconv.ErrRange) // exponent beyond int64 is huge by definition
+	}
+	return e > 1_000_000 || e < -1_000_000
+}
+
+// panicShape is what classifyJSPanic needs to decide whether a jsonschema panic is the
+// documented bignum one.
+type panicShape struct {
+	nilDeref     bool
+	schema, inst []byte
+}
+
+// classifyJSPanic gives the documented key only for the shape of DF1 Finding C-2: a nil
+// pointer runtime error, a schema with a numeric bound keyword, and an instance number with
+// an exponent above 1e6. Any other jsonschema panic is a new finding under a key that is not
+// allowlisted.
+func classifyJSPanic(p panicShape) string {
+	hasBound := false
+	for _, kw := range []string{"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"} {
+		if schemaHasKey(p.schema, kw, nil) {
+			hasBound = true
+			break
+		}
+	}
+	doc, ok := decodeJSONNumbers(p.inst)
+	huge := ok && anyNode(doc, func(n any) bool {
+		num, isNum := n.(json.Number)
+		return isNum && hugeExponent(num.String())
+	})
+	if p.nilDeref && hasBound && huge {
+		return "jsonschema-numeric-bignum-panic"
+	}
+	return "jsonschema-panic"
+}
+
+// classifyVerdictDiff gives a stable allowlist key for a verdict disagreement. A key is
+// chosen only when the mechanism it names is present in the pair AND the verdict direction
+// matches the documented one, so a documented split and a genuine bug never share a key.
+// Anything that fits no documented mechanism is "verdict-differs" (not allowlisted).
+func classifyVerdictDiff(schemaBytes, instanceBytes []byte, kinV, jsV bool) string {
+	hasNull := instanceHasNull(instanceBytes)
 	switch {
 	// OpenAPI 3.0 extension keywords that JSON Schema 2020-12 does not recognise. kin
-	// honours them; jsonschema ignores the unknown keyword and validates the base type.
-	case bytes.Contains(schemaBytes, []byte(`"nullable"`)):
+	// honours nullable (null accepted); jsonschema ignores it and enforces the base type.
+	case hasNull && kinV && !jsV && schemaHasKey(schemaBytes, "nullable", nil):
 		return "openapi-nullable-extension"
-	case bytes.Contains(schemaBytes, []byte(`"discriminator"`)):
+	case schemaHasKey(schemaBytes, "discriminator", nil):
 		return "openapi-discriminator-extension"
-	}
-	var inst any
-	_ = json.Unmarshal(instanceBytes, &inst)
-	switch inst.(type) {
-	case float64, json.Number:
+	// kin allows everything for an empty enum, jsonschema denies everything.
+	case kinV && !jsV && schemaHasKey(schemaBytes, "enum", isEmptyArray):
+		return "enum-semantics"
+	case instanceCoerces(instanceBytes):
 		return "number-coercion"
-	case nil:
-		// OpenAPI 3.0 forbids a null value unless the schema sets nullable:true; JSON Schema
-		// accepts null wherever `type` permits (and a type-less schema permits any type).
+	// OpenAPI 3.0 forbids a null unless nullable:true; JSON Schema accepts null wherever
+	// the keywords only constrain other types.
+	case hasNull && !kinV && jsV && !schemaHasKey(schemaBytes, "nullable", nil):
 		return "openapi-null-semantics"
-	}
-	switch {
 	case bytes.Contains(schemaBytes, []byte(`"additionalProperties"`)):
 		return "additionalProperties-semantics"
 	case bytes.Contains(schemaBytes, []byte(`"pattern"`)):
 		return "pattern-regex-dialect"
 	case bytes.Contains(schemaBytes, []byte(`"required"`)):
 		return "required-semantics"
-	case bytes.Contains(schemaBytes, []byte(`"enum"`)):
-		return "enum-semantics"
 	default:
 		return "verdict-differs"
 	}
