@@ -197,6 +197,22 @@ var plants = append([]plant{
 		repl:           "   AND (user_roles.environment_id = ? OR 1 = 1) /* PLANT: env-scope clause removed */",
 		op:             "secret.read.env",
 		minUnexplained: 2,
+		// V8b: removes the risk-exception APPROVE router gate (RequirePermission
+		// system.write@global). core.ApproveRiskException performs no permission check
+		// (matrix core_refusal:"none"; it enforces only the dual-control business rules —
+		// pending-state, human-only, creator!=approver, SoD re-validation), none of which
+		// bite for the fixture's probed principals (the exception is pending in every
+		// fresh leg, created by a dedicated non-probed user, and machines are model-denied
+		// before human-only could matter). So with the router gate gone REST lets any
+		// authenticated HUMAN approve a governed risk acceptance, over-allowing every
+		// principal the system.write@global model rule denies. The clean router-gate
+		// differential the binding checks.
+		name:           "riskexception-approve-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/risk-exceptions/{id}/approve", dashboardHandler.ApproveRiskException)`,
+		repl:           `r.Post("/risk-exceptions/{id}/approve", dashboardHandler.ApproveRiskException) // PLANT: router gate removed`,
+		op:             "riskexception.approve",
+		minUnexplained: 10,
 	},
 }, fixRegressionPlants...)
 
