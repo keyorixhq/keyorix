@@ -65,6 +65,38 @@ func restOutcome(code int, body string) result {
 	return result{Other, d}
 }
 
+// grpcInvalidTokenLimiterMsg is the EXACT message the per-IP invalid-token
+// brute-force limiter returns on gRPC (grpcAuthFailure,
+// server/grpc/interceptors/auth.go: `status.Error(codes.ResourceExhausted,
+// "too many invalid token attempts")`). Keep in sync with that string.
+const grpcInvalidTokenLimiterMsg = "too many invalid token attempts"
+
+// grpcInvalidTokenLimited reports whether err is the per-IP invalid-token
+// brute-force limiter's refusal (grpcAuthFailure, PAT-003's gRPC mirror). It
+// matches the message EXACTLY so the OTHER codes.ResourceExhausted producers —
+// an oversized secret value (core.SecretValueTooLargeError, surfaced by
+// services/secret_service.go) and the per-principal audit-stream cap
+// (services/audit_service.go) — are NOT absorbed and still map to Other via
+// grpcOutcome.
+//
+// This matters because the harness drives every leg from ONE constant bufconn
+// peer, so that limiter's process-global per-IP bucket (burst
+// grpcTokenAuthFailureBurst, 1/s refill, see
+// server/grpc/interceptors/rate_limit.go) is shared across cases — it is NOT
+// reset by the fresh-store-per-iteration isolation, because it lives in the
+// interceptor package, not the store. A rejected token (e.g. a suspended
+// principal's) spends the bucket, and a LATER case's probe then comes back
+// ResourceExhausted. That answer says nothing about authorization, so the leg
+// is recorded n/a, exactly as seq_run_test.go's execRead already does for the
+// sequence driver. (Fuzz-corpus issue #118.)
+func grpcInvalidTokenLimited(err error) bool {
+	if err == nil {
+		return false
+	}
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.ResourceExhausted && st.Message() == grpcInvalidTokenLimiterMsg
+}
+
 // grpcOutcome maps a gRPC error (OUTCOMES.md, gRPC row).
 func grpcOutcome(err error) result {
 	if err == nil {
