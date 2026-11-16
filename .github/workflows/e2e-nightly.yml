@@ -14,8 +14,8 @@ name: E2E smoke (nightly)
 # email / mobile notifications deliver it.
 on:
   schedule:
-    # 03:23 UTC nightly, off the round minute.
-    - cron: '23 3 * * *'
+    # 07:13 UTC nightly, off the round minute.
+    - cron: '13 7 * * *'
   workflow_dispatch: {}
 
 permissions: {}

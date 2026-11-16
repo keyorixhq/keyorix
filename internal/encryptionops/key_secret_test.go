@@ -13,7 +13,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // parsedKeySecret is the subset of a Secret manifest the tests check.

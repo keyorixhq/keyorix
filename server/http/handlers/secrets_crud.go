@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/errclass"
@@ -114,6 +115,9 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	response, err := h.coreService.CreateSecret(secretMutationAuditContext(r, userCtx), req)
 	if err != nil {
 		log.Printf("Error creating secret: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if h.trySendSecretSizeError(w, err) {
 			return
 		}
@@ -311,6 +315,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	}
 	if err != nil {
 		log.Printf("Error getting secret: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if authorized && h.sendSecretReadRefusal(w, err) {
 			return
 		}
@@ -338,6 +345,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		}
 		if err != nil {
 			log.Printf("Error getting secret value: %v", err)
+			if sendStorageUnavailable(w, err) {
+				return
+			}
 			if h.sendSecretReadRefusal(w, err) {
 				return
 			}
@@ -522,6 +532,9 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 	}
 	if err != nil {
 		log.Printf("Error getting secret value by ref: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		// The route gate authorized the caller on this secret before this read.
 		if h.sendSecretReadRefusal(w, err) {
 			return
@@ -563,20 +576,18 @@ func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	// The secret.restored row commits with the restore (secretMutationAuditContext).
 	if err := h.coreService.RestoreSecret(secretMutationAuditContext(r, userCtx), userCtx.UserID, uint(id)); err != nil {
-		status := http.StatusInternalServerError
-		msg := err.Error()
+		// #3737: a live secret is a state conflict (409), not a storage failure; so is a
+		// restore under a deleted environment or project (core's own text names the parent).
+		// The not-found body is core's own text, as it was before the route moved onto the
+		// classifier (TestSecretRestore_MissingSecretStays404WithSameBody).
+		texts := coreErrorTexts{errclass.NotFound: err.Error()}
 		switch {
 		case errors.Is(err, core.ErrSecretNotDeleted):
-			// #3737: a live secret is a state conflict, not a storage failure.
-			status = http.StatusConflict
-			msg = fmt.Sprintf("secret %d is not deleted; nothing to restore", id)
-		case isSecretNotFound(err):
-			status = http.StatusNotFound
-		default:
-			log.Printf("Error restoring secret %d: %v", id, err)
-			msg = clientSafe(err)
+			texts[errclass.Precondition] = fmt.Sprintf("secret %d is not deleted; nothing to restore", id)
+		case errors.Is(err, storage.ErrParentDeleted):
+			texts[errclass.Precondition] = err.Error()
 		}
-		h.sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, coreErrorAnswer{op: fmt.Sprintf("restoring secret %d", id), texts: texts})
 		return
 	}
 	h.sendSuccess(w, map[string]any{"id": id, "restored": true}, "Secret restored")

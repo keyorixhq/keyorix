@@ -22,6 +22,13 @@ a workflow can act on (leg_tests, gate_edge, gate_e2e_smoke, gate_smoke) and the
 sampled full run; ci.yml reads them only when its repository variable says
 enforce (patch in the session report). Every failure here is logged as an
 "error" record and changes nothing: the caller keeps its own decision.
+
+MQ_SLIM_LEVERS (MQ-SLIM-GATE-ONLY-1) narrows enforce to the named levers: a
+comma-separated list of gate, testreach (guards is read by ci.yml only). Unset
+or empty means gate,testreach, i.e. enforce behaves exactly as before the
+variable existed. A lever that is not enforced is still computed and logged
+(its records say "mode": "shadow") and writes no output. A value naming no
+known lever enforces nothing (fail safe), and so does not sample either.
 """
 import json
 import os
@@ -30,6 +37,8 @@ import subprocess
 
 MODULE = "github.com/keyorixhq/keyorix"
 MODES = ("off", "shadow", "enforce")
+LEVERS = ("gate", "testreach")
+CI_ONLY_LEVERS = ("guards",)  # ci.yml's FAST-profile guard skips; no decision is computed here
 EDGE_MAINS = (MODULE + "/server", MODULE + "/cmd/keyorix-k8s-sync", MODULE + "/cmd/keyorix-mcp")
 READER_SRC = re.compile(r"\bruntime\.Callers?\(|\bos\.Getwd\(")
 READER_IMPORTS = {"go/parser", "golang.org/x/tools/go/packages", "os/exec"}
@@ -42,13 +51,44 @@ def mode():
     return m if m in MODES else "shadow"
 
 
+def _levers_set():
+    return bool(os.environ.get("MQ_SLIM_LEVERS", "").strip())
+
+
+def _lever_tokens():
+    return {t.strip().lower() for t in os.environ.get("MQ_SLIM_LEVERS", "").split(",") if t.strip()}
+
+
+def enforced_levers():
+    """The levers MQ_SLIM_MODE=enforce acts on. Meaningless unless mode() is
+    enforce. MQ_SLIM_LEVERS unset or blank: all of them (the behaviour before
+    the variable existed). Anything else: only the known ones it names, so a
+    typo, or a value like ",", enforces nothing."""
+    return _lever_tokens() & set(LEVERS) if _levers_set() else set(LEVERS)
+
+
+def unknown_levers():
+    return sorted(_lever_tokens() - set(LEVERS) - set(CI_ONLY_LEVERS))
+
+
+def enforces(lever):
+    return mode() == "enforce" and lever in enforced_levers()
+
+
+def lever_mode(lever):
+    """The mode a lever's records report: a lever enforce does not cover is
+    shadow."""
+    return "shadow" if mode() == "enforce" and lever not in enforced_levers() else mode()
+
+
 def sampled_full_run():
     """enforce only: a merge_group run whose GITHUB_RUN_NUMBER is divisible by
     SAMPLE_EVERY is a full run, the safety net that bounds how long a selection
     miss can stay unseen. The run number counts every run of the workflow (pull
     request and push runs too), so this samples about 1 in SAMPLE_EVERY
-    merge_group runs at random, not exactly every SAMPLE_EVERY-th one."""
-    if mode() != "enforce" or os.environ.get("GITHUB_EVENT_NAME") != "merge_group":
+    merge_group runs at random, not exactly every SAMPLE_EVERY-th one. With no
+    lever enforced there is nothing to net, and the selection stays as it is."""
+    if mode() != "enforce" or not enforced_levers() or os.environ.get("GITHUB_EVENT_NAME") != "merge_group":
         return False
     try:
         return int(os.environ.get("GITHUB_RUN_NUMBER", "1")) % SAMPLE_EVERY == 0
@@ -63,7 +103,7 @@ def _context():
 
 
 def record(log, lever, check, decision, why, **extra):
-    rec = {"v": 1, "lever": lever, **_context(), "check": check, "decision": decision, "why": why, "mode": mode(), **extra}
+    rec = {"v": 1, "lever": lever, **_context(), "check": check, "decision": decision, "why": why, "mode": lever_mode(lever), **extra}
     log(f"MQ-SHADOW {json.dumps(rec, sort_keys=True)}")
     return rec
 
@@ -275,21 +315,27 @@ def e2e_tagged_deps():
 
 def run(ctx, legs, leg_pkgs, gates, touched, log):
     """Entry point from select-affected.decide(): (records, outputs). outputs
-    is empty unless MQ_SLIM_MODE=enforce."""
+    is empty unless MQ_SLIM_MODE=enforce, and then holds only the outputs of
+    the levers MQ_SLIM_LEVERS names (all of them when it is unset)."""
     if mode() == "off":
         return [], {}
+    if mode() == "enforce" and _levers_set():  # unset: no new line, today's log byte for byte
+        bad = unknown_levers()
+        if bad:
+            log(f"MQ-SLIM: MQ_SLIM_LEVERS names unknown lever(s) {','.join(bad)} (known: {','.join(LEVERS + CI_ONLY_LEVERS)}); they enforce nothing")
+        log(f"MQ-SLIM: enforcing {','.join(sorted(enforced_levers())) or '(no lever)'}; every other lever stays shadow")
     recs, out = [], {}
     try:
         r, leg_tests = testreach_lever(ctx, legs, leg_pkgs, log)
         recs += r
-        if mode() == "enforce":
+        if enforces("testreach"):
             out["leg_tests"] = leg_tests
     except Exception as exc:  # shadow must never change the decision
         recs.append(record(log, "testreach", "test-suite", "error", f"{type(exc).__name__}: {exc}"))
     try:
         r, new = gate_lever(ctx, gates, touched, log)
         recs += r
-        if mode() == "enforce":
+        if enforces("gate"):
             out.update({"gate_" + g: on for g, on in new.items()})
     except Exception as exc:
         recs.append(record(log, "gate", "edge-builds,e2e-smoke,smoke", "error", f"{type(exc).__name__}: {exc}"))

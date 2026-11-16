@@ -1,0 +1,1 @@
+TestScriptsDeprecatedCLIFlags_NoScriptUsesOne	internal/statemap	#4306	new guard: scripts/**/*.sh must not call a flag the built CLI deprecates; green on main and on the open PRs touching scripts

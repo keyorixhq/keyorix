@@ -8,7 +8,8 @@ package main
 //     closure_selftest_relevant; otherwise the plain "Verify" step of the same
 //     ledger runs instead (the self-test verifies the real ledger first, so
 //     each ledger is verified exactly once).
-//   - assert-leg-completeness: the shard-partition step
+//   - assert-leg-completeness (a step group of the static-analysis job since
+//     MQ-LEG-OVERHEAD-1 P2): the shard-partition step
 //     (assert_all_shards_complete) runs on a FAST PR only when
 //     shard_layout_relevant.
 //
@@ -32,7 +33,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 type pgStep struct {
@@ -96,14 +97,16 @@ func loadPathGate(t *testing.T, root string) pathGate {
 		t.Fatalf("ci.yml: %v", err)
 	}
 	return pathGate{
-		filter:       base.filterStep(t),
-		adrIf:        jobIf("adr-numbers"),
-		legIf:        jobIf("assert-leg-completeness"),
+		filter: base.filterStep(t),
+		adrIf:  jobIf("adr-numbers"),
+		// MQ-LEG-OVERHEAD-1 P2: the leg-completeness assertions are steps of
+		// static-analysis; its job condition is the one the old job carried.
+		legIf:        jobIf("static-analysis"),
 		selfClosures: step("adr-numbers", exact("./scripts/check-closures.sh --self-test"), "./scripts/check-closures.sh --self-test"),
 		verifyClos:   step("adr-numbers", exact("./scripts/check-closures.sh"), "./scripts/check-closures.sh"),
 		selfConf:     step("adr-numbers", exact("./scripts/check-adr-conformance.sh --self-test"), "./scripts/check-adr-conformance.sh --self-test"),
 		verifyConf:   step("adr-numbers", exact("./scripts/check-adr-conformance.sh"), "./scripts/check-adr-conformance.sh"),
-		shards: step("assert-leg-completeness", func(r string) bool {
+		shards: step("static-analysis", func(r string) bool {
 			return strings.Contains(r, "assert_all_shards_complete")
 		}, "assert_all_shards_complete"),
 	}

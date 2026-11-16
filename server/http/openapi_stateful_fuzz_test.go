@@ -1072,22 +1072,10 @@ var osKnownUndeclared5xx = []struct {
 	bodyContains string // "" = any body
 	reason       string
 }{
-	// OPENAPI-STATEFUL-3 (CLASS): generic-CRUD handlers blanket-map ANY core error to an
-	// undeclared 500 instead of the appropriate 4xx. The clearest example is GetProjectStats:
-	// `stats, err := GetProjectStats(id); if err != nil { 500 }` — a not-found project id
-	// (e.g. one deleted earlier in the sequence) yields 500, never 404. The fuzzer observed
-	// the same shape (not-found / duplicate-name constraint / boundary input → 500) on each op
-	// below; the list is observed-via-fuzzing, likely non-exhaustive. See #4132
-	// (OPENAPI-STATEFUL-3).
-
-	{id: "OPENAPI-STATEFUL-3", opID: "deleteProject", princ: -1, code: 500, reason: "project-with-dependencies / not-found blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "updateProject", princ: -1, code: 500, reason: "duplicate-name constraint / not-found blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "createProjectEnvironment", princ: -1, code: 500, reason: "duplicate env-name constraint / not-found blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "restoreEnvironment", princ: -1, code: 500, reason: "restore of a non-deleted/absent environment blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "restoreSecret", princ: -1, code: 500, reason: "restore of a non-deleted/absent secret blanket-mapped to 500"},
-
-	{id: "OPENAPI-STATEFUL-3", opID: "renderSecretTemplate", princ: -1, code: 500, reason: "template render error on schema-valid input blanket-mapped to 500"},
-	{id: "OPENAPI-STATEFUL-3", opID: "shareSecret", princ: -1, code: 500, reason: "share error (self-share / duplicate / not-found) blanket-mapped to 500"},
+	// OPENAPI-STATEFUL-3 (CLASS, #4132) has no waiver left: every op it named (the project and
+	// environment routes, restoreSecret, renderSecretTemplate, shareSecret) answers its refusals
+	// through answerCoreError and is pinned by a handler table test (catalog_errmap_test.go,
+	// secrets_share_render_errmap_test.go).
 
 	// OPENAPI-STATEFUL-7: StartImpersonation's handler switch (admin_impersonation.go:92-99)
 	// maps only "yourself"->400 and storage.ErrUserNotFound->404; every OTHER core refusal
@@ -1236,6 +1224,11 @@ var osVolatileReadColls = map[string]bool{
 	"backup": true, "posture": true, "dashboard": true, "summary": true, "activity": true,
 	"crypto-inventory": true, "credential-trends": true, "trends": true, "inventory": true,
 	"permission-changes": true, "sbom": true, "bom": true,
+	// The compliance controls CSV embeds a live audit-event count in its detail column
+	// ("... 815 events"); the first read is itself audited, so the second read legitimately
+	// differs. Unlike the JSON report it carries no generated_at marker to skip on, and the
+	// collection key is the last path segment ("controls.csv"), not "compliance".
+	"controls.csv": true,
 }
 
 func osOracleIdempotentRead(t *testing.T, w *osWorld, o *osOp, princ int, req *http.Request, rec *httptest.ResponseRecorder) {

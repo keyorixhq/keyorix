@@ -39,8 +39,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
+	yaml "go.yaml.in/yaml/v4"
 	"golang.org/x/term"
-	"gopkg.in/yaml.v3"
 )
 
 const (

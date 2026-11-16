@@ -34,6 +34,7 @@ func TestRequireMachinePrivilegeCeiling_AdminTargetActorGlobalAdmin_Allowed(t *t
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineRoles", mock.Anything, uint(7)).Return([]*models.Role{{ID: 50, Name: "admin"}}, nil)
+	ms.On("GetMachineRoleScopes", mock.Anything, uint(7)).Return([]Scope{}, nil).Maybe()
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{50}).Return(true, nil)
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{99}, nil)
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{}, nil)
@@ -48,6 +49,7 @@ func TestRequireMachinePrivilegeCeiling_AdminTargetActorNotGlobalAdmin_Denied(t 
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineRoles", mock.Anything, uint(7)).Return([]*models.Role{{ID: 50, Name: "admin"}}, nil)
+	ms.On("GetMachineRoleScopes", mock.Anything, uint(7)).Return([]Scope{}, nil).Maybe()
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{50}).Return(true, nil)
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{11}, nil)
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{}, nil)
@@ -66,6 +68,7 @@ func TestRequireMachinePrivilegeCeiling_AdminTarget_MachineActorAlwaysDenied(t *
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineRoles", mock.Anything, uint(7)).Return([]*models.Role{{ID: 50, Name: "admin"}}, nil)
+	ms.On("GetMachineRoleScopes", mock.Anything, uint(7)).Return([]Scope{}, nil).Maybe()
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{50}).Return(true, nil)
 
 	c := NewKeyorixCore(ms)
@@ -107,6 +110,7 @@ func TestRequireMachinePrivilegeCeiling_NonAdminTarget_ActorLacksRolesAssign_Den
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineRoles", mock.Anything, uint(7)).Return([]*models.Role{{ID: 12, Name: "project_viewer"}}, nil)
+	ms.On("GetMachineRoleScopes", mock.Anything, uint(7)).Return([]Scope{}, nil).Maybe()
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{12}).Return(false, nil)
 	stubUnauthorizedPrincipal(ms, 3, Scope{ProjectID: 2})
 
