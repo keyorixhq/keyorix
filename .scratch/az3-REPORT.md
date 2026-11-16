@@ -14,9 +14,9 @@ instability (reduced exec rate / OOM) that overheating would produce.
 
 ## 0. Headline
 
-**9 authz-related fuzz targets, ~171 minutes of real fuzz wall time, 0 crashers, 0
-unexplained/uncalibrated differentials, 0 constraint bypasses, 0 new regression corpus
-files written.** The extended authzdiff model (az2) and its neighbours hold up under
+**9 authz-related fuzz targets, ~189 minutes of real fuzz wall time (21 × 540 s chunks),
+0 crashers, 0 unexplained/uncalibrated differentials, 0 constraint bypasses, 0 new
+regression corpus files written.** The extended authzdiff model (az2) and its neighbours hold up under
 sustained fuzzing. The one task-named item — "the open crasher FuzzAuthzDiff
 membership.invite" — **does not exist**: no crasher file on disk, none in git history, and
 the op's differential replays and fuzzes green (§3). No production change is proposed.
@@ -76,11 +76,15 @@ time it has had). Prior time inferred from cached-corpus size at first baseline-
 | `FuzzChiAuthzRouteDifferential` | 18 | 2,100,000 | +3 (213→216) | 0 | PASS — **saturated** |
 | `FuzzGRPCRESTSecretReadAuthzParity` | 18 | 17,800 | +95 (11→106) | 0 | PASS — **still growing** |
 | `FuzzPATRestrictionAllows` | 18 | 13,800,000 | +47 (5→52) | 0 | PASS — **saturated** (+0 in chunk 2) |
-| `FuzzConnectRefScopingGRPC` | 18 | 48,000 | +128 (8→136) | 0 | PASS — **still growing** |
-| `FuzzMultiTenantIsolation` | 18 | 18,500 | +101 (6→107) | 0 | PASS — **still growing** |
+| `FuzzConnectRefScopingGRPC` | 27 | 76,000 | +176 (8→184) | 0 | PASS — **still growing** (extended) |
+| `FuzzMultiTenantIsolation` | 27 | 27,000 | +143 (6→149) | 0 | PASS — **still growing** (extended) |
 | `FuzzSSOIDTokenSingleConstraintViolation` | 18 | 225,000 | +151 (21→172) | 0 | PASS — 0 constraint bypass |
 | `FuzzOIDCIDTokenSingleConstraintViolation` | 18 | 378,000 | +137 (24→161) | 0 | PASS — 0 constraint bypass |
-| **Total** | **171** | — | — | **0** | **all green** |
+| **Total** | **189** | — | — | **0** | **all green** |
+
+The two "still growing" server/http isolation targets each received an extra 9 min chunk
+after the main pass (ConnectRef 136→184, MultiTenant 107→149); both kept finding new
+coverage with **0 crashers**, confirming they remain the best place to spend further time.
 
 "Still growing" = corpus was non-trivially expanding at the end of the budget → the most
 valuable place to spend additional fuzz time (see §6). "Saturated" = new-interesting had
