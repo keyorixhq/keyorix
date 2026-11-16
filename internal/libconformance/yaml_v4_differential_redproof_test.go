@@ -78,6 +78,14 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// anchor is never absorbed. v4 has no live caller — forward-looking.
 	"anchor-name-colon-boundary": true,
 
+	// The `-0` int-vs-float divergence (D10) in a KEY position (`-0:` → v3 key int 0
+	// / v4 key float negative zero), where the maps do not align by key and the
+	// value-only walker falls through to value-mismatch. Same root cause as D10, at a
+	// key. Found by the DF3 multi-doc fuzzer at `-0:`. Recognised by negZeroEq
+	// (pairs entries across the int-0/float-negzero transformation), scoped to inputs
+	// containing `-0`. v4 has no live caller — forward-looking.
+	"negative-zero-structural": true,
+
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
 	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null
@@ -642,6 +650,39 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("the structural class must require a `!` tag in the input, got %q", noTag)
 		}
 		t.Logf("oracle-3 D17 structural gating proven: `!`-tag KEY divergence tolerated; genuine key/value diffs and untagged inputs still fail")
+	}
+
+	// ---- Oracle 3 class gating: -0 in a KEY position (D19 structural) ----
+	{
+		in := []byte("-0:")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatal(err)
+		}
+		cb3, _ := v3yaml.Marshal(v3v)
+		cb4, _ := v3yaml.Marshal(v4v)
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("precondition: `-0:` v3/v4 must disagree (v3=%q v4=%q)", cb3, cb4)
+		}
+		class := classifyYAMLV4ValueSplit(in, v3v, v4v)
+		if class != "negative-zero-structural" {
+			t.Fatalf("`-0:` must class as negative-zero-structural, got %q (v3=%#v v4=%#v)", class, v3v, v4v)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("negative-zero-structural must be tolerated")
+		}
+		// RED: a non-negzero key diff must NOT be absorbed; and without `-0` in input.
+		if negZeroEq(map[any]any{1: nil}, map[any]any{2: nil}) {
+			t.Fatalf("a genuine key diff (1 vs 2) must not be equated by negZeroEq")
+		}
+		notNeg := classifyYAMLV4ValueSplit([]byte("x: 1"), map[string]any{"x": 1}, map[string]any{"x": float64(1)})
+		if notNeg == "negative-zero-structural" {
+			t.Fatalf("a non-negzero int-vs-float diff must not class as negative-zero-structural, got %q", notNeg)
+		}
+		t.Logf("oracle-3 D19 negzero-structural gating proven: `-0:` key tolerated; genuine diffs still fail")
 	}
 
 	// ---- Oracle 3 class gating: colon inside an anchor name (D18) ----

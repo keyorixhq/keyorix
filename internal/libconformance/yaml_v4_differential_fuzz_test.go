@@ -114,6 +114,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"|\n  00",                   // NOT a split: properly indented block scalar agrees
 		"o: &!0000",                 // anchor name with '!' (v3 rejects / v4 lenient)
 		"- -0",                      // -0: v3 int 0 / v4 float -0.0
+		"-0:",                       // -0 as a KEY: v3 int-0 key / v4 float-negzero key (D19)
 		"{!}",                       // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
 		"[!x]",                      // tagged empty node in flow seq (v3 rejects / v4 "")
 		"[0: !]",                    // tagged empty value in flow seq (v3 rejects / v4 "")
@@ -317,6 +318,13 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if diffs, ok := nonspecificTagNonEmptyScalarOnly(v3val, v4val); ok && diffs > 0 && inputHasNonSpecificTag(data) {
 		return "nonspecific-tag-nonempty-scalar"
 	}
+	// The `-0` int-vs-float divergence (D10) landing in a KEY position (`-0:`),
+	// where v3's key is int 0 and v4's is float negative zero, so the maps do not
+	// align and the value-only walker falls through. Recognised by negZeroEq, scoped
+	// to inputs literally containing `-0`.
+	if strings.Contains(string(data), "-0") && negZeroEq(v3val, v4val) {
+		return "negative-zero-structural"
+	}
 	// A colon inside an anchor NAME (`&a:b`, `&00:00000`). v3 ends the anchor name
 	// at the `:` (so `&a:b` → anchor `a`, content ":b"); v4 absorbs the `:` into the
 	// name (anchor `a:b`, EMPTY node → nil). Both accept, values differ.
@@ -332,6 +340,66 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 		return "nonspecific-tag-structural"
 	}
 	return "value-mismatch"
+}
+
+// negZeroEq reports whether a (v3) and b (v4) are identical up to the `-0`
+// int-vs-float resolution (D10) applied at ANY position — value OR key, nested —
+// pairing map entries so a differing KEY (v3 int 0 vs v4 float negative zero) is
+// matched. It never equates a genuine diff: a differing leaf must be exactly int 0
+// (v3) vs a float negative zero (v4).
+func negZeroEq(a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	if ai, ok := a.(int); ok && ai == 0 {
+		if bf, ok := b.(float64); ok && bf == 0 && math.Signbit(bf) {
+			return true
+		}
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		bkeys := rb.MapKeys()
+		used := make([]bool, len(bkeys))
+		for _, k3 := range ra.MapKeys() {
+			v3v := ra.MapIndex(k3).Interface()
+			matched := false
+			for i, k4 := range bkeys {
+				if used[i] {
+					continue
+				}
+				if negZeroEq(k3.Interface(), k4.Interface()) && negZeroEq(v3v, rb.MapIndex(k4).Interface()) {
+					used[i], matched = true, true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		for i := range ra.Len() {
+			if !negZeroEq(ra.Index(i).Interface(), rb.Index(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(a, b)
+	}
 }
 
 // v3AnchorTokenRe matches the anchor token as v3 scans it: `&` plus the
