@@ -23,15 +23,13 @@ import (
 //
 // The waiver families, what each matches, and what it does not detect:
 //
-//   - Core allows (known-02, known-04): the core leg allows, REST
-//     denies and gRPC denies or is absent. A transport that allows never
-//     matches. known-02 also requires a counterfactual model decision
-//     (caseResult.ModelIfActive), so it absorbs only the exact condition it was
-//     established on, and since #4159 only the value reads in
-//     suspendedReadPathOps (every other bound core-enforced op refuses a
-//     suspended actor, and TestCoreRefusesSuspendedActor fails an op it has no
-//     checked case for). Not detected: a core leg that allows while every present
-//     transport denies (see below). The former known-03 (core let a secret's
+//   - Core allows (known-04): the core leg allows, REST denies and gRPC
+//     denies or is absent. A transport that allows never matches. Not
+//     detected: a core leg that allows while every present transport denies
+//     (see below). The former known-02 (core let a suspended actor act, #4159)
+//     was fixed in core at every bound core-enforced op, the value reads
+//     included (#4336; TestCoreRefusesSuspendedActor, which fails an op it has
+//     no checked case for). The former known-03 (core let a secret's
 //     owner update/delete it without secrets.write/secrets.delete, #4160) was
 //     fixed in core (TestCoreOwnerWithoutPermissionIsRefused).
 //   - An untyped core error is never waived. The former known-08 (machine
@@ -67,16 +65,10 @@ func explain(r *caseResult) string {
 	is := func(lo *legOutcome, o Outcome) bool { return lo != nil && lo.NA == "" && lo.Outcome == o }
 	na := func(lo *legOutcome) bool { return lo == nil || lo.NA != "" }
 	deniedOrNA := func(lo *legOutcome) bool { return na(lo) || is(lo, Denied) }
-	pk := r.Principal
 	modelDenies := r.Model == Denied || r.Model == ModelNA
 
-	switch {
-	case pk == pkSuspended && (r.Op == "secret.value.byid" || r.Op == "secret.value.byref") && r.ModelIfActive == Allowed && is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc):
-		return "known-02"
-
-	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
+	if is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies {
 		return "known-04"
-
 	}
 	return "unexplained"
 }
@@ -86,7 +78,6 @@ func explain(r *caseResult) string {
 // job fails on an expired row (TestAuthzDiffWaiversNotExpired); renewing one
 // is a decision recorded on its issue, not a date bump.
 var waivers = []struct{ id, issue, expires string }{
-	{"known-02", "#4159", "2027-02-13"},
 	{"known-04", "#4161", "2027-02-13"},
 }
 

@@ -9,13 +9,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 )
 
-// suspendedReadPathOps are the ops whose core leg is still allowed to answer a
-// suspended actor: value reads on the hot read path (GetSecretValue*), which this
-// session may not change (OPT-READPATH-2 owns read-path lookups). They are the
-// only ops the narrowed waiver known-02 still matches (#4159); explain names the
-// same two ops as literals (its enumeration test reads them from its source).
-var suspendedReadPathOps = map[string]bool{"secret.value.byid": true, "secret.value.byref": true}
-
 // suspendedUncheckableOps are the core-enforced ops for which neither suspended
 // principal below has a case the active principal would be allowed (so there is
 // nothing to refuse), each with the reason. A new op lands here only with a
@@ -26,7 +19,8 @@ var suspendedUncheckableOps = map[string]string{}
 // TestCoreRefusesSuspendedActor: for every bound op whose core method is an
 // authorization layer, a suspended human actor is refused by core itself
 // wherever the same principal would be allowed once active — the transports
-// already refuse it at authentication (#4159, waiver known-02). Two suspended
+// already refuse it at authentication (#4159, the former waiver known-02;
+// the value reads secret.value.byid/byref too since #4336). Two suspended
 // principals, so that the op families one of them cannot reach are still
 // checked:
 //   - the harness's pkSuspended (project_admin@A, suspended after login), run
@@ -49,7 +43,7 @@ var suspendedUncheckableOps = map[string]string{}
 // layer, and the transports' refusal is the only one.
 func TestCoreRefusesSuspendedActor(t *testing.T) {
 	for _, spec := range withDerived(t, ops()) {
-		if !spec.coreEnforced || suspendedReadPathOps[spec.name] {
+		if !spec.coreEnforced {
 			continue
 		}
 		t.Run(spec.name, func(t *testing.T) {
