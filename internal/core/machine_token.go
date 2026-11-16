@@ -201,6 +201,15 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 		}
 		ceilingType, ceilingID = ActorTypeMachine, callerID
 	}
+	// A user caller authenticated by a restricted PAT (ADR-042) must not mint a
+	// token: the minted kx_machine_ token is unrestricted and non-expiring unless
+	// the request asks otherwise, so this would be a one-call escape from every
+	// dimension of the restriction (project, environment, permissions, CIDR
+	// allowlist). The counterpart of PAT-GUARD-1 (ErrRestrictedPATCannotMintPAT)
+	// and of requireMachineCallerMayIssue for machine callers.
+	if ceilingType == ActorTypeUser && patRestrictionFromContext(ctx) != nil {
+		return nil, fmt.Errorf("%w: a restricted personal access token cannot issue machine tokens, because the token would carry none of its restrictions", ErrMachinePrivilegeCeilingDenied)
+	}
 	if err := c.requireMachinePrivilegeCeiling(ctx, ceilingType, ceilingID, projectID, machineID); err != nil {
 		return nil, err
 	}

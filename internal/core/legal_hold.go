@@ -160,20 +160,29 @@ func (c *KeyorixCore) LiftLegalHold(ctx context.Context, actorID uint, reason st
 		}
 	}
 	now := c.now()
-	hold.Released = true
-	hold.ReleasedBy = actorID
-	hold.ReleasedAt = &now
-	hold.ReleaseReason = reason
 	// AUDIT-TX-3: lifting a hold lets the purge jobs destroy data again, so the
 	// release and its audit row commit together (fail closed).
+	//
+	// #4210: the release is a conditional, column-scoped UPDATE on released=false,
+	// not a Save of the struct read above. A lift that lost a race to another lift
+	// matches no row and is refused with ErrLegalHoldAlreadyReleased (no second
+	// audit row, the first lifter's attribution stays); nothing here can write
+	// released=false back over a lift.
 	if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
-		if err := tx.UpdateLegalHold(ctx, hold); err != nil {
+		released, err := tx.ReleaseLegalHold(ctx, hold.ID, actorID, now, reason)
+		if err != nil {
 			return err
+		}
+		if !released {
+			return storage.ErrLegalHoldAlreadyReleased
 		}
 		c.writeAuditEventFullOn(ctx, tgt, EventLegalHoldLifted, actorPtr(actorID), nil, nil, "",
 			fmt.Sprintf("legal hold %d lifted by %d (originally placed by %d): %s", hold.ID, actorID, hold.PlacedBy, reason))
 		return nil
 	}); err != nil {
+		if errors.Is(err, storage.ErrLegalHoldAlreadyReleased) {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil

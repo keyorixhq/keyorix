@@ -43,6 +43,7 @@ var refusedSecretFlags = []secretFlag{
 	{"secret create", "value", "use --from-file <relative path> (or --from-file - to read stdin), or --interactive for a hidden prompt"},
 	{"secret update", "value", "use --from-file <relative path> (or --from-file - to read stdin), or --interactive for a hidden prompt"},
 	{"secret rotate", "value", "leave the flag out: the value is read from a hidden prompt, or from stdin when it is piped"},
+	{"dynamic-secret set-admin-dsn", "admin-dsn", "set KEYORIX_DYNAMIC_ADMIN_DSN, or pipe the DSN on stdin (or leave both out to be prompted on a terminal)"},
 	// A webhook URL is a credential: its path carries the token (Slack, Teams).
 	{"notification channel add", "url", "use --url-file <relative path> (or --url-file - to read stdin)"},
 	{"notification channel update", "url", "use --url-file <relative path> (or --url-file - to read stdin)"},

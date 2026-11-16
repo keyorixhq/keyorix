@@ -12,6 +12,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -42,6 +43,13 @@ func (c *KeyorixCore) MigrateAuditChainEncoding(ctx context.Context, actorID uin
 
 	result, err := c.storage.MigrateAuditChainEncoding(ctx, dryRun, anchor)
 	if err != nil {
+		// A pre-flight refusal (gap, broken link, changed row) is a precondition
+		// failure the operator must read, with its own text: transports classify it
+		// by storage.ErrAuditChainReencodeRefused (HTTP: 409), so it is not wrapped
+		// in the generic failure prefix.
+		if errors.Is(err, storage.ErrAuditChainReencodeRefused) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("failed to migrate audit chain encoding: %w", err)
 	}
 	if dryRun {

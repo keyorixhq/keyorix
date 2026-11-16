@@ -61,6 +61,10 @@ Not searched (so not in the list):
 ## Inventory
 
 `R` = reproduced with the native binary for the operator page, `C` = from code only.
+PILOT-RUNBOOK-WALK-3 re-ran the message fragments below against the current tree (each
+backticked fragment searched for in non-test `.go` files under `server/` and `internal/`;
+a fragment that only appears there as a format string was checked against real output
+instead) and promoted the rows it reproduced natively from `C` to `R`.
 
 ### Configuration (Validate, `Configuration is invalid:` / `Failed to load configuration:`)
 
@@ -75,10 +79,10 @@ Not searched (so not in the list):
 | C | config.go:2917 | `autocert is enabled but no domains are specified` |
 | R | config.go:2921 | `TLS is enabled but cert_file or key_file is missing` |
 | C | airgap_profile.go (Validate) | `server.http.tls.auto_cert: true is not available in this build` (air-gapped build only; AIRGAP-ACME-1) |
-| C | config.go:2931-2934 | `gRPC TLS auto_cert is not supported`, `gRPC TLS is enabled but cert_file or key_file is missing` |
+| C | config_server.go:464-468 | `server.grpc.tls.auto_cert: true is not supported`, `gRPC TLS is enabled but cert_file or key_file is missing` |
 | C | config.go:2964 | `postgres storage requires either database.dsn or all of host, name, and user` |
 | C | config.go:2981 | `database path is not specified` |
-| C | config.go:2791 | `database.path ... must not contain ".."` |
+| R | config.go:2791 | `database.path ... must not contain ".."` (`failed to load config: invalid storage.database.path`) |
 | R | config.go:3035 | `unsupported language` |
 | C | config.go:3038 | `unsupported fallback language` |
 | C | config.go:3016-3019 | `max_secret_size ... must not be negative`, `exceeds the hard ceiling` |
@@ -114,12 +118,14 @@ Not searched (so not in the list):
 | R | database_tls.go:255 | `but no CA certificate is configured` |
 | R | database_tls.go:87 | `is not a valid sslmode` |
 | R | database_tls.go:286 | `cannot be combined with storage.database.dsn` |
-| C | database_tls.go:144 | `when dsn is set` (ssl_mode vs dsn disagree) |
-| C | database_tls.go:305, 319, 345 | `ssl_root_cert is set but storage.database.ssl_mode is` disable/allow/prefer, `storage.database.dsn sets sslrootcert but its effective sslmode is` |
-| C | database_tls.go:193-233 | CA file: not a regular file, `writable by group or others, refusing to trust it`, larger than limit, `contains a private key`, no PEM certificate |
-| C | database_tls.go:368, 373 | `selects a PostgreSQL connection service` (dsn / `PGSERVICE`) |
+| R | database_tls.go:144 | `when dsn is set` (ssl_mode vs dsn disagree: `has a different sslmode`, `has no sslmode`) |
+| R | database_tls.go:305, 319 | `ssl_root_cert is set but storage.database.ssl_mode is` disable/allow/prefer |
+| C | database_tls.go:345 | `storage.database.dsn sets sslrootcert but its effective sslmode is` |
+| R | database_tls.go:193-233 | CA file: not a regular file, `writable by group or others, refusing to trust it`, larger than limit, `contains a private key`, no PEM certificate (missing file: `read CA file ... no such file or directory`) |
+| R | database_tls.go:368, 373 | `selects a PostgreSQL connection service` (`service=` in the dsn reproduced; the `PGSERVICE` variable was not tried) |
 | C | database_tls.go:482-631 | connection string syntax errors (`malformed`, `unterminated`, `forbidden NUL byte`) |
-| C | postgres_dsn.go:69, 289 | `dsn already contains a password`, `the PostgreSQL driver's connection settings differ from what the TLS` |
+| R | postgres_dsn.go:69 | `dsn already contains a password` (with `KEYORIX_DB_PASSWORD` also set) |
+| C | postgres_dsn.go:289 | `the PostgreSQL driver's connection settings differ from what the TLS` |
 
 ### Database and storage
 
@@ -222,7 +228,7 @@ cleartext/trusted-proxy lines, `no recovery key is configured`.
 | C | backup.go:561 | `changed during the backup -- refusing to write an archive` |
 | C | restore.go:774-786 | high-water value does not parse; `could not read the rollback-protection witness file` |
 | C | restore.go:1198-1208 | `was created concurrently during restore` |
-| C | backup.go:122, restore.go:133, init.go:188, recover_admin.go:76 | `--output is required`, `--input is required`, `--secure-files and --dev cannot be combined`, `--user is required` |
+| R | backup.go:122, restore.go:133, init.go:188, recover_admin.go:76 | `--output is required`, `--input is required`, `--secure-files and --dev cannot be combined`, `--user is required` |
 | C | encryptionops/dek.go:123, kek.go:39, auth_encryption.go:177 | `Re-run with --confirm` family |
 | C | encryptionops/dek.go:115, kek.go:36 | `must run on the server host` |
 | C | encryptionops/dek.go:140, kek.go:71 | `stop the running server before rotating` |

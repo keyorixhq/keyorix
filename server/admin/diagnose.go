@@ -3,10 +3,15 @@ package admin
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
@@ -53,6 +58,10 @@ func runAdminDiagnose(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 	}
 	fmt.Println("[ OK ] config parse and schema validation")
 
+	// Before the key lock and the key checks: an interrupted rotation is also what
+	// can make those fail, and this line is the one that explains the backups.
+	diagnoseBackupRefusal(cfg)
+
 	lock, err := acquireDatabaseLock(cfg)
 	if err != nil {
 		return err
@@ -97,6 +106,28 @@ func runAdminDiagnose(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 	return nil
 }
 
+// diagnoseBackupRefusal reports, non-fatally, that `admin backup` would be
+// refused because a key-rotation staging file is present (#4105). It runs the
+// backup's own check (refusePendingKeyRotation), read-only, so the line and the
+// refusal cannot disagree, and prints the refusal's path and safe-removal steps.
+// A [WARN]: it does not stop the server from starting, only backups.
+func diagnoseBackupRefusal(cfg *config.Config) {
+	err := refusePendingKeyRotation(cfg)
+	if err == nil {
+		return
+	}
+	r, ok := errors.AsType[*pendingRotationRefusal](err)
+	if !ok {
+		fmt.Printf("[WARN] backups would be refused: %v\n", err)
+		return
+	}
+	fmt.Printf("[WARN] backups would be refused: staging file present (%s). %s\n", strings.Join(r.paths, ", "), r.msg)
+	if r.dek {
+		fmt.Println("       the DEK's .pending file: never delete by hand; recover with rotate-kek recovery " +
+			"(docs/operator/key-rotation-runbook.md, \"Interrupted rotate-kek or migrate-provider\")")
+	}
+}
+
 // diagnoseRecoveryKey reports, non-fatally, whether `recover-admin` is
 // currently usable on this install (F6, recovery-key visibility). Skipped
 // entirely in keyless mode -- recover-admin does not check a key there, so
@@ -136,6 +167,34 @@ func diagnoseConfigParse() (*config.Config, error) {
 	return cfg, nil
 }
 
+// requireKeyFilesPresent fails, naming each absolute path, when a key file the
+// configuration requires is not on disk. Read-only: it only stats. Only "does
+// not exist" is reported here; a path that cannot be statted for another reason
+// (permission denied, say) is left to the KEK check below, which reads the file
+// and fails with that error. This differs from keyfiles.InspectKeySet (the
+// first-boot gate), which counts any stat error as missing.
+func requireKeyFilesPresent(enc *config.EncryptionConfig) error {
+	paths, err := keyfiles.RequiredKeyFilePaths(enc, ".")
+	if err != nil {
+		return fmt.Errorf("encryption key paths: %w", err)
+	}
+	var missing []string
+	for _, p := range paths {
+		if _, serr := os.Stat(p); errors.Is(serr, fs.ErrNotExist) {
+			if abs, aerr := filepath.Abs(p); aerr == nil {
+				p = abs
+			}
+			missing = append(missing, "key file "+p+" does not exist")
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s. diagnose is read-only and does not create keys; "+
+		"`keyorix-server admin encryption init` creates the keys of a new install (relative key paths are resolved against the current directory)",
+		strings.Join(missing, "; "))
+}
+
 // diagnoseEncryption attempts a REAL KEK derivation (not just a file-exists
 // check) under the same exclusive DEK lock the server itself acquires at
 // startup, released immediately after. This is deliberately more thorough
@@ -151,6 +210,13 @@ func diagnoseEncryption(cfg *config.Config) error {
 		}
 		defer crypto.WipeBytes(passphraseBytes)
 		passphrase = string(passphraseBytes)
+	}
+
+	// Before anything that can write: the lock file below and Initialize (which
+	// generates a salt and a DEK when none exist) both create files, and a
+	// diagnose command must not.
+	if err := requireKeyFilesPresent(&cfg.Storage.Encryption); err != nil {
+		return err
 	}
 
 	svc := encryption.NewService(&cfg.Storage.Encryption, ".")

@@ -45,9 +45,10 @@
 //     clientImports, or through a function of a listed stdlib package that is not
 //     in refForms. The lists are the reviewable assumption; extend them when a
 //     new kind of client is adopted.
-//   - Subprocesses (os/exec): the encryption key provider type "exec" and
-//     `keyorix run` start an operator-supplied command, which may itself use the
-//     network. It is named in the inventory but not detected here.
+//   - What a subprocess does: the encryption key provider type "exec" and
+//     `keyorix run` start a command that may itself use the network. The call
+//     sites that start a process are checked by subprocess_guard_test.go; the
+//     child's own connections are not.
 //   - Browser-side requests: JavaScript in web/ and the vendored swagger UI. The
 //     markup check lives in server/http/airgap_external_hosts_guard_test.go.
 //   - Reflection, plugins and code generated at run time.
@@ -867,6 +868,7 @@ var dependencyKinds = map[string]string{
 	"github.com/crewjam/saml":                                           "client",
 	"github.com/digitorus/pkcs7":                                        "local: parses and verifies PKCS#7",
 	"github.com/digitorus/timestamp":                                    "local: builds and parses RFC 3161 messages; the request is sent by internal/notary with an http.Client",
+	"github.com/fxamacker/cbor/v2":                                      "local: CBOR encoder/decoder, no network",
 	"github.com/getkin/kin-openapi":                                     "local: OpenAPI document handling",
 	"github.com/go-chi/chi/v5":                                          "local: HTTP router for inbound requests",
 	"github.com/go-chi/cors":                                            "local: CORS middleware for inbound requests",
@@ -907,7 +909,9 @@ var dependencyKinds = map[string]string{
 	"google.golang.org/genproto/googleapis/rpc":                         "local: protobuf types",
 	"google.golang.org/grpc":                                            "client",
 	"google.golang.org/protobuf":                                        "local: protobuf runtime",
-	"gopkg.in/yaml.v3":                                                  "local: YAML parsing",
+	"go.yaml.in/yaml/v3":                                                "local: YAML parsing (test-only sibling-differential fuzzers in internal/libconformance)",
+	"go.yaml.in/yaml/v4":                                                "local: YAML parsing",
+	"gopkg.in/yaml.v3":                                                  "local: YAML parsing (tests and scripts/ tooling only: libconformance, CI guard inputs, configcompat; not imported by production code)",
 	"gorm.io/driver/postgres":                                           "local: a gorm dialector; the connection is opened by gorm.Open, which is in refForms",
 	"gorm.io/driver/sqlite":                                             "local: a gorm dialector for a local SQLite file",
 	"gorm.io/gorm":                                                      "client",

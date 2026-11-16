@@ -1,0 +1,1 @@
+scripts/fuzzing/sinkmap/sinkmap_test.go	!**	scans only a temp copy of its own testdata fixture

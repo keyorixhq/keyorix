@@ -78,6 +78,19 @@ never change the exit code. Currently one finding is reported there:
 | TLS 1.3-only | `server.http.tls_mode` / `server.grpc.tls_mode` (`"strict"`) | Set once every client that will ever connect can speak TLS 1.3 — the default (1.2 floor, forward-secret AEAD ciphers) is already compliant, not a weaker fallback to graduate away from on a fixed timeline; `allowed_ciphers` has no effect once set. |
 | Bundled auto-HTTPS | `docker compose --profile tls up` | Simplest path for a real public domain — auto-provisions a publicly-trusted certificate via Caddy. |
 
+**`cert_file` and a CA file are on different sides.** `server.*.tls.cert_file` (with `key_file`)
+is the certificate the *server presents*. The server's `tls.Config` is built with a
+certificate callback only (`server/tls_config.go`, `server/grpc/server.go`; the key set is
+`TLSConfig` in `internal/config/config_server.go`): there is no server-side `tls.ca_file`,
+and no client-CA or mutual-TLS setting, so the server asks clients for no certificate and
+verifies none. The CA a *client* trusts for that certificate is the client's own setting:
+the CLI's `ca_file` (`--ca-file`, `KEYORIX_CA_FILE`, `keyorix config set ca_file`; for a
+self-signed `cert_file`, the certificate itself), or the system roots when unset. The
+third CA in the product, `storage.database.ssl_root_cert`, is what the server trusts when
+it connects to PostgreSQL. With a TLS-terminating proxy in front, the proxy's certificate
+is the one clients must trust and the backend's `cert_file` is not involved. Detail and
+examples: [CONFIGURATION.md](../CONFIGURATION.md) ("Which side verifies what").
+
 ## 2. Encryption key management
 
 | Decision | Key | Recommendation |
@@ -347,15 +360,17 @@ option there, but it does not bundle the key-material files.
   operational surprises (wrong config, wrong key-file paths) that are best
   found in a drill, not an actual incident. Restore into an **empty** target
   (a fresh directory, or an empty PostgreSQL database); that is the supported
-  flow and the one the drill script exercises. `admin restore
-  --overwrite-existing` moves only existing key files and a SQLite database
-  file aside (`<path>.pre-restore-<timestamp>`) rather than truncating them.
-  It does **not** empty a PostgreSQL database: the rows are loaded into the
-  tables that are already there, so over a database that holds data the
-  restore stops on a duplicate key (the load is one transaction, so the
-  database itself is unchanged) after the key files have already been
-  replaced. To restore over a used PostgreSQL database, drop and recreate it
-  first ([`../SELF_HOSTING.md`](../SELF_HOSTING.md) §5).
+  flow and the one the drill script exercises. Into a PostgreSQL database that
+  already has tables, `admin restore` is refused (`target Postgres database
+  already has 80 table(s) -- restore refuses to overwrite it`); with
+  `--overwrite-existing` the load transaction empties the target's tables
+  itself, loads the archive and replaces the key files, so every row written
+  since the backup is gone. `--overwrite-existing` moves existing key files and
+  a SQLite database file aside (`<path>.pre-restore-<timestamp>`) rather than
+  truncating them. Only a v0.96.x binary does not empty the tables: it stops on
+  a duplicate key, and the database must be dropped and recreated first
+  ([`../SELF_HOSTING.md`](../SELF_HOSTING.md) §5,
+  [`../operator/upgrade-rollback.md`](../operator/upgrade-rollback.md)).
 
 ## 7. Process and host hardening
 

@@ -166,6 +166,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// runStartupValidation/enforceKeyFilePermissions, which both read the grace result.
 	resolveADR112BootPosture(cfg)
 
+	// #4249: before any check opens a key file through a relative key path, refuse
+	// a start from another directory than the config's (the path would name other files).
+	if err := cfg.Storage.Encryption.CheckRelativeKeyPathBase("."); err != nil {
+		log.Fatalf("Refusing to start: %v", err)
+	}
+
 	// Run the file-permission / encryption-key / database-reachability checks that were
 	// previously reachable ONLY via the manual `keyorix-server admin validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run

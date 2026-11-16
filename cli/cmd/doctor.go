@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
 	"github.com/keyorixhq/keyorix/cli/internal/cliout"
@@ -430,6 +430,10 @@ func doctorClock(rep *doctorReport, offset time.Duration, ok bool) {
 	}
 }
 
+// machineTokenPrefix is how the server's machine tokens start (ADR-030). doctor uses it only
+// to word the auth check; the server decides what a token may do.
+const machineTokenPrefix = "kx_machine_"
+
 // doctorAuth checks that the token is accepted. It returns whether it is.
 func doctorAuth(ctx context.Context, rep *doctorReport, client *apiclient.ClientWithResponses, token string, canTry bool) bool {
 	if !canTry {
@@ -467,6 +471,16 @@ func doctorAuth(ctx context.Context, rep *doctorReport, client *apiclient.Client
 		}
 		rep.add("auth", doctorPass, detail, "")
 		return true
+	case http.StatusNotFound:
+		// A machine principal has no user row, so the server answers its profile 404 after
+		// it has authenticated it (a bad token is 401). Only a machine token gets this
+		// reading: for a login or a PAT a 404 means the account is gone, and stays a FAIL.
+		if strings.HasPrefix(token, machineTokenPrefix) {
+			rep.add("auth", doctorPass, "machine token: profile not applicable (the server accepts the token)", "")
+			return true
+		}
+		rep.add("auth", doctorFail, "GET /api/v1/auth/profile answered HTTP 404: the account behind this token no longer exists", "run `keyorix login`")
+		return false
 	case http.StatusUnauthorized:
 		rep.add("auth", doctorFail, "the server rejected the token (HTTP 401): the session expired or was revoked", "run `keyorix login`")
 		return false

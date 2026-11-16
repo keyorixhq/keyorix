@@ -205,6 +205,15 @@ func owedRequestID(ctx context.Context) *string {
 	return nil
 }
 
+// owedRequestIDText is the server-minted request id for a log line, "-" when there is
+// none. The id is server-generated, never a secret (SUSPEND-TAILS-NOV-1 item 1).
+func owedRequestIDText(ctx context.Context) string {
+	if id := owedRequestID(ctx); id != nil {
+		return *id
+	}
+	return "-"
+}
+
 // owedBackfillContext is the context a backfill pass appends the owed row p under: ctx
 // with a fresh request-log holder carrying p's recorded id as the server-minted id, so
 // the storage funnel stamps it exactly as it stamps a live request's rows -- the only
@@ -379,19 +388,19 @@ func (c *KeyorixCore) writeOwedAudit(ctx context.Context, pendingID uint, event 
 	if pendingID == 0 {
 		if late != nil {
 			if id, qerr := c.queueOwedAuditLate(ctx, event.EventType, late); qerr == nil {
-				log.Printf("SECURITY: audit event %q could not be written after its effect committed; queued for backfill late as pending audit event %d: %s; user=%v secret=%v: %v",
-					event.EventType, id, event.Description, uintOrNil(event.UserID), uintOrNil(event.SecretNodeID), err)
+				log.Printf("SECURITY: audit event %q could not be written after its effect committed; queued for backfill late as pending audit event %d: %s; user=%v secret=%v request=%s: %v",
+					event.EventType, id, event.Description, uintOrNil(event.UserID), uintOrNil(event.SecretNodeID), owedRequestIDText(ctx), err)
 				return false
 			} else {
 				err = fmt.Errorf("%w; queueing it for backfill failed too: %w", err, qerr)
 			}
 		}
-		log.Printf("SECURITY: audit event %q could not be written after its effect committed and is NOT queued for backfill (record it by hand): %s; user=%v secret=%v: %v",
-			event.EventType, event.Description, uintOrNil(event.UserID), uintOrNil(event.SecretNodeID), err)
+		log.Printf("SECURITY: audit event %q could not be written after its effect committed and is NOT queued for backfill (record it by hand): %s; user=%v secret=%v request=%s: %v",
+			event.EventType, event.Description, uintOrNil(event.UserID), uintOrNil(event.SecretNodeID), owedRequestIDText(ctx), err)
 		return false
 	}
-	log.Printf("SECURITY: audit event %q could not be written after its effect committed; queued for backfill as pending audit event %d: %s; user=%v secret=%v: %v",
-		event.EventType, pendingID, event.Description, uintOrNil(event.UserID), uintOrNil(event.SecretNodeID), err)
+	log.Printf("SECURITY: audit event %q could not be written after its effect committed; queued for backfill as pending audit event %d: %s; user=%v secret=%v request=%s: %v",
+		event.EventType, pendingID, event.Description, uintOrNil(event.UserID), uintOrNil(event.SecretNodeID), owedRequestIDText(ctx), err)
 	if rerr := c.storage.RecordPendingAuditEventFailure(context.WithoutCancel(ctx), pendingID, err.Error()); rerr != nil {
 		log.Printf("SECURITY: could not note the failure on pending audit event %d: %v", pendingID, rerr)
 	}
