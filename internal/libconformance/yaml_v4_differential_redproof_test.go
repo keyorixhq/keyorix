@@ -76,6 +76,18 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// Keyorix defect (no code feeds such malformed YAML to a security decision).
 	// Keyed on the v4 error "expected <document start>" alone.
 	"v4-rejects:doc-start": true,
+
+	// A flow indicator (`,` `[` `]`) inside a non-verbatim tag suffix ("!,", "!tag[",
+	// "a: !,x", "x: !!str,"). v4.0.0 strictly REJECTS it ("found character '…' that
+	// is not allowed in a YAML tag"); v3.0.5 is lenient — it ends the tag before the
+	// flow char and treats the remainder as content (decoding to ""/the trailing
+	// scalar). `!{`/`!}` are rejected by BOTH; a verbatim `!<a,b>` is accepted by
+	// BOTH; only the non-verbatim flow-char suffix splits. v4 is the more
+	// spec-correct side (flow indicators are not valid tag characters). Found by the
+	// DF2 fuzz run at "0: !,". Not a Keyorix defect (v4 has no live caller); a
+	// forward-looking strictness change. Keyed on the v4 error "not allowed in a YAML
+	// tag" alone.
+	"v4-rejects:tag-char": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -285,6 +297,30 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("expected v3 to keep only the leading scalar 0 (silent drop), got %#v", v3v)
 		}
 		t.Logf("oracle-2 doc-start gating proven: v3 accepts+truncates to %#v, v4 rejects", v3v)
+	}
+
+	// ---- Oracle 2 class gating: the tag-char divergence (v4 stricter) ----
+	{
+		in := []byte("!,")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: '!,' must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:tag-char" {
+			t.Fatalf("tag-char split must class as v4-rejects:tag-char, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("tag-char class must be listed (tolerated)")
+		}
+		// A verbatim tag with the same chars is accepted by BOTH (no split).
+		var w1, w2 any
+		if v3yaml.Unmarshal([]byte("!<a,b>"), &w1) != nil || v4yaml.Unmarshal([]byte("!<a,b>"), &w2) != nil {
+			t.Fatalf("precondition: verbatim tag !<a,b> must be accepted by BOTH")
+		}
+		t.Logf("oracle-2 tag-char gating proven: non-verbatim flow-char tag tolerated; verbatim accepted by both")
 	}
 }
 
