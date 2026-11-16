@@ -1,0 +1,1 @@
+TestFullRowWriteGuard_EveryExemptRowNamesAReasonClass	internal/storage/store	#4286	new check on docs/full-row-write-exempt.tsv: every row states a reason class from the ledger header and a justification (STORE-STALE-NOV-3); report-only until its first green nightly on main
