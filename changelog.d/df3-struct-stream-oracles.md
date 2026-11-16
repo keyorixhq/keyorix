@@ -20,3 +20,10 @@
     but **rejected by v4** (cannot construct the kept string `"00"` into an `int` field),
     invisible to the `any`-path oracle. All forward-looking (v4 has no live Keyorix caller).
     Enforced by `INV-LIBCONF-yaml-v4-struct-stream-differential`.
+  - The fuzz run also drained a further any-path tail (all red/green proven, documented): **D15**
+    `v3-rejects:flow-seq-tagged-empty` (`[!x]`), **D16** `v3-rejects:flow-node-content` (`[: 1]`),
+    **D17** `nonspecific-tag-structural` (the `!`-tag divergence in a KEY, `! : 00`), **D18**
+    `anchor-name-colon-boundary` (a `:` inside an anchor name, `&a:b`: v3 `":b"` / v4 nil), and a
+    round-trip footgun **`roundtrip:negzero-float-to-int`** (`-.000`: v3 float `-0.0`→`-0`→ int `0`,
+    non-idempotent — D10 across a round-trip). A reflection-walker key-type panic
+    (`map[string]any` vs `map[any]any`) was fixed with a logical-key lookup.

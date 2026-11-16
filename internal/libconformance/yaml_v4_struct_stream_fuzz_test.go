@@ -389,6 +389,7 @@ func FuzzYAMLV4RoundTrip(f *testing.F) {
 		"s: 'hello world'\n", "t: true\n", "f: 3.14\n", "! 00\n", "!\n",
 		"anchor: &a 1\nref: *a\n", "key: |\n  multi\n  line\n",
 		"m: {a: 1, b: 2}\n", "e: 1_000\n", "neg: -0\n", "ts: 2020-01-02\n",
+		"-.000\n", "v: -0.0\n",
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -432,20 +433,39 @@ func roundTripOne(t *testing.T, data []byte, label string,
 	if bytes.Equal(c1, c2) {
 		return
 	}
-	// A non-idempotent round-trip. Classify the drift with the single-doc value
-	// classifier; a tolerated class (e.g. a `!`-tag re-resolution that only one
-	// library applies) is excused, anything else is a finding.
+	// A non-idempotent round-trip. Try the round-trip-specific classifier first,
+	// then the single-doc value classifier; a tolerated class is excused, anything
+	// else is a finding.
 	if !reflect.DeepEqual(c1, c2) {
+		rtClass := classifyRoundTripDrift(v1, v2)
+		if yamlV4RoundTripExpectedDiff[rtClass] {
+			return
+		}
 		class := classifyYAMLV4ValueSplit(enc, v1, v2)
-		if !yamlV4ExpectedDiff[class] && !yamlV4RoundTripExpectedDiff[class] {
-			t.Fatalf("round-trip [%s] NOT idempotent [class=%q]\n  input=%q\n  first decode canonical=%q\n  re-decode canonical=%q",
-				label, class, data, c1, c2)
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("round-trip [%s] NOT idempotent [rt-class=%q value-class=%q]\n  input=%q\n  first decode canonical=%q\n  re-decode canonical=%q",
+				label, rtClass, class, data, c1, c2)
 		}
 	}
 }
 
+// classifyRoundTripDrift names a per-library decode→encode→decode non-idempotence.
+// v1 is the first decode, v2 the re-decode of v1's own Marshal output.
+func classifyRoundTripDrift(v1, v2 any) string {
+	// Negative-zero float round-trips to int 0 (v3): a float -0.0 Marshals to "-0",
+	// which v3 re-reads as the int 0 (the D10 negative-zero rule) — so the type and
+	// canonical change (-0.0 float -> 0 int). The round-trip manifestation of D10;
+	// recognised by the same negZeroIntVsFloatOnly shape with v2(int)/v1(float).
+	if n, ok := negZeroIntVsFloatOnly(v2, v1); ok && n > 0 {
+		return "roundtrip:negzero-float-to-int"
+	}
+	return "roundtrip:other"
+}
+
 // yamlV4RoundTripExpectedDiff lists round-trip-specific non-idempotence classes
-// (distinct from the cross-library yamlV4ExpectedDiff). EMPTY on purpose: a
-// decode→encode→decode cycle is expected to be a fixed point for both libraries.
-// A class the fuzzer finds is a finding until triaged and justified here.
-var yamlV4RoundTripExpectedDiff = map[string]bool{}
+// (distinct from the cross-library yamlV4ExpectedDiff). The one entry is the D10
+// negative-zero footgun biting across a round-trip (v3 only); any other class is a
+// finding until triaged and justified here.
+var yamlV4RoundTripExpectedDiff = map[string]bool{
+	"roundtrip:negzero-float-to-int": true,
+}

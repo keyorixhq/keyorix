@@ -287,4 +287,33 @@ func TestYAMLV4StructStreamRedGreen(t *testing.T) {
 		}
 		t.Logf("S2 RED proven: a non-idempotent drift classes as %q and fires the oracle", class)
 	}
+
+	// Round-trip negative-zero-float→int footgun (v3): `-.000` decodes to float
+	// -0.0, Marshals to "-0", which v3 re-reads as int 0 — non-idempotent. This is
+	// the D10 rule biting across a round-trip; tolerated by the round-trip table.
+	{
+		in := []byte("-.000")
+		var v1 any
+		if err := v3yaml.Unmarshal(in, &v1); err != nil {
+			t.Fatalf("precondition: v3 must accept %q, got %v", in, err)
+		}
+		enc, _ := v3yaml.Marshal(v1)
+		var v2 any
+		if err := v3yaml.Unmarshal(enc, &v2); err != nil {
+			t.Fatalf("precondition: v3 must re-decode its own %q, got %v", enc, err)
+		}
+		c1, _ := v3yaml.Marshal(v1)
+		c2, _ := v3yaml.Marshal(v2)
+		if reflect.DeepEqual(c1, c2) {
+			t.Fatalf("precondition: `-.000` v3 round-trip must NOT be idempotent (got %q == %q)", c1, c2)
+		}
+		if rt := classifyRoundTripDrift(v1, v2); rt != "roundtrip:negzero-float-to-int" || !yamlV4RoundTripExpectedDiff[rt] {
+			t.Fatalf("`-.000` drift must class as the tolerated roundtrip:negzero-float-to-int, got %q", rt)
+		}
+		// RED: a genuine drift (int 1 -> int 2) must NOT be absorbed by the rt class.
+		if classifyRoundTripDrift(1, 2) == "roundtrip:negzero-float-to-int" {
+			t.Fatalf("a genuine int drift must NOT class as the negzero round-trip class")
+		}
+		t.Logf("S2 negzero round-trip proven: v3 `-.000` float -0.0 -> `-0` -> int 0 tolerated; genuine drift still fails")
+	}
 }
