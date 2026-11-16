@@ -176,6 +176,12 @@ func TestCalib_YAMLSequence_TimeArmQuietGreen(t *testing.T) {
 // proves the noise-robust time measure still has the power to flag a real
 // quadratic, under load as on an idle host.
 func TestCalib_PlantedQuadraticTime_FiresRed(t *testing.T) {
+	if raceEnabled {
+		// The planted pass is ~10^9 instrumented byte reads at factor 8: 78 s
+		// under -race against 4 s without. It is single-goroutine, so the race
+		// detector checks nothing here; the non-race test legs run this proof.
+		t.Skip("planted O(n^2) time-arm proof runs in non-race builds only (about 20x slower under -race)")
+	}
 	call := func(in []byte) {
 		seqUnmarshalGopkg(in)
 		plantedQuadraticCPU(in)
