@@ -49,6 +49,21 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// "did not find expected key" so it does NOT tolerate any other v3 syntax
 	// rejection the fuzzer may find.
 	"v3-rejects:empty-implicit-key": true,
+
+	// DEL (0x7F) and the C1 control range (0x80-0x9F, except NEL 0x85) in scalar
+	// content. v3.0.5 REJECTS these ("control characters are not allowed"); v4.0.0
+	// ACCEPTS them and keeps the control byte in the decoded string (confirmed both
+	// as a bare document "\x7f" and embedded, "k: a\x7fb"). C0 controls (0x00-0x1F,
+	// except tab/LF/CR) are rejected by BOTH; NEL (0x85) and NBSP (0xA0) are accepted
+	// by BOTH. So the split is exactly DEL + C1. v3 is the STRICTER (safer) side here;
+	// v4 relaxed the printable-character policy. Found by the DF2 fuzz run at "\x7f".
+	// This is the security-relevant direction and the most migration-sensitive class:
+	// on a v3->v4 bump, control characters (terminal escapes, DEL) that are rejected
+	// today would pass into config string values. Not a Keyorix defect today (v4 has
+	// no live caller); a forward-looking hazard AND an upstream HARDENING note about
+	// v4's relaxed control-char validation. Keyed on the v3 error "control characters
+	// are not allowed", so it does not tolerate any other rejection.
+	"v3-rejects:control-char": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -207,6 +222,34 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("the generic syntax split (%q) must NOT be tolerated", other)
 		}
 		t.Logf("oracle-2 empty-implicit-key gating proven: ':' tolerated; other syntax splits still fail (%q)", other)
+	}
+
+	// ---- Oracle 2 class gating: the control-char divergence ----
+	// DEL (0x7F) is rejected by v3, accepted by v4; prove it classes as the tolerated
+	// control-char class, and that a C0 control (rejected by BOTH) never produces a
+	// split to tolerate in the first place.
+	{
+		del := []byte{0x7f}
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(del, &v3v)
+		err4 := v4yaml.Unmarshal(del, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: DEL must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:control-char" {
+			t.Fatalf("DEL split must class as v3-rejects:control-char, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("control-char class must be listed (tolerated)")
+		}
+		// A C0 control (0x00) is rejected by BOTH -> no split, so the oracle never
+		// reaches the table; confirm the shared-reject precondition holds.
+		var z1, z2 any
+		if v3yaml.Unmarshal([]byte{0x00}, &z1) == nil || v4yaml.Unmarshal([]byte{0x00}, &z2) == nil {
+			t.Fatalf("precondition: a C0 NUL must be rejected by BOTH libraries")
+		}
+		t.Logf("oracle-2 control-char gating proven: DEL/C1 tolerated; C0 rejected by both")
 	}
 }
 

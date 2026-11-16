@@ -89,6 +89,8 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"- :\n",                     // empty implicit key inside a sequence
 		"::",                        // NOT a split: both accept (key "::")
 		"0: !",                      // ! on empty scalar under an INT key (map[any]any)
+		"\x7f",                      // DEL control char (v3 rejects / v4 accepts)
+		"k: a\x80b\n",               // C1 control embedded in a scalar value
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
