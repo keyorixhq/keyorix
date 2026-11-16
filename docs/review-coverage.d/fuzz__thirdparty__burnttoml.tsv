@@ -1,0 +1,1 @@
+fuzz/thirdparty/burnttoml	none	-	test-only hostile-input fuzz harness for BurntSushi/toml; not part of any shipped build	test-helper
