@@ -1086,6 +1086,29 @@ var osKnownUndeclared5xx = []struct {
 	// becomes an undeclared 500 instead of a 403/409. No session is minted; nothing leaks.
 	// Fix: classify these as 403 (authority/credential refusal) / 409 (target-state refusal).
 	{id: "OPENAPI-STATEFUL-7", opID: "startImpersonation", princ: -1, code: 500, reason: "core impersonation refusal (suspended/inactive target, ceiling-exceeded, admin-not-found) falls through the handler switch to an undeclared 500 instead of 403/409. admin_impersonation.go:97."},
+
+	// OPENAPI-STATEFUL-1 (siblings still on the legacy per-handler switch, #4132): the three
+	// secret read-metadata routes below answer a non-user (machine) principal's core read
+	// re-check through a `default: InternalError 500` branch instead of the shared classifier
+	// answerCoreError, exactly like GetSecretCertificate/AccessHistory did before they were
+	// migrated. A machine token with a valid project-scoped reader role gets 500 where the
+	// global admin gets 200 (deterministically reproduced: TestOpenAPIStrictExceptions). The
+	// genuine storage-fault 5xx on these routes (TestSecretReadRoutes_StorageFaultIs5xxInEveryLocale)
+	// is ALSO undeclared by the spec, so the waiver is princ-agnostic. Fix: route the error
+	// branch through answerCoreError (machine-not-permitted -> declared 4xx) AND declare the
+	// storage-fault 503 in openapi.yaml. owner: secrets handlers.
+	{id: "OPENAPI-STATEFUL-1", opID: "getSecretAuditTrail", princ: -1, code: 500, reason: "machine principal reaches the legacy default:500 branch (secrets_audit_trail.go:61); should be a declared 4xx via answerCoreError. See TestOpenAPIStrictExceptions."},
+	{id: "OPENAPI-STATEFUL-1", opID: "getSecretOwnershipHistory", princ: -1, code: 500, reason: "machine principal reaches the legacy default:500 branch (secret_ownership_history.go:38); should be a declared 4xx via answerCoreError. See TestOpenAPIStrictExceptions."},
+	{id: "OPENAPI-STATEFUL-1", opID: "listAccessors", princ: -1, code: 500, reason: "machine principal reaches the legacy default:500 branch (secrets_access_list.go:36); should be a declared 4xx via answerCoreError. See TestOpenAPIStrictExceptions."},
+
+	// OPENAPI-STATEFUL-9 (NEW, no existing issue): a duplicate-name template create answers an
+	// undeclared 500. Both handlers DO use answerCoreError, but core wraps the DB unique-
+	// constraint violation in no Conflict sentinel, so errclass classifies it Internal -> 500
+	// instead of 409 Conflict. Deterministically reproduced (create same name twice) by
+	// TestOpenAPIStrictExceptions. Fix: core returns a Conflict-typed sentinel on the name
+	// uniqueness violation (missing-sentinel class). owner: catalog / secret-template handlers.
+	{id: "OPENAPI-STATEFUL-9", opID: "createSecretTemplate", princ: -1, code: 500, reason: "duplicate template name -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (missing Conflict sentinel in core). See TestOpenAPIStrictExceptions."},
+	{id: "OPENAPI-STATEFUL-9", opID: "createRejectionReasonTemplate", princ: -1, code: 500, reason: "duplicate rejection-reason-template name -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (missing Conflict sentinel in core). See TestOpenAPIStrictExceptions."},
 }
 
 // --- Oracle 2: response conformance ----------------------------------------
