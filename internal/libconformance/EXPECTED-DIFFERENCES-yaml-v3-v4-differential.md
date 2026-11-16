@@ -55,6 +55,8 @@ class reaches the failing assertion.
 
 | D19 | `negative-zero-structural` | the `-0` int-vs-float divergence (D10) in a **KEY** position (`-0:`) | key is int `0` → `{0: null}` | key is float negative zero → `{-0.0: null}` | The KEY-position generalisation of D10, exactly as D17 generalises D1/D12: v3 and v4 resolve the key scalar to different types, so the maps do not align by key and the value-only walker falls through to `value-mismatch`. Found by the DF3 multi-doc fuzzer at `-0:`. Recognised by `negZeroEq` (pairs entries across the int-0/float-negzero transformation), scoped to inputs containing `-0`. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4ValueSplit`/`negZeroEq` — red/green proves a genuine key diff and a non-negzero int-vs-float both stay `value-mismatch`. |
 
+| D20 | `v3-rejects:unexpected-eos` | a truncated / unterminated construct — e.g. a block scalar followed by a lone `"` at column 0 (`|\n"`), read by v3 as an unterminated double-quoted scalar | **rejects** (`found unexpected end of stream`) | **accepts** (lenient on the truncated input) | Found by the DF3 fuzz run at `|\n"`. **v4 accepts what v3 rejects** (the migration-hazard direction, like D2/D3) but on malformed/truncated input. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 error `unexpected end of stream`. |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that

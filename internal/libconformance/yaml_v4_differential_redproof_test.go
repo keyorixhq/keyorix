@@ -86,6 +86,15 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// containing `-0`. v4 has no live caller — forward-looking.
 	"negative-zero-structural": true,
 
+	// A truncated / unterminated construct — e.g. a block scalar followed by a lone
+	// `"` at column 0 (`|\n"`), which v3 reads as an unterminated double-quoted
+	// scalar. v3.0.5 REJECTS ("found unexpected end of stream"); v4.0.0 is lenient
+	// and ACCEPTS. Found by the DF3 fuzz run at `|\n"`. v4 accepts what v3 rejects
+	// (the migration-hazard direction, like D2/D3) but on malformed/truncated input.
+	// Not a Keyorix defect (v4 has no live caller). Keyed on the v3 error "unexpected
+	// end of stream".
+	"v3-rejects:unexpected-eos": true,
+
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
 	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null
@@ -650,6 +659,25 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("the structural class must require a `!` tag in the input, got %q", noTag)
 		}
 		t.Logf("oracle-3 D17 structural gating proven: `!`-tag KEY divergence tolerated; genuine key/value diffs and untagged inputs still fail")
+	}
+
+	// ---- Oracle 2 class gating: truncated construct, v3 rejects EOS (D20) ----
+	{
+		in := []byte("|\n\"")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: `|\\n\"` must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:unexpected-eos" {
+			t.Fatalf("`|\\n\"` split must class as v3-rejects:unexpected-eos, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("unexpected-eos class must be tolerated")
+		}
+		t.Logf("oracle-2 unexpected-eos gating proven")
 	}
 
 	// ---- Oracle 3 class gating: -0 in a KEY position (D19 structural) ----

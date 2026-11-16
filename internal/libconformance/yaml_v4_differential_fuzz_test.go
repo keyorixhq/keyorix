@@ -115,6 +115,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"o: &!0000",                 // anchor name with '!' (v3 rejects / v4 lenient)
 		"- -0",                      // -0: v3 int 0 / v4 float -0.0
 		"-0:",                       // -0 as a KEY: v3 int-0 key / v4 float-negzero key (D19)
+		"|\n\"",                     // block scalar + lone quote: v3 rejects EOS / v4 accepts (D20)
 		"{!}",                       // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
 		"[!x]",                      // tagged empty node in flow seq (v3 rejects / v4 "")
 		"[0: !]",                    // tagged empty value in flow seq (v3 rejects / v4 "")
@@ -272,6 +273,13 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		return side + ":tag-char"
 	case strings.Contains(msg, "mapping values are not allowed"):
 		return side + ":mapping-context"
+	case strings.Contains(msg, "unexpected end of stream"):
+		// A truncated / unterminated construct — e.g. a block scalar followed by a
+		// lone `"` at column 0 (`|\n"`), which v3 reads as an unterminated
+		// double-quoted scalar. v3 REJECTS ("found unexpected end of stream"); v4 is
+		// lenient and ACCEPTS. v4 accepts what v3 rejects (same strictness direction
+		// as D2/D3 — the migration-hazard direction) but benignly on malformed input.
+		return side + ":unexpected-eos"
 	case strings.Contains(msg, "comment without preceding whitespace"):
 		// A `#` not preceded by whitespace (e.g. "|#0", "a#b" in some contexts). The
 		// YAML spec requires a comment to be preceded by whitespace; v4 enforces this
