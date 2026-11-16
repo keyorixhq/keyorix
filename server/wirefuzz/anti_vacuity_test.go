@@ -95,29 +95,47 @@ func TestAntiVacuity_HalfCloseCausesFailClosed(t *testing.T) {
 	w := buildWireWorld(t)
 	wire := []byte("GET /api/v1/secrets/value?ref=" + w.refA + " HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + w.adminTok + "\r\n\r\n")
 
-	conn, err := net.DialTimeout("tcp", w.addr, 3*time.Second)
-	if err != nil {
-		t.Fatal(err)
+	// net/http cancels the request context on the FIN, and where the cancellation lands is a
+	// race against the handler: the auth middleware fails closed with 503, a cancelled
+	// authorization lookup denies with 403, a cancelled storage read reports 500 (seen in CI
+	// on #4201), and when the handler wins the race the read completes with 200 (seen on main
+	// at about 1 run in 20, TQR-RED-1). The premise is only that a half-close CAN turn an
+	// authorized read into a fail-closed answer, so retry until one attempt does; every
+	// fail-closed answer must carry no secret value.
+	failClosed := func(b []byte) bool {
+		for _, st := range []string{"HTTP/1.1 503", "HTTP/1.1 500", "HTTP/1.1 403"} {
+			if bytes.HasPrefix(b, []byte(st)) {
+				return true
+			}
+		}
+		return false
 	}
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
-	if _, err := conn.Write(wire); err != nil {
-		t.Fatal(err)
+	var last []byte
+	ok := false
+	for attempt := 0; attempt < 20 && !ok; attempt++ {
+		conn, err := net.DialTimeout("tcp", w.addr, 3*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
+		if _, err := conn.Write(wire); err != nil {
+			_ = conn.Close()
+			t.Fatal(err)
+		}
+		if tc, isTCP := conn.(*net.TCPConn); isTCP {
+			_ = tc.CloseWrite()
+		}
+		var buf bytes.Buffer
+		_, _ = buf.ReadFrom(conn)
+		_ = conn.Close()
+		last = buf.Bytes()
+		ok = failClosed(last)
+		if ok && bytes.Contains(last, []byte(w.valA)) {
+			t.Fatalf("a fail-closed answer to a half-closed read carries the secret value: %q", truncate(last, 200))
+		}
 	}
-	if tc, ok := conn.(*net.TCPConn); ok {
-		_ = tc.CloseWrite()
-	}
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(conn)
-	if bytes.Contains(buf.Bytes(), []byte(w.valA)) {
-		t.Fatal("the server now serves a half-closed authorized read: the premise of the no-half-close driver rule (oracles_test.go header) no longer holds; update that comment and this test")
-	}
-	// net/http cancels the request context on the FIN; where the cancellation lands decides
-	// the status: the auth middleware fails closed with 503, or (when auth already passed)
-	// the handler's storage read reports "context canceled" as 500 (seen in CI on #4201).
-	// Both are fail-closed with no secret value; only a 200 would break the premise.
-	if !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 503")) && !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 500")) {
-		t.Fatalf("expected a fail-closed 503 (or 500 from a cancelled handler read) for a half-closed authorized read, got %q", truncate(buf.Bytes(), 80))
+	if !ok {
+		t.Fatalf("no half-closed authorized read failed closed in 20 attempts: the premise of the no-half-close driver rule (oracles_test.go header) no longer holds; update that comment and this test; last answer %q", truncate(last, 80))
 	}
 
 	// ...while exchange() (no half-close) gets the real answer.
