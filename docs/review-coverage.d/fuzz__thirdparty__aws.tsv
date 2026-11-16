@@ -1,0 +1,1 @@
+fuzz/thirdparty/aws	none	-	test-only hostile-server fuzz harness for third-party SDK clients; not part of any shipped build	test-helper

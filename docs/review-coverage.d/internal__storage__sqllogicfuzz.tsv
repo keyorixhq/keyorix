@@ -1,0 +1,1 @@
+internal/storage/sqllogicfuzz	none	-	test-only SQL logic-bug fuzz harness (TLP, NoREC, cross-dialect, injection structure) over a synthetic schema; not part of any shipped build	test-helper

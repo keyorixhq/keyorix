@@ -1,0 +1,1 @@
+TestFullRowWriteGuard_WidenedScanNoStaleFullRowWrite	internal/storage/store	#2704	widens the stale full-row write guard (#2704) to every derived production package importing gorm or models, and to UpdateColumns(struct) and CreateInBatches under UpdateAll (STALE-ROW-WRITES-NOV-1); report-only until its first green nightly on main

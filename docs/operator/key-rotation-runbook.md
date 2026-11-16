@@ -231,7 +231,7 @@ There is no command that reverses a DEK rotation: no `admin encryption` subcomma
 `rotate` puts the old DEK back. The two ways out are **roll forward** (finish the rotation, get the
 new key set to where it is needed, or run `keyorix-server admin encryption rotate --config ./keyorix.yaml --confirm`
 again to move to a fresh DEK) and **restore the pre-rotation archive**
-(`keyorix-server admin restore --input <archive> --overwrite-existing --config ./keyorix.yaml`,
+(`keyorix-server admin restore --input <archive> --overwrite-existing --replace-existing-data --config ./keyorix.yaml`,
 with `--allow-rollback` when the restore refuses an archive that is behind the host's audit
 trail; the full procedure is below). Roll forward whenever you can: a restore loses every write
 made since the archive was taken. Whichever you choose, do not rotate with an N-1 admin binary
@@ -306,16 +306,22 @@ Restoring the archive (server stopped, same config and key paths, passphrase cur
 archive was taken):
 
 ```bash
-keyorix-server admin restore --input /backups/keyorix-pre-rotation-<date>.tar.gz --overwrite-existing --config ./keyorix.yaml
+keyorix-server admin restore --input /backups/keyorix-pre-rotation-<date>.tar.gz --overwrite-existing --replace-existing-data --config ./keyorix.yaml
 ```
 
 `--overwrite-existing` moves each existing file aside to `<path>.pre-restore-<timestamp>` rather
-than truncating it. The restore verifies the archive's signed manifest before writing, runs
+than truncating it. On its own it only replaces an empty (migrated) database, the re-run of an
+interrupted restore: a database that holds data is refused with `the restore target database
+holds data (tables with rows: ...)`, and nothing is changed. Restoring over the rotated
+deployment replaces its data, so it also takes `--replace-existing-data`. On SQLite the database
+file is moved aside like the key files; on PostgreSQL its rows are deleted inside the load
+transaction and only a backup keeps them, so take one (`admin backup`) before the restore. The restore verifies the archive's signed manifest before writing, runs
 `verify-audit` and fails on BROKEN. It refuses an archive that is behind the host's
 `.audit-highwater-witness`; `--allow-rollback` overrides that, and records an
 `admin.restore_rollback_override` audit event. Whether a pre-rotation archive trips that check
 depends on whether the rotation advanced the witness; be ready for either. In the rehearsal
-(SQLite, one rotation and one write after the archive) it did:
+(SQLite, one rotation and one write after the archive; recorded before `--replace-existing-data`
+existed, which both commands now also need) it did:
 
 ```text
 $ keyorix-server admin restore --input ./backups/pre-rotation-2.tar.gz --overwrite-existing

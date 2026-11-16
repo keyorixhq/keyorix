@@ -1,0 +1,1 @@
+internal/storage/store/full_row_write_widened_guard_test.go	docs/full-row-write-exempt.tsv,docs/guard-rollout.d/TestFullRowWriteGuard_WidenedScanNoStaleFullRowWrite.tsv,!operator/**	exemption ledger and its rollout row; walks the root module's .go files (a Go change already runs it) and stats go.mod to skip other modules

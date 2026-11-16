@@ -146,6 +146,58 @@ var plants = append([]plant{
 		op:             "breakglass.activate",
 		minUnexplained: 10,
 	},
+	{
+		// V8: removes the access-review campaign-open router gate
+		// (RequireScopedPermission roles.assign@project). core.OpenAccessReviewCampaign
+		// performs NO authorization of its own (matrix core_refusal:"none" — opening is
+		// deliberately NOT human-gated so the scheduler can auto-open overdue campaigns),
+		// so with the router gate gone REST lets any authenticated principal open a
+		// recertification campaign, over-allowing every principal the roles.assign@project
+		// model rule denies. This is the clean router-gate differential the binding checks.
+		name:           "access-review-campaign-open-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/campaigns", catalogHandler.OpenAccessReviewCampaign)`,
+		repl:           `r.Post("/projects/{id}/access-review/campaigns", catalogHandler.OpenAccessReviewCampaign) // PLANT: router gate removed`,
+		op:             "access-review.campaign.open",
+		minUnexplained: 10,
+	},
+	{
+		// V8: removes the risk-exception create router gate (RequirePermission
+		// system.write@global). core.CreateRiskException performs no permission check
+		// (matrix core_refusal:"none"; it enforces only human-only + a bounded sunset +
+		// the SoD-live-violation check for category=="sod"), so with the router gate gone
+		// REST lets any authenticated HUMAN file a governed risk acceptance, over-allowing
+		// every principal the system.write@global model rule denies. (Machine actors stay
+		// refused by core's human-only rule, so the over-allows are the human cases.)
+		name:           "riskexception-create-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathRiskExceptions, dashboardHandler.CreateRiskException)`,
+		repl:           `r.Post(pathRiskExceptions, dashboardHandler.CreateRiskException) // PLANT: router gate removed`,
+		op:             "riskexception.create",
+		minUnexplained: 10,
+	},
+	{
+		// V5b area 1: removes the ENVIRONMENT clause from userPrincipalPermissionSQL
+		// — the predicate core.Authorize resolves through
+		// (ResolveUserPermissionAt) that makes a role grant scoped to
+		// environment E apply only
+		// when the check's target environment is E (the exact shape INV-CORE-15
+		// and #2857 turned on: a grant at {project, env X} must not satisfy a
+		// check in a different environment). With the clause gone, an
+		// environment-scoped grant becomes an all-environments wildcard, so a
+		// principal granted secrets.read ONLY in prod can read the staging2 secret
+		// of the same project — core, REST and gRPC all allow it (all resolve
+		// through this one query), and the model, which still matches the
+		// environment, denies: a transport-allows-over-model-denies case no waiver
+		// absorbs ("unexplained"). The cross-environment grants the sweep offers
+		// (envVariations) are what expose it; a clean sweep records none.
+		name:           "env-scope-clause-removed",
+		file:           "internal/storage/store/local_principal_permission.go",
+		anchor:         "   AND (user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.id IS NOT NULL AND environments.deleted_at IS NULL))",
+		repl:           "   AND (user_roles.environment_id = ? OR 1 = 1) /* PLANT: env-scope clause removed */",
+		op:             "secret.read.env",
+		minUnexplained: 2,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after

@@ -33,7 +33,9 @@ func resetBackupRestoreFlags(t *testing.T) {
 		restoreInput, restoreOverwriteExisting, restoreAllowRollback, restoreMaxEntryBytes, restoreMaxTotalBytes
 	origCfgPath := configPathFlag
 	origForce := forceFlag
+	origReplace := restoreReplaceExistingData
 	t.Cleanup(func() {
+		restoreReplaceExistingData = origReplace
 		backupOutput = origBackupOutput
 		restoreInput, restoreOverwriteExisting, restoreAllowRollback, restoreMaxEntryBytes, restoreMaxTotalBytes =
 			origInput, origOverwrite, origAllowRollback, origMaxEntry, origMaxTotal

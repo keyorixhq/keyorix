@@ -174,6 +174,28 @@ var ErrDuplicateUsername = errors.New("a user with this username already exists"
 // "project name already in use" error rather than a raw constraint-violation message.
 var ErrDuplicateProjectName = errors.New("a project with this name already exists")
 
+// ErrDuplicateEnvironmentName is returned (wrapped) by CreateEnvironment when the insert
+// collides with the unique index on (project_id, name) (idx_env_project_name; a
+// soft-deleted environment keeps its name). REST answers 409, never a 500 carrying the
+// driver's constraint text.
+var ErrDuplicateEnvironmentName = errors.New("an environment with this name already exists in the project")
+
+// ErrDuplicateRoleName is returned (wrapped) by CreateRole when the insert collides with
+// the unique index on roles.name_folded (uniq_roles_name_folded, #1642). REST answers 409
+// by this sentinel, not by the driver's constraint text.
+var ErrDuplicateRoleName = errors.New("a role with this name already exists")
+
+// ErrEnvironmentHasSecrets is returned (wrapped) by DeleteEnvironment when the environment
+// still holds active secrets. The refusal is about the target's state: REST 409, gRPC
+// FailedPrecondition.
+var ErrEnvironmentHasSecrets = errors.New("environment still holds active secrets")
+
+// ErrParentDeleted is returned (wrapped) by RestoreEnvironment and RestoreSecret when the
+// parent project (or environment) is itself soft-deleted, so restoring the child would
+// resurrect a usable scope under a deleted parent. The refusal is about the target's
+// state: REST 409, gRPC FailedPrecondition.
+var ErrParentDeleted = errors.New("parent is deleted")
+
 // ErrDuplicateGroupName is returned (wrapped) by CreateGroup when the insert collides
 // with the partial unique index on groups.name_folded (live rows only, #1642). Callers
 // translate it into a 409 with a message naming the conflict instead of a bare 500

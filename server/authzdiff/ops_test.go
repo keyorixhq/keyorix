@@ -79,6 +79,11 @@ type opSpec struct {
 	// globalHandler: the REST route is served through a package-level handler
 	// global (the /users routes); the REST leg re-points it under routerMu.
 	globalHandler bool
+	// envScoped: the op authorizes at a SPECIFIC environment (req.env != 0), and
+	// the sweep/fuzzer additionally offer the custom principal an
+	// environment-scoped grant ("<proj>@prod"/"<proj>@stg" variation scopes). Only
+	// env-scoped ops pay those extra cases (envVariations). V5b area 1.
+	envScoped bool
 	// restOK, when set, decides "allowed" for a REST 2xx from the body (bulk
 	// ops answer 200 even when the item was refused). Nil = any 2xx is allowed.
 	restOK func(body []byte, fx *fixtures, t tgt) bool
@@ -144,7 +149,7 @@ func actorCtx(ctx context.Context, p *principal) context.Context {
 // ops is every bound operation: the hand-bound Phase 2 set plus the Phase 4
 // family bindings. The sweep orders them by family (coverage_test.go).
 func ops() []opSpec {
-	return append(append(append(baseOps(), familyOps()...), phase5Ops()...), v5Ops()...)
+	return append(append(append(append(append(baseOps(), familyOps()...), phase5Ops()...), v5Ops()...), v8Ops()...), v5bOps()...)
 }
 
 func baseOps() []opSpec {

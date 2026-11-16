@@ -91,7 +91,6 @@ Already tracked elsewhere, cited in the documents rather than refiled:
 | [#2801](https://github.com/keyorixhq/keyorix/issues/2801), [#2802](https://github.com/keyorixhq/keyorix/issues/2802) | sharing-and-acl.md SHARE-13 | Fixed on `main` in b8ce46cfc (`reshareOntoLiveRow`: column-scoped, conditional on a live row) and pinned by `TestCreateShareRecord_RevokeBetweenReadAndWrite_StaysRevoked`, `TestCreateShareRecord_LostCreateRace_KeepsCallerExpiry` and `TestCreateShareRecord_LostCreateRace_WinnerRevoked_StaysRevoked`; the coordinator can close them |
 | [#3397](https://github.com/keyorixhq/keyorix/issues/3397) | scim-and-sso-accounts.md SCIM-1 | Design decision: the SCIM token strength check is length-only; recorded, not changed here |
 | BACKLOG `JIT-OFFBOARDING-GAP` | scim-and-sso-accounts.md SCIM-7 | Known gap, long-term, not started: an IdP disable or SCIM deactivation does not revoke the PATs and sessions of an SSO/JIT-claimed (`sso:`) account (decided 2026-10-20, option A of #3493) |
-| [#3494](https://github.com/keyorixhq/keyorix/issues/3494) | scim-and-sso-accounts.md section 4 | Known issue: SCIM Replace/Patch/Delete map a storage failure to 404, not 500 |
 | [#3367](https://github.com/keyorixhq/keyorix/pull/3367) | break-glass.md BG-6 | AUDIT-TX-2; BG-6 no longer depends on it (BREAKGLASS-OWED-1 is on `main`) |
 
 ### Keeping the Evidence cells honest
