@@ -128,6 +128,14 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// fuzz run at "o: &!0000". Not a Keyorix defect (v4 has no live caller). Keyed on
 	// the v3 anchor-char error alone.
 	"v3-rejects:anchor-char": true,
+
+	// The literal `-0`. v3.0.5 resolves it to int 0; v4.0.0 resolves it to float64
+	// NEGATIVE ZERO (-0.0). Every other number tested (+0, -0.0, 0x0, 010, 1e3, …)
+	// agrees in BOTH — only the bare `-0` splits. A genuine but tiny type/value
+	// divergence (a config `-0` would be an int in v3, a float in v4). Found by the
+	// DF2 fuzz run at "- -0". Not a Keyorix defect (v4 has no live caller). Recognised
+	// only for int-0-vs-float-negzero leaves.
+	"negative-zero-int-vs-float": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -446,6 +454,31 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("anchor-char class must be listed (tolerated)")
 		}
 		t.Logf("oracle-2 anchor-char gating proven")
+	}
+
+	// ---- Oracle 3 class gating: -0 int-vs-float ----
+	{
+		in := []byte("- -0")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatal(err)
+		}
+		class := classifyYAMLV4ValueSplit(in, v3v, v4v)
+		if class != "negative-zero-int-vs-float" {
+			t.Fatalf("'-0' divergence must class as negative-zero-int-vs-float, got %q (v3=%#v v4=%#v)", class, v3v, v4v)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("negative-zero class must be listed (tolerated)")
+		}
+		// RED: an int-vs-float diff that is NOT negative zero must stay value-mismatch.
+		notNegZero := classifyYAMLV4ValueSplit([]byte("x: 1"), map[string]any{"x": 1}, map[string]any{"x": float64(1)})
+		if notNegZero != "value-mismatch" {
+			t.Fatalf("a non-negzero int-vs-float diff must stay value-mismatch, got %q", notNegZero)
+		}
+		t.Logf("oracle-3 negative-zero gating proven")
 	}
 }
 

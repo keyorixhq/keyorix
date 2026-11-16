@@ -2,6 +2,7 @@ package libconformance
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"regexp"
@@ -100,6 +101,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"|\n00",                     // under-indented block scalar (v3 drops to "" / v4 keeps "00")
 		"|\n  00",                   // NOT a split: properly indented block scalar agrees
 		"o: &!0000",                 // anchor name with '!' (v3 rejects / v4 lenient)
+		"- -0",                      // -0: v3 int 0 / v4 float -0.0
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
@@ -262,7 +264,73 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if diffs, ok := v3EmptyVsV4NonEmptyStringOnly(v3val, v4val); ok && diffs > 0 && inputHasBlockScalarHeader(data) {
 		return "block-scalar-underindent"
 	}
+	// The literal `-0`: v3 resolves it to int 0, v4 to float64 negative zero.
+	if diffs, ok := negZeroIntVsFloatOnly(v3val, v4val); ok && diffs > 0 {
+		return "negative-zero-int-vs-float"
+	}
 	return "value-mismatch"
+}
+
+// negZeroIntVsFloatOnly reports whether a and b are structurally identical except
+// that wherever they differ, a is int 0 and b is a float64 negative zero (the
+// `-0` resolution change).
+func negZeroIntVsFloatOnly(a, b any) (int, bool) {
+	if ai, ok := a.(int); ok {
+		if bf, ok := b.(float64); ok {
+			if ai == 0 && bf == 0 && math.Signbit(bf) {
+				return 1, true
+			}
+			return 0, false
+		}
+		if bi, ok := b.(int); ok && ai == bi {
+			return 0, true
+		}
+		return 0, false
+	}
+	if a == nil || b == nil {
+		return 0, reflect.DeepEqual(a, b)
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return 0, false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for _, k := range ra.MapKeys() {
+			bval := rb.MapIndex(k)
+			if !bval.IsValid() {
+				return 0, false
+			}
+			n, ok := negZeroIntVsFloatOnly(ra.MapIndex(k).Interface(), bval.Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for i := range ra.Len() {
+			n, ok := negZeroIntVsFloatOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	default:
+		if reflect.DeepEqual(a, b) {
+			return 0, true
+		}
+		return 0, false
+	}
 }
 
 // blockScalarHeaderRe matches a block-scalar header (`|` or `>`, optional indent
