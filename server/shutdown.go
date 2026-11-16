@@ -10,9 +10,11 @@ import (
 
 // flushLastUsedOnShutdown stops the last-used coalescer on graceful shutdown:
 // it writes the stamps the core recorded but has not yet flushed
-// (internal/core/last_used_coalescer.go) and then latches the coalescer shut so
-// no timer or background flush goroutine can fire against the store after this
-// returns. StopLastUsed (not FlushLastUsed) is used deliberately: the servers
+// (internal/core/last_used_coalescer.go) and latches the coalescer shut so no
+// new timer or background flush starts after this returns; a background flush
+// in flight is cancelled and waited for within the same deadline (only a store
+// call that ignores cancellation can outlive it, see lastUsedCoalescer.Stop).
+// StopLastUsed (not FlushLastUsed) is used deliberately: the servers
 // have already drained here, but a plain flush leaves the coalescer able to
 // re-arm its timer on any late stamp, and a failed final flush re-arms it from
 // finishFlush — either would touch the store after the process considers
