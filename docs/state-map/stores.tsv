@@ -153,6 +153,7 @@ scripts/fuzzing/configspace/render.go (os.WriteFile)	file_write	scripts/fuzzing/
 scripts/fuzzing/configspace/runner.go (os.Create)	file_write	scripts/fuzzing/configspace	1
 scripts/fuzzing/configspace/runner.go (os.WriteFile)	file_write	scripts/fuzzing/configspace	2
 scripts/fuzzing/invariant-map/main.go (os.WriteFile)	file_write	scripts/fuzzing/invariant-map	1
+scripts/fuzzing/reachgen/cmd/reachgen/main.go (os.WriteFile)	file_write	scripts/fuzzing/reachgen/cmd/reachgen	2
 scripts/fuzzing/reencode-seeds.go (os.WriteFile)	file_write	scripts/fuzzing	1
 scripts/fuzzing/sinkmap/main.go (os.WriteFile)	file_write	scripts/fuzzing/sinkmap	2
 scripts/metrics/cfgkeys/main.go (os.WriteFile)	file_write	scripts/metrics/cfgkeys	1
