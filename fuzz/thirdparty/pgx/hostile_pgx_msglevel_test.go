@@ -11,14 +11,14 @@
 //   - unexpected message order (DataRow before RowDescription, missing ReadyForQuery).
 //
 // Oracles (sound only; each is also covered by a red proof — see msglevel_redproof_test):
-//   1. No panic escapes pgx's error path; bounded time (runWithOracles).
-//   4. No credential leak: the canary password/DSN never appears in any error pgx
-//      returns to the caller (scanned with internal/fuzzutil/canary).
-//   5. Decoding parity: for every row pgx returns, pgx's raw column bytes
-//      (rows.RawValues()) equal the exact bytes this harness encoded into the DataRow.
-//      A mismatch means pgx mis-framed a column — a genuine finding.
-//   6. Response mixing: a hostile reply to statement A never contaminates the decoded
-//      result of statement B on the same connection (FuzzPgxResponseMixing).
+//  1. No panic escapes pgx's error path; bounded time (runWithOracles).
+//  4. No credential leak: the canary password/DSN never appears in any error pgx
+//     returns to the caller (scanned with internal/fuzzutil/canary).
+//  5. Decoding parity: for every row pgx returns, pgx's raw column bytes
+//     (rows.RawValues()) equal the exact bytes this harness encoded into the DataRow.
+//     A mismatch means pgx mis-framed a column — a genuine finding.
+//  6. Response mixing: a hostile reply to statement A never contaminates the decoded
+//     result of statement B on the same connection (FuzzPgxResponseMixing).
 //
 // What these oracles do NOT verify: see the report (.scratch/pp1-REPORT.md).
 package pgxhostile

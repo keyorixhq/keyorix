@@ -9,13 +9,13 @@
 // count) that a raw-byte seed rarely reaches.
 //
 // Oracles (sound only; each has a red proof in hostile_mysql_msglevel_redproof_test.go):
-//   1. No panic escapes the driver's error path (except the ALREADY-KNOWN short-packet
-//      class, recorded by isKnownShortPacketPanic); bounded time (runWithOracles).
-//   4. No credential leak: the canary password never appears in any error the driver
-//      returns to the caller (internal/fuzzutil/canary).
-//   5. Decoding parity: for a coherent one-row result set, the []byte the driver Scans
-//      equals the exact value bytes this harness length-encoded into the row. A mismatch
-//      means the driver mis-framed the value — a genuine finding.
+//  1. No panic escapes the driver's error path (except the ALREADY-KNOWN short-packet
+//     class, recorded by isKnownShortPacketPanic); bounded time (runWithOracles).
+//  4. No credential leak: the canary password never appears in any error the driver
+//     returns to the caller (internal/fuzzutil/canary).
+//  5. Decoding parity: for a coherent one-row result set, the []byte the driver Scans
+//     equals the exact value bytes this harness length-encoded into the row. A mismatch
+//     means the driver mis-framed the value — a genuine finding.
 //
 // Oracle 3 (LOCAL INFILE) is in hostile_mysql_localinfile_canary_test.go; oracle 6
 // (response mixing) in hostile_mysql_mixing_test.go; oracle 2 (TLS) in
