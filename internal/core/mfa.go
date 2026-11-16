@@ -19,10 +19,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // ErrMFARequired is returned by Login when the password is correct but the
@@ -999,7 +999,7 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 			}
 		}
 	}
-	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
+	if !ok && codeOrPassword != "" && kdfmeter.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
 		if !secondFactorEnrolled {
 			ok = true
 		} else if active, aerr := c.userStillActiveForGrant(ctx, user.ID); aerr != nil {

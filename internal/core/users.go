@@ -16,8 +16,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // emailRegex/usernameMinLen/usernameMaxLen/displayNameMinLen/displayNameMaxLen
@@ -128,7 +128,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 		return nil, "", refusal
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), int(bcryptCost.Load()))
+	hash, err := kdfmeter.GenerateFromPassword([]byte(req.Password), int(bcryptCost.Load()))
 	if err != nil {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
