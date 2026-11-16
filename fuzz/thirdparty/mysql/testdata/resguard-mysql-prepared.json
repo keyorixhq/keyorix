@@ -1,0 +1,23 @@
+{
+  "target": "mysql_prepared",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 6,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 21968,
+      "per_byte": 633.5,
+      "abs_max": 87872
+    },
+    "cpu_ns": {
+      "floor": 1234000,
+      "per_byte": 24680,
+      "abs_max": 4936000
+    },
+    "mallocs": {
+      "floor": 137,
+      "per_byte": 3.625,
+      "abs_max": 548
+    }
+  }
+}
