@@ -1,0 +1,56 @@
+{
+  "target": "backupfmt_extract",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 9,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 92608,
+      "per_byte": 91.68597168597168,
+      "abs_max": 370432
+    },
+    "cpu_ns": {
+      "floor": 5338000,
+      "per_byte": 1084.9420849420849,
+      "abs_max": 21352000
+    },
+    "disk_blocks": {
+      "floor": 2056,
+      "per_byte": 0.010296010296010296,
+      "abs_max": 8224,
+      "mode": "absolute"
+    },
+    "disk_bytes": {
+      "floor": 1048869,
+      "per_byte": 2.8815958815958815,
+      "abs_max": 4195476,
+      "mode": "absolute"
+    },
+    "disk_files": {
+      "floor": 5,
+      "per_byte": 0.006435006435006435,
+      "abs_max": 20
+    },
+    "live_heap": {
+      "floor": 1853760,
+      "per_byte": 2385.7915057915056,
+      "abs_max": 7415040
+    },
+    "mallocs": {
+      "floor": 233,
+      "per_byte": 0.29987129987129985,
+      "abs_max": 932
+    },
+    "wall_ns": {
+      "floor": 5233018,
+      "per_byte": 615.9163449163449,
+      "abs_max": 20932072
+    },
+    "write_bytes": {
+      "floor": 1052672,
+      "per_byte": 5.271557271557271,
+      "abs_max": 4210688,
+      "mode": "absolute"
+    }
+  }
+}
