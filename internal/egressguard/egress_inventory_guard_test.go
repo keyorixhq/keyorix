@@ -855,6 +855,7 @@ var dependencyKinds = map[string]string{
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity":                  "client",
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys":    "client",
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets": "client",
+	"github.com/BurntSushi/toml":                                        "local: TOML parser, used by the hostile-input fuzz targets; no network code",
 	"github.com/anishathalye/porcupine":                                 "local: linearizability checker for test tooling",
 	"github.com/aws/aws-sdk-go-v2":                                      "local: core types; the clients are config, credentials and service/*",
 	"github.com/aws/aws-sdk-go-v2/config":                               "client",

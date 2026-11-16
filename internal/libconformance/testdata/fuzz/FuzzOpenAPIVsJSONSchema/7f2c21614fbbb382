@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("{\"type\":\"integer\"}")
+[]byte("1e-1000")

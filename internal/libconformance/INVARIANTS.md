@@ -16,3 +16,8 @@ New invariants go in `INVARIANTS.d/INV-LIBCONF-<kebab-slug>.md`, one per file, p
 root `CLAUDE.md` convention. The package links a minimal coverage map because the targets
 call only the libraries, never Keyorix code. It also holds the differential and
 conformance fuzz targets over sibling parsing / schema libraries.
+
+The DF1 cross-library parser-differential targets live here: each feeds ONE input to two
+independent library readings and fails on a disagreement that is not on an
+EXPECTED-DIFFERENCE allowlist (reason per entry), with a companion dead-entry test so a
+stale allowlist row cannot hide a regression.
