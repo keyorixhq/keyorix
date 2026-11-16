@@ -1,0 +1,33 @@
+{
+  "target": "goxmldsig_sig",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 24,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 240872,
+      "per_byte": 9407.04,
+      "abs_max": 963488
+    },
+    "cpu_ns": {
+      "floor": 1673000,
+      "per_byte": 62480,
+      "abs_max": 6692000
+    },
+    "live_heap": {
+      "floor": 1073456,
+      "per_byte": 42938.24,
+      "abs_max": 4293824
+    },
+    "mallocs": {
+      "floor": 2313,
+      "per_byte": 88,
+      "abs_max": 9252
+    },
+    "wall_ns": {
+      "floor": 1434444,
+      "per_byte": 55860.48,
+      "abs_max": 5737776
+    }
+  }
+}
