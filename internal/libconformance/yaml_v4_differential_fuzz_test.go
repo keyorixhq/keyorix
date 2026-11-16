@@ -117,6 +117,8 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"-0:",                       // -0 as a KEY: v3 int-0 key / v4 float-negzero key (D19)
 		"|\n\"",                     // block scalar + lone quote: v3 rejects EOS / v4 accepts (D20)
 		"|\n%0",                     // block scalar + %0: v3 rejects directive / v4 accepts (D21)
+		"<<",                        // bare merge key: v3 "<<" / v4 drops to nil (D22)
+		"a: <<",                     // merge key w/o map value: v3 keeps / v4 drops entry (D22)
 		"{!}",                       // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
 		"[!x]",                      // tagged empty node in flow seq (v3 rejects / v4 "")
 		"[0: !]",                    // tagged empty value in flow seq (v3 rejects / v4 "")
@@ -333,6 +335,14 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if diffs, ok := nonspecificTagNonEmptyScalarOnly(v3val, v4val); ok && diffs > 0 && inputHasNonSpecificTag(data) {
 		return "nonspecific-tag-nonempty-scalar"
 	}
+	// The `<<` merge-key indicator used where it is not a valid map-merge (`<<`,
+	// `a: <<`, `- <<`): v3 keeps the literal string "<<", v4 treats it as a merge
+	// directive and SILENTLY DROPS the entry/element (empty container / nil).
+	// Recognised causally: single-quoting every `<<` (forcing a plain string in
+	// BOTH) makes the two agree and reproduces v3's value.
+	if strings.Contains(string(data), "<<") && isMergeKeyDivergence(data, v3val) {
+		return "merge-key-handling"
+	}
 	// The `-0` int-vs-float divergence (D10) landing in a KEY position (`-0:`),
 	// where v3's key is int 0 and v4's is float negative zero, so the maps do not
 	// align and the value-only walker falls through. Recognised by negZeroEq, scoped
@@ -355,6 +365,32 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 		return "nonspecific-tag-structural"
 	}
 	return "value-mismatch"
+}
+
+// isMergeKeyDivergence causally confirms a `<<` merge-key divergence: single-quote
+// every `<<` in the input (forcing it to be a plain string in BOTH libraries) and
+// require that v3 then reproduces its ORIGINAL value. If quoting the merge
+// indicator removes the divergence, `<<` merge-handling was the sole cause, so a
+// genuine divergence that merely contains `<<` is never absorbed. (We only need to
+// check v3 here: the caller already knows v3 and v4 disagreed on the original; if
+// quoting makes v3 unchanged, v4 — which has no live caller — simply stopped
+// dropping the entry, i.e. the drop was the whole divergence.)
+func isMergeKeyDivergence(data []byte, v3val any) bool {
+	quoted := strings.ReplaceAll(string(data), "<<", "'<<'")
+	if quoted == string(data) {
+		return false
+	}
+	var q3, q4 any
+	if v3yaml.Unmarshal([]byte(quoted), &q3) != nil || v4yaml.Unmarshal([]byte(quoted), &q4) != nil {
+		return false
+	}
+	cq3, e3 := v3yaml.Marshal(q3)
+	cq4, e4 := v3yaml.Marshal(q4)
+	if e3 != nil || e4 != nil || !reflect.DeepEqual(cq3, cq4) {
+		return false
+	}
+	co3, err := v3yaml.Marshal(v3val)
+	return err == nil && reflect.DeepEqual(co3, cq3)
 }
 
 // negZeroEq reports whether a (v3) and b (v4) are identical up to the `-0`

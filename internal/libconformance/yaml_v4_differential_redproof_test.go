@@ -111,6 +111,16 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// "expected <document start>" error with the v3-rejecting side.
 	"v3-rejects:doc-start": true,
 
+	// The `<<` merge-key indicator used where it is not a valid map-merge (`<<`,
+	// `a: <<`, `- <<`, `k: <<`). v3.0.5 keeps the literal string "<<"; v4.0.0 treats
+	// it as a merge directive and SILENTLY DROPS the entry/element (empty container
+	// or nil) -- a v4 silent-data-loss footgun. Found by the DF3 struct fuzzer at
+	// `<<`. Recognised causally by isMergeKeyDivergence (single-quoting every `<<`
+	// makes the two agree and reproduces v3's value). Not a Keyorix defect (v4 has no
+	// live caller); a forward-looking v4 data-loss note. Scoped to inputs containing
+	// `<<`.
+	"merge-key-handling": true,
+
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
 	// not find expected key"); v4.0.0 ACCEPTS it, decoding to a null key -> null
@@ -675,6 +685,37 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("the structural class must require a `!` tag in the input, got %q", noTag)
 		}
 		t.Logf("oracle-3 D17 structural gating proven: `!`-tag KEY divergence tolerated; genuine key/value diffs and untagged inputs still fail")
+	}
+
+	// ---- Oracle 3 class gating: `<<` merge-key handling (D22) ----
+	{
+		for _, in := range []string{"a: <<", "- <<", "k: <<"} {
+			var v3v, v4v any
+			if err := v3yaml.Unmarshal([]byte(in), &v3v); err != nil {
+				t.Fatalf("%q: v3 unmarshal: %v", in, err)
+			}
+			if err := v4yaml.Unmarshal([]byte(in), &v4v); err != nil {
+				t.Fatalf("%q: v4 unmarshal: %v", in, err)
+			}
+			cb3, _ := v3yaml.Marshal(v3v)
+			cb4, _ := v3yaml.Marshal(v4v)
+			if reflect.DeepEqual(cb3, cb4) {
+				t.Fatalf("precondition %q: v3/v4 must disagree (v3=%q v4=%q)", in, cb3, cb4)
+			}
+			class := classifyYAMLV4ValueSplit([]byte(in), v3v, v4v)
+			if class != "merge-key-handling" {
+				t.Fatalf("%q: want class merge-key-handling, got %q (v3=%#v v4=%#v)", in, class, v3v, v4v)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("merge-key-handling must be tolerated")
+			}
+		}
+		// RED: a genuine divergence that merely contains `<<` inside a quoted string
+		// (so quoting does not change anything causal) must NOT be absorbed.
+		if isMergeKeyDivergence([]byte("x: 1"), map[string]any{"x": 1}) {
+			t.Fatalf("an input without a bare `<<` must not be recognised as merge-key")
+		}
+		t.Logf("oracle-3 D22 merge-key gating proven: `<<` drop tolerated causally; non-merge inputs still fail")
 	}
 
 	// ---- Oracle 2 class gating: v3 rejects a directive (D21) ----
