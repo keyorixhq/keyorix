@@ -85,6 +85,10 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"? [a, b]\n: val\n",         // complex mapping key (both reject)
 		"!",                         // non-specific tag on empty scalar (v3 null / v4 "")
 		"a: !\nb: !!str\n",          // mixed: ! diverges, !!str agrees
+		":",                         // empty implicit key (v3 rejects / v4 null key)
+		"- :\n",                     // empty implicit key inside a sequence
+		"::",                        // NOT a split: both accept (key "::")
+		"0: !",                      // ! on empty scalar under an INT key (map[any]any)
 		"'': empty-key\n",           // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
@@ -180,6 +184,12 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		return side + ":type"
 	case strings.Contains(msg, "map key"):
 		return side + ":complex-key"
+	case strings.Contains(msg, "did not find expected key"):
+		// A mapping entry whose implicit key is EMPTY (a line starting with the
+		// value indicator `:`, e.g. ":", ": ", "- :"). v3 rejects it here; v4
+		// accepts it as a null key. Kept distinct from the generic syntax class so
+		// tolerating it does NOT tolerate every other v3 syntax rejection.
+		return side + ":empty-implicit-key"
 	case strings.Contains(msg, "did not find expected") || strings.Contains(msg, "could not find expected"):
 		return side + ":syntax"
 	case strings.Contains(msg, "control characters are not allowed"):
@@ -209,53 +219,58 @@ func classifyYAMLV4ValueSplit(v3val, v4val any) string {
 // nilVsEmptyStringOnly reports whether a and b are structurally identical except
 // that wherever they differ, a is nil and b is "" (the v3→v4 non-specific-`!`
 // resolution change). It returns the count of such differing leaves and whether
-// EVERY difference matched that exact shape. A count of 0 with ok=true means the
-// values were fully equal (no divergence — callers only consult this on a known
-// mismatch, so that path does not arise here).
+// EVERY difference matched that exact shape. It walks maps and slices via
+// reflection so it handles BOTH the map shapes yaml decodes an `any` document
+// into — map[string]any (all-string keys) and map[any]any (a non-string key such
+// as the int key in "0: !"). A count of 0 with ok=true means the values were
+// fully equal (callers only consult this on a known mismatch).
 func nilVsEmptyStringOnly(a, b any) (int, bool) {
-	switch av := a.(type) {
-	case map[string]any:
-		bv, ok := b.(map[string]any)
-		if !ok || len(av) != len(bv) {
-			return 0, false
-		}
-		total := 0
-		for k, aval := range av {
-			bval, present := bv[k]
-			if !present {
-				return 0, false
-			}
-			n, ok := nilVsEmptyStringOnly(aval, bval)
-			if !ok {
-				return 0, false
-			}
-			total += n
-		}
-		return total, true
-	case []any:
-		bv, ok := b.([]any)
-		if !ok || len(av) != len(bv) {
-			return 0, false
-		}
-		total := 0
-		for i := range av {
-			n, ok := nilVsEmptyStringOnly(av[i], bv[i])
-			if !ok {
-				return 0, false
-			}
-			total += n
-		}
-		return total, true
-	case nil:
+	// The divergence leaf: v3 nil, v4 empty string.
+	if a == nil {
 		if bs, ok := b.(string); ok && bs == "" {
-			return 1, true // the non-specific-tag divergence leaf
+			return 1, true
 		}
 		if b == nil {
 			return 0, true
 		}
 		return 0, false
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return 0, false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for _, k := range ra.MapKeys() {
+			bval := rb.MapIndex(k)
+			if !bval.IsValid() {
+				return 0, false
+			}
+			n, ok := nilVsEmptyStringOnly(ra.MapIndex(k).Interface(), bval.Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for i := range ra.Len() {
+			n, ok := nilVsEmptyStringOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
 	default:
-		// Any other leaf must be deeply equal.
 		if reflect.DeepEqual(a, b) {
 			return 0, true
 		}
