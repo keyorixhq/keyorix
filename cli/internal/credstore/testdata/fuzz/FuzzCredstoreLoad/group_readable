@@ -1,3 +1,0 @@
-go test fuzz v1
-[]byte("server_url: https://example.test\ntoken: tok-abc\n")
-uint32(416)

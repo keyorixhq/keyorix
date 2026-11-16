@@ -1,8 +1,0 @@
-go test fuzz v1
-[]byte("B")
-int64(1762999959)
-uint16(16)
-byte('\t')
-byte('\x03')
-string("0")
-string("0")

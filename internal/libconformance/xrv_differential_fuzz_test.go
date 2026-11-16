@@ -252,7 +252,7 @@ func viewAttrs(attrs map[[2]string]string) []string {
 	return out
 }
 
-func isXMLNSDecl(space, local string) bool {
+func xrvIsXMLNSDecl(space, local string) bool {
 	return space == "xmlns" || (space == "" && local == "xmlns")
 }
 
@@ -281,7 +281,7 @@ func encodingXMLView(data []byte) (xmlView, error) {
 			v = append(v, fmt.Sprintf("S %s %s", tt.Name.Space, tt.Name.Local))
 			attrs := map[[2]string]string{}
 			for _, a := range tt.Attr {
-				if isXMLNSDecl(a.Name.Space, a.Name.Local) {
+				if xrvIsXMLNSDecl(a.Name.Space, a.Name.Local) {
 					continue
 				}
 				attrs[[2]string{a.Name.Space, a.Name.Local}] = a.Value
@@ -381,7 +381,7 @@ func etreeView(doc *etree.Document, lenient bool) xmlView {
 				attrs := map[[2]string]string{}
 				for i := range tt.Attr {
 					a := &tt.Attr[i]
-					if isXMLNSDecl(a.Space, a.Key) {
+					if xrvIsXMLNSDecl(a.Space, a.Key) {
 						continue
 					}
 					attrs[[2]string{etreeURI(tt, a.Space, a.NamespaceURI(), lenient), a.Key}] = a.Value

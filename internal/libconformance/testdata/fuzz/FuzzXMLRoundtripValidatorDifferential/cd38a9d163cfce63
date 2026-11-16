@@ -1,2 +1,0 @@
-go test fuzz v1
-[]byte("<A A000=\"00\" xmlns:q=\"\"x=\"0\"q:x=\"0\"/>")

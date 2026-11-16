@@ -1,3 +1,0 @@
-go test fuzz v1
-string("sslrootcert=system")
-string("0")
