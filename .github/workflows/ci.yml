@@ -534,7 +534,7 @@ jobs:
           if [ "$EVENT_NAME" != "pull_request" ]; then
             fuzz_pr_relevant=false
           elif [ -n "$changed" ]; then
-            if v=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate | jq -s 'add // []' | jq "$FUZZ_PR_GATE_JQ"); then
+            if v=$(set -o pipefail; gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate | jq -s 'add // []' | jq "$FUZZ_PR_GATE_JQ"); then
               case "$v" in
                 true|false) fuzz_pr_relevant=$v ;;
               esac

@@ -219,4 +219,14 @@ func TestFuzzPRGate_JobWiring(t *testing.T) {
 	if !strings.Contains(text, "fuzz_pr_relevant: ${{ steps.filter.outputs.fuzz_pr_relevant }}") {
 		t.Error("changes job does not export fuzz_pr_relevant")
 	}
+
+	// The gate's own comment says an API error fails toward running (true). The step runs under
+	// `bash -e` without pipefail, so without `set -o pipefail` a failed `gh api` leaves `jq` reading
+	// nothing, printing `[]`, and the gate answers false: fuzz-targets is skipped on a transient 5xx.
+	_, after, ok := strings.Cut(text, `$(set -o pipefail; gh api "repos/$REPO/pulls/$PR_NUMBER/files"`)
+	if !ok {
+		t.Error("the fuzz gate's pulls/files lookup lost `set -o pipefail`: an API error would answer false instead of true")
+	} else if !strings.Contains(strings.SplitN(after, "\n", 2)[0], `jq "$FUZZ_PR_GATE_JQ"`) {
+		t.Error("the fuzz gate's pulls/files lookup no longer ends in the gate filter")
+	}
 }
