@@ -2320,7 +2320,8 @@ jobs:
   # build-and-test skips has nothing to fuzz.
   fuzz-plan:
     needs: [build-and-test]
-    if: github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
+    # !cancelled() (not always()): a status function turns off the implicit success(), which also looks at build-and-test's skipped ancestors and would skip this job and leave fuzz-changed red. Unlike always() it is false once the run is cancelled, so a newer push still cancels this job and the fuzz shards (concurrency group, cancel-in-progress).
+    if: ${{ !cancelled() && needs.build-and-test.result == 'success' && github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -2462,7 +2463,7 @@ jobs:
 
   fuzz:
     needs: [fuzz-plan]
-    if: needs.fuzz-plan.outputs.count != '0'
+    if: ${{ !cancelled() && needs.fuzz-plan.result == 'success' && needs.fuzz-plan.outputs.count != '0' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read

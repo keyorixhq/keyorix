@@ -67,7 +67,7 @@ func TestGRPCServer_EndToEnd(t *testing.T) {
 	const scopedToken = "e2e-scoped-token"
 	project1 := uint(1)
 	scopedWriter := h.CreateTestUser(t, "e2e-scoped-writer", 200)
-	h.AssignUserRole(t, scopedWriter.ID, 3, &project1) // editor @ project 1 only
+	h.AssignUserRole(t, scopedWriter.ID, testhelper.RoleProjectDeveloper, &project1) // project_developer @ project 1 only
 	_, err = h.Storage.CreateSession(context.Background(), &models.Session{
 		UserID: scopedWriter.ID, SessionToken: scopedToken, ExpiresAt: &expires,
 	})

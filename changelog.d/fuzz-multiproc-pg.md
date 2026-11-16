@@ -4,8 +4,11 @@
   database (the ADR-039 HA shape) and drives them concurrently through the REST
   API, choosing cross-replica interleavings from the fuzz input. It checks
   cross-replica convergence and single-register serial equivalence per
-  iteration, and carries seeded oracles for post-return visibility, revoked
-  personal-access-token denial across replicas, a SIGKILLed replica leaving no
-  stuck advisory lock, audit-chain verification, and a secret/key log canary.
-  Each oracle has a red/green proof. Requires the `e2e` build tag and
+  iteration, and carries seeded oracles for cross-replica unique-name creation
+  (exactly one winner and one active row — a second fuzz target races concurrent
+  same-name creates), post-return visibility, revoked personal-access-token
+  denial across replicas, a SIGKILLed replica leaving no stuck advisory lock and
+  reopening the shared store without hand repair, audit-chain verification plus
+  exactly-one-audit-row-per-acknowledged-op, and a secret/key log canary. Each
+  oracle has a red/green proof. Requires the `e2e` build tag and
   `KEYORIX_TEST_PG_DSN`; skips otherwise. No production code changed.
