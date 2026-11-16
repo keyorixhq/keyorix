@@ -606,33 +606,43 @@ func acIsBcryptHeavyOp(op byte) bool {
 	return k == 0 || k == 8
 }
 
+// acProgramStats records, per op%13 kind, how many ops of one program
+// acRunProgram dispatched to acRunOp and how many it skipped under
+// acdMaxBcryptOpsPerKind. The #119 regression tests assert on these counts
+// (deterministic) rather than on wall time (which -race and a shared CI runner
+// inflate several-fold).
+type acProgramStats struct {
+	executed map[byte]int
+	skipped  map[byte]int
+}
+
 // acRunProgram resets the victim's state and runs one fuzz program through
 // acRunOp, applying acdMaxBcryptOpsPerKind to each bcrypt-heavy op kind. Shared
 // by the fuzz body and the #119 regression tests so both exercise the exact
 // same cap.
-func acRunProgram(t *testing.T, w *acWorld, program []byte) {
+func acRunProgram(t *testing.T, w *acWorld, program []byte) acProgramStats {
 	t.Helper()
+	stats := acProgramStats{executed: map[byte]int{}, skipped: map[byte]int{}}
 	if len(program) == 0 {
-		return
+		return stats
 	}
 	st := w.resetIteration(t)
 	maxOps := min(len(program), 48)
-	bcryptOps := map[byte]int{} // executions so far, per bcrypt-heavy op%13 kind
 	for i := range maxOps {
 		op := program[i]
-		if acIsBcryptHeavyOp(op) {
-			k := op % 13
-			if bcryptOps[k] >= acdMaxBcryptOpsPerKind {
-				// Skip the surplus bcrypt but KEEP scanning the program: a
-				// `continue` preserves the surrounding op sequence (the later
-				// authenticated-request differentials this fuzzer exists to run),
-				// where a `break` would drop every remaining op.
-				continue
-			}
-			bcryptOps[k]++
+		k := op % 13
+		if acIsBcryptHeavyOp(op) && stats.executed[k] >= acdMaxBcryptOpsPerKind {
+			// Skip the surplus bcrypt but KEEP scanning the program: a
+			// `continue` preserves the surrounding op sequence (the later
+			// authenticated-request differentials this fuzzer exists to run),
+			// where a `break` would drop every remaining op.
+			stats.skipped[k]++
+			continue
 		}
+		stats.executed[k]++
 		acRunOp(t, w, st, op)
 	}
+	return stats
 }
 
 func FuzzAuthCacheDifferential(f *testing.F) {

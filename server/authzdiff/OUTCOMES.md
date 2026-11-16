@@ -33,7 +33,13 @@ layer) and nothing else.
    *exactly* the limiter's `"too many invalid token attempts"` (`runLayer` gRPC
    leg via `grpcInvalidTokenLimited`). Every OTHER `ResourceExhausted` — an
    oversized secret value, the audit-stream cap — is still mapped to `other` and
-   counted. (Fuzz-corpus issue #118: a suspended-principal case was reported as
+   counted. The two legs are deliberately asymmetric: the REST leg matches on
+   the status alone, so EVERY `429` is n/a, including one from a general
+   per-principal request limiter; the gRPC leg matches the exact message, so
+   the per-principal limiter's `ResourceExhausted` (`"too many requests; slow
+   down"`, `server/grpc/interceptors/rate_limit.go`) stays `other` and is
+   counted. A REST `429` carries no machine-readable reason to tell the two
+   limiters apart, and neither is an authorization decision. (Fuzz-corpus issue #118: a suspended-principal case was reported as
    `mapping-gap:other-where-model-denies:grpc` because the gRPC leg mapped that
    leaked limiter refusal to `other` while the REST/sequence paths already
    excused it.)
