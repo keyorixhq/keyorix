@@ -12,25 +12,26 @@ import (
 	yaml "go.yaml.in/yaml/v4"
 )
 
-// unknownFieldRE matches yaml.v3's strict-decode message for a key the target
-// struct has no field for: "field webauthn not found in type config.SecurityConfig".
+// unknownFieldRE matches the YAML library's strict-decode message for a key the
+// target struct has no field for: "field webauthn not found in type config.SecurityConfig".
 var unknownFieldRE = regexp.MustCompile(`field (\S+) not found in type ([\w.]+)`)
 
-// describeUnknownKeys rewrites yaml.v3's "field X not found in type
+// describeUnknownKeys rewrites the YAML library's "field X not found in type
 // config.SomeGoType" into the YAML section an operator writes ("unknown key "X"
 // under security"), keeping the "line N:" prefix (BOOT-REFUSALS-1 item 5: the Go
 // type name made the operator guess which section was meant). Any other error, and
 // any type this config does not reach, is returned unchanged.
 func describeUnknownKeys(err error) error {
-	te, ok := errors.AsType[*yaml.TypeError](err)
+	le, ok := errors.AsType[*yaml.LoadErrors](err)
 	if !ok {
 		return err
 	}
 	sections := yamlSections()
-	out := make([]string, len(te.Errors))
+	out := make([]*yaml.LoadError, len(le.Errors))
 	changed := false
-	for i, e := range te.Errors {
-		out[i] = unknownFieldRE.ReplaceAllStringFunc(e, func(m string) string {
+	for i, e := range le.Errors {
+		ne := *e
+		ne.Message = unknownFieldRE.ReplaceAllStringFunc(e.Message, func(m string) string {
 			sm := unknownFieldRE.FindStringSubmatch(m)
 			paths := sections[sm[2]]
 			if len(paths) == 0 {
@@ -43,11 +44,12 @@ func describeUnknownKeys(err error) error {
 			}
 			return fmt.Sprintf("unknown key %q %s (check its spelling and section in docs/CONFIGURATION.md)", sm[1], where)
 		})
+		out[i] = &ne
 	}
 	if !changed {
 		return err
 	}
-	return &yaml.TypeError{Errors: out}
+	return &yaml.LoadErrors{Errors: out}
 }
 
 var (

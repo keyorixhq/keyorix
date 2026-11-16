@@ -5,5 +5,8 @@
   `Marshal`, `NewDecoder` and `NewEncoder` entry points keep their v3-compatible settings,
   so config, import and export parsing behave as before. The guard tests that forbid the
   YAML library in `internal/core` and inventory its egress now name the v4 import path.
+  One operator-visible difference: a config type error now reads `yaml: construct errors:
+  line N: cannot construct !!str ... into bool` (was `yaml: unmarshal errors:` / `cannot
+  unmarshal`); the `unknown key "X" under <section>` rewrite is unchanged.
   Duplicate keys in a mapping still cost quadratic time and memory in v4 (reported upstream
   as yaml/go-yaml#510).
