@@ -107,6 +107,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"suspendUser":                        reasonSchemaNotYetWritten, // post /api/v1/users/{id}/suspend
 	"transitionMachineIdentity":          reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/machine-identities/{machineId}
 	"transitionMembership":               reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/memberships/{membershipId}
+	"unlockUser":                         reasonSchemaNotYetWritten, // post /api/v1/users/{id}/unlock
 	"updateAuthProfile":                  reasonSchemaNotYetWritten, // put /api/v1/auth/profile
 	"updateProjectMember":                reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/members/{userId}
 	"updateRotationPolicy":               reasonSchemaNotYetWritten, // put /api/v1/rotation-policies/{id}
