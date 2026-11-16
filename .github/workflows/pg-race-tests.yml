@@ -48,10 +48,10 @@ name: Cross-replica race tests (Postgres)
 # only these packages' tests catch.
 on:
   schedule:
-    # 04:47 UTC nightly, off the round minute and distinct from this repo's
-    # other scheduled slots (e2e-nightly 03:23, govulncheck-scheduled every
+    # 08:27 UTC nightly, off the round minute and distinct from this repo's
+    # other scheduled slots (e2e-nightly 07:13, govulncheck-scheduled every
     # 3 h at :17, osv-scanner Friday 17:19).
-    - cron: '47 4 * * *'
+    - cron: '27 8 * * *'
   workflow_dispatch: {}
 
 permissions: {}
