@@ -93,7 +93,7 @@ func foldCompare(a, b string) *foldMismatch {
 	if kSame == uSame {
 		return nil
 	}
-	return &foldMismatch{key: classifyFoldEqDiff(a, b), detail: "equality verdict differs (Keyorix-same=" +
+	return &foldMismatch{key: classifyFoldEqDiff(a, b, kSame), detail: "equality verdict differs (Keyorix-same=" +
 		boolStr(kSame) + " RFC8265-same=" + boolStr(uSame) + ")", a: a, b: b}
 }
 
@@ -107,7 +107,11 @@ func boolStr(b bool) string {
 // classifyFoldEqDiff names the Unicode mechanism behind an equality disagreement. Order
 // matters: the narrower explanation (case folding, no width needed) is checked before the
 // wider one (needs NFKC width mapping).
-func classifyFoldEqDiff(a, b string) string {
+//
+// Width mapping is allowlisted in ONE direction only: Keyorix keeps the two names distinct
+// while RFC 8265 treats them as the same (kSame=false). The opposite (Keyorix merges what
+// the RFC keeps apart, an account-collision direction) gets its own key, not allowlisted.
+func classifyFoldEqDiff(a, b string, kSame bool) string {
 	switch {
 	case caseFolder.String(norm.NFC.String(a)) == caseFolder.String(norm.NFC.String(b)):
 		// full case folding (ß→ss, final sigma, …) collapses them without any width
@@ -116,6 +120,9 @@ func classifyFoldEqDiff(a, b string) string {
 	case caseFolder.String(norm.NFKC.String(a)) == caseFolder.String(norm.NFKC.String(b)):
 		// width/compatibility mapping (fullwidth ＡＤＭＩＮ vs ADMIN) collapses under NFKC
 		// (+fold) but not under Keyorix's NFC.
+		if kSame {
+			return "width-compat-mapping-keyorix-same"
+		}
 		return "width-compat-mapping"
 	default:
 		return "fold-equality-unexplained"

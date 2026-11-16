@@ -180,6 +180,11 @@ func treeCompare(j, y any) *yamlJSONMismatch {
 			return &yamlJSONMismatch{key: "type-differs", detail: "json number vs non-number", jsonV: fmt.Sprint(j), yml: fmt.Sprint(y)}
 		}
 		if jr.Cmp(yr) != 0 {
+			// number-precision means float64 rounding of the exact value and nothing else.
+			yf, _ := yr.Float64()
+			if rounded := new(big.Rat).SetFloat64(yf); rounded == nil || rounded.Cmp(jr) != 0 {
+				return &yamlJSONMismatch{key: "number-differs", detail: "same token decoded to different numeric value, not float64 rounding", jsonV: jr.FloatString(0), yml: yr.FloatString(0)}
+			}
 			return &yamlJSONMismatch{key: "number-precision", detail: "same token decoded to different numeric value", jsonV: jr.FloatString(0), yml: yr.FloatString(0)}
 		}
 		return nil

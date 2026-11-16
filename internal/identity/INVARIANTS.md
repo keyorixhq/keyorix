@@ -9,4 +9,7 @@ Format: `INV-IDENTITY-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issu
 
 ## Cross-library normalization agreement
 
+Keyorix's folding is checked against the RFC 8265 PRECIS reference by
+`INV-IDENTITY-fold-vs-precis` (`INVARIANTS.d/INV-IDENTITY-fold-vs-precis.md`).
+
 New invariants go in `INVARIANTS.d/INV-IDENTITY-<kebab-slug>.md`, one per file.
