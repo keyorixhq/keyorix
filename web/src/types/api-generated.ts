@@ -3671,6 +3671,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users/{id}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear a user's login lockout
+         * @description Clear the user's login-lockout state (the failed-attempt counter and any
+         *     active lock) after repeated failed logins. Requires `users.write`. The
+         *     unlock is audited fail-closed: when its audit event cannot be recorded the
+         *     lockout is not cleared and the response is 503 `audit_unavailable`; the
+         *     request is safe to retry.
+         */
+        post: operations["unlockUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/{id}/resend-setup-link": {
         parameters: {
             query?: never;
@@ -10334,6 +10360,7 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["SecretReadRefused"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     diffSecretVersions: {
@@ -12895,6 +12922,32 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    unlockUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope with `message`; `data` is null. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     resendSetupLink: {

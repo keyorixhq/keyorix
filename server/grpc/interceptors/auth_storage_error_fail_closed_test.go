@@ -51,7 +51,7 @@ func TestAuthInterceptor_CredentialLookupStorageError_FailsClosed(t *testing.T) 
 			mint: func(t *testing.T) (string, func()) {
 				h.CreateTestUser(t, "grpc-cfc", 9200)
 				proj2 := uint(2)
-				h.AssignUserRole(t, 9200, 3, &proj2)
+				h.AssignUserRole(t, 9200, testhelper.RoleProjectDeveloper, &proj2)
 				res, err := h.CoreService.CreateOwnPAT(ctxBg, 9200, "cfc", nil, []string{"secrets.read"}, 2, 0, nil)
 				require.NoError(t, err)
 				return res.PlainToken, func() {

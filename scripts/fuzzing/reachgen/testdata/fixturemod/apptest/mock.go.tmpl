@@ -1,0 +1,17 @@
+// Package apptest is a test-support package (like internal/core/storage/
+// storagetest): it ships in no build but its non-test files import "testing".
+// reachgen must not count its third-party calls as Keyorix call sites.
+package apptest
+
+import (
+	"testing"
+
+	"example.com/lib"
+)
+
+// HandleRequestMock calls a third-party parser with a request-shaped argument,
+// the shape a testify mock's Called(...) forwarding has.
+func HandleRequestMock(t *testing.T, s string) {
+	t.Helper()
+	_ = lib.ParseRequest(s)
+}

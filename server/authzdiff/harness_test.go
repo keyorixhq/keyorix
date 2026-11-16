@@ -202,7 +202,18 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 			routerMu.Unlock()
 		}
 		if r.Detail == "Too Many Requests" {
-			return &legOutcome{NA: limiterNA}
+			// The per-IP invalid-token brute-force limiter (PAT-003,
+			// server/middleware/auth.go) is process-global and keyed by the
+			// harness's single constant test peer, so a rejected token spent in
+			// an earlier case can turn this probe into HTTP 429. That is a
+			// transport throttle, not an authorization decision — record it as
+			// n/a, exactly as seq_run_test.go's execRead does. A 429 on REST is
+			// unambiguously a rate-limit refusal (an oversized secret is 413/400,
+			// never 429), so the status alone is enough here; the gRPC leg below
+			// needs the exact message because codes.ResourceExhausted also
+			// carries authorization-irrelevant non-throttle meanings. (#118.)
+			seqRateLimited.Add(1)
+			return &legOutcome{NA: "invalid-token rate limiter"}
 		}
 		return &legOutcome{Outcome: r.Outcome, Detail: r.Detail}
 	case layerGRPC:
@@ -216,21 +227,20 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 		if errors.Is(err, errLayerAbsent) {
 			return &legOutcome{NA: "ID-3: gRPC cannot express this target"}
 		}
-		r := grpcOutcome(err)
-		if r.Detail == "ResourceExhausted" {
-			return &legOutcome{NA: limiterNA}
+		if grpcInvalidTokenLimited(err) {
+			// Same process-global per-IP invalid-token limiter as the REST leg,
+			// on the gRPC side (grpcAuthFailure, server/grpc/interceptors/auth.go).
+			// Matched by its EXACT message so the other ResourceExhausted
+			// producers (oversized secret, audit-stream cap) still map to Other.
+			// (#118.)
+			seqRateLimited.Add(1)
+			return &legOutcome{NA: "invalid-token rate limiter"}
 		}
+		r := grpcOutcome(err)
 		return &legOutcome{Outcome: r.Outcome, Detail: r.Detail}
 	}
 	return &legOutcome{NA: "unknown layer"}
 }
-
-// limiterNA marks a leg the per-IP invalid-token limiter answered instead of the
-// authorization layer (a suspended principal's token is rejected, and the budget is a
-// process-global bucket keyed by the constant test peer, so a long fuzz run exhausts
-// it). Such an answer says nothing about authorisation: n/a, as the sequence harness
-// records it (seq_run_test.go).
-const limiterNA = "invalid-token rate limiter"
 
 // ---------- positive control (OUTCOMES.md precondition 2) ----------
 

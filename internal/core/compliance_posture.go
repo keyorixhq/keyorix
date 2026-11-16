@@ -159,6 +159,13 @@ type EmergencyAccessPosture struct {
 	// never to silently read identical to "reviewed" or to an ordinary
 	// unreviewed backlog.
 	IndependentReviewImpossible bool `json:"independent_review_impossible"`
+	// DegradedActivations (POSTURE-DEGRADED-NOV-1) counts activations committed
+	// while the audit log refused their rows (BREAKGLASS-OWED-1) whose owed rows
+	// the backfill has not yet written into the chain (AuditSettledAt nil). Their
+	// audit trail is incomplete right now, so the snapshot is also marked
+	// Degraded: a posture that read these as clean would claim a complete audit
+	// record for an emergency elevation that does not have one yet.
+	DegradedActivations int `json:"degraded_activations"`
 }
 
 // AccessRequestPosture summarises the dual-control access-request/approval workflow
@@ -1008,9 +1015,20 @@ func (c *KeyorixCore) accumulateBreakGlassPosture(p *CompliancePosture, pid uint
 	p.EmergencyAccess.ReviewWindowHours = int(window.Hours())
 	cutoff := c.now().Add(-window)
 	p.EmergencyAccess.TotalActivations += len(acts)
+	// Owed audit rows get their own area (not "emergency_access:"), so they do
+	// not turn the independent-reviewer control Unknown, and one reason per
+	// project, so a long audit outage does not grow DegradedReasons unbounded.
+	owed, firstOwedID := 0, uint(0)
 	for _, a := range acts {
 		if a.State == BreakGlassActive {
 			p.EmergencyAccess.ActiveActivations++
+		}
+		if a.Degraded && a.AuditSettledAt == nil {
+			p.EmergencyAccess.DegradedActivations++
+			if owed == 0 || a.ID < firstOwedID {
+				firstOwedID = a.ID
+			}
+			owed++
 		}
 		// BREAKGLASS-OWED-1: a degraded activation's review is mandatory from the
 		// moment it exists, with no grace window -- the same rule
@@ -1022,6 +1040,10 @@ func (c *KeyorixCore) accumulateBreakGlassPosture(p *CompliancePosture, pid uint
 				p.EmergencyAccess.OldestUnreviewedAgeHours = ageHours
 			}
 		}
+	}
+	if owed > 0 {
+		p.degrade(fmt.Sprintf("emergency_access_audit:project=%d", pid),
+			fmt.Errorf("%d break-glass activation(s) committed while the audit log refused their rows are still owed (first id %d)", owed, firstOwedID))
 	}
 }
 

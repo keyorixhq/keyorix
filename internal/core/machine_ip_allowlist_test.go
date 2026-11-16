@@ -22,6 +22,7 @@ func TestIssueMachineToken_StoresCIDRs(t *testing.T) {
 		Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
 	// requireMachinePrivilegeCeiling checks the machine's roles before issuing.
 	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
+	store.On("GetMachineRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil).Maybe()
 	// requireMachinePrivilegeCeiling also now requires the calling actor (9) to
 	// hold roles.assign at the target's project scope — grant it via a plain,
 	// non-admin RBAC role (the standard MockStorage stub for this shape).
@@ -59,6 +60,7 @@ func TestIssueMachineToken_NilCIDRsOmitted(t *testing.T) {
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).
 		Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
 	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
+	store.On("GetMachineRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil).Maybe()
 	// requireMachinePrivilegeCeiling also now requires the calling actor (9) to
 	// hold roles.assign at the target's project scope — grant it via a plain,
 	// non-admin RBAC role (the standard MockStorage stub for this shape).
@@ -102,6 +104,7 @@ func TestValidateMachineToken_ReturnsCIDRRestriction(t *testing.T) {
 	store.On("GetMachineIdentity", mock.Anything, uint(5)).
 		Return(&models.MachineIdentity{ID: 5, Name: "cidr-bot", State: MachineActive}, nil)
 	store.On("GetMachineRoles", mock.Anything, uint(5)).Return([]*models.Role{{Name: "viewer"}}, nil)
+	store.On("GetMachineRoleScopes", mock.Anything, uint(5)).Return([]Scope{}, nil).Maybe()
 
 	c := NewKeyorixCore(store)
 	c.now = func() time.Time { return fixed }

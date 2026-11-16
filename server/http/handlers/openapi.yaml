@@ -3561,6 +3561,7 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/SecretReadRefused'}
+        '503': {$ref: '#/components/responses/AuthorizeUnavailable'}
   /api/v1/secrets/{id}/versions/{from}/diff/{to}:
     get:
       tags: [Secrets]
@@ -5803,6 +5804,29 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/{id}/unlock:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Users]
+      summary: Clear a user's login lockout
+      description: |
+        Clear the user's login-lockout state (the failed-attempt counter and any
+        active lock) after repeated failed logins. Requires `users.write`. The
+        unlock is audited fail-closed: when its audit event cannot be recorded the
+        lockout is not cleared and the response is 503 `audit_unavailable`; the
+        request is safe to retry.
+      operationId: unlockUser
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope with `message`; `data` is null."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuditUnavailable'}
 
   /api/v1/users/{id}/resend-setup-link:
     parameters:

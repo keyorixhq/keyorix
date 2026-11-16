@@ -80,6 +80,7 @@ func TestIssueMachineToken_ReplaceCredential_EndToEnd(t *testing.T) {
 	store.On("GetMachineIdentityCredentialByID", mock.Anything, uint(50)).
 		Return(&models.MachineIdentityCredential{ID: 50, MachineIdentityID: 1, TokenHash: "old-hash"}, nil)
 	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
+	store.On("GetMachineRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil).Maybe()
 	stubAuthorizedPrincipal(store, 7, Scope{ProjectID: 2}, permRolesAssign)
 	store.On("CreateMachineIdentityCredential", mock.Anything, mock.AnythingOfType("*models.MachineIdentityCredential")).
 		Return(&models.MachineIdentityCredential{ID: 51}, nil)
@@ -108,6 +109,7 @@ func TestIssueMachineToken_ReplaceCredential_BadID_FailsFast(t *testing.T) {
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
 	store.On("GetMachineIdentityCredentialByID", mock.Anything, uint(999)).Return(nil, errors.New("not found"))
 	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
+	store.On("GetMachineRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil).Maybe()
 	stubAuthorizedPrincipal(store, 7, Scope{ProjectID: 2}, permRolesAssign)
 
 	c := NewKeyorixCore(store)

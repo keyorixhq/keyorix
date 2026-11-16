@@ -440,7 +440,7 @@ func newBreakGlassServiceFull(t *testing.T) *BreakGlassGRPCService {
 	h.AssignUserRole(t, 1, 1, nil) // user 1 = super_admin (global)
 	h.EnsureActiveUser(t, 1)       // user 1 acts through core (#4159)
 	proj := uint(1)
-	h.AssignUserRole(t, 1, 4, &proj) // viewer at project 1
+	h.AssignUserRole(t, 1, testhelper.RoleProjectViewer, &proj) // project_viewer at project 1
 	h.CreateTestRole(t, "emergency", "break-glass role", 90)
 	h.CoreService.SetBreakGlassPolicy(core.BreakGlassPolicy{
 		Enabled: true, EmergencyRole: "emergency", DefaultTTL: time.Hour, MaxTTL: 4 * time.Hour,

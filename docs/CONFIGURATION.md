@@ -2786,8 +2786,10 @@ of these happens:
 - the session lifetime ends. With `session.absolute_ttl` unset (the default) a session
   can be refreshed indefinitely, so it is not a dependable bound; set it if you rely on it.
 
-The inactivity sweep (`keyorix user suspend-inactive`) is **not scheduled**: nothing in the
-server runs it, and it skips global administrators. Run it by hand, or do not count on it.
+The inactivity sweep (`keyorix user suspend-inactive --days N`, `SuspendInactiveUsers`) is
+**not scheduled**: nothing in the server runs it (its only caller is the on-demand
+`POST /api/v1/admin/jobs/suspend-inactive-users`, which needs `system.write`), and it skips
+global administrators. Run it by hand, or do not count on it.
 
 To offboard such a user, as an administrator holding `users.write` (`users.delete` for
 the delete):
@@ -2803,10 +2805,18 @@ keyorix user suspend --id <user-id>
 curl -s -X POST -H "Authorization: Bearer $KEYORIX_TOKEN" \
   "https://<host>/api/v1/users/<user-id>/suspend"
 
+# 3. Or deactivate: login is blocked, sessions and PATs are revoked.
+keyorix user update --id <user-id> --active false
+#    API equivalent: PUT /api/v1/users/<user-id> with {"active": false}
+
+# 4. Or remove the account (soft delete; sessions and PATs are revoked in the same step).
 # 3. Or remove the account (soft delete; sessions and PATs are revoked in the same step).
 keyorix user delete --id <user-id> --force
 #    API equivalent: DELETE /api/v1/users/<user-id>
 ```
+
+The `--by` flag of these commands is deprecated and ignored; the acting admin is the
+authenticated caller.
 
 Suspension is reversible (`keyorix user reactivate`), but the revoked PATs stay revoked.
 If the IdP later re-enables the person, nothing in Keyorix changes until you reactivate

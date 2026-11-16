@@ -1,0 +1,1 @@
+fuzz/thirdparty/ssh	none	-	test-only reachability-first fuzz harness for golang.org/x/crypto/ssh authorized-key parsing; not part of any shipped build	test-helper
