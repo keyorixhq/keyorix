@@ -1111,6 +1111,18 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 		if sendPolicyRefusal(w, "InitSystem", err) {
 			return
 		}
+		// Details the caller sent and the server rejects (a malformed email or username)
+		// are a 400 naming the field, not the 403 the CLI words as "request access". Core
+		// checks the token first, so only a caller holding it can reach this answer; a
+		// token refusal below stays 403.
+		if errors.Is(err, core.ErrValidation) && !errors.Is(err, core.ErrInvalidBootstrapToken) {
+			var details any
+			if f := core.ValidationField(err); f != "" {
+				details = map[string]string{"field": f}
+			}
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, details)
+			return
+		}
 		// Token refusals carry typed codes. Both answer 403 and say nothing about
 		// whether a user exists (core checks the token only on a fresh install).
 		if errors.Is(err, core.ErrBootstrapAPIDisabled) {
