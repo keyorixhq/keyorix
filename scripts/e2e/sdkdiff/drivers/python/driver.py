@@ -4,6 +4,7 @@ import os
 import socket
 import sys
 import time
+import traceback
 import urllib.parse
 import urllib.request
 
@@ -73,7 +74,13 @@ def classify(err, force=None):
         cls = "decode"
     elif isinstance(err, OSError):
         cls = "network"
-    return {"ok": False, "class": cls, "status": status, "native": type(err).__name__, "msg": str(err)}
+    try:
+        # three-argument form: the one-argument form needs Python 3.10+, and a TypeError here would hide "full" from O4
+        full = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+    except Exception as e2:  # noqa: BLE001
+        full = "format failed: " + type(e2).__name__
+    return {"ok": False, "class": cls, "status": status, "native": type(err).__name__, "msg": str(err)[:20000],
+            "sdk_error": isinstance(err, keyorix.KeyorixError), "full": full[:20000]}
 
 
 def run(f):
