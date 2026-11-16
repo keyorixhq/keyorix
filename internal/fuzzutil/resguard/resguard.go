@@ -139,10 +139,9 @@ const (
 // body at a time per process, so one Probe per F is correct for -parallel too —
 // -parallel forks processes, not goroutines, for the body).
 type Probe struct {
-	opts     Options
-	n        int64
-	drift    *Drift
-	warmedUp bool
+	opts  Options
+	n     int64
+	drift *Drift
 }
 
 // New builds a Probe. tb is used only to default TempDir to tb-independent

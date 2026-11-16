@@ -24,8 +24,13 @@ import "math/bits"
 // gradient).
 
 // costSink is written by every bucket case so the compiler cannot prove the
-// switch dead and fold it away; its value is never read.
+// switch dead and fold it away; its value is only read through CostSink, which
+// exists so the variable counts as used.
 var costSink uint8
+
+// CostSink returns the accumulated bucket sink. It carries no meaning beyond
+// keeping costSink observable.
+func CostSink() uint8 { return costSink }
 
 // FeedCoverage runs every meter's magnitude through the bucket switch.
 func FeedCoverage(c Cost) {

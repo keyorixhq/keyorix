@@ -225,8 +225,7 @@ func TestAirGapBlocksNonLoopback(t *testing.T) {
 	m := NewNetMeter()
 	// RED: a non-loopback dial is refused without connecting.
 	_, err := m.DialContext(t.Context(), "tcp", "8.8.8.8:53")
-	var ag *ErrAirGap
-	if !errors.As(err, &ag) {
+	if _, ok := errors.AsType[*ErrAirGap](err); !ok {
 		t.Fatalf("non-loopback dial should return ErrAirGap, got %v", err)
 	}
 	if m.NonLoopback() != 1 {

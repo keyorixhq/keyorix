@@ -3,6 +3,7 @@ package fuzzworld
 import (
 	"errors"
 	"os"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -217,10 +218,5 @@ func indexOf(s, sub string) int {
 }
 
 func containsStr(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, want)
 }

@@ -138,10 +138,7 @@ func Calibrate(target string, samples []Cost, factor float64) Budget {
 			}
 			v := m.get(c)
 			vals = append(vals, v)
-			n := c.InputLen
-			if n < 1 {
-				n = 1
-			}
+			n := max(c.InputLen, 1)
 			ratios = append(ratios, v/float64(n))
 		}
 		floor := p99(vals)
@@ -202,10 +199,7 @@ func p99(xs []float64) float64 {
 	}
 	s := append([]float64(nil), xs...)
 	sort.Float64s(s)
-	idx := int(math.Ceil(0.99*float64(len(s)))) - 1
-	if idx < 0 {
-		idx = 0
-	}
+	idx := max(int(math.Ceil(0.99*float64(len(s))))-1, 0)
 	if idx >= len(s) {
 		idx = len(s) - 1
 	}
