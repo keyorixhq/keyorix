@@ -428,15 +428,16 @@ func documentedExitCode(status int) int {
 // --- small helpers -----------------------------------------------------------
 
 func clampHostileStatus(status int) int {
-	// Map an arbitrary int into a valid HTTP status the net/http server accepts.
-	s := status % 600
-	if s < 0 {
-		s = -s
+	// Map an arbitrary int into a FINAL HTTP status (200..599). 1xx codes are
+	// excluded on purpose: net/http's WriteHeader treats a 1xx as an INTERIM
+	// informational response and then sends 200 as the real status, so a 1xx here
+	// would model a reply the harness cannot actually drive (the client sees 200,
+	// not the 1xx) -- an artifact, not a CLI behaviour. Interim 1xx handling is a
+	// separate surface noted in the CL1 report LEFTOVERS.
+	if status < 0 {
+		status = -status
 	}
-	if s < 100 {
-		s += 100
-	}
-	return s
+	return 200 + (status % 400)
 }
 
 func clampRedirectCode(code int) int {
