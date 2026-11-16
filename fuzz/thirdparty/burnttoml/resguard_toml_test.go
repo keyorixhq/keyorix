@@ -76,7 +76,6 @@ func rgCalibrate(tb testing.TB) resguard.Budget {
 	return b
 }
 
-
 func TestResguardTOMLCalibrate(t *testing.T) {
 	b := rgCalibrate(t)
 	if _, ok := b.Meters["alloc_bytes"]; !ok {
