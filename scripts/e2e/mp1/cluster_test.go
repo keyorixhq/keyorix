@@ -120,7 +120,9 @@ var mp1DBCounter atomic.Int64
 // createIsolatedDB creates a fresh, empty `mp1_<pid>_<n>` database on tg and
 // returns its DSN. The DROP is registered on the package teardown list, not on
 // t.Cleanup, so the database outlives the fuzz iteration that happened to
-// create the cluster. Only `mp1_*` databases are ever created or dropped.
+// create the cluster. The `mp1_` prefix plus the test process's pid keeps every
+// database this harness creates distinguishable on a shared Postgres host, and
+// the teardown drops only the exact names this process created.
 func createIsolatedDB(t *testing.T, tg pgTarget) (dsn, name string) {
 	t.Helper()
 	name = fmt.Sprintf("mp1_%d_%d", os.Getpid(), mp1DBCounter.Add(1))
@@ -157,6 +159,71 @@ type Cluster struct {
 	ProjID     int
 	EnvID      int
 	ProjName   string
+
+	// logMu guards extraLogs and scanned.
+	logMu sync.Mutex
+	// extraLogs are earlier log files of this cluster's replicas that a
+	// restart would otherwise overwrite (harness.startProcess truncates
+	// LogPath). The canary scan reads them too.
+	extraLogs []string
+	// scanned is, per log path, the file size at the last canary scan
+	// (scanNewLogOutput).
+	scanned map[string]int64
+	// reported are the problems already returned, so the overlap a scan
+	// re-reads does not report one hit twice.
+	reported map[string]bool
+}
+
+// addExtraLog adds path to the logs the canary scan reads (once).
+func (c *Cluster) addExtraLog(path string) {
+	c.logMu.Lock()
+	if !slices.Contains(c.extraLogs, path) {
+		c.extraLogs = append(c.extraLogs, path)
+	}
+	c.logMu.Unlock()
+}
+
+// moveLog records that the log at from was renamed to to, keeping its scan
+// offset, and adds to to the scanned logs.
+func (c *Cluster) moveLog(from, to string) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if off, ok := c.scanned[from]; ok {
+		c.scanned[to] = off
+		delete(c.scanned, from)
+	}
+	c.extraLogs = append(c.extraLogs, to)
+}
+
+// startedClusters is every cluster StartCluster booted in this test process
+// (the shared one and any test-owned one, e.g. the SIGKILL cluster), so the
+// post-run canary scan in TestMain reads every replica log ever written.
+var (
+	clustersMu      sync.Mutex
+	startedClusters []*Cluster
+)
+
+func registerCluster(c *Cluster) {
+	clustersMu.Lock()
+	startedClusters = append(startedClusters, c)
+	clustersMu.Unlock()
+}
+
+func clustersSnapshot() []*Cluster {
+	clustersMu.Lock()
+	defer clustersMu.Unlock()
+	return slices.Clone(startedClusters)
+}
+
+// logPaths returns every log file this cluster's replicas have written: the
+// current one of each replica plus any preserved pre-restart log. The caller
+// holds logMu.
+func (c *Cluster) logPaths() []string {
+	out := make([]string, 0, len(c.Replicas)+len(c.extraLogs))
+	for _, s := range c.Replicas {
+		out = append(out, s.LogPath)
+	}
+	return append(out, c.extraLogs...)
 }
 
 // Replica returns replica i (wrapping, so a fuzz byte can address any).
@@ -264,6 +331,7 @@ func StartCluster(t *testing.T, n int, anomalySchedule string) *Cluster {
 	c := &Cluster{
 		ServerBin: serverBin, DSN: dsn, DBName: dbName, Target: tg, DBPassword: dbPassword,
 	}
+	registerCluster(c)
 
 	env := append(harness.BaseServerEnv(""), "KEYORIX_MASTER_PASSWORD="+masterPassword,
 		"KEYORIX_DB_PASSWORD="+dbPassword)
@@ -535,16 +603,4 @@ func allEqual(vals []string) bool {
 func serialEquivViolation(final string, success map[string]struct{}) bool {
 	_, ok := success[final]
 	return !ok
-}
-
-// scanLogForSecrets returns every canary value (length >= minLen) that appears
-// verbatim in logText. A non-empty result is a confidentiality leak.
-func scanLogForSecrets(logText string, values []string, minLen int) []string {
-	var hits []string
-	for _, v := range values {
-		if len(v) >= minLen && strings.Contains(logText, v) {
-			hits = append(hits, v)
-		}
-	}
-	return hits
 }

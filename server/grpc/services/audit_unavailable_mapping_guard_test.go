@@ -49,9 +49,11 @@ func readAuditUnavailableReachingMethods(t *testing.T) map[string]bool {
 }
 
 func grpcAuditUnavailableMappingViolations(funcs []grpcFuncCalls, exempt map[string]string) (violations []string, seen int, mappers map[string]bool) {
-	mappers = map[string]bool{"auditUnavailableStatus": true}
+	// coreErrorStatus (core_error_status.go) calls auditUnavailableStatus first, so a
+	// function that calls it maps the outage too (the family mappers migrate onto it).
+	mappers = map[string]bool{"auditUnavailableStatus": true, "coreErrorStatus": true}
 	for _, f := range funcs {
-		if f.calls["auditUnavailableStatus"] {
+		if f.calls["auditUnavailableStatus"] || f.calls["coreErrorStatus"] {
 			mappers[f.name] = true
 		}
 	}
@@ -109,13 +111,15 @@ func mapX(err error) error { if e, ok := auditUnavailableStatus(err); ok { retur
 func (s *S) Bad()  error { return wrap(s.core.AssignUserRole()) }
 func (s *S) Good() error { return mapX(s.core.AssignUserRole()) }
 func (s *S) Skip() error { return wrap(s.core.AssignUserRole()) }
+func mapY(ctx C, err error) error { return coreErrorStatus(ctx, err, o) }
+func (s *S) ViaAdapter() error { return mapY(ctx, s.core.AssignUserRole()) }
 `
 	if err := os.WriteFile(filepath.Join(dir, "synthetic.go"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	violations, seen, mappers := grpcAuditUnavailableMappingViolations(
 		scanGRPCFuncs(t, dir, map[string]bool{"AssignUserRole": true}), map[string]string{"synthetic.go:Skip": "test"})
-	if seen != 3 || !mappers["mapX"] || !slices.Equal(violations, []string{"synthetic.go:Bad -> AssignUserRole"}) {
+	if seen != 4 || !mappers["mapX"] || !mappers["mapY"] || !slices.Equal(violations, []string{"synthetic.go:Bad -> AssignUserRole"}) {
 		t.Fatalf("self-test: seen=%d mappers=%v violations=%v", seen, mappers, violations)
 	}
 }
