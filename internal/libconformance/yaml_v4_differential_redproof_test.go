@@ -120,6 +120,14 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// v3-"" vs a non-empty v4 string AND the input carries a block-scalar header, so
 	// no other value divergence is absorbed. Found by the DF2 fuzz run at "|\n00".
 	"block-scalar-underindent": true,
+
+	// An anchor/alias name containing a character v3 forbids there — e.g. "&!0000",
+	// an anchor name with `!`. v3.0.5 REJECTS ("did not find expected alphabetic or
+	// numeric character"); v4.0.0 is lenient and ACCEPTS. v4 accepts what v3 rejects
+	// (benign — the anchor name does not affect the resolved value). Found by the DF2
+	// fuzz run at "o: &!0000". Not a Keyorix defect (v4 has no live caller). Keyed on
+	// the v3 anchor-char error alone.
+	"v3-rejects:anchor-char": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -419,6 +427,25 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("empty-vs-nonempty WITHOUT a block header must stay value-mismatch, got %q", noHeader)
 		}
 		t.Logf("oracle-3 block-scalar gating proven: v3 drops to \"\", v4 keeps \"00\"; non-block empty-vs-nonempty still fails")
+	}
+
+	// ---- Oracle 2 class gating: anchor-name character leniency ----
+	{
+		in := []byte("o: &!0000")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: '&!0000' anchor must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:anchor-char" {
+			t.Fatalf("anchor-char split must class as v3-rejects:anchor-char, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("anchor-char class must be listed (tolerated)")
+		}
+		t.Logf("oracle-2 anchor-char gating proven")
 	}
 }
 
