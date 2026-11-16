@@ -130,7 +130,7 @@ func TestRunLayer_InvalidTokenLimiterLeak_RecordedNA_Not_MappingGap(t *testing.T
 	// refills at 1/s — re-drain if a probe slips through before runLayer runs.
 	var got *legOutcome
 	for range 6 {
-		drainGRPCInvalidTokenLimiter(t, spec, susp)
+		_ = drainGRPCInvalidTokenLimiter(t, spec, susp)
 		got = runLayer(t, spec, layerGRPC, susp, k, tB, nil)
 		if got.NA == "invalid-token rate limiter" {
 			break
