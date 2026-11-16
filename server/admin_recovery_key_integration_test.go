@@ -436,6 +436,7 @@ server:
 	if err := os.MkdirAll(filepath.Join(dir, "keys"), 0750); err != nil {
 		t.Fatalf("create keys dir: %v", err)
 	}
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
 	}

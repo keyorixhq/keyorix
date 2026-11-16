@@ -101,6 +101,10 @@ keyorix dynamic-secret issue 5 --ttl 900`,
 	"dynamic-secret renew":      `keyorix dynamic-secret renew 21 --ttl 900`,
 	"dynamic-secret revoke":     `keyorix dynamic-secret revoke 21`,
 	"dynamic-secret revoke-all": `keyorix dynamic-secret revoke-all 5 --yes`,
+	"dynamic-secret refused-dsn": `# Configs that can no longer issue because their stored DSN names a refused option
+keyorix dynamic-secret refused-dsn --project-id 3`,
+	"dynamic-secret set-admin-dsn": `# The new DSN is read from KEYORIX_DYNAMIC_ADMIN_DSN or stdin, never from the command line
+keyorix dynamic-secret set-admin-dsn 5 < new-admin-dsn.txt`,
 
 	"group add-member":    `keyorix group add-member platform-team --user alice`,
 	"group create":        `keyorix group create --name platform-team --description "Platform engineers"`,

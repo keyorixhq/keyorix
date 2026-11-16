@@ -453,7 +453,7 @@ Verify and export the tamper-evident audit trail
 - [`keyorix audit logs`](#keyorix-audit-logs) — Query the audit trail with filters (human-readable table)
 - [`keyorix audit migrate-chain-encoding`](#keyorix-audit-migrate-chain-encoding) — One-time re-derivation of the audit hash chain under the current encoding
 - [`keyorix audit search`](#keyorix-audit-search) — Search the audit trail with structured filters
-- [`keyorix audit verify`](#keyorix-audit-verify) — Report the audit hash chain's integrity (non-zero exit if broken or not proven)
+- [`keyorix audit verify`](#keyorix-audit-verify) — Report the audit hash chain's integrity (non-zero exit unless valid)
 
 ## `keyorix audit checkpoint`
 
@@ -577,15 +577,21 @@ keyorix audit search --resource-type secret --resource-id 42
 
 ## `keyorix audit verify`
 
-Report the audit hash chain's integrity (non-zero exit if broken or not proven)
+Report the audit hash chain's integrity (non-zero exit unless valid)
 
 Report the audit hash chain's integrity.
 
 By default this reads the server's incremental verification: the rolling full
 re-walk (every row re-hashed at least once per cycle) plus a check of the rows
-after the latest signed checkpoint. Status is VALID, BROKEN, or NOT PROVEN
-(no recent full verification covers the older rows yet). --full runs a full
-walk on the server now, as a background job, and waits for it.
+after the latest signed checkpoint. Status is VALID, BROKEN, NOT PROVEN
+(no recent full verification covers the older rows yet) or SEALED (the rows
+that remain verify, but an audit loss was accepted with "admin audit
+accept-loss"; the reason names the seal). --full runs a full walk on the
+server now, as a background job, and waits for it.
+
+Exit codes: 0 VALID; 1 BROKEN or NOT PROVEN; 4 SEALED (the same code
+"keyorix-server admin verify-audit" uses for SEALED; note that 4 is also this
+CLI's "permission denied" code, so check the printed status when it matters).
 
 **Usage:** `keyorix audit verify [flags]`
 
@@ -1392,9 +1398,11 @@ Issue and manage on-demand database credentials (dynamic secrets)
 - [`keyorix dynamic-secret issue`](#keyorix-dynamic-secret-issue) — Issue a short-lived credential from a config (shown once)
 - [`keyorix dynamic-secret leases`](#keyorix-dynamic-secret-leases) — List leases issued from a config
 - [`keyorix dynamic-secret list`](#keyorix-dynamic-secret-list) — List dynamic-secret target configs
+- [`keyorix dynamic-secret refused-dsn`](#keyorix-dynamic-secret-refused-dsn) — List a project's configs whose admin DSN names a refused option
 - [`keyorix dynamic-secret renew`](#keyorix-dynamic-secret-renew) — Extend an active lease (up to the config's max TTL)
 - [`keyorix dynamic-secret revoke`](#keyorix-dynamic-secret-revoke) — Revoke an active lease now
 - [`keyorix dynamic-secret revoke-all`](#keyorix-dynamic-secret-revoke-all) — Revoke ALL active leases from a config (incident kill switch)
+- [`keyorix dynamic-secret set-admin-dsn`](#keyorix-dynamic-secret-set-admin-dsn) — Replace a dynamic-secret config's admin DSN (from the environment or stdin)
 
 ## `keyorix dynamic-secret classify`
 
@@ -1544,6 +1552,37 @@ keyorix dynamic-secret list --project-id 3
 | `-o`, `--output` | `string` | `table` | Output format: table, json or yaml |
 | `--project-id` | `int` | — | Filter by project ID |
 
+## `keyorix dynamic-secret refused-dsn`
+
+List a project's configs whose admin DSN names a refused option
+
+List the configs in a project whose stored admin DSN names a driver option the server
+has refused since #3952 (a server file such as sslrootcert or tlsCAFile, or ambient
+credentials). They can no longer issue. Fix each with:
+```text
+  keyorix dynamic-secret set-admin-dsn <config-id>
+
+```
+Needs secrets.read on the project and dynamic-secret admin authority there, because the
+report is derived from the decrypted DSNs. It prints config and option names only, never a
+DSN or an option value.
+
+**Usage:** `keyorix dynamic-secret refused-dsn [flags]`
+
+**Examples:**
+
+```sh
+# Configs that can no longer issue because their stored DSN names a refused option
+keyorix dynamic-secret refused-dsn --project-id 3
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-o`, `--output` | `string` | `table` | Output format: table, json or yaml |
+| `--project-id` | `int` | — | Project ID (required) |
+
 ## `keyorix dynamic-secret renew`
 
 Extend an active lease (up to the config's max TTL)
@@ -1591,6 +1630,33 @@ keyorix dynamic-secret revoke-all 5 --yes
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--yes` | — | — | Skip the confirmation prompt |
+
+## `keyorix dynamic-secret set-admin-dsn`
+
+Replace a dynamic-secret config's admin DSN (from the environment or stdin)
+
+Replace the admin DSN stored for a dynamic-secret config, in place. Use it to remove an
+option the server has refused since #3952 (a private-CA sslrootcert or tlsCAFile) from a
+config that can no longer issue, without deleting and recreating the config.
+
+The new DSN is read from the KEYORIX_DYNAMIC_ADMIN_DSN environment variable, or from
+stdin (a hidden prompt on a terminal, or whatever is piped in). It is never accepted as a
+flag, so it cannot land in shell history or a process listing; the server encrypts it at
+rest and never returns it.
+
+While the config has an active or revoke_failed lease, the new DSN must name the same
+host(s) as the old one (the server answers 409 otherwise): those leases are revoked through it.
+
+List the configs that need this with: keyorix dynamic-secret refused-dsn --project-id \<id\>
+
+**Usage:** `keyorix dynamic-secret set-admin-dsn <config-id>`
+
+**Examples:**
+
+```sh
+# The new DSN is read from KEYORIX_DYNAMIC_ADMIN_DSN or stdin, never from the command line
+keyorix dynamic-secret set-admin-dsn 5 < new-admin-dsn.txt
+```
 
 ## `keyorix group`
 
@@ -2038,9 +2104,11 @@ prompt. With no terminal and neither variable set, login stops with an error.
 
 When the account has TOTP multi-factor authentication enabled, /auth/login answers with a
 second-factor challenge instead of a token; login then asks for an authenticator code (or
-an unused recovery code) and completes the challenge via POST /auth/mfa/verify. Pass
---mfa-code to supply it non-interactively. The code is used for that one request only: it
-is never echoed, never logged, and never written to the credential file.
+an unused recovery code) and completes the challenge via POST /auth/mfa/verify. To
+supply it non-interactively set KEYORIX_MFA_CODE, or KEYORIX_MFA_CODE_FILE to a file that
+holds it (the --mfa-code flag is refused: a code on the command line shows in ps and in
+shell history). The code is used for that one request only: it is never echoed, never
+logged, and never written to the credential file.
 
 **Usage:** `keyorix login [flags]`
 
@@ -4888,8 +4956,10 @@ Encrypted imports (--decrypt-with):
   as a standard JSON payload.
 
 ```
+An encrypted export given without --decrypt-with is refused; nothing is imported.
+
 Importing from a live source (Vault/AWS/Azure/GCP) is not supported by this command —
-use the old CLI's 'secret import --source' until the dedicated migration tool exists.
+use keyorix-migrate (docs/migrate-from-vault.md, docs/migrate-from-cloud.md).
 
 **Usage:** `keyorix secret import [flags]`
 

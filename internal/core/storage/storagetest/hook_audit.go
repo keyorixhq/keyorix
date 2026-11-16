@@ -96,6 +96,10 @@ func (hs *HookStore) LogAuditEvent(ctx context.Context, event *models.AuditEvent
 	if hk := hs.h.LogAuditEvent; hk != nil {
 		return hk(hs.Storage, ctx, event)
 	}
+	// audit-direct-ok: CORE-TESTKIT-1: the test double HookStore's per-method plumbing. It runs the
+	// test's hook or forwards the *models.AuditEvent the caller already built, unmodified, and never
+	// builds or mutates one, so it cannot be the site of an attribution bug. The package is
+	// test-only: no production file may import it (ADR-121 R3, test_only_packages_guard_test.go).
 	return hs.Storage.LogAuditEvent(ctx, event)
 }
 

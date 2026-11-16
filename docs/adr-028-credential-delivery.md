@@ -152,8 +152,8 @@ POST /api/v1/projects/{id}/invitations/{invId}/resend   (ADR-024 invitation rese
 ```
 
 ```
-keyorix user resend-setup-link --id <id> [--by <admin-email>]
-keyorix invite resend <invitation-id> [--by <admin-email>]
+keyorix user resend-setup-link --id <id>
+keyorix invite resend --project <project> --id <invitation-id>
 ```
 
 In out-of-band mode every one of these returns the link as CLI/JSON output for the admin to relay — symmetric with the dashboard, and the only path that works air-gapped.

@@ -513,15 +513,16 @@ func TestCorePGProvocationsReachServer(t *testing.T) {
 }
 
 // corePGDuplicateProgram makes the server raise a real 23505 with the canary in
-// DETAIL. It is a duplicate-environment create (op kind 10), not a duplicate
+// DETAIL. It is the duplicate role and group create (op kind 11), not a duplicate
 // secret: core.CreateSecret pre-checks name uniqueness at the application layer
 // (internal/core/secrets.go) and returns before any INSERT, so a duplicate secret
-// never reaches the server. CreateEnvironment has no such pre-check and, unlike
-// CreateProject (whose dup error core sanitizes in translateProjectNameError),
-// returns the raw driver error up to the caller, so a shim-planted value reaches
-// the op-error channel. Flag 6 selects the bare-canary name variant so the first
-// create succeeds and only the duplicate fails.
-var corePGDuplicateProgram = []byte{byte(corePGW2OpCount + 10), 0, 6}
+// never reaches the server. CreateRole and CreateGroup have no such pre-check and,
+// unlike CreateProject (whose dup error core sanitizes in translateProjectNameError)
+// and CreateEnvironment (whose storage answers ErrDuplicateEnvironmentName with a
+// fixed text and drops the driver's), keep the driver error text in what they return,
+// so a shim-planted value reaches the op-error channel. Flag 6 selects the
+// bare-canary name variant so the first create succeeds and only the duplicate fails.
+var corePGDuplicateProgram = []byte{byte(corePGW2OpCount + 11), 0, 6}
 
 const corePGShimName = "w7:pg-error-quoting-shim"
 

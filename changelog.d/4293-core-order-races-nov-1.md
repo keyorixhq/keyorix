@@ -1,0 +1,2 @@
+### Testing
+- **`DeleteProjectIfEmpty` raced against secret creation on SQLite (#2887).** Goroutines on independent connections create secrets while the project is deleted; a committed secret must stay live under a live project, and a deleted project must hold no committed secret. The Postgres half (forced interleaving) already existed. Four older issues were re-verified as fixed on main: #3420 (break-glass owed audit), #3428 (online unlock audits in the same transaction), #2887 and #4210 (conditional legal-hold lift); #3420 and #3428 get closure rows naming them.

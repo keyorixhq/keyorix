@@ -12,8 +12,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
 | secrets | 43 | 30 | 10 | 10 |
-| other | 127 | 20 | 21 | 10 |
-| **total** | **211** | **91** | **46** | **35** |
+| other | 128 | 22 | 22 | 10 |
+| **total** | **212** | **93** | **47** | **35** |
 
 ## groups
 
@@ -159,6 +159,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `GRPC keyorix.v1.DynamicSecretService.RenewLease` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `GRPC keyorix.v1.DynamicSecretService.RevokeLease` — fixture: needs a dynamic-secret backend (database/cloud) configured
+- [ ] `GRPC keyorix.v1.DynamicSecretService.UpdateConfigAdminDSN` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [x] `GRPC keyorix.v1.RoleService.AssignRole` — userrole.assign
 - [x] `GRPC keyorix.v1.RoleService.CreateRole` — role.create
 - [x] `GRPC keyorix.v1.RoleService.DeleteRole` — role.delete
@@ -192,6 +193,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST GET /auth/saml/{provider}/login` — fixture: needs a configured SAML identity provider
 - [ ] `REST GET /auth/sso/{provider}/callback` — fixture: needs a configured OIDC identity provider
 - [ ] `REST GET /auth/sso/{provider}/login` — fixture: needs a configured OIDC identity provider
+- [ ] `REST PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `REST PATCH /api/v1/dynamic-secrets/configs/{id}/classification` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `REST PATCH /api/v1/dynamic-secrets/configs/{id}/enabled` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `REST PATCH /scim/v2/Groups/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
@@ -243,7 +245,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/notifications/read-all` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/notifications/{id}/read` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/projects/{id}/access-review/attest` — model: access-review campaign/attestation rules are not in the reference model
-- [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns` — model: access-review campaign/attestation rules are not in the reference model
+- [x] `REST POST /api/v1/projects/{id}/access-review/campaigns` — access-review.campaign.open
 - [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close` — model: access-review campaign/attestation rules are not in the reference model
 - [ ] `REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide` — model: access-review campaign/attestation rules are not in the reference model
 - [ ] `REST POST /api/v1/projects/{id}/access-review/revoke` — model: access-review campaign/attestation rules are not in the reference model
@@ -251,7 +253,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/review` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/rejection-reason-templates` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST POST /api/v1/risk-exceptions` — model: risk-exception approval rules are not in the reference model
+- [x] `REST POST /api/v1/risk-exceptions` — riskexception.create
 - [ ] `REST POST /api/v1/risk-exceptions/{id}/approve` — model: risk-exception approval rules are not in the reference model
 - [x] `REST POST /api/v1/roles` — role.create
 - [x] `REST POST /api/v1/roles/{id}/permissions` — role.perm.add

@@ -596,6 +596,11 @@ var noPermissionGateAllowlist = map[string]string{
 		"handler -- traced to the actual code: DynamicSecretHandler.ListConfigs " +
 		"(server/http/handlers/dynamic_secrets.go) calls h.authorize(r, permSecretsRead, " +
 		"core.Scope{ProjectID: projectID, EnvironmentID: environmentID}) itself before listing.",
+	"GET /api/v1/dynamic-secrets/configs/refused-admin-dsn": "GET /dynamic-secrets/configs/refused-admin-dsn " +
+		"(ListConfigsWithRefusedAdminDSN, DYNAMIC-ADMIN-DSN-1) is authorized INSIDE the handler: the project comes " +
+		"from the required project_id query parameter; DynamicSecretHandler.ListConfigsWithRefusedAdminDSN calls " +
+		"h.authorize(r, permSecretsRead, core.Scope{ProjectID: projectID}) and core then requires dynamic-secret " +
+		"admin authority on that project (TestDynamicSecretRefusedAdminDSNList_REST).",
 }
 
 // permissionGateMiddleware is every customMiddleware function name recognized

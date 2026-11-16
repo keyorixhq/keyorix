@@ -127,13 +127,14 @@ func runGCP(cmd *cobra.Command, _ []string) error {
 		skippedItems = append(skippedItems, plan.Item{Entry: plan.Entry{SourceKind: "gcp", Path: s.Locator}, Outcome: plan.Skip, Reason: s.Reason})
 	}
 
-	planEntries := buildCloudPlanEntries("gcp", cloudEntries, func(e cloudentry.Entry) string {
+	planEntries, nameSkipped := buildCloudPlanEntries("gcp", cloudEntries, func(e cloudentry.Entry) string {
 		field := e.Field
 		if field == "" {
 			field = "value"
 		}
 		return plan.SourceID("gcp-secret-manager", gcpProject, e.RawName, field)
 	})
+	skippedItems = append(skippedItems, nameSkipped...)
 
 	unique, collided := splitIntraBatchNameCollisions(planEntries)
 	built, err := plan.BuildPlan(ctx, tgt, unique)

@@ -162,6 +162,11 @@ api_get() {
     if [ -n "$token" ]; then
         # The bearer token goes in over stdin and is read into a shell variable inside the
         # container, so it never appears in the argv of `exec` (visible in ps / docker inspect).
+        # Residual: wget itself still gets it as its own --header argv for the length of the
+        # request. The image has only busybox wget, which takes a header only as an argv value
+        # (no header-from-file option, unlike curl's -H @file), so there is nothing to move it
+        # to. The exposure is a process list inside a --network none container that is removed
+        # at exit, holding a session token for a throwaway database.
         printf 'Authorization: Bearer %s\n' "$token" |
             $ENGINE exec -i "$container" sh -c \
                 'IFS= read -r h; exec wget -q --header="$h" -O- "$1"' sh "http://127.0.0.1:8080$path"
@@ -177,6 +182,7 @@ api_post() {
     # -- this only POSTs it, it does not build it.
     local container="$1" path="$2" mounted_path="$3" token="${4:-}"
     if [ -n "$token" ]; then
+        # Same stdin hand-off and the same wget-argv residual as api_get.
         printf 'Authorization: Bearer %s\n' "$token" |
             $ENGINE exec -i "$container" sh -c \
                 'IFS= read -r h; exec wget -q --header="Content-Type: application/json" --header="$h" --post-file="$2" -O- "$1"' \

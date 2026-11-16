@@ -2042,11 +2042,16 @@ func newLegalHoldStoreMax(t *testing.T) *LocalStorage {
 	return newMaxStore(t, "lhold_"+t.Name(), &models.LegalHold{})
 }
 
-// UpdateLegalHold — upserts (Save never returns not-found; just covers the branch).
-func TestUpdateLegalHold_UpsertPath(t *testing.T) {
+// ReleaseLegalHold — an unknown id matches no row: not released, no error, and
+// (unlike the former Save upsert) no row is created.
+func TestReleaseLegalHold_UnknownIDMatchesNothing(t *testing.T) {
 	ls := newLegalHoldStoreMax(t)
-	err := ls.UpdateLegalHold(context.Background(), &models.LegalHold{ID: 9999})
+	released, err := ls.ReleaseLegalHold(context.Background(), 9999, 1, time.Now(), "r")
 	require.NoError(t, err)
+	require.False(t, released)
+	var n int64
+	require.NoError(t, ls.db.Model(&models.LegalHold{}).Count(&n).Error)
+	require.Zero(t, n, "a release of an unknown id must not insert a row")
 }
 
 // CreateLegalHold — error path.
