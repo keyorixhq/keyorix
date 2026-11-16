@@ -34,12 +34,12 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/cli/internal/credstore"
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // credField constrains a fuzzed field to the domain real credential values
 // live in: no control characters and no leading/trailing whitespace. YAML
-// (yaml.v3) does not byte-round-trip a scalar with a leading newline or
+// (yaml v3/v4) does not byte-round-trip a scalar with a leading newline or
 // trailing space — "\n0" marshals and unmarshals back as "0" — but a server
 // URL, bearer token, project name or CA-file path never contains such bytes.
 // Fuzzing those into the ROUND-TRIP oracle (a) tests YAML scalar-folding
