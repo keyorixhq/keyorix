@@ -132,7 +132,7 @@ func FuzzYAMLV4StructDifferential(f *testing.F) {
 		"list: [1, 2, 3]\n", // sequence into []int
 		"map: {a: x, b: y}\n",
 		"sub:\n  name: n\n  n: 7\n",
-		"environment: production\n",            // real config field
+		"environment: production\n",             // real config field
 		"server:\n  http:\n    enabled: true\n", // nested real config
 		"unknown_top_level_key: 1\n",            // strict-mode unknown-field probe
 		"storage:\n  type: sqlite\n",
@@ -289,12 +289,12 @@ func FuzzYAMLV4MultiDocDifferential(f *testing.F) {
 		"---\na: 1\n---\nb: 2\n",
 		"---\na: 1\n---\nb: 2\n---\nc: 3\n",
 		"a: 1\n---\nb: 2\n",
-		"---\n---\n",       // two empty documents
+		"---\n---\n",               // two empty documents
 		"---\n! 00\n---\n! true\n", // per-doc nonspecific-tag divergence in docs 1 and 2
 		"{}\n---\n[]\n",
 		"\n---\n\n",
 		"--- a\n--- b\n",
-		"0\n---\n: ",         // doc2 is the D2 empty-implicit-key: v3 stream errors, v4 accepts
+		"0\n---\n: ",        // doc2 is the D2 empty-implicit-key: v3 stream errors, v4 accepts
 		"a: 1\n---\n! 00\n", // doc2 is a D12 nonspecific-tag value divergence
 		">\n0",              // folded block scalar under-indented: v3 stream rejects / v4 accepts
 		"&0?",               // anchor then ?: v3 rejects mapping-key-context / v4 accepts

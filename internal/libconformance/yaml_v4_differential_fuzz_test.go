@@ -69,66 +69,66 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"null",
 		"x: 1",
 		"x: 1\ny: 2\n",
-		"x: 1\nx: 2\n",              // duplicate key (both expected to reject)
-		"- 1\n- 2\n- 3\n",           // sequence
-		"a:\n  b:\n    c: 1\n",      // nested maps
-		"foo: !!str 123\n",          // explicit tag
-		"n: .nan\ni: .inf\n",        // float specials (NaN re-encode parity)
-		"big: 0x7fffffffffffffff\n", // hex int
-		"t: true\nf: no\ny: yes\n",  // yaml 1.1 vs 1.2 bools
-		"o: 0o17\n",                 // octal 1.2
-		"o: 017\n",                  // octal leading-zero
-		"v: 0b101\n",                // binary
-		"e: 1_000\n",                // underscore digits
-		"s: 2020-01-02\n",           // timestamp
-		"anchor: &a 1\nref: *a\n",   // anchor/alias
+		"x: 1\nx: 2\n",                          // duplicate key (both expected to reject)
+		"- 1\n- 2\n- 3\n",                       // sequence
+		"a:\n  b:\n    c: 1\n",                  // nested maps
+		"foo: !!str 123\n",                      // explicit tag
+		"n: .nan\ni: .inf\n",                    // float specials (NaN re-encode parity)
+		"big: 0x7fffffffffffffff\n",             // hex int
+		"t: true\nf: no\ny: yes\n",              // yaml 1.1 vs 1.2 bools
+		"o: 0o17\n",                             // octal 1.2
+		"o: 017\n",                              // octal leading-zero
+		"v: 0b101\n",                            // binary
+		"e: 1_000\n",                            // underscore digits
+		"s: 2020-01-02\n",                       // timestamp
+		"anchor: &a 1\nref: *a\n",               // anchor/alias
 		"merge: &m {a: 1}\nd: {<<: *m, b: 2}\n", // merge key
-		"key: |\n  multi\n  line\n", // block scalar
-		"? [a, b]\n: val\n",         // complex mapping key (both reject)
-		"!",                         // non-specific tag on empty scalar (v3 null / v4 "")
-		"! 00",                      // ! on NON-empty scalar: v3 int 0 / v4 "00" (D12)
-		"! true",                    // ! on bool-looking scalar: v3 bool / v4 "true" (D12)
-		"! null",                    // ! on null text: v3 nil / v4 "null" (D12)
-		"! 1.5",                     // ! on float-looking scalar: v3 1.5 / v4 "1.5" (D12)
-		"a: ! 123",                  // ! on non-empty under a key (D12)
-		"- ! 00",                    // ! on non-empty in a sequence (D12)
-		"! abc",                     // NOT a split: ! on a string-resolving scalar agrees
-		"! : 00",                    // ! on an empty KEY: v3 {nil:0} / v4 {"":"00"} (D17 structural)
-		"! 00 : x",                  // ! on a non-empty KEY (D17 structural)
-		"&a:b",                      // colon in anchor name: v3 ":b" / v4 nil (D18)
-		"&00:00000",                 // colon in anchor name (D18)
-		"k: &00:00000",              // colon in anchor name under a key (D18)
-		"a: !\nb: !!str\n",          // mixed: ! diverges, !!str agrees
-		":",                         // empty implicit key (v3 rejects / v4 null key)
-		"- :\n",                     // empty implicit key inside a sequence
-		"::",                        // NOT a split: both accept (key "::")
-		"0: !",                      // ! on empty scalar under an INT key (map[any]any)
-		"\x7f",                      // DEL control char (v3 rejects / v4 accepts)
-		"k: a\x80b\n",               // C1 control embedded in a scalar value
-		"0\n:",                      // scalar then ':' next line (v3 accepts+truncates / v4 rejects)
-		"0: !,",                     // flow char in tag suffix (v3 lenient / v4 rejects)
-		"!<a,b>",                    // NOT a split: verbatim tag accepted by both
-		"|#0",                       // comment without preceding whitespace (v3 lenient / v4 rejects)
-		"\t",                        // leading tab (v3 rejects / v4 accepts as nil)
-		"|\n00",                     // under-indented block scalar (v3 drops to "" / v4 keeps "00")
-		"|\n  00",                   // NOT a split: properly indented block scalar agrees
-		"o: &!0000",                 // anchor name with '!' (v3 rejects / v4 lenient)
-		"- -0",                      // -0: v3 int 0 / v4 float -0.0
-		"-0:",                       // -0 as a KEY: v3 int-0 key / v4 float-negzero key (D19)
-		"|\n\"",                     // block scalar + lone quote: v3 rejects EOS / v4 accepts (D20)
-		"|\n%0",                     // block scalar + %0: v3 rejects directive / v4 accepts (D21)
-		"<<",                        // bare merge key: v3 "<<" / v4 drops to nil (D22)
-		"a: <<",                     // merge key w/o map value: v3 keeps / v4 drops entry (D22)
-		"0: {0:} ",                  // flow-map colon no space: v3 key "0:" / v4 key 0 (D23)
-		"{!}",                       // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
-		"[!x]",                      // tagged empty node in flow seq (v3 rejects / v4 "")
-		"[0: !]",                    // tagged empty value in flow seq (v3 rejects / v4 "")
-		"[0: !t 1]",                 // NOT a split: tag on NON-empty flow scalar agrees
-		"[: 1]",                     // empty key in flow seq (v3 rejects / v4 null key)
-		"'': empty-key\n",           // empty key
-		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
-		"---\na: 1\n---\nb: 2\n",    // multi-document (single-value decode)
-		"key: =\n",                  // the '=' value
+		"key: |\n  multi\n  line\n",             // block scalar
+		"? [a, b]\n: val\n",                     // complex mapping key (both reject)
+		"!",                                     // non-specific tag on empty scalar (v3 null / v4 "")
+		"! 00",                                  // ! on NON-empty scalar: v3 int 0 / v4 "00" (D12)
+		"! true",                                // ! on bool-looking scalar: v3 bool / v4 "true" (D12)
+		"! null",                                // ! on null text: v3 nil / v4 "null" (D12)
+		"! 1.5",                                 // ! on float-looking scalar: v3 1.5 / v4 "1.5" (D12)
+		"a: ! 123",                              // ! on non-empty under a key (D12)
+		"- ! 00",                                // ! on non-empty in a sequence (D12)
+		"! abc",                                 // NOT a split: ! on a string-resolving scalar agrees
+		"! : 00",                                // ! on an empty KEY: v3 {nil:0} / v4 {"":"00"} (D17 structural)
+		"! 00 : x",                              // ! on a non-empty KEY (D17 structural)
+		"&a:b",                                  // colon in anchor name: v3 ":b" / v4 nil (D18)
+		"&00:00000",                             // colon in anchor name (D18)
+		"k: &00:00000",                          // colon in anchor name under a key (D18)
+		"a: !\nb: !!str\n",                      // mixed: ! diverges, !!str agrees
+		":",                                     // empty implicit key (v3 rejects / v4 null key)
+		"- :\n",                                 // empty implicit key inside a sequence
+		"::",                                    // NOT a split: both accept (key "::")
+		"0: !",                                  // ! on empty scalar under an INT key (map[any]any)
+		"\x7f",                                  // DEL control char (v3 rejects / v4 accepts)
+		"k: a\x80b\n",                           // C1 control embedded in a scalar value
+		"0\n:",                                  // scalar then ':' next line (v3 accepts+truncates / v4 rejects)
+		"0: !,",                                 // flow char in tag suffix (v3 lenient / v4 rejects)
+		"!<a,b>",                                // NOT a split: verbatim tag accepted by both
+		"|#0",                                   // comment without preceding whitespace (v3 lenient / v4 rejects)
+		"\t",                                    // leading tab (v3 rejects / v4 accepts as nil)
+		"|\n00",                                 // under-indented block scalar (v3 drops to "" / v4 keeps "00")
+		"|\n  00",                               // NOT a split: properly indented block scalar agrees
+		"o: &!0000",                             // anchor name with '!' (v3 rejects / v4 lenient)
+		"- -0",                                  // -0: v3 int 0 / v4 float -0.0
+		"-0:",                                   // -0 as a KEY: v3 int-0 key / v4 float-negzero key (D19)
+		"|\n\"",                                 // block scalar + lone quote: v3 rejects EOS / v4 accepts (D20)
+		"|\n%0",                                 // block scalar + %0: v3 rejects directive / v4 accepts (D21)
+		"<<",                                    // bare merge key: v3 "<<" / v4 drops to nil (D22)
+		"a: <<",                                 // merge key w/o map value: v3 keeps / v4 drops entry (D22)
+		"0: {0:} ",                              // flow-map colon no space: v3 key "0:" / v4 key 0 (D23)
+		"{!}",                                   // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
+		"[!x]",                                  // tagged empty node in flow seq (v3 rejects / v4 "")
+		"[0: !]",                                // tagged empty value in flow seq (v3 rejects / v4 "")
+		"[0: !t 1]",                             // NOT a split: tag on NON-empty flow scalar agrees
+		"[: 1]",                                 // empty key in flow seq (v3 rejects / v4 null key)
+		"'': empty-key\n",                       // empty key
+		"a: 1\nb: {c: 2, c: 3}\n",               // nested duplicate key
+		"---\na: 1\n---\nb: 2\n",                // multi-document (single-value decode)
+		"key: =\n",                              // the '=' value
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -1004,4 +1004,3 @@ func TestResguardYAMLV4Calibrate(t *testing.T) {
 		t.Logf("wrote %s: %s", yamlV4BudgetPath, b.Summary())
 	}
 }
-
