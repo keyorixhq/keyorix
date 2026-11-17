@@ -36,8 +36,8 @@ var knownUndeclaredEmergencyAccessFields = map[string]string{
 func jsonFieldNames(t *testing.T, typ reflect.Type) []string {
 	t.Helper()
 	var names []string
-	for i := 0; i < typ.NumField(); i++ {
-		tag := typ.Field(i).Tag.Get("json")
+	for f := range typ.Fields() {
+		tag := f.Tag.Get("json")
 		name, _, _ := strings.Cut(tag, ",")
 		if name == "" || name == "-" {
 			continue
@@ -54,7 +54,7 @@ func TestEmergencyAccessPosture_RESTFieldsAreDeclaredInProto(t *testing.T) {
 		declared[string(msg.Fields().Get(i).Name())] = true
 	}
 
-	rest := jsonFieldNames(t, reflect.TypeOf(core.EmergencyAccessPosture{}))
+	rest := jsonFieldNames(t, reflect.TypeFor[core.EmergencyAccessPosture]())
 	require.NotEmpty(t, rest)
 	for _, name := range rest {
 		reason, exempt := knownUndeclaredEmergencyAccessFields[name]
