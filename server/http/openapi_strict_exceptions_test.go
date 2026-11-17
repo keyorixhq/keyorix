@@ -2,7 +2,7 @@ package http
 
 // openapi_strict_exceptions_test.go — the SHRINK-ONLY guard for the STRICT
 // FuzzOpenAPIStateful gate (task V9). It enforces, against the REAL NewRouter
-// stack, that testdata/openapi_strict_exceptions.tsv is exactly the set of
+// stack, that testdata/openapi_strict_exceptions.d/ (one <operation>.tsv per row) is exactly the set of
 // still-unfixed undeclared-5xx defects strict mode waives:
 //
 //   - CAN ONLY SHRINK: every row has a deterministic reproducer that must still
@@ -20,12 +20,12 @@ package http
 // is watched to fail (red/green proof in the PR/report), not merely asserted.
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -36,7 +36,7 @@ import (
 
 // osStrictExceptionsFile is read relative to the package dir (Go sets the test's
 // working directory to the package directory).
-const osStrictExceptionsFile = "testdata/openapi_strict_exceptions.tsv"
+const osStrictExceptionsDir = "testdata/openapi_strict_exceptions.d"
 
 type osStrictException struct {
 	op      string
@@ -47,35 +47,48 @@ type osStrictException struct {
 	reason  string
 }
 
+// osReadStrictExceptions reads one row per <operation>.tsv file in
+// osStrictExceptionsDir (one file per entry, so PRs never share a list file). A
+// file whose name does not match its operation column is a hard failure.
 func osReadStrictExceptions(t *testing.T) []osStrictException {
 	t.Helper()
-	f, err := os.Open(osStrictExceptionsFile)
+	entries, err := os.ReadDir(osStrictExceptionsDir)
 	if err != nil {
-		t.Fatalf("open %s: %v", osStrictExceptionsFile, err)
+		t.Fatalf("read %s: %v", osStrictExceptionsDir, err)
 	}
-	defer f.Close()
 	var rows []osStrictException
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
-			continue
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".tsv") {
+			continue // README.md and the like
 		}
-		cols := strings.Split(line, "\t")
-		if cols[0] == "operation" { // header
-			continue
-		}
-		if len(cols) < 6 {
-			t.Fatalf("malformed row (want 6 tab-separated cols): %q", line)
-		}
-		code, err := strconv.Atoi(cols[1])
+		path := filepath.Join(osStrictExceptionsDir, name)
+		b, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("bad status in row %q: %v", line, err)
+			t.Fatalf("read %s: %v", path, err)
 		}
-		rows = append(rows, osStrictException{cols[0], code, cols[2], cols[3], cols[4], cols[5]})
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatalf("scan %s: %v", osStrictExceptionsFile, err)
+		n := 0
+		for line := range strings.SplitSeq(string(b), "\n") {
+			if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
+				continue
+			}
+			n++
+			cols := strings.Split(line, "\t")
+			if len(cols) < 6 {
+				t.Fatalf("%s: malformed row (want 6 tab-separated cols): %q", path, line)
+			}
+			if want := strings.TrimSuffix(name, ".tsv"); cols[0] != want {
+				t.Fatalf("%s: operation %q does not match the file name (want %q)", path, cols[0], want)
+			}
+			code, err := strconv.Atoi(cols[1])
+			if err != nil {
+				t.Fatalf("%s: bad status in row %q: %v", path, line, err)
+			}
+			rows = append(rows, osStrictException{cols[0], code, cols[2], cols[3], cols[4], cols[5]})
+		}
+		if n != 1 {
+			t.Fatalf("%s: want exactly one row, got %d", path, n)
+		}
 	}
 	return rows
 }

@@ -1,0 +1,1 @@
+listAccessors	500	mapped-wrongly	#4132	secrets-handlers	OPENAPI-STATEFUL-1: machine principal reaches legacy default:500 (secrets_access_list.go:36); should be a declared 4xx via answerCoreError.
