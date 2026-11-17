@@ -40,8 +40,9 @@ var ErrRestrictedPATCannotMintPAT = errors.New("a restricted personal access tok
 // deliberately not RBAC-gated, so Authorize never sees it, and it grants the owner
 // an emergency role at a project: a privilege-escalation path a token confined
 // below its owner must not reach. Revoking the owner's own tokens and sessions stays
-// allowed for a restricted PAT, since it only ever reduces access.
-var ErrRestrictedPATCannotBreakGlass = errors.New("a restricted personal access token cannot activate break-glass access")
+// allowed for a restricted PAT, since it only ever reduces access. It also matches
+// ErrPermissionDenied (#4163, authzdiff known-09).
+var ErrRestrictedPATCannotBreakGlass = newPermissionSentinel("a restricted personal access token cannot activate break-glass access")
 
 // patAllowsSecretRead reports whether the request's PAT restriction permits
 // secrets.read on secret at the secret's own project/environment.

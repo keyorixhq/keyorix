@@ -45,37 +45,37 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestMapSecretError_UnknownRotationCharset_S23(t *testing.T) {
-	err := mapSecretError(errors.New("unknown rotation charset: klingon"))
+	err := mapSecretError(context.Background(), errors.New("unknown rotation charset: klingon"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_MustBeSetTogether_S23(t *testing.T) {
-	err := mapSecretError(errors.New("backend and ref must be set together"))
+	err := mapSecretError(context.Background(), errors.New("backend and ref must be set together"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_UnknownRotationBackend_S23(t *testing.T) {
-	err := mapSecretError(errors.New("unknown rotation backend: vault"))
+	err := mapSecretError(context.Background(), errors.New("unknown rotation backend: vault"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_NoRotationBackends_S23(t *testing.T) {
-	err := mapSecretError(errors.New("no rotation backends configured"))
+	err := mapSecretError(context.Background(), errors.New("no rotation backends configured"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_Exceeds_S23(t *testing.T) {
-	err := mapSecretError(errors.New("value exceeds maximum length"))
+	err := mapSecretError(context.Background(), errors.New("value exceeds maximum length"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_OutOfRange_S23(t *testing.T) {
-	err := mapSecretError(errors.New("out of range: rotation length"))
+	err := mapSecretError(context.Background(), errors.New("out of range: rotation length"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_Default_S23(t *testing.T) {
-	err := mapSecretError(errors.New("unexpected database timeout"))
+	err := mapSecretError(context.Background(), errors.New("unexpected database timeout"))
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
@@ -84,38 +84,38 @@ func TestMapSecretError_Default_S23(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMapDynamicError_NotFound_S23(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: config not found", core.ErrDynamicSecretNotFound))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: config not found", core.ErrDynamicSecretNotFound))
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestMapDynamicError_CannotExceed_S23(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: ttl cannot exceed maximum allowed value", core.ErrValidation))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: ttl cannot exceed maximum allowed value", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapDynamicError_Required_S23(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: admin_dsn is required", core.ErrValidation))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: admin_dsn is required", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapDynamicError_ClassificationMust_S23(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: classification must be one of: public, internal, confidential, restricted", core.ErrValidation))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: classification must be one of: public, internal, confidential, restricted", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapDynamicError_Permission_S23(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: permission denied for this config", core.ErrPermissionDenied))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: permission denied for this config", core.ErrPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestMapDynamicError_Denied_S23(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: denied: insufficient authority", core.ErrPermissionDenied))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: denied: insufficient authority", core.ErrPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestMapDynamicError_Unavailable_S23(t *testing.T) {
 	// Any non-matching error maps to Unavailable (backend trouble).
-	err := mapDynamicError(errors.New("dial tcp: connection refused"))
+	err := mapDynamicError(context.Background(), errors.New("dial tcp: connection refused"))
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
@@ -124,47 +124,47 @@ func TestMapDynamicError_Unavailable_S23(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMapMachineError_CannotTransition_S23(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: cannot transition from revoked to active", core.ErrMachineTransitionInvalid))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: cannot transition from revoked to active", core.ErrMachineTransitionInvalid))
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
 func TestMapMachineError_MustBeActive_S23(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: machine must be active to issue tokens", core.ErrMachineIdentityNotActive))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: machine must be active to issue tokens", core.ErrMachineIdentityNotActive))
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
 func TestMapMachineError_NotFound_S23(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: machine identity not found", core.ErrMachineIdentityNotFound))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: machine identity not found", core.ErrMachineIdentityNotFound))
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestMapMachineError_Invalid_S23(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: invalid classification value", core.ErrValidation))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: invalid classification value", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapMachineError_ClassificationMust_S23(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: classification must be one of the allowed values", core.ErrValidation))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: classification must be one of the allowed values", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapMachineError_Required_S23(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: name is required", core.ErrValidation))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: name is required", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapMachineError_Permission_S23(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: permission denied for machine", core.ErrPermissionDenied))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: permission denied for machine", core.ErrPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestMapMachineError_Denied_S23(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: denied: no roles.assign grant", core.ErrPermissionDenied))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: denied: no roles.assign grant", core.ErrPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestMapMachineError_Internal_S23(t *testing.T) {
-	err := mapMachineError(errors.New("unexpected storage failure"))
+	err := mapMachineError(context.Background(), errors.New("unexpected storage failure"))
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
@@ -252,12 +252,12 @@ func TestGetSecretImpact_PermissionDenied_S23(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMapUserError_Invalid_S23(t *testing.T) {
-	err := mapUserError(fmt.Errorf("%w: invalid email address format", core.ErrValidation))
+	err := mapUserError(context.Background(), fmt.Errorf("%w: invalid email address format", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapUserError_Default_S23(t *testing.T) {
-	err := mapUserError(errors.New("unexpected database error"))
+	err := mapUserError(context.Background(), errors.New("unexpected database error"))
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 

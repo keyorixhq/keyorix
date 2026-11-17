@@ -157,6 +157,7 @@ func TestApproveAccessRequest_PermanentByDefault(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
+	h.CreateTestUser(t, "approver", 1) // the approver is an active account (#4159)
 	// #93/#107/#141: the approver must themselves hold every permission of the
 	// role being granted — grant "admin" globally so the ceiling check's admin
 	// bypass applies.

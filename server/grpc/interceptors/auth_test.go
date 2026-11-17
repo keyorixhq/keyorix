@@ -266,6 +266,7 @@ func TestAuthInterceptor_MachineTokenAuthenticatesAndUsesMachineRBAC(t *testing.
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2 := uint(2)
 	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2)
+	h.EnsureActiveUser(t, 1) // the acting user is an active account (#4159)
 	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(tok.PlainToken, "kx_machine_"))
@@ -367,6 +368,7 @@ func TestAuthInterceptor_MachineTokenNetworkAllowlistOverGRPC(t *testing.T) {
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2cidr := uint(2)
 	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2cidr)
+	h.EnsureActiveUser(t, 1) // the acting user is an active account (#4159)
 	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{
 		Name:         "tok-cidr",
 		AllowedCIDRs: []string{"10.0.0.0/8"},
@@ -467,6 +469,7 @@ func TestAuthInterceptor_MachineRequestStampsMachineActorInAudit(t *testing.T) {
 	// grant it the seeded "admin" role (id 2, bundles roles.assign) at project 2.
 	proj2audit := uint(2)
 	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2audit)
+	h.EnsureActiveUser(t, 1) // the acting user is an active account (#4159)
 	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 

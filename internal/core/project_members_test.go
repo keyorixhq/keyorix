@@ -23,6 +23,7 @@ import (
 func grantGlobalAdmin(t *testing.T, st *store.LocalStorage, actorID uint) {
 	t.Helper()
 	ctx := context.Background()
+	ensureActiveActor(t, st, actorID)
 	role, err := st.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, actorID, role.ID, storage.Scope{}))

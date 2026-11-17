@@ -178,6 +178,7 @@ func failingAuditStorage(counting *auditCallCountingStorage) storage.Storage {
 func TestSecretReadDenial_AuditWriteFailureKeepsTheRefusal(t *testing.T) {
 	_, counting, db := newAuditSkipReadsWorld(t, false)
 	c := NewKeyorixCore(failingAuditStorage(counting))
+	ensureActiveActor(t, c.storage, 3) // mallory is an active account (#4159)
 	_, err := c.CopySecret(context.Background(), 4242, 1, "", "mallory", 3, "10.0.0.1", "ua")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found", "the refusal must be the same answer as without auditing")

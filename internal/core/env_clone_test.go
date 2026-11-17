@@ -37,13 +37,15 @@ func newCloneTestCore(t *testing.T) *KeyorixCore {
 		&models.AuditEvent{},
 		&models.SecretAccessLog{},
 		&models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
-		&models.SecretAccessSchedule{},
+		&models.SecretAccessSchedule{}, &models.User{},
 	))
 	// CopySecret calls GetSecretValueWithPermissionCheck which gates the owner path on
 	// IsProjectMember (RBAC-001). The first project created in each test gets ID=1;
 	// seed actor 1 as a project member so the copy read passes.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
-	return &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	ensureActiveActor(t, c.storage, 1) // the acting user of these tests (#4159)
+	return c
 }
 
 func TestCloneEnvironment_Basic(t *testing.T) {
@@ -233,6 +235,7 @@ func TestCloneEnvironment_ListSecretsError(t *testing.T) {
 
 	// Both envs have ProjectID=1 (returned by the override above), so the project
 	// check passes, and we reach ListSecrets which returns an error.
+	stubActiveActors(ms) // the acting user is active (#4159)
 	result, err := c.CloneEnvironment(context.Background(), 1, 2, 3, "owner", 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db unavailable")

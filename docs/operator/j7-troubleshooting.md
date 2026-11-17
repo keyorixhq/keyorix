@@ -6,9 +6,12 @@ server; paths and addresses differ on your install.
 First step for any start-up failure: `keyorix-server admin diagnose --config ./keyorix.yaml`
 runs the checks server start-up depends on (config parse, encryption key access, database
 open, migration state) and reports which one fails, without starting a listener. It needs
-the master passphrase like the server does. It is not read-only: pointed at a directory with
-no key files it generates the DEK and KEK salt (`Generated and wrapped new DEK at data.key`),
-as a first start would, and on an empty database it ends with
+the master passphrase like the server does. It creates no keys: pointed at a directory with
+no key files it stops with `[FAIL] KEK/passphrase access: key file <abs path>/kek.salt does not
+exist; key file <abs path>/dek.key does not exist. diagnose is read-only and does not create
+keys; ...`, naming each missing file by absolute path, and leaves the salt, the DEK and
+`dek.lock` uncreated (`keyorix-server admin encryption init` creates the keys of a new
+install). When the schema is behind the binary it ends with
 `The database schema is behind this binary; run keyorix-server admin migrate before starting.`
 Exit status 0 means every check that can stop the boot passed, WARN lines included.
 
@@ -45,7 +48,9 @@ failed to connect to postgres: failed to connect to `user=keyorix database=keyor
 	127.0.0.1:59999 (localhost): dial error: dial tcp 127.0.0.1:59999: connect: connection refused
 ```
 
-The server exits with status 1. An `admin` command (for example `admin validate`) reports the
+The server exits with status 75 and ends with `keyorix-server: exit 75 (dependency unavailable)`
+(the shipped systemd unit retries it every 30 s; see
+[startup-refusals.md](startup-refusals.md#exit-statuses)). An `admin` command (for example `admin validate`) reports the
 same cause after the prefix `cannot connect to the database to check for a running server:
 connect to postgres for server-presence check:`.
 

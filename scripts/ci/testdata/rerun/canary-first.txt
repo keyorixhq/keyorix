@@ -1,0 +1,7 @@
+--- FAIL: TestCorePGCanaryOracleCatchesPlantedLeaks (6.56s)
+    --- FAIL: TestCorePGCanaryOracleCatchesPlantedLeaks/shim-quoting-a-stored-column-is-reported (0.15s)
+        secret_ops_canary_pg_fuzz_test.go:601: planted leak "channel=op-error " was not reported; findings: []
+    --- FAIL: TestCorePGCanaryOracleCatchesPlantedLeaks/shim-quoting-a-secret-value-is-reported (0.15s)
+        secret_ops_canary_pg_fuzz_test.go:605: planted leak "channel=op-error " was not reported; findings: []
+FAIL
+FAIL	github.com/keyorixhq/keyorix/internal/core	679.278s

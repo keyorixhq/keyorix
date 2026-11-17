@@ -1,0 +1,18 @@
+ok  	github.com/keyorixhq/keyorix/pkg/bundleverify	2.071s
+--- FAIL: TestGovulncheckCheckScript (0.21s)
+    govulncheck_exceptions_test.go:30: check-govulncheck-test.sh: exit status 1
+        === clean run, no findings at all ===
+        === non-reachable-only finding passes with no row needed ===
+        === reachable + allowlisted (real row GO-2026-6909) passes and says so ===
+        === reachable + NOT allowlisted fails and names the ID ===
+        FAIL: reachable blocking: expected a BLOCKING GO-2099-9999 line, got: check-govulncheck: BLOCKING GO-2099-9999 -- reachable, no row in docs/govulncheck-exceptions.d/ (see https://pkg.go.dev/vuln/GO-2099-9999)
+          module example.com/nonexistent@v0.0.1, fixed_version=N/A
+          CallsIt -> example.com/nonexistent
+        check-govulncheck: one or more reachable findings are not allowlisted -- see docs/govulncheck-exceptions.d/README.md to add a reviewed, dated row, or bump the dependency past fixed_version
+        === one allowed + one blocking: the allowed one does not hide the blocking one ===
+        === a near-miss ID (prefix of an allowlisted one) still blocks -- exact match only ===
+        === govulncheck itself failing (nonzero exit) fails the check, not silently 'clean' ===
+        === 6 passed, 1 failed ===
+FAIL
+FAIL	github.com/keyorixhq/keyorix/scripts/ci	166.285s
+ok  	github.com/keyorixhq/keyorix/scripts/ci/declrefs	0.153s [no tests to run]

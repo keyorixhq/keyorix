@@ -49,6 +49,7 @@ func TestStorageUnavailable_RESTMapping(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(kxstorage.AllModels()...))
 	faulty := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), nil)
 	cs := core.NewKeyorixCore(faulty)
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
 	cat := NewCatalogHandler(cs)
 	dyn := NewDynamicSecretHandler(cs)
 

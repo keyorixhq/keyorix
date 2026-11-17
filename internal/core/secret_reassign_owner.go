@@ -47,6 +47,9 @@ func (c *KeyorixCore) ReassignOwnedSecrets(ctx context.Context, actorKind string
 	if fromOwnerID == toOwnerID {
 		return 0, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "from-owner and to-owner must differ")
 	}
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorKind == ActorTypeMachine)); err != nil { // #4159
+		return 0, err
+	}
 	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, Scope{ProjectID: projectID}); err != nil {
 		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	} else if !allowed {

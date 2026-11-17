@@ -33,7 +33,7 @@ func NewProjectService(coreService *core.KeyorixCore) *ProjectGRPCService {
 // mapProjectError translates core/storage project errors into gRPC status codes
 // through the shared classifier (coreErrorStatus): an audit outage and a typed storage
 // read fault are Unavailable (retry), the texts are this family's own and fixed.
-func mapProjectError(err error) error {
+func mapProjectError(ctx context.Context, err error) error {
 	// Not yet typed: storage's lockProjectRowForCascade (internal/storage/store/
 	// local_secrets.go) returns a bare fmt.Errorf("project not found") to
 	// DeleteProject/DeleteProjectIfEmpty for a missing or already-deleted project.
@@ -51,7 +51,7 @@ func mapProjectError(err error) error {
 	case errors.Is(err, storage.ErrDuplicateProjectName):
 		texts[errclass.Conflict] = "a project with this name already exists"
 	}
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "project operation", texts: texts})
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "project operation", texts: texts})
 }
 
 // ListProjects returns the projects the CALLER CAN READ, matching the HTTP route
@@ -84,7 +84,7 @@ func (s *ProjectGRPCService) ListProjects(ctx context.Context, _ *emptypb.Empty)
 	}
 	projects, err := s.core.ListProjects(ctx)
 	if err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	out := make([]*pb.Project, 0, len(projects))
 	for _, p := range projects {
@@ -109,7 +109,7 @@ func (s *ProjectGRPCService) GetProject(ctx context.Context, req *pb.GetProjectR
 	}
 	project, err := s.core.GetProject(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	return projectToProto(project), nil
 }
@@ -134,11 +134,11 @@ func (s *ProjectGRPCService) GetProjectRotationOrder(ctx context.Context, req *p
 	// this check indefinitely. Confirm the project is live before proceeding, mirroring
 	// the CreateProjectEnvironment precedent (catalog.go).
 	if _, err := s.core.GetProject(ctx, uint(req.GetId())); err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	order, err := s.core.GetProjectRotationOrder(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	return rotationOrderToProto(order), nil
 }
@@ -159,11 +159,11 @@ func (s *ProjectGRPCService) GetProjectRotationPlan(ctx context.Context, req *pb
 	// See GetProjectRotationOrder above: a scoped role binding survives project
 	// soft-delete, so confirm the project is still live before proceeding.
 	if _, err := s.core.GetProject(ctx, uint(req.GetId())); err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	plan, err := s.core.GenerateRotationPlan(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	return rotationPlanToProto(plan), nil
 }
@@ -179,7 +179,7 @@ func (s *ProjectGRPCService) GetDeploymentRotationPlan(ctx context.Context, _ *e
 	}
 	plan, err := s.core.GenerateDeploymentRotationPlan(ctx)
 	if err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	// #G17: the response aggregates every project's own rotation plan; a
 	// project that individually requires MFA must not be readable via this
@@ -208,7 +208,7 @@ func (s *ProjectGRPCService) CreateProject(ctx context.Context, req *pb.CreatePr
 	// AUDIT-TX-2: core writes project.created inside the create's transaction.
 	project, err := s.core.CreateProject(core.WithMutationAuditActor(ctx, user.UserID), req.GetName(), req.GetDescription())
 	if err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	return projectToProto(project), nil
 }
@@ -241,7 +241,7 @@ func (s *ProjectGRPCService) UpdateProject(ctx context.Context, req *pb.UpdatePr
 		if perr, ok := partialMutationStatus(err); ok {
 			return nil, perr
 		}
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	return projectToProto(project), nil
 }
@@ -261,7 +261,7 @@ func (s *ProjectGRPCService) DeleteProject(ctx context.Context, req *pb.DeletePr
 	// AUDIT-TX-3: core reads the name and writes the project.deleted row in the
 	// delete's own transaction.
 	if err := s.core.DeleteProject(core.WithMutationAuditActor(ctx, user.UserID), user.UserID, uint(req.GetId()), force); err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -280,11 +280,11 @@ func (s *ProjectGRPCService) ListEnvironments(ctx context.Context, req *pb.ListE
 	// See GetProjectRotationOrder above: a scoped role binding survives project
 	// soft-delete, so confirm the project is still live before proceeding.
 	if _, err := s.core.GetProject(ctx, uint(req.GetProjectId())); err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	envs, err := s.core.ListEnvironmentsByProject(ctx, uint(req.GetProjectId()))
 	if err != nil {
-		return nil, mapProjectError(err)
+		return nil, mapProjectError(ctx, err)
 	}
 	out := make([]*pb.Environment, 0, len(envs))
 	for _, e := range envs {

@@ -181,6 +181,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
 
 	allowNotifications(store) // best-effort outcome notification to the requester
+	stubActiveActors(store)   // the acting user is active (#4159)
 	out, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "project_developer", 0)
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestApproved, out.State)
@@ -216,6 +217,7 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 
 	allowNotifications(store) // best-effort outcome notification to the requester
 	// Empty grantedRole → uses the suggested role.
+	stubActiveActors(store) // the acting user is active (#4159)
 	out, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "", 0)
 	require.NoError(t, err)
 	assert.Equal(t, "project_viewer", out.GrantedRole)
@@ -300,6 +302,7 @@ func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
 	store.On("GetRolePermissions", ctx, uint(2)).Return([]*models.Permission{{ID: 51, Name: "system.admin"}}, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{6}, "system.admin").Return(false, nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "admin", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "do not hold permission")
@@ -332,6 +335,7 @@ func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
 	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
 	allowNotifications(store)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	out, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "project_admin", 0)
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestApproved, out.State)
@@ -353,6 +357,7 @@ func TestApproveAccessRequest_RejectsExpired(t *testing.T) {
 		return r.State == AccessRequestExpired
 	})).Return(true, nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expired")
@@ -366,6 +371,7 @@ func TestApproveAccessRequest_RejectsNonPending(t *testing.T) {
 	ctx := context.Background()
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{ID: 3, ProjectID: 1, State: AccessRequestApproved}, nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "project_viewer", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only a pending")
@@ -384,6 +390,7 @@ func TestApproveAccessRequest_RejectsOtherProject(t *testing.T) {
 		ID: 3, ProjectID: 2, UserID: 2, SuggestedRole: "project_admin", State: AccessRequestPending,
 	}, nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "project_admin", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
@@ -556,6 +563,7 @@ func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	inv1, prov1, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9, 0)
 	require.NoError(t, err)
 	require.NotNil(t, inv1)
@@ -567,6 +575,7 @@ func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-24*time.Hour)).Return(int64(1), nil).Once()
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-resendMinInterval)).Return(int64(1), nil).Once()
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	inv2, prov2, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9, 0)
 	require.Error(t, err, "the second same-email invite must be throttled, not delivered")
 	assert.Contains(t, err.Error(), "wait")
@@ -644,6 +653,7 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	// roles.assign baseline before the per-permission loop this test's
 	// throttling behavior actually exercises.
 	stubAuthorizedPrincipal(store, 9, Scope{}, "roles.assign")
+	stubActiveActors(store) // the inviting admin is active (#4159)
 
 	inv1, prov1, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9, 0)
 	require.NoError(t, err)

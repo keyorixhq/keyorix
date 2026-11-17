@@ -150,6 +150,9 @@ func (c *KeyorixCore) validationMode() string {
 // membership. When the mode lands the membership directly in `active`, the role
 // grant is applied immediately.
 func (c *KeyorixCore) InviteMember(ctx context.Context, projectID, userID uint, role string, invitedBy, invitedByMachineID uint, idpResolved bool) (*models.ProjectMembership, error) {
+	if err := c.requireActorActive(ctx, invitedBy); err != nil { // #4159
+		return nil, err
+	}
 	return c.inviteMemberWithMode(ctx, projectID, userID, role, invitedBy, invitedByMachineID, c.validationMode(), idpResolved)
 }
 
@@ -321,6 +324,9 @@ func initialMembershipStateForMode(mode string, idpResolved bool) string {
 // actorIsMachine distinguishes a machine-credential-authenticated caller (also
 // actorID==0) from the true actorID==0 system pseudo-actor.
 func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membershipID uint, to string, actorID uint, actorIsMachine bool) (*models.ProjectMembership, error) {
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return nil, err
+	}
 	m, err := c.storage.GetProjectMembership(ctx, membershipID)
 	if err != nil {
 		return nil, membershipReadError(err, "membership not found")

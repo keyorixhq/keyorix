@@ -1,0 +1,2 @@
+### Testing
+- **Restores the 80% coverage floor.** #4043 added the sdkdiff hostile-server mode (about 1,580 statements) with 61% of them unexercised by the root-4 leg, which took the merge-queue total from 80.2% to 79.2%. The mutation catalogue, the mock server's wire framing, the oracles, the report and the run/replay orchestrator now have offline tests (stub driver, raw TCP client); those files are 95.7% covered. No exclusion was added and the floor is unchanged.

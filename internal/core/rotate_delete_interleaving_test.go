@@ -141,6 +141,11 @@ func runRotateDeleteInterleaving(t *testing.T, tc rotateDeleteCase, db *gorm.DB,
 	seeded := 1
 	if tc.op == rotateDeleteOpRollback {
 		seeded = 2 // something to roll back to
+		// RollbackSecret refuses an actor with no active account (#4159,
+		// requireActorActive), so the acting user must exist: without it the
+		// rollback returns "the acting account is not active" before it reaches
+		// the hold point, which is not the interleaving under test.
+		require.NoError(t, db.Create(&models.User{ID: 1, Username: "rollback-operator", UsernameFolded: "rollback-operator", Email: "rollback-operator@example.com", EmailFolded: "rollback-operator@example.com", IsActive: true, AccountState: AccountActive}).Error)
 	}
 	id := seedRotateDeleteSecret(t, db, tc.backend, seeded)
 

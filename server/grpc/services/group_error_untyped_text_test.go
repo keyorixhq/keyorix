@@ -9,6 +9,7 @@ package services
 // that is Unavailable (retry), by its type, never by its words.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -131,7 +132,7 @@ func TestGroupError_TypedPermissionAndTransient(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := groupError(tc.err)
+			got := groupError(context.Background(), tc.err)
 			assert.Equal(t, tc.code, status.Code(got), got.Error())
 			if tc.msg != "" {
 				assert.Equal(t, tc.msg, status.Convert(got).Message())

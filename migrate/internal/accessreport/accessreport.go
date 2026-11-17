@@ -83,18 +83,37 @@ func (l Line) toItem() accessplan.Item {
 // corrupted multi-GB file taking down the migration run with an out-of-memory kill.
 const maxPlanFileBytes = 256 << 20 // 256MB
 
+// isValidOutcome reports whether o is one of accessplan's four Outcome values, or empty (the
+// zero value for a Line whose "outcome" key was absent from the JSON object). Apply's switch
+// treats any non-Create outcome as "skip" (see apply.go's comment above), so an unrecognised
+// value here would be silently dropped rather than rejected — ReadJSON must catch it first.
+func isValidOutcome(o accessplan.Outcome) bool {
+	switch o {
+	case accessplan.Create, accessplan.Skip, accessplan.Conflict, accessplan.Unmappable, "":
+		return true
+	}
+	return false
+}
+
 // ReadJSON reads a plan-access JSON report (one Line object per line) back into Items, in file
 // order — apply-access's starting point before re-deriving and cross-checking against live
-// Vault/Keyorix state.
+// Vault/Keyorix state. A line whose "outcome" does not match one of accessplan's four Outcome
+// values is rejected outright: Apply's switch (apply.go) treats any outcome other than Create
+// as "skip", so a corrupted or tampered outcome value would otherwise be silently dropped from
+// the applied plan instead of surfacing as an error (KFZ accessreport/ReadJSON finding).
 func ReadJSON(r io.Reader) (accessplan.Plan, error) {
 	dec := json.NewDecoder(io.LimitReader(r, maxPlanFileBytes))
 	var items []accessplan.Item
-	for dec.More() {
+	for lineN := 1; dec.More(); lineN++ {
 		var l Line
 		if err := dec.Decode(&l); err != nil {
 			return accessplan.Plan{}, err
 		}
-		items = append(items, l.toItem())
+		it := l.toItem()
+		if !isValidOutcome(it.Outcome) {
+			return accessplan.Plan{}, fmt.Errorf("access report line %d: unrecognised outcome %q", lineN, it.Outcome)
+		}
+		items = append(items, it)
 	}
 	return accessplan.Plan{Items: items}, nil
 }

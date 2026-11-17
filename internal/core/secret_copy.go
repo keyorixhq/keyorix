@@ -29,8 +29,14 @@ import (
 // (which keys off SecretAccessLog rows the Log* helpers write). ip/ua attribute the
 // events (pass-through from the request); empty is tolerated.
 func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint, newName, actorUsername string, actorID uint, ip, ua string) (*models.SecretNode, error) { // NOSONAR -- domain-driven parameter count
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4162
+		return nil, err
+	}
 	if sourceID == 0 || targetEnvID == 0 {
 		return nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "source secret ID and target environment ID are required")
+	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
 	}
 
 	// #G14: authorize read access to the source BEFORE the cross-project
@@ -47,8 +53,13 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	// collapsed — a genuine, unrelated storage failure (DB down, read-only,
 	// etc.) still propagates as-is so it isn't misreported and mishandled
 	// upstream as a plain not-found.
-	notFound := storage.NotFound(storage.ErrSecretNotFound,
-		fmt.Sprintf("%s: %s", i18n.T("ErrorSecretNotFound", nil), "not found"), nil)
+	//
+	// #4163 (authzdiff known-09): the answer is also a typed refusal
+	// (ErrPermissionDenied), for a missing and a forbidden source alike, so the two
+	// stay indistinguishable while every caller can tell it is a refusal; the REST
+	// handler checks not-found first and keeps its 404.
+	notFound := markPermissionDenied(storage.NotFound(storage.ErrSecretNotFound,
+		fmt.Sprintf("%s: %s", i18n.T("ErrorSecretNotFound", nil), "not found"), nil))
 	// #3273: a refused source read is audited (secret.read, Success=false). A
 	// missing source and a forbidden one answer the same notFound and take the
 	// same path into the recorder; only the row's reason differs.

@@ -38,10 +38,12 @@ func TestUpdateRole_RoleDeletedConcurrentlyAnswers404(t *testing.T) {
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{},
 		&models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{},
+		&models.User{},
 	))
 	admin := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(admin).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: admin.ID}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "fixture-actor-1", UsernameFolded: "fixture-actor-1", Email: "fixture-actor-1@example.com", EmailFolded: "fixture-actor-1@example.com", IsActive: true}).Error) // the admin's account is active (#4159)
 	victim := &models.Role{Name: "doomed-role", Description: "about to be deleted"}
 	require.NoError(t, db.Create(victim).Error)
 

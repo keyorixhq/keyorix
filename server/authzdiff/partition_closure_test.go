@@ -139,7 +139,8 @@ func explainLiterals(t *testing.T) (ops, details []string) {
 	}
 	body = body[:end]
 	opName := regexp.MustCompile(`^[a-z]+(\.[a-z]+)+$`)
-	for _, m := range regexp.MustCompile(`"([^"\\]*)"`).FindAllStringSubmatch(body, -1) {
+	literals := regexp.MustCompile(`"([^"\\]*)"`).FindAllStringSubmatch(body, -1)
+	for _, m := range literals {
 		s := m[1]
 		switch {
 		case strings.HasPrefix(s, "known-") || s == "unexplained" || s == "":
@@ -153,8 +154,13 @@ func explainLiterals(t *testing.T) (ops, details []string) {
 			}
 		}
 	}
-	if len(ops) == 0 || len(details) == 0 {
-		t.Fatalf("no literals parsed from explain (ops=%v details=%v)", ops, details)
+	// Since #4162/#4163 explain compares no detail literal (no waiver matches
+	// an untyped core error any more), and since #4336 no op literal either
+	// (known-02 was the last op-scoped waiver), so ops and details may both be
+	// empty. A broken parser also misses the bucket names explain returns
+	// ("unexplained" at least), so only a parse with no literal at all fails.
+	if len(literals) == 0 {
+		t.Fatal("no literals parsed from explain")
 	}
 	return ops, details
 }

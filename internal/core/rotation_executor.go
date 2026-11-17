@@ -603,6 +603,9 @@ func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.S
 // classification-restricted secret with a gate enabled, never that the
 // rotation itself is blocked.
 func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValue []byte, actorID uint, rotatedBy string) (*models.SecretNode, error) {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
@@ -711,6 +714,9 @@ type AutoRotateSpec struct {
 // rotates the upstream credential too (ADR-047). The caller (transport) must have
 // enforced scoped secrets.write.
 func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec AutoRotateSpec, actorID uint) error { // NOSONAR -- cognitive complexity 20, suppress go:S3776
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	if !knownRotationCharset(spec.Charset) {
 		return fmt.Errorf("unknown rotation charset %q (want alphanumeric|lower_alphanumeric|hex|alphanumeric_symbols)", spec.Charset)
 	}
