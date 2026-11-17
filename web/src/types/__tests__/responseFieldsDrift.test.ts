@@ -24,17 +24,18 @@
 //   - user list: the awaited return types of usersApi.list and adminApi.getUsers, and
 //     the exported AdminUser row interface (TS checker).
 //
-// NOT covered (stated, not implied; also listed in the PR body): every other response
-// type, the secret detail / `include_value` body, fields read in components rather than
-// in the service layer, nested types under a field the schema does not define, and
-// string formats / enums / nullability (openapiDrift.test.ts compares those for the
-// exported wire interfaces).
+// NOT covered here (stated, not implied): fields read in components rather than in the
+// service layer, nested types under a field the schema does not define, and string
+// formats / enums / nullability (openapiDrift.test.ts compares those for the exported
+// wire interfaces). The roles, groups, sharing, dashboard, audit and project responses and
+// the `include_value` read are in anyMappedResponsesDrift.test.ts.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { Locator, Shape, createProgram, exportedInterfaces, locate, toShape } from './openapiDriftLib';
+import { deref, mapperReads, requiredNotInSchema } from './responseDriftLib';
 
 type Doc = Record<string, any>;
 
@@ -44,107 +45,7 @@ const SECRETS_TS = resolve(SRC, 'services/secrets.ts');
 const USERS_TS = resolve(SRC, 'services/users.ts');
 const ADMIN_TS = resolve(SRC, 'services/admin.ts');
 
-// ── engine ────────────────────────────────────────────────────────────────────
-
-function deref(doc: Doc, s: Doc | undefined): Doc {
-    let cur = s ?? {};
-    for (let i = 0; cur.$ref && i < 20; i++) {
-        const path = String(cur.$ref).replace(/^#\//, '').split('/');
-        const next = path.reduce((n: any, k) => n?.[k], doc);
-        if (!next) throw new Error(`unresolvable $ref ${cur.$ref}`);
-        cur = next;
-    }
-    return cur;
-}
-
-/** Paths of web-REQUIRED fields that the schema does not define. Empty = no drift. */
-export function requiredNotInSchema(doc: Doc, shape: Shape, rawSchema: Doc, at: string, out: string[] = []): string[] {
-    const schema = deref(doc, rawSchema);
-    if (schema.oneOf || schema.anyOf || schema.allOf) {
-        throw new Error(`${at}: oneOf/anyOf/allOf is not supported by this check; extend it instead of skipping`);
-    }
-    if (shape.kind === 'array') {
-        if (!shape.items) return out;
-        if (!schema.items) {
-            out.push(`${at}[]: web types the items but the schema declares none`);
-            return out;
-        }
-        return requiredNotInSchema(doc, shape.items, schema.items, `${at}[]`, out);
-    }
-    if (shape.kind !== 'object' || !shape.props || shape.record) return out;
-    const sProps: Doc = schema.properties ?? {};
-    for (const [name, p] of Object.entries(shape.props)) {
-        const here = `${at}.${name}`;
-        if (!(name in sProps)) {
-            if (!p.optional) out.push(here);
-            continue;
-        }
-        requiredNotInSchema(doc, p.shape, sProps[name], here, out);
-    }
-    return out;
-}
-
-interface Reads {
-    required: string[];
-    tolerant: string[];
-}
-
-/** Fields read off the row parameter of the first `.map(cb)` inside `container.method`. */
-export function mapperReads(sourceText: string, container: string, method: string): Reads {
-    const sf = ts.createSourceFile('x.ts', sourceText, ts.ScriptTarget.ES2022, true);
-    let body: ts.Node | undefined;
-    const findMethod = (n: ts.Node) => {
-        if (
-            ts.isVariableDeclaration(n) &&
-            ts.isIdentifier(n.name) &&
-            n.name.text === container &&
-            n.initializer &&
-            ts.isObjectLiteralExpression(n.initializer)
-        ) {
-            for (const m of n.initializer.properties) {
-                if (m.name && ts.isIdentifier(m.name) && m.name.text === method) body = m;
-            }
-        }
-        ts.forEachChild(n, findMethod);
-    };
-    findMethod(sf);
-    if (!body) throw new Error(`${container}.${method} not found`);
-
-    let cb: ts.ArrowFunction | undefined;
-    const findMap = (n: ts.Node) => {
-        if (
-            !cb &&
-            ts.isCallExpression(n) &&
-            ts.isPropertyAccessExpression(n.expression) &&
-            n.expression.name.text === 'map'
-        ) {
-            const a = n.arguments[0];
-            if (a && ts.isArrowFunction(a) && a.parameters.length === 1 && ts.isIdentifier(a.parameters[0]!.name))
-                cb = a;
-        }
-        ts.forEachChild(n, findMap);
-    };
-    findMap(body);
-    if (!cb) throw new Error(`${container}.${method}: no .map((row) => ...) mapper found`);
-    const param = (cb.parameters[0]!.name as ts.Identifier).text;
-
-    const required = new Set<string>();
-    const tolerant = new Set<string>();
-    const visit = (n: ts.Node) => {
-        if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === param) {
-            const p = n.parent;
-            const fallback =
-                ts.isBinaryExpression(p) &&
-                (p.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
-                    p.operatorToken.kind === ts.SyntaxKind.BarBarToken);
-            (fallback ? tolerant : required).add(n.name.text);
-        }
-        ts.forEachChild(n, visit);
-    };
-    visit(cb.body);
-    for (const name of required) tolerant.delete(name);
-    return { required: [...required].sort(), tolerant: [...tolerant].sort() };
-}
+// ── helpers (the engine itself is in responseDriftLib.ts) ─────────────────────────
 
 const objectShape = (props: Record<string, boolean /* optional */>): Shape => ({
     kind: 'object',
