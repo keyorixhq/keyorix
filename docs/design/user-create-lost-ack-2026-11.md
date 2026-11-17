@@ -57,11 +57,12 @@ call sites of source 1 from the code on every run. A new insert site with no row
 
 ## Not covered
 
-- The off-box audit forward. A create through `withAuditedMutation`
-  (`CreateUserAudited`, `CreateUserWithAssignments`, `ProvisionSCIMUser`) forwards
-  its committed audit rows (`auditForwardSink.Flush`) only after a clean commit, so on
-  a delivered lost ack the row is in the database but was not forwarded. This is the
-  same for every audited mutation, not only creates, and belongs to the audit flusher.
+- The off-box audit forward of a `withAuditedMutation` mutation that is NOT read back. A
+  delivered create (`CreateUserAudited`, `CreateUserWithAssignments`, `ProvisionSCIMUser`) now
+  forwards its committed rows: `withAuditedMutation` returns the unflushed sink on a
+  commit-phase error (`errAuditCommitUnacknowledged`) and `userCreateLanded` flushes it once
+  the row is confirmed (PARTIAL-COMMIT-TAILS-NOV-3 item 3). Every other audited mutation still
+  answers a lost ack as an error and drops the forward, like the rest of its success path.
 
 ## knownOpenTolerances
 

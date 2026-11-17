@@ -15,5 +15,9 @@
   no `userCreateLostAckSites` row, or a row whose function does not call `userCreateLanded`,
   fails; each in-scope row is driven commit-then-error and plain-error through its op), the
   per-path `TestPartialCommit_*` tests, and `TestUserCreateLanded_ReadBackOutcomes`.
-  **Not covered**: the off-box audit forward (`auditForwardSink.Flush`) of a `withAuditedMutation` create is skipped
-  on a lost ack even when the row is delivered (the audit row itself is committed).
+  A delivered create that ran through `withAuditedMutation` also forwards its committed audit
+  rows off box (`flushDeliveredAudit` on the `errAuditCommitUnacknowledged` the transaction
+  returned), exactly once; a rolled-back one forwards nothing
+  (`TestWithAuditedMutation_LostAckDeliveredCreateForwardsItsAudit`).
+  **Not covered**: a `withAuditedMutation` caller that does not read its mutation back answers
+  the lost ack as an error and drops the forward (the audit row itself is committed).
