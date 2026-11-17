@@ -85,7 +85,10 @@ for m in "${!pkgs_by_module[@]}"; do
   gw=${GOWORK:-}
   [ "$m" != "." ] && gw=off
   # shellcheck disable=SC2086
-  if ! (cd "$m" && GOWORK=$gw go test -count=1 -timeout 1200s -run "$rx" "${pkgs[@]}"); then
+  # rerun-known-flakes.py is a pass-through unless KNOWN_FLAKE_RERUN=1 (ci.yml
+  # sets it on merge_group only): then a failed test on scripts/ci/known-flakes.txt
+  # is rerun once and the rerun is logged as FLAKE-RERUN (MQ-LEVERS-2 P2).
+  if ! (cd "$m" && GOWORK=$gw python3 "$root/scripts/ci/rerun-known-flakes.py" --label repo-guards -- go test -count=1 -timeout 1200s -run "$rx" "${pkgs[@]}"); then
     status=1
   fi
 done
