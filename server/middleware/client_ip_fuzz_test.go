@@ -37,9 +37,10 @@ import (
 //	    IP equals that single XFF entry.
 //	(g) RESULT IS VALID IP: a non-empty return value must parse as a valid
 //	    IP address via net.ParseIP.
-//	(h) RESULT NOT TRUSTED: a non-empty return value is never itself in the
-//	    trusted set (a trusted proxy's own address cannot appear as the
-//	    "real" client).
+//	(h) RESULT NOT TRUSTED: a non-empty return value taken from X-Forwarded-For
+//	    is never itself in the trusted set (a trusted proxy's own address cannot
+//	    appear as the "real" client). Not checked for the X-Real-IP fallback,
+//	    which clientIPFromRequest returns without a trust check by design.
 //
 // What this does NOT verify: that ClientIP correctly rewrites r.RemoteAddr
 // (HTTP middleware layer), the X-Forwarded-Proto / ForwardedHTTPS path, the
@@ -76,6 +77,9 @@ func FuzzClientIPParsing(f *testing.F) {
 		{"not-a-cidr\n10.0.0.0/8", "10.0.0.1:50000", "1.2.3.4", ""},
 		// Blank entries in trusted list.
 		{"\n\n10.0.0.0/8\n", "10.0.0.1:50000", "1.2.3.4", ""},
+		// X-Real-IP fallback returning an address inside the trusted set (found by
+		// the fuzzer; oracle (h) covers the XFF walk only).
+		{"0.0.0.0/0", "1.2.3.4:50000", "", "0.0.0.0"},
 	}
 	for _, s := range seeds {
 		f.Add(s.trusted, s.remote, s.xff, s.xrip)
@@ -160,8 +164,11 @@ func FuzzClientIPParsing(f *testing.F) {
 			t.Fatalf("clientIPFromRequest: returned non-empty %q that net.ParseIP rejects", got)
 		}
 
-		// Oracle (h): result must not be in the trusted set.
-		if ipInAny(got, nets) {
+		// Oracle (h): an X-Forwarded-For result must not be in the trusted set. The
+		// X-Real-IP fallback (XFF absent or blank) is exempt: it carries no chain and
+		// is returned as the trusted proxy wrote it, without a trust check.
+		xffUsed := strings.TrimSpace(xffHeader) != ""
+		if xffUsed && ipInAny(got, nets) {
 			t.Fatalf("clientIPFromRequest: returned %q which is itself a trusted proxy", got)
 		}
 
