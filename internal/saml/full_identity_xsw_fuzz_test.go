@@ -312,7 +312,8 @@ func FuzzSAMLFullIdentity(f *testing.F) {
 
 	// Sanity: the pristine fixture must parse to exactly the signed identity in every field.
 	// If this fails the harness is miswired (fixture attr names vs maker), not a finding.
-	if msg := checkFullIdentity(mustParse(fx)); msg != "" {
+	info, op, off, perr := mustParse(fx)
+	if msg := checkFullIdentity(info, perr, op, off); msg != "" {
 		f.Fatalf("harness: pristine signed fixture did not yield the signed identity: %s", msg)
 	}
 
@@ -338,11 +339,11 @@ func FuzzSAMLFullIdentity(f *testing.F) {
 	})
 }
 
-// mustParse parses the pristine signed fixture and returns the result in checkFullIdentity's
-// argument shape (op/off = 0 denote the pristine input).
-func mustParse(fx *fidFixture) (*AssertionInfo, error, uint8, uint16) {
+// mustParse parses the pristine signed fixture and returns the parse result plus op/off = 0,
+// which denote the pristine input (error last, as checkFullIdentity's caller reorders them).
+func mustParse(fx *fidFixture) (*AssertionInfo, uint8, uint16, error) {
 	info, perr := fx.p.ParseResponse(postedReq(fx.acsURL, fx.signedXML), nil)
-	return info, perr, 0, 0
+	return info, 0, 0, perr
 }
 
 // postedReq builds an application/x-www-form-urlencoded POST carrying rawXML as the
