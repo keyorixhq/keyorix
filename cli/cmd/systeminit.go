@@ -29,6 +29,11 @@ import (
 	"github.com/keyorixhq/keyorix/cli/internal/cliout"
 )
 
+// defaultSystemInitAdminEmail is the --admin-email default. It must pass the
+// server's email rule (name@domain.tld); ".local" is reserved, so it can never be
+// someone else's mailbox.
+const defaultSystemInitAdminEmail = "admin@keyorix.local"
+
 var (
 	systemInitServer         string
 	systemInitAdminUsername  string
@@ -69,7 +74,12 @@ func init() {
 	// trailing success banner, printed AFTER the account already exists -- see G76.
 	systemInitCmd.Flags().StringVar(&systemInitAdminPassword, "admin-password", "",
 		"Admin password (required; INSECURE on the command line -- prefer KEYORIX_ADMIN_PASSWORD, or omit to be prompted)")
-	systemInitCmd.Flags().StringVar(&systemInitAdminEmail, "admin-email", "admin@localhost", "Admin email address")
+	// A default that passes the server's email rule: the old "admin@localhost" has no
+	// dot-domain and was refused, so a bare `system init` always failed (#4216). Kept as
+	// a default (not a required flag) so every quick-start that omits the flag works.
+	systemInitCmd.Flags().StringVar(&systemInitAdminEmail, "admin-email", defaultSystemInitAdminEmail,
+		"Admin email address (default "+defaultSystemInitAdminEmail+" is a placeholder with no mailbox; "+
+			"pass your own to receive password-reset mail)")
 	systemInitCmd.Flags().StringVar(&systemInitBootstrapToken, "bootstrap-token", "",
 		"Bootstrap token authorizing first-admin creation (or KEYORIX_BOOTSTRAP_TOKEN; printed in the server log on first boot; INSECURE on the command line)")
 	_ = systemInitCmd.MarkFlagRequired("server") // #nosec G104
@@ -189,6 +199,12 @@ const bootstrapTokenHint = " Next step: check that KEYORIX_BOOTSTRAP_TOKEN / KEY
 // generic "Error" (shared with its other validation refusals), so the refusal is told
 // apart by its message; any other answer keeps the standard status handling.
 func systemInitError(status int, body []byte) error {
+	if field, ok := systemInitValidationField(status, body); ok {
+		var eb apiErrorBody
+		_ = json.Unmarshal(body, &eb)
+		return withExitCode(statusExitCode(http.StatusBadRequest), fmt.Errorf("bootstrap server failed: %s (HTTP %d)%s",
+			cliout.SanitizeForTerminal(eb.Message), status, systemInitValidationHint(field)))
+	}
 	var eb apiErrorBody
 	if status == http.StatusForbidden && json.Unmarshal(body, &eb) == nil &&
 		strings.Contains(eb.Message, "invalid bootstrap token") &&
@@ -197,6 +213,59 @@ func systemInitError(status int, body []byte) error {
 			cliout.SanitizeForTerminal(eb.Message), status, bootstrapTokenHint))
 	}
 	return apiError("bootstrap server", status, body)
+}
+
+// errCodeValidation is the "error" code of the server's 400 for admin details it
+// rejects (server/http/handlers/auth.go InitSystem); details.field names the input.
+const errCodeValidation = "ValidationError"
+
+// systemInitValidationField reports whether the answer is a refusal of the admin
+// details sent (not of the bootstrap token) and which input it names ("" when the
+// server did not say). A server that predates the typed code answers the same
+// refusal 403 with the generic "Error" code and core's wrapped text ("failed to create
+// admin user: Validation error: ..."), so the text is matched anywhere, not as a
+// prefix; it is recognised too so the operator is not sent to "request access".
+// Neither token refusal ("invalid bootstrap token", "system initialisation over the
+// API is disabled: ...") contains "Validation error", so neither is re-labelled.
+func systemInitValidationField(status int, body []byte) (field string, ok bool) {
+	var eb struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+		Details struct {
+			Field string `json:"field"`
+		} `json:"details"`
+	}
+	if json.Unmarshal(body, &eb) != nil {
+		return "", false
+	}
+	switch {
+	case status == http.StatusBadRequest && eb.Error == errCodeValidation:
+		return eb.Details.Field, true
+	case status == http.StatusForbidden && eb.Error == "Error" && strings.Contains(eb.Message, "Validation error"):
+		lower := strings.ToLower(eb.Message)
+		for _, f := range []string{"email", "username"} {
+			if strings.Contains(lower, f) {
+				return f, true
+			}
+		}
+		return "", true
+	}
+	return "", false
+}
+
+// systemInitValidationHint names the flag that fixes the rejected input.
+func systemInitValidationHint(field string) string {
+	switch field {
+	case "email":
+		return " Next step: pass a valid address with --admin-email (name@domain.tld)."
+	case "username":
+		return " Next step: pass a different name with --admin-username."
+	case "display_name":
+		return " Next step: the display name is fixed by this command; report this to the server operator."
+	case "password":
+		return " Next step: set KEYORIX_ADMIN_PASSWORD (or enter one at the prompt) and run again."
+	}
+	return " Next step: check --admin-username, --admin-email and the admin password, then run again."
 }
 
 // resolveSystemInitBootstrapToken resolves the bootstrap token: the (insecure,

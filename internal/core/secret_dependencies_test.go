@@ -161,6 +161,9 @@ func newDepCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	}
 	now := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	for _, actor := range depTestActors {
+		ensureActiveActor(t, c.storage, actor) // acting users must be active accounts (#4159)
+	}
 	return c, db
 }
 
@@ -266,6 +269,7 @@ func TestAddSecretDependency_MachineAndUserAttributionDistinguishable(t *testing
 	machineDependent := mkSecret(t, db, 1, "machine-app")
 	machineDependsOn := mkSecret(t, db, 1, "machine-db")
 
+	ensureActiveActor(t, c.storage, collidingID) // the human actor is an active account (#4159)
 	humanEdge, err := c.AddSecretDependency(ctx, ActorTypeUser, collidingID, humanDependent, humanDependsOn, "human-created", 0)
 	require.NoError(t, err)
 	machineEdge, err := c.AddSecretDependency(ctx, ActorTypeMachine, collidingID, machineDependent, machineDependsOn, "machine-created", collidingID)

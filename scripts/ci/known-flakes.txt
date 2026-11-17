@@ -1,0 +1,23 @@
+# scripts/ci/known-flakes.txt -- the ONLY tests scripts/ci/rerun-known-flakes.py may
+# rerun (once) inside a merge-queue leg. One entry per line:
+#
+#   <package path relative to the module root> <test or Test/Sub/path>   # evidence
+#
+# A test is a failure the wrapper may rerun only if its LEAF failing name equals an
+# entry or sits below one (entry TestX covers TestX/anything). Everything else
+# fails the leg on the first failure. Never list a Fuzz* test, a test that is not
+# in the real merge-queue logs below, or a planted-defect/oracle test beyond the
+# two named here: scripts/ci/rerun_known_flakes_test.go enforces it.
+#
+# What a rerun hides: a real race or ordering bug that fails 1 time in 2 passes
+# this wrapper 50% of the time. The nightly run (never reruns) and the
+# FLAKE-RERUN log lines are the nets. Remove an entry when its cause is fixed.
+
+# run 43664286604 (#4274), repo-guards (run-guards.sh); log re-read 2026-11-15. MQ-LEVERS-1 also saw it in 43651441058 (#4273), not re-read.
+scripts/ci TestGovulncheckCheckScript
+# run 43654205075 (#4289), repo-guards (run-guards.sh)
+server TestEdgeUnattended_InterruptedMigrationCompletes
+# run 43726111215 (#4326), test-suite root-4: O2 HANG, 4 s deadline hit after 15.6 s under load. ONLY the P9 case.
+internal/fuzzutil/hostile TestPlantedDefectsDetectedByDirectedPrograms/P9_unbounded_decompression
+# run 43591322921 (#4203), test-suite core-1: planted leak "not reported" in two shim cases (oracle blind once)
+internal/core TestCorePGCanaryOracleCatchesPlantedLeaks

@@ -27,6 +27,7 @@ import (
 func newShareHandlerS13(t *testing.T) *ShareHandler {
 	t.Helper()
 	cs := freshCoreS12(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
 	h, err := NewShareHandler(cs)
 	require.NoError(t, err)
 	return h

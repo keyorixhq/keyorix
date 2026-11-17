@@ -1,0 +1,2 @@
+### Documentation
+- **v0.97.0 release notes and release checklist match the tree.** The notes list the demo fixes merged after the release prep (dashboard activity, audit filters, audit-chain tile, typed `POST /system/init` refusals, plain-words legacy hash reason). RELEASING.md states which tag form `INSTALL-WITH-AI.md` must carry after a release, as the pin tests enforce it. RELEASE-CHECKLIST.md says `dist/` holds 30 files (29 covered by `checksums.txt`) and adds the sandbox `git repack -a -d` note.

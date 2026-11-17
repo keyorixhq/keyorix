@@ -76,6 +76,9 @@ func openTestDB(t *testing.T) *gorm.DB {
 	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
+	// The admin's own account is active: core refuses a mutation by an actor whose
+	// account is missing or not active (#4159).
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "fixture-actor-1", UsernameFolded: "fixture-actor-1", Email: "fixture-actor-1@example.com", EmailFolded: "fixture-actor-1@example.com", IsActive: true}).Error)
 	return db
 }
 

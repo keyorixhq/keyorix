@@ -66,6 +66,7 @@ func TestAuthInterceptor_MachineRoleResolutionUnavailable_IsUnavailableAndUnthro
 	// bundles it. Same setup as TestAuthInterceptor_MachineTokenNetworkAllowlistOverGRPC.
 	proj2 := uint(2)
 	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2)
+	h.EnsureActiveUser(t, 1) // the acting user is an active account (#4159)
 	tok, err := h.CoreService.IssueMachineToken(ctxBg, 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok-rolesdown"})
 	require.NoError(t, err)
 	require.NoError(t, h.CoreService.AssignMachineRole(ctxBg, m.ID, testhelper.RoleProjectViewer, core.Scope{ProjectID: 2}, 1, false))

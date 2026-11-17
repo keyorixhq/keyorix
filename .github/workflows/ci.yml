@@ -343,6 +343,11 @@ jobs:
       harness_demo: ${{ steps.filter.outputs.harness_demo }}
       harness_e2e: ${{ steps.filter.outputs.harness_e2e }}
       harness_fuzz: ${{ steps.filter.outputs.harness_fuzz }}
+      # fuzz-targets on a FAST pull_request (MQ-LEVERS-2 P1): true when the PR
+      # adds, removes or build-tag-moves a `func Fuzz*` in a _test.go file, or
+      # touches scripts/fuzzing/targets.d / targets.conf. Empty outside
+      # pull_request (those events are FULL anyway).
+      fuzz_pr_relevant: ${{ steps.filter.outputs.fuzz_pr_relevant }}
       # FAST-profile gates for two always-on checks (CI-PATHGATE-1). Each is
       # true when the PR touches that check's own inputs (or ci.yml, or the
       # file list is unknown: the `relevant` helper), and always true outside
@@ -505,6 +510,38 @@ jobs:
           relevant harness_demo '^(scripts/demo/|scripts/airgap-e2e\.sh$|scripts/totpgen/|server/Dockerfile$|\.dockerignore$)'
           relevant harness_e2e '^(scripts/e2e/|Makefile$)'
           relevant harness_fuzz '^scripts/fuzzing/'
+          # fuzz-targets compares `go test -list '^Fuzz'` with targets.d, so it
+          # can only change when a Fuzz function appears, disappears or moves
+          # build tag (a _test.go patch line), or the targets.d / targets.conf
+          # side changes. The file NAME is not enough: #4194 added
+          # FuzzAuthzSeqSwarmPlant to seq_swarm_test.go and forgot its targets.d
+          # conf, and fuzz-targets (queue-only until now) failed three queue
+          # rounds on one head. scripts/ci/fuzz_pr_gate_test.go runs this
+          # exact filter, extracted between the BEGIN/END markers, against
+          # the recorded file list of #4194. Fails toward running: an unknown
+          # list, an API error, a _test.go entry without a patch (renames,
+          # oversized diffs) all give true.
+          # BEGIN fuzz-pr-gate
+          FUZZ_PR_GATE_JQ='
+            def fuzzy: (.filename | test("_test\\.go$"))
+              and ((.filename | test("(^|/)[Ff]uzz[^/]*$"))
+                or ((.patch // "") == "")
+                or (.patch | test("(^|\n)[+-]([^\n]*func Fuzz|//go:build)")));
+            any(.[]; (.filename | test("^scripts/fuzzing/(targets\\.d/|targets\\.conf$)")) or fuzzy)
+          '
+          # END fuzz-pr-gate
+          fuzz_pr_relevant=true
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            fuzz_pr_relevant=false
+          elif [ -n "$changed" ]; then
+            if v=$(set -o pipefail; gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate | jq -s 'add // []' | jq "$FUZZ_PR_GATE_JQ"); then
+              case "$v" in
+                true|false) fuzz_pr_relevant=$v ;;
+              esac
+            fi
+          fi
+          echo "fuzz_pr_relevant=$fuzz_pr_relevant"
+          echo "fuzz_pr_relevant=$fuzz_pr_relevant" >> "$GITHUB_OUTPUT"
           # FAST-profile path gates. operator/ and migrate/ are separate Go
           # modules with no dependency on the root module (no replace to
           # ../), so only their own tree changes them. cli/ imports the root
@@ -1600,25 +1637,12 @@ jobs:
     # gated test silently skipped here, indefinitely (the same shape as the 13
     # HA-lock branches this container also exists to exercise: a mechanism
     # that only ever runs against SQLite verifies nothing about the Postgres
-    # path it was written for). Declared job-level (not leg-conditional) to
-    # keep this diff to "add the container + the DSN," matching every other
-    # leg's already-generous-timeout precedent rather than hand-picking which
-    # legs need it -- a service container that isn't used by a given leg's
-    # tests costs only its own startup time, not the leg's.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: keyorix
-          POSTGRES_PASSWORD: keyorix123
-          POSTGRES_DB: keyorix
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # path it was written for). MQ-LEG-STEPS-1: the container is no longer a job-level
+    # `services:` entry (that starts, serially and BEFORE the first step, in
+    # about 22 s on every leg, including a leg the merge-queue selection then
+    # skips). It is started in the background by "Start Postgres" below, only
+    # when the leg runs, and overlaps checkout, setup-go and the cache
+    # restore (about 33 s); "Wait for Postgres" gates go test.
     env:
       KEYORIX_TEST_PG_DSN: "host=localhost port=5432 dbname=keyorix user=keyorix sslmode=disable password=keyorix123"
     steps:
@@ -1666,6 +1690,26 @@ jobs:
             echo "only=$pkgs" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Start Postgres (background)
+        if: steps.leg.outputs.run == 'true'
+        run: |
+          # Same image, credentials, port and database as the former
+          # `services: postgres`. The pull (retried, as the runner's own
+          # service pull is) and the start run detached; the step returns at once.
+          # If all three pulls fail, `docker run` pulls once more and fails; the
+          # Wait step then prints the log and exits 1, so it still fails closed.
+          cat > "$RUNNER_TEMP/pg-leg.sh" <<'EOS'
+          for d in 0 15 45; do
+            sleep "$d"
+            docker pull -q postgres:16 && break
+          done
+          exec docker run --rm --name pg-leg -p 5432:5432 \
+            -e POSTGRES_USER=keyorix -e POSTGRES_PASSWORD=keyorix123 -e POSTGRES_DB=keyorix \
+            postgres:16
+          EOS
+          setsid nohup bash "$RUNNER_TEMP/pg-leg.sh" > "$RUNNER_TEMP/pg-leg.log" 2>&1 &
+          echo "Postgres start requested in the background at $(date -u +%T)"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.leg.outputs.run == 'true'
 
@@ -1694,12 +1738,39 @@ jobs:
             go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
             go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-
 
+      # TCP check on 127.0.0.1 inside the container: the image's init phase
+      # runs a temporary server that listens on the unix socket only, so a
+      # socket-only pg_isready could pass before the final server is up.
+      - name: Wait for Postgres
+        if: steps.leg.outputs.run == 'true'
+        run: |
+          for i in $(seq 1 150); do
+            if docker exec pg-leg pg_isready -h 127.0.0.1 -p 5432 -U keyorix -d keyorix -q 2>/dev/null; then
+              echo "Postgres ready (waited ${i} s after the previous step)."
+              exit 0
+            fi
+            # `docker inspect` fails while the container does not exist yet (the
+            # pull is still running); 2>/dev/null plus the compare keeps that
+            # from ending the loop.
+            if [ "$(docker inspect -f '{{.State.Status}}' pg-leg 2>/dev/null)" = "exited" ]; then
+              echo "::error::Postgres container exited; log follows"
+              cat "$RUNNER_TEMP/pg-leg.log" || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Postgres not ready after 150 s; container log follows"
+          cat "$RUNNER_TEMP/pg-leg.log" || true
+          exit 1
+
       - name: go test (${{ matrix.leg }})
         if: steps.leg.outputs.run == 'true'
         env:
           LEG_ONLY: ${{ steps.leg.outputs.only }}
           LEG_TESTS_RX: ${{ steps.leg.outputs.tests }}
           VERBOSE_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.verbose_tests || false }}
+          # Merge queue only (MQ-LEVERS-2 P2): see the go test line below.
+          KNOWN_FLAKE_RERUN: ${{ github.event_name == 'merge_group' && '1' || '' }}
         run: |
           # Which packages each leg runs, and why each excluded package is
           # excluded, now lives in one place (scripts/ci-test-legs.sh) shared
@@ -1806,11 +1877,26 @@ jobs:
             run_filter="$LEG_TESTS_RX"
           fi
           verbose_flag=""
+          # MQ-LEG-STEPS-1: measurement only (workflow_dispatch + verbose_tests):
+          # cmd/go's hidden -debug-actiongraph writes one JSON object per build
+          # action (start/end time, cache hit, package), which splits the
+          # "compile, vet, link" part of this step; uploaded below.
+          ag_flag=""
           if [ "$VERBOSE_TESTS" = "true" ]; then
             verbose_flag="-v"
+            ag_flag="-debug-actiongraph=$RUNNER_TEMP/actiongraph-${{ matrix.leg }}.json"
           fi
+          # MQ-LEVERS-2 P2: a merge-queue entry is ejected as soon as a required
+          # job fails, so a failed test that is on scripts/ci/known-flakes.txt
+          # (and nothing else) is rerun ONCE inside this step. The wrapper
+          # passes go test's output and exit code through unchanged unless
+          # KNOWN_FLAKE_RERUN=1 (merge_group only; PR, push and the nightly
+          # never rerun), prints `FLAKE-RERUN <test> passed on retry` plus a
+          # `FLAKE-RERUN-COUNT` line and a job-summary entry for every rerun,
+          # and never touches the coverage profile. A test that fails twice,
+          # or is not listed, fails the leg as before.
           # shellcheck disable=SC2086
-          go test -race $verbose_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+          python3 scripts/ci/rerun-known-flakes.py --label "${{ matrix.leg }}" -- go test -race $verbose_flag $ag_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       - name: Upload coverage artifact
         if: steps.leg.outputs.run == 'true'
@@ -1819,6 +1905,15 @@ jobs:
           name: coverage-${{ matrix.leg }}
           path: ${{ matrix.coverage-file }}
           retention-days: 1
+
+      - name: Upload action graph (measurement)
+        if: always() && steps.leg.outputs.run == 'true' && github.event_name == 'workflow_dispatch' && inputs.verbose_tests
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: actiongraph-${{ matrix.leg }}
+          path: ${{ runner.temp }}/actiongraph-${{ matrix.leg }}.json
+          retention-days: 3
+          if-no-files-found: warn
 
   # pg-gated security closures, proven with a real Postgres DSN. This job and
   # test-suite are the only ones with a Postgres service container, so this is
@@ -2283,13 +2378,16 @@ jobs:
   # build-and-test skips has nothing to fuzz.
   fuzz-plan:
     needs: [build-and-test]
-    if: github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
+    # !cancelled() (not always()): a status function turns off the implicit success(), which also looks at build-and-test's skipped ancestors and would skip this job and leave fuzz-changed red. Unlike always() it is false once the run is cancelled, so a newer push still cancels this job and the fuzz shards (concurrency group, cancel-in-progress).
+    if: ${{ !cancelled() && needs.build-and-test.result == 'success' && github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
       count: ${{ steps.plan.outputs.count }}
       shards: ${{ steps.shard.outputs.shards }}
+      authz_mode: ${{ steps.authzplan.outputs.mode }}
+      authz_ops: ${{ steps.authzplan.outputs.ops }}
     env:
       FUZZ_SHARDS: 6  # max parallel fuzz jobs
       FUZZ_MAX_SHARD_SECONDS: 480  # open another shard (up to FUZZ_SHARDS) above this estimated work per shard
@@ -2422,10 +2520,37 @@ jobs:
             -shards "$FUZZ_SHARDS" -max-shard-seconds "$FUZZ_MAX_SHARD_SECONDS")"
           echo "Shards: $shards"
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
+      # Authz oracle plan (AUTHZ-MODEL-GUARD-1, KFZ-2026-092). The targets above
+      # are the fuzzers INSIDE the changed packages; the authzdiff oracle lives
+      # in server/authzdiff and models permission rules implemented elsewhere
+      # (internal/core, server/http, server/grpc, storage), so #4332 changed a
+      # rule, kept every check green, and left the model stale until a fuzz lane
+      # found it. scripts/ci/authzgate maps the diff, by call shape, to the
+      # authzdiff ops whose rules it can change: mode none | ops | full (its
+      # header has the rules). A planner error fails toward full, never none.
+      - name: Plan the authz oracle sweep
+        id: authzplan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
+          if out="$(scripts/ci/authz-oracle.sh plan "$base" HEAD)"; then
+            mode="$(printf '%s\n' "$out" | sed -n 's/^mode=//p')"
+            ops="$(printf '%s\n' "$out" | sed -n 's/^ops=//p')"
+          else
+            echo "::warning::authzgate plan failed; running the full authz oracle sweep"
+            mode=full ops=""
+          fi
+          printf '%s\n' "$out" | grep '^# ' | head -50 || true
+          case "$mode" in none|ops|full) ;; *) echo "::warning::bad authzgate mode '$mode'; using full"; mode=full ops="" ;; esac
+          echo "Authz oracle: mode=$mode ops=${ops:-<none>}"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "ops=$ops" >> "$GITHUB_OUTPUT"
 
   fuzz:
     needs: [fuzz-plan]
-    if: needs.fuzz-plan.outputs.count != '0'
+    if: ${{ !cancelled() && needs.fuzz-plan.result == 'success' && needs.fuzz-plan.outputs.count != '0' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -2468,11 +2593,58 @@ jobs:
           path: '**/testdata/fuzz/**'
           if-no-files-found: ignore
 
+  # authz-oracle (AUTHZ-MODEL-GUARD-1, KFZ-2026-092): when fuzz-plan's authz
+  # plan says this PR changes permission-check code, run the authzdiff strict
+  # sweep (TestAuthzDiffSweep, AUTHZDIFF_STRICT=1) on the ops it maps to, or on
+  # every op, plus the FuzzAuthzDiff seed corpus. Red = the reference model and
+  # the product disagree on a case no waiver explains: update the model in the
+  # same PR. Deterministic on purpose: a fuzz burst is not a PR gate here (a
+  # 60s cold burst found an unrelated, state-dependent gRPC ResourceExhausted
+  # case on main in 10s, so it would fail unrelated PRs). The burst runs only
+  # with the ci:full label, report-only. Measured cost and trigger rate:
+  # scripts/ci/authzgate/README.md.
+  authz-oracle:
+    needs: [fuzz-plan]
+    # !cancelled(), as on fuzz-plan and fuzz: without a status function the implicit success() also looks at build-and-test's skipped ancestors and skips this job even when the plan asked for a sweep (seen on #4358's own run: mode=full, authz-oracle skipped).
+    if: ${{ !cancelled() && needs.fuzz-plan.result == 'success' && needs.fuzz-plan.outputs.authz_mode != 'none' && needs.fuzz-plan.outputs.authz_mode != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Strict authzdiff sweep of the planned ops
+        env:
+          MODE: ${{ needs.fuzz-plan.outputs.authz_mode }}
+          OPS: ${{ needs.fuzz-plan.outputs.authz_ops }}
+          AUTHZ_ORACLE_LOG: ${{ runner.temp }}/authz-oracle.log
+        run: scripts/ci/authz-oracle.sh run "$MODE" "$OPS"
+      - name: FuzzAuthzDiff burst (ci:full only, report-only)
+        if: contains(github.event.pull_request.labels.*.name, 'ci:full')
+        continue-on-error: true
+        env:
+          GOMAXPROCS: '2'
+        run: go test ./server/authzdiff -run '^$' -fuzz '^FuzzAuthzDiff$' -fuzztime 60s
+      - name: Upload the sweep log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: authz-oracle-log
+          path: ${{ runner.temp }}/authz-oracle.log
+          if-no-files-found: ignore
+
   # Single, stable check name regardless of shard count (or zero targets).
   # Runs (green or red) only when fuzz-plan ran; when build-and-test failed or
   # was skipped, or the event is not a PR push, this job is skipped (no runner).
+  # authz-oracle reports here only with the repository variable
+  # AUTHZ_ORACLE_GATE=enforce (rollout: report-only until the #4332 model fix
+  # reaches main, since main itself is red at machine.token.issue until then);
+  # its own check is red either way.
   fuzz-changed:
-    needs: [build-and-test, fuzz-plan, fuzz]
+    needs: [build-and-test, fuzz-plan, fuzz, authz-oracle]
     if: always() && github.event_name == 'pull_request' && needs.build-and-test.result == 'success' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
     runs-on: ubuntu-24.04
     steps:
@@ -2481,9 +2653,27 @@ jobs:
           PLAN_RESULT: ${{ needs.fuzz-plan.result }}
           FUZZ_RESULT: ${{ needs.fuzz.result }}
           COUNT: ${{ needs.fuzz-plan.outputs.count }}
+          AUTHZ_RESULT: ${{ needs.authz-oracle.result }}
+          AUTHZ_MODE: ${{ needs.fuzz-plan.outputs.authz_mode }}
+          AUTHZ_GATE: ${{ vars.AUTHZ_ORACLE_GATE }}
         run: |
-          echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT"
+          echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT authz-oracle=$AUTHZ_RESULT (mode=$AUTHZ_MODE gate=${AUTHZ_GATE:-report})"
           [ "$PLAN_RESULT" = "success" ] || exit 1
+          # A skipped oracle is a pass only when the plan ran nothing: with
+          # mode ops or full it means the planned sweep never ran.
+          authz="$AUTHZ_RESULT"
+          if [ "$authz" = "skipped" ] && [ "$AUTHZ_MODE" != "none" ]; then
+            authz="skipped-with-mode-$AUTHZ_MODE"
+          fi
+          case "$authz" in
+            success|skipped) ;;
+            *)
+              if [ "$AUTHZ_GATE" = "enforce" ]; then
+                exit 1
+              fi
+              echo "::warning::authz-oracle is $authz (report-only until AUTHZ_ORACLE_GATE=enforce)"
+              ;;
+          esac
           case "$FUZZ_RESULT" in success|skipped) exit 0 ;; *) exit 1 ;; esac
 
   # Fresh-install API smoke, SQLite leg (Session I, 2026-09-28): boots a real
@@ -2767,6 +2957,10 @@ jobs:
           go-version: '1.27.4'
 
       - name: Every repo-wide guard
+        # Merge queue only: a failed test on scripts/ci/known-flakes.txt is rerun
+        # once inside run-guards.sh (MQ-LEVERS-2 P2); pull requests never rerun.
+        env:
+          KNOWN_FLAKE_RERUN: ${{ github.event_name == 'merge_group' && '1' || '' }}
         run: scripts/ci/run-guards.sh
 
   # Guards whose inputs are not Go code (CI-GUARD-TRIGGERS-1). Every Go job
@@ -3564,12 +3758,15 @@ jobs:
     # Deliberately NOT gated on operator_only -- this job checks FuzzXxx
     # functions in the root AND the operator/cli/migrate/fuzzkit modules, and
     # an operator-only diff could add/remove/rename one there.
-    # FULL profile only (CI-LIGHT-1). Required context: skipped satisfies it on a FAST PR run, the merge queue runs it.
+    # FULL profile, or a FAST PR that touches a Fuzz function / targets.d /
+    # targets.conf (fuzz_pr_relevant, MQ-LEVERS-2 P1). A FAST PR touching none
+    # of them still skips, which satisfies the required context; the merge
+    # queue runs it as before.
     # Merge-queue gate (CI-SELECT-1): gate_fuzz_targets -- scripts/fuzzing/**,
     # or a changed .go file (any module) that has a `func Fuzz` line before
     # or after the change (an added, removed, renamed or build-tag-moved fuzz
     # target is the only thing this job's comparison can see change).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_targets == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true' || needs.changes.outputs.fuzz_pr_relevant == 'true') && needs.select.outputs.gate_fuzz_targets == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read

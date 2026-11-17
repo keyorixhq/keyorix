@@ -30,6 +30,7 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 		c := core.NewKeyorixCore(store)
 		c.SetClockForTesting(time.Now)
 		store.On("GetMachineIdentity", ctx, uint(5)).Return(machine, nil)
+		store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, IsActive: true, AccountState: core.AccountActive}, nil) // active actor (#4159)
 		// Actor 2 has NO role grants at global scope (project_id=0) — only within
 		// project 1, which requireAuthorityForRole(..., projectID=0, ...) never sees.
 		store.On("GetUserRoleIDsAt", ctx, uint(2), mock.MatchedBy(func(s any) bool { return true })).Return([]uint{}, nil)
@@ -48,6 +49,7 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 		c.SetClockForTesting(time.Now)
 		store.On("GetMachineIdentity", ctx, uint(5)).Return(machine, nil)
 		store.On("RoleSetBypassesPermissionChecks", ctx, []uint{99}).Return(true, nil)
+		store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: core.AccountActive}, nil) // active actor (#4159)
 		store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{99}, nil)
 		store.On("GetUserGroupRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 		store.On("CreateOIDCBinding", ctx, mock.MatchedBy(func(b *models.MachineIdentityOIDCBinding) bool {

@@ -12,12 +12,20 @@
   refusal reached through a recorded transient lookup fault is `Unavailable` with the gates'
   fixed text (`authorizeRefusal`), as `mapSecretMutationError` already did. The family mappers
   (`mapRoleError`, `mapMachineError`, `mapUserError`, `mapProjectError`, `mapShareError`,
-  `mapDynamicError`, `mapSecretACLError`, `mapSecretError`, `groupError`) are not yet callers of
-  the adapter; they migrate one family per PR, `mapRoleError` and `authorizeShareScoped` after
-  #4147 (GRPC-OUTAGE-TAILS-1) merges. Guard: `TestCoreErrorStatus_EverySentinelRendersItsClass`,
+  `mapDynamicError`, `mapSecretACLError`, `mapSecretError`, `groupError`, and the share scope resolver's
+  `shareScopeReadError`) are callers of the adapter and keep only
+  what the classifier cannot say (an explicit pre-check with its reason, or a per-sentinel client
+  text (`mapSecretError` keeps ResourceExhausted, Aborted, core's share refusal text, `ErrSecretAlreadyExists`
+  and the untyped rotation-validation text match, which runs last and only for an `Internal` class that
+  is not an outage; `shareScopeReadError` keeps the positive-absence test of `core.ReadFault`). `ErrBuiltinRole` stays
+  `FailedPrecondition` in `mapRoleError` while REST answers 403 (ask
+  `errmap-grpc-builtin-role-code`). Guard: `TestFamilyMappers_TypedStorageReadFaultIsUnavailable`, `TestMapSecretError_*` and
+  `TestShareScopeReadError_Answers` (secret_error_classifier_test.go)
+  (one typed storage read fault is `Unavailable` + `storage_unavailable` on every family mapper),
+  `TestFamilyMappers_PermissionRefusalIsPermissionDenied`, `TestCoreErrorStatus_EverySentinelRendersItsClass`,
   `TestCoreErrorStatus_TextsAndDetails` (every table row and the ErrorInfo details), the REST
   twin `TestAnswerCoreError_EverySentinelRendersItsClass` over the same `errclass.Sentinels()`
   (the parity check), and the family guard `TestEveryGrantingServiceMapsPermissionDenied` (every
-  service method calling a granting core method, derived by `guardrules.GrantCeilingMethods`,
-  hands the error to a mapper that classifies `ErrPermissionDenied`; report-only on pull
+  service method calling a granting core method, read from
+  `internal/core/testdata/grant_ceiling_reaching_methods.txt`, hands the error to a mapper that classifies `ErrPermissionDenied`; report-only on pull
   requests while its `docs/guard-rollout.d` row exists).

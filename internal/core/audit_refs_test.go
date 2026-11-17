@@ -40,6 +40,7 @@ func TestAuditDescriptionsCarryNames(t *testing.T) {
 		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	ensureActiveActor(t, c.storage, 42) // the acting user of the restores is active (#4159)
 	ctx := context.Background()
 
 	lastDescription := func(eventType string) string {

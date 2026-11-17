@@ -186,6 +186,11 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 		// inv with an error means it exists but the link couldn't be provisioned (e.g.
 		// base_url unset) — surface that so the admin can fix config and resend.
 		if inv == nil {
+			// The granter ceiling (a role the actor cannot grant): a refusal, not a
+			// fault (#4154). Before the text cases, whose "required" would read it as a 400.
+			if sendGrantCeilingRefusal(w, err) {
+				return
+			}
 			status := http.StatusInternalServerError
 			msg := err.Error()
 			switch {
@@ -330,6 +335,8 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		switch {
+		case errors.Is(err, core.ErrPermissionDenied):
+			status = http.StatusForbidden // a typed core refusal (#4162: a machine actor)
 		case strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "already have a pending access request"):

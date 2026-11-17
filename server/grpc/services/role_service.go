@@ -8,6 +8,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -83,7 +84,7 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	// with its permission set).
 	role, perms, err := s.core.CreateRoleWithScope(ctx, actor.UserID, req.GetName(), req.GetDescription(), permIDs, req.GetAssignableScope())
 	if err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	// Build the response from the values core.CreateRole already returned
 	// (read inside the same transaction that created the role) instead of
@@ -126,7 +127,7 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 
 	role, _, err := s.core.GetRoleWithPermissions(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	if req.Description != nil {
 		role.Description = req.GetDescription()
@@ -165,7 +166,7 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 		if perr, ok := partialMutationStatus(err); ok {
 			return nil, perr
 		}
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	// Same fix as CreateRole above: build from the values UpdateRole already
 	// returned (read inside its own transaction) instead of a fresh
@@ -187,7 +188,7 @@ func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequ
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 	if err := s.core.DeleteRole(ctx, actor.UserID, uint(req.GetId())); err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -248,7 +249,7 @@ func (s *RoleGRPCService) AssignRole(ctx context.Context, req *pb.AssignRoleRequ
 		ctx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
 	}
 	if err := s.core.AssignUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope, actor.ActorKind() == core.ActorTypeMachine); err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	return &pb.RoleAssignment{
 		UserId:        req.GetUserId(),
@@ -273,7 +274,7 @@ func (s *RoleGRPCService) RemoveRole(ctx context.Context, req *pb.RemoveRoleRequ
 		return nil, err
 	}
 	if err := s.core.RemoveUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -297,7 +298,7 @@ func (s *RoleGRPCService) GetUserRoles(ctx context.Context, req *pb.GetUserRoles
 	}
 	assignment, err := s.core.GetUserRoleAssignment(ctx, uint(req.GetUserId()))
 	if err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	roles := make([]*pb.Role, 0, len(assignment.Roles))
 	for _, r := range assignment.Roles {
@@ -319,7 +320,7 @@ func (s *RoleGRPCService) GetUserRoles(ctx context.Context, req *pb.GetUserRoles
 func (s *RoleGRPCService) roleByID(ctx context.Context, id uint) (*pb.Role, error) {
 	role, perms, err := s.core.GetRoleWithPermissions(ctx, id)
 	if err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	return roleToProto(role, perms), nil
 }
@@ -415,71 +416,67 @@ func isUntypedDuplicateRoleName(err error) bool {
 	return strings.Contains(msg, "unique") && strings.Contains(msg, "roles")
 }
 
-// mapRoleError translates core/storage role errors into gRPC status codes.
-func mapRoleError(err error) error {
-	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
-	}
+// mapRoleError translates core/storage role errors into gRPC status codes through
+// the shared classifier (coreErrorStatus). What stays here is what the classifier
+// cannot say: the role-scope client message, the built-in-role refusal (its own
+// FailedPrecondition, see below), the one untyped duplicate-name driver error, and
+// the per-sentinel client texts of this family.
+func mapRoleError(ctx context.Context, err error) error {
 	// #3546: a role-scope refusal (e.g. a project-tier role with no project_id)
 	// is the caller's to fix; its message is fixed, client-safe text.
 	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {
 		return status.Error(codes.InvalidArgument, scopeMsg)
 	}
-	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
-	switch {
-	case errors.Is(err, storage.ErrRoleNotFound), errors.Is(err, storage.ErrPermissionNotFound):
-		return status.Error(codes.NotFound, "role not found")
-	// GetUserRoles: core.GetUserRoleAssignment wraps storage's GetUser miss.
-	// Assign/remove never return a user, project or environment not-found:
-	// storage writes the grant row without looking them up, and a missing
-	// environment is a RoleScopeError (InvalidArgument, above).
-	case errors.Is(err, storage.ErrUserNotFound):
-		return status.Error(codes.NotFound, "user not found")
-	// #4020: the grant itself is absent (RemoveRole) or already present
-	// (AssignRole), the same answers REST gives (404, 409). A storage fault is
-	// neither and falls through to Internal.
-	case errors.Is(err, storage.ErrRoleNotAssigned):
-		return status.Error(codes.NotFound, "role not assigned to user")
-	case errors.Is(err, storage.ErrRoleAlreadyAssigned):
-		return status.Error(codes.AlreadyExists, "role already assigned to user")
-	case errors.Is(err, core.ErrRoleNameReserved):
-		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
-	// CreateRole with a permission listed twice: the second grant hits
-	// role_permissions' primary key (HTTP's AssignPermissionToRole answers 409).
-	case errors.Is(err, storage.ErrDuplicateRolePermission):
-		return status.Error(codes.AlreadyExists, "the role already has that permission")
+	// ErrBuiltinRole is a permission sentinel (the classifier says PermissionDenied and
+	// REST answers 403) but this RPC has always answered FailedPrecondition: kept until
+	// admin decides the parity question (ask errmap-grpc-builtin-role-code).
+	if errors.Is(err, core.ErrBuiltinRole) {
+		return status.Error(codes.FailedPrecondition, "cannot modify a built-in role")
+	}
 	// Not yet typed: storage's CreateRole/UpdateRole return the raw driver error
 	// for a unique-index hit (no storage.ErrDuplicateRoleName exists), so this is
-	// the one text match left here. Delete it when that sentinel exists.
-	case isUntypedDuplicateRoleName(err):
+	// the one text match left here. Delete it when that sentinel exists. Only an
+	// error the classifier does not know: a typed error never reaches the text match.
+	if errclass.Of(err) == errclass.Internal && isUntypedDuplicateRoleName(err) {
 		return status.Error(codes.AlreadyExists, "a role with that name already exists")
-	// #1660/FIX-4 (restored 2026-09-03): core.CreateRole's own validation
-	// (name fold rejects control/bidi characters, length bounds) surfaces
-	// here now that the RPC routes through it instead of storage directly.
-	// errors.Is against core.ErrRoleValidation confirms the failure is
-	// application-generated (never a storage/driver error that merely
-	// happens to mention the word "validation", e.g. a constraint named
-	// *_validation_*) — restoring #1668's actual precision guarantee, lost
-	// 22 hours later when #1669 reverted the classification back to the
-	// bare substring match as a side effect of ALSO (correctly) fixing a
-	// different problem: err.Error() here wraps identity.NewFoldedName's
-	// raw-input echo (%q of the caller's own string) — safe content, but
-	// not a "known safe sentinel with an already-fixed string" the
-	// keyorix-raw-error-to-client Semgrep gate's nosemgrep exception
-	// requires, so it is NOT echoed to the client; the fixed message #1669
-	// introduced is kept. The two fixes are independent: restoring
-	// PRECISION here does not require reintroducing the CI-blocking MESSAGE
-	// #1669 was correct to remove.
-	case errors.Is(err, core.ErrRoleValidation):
-		return status.Error(codes.InvalidArgument, "invalid role name, description or assignable_scope")
-	case errors.Is(err, core.ErrBuiltinRole):
-		return status.Error(codes.FailedPrecondition, "cannot modify a built-in role")
-	// The roles.assign grant ceiling (core/authz.go) is typed (permissionDeniedf);
-	// the fixed text does not echo the permission or role name (GRPC-003).
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "insufficient privileges for this operation")
-	default:
-		return status.Error(codes.Internal, "role operation failed")
 	}
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "role operation", texts: roleErrorTexts(err)})
+}
+
+// roleErrorTexts keeps this family's client texts per sentinel (the classifier has one
+// fixed text per class). None of them echoes a permission or role name (GRPC-003).
+func roleErrorTexts(err error) coreErrorTexts {
+	texts := coreErrorTexts{
+		// The roles.assign grant ceiling (core/authz.go) is typed (permissionDeniedf).
+		errclass.PermissionDenied: "insufficient privileges for this operation",
+	}
+	switch {
+	// GetUserRoles: core.GetUserRoleAssignment wraps storage's GetUser miss. Assign/remove
+	// never return a user, project or environment not-found: storage writes the grant row
+	// without looking them up, and a missing environment is a RoleScopeError. Any other
+	// not-found gets the classifier's default text, not "role not found".
+	case errors.Is(err, storage.ErrRoleNotFound), errors.Is(err, storage.ErrPermissionNotFound):
+		texts[errclass.NotFound] = "role not found"
+	case errors.Is(err, storage.ErrUserNotFound):
+		texts[errclass.NotFound] = "user not found"
+	// #4020: the grant itself is absent (RemoveRole) or already present (AssignRole),
+	// the same answers REST gives (404, 409).
+	case errors.Is(err, storage.ErrRoleNotAssigned):
+		texts[errclass.NotFound] = "role not assigned to user"
+	case errors.Is(err, storage.ErrRoleAlreadyAssigned):
+		texts[errclass.Conflict] = "role already assigned to user"
+	case errors.Is(err, core.ErrRoleNameReserved):
+		texts[errclass.Conflict] = "this role name is reserved and cannot be created"
+	// CreateRole with a permission listed twice: the second grant hits role_permissions'
+	// primary key (HTTP's AssignPermissionToRole answers 409).
+	case errors.Is(err, storage.ErrDuplicateRolePermission):
+		texts[errclass.Conflict] = "the role already has that permission"
+	// #1660/FIX-4: core.CreateRole's own validation (name fold rejects control/bidi
+	// characters, length bounds). errors.Is against core.ErrRoleValidation confirms the
+	// failure is application-generated, and the text is fixed: err.Error() wraps the
+	// caller's raw input (%q) and is never echoed (keyorix-raw-error-to-client).
+	case errors.Is(err, core.ErrRoleValidation):
+		texts[errclass.InvalidInput] = "invalid role name, description or assignable_scope"
+	}
+	return texts
 }

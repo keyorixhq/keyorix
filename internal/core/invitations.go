@@ -343,6 +343,9 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 // cross-project side effect. A genuine same-project resend/re-invite still supersedes
 // the prior pending invite for that project, exactly as before.
 func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uint, email, role string, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
+	if err := c.requireActorActive(ctx, invitedBy); err != nil { // #4159
+		return nil, nil, err
+	}
 	invCtx, inv, err := c.buildProjectInvite(ctx, projectID, email, role, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err
@@ -502,6 +505,9 @@ func (c *KeyorixCore) buildGlobalInvite(ctx context.Context, email, systemRole s
 // prior PROJECT-scoped invite to that address (there is no narrower boundary to draw
 // here; CORE-INVITATIONS-003 is specifically about project-vs-project interference).
 func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
+	if err := c.requireActorActive(ctx, invitedBy); err != nil { // #4159
+		return nil, nil, err
+	}
 	invCtx, inv, sysRole, clean, err := c.buildGlobalInvite(ctx, email, systemRole, assignments, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err
@@ -807,6 +813,9 @@ func (c *KeyorixCore) StaleInvitations(ctx context.Context, projectID uint, olde
 
 // RequestProjectAccess creates a pending access request for a user to a project.
 func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userID uint, suggestedRole, reason string) (*models.AccessRequest, error) {
+	if err := refuseMachineActor(ctx, userID); err != nil { // #4162
+		return nil, err
+	}
 	if projectID == 0 || userID == 0 {
 		return nil, fmt.Errorf("project and user IDs are required")
 	}
@@ -939,6 +948,10 @@ func (c *KeyorixCore) requiredApprovals() int {
 // threshold the request stays pending and the returned request carries the M-of-K
 // progress. When K is 1 (the default) the first approval grants immediately.
 func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projectID, requestID, approverID, approverMachineID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
+	if err := c.requireActorActive(ctx, approverID); err != nil { // #4159
+		return nil, err
+	}
+
 	// #G04-HA: the read-approvals-decide-record sequence must be serialized per
 	// REQUEST across every replica, not merely within this process. What #1646
 	// established still holds and is not re-litigated here: two racing

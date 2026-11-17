@@ -69,10 +69,10 @@ with `development`/`staging`/`production` environments (IDs 1/2/3).
 Two things about this command are not obvious from `--help` alone, so they're
 spelled out here rather than left for you to discover the hard way:
 
-- **Pass `--admin-email` explicitly.** The flag's own default
-  (`admin@localhost`) fails the server's email validation (no dot after
-  `@`), so omitting it makes bootstrap fail with a confusing
-  `Validation error: Validation error: Email`.
+- **Pass your own `--admin-email` if you want password-reset mail.** The
+  flag's default (`admin@keyorix.local`) is a placeholder that passes the
+  server's email validation but has no mailbox. A rejected address is
+  answered `400` and the CLI says which flag to fix.
 - **Pick a password with an uppercase letter, a digit, and that does not
   contain the username.** `Correct-Horse-Battery9` above satisfies all
   three; something like `admin-password1` will not, because it contains

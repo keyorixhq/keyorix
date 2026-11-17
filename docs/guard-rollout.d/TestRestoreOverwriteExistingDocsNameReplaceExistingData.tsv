@@ -1,0 +1,1 @@
+TestRestoreOverwriteExistingDocsNameReplaceExistingData	internal/docsdrift	#4334	new docs guard: admin restore --overwrite-existing without --replace-existing-data or an empty-target sentence; green on main + 5 open PRs

@@ -2,12 +2,16 @@ package dynamic
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -100,9 +104,22 @@ func (e *RedisEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	client, err := connectRedis(ctx, adminDSN, e.allowPrivateNetwork, e.allowInsecureTransport)
+	// A skip_verify=true that Issue now refuses is dropped here instead, with
+	// certificate verification kept on: ACL users have no native expiry, so a
+	// refused revoke would leave them live on the target (same reasoning as the
+	// MongoDB revoke, #3980).
+	revokeDSN := adminDSN
+	if !e.allowInsecureTransport {
+		revokeDSN = redisDSNWithoutSkipVerify(adminDSN)
+	}
+	client, err := connectRedis(ctx, revokeDSN, e.allowPrivateNetwork, e.allowInsecureTransport)
 	if err != nil {
-		return err
+		if _, refused := errors.AsType[*dsn.ForbiddenOptionError](err); refused || revokeDSN == adminDSN {
+			return err
+		}
+		// Name the dropped option, so an operator reading revoke_failed knows
+		// why a target with an untrusted certificate now fails the handshake.
+		return fmt.Errorf("revoke ran without admin_dsn option skip_verify (the server certificate was verified): %w", err)
 	}
 	defer func() { _ = client.Close() }()
 
@@ -155,6 +172,22 @@ func connectRedis(ctx context.Context, adminDSN string, allowPrivateNetwork, all
 	if err := netutil.RefuseScheme(opts.Network, "unix", "redis admin_dsn"); err != nil {
 		return nil, err
 	}
+	// go-redis reads skip_verify=true from the DSN query and sets
+	// InsecureSkipVerify, which would pass RequireTLS below while no certificate
+	// is checked: a project admin could then undo the operator's transport
+	// policy. Checked on the parsed options, not the DSN text, so every spelling
+	// go-redis accepts is covered. Allowed only where the operator has opted
+	// into insecure transport, and then logged like a plaintext connection.
+	if opts.TLSConfig != nil && opts.TLSConfig.InsecureSkipVerify {
+		if !allowInsecureTransport {
+			return nil, &dsn.ForbiddenOptionError{
+				Backend: "redis",
+				Option:  "skip_verify",
+				Reason:  "certificate verification cannot be turned off in an admin_dsn; remove skip_verify=true, or the operator can allow insecure transport",
+			}
+		}
+		log.Printf("WARNING: redis admin_dsn %q has skip_verify=true: the server certificate is not verified; dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport is explicitly enabled", opts.Addr)
+	}
 
 	guard := netutil.Guard{AllowInsecureTransport: allowInsecureTransport, InsecureTransportKey: "dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport"}
 	if !allowPrivateNetwork {
@@ -181,4 +214,21 @@ func connectRedis(ctx context.Context, adminDSN string, allowPrivateNetwork, all
 		return nil, fmt.Errorf("connect to target: %w", err)
 	}
 	return client, nil
+}
+
+// redisDSNWithoutSkipVerify returns adminDSN without its skip_verify query
+// parameter, so a revoke connects with certificate verification on. A DSN that
+// does not parse, or has no skip_verify, is returned unchanged.
+func redisDSNWithoutSkipVerify(adminDSN string) string {
+	u, err := url.Parse(adminDSN)
+	if err != nil {
+		return adminDSN
+	}
+	q := u.Query()
+	if !q.Has("skip_verify") {
+		return adminDSN
+	}
+	q.Del("skip_verify")
+	u.RawQuery = q.Encode()
+	return u.String()
 }

@@ -21,6 +21,7 @@ func newRoleService(t *testing.T) (*RoleGRPCService, *testhelper.RBACTestHelper)
 	// Admin-context user (id 1) = super_admin (global); denied tests use an
 	// ungranted user id so core.Authorize refuses them.
 	h.AssignUserRole(t, 1, 1, nil)
+	h.EnsureActiveUser(t, 1) // user 1 acts through core (#4159)
 	return NewRoleService(h.CoreService), h
 }
 
@@ -314,6 +315,7 @@ func TestRoleService_AssignRole_ScopedCrossProjectDenied(t *testing.T) {
 	svc, h := newRoleService(t)
 	proj1 := uint(1)
 	h.AssignUserRole(t, 50, testhelper.RoleProjectAdmin, &proj1) // user 50 = project_admin at project 1 only
+	h.EnsureActiveUser(t, 50)                                    // user 50 acts through core (#4159)
 	target := h.CreateTestUser(t, "xtarget", 600)
 	// A project role: the legacy roles are install-wide only (#3605), so granting one
 	// at a project would be refused before the scoped authorization this test is about.

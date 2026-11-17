@@ -280,6 +280,16 @@ func (h *RBACTestHelper) CreateTestUser(t *testing.T, username string, userID ui
 		EmailFolded:    strings.ToLower(username) + "@test.com",
 	}
 
+	// A placeholder EnsureActiveUser created for this ID (a role was granted
+	// first) becomes this user.
+	var placeholder int64
+	require.NoError(t, h.DB.Model(&models.User{}).Where("id = ? AND username = ?", userID, fmt.Sprintf("fixture-actor-%d", userID)).Count(&placeholder).Error)
+	if placeholder > 0 {
+		require.NoError(t, h.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]any{
+			"username": user.Username, "username_folded": user.UsernameFolded, "email": user.Email, "email_folded": user.EmailFolded,
+		}).Error)
+		return user
+	}
 	result := h.DB.Create(user)
 	require.NoError(t, result.Error)
 
@@ -336,8 +346,10 @@ func (h *RBACTestHelper) CreateTestGroup(t *testing.T, name, description string,
 	return group
 }
 
-// AssignUserRole assigns a role to a user
+// AssignUserRole assigns a role to a user. It refuses a global-only role at a project
+// (see requireAssignableAt).
 func (h *RBACTestHelper) AssignUserRole(t *testing.T, userID, roleID uint, projectID *uint) {
+	h.requireAssignableAt(t, roleID, projectID)
 	userRole := &models.UserRole{
 		UserID:    userID,
 		RoleID:    roleID,
@@ -360,8 +372,10 @@ func (h *RBACTestHelper) AssignUserToGroup(t *testing.T, userID, groupID uint) {
 	require.NoError(t, result.Error)
 }
 
-// AssignGroupRole assigns a role to a group
+// AssignGroupRole assigns a role to a group. It refuses a global-only role at a project
+// (see requireAssignableAt).
 func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, projectID *uint) {
+	h.requireAssignableAt(t, roleID, projectID)
 	groupRole := &models.GroupRole{
 		GroupID:   groupID,
 		RoleID:    roleID,
@@ -371,6 +385,32 @@ func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, pro
 	h.ensureLiveProject(t, groupRole.ProjectID)
 	result := h.DB.Create(groupRole)
 	require.NoError(t, result.Error)
+}
+
+// requireAssignableAt fails the test when a fixture grants a global-only role at a
+// project. The helper writes the grant straight to the DB and so bypasses the check
+// core's grant paths apply (#3605: the legacy super_admin/admin/editor/viewer/auditor
+// roles and the system_* roles are install-wide only); a fixture that did it tested a
+// grant no real install can hold. Grant a project_* role (RoleProject*, or one made with
+// a project assignable scope) at a project instead.
+func (h *RBACTestHelper) requireAssignableAt(t *testing.T, roleID uint, projectID *uint) {
+	t.Helper()
+	var role models.Role
+	if err := h.DB.First(&role, roleID).Error; err != nil {
+		return // an unknown role id is the caller's own fixture; nothing to judge
+	}
+	if globalOnlyAtProject(&role, derefScope(projectID)) {
+		t.Fatalf("fixture grants the global-only role %q (id %d) at project %d: core refuses that grant (#3605), "+
+			"so the test would run on a grant no install can hold; use a project role (testhelper.RoleProjectAdmin/"+
+			"RoleProjectDeveloper/RoleProjectViewer/RoleProjectAuditor) at a project, or grant %q at the global scope (nil project)",
+			role.Name, role.ID, derefScope(projectID), role.Name)
+	}
+}
+
+// globalOnlyAtProject reports whether granting role at projectID (0 = global) is a
+// global-only role at a project, by the scope the grant check enforces.
+func globalOnlyAtProject(role *models.Role, projectID uint) bool {
+	return projectID != 0 && models.EffectiveRoleAssignableScope(role) == models.RoleAssignableGlobal
 }
 
 // ensureLiveProject creates a live projects row for a scoped grant's project id
@@ -500,4 +540,16 @@ func (h *RBACTestHelper) QueryRawSQL(t *testing.T, query string, args ...any) *s
 	rows, err := h.SqlDB.Query(query, args...)
 	require.NoError(t, err)
 	return rows
+}
+
+// EnsureActiveUser creates an active user with userID unless one exists. Core
+// refuses a mutation by an actor whose account is missing or not active (#4159), so
+// a fixture that acts as userID through a mutating core method needs the account.
+func (h *RBACTestHelper) EnsureActiveUser(t *testing.T, userID uint) {
+	t.Helper()
+	var n int64
+	require.NoError(t, h.DB.Model(&models.User{}).Where("id = ?", userID).Count(&n).Error)
+	if n == 0 {
+		h.CreateTestUser(t, fmt.Sprintf("fixture-actor-%d", userID), userID)
+	}
 }

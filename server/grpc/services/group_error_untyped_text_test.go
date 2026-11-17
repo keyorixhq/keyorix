@@ -4,9 +4,12 @@ package services
 // UNTYPED error. A Postgres "permission denied for table groups" is a database-role
 // fault and a driver text that happens to contain "invalid"/"required" is not a
 // validation refusal: both are server faults (Internal). Real typed refusals keep the
-// class they always had.
+// class they always had. ERRMAP-GRPC-NOV-3: the exception is a fault of the group READ
+// (GetGroup), which core types as a storage read fault whatever the driver text says:
+// that is Unavailable (retry), by its type, never by its words.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -32,14 +35,15 @@ func TestGroupRPCs_UntypedStorageTextDoesNotSteerClass(t *testing.T) {
 
 	calls := map[string]struct {
 		method string
+		want   codes.Code
 		call   func() error
 	}{
-		"GetGroup": {"GetGroup", func() error { _, err := svc.GetGroup(groupCtx(), &pb.GetGroupRequest{Id: gid}); return err }},
-		"DeleteGroup": {"GetGroup", func() error {
+		"GetGroup": {"GetGroup", codes.Unavailable, func() error { _, err := svc.GetGroup(groupCtx(), &pb.GetGroupRequest{Id: gid}); return err }},
+		"DeleteGroup": {"GetGroup", codes.Internal, func() error {
 			_, err := svc.DeleteGroup(groupCtx(), &pb.DeleteGroupRequest{Id: gid})
 			return err
 		}},
-		"AddGroupMember": {"AddUserToGroup", func() error {
+		"AddGroupMember": {"AddUserToGroup", codes.Internal, func() error {
 			_, err := svc.AddGroupMember(groupCtx(), &pb.GroupMemberRequest{GroupId: gid, UserId: 2})
 			return err
 		}},
@@ -60,7 +64,7 @@ func TestGroupRPCs_UntypedStorageTextDoesNotSteerClass(t *testing.T) {
 				fs.Arm(nil)
 				require.True(t, fired, "the armed %s fault must have fired for %s", c.method, name)
 				require.Error(t, err)
-				assert.Equal(t, codes.Internal, status.Code(err), err.Error())
+				assert.Equal(t, c.want, status.Code(err), err.Error())
 				assert.NotContains(t, err.Error(), text, "raw storage text must not reach the caller")
 			})
 		}
@@ -128,7 +132,7 @@ func TestGroupError_TypedPermissionAndTransient(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := groupError(tc.err)
+			got := groupError(context.Background(), tc.err)
 			assert.Equal(t, tc.code, status.Code(got), got.Error())
 			if tc.msg != "" {
 				assert.Equal(t, tc.msg, status.Convert(got).Message())

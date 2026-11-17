@@ -176,6 +176,28 @@ var plants = append([]plant{
 		op:             "riskexception.create",
 		minUnexplained: 10,
 	},
+	{
+		// V5b area 1: removes the ENVIRONMENT clause from userPrincipalPermissionSQL
+		// — the predicate core.Authorize resolves through
+		// (ResolveUserPermissionAt) that makes a role grant scoped to
+		// environment E apply only
+		// when the check's target environment is E (the exact shape INV-CORE-15
+		// and #2857 turned on: a grant at {project, env X} must not satisfy a
+		// check in a different environment). With the clause gone, an
+		// environment-scoped grant becomes an all-environments wildcard, so a
+		// principal granted secrets.read ONLY in prod can read the staging2 secret
+		// of the same project — core, REST and gRPC all allow it (all resolve
+		// through this one query), and the model, which still matches the
+		// environment, denies: a transport-allows-over-model-denies case no waiver
+		// absorbs ("unexplained"). The cross-environment grants the sweep offers
+		// (envVariations) are what expose it; a clean sweep records none.
+		name:           "env-scope-clause-removed",
+		file:           "internal/storage/store/local_principal_permission.go",
+		anchor:         "   AND (user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.id IS NOT NULL AND environments.deleted_at IS NULL))",
+		repl:           "   AND (user_roles.environment_id = ? OR 1 = 1) /* PLANT: env-scope clause removed */",
+		op:             "secret.read.env",
+		minUnexplained: 2,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after
@@ -238,6 +260,29 @@ var fixRegressionPlants = []plant{
 		repl:           "\t// PLANT: #3993 reverted\n",
 		op:             "machine.token.issue",
 		minUnexplained: 2,
+	},
+	{
+		// #4332 (fuzz-corpus#91): a USER issuing a token for a machine is not
+		// held to that machine's permissions — the same hole #3993 closed for
+		// machine callers, re-opened for users (false positive f1be67fcde954c04:
+		// a user with {secrets.read,secrets.delete,roles.assign} minting a token
+		// for a project_auditor machine it does not fully cover). Reverting the
+		// user branch makes the model over-allow where core/REST/gRPC deny.
+		name: "fix-4332-user-target-ceiling-removed",
+		file: "internal/core/authz.go",
+		anchor: "\tif actorType == ActorTypeUser && machineID != 0 {\n" +
+			"\t\t// A user is held to the same rule (INV-CORE-01: no authority a\n" +
+			"\t\t// caller does not hold). A user with roles.assign at the project but\n" +
+			"\t\t// without the target's permissions could otherwise mint a token for a\n" +
+			"\t\t// peer carrying them and act as that peer. A global admin holds\n" +
+			"\t\t// every permission, so the check passes for it without a special case.\n" +
+			"\t\treturn c.requireActorHoldsTargetPermissions(ctx, ActorTypeUser, principalID, machineID)\n\t}\n",
+		repl: "\t// PLANT: #4332 reverted\n",
+		op:   "machine.token.issue",
+		// 8 unexplained cases at introduction (the custom-role user across the
+		// sweep's mask/scope/route variations that leave it short of the target
+		// machine's project_auditor bundle); control sweep without the plant: 0.
+		minUnexplained: 8,
 	},
 }
 

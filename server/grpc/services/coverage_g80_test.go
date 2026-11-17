@@ -22,7 +22,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
@@ -304,7 +304,7 @@ func TestMapSecretACLError_WrappedStorageError_DoesNotLeakRawText(t *testing.T) 
 	rawDriverErr := errors.New(`pq: invalid input syntax for type integer: "abc"`)
 	wrapped := fmt.Errorf("%s: %w", "Storage operation failed", rawDriverErr)
 
-	got := mapSecretACLError(wrapped)
+	got := mapSecretACLError(context.Background(), wrapped)
 	require.Error(t, got)
 	assert.Equal(t, codes.Internal, status.Code(got))
 	assert.NotContains(t, status.Convert(got).Message(), "pq:", "raw driver error text must not reach the client")
@@ -327,7 +327,7 @@ func TestMapSecretACLError_Classification(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := mapSecretACLError(c.err)
+			got := mapSecretACLError(context.Background(), c.err)
 			assert.Equal(t, c.want, status.Code(got))
 		})
 	}
@@ -820,7 +820,7 @@ func TestUserService_ListUsers_ProjectCountsPopulated(t *testing.T) {
 	// POST /projects/{id}/members path writes, so both figures are populated and
 	// projectCounts' success branch is still the one exercised.
 	projectID := uint(2)
-	h.AssignUserRole(t, 1, 1, &projectID)
+	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &projectID)
 	require.NoError(t, h.DB.Create(&models.ProjectMembership{
 		ProjectID: projectID, UserID: 1, State: "active", InvitedAt: time.Now(), UpdatedAt: time.Now(),
 	}).Error)

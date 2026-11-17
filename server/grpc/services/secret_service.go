@@ -11,6 +11,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -88,7 +89,7 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	// The secret.created row commits with the secret, as on the HTTP path.
 	secret, err := s.core.CreateSecret(secretMutationAuditContext(ctx, user), coreReq)
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretError(ctx, err)
 	}
 	return secretNodeToProto(secret), nil
 }
@@ -128,7 +129,7 @@ func (s *SecretGRPCService) GetSecret(ctx context.Context, req *pb.GetSecretRequ
 		secret, err = s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
 	}
 	if err != nil {
-		return nil, mapSecretReadError(err)
+		return nil, mapSecretReadError(ctx, err)
 	}
 	out := secretNodeToProto(secret)
 	// Opt-in: the count is O(reads) over the access log (same default as REST).
@@ -163,7 +164,7 @@ func (s *SecretGRPCService) ListSecretDependencies(ctx context.Context, req *pb.
 	}
 	deps, err := s.core.ListSecretDependencies(ctx, user.ActorKind(), user.PrincipalID(), uint(req.GetId()))
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretError(ctx, err)
 	}
 	return secretDependenciesToProto(deps), nil
 }
@@ -180,7 +181,7 @@ func (s *SecretGRPCService) GetSecretImpact(ctx context.Context, req *pb.GetSecr
 	}
 	impact, err := s.core.GetSecretImpact(ctx, user.ActorKind(), user.PrincipalID(), uint(req.GetId()))
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretError(ctx, err)
 	}
 	return secretImpactToProto(impact), nil
 }
@@ -228,7 +229,7 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 		// core.GetSecret (the machine branch) refuses an expired secret itself and
 		// is not a value-read entry point, so note the refusal here.
 		core.NoteSecretReadDenial(ctx, core.ClassifySecretReadDenial(err))
-		return nil, mapSecretReadError(err)
+		return nil, mapSecretReadError(ctx, err)
 	}
 	var value []byte
 	if isMachine {
@@ -237,7 +238,7 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 		value, err = s.core.GetPermittedSecretValue(ctx, permitted)
 	}
 	if err != nil {
-		return nil, mapSecretReadError(err)
+		return nil, mapSecretReadError(ctx, err)
 	}
 	// Record the read in the audit trail and secret-access log — the same call the
 	// HTTP reveal handler fires. Without it, a secret read over gRPC left no
@@ -373,7 +374,7 @@ func (s *SecretGRPCService) SetSecretAutoRotate(ctx context.Context, req *pb.Set
 		Enabled: req.GetEnabled(), Length: int(req.GetLength()), Charset: req.GetCharset(),
 		Backend: req.GetBackend(), Ref: req.GetRef(),
 	}, user.PrincipalID()); err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -458,7 +459,7 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 		versions, err = s.core.GetSecretVersionsWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
 	}
 	if err != nil {
-		return nil, mapSecretError(err)
+		return nil, mapSecretError(ctx, err)
 	}
 	// Audit the listing, mirroring the HTTP handler (secrets_versions.go) —
 	// without this, listing version history over gRPC left no audit event, an
@@ -511,7 +512,7 @@ func (s *SecretGRPCService) GrantSecretACL(ctx context.Context, req *pb.GrantSec
 		return nil, err
 	}
 	if err := s.core.GrantSecretACL(ctx, user.UserID, uint(req.GetSecretId()), uint(req.GetUserId()), req.GetPermissions()); err != nil {
-		return nil, mapSecretACLError(err)
+		return nil, mapSecretACLError(ctx, err)
 	}
 	// Re-fetch so we can return the created/updated row with its ID and timestamps.
 	acls, err := s.core.ListSecretACLs(ctx, uint(req.GetSecretId()))
@@ -543,7 +544,7 @@ func (s *SecretGRPCService) RevokeSecretACL(ctx context.Context, req *pb.RevokeS
 		return nil, err
 	}
 	if err := s.core.RevokeSecretACL(ctx, user.UserID, uint(req.GetSecretId()), uint(req.GetAclId())); err != nil {
-		return nil, mapSecretACLError(err)
+		return nil, mapSecretACLError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -585,31 +586,17 @@ func secretACLToProto(a *models.SecretACL) *pb.SecretACLEntry {
 	}
 }
 
-// mapSecretACLError translates core ACL errors into gRPC status codes.
-func mapSecretACLError(err error) error {
-	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
-	}
-	// CORE-GRPC-TAILS-1: not-found and not-authorized are classified by sentinel
-	// (errors.Is), not by err.Error() text; only the untyped validation cases below
-	// still read the message.
-	switch {
-	case errors.Is(err, storage.ErrSecretACLNotFound), errors.Is(err, storage.ErrSecretNotFound),
-		errors.Is(err, storage.ErrUserNotFound):
-		return status.Error(codes.NotFound, "ACL or secret not found")
-	// ERRSTRING-CLASS-1: GrantSecretACL's own validation is typed
-	// (storage.ErrInvalidSecretACLRequest). A raw SQL/driver error from the
-	// storage-layer paths that also reach this classifier can contain "invalid" or
-	// "required" and is a server fault. Fixed message, so a driver error never
-	// reaches the client verbatim (matches mapUserError's GRPC-003 remediation).
-	case errors.Is(err, storage.ErrInvalidSecretACLRequest):
-		return status.Error(codes.InvalidArgument, "invalid ACL request")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "not authorized to manage this secret's ACLs")
-	default:
-		return status.Error(codes.Internal, "ACL operation failed")
-	}
+// mapSecretACLError translates core ACL errors into gRPC status codes through the
+// shared classifier (coreErrorStatus); the texts are this family's own and fixed, so a
+// driver error never reaches the client (matches mapUserError's GRPC-003 remediation).
+func mapSecretACLError(ctx context.Context, err error) error {
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "ACL operation", texts: coreErrorTexts{
+		errclass.NotFound: "ACL or secret not found",
+		// ERRSTRING-CLASS-1: GrantSecretACL's own validation is typed
+		// (storage.ErrInvalidSecretACLRequest).
+		errclass.InvalidInput:     "invalid ACL request",
+		errclass.PermissionDenied: "not authorized to manage this secret's ACLs",
+	}})
 }
 
 // ---------------------------------------------------------------------------
@@ -691,10 +678,10 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 // in the `error` field rides here as an ErrorInfo detail's Reason. Never use it
 // before authorization: a refusal names the secret's state, which would
 // confirm the secret exists to a caller who cannot see it.
-func mapSecretReadError(err error) error {
+func mapSecretReadError(ctx context.Context, err error) error {
 	refusal, ok := core.ClassifySecretReadRefusal(err)
 	if !ok {
-		return mapSecretError(err)
+		return mapSecretError(ctx, err)
 	}
 	code := codes.FailedPrecondition
 	if refusal.Kind == core.SecretReadRefusalDenied {
@@ -735,19 +722,36 @@ func mapSecretMutationError(ctx context.Context, faults *core.AuthorizeFaultReco
 			return authorizeRefusal(ctx, ferr, "access denied to this secret")
 		}
 	}
-	return mapSecretError(err)
+	return mapSecretError(ctx, err)
 }
 
-// mapSecretError translates core errors into gRPC status codes.
-func mapSecretError(err error) error {
-	// Checked via errors.As, BEFORE the string-matching switch below: this
-	// error's own message contains the substring "exceeds" (deliberately, so
-	// it names the actual limit), which the switch's own
-	// "exceeds"-string-matching InvalidArgument branch would otherwise catch
-	// first and misreport as an unrelated invalid-rotation-configuration
-	// error instead of ResourceExhausted -- exactly the collision that
-	// branch's own comment already warns a future "exceeds"-containing error
-	// could cause.
+// mapSecretError translates core errors into gRPC status codes through the shared
+// classifier (coreErrorStatus), like the other family mappers: an audit or storage read
+// outage, a canceled request ctx and a permission-lookup outage answer Unavailable, a
+// sentinel answers its class, and the texts below are this family's own and fixed.
+//
+// The pre-checks run only where the classifier table cannot say it:
+//   - codes with no errclass class (ResourceExhausted, Aborted);
+//   - core's per-refusal share text (ShareRefusalMessage);
+//   - core.ErrSecretAlreadyExists, which has no sentinel-table row (REST's CreateSecret
+//     handler answers it itself);
+//   - the untyped rotation validation errors, which only have text to match.
+//
+// The last two run only for an error the classifier table leaves Internal
+// (secretErrorUnclassified): an audit or storage outage or a partial mutation that also
+// wraps ErrSecretAlreadyExists stays Unavailable, and a typed fault or sentinel whose text
+// happens to contain "out of range" or "exceeds" keeps its class. ErrSecretAlreadyExists
+// is a verdict, so it keeps AlreadyExists under a canceled ctx like the Conflict rows of
+// the table do; the rotation text match is skipped for an authorize-transient error.
+//
+// The "name already exists" text is given only to the two name/version conflicts the old
+// switch answered with it (ErrSecretAlreadyExists, ErrDuplicateSecretVersion); any other
+// Conflict sentinel (ErrDuplicateSecretDependency, ...) gets the class's default text.
+func mapSecretError(ctx context.Context, err error) error {
+	// Checked via errors.As, BEFORE anything text-based: this error's own message
+	// contains the substring "exceeds" (deliberately, so it names the actual limit),
+	// which the rotation text match below would otherwise misreport as an invalid
+	// rotation configuration instead of ResourceExhausted.
 	if tooLarge, ok := errors.AsType[*core.SecretValueTooLargeError](err); ok {
 		return status.Error(codes.ResourceExhausted, tooLarge.Error()) // nosemgrep: keyorix-raw-error-to-client -- SecretValueTooLargeError.Error() is a fixed-format string carrying only the submitted size and configured limit (both already known to the caller), never secret content
 	}
@@ -763,35 +767,57 @@ func mapSecretError(err error) error {
 	if reason, ok := core.ShareRefusalMessage(err); ok {
 		return status.Error(codes.PermissionDenied, reason)
 	}
-	// CORE-GRPC-TAILS-1: not-found, permission-denied and already-exists are classified
-	// by sentinel (errors.Is), not by err.Error() text; only the untyped rotation
-	// validation below still reads the message.
-	msg := err.Error()
-	switch {
-	// core.ErrSecretTargetInvalid: CreateSecret's target environment is missing or in
-	// another project (core secrets.go pre-check and withEnvironmentSecretGuard). Both
-	// answer NotFound, as the old text match did for the missing case, so a foreign
-	// environment reads the same as a missing one.
-	case errors.Is(err, storage.ErrSecretNotFound), errors.Is(err, storage.ErrSecretVersionNotFound),
-		errors.Is(err, storage.ErrProjectNotFound), errors.Is(err, storage.ErrEnvironmentNotFound),
-		errors.Is(err, core.ErrSecretTargetInvalid):
-		return status.Error(codes.NotFound, "secret not found")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "access denied to this secret")
-	case errors.Is(err, core.ErrSecretAlreadyExists), errors.Is(err, storage.ErrDuplicateSecretVersion):
-		return status.Error(codes.AlreadyExists, "secret with this name already exists")
-	// Fixed message, not msg -- these are genuinely safe caller-echo validation
-	// text today (rotation_executor.go), but "exceeds" in particular is used
-	// for dozens of unrelated validations across internal/core; matching a
-	// coincidental substring in some future wrapped error must not turn into
-	// a raw-error leak here (matches mapUserError's GRPC-003 remediation).
-	case strings.Contains(msg, "unknown rotation charset"), strings.Contains(msg, "out of range"),
-		strings.Contains(msg, "must be set together"), strings.Contains(msg, "unknown rotation backend"),
-		strings.Contains(msg, "no rotation backends"), strings.Contains(msg, "exceeds"):
-		return status.Error(codes.InvalidArgument, "invalid rotation configuration")
-	default:
-		return status.Error(codes.Internal, "secret operation failed")
+	unclassified := secretErrorUnclassified(err)
+	if unclassified && errors.Is(err, core.ErrSecretAlreadyExists) {
+		return status.Error(codes.AlreadyExists, secretAlreadyExistsText)
 	}
+	if unclassified && !core.IsAuthorizeTransient(ctx, err) && isRotationValidationError(err) {
+		// Fixed message, not the text: these are genuinely safe caller-echo validation
+		// text today (rotation_executor.go), but "exceeds" in particular is used for
+		// dozens of unrelated validations across internal/core; matching a coincidental
+		// substring in some future wrapped error must not turn into a raw-error leak here
+		// (matches mapUserError's GRPC-003 remediation).
+		return status.Error(codes.InvalidArgument, "invalid rotation configuration")
+	}
+	// core.ErrSecretTargetInvalid (CreateSecret's target environment is missing or in
+	// another project) is a NotFound row of the table, so a foreign environment reads
+	// the same as a missing one.
+	texts := coreErrorTexts{
+		errclass.NotFound:         "secret not found",
+		errclass.PermissionDenied: "access denied to this secret",
+	}
+	if errors.Is(err, storage.ErrDuplicateSecretVersion) {
+		texts[errclass.Conflict] = secretAlreadyExistsText
+	}
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "secret operation", texts: texts})
+}
+
+// secretAlreadyExistsText is the client text of a secret name or version that exists.
+const secretAlreadyExistsText = "secret with this name already exists"
+
+// secretErrorUnclassified reports whether the classifier table leaves err Internal: no
+// partial mutation, no audit or storage outage and no sentinel with a class. Only such an
+// error may be answered by mapSecretError's pre-checks that the table cannot express.
+func secretErrorUnclassified(err error) bool {
+	if _, ok := core.AsPartialMutationError(err); ok {
+		return false
+	}
+	return errclass.Of(err) == errclass.Internal
+}
+
+// isRotationValidationError reports whether err is one of the untyped rotation
+// validation errors of rotation_executor.go (no sentinel exists to match them by). It takes
+// the error, not its text, so the text read stays visible to TestNoErrorTextClassification
+// (which does not follow error text passed through a parameter).
+func isRotationValidationError(err error) bool {
+	msg := err.Error()
+	for _, s := range []string{"unknown rotation charset", "out of range", "must be set together",
+		"unknown rotation backend", "no rotation backends", "exceeds"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // Shared proto-conversion, pagination, and identity helpers live in conversions.go.

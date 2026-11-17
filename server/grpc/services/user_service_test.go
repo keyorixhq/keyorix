@@ -153,6 +153,7 @@ func TestUserService_CreateUser_RoleGrantRequiresAssign(t *testing.T) {
 		WHERE r.name = 'user_provisioner' AND p.name IN ('users.write', 'users.read', 'system.read')`)
 	require.NoError(t, err)
 	h.AssignUserRole(t, 8, 50, nil)
+	h.EnsureActiveUser(t, 8) // user 8 acts through core (#4159)
 
 	svc := NewUserService(h.CoreService)
 	ctx := authCtx(8, "provisioner")

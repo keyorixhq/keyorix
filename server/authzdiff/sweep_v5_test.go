@@ -26,9 +26,8 @@ import "testing"
 // three legs (core, REST and the BreakGlassService.ActivateBreakGlass gRPC RPC).
 //
 // Strict rule, verbatim from the full sweep: zero uncalibrated cases and zero
-// "unexplained" cases. Disagreements that map to a known waiver (the
-// suspended-account known-02; the machine validation-refusal known-09 that
-// break-glass activation produces) are allowed, exactly as in the full sweep.
+// "unexplained" cases. Disagreements that map to a known waiver are allowed,
+// exactly as in the full sweep.
 func TestV5StrictSweep(t *testing.T) {
 	if testing.Short() {
 		t.Skip("V5 strict check drives real core+REST legs; skipped under -short")

@@ -26,13 +26,9 @@ func init() {
 	registerModelTimestampException("server/admin/recovery_key.go:runRotateRecoveryKey:CreatedAt",
 		"SetRecoveryKeyRecord stores CreatedAt.UTC() and utcPtr(RotatedAt) (local_recovery_key.go)")
 
-	// Tracked: real defects of the same class, outside the files HOSTZONE-TIME-NOV-1 may edit. The
-	// first is proven on SQLite (secret_versions.created_at stored "... +0900 JST m=+..." after
-	// CreateSecret on a TZ=Asia/Tokyo host); the second has the shape of the proven system_metadata
-	// writers (a plain Create of an explicit host-zone UpdatedAt) and is not driven separately.
-	// Remove each row together with the .UTC() fix.
+	// Tracked: a real defect of the same class, outside the files HOSTZONE-TIME-NOV-1 may edit, proven
+	// on SQLite (secret_versions.created_at stored "... +0900 JST m=+..." after CreateSecret on a
+	// TZ=Asia/Tokyo host). Remove the row together with the .UTC() fix.
 	registerModelTimestampException("internal/core/secrets_versions.go:storeSecretVersion:CreatedAt",
 		"tracked, real: HOSTZONE-TIME-NOV-1 LEFTOVERS (secret_versions.created_at)")
-	registerModelTimestampException("internal/storage/factory_schema_epoch.go:recordSchemaEpochAs:UpdatedAt",
-		"tracked, real by shape: HOSTZONE-TIME-NOV-1 LEFTOVERS (system_metadata.updated_at of the schema epoch rows)")
 }

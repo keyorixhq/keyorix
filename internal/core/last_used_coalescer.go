@@ -134,10 +134,12 @@ type lastUsedCoalescer struct {
 
 	mu           sync.Mutex
 	pending      map[lastUsedKey]time.Time
-	timer        *time.Timer // armed while pending is non-empty and no flush is running
-	failures     int         // consecutive failed flushes
-	backoffUntil time.Time   // no background flush before this
-	dropped      uint64      // stamps dropped over the cap, lifetime
+	timer        *time.Timer        // armed while pending is non-empty and no flush is running
+	stopped      bool               // set by Stop(): forbids arming a timer or starting a flush
+	bgCancel     context.CancelFunc // cancels the running background flush; Stop calls it
+	failures     int                // consecutive failed flushes
+	backoffUntil time.Time          // no background flush before this
+	dropped      uint64             // stamps dropped over the cap, lifetime
 	dropLog      rateLimitedLog
 	failLog      rateLimitedLog
 }
@@ -232,6 +234,13 @@ func (c *KeyorixCore) writeLastUsedBatch(ctx context.Context, entries []lastUsed
 // record notes a use at time at. It never touches the database.
 func (a *lastUsedCoalescer) record(k lastUsedKey, at time.Time) {
 	a.mu.Lock()
+	if a.stopped {
+		// After Stop() the coalescer is permanently shut: a late stamp is
+		// dropped rather than re-arming a timer that would touch a closing
+		// store. This is the lifecycle hole FlushLastUsed alone left open.
+		a.mu.Unlock()
+		return
+	}
 	prev, already := a.pending[k]
 	switch {
 	case already:
@@ -274,6 +283,9 @@ func (a *lastUsedCoalescer) droppedCount() uint64 {
 // armTimerLocked arms the periodic flush: after interval, or after the backoff
 // if that ends later. The caller holds a.mu and has checked a.timer == nil.
 func (a *lastUsedCoalescer) armTimerLocked() {
+	if a.stopped {
+		return
+	}
 	delay := a.interval
 	if wait := a.backoffUntil.Sub(a.clock()); wait > delay {
 		delay = wait
@@ -286,6 +298,10 @@ func (a *lastUsedCoalescer) armTimerLocked() {
 func (a *lastUsedCoalescer) onTimer() {
 	a.mu.Lock()
 	a.timer = nil
+	if a.stopped {
+		a.mu.Unlock()
+		return
+	}
 	if wait := a.backoffUntil.Sub(a.clock()); wait > 0 {
 		if len(a.pending) > 0 {
 			a.timer = time.AfterFunc(wait, a.onTimer)
@@ -305,6 +321,15 @@ func (a *lastUsedCoalescer) onTimer() {
 // kick starts a background flush unless one is already in flight. It never
 // starts more than one goroutine however many callers race here.
 func (a *lastUsedCoalescer) kick() {
+	// record() releases a.mu before calling kick(); re-check stopped under the
+	// lock so a Stop() that raced in between cannot start a background flush
+	// that would touch the store after Stop returned.
+	a.mu.Lock()
+	stopped := a.stopped
+	a.mu.Unlock()
+	if stopped {
+		return
+	}
 	if !a.flushing.CompareAndSwap(false, true) {
 		return
 	}
@@ -322,10 +347,27 @@ func (a *lastUsedCoalescer) pendingAt(k lastUsedKey) (time.Time, bool) {
 	return t, ok
 }
 
+// flushInBackground runs one background flush. It registers its cancel func
+// under a.mu and re-checks stopped there: kick() and onTimer() check stopped
+// and start the flush in two steps, so a Stop() can land in between. Either
+// Stop sees bgCancel and cancels this flush, or this flush sees stopped and
+// does not start.
 func (a *lastUsedCoalescer) flushInBackground() {
 	ctx, cancel := context.WithTimeout(context.Background(), lastUsedFlushTimeout)
 	defer cancel()
-	a.flush(ctx)
+	a.mu.Lock()
+	if a.stopped {
+		a.mu.Unlock()
+		return
+	}
+	a.bgCancel = cancel
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.bgCancel = nil
+		a.mu.Unlock()
+	}()
+	a.runFlush(ctx, false)
 }
 
 // acquireFlush takes the flush semaphore, giving up when ctx ends first.
@@ -360,17 +402,36 @@ func (a *lastUsedCoalescer) rearm() {
 // An explicit flush (shutdown, tests) ignores the backoff but not ctx: it gives
 // up waiting for a running flush when ctx ends, and stops writing then.
 func (a *lastUsedCoalescer) flush(ctx context.Context) {
+	a.runFlush(ctx, false)
+}
+
+// runFlush is flush. final is set only for Stop's own last flush: once the
+// coalescer is stopped, every other flush returns without writing, including
+// one that was already waiting for the semaphore when Stop latched (it may get
+// the semaphore only after Stop's final flush gave up or finished).
+func (a *lastUsedCoalescer) runFlush(ctx context.Context, final bool) {
 	if !a.acquireFlush(ctx) {
 		a.mu.Lock()
-		n := len(a.pending)
+		n, stopped := len(a.pending), a.stopped
 		a.mu.Unlock()
-		log.Printf("last-used flush: gave up waiting for the flush already running (%v); %d pending stamp(s) not written by this call", ctx.Err(), n)
-		a.rearm()
+		switch {
+		case final:
+			log.Printf("last-used stop: final flush gave up waiting for the flush already running (%v); %d pending stamp(s) not written, lost with the process", ctx.Err(), n)
+		case stopped:
+			// Stopped meanwhile: Stop's final flush owns what is pending.
+		default:
+			log.Printf("last-used flush: gave up waiting for the flush already running (%v); %d pending stamp(s) not written by this call", ctx.Err(), n)
+			a.rearm()
+		}
 		return
 	}
 	defer func() { <-a.flushSem }()
 
 	a.mu.Lock()
+	if a.stopped && !final {
+		a.mu.Unlock()
+		return
+	}
 	batch := a.pending
 	a.pending = make(map[lastUsedKey]time.Time, len(batch))
 	if a.timer != nil {
@@ -445,7 +506,11 @@ func (a *lastUsedCoalescer) finishFlush(total int, failed []lastUsedEntry, err e
 		if dropped > 0 {
 			a.dropLocked(dropped)
 		}
-		if ok, flushes := a.failLog.allow(a.clock(), 1); ok {
+		if a.stopped {
+			// No background flush follows a stop. A background flush cancelled
+			// by Stop lands here too; Stop's final flush retries its keys.
+			log.Printf("last-used flush during stop: %d of %d stamp(s) not written: %v", len(failed), total, err)
+		} else if ok, flushes := a.failLog.allow(a.clock(), 1); ok {
 			log.Printf("last-used flush: %d of %d stamp(s) not written (%d failed flush(es) since the last notice, %d in a row); next background flush in %s: %v",
 				len(failed), total, flushes, a.failures, delay.Round(time.Millisecond), err)
 		}
@@ -544,4 +609,52 @@ func (a *lastUsedCoalescer) safeWrite(ctx context.Context, k lastUsedKey, at tim
 // lost with the process).
 func (c *KeyorixCore) FlushLastUsed(ctx context.Context) {
 	c.lastUsed().flush(ctx)
+}
+
+// Stop permanently shuts the coalescer down. It is the lifecycle counterpart to
+// flush: idempotent, it stops and forbids the periodic timer, cancels the
+// context of a background flush still in flight, then performs one final flush
+// bounded by ctx (which, via flush's semaphore, first waits for that cancelled
+// flush to return). After Stop, record() is a no-op and no new timer or flush
+// starts; a background flush that was waiting for the semaphore returns
+// without writing. When Stop returns before ctx ends, no flush of this
+// coalescer is running. If ctx ends first because the cancelled background
+// flush is inside a store call that ignores cancellation, Stop returns anyway
+// and that one call may still finish afterwards (at most lastUsedFlushTimeout
+// after the flush started); that flush writes no further key once cancelled.
+// A stamp the final flush cannot reach within ctx stays unwritten (lost with
+// the process), the same bound a crash gives.
+//
+// flush() alone (FlushLastUsed) is not a stop: a stamp recorded after it re-arms
+// the timer, which then fires against a store the caller believed drained, and a
+// failed final flush re-arms the timer from finishFlush. Stop closes both holes
+// by latching a.stopped, which every arm/flush entry point now honours.
+func (a *lastUsedCoalescer) Stop(ctx context.Context) {
+	a.mu.Lock()
+	first := !a.stopped
+	a.stopped = true
+	if a.timer != nil {
+		a.timer.Stop()
+		a.timer = nil
+	}
+	if a.bgCancel != nil {
+		a.bgCancel()
+	}
+	a.mu.Unlock()
+	if !first {
+		// Already stopped: the first Stop did (or is doing) the final flush.
+		// Idempotent — never a second write, never a panic.
+		return
+	}
+	a.runFlush(ctx, true)
+}
+
+// StopLastUsed stops the last-used coalescer for good on graceful shutdown: it
+// cancels a running background flush, does a final flush bounded by ctx, and no
+// new timer or flush starts afterwards (see Stop for the one store call that
+// can outlive a ctx that ends first). Unlike FlushLastUsed (which flushes but
+// leaves the coalescer able to re-arm on a late stamp), this is the lifecycle
+// stop the shutdown path wires in. ctx bounds the final flush.
+func (c *KeyorixCore) StopLastUsed(ctx context.Context) {
+	c.lastUsed().Stop(ctx)
 }

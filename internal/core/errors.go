@@ -31,6 +31,12 @@ var (
 	// missing, empty, or does not match the server's configured token.
 	ErrInvalidBootstrapToken = errors.New("invalid bootstrap token")
 
+	// ErrBootstrapAPIDisabled is returned (together with ErrInvalidBootstrapToken)
+	// when the server has no bootstrap token configured, so system initialisation
+	// over the API is switched off. Matched by sentinel so the HTTP layer can give
+	// it its own typed code.
+	ErrBootstrapAPIDisabled = errors.New("system initialisation over the API is disabled")
+
 	// ErrInvalidInput is returned when a caller supplies a logically inconsistent
 	// or out-of-range parameter (e.g. a time range where Since >= Until).
 	ErrInvalidInput = errors.New("invalid input")
@@ -146,8 +152,9 @@ var (
 	// the caller does not hold roles.assign at the membership's real project
 	// — distinguishable (via errors.Is) from a generic storage failure so a
 	// caller (e.g. TransitionMembershipProxy) can classify it as a 403, not
-	// a 500 (F6 sweep, 2026-09-22).
-	ErrMembershipAuthorityRequired = errors.New("roles.assign is required at this membership's project to transition it")
+	// a 500 (F6 sweep, 2026-09-22). It also matches ErrPermissionDenied, so every
+	// transport answers it as a refusal (#4163, authzdiff known-09).
+	ErrMembershipAuthorityRequired = newPermissionSentinel("roles.assign is required at this membership's project to transition it")
 
 	// ErrMachineStateConflict is returned by ClassifyMachineIdentity when it
 	// loses a race against a concurrent TransitionMachineIdentity call on the

@@ -641,26 +641,54 @@ func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.En
 // between the count and the delete.)
 func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 	return ls.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(id), func(ctx context.Context) error {
-		var secretCount int64
-		if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
-			Where("environment_id = ? AND status = 'active'", id).
-			Count(&secretCount).Error; err != nil {
-			return fmt.Errorf("failed to count secrets in environment: %w", err)
-		}
-		if secretCount > 0 {
-			return storage.Typed(storage.ErrEnvironmentHasSecrets,
-				fmt.Sprintf("environment has %d active secret(s); move or delete them before removing this environment", secretCount), nil)
-		}
+		// #4287: the count and the soft-delete run in ONE transaction that first row-locks
+		// the environment, unscoped. RestoreProject revives a project's environments
+		// without taking the guard lock above, so its UPDATE of this row is what must
+		// exclude (or be excluded by) this call: if the restore holds the row, this lock
+		// waits and the count then sees the revived secrets; if this call holds it, the
+		// restore waits and the soft-delete below sees an already-deleted row.
+		return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := lockEnvironmentRowUnscoped(tx, id); err != nil {
+				return err
+			}
+			var secretCount int64
+			if err := tx.Model(&models.SecretNode{}).
+				Where("environment_id = ? AND status = 'active'", id).
+				Count(&secretCount).Error; err != nil {
+				return fmt.Errorf("failed to count secrets in environment: %w", err)
+			}
+			if secretCount > 0 {
+				return storage.Typed(storage.ErrEnvironmentHasSecrets,
+					fmt.Sprintf("environment has %d active secret(s); move or delete them before removing this environment", secretCount), nil)
+			}
 
-		result := ls.db.WithContext(ctx).Delete(&models.Environment{}, id)
-		if result.Error != nil {
-			return fmt.Errorf("failed to delete environment: %w", result.Error)
-		}
-		if result.RowsAffected == 0 {
-			return storage.NotFound(storage.ErrEnvironmentNotFound, "environment not found", nil)
-		}
-		return nil
+			result := tx.Delete(&models.Environment{}, id)
+			if result.Error != nil {
+				return fmt.Errorf("failed to delete environment: %w", result.Error)
+			}
+			if result.RowsAffected == 0 {
+				return storage.NotFound(storage.ErrEnvironmentNotFound, "environment not found", nil)
+			}
+			return nil
+		})
 	})
+}
+
+// lockEnvironmentRowUnscoped takes FOR UPDATE on the environment row by id, ignoring
+// deleted_at: unlike a default-scoped lock it also holds a soft-deleted row, which is
+// exactly the row a concurrent RestoreProject is about to revive (same lesson as
+// lockProjectRowForCascade, #2723). A missing row is not an error here; the caller's own
+// statements report it. SQLite has no row lock and is single-writer, so this is a no-op there.
+func lockEnvironmentRowUnscoped(tx *gorm.DB, id uint) error {
+	if tx.Dialector.Name() != "postgres" {
+		return nil
+	}
+	var ids []uint
+	if err := tx.Unscoped().Model(&models.Environment{}).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(sqlWhereID, id).Limit(1).Pluck("id", &ids).Error; err != nil {
+		return fmt.Errorf("failed to lock environment: %w", err)
+	}
+	return nil
 }
 
 // RestoreEnvironment clears deleted_at on a soft-deleted environment, but refuses to

@@ -17,6 +17,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -51,7 +53,9 @@ func freshDepCovCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	role := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(role).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
-	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
+	return cs, db
 }
 
 // mkDepSecret inserts an active secret into the given project/environment and
@@ -275,3 +279,17 @@ func TestGetDeploymentRotationPlan_StorageError_DepCov(t *testing.T) {
 
 // TestCreateSecretDependencyExclusiveProxy_DefaultStorageError_DepCov — closed
 // DB triggers a plain storage error (neither duplicate nor cycle) → 500.
+
+// ensureActiveActorUser creates an active user row with id unless one exists: core
+// refuses a mutation by an actor whose account is missing or not active (#4159), and
+// these handler fixtures act as user 1 (withUserCtx) without creating it.
+func ensureActiveActorUser(t *testing.T, st coreStorage.Storage, id uint) {
+	t.Helper()
+	ctx := context.Background()
+	if u, err := st.GetUser(ctx, id); err == nil && u != nil {
+		return
+	}
+	name := fmt.Sprintf("fixture-actor-%d", id)
+	_, err := st.CreateUser(ctx, &models.User{ID: id, Username: name, UsernameFolded: name, Email: name + "@example.com", EmailFolded: name + "@example.com", IsActive: true})
+	require.NoError(t, err)
+}

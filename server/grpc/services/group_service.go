@@ -7,9 +7,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -40,7 +39,7 @@ func (s *GroupGRPCService) ListGroups(ctx context.Context, _ *emptypb.Empty) (*p
 	}
 	groups, err := s.core.ListGroups(ctx)
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	out := make([]*pb.Group, 0, len(groups))
 	for _, g := range groups {
@@ -59,7 +58,7 @@ func (s *GroupGRPCService) GetGroup(ctx context.Context, req *pb.GetGroupRequest
 	}
 	g, err := s.core.GetGroup(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return groupToProto(g), nil
 }
@@ -79,7 +78,7 @@ func (s *GroupGRPCService) CreateGroup(ctx context.Context, req *pb.CreateGroupR
 		Name: req.GetName(), Description: req.GetDescription(),
 	})
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return groupToProto(g), nil
 }
@@ -97,7 +96,7 @@ func (s *GroupGRPCService) UpdateGroup(ctx context.Context, req *pb.UpdateGroupR
 		ID: uint(req.GetId()), Name: req.GetName(), Description: req.GetDescription(),
 	})
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return groupToProto(g), nil
 }
@@ -112,7 +111,7 @@ func (s *GroupGRPCService) DeleteGroup(ctx context.Context, req *pb.DeleteGroupR
 		return nil, err
 	}
 	if err := s.core.DeleteGroup(ctx, actor.UserID, uint(req.GetId())); err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -132,7 +131,7 @@ func (s *GroupGRPCService) RestoreGroup(ctx context.Context, req *pb.RestoreGrou
 	}
 	g, err := s.core.RestoreGroup(ctx, actor.UserID, uint(req.GetId()))
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return groupToProto(g), nil
 }
@@ -147,7 +146,7 @@ func (s *GroupGRPCService) GetGroupMembers(ctx context.Context, req *pb.GetGroup
 	}
 	users, err := s.core.GetGroupMembers(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	out := make([]*pb.GroupMember, 0, len(users))
 	for _, u := range users {
@@ -189,7 +188,7 @@ func (s *GroupGRPCService) AddGroupMember(ctx context.Context, req *pb.GroupMemb
 		ctx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
 	}
 	if err := s.core.AddUserToGroup(ctx, actor.UserID, actorIsMachine, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0)
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -205,7 +204,7 @@ func (s *GroupGRPCService) RemoveGroupMember(ctx context.Context, req *pb.GroupM
 		return nil, err
 	}
 	if err := s.core.RemoveUserFromGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0)
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -240,27 +239,25 @@ func groupMemberToProto(u *models.User) *pb.GroupMember {
 // Postgres "permission denied for table groups" is a database-role fault, not an
 // authorization refusal (ERRSTRING-CLASS-1). An untyped error is Internal until it
 // is typed; a transient authorization-storage fault is Unavailable (retryable).
-func groupError(err error) error {
-	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
-	}
+func groupError(ctx context.Context, err error) error {
+	// Each family text is keyed on the sentinel it describes; any other sentinel of
+	// the class gets the classifier's default text (a project not-found is not
+	// "group not found").
+	texts := coreErrorTexts{errclass.PermissionDenied: "access denied"}
 	switch {
 	case errors.Is(err, storage.ErrGroupNotFound):
-		return status.Error(codes.NotFound, "group not found")
+		texts[errclass.NotFound] = "group not found"
 	case errors.Is(err, storage.ErrUserNotFound):
-		return status.Error(codes.NotFound, "user not found")
+		texts[errclass.NotFound] = "user not found"
 	case errors.Is(err, storage.ErrDuplicateGroupName):
-		return status.Error(codes.AlreadyExists, "group name already in use")
+		texts[errclass.Conflict] = "group name already in use"
 	case errors.Is(err, core.ErrLastAdminGroupGuard), errors.Is(err, storage.ErrWouldStrandLastAdmin):
-		return status.Error(codes.FailedPrecondition, "cannot remove the last administrator")
+		texts[errclass.Precondition] = "cannot remove the last administrator"
 	case errors.Is(err, storage.ErrInvalidGroupRequest):
-		return status.Error(codes.InvalidArgument, "invalid group request")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "access denied")
-	case core.IsAuthTransient(err):
-		return status.Error(codes.Unavailable, "group operation temporarily unavailable; retry")
-	default:
-		return internalFailure("group operation failed", err)
+		texts[errclass.InvalidInput] = "invalid group request"
 	}
+	// The classifier answers an audit outage and a typed storage read fault Unavailable
+	// (retry), and a transient authorization-storage fault Unavailable with the gates'
+	// fixed text.
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "group operation", texts: texts})
 }

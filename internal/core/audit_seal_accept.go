@@ -662,6 +662,18 @@ func (c *KeyorixCore) auditEventByID(ctx context.Context, id uint) (*models.Audi
 	return evs[0], nil
 }
 
+// auditEventIsPre1452Encoded reports whether audit event id's stored hash is
+// valid under the pre-#1452 encoding (auditEntryHashPre1452). Only reached for
+// the row the walk already found broken, so a hash that also matched the
+// current encoding cannot get here. A missing row is not legacy-encoded.
+func (c *KeyorixCore) auditEventIsPre1452Encoded(ctx context.Context, id uint) (bool, error) {
+	e, err := c.auditEventByID(ctx, id)
+	if err != nil || e == nil {
+		return false, err
+	}
+	return auditEntryHashIsPre1452(e), nil
+}
+
 // planAuditGaps checks each named id where the walk breaks: the row must be
 // intact (it recomputes), current-encoded, and its prev_hash must name a row
 // that is gone (neither the row before it nor the one before that: an inserted
@@ -682,12 +694,19 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 		if v.FirstBrokenID != nil {
 			at = *v.FirstBrokenID
 		}
-		switch {
-		case at != id:
+		if at != id {
 			return nil, nil, auditLossRefused("the walk breaks at audit event #%d, not at #%d (%s)", at, id, v.Reason)
-		case strings.Contains(v.Reason, "valid under the pre-#1452"):
-			return nil, nil, auditLossRefused("audit event #%d is in the pre-#1452 encoding: an old encoding, not a loss (run the chain-encoding migration)", id)
-		case !strings.Contains(v.Reason, "prev_hash does not link"):
+		}
+		// Classified from the stored row, never from the verifier's reason text, so
+		// rewording that text cannot change this refusal.
+		legacy, err := c.auditEventIsPre1452Encoded(ctx, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		if legacy {
+			return nil, nil, auditLossRefused("audit event #%d was written with the old audit-hash format: an upgrade step that was not run, not a loss (run `keyorix audit migrate-chain-encoding`)", id)
+		}
+		if !strings.Contains(v.Reason, "prev_hash does not link") {
 			return nil, nil, auditLossRefused("audit event #%d does not verify (%s): that is a modified row, not a lost one", id, v.Reason)
 		}
 		row, err := c.auditEventByID(ctx, id)

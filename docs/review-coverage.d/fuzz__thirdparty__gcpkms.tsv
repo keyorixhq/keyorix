@@ -1,0 +1,1 @@
+fuzz/thirdparty/gcpkms	none	-	test-only hostile-server fuzz harness for the GCP KMS client; not part of any shipped build	test-helper

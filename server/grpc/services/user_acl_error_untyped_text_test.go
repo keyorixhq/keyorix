@@ -23,7 +23,7 @@ func TestMapSecretACLError_UntypedDriverTextIsInternal(t *testing.T) {
 		`pq: invalid input syntax for type bigint: "x"`,
 		`pq: null value in column "user_id" (field required)`,
 	} {
-		got := mapSecretACLError(errors.New(text))
+		got := mapSecretACLError(context.Background(), errors.New(text))
 		assert.Equal(t, codes.Internal, status.Code(got), text)
 		assert.Equal(t, "ACL operation failed", status.Convert(got).Message())
 	}
@@ -36,21 +36,21 @@ func TestGrantSecretACL_RealValidationRefusalIsInvalidArgument(t *testing.T) {
 
 	err := c.GrantSecretACL(ctx, 1, 1, 2, []string{"not-a-permission"})
 	require.Error(t, err)
-	got := mapSecretACLError(err)
+	got := mapSecretACLError(context.Background(), err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(got), got.Error())
 	assert.Equal(t, "invalid ACL request", status.Convert(got).Message())
 
 	err = c.GrantSecretACL(ctx, 1, 1, 0, []string{"read"})
 	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(mapSecretACLError(err)))
+	assert.Equal(t, codes.InvalidArgument, status.Code(mapSecretACLError(context.Background(), err)))
 }
 
 func TestMapUserError_UntypedCeilingPhraseIsInternal(t *testing.T) {
-	got := mapUserError(errors.New(`pq: duplicate role label "cannot grant this role"`))
+	got := mapUserError(context.Background(), errors.New(`pq: duplicate role label "cannot grant this role"`))
 	assert.Equal(t, codes.Internal, status.Code(got), got.Error())
 }
 
 func TestMapUserError_TypedRefusalFromRealCorePathIsPermissionDenied(t *testing.T) {
-	got := mapUserError(core.ErrPermissionDenied)
+	got := mapUserError(context.Background(), core.ErrPermissionDenied)
 	assert.Equal(t, codes.PermissionDenied, status.Code(got))
 }

@@ -3,8 +3,10 @@
 package mp1
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -178,19 +180,15 @@ func TestAuditChainVerifies(t *testing.T) {
 	c := getSharedCluster(t)
 
 	// Drive a short concurrent cross-replica burst so there is fresh audit
-	// activity attributable to this test even if run in isolation.
-	for i := range 5 {
-		name := fmt.Sprintf("mp1-audit-%d-%d", time.Now().UnixNano(), i)
-		v := "audit-" + name
-		recordCanary(v)
-		rep := c.Replica(i % len(c.Replicas))
-		if _, st, err := c.createSecret(rep, name, v); err != nil || (st != http.StatusCreated && st != http.StatusOK) {
-			t.Fatalf("audit-burst create: st=%d err=%v", st, err)
-		}
+	// activity attributable to this test even if run in isolation: the creates
+	// run at the same time on different replicas, so their appends contend for
+	// the advisory lock.
+	if _, errs := c.concurrentCreateSecrets("mp1-audit", 6); len(errs) > 0 {
+		t.Fatalf("audit-burst creates failed: %v", errs)
 	}
 
 	out := c.verifyAudit(t)
-	if !strings.Contains(out, `"verdict"`) && !strings.Contains(strings.ToUpper(out), "VALID") {
+	if !auditVerdictValid(out) {
 		t.Fatalf("verify-audit produced no VALID verdict:\n%s", out)
 	}
 	t.Logf("verify-audit: %s", strings.TrimSpace(out))
@@ -214,6 +212,15 @@ func (c *Cluster) verifyAudit(t *testing.T) string {
 	return string(out)
 }
 
+// auditVerdictValid reports whether verify-audit's --json report carries the
+// exact VALID verdict. It matches the whole `"verdict": "VALID"` pair (the
+// json.MarshalIndent form printVerifyAuditReport emits), so a BROKEN or any
+// other verdict does not pass on the word VALID appearing elsewhere. verifyAudit
+// also fails on a non-zero exit; this check does not rely on that alone.
+func auditVerdictValid(out string) bool {
+	return strings.Contains(out, `"verdict": "VALID"`)
+}
+
 // ── Oracle: a SIGKILLed replica leaves no stuck lock ────────────────────────
 //
 // SIGKILL one replica while all three are under write load, then confirm the
@@ -230,7 +237,8 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	// Seed a secret and drive a brief burst so there is in-flight audit
 	// activity around the kill.
 	name := fmt.Sprintf("mp1-kill-%d", time.Now().UnixNano())
-	id, st, err := c.createSecret(c.Replica(0), name, "kill-v0")
+	recordCanary("kill-v0-" + name)
+	id, st, err := c.createSecret(c.Replica(0), name, "kill-v0-"+name)
 	if err != nil || (st != http.StatusCreated && st != http.StatusOK) {
 		t.Fatalf("seed create: st=%d err=%v", st, err)
 	}
@@ -239,7 +247,9 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	// then SIGKILL it mid-flight.
 	victim := 1
 	for i := range 3 {
-		go func(k int) { _, _ = c.updateSecret(c.Replica(victim), id, fmt.Sprintf("kill-inflight-%d", k)) }(i)
+		v := fmt.Sprintf("kill-inflight-%d-%s", i, name)
+		recordCanary(v)
+		go func() { _, _ = c.updateSecret(c.Replica(victim), id, v) }()
 	}
 	vs := c.Replicas[victim]
 	if vs.Cmd == nil || vs.Cmd.Process == nil {
@@ -266,14 +276,18 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	start := time.Now()
 	for time.Now().Before(deadline) {
 		survivor := c.Replica(0) // replica 0 always survives
-		st, uerr := c.updateSecret(survivor, id, fmt.Sprintf("post-kill-%d", time.Now().UnixNano()))
+		v := fmt.Sprintf("post-kill-%d", time.Now().UnixNano())
+		recordCanary(v)
+		st, uerr := c.updateSecret(survivor, id, v)
 		lastSt, lastErr = st, uerr
 		if uerr == nil && st == http.StatusOK {
 			progressed = true
 			break
 		}
 		// also try replica 2
-		if st2, uerr2 := c.updateSecret(c.Replica(2), id, fmt.Sprintf("post-kill2-%d", time.Now().UnixNano())); uerr2 == nil && st2 == http.StatusOK {
+		v2 := fmt.Sprintf("post-kill2-%d", time.Now().UnixNano())
+		recordCanary(v2)
+		if st2, uerr2 := c.updateSecret(c.Replica(2), id, v2); uerr2 == nil && st2 == http.StatusOK {
 			progressed = true
 			break
 		}
@@ -284,21 +298,49 @@ func TestKilledReplicaNoStuckLock(t *testing.T) {
 	}
 	t.Logf("surviving replica committed a write %s after the SIGKILL (bound %s)", time.Since(start).Round(time.Millisecond), bound)
 
+	// ── Oracle #6 (restart half): the SIGKILLed replica reopens the shared
+	// store without hand repair. ──────────────────────────────────────────────
+	//
+	// Restart the SAME victim process (same config dir, same port, same key
+	// material) and confirm it becomes healthy and serves a fresh authenticated
+	// write against the shared DB. A clean reopen requires the replica to
+	// re-derive the KEK from the master password + on-disk salt, unseal the DEK,
+	// re-attach to the already-migrated schema, and rebuild its connection pool —
+	// all with no manual intervention. If the prior SIGKILL had left the store in
+	// a state needing repair, the boot or the first write would fail here.
+	// The restart truncates vs.LogPath, so keep the pre-SIGKILL log for the
+	// post-run canary scan first.
+	preKill := vs.LogPath + ".pre-restart"
+	if err := os.Rename(vs.LogPath, preKill); err != nil {
+		t.Fatalf("preserve the victim's pre-restart log: %v", err)
+	}
+	c.moveLog(vs.LogPath, preKill)
+	serverEnv := append(append([]string{}, vs.Env...), "KEYORIX_CONFIG_PATH=./keyorix.yaml")
+	harness.StartBackgroundProcess(t, vs, serverEnv)
+	harness.WaitHealthy(t, vs)
+	vr := fmt.Sprintf("post-restart-%d", time.Now().UnixNano())
+	recordCanary(vr)
+	if st, uerr := c.updateSecret(vs, id, vr); uerr != nil || st != http.StatusOK {
+		t.Fatalf("restarted replica did not serve a write: status=%d err=%v — store did not reopen cleanly after SIGKILL", st, uerr)
+	}
+	t.Logf("SIGKILLed replica restarted, became healthy, and served a write against the shared store (no hand repair)")
+
 	// And the chain still verifies (no fork/gap left by the torn-down replica).
 	out := c.verifyAudit(t)
-	if !strings.Contains(out, `"verdict"`) && !strings.Contains(strings.ToUpper(out), "VALID") {
-		t.Fatalf("after SIGKILL, verify-audit produced no VALID verdict:\n%s", out)
+	if !auditVerdictValid(out) {
+		t.Fatalf("after SIGKILL+restart, verify-audit produced no VALID verdict:\n%s", out)
 	}
-	t.Logf("after SIGKILL, verify-audit: %s", strings.TrimSpace(out))
+	t.Logf("after SIGKILL+restart, verify-audit: %s", strings.TrimSpace(out))
 }
 
 // ── Oracle: no secret value or key bytes appear in any replica log (canary) ──
 //
-// Every value written by this package is recorded as a canary. This test adds
-// a fresh, highly-distinctive canary of its own, then scans every replica's
-// log file for ANY recorded canary value and for the raw DEK/salt key bytes.
-// A hit means a secret value or key material leaked into a log — a serious
-// confidentiality defect.
+// Every value written by this package is recorded as a canary (see the canary
+// bookkeeping in cluster_fuzz_test.go for where the scan runs). Go runs Tests
+// in source order and Fuzz targets after them, so this Test cannot see what
+// the fuzz targets write, and under `-run '^$' -fuzz ...` no Test runs at all:
+// the fuzz iterations and TestMain scan that output. This test adds a fresh,
+// highly-distinctive canary of its own and scans the log output written so far.
 func TestZZCanaryNoSecretInLogs(t *testing.T) {
 	requirePG(t)
 	c := getSharedCluster(t)
@@ -314,35 +356,146 @@ func TestZZCanaryNoSecretInLogs(t *testing.T) {
 		_, _, _ = c.readSecretValue(c.Replica(i), 0) // id 0 ignored; just exercise
 	}
 
-	values := canarySnapshot()
-	// Also treat the raw key bytes as canaries.
-	keyCanaries := c.keyByteCanaries(t)
+	plantCanaryLeak(t, c, fresh)
+	problems, logs := scanAllNewLogOutput(c)
+	for _, p := range problems {
+		t.Error(p)
+	}
+	t.Logf("canary scan: %d distinct secret values checked against %d replica logs", len(canarySnapshot()), logs)
+}
 
-	for _, s := range c.Replicas {
-		raw, err := os.ReadFile(s.LogPath) //nolint:gosec // harness-controlled path
-		if err != nil {
-			t.Logf("replica log %s unreadable (skipping): %v", s.LogPath, err)
-			continue
-		}
-		log := string(raw)
-		for _, v := range scanLogForSecrets(log, values, 6) {
-			t.Errorf("CANARY HIT: secret value %q found in replica log %s", v, s.LogPath)
-		}
-		for label, kc := range keyCanaries {
-			if kc != "" && strings.Contains(log, kc) {
-				t.Errorf("CANARY HIT: key material (%s) found in replica log %s", label, s.LogPath)
+// canaryMinLen is the shortest recorded value the log scan looks for; shorter
+// values would match unrelated log text.
+const canaryMinLen = 6
+
+// canarySet is an exact multi-substring matcher: values bucketed by length, so
+// a scan costs one map lookup per (window length, byte position), not one
+// substring search per value. Over a long fuzz campaign the value set reaches
+// hundreds of thousands, where a per-value strings.Contains over every log is
+// far too slow.
+type canarySet struct {
+	minLen int
+	byLen  map[int]map[string]struct{}
+	lens   []int
+	maxLen int
+}
+
+func newCanarySet(values []string, minLen int) *canarySet {
+	s := &canarySet{minLen: minLen, byLen: map[int]map[string]struct{}{}}
+	for _, v := range values {
+		s.add(v)
+	}
+	return s
+}
+
+func (s *canarySet) add(v string) {
+	if len(v) < s.minLen {
+		return
+	}
+	m, ok := s.byLen[len(v)]
+	if !ok {
+		m = map[string]struct{}{}
+		s.byLen[len(v)] = m
+		s.lens = append(s.lens, len(v))
+		s.maxLen = max(s.maxLen, len(v))
+	}
+	m[v] = struct{}{}
+}
+
+// find returns every distinct value of s that occurs in text.
+func (s *canarySet) find(text []byte) []string {
+	var hits []string
+	seen := map[string]bool{}
+	for _, l := range s.lens {
+		m := s.byLen[l]
+		for i := 0; i+l <= len(text); i++ {
+			if _, ok := m[string(text[i:i+l])]; ok && !seen[string(text[i:i+l])] {
+				v := string(text[i : i+l])
+				seen[v] = true
+				hits = append(hits, v)
 			}
 		}
 	}
-	t.Logf("canary scan: %d distinct secret values checked against %d replica logs", len(values), len(c.Replicas))
+	return hits
+}
+
+// scanLogForSecrets returns every canary value (length >= minLen) that appears
+// verbatim in logText. A non-empty result is a confidentiality leak.
+func scanLogForSecrets(logText string, values []string, minLen int) []string {
+	return newCanarySet(values, minLen).find([]byte(logText))
+}
+
+// scanNewLogOutput scans the log output of c written since its previous call
+// (every log in logPaths, from the last scanned size minus an overlap of the
+// longest pattern, so a value written across two scans is still seen) for any
+// value in set and for c's raw DEK/salt key bytes. It returns one problem line
+// per new hit and per log it could not read (an unscanned log is not a clean
+// one), plus the number of logs it read. Complete only because every value is
+// recorded before it is sent (recordCanary).
+func (c *Cluster) scanNewLogOutput(set *canarySet) (problems []string, logs int) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if c.scanned == nil {
+		c.scanned = map[string]int64{}
+		c.reported = map[string]bool{}
+	}
+	keyCanaries := c.keyByteCanaries()
+	overlap := set.maxLen
+	for _, kc := range keyCanaries {
+		overlap = max(overlap, len(kc))
+	}
+	report := func(p string) {
+		if !c.reported[p] {
+			c.reported[p] = true
+			problems = append(problems, p)
+		}
+	}
+	for _, path := range c.logPaths() {
+		chunk, size, err := readFrom(path, max(0, c.scanned[path]-int64(overlap)))
+		if err != nil {
+			report(fmt.Sprintf("replica log %s unreadable, not scanned: %v", path, err))
+			continue
+		}
+		c.scanned[path] = size
+		logs++
+		for _, v := range set.find(chunk) {
+			report(fmt.Sprintf("CANARY HIT: secret value %q found in replica log %s", v, path))
+		}
+		for label, kc := range keyCanaries {
+			if kc != "" && bytes.Contains(chunk, []byte(kc)) {
+				report(fmt.Sprintf("CANARY HIT: key material (%s) found in replica log %s", label, path))
+			}
+		}
+	}
+	return problems, logs
+}
+
+// readFrom returns the bytes of path from offset off to its current end, and
+// the end offset.
+func readFrom(path string, off int64) ([]byte, int64, error) {
+	f, err := os.Open(path) //nolint:gosec // harness-controlled path
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close() //nolint:errcheck
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return nil, 0, err
+	}
+	chunk, err := io.ReadAll(f)
+	if err != nil {
+		return nil, 0, err
+	}
+	return chunk, off + int64(len(chunk)), nil
 }
 
 // keyByteCanaries returns distinctive substrings of the raw on-disk key files
 // (dek.key, kek.salt) to search logs for. A hex-encoded chunk is used so a
 // match is unambiguous even if the file bytes are not printable.
-func (c *Cluster) keyByteCanaries(t *testing.T) map[string]string {
-	t.Helper()
+func (c *Cluster) keyByteCanaries() map[string]string {
 	out := map[string]string{}
+	if len(c.Replicas) == 0 {
+		return out
+	}
 	dir := c.Replica(0).Dir
 	for _, name := range []string{"dek.key", "kek.salt"} {
 		raw, err := os.ReadFile(dir + "/keys/" + name) //nolint:gosec // harness temp path
@@ -350,7 +503,7 @@ func (c *Cluster) keyByteCanaries(t *testing.T) map[string]string {
 			continue
 		}
 		if len(raw) > 8 {
-			out[name+"(hex)"] = fmt.Sprintf("%x", raw[:16])
+			out[name+"(hex)"] = fmt.Sprintf("%x", raw[:min(16, len(raw))])
 			out[name+"(raw)"] = string(raw)
 		}
 	}

@@ -382,11 +382,15 @@ docker compose up -d
 database and the (also empty) `keyorix_keys` volume, then runs `verify-audit`
 (`verify-audit on the restored database: VALID`). Restore into the wiped volumes
 before the first `up -d`, as above (a stack that has already booted holds a non-empty database and keys,
-which restore refuses without `--overwrite-existing`).
+which restore refuses without `--overwrite-existing --replace-existing-data`).
 
 Restore refuses a non-empty target by default — the normal flow is restoring
 into a fresh database, not overwriting a live one. `--overwrite-existing` lets it
-proceed past that check: the existing key files and `keyset.manifest.json` (and, on
+proceed past that check, and on its own it is for re-running an interrupted restore
+into an empty database (existing key files, an empty migrated schema). Over a target
+that holds data it still refuses (`the restore target database holds data`, nothing
+changed); to replace a deployment's data on purpose pass `--overwrite-existing
+--replace-existing-data`. Then the existing key files and `keyset.manifest.json` (and, on
 SQLite, the database file) are moved aside as `*.pre-restore-<timestamp>`; on
 PostgreSQL the target's tables are emptied inside the load transaction and the
 archive's rows loaded in their place. **The replaced PostgreSQL rows are not kept
@@ -403,6 +407,7 @@ then restore with `--overwrite-existing`, which the existing key files still nee
 docker compose stop backend
 docker compose exec -T postgres psql -U keyorix -d keyorix \
   -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+# the database is an empty schema now; a v0.96.x binary has no --replace-existing-data
 docker compose run --rm -v "$PWD/keyorix-backup-YYYY-MM-DD.tar.gz:/tmp/backup.tar.gz:ro" \
   backend ./keyorix-server admin restore --input /tmp/backup.tar.gz --overwrite-existing
 docker compose up -d
@@ -538,7 +543,7 @@ undoes it (not committed); if it cannot vouch for a staged key file it refuses a
 nothing. Killed before that journal exists, it leaves only `*.restoring-*` files (removed by
 the next restore or `--recover`) and, after the migration step, the empty schema, so a plain re-run is
 refused: re-run with `--overwrite-existing`, which empties the target's tables inside the
-load transaction. What each failure point leaves, and the recovery, are in
+load transaction (that schema holds no data, so `--replace-existing-data` is not needed). What each failure point leaves, and the recovery, are in
 [operator/restore-failure-modes.md](operator/restore-failure-modes.md). (Releases up to
 v0.96.x installed the key files before the load; see the warning earlier in this section.)
 

@@ -85,8 +85,26 @@ func coreRefusal(tb testing.TB, row string) string {
 func withDerived(tb testing.TB, specs []opSpec) []opSpec {
 	for i := range specs {
 		specs[i].coreEnforced = coreRefusal(tb, specs[i].row) != "none"
+		if humanOnlyOps[specs[i].name] {
+			req := specs[i].req
+			specs[i].req = func(fx *fixtures, t tgt, a byte) requirement {
+				r := req(fx, t, a)
+				r.humanOnly = true
+				return r
+			}
+		}
 	}
 	return specs
+}
+
+// humanOnlyOps are the ops whose actor must be a user: core refuses a machine
+// actor with ErrPermissionDenied (refuseMachineActor, #4162), and so do REST and
+// gRPC. Keeping them refused for machines is a decision (Andrei, ask
+// 4162-machine-human-only-ops, 2026-11-15: option a), recorded in OUTCOMES.md.
+var humanOnlyOps = map[string]bool{
+	"secret.acl.grant": true, "secret.share": true, "accessrequest.create": true, "secret.certificate": true,
+	"secret.tags": true, "secret.description": true, "secret.move": true, "secret.copy": true,
+	"secret.extend.expiring": true,
 }
 
 // ---------- legs ----------
@@ -183,6 +201,20 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 		if spec.globalHandler {
 			routerMu.Unlock()
 		}
+		if r.Detail == "Too Many Requests" {
+			// The per-IP invalid-token brute-force limiter (PAT-003,
+			// server/middleware/auth.go) is process-global and keyed by the
+			// harness's single constant test peer, so a rejected token spent in
+			// an earlier case can turn this probe into HTTP 429. That is a
+			// transport throttle, not an authorization decision — record it as
+			// n/a, exactly as seq_run_test.go's execRead does. A 429 on REST is
+			// unambiguously a rate-limit refusal (an oversized secret is 413/400,
+			// never 429), so the status alone is enough here; the gRPC leg below
+			// needs the exact message because codes.ResourceExhausted also
+			// carries authorization-irrelevant non-throttle meanings. (#118.)
+			seqRateLimited.Add(1)
+			return &legOutcome{NA: "invalid-token rate limiter"}
+		}
 		return &legOutcome{Outcome: r.Outcome, Detail: r.Detail}
 	case layerGRPC:
 		if spec.grpc == nil {
@@ -194,6 +226,15 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 		err := spec.grpc(grpcCtx(p), lg, t, k.Arg)
 		if errors.Is(err, errLayerAbsent) {
 			return &legOutcome{NA: "ID-3: gRPC cannot express this target"}
+		}
+		if grpcInvalidTokenLimited(err) {
+			// Same process-global per-IP invalid-token limiter as the REST leg,
+			// on the gRPC side (grpcAuthFailure, server/grpc/interceptors/auth.go).
+			// Matched by its EXACT message so the other ResourceExhausted
+			// producers (oversized secret, audit-stream cap) still map to Other.
+			// (#118.)
+			seqRateLimited.Add(1)
+			return &legOutcome{NA: "invalid-token rate limiter"}
 		}
 		r := grpcOutcome(err)
 		return &legOutcome{Outcome: r.Outcome, Detail: r.Detail}

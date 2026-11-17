@@ -27,6 +27,8 @@ func TestExtendExpiringSecrets(t *testing.T) {
 		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	require.NoError(t, db.AutoMigrate(&models.User{}))
+	ensureActiveActor(t, c.storage, 1) // the acting user (#4159)
 	ctx := context.Background()
 	now := time.Now()
 

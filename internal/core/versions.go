@@ -333,8 +333,19 @@ func (c *KeyorixCore) GetSecretForValueRead(ctx context.Context, id, userID uint
 // metadata or the value from one handler. withValue false (a metadata read) reads the
 // schedule alone, exactly as GetSecretWithPermissionCheck does, and keeps no snapshot:
 // a metadata read never depends on the version read.
+//
+// A suspended or otherwise inactive human actor is refused first (requireActorActive,
+// #4159 known-02, #4336), as on the mutating entry points: the transports refuse it at
+// authentication, and core no longer relies on that. The account read is skipped when
+// the request's gate already allowed this read (gateAllowedRead): that request was
+// authenticated by the transport, so the hot HTTP/gRPC path pays no extra statement.
 func (c *KeyorixCore) GetSecretForRead(ctx context.Context, id, userID uint, withValue bool) (_ *ReadPermittedSecret, err error) {
 	defer func() { noteValueReadErr(ctx, err, id) }()
+	if !gateAllowedRead(ctx, userID, id) {
+		if err := c.requireActorActive(ctx, userID); err != nil {
+			return nil, err
+		}
+	}
 	if !withValue || readPathReuseOff.Load() {
 		secret, err := c.GetSecretWithPermissionCheck(ctx, id, userID)
 		if err != nil {
@@ -435,6 +446,9 @@ const EventSecretRolledBack = "secret.rolled_back"
 // scoped secrets.write. Unlike a value read, this fetches the historical version
 // directly (no max-reads / expiry guard) since a restore is a write, not a use.
 func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetVersion int, actorID uint, actorName string) (*models.SecretNode, error) {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	version, err := c.GetSecretVersion(ctx, secretID, targetVersion)
 	if err != nil {
 		return nil, err

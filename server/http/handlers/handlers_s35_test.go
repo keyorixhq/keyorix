@@ -138,15 +138,17 @@ func TestUpdateRole_DBError_S35(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// DeleteRole: broken DB → GetRole fails with "Data retrieval failed" → 500
-// (line 409).
+// DeleteRole: broken DB → the acting account's read (requireActorActive, the
+// first read since #4336) fails, and core fails closed with a storage read fault
+// (ErrStorageReadUnavailable), which answerCoreError answers 503
+// (INV-CORE-mutation-refuses-inactive-actor).
 func TestDeleteRole_DBError_S35(t *testing.T) {
 	t.Parallel()
 	h := NewRBACHandler(freshCoreBrokenS35(t))
 	r := withUserCtxS7(withChiParamS7(httptest.NewRequest(http.MethodDelete, "/api/v1/roles/1", nil), "id", "1"))
 	w := httptest.NewRecorder()
 	h.DeleteRole(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // ── GroupHandler proxy / groups_proxy.go ─────────────────────────────────────

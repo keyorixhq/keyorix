@@ -24,6 +24,8 @@ func TestSecretSearch_NameDescriptionTags(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.Tag{}, &models.SecretTag{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	require.NoError(t, db.AutoMigrate(&models.User{}))
+	ensureActiveActor(t, c.storage, 1) // the acting user (#4159)
 	ctx := context.Background()
 	p, _ := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
 	e, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
