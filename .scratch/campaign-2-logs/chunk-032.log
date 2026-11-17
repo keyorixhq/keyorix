@@ -1,0 +1,156 @@
+2026/11/17 10:05:12 storage: opening in-memory SQLite database (configured: "file:diffv2_1?mode=memory&cache=shared&_busy_timeout=30000")
+2026/11/17 10:05:13 audit index build: creating idx_audit_events_event_time_id CONCURRENTLY (writes to audit_events continue)
+2026/11/17 10:05:13 audit index build: idx_audit_events_event_time_id done in 2ms
+2026/11/17 10:05:13 audit index build: creating idx_audit_events_project_event_time CONCURRENTLY (writes to audit_events continue)
+2026/11/17 10:05:13 audit index build: idx_audit_events_project_event_time done in 1ms
+2026/11/17 10:05:13 audit index build: creating idx_audit_events_secret_event_time CONCURRENTLY (writes to audit_events continue)
+2026/11/17 10:05:13 audit index build: idx_audit_events_secret_event_time done in 1ms
+2026/11/17 10:05:13 audit index build: creating idx_secret_access_logs_secret_time_action CONCURRENTLY (writes to secret_access_logs continue)
+2026/11/17 10:05:13 audit index build: idx_secret_access_logs_secret_time_action done in 1ms
+2026/11/17 10:05:13 audit index build: creating idx_secret_access_logs_access_time_brin CONCURRENTLY (writes to secret_access_logs continue)
+2026/11/17 10:05:13 audit index build: idx_secret_access_logs_access_time_brin done in 1ms
+fuzz: elapsed: 0s, gathering baseline coverage: 0/3171 completed
+fuzz: elapsed: 3s, gathering baseline coverage: 37/3171 completed
+fuzz: elapsed: 6s, gathering baseline coverage: 127/3171 completed
+fuzz: elapsed: 9s, gathering baseline coverage: 218/3171 completed
+fuzz: elapsed: 12s, gathering baseline coverage: 311/3171 completed
+fuzz: elapsed: 15s, gathering baseline coverage: 400/3171 completed
+fuzz: elapsed: 18s, gathering baseline coverage: 493/3171 completed
+fuzz: elapsed: 21s, gathering baseline coverage: 576/3171 completed
+fuzz: elapsed: 24s, gathering baseline coverage: 667/3171 completed
+fuzz: elapsed: 27s, gathering baseline coverage: 758/3171 completed
+fuzz: elapsed: 30s, gathering baseline coverage: 847/3171 completed
+fuzz: elapsed: 33s, gathering baseline coverage: 939/3171 completed
+fuzz: elapsed: 36s, gathering baseline coverage: 1034/3171 completed
+fuzz: elapsed: 39s, gathering baseline coverage: 1128/3171 completed
+fuzz: elapsed: 42s, gathering baseline coverage: 1218/3171 completed
+fuzz: elapsed: 45s, gathering baseline coverage: 1302/3171 completed
+fuzz: elapsed: 48s, gathering baseline coverage: 1391/3171 completed
+fuzz: elapsed: 51s, gathering baseline coverage: 1481/3171 completed
+fuzz: elapsed: 54s, gathering baseline coverage: 1573/3171 completed
+fuzz: elapsed: 57s, gathering baseline coverage: 1661/3171 completed
+fuzz: elapsed: 1m0s, gathering baseline coverage: 1752/3171 completed
+fuzz: elapsed: 1m3s, gathering baseline coverage: 1850/3171 completed
+fuzz: elapsed: 1m6s, gathering baseline coverage: 1938/3171 completed
+fuzz: elapsed: 1m9s, gathering baseline coverage: 2028/3171 completed
+fuzz: elapsed: 1m12s, gathering baseline coverage: 2124/3171 completed
+fuzz: elapsed: 1m15s, gathering baseline coverage: 2218/3171 completed
+fuzz: elapsed: 1m18s, gathering baseline coverage: 2315/3171 completed
+fuzz: elapsed: 1m21s, gathering baseline coverage: 2410/3171 completed
+fuzz: elapsed: 1m24s, gathering baseline coverage: 2501/3171 completed
+fuzz: elapsed: 1m27s, gathering baseline coverage: 2589/3171 completed
+fuzz: elapsed: 1m30s, gathering baseline coverage: 2679/3171 completed
+fuzz: elapsed: 1m33s, gathering baseline coverage: 2762/3171 completed
+fuzz: elapsed: 1m36s, gathering baseline coverage: 2852/3171 completed
+fuzz: elapsed: 1m39s, gathering baseline coverage: 2937/3171 completed
+fuzz: elapsed: 1m42s, gathering baseline coverage: 3025/3171 completed
+fuzz: elapsed: 1m45s, gathering baseline coverage: 3110/3171 completed
+fuzz: elapsed: 1m47s, gathering baseline coverage: 3171/3171 completed, now fuzzing with 2 workers
+fuzz: elapsed: 1m48s, execs: 3454 (115/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 1m51s, execs: 3848 (131/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 1m54s, execs: 4310 (154/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 1m57s, execs: 4732 (141/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 2m0s, execs: 5149 (139/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 2m3s, execs: 5681 (177/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 2m6s, execs: 6183 (167/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 2m9s, execs: 6568 (128/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 2m12s, execs: 6960 (131/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 2m15s, execs: 7396 (145/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 2m18s, execs: 7789 (131/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 2m21s, execs: 7860 (24/sec), new interesting: 0 (total: 3171)
+fuzz: elapsed: 2m24s, execs: 8127 (89/sec), new interesting: 1 (total: 3172)
+fuzz: elapsed: 2m27s, execs: 8320 (64/sec), new interesting: 1 (total: 3172)
+fuzz: elapsed: 2m30s, execs: 8511 (64/sec), new interesting: 1 (total: 3172)
+fuzz: elapsed: 2m33s, execs: 8665 (51/sec), new interesting: 1 (total: 3172)
+fuzz: elapsed: 2m36s, execs: 8869 (68/sec), new interesting: 1 (total: 3172)
+fuzz: elapsed: 2m39s, execs: 9101 (77/sec), new interesting: 1 (total: 3172)
+fuzz: elapsed: 2m42s, execs: 10142 (347/sec), new interesting: 3 (total: 3174)
+fuzz: elapsed: 2m45s, execs: 10734 (197/sec), new interesting: 3 (total: 3174)
+fuzz: elapsed: 2m48s, execs: 11347 (204/sec), new interesting: 3 (total: 3174)
+fuzz: elapsed: 2m51s, execs: 12025 (226/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 2m54s, execs: 12617 (197/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 2m57s, execs: 12874 (85/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 3m0s, execs: 12874 (0/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 3m3s, execs: 13486 (204/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 3m6s, execs: 13486 (0/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 3m9s, execs: 13486 (0/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 3m12s, execs: 13486 (0/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 3m15s, execs: 13486 (0/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 3m18s, execs: 13486 (0/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 3m21s, execs: 13486 (0/sec), new interesting: 4 (total: 3175)
+fuzz: elapsed: 3m24s, execs: 15334 (619/sec), new interesting: 5 (total: 3176)
+fuzz: elapsed: 3m27s, execs: 15650 (105/sec), new interesting: 5 (total: 3176)
+fuzz: elapsed: 3m30s, execs: 15724 (25/sec), new interesting: 5 (total: 3176)
+fuzz: elapsed: 3m33s, execs: 15724 (0/sec), new interesting: 5 (total: 3176)
+fuzz: elapsed: 3m36s, execs: 15724 (0/sec), new interesting: 5 (total: 3176)
+fuzz: elapsed: 3m39s, execs: 15724 (0/sec), new interesting: 5 (total: 3176)
+fuzz: elapsed: 3m42s, execs: 16326 (202/sec), new interesting: 6 (total: 3177)
+fuzz: elapsed: 3m45s, execs: 16387 (20/sec), new interesting: 6 (total: 3177)
+fuzz: elapsed: 3m48s, execs: 16682 (98/sec), new interesting: 7 (total: 3178)
+fuzz: elapsed: 3m51s, execs: 16682 (0/sec), new interesting: 7 (total: 3178)
+fuzz: elapsed: 3m54s, execs: 16943 (87/sec), new interesting: 8 (total: 3179)
+fuzz: elapsed: 3m57s, execs: 17318 (125/sec), new interesting: 9 (total: 3180)
+fuzz: elapsed: 4m0s, execs: 17663 (115/sec), new interesting: 10 (total: 3181)
+fuzz: elapsed: 4m3s, execs: 17936 (91/sec), new interesting: 10 (total: 3181)
+fuzz: elapsed: 4m6s, execs: 17951 (5/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m9s, execs: 18719 (256/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m12s, execs: 18958 (80/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m15s, execs: 19156 (66/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m18s, execs: 19940 (261/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m21s, execs: 20218 (93/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m24s, execs: 20478 (87/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m27s, execs: 21173 (232/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m30s, execs: 21736 (188/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m33s, execs: 21736 (0/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m36s, execs: 21736 (0/sec), new interesting: 11 (total: 3182)
+fuzz: elapsed: 4m39s, execs: 22757 (342/sec), new interesting: 13 (total: 3184)
+fuzz: elapsed: 4m42s, execs: 23312 (185/sec), new interesting: 13 (total: 3184)
+fuzz: elapsed: 4m45s, execs: 23983 (224/sec), new interesting: 13 (total: 3184)
+fuzz: elapsed: 4m48s, execs: 24539 (185/sec), new interesting: 13 (total: 3184)
+fuzz: elapsed: 4m51s, execs: 24960 (140/sec), new interesting: 13 (total: 3184)
+fuzz: elapsed: 4m54s, execs: 25411 (150/sec), new interesting: 14 (total: 3185)
+fuzz: elapsed: 4m57s, execs: 25630 (73/sec), new interesting: 14 (total: 3185)
+fuzz: elapsed: 5m0s, execs: 26033 (134/sec), new interesting: 15 (total: 3186)
+fuzz: elapsed: 5m3s, execs: 26033 (0/sec), new interesting: 15 (total: 3186)
+fuzz: elapsed: 5m6s, execs: 26033 (0/sec), new interesting: 15 (total: 3186)
+fuzz: elapsed: 5m9s, execs: 26033 (0/sec), new interesting: 15 (total: 3186)
+fuzz: elapsed: 5m12s, execs: 26033 (0/sec), new interesting: 15 (total: 3186)
+fuzz: elapsed: 5m15s, execs: 27493 (489/sec), new interesting: 17 (total: 3188)
+fuzz: elapsed: 5m18s, execs: 28078 (195/sec), new interesting: 19 (total: 3190)
+fuzz: elapsed: 5m21s, execs: 28848 (257/sec), new interesting: 21 (total: 3192)
+fuzz: elapsed: 5m24s, execs: 29230 (127/sec), new interesting: 21 (total: 3192)
+fuzz: elapsed: 5m27s, execs: 29558 (109/sec), new interesting: 22 (total: 3193)
+fuzz: elapsed: 5m30s, execs: 29736 (59/sec), new interesting: 22 (total: 3193)
+fuzz: elapsed: 5m33s, execs: 30409 (224/sec), new interesting: 23 (total: 3194)
+fuzz: elapsed: 5m36s, execs: 30880 (157/sec), new interesting: 23 (total: 3194)
+fuzz: elapsed: 5m39s, execs: 31583 (234/sec), new interesting: 23 (total: 3194)
+fuzz: elapsed: 5m42s, execs: 31869 (95/sec), new interesting: 23 (total: 3194)
+fuzz: elapsed: 5m45s, execs: 32230 (120/sec), new interesting: 24 (total: 3195)
+fuzz: elapsed: 5m48s, execs: 32297 (22/sec), new interesting: 24 (total: 3195)
+fuzz: elapsed: 5m51s, execs: 32584 (96/sec), new interesting: 25 (total: 3196)
+fuzz: elapsed: 5m54s, execs: 32782 (66/sec), new interesting: 26 (total: 3197)
+fuzz: elapsed: 5m57s, execs: 33666 (295/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m0s, execs: 34093 (142/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m3s, execs: 34398 (102/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m6s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m9s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m12s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m15s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m18s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m21s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m24s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m27s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m30s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m33s, execs: 34398 (0/sec), new interesting: 28 (total: 3199)
+fuzz: elapsed: 6m36s, execs: 35384 (330/sec), new interesting: 29 (total: 3200)
+fuzz: elapsed: 6m39s, execs: 35713 (110/sec), new interesting: 29 (total: 3200)
+fuzz: elapsed: 6m42s, execs: 36216 (167/sec), new interesting: 30 (total: 3201)
+fuzz: elapsed: 6m45s, execs: 36216 (0/sec), new interesting: 30 (total: 3201)
+fuzz: elapsed: 6m48s, execs: 36216 (0/sec), new interesting: 30 (total: 3201)
+fuzz: elapsed: 6m51s, execs: 36774 (187/sec), new interesting: 30 (total: 3201)
+fuzz: elapsed: 6m54s, execs: 36774 (0/sec), new interesting: 30 (total: 3201)
+fuzz: elapsed: 6m57s, execs: 38405 (546/sec), new interesting: 31 (total: 3202)
+fuzz: elapsed: 7m0s, execs: 39265 (287/sec), new interesting: 31 (total: 3202)
+fuzz: elapsed: 7m0s, execs: 39265 (0/sec), new interesting: 31 (total: 3202)
+PASS
+ok  	github.com/keyorixhq/keyorix/internal/storage/store	421.325s

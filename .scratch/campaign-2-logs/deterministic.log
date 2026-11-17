@@ -1,0 +1,9 @@
+go: downloading github.com/jackc/pgx/v5 v5.13.0
+go: downloading github.com/jackc/puddle/v2 v2.2.3
+go: downloading modernc.org/sqlite v1.62.0
+go: downloading go.yaml.in/yaml/v4 v4.0.0
+go: downloading github.com/wneessen/go-mail v0.8.2
+go: downloading github.com/digitorus/pkcs7 v0.0.0-20261104125046-a476de3098e4
+go: downloading golang.org/x/net v0.62.0
+go: downloading modernc.org/libc v1.80.1
+ok  	github.com/keyorixhq/keyorix/internal/storage/store	9.313s

@@ -1,0 +1,35 @@
+2026/11/17 08:23:19 storage: opening in-memory SQLite database (configured: "file:diffv2_1?mode=memory&cache=shared&_busy_timeout=30000")
+2026/11/17 08:23:20 audit index build: creating idx_audit_events_event_time_id CONCURRENTLY (writes to audit_events continue)
+2026/11/17 08:23:20 audit index build: idx_audit_events_event_time_id done in 2ms
+2026/11/17 08:23:20 audit index build: creating idx_audit_events_project_event_time CONCURRENTLY (writes to audit_events continue)
+2026/11/17 08:23:20 audit index build: idx_audit_events_project_event_time done in 1ms
+2026/11/17 08:23:20 audit index build: creating idx_audit_events_secret_event_time CONCURRENTLY (writes to audit_events continue)
+2026/11/17 08:23:20 audit index build: idx_audit_events_secret_event_time done in 1ms
+2026/11/17 08:23:20 audit index build: creating idx_secret_access_logs_secret_time_action CONCURRENTLY (writes to secret_access_logs continue)
+2026/11/17 08:23:20 audit index build: idx_secret_access_logs_secret_time_action done in 1ms
+2026/11/17 08:23:20 audit index build: creating idx_secret_access_logs_access_time_brin CONCURRENTLY (writes to secret_access_logs continue)
+2026/11/17 08:23:20 audit index build: idx_secret_access_logs_access_time_brin done in 1ms
+fuzz: elapsed: 0s, gathering baseline coverage: 0/2865 completed
+fuzz: elapsed: 3s, gathering baseline coverage: 37/2865 completed
+fuzz: elapsed: 6s, gathering baseline coverage: 125/2865 completed
+fuzz: elapsed: 9s, gathering baseline coverage: 213/2865 completed
+fuzz: elapsed: 12s, gathering baseline coverage: 302/2865 completed
+fuzz: elapsed: 15s, gathering baseline coverage: 391/2865 completed
+fuzz: elapsed: 18s, gathering baseline coverage: 479/2865 completed
+fuzz: elapsed: 21s, gathering baseline coverage: 570/2865 completed
+fuzz: elapsed: 24s, gathering baseline coverage: 662/2865 completed
+fuzz: elapsed: 27s, gathering baseline coverage: 752/2865 completed
+fuzz: elapsed: 30s, gathering baseline coverage: 834/2865 completed
+fuzz: elapsed: 33s, gathering baseline coverage: 924/2865 completed
+fuzz: elapsed: 36s, gathering baseline coverage: 1017/2865 completed
+fuzz: elapsed: 39s, gathering baseline coverage: 1103/2865 completed
+fuzz: elapsed: 42s, gathering baseline coverage: 1191/2865 completed
+fuzz: elapsed: 45s, gathering baseline coverage: 1280/2865 completed
+fuzz: elapsed: 48s, gathering baseline coverage: 1368/2865 completed
+fuzz: elapsed: 51s, gathering baseline coverage: 1455/2865 completed
+fuzz: elapsed: 54s, gathering baseline coverage: 1548/2865 completed
+fuzz: elapsed: 57s, gathering baseline coverage: 1633/2865 completed
+fuzz: elapsed: 1m0s, gathering baseline coverage: 1723/2865 completed
+fuzz: elapsed: 1m0s, gathering baseline coverage: 1723/2865 completed
+PASS
+ok  	github.com/keyorixhq/keyorix/internal/storage/store	61.193s
