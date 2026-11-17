@@ -416,7 +416,7 @@ func (w *keyWorld) heapDumpHits() int {
 	if err != nil {
 		return -1
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	runtime.GC()
 	debug.WriteHeapDump(f.Fd())
 	_ = f.Close()
