@@ -101,6 +101,7 @@ func TestTypedNotFound_MachineIdentityFamily(t *testing.T) {
 				require.NoError(t, err)
 				_, err = w.core.TransitionMachineIdentity(ctx, p.ID, s.ID, MachineSuspended, 1)
 				require.NoError(t, err)
+				ensureActiveActor(t, w.core.storage, 1) // the issuing user is active (#4159)
 				_, err = w.core.IssueMachineToken(ctx, p.ID, s.ID, 1, IssueMachineTokenParams{Name: "x"})
 				assert.ErrorIs(t, err, ErrMachineIdentityNotActive)
 

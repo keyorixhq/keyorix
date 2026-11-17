@@ -337,6 +337,32 @@ var fixRegressionPlants = []plant{
 		// machine's project_auditor bundle); control sweep without the plant: 0.
 		minUnexplained: 8,
 	},
+	{
+		// #4332 (fuzz-corpus#120, HF3): a USER caller authenticated by a RESTRICTED
+		// PAT is refused the mint outright, because a minted kx_machine_ token is
+		// unrestricted/non-expiring and would carry NONE of the PAT's restrictions
+		// (project/environment/permissions/CIDR) — a one-call escape, the
+		// counterpart of PAT-GUARD-1. Reverting the refusal lets pkPATFull (a PAT
+		// whose owner is project_admin at A and B, fully covering the target
+		// machine's project_auditor role and holding roles.assign, with the PAT
+		// confined to a permission allowlist that still Allows the roles.assign
+		// gate) pass the gate AND the privilege-ceiling check, so core/REST/gRPC
+		// all MINT the token where the model denies on `if p.pat != nil`.
+		//
+		// Exactly the pkPATFull named principal reaches this: it is the only
+		// fixture PAT that passes the roles.assign gate and fully covers a target
+		// machine. pkPAT (restricted to secrets.read@A) still fails the gate with
+		// or without this plant, and non-PAT callers are untouched (the refusal is
+		// user-with-PAT only). 2 cases at introduction (targets A and B, each
+		// across all three layers); control sweep without the plant: 0.
+		name: "fix-4332-pat-refusal-removed",
+		file: "internal/core/machine_token.go",
+		anchor: "\tif ceilingType == ActorTypeUser && patRestrictionFromContext(ctx) != nil {\n" +
+			"\t\treturn nil, fmt.Errorf(\"%w: a restricted personal access token cannot issue machine tokens, because the token would carry none of its restrictions\", ErrMachinePrivilegeCeilingDenied)\n\t}\n",
+		repl:           "\t// PLANT: #4332 restricted-PAT refusal reverted\n",
+		op:             "machine.token.issue",
+		minUnexplained: 2,
+	},
 }
 
 func TestPlantsAreDetected(t *testing.T) {

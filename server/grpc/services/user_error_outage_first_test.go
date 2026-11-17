@@ -5,6 +5,7 @@ package services
 // storage read or an audit outage is Unavailable (retry), not the terminal refusal.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -24,12 +25,12 @@ func TestMapUserError_OutageBeforeTypedRefusal(t *testing.T) {
 		"setup base url required":      core.ErrSetupBaseURLRequired,
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := mapUserError(fmt.Errorf("%w: %w", refusal, fault))
+			got := mapUserError(context.Background(), fmt.Errorf("%w: %w", refusal, fault))
 			assert.Equal(t, codes.Unavailable, status.Code(got), got.Error())
 			assert.True(t, hasErrorInfoReason(got, storageUnavailableReason), "the storage_unavailable ErrorInfo")
 		})
 	}
 	// Without an outage the typed refusal keeps its own answer.
-	got := mapUserError(fmt.Errorf("op: %w", core.ErrInsufficientAdminAuthority))
+	got := mapUserError(context.Background(), fmt.Errorf("op: %w", core.ErrInsufficientAdminAuthority))
 	assert.Equal(t, codes.PermissionDenied, status.Code(got), got.Error())
 }

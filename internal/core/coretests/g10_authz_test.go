@@ -83,11 +83,15 @@ func TestReassignOwnedSecrets_RefusesUnauthorizedActor(t *testing.T) {
 	ms := new(storagetest.MockStorage)
 	c := core.NewKeyorixCore(ms)
 	storagetest.StubUnauthorizedPrincipal(ms, g10UnauthorizedActor, core.Scope{ProjectID: 3})
+	// The actor's own account is read first (#4159: an inactive actor is refused);
+	// it is active here, so the refusal under test is the authorization one.
+	ms.On("GetUser", mock.Anything, g10UnauthorizedActor).Return(&models.User{ID: g10UnauthorizedActor, IsActive: true, AccountState: core.AccountActive}, nil)
 
 	_, err := c.ReassignOwnedSecrets(context.Background(), core.ActorTypeUser, g10UnauthorizedActor, 3, 1, 2)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not authorized")
-	ms.AssertNotCalled(t, "GetUser", mock.Anything, mock.Anything)
+	ms.AssertNotCalled(t, "GetUser", mock.Anything, uint(1)) // no owner lookup before authorization
+	ms.AssertNotCalled(t, "GetUser", mock.Anything, uint(2))
 }
 
 func TestGetSecretSharingStatus_RefusesUnauthorizedActor(t *testing.T) {

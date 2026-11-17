@@ -139,5 +139,5 @@ func ensureRawColumn(db *gorm.DB, table, column, sqlType string) error {
 	q := db.Statement.Quote
 	// #nosec G201 -- table/column/type come from legacyColumns and the manifest's table name, which
 	// LoadArchive only reaches for a table of the current model registry; all are quoted identifiers.
-	return db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", q(table), q(column), sqlType)).Error
+	return db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", q(table), q(column), sqlType)).Error // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- identifiers are dialect-quoted and come from the fixed legacyColumns registry, no value is request-controlled
 }

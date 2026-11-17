@@ -40,22 +40,22 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestGroupError_NotFound(t *testing.T) {
-	err := groupError(fmt.Errorf("get group: %w", storage.ErrGroupNotFound))
+	err := groupError(context.Background(), fmt.Errorf("get group: %w", storage.ErrGroupNotFound))
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestGroupError_AlreadyExists(t *testing.T) {
-	err := groupError(fmt.Errorf("create group: %w", storage.ErrDuplicateGroupName))
+	err := groupError(context.Background(), fmt.Errorf("create group: %w", storage.ErrDuplicateGroupName))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
 func TestGroupError_Duplicate(t *testing.T) {
-	err := groupError(fmt.Errorf("%w: UNIQUE constraint failed: groups.name", storage.ErrDuplicateGroupName))
+	err := groupError(context.Background(), fmt.Errorf("%w: UNIQUE constraint failed: groups.name", storage.ErrDuplicateGroupName))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
 func TestGroupError_InUse(t *testing.T) {
-	err := groupError(fmt.Errorf("rename group: %w", storage.ErrDuplicateGroupName))
+	err := groupError(context.Background(), fmt.Errorf("rename group: %w", storage.ErrDuplicateGroupName))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
@@ -63,27 +63,27 @@ func TestGroupError_InUse(t *testing.T) {
 // (storage.ErrInvalidGroupRequest, core.ErrPermissionDenied), not by the words in the
 // text; the untyped-text counterparts are in group_error_untyped_text_test.go.
 func TestGroupError_Required(t *testing.T) {
-	err := groupError(fmt.Errorf("validation: %w: name is required", storage.ErrInvalidGroupRequest))
+	err := groupError(context.Background(), fmt.Errorf("validation: %w: name is required", storage.ErrInvalidGroupRequest))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestGroupError_Invalid(t *testing.T) {
-	err := groupError(fmt.Errorf("validation: %w: invalid group name", storage.ErrInvalidGroupRequest))
+	err := groupError(context.Background(), fmt.Errorf("validation: %w: invalid group name", storage.ErrInvalidGroupRequest))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestGroupError_Exceeds(t *testing.T) {
-	err := groupError(fmt.Errorf("validation: %w: name exceeds maximum length", storage.ErrInvalidGroupRequest))
+	err := groupError(context.Background(), fmt.Errorf("validation: %w: name exceeds maximum length", storage.ErrInvalidGroupRequest))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestGroupError_Permission(t *testing.T) {
-	err := groupError(fmt.Errorf("add member: %w", core.ErrPermissionDenied))
+	err := groupError(context.Background(), fmt.Errorf("add member: %w", core.ErrPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestGroupError_Denied(t *testing.T) {
-	err := groupError(fmt.Errorf("access denied to group: %w", core.ErrSoDPermissionDenied))
+	err := groupError(context.Background(), fmt.Errorf("access denied to group: %w", core.ErrSoDPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
@@ -92,12 +92,12 @@ func TestGroupError_Denied(t *testing.T) {
 // PermissionDenied without a text match.
 
 func TestGroupError_RefusingToRemoveLast(t *testing.T) {
-	err := groupError(fmt.Errorf("remove member: %w", core.ErrLastAdminGroupGuard))
+	err := groupError(context.Background(), fmt.Errorf("remove member: %w", core.ErrLastAdminGroupGuard))
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
 func TestGroupError_Default(t *testing.T) {
-	err := groupError(errors.New("unexpected backend failure"))
+	err := groupError(context.Background(), errors.New("unexpected backend failure"))
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
@@ -106,48 +106,48 @@ func TestGroupError_Default(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMapUserError_NotFound(t *testing.T) {
-	err := mapUserError(fmt.Errorf("get user: %w", storage.ErrUserNotFound))
+	err := mapUserError(context.Background(), fmt.Errorf("get user: %w", storage.ErrUserNotFound))
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestMapUserError_AlreadyExists(t *testing.T) {
-	err := mapUserError(fmt.Errorf("create user: %w", core.ErrUserAlreadyExists))
+	err := mapUserError(context.Background(), fmt.Errorf("create user: %w", core.ErrUserAlreadyExists))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
 func TestMapUserError_Duplicate(t *testing.T) {
-	err := mapUserError(fmt.Errorf("create user: %w", storage.ErrDuplicateEmail))
+	err := mapUserError(context.Background(), fmt.Errorf("create user: %w", storage.ErrDuplicateEmail))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
 func TestMapUserError_AdministratorCanGrant(t *testing.T) {
-	err := mapUserError(fmt.Errorf("cannot grant this role: you do not hold permission %q yourself: %w", "system.write", core.ErrPermissionDenied))
+	err := mapUserError(context.Background(), fmt.Errorf("cannot grant this role: you do not hold permission %q yourself: %w", "system.write", core.ErrPermissionDenied))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	assert.NotContains(t, status.Convert(err).Message(), "system.write", "the permission name must not reach the client")
 }
 
 func TestMapUserError_Validation(t *testing.T) {
-	err := mapUserError(fmt.Errorf("%w: validation error: email format", core.ErrValidation))
+	err := mapUserError(context.Background(), fmt.Errorf("%w: validation error: email format", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapUserError_Required(t *testing.T) {
-	err := mapUserError(fmt.Errorf("%w: username is required", core.ErrValidation))
+	err := mapUserError(context.Background(), fmt.Errorf("%w: username is required", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapUserError_Invalid(t *testing.T) {
-	err := mapUserError(fmt.Errorf("%w: invalid email address", core.ErrValidation))
+	err := mapUserError(context.Background(), fmt.Errorf("%w: invalid email address", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapUserError_MustBe(t *testing.T) {
-	err := mapUserError(fmt.Errorf("%w: password must be at least 8 characters", core.ErrValidation))
+	err := mapUserError(context.Background(), fmt.Errorf("%w: password must be at least 8 characters", core.ErrValidation))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapUserError_Default(t *testing.T) {
-	err := mapUserError(errors.New("connection reset by peer"))
+	err := mapUserError(context.Background(), errors.New("connection reset by peer"))
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
@@ -162,6 +162,7 @@ func newGroupServiceFull(t *testing.T) (*GroupGRPCService, *testhelper.RBACTestH
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
 	h.AssignUserRole(t, 1, 1, nil) // user 1 = super_admin (global)
+	h.EnsureActiveUser(t, 1)       // user 1 acts through core (#4159)
 	return NewGroupService(h.CoreService), h
 }
 
@@ -437,6 +438,7 @@ func newBreakGlassServiceFull(t *testing.T) *BreakGlassGRPCService {
 	t.Cleanup(h.Cleanup)
 	require.NoError(t, h.DB.AutoMigrate(&models.BreakGlassActivation{}, &models.AuditEvent{}))
 	h.AssignUserRole(t, 1, 1, nil) // user 1 = super_admin (global)
+	h.EnsureActiveUser(t, 1)       // user 1 acts through core (#4159)
 	proj := uint(1)
 	h.AssignUserRole(t, 1, testhelper.RoleProjectViewer, &proj) // project_viewer at project 1
 	h.CreateTestRole(t, "emergency", "break-glass role", 90)

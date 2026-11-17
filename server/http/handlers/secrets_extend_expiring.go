@@ -5,12 +5,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -43,11 +45,18 @@ func (h *SecretHandler) ExtendExpiringSecrets(w http.ResponseWriter, r *http.Req
 
 	n, truncated, err := h.coreService.ExtendExpiringSecrets(r.Context(), uint(id), reqBody.WithinDays, reqBody.NewWindowDays, userCtx.Username, userCtx.UserID)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "required") {
+		switch {
+		case errors.Is(err, core.ErrPermissionDenied):
+			// a typed core refusal (#4159: an inactive actor) is a 403, not a 500
+			status, msg = http.StatusForbidden, "Insufficient permissions"
+		case strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
-		} else {
+		default:
 			log.Printf("Error extending expiring secrets for project %d: %v", id, err)
 			msg = clientSafe(err)
 		}

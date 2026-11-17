@@ -73,6 +73,7 @@ func TestInviteMember_AllowlistStartsInvited(t *testing.T) {
 	})).Return(&models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, State: MembershipInvited}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	m, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipInvited, m.State)
@@ -139,6 +140,7 @@ func TestInviteMember_OpenGrantsRoleImmediately(t *testing.T) {
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	m, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipActive, m.State)
@@ -164,6 +166,7 @@ func TestInviteMember_RejectsDisallowedDomain(t *testing.T) {
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, 0, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not on the allowlist")
@@ -211,6 +214,7 @@ func TestInviteMember_RejectsDuplicate(t *testing.T) {
 	store.On("GetActiveProjectMembership", ctx, uint(1), uint(2)).
 		Return(&models.ProjectMembership{ID: 1, State: MembershipActive}, nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.InviteMember(ctx, 1, 2, "project_viewer", 9, 0, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already has")
@@ -225,6 +229,7 @@ func TestTransitionMembership_RejectsIllegalJump(t *testing.T) {
 	store.On("GetProjectMembership", ctx, uint(50)).
 		Return(&models.ProjectMembership{ID: 50, ProjectID: 1, State: MembershipInvited}, nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot transition")
@@ -275,6 +280,7 @@ func TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership(t *t
 	}), MembershipActive).Return(true, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	m, err := c.InviteMember(ctx, 1, 2, "project_viewer", 9, 0, false)
 
 	// (a) the error still propagates to the caller.
@@ -325,6 +331,7 @@ func TestTransitionMembership_ActivationFailure_RevertsToPriorState(t *testing.T
 	}), MembershipActive).Return(true, nil).Once()
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	m, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9, false)
 
 	require.Error(t, err)
@@ -344,6 +351,7 @@ func TestTransitionMembership_RejectsOtherProject(t *testing.T) {
 	store.On("GetProjectMembership", ctx, uint(50)).
 		Return(&models.ProjectMembership{ID: 50, ProjectID: 2, UserID: 2, Role: "project_admin", State: MembershipProvisioned}, nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	_, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
@@ -376,6 +384,7 @@ func TestTransitionMembership_ActivateGrantsRole(t *testing.T) {
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	out, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9, false)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipActive, out.State)
@@ -413,6 +422,7 @@ func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
 	store.On("ClearProjectSecretOwnership", ctx, uint(2), uint(1)).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	out, err := c.TransitionMembership(ctx, 1, 50, MembershipRevoked, 9, false)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipRevoked, out.State)
@@ -458,6 +468,7 @@ func TestTransitionMembership_RevokeRefusedForLastAdmin_RevertsAndReturnsError(t
 	}), MembershipRevoked).Return(true, nil).Once()
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	out, err := c.TransitionMembership(ctx, 1, 50, MembershipRevoked, 9, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to remove role grant on revocation")

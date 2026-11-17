@@ -49,6 +49,9 @@ func (c *KeyorixCore) CloneEnvironment(ctx context.Context, projectID, srcEnvID,
 	if srcEnvID == dstEnvID {
 		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "source and destination environments must differ")
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 
 	// Verify both environments belong to the authorised project.
 	srcEnv, err := c.storage.GetEnvironment(ctx, srcEnvID)

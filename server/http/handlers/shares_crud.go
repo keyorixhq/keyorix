@@ -145,7 +145,7 @@ func (h *ShareHandler) UpdateSharePermission(w http.ResponseWriter, r *http.Requ
 			h.sendError(w, "NotFound", "Share not found", http.StatusNotFound, nil)
 		} else if reason, ok := core.ShareRefusalMessage(err); ok {
 			h.sendError(w, "Forbidden", reason, http.StatusForbidden, nil)
-		} else if strings.Contains(err.Error(), errPermissionDenied) {
+		} else if errors.Is(err, core.ErrPermissionDenied) || strings.Contains(err.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", "Not authorized to update this share", http.StatusForbidden, nil)
 		} else if strings.Contains(err.Error(), "expiry must be in the future") {
 			h.sendError(w, "ValidationError", "Share expiry must be in the future", http.StatusBadRequest, nil)

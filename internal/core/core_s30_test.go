@@ -221,6 +221,7 @@ func TestAssignMachineRole_Success(t *testing.T) {
 	// the target scope as a baseline, before the per-permission bundle loop.
 	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 5}, "roles.assign")
 	c := NewKeyorixCore(ms)
+	stubActiveActors(ms) // the acting user is active (#4159)
 	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 5}, 1, false)
 	require.NoError(t, err)
 }

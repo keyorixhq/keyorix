@@ -335,6 +335,8 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		switch {
+		case errors.Is(err, core.ErrPermissionDenied):
+			status = http.StatusForbidden // a typed core refusal (#4162: a machine actor)
 		case strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "already have a pending access request"):

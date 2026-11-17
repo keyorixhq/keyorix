@@ -6,6 +6,7 @@ package services
 // and text; an untyped error that merely carries the phrase is a server fault.
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ import (
 )
 
 func TestMapShareError_UntypedExpiryPhraseIsInternal(t *testing.T) {
-	got := mapShareError(errors.New("pq: value for column note: share expiry must be in the future"))
+	got := mapShareError(context.Background(), errors.New("pq: value for column note: share expiry must be in the future"))
 	assert.Equal(t, codes.Internal, status.Code(got), got.Error())
 	assert.Equal(t, "share operation failed", status.Convert(got).Message())
 }

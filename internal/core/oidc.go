@@ -90,6 +90,9 @@ func (c *KeyorixCore) CreateOIDCBinding(ctx context.Context, projectID, machineI
 	if strings.TrimSpace(issuer) == "" || strings.TrimSpace(subject) == "" {
 		return nil, validationErrorf("issuer and subject are required")
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	if err := c.requireAdminAuthorityAt(ctx, actorID, 0); err != nil {
 		// Only the refusal is a permission denial; a failure to resolve the actor's
 		// roles stays a storage error.

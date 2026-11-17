@@ -71,7 +71,7 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *pb.ShareSecretR
 		})
 	}
 	if err != nil {
-		return nil, mapShareError(err)
+		return nil, mapShareError(ctx, err)
 	}
 	return shareRecordToProto(record), nil
 }
@@ -91,7 +91,7 @@ func (s *ShareGRPCService) ListSecretShares(ctx context.Context, req *pb.ListSec
 
 	shares, err := s.core.ListSecretSharesWithPermissionCheck(ctx, uint(req.GetSecretId()), user.UserID)
 	if err != nil {
-		return nil, mapShareError(err)
+		return nil, mapShareError(ctx, err)
 	}
 	return sharesToResponse(shares, 1, len(shares)), nil
 }
@@ -236,7 +236,7 @@ func (s *ShareGRPCService) UpdateSharePermission(ctx context.Context, req *pb.Up
 			log.Printf("update share %d permission partially applied: %s", req.GetShareId(), withFaultCause(err))
 			return nil, perr
 		}
-		return nil, mapShareError(err)
+		return nil, mapShareError(ctx, err)
 	}
 	return shareRecordToProto(record), nil
 }
@@ -254,7 +254,7 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 		return nil, err
 	}
 	if err := s.core.RevokeShare(ctx, uint(req.GetShareId()), user.UserID); err != nil {
-		return nil, mapShareError(err)
+		return nil, mapShareError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -289,20 +289,33 @@ func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, actor *inte
 // shareScopeReadError is the status for a failed share or secret read in
 // authorizeShareScoped: a transient failure is the shared authorization
 // Unavailable, any other read fault is the storage Unavailable (the cause is
-// logged, never sent), and only a positively absent row is NotFound.
+// logged, never sent), and only a positively absent row is NotFound. The storage
+// outage answer is rendered by coreErrorStatus (one adapter for both transports' twins).
+//
+// The positive-absence check stays a pre-check: what counts as "the row is really
+// absent" is core.ReadFault's structural test of the raw storage error (not-found
+// shapes of the driver and of the ORM, which carry no errclass sentinel), and this read
+// answers one uniform "share not found" for a missing share, a missing secret and every
+// other absent row, so a caller learns nothing about which exists (INV-GRPCSVC-02).
+// A transient error is answered first by authorizeRefusal, never by the classifier:
+// under a canceled ctx every error is transient, and the classifier would answer a
+// sentinel-carrying one by its class (storage.ErrShareNotFound as NotFound "not found",
+// an error wrapping ErrStorageReadUnavailable with the storage ErrorInfo), not with the
+// authorization outage text.
 func shareScopeReadError(ctx context.Context, err error) error {
 	if core.IsAuthorizeTransient(ctx, err) {
 		return authorizeRefusal(ctx, err, "share not found")
 	}
-	if serr, ok := storageUnavailableStatus(core.ReadFault(err)); ok {
-		return serr
+	fault := core.ReadFault(err)
+	if fault == nil {
+		return status.Error(codes.NotFound, "share not found")
 	}
-	return status.Error(codes.NotFound, "share not found")
+	return coreErrorStatus(ctx, fault, coreErrorStatusOpts{op: "share scope read"})
 }
 
 // mapShareError translates core sharing errors into gRPC status codes through the
 // shared classifier (coreErrorStatus); the texts are this family's own and fixed.
-func mapShareError(err error) error {
+func mapShareError(ctx context.Context, err error) error {
 	// #2976: a typed share refusal carries a fixed, user-facing reason (owner not a
 	// project member, recipient not a member, ...) — the same text HTTP returns.
 	if reason, ok := core.ShareRefusalMessage(err); ok {
@@ -320,7 +333,7 @@ func mapShareError(err error) error {
 	if errors.Is(err, storage.ErrShareExpiryNotInFuture) {
 		texts[errclass.InvalidInput] = "share expiry must be in the future"
 	}
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "share operation", texts: texts})
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "share operation", texts: texts})
 }
 
 func shareRecordToProto(r *models.ShareRecord) *pb.ShareRecord {

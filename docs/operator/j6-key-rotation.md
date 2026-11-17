@@ -120,7 +120,10 @@ Bring the database up first; `--force` is not a fix for this (see the runbook).
 
 ```bash
 keyorix-server admin encryption rotate-kek --config ./keyorix.yaml --confirm --new-passphrase-file ./new_master_password
-# or --new-passphrase-stdin / --new-passphrase-fd; the file must be mode 0600
+# or --new-passphrase-stdin / --new-passphrase-fd. A file is refused when it is group- or
+# world-readable (any group or other bit, such as 0644: `... is group- or world-readable (mode
+# 0644) -- refusing to read it; chmod 600 the file`) or owned by anyone but you or root; 0600 and
+# 0400 both work. The same rule applies to --passphrase-file.
 ```
 
 Expected:

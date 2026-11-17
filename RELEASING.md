@@ -45,13 +45,21 @@ checks is [docs/releases/RELEASE-CHECKLIST.md](docs/releases/RELEASE-CHECKLIST.m
    Before tagging run `scripts/release/check-docs-version.sh vX.Y.Z` (intentional
    exceptions: `scripts/release/docs-version-exceptions.txt`) and read the install commands
    in README and `QUICK_START.md` once as a new user would.
-   **First release after v0.96.3 (INSTALL-WITH-AI.md, Compose path):** the page's
-   `V=` and `git clone --branch` pins are v0.96.3 and its "Docker Compose with
-   PostgreSQL" section tells the assistant the server-to-database connection is
-   plaintext at that tag. In the release PR re-pin both to the new tag and drop the
-   plaintext-database note (and the "first release after v0.96.3" sentence) once the
-   bundled database has TLS in that release. `TestInstallWithAIPinsAreNotOlderThanLatestRelease`
-   fails when the page pins a version older than the newest `## vX.Y.Z` in `CHANGELOG.md`.
+   **INSTALL-WITH-AI.md pins after every release (the "first release after v0.96.3" rule,
+   done in v0.97.0; the pin test's failure message still cites it):** after a release the
+   page must carry the new tag, with the leading `v`, in both pins: `V=vX.Y.Z` (binary path)
+   and `git clone --branch vX.Y.Z` (Compose path). The page needs at least those two pins.
+   A pin older than the newest `## vX.Y.Z` heading of `CHANGELOG.md` fails
+   `TestInstallWithAIPinsAreNotOlderThanLatestRelease` (`internal/docsdrift`). The "pinned
+   tag vX.Y.Z" sentence in the "Docker Compose with PostgreSQL" section is optional, but
+   when it is present it must name a tag the page pins, so re-pin it with the other two; the
+   same test fails on a stale one, and `TestInstallWithAIPinCheckCatchesPlantedErrors`
+   proves the checker does so and that a page without the sentence is a valid re-pin. Since
+   v0.97.0 that sentence says the server-to-database connection is encrypted (the bundled
+   database serves TLS): keep it only while that stays true at the new tag, and drop the
+   sentence rather than leave it stale. The test cannot see a release whose CHANGELOG section
+   exists only on its own tag: use `scripts/release/check-docs-version.sh vX.Y.Z` before
+   tagging.
 4. **Release gate (hard step, do not tag around it).** Run
    `scripts/release/check-release-blockers.sh` (needs `gh` with `GITHUB_TOKEN`/`GH_TOKEN` or
    a `gh auth login`; in a sandboxed session run it outside the sandbox or feed `kgh issue
