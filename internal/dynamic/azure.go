@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 )
@@ -113,9 +114,11 @@ func (e *AzureEngine) Renew(_ context.Context, _, _ string, _ time.Time) error {
 	return fmt.Errorf("azure: access tokens are not renewable; issue a new lease instead")
 }
 
-// realAzureMinter acquires tokens via DefaultAzureCredential.
+// realAzureMinter acquires tokens via DefaultAzureCredential. cred is the interface
+// DefaultAzureCredential satisfies, so a test can aim the same GetToken path at a
+// hostile authority (hostile_azure_test.go) without changing what production builds.
 type realAzureMinter struct {
-	cred *azidentity.DefaultAzureCredential
+	cred azcore.TokenCredential
 }
 
 func newRealAzureMinter() (*realAzureMinter, error) {
