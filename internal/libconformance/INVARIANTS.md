@@ -21,3 +21,23 @@ The DF1 cross-library parser-differential targets live here: each feeds ONE inpu
 independent library readings and fails on a disagreement that is not on an
 EXPECTED-DIFFERENCE allowlist (reason per entry), with a companion dead-entry test so a
 stale allowlist row cannot hide a regression.
+
+## XML
+
+Invariants on the XML readers behind SAML and metadata parsing.
+
+## MFA (TOTP)
+
+Invariants on the TOTP and otpauth library behaviour the MFA enrolment path relies on.
+
+## Recovery key (age)
+
+Invariants on the age armor and recipient handling the admin recovery-key command uses.
+
+## QR rendering
+
+Invariants on the QR encoder used for MFA enrolment codes.
+
+## Email rendering
+
+Invariants on the go-mail rendering used for outgoing mail.
