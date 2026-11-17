@@ -1,0 +1,1 @@
+fuzz/thirdparty/uuid	none	-	test-only byte-path and string-parser round-trip fuzz harness for google/uuid; not part of any shipped build	test-helper
