@@ -30,7 +30,12 @@ func TestGoMailFindingSCRAMIterationsUnbounded(t *testing.T) {
 		t.Skip("spends about a second of CPU on purpose")
 	}
 	prev := smtpRelayIdle
-	smtpRelayIdle = 3 * time.Second
+	// The relay hangs up when the client stays silent for this long, and the
+	// client is silent while it computes PBKDF2. i=4096000 takes about 0.7s on
+	// a quiet machine but exceeded the old 3s on a loaded merge-queue runner
+	// (client-final never arrived, which reads like a refusal). Generous: it
+	// only bounds a hang, a finished computation returns at once.
+	smtpRelayIdle = 60 * time.Second
 	defer func() { smtpRelayIdle = prev }()
 	run := func(iter string) (time.Duration, []string) {
 		sc := &smtpScript{
@@ -56,7 +61,7 @@ func TestGoMailFindingSCRAMIterationsUnbounded(t *testing.T) {
 		t.Fatalf("harness: the SCRAM dialogue did not reach the client-final message: %q", smallLines)
 	}
 	if !sentFinal(bigLines) {
-		t.Fatalf("go-mail refused i=4096000 (lines %q): finding fixed", bigLines)
+		t.Fatalf("no client-final for i=4096000 (lines %q): either go-mail now refuses large counts (finding fixed) or the relay idle timeout (%v) expired during PBKDF2; check the elapsed time before concluding", bigLines, smtpRelayIdle)
 	}
 	if big < 50*small {
 		t.Fatalf("i=4096000 took %v, i=4096 took %v: the iteration count no longer drives the cost", big, small)
