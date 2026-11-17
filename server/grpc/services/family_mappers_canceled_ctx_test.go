@@ -57,6 +57,7 @@ func TestFamilyMappers_CanceledContextIsUnavailable(t *testing.T) {
 				// on a live ctx too, so the ctx changes nothing here.
 				assert.Equal(t, "dynamic-secret backend operation failed", st.Message())
 				assert.Equal(t, codes.Unavailable, status.Code(live), live.Error())
+				assert.Equal(t, "dynamic-secret backend operation failed", status.Convert(live).Message())
 				return
 			}
 			assert.Equal(t, authorizeUnavailableMessage, st.Message(), "the gates' fixed text, as REST's 503")
