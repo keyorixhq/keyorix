@@ -204,11 +204,12 @@ interface SectionCardProps {
     children: React.ReactNode;
 }
 
-const Tile: React.FC<{ label: string; value: React.ReactNode; tone?: 'good' | 'warn' | 'bad' | undefined }> = ({
-    label,
-    value,
-    tone,
-}) => {
+const Tile: React.FC<{
+    label: string;
+    value: React.ReactNode;
+    tone?: 'good' | 'warn' | 'bad' | undefined;
+    hint?: string | undefined;
+}> = ({ label, value, tone, hint }) => {
     let color = 'var(--text-primary)';
     if (tone === 'good') color = 'var(--success)';
     else if (tone === 'warn') color = 'var(--warning)';
@@ -224,6 +225,11 @@ const Tile: React.FC<{ label: string; value: React.ReactNode; tone?: 'good' | 'w
             <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 {label}
             </div>
+            {hint && (
+                <div className="text-xs mt-0.5 font-medium" style={{ color }}>
+                    {hint}
+                </div>
+            )}
         </div>
     );
 };
@@ -418,6 +424,14 @@ const PosturePanel: React.FC = () => {
                     value={`${p.emergencyAccess.activeActivations} / ${p.emergencyAccess.totalActivations}`}
                     tone={maybeCountTone(p.emergencyAccess.activeActivations, 'warn')}
                 />
+                {p.emergencyAccess.degradedActivations !== undefined && (
+                    <Tile
+                        label="Break-glass degraded (audit rows owed)"
+                        value={p.emergencyAccess.degradedActivations}
+                        tone={maybeCountTone(p.emergencyAccess.degradedActivations, 'bad')}
+                        hint={p.emergencyAccess.degradedActivations > 0 ? 'Review owed' : undefined}
+                    />
+                )}
                 <Tile
                     label="Restricted secrets (A.5.12)"
                     value={p.classification.restricted}

@@ -85,6 +85,20 @@ describe('complianceApi.getPosture', () => {
         expect(posture.generatedAt).toBe('2026-02-01T00:00:00Z');
     });
 
+    // POSTURE-CONSUMERS-NOV-1: emergency_access.degraded_activations. Absent (an older
+    // server) stays undefined, never 0, so the tile can tell "none" from "not reported".
+    it.each([
+        ['zero', { active_activations: 0, total_activations: 2, degraded_activations: 0 }, 0],
+        ['one', { active_activations: 1, total_activations: 2, degraded_activations: 1 }, 1],
+        ['many', { active_activations: 1, total_activations: 9, degraded_activations: 7 }, 7],
+        ['absent (older server)', { active_activations: 0, total_activations: 2 }, undefined],
+    ])('normalizes emergency_access.degraded_activations: %s', async (_name, emergencyAccess, want) => {
+        mock.get.mockResolvedValueOnce({ data: { data: { emergency_access: emergencyAccess } } });
+        const posture = await complianceApi.getPosture();
+        expect(posture.emergencyAccess.degradedActivations).toBe(want);
+        expect(posture.emergencyAccess.totalActivations).toBe(emergencyAccess.total_activations);
+    });
+
     it('defaults every field on an empty payload', async () => {
         mock.get.mockResolvedValueOnce({ data: { data: {} } });
         const posture = await complianceApi.getPosture();
