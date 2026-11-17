@@ -40,12 +40,11 @@ func klBackends(t *testing.T) []struct{ name, pgBase string } {
 // driven through the real cross-process lock), exactly what the in-process backup
 // fuzzer could not reach.
 //
-// SQLite-ONLY by design. A full 10-step program forks ~10 PBKDF2-heavy children;
-// on SQLite that is ~4 s/exec (safely inside Go fuzzing's worker-liveness window),
-// but on Postgres each exec costs ~2x and a single exec was measured at ~103 s
-// (deterministic replay, GREEN), which exceeds that window and makes the fuzz
-// coordinator kill the worker ("exit status 2") — a false crasher, not an oracle
-// failure (report triage KL-1/KL-2, ARTIFACT). Postgres is therefore covered by
+// SQLite-ONLY by design. A full 10-step program forks ~10 PBKDF2-heavy children.
+// On SQLite one exec stays inside Go fuzzing's worker-liveness window; on Postgres
+// a full program can exceed it, and the fuzz coordinator then kills the worker
+// ("exit status 2"): a false crasher, not an oracle failure (seen while building
+// PR #4142; the program replayed green). Postgres is therefore covered by
 // TestKeyLifecycleProcessReplay (both backends, under the package timeout, not the
 // coordinator) and TestKeyLifecycleProcessCorpusPostgres, NOT by this live fuzz
 // target. The seed-corpus pass under a plain `go test` is unaffected (it runs
@@ -59,7 +58,7 @@ func FuzzKeyLifecycleProcess(f *testing.F) {
 			t.Skip("child process must not re-enter the fuzzer")
 		}
 		require.NoError(t, i18n.InitializeForTesting())
-		klRunProgram(t, "sqlite", "", program)
+		_ = klRunProgram(t, "sqlite", "", program)
 	})
 }
 
@@ -71,9 +70,14 @@ func klSeedPrograms() [][]byte {
 		{0, 0, 0, 5, 0, 0, 6, 0, 0},          // create, backup, restore
 		{0, 0, 0, 3, 0, 0, 10, 0, 0},         // create, rotate_dek, reopen
 		{0, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0}, // create, rotate_kek, backup, restore
-		{0, 0, 0, 7, 0, 5, 10, 0, 0},         // create, kill_rotate(+recover), reopen
+		{0, 0, 0, 7, 0, 28, 10, 0, 0},        // create, kill_rotate(early, 8 ms), reopen
+		{0, 0, 0, 7, 0, 1, 10, 0, 0},         // create, kill_rotate(pending observed), reopen
+		{0, 0, 0, 7, 0, 2, 10, 0, 0},         // create, kill_rotate(after sweep commit), reopen
+		{0, 0, 0, 7, 0, 3, 10, 0, 0},         // create, kill_rotate(before marker clear), reopen
 		{0, 0, 0, 8, 0, 0},                   // create, concurrent_rotate
 		{0, 0, 0, 9, 0, 0},                   // create, kill_lockholder
+		{0, 0, 0, 2, 0, 0, 1, 0, 0},          // create, delete, update (no live secret: no-op)
+		{0, 0, 0, 2, 0, 0, 2, 0, 0},          // create, delete, delete (no live secret: no-op)
 		{},
 		{255, 255, 255},
 	}
@@ -86,23 +90,41 @@ func klSeedPrograms() [][]byte {
 // is set.
 func TestKeyLifecycleProcessReplay(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
+	// wantPhases: the phase each kill_rotate step must report, in order. A kill
+	// that lands before the rotation wrote anything cannot test recovery, so the
+	// kill cases assert where their kill landed (M1 in the PR #4142 review).
+	pendingOrLater := []string{klPhasePendingUncommitted, klPhasePendingCommitted, klPhasePromoted}
 	cases := []struct {
-		name    string
-		program []byte
+		name       string
+		program    []byte
+		wantPhases [][]string // per kill step: the accepted phases
 	}{
-		{"create_backup_restore", []byte{0, 0, 0, 5, 0, 0, 6, 0, 0}},
-		{"create_rotatedek_reopen", []byte{0, 0, 0, 3, 0, 0, 10, 0, 0}},
-		{"create_rotatekek_backup_restore", []byte{0, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0}},
-		{"create_kill_rotate_recover_reopen", []byte{0, 0, 0, 7, 0, 7, 10, 0, 0}},
-		{"concurrent_rotate_refused", []byte{0, 0, 0, 8, 0, 0}},
-		{"killed_lockholder_unblocks", []byte{0, 0, 0, 9, 0, 0}},
-		{"update_then_delete", []byte{0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0, 0}},
-		{"rotate_backup_then_rotate_restore", []byte{0, 0, 0, 5, 0, 0, 3, 0, 0, 6, 0, 0}},
+		{"create_backup_restore", []byte{0, 0, 0, 5, 0, 0, 6, 0, 0}, nil},
+		{"create_rotatedek_reopen", []byte{0, 0, 0, 3, 0, 0, 10, 0, 0}, nil},
+		{"create_rotatekek_backup_restore", []byte{0, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0}, nil},
+		{"create_kill_rotate_early_recover_reopen", []byte{0, 0, 0, 7, 0, 28, 10, 0, 0},
+			[][]string{{klPhasePrePending}}},
+		{"create_kill_rotate_pending_recover_reopen", []byte{0, 0, 0, 7, 0, 1, 10, 0, 0},
+			[][]string{pendingOrLater}},
+		{"create_kill_rotate_after_commit_recover_reopen", []byte{0, 0, 0, 7, 0, 2, 10, 0, 0},
+			[][]string{{klPhasePendingCommitted}}},
+		{"create_kill_rotate_before_marker_clear_recover_reopen", []byte{0, 0, 0, 7, 0, 3, 10, 0, 0},
+			[][]string{{klPhasePromoted}}},
+		{"concurrent_rotate_refused", []byte{0, 0, 0, 8, 0, 0}, nil},
+		{"killed_lockholder_unblocks", []byte{0, 0, 0, 9, 0, 0}, nil},
+		{"update_then_delete", []byte{0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0, 0}, nil},
+		{"delete_then_update_is_noop", []byte{0, 0, 0, 2, 0, 0, 1, 0, 0}, nil},
+		{"delete_then_delete_is_noop", []byte{0, 0, 0, 2, 0, 0, 2, 0, 0}, nil},
+		{"rotate_backup_then_rotate_restore", []byte{0, 0, 0, 5, 0, 0, 3, 0, 0, 6, 0, 0}, nil},
 	}
 	for _, b := range klBackends(t) {
 		for _, tc := range cases {
 			t.Run(b.name+"/"+tc.name, func(t *testing.T) {
-				klRunProgram(t, b.name, b.pgBase, tc.program)
+				w := klRunProgram(t, b.name, b.pgBase, tc.program)
+				require.Lenf(t, w.killPhases, len(tc.wantPhases), "kill steps run: %v", w.killPhases)
+				for i, accepted := range tc.wantPhases {
+					require.Containsf(t, accepted, w.killPhases[i], "kill step %d landed in phase %q", i, w.killPhases[i])
+				}
 			})
 		}
 	}
@@ -111,9 +133,9 @@ func TestKeyLifecycleProcessReplay(t *testing.T) {
 // TestKeyLifecycleProcessCorpusPostgres replays representative lifecycle programs
 // — including a long, rotation-and-kill-heavy one the SQLite fuzzer explores — on
 // Postgres (skipped without KEYORIX_TEST_PG_DSN). It runs under the package test
-// timeout, NOT Go fuzzing's per-exec worker-liveness window, so the ~100 s/exec
-// cost of a full program on Postgres cannot produce a coordinator-kill false
-// crasher (see FuzzKeyLifecycleProcess's doc comment). This is the honest Postgres
+// timeout, NOT Go fuzzing's per-exec worker-liveness window, so the cost of a
+// full program on Postgres cannot produce a coordinator-kill false crasher (see
+// FuzzKeyLifecycleProcess's doc comment). This is the honest Postgres
 // depth coverage the SQLite-only fuzz target does not provide. Runs with -timeout
 // 20m in CI's pg leg.
 func TestKeyLifecycleProcessCorpusPostgres(t *testing.T) {
@@ -126,8 +148,10 @@ func TestKeyLifecycleProcessCorpusPostgres(t *testing.T) {
 		name    string
 		program []byte
 	}{
-		// create, kill_rotate(+recover), reopen, update, delete, rotate_kek, backup, restore
-		{"kill_rotate_then_mixed", []byte{0, 0, 0, 7, 0, 7, 10, 0, 0, 1, 0, 0, 2, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0}},
+		// create, kill_rotate(after sweep commit, +recover), reopen, update, delete, rotate_kek, backup, restore
+		{"kill_rotate_then_mixed", []byte{0, 0, 0, 7, 0, 2, 10, 0, 0, 1, 0, 0, 2, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0}},
+		// create, kill_rotate(pending observed), kill_rotate(before marker clear), rotate_dek, reopen
+		{"kill_rotate_phases", []byte{0, 0, 0, 7, 0, 1, 7, 0, 3, 3, 0, 0, 10, 0, 0}},
 		// create, concurrent_rotate, create, kill_lockholder, rotate_dek, backup, restore
 		{"lock_contention_then_rotate", []byte{0, 0, 0, 8, 0, 0, 0, 1, 0, 9, 0, 0, 3, 0, 0, 5, 0, 0, 6, 0, 0}},
 	}
@@ -142,26 +166,21 @@ func TestKeyLifecycleProcessCorpusPostgres(t *testing.T) {
 // RED/GREEN oracle proofs (a guard nobody has watched fail is not a guard)
 // ---------------------------------------------------------------------------
 
-// TestKLRedProof_OracleB_Decrypt plants a realistic defect — a corrupted
-// ciphertext in the store — and watches oracle (b)'s decrypt checker FIRE, with
-// the uncorrupted control GREEN. Proves oracle (b) is load-bearing, not vacuous.
+// TestKLRedProof_OracleB_Decrypt plants two realistic defects and watches oracle
+// (b)'s checker FIRE on each, with the untouched control GREEN: a corrupted
+// ciphertext, and a LOST acknowledged write (its secret_versions row removed
+// although the secret was never deleted). It also shows the one allowed miss: the
+// same lost row is accepted once the secret's delete is in the model.
 func TestKLRedProof_OracleB_Decrypt(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	resetBackupRestoreFlags(t)
 	w := klSetupWorld(t, "sqlite", "")
 
-	// Create a real secret via a child, record its acknowledged write.
-	n := w.next()
-	pt := []byte("red-green-plaintext")
-	vf := filepath.Join(t.TempDir(), "val")
-	require.NoError(t, os.WriteFile(vf, pt, 0600))
-	res, out, werr := w.klRunChild("create", map[string]string{
-		klEnvProjID: fmt.Sprintf("%d", w.projID), klEnvEnvID: fmt.Sprintf("%d", w.envID),
-		klEnvName: fmt.Sprintf("secret-%d", n), klEnvValueFile: vf,
-	})
-	w.klRequireDocumented("create", res, out, werr, "redproof-b")
-	require.True(t, res.OK && res.NodeID != 0)
-	known := []knownVersion{{nodeID: res.NodeID, projectID: w.projID, version: 1, plaintext: pt}}
+	// Create two real secrets via children, record their acknowledged writes.
+	w.klStepCreate(0)
+	w.klStepCreate(1)
+	require.Len(t, w.known, 2)
+	corrupted, lost := w.known[0], w.known[1]
 
 	// Open encryption + DB over the source.
 	chdirTest(t, w.dir)
@@ -174,21 +193,32 @@ func TestKLRedProof_OracleB_Decrypt(t *testing.T) {
 	gdb, err := storage.OpenGormDB(cfg)
 	require.NoError(t, err)
 
-	// GREEN: the acknowledged write decrypts to exactly its recorded plaintext.
-	require.NoError(t, klDecryptKnownWith(enc, gdb, known), "control (green) must pass before the defect is planted")
+	// GREEN: every acknowledged write decrypts to exactly its recorded plaintext.
+	require.NoError(t, klDecryptKnownWith(enc, gdb, w.known, w.deleted), "control (green) must pass before a defect is planted")
 
-	// RED: corrupt the on-disk ciphertext; the checker must now return an error.
+	// RED 1: corrupt one stored ciphertext; the checker must now return an error.
 	var row models.SecretVersion
-	require.NoError(t, gdb.Where("secret_node_id = ? AND version_number = ?", res.NodeID, 1).First(&row).Error)
+	require.NoError(t, gdb.Where("secret_node_id = ? AND version_number = ?", corrupted.nodeID, 1).First(&row).Error)
 	corrupt := append([]byte(nil), row.EncryptedValue...)
 	for i := range corrupt {
 		corrupt[i] ^= 0xFF // corrupt the whole stored ciphertext envelope -> AEAD auth must fail
 	}
 	require.NoError(t, gdb.Model(&models.SecretVersion{}).
-		Where("secret_node_id = ? AND version_number = ?", res.NodeID, 1).
+		Where("secret_node_id = ? AND version_number = ?", corrupted.nodeID, 1).
 		Update("encrypted_value", corrupt).Error)
-	require.Error(t, klDecryptKnownWith(enc, gdb, known),
+	require.Error(t, klDecryptKnownWith(enc, gdb, []knownVersion{corrupted}, w.deleted),
 		"oracle(b) must FIRE on a corrupted ciphertext (watched red proof)")
+
+	// RED 2: lose the other acknowledged write (simulated data loss).
+	only := []knownVersion{lost}
+	require.NoError(t, klDecryptKnownWith(enc, gdb, only, w.deleted), "control: the second write is intact")
+	require.NoError(t, gdb.Where("secret_node_id = ? AND version_number = ?", lost.nodeID, 1).
+		Delete(&models.SecretVersion{}).Error)
+	err = klDecryptKnownWith(enc, gdb, only, w.deleted)
+	require.ErrorContains(t, err, "MISSING", "oracle(b) must FIRE on a lost acknowledged write (watched red proof)")
+	// The model's one allowed miss: a secret whose delete was acknowledged.
+	require.NoError(t, klDecryptKnownWith(enc, gdb, only, map[uint]bool{lost.nodeID: true}),
+		"a missing version of a DELETED secret is not a violation")
 }
 
 // TestKLRedProof_ViolationGate proves the oracle-(a)/(c)/(d) "never a panic or an
@@ -206,7 +236,7 @@ func TestKLRedProof_ViolationGate(t *testing.T) {
 		"sweep-verify":          fmt.Errorf("x: %w", encryption.ErrSweepVerification),
 		"protocol-too-old":      fmt.Errorf("x: %w", encryption.ErrRotationProtocolTooOld),
 		"key-dir-missing":       fmt.Errorf("x: %w", &encryption.KeyDirMissingError{Dir: "/nope"}),
-		"sweep-outcome-unknown": errors.New("DEK rotation failed: the re-encryption sweep may have committed"),
+		"sweep-outcome-unknown": errors.New("DEK rotation failed: " + klSweepOutcomeUnknownMsg),
 	}
 	for wantKind, err := range green {
 		got := klClassifyErr(err)
@@ -220,17 +250,27 @@ func TestKLRedProof_ViolationGate(t *testing.T) {
 	require.Falsef(t, klDocumentedKinds[klNoResult], "a missing result file (crash) must NOT be accepted")
 }
 
-// TestKLRedProof_OracleE_Lock proves oracle (e) is load-bearing on the REAL
-// cross-process flock, without disabling production:
+// TestKLSweepOutcomeUnknownMessageMatchesSource pins klClassifyErr's string match
+// to internal/encryption's unexported errSweepOutcomeUnknown: if its wording
+// changes, this fails instead of the harness quietly classifying that documented
+// outcome as UNEXPECTED.
+func TestKLSweepOutcomeUnknownMessageMatchesSource(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "internal", "encryption", "keymanager_rotation.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(src), `errSweepOutcomeUnknown = errors.New("`+klSweepOutcomeUnknownMsg+`")`)
+}
+
+// TestKLRedProof_OracleE_Lock exercises oracle (e) on the REAL cross-process
+// flock, without disabling production code:
 //   - control (green): with NO holder, a rotation SUCCEEDS;
 //   - fire: while a child holds the exclusive lock, a concurrent rotation is
 //     REFUSED with lock-held (the two never both proceed);
 //   - release: after the holder is SIGKILLed, a rotation SUCCEEDS again (a killed
 //     holder never blocks forever).
 //
-// The free-vs-held contrast is the watched proof the lock-held assertion is not
-// vacuous: a regression making the exclusive lock a no-op would make the held-case
-// rotation succeed, which the fire-case assertion would catch.
+// This is a free-vs-held CONTRAST, not a mutation red: the production lock is
+// never disabled. A regression making the exclusive lock a no-op would make the
+// held-case rotation succeed, which the fire-case assertion would catch.
 func TestKLRedProof_OracleE_Lock(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	resetBackupRestoreFlags(t)
@@ -242,43 +282,88 @@ func TestKLRedProof_OracleE_Lock(t *testing.T) {
 	require.Truef(t, res.OK, "control: a rotation with a FREE lock must succeed; out:\n%s", out)
 
 	// fire: a concurrent holder makes a rotation refuse with lock-held.
-	holdResult := filepath.Join(t.TempDir(), "hold.json")
-	hold := w.klStartChild("holdlock", w.dir, w.cfgPath, holdResult, map[string]string{klEnvHoldMS: "3000"})
-	require.NoError(t, hold.Start())
-	w.klWaitLockAcquired(holdResult, hold)
+	hold, _, release := w.klSpawnLockHolder()
 	res2, out2, werr2 := w.klRunChild("rotate_dek", nil)
+	require.NoError(t, os.WriteFile(release, nil, 0600))
+	require.NoError(t, hold.wait(t))
 	w.klRequireDocumented("rotate_dek", res2, out2, werr2, "redproof-e/held")
 	require.Falsef(t, res2.OK, "oracle(e) FIRE: a rotation must NOT proceed while the lock is held; out:\n%s", out2)
 	require.Equal(t, "lock-held", res2.ErrKind)
-	_ = hold.Wait()
 
 	// release: a SIGKILLed holder frees the lock; a later rotation succeeds.
-	holdResult2 := filepath.Join(t.TempDir(), "hold2.json")
-	hold2 := w.klStartChild("holdlock", w.dir, w.cfgPath, holdResult2, map[string]string{klEnvHoldMS: "10000"})
-	require.NoError(t, hold2.Start())
-	w.klWaitLockAcquired(holdResult2, hold2)
-	require.NoError(t, hold2.Process.Signal(syscall.SIGKILL))
-	_ = hold2.Wait()
+	hold2, _, _ := w.klSpawnLockHolder()
+	hold2.kill()
 	res3, out3, werr3 := w.klRunChild("rotate_dek", nil)
 	w.klRequireDocumented("rotate_dek", res3, out3, werr3, "redproof-e/released")
 	require.Truef(t, res3.OK, "a killed holder must not block a later rotation forever; out:\n%s", out3)
 }
 
-// TestKLRedProof_OracleD_Recovery proves oracle (d): after a rotation child is
-// SIGKILLed at a process-granularity point, the DOCUMENTED recovery command
-// (encryption upgrade-aad / UpgradeAADWithConfig) makes the store fully usable
-// with no manual hand-repair, and every acknowledged write still decrypts (green).
-// The deterministic in-rotation post-sweep-pre-promote recovery red/green is owned
-// by internal/encryption (TestRotateDEKWithSweep_KillAfterSweepCommitBeforePromote_
-// RecoversCleanly, FuzzDEKSweepCrashConsistency) — cited, not duplicated here.
+// TestKLRedProof_OracleD_Recovery proves oracle (d) is load-bearing. A real DEK
+// rotation child is SIGKILLed right after its sweep transaction COMMITTED and
+// before dek.key.pending was promoted (the rotate_dek_pause child; the kill phase
+// is asserted, not assumed). Then:
+//
+//   - RED: the store opened WITHOUT the recovery step (Initialize on the key
+//     files as the kill left them, which is what skipping
+//     RecoverInterruptedRotation leaves) cannot decrypt the acknowledged write:
+//     the rows are under the new DEK and dek.key is still the old one;
+//   - GREEN: after the documented recovery command (encryption upgrade-aad /
+//     UpgradeAADWithConfig) the new DEK is promoted, no pending file is left, and
+//     every acknowledged write decrypts (klStepKillRotate's own assertions plus
+//     klVerifySource).
+//
+// The in-process numbered-checkpoint red/green of the same window is owned by
+// internal/encryption (TestRotateDEKWithSweep_KillAfterSweepCommitBeforePromote_
+// RecoversCleanly, FuzzDEKSweepCrashConsistency); this one crosses the process
+// boundary.
 func TestKLRedProof_OracleD_Recovery(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	resetBackupRestoreFlags(t)
 	w := klSetupWorld(t, "sqlite", "")
-
-	// Acknowledge a secret, then kill a rotation and recover.
 	w.klStepCreate(0)
 	require.NotEmpty(t, w.known, "a secret must be acknowledged before the kill")
-	w.klStepKillRotate(7) // kills the rotation, runs recover, and verifies the source
-	// klStepKillRotate already asserts oracle (d)+(a)+(b); reaching here green is the proof.
+
+	dekPath := filepath.Join(w.dir, "dek.key")
+	orig, err := os.ReadFile(dekPath)
+	require.NoError(t, err)
+
+	// Kill after the sweep commit, before the promote.
+	resultFile := filepath.Join(t.TempDir(), "res.json")
+	ready := filepath.Join(t.TempDir(), "ready")
+	p := w.klSpawn("rotate_dek_pause", resultFile, map[string]string{klEnvPause: klPauseAfterCommit, klEnvReady: ready})
+	w.klWaitReady(p, ready, resultFile)
+	p.kill()
+	require.FileExists(t, dekPath+".pending", "the kill must leave the pending DEK (the phase under test)")
+	atKill, err := os.ReadFile(dekPath)
+	require.NoError(t, err)
+	require.Equal(t, orig, atKill, "the kill must land before the promote")
+	require.True(t, w.klRedoMarkerCommitted(), "the kill must land after the sweep committed its redo marker")
+
+	// RED: no recovery -> the acknowledged write does not decrypt.
+	cfg := klLoadConfigAt(t, w.dir, w.cfgPath)
+	enc := encryption.NewService(&cfg.Storage.Encryption, w.dir)
+	if ierr := enc.Initialize(w.passphrase); ierr == nil {
+		gdb, gerr := storage.OpenGormDB(cfg)
+		require.NoError(t, gerr)
+		derr := klDecryptKnownWith(enc, gdb, w.known, w.deleted)
+		if sqlDB, e := gdb.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+		enc.Shutdown()
+		require.Error(t, derr, "oracle(b) must FIRE on the killed rotation's store when recovery is skipped (watched red proof)")
+		t.Logf("red (no recovery): %v", derr)
+	} else {
+		enc.Shutdown()
+		t.Logf("red (no recovery): the store does not even open: %v", ierr)
+	}
+
+	// GREEN: the documented recovery command promotes the new DEK.
+	res, out, werr := w.klRunChild("recover", nil)
+	w.klRequireDocumented("recover", res, out, werr, "redproof-d/recover")
+	require.Truef(t, res.OK, "recovery must succeed: %s; output:\n%s", res.ErrMsg, out)
+	require.NoFileExists(t, dekPath+".pending")
+	after, err := os.ReadFile(dekPath)
+	require.NoError(t, err)
+	require.NotEqual(t, orig, after, "recovery must promote the committed rotation's new DEK")
+	w.klVerifySource("redproof-d/after-recover")
 }

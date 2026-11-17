@@ -7,8 +7,13 @@
   every acknowledged secret decryptable, and the store fully usable. Why: #4105 (a crashed
   rotation must not leave a state an operator has to hand-repair); permanent data loss is
   least visible at the process boundary. Guard: `server/admin/keylifecycle_process_fuzz_test.go`
-  (`TestKLRedProof_OracleD_Recovery`, `FuzzKeyLifecycleProcess` kill_rotate→recover→decrypt),
-  `TestKeyLifecycleProcessReplay` (`create_kill_rotate_recover_reopen`). The deterministic
-  in-rotation post-sweep-pre-promote recovery red/green is owned by `internal/encryption`
+  `TestKLRedProof_OracleD_Recovery` (a real rotation child SIGKILLed after its sweep
+  COMMIT, before the promote; red: the store opened without recovery cannot decrypt the
+  acknowledged write; green: after the recovery command the new DEK is promoted and it
+  decrypts), `TestKeyLifecycleProcessReplay` (`create_kill_rotate_*`: one case per kill
+  phase, each asserting where its kill landed) and `FuzzKeyLifecycleProcess` op 7
+  (`klStepKillRotate`: after recovery no pending file, dek.key is the new DEK exactly when
+  the sweep had committed, every acknowledged write decrypts). The in-process
+  numbered-checkpoint red/green of the same window is owned by `internal/encryption`
   (`TestRotateDEKWithSweep_KillAfterSweepCommitBeforePromote_RecoversCleanly`,
   `FuzzDEKSweepCrashConsistency`).

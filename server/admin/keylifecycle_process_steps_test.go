@@ -4,10 +4,13 @@
 package admin
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"testing"
 	"time"
@@ -22,64 +25,76 @@ import (
 )
 
 // klBackup records a backup archive together with the passphrase and the
-// acknowledged-write snapshot in effect WHEN IT WAS TAKEN — a later KEK rotation
-// changes the live passphrase but not this archive's, so a restore must use these.
+// acknowledged-write snapshot (known writes + deleted secrets) in effect WHEN IT
+// WAS TAKEN: a later KEK rotation changes the live passphrase but not this
+// archive's, and a later delete does not make the archive's copy deletable.
 type klBackup struct {
 	path       string
 	passphrase string
 	known      []knownVersion
+	deleted    map[uint]bool
 }
 
 // ---------------------------------------------------------------------------
-// Oracle (a)+(b): the store opens (or a documented typed error) and every
-// acknowledged write decrypts to exactly its recorded plaintext.
+// Oracle (a)+(b): the store opens and every acknowledged write still exists and
+// decrypts to exactly its recorded plaintext.
 // ---------------------------------------------------------------------------
 
 // klOracleReopenAndDecrypt opens the store at dir/cfg in-process (the parent holds
 // no handle between steps) and verifies:
 //
-//	(a) encryption Initialize succeeds, OR fails with a DOCUMENTED typed error
-//	    (never a panic / unexpected error); and
-//	(b) every known write still present in secret_versions decrypts to its exact
-//	    recorded plaintext under `passphrase`.
+//	(a) encryption Initialize succeeds. Only a RESTORED store (allowRefusal) may
+//	    instead fail with a DOCUMENTED typed error; the source store, which every
+//	    step and the recovery command must leave usable, may not. Never a panic or
+//	    an undocumented error; and
+//	(b) klDecryptKnownWith: every known write exists and decrypts under
+//	    `passphrase`.
 //
-// It does NOT verify: versions this harness never created; versions whose secret
-// was deleted/purged (their row may be gone — oracle (b) only covers surviving
-// rows); the audit chain (covered by the restore's own verify-audit, oracle 3);
-// on-disk physical layout; or any property of a store that legitimately refused to
-// open with a documented error (it classifies and returns, it cannot decrypt a
-// store that will not open).
-func klOracleReopenAndDecrypt(t *testing.T, dir string, cfg *config.Config, passphrase string, known []knownVersion, label string) {
+// It does NOT verify: versions this harness never created; the audit chain
+// (covered by the restore's own verify-audit, oracle c); on-disk physical layout;
+// or any property of a restored store that refused to open with a documented
+// error (it classifies and returns, it cannot decrypt a store that will not open).
+func klOracleReopenAndDecrypt(t *testing.T, dir string, cfg *config.Config, passphrase string,
+	known []knownVersion, deleted map[uint]bool, allowRefusal bool, label string) {
 	t.Helper()
 	enc := encryption.NewService(&cfg.Storage.Encryption, dir)
 	if err := enc.Initialize(passphrase); err != nil {
 		kind := klClassifyErr(err)
-		require.Truef(t, klDocumentedKinds[kind] && kind != "",
-			"%s: oracle(a) store failed to open with an UNDOCUMENTED error (kind=%q): %v", label, kind, err)
-		t.Logf("%s: oracle(a) store opened with documented typed error kind=%q (acceptable)", label, kind)
+		require.Truef(t, allowRefusal && klDocumentedKinds[kind] && kind != "",
+			"%s: oracle(a) store failed to open (kind=%q, refusal allowed=%v): %v", label, kind, allowRefusal, err)
+		t.Logf("%s: oracle(a) restored store refused to open with documented typed error kind=%q (acceptable)", label, kind)
 		return
 	}
 	defer enc.Shutdown()
 	gdb, err := storage.OpenGormDB(cfg)
-	require.NoErrorf(t, err, "%s: oracle(a) open DB over restored store", label)
+	require.NoErrorf(t, err, "%s: oracle(a) open DB", label)
 	defer func() {
 		if sqlDB, derr := gdb.DB(); derr == nil {
 			_ = sqlDB.Close()
 		}
 	}()
-	require.NoErrorf(t, klDecryptKnownWith(enc, gdb, known), "%s: oracle(b)", label)
+	require.NoErrorf(t, klDecryptKnownWith(enc, gdb, known, deleted), "%s: oracle(b)", label)
 }
 
 // klDecryptKnownWith is the pure, error-returning core of oracle (b): every known
-// write still present in secret_versions must decrypt to its exact recorded
-// plaintext. Returns the first violation as an error (so a red-proof can WATCH it
-// fire), nil when every surviving known write decrypts correctly. A row that no
-// longer survives (deleted/purged/unacknowledged) is skipped, not a violation.
-func klDecryptKnownWith(enc *encryption.Service, gdb *gorm.DB, known []knownVersion) error {
+// write must still be in secret_versions and decrypt to its exact recorded
+// plaintext. A missing row is a violation (a lost acknowledged write) unless its
+// secret's delete was acknowledged; any other read error is a violation. Returns
+// the first violation (so a red-proof can WATCH it fire), nil when every known
+// write is present and correct. (Delete is a soft delete today, so a deleted
+// secret's versions normally survive and are checked too.)
+func klDecryptKnownWith(enc *encryption.Service, gdb *gorm.DB, known []knownVersion, deleted map[uint]bool) error {
 	for _, kv := range known {
 		var row models.SecretVersion
-		if gdb.Where("secret_node_id = ? AND version_number = ?", kv.nodeID, kv.version).First(&row).Error != nil {
-			continue
+		err := gdb.Where("secret_node_id = ? AND version_number = ?", kv.nodeID, kv.version).First(&row).Error
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			if deleted[kv.nodeID] {
+				continue
+			}
+			return fmt.Errorf("node=%d ver=%d: acknowledged write is MISSING (its secret was never deleted)", kv.nodeID, kv.version)
+		case err != nil:
+			return fmt.Errorf("node=%d ver=%d: read failed: %w", kv.nodeID, kv.version, err)
 		}
 		aad := encryption.SecretAAD(kv.nodeID, kv.projectID, kv.version)
 		got, derr := enc.DecryptSecretWithAAD(row.EncryptedValue, aad)
@@ -94,13 +109,14 @@ func klDecryptKnownWith(enc *encryption.Service, gdb *gorm.DB, known []knownVers
 	return nil
 }
 
-// klVerifySource runs the oracle over the live source store (chdir'd there).
+// klVerifySource runs the oracle over the live source store (chdir'd there). The
+// source store must open: no documented refusal is accepted here.
 func (w *klWorld) klVerifySource(label string) {
 	chdirTest(w.t, w.dir)
 	configPathFlag = w.cfgPath
 	cfg, err := loadConfig()
 	require.NoError(w.t, err)
-	klOracleReopenAndDecrypt(w.t, w.dir, cfg, w.passphrase, w.known, "["+w.backend+"] "+label+" source")
+	klOracleReopenAndDecrypt(w.t, w.dir, cfg, w.passphrase, w.known, w.deleted, false, "["+w.backend+"] "+label+" source")
 }
 
 // klRequireDocumented asserts a child result is either success or a documented
@@ -137,8 +153,9 @@ func (w *klWorld) klStepCreate(arg byte) {
 	}
 }
 
+// klStepUpdate updates a LIVE (not deleted) secret; a no-op when there is none.
 func (w *klWorld) klStepUpdate(arg byte) {
-	nid := w.pickKnownNode(arg)
+	nid := w.pickLiveNode(arg)
 	if nid == 0 {
 		return
 	}
@@ -153,14 +170,18 @@ func (w *klWorld) klStepUpdate(arg byte) {
 	}
 }
 
+// klStepDelete deletes a LIVE secret; a no-op when there is none. Its known
+// versions stay in the model: oracle (b) lets them be missing from then on.
 func (w *klWorld) klStepDelete(arg byte) {
-	nid := w.pickKnownNode(arg)
+	nid := w.pickLiveNode(arg)
 	if nid == 0 {
 		return
 	}
 	res, out, werr := w.klRunChild("delete", map[string]string{klEnvNodeID: fmt.Sprintf("%d", nid)})
 	w.klRequireDocumented("delete", res, out, werr, "delete")
-	// Leave known entries: oracle (b) skips a row that no longer survives.
+	if res.OK {
+		w.deleted[nid] = true
+	}
 }
 
 func (w *klWorld) klStepRotateDEK() {
@@ -178,21 +199,21 @@ func (w *klWorld) klStepRotateKEK() {
 }
 
 // klStepBackup takes a real backup child and records it with the passphrase +
-// known-snapshot in effect now (a later KEK rotation must not strand this archive).
+// known/deleted snapshot in effect now (a later KEK rotation must not strand this
+// archive).
 func (w *klWorld) klStepBackup() {
 	archive := filepath.Join(w.t.TempDir(), fmt.Sprintf("backup-%d.tar.gz", w.next()))
 	res, out, werr := w.klRunChild("backup", map[string]string{klEnvArchive: archive})
 	w.klRequireDocumented("backup", res, out, werr, "backup")
 	if res.OK {
-		snap := make([]knownVersion, len(w.known))
-		copy(snap, w.known)
-		w.lastBackup = &klBackup{path: archive, passphrase: w.passphrase, known: snap}
+		w.lastBackup = &klBackup{path: archive, passphrase: w.passphrase,
+			known: slices.Clone(w.known), deleted: maps.Clone(w.deleted)}
 	}
 }
 
 // klStepRestore (oracle c): restore the last backup into a FRESH store and assert
 // it either starts and decrypts every acknowledged secret, or refuses with a
-// documented error — never a store with undecryptable secrets.
+// documented error — never a store with undecryptable or missing secrets.
 func (w *klWorld) klStepRestore() {
 	if w.lastBackup == nil {
 		return
@@ -212,58 +233,193 @@ func (w *klWorld) klStepRestore() {
 		"[%s] oracle(c) restore must verify the audit chain", w.backend)
 	// In-process decrypt over the restored store (oracle c: never undecryptable).
 	cfg := klLoadConfigAt(w.t, restoreDir, restoreCfg)
-	klOracleReopenAndDecrypt(w.t, restoreDir, cfg, w.lastBackup.passphrase, w.lastBackup.known, "["+w.backend+"] oracle(c) restored")
+	klOracleReopenAndDecrypt(w.t, restoreDir, cfg, w.lastBackup.passphrase, w.lastBackup.known, w.lastBackup.deleted, true,
+		"["+w.backend+"] oracle(c) restored")
 	chdirTest(w.t, w.dir) // restore chdir'd the parent; return to source
 }
 
-// klStepKillRotate (oracles d,a,b): start a DEK rotation child, SIGKILL it at a
-// fuzz-controlled delay (sometimes before, during, or after the sweep — a
-// process-granularity crash), then run the DOCUMENTED recovery command and assert
-// the store is fully usable with no manual repair.
-func (w *klWorld) klStepKillRotate(delayArg byte) {
+// Kill phases klStepKillRotate observes (with the child SIGSTOPped, so the files
+// cannot change between the look and the SIGKILL). An "exited:" prefix means the
+// child had already exited when the parent stopped it.
+const (
+	klPhasePrePending         = "pre-pending"         // no dek.key.pending yet, dek.key unchanged
+	klPhasePendingUncommitted = "pending-uncommitted" // pending DEK present, sweep not committed
+	klPhasePendingCommitted   = "pending-committed"   // sweep + redo marker committed, not promoted
+	klPhasePromoted           = "promoted"            // dek.key is the new DEK
+)
+
+// klStepKillRotate (oracles d,a,b): SIGKILL a DEK rotation child at a phase chosen
+// by arg, then run the DOCUMENTED recovery command and assert the store is fully
+// usable with no manual repair. arg%4 picks how the kill point is reached:
+//
+//	0: a wall-clock delay of 1..40 ms after the start (arg/4): before the child
+//	   has written anything (start-up and key derivation take far longer).
+//	1: as soon as dek.key.pending appears, plus 0..2.8 ms (arg/4): inside the
+//	   pending window (a few ms), usually before the sweep commits.
+//	2: the rotate_dek_pause child, parked right after the sweep's COMMIT: the
+//	   only copy of the new DEK is dek.key.pending (deterministic).
+//	3: the rotate_dek_pause child, parked after the promote, before the redo
+//	   marker is cleared (deterministic).
+//
+// Returns the observed phase (also appended to w.killPhases). After the recovery
+// command: no dek.key.pending is left; dek.key is the NEW DEK exactly when the
+// sweep had committed (recovery promoted it) or the promote had happened, and the
+// old one otherwise; and oracle (b) holds over the source.
+func (w *klWorld) klStepKillRotate(arg byte) string {
+	dekPath := filepath.Join(w.dir, "dek.key")
+	pendingPath := dekPath + ".pending"
+	orig, err := os.ReadFile(dekPath) // #nosec G304 -- test-controlled path
+	require.NoError(w.t, err)
 	resultFile := filepath.Join(w.t.TempDir(), "res.json")
-	cmd := w.klStartChild("rotate_dek", w.dir, w.cfgPath, resultFile, nil)
-	require.NoError(w.t, cmd.Start())
-	delay := time.Duration(1+int(delayArg)%40) * time.Millisecond
-	time.Sleep(delay)
-	_ = cmd.Process.Signal(syscall.SIGKILL)
-	_ = cmd.Wait() // reap; killed child leaves no (or a partial) result — expected
+	mode, sub := arg%4, int(arg/4)
+
+	var p *klProc
+	switch mode {
+	case 0:
+		p = w.klSpawn("rotate_dek", resultFile, nil)
+		time.Sleep(time.Duration(1+sub%40) * time.Millisecond)
+	case 1:
+		p = w.klSpawn("rotate_dek", resultFile, nil)
+		w.klWaitPath(p, pendingPath)
+		time.Sleep(time.Duration(sub%8) * 400 * time.Microsecond)
+	default:
+		pause := klPauseAfterCommit
+		if mode == 3 {
+			pause = klPauseBeforeMarkerClear
+		}
+		ready := filepath.Join(w.t.TempDir(), "ready")
+		p = w.klSpawn("rotate_dek_pause", resultFile, map[string]string{klEnvPause: pause, klEnvReady: ready})
+		w.klWaitReady(p, ready, resultFile)
+	}
+	exited := p.exited()
+	if !exited {
+		_ = p.cmd.Process.Signal(syscall.SIGSTOP)
+	}
+	pendingAtKill := klFileExists(pendingPath)
+	atKill, err := os.ReadFile(dekPath) // #nosec G304 -- test-controlled path
+	require.NoError(w.t, err)
+	p.kill()
+	committed := w.klRedoMarkerCommitted()
+
+	promotedAtKill := !bytes.Equal(atKill, orig)
+	var phase string
+	switch {
+	case promotedAtKill:
+		phase = klPhasePromoted
+	case pendingAtKill && committed:
+		phase = klPhasePendingCommitted
+	case pendingAtKill:
+		phase = klPhasePendingUncommitted
+	default:
+		phase = klPhasePrePending
+	}
+	if exited {
+		phase = "exited:" + phase
+	}
+	switch mode {
+	case 2:
+		require.Equalf(w.t, klPhasePendingCommitted, phase, "[%s] kill after the sweep commit landed in the wrong phase", w.backend)
+	case 3:
+		require.Equalf(w.t, klPhasePromoted, phase, "[%s] kill before the marker clear landed in the wrong phase", w.backend)
+		require.Truef(w.t, committed, "[%s] kill before the marker clear: the redo marker must still be committed", w.backend)
+	}
+	w.killPhases = append(w.killPhases, phase)
+	w.t.Logf("[%s] kill_rotate mode=%d: killed in phase %s", w.backend, mode, phase)
 
 	// Documented recovery command (runbook §6): finishes an interrupted rotation.
+	label := "kill_rotate(" + phase + ")->recover (oracle d)"
 	res, out, werr := w.klRunChild("recover", nil)
-	w.klRequireDocumented("recover", res, out, werr, "kill_rotate->recover (oracle d)")
+	w.klRequireDocumented("recover", res, out, werr, label)
+	require.Truef(w.t, res.OK, "[%s] %s: the recovery command must succeed, got kind=%q: %s; output:\n%s",
+		w.backend, label, res.ErrKind, res.ErrMsg, out)
+	require.Falsef(w.t, klFileExists(pendingPath), "[%s] %s: dek.key.pending left after recovery", w.backend, label)
+	after, err := os.ReadFile(dekPath) // #nosec G304 -- test-controlled path
+	require.NoError(w.t, err)
+	wantNew := promotedAtKill || (pendingAtKill && committed)
+	require.Equalf(w.t, wantNew, !bytes.Equal(after, orig),
+		"[%s] %s: after recovery dek.key must be the new DEK exactly when the sweep had committed (want new=%v)", w.backend, label, wantNew)
 	// After recovery the store must be fully usable — no manual hand-repair (#4105).
-	w.klVerifySource("kill_rotate->recover (oracle d)")
+	w.klVerifySource(label)
+	return phase
+}
+
+// klWaitPath busy-polls until path exists or the child exits (the pending window
+// is a few ms, so no sleep between polls).
+func (w *klWorld) klWaitPath(p *klProc, path string) {
+	w.t.Helper()
+	deadline := time.Now().Add(klChildTimeout)
+	for time.Now().Before(deadline) && !p.exited() {
+		if klFileExists(path) {
+			return
+		}
+	}
+}
+
+func klFileExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+// klRedoMarkerCommitted reports whether the source DB holds the DEK-rotation redo
+// marker. Called only with no child running.
+func (w *klWorld) klRedoMarkerCommitted() bool {
+	cfg := klLoadConfigAt(w.t, w.dir, w.cfgPath)
+	gdb, err := storage.OpenGormDB(cfg)
+	require.NoError(w.t, err)
+	defer func() {
+		if sqlDB, derr := gdb.DB(); derr == nil {
+			_ = sqlDB.Close()
+		}
+	}()
+	if !gdb.Migrator().HasTable(&models.SystemMetadata{}) {
+		return false
+	}
+	var n int64
+	require.NoError(w.t, gdb.Model(&models.SystemMetadata{}).Where("key = ?", klRedoMarkerKey).Count(&n).Error)
+	return n > 0
+}
+
+// klSpawnLockHolder starts a holdlock child and waits until it HOLDS the lock.
+// Create the returned release file to let it go.
+func (w *klWorld) klSpawnLockHolder() (p *klProc, resultFile, release string) {
+	dir := w.t.TempDir()
+	resultFile = filepath.Join(dir, "hold.json")
+	ready := filepath.Join(dir, "ready")
+	release = filepath.Join(dir, "release")
+	p = w.klSpawn("holdlock", resultFile, map[string]string{
+		klEnvHoldMS: fmt.Sprintf("%d", klChildTimeout.Milliseconds()), klEnvReady: ready, klEnvRelease: release,
+	})
+	w.klWaitReady(p, ready, resultFile)
+	return p, resultFile, release
 }
 
 // klStepConcurrentRotate (oracle e, part 1): while a child holds the exclusive key
 // lock, a second rotation must be REFUSED (lock-held) — the two never both proceed.
+// The holder keeps the lock until the parent releases it, so a slow rotation child
+// cannot outlast a fixed hold.
 func (w *klWorld) klStepConcurrentRotate() {
-	holdResult := filepath.Join(w.t.TempDir(), "hold.json")
-	hold := w.klStartChild("holdlock", w.dir, w.cfgPath, holdResult, map[string]string{klEnvHoldMS: "1200"})
-	require.NoError(w.t, hold.Start())
-	defer func() { _ = hold.Wait() }()
-	w.klWaitLockAcquired(holdResult, hold)
+	hold, holdResult, release := w.klSpawnLockHolder()
 
 	// A real rotation now must refuse with the documented lock-held error.
 	res, out, werr := w.klRunChild("rotate_dek", nil)
+	require.NoError(w.t, os.WriteFile(release, nil, 0600))
+	hwerr := hold.wait(w.t)
 	w.klRequireDocumented("rotate_dek(concurrent)", res, out, werr, "concurrent_rotate (oracle e)")
 	require.Falsef(w.t, res.OK,
 		"[%s] oracle(e) VIOLATION: a second rotation PROCEEDED while another process held the exclusive lock; output:\n%s", w.backend, out)
 	require.Equalf(w.t, "lock-held", res.ErrKind,
 		"[%s] oracle(e) concurrent rotation must refuse with lock-held, got kind=%q: %s", w.backend, res.ErrKind, res.ErrMsg)
+	hres, rerr := klReadResult(holdResult)
+	require.NoError(w.t, rerr)
+	require.Truef(w.t, hres.OK && hwerr == nil, "[%s] lock holder did not finish cleanly: %+v exitErr=%v", w.backend, hres, hwerr)
 }
 
 // klStepKillLockHolder (oracle e, part 2): SIGKILL a process holding the exclusive
 // lock; a subsequent rotation must SUCCEED — a killed holder never blocks forever
 // (flock releases on process exit).
 func (w *klWorld) klStepKillLockHolder() {
-	holdResult := filepath.Join(w.t.TempDir(), "hold.json")
-	hold := w.klStartChild("holdlock", w.dir, w.cfgPath, holdResult, map[string]string{klEnvHoldMS: "4000"})
-	require.NoError(w.t, hold.Start())
-	w.klWaitLockAcquired(holdResult, hold)
-	_ = hold.Process.Signal(syscall.SIGKILL)
-	_ = hold.Wait()
+	hold, _, _ := w.klSpawnLockHolder()
+	hold.kill()
 
 	res, out, werr := w.klRunChild("rotate_dek", nil)
 	w.klRequireDocumented("rotate_dek(after-kill-holder)", res, out, werr, "kill_lockholder (oracle e)")
@@ -275,36 +431,26 @@ func (w *klWorld) klStepKillLockHolder() {
 // klStepReopen (oracle a,b): just reopen+decrypt the source, no mutation.
 func (w *klWorld) klStepReopen() { w.klVerifySource("reopen") }
 
-// klWaitLockAcquired polls for the holdlock child's readiness file (written AFTER
-// it acquired the lock, BEFORE it sleeps), failing if the child dies first.
-func (w *klWorld) klWaitLockAcquired(resultFile string, cmd *exec.Cmd) {
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(resultFile); err == nil {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	w.t.Fatalf("[%s] lock holder did not acquire the lock within 10s", w.backend)
-}
-
 // ---------------------------------------------------------------------------
 // Model helpers
 // ---------------------------------------------------------------------------
 
-func (w *klWorld) pickKnownNode(b byte) uint {
-	nodes := w.distinctNodes()
+// pickLiveNode picks a known secret whose delete has not been acknowledged (0
+// when there is none): update and delete of a deleted secret are refused by
+// design, which would read as an undocumented error.
+func (w *klWorld) pickLiveNode(b byte) uint {
+	nodes := w.liveNodes()
 	if len(nodes) == 0 {
 		return 0
 	}
 	return nodes[int(b)%len(nodes)]
 }
 
-func (w *klWorld) distinctNodes() []uint {
+func (w *klWorld) liveNodes() []uint {
 	seen := map[uint]bool{}
 	var out []uint
 	for _, kv := range w.known {
-		if !seen[kv.nodeID] {
+		if !seen[kv.nodeID] && !w.deleted[kv.nodeID] {
 			seen[kv.nodeID] = true
 			out = append(out, kv.nodeID)
 		}
@@ -337,17 +483,17 @@ func klLoadConfigAt(t *testing.T, dir, cfgPath string) *config.Config {
 
 // klMaxSteps bounds a program so one fuzz input's child-process count stays sane.
 // Each step forks a REAL child (storage + migration + 600k-iteration PBKDF2), so
-// a single exec's wall time is ~klMaxSteps child spawns. On the loaded shared host
+// a single exec's wall time is ~klMaxSteps child spawns. On a loaded shared host
 // a 14-step program occasionally exceeded Go fuzzing's worker-liveness window and
-// the coordinator killed the worker ("exit status 2") — a false crasher that
-// replayed green 4/4 in isolation (see the report's triage, KL-1/ARTIFACT). 10
-// keeps worst-case exec time well under that window without weakening any oracle.
+// the coordinator killed the worker ("exit status 2"), a false crasher that
+// replayed green in isolation (PR #4142). 10 keeps worst-case exec time well
+// under that window without weakening any oracle.
 const klMaxSteps = 10
 
 // klRunProgram sets up a fresh world for backend and drives program as a sequence
 // of lifecycle steps, running the per-step oracle after each. 3 bytes/step:
-// op, arg0, arg1.
-func klRunProgram(t *testing.T, backend, pgBaseDSN string, program []byte) {
+// op, arg0, arg1. Returns the world so a replay can assert on what it reached.
+func klRunProgram(t *testing.T, backend, pgBaseDSN string, program []byte) *klWorld {
 	resetBackupRestoreFlags(t)
 	w := klSetupWorld(t, backend, pgBaseDSN)
 	w.klVerifySource("initial")
@@ -361,6 +507,7 @@ func klRunProgram(t *testing.T, backend, pgBaseDSN string, program []byte) {
 		}
 		steps++
 	}
+	return w
 }
 
 const klNumOps = 11
@@ -393,7 +540,7 @@ func (w *klWorld) klStep(op, a0, a1 byte) {
 	case 6:
 		w.klStepRestore()
 	case 7:
-		w.klStepKillRotate(a1)
+		_ = w.klStepKillRotate(a1)
 	case 8:
 		w.klStepConcurrentRotate()
 	case 9:

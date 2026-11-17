@@ -4,7 +4,7 @@
 // change / backup / restore IN PROCESS; in production the CLI runs each as a
 // SEPARATE OS process, serialised by the cross-process `dek.lock` flock that the
 // in-process fuzzer could not drive (the op-9 limitation documented in
-// backup_roundtrip_metamorphic_fuzz_test.go and the fk report; issues #4104/#4105).
+// backup_roundtrip_metamorphic_fuzz_test.go; issues #4104/#4105).
 //
 // This harness drives each lifecycle step as a REAL child process — a re-exec of
 // the test binary (os.Args[0]) selecting TestKeyLifecycleChild via -test.run, the
@@ -13,23 +13,26 @@
 // duplicated). Steps: create / update / delete a secret; rotate the DEK (full
 // re-encryption sweep); rotate the KEK (passphrase change — a re-wrap with no DB
 // re-encryption, the "rotate without sweep" shape); take a backup; restore into a
-// fresh store; SIGKILL a rotation child at a fuzz-controlled delay; start a second
-// writer while the first holds the exclusive lock; SIGKILL a lock holder; run the
-// documented recovery command (`encryption upgrade-aad`, UpgradeAADWithConfig);
-// reopen the store.
+// fresh store; SIGKILL a rotation child at an OBSERVED phase (before it wrote
+// dek.key.pending, while the pending DEK exists, after the sweep committed but
+// before the promote, after the promote but before the redo marker is cleared;
+// klStepKillRotate); start a second writer while the first holds the exclusive
+// lock; SIGKILL a lock holder; run the documented recovery command (`encryption
+// upgrade-aad`, UpgradeAADWithConfig); reopen the store.
 //
 // ORACLES (each with what it does NOT verify in its runner's doc comment):
 //
 //	(a) after ANY interleaving or kill the store OPENS, or fails with a documented
 //	    TYPED error — never a panic / non-zero crash.  [klOracleReopenAndDecrypt]
-//	(b) every ACKNOWLEDGED write decrypts to exactly its recorded plaintext; an
-//	    unacknowledged (killed) write may be present or absent but never corrupt.
-//	    [klModel + klOracleReopenAndDecrypt]
+//	(b) every ACKNOWLEDGED write still exists and decrypts to exactly its recorded
+//	    plaintext; a missing version is a violation unless its secret was deleted.
+//	    [klWorld.known/deleted + klDecryptKnownWith]
 //	(c) a restore of a (possibly pending-rotation) backup either starts or fails
 //	    with a documented error, and never yields undecryptable acknowledged
 //	    secrets.  [klStepRestore + klOracleReopenAndDecrypt over the restore dir]
 //	(d) no manual hand-repair (#4105): after the documented recovery command the
-//	    store is fully usable.  [klStepKillRotate -> klStepRecover]
+//	    store is fully usable, no dek.key.pending is left, and a rotation killed
+//	    after its sweep committed has its new DEK promoted.  [klStepKillRotate]
 //	(e) the lock: two concurrent rotations never both proceed, and a killed holder
 //	    never leaves a lock that blocks forever.  [klStepConcurrentRotate,
 //	    klStepKillLockHolder]
@@ -86,7 +89,10 @@ const (
 	klEnvValueFile  = "KL_VALUE_FILE"  // create/update: file holding the plaintext bytes
 	klEnvArchive    = "KL_ARCHIVE"     // backup/restore: archive path
 	klEnvRestoreDir = "KL_RESTORE_DIR" // restore: target dir
-	klEnvHoldMS     = "KL_HOLD_MS"     // holdlock: ms to sleep while holding the lock
+	klEnvHoldMS     = "KL_HOLD_MS"     // holdlock: upper bound (ms) on the hold if no release comes
+	klEnvReady      = "KL_READY"       // holdlock/rotate_dek_pause: file written once the child reached its point
+	klEnvRelease    = "KL_RELEASE"     // holdlock: the holder releases the lock once this file exists
+	klEnvPause      = "KL_PAUSE"       // rotate_dek_pause: klPauseAfterCommit or klPauseBeforeMarkerClear
 	klMasterPassEnv = "KEYORIX_MASTER_PASSWORD"
 	klErrExit       = 87 // child exits non-zero only on an UNEXPECTED, un-writable-result crash
 )
@@ -103,6 +109,10 @@ type klResult struct {
 	Version int    `json:"version"`
 	Stdout  string `json:"stdout"`
 }
+
+// klSweepOutcomeUnknownMsg is the message of internal/encryption's unexported
+// errSweepOutcomeUnknown.
+const klSweepOutcomeUnknownMsg = "the re-encryption sweep may have committed"
 
 // klClassifyErr maps a child-side error to a documented error KIND (oracle a/c
 // accept-list) or "UNEXPECTED". The kinds correspond 1:1 to the exported typed
@@ -123,8 +133,9 @@ func klClassifyErr(err error) string {
 		return "sweep-verify"
 	case errors.Is(err, encryption.ErrRotationProtocolTooOld):
 		return "protocol-too-old"
-	case strings.Contains(err.Error(), "the re-encryption sweep may have committed"):
-		// errSweepOutcomeUnknown is unexported; match its stable message. This is a
+	case strings.Contains(err.Error(), klSweepOutcomeUnknownMsg):
+		// errSweepOutcomeUnknown is unexported; match its message, pinned to the
+		// source by TestKLSweepOutcomeUnknownMessageMatchesSource. This is a
 		// documented outcome: the pending DEK is kept and recovery promotes it.
 		return "sweep-outcome-unknown"
 	default:
@@ -162,9 +173,11 @@ type klWorld struct {
 	envID      uint
 	passphrase string         // current master passphrase (a KEK rotation changes it)
 	known      []knownVersion // the acknowledged-write model (oracle b)
+	deleted    map[uint]bool  // secrets whose delete was acknowledged (oracle b may miss only these)
 	seq        int
 	pgBaseDSN  string
-	lastBackup *klBackup // most recent successful backup (archive + its passphrase/known)
+	lastBackup *klBackup // most recent successful backup (archive + its passphrase/known/deleted)
+	killPhases []string  // the phase each klStepKillRotate observed at its kill, in order
 }
 
 func (w *klWorld) next() int { w.seq++; return w.seq }
@@ -215,6 +228,7 @@ func klSetupWorld(t *testing.T, backend, pgBaseDSN string) *klWorld {
 	return &klWorld{
 		t: t, backend: backend, dir: dir, cfgPath: cfgPath,
 		projID: p.ID, envID: envs[0].ID, passphrase: roundTripPassphrase, pgBaseDSN: pgBaseDSN,
+		deleted: map[uint]bool{},
 	}
 }
 
@@ -278,6 +292,77 @@ func (w *klWorld) klStartChild(op, workDir, cfgPath, resultFile string, extra ma
 	cmd.Dir = workDir
 	cmd.Env = klChildEnv(op, workDir, cfgPath, resultFile, w.passphrase, extra)
 	return cmd
+}
+
+// klProc is a started child whose exit the parent can poll without blocking (a
+// waiter goroutine reaps it), so a readiness wait can tell "not ready yet" from
+// "died before it got there".
+type klProc struct {
+	op   string
+	cmd  *exec.Cmd
+	out  *strings.Builder // combined output; read only after done is closed
+	done chan struct{}
+	err  error // the Wait error, valid after done is closed
+}
+
+// klSpawn starts op as a child and reaps it in the background.
+func (w *klWorld) klSpawn(op, resultFile string, extra map[string]string) *klProc {
+	w.t.Helper()
+	p := &klProc{op: op, cmd: w.klStartChild(op, w.dir, w.cfgPath, resultFile, extra), out: &strings.Builder{}, done: make(chan struct{})}
+	p.cmd.Stdout = p.out
+	p.cmd.Stderr = p.out
+	require.NoError(w.t, p.cmd.Start())
+	go func() { p.err = p.cmd.Wait(); close(p.done) }()
+	return p
+}
+
+func (p *klProc) exited() bool {
+	select {
+	case <-p.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// kill SIGKILLs the child (a no-op once it has exited) and waits for it.
+func (p *klProc) kill() {
+	_ = p.cmd.Process.Signal(syscall.SIGKILL)
+	<-p.done
+}
+
+// wait waits up to klChildTimeout for the child to exit, then kills it.
+func (p *klProc) wait(t *testing.T) error {
+	t.Helper()
+	select {
+	case <-p.done:
+		return p.err
+	case <-time.After(klChildTimeout):
+		p.kill()
+		return fmt.Errorf("child %q timed out after %s", p.op, klChildTimeout)
+	}
+}
+
+// klWaitReady waits until the child wrote readyFile (it reached its point and,
+// for holdlock, holds the lock). It fails the test when the child exits first
+// or writes its result without the ready file (a refused acquire), so a step
+// that needs the point reached can never pass vacuously.
+func (w *klWorld) klWaitReady(p *klProc, readyFile, resultFile string) {
+	w.t.Helper()
+	deadline := time.Now().Add(klChildTimeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(readyFile); err == nil {
+			return
+		}
+		if p.exited() {
+			res, rerr := klReadResult(resultFile)
+			w.t.Fatalf("[%s] %s child exited before it was ready (result=%+v readErr=%v exitErr=%v); output:\n%s",
+				w.backend, p.op, res, rerr, p.err, p.out.String())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	p.kill()
+	w.t.Fatalf("[%s] %s child was not ready within %s", w.backend, p.op, klChildTimeout)
 }
 
 // klRunChild runs op to completion and returns the parsed result, the child's raw
@@ -391,6 +476,8 @@ func klChildDispatch(t *testing.T, op string) klResult {
 		return klChildRestore(t, os.Getenv(klEnvArchive))
 	case "holdlock":
 		return klChildHoldLock(t, cfg)
+	case "rotate_dek_pause":
+		return klChildRotatePause(cfg)
 	default:
 		return klResult{ErrKind: "UNEXPECTED", ErrMsg: "unknown op " + op}
 	}
@@ -473,7 +560,9 @@ func klChildDelete(t *testing.T, cfg *config.Config) klResult {
 	}
 	defer cleanup()
 	nid := klAtoiU(os.Getenv(klEnvNodeID))
-	_ = c.DeleteSecret(context.Background(), nid)
+	if err := c.DeleteSecret(context.Background(), nid); err != nil {
+		return klResultFromErr(err)
+	}
 	return klResult{OK: true, NodeID: nid}
 }
 
@@ -505,9 +594,12 @@ func klChildRestore(t *testing.T, archive string) klResult {
 	return klResult{OK: true, Stdout: out}
 }
 
-// klChildHoldLock acquires the exclusive key lock (the same lock a rotation holds)
-// and sleeps KL_HOLD_MS, to simulate a long-running writer the parent can race or
-// kill. It never touches the DB, so it is a clean lock-contention probe.
+// klChildHoldLock acquires the exclusive key lock (the same lock a rotation holds),
+// writes KL_READY, and holds the lock until the parent creates KL_RELEASE (or
+// KL_HOLD_MS passes, a bound for an orphaned child), to simulate a long-running
+// writer the parent can race or kill. KL_READY is written only after a
+// SUCCESSFUL acquire; a refused acquire writes only the result. It never touches
+// the DB, so it is a clean lock-contention probe.
 func klChildHoldLock(t *testing.T, cfg *config.Config) klResult {
 	dir := os.Getenv(klEnvDir)
 	enc := encryption.NewService(&cfg.Storage.Encryption, dir)
@@ -515,14 +607,17 @@ func klChildHoldLock(t *testing.T, cfg *config.Config) klResult {
 		return klResultFromErr(err)
 	}
 	defer enc.Shutdown()
-	ms := klAtoiU(os.Getenv(klEnvHoldMS))
-	// Signal "lock acquired" by writing the result file BEFORE sleeping, so the
-	// parent can wait on readiness. We still hold the lock for the sleep.
-	res := klResult{OK: true}
-	b, _ := json.Marshal(res)
-	_ = os.WriteFile(os.Getenv(klEnvResult), b, 0600)
-	time.Sleep(time.Duration(ms) * time.Millisecond)
-	return res
+	if err := os.WriteFile(os.Getenv(klEnvReady), []byte("held"), 0600); err != nil {
+		return klResult{ErrKind: "UNEXPECTED", ErrMsg: "write ready file: " + err.Error()}
+	}
+	deadline := time.Now().Add(time.Duration(klAtoiU(os.Getenv(klEnvHoldMS))) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(os.Getenv(klEnvRelease)); err == nil {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return klResult{OK: true}
 }
 
 // klPgCounter + klPgIsolatedDSN create per-run Postgres databases named
