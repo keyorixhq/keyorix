@@ -49,11 +49,13 @@ excluded from the counts table, which tracks production packages only.
 | `internal/rotation` | [internal/rotation/INVARIANTS.md](../internal/rotation/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/fuzzutil/complexity` | [internal/fuzzutil/complexity/INVARIANTS.md](../internal/fuzzutil/complexity/INVARIANTS.md) | 2 | 2 | 0 |
+| `internal/fuzzutil/resguard` | [internal/fuzzutil/resguard/INVARIANTS.md](../internal/fuzzutil/resguard/INVARIANTS.md) | 6 | 6 | 0 |
 | `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 2 | 2 | 0 |
 | `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
 | `migrate/internal/splitjson` | [migrate/internal/splitjson/INVARIANTS.md](../migrate/internal/splitjson/INVARIANTS.md) | 1 | 1 | 0 |
 | `migrate/internal/vaultsource` | [migrate/internal/vaultsource/INVARIANTS.md](../migrate/internal/vaultsource/INVARIANTS.md) | 4 | 4 | 0 |
+| `internal/fuzzutil/boundedwork` | [internal/fuzzutil/boundedwork/INVARIANTS.md](../internal/fuzzutil/boundedwork/INVARIANTS.md) | 5 | 5 | 0 |
 | `scripts/fuzzing/time-travel` | [scripts/fuzzing/time-travel/INVARIANTS.md](../scripts/fuzzing/time-travel/INVARIANTS.md) | 2 | 1 | 1 |
 | `fuzz/thirdparty` | [fuzz/thirdparty/INVARIANTS.md](../fuzz/thirdparty/INVARIANTS.md) | 8 | 8 | 0 |
 | `internal/identity` | [internal/identity/INVARIANTS.md](../internal/identity/INVARIANTS.md) | 1 | 1 | 0 |

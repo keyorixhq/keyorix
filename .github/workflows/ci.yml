@@ -343,6 +343,11 @@ jobs:
       harness_demo: ${{ steps.filter.outputs.harness_demo }}
       harness_e2e: ${{ steps.filter.outputs.harness_e2e }}
       harness_fuzz: ${{ steps.filter.outputs.harness_fuzz }}
+      # fuzz-targets on a FAST pull_request (MQ-LEVERS-2 P1): true when the PR
+      # adds, removes or build-tag-moves a `func Fuzz*` in a _test.go file, or
+      # touches scripts/fuzzing/targets.d / targets.conf. Empty outside
+      # pull_request (those events are FULL anyway).
+      fuzz_pr_relevant: ${{ steps.filter.outputs.fuzz_pr_relevant }}
       # FAST-profile gates for two always-on checks (CI-PATHGATE-1). Each is
       # true when the PR touches that check's own inputs (or ci.yml, or the
       # file list is unknown: the `relevant` helper), and always true outside
@@ -505,6 +510,38 @@ jobs:
           relevant harness_demo '^(scripts/demo/|scripts/airgap-e2e\.sh$|scripts/totpgen/|server/Dockerfile$|\.dockerignore$)'
           relevant harness_e2e '^(scripts/e2e/|Makefile$)'
           relevant harness_fuzz '^scripts/fuzzing/'
+          # fuzz-targets compares `go test -list '^Fuzz'` with targets.d, so it
+          # can only change when a Fuzz function appears, disappears or moves
+          # build tag (a _test.go patch line), or the targets.d / targets.conf
+          # side changes. The file NAME is not enough: #4194 added
+          # FuzzAuthzSeqSwarmPlant to seq_swarm_test.go and forgot its targets.d
+          # conf, and fuzz-targets (queue-only until now) failed three queue
+          # rounds on one head. scripts/ci/fuzz_pr_gate_test.go runs this
+          # exact filter, extracted between the BEGIN/END markers, against
+          # the recorded file list of #4194. Fails toward running: an unknown
+          # list, an API error, a _test.go entry without a patch (renames,
+          # oversized diffs) all give true.
+          # BEGIN fuzz-pr-gate
+          FUZZ_PR_GATE_JQ='
+            def fuzzy: (.filename | test("_test\\.go$"))
+              and ((.filename | test("(^|/)[Ff]uzz[^/]*$"))
+                or ((.patch // "") == "")
+                or (.patch | test("(^|\n)[+-]([^\n]*func Fuzz|//go:build)")));
+            any(.[]; (.filename | test("^scripts/fuzzing/(targets\\.d/|targets\\.conf$)")) or fuzzy)
+          '
+          # END fuzz-pr-gate
+          fuzz_pr_relevant=true
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            fuzz_pr_relevant=false
+          elif [ -n "$changed" ]; then
+            if v=$(set -o pipefail; gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate | jq -s 'add // []' | jq "$FUZZ_PR_GATE_JQ"); then
+              case "$v" in
+                true|false) fuzz_pr_relevant=$v ;;
+              esac
+            fi
+          fi
+          echo "fuzz_pr_relevant=$fuzz_pr_relevant"
+          echo "fuzz_pr_relevant=$fuzz_pr_relevant" >> "$GITHUB_OUTPUT"
           # FAST-profile path gates. operator/ and migrate/ are separate Go
           # modules with no dependency on the root module (no replace to
           # ../), so only their own tree changes them. cli/ imports the root
@@ -2338,6 +2375,8 @@ jobs:
     outputs:
       count: ${{ steps.plan.outputs.count }}
       shards: ${{ steps.shard.outputs.shards }}
+      authz_mode: ${{ steps.authzplan.outputs.mode }}
+      authz_ops: ${{ steps.authzplan.outputs.ops }}
     env:
       FUZZ_SHARDS: 6  # max parallel fuzz jobs
       FUZZ_MAX_SHARD_SECONDS: 480  # open another shard (up to FUZZ_SHARDS) above this estimated work per shard
@@ -2470,6 +2509,33 @@ jobs:
             -shards "$FUZZ_SHARDS" -max-shard-seconds "$FUZZ_MAX_SHARD_SECONDS")"
           echo "Shards: $shards"
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
+      # Authz oracle plan (AUTHZ-MODEL-GUARD-1, KFZ-2026-092). The targets above
+      # are the fuzzers INSIDE the changed packages; the authzdiff oracle lives
+      # in server/authzdiff and models permission rules implemented elsewhere
+      # (internal/core, server/http, server/grpc, storage), so #4332 changed a
+      # rule, kept every check green, and left the model stale until a fuzz lane
+      # found it. scripts/ci/authzgate maps the diff, by call shape, to the
+      # authzdiff ops whose rules it can change: mode none | ops | full (its
+      # header has the rules). A planner error fails toward full, never none.
+      - name: Plan the authz oracle sweep
+        id: authzplan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
+          if out="$(scripts/ci/authz-oracle.sh plan "$base" HEAD)"; then
+            mode="$(printf '%s\n' "$out" | sed -n 's/^mode=//p')"
+            ops="$(printf '%s\n' "$out" | sed -n 's/^ops=//p')"
+          else
+            echo "::warning::authzgate plan failed; running the full authz oracle sweep"
+            mode=full ops=""
+          fi
+          printf '%s\n' "$out" | grep '^# ' | head -50 || true
+          case "$mode" in none|ops|full) ;; *) echo "::warning::bad authzgate mode '$mode'; using full"; mode=full ops="" ;; esac
+          echo "Authz oracle: mode=$mode ops=${ops:-<none>}"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "ops=$ops" >> "$GITHUB_OUTPUT"
 
   fuzz:
     needs: [fuzz-plan]
@@ -2516,11 +2582,58 @@ jobs:
           path: '**/testdata/fuzz/**'
           if-no-files-found: ignore
 
+  # authz-oracle (AUTHZ-MODEL-GUARD-1, KFZ-2026-092): when fuzz-plan's authz
+  # plan says this PR changes permission-check code, run the authzdiff strict
+  # sweep (TestAuthzDiffSweep, AUTHZDIFF_STRICT=1) on the ops it maps to, or on
+  # every op, plus the FuzzAuthzDiff seed corpus. Red = the reference model and
+  # the product disagree on a case no waiver explains: update the model in the
+  # same PR. Deterministic on purpose: a fuzz burst is not a PR gate here (a
+  # 60s cold burst found an unrelated, state-dependent gRPC ResourceExhausted
+  # case on main in 10s, so it would fail unrelated PRs). The burst runs only
+  # with the ci:full label, report-only. Measured cost and trigger rate:
+  # scripts/ci/authzgate/README.md.
+  authz-oracle:
+    needs: [fuzz-plan]
+    # !cancelled(), as on fuzz-plan and fuzz: without a status function the implicit success() also looks at build-and-test's skipped ancestors and skips this job even when the plan asked for a sweep (seen on #4358's own run: mode=full, authz-oracle skipped).
+    if: ${{ !cancelled() && needs.fuzz-plan.result == 'success' && needs.fuzz-plan.outputs.authz_mode != 'none' && needs.fuzz-plan.outputs.authz_mode != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Strict authzdiff sweep of the planned ops
+        env:
+          MODE: ${{ needs.fuzz-plan.outputs.authz_mode }}
+          OPS: ${{ needs.fuzz-plan.outputs.authz_ops }}
+          AUTHZ_ORACLE_LOG: ${{ runner.temp }}/authz-oracle.log
+        run: scripts/ci/authz-oracle.sh run "$MODE" "$OPS"
+      - name: FuzzAuthzDiff burst (ci:full only, report-only)
+        if: contains(github.event.pull_request.labels.*.name, 'ci:full')
+        continue-on-error: true
+        env:
+          GOMAXPROCS: '2'
+        run: go test ./server/authzdiff -run '^$' -fuzz '^FuzzAuthzDiff$' -fuzztime 60s
+      - name: Upload the sweep log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: authz-oracle-log
+          path: ${{ runner.temp }}/authz-oracle.log
+          if-no-files-found: ignore
+
   # Single, stable check name regardless of shard count (or zero targets).
   # Runs (green or red) only when fuzz-plan ran; when build-and-test failed or
   # was skipped, or the event is not a PR push, this job is skipped (no runner).
+  # authz-oracle reports here only with the repository variable
+  # AUTHZ_ORACLE_GATE=enforce (rollout: report-only until the #4332 model fix
+  # reaches main, since main itself is red at machine.token.issue until then);
+  # its own check is red either way.
   fuzz-changed:
-    needs: [build-and-test, fuzz-plan, fuzz]
+    needs: [build-and-test, fuzz-plan, fuzz, authz-oracle]
     if: always() && github.event_name == 'pull_request' && needs.build-and-test.result == 'success' && (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
     runs-on: ubuntu-24.04
     steps:
@@ -2529,9 +2642,27 @@ jobs:
           PLAN_RESULT: ${{ needs.fuzz-plan.result }}
           FUZZ_RESULT: ${{ needs.fuzz.result }}
           COUNT: ${{ needs.fuzz-plan.outputs.count }}
+          AUTHZ_RESULT: ${{ needs.authz-oracle.result }}
+          AUTHZ_MODE: ${{ needs.fuzz-plan.outputs.authz_mode }}
+          AUTHZ_GATE: ${{ vars.AUTHZ_ORACLE_GATE }}
         run: |
-          echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT"
+          echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT authz-oracle=$AUTHZ_RESULT (mode=$AUTHZ_MODE gate=${AUTHZ_GATE:-report})"
           [ "$PLAN_RESULT" = "success" ] || exit 1
+          # A skipped oracle is a pass only when the plan ran nothing: with
+          # mode ops or full it means the planned sweep never ran.
+          authz="$AUTHZ_RESULT"
+          if [ "$authz" = "skipped" ] && [ "$AUTHZ_MODE" != "none" ]; then
+            authz="skipped-with-mode-$AUTHZ_MODE"
+          fi
+          case "$authz" in
+            success|skipped) ;;
+            *)
+              if [ "$AUTHZ_GATE" = "enforce" ]; then
+                exit 1
+              fi
+              echo "::warning::authz-oracle is $authz (report-only until AUTHZ_ORACLE_GATE=enforce)"
+              ;;
+          esac
           case "$FUZZ_RESULT" in success|skipped) exit 0 ;; *) exit 1 ;; esac
 
   # Fresh-install API smoke, SQLite leg (Session I, 2026-09-28): boots a real
@@ -3612,12 +3743,15 @@ jobs:
     # Deliberately NOT gated on operator_only -- this job checks FuzzXxx
     # functions in the root AND the operator/cli/migrate/fuzzkit modules, and
     # an operator-only diff could add/remove/rename one there.
-    # FULL profile only (CI-LIGHT-1). Required context: skipped satisfies it on a FAST PR run, the merge queue runs it.
+    # FULL profile, or a FAST PR that touches a Fuzz function / targets.d /
+    # targets.conf (fuzz_pr_relevant, MQ-LEVERS-2 P1). A FAST PR touching none
+    # of them still skips, which satisfies the required context; the merge
+    # queue runs it as before.
     # Merge-queue gate (CI-SELECT-1): gate_fuzz_targets -- scripts/fuzzing/**,
     # or a changed .go file (any module) that has a `func Fuzz` line before
     # or after the change (an added, removed, renamed or build-tag-moved fuzz
     # target is the only thing this job's comparison can see change).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_targets == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true' || needs.changes.outputs.fuzz_pr_relevant == 'true') && needs.select.outputs.gate_fuzz_targets == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read

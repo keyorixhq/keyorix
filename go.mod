@@ -52,6 +52,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/wneessen/go-mail v0.8.2
 	go.mongodb.org/mongo-driver/v2 v2.10.0
+	go.yaml.in/yaml/v2 v2.4.4
 	go.yaml.in/yaml/v3 v3.0.5
 	go.yaml.in/yaml/v4 v4.0.0
 	golang.org/x/crypto v0.58.0
