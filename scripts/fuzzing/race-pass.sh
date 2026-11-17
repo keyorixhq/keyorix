@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Race-detector pass over keyorix's CONCURRENT fuzz targets.
 #
-# The production rigs fuzz with CGO_ENABLED=0 (static, air-gap-friendly binaries),
-# but the race detector needs cgo + a C toolchain — so this is a dev/CI check, NOT
-# a rig job. It runs each concurrent target under -race to surface data races the
-# native rig cannot. Single-threaded parser targets have no races to find, so only
+# The race detector needs cgo + a C toolchain. This is a dev/CI check, NOT a rig
+# job (the rig, vcd-keyorix-fuzz, does build with cgo and gcc). It runs each
+# concurrent target under -race to surface data races the rig's fuzz runs do not
+# look for. Single-threaded parser targets have no races to find, so only
 # targets that spin up goroutines/servers are listed here.
 #
 # fuzzutil.Guard auto-scales its wall-clock budget under -race (see
