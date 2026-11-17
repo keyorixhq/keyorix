@@ -72,10 +72,10 @@ var refSchemaSeeds = [][]byte{
 
 	// --- inherited from Oracle C: seeds that exercise the full allowlist ---
 	// Keep these so assertNoDeadEntries passes after fuzz mutations.
-	[]byte(`{"type":"string","nullable":true}`),   // openapi-nullable-extension
-	[]byte(`{"enum":[]}`),                          // enum-semantics
-	[]byte(`{"type":"integer"}`),                   // number-coercion (1e-1000 instance)
-	[]byte(`{"minimum":0}`),                        // openapi-null-semantics + bignum-panic
+	[]byte(`{"type":"string","nullable":true}`), // openapi-nullable-extension
+	[]byte(`{"enum":[]}`),                       // enum-semantics
+	[]byte(`{"type":"integer"}`),                // number-coercion (1e-1000 instance)
+	[]byte(`{"minimum":0}`),                     // openapi-null-semantics + bignum-panic
 	[]byte(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`),
 }
 
@@ -184,4 +184,3 @@ func TestRefDiffAllowlistNoDead(t *testing.T) {
 	}
 	allow.assertNoDeadEntries(t)
 }
-

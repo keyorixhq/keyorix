@@ -23,9 +23,9 @@ import (
 //
 // The cycle schemas tested are (from the refSchemaSeeds seed corpus):
 //
-//   1. {"$ref":"#"}  — self-referential root; equivalent to `true` in JSON Schema 2020-12.
-//   2. {"$defs":{"A":{"$ref":"#/$defs/A"}},"$ref":"#/$defs/A"} — explicit A→A cycle.
-//   3. {"type":"object","properties":{"child":{"$ref":"#"}}} — legal recursive tree.
+//  1. {"$ref":"#"}  — self-referential root; equivalent to `true` in JSON Schema 2020-12.
+//  2. {"$defs":{"A":{"$ref":"#/$defs/A"}},"$ref":"#/$defs/A"} — explicit A→A cycle.
+//  3. {"type":"object","properties":{"child":{"$ref":"#"}}} — legal recursive tree.
 //
 // For each, we compile with santhosh and validate several representative instances.
 // The only correctness assertion is "no crash": a returned validation error is not a
