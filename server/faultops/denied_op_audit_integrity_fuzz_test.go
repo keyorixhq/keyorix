@@ -193,7 +193,7 @@ func TestDeniedOpAuditCensus(t *testing.T) {
 
 	for pIdx := range int(numPrincipalKinds) {
 		for opIdx := range m1Ops {
-			for tp := uint(0); tp < 2; tp++ {
+			for tp := range uint(2) {
 				// Each case in its OWN subtest so its world DB closes when the
 				// subtest ends (maxLiveWorldDBsPerTest, world_db_budget_test.go):
 				// a flat loop on one t piles up every world until the test ends
