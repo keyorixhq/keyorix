@@ -266,9 +266,9 @@ func checkRoundtripContractFull(validate func([]byte) error, reserialiseFn func(
 // name view is sufficient to detect a structural change).
 type genericXML struct {
 	XMLName  xml.Name
-	Attrs    []xml.Attr    `xml:",any,attr"`
-	Children []genericXML  `xml:",any"`
-	Chardata string        `xml:",chardata"`
+	Attrs    []xml.Attr   `xml:",any,attr"`
+	Children []genericXML `xml:",any"`
+	Chardata string       `xml:",chardata"`
 }
 
 func (g genericXML) render() string {

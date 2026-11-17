@@ -57,7 +57,7 @@ func injectingReserialise(raw []xml.Token) ([]byte, bool) {
 	injected := make([]xml.Token, 0, len(raw)+(end-start+1))
 	injected = append(injected, raw[:end+1]...)      // up to and including the first child's end
 	injected = append(injected, raw[start:end+1]...) // the forged duplicate
-	injected = append(injected, raw[end+1:]...)       // the rest
+	injected = append(injected, raw[end+1:]...)      // the rest
 	return reserialise(injected)
 }
 
