@@ -103,7 +103,7 @@ func newHostileClientNoAuth(addr string) (*mongo.Client, error) {
 	opts := options.Client().
 		SetHosts([]string{addr}).
 		SetDirect(true).
-		SetDialer(lingerDialer{}).
+		SetDialer(&lingerDialer{}).
 		SetConnectTimeout(500 * time.Millisecond).
 		SetServerSelectionTimeout(700 * time.Millisecond).
 		SetTimeout(time.Second)
