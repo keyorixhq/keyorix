@@ -15,8 +15,8 @@ package encryption_test
 //      SIGKILLed at a random write seam and then recovered, AND a backup is
 //      taken of the recovered install, no file anywhere under the install tree
 //      OR inside the produced backup archive may contain, byte-for-byte, any of
-//      the KEK/DEK-derived key-material values (evidence-sign key [KEK-derived],
-//      audit-checkpoint key [DEK-derived], backup-manifest key [KEK-derived]).
+//      the KEK-derived key-material values (evidence-sign key [KEK-derived],
+//      audit-checkpoint key [KEK-derived], backup-manifest key [KEK-derived]).
 //      All three are documented as held only in application memory and never
 //      persisted, so ANY on-disk occurrence is a leak. Both the pre-rotation and
 //      the post-recovery values are used as needles, so neither the retired nor
@@ -68,7 +68,7 @@ const (
 var kleakOps = []pcrashOp{pcrashOps[0], pcrashOps[1]} // rotate-dek, rotate-kek
 
 // kleakReadKeyMaterial opens the install at dir with pass and returns copies of
-// the three KEK/DEK-derived key-material values (needles), or ok=false if the
+// the three KEK-derived key-material values (needles), or ok=false if the
 // install does not open (a documented refusal after a kill — then there is no
 // live key material to read, and the pre-rotation needles still guard the tree).
 func kleakReadKeyMaterial(dir, pass string) (needles [][]byte, ok bool) {
@@ -299,10 +299,7 @@ func kleakCalibrate(t *testing.T, w *pcrashWorld) resguard.Budget {
 		for _, frac := range []int64{2, 1, 0} { // seams/2, seams, past-last
 			killAt := cal.seams + 1
 			if frac > 0 {
-				killAt = cal.seams / frac
-				if killAt < 1 {
-					killAt = 1
-				}
+				killAt = max(cal.seams/frac, 1)
 			}
 			v, cost := kleakRun(t, w, probe, resguard.Budget{}, false, op, killAt, uint16(killAt), nil)
 			if len(v) > 0 {

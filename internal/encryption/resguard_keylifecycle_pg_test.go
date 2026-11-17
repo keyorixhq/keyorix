@@ -14,7 +14,7 @@ package encryption
 // K1: after a true DEK rotation with sweep (RotateDEKWithSweep) is crashed at
 // each durability checkpoint and then recovered (RecoverInterruptedRotation +
 // Initialize), no file in the key directory may contain, byte-for-byte, the raw
-// DEK or any KEK/DEK-derived key-material value (evidence-sign, audit-checkpoint,
+// DEK or any KEK-derived key-material value (evidence-sign, audit-checkpoint,
 // backup-manifest) — pre-rotation or post-recovery. All are held only in memory
 // and are never persisted, so any on-disk occurrence is a leak.
 //
