@@ -33,9 +33,6 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -128,17 +125,20 @@ type (
 //
 // Recognised shapes, one per provider SDK this server links: the AWS SDK's
 // response error (HTTPStatusCode()) and API error (ErrorCode()), Azure's
-// *azcore.ResponseError, and a gRPC status (GCP, GRPCStatus()).
+// *azcore.ResponseError, and a gRPC status (GCP, GRPCStatus()). The AWS
+// throttle-code table and the Azure types are read in boot_exit_aws.go and
+// boot_exit_azure.go, which the noaws/noazure builds replace with stubs so an
+// air-gapped binary does not link either SDK (make airgap-dependency-guard).
 func isServiceUnavailable(err error) bool {
 	if he, ok := errors.AsType[httpStatusError](err); ok && transientHTTP(he.HTTPStatusCode()) {
 		return true
 	}
 	if ae, ok := errors.AsType[apiCodeError](err); ok {
-		if _, throttled := retry.DefaultThrottleErrorCodes[ae.ErrorCode()]; throttled {
+		if isAWSThrottleCode(ae.ErrorCode()) {
 			return true
 		}
 	}
-	if re, ok := errors.AsType[*azcore.ResponseError](err); ok && transientHTTP(re.StatusCode) {
+	if isAzureServiceUnavailable(err) {
 		return true
 	}
 	if _, ok := errors.AsType[grpcStatusError](err); ok {
@@ -148,31 +148,6 @@ func isServiceUnavailable(err error) bool {
 		}
 	}
 	return false
-}
-
-// isTokenRequestUnanswered reports whether err is an Azure token request
-// (azure-kms authenticates to Entra ID before it calls the vault) that got no
-// answer or a "not now" answer. azidentity's *AuthenticationFailedError keeps
-// the cause of a request that failed (a refused dial, a DNS failure, a
-// timeout) only as message text, with no Unwrap, so isNetworkFailure cannot
-// see it; its RawResponse is nil exactly when Entra ID did not answer. An
-// answer of 5xx or 429 may come back too. Any other answer (400 invalid_client,
-// 401: a wrong secret or application) is a refusal. No credential configured
-// at all is azidentity's credentialUnavailableError, a different type, and
-// stays a refusal.
-//
-// What this does not tell apart: a nil RawResponse also covers a local failure
-// inside azidentity before the request (a client assertion that could not be
-// read). That is retried rather than stopped, the direction that fails soft.
-func isTokenRequestUnanswered(err error) bool {
-	afe, ok := errors.AsType[*azidentity.AuthenticationFailedError](err)
-	if !ok {
-		return false
-	}
-	if afe.RawResponse == nil {
-		return true
-	}
-	return transientHTTP(afe.RawResponse.StatusCode)
 }
 
 // transientHTTP reports whether an HTTP answer says "not now": 5xx or 429.
