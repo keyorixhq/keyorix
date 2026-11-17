@@ -84,6 +84,21 @@ func takeGateReadAllow(ctx context.Context, userID, secretID uint) *models.Secre
 	return s
 }
 
+// gateAllowedRead reports, without consuming the memo, whether the request's gate has
+// allowed userID to read secretID: the same condition takeGateReadAllow consumes on. The
+// gate runs only on a request the transport has authenticated (a suspended account is
+// refused there), so GetSecretForRead skips its account-state read on a match
+// (#4336: no extra round trip on the transport read path).
+func gateAllowedRead(ctx context.Context, userID, secretID uint) bool {
+	m := gateReadDecisionFrom(ctx)
+	if m == nil || readPathReuseOff.Load() || actorTypeFromContext(ctx) == ActorTypeMachine {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.secret != nil && m.userID == userID && m.secret.ID == secretID
+}
+
 // readPathReuseOff disables both OPT-READPATH-2 reuses: the gate's read decision
 // (the decision is evaluated twice) and the value step's schedule/version snapshot
 // (read again), i.e. the read path as it was before. Tests only: the before/after

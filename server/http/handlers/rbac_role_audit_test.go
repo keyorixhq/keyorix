@@ -34,6 +34,7 @@ func TestRBACRoleDefinitionAudit(t *testing.T) {
 		// MachineIdentity(Role)/ConnectRefGrant: DeleteRole's cascade
 		// (SESSION-AT AT1 row 2) deletes from every RoleID-referencing table.
 		&models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{},
+		&models.User{},
 	))
 	handler := NewRBACHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
 	// CreateRole requires at least one (resolvable) permission name.
@@ -45,6 +46,7 @@ func TestRBACRoleDefinitionAudit(t *testing.T) {
 	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "fixture-actor-1", UsernameFolded: "fixture-actor-1", Email: "fixture-actor-1@example.com", EmailFolded: "fixture-actor-1@example.com", IsActive: true}).Error) // the admin's account is active (#4159)
 
 	countEvents := func(eventType string) int64 {
 		var n int64

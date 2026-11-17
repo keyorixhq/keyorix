@@ -168,6 +168,7 @@ func TestAssignRoleToGroup_BlocksNewSoDViolationForMember(t *testing.T) {
 
 	// Granting editor (secrets.write) to the GROUP would complete the policy for
 	// erin, its member.
+	h.EnsureActiveUser(t, 1) // the acting user is active (#4159)
 	err = h.CoreService.AssignRoleToGroup(ctx, 1, 30, 3, core.Scope{}, false)
 	require.Error(t, err, "the group grant must be blocked on behalf of the member it would newly violate for")
 	assert.Contains(t, err.Error(), "separation-of-duties")
@@ -197,6 +198,7 @@ func TestAssignRoleToGroup_AllowsNonViolatingGrant(t *testing.T) {
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
+	h.EnsureActiveUser(t, 1)                                                  // the acting user is active (#4159)
 	err = h.CoreService.AssignRoleToGroup(ctx, 1, 31, 5, core.Scope{}, false) // auditor: no conflict
 	require.NoError(t, err, "a non-violating group grant must succeed unimpeded")
 

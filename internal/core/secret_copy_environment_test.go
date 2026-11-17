@@ -24,6 +24,8 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.SecretAccessSchedule{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	require.NoError(t, db.AutoMigrate(&models.User{}))
+	ensureActiveActor(t, c.storage, 1) // the acting user (#4159)
 	ctx := context.Background()
 	p, _ := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
 	staging, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "staging", ProjectID: p.ID})

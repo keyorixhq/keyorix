@@ -27,8 +27,9 @@ func TestGroupCRUDAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.Group{}, &models.GroupRole{}, &models.UserGroup{}, &models.AuditEvent{}, &models.Role{},
-		&models.UserRole{},
+		&models.UserRole{}, &models.User{},
 	))
+	seedActiveActor(t, db, 42) // the acting admin is active (#4159)
 	// NewKeyorixCore, not a bare struct literal: the literal leaves the `now`
 	// clock nil, and #2697's UpdateGroup stamps updated_at through it (as most of
 	// core already does). The literal only ever worked here because this one
@@ -89,6 +90,7 @@ func TestGroupMembershipAudit(t *testing.T) {
 	))
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 11, Username: "alice", Email: "alice@example.com"}).Error)
+	seedActiveActor(t, db, 42) // the acting admin is active (#4159)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 

@@ -25,6 +25,9 @@ const defaultExtendWindowDays = 90
 // soonest-expiring ones first (storage orders by expiration ascending), but a caller
 // with more matching secrets than the scan cap must know not every one was renewed.
 func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint, withinDays, newWindowDays int, actor string, actorID uint) (extended int, truncated bool, err error) {
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4162
+		return 0, false, err
+	}
 	if projectID == 0 || actorID == 0 {
 		return 0, false, fmt.Errorf("project ID and actor ID are required")
 	}
@@ -33,6 +36,9 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 	}
 	if newWindowDays > maxExpiringWindowDays {
 		newWindowDays = maxExpiringWindowDays
+	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return 0, false, err
 	}
 	newExpiry := c.now().Add(time.Duration(newWindowDays) * 24 * time.Hour).UTC()
 

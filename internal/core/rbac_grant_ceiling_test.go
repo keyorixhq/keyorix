@@ -24,6 +24,7 @@ func TestAssignUserRole_RequiresActorHoldRolePermissions(t *testing.T) {
 
 	const attacker = uint(9) // holds roles.assign in the real exploit (irrelevant here — no roles at all)
 	const target = uint(10)
+	ensureActiveActor(t, c.storage, attacker)
 	err := c.AssignUserRole(ctx, attacker, target, 2, Scope{ProjectID: 3}, false)
 	require.Error(t, err, "a roles.assign holder must not grant a role bundling a permission they don't hold themselves")
 	assert.Contains(t, err.Error(), "do not hold permission")
@@ -53,6 +54,7 @@ func TestAssignUserRole_CannotGrantToThirdPartyEither(t *testing.T) {
 	const victim = uint(20) // a third party, not the attacker themselves
 	require.NoError(t, db.Create(&models.UserRole{UserID: attacker, RoleID: 3, ProjectID: 3}).Error)
 
+	ensureActiveActor(t, c.storage, attacker)
 	err := c.AssignUserRole(ctx, attacker, victim, 2, Scope{ProjectID: 3}, false)
 	require.Error(t, err, "holding roles.assign alone must not be enough to grant a role bundling secrets.delete")
 	assert.Contains(t, err.Error(), "do not hold permission")
@@ -82,6 +84,7 @@ func TestAssignUserRole_ScopedHolderCannotGrantAtBroaderScope(t *testing.T) {
 	seedLiveScopeProjects(t, db, 3)
 	require.NoError(t, db.Create(&models.UserRole{UserID: attacker, RoleID: 3, ProjectID: 3}).Error)
 
+	ensureActiveActor(t, c.storage, attacker)
 	err := c.AssignUserRole(ctx, attacker, target, 2, Scope{}, false) // global grant attempt
 	require.Error(t, err, "a project-scoped holder must not grant the role globally")
 	assert.Contains(t, err.Error(), "do not hold permission")
@@ -114,6 +117,7 @@ func TestAssignUserRole_HolderMayGrantRoleTheyQualifyFor(t *testing.T) {
 	const target = uint(10)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 3}).Error) // global grant
 
+	ensureActiveActor(t, c.storage, holder)
 	require.NoError(t, c.AssignUserRole(ctx, holder, target, 2, Scope{ProjectID: 3}, false))
 
 	var count int64
@@ -138,6 +142,7 @@ func TestAssignUserRole_AdminBypassesCeiling(t *testing.T) {
 	const target = uint(10)
 	require.NoError(t, db.Create(&models.UserRole{UserID: admin, RoleID: 1}).Error)
 
+	ensureActiveActor(t, c.storage, admin)
 	require.NoError(t, c.AssignUserRole(ctx, admin, target, 2, Scope{ProjectID: 3}, false))
 }
 
@@ -176,6 +181,7 @@ func TestAssignUserRole_EmptyRoleRequiresRolesAssignBaseline(t *testing.T) {
 
 	const actor = uint(9) // holds nothing, not even roles.assign
 	const target = uint(10)
+	ensureActiveActor(t, c.storage, actor)
 	err := c.AssignUserRole(ctx, actor, target, 2, Scope{ProjectID: 3}, false)
 	require.Error(t, err, "CEILING VIOLATED: an empty-permission role must still require roles.assign to grant")
 	assert.Contains(t, err.Error(), "do not hold permission")
@@ -203,6 +209,7 @@ func TestAssignUserRole_EmptyRoleGrantableByRolesAssignHolder(t *testing.T) {
 	seedLiveScopeProjects(t, db, 3)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 3, ProjectID: 3}).Error)
 
+	ensureActiveActor(t, c.storage, holder)
 	require.NoError(t, c.AssignUserRole(ctx, holder, target, 2, Scope{ProjectID: 3}, false))
 
 	var count int64

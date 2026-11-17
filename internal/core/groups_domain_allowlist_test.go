@@ -58,6 +58,7 @@ func TestAddUserToGroup_RejectsDisallowedDomain_ProjectScopedGrant(t *testing.T)
 	// the allowlist gate under test to be reached.
 	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin /* project_admin, bundles roles.assign */, &projID)
 
+	h.EnsureActiveUser(t, 99) // the acting user is active (#4159)
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, mallory.ID, 60, proj)
 	require.Error(t, err, "adding a disallowed-domain user to a group that confers project access must be refused")
 	assert.Contains(t, err.Error(), "not on the allowlist")
@@ -94,6 +95,7 @@ func TestAddUserToGroup_RejectsDisallowedDomain_GlobalMembershipReachesProjectGr
 	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin /* project_admin, bundles roles.assign */, &projID)
 
 	// projectID 0 == a GLOBAL membership, not a project-scoped one.
+	h.EnsureActiveUser(t, 99) // the acting user is active (#4159)
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, trent.ID, 61, 0)
 	require.Error(t, err, "a global group join that reaches a project-scoped grant must still be refused")
 	assert.Contains(t, err.Error(), "not on the allowlist")
@@ -125,6 +127,7 @@ func TestAddUserToGroup_AllowsAllowedDomain(t *testing.T) {
 	// allowlist behavior under test is orthogonal to that baseline.
 	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin /* project_admin, bundles roles.assign */, &projID)
 
+	h.EnsureActiveUser(t, 99) // the acting user is active (#4159)
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, peggy.ID, 62, proj)
 	require.NoError(t, err, "an allowed-domain user must still be able to join a project-conferring group")
 
@@ -156,6 +159,7 @@ func TestAddUserToGroup_NoRoleGrant_NotGatedByDomainAllowlist(t *testing.T) {
 
 	h.CoreService.SetMembershipDomainAllowlist([]string{"allowed.com"})
 
+	h.EnsureActiveUser(t, 99) // the acting user is active (#4159)
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, oscar.ID, 63, 0)
 	require.NoError(t, err, "joining a group with no role grants confers no access and must not be gated")
 }

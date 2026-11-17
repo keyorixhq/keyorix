@@ -24,8 +24,10 @@ func newMaxReadsCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1) // sqlite: serialize connections (statements stay atomic)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessSchedule{}))
-	return &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}, db
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessSchedule{}, &models.User{}))
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	ensureActiveActor(t, c.storage, 1) // the acting user is active (#4159)
+	return c, db
 }
 
 // seedMaxReadsSecret creates a secret with the given max_reads and one version.

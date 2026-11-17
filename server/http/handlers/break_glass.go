@@ -90,6 +90,9 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 		switch {
 		case errors.Is(err, core.ErrBreakGlassNotProjectMember):
 			status = http.StatusForbidden
+		case errors.Is(err, core.ErrPermissionDenied):
+			// a typed core refusal (#4159: an inactive actor) is a 403, not a 500
+			status = http.StatusForbidden
 		case errors.Is(err, core.ErrBreakGlassInvalidRequest):
 			status = http.StatusBadRequest
 		case errors.Is(err, storage.ErrBreakGlassAlreadyActive):

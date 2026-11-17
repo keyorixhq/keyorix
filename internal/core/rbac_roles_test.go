@@ -35,8 +35,13 @@ func newRoleCRUDTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		// UserRole/GroupRole/MachineIdentity(Role)/ConnectRefGrant: DeleteRole's
 		// cascade (SESSION-AT AT1 row 2) deletes from every RoleID-referencing
 		// table, so any test exercising a real (non-404) DeleteRole needs all five.
-		&models.UserRole{}, &models.GroupRole{}, &models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{}))
-	return NewKeyorixCore(store.NewLocalStorage(db)), db
+		&models.UserRole{}, &models.GroupRole{}, &models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{},
+		&models.User{})) // the acting users' accounts (#4159)
+	c := NewKeyorixCore(store.NewLocalStorage(db))
+	for _, actor := range []uint{1, 9} {
+		ensureActiveActor(t, c.storage, actor)
+	}
+	return c, db
 }
 
 func TestCreateRole_RejectsReservedBuiltinName(t *testing.T) {

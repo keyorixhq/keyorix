@@ -9,6 +9,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -171,6 +172,9 @@ func aclErrorStatus(err error) int {
 	// must not read as a missing target.
 	if corestorage.IsSecretACLNotFound(err) || corestorage.IsSecretNotFound(err) {
 		return http.StatusNotFound
+	}
+	if errors.Is(err, core.ErrPermissionDenied) {
+		return http.StatusForbidden // a typed core refusal (#4162: a machine actor)
 	}
 	msg := err.Error()
 	switch {

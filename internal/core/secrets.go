@@ -655,10 +655,47 @@ func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *
 	if req.UserID == 0 {
 		return nil, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking"))
 	}
-	if _, err := c.EnforceSecretActionPermission(ctx, req.ID, req.UserID, c.updateSecretAction(ctx, req)); err != nil {
+	if err := c.requireActorActive(ctx, req.UserID); err != nil { // #4159
+		return nil, err
+	}
+	action := c.updateSecretAction(ctx, req)
+	pc, secret, err := c.checkSecretPermission(ctx, req.ID, req.UserID, PermissionWrite, action) // EnforceSecretActionPermission
+	if err != nil {
+		return nil, err
+	}
+	if err := c.requireOwnerHoldsGatePermission(ctx, pc, secret, req.UserID, "secrets.write", action); err != nil {
 		return nil, err
 	}
 	return c.UpdateSecret(ctx, req)
+}
+
+// requireOwnerHoldsGatePermission: #4160 (authzdiff known-03). Ownership alone
+// does not authorize a mutation: an owner whose roles no longer grant perm (a
+// viewer who was handed the secret) is refused, exactly as the per-secret route
+// and RPC gates refuse them (AuthorizeSecretPrincipalForSecretAction: ACL, role,
+// then share — no owner pass). Only an owner-sourced grant is re-checked; a grant
+// from a share, ACL or role already is that gate's decision. secret is the row the
+// owner decision was made on, reused so the re-check reads no second copy.
+func (c *KeyorixCore) requireOwnerHoldsGatePermission(ctx context.Context, pc *PermissionContext, secret *models.SecretNode, userID uint, perm string, action SecretAction) error {
+	if pc == nil || pc.Source != "owner" {
+		return nil
+	}
+	d, err := c.AuthorizeSecretAction(ctx, userID, secret.ID, perm, action, secret)
+	if err != nil {
+		// A role/ACL read FAULT answers retry (503), not a 500; a positive not-found
+		// or an already-typed error keeps its class (STORAGE-ERR-CLASS-4).
+		if !isPositiveNotFound(err) && !errors.Is(err, ErrStorageReadUnavailable) && !errors.Is(err, ErrPermissionDenied) {
+			err = &storageReadFault{cause: err}
+		}
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if d.Allowed {
+		return nil
+	}
+	if d.ShareNotElevated {
+		return shareRefusal(ErrShareActionNotElevated)
+	}
+	return permissionDeniedf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
 }
 
 // updateSecretAction classifies an update for the share allowlist: SecretActionUpdate
@@ -903,7 +940,14 @@ func (c *KeyorixCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, u
 	if userID == 0 {
 		return secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking"))
 	}
-	if _, err := c.EnforceSecretOwnerPermission(ctx, id, userID); err != nil {
+	if err := c.requireActorActive(ctx, userID); err != nil { // #4159
+		return err
+	}
+	pc, secret, err := c.checkSecretPermission(ctx, id, userID, PermissionOwner, "") // EnforceSecretOwnerPermission
+	if err != nil {
+		return err
+	}
+	if err := c.requireOwnerHoldsGatePermission(ctx, pc, secret, userID, "secrets.delete", ""); err != nil {
 		return err
 	}
 	return c.DeleteSecret(ctx, id)

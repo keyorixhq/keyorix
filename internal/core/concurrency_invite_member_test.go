@@ -47,11 +47,13 @@ func TestConcurrency_InviteMember_NoDuplicateActiveMembership(t *testing.T) {
 	// actual subject) from that separate baseline. GetUserGroupRoleIDsAt
 	// (the baseline check's group-role side) needs Group/UserGroup/GroupRole
 	// migrated too, even though this test seeds no groups.
-	require.NoError(t, db.AutoMigrate(&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Environment{}))
+	require.NoError(t, db.AutoMigrate(&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Environment{}, &models.User{}))
 	require.NoError(t, db.Create(&models.Permission{ID: 900, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 7, Name: "invite-actor"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 7, PermissionID: 900}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 7, ProjectID: 1}).Error)
+	// The inviter is an active account (#4159: core refuses an inactive actor).
+	require.NoError(t, db.Create(&models.User{ID: 9, Username: "inviter", UsernameFolded: "inviter", Email: "inviter@example.com", EmailFolded: "inviter@example.com", IsActive: true}).Error)
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	c.SetMembershipValidationMode(core.ValidationModeAllowlist)
