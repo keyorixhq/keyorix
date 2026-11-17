@@ -52,8 +52,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
-	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 )
 
 // ─── tracked key material ────────────────────────────────────────────────────
