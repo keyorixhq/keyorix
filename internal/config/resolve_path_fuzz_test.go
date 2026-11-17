@@ -28,7 +28,8 @@ import (
 //	    "mode=memory" pass through unchanged with no error.
 //	(e) SUCCESS IS ABSOLUTE: if the function returns no error and the path
 //	    is not ":memory:" and does not contain "mode=memory" and is not
-//	    empty, the returned path must be absolute.
+//	    empty, the returned path must be absolute. Exception: an empty base
+//	    (dbPath starting with '?') is returned unchanged by design.
 //
 // What this does NOT verify: that the resolved path is accessible or has
 // correct permissions, nor that the '?' suffix is a valid SQLite pragma
@@ -47,6 +48,7 @@ func FuzzResolveConfigRelativePath(f *testing.F) {
 		"./relative.db",
 		"keyorix.db?_pragma=journal_mode(WAL)",
 		"?mode=memory",
+		"?",
 		":memory:?_pragma=busy_timeout(5000)",
 		"some/path/db?mode=memory&cache=private",
 		"a/b/../c/keyorix.db",
@@ -115,6 +117,17 @@ func FuzzResolveConfigRelativePath(f *testing.F) {
 			want := base + suffix
 			if got != want {
 				t.Fatalf("resolveConfigRelativePath(%q, %q): absolute path, want %q, got %q", baseDir, dbPath, want, got)
+			}
+			return
+		}
+
+		// An empty base (dbPath starts with '?', e.g. "?") is returned
+		// unchanged by design (config.go: base == "" || filepath.IsAbs(base)):
+		// there is no path component to anchor, only a query suffix.
+		// Oracle (e) does not apply.
+		if base == "" {
+			if got != dbPath {
+				t.Fatalf("resolveConfigRelativePath(%q, %q): empty base, want unchanged, got %q", baseDir, dbPath, got)
 			}
 			return
 		}
