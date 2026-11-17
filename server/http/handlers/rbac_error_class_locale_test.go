@@ -52,6 +52,10 @@ func rbacRealIDs(t *testing.T, db *gorm.DB) rbacIDs {
 	require.NoError(t, db.Where(models.User{ID: rbacPlainID}).
 		Attrs(models.User{Username: "fx-plain", UsernameFolded: "fx-plain", Email: "fx-plain@example.com", EmailFolded: "fx-plain@example.com", IsActive: true}).
 		FirstOrCreate(&models.User{}).Error)
+	// The plain user is a real row: POST /user-roles refuses an absent target (ERRMAP-TAILS-NOV-4),
+	// so a grant "to user 2" with no user 2 only ever passed because it was accepted.
+	plain := models.User{ID: rbacPlainID, Username: "rbac_plain", Email: "rbac_plain@example.test", AccountState: "active"}
+	require.NoError(t, db.Where("id = ?", rbacPlainID).FirstOrCreate(&plain).Error)
 	return rbacIDs{
 		role:  strconv.FormatUint(uint64(role.ID), 10),
 		perm:  strconv.FormatUint(uint64(perm.ID), 10),

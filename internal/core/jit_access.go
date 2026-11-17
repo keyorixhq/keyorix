@@ -41,7 +41,8 @@ import (
 // latter is the trusted exemption requireGranterHoldsRolePermissions was
 // written for. #1542.
 func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time, actorIsMachine bool) error {
-	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
+	// The ceiling first, then the target must exist (requireGrantTargetUser).
+	if err := c.requireGrantTargetUser(ctx, actorID, userID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
 	// #1646: same cross-replica race as AssignUserRole (see WithNamedLock's doc
