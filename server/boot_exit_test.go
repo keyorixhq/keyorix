@@ -6,13 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/jackc/pgx/v5/pgconn"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -80,40 +77,22 @@ func TestBootExitCode_PoolerStep(t *testing.T) {
 	}
 }
 
-// awsResponseError mimics the AWS SDK's response error (awshttp.ResponseError
-// over smithyhttp.ResponseError) and API error (smithy.GenericAPIError) by
-// method, the way isServiceUnavailable reads them.
-type awsResponseError struct {
-	status int
-	code   string
+// kmsStartupError wraps err the way a failed KEK fetch at boot does.
+func kmsStartupError(provider string, err error) error {
+	return operatorFixUnlessUnreachable(fmt.Errorf("KEK from key provider %q failed: %w", provider, err))
 }
 
-func (e *awsResponseError) Error() string       { return fmt.Sprintf("StatusCode: %d, %s", e.status, e.code) }
-func (e *awsResponseError) HTTPStatusCode() int { return e.status }
-func (e *awsResponseError) ErrorCode() string   { return e.code }
-
 // REVIEW-4213 F2: a KMS that answered "not now" (5xx, throttled) may come
-// back; one that answered "no" (4xx refusal) needs an operator.
+// back; one that answered "no" (4xx refusal) needs an operator. The AWS and
+// Azure answers are in boot_exit_aws_test.go and boot_exit_azure_test.go (they
+// need their SDK, which the noaws/noazure builds do not link).
 func TestBootExitCode_KMSAnswers(t *testing.T) {
-	kms := func(err error) error {
-		return operatorFixUnlessUnreachable(fmt.Errorf("KEK from key provider %q failed: %w", "aws-kms", err))
-	}
+	kms := func(err error) error { return kmsStartupError("gcp-kms", err) }
 	cases := []struct {
 		name string
 		err  error
 		want int
 	}{
-		{"aws 500 internal", kms(&retry.MaxAttemptsError{Attempt: 3, Err: &awsResponseError{500, "KMSInternalException"}}), exitDependencyDown},
-		{"aws 503 dependency timeout", kms(&awsResponseError{503, "DependencyTimeoutException"}), exitDependencyDown},
-		{"aws 400 throttling", kms(&awsResponseError{400, "ThrottlingException"}), exitDependencyDown},
-		{"aws 429", kms(&awsResponseError{429, "TooManyRequests"}), exitDependencyDown},
-		{"aws 400 access denied", kms(&awsResponseError{400, "AccessDeniedException"}), exitOperatorFix},
-		{"aws 400 not found", kms(&awsResponseError{400, "NotFoundException"}), exitOperatorFix},
-		{"aws 400 invalid ciphertext", kms(&awsResponseError{400, "InvalidCiphertextException"}), exitOperatorFix},
-		{"aws 400 disabled key", kms(&awsResponseError{400, "DisabledException"}), exitOperatorFix},
-		{"azure 503", kms(&azcore.ResponseError{StatusCode: http.StatusServiceUnavailable}), exitDependencyDown},
-		{"azure 429", kms(&azcore.ResponseError{StatusCode: http.StatusTooManyRequests}), exitDependencyDown},
-		{"azure 403", kms(&azcore.ResponseError{StatusCode: http.StatusForbidden, ErrorCode: "Forbidden"}), exitOperatorFix},
 		{"gcp unavailable", kms(status.Error(codes.Unavailable, "x")), exitDependencyDown},
 		{"gcp internal", kms(status.Error(codes.Internal, "x")), exitDependencyDown},
 		{"gcp resource exhausted", kms(status.Error(codes.ResourceExhausted, "x")), exitDependencyDown},
