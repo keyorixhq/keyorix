@@ -58,7 +58,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
-	"os"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
@@ -185,27 +184,19 @@ func settleGoroutines(ceiling int) {
 	}
 }
 
-func openFDs() int {
-	entries, err := os.ReadDir("/proc/self/fd")
-	if err != nil {
-		return -1
-	}
-	return len(entries)
-}
-
 // FuzzGCPKMSResponse drives the real kms.KeyManagementClient.Encrypt and Decrypt
 // against a bufconn fake that returns a fuzzer-controlled gRPC status code and
 // an arbitrary proto-encoded response body.
 func FuzzGCPKMSResponse(f *testing.F) {
 	// Seeds: (gRPC code 0–16, payload bytes).
-	f.Add(uint32(0), []byte(nil))             // OK, empty response
-	f.Add(uint32(0), []byte("\n\x06canary"))  // OK, non-empty Ciphertext field
-	f.Add(uint32(5), []byte(nil))             // NOT_FOUND
-	f.Add(uint32(7), []byte(nil))             // PERMISSION_DENIED
-	f.Add(uint32(8), []byte(nil))             // RESOURCE_EXHAUSTED (retryable)
-	f.Add(uint32(13), []byte(nil))            // INTERNAL
-	f.Add(uint32(14), []byte(nil))            // UNAVAILABLE (retryable)
-	f.Add(uint32(16), []byte(nil))            // UNAUTHENTICATED
+	f.Add(uint32(0), []byte(nil))                // OK, empty response
+	f.Add(uint32(0), []byte("\n\x06canary"))     // OK, non-empty Ciphertext field
+	f.Add(uint32(5), []byte(nil))                // NOT_FOUND
+	f.Add(uint32(7), []byte(nil))                // PERMISSION_DENIED
+	f.Add(uint32(8), []byte(nil))                // RESOURCE_EXHAUSTED (retryable)
+	f.Add(uint32(13), []byte(nil))               // INTERNAL
+	f.Add(uint32(14), []byte(nil))               // UNAVAILABLE (retryable)
+	f.Add(uint32(16), []byte(nil))               // UNAUTHENTICATED
 	f.Add(uint32(0), []byte("\xff\xff\xff\xff")) // OK, invalid proto bytes
 
 	fakeSrv := &fakeKMSServer{}

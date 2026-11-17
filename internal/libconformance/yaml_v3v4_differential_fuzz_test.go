@@ -160,27 +160,27 @@ func FuzzYAMLV3V4Differential(f *testing.F) {
 		"null",
 		"x: 1",
 		"x: 1\ny: 2\n",
-		"x: 1\nx: 2\n",              // duplicate key — both should reject
-		"- 1\n- 2\n- 3\n",           // sequence
-		"a:\n  b:\n    c: 1\n",      // nested maps
-		"foo: !!str 123\n",          // explicit tag
-		"n: .nan\ni: .inf\n",        // float specials
-		"big: 0x7fffffffffffffff\n", // hex integer
-		"t: true\nf: false\n",       // YAML 1.2 canonical booleans (both accept)
-		"yes: yes\nno: no\n",        // YAML 1.1 bool-ish strings (key v3 vs v4 difference)
-		"on: on\noff: off\n",        // YAML 1.1 bool-ish strings
-		"y: y\nn: n\n",              // YAML 1.1 bool-ish strings
-		"s: 2020-01-02\n",           // timestamp-looking string
-		"anchor: &a 1\nref: *a\n",   // anchor/alias
-		"key: |\n  multi\n  line\n", // block scalar
-		"a: 1\nb: {c: 2, c: 3}\n",   // nested duplicate key
-		"<<: {a: 1}\nb: 2\n",        // merge key
-		"a: 1\n---\nb: 2\n",         // multi-document (only first document decoded)
-		"oct: 0777\n",               // YAML 1.1 octal (v3: int511; v4: may differ)
+		"x: 1\nx: 2\n",                // duplicate key — both should reject
+		"- 1\n- 2\n- 3\n",             // sequence
+		"a:\n  b:\n    c: 1\n",        // nested maps
+		"foo: !!str 123\n",            // explicit tag
+		"n: .nan\ni: .inf\n",          // float specials
+		"big: 0x7fffffffffffffff\n",   // hex integer
+		"t: true\nf: false\n",         // YAML 1.2 canonical booleans (both accept)
+		"yes: yes\nno: no\n",          // YAML 1.1 bool-ish strings (key v3 vs v4 difference)
+		"on: on\noff: off\n",          // YAML 1.1 bool-ish strings
+		"y: y\nn: n\n",                // YAML 1.1 bool-ish strings
+		"s: 2020-01-02\n",             // timestamp-looking string
+		"anchor: &a 1\nref: *a\n",     // anchor/alias
+		"key: |\n  multi\n  line\n",   // block scalar
+		"a: 1\nb: {c: 2, c: 3}\n",     // nested duplicate key
+		"<<: {a: 1}\nb: 2\n",          // merge key
+		"a: 1\n---\nb: 2\n",           // multi-document (only first document decoded)
+		"oct: 0777\n",                 // YAML 1.1 octal (v3: int511; v4: may differ)
 		"big: 99999999999999999999\n", // very large integer
-		"f1: 1.5e300\nf2: 1e-300\n", // large/small floats
-		"tag: !!binary YWJj\n",      // binary tag
-		"bare: ~\n",                 // null
+		"f1: 1.5e300\nf2: 1e-300\n",   // large/small floats
+		"tag: !!binary YWJj\n",        // binary tag
+		"bare: ~\n",                   // null
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))

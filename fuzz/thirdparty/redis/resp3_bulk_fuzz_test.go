@@ -44,8 +44,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
+	"github.com/redis/go-redis/v9"
 )
 
 const resp3TestPassword = "resp3-fuzz-credential-canary-do-not-appear-in-error"
@@ -81,11 +81,11 @@ func serveRESP3BulkDeclared(c net.Conn, count uint64, body []byte) {
 // documented for keyorix-private / upstream reporting only.
 func FuzzRESP3BulkDeclared(f *testing.F) {
 	f.Add(uint64(0), []byte(nil))
-	f.Add(uint64(5), []byte("hello"))                    // exact match
-	f.Add(uint64(5), []byte("hi"))                       // declared > actual
-	f.Add(uint64(1<<24), []byte(nil))                    // 16MB declared, empty body (safe upper bound)
-	f.Add(uint64(9999999), []byte(nil))                  // ~10MB declared, empty body
-	f.Add(uint64(5), []byte("hello-extra-garbage\r\n"))  // declared < actual
+	f.Add(uint64(5), []byte("hello"))                   // exact match
+	f.Add(uint64(5), []byte("hi"))                      // declared > actual
+	f.Add(uint64(1<<24), []byte(nil))                   // 16MB declared, empty body (safe upper bound)
+	f.Add(uint64(9999999), []byte(nil))                 // ~10MB declared, empty body
+	f.Add(uint64(5), []byte("hello-extra-garbage\r\n")) // declared < actual
 
 	f.Fuzz(func(t *testing.T, count uint64, body []byte) {
 		// Cap declared count: values ≥ ~512MB trigger OOM in go-redis's pre-allocator
