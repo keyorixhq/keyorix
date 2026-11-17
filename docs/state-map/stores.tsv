@@ -121,6 +121,7 @@ internal/encryptionops/migrate_provider.go (securefiles.SecureCreateFileSync)	fi
 internal/encryptionops/migrate_provider.go (securefiles.SecureWriteFileSync)	file_write	internal/encryptionops	1
 internal/encryptionops/shamir_split.go (securefiles.SecureCreateFileSync)	file_write	internal/encryptionops	2
 internal/faultstorage/gen/main.go (os.WriteFile)	file_write	internal/faultstorage/gen	2
+internal/fuzzutil/resguard/budget.go (os.WriteFile)	file_write	internal/fuzzutil/resguard	1
 internal/guardrules/expiry.go (os.OpenFile)	file_write	internal/guardrules	1
 internal/guardrules/rollout.go (os.OpenFile)	file_write	internal/guardrules	1
 internal/keyfiles/manifest.go (securefiles.SecureWriteFileSync)	file_write	internal/keyfiles	1
@@ -140,6 +141,8 @@ scripts/ci/shadowprobe/main.go (os.WriteFile)	file_write	scripts/ci/shadowprobe	
 scripts/demo/oidcissuer/main.go (os.WriteFile)	file_write	scripts/demo/oidcissuer	1
 scripts/e2e/harness/harness.go (os.Create)	file_write	scripts/e2e/harness	1
 scripts/e2e/harness/harness.go (os.WriteFile)	file_write	scripts/e2e/harness	4
+scripts/e2e/sdkdiff/hostile_run.go (os.Create)	file_write	scripts/e2e/sdkdiff	1
+scripts/e2e/sdkdiff/hostile_run.go (os.WriteFile)	file_write	scripts/e2e/sdkdiff	1
 scripts/e2e/sdkdiff/main.go (os.Create)	file_write	scripts/e2e/sdkdiff	2
 scripts/e2e/sdkdiff/main.go (os.WriteFile)	file_write	scripts/e2e/sdkdiff	1
 scripts/e2e/sdkdiff/minimize.go (os.WriteFile)	file_write	scripts/e2e/sdkdiff	2

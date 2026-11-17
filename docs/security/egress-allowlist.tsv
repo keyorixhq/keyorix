@@ -35,6 +35,7 @@ internal/dynamic/redis.go	E13	Redis dynamic-secret backend
 internal/dynamic/revoke_dsn.go	E13	Revoke-only rewrite of a stored admin_dsn before connecting to the dynamic-secret target
 internal/evidencesink/objectstore.go	E06	S3-compatible upload of the evidence pack, evidence_delivery.object_store
 internal/evidencesink/webhook.go	E06	Webhook POST of the evidence pack, evidence_delivery.webhook
+internal/fuzzutil/resguard/	DEV	Fuzz resource-measurement layer: the air-gap NetMeter wraps dials and fails non-loopback ones, imported only by fuzz tests
 internal/k8ssync/keyorix_fetcher.go	E14	keyorix-k8s-sync reads secrets from the configured Keyorix server
 internal/k8ssync/rest_sink.go	E14	keyorix-k8s-sync writes Kubernetes Secrets through the in-cluster API server
 internal/mcp/keyorix.go	E17	keyorix-mcp calls the configured Keyorix server
@@ -79,5 +80,5 @@ operator/internal/keyorix/client.go	E15	Kubernetes operator reads secrets from t
 scripts/	DEV	Build, CI, e2e, fuzzing, drill and demo tooling, never built into a release artifact
 server/admin/restore.go	E01	Opens a local SQLite file read-only during restore (no network)
 server/admin/restore_postgres.go	E01	`admin restore` into a PostgreSQL target database
-server/boot_exit.go	E11	Azure sign-in probe for azure-kms at boot: imports azcore/azidentity only to classify the key provider's boot error into exit 75/78, no connection of its own
+server/boot_exit_azure.go	E11	Azure sign-in probe for azure-kms at boot (!noazure half of the exit classification): imports azcore/azidentity only to classify the key provider's boot error into exit 75/78, no connection of its own
 server/wire_sso.go	E08	OIDC discovery at boot and the SSO HTTP client, sso.providers[]

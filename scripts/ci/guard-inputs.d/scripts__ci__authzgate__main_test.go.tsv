@@ -1,0 +1,1 @@
+scripts/ci/authzgate/main_test.go	!operator/**	walks internal/, server/, pkg/, cmd/ and migrations/ only (treeDirs); operator/ is a separate module the gate never indexes

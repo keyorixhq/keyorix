@@ -1,0 +1,24 @@
+{
+  "target": "azure_connector_response",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 20,
+  "meters": {
+    "net_bytes_in": {
+      "floor": 3198,
+      "per_byte": 3054,
+      "abs_max": 12792
+    },
+    "net_bytes_out": {
+      "floor": 2584,
+      "per_byte": 2584,
+      "abs_max": 10336
+    },
+    "sleep_ns": {
+      "floor": 2000000,
+      "per_byte": 2000000,
+      "abs_max": 8000000,
+      "mode": "absolute"
+    }
+  }
+}
