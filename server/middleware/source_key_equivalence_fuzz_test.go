@@ -20,16 +20,16 @@
 // feed a deliberately-broken pipeline and show the oracle goes red WITHOUT
 // editing production code — the fold_oracles_fuzz_test.go pattern):
 //
-//   1. CONVERGENCE: equivalent textual presentations of one net.IP (ephemeral
-//      port, bracketed vs bare IPv6, upper/lower hex, zero-expanded IPv6,
-//      IPv4-mapped ::ffff:a.b.c.d) collapse to ONE core.CanonicalIP key.
-//   2. UNTRUSTED PEER ⇒ HEADERS INERT: with no trusted proxy in front (empty
-//      trusted set), NO forwarding header the attacker sets may move the source
-//      key off the TCP peer. This is the anti-spoof AND anti-targeted-DoS oracle.
-//   3. TRUSTED PEER ⇒ LEFTMOST PREPEND IGNORED: behind a trusted proxy, prepending
-//      attacker-controlled hop(s) to the LEFT of the X-Forwarded-For chain never
-//      changes the attributed key (the walk is right→left, stopping at the first
-//      non-trusted hop; a classic left-to-right RealIP parse would fail this).
+//  1. CONVERGENCE: equivalent textual presentations of one net.IP (ephemeral
+//     port, bracketed vs bare IPv6, upper/lower hex, zero-expanded IPv6,
+//     IPv4-mapped ::ffff:a.b.c.d) collapse to ONE core.CanonicalIP key.
+//  2. UNTRUSTED PEER ⇒ HEADERS INERT: with no trusted proxy in front (empty
+//     trusted set), NO forwarding header the attacker sets may move the source
+//     key off the TCP peer. This is the anti-spoof AND anti-targeted-DoS oracle.
+//  3. TRUSTED PEER ⇒ LEFTMOST PREPEND IGNORED: behind a trusted proxy, prepending
+//     attacker-controlled hop(s) to the LEFT of the X-Forwarded-For chain never
+//     changes the attributed key (the walk is right→left, stopping at the first
+//     non-trusted hop; a classic left-to-right RealIP parse would fail this).
 //
 // What this target does NOT verify (stated so the claim is checkable):
 //   - It does not run the real limiter counting/storage — FuzzLoginThrottle
