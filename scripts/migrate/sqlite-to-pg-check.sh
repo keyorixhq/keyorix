@@ -264,6 +264,11 @@ SRC_AUDIT_MAX="$(jq -r 'select(.table=="__audit_max_id") | .count' "$DRILL_DIR/s
 SRC_ROWS="$(jq -s 'map(select(.table!="__audit_max_id") | .count) | add' "$DRILL_DIR/src.sums")"
 ok "source: $(jq -s 'map(select(.table!="__audit_max_id" and .count>0)) | length' "$DRILL_DIR/src.sums") non-empty tables, $SRC_ROWS rows, newest audit id $SRC_AUDIT_MAX"
 
+# the head of the source chain (id, prev_hash, entry_hash), taken before the backup appends its event
+SRC_HEAD="$(mc "$SRC" audit-link --after "$SRC_AUDIT_MAX" | head -1)" || fail "audit-link on the source"
+SRC_HEAD_ENTRY="$(echo "$SRC_HEAD" | cut -f3)"
+[ "$(echo "$SRC_HEAD" | cut -f1)" = "$SRC_AUDIT_MAX" ] && [ -n "$SRC_HEAD_ENTRY" ] || fail "source head row $SRC_AUDIT_MAX not found or has no entry hash"
+
 step "admin backup of the SQLite source (server stopped)"
 inst_admin "$SRC" backup --output ./backup.tar.gz >"$DRILL_DIR/backup.log" 2>&1 \
     || { cat "$DRILL_DIR/backup.log" >&2; fail "admin backup failed"; }
@@ -322,6 +327,13 @@ echo "     schema_min_compatible_epoch / role_permissions_generation -- see scri
 TAIL="$(mc "$DST" audit-tail --after "$SRC_AUDIT_MAX")" || fail "audit-tail on the target"
 echo "$TAIL" | cut -f2 | sort | uniq -c | sed 's/^/    audit events appended by the restore: /'
 echo "$TAIL" | cut -f2 | grep -qx 'admin.restore_completed' || fail "no admin.restore_completed bridge event on the target"
+# head unchanged (same id, same entry hash) and the first event written on PostgreSQL chains onto it
+LINK="$(mc "$DST" audit-link --after "$SRC_AUDIT_MAX")" || fail "audit-link on the target"
+[ "$(echo "$LINK" | sed -n 1p | cut -f1,3)" = "$(printf '%s\t%s' "$SRC_AUDIT_MAX" "$SRC_HEAD_ENTRY")" ] \
+    || fail "migrated head differs from the source head (id $SRC_AUDIT_MAX, entry hash $SRC_HEAD_ENTRY)"
+[ "$(echo "$LINK" | sed -n 2p | cut -f2)" = "$SRC_HEAD_ENTRY" ] \
+    || fail "the first event written after the migration does not chain onto the migrated head"
+ok "head row $SRC_AUDIT_MAX keeps its entry hash and the first new event (id $((SRC_AUDIT_MAX + 1))) chains onto it"
 
 step "audit chain: VALID, continuous, anchor-checked, retention anchor and schema epoch preserved"
 cp "$EXT/checkpoint-export.json" "$EXT/checkpoint.key" "$DRILL_DIR/$DST/"
