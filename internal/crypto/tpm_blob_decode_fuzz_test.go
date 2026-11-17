@@ -59,7 +59,10 @@ var (
 // see FuzzTPMUnsealHostileResponse for the TPM side); the private's inner
 // encrypted structure (go-tpm treats TPM2B_PRIVATE as opaque bytes); whether a
 // decoded public describes a sensible sealed object (attributes, policy); go-tpm's
-// command marshalling. Inputs are capped at 8 KiB per field.
+// command marshalling; the provider's own decode calls (decodeSealedPublic and
+// decodeSealedPrivate mirror tpm_provider.go's two tpm2.Unmarshal calls instead of
+// calling unseal, so a change there does not reach this target until the mirror
+// is updated). Inputs are capped at 8 KiB per field.
 func FuzzTPMSealedBlobDecode(f *testing.F) {
 	pub := tpm2.Marshal(tpm2.New2B(tpm2.TPMTPublic{
 		Type:    tpm2.TPMAlgKeyedHash,
@@ -215,7 +218,7 @@ func legacyLaxSelector(nerr, lerr error) bool {
 // TPMS_ENC_SCHEME_RSAES has no fields, so every RSA public with scheme RSAES is
 // misread by the legacy decoder. tpm2 also accepts RSAES as an ECC scheme
 // (TPMI_ALG_ECC_SCHEME excludes it; tpm2 shares one asym-scheme union for
-// both), found as testdata f190c11635016535, and legacy misreads that the same
+// both), found as private fuzz-corpus seed f190c11635016535, and legacy misreads that the same
 // way. Such inputs are skipped, whichever decoder
 // accepts them: the two cannot be compared there. The scheme is read from the
 // raw bytes, after the symmetric definition (2 bytes for NULL, 6 otherwise;
@@ -248,7 +251,7 @@ func legacySchemeMisread(b []byte) bool {
 		// TP1-TPM-legacy-ecdaa-count (pinned by TestTPMFindingLegacyECDAACount):
 		// legacy SigScheme.Count is a uint32; TPMS_SCHEME_ECDAA.count is a
 		// UINT16 (Part 2 §11.2.1.3), so legacy misreads every ECDAA scheme.
-		// Found as testdata 441d256acb7fe83f.
+		// Found as private fuzz-corpus seed 441d256acb7fe83f.
 		return true
 	}
 	return false

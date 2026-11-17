@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	legacy "github.com/google/go-tpm/legacy/tpm2"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // unsealWithRewrittenResponse seals a fixed KEK on a fresh simulator, then
@@ -56,7 +59,8 @@ func TestTPMFindingShortParamsAreSuccess(t *testing.T) {
 		return short
 	})
 	if err != nil {
-		t.Fatalf("go-tpm now rejects an empty Unseal parameter area (%v): finding fixed, remove tpmShortParams\n rsp=%x", err, rsp)
+		guardrules.KnownFindingClosed(t, "TP1-TPM-short-params", fmt.Sprintf("go-tpm now rejects an empty Unseal parameter area (%v): remove tpmShortParams\n rsp=%x", err, rsp))
+		return
 	}
 	if len(out) != 0 {
 		t.Fatalf("empty parameter area produced outData %x: the model of the finding is wrong", out)
@@ -80,7 +84,8 @@ func TestTPMFindingResponseHeaderUnchecked(t *testing.T) {
 		return r
 	})
 	if err != nil {
-		t.Fatalf("go-tpm now checks the response header (%v): finding fixed", err)
+		guardrules.KnownFindingClosed(t, "TP1-TPM-rsp-header-unchecked", fmt.Sprintf("go-tpm now checks the response header (%v)", err))
+		return
 	}
 	if !bytes.Equal(out, bytes.Repeat([]byte{0x5A}, KEKSize)) {
 		t.Fatalf("bad header changed the unsealed value to %x", out)
@@ -92,7 +97,7 @@ func TestTPMFindingResponseHeaderUnchecked(t *testing.T) {
 // binary.Read of its 2-byte size field, so an empty or 1-byte input decodes,
 // without error, as an empty TPM2B. The same happens to a TPM2B nested at the end
 // of a structure: FuzzTPMSealedBlobDecode found a TPMT_PUBLIC whose trailing
-// "unique" TPM2B_DIGEST has a 1-byte size field (testdata 2ebca50f1c116e94).
+// "unique" TPM2B_DIGEST has a 1-byte size field (private fuzz-corpus seed 2ebca50f1c116e94).
 // B1 and B2 excuse exactly this shape (tpmTruncatedSizeTail). This test goes red
 // when go-tpm starts rejecting a truncated size field; then delete
 // tpmTruncatedSizeTail with it.
@@ -111,7 +116,8 @@ func TestTPMFindingTruncatedSizeAccepted(t *testing.T) {
 		pub, err := tpm2.Unmarshal[tpm2.TPM2BPublic](in)
 		priv, err2 := tpm2.Unmarshal[tpm2.TPM2BPrivate](in)
 		if err != nil || err2 != nil {
-			t.Fatalf("go-tpm now rejects the truncated size field %x (%v, %v): finding fixed, remove tpmTruncatedSizeField", in, err, err2)
+			guardrules.KnownFindingClosed(t, "TP1-TPM-truncated-size", fmt.Sprintf("go-tpm now rejects the truncated size field %x (%v, %v): remove tpmTruncatedSizeTail", in, err, err2))
+			return
 		}
 		if len(pub.Bytes()) != 0 || len(priv.Buffer) != 0 {
 			t.Fatalf("truncated %x decoded to non-empty contents: the model of the finding is wrong", in)
@@ -122,7 +128,8 @@ func TestTPMFindingTruncatedSizeAccepted(t *testing.T) {
 	nested := []byte{0x00, 0x08, 0x0d, 0x34, 0xd3, 0x4d, 0x34, 0xd0, 0x00, 0x00, 0x00, 0x10, 0x34}
 	inner, err := tpm2.Unmarshal[tpm2.TPMTPublic](nested)
 	if err != nil {
-		t.Fatalf("go-tpm now rejects the nested truncated size field (%v): finding fixed, remove tpmTruncatedSizeTail", err)
+		guardrules.KnownFindingClosed(t, "TP1-TPM-truncated-size", fmt.Sprintf("go-tpm now rejects the nested truncated size field (%v): remove tpmTruncatedSizeTail", err))
+		return
 	}
 	if m := tpm2.Marshal(*inner); !bytes.Equal(m, append(append([]byte{}, nested[:len(nested)-1]...), 0, 0)) {
 		t.Fatalf("nested case re-marshals as %x: the model of the finding is wrong", m)
@@ -142,8 +149,8 @@ func TestTPMFindingTruncatedSizeAccepted(t *testing.T) {
 }
 
 // TestTPMFindingLegacyLaxSelector pins TP1-TPM-legacy-lax-selector
-// (EXPECTED-DIFFERENCE, found by FuzzTPMTPublicLegacyDifferential, testdata
-// 3ad0110a1f55f254): legacy/tpm2.DecodePublic accepts a SYMCIPHER TPMT_PUBLIC
+// (EXPECTED-DIFFERENCE, found by FuzzTPMTPublicLegacyDifferential, private
+// fuzz-corpus seed 3ad0110a1f55f254): legacy/tpm2.DecodePublic accepts a SYMCIPHER TPMT_PUBLIC
 // whose symmetric algorithm is 0x3030, which no TPM defines; tpm2.Unmarshal
 // rejects it. Keyorix uses only the tpm2 decoder, which is the strict one, so
 // nothing in keyorix depends on the legacy reading. This test goes red if either
@@ -154,13 +161,13 @@ func TestTPMFindingLegacyLaxSelector(t *testing.T) {
 	_, nerr := tpm2.Unmarshal[tpm2.TPMTPublic](in)
 	_, lerr := legacy.DecodePublic(in)
 	if nerr == nil || lerr != nil || !legacyLaxSelector(nerr, lerr) {
-		t.Fatalf("tpm2 err=%v, legacy err=%v: the decoders no longer differ this way, remove legacyLaxSelector", nerr, lerr)
+		guardrules.KnownFindingClosed(t, "TP1-TPM-legacy-lax-selector", fmt.Sprintf("tpm2 err=%v, legacy err=%v: the decoders no longer differ this way, remove legacyLaxSelector", nerr, lerr))
 	}
 }
 
 // TestTPMFindingLegacyRSAESMisread pins TP1-TPM-legacy-rsaes, an upstream DEFECT
 // in google/go-tpm v0.9.8 legacy/tpm2 found by FuzzTPMTPublicLegacyDifferential
-// (testdata 1ab57a4c8c393042): decodeSigScheme reads a 2-byte hashAlg after every
+// (private fuzz-corpus seed 1ab57a4c8c393042): decodeSigScheme reads a 2-byte hashAlg after every
 // non-NULL scheme, but TPMS_ENC_SCHEME_RSAES (TPM 2.0 Part 2 §11.2.3.2) is empty,
 // so a well-formed RSA public with scheme RSAES is misread: the next two bytes
 // (keyBits) are taken as the hash and everything after shifts. Keyorix does not
@@ -192,7 +199,8 @@ func TestTPMFindingLegacyRSAESMisread(t *testing.T) {
 	}
 	lp, lerr := legacy.DecodePublic(in)
 	if lerr == nil && lp.RSAParameters != nil && lp.RSAParameters.KeyBits == 2048 && len(lp.RSAParameters.ModulusRaw) == 256 {
-		t.Fatal("legacy now decodes an RSAES public correctly: finding fixed, remove legacySchemeMisread")
+		guardrules.KnownFindingClosed(t, "TP1-TPM-legacy-rsaes", "legacy now decodes an RSAES public correctly: remove RSAES from legacySchemeMisread")
+		return
 	}
 	if lerr == nil && lp.RSAParameters != nil {
 		t.Logf("legacy.DecodePublic on a valid RSAES public: no error, KeyBits=%d (want 2048), scheme hash=%#x, modulus %d bytes (want 256)",
@@ -204,7 +212,7 @@ func TestTPMFindingLegacyRSAESMisread(t *testing.T) {
 
 // TestTPMFindingLegacyECDAACount pins TP1-TPM-legacy-ecdaa-count, an upstream
 // DEFECT in google/go-tpm v0.9.8 legacy/tpm2 (found by
-// FuzzTPMTPublicLegacyDifferential, testdata 441d256acb7fe83f): legacy SigScheme
+// FuzzTPMTPublicLegacyDifferential, private fuzz-corpus seed 441d256acb7fe83f): legacy SigScheme
 // decodes an ECDAA scheme's count as a uint32, TPM 2.0 Part 2 §11.2.1.3 defines
 // it as UINT16 (tpm2.TPMSSchemeECDAA has it right). A well-formed ECDAA ECC
 // public therefore misdecodes in legacy. No keyorix reach (keyorix does not
@@ -236,13 +244,14 @@ func TestTPMFindingLegacyECDAACount(t *testing.T) {
 	lp, lerr := legacy.DecodePublic(in)
 	if lerr == nil && lp.ECCParameters != nil && lp.ECCParameters.Sign != nil && lp.ECCParameters.Sign.Count == 7 &&
 		len(lp.ECCParameters.Point.XRaw) == 32 {
-		t.Fatal("legacy now decodes an ECDAA scheme correctly: finding fixed, drop ECDAA from legacySchemeMisread")
+		guardrules.KnownFindingClosed(t, "TP1-TPM-legacy-ecdaa-count", "legacy now decodes an ECDAA scheme correctly: drop ECDAA from legacySchemeMisread")
+		return
 	}
 	t.Logf("legacy.DecodePublic on a valid ECDAA public: err=%v", lerr)
 }
 
 // TestTPMFindingSymDefObjectXOR pins TP1-TPM-symdef-xor (found by
-// FuzzTPMTPublicLegacyDifferential, testdata 25c09b19d4927829): tpm2.Unmarshal
+// FuzzTPMTPublicLegacyDifferential, private fuzz-corpus seed 25c09b19d4927829): tpm2.Unmarshal
 // accepts a SYMCIPHER public whose TPMT_SYM_DEF_OBJECT algorithm is TPM_ALG_XOR,
 // which TPMI_ALG_SYM_OBJECT excludes; legacy.DecodePublic rejects the same bytes
 // (it reads a mode field XOR does not have). HARDENING at most for keyorix: the
@@ -253,7 +262,8 @@ func TestTPMFindingSymDefObjectXOR(t *testing.T) {
 	_, nerr := tpm2.Unmarshal[tpm2.TPMTPublic](in)
 	_, lerr := legacy.DecodePublic(in)
 	if nerr != nil || !symDefIsXOR(in) {
-		t.Fatalf("tpm2 no longer accepts XOR in TPMT_SYM_DEF_OBJECT (%v): finding fixed, remove symDefIsXOR", nerr)
+		guardrules.KnownFindingClosed(t, "TP1-TPM-symdef-xor", fmt.Sprintf("tpm2 no longer accepts XOR in TPMT_SYM_DEF_OBJECT (%v): remove symDefIsXOR", nerr))
+		return
 	}
 	if lerr == nil {
 		t.Fatal("legacy now accepts it too: update the report")
@@ -296,7 +306,8 @@ func TestTPMFindingTrailingBytesAccepted(t *testing.T) {
 	}
 	got, err := newTPMProvider(t, dir, 11).KEK()
 	if err != nil {
-		t.Fatalf("trailing bytes are now rejected (%v): finding changed, update the report", err)
+		guardrules.KnownFindingClosed(t, "TP1-TPM-trailing-bytes", fmt.Sprintf("trailing bytes are now rejected (%v): update the report", err))
+		return
 	}
 	if string(got) != string(kek) {
 		t.Fatal("trailing bytes changed the unsealed KEK")

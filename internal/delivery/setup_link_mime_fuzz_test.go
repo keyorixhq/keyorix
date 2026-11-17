@@ -34,7 +34,7 @@ var buildSetupLinkRaw = func(req SetupLinkRequest) ([]byte, error) {
 }
 
 // FuzzSetupLinkEmailMIMERoundTrip renders the setup-link email through
-// keyorix's own SMTPDelivery.buildMessage (wneessen/go-mail v0.8.1: To,
+// keyorix's own SMTPDelivery.buildMessage (wneessen/go-mail v0.8.2: To,
 // Subject, a text/plain body and a text/html alternative) and parses the bytes
 // back with the standard library (net/mail, mime, mime/multipart,
 // mime/quotedprintable) and golang.org/x/net/html. The live caller

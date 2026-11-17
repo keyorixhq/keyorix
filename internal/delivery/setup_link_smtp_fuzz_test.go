@@ -28,8 +28,8 @@ const (
 )
 
 // scramIterKnownFinding is the largest SCRAM iteration count the hostile-relay
-// target still judges under S3. Above it, finding TP1-GOMAIL-scram-iter applies:
-// go-mail runs PBKDF2 with whatever count the relay sends (about 0.2 µs per
+// target still judges under S3. Above it, finding TP1-GOMAIL-scram-iter
+// (#4383) applies: go-mail runs PBKDF2 with whatever count the relay sends (about 0.2 µs per
 // iteration here), so a larger count is a known unbounded-work case, pinned by
 // TestGoMailFindingSCRAMIterationsUnbounded, and would also stall the fuzz
 // worker. The excluded inputs are the ones go-mail itself would parse
