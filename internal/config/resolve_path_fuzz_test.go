@@ -92,10 +92,7 @@ func FuzzResolveConfigRelativePath(f *testing.F) {
 		}
 
 		// Extract base (before '?').
-		base := dbPath
-		if idx := strings.IndexByte(dbPath, '?'); idx != -1 {
-			base = dbPath[:idx]
-		}
+		base, _, _ := strings.Cut(dbPath, "?")
 
 		// Oracle (b): traversal via ".." in the base must be rejected.
 		if !filepath.IsAbs(base) && strings.Contains(base, "..") {
