@@ -197,10 +197,10 @@ func ex1Compare(e, a ex1Probe) []ex1Finding {
 //	                                       observable round-trip (DBMeter doc: "round-trips, not
 //	                                       total DB work"); recorded, never gated
 func ex1Classify(dim string) string {
-	switch {
-	case dim == "dbrows":
+	switch dim {
+	case "dbrows":
 		return "ARTIFACT"
-	case dim == "dbqueries":
+	case "dbqueries":
 		return "ENUMERATION-COST"
 	default:
 		return "ENUMERATION"
@@ -306,7 +306,7 @@ func TestEX1ExistenceCostCensus(t *testing.T) {
 			// Replay the whole pair 3x; keep only the differences present in all 3 runs.
 			var common map[string]ex1Finding
 			allDenied := true
-			for rep := 0; rep < 3; rep++ {
+			for range 3 {
 				pe := ex1RunProbe(w, meter, buildE)
 				pa := ex1RunProbe(w, meter, buildA)
 				if osIs2xx(pe.code) || osIs2xx(pa.code) {
@@ -577,7 +577,7 @@ func TestEX1AccountExistenceOracle(t *testing.T) {
 	nextIP := func() string { ipN++; return "198.51.100." + strconv.Itoa(ipN) + ":5000" }
 
 	var known, unknown ex1Probe
-	for rep := 0; rep < 3; rep++ {
+	for rep := range 3 {
 		known = ex1RunProbe(w, meter, func() *http.Request { return ex1LoginReq("osadmin", wrongPass, nextIP()) })
 		unknown = ex1RunProbe(w, meter, func() *http.Request { return ex1LoginReq("nosuchuser-"+strconv.Itoa(rep), wrongPass, nextIP()) })
 
