@@ -648,8 +648,14 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	// immediately after engine.Issue — see the crash-orphan note on IssueLease's doc
 	// comment (#97).
 	log.Printf("dynamic-secrets: issuing a %s credential (config=%q id=%d project=%d ttl=%s)", cfg.BackendType, cfg.Name, cfg.ID, cfg.ProjectID, ttl)
-	cred, roleName, err := engine.Issue(ctx, adminDSN, cfg.CreationTemplate, ttl)
+	issueCtx, reported := withIssuedRoleCapture(ctx)
+	cred, roleName, err := engine.Issue(issueCtx, adminDSN, cfg.CreationTemplate, ttl)
 	if err != nil {
+		// The engine named an account before its first target write, so a failure (a
+		// contained client panic above all) may have left it behind with no lease.
+		if name := reported(); name != "" {
+			c.cleanupAbortedIssue(ctx, cfg, engine, adminDSN, name, userID)
+		}
 		return nil, fmt.Errorf("failed to issue credential: %w", err)
 	}
 	// leaseID is generated BEFORE encryption (not after, as in the pre-#94 order) so

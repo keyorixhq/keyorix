@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/keyorixhq/keyorix/internal/core/dsn"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -241,6 +242,7 @@ func (e *PostgresEngine) Issue(ctx context.Context, adminDSN, creationTemplate s
 	ident := pgx.Identifier{role}.Sanitize()
 	validUntil := time.Now().Add(ttl).UTC().Format(time.RFC3339)
 
+	ports.ReportIssuedRole(ctx, role) // before the first write: a panic after CREATE ROLE must not orphan it
 	if _, err := conn.Exec(ctx, fmt.Sprintf(
 		"CREATE ROLE %s LOGIN PASSWORD '%s' VALID UNTIL '%s'", ident, password, validUntil)); err != nil {
 		return Credential{}, "", fmt.Errorf("create role: %w", err)
