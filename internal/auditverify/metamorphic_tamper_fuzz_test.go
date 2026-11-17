@@ -400,7 +400,7 @@ func liveIDs(f *diffFixture) []uint64 {
 func FuzzAuditChainMetamorphicTamper(f *testing.F) {
 	// Seeds: a few bytes selecting different mutation kinds / sizes.
 	f.Add([]byte{})
-	for k := byte(0); k < 11; k++ {
+	for k := range byte(11) {
 		f.Add([]byte{10, k, 3, 7, 1})      // N=13, kind k, various picks
 		f.Add([]byte{0, k, 200, 5, 9, 42}) // N=3,  kind k
 	}
