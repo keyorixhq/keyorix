@@ -10,6 +10,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"github.com/keyorixhq/keyorix/internal/core/dsn"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -100,6 +101,7 @@ func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 	}
 
 	ref := mysqlAccountRef(user)
+	ports.ReportIssuedRole(ctx, user)
 	// Armed before CREATE USER: a panic while reading its reply can follow a CREATE
 	// the server already ran. user is fresh crypto/rand, so the DROP cannot hit an
 	// account this call did not create.
