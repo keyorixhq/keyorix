@@ -75,6 +75,30 @@ const (
 	maxWireLen = 1 << 16
 
 	callWallBound = 2 * time.Second
+
+	// driverDefaultMaxMessageSize mirrors go.mongodb.org/mongo-driver/v2's own
+	// defaultMaxMessageSize (x/mongo/driver/topology/connection.go): whenever a
+	// connection has not yet negotiated a server-advertised maxMessageSizeBytes
+	// (desc.MaxMessageSize == 0 -- true for the very first reply on a connection,
+	// before any hello has been parsed), the driver falls back to this hard-coded,
+	// spec-mandated value and allocates a read buffer sized up to it. That is
+	// legitimate driver behaviour, not a defect: KFZ-2026-130 (fuzz-corpus,
+	// private) records this exact allocation, reached via two different
+	// fuzzer inputs (one with a negotiated hello value, one via this unset/
+	// default fallback), misread as a bug because oracle (a) below used to
+	// bound allocation at a flat 32 MiB -- below this constant.
+	driverDefaultMaxMessageSize = 48_000_000
+
+	// allocBound is oracle (a)'s ceiling: the driver's own legitimate max (above)
+	// plus slack for bookkeeping overhead and the odd extra retry/connection
+	// attempt within callWallBound. Observed legitimate deltas for this exact
+	// fallback path: 43.6-65.3 MB across 20+ local runs (see KFZ-2026-130); 24
+	// MiB of slack on top of driverDefaultMaxMessageSize covers the observed
+	// range with margin while staying far below anything a real amplification
+	// bug would produce (the outer wire length reaching the driver is
+	// independently clamped to maxWireLen, so nothing here can hide a
+	// genuinely unbounded read).
+	allocBound = driverDefaultMaxMessageSize + 24<<20
 )
 
 // ---- wire-message construction ---------------------------------------------
@@ -352,7 +376,10 @@ func runInteraction(t *testing.T, mode, opSel, lenMode, driveMode byte, body []b
 			t.Fatalf("CANARY LEAK in value: %s", r.fmtd)
 		}
 		// oracle (a) bounded-memory sanity backstop (clamp is the real guarantee).
-		if d := ms1.TotalAlloc - ms0.TotalAlloc; d > 32<<20 {
+		// allocBound already covers the driver's own legitimate
+		// defaultMaxMessageSize fallback (see its doc comment); this backstop is
+		// for anything beyond that, e.g. a genuine unbounded-amplification defect.
+		if d := ms1.TotalAlloc - ms0.TotalAlloc; d > allocBound {
 			t.Fatalf("alloc delta %d exceeds bound for %d body bytes", d, len(body))
 		}
 	case <-time.After(callWallBound + 2*time.Second):
