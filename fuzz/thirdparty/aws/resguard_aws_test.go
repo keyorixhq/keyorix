@@ -115,7 +115,7 @@ func awsDriveMeasured(t *testing.T, probe *resguard.Probe, build awsOpBuilder, d
 	defer fs.Close()
 	op := build(fs.url())
 	return probe.Measure(len(data), func() {
-		runWithWatchdog(t, "calibrate", func() (any, error) {
+		_, _, _ = runWithWatchdog(t, "calibrate", func() (any, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 			defer cancel()
 			return op(ctx)

@@ -83,7 +83,7 @@ func azureDriveMeasured(t *testing.T, probe *resguard.Probe, data []byte) resgua
 		return resguard.Cost{}
 	}
 	return probe.Measure(len(data), func() {
-		runWithWatchdog(t, "GetSecret", func() (any, error) {
+		_, _, _ = runWithWatchdog(t, "GetSecret", func() (any, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 			defer cancel()
 			return callGetSecret(cl, ctx)

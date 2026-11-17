@@ -50,7 +50,7 @@ func calibrateAuthz(t *testing.T) resguard.Budget {
 	probe := resguard.New(t, resguard.Options{SampleEvery: 1})
 	specs := withDerived(t, ops())
 	var costs []resguard.Cost
-	for si := 0; si < len(specs); si++ {
+	for si := range len(specs) {
 		spec := specs[si]
 		tg := spec.targets[0]
 		for _, pk := range allPrincipalKinds {
