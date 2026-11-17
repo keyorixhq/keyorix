@@ -118,7 +118,13 @@ type schemaVerdictMismatch struct {
 
 // openapiCompare is the pure oracle core.
 func openapiCompare(schemaBytes, instanceBytes []byte) *schemaVerdictMismatch {
-	kinV, kinOK, kinPanic := kinVerdict(schemaBytes, instanceBytes)
+	return compareVerdicts(kinVerdict, schemaBytes, instanceBytes)
+}
+
+// compareVerdicts runs kinFn (the kin-openapi side) and jsVerdict on one pair and
+// classifies any disagreement. Oracle C passes kinVerdict; Oracle D passes kinRefVerdict.
+func compareVerdicts(kinFn func(schemaBytes, instanceBytes []byte) (valid, ok, panicked bool), schemaBytes, instanceBytes []byte) *schemaVerdictMismatch {
+	kinV, kinOK, kinPanic := kinFn(schemaBytes, instanceBytes)
 	jsV, jsOK, jsPanic, jsNilDeref := jsVerdict(schemaBytes, instanceBytes)
 	// A crash in exactly one library is the most severe differential: one validator DoSes
 	// on an input the other handles.
