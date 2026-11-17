@@ -192,3 +192,9 @@ func (s *lostAckThenReadFailStorage) GetUser(ctx context.Context, id uint) (*mod
 	}
 	return s.FaultyStorage.GetUser(ctx, id)
 }
+
+// GetSessionAuthLiveness forwards the combined session read over this wrapper, so
+// the GetUser override is not bypassed on that path (PERF-FIX-7 guard).
+func (s *lostAckThenReadFailStorage) GetSessionAuthLiveness(ctx context.Context, userID, sessionID uint) (*storage.SessionAuthLiveness, error) {
+	return storage.ComposeSessionAuthLiveness(ctx, s, userID, sessionID), nil
+}
