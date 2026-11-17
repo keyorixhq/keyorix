@@ -52,8 +52,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
-	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 )
 
 // ─── tracked key material ────────────────────────────────────────────────────
@@ -416,7 +416,7 @@ func (w *keyWorld) heapDumpHits() int {
 	if err != nil {
 		return -1
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	runtime.GC()
 	debug.WriteHeapDump(f.Fd())
 	_ = f.Close()
