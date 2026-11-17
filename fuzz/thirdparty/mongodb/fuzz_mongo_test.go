@@ -94,22 +94,38 @@ const (
 	// the number of connections.
 	allocCeiling = 32 << 20
 
-	// perDialAlloc is the per-connection allocation budget (newConnection, client
-	// metadata encode, hello handshake info, dial, topology compare). Profiled
-	// and measured at 10,505-10,508 B per dial over 20 runs of KFZ-2026-130
-	// (10k-12.6k dials), i.e. host-independent per dial even though the dial
-	// count is not. 12 KiB leaves ~14% margin and keeps a planted amplification
-	// visible on churny inputs; a driver upgrade that raises the per-dial cost
-	// fails loudly here instead of silently widening the budget.
+	// perDialAlloc is the fixed per-connection allocation budget (newConnection,
+	// client metadata encode, hello handshake info, dial, topology compare).
+	// Profiled and measured at 10,505-10,508 B per dial over 20 runs of
+	// KFZ-2026-130 with the 5-byte body "20000" (10k-12.6k dials). That figure is
+	// only the fixed part: the driver also allocates in proportion to the reply it
+	// reads on each connection (perByteAlloc), so the per-dial cost is host
+	// independent only for a given reply size. 12 KiB leaves ~14% margin on the
+	// fixed part; a driver upgrade that raises it fails loudly here instead of
+	// silently widening the budget.
 	perDialAlloc = 12 << 10
+
+	// perByteAlloc scales the budget by the bytes the client actually read from
+	// the server across all dials. A larger reply behind the same invalid section
+	// kind hits the same no-backoff reconnect path, and each connection then costs
+	// a multiple of the reply length on top of perDialAlloc. Measured 2.016-2.498
+	// B of allocation per byte read (35 runs at pad 8K/16K/32K/64K, honest
+	// framing, per-size values identical across runs); 3 leaves 20% margin over
+	// the maximum. What this does NOT verify: a planted allocation smaller than
+	// (perByteAlloc - measured) x bytesRead is invisible on an interaction that
+	// read a large reply; seeds and short replies keep the term negligible.
+	perByteAlloc = 3
 )
 
 // allocOverBudget reports whether a TotalAlloc delta exceeds oracle (a)'s budget
-// for an interaction that made dials TCP dials, and returns that budget. Churn
-// (dials x perDialAlloc) is subtracted first; the remainder must stay under
-// allocCeiling.
-func allocOverBudget(delta uint64, dials int64) (over bool, bound uint64) {
-	bound = allocCeiling + uint64(max(dials, 0))*perDialAlloc
+// for an interaction that made dials TCP dials and read bytesRead bytes from the
+// server, and returns that budget: allocCeiling + dials*perDialAlloc +
+// bytesRead*perByteAlloc. Churn is only scaled for, never bounded, and the bytes
+// term is bounded by what the server sent (each read is clamped to maxWireLen),
+// so a planted allocation that does not come from reading still trips the
+// ceiling.
+func allocOverBudget(delta uint64, dials, bytesRead int64) (over bool, bound uint64) {
+	bound = allocCeiling + uint64(max(dials, 0))*perDialAlloc + uint64(max(bytesRead, 0))*perByteAlloc
 	return delta > bound, bound
 }
 
@@ -295,10 +311,27 @@ func readClientMessage(c net.Conn) (int32, error) {
 
 // ---- client ----------------------------------------------------------------
 
-// lingerDialer counts every TCP dial the driver makes during one interaction. The
-// count is the unit oracle (a) scales its allocation budget by: the driver's
-// heartbeat monitor reconnects with no backoff, so allocation tracks dials.
-type lingerDialer struct{ dials atomic.Int64 }
+// lingerDialer counts every TCP dial the driver makes during one interaction and
+// every byte it reads back. Those are the units oracle (a) scales its allocation
+// budget by: the driver's heartbeat monitor reconnects with no backoff, so
+// allocation tracks dials, and each connection also allocates in proportion to
+// the reply it reads.
+type lingerDialer struct {
+	dials     atomic.Int64
+	bytesRead atomic.Int64
+}
+
+// countingConn adds every successful Read length to the dialer's bytesRead.
+type countingConn struct {
+	net.Conn
+	n *atomic.Int64
+}
+
+func (c *countingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.n.Add(int64(n))
+	return n, err
+}
 
 func (d *lingerDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	d.dials.Add(1)
@@ -310,7 +343,7 @@ func (d *lingerDialer) DialContext(ctx context.Context, network, addr string) (n
 	if tcp, ok := c.(*net.TCPConn); ok {
 		_ = tcp.SetLinger(0)
 	}
-	return c, nil
+	return &countingConn{Conn: c, n: &d.bytesRead}, nil
 }
 
 func newHostileClient(addr string, d *lingerDialer) (*mongo.Client, error) {
@@ -371,6 +404,10 @@ func runInteraction(t *testing.T, mode, opSel, lenMode, driveMode byte, body []b
 
 	var ms0, ms1 runtime.MemStats
 	runtime.ReadMemStats(&ms0)
+	// Snapshot the counters next to the MemStats reads so the budget covers the
+	// same window as the allocation delta (heartbeat dials between Connect and
+	// here allocated before ms0 and must not widen the budget).
+	dials0, bytes0 := dialer.dials.Load(), dialer.bytesRead.Load()
 
 	type res struct {
 		err  error
@@ -385,6 +422,7 @@ func runInteraction(t *testing.T, mode, opSel, lenMode, driveMode byte, body []b
 	select {
 	case r := <-ch:
 		runtime.ReadMemStats(&ms1)
+		dials1, bytes1 := dialer.dials.Load(), dialer.bytesRead.Load()
 		// oracle (b): the SCRAM password must never surface.
 		if r.err != nil && containsCanary(r.err.Error()) {
 			t.Fatalf("CANARY LEAK in error: %v", r.err)
@@ -395,11 +433,11 @@ func runInteraction(t *testing.T, mode, opSel, lenMode, driveMode byte, body []b
 		// oracle (a): allocation not attributable to connection churn must stay
 		// under allocCeiling (see allocOverBudget). Churn itself is only scaled
 		// for, never bounded: see the "does NOT verify" note on allocCeiling.
-		dials := dialer.dials.Load()
+		dials, bytesRead := dials1-dials0, bytes1-bytes0
 		d := ms1.TotalAlloc - ms0.TotalAlloc
-		if over, bound := allocOverBudget(d, dials); over {
-			t.Fatalf("alloc delta %d exceeds bound %d (%d dials x %d + %d ceiling) for %d body bytes",
-				d, bound, dials, perDialAlloc, allocCeiling, len(body))
+		if over, bound := allocOverBudget(d, dials, bytesRead); over {
+			t.Fatalf("alloc delta %d exceeds bound %d (%d dials x %d + %d bytes read x %d + %d ceiling) for %d body bytes",
+				d, bound, dials, perDialAlloc, bytesRead, perByteAlloc, allocCeiling, len(body))
 		}
 	case <-time.After(callWallBound + 2*time.Second):
 		t.Fatalf("driver interaction did not return within bound (mode=%d opSel=%d lenMode=%d)", mode, opSel, lenMode)

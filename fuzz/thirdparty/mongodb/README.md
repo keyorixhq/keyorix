@@ -43,9 +43,13 @@ See the package doc comment in `fuzz_mongo_test.go` for the four oracle classes 
 which bounds each wire read. It does **not** bound the number of connections: after a
 malformed hello the driver's heartbeat monitor reconnects with no backoff for the whole
 server-selection window (KFZ-2026-130, ~12k dials in 0.7 s on a fast host), so total
-allocation grows with host speed. Oracle (a) therefore budgets `allocCeiling` (32 MiB)
-plus `perDialAlloc` per counted TCP dial, and does not limit the dial count itself. The
-uncapped pre-allocation behaviour is probed once by `TestWireLengthBound`.
+allocation grows with host speed. Each connection also allocates about 2 to 2.5 bytes
+per byte of reply it reads, so churn on a larger reply costs more per dial than churn on
+a 5-byte one. Oracle (a) therefore budgets `allocCeiling` (32 MiB) plus `perDialAlloc`
+per counted TCP dial plus `perByteAlloc` per byte the client read, and does not limit
+the dial count itself. It does not verify a planted allocation smaller than the bytes
+term's slack on an interaction that read a large reply. The uncapped pre-allocation
+behaviour is probed once by `TestWireLengthBound`.
 
 ## Files
 
