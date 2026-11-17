@@ -126,10 +126,10 @@ func meteredFetcher(baseURL string, nm *resguard.NetMeter) *KeyorixFetcher {
 // goroutine/fd leak across inputs.
 func FuzzK8sSyncFetcherResource(f *testing.F) {
 	f.Add([]byte{})
-	f.Add([]byte{1, 1, 8})    // 1 page, target present, small value
-	f.Add([]byte{3, 1, 200})  // up to 4 pages, target present
-	f.Add([]byte{2, 0, 0})    // target absent -> walk then ErrUpstreamGone
-	f.Add([]byte{0, 1, 255})  // 1 page, bigger value
+	f.Add([]byte{1, 1, 8})   // 1 page, target present, small value
+	f.Add([]byte{3, 1, 200}) // up to 4 pages, target present
+	f.Add([]byte{2, 0, 0})   // target absent -> walk then ErrUpstreamGone
+	f.Add([]byte{0, 1, 255}) // 1 page, bigger value
 
 	nm := resguard.NewNetMeter()
 	probe := resguard.New(f, resguard.Options{SampleEvery: 32, Net: nm})
@@ -215,9 +215,9 @@ func TestResguardK8sSyncCalibrate(t *testing.T) {
 // ceiling, so a server advertising a large total_pages (with the target never present)
 // drives one HTTP round-trip per page — bounded only by the caller's context deadline.
 //
-//   GREEN: total_pages=1 -> a handful of dials, under the absolute ceiling.
-//   RED:   total_pages=3000, target absent -> the walk issues ~3000 dials, far over the
-//          ceiling, and the dials meter fires.
+//	GREEN: total_pages=1 -> a handful of dials, under the absolute ceiling.
+//	RED:   total_pages=3000, target absent -> the walk issues ~3000 dials, far over the
+//	       ceiling, and the dials meter fires.
 func TestResguardK8sSyncPaginationRedGreen(t *testing.T) {
 	budget, err := resguard.LoadBudget(resguardK8sSyncBudgetPath)
 	if err != nil {
