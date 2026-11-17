@@ -29,3 +29,18 @@ func TestMachineTokenExpiresAt(t *testing.T) {
 		assert.Nil(t, got, "%d", d)
 	}
 }
+
+// TestMachineTokenExpiresAt_IsUTCWhateverTheClockZone: both transports pass time.Now(), which is in
+// the host zone; the stored and returned expiry must not carry that offset.
+func TestMachineTokenExpiresAt_IsUTCWhateverTheClockZone(t *testing.T) {
+	for _, zone := range []string{"Asia/Tokyo", "Pacific/Auckland"} {
+		loc, err := time.LoadLocation(zone)
+		require.NoError(t, err)
+		now := time.Date(2026, 11, 11, 12, 0, 0, 0, loc)
+		got, err := MachineTokenExpiresAt(30, now)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, time.UTC, got.Location(), zone)
+		assert.True(t, got.Equal(now.UTC().AddDate(0, 0, 30)), zone)
+	}
+}
