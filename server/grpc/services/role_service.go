@@ -84,7 +84,7 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	// with its permission set).
 	role, perms, err := s.core.CreateRoleWithScope(ctx, actor.UserID, req.GetName(), req.GetDescription(), permIDs, req.GetAssignableScope())
 	if err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	// Build the response from the values core.CreateRole already returned
 	// (read inside the same transaction that created the role) instead of
@@ -127,7 +127,7 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 
 	role, _, err := s.core.GetRoleWithPermissions(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	if req.Description != nil {
 		role.Description = req.GetDescription()
@@ -166,7 +166,7 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 		if perr, ok := partialMutationStatus(err); ok {
 			return nil, perr
 		}
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	// Same fix as CreateRole above: build from the values UpdateRole already
 	// returned (read inside its own transaction) instead of a fresh
@@ -188,7 +188,7 @@ func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequ
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 	if err := s.core.DeleteRole(ctx, actor.UserID, uint(req.GetId())); err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -249,7 +249,7 @@ func (s *RoleGRPCService) AssignRole(ctx context.Context, req *pb.AssignRoleRequ
 		ctx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
 	}
 	if err := s.core.AssignUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope, actor.ActorKind() == core.ActorTypeMachine); err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	return &pb.RoleAssignment{
 		UserId:        req.GetUserId(),
@@ -274,7 +274,7 @@ func (s *RoleGRPCService) RemoveRole(ctx context.Context, req *pb.RemoveRoleRequ
 		return nil, err
 	}
 	if err := s.core.RemoveUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -298,7 +298,7 @@ func (s *RoleGRPCService) GetUserRoles(ctx context.Context, req *pb.GetUserRoles
 	}
 	assignment, err := s.core.GetUserRoleAssignment(ctx, uint(req.GetUserId()))
 	if err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	roles := make([]*pb.Role, 0, len(assignment.Roles))
 	for _, r := range assignment.Roles {
@@ -320,7 +320,7 @@ func (s *RoleGRPCService) GetUserRoles(ctx context.Context, req *pb.GetUserRoles
 func (s *RoleGRPCService) roleByID(ctx context.Context, id uint) (*pb.Role, error) {
 	role, perms, err := s.core.GetRoleWithPermissions(ctx, id)
 	if err != nil {
-		return nil, mapRoleError(err)
+		return nil, mapRoleError(ctx, err)
 	}
 	return roleToProto(role, perms), nil
 }
@@ -421,7 +421,7 @@ func isUntypedDuplicateRoleName(err error) bool {
 // cannot say: the role-scope client message, the built-in-role refusal (its own
 // FailedPrecondition, see below), the one untyped duplicate-name driver error, and
 // the per-sentinel client texts of this family.
-func mapRoleError(err error) error {
+func mapRoleError(ctx context.Context, err error) error {
 	// #3546: a role-scope refusal (e.g. a project-tier role with no project_id)
 	// is the caller's to fix; its message is fixed, client-safe text.
 	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {
@@ -440,7 +440,7 @@ func mapRoleError(err error) error {
 	if errclass.Of(err) == errclass.Internal && isUntypedDuplicateRoleName(err) {
 		return status.Error(codes.AlreadyExists, "a role with that name already exists")
 	}
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "role operation", texts: roleErrorTexts(err)})
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "role operation", texts: roleErrorTexts(err)})
 }
 
 // roleErrorTexts keeps this family's client texts per sentinel (the classifier has one

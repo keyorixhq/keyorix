@@ -34,7 +34,7 @@ func NewMachineIdentityService(coreService *core.KeyorixCore) *MachineIdentityGR
 // mapMachineError translates core/storage machine-identity errors into gRPC status
 // codes through the shared classifier (coreErrorStatus); the texts stay this family's
 // own and fixed (GRPC-004: never a state name or classification enum value).
-func mapMachineError(err error) error {
+func mapMachineError(ctx context.Context, err error) error {
 	texts := coreErrorTexts{errclass.PermissionDenied: "access denied"}
 	switch {
 	case errors.Is(err, core.ErrMachineIdentityNotFound):
@@ -46,7 +46,7 @@ func mapMachineError(err error) error {
 	}
 	// MACH-001: the privilege-ceiling denial (requireMachinePrivilegeCeiling) is a typed
 	// permission sentinel, so the classifier answers it PermissionDenied, not Internal.
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "machine identity operation", texts: texts})
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "machine identity operation", texts: texts})
 }
 
 func machineActionToState(action string) (string, bool) {
@@ -75,7 +75,7 @@ func (s *MachineIdentityGRPCService) ListMachineIdentities(ctx context.Context, 
 	}
 	rows, err := s.core.ListMachineIdentities(ctx, uint(req.GetProjectId()))
 	if err != nil {
-		return nil, mapMachineError(err)
+		return nil, mapMachineError(ctx, err)
 	}
 	out := make([]*pb.MachineIdentity, 0, len(rows))
 	for _, m := range rows {
@@ -97,7 +97,7 @@ func (s *MachineIdentityGRPCService) CreateMachineIdentity(ctx context.Context, 
 	}
 	m, err := s.core.CreateMachineIdentity(ctx, uint(req.GetProjectId()), req.GetName(), req.GetIdentityType(), req.GetDescription(), req.GetClassification(), user.UserID, user.MachineIdentityID)
 	if err != nil {
-		return nil, mapMachineError(err)
+		return nil, mapMachineError(ctx, err)
 	}
 	return machineIdentityToProto(m), nil
 }
@@ -119,7 +119,7 @@ func (s *MachineIdentityGRPCService) TransitionMachineIdentity(ctx context.Conte
 	}
 	m, err := s.core.TransitionMachineIdentity(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), to, user.UserID)
 	if err != nil {
-		return nil, mapMachineError(err)
+		return nil, mapMachineError(ctx, err)
 	}
 	return machineIdentityToProto(m), nil
 }
@@ -137,7 +137,7 @@ func (s *MachineIdentityGRPCService) ClassifyMachineIdentity(ctx context.Context
 	}
 	m, err := s.core.ClassifyMachineIdentity(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), req.GetClassification(), user.UserID)
 	if err != nil {
-		return nil, mapMachineError(err)
+		return nil, mapMachineError(ctx, err)
 	}
 	return machineIdentityToProto(m), nil
 }
@@ -170,7 +170,7 @@ func (s *MachineIdentityGRPCService) IssueMachineToken(ctx context.Context, req 
 		Classification: req.GetClassification(),
 	})
 	if err != nil {
-		return nil, mapMachineError(err)
+		return nil, mapMachineError(ctx, err)
 	}
 	return &pb.IssueMachineTokenResponse{
 		Token:          res.PlainToken,
@@ -209,7 +209,7 @@ func (s *MachineIdentityGRPCService) ListMachineTokens(ctx context.Context, req 
 	}
 	rows, err := s.core.ListMachineTokens(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()))
 	if err != nil {
-		return nil, mapMachineError(err)
+		return nil, mapMachineError(ctx, err)
 	}
 	out := make([]*pb.MachineToken, 0, len(rows))
 	for _, c := range rows {
@@ -237,7 +237,7 @@ func (s *MachineIdentityGRPCService) RevokeMachineToken(ctx context.Context, req
 	// the very next HTTP request regardless of which transport performed it. Proven
 	// non-vacuous in TestGRPCRevokeMachineToken_EvictsHTTPAuthCacheImmediately.
 	if _, err := s.core.RevokeMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), uint(req.GetTokenId()), user.UserID); err != nil {
-		return nil, mapMachineError(err)
+		return nil, mapMachineError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -255,7 +255,7 @@ func (s *MachineIdentityGRPCService) ClassifyMachineToken(ctx context.Context, r
 	}
 	cred, err := s.core.ClassifyMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), uint(req.GetTokenId()), req.GetClassification(), user.UserID)
 	if err != nil {
-		return nil, mapMachineError(err)
+		return nil, mapMachineError(ctx, err)
 	}
 	return machineTokenToProto(cred), nil
 }

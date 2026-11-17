@@ -512,7 +512,7 @@ func (s *SecretGRPCService) GrantSecretACL(ctx context.Context, req *pb.GrantSec
 		return nil, err
 	}
 	if err := s.core.GrantSecretACL(ctx, user.UserID, uint(req.GetSecretId()), uint(req.GetUserId()), req.GetPermissions()); err != nil {
-		return nil, mapSecretACLError(err)
+		return nil, mapSecretACLError(ctx, err)
 	}
 	// Re-fetch so we can return the created/updated row with its ID and timestamps.
 	acls, err := s.core.ListSecretACLs(ctx, uint(req.GetSecretId()))
@@ -544,7 +544,7 @@ func (s *SecretGRPCService) RevokeSecretACL(ctx context.Context, req *pb.RevokeS
 		return nil, err
 	}
 	if err := s.core.RevokeSecretACL(ctx, user.UserID, uint(req.GetSecretId()), uint(req.GetAclId())); err != nil {
-		return nil, mapSecretACLError(err)
+		return nil, mapSecretACLError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -589,8 +589,8 @@ func secretACLToProto(a *models.SecretACL) *pb.SecretACLEntry {
 // mapSecretACLError translates core ACL errors into gRPC status codes through the
 // shared classifier (coreErrorStatus); the texts are this family's own and fixed, so a
 // driver error never reaches the client (matches mapUserError's GRPC-003 remediation).
-func mapSecretACLError(err error) error {
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "ACL operation", texts: coreErrorTexts{
+func mapSecretACLError(ctx context.Context, err error) error {
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "ACL operation", texts: coreErrorTexts{
 		errclass.NotFound: "ACL or secret not found",
 		// ERRSTRING-CLASS-1: GrantSecretACL's own validation is typed
 		// (storage.ErrInvalidSecretACLRequest).

@@ -7,6 +7,7 @@ package services
 // layer's raw message) is a server fault, not a caller error.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -26,11 +27,11 @@ type typedMapCase struct {
 	code codes.Code
 }
 
-func runTypedMapCases(t *testing.T, mapper func(error) error, cases []typedMapCase) {
+func runTypedMapCases(t *testing.T, mapper func(context.Context, error) error, cases []typedMapCase) {
 	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := mapper(tc.err)
+			got := mapper(context.Background(), tc.err)
 			assert.Equal(t, tc.code, status.Code(got), got.Error())
 		})
 	}
@@ -149,7 +150,7 @@ func TestMapSecretACLError_ClassifiesBySentinel(t *testing.T) {
 }
 
 func TestMapSecretError_ClassifiesBySentinel(t *testing.T) {
-	runTypedMapCases(t, mapSecretError, []typedMapCase{
+	runTypedMapCases(t, func(_ context.Context, err error) error { return mapSecretError(err) }, []typedMapCase{
 		{"missing secret", fmt.Errorf("get: %w", storage.ErrSecretNotFound), codes.NotFound},
 		{"missing secret version", fmt.Errorf("Secret version not found: %w", storage.ErrSecretVersionNotFound), codes.NotFound},
 		{"missing project", fmt.Errorf("create: %w", storage.ErrProjectNotFound), codes.NotFound},

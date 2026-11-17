@@ -71,7 +71,7 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *pb.ShareSecretR
 		})
 	}
 	if err != nil {
-		return nil, mapShareError(err)
+		return nil, mapShareError(ctx, err)
 	}
 	return shareRecordToProto(record), nil
 }
@@ -91,7 +91,7 @@ func (s *ShareGRPCService) ListSecretShares(ctx context.Context, req *pb.ListSec
 
 	shares, err := s.core.ListSecretSharesWithPermissionCheck(ctx, uint(req.GetSecretId()), user.UserID)
 	if err != nil {
-		return nil, mapShareError(err)
+		return nil, mapShareError(ctx, err)
 	}
 	return sharesToResponse(shares, 1, len(shares)), nil
 }
@@ -236,7 +236,7 @@ func (s *ShareGRPCService) UpdateSharePermission(ctx context.Context, req *pb.Up
 			log.Printf("update share %d permission partially applied: %s", req.GetShareId(), withFaultCause(err))
 			return nil, perr
 		}
-		return nil, mapShareError(err)
+		return nil, mapShareError(ctx, err)
 	}
 	return shareRecordToProto(record), nil
 }
@@ -254,7 +254,7 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 		return nil, err
 	}
 	if err := s.core.RevokeShare(ctx, uint(req.GetShareId()), user.UserID); err != nil {
-		return nil, mapShareError(err)
+		return nil, mapShareError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -302,7 +302,7 @@ func shareScopeReadError(ctx context.Context, err error) error {
 
 // mapShareError translates core sharing errors into gRPC status codes through the
 // shared classifier (coreErrorStatus); the texts are this family's own and fixed.
-func mapShareError(err error) error {
+func mapShareError(ctx context.Context, err error) error {
 	// #2976: a typed share refusal carries a fixed, user-facing reason (owner not a
 	// project member, recipient not a member, ...) — the same text HTTP returns.
 	if reason, ok := core.ShareRefusalMessage(err); ok {
@@ -320,7 +320,7 @@ func mapShareError(err error) error {
 	if errors.Is(err, storage.ErrShareExpiryNotInFuture) {
 		texts[errclass.InvalidInput] = "share expiry must be in the future"
 	}
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "share operation", texts: texts})
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "share operation", texts: texts})
 }
 
 func shareRecordToProto(r *models.ShareRecord) *pb.ShareRecord {
