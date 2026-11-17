@@ -2,6 +2,8 @@ package fuzzutil
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -134,4 +136,35 @@ func TestFrozenSince_OverlapAndRunningProcess(t *testing.T) {
 	if got := frozenSince(stallBase.Add(now - 500*time.Millisecond)); got > 100*time.Millisecond {
 		t.Fatalf("later window saw %s of an earlier freeze", got)
 	}
+}
+
+func TestEffectiveElapsed_SubtractsFreeze(t *testing.T) {
+	withFrozen(t, 1500*time.Millisecond)
+	eff, fz := EffectiveElapsed(time.Now().Add(-2 * time.Second))
+	if fz != 1500*time.Millisecond || eff < 400*time.Millisecond || eff > 700*time.Millisecond {
+		t.Fatalf("effective=%s frozen=%s", eff, fz)
+	}
+	// a freeze larger than the window is clamped, never negative
+	withFrozen(t, time.Hour)
+	if eff, _ := EffectiveElapsed(time.Now().Add(-time.Second)); eff < 0 {
+		t.Fatalf("negative effective elapsed %s", eff)
+	}
+}
+
+func TestLogStall_AppendsLineWhenEnvSet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stalls.log")
+	t.Setenv(StallLogEnv, path)
+	logStall(1234 * time.Millisecond)
+	logStall(2 * time.Second)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "frozen=1.234s") || !strings.Contains(lines[1], "frozen=2s") || !strings.Contains(lines[0], "pid=") {
+		t.Fatalf("unexpected stall log: %q", b)
+	}
+	// unset: no file is created
+	t.Setenv(StallLogEnv, "")
+	logStall(time.Second)
 }

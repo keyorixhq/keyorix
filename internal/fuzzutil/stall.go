@@ -1,10 +1,18 @@
 package fuzzutil
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// StallLogEnv optionally names a file to which every detected freeze is appended (one line:
+// UTC time, pid, executable, frozen duration). It exists to measure how often and how long
+// the fuzz boxes freeze, so a finding that never reproduces can be matched against it.
+const StallLogEnv = "FUZZ_STALL_LOG"
 
 // A wall-clock "did not return within N" oracle cannot tell a hung call from a process
 // that simply was not scheduled for a while (GC/swap/cgroup throttle/host contention on
@@ -55,12 +63,40 @@ func startStallMonitor() {
 					stallGaps[stallN%stallRing] = stallGap{last, off}
 					stallN++
 					stallMu.Unlock()
+					logStall(off - last)
 				}
 				stallLast.Store(int64(off))
 				last = off
 			}
 		}()
 	})
+}
+
+// logStall appends one line to $FUZZ_STALL_LOG when it is set. Best effort: a short O_APPEND
+// write, errors ignored, so instrumentation can never fail a fuzz run.
+func logStall(frozen time.Duration) {
+	path := os.Getenv(StallLogEnv)
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	_, _ = fmt.Fprintf(f, "%s pid=%d exe=%s frozen=%s\n", time.Now().UTC().Format(time.RFC3339), os.Getpid(), filepath.Base(os.Args[0]), frozen.Round(time.Millisecond))
+}
+
+// EffectiveElapsed is time.Since(start) minus the time the process spent frozen inside that
+// window: the right number for an `elapsed > ceiling` oracle, which would otherwise fire on a
+// freeze that no code under test caused. frozen is returned so a failure message can show it.
+func EffectiveElapsed(start time.Time) (effective, frozen time.Duration) {
+	total := time.Since(start)
+	frozen = frozenSinceFn(start)
+	if frozen > total {
+		frozen = total
+	}
+	return total - frozen, frozen
 }
 
 // frozenSinceFn is frozenSince behind a variable so tests can inject a freeze.
