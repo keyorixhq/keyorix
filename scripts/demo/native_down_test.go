@@ -41,7 +41,7 @@ func startProc(t *testing.T, script string) int {
 	}
 	go func() { _ = cmd.Wait() }()
 	t.Cleanup(func() { _ = cmd.Process.Kill() })
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if _, err := os.Stat(ready); err == nil {
 			return cmd.Process.Pid
 		}
