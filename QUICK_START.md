@@ -302,6 +302,11 @@ Enrol once, right after the first login:
 ./bin/keyorix mfa activate      # prompts for the code your authenticator app shows, then your password
 ```
 
+An authenticator code works once, and `mfa activate` spends the one you typed. **Wait for the
+app to show the next code (a new one appears every 30 seconds) before your first `login`**: a
+`login` with the code you just activated with is refused with `Invalid or expired code`, the
+same answer a wrong code gets.
+
 In a script, `mfa activate` reads the code and then the password from stdin one read at a
 time, so two lines piped in at once lose the second (`Error: password is required`, with or
 without a trailing newline). Give the password a moment after the code and end it with a
@@ -314,10 +319,7 @@ Save the recovery codes `mfa activate` prints — they are shown once. The sessi
 you activated from stays signed in (every *other* session is signed out), so the
 commands below work immediately; the next `login` asks for a code after the
 password; type the authenticator code there (an unused recovery code works too).
-Either is used for that one request: only the session token is stored. Each
-authenticator code works once: a `login` right after `mfa activate` with the code
-you just activated with is refused (`Invalid or expired code`), so wait for the
-app to show the next one. For
+Either is used for that one request: only the session token is stored. For
 non-interactive use, log in once and use a personal access token
 (`KEYORIX_TOKEN`) instead of scripting the password and code. An account whose
 only second factor is a WebAuthn passkey cannot complete a CLI login — sign in

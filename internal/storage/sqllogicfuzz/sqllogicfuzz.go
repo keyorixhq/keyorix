@@ -332,7 +332,7 @@ func InsertRows(db *gorm.DB, table string, rows []Row) error {
 		if r.D != nil {
 			d = *r.D
 		}
-		sql := fmt.Sprintf("INSERT INTO %s (id,a,b,c,d,e) VALUES (?,?,?,?,?,?)", table)
+		sql := fmt.Sprintf("INSERT INTO %s (id,a,b,c,d,e) VALUES (?,?,?,?,?,?)", table) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- test-only fuzz helper, table is a fixed name chosen by the harness; row values are bound parameters
 		if err := db.Exec(sql, r.ID, r.A, b, r.C, d, r.E).Error; err != nil {
 			return err
 		}

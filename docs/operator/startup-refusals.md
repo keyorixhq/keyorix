@@ -1,8 +1,10 @@
 # Why did Keyorix refuse to start (or to run this command)?
 
 Keyorix fails closed: when a setting, a key file, the database or another running process
-is not in a state it can safely work with, `keyorix-server` exits with status 1 and one
-line saying why, instead of starting in a weaker mode. This page lists those refusals:
+is not in a state it can safely work with, `keyorix-server` exits non-zero and says why on
+stderr, instead of starting in a weaker mode. The exit status is **78** when only an
+operator can fix it, **75** when a dependency may come back, and **1** for everything else
+([Exit statuses](#exit-statuses)). This page lists those refusals:
 the message you will see, what it means, how to fix it, and whether the fix is safe to do
 on a live install.
 
@@ -34,12 +36,39 @@ Where the log line has a prefix (`Configuration is invalid:`, `startup validatio
 refused; the prefix order is also the order the checks run, so an earlier prefix means the
 later checks have not run yet.
 
-Contents: [Configuration](#configuration) · [TLS](#tls) ·
+Contents: [Exit statuses](#exit-statuses) · [Configuration](#configuration) · [TLS](#tls) ·
 [Database and storage](#database-and-storage) · [Keys and secret files](#keys-and-secret-files) ·
 [Key files and DEK](#key-files-and-dek) ·
 [Upgrade, schema epoch and rollback](#upgrade-schema-epoch-and-rollback) ·
 [Security posture](#security-posture) · [HA and multiple replicas](#ha-and-multiple-replicas) ·
 [Admin commands](#admin-commands) · [What this page does not cover](#what-this-page-does-not-cover)
+
+## Exit statuses
+
+`keyorix-server` (no subcommand) exits with one of three statuses when a boot fails, and
+prints one plain hint line last on stderr for 78 and 75 (`keyorix-server: exit 78 (operator
+action required) ...` / `keyorix-server: exit 75 (dependency unavailable) ...`). The shipped
+systemd unit (`deploy/edge/keyorix-server.service`) does not restart on 78 and retries 75 and
+1 every `RestartSec=30`; [edge-deployment.md](../edge-deployment.md) (section "Start after a
+reboot") has the full classification. The status follows the stage that refused, which the log
+prefix names (see "How to read an entry"):
+
+| Exit | What refused | Log line starts with |
+|---|---|---|
+| 78 | Configuration that cannot be read or is refused | `Failed to load configuration:`, `Configuration is invalid:` |
+| 78 | Key, secret-file, SCIM-token and file-permission refusals; the master passphrase missing or wrong; a key consistency check; a KMS that answered "no" | `startup validation:`, `transport security:`, the refusal's own name, `failed to initialize core service:` |
+| 78 | A database login the database refused; an undeclared transaction-mode pooler | the driver's error |
+| 75 | A KMS, its sign-in endpoint or a remote database that did not answer, or answered 5xx or throttling | `failed to connect to postgres:`, `connect to postgres for server-presence check:`, `startup validation:`, `failed to initialize core service:` |
+| 75 | The DEK lock is held by another process (a second server, or a rotation) | `failed to initialize core service: ... another process already holds the DEK lock` |
+| 1 | Everything else: a relative key path used from another directory than the config's, the FIPS self-test, logging or memory-hardening setup, a listener port in use, a Postgres connection that fails the TLS check or is closed during login, the server-presence lock held by an admin command, `single_writer` refusals, a lock lost while running | `Refusing to start:`, `Failed to set up logging`, `HTTP server error:`, `single_writer:` |
+
+Two of these are worth knowing before you automate on the status. The DEK lock refusal is 75
+today although the hint line under it talks about a KMS or database: restarting after the other
+process exits is the right action, and under systemd the unit retries it. And the relative key
+path refusal (`Refusing to start: storage.encryption.dek_path ... is relative ...`) is an
+operator fix that exits 1, so a unit that stops on 78 keeps retrying it until the working
+directory or the paths are fixed. `admin` subcommands keep their own exit codes (1 for a
+failure unless an entry says otherwise).
 
 ---
 
@@ -410,7 +439,10 @@ connect to postgres for server-presence check: failed to connect to `user=keyori
 
 **Match:** `connect to postgres for server-presence check`
 
-**Cause / fix.** See j7. The check names the host and port it tried. **In place:** yes.
+**Cause / fix.** See j7. The check names the host and port it tried. The server exits with
+status **75** (a database that may come back; the shipped systemd unit retries it every
+30 s). A database that answers and refuses the login exits **78**; one that answers with an
+untrusted TLS certificate exits **1**. **In place:** yes.
 
 ### Database file missing when it must exist — from code
 
@@ -720,8 +752,12 @@ server stops with `no master passphrase is available (... mode 0644 is too open 
 Real output (second server started on the same data directory):
 
 ```
-failed to initialize core service: failed to initialize encryption: failed to acquire the encryption key lock: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable
+failed to initialize core service: failed to initialize encryption: failed to acquire the encryption key lock: another process already holds the DEK lock (a live server, or a concurrent rotation) at <datadir>/keys/dek.lock: resource temporarily unavailable
 ```
+
+The message names the absolute path of the lock file, so you can run `lsof` on it directly.
+The server exits with status **75** (and prints the 75 hint, which names a KMS or database;
+here the cause is the other process), so the shipped systemd unit retries it every 30 s.
 
 **Match:** `another process already holds the DEK lock`
 
@@ -864,7 +900,7 @@ without `--force` the command stops earlier at the database lock, see the previo
 
 ```
 WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
-Error: refusing to clean up migrate-backup files: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable — a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry
+Error: refusing to clean up migrate-backup files: another process already holds the DEK lock (a live server, or a concurrent rotation) at <datadir>/keys/dek.lock: resource temporarily unavailable — a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry
 ```
 
 **Match:** `refusing to clean up migrate-backup files`
@@ -1521,7 +1557,7 @@ the first lock, the WARNING line, never the key lock):
 ```
 WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
 ⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
-Error: refusing to rotate: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable — stop the running server before running it
+Error: refusing to rotate: another process already holds the DEK lock (a live server, or a concurrent rotation) at <datadir>/keys/dek.lock: resource temporarily unavailable — stop the running server before rotating
 ```
 
 **In place:** stop first. [j6-key-rotation.md](j6-key-rotation.md). With several replicas on PostgreSQL,

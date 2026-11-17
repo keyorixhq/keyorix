@@ -17,7 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand/v2"
+	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- seeded PRNG for reproducible mutation selection in a test harness, never used for secrets
 	"path"
 	"slices"
 	"strings"
