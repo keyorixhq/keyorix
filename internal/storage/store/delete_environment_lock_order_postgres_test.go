@@ -87,14 +87,12 @@ func TestDeleteEnvironment_RestoreProject_DeleteProject_NoDeadlock_Postgres(t *t
 			func() error { return deleter.DeleteProject(iterCtx, proj.ID) },
 		}
 		for k, call := range calls {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				<-start
 				// Up to 3 ms of jitter, so every call gets to go first in some iterations.
 				time.Sleep(time.Duration(mathrand.IntN(3000)) * time.Microsecond)
 				errs[k] = call()
-			}()
+			})
 		}
 		close(start)
 		wg.Wait()
