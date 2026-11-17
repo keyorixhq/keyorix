@@ -71,10 +71,10 @@ type loaderOutcome struct {
 	loaded bool // LoadFromData returned a non-nil doc (refs resolved or cleanly refused)
 
 	// O-LOAD-3 idempotence: marshal1 -> LoadFromData -> marshal2.
-	marshal1   []byte
-	reloadErr  error
-	marshal2   []byte
-	idempRan   bool
+	marshal1  []byte
+	reloadErr error
+	marshal2  []byte
+	idempRan  bool
 
 	// O-LOAD-5 differential: loader-resolved marshal vs plain-json round-trip marshal.
 	diffRan      bool
