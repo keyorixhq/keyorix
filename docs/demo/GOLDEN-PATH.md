@@ -629,10 +629,9 @@ secret should count as "new" remains a product question, not a demo one.
 - Copy: the wrong "request access" hint after `recover-admin`, the help of
   `user create`/`logout`, and the internal references in `restore` and
   `secret versions` output are fixed. `verify-audit` on a row hashed with the
-  old audit-hash format still quotes "pre-#1452" ("valid under the pre-#1452
-  audit-hash encoding") until
-  [#4218](https://github.com/keyorixhq/keyorix/pull/4218) lands; that row is
-  not evidence of tampering:
+  old audit-hash format now says so in plain words (an upgrade step that was
+  not run, not tampering) since
+  [#4218](https://github.com/keyorixhq/keyorix/pull/4218):
   [#3744](https://github.com/keyorixhq/keyorix/issues/3744).
 - With the default TLS (self-signed certificate), a browser shows a certificate
   warning until the presenter trusts `certs/server.crt` (macOS: open it in Keychain
