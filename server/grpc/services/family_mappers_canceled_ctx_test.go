@@ -22,7 +22,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 )
 
-// familyMappers is the eight mappers migrated onto coreErrorStatus.
+// familyMappers is the eight mappers #4214 migrated onto coreErrorStatus plus
+// mapSecretError (GRPC-MAPPER-TAILS-1 item 3).
 var familyMappers = map[string]func(context.Context, error) error{
 	"mapRoleError":      mapRoleError,
 	"mapMachineError":   mapMachineError,
@@ -31,6 +32,7 @@ var familyMappers = map[string]func(context.Context, error) error{
 	"mapShareError":     mapShareError,
 	"mapDynamicError":   mapDynamicError,
 	"mapSecretACLError": mapSecretACLError,
+	"mapSecretError":    mapSecretError,
 	"groupError":        groupError,
 }
 

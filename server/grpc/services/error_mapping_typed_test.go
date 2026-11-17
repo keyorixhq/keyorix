@@ -150,7 +150,7 @@ func TestMapSecretACLError_ClassifiesBySentinel(t *testing.T) {
 }
 
 func TestMapSecretError_ClassifiesBySentinel(t *testing.T) {
-	runTypedMapCases(t, func(_ context.Context, err error) error { return mapSecretError(err) }, []typedMapCase{
+	runTypedMapCases(t, mapSecretError, []typedMapCase{
 		{"missing secret", fmt.Errorf("get: %w", storage.ErrSecretNotFound), codes.NotFound},
 		{"missing secret version", fmt.Errorf("Secret version not found: %w", storage.ErrSecretVersionNotFound), codes.NotFound},
 		{"missing project", fmt.Errorf("create: %w", storage.ErrProjectNotFound), codes.NotFound},

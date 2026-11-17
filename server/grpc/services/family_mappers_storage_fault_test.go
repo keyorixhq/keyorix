@@ -30,6 +30,7 @@ func TestFamilyMappers_TypedStorageReadFaultIsUnavailable(t *testing.T) {
 		"mapShareError":     mapShareError,
 		"mapDynamicError":   mapDynamicError,
 		"mapSecretACLError": mapSecretACLError,
+		"mapSecretError":    mapSecretError,
 		"groupError":        groupError,
 	}
 	for name, m := range mappers {
@@ -57,6 +58,7 @@ func TestFamilyMappers_PermissionRefusalIsPermissionDenied(t *testing.T) {
 		"mapShareError":     mapShareError,
 		"mapDynamicError":   mapDynamicError,
 		"mapSecretACLError": mapSecretACLError,
+		"mapSecretError":    mapSecretError,
 		"groupError":        groupError,
 	}
 	for name, m := range mappers {

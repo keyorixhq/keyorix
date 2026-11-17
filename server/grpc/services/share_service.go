@@ -289,15 +289,25 @@ func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, actor *inte
 // shareScopeReadError is the status for a failed share or secret read in
 // authorizeShareScoped: a transient failure is the shared authorization
 // Unavailable, any other read fault is the storage Unavailable (the cause is
-// logged, never sent), and only a positively absent row is NotFound.
+// logged, never sent), and only a positively absent row is NotFound. The two outage
+// answers are rendered by coreErrorStatus (one adapter for both transports' twins).
+//
+// The positive-absence check stays a pre-check: what counts as "the row is really
+// absent" is core.ReadFault's structural test of the raw storage error (not-found
+// shapes of the driver and of the ORM, which carry no errclass sentinel), and this read
+// answers one uniform "share not found" for a missing share, a missing secret and every
+// other absent row, so a caller learns nothing about which exists (INV-GRPCSVC-02).
+// A transient error is routed first and not wrapped as a fault, so it keeps the
+// authorization outage text instead of the storage one.
 func shareScopeReadError(ctx context.Context, err error) error {
-	if core.IsAuthorizeTransient(ctx, err) {
-		return authorizeRefusal(ctx, err, "share not found")
+	if !core.IsAuthorizeTransient(ctx, err) {
+		fault := core.ReadFault(err)
+		if fault == nil {
+			return status.Error(codes.NotFound, "share not found")
+		}
+		err = fault
 	}
-	if serr, ok := storageUnavailableStatus(core.ReadFault(err)); ok {
-		return serr
-	}
-	return status.Error(codes.NotFound, "share not found")
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "share scope read"})
 }
 
 // mapShareError translates core sharing errors into gRPC status codes through the

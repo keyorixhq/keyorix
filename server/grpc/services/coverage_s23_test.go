@@ -45,37 +45,37 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestMapSecretError_UnknownRotationCharset_S23(t *testing.T) {
-	err := mapSecretError(errors.New("unknown rotation charset: klingon"))
+	err := mapSecretError(context.Background(), errors.New("unknown rotation charset: klingon"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_MustBeSetTogether_S23(t *testing.T) {
-	err := mapSecretError(errors.New("backend and ref must be set together"))
+	err := mapSecretError(context.Background(), errors.New("backend and ref must be set together"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_UnknownRotationBackend_S23(t *testing.T) {
-	err := mapSecretError(errors.New("unknown rotation backend: vault"))
+	err := mapSecretError(context.Background(), errors.New("unknown rotation backend: vault"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_NoRotationBackends_S23(t *testing.T) {
-	err := mapSecretError(errors.New("no rotation backends configured"))
+	err := mapSecretError(context.Background(), errors.New("no rotation backends configured"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_Exceeds_S23(t *testing.T) {
-	err := mapSecretError(errors.New("value exceeds maximum length"))
+	err := mapSecretError(context.Background(), errors.New("value exceeds maximum length"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_OutOfRange_S23(t *testing.T) {
-	err := mapSecretError(errors.New("out of range: rotation length"))
+	err := mapSecretError(context.Background(), errors.New("out of range: rotation length"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestMapSecretError_Default_S23(t *testing.T) {
-	err := mapSecretError(errors.New("unexpected database timeout"))
+	err := mapSecretError(context.Background(), errors.New("unexpected database timeout"))
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
