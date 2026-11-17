@@ -720,8 +720,10 @@ server stops with `no master passphrase is available (... mode 0644 is too open 
 Real output (second server started on the same data directory):
 
 ```
-failed to initialize core service: failed to initialize encryption: failed to acquire the encryption key lock: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable
+failed to initialize core service: failed to initialize encryption: failed to acquire the encryption key lock: another process already holds the DEK lock (a live server, or a concurrent rotation) at <datadir>/keys/dek.lock: resource temporarily unavailable
 ```
+
+The message names the absolute path of the lock file, so you can run `lsof` on it directly.
 
 **Match:** `another process already holds the DEK lock`
 
@@ -864,7 +866,7 @@ without `--force` the command stops earlier at the database lock, see the previo
 
 ```
 WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
-Error: refusing to clean up migrate-backup files: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable — a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry
+Error: refusing to clean up migrate-backup files: another process already holds the DEK lock (a live server, or a concurrent rotation) at <datadir>/keys/dek.lock: resource temporarily unavailable — a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry
 ```
 
 **Match:** `refusing to clean up migrate-backup files`
@@ -1521,7 +1523,7 @@ the first lock, the WARNING line, never the key lock):
 ```
 WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
 ⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
-Error: refusing to rotate: another process already holds the DEK lock (a live server, or a concurrent rotation): resource temporarily unavailable — stop the running server before running it
+Error: refusing to rotate: another process already holds the DEK lock (a live server, or a concurrent rotation) at <datadir>/keys/dek.lock: resource temporarily unavailable — stop the running server before rotating
 ```
 
 **In place:** stop first. [j6-key-rotation.md](j6-key-rotation.md). With several replicas on PostgreSQL,
