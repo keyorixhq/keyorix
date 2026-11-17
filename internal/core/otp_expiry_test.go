@@ -165,6 +165,7 @@ func TestCreateUserWithOneTimePassword_RecordsExpiry(t *testing.T) {
 			ms.On("AddPasswordHistory", ctx, uint(11), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 			ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, assertNotFoundErr())
 
+			ms.On("GetUser", ctx, uint(7)).Return(&models.User{ID: 7, IsActive: true, AccountState: AccountActive}, nil).Maybe() // the creating admin is active (#4159)
 			_, otp, err := c.CreateUserWithOneTimePassword(ctx, &CreateUserRequest{Username: "dana", Email: "dana@acme.io", DisplayName: "Dana"}, 7, false)
 			require.NoError(t, err)
 

@@ -24,3 +24,15 @@ A new in-scope operation that the harness does not cover needs a reason in
 `TestMatrixKeysAreCurrent`, `TestCoverageIsCurrent`, `TestCoverageAllIsCurrent`
 and `TestGlobalHandlerFlagMatchesRouter` report through `guardrules.Rollout`
 (`docs/guard-rollout-contract.md`).
+
+## Running the strict sweep
+
+```
+AUTHZDIFF_SWEEP=1 AUTHZDIFF_STRICT=1 GOFLAGS= go test ./server/authzdiff -run '^TestAuthzDiffSweep$' -parallel 4 -timeout 60m
+```
+
+Pass `-parallel 4`: at the default parallelism (GOMAXPROCS) the sweep's concurrent
+legs exceed the per-process memory guard on a shared workstation and the run is
+killed. A strict sweep without `AUTHZDIFF_OPS` also fails on a waiver that matched
+no case (a dead waiver): when a fix closes a waiver, remove its row from
+`partition_test.go` in the same change.

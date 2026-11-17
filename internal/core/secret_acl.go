@@ -60,6 +60,9 @@ func EncodeSecretACLPerms(perms []string) (string, error) {
 // secrets.manage at the target's project scope (enforced at the HTTP layer).
 // Emits a secret.acl_granted audit event.
 func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, userID uint, perms []string) error {
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4162
+		return err
+	}
 	if actorID == 0 {
 		return invalidACLRequest(fmt.Errorf("%s: actor ID is required", i18n.T("ErrorValidation", nil)))
 	}

@@ -19,6 +19,7 @@ func newGroupService(t *testing.T) (*GroupGRPCService, *testhelper.RBACTestHelpe
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
 	h.AssignUserRole(t, 1, 1, nil) // user 1 = super_admin (global) → all global checks pass
+	h.EnsureActiveUser(t, 1)       // user 1 acts through core (#4159)
 	return NewGroupService(h.CoreService), h
 }
 

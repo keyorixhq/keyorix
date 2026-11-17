@@ -99,6 +99,7 @@ func newPlannerCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.Create(role).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: plannerTestActor, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	ensureActiveActor(t, c.storage, plannerTestActor) // the acting user is active (#4159)
 	return c, db
 }
 
