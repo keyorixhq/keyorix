@@ -32,6 +32,8 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // parseDeadline bounds a single parse. Generous on purpose: we are catching a
@@ -54,7 +56,7 @@ func FuzzWebAuthnParsePublicKey(f *testing.F) {
 		}
 		start := time.Now()
 		_, _ = parseKey(data) // return ignored: reject is fine; we assert no panic + bounded time
-		if elapsed := time.Since(start); elapsed > parseDeadline {
+		if elapsed, _ := fuzzutil.EffectiveElapsed(start); elapsed > parseDeadline {
 			t.Fatalf("ParsePublicKey took %v (> %v) on %d bytes — unbounded work", elapsed, parseDeadline, len(data))
 		}
 	})
