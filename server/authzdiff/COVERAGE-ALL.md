@@ -12,8 +12,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
 | secrets | 43 | 30 | 10 | 10 |
-| other | 128 | 22 | 22 | 10 |
-| **total** | **212** | **93** | **47** | **35** |
+| other | 128 | 25 | 22 | 11 |
+| **total** | **212** | **96** | **47** | **36** |
 
 ## groups
 
@@ -149,7 +149,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 
 - [ ] `GRPC keyorix.v1.AuditService.WriteAuditCheckpoint` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [x] `GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass` — breakglass.activate
-- [ ] `GRPC keyorix.v1.BreakGlassService.RevokeBreakGlass` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
+- [x] `GRPC keyorix.v1.BreakGlassService.RevokeBreakGlass` — breakglass.revoke
 - [ ] `GRPC keyorix.v1.ConnectService.CreateRefGrant` — fixture: needs a Keyorix Connect connector configured
 - [ ] `GRPC keyorix.v1.ConnectService.DeleteRefGrant` — fixture: needs a Keyorix Connect connector configured
 - [ ] `GRPC keyorix.v1.ConnectService.ReadSecret` — fixture: needs a Keyorix Connect connector configured
@@ -180,7 +180,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST DELETE /api/v1/legal-hold` — model: legal-hold rules are not in the reference model
 - [ ] `REST DELETE /api/v1/notification-channels/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST DELETE /api/v1/rejection-reason-templates/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST DELETE /api/v1/risk-exceptions/{id}` — model: risk-exception approval rules are not in the reference model
+- [x] `REST DELETE /api/v1/risk-exceptions/{id}` — riskexception.delete
 - [x] `REST DELETE /api/v1/roles/{id}` — role.delete
 - [x] `REST DELETE /api/v1/roles/{id}/permissions/{permissionId}` — role.perm.remove
 - [ ] `REST DELETE /api/v1/rotation-policies/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
@@ -251,10 +251,10 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/projects/{id}/access-review/revoke` — model: access-review campaign/attestation rules are not in the reference model
 - [x] `REST POST /api/v1/projects/{id}/break-glass` — breakglass.activate
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/review` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
-- [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
+- [x] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke` — breakglass.revoke
 - [ ] `REST POST /api/v1/rejection-reason-templates` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [x] `REST POST /api/v1/risk-exceptions` — riskexception.create
-- [ ] `REST POST /api/v1/risk-exceptions/{id}/approve` — model: risk-exception approval rules are not in the reference model
+- [x] `REST POST /api/v1/risk-exceptions/{id}/approve` — riskexception.approve
 - [x] `REST POST /api/v1/roles` — role.create
 - [x] `REST POST /api/v1/roles/{id}/permissions` — role.perm.add
 - [ ] `REST POST /api/v1/rotation-policies` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound

@@ -105,7 +105,10 @@ type perProject struct {
 	oidcBindingID    uint   // OIDC binding on machineID (oidc.delete target)
 	migrateUsername  string // a user migrate-from-user may convert (keep_user=true)
 	machineRoleID    uint   // role held by machineID at this project (role.remove target)
-	sx               secretFixtures
+	// breakGlassActivationID is an ACTIVE break-glass activation in this project
+	// (activated by u-bg, a dedicated member), the breakglass.revoke target (V5EXT).
+	breakGlassActivationID uint
+	sx                     secretFixtures
 }
 
 // fixtureSecret is one of the four per-project secrets selected by an op arg
@@ -134,7 +137,11 @@ type fixtures struct {
 	freshUserID      uint // no role, no membership anywhere (invite/add-member target)
 	freshUserID2     uint // a second one (membership.invite vs member.add must not collide)
 	requesterIDs     [2]uint
-	ux               userFixtures
+	// riskExceptionID is a governed risk acceptance created by a NON-probed user
+	// (u-risk-creator), left un-approved and un-revoked: the riskexception.approve
+	// and riskexception.delete targets (V5EXT).
+	riskExceptionID uint
+	ux              userFixtures
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -467,6 +474,36 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	}
 	if e := seedUserFixtures(ctx, c, fx); e != nil {
 		return nil, e
+	}
+
+	// ---- V5EXT fixtures (risk-exception approve/delete, break-glass revoke) ----
+	//
+	// A risk exception created by a NON-probed user (u-risk-creator), left
+	// un-approved and un-revoked. riskexception.approve is gated system.write@global
+	// at the router and refuses the creator (dual control, core); keeping the
+	// creator out of the probed set makes the self-approval rule never fire for a
+	// probed principal, so the oracle sees only the router gate. riskexception.delete
+	// is gated system.write@global at the router, but core independently enforces
+	// creator-OR-admin-tier (core_refusal:"typed"); with a non-probed creator the
+	// effective gate for every probed principal is an admin role at global scope,
+	// which the model's globalAdminRole requirement expresses.
+	riskCreator := mkUser("u-risk-creator")
+	re := must(c.CreateRiskException(ctx, riskCreator.ID, false,
+		"synthetic-fixture-exception", "other", "synthetic-ref", "synthetic-justification-text",
+		riskExceptionExpiry()))
+	fx.riskExceptionID = re.ID
+
+	// An ACTIVE break-glass activation per project, activated by a dedicated
+	// member (u-bg: project_viewer@A and @B). The emergency-role grant the
+	// activation creates lands on u-bg, which no probed principal is, so it
+	// perturbs no other fixture. breakglass.revoke (roles.assign@project at the
+	// REST router AND the gRPC interceptor; core_refusal:"none") acts on it.
+	bgUser := mkUser("u-bg")
+	grant(bgUser.ID, fx.roleIDs["project_viewer"], fx.A.projectID, nil)
+	grant(bgUser.ID, fx.roleIDs["project_viewer"], fx.B.projectID, nil)
+	for _, pp := range []*perProject{&fx.A, &fx.B} {
+		act := must(c.ActivateBreakGlass(ctx, pp.projectID, bgUser.ID, "emergency-access-justification-fixture", ""))
+		pp.breakGlassActivationID = act.ID
 	}
 
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
