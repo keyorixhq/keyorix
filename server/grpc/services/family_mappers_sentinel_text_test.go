@@ -6,6 +6,7 @@ package services
 // not-found under a group RPC never reads "group not found".
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -21,7 +22,7 @@ import (
 func TestFamilyMappers_TextIsKeyedOnTheSentinel(t *testing.T) {
 	cases := []struct {
 		name   string
-		mapper func(error) error
+		mapper func(context.Context, error) error
 		err    error
 		code   codes.Code
 		text   string
@@ -41,7 +42,7 @@ func TestFamilyMappers_TextIsKeyedOnTheSentinel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.mapper(fmt.Errorf("op: %w", tc.err))
+			got := tc.mapper(context.Background(), fmt.Errorf("op: %w", tc.err))
 			st, _ := status.FromError(got)
 			assert.Equal(t, tc.code, st.Code(), got.Error())
 			assert.Equal(t, tc.text, st.Message())

@@ -8,6 +8,7 @@ package services
 // adapter. A permission refusal stays PermissionDenied on each.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -21,7 +22,7 @@ import (
 )
 
 func TestFamilyMappers_TypedStorageReadFaultIsUnavailable(t *testing.T) {
-	mappers := map[string]func(error) error{
+	mappers := map[string]func(context.Context, error) error{
 		"mapRoleError":      mapRoleError,
 		"mapMachineError":   mapMachineError,
 		"mapUserError":      mapUserError,
@@ -29,6 +30,7 @@ func TestFamilyMappers_TypedStorageReadFaultIsUnavailable(t *testing.T) {
 		"mapShareError":     mapShareError,
 		"mapDynamicError":   mapDynamicError,
 		"mapSecretACLError": mapSecretACLError,
+		"mapSecretError":    mapSecretError,
 		"groupError":        groupError,
 	}
 	for name, m := range mappers {
@@ -36,7 +38,7 @@ func TestFamilyMappers_TypedStorageReadFaultIsUnavailable(t *testing.T) {
 			fault := core.ReadFault(errors.New("driver: connection reset by peer"))
 			require.Error(t, fault)
 
-			got := m(fmt.Errorf("read: %w", fault))
+			got := m(context.Background(), fmt.Errorf("read: %w", fault))
 			st, ok := status.FromError(got)
 			require.True(t, ok)
 			assert.Equal(t, codes.Unavailable, st.Code(), got.Error())
@@ -48,7 +50,7 @@ func TestFamilyMappers_TypedStorageReadFaultIsUnavailable(t *testing.T) {
 }
 
 func TestFamilyMappers_PermissionRefusalIsPermissionDenied(t *testing.T) {
-	mappers := map[string]func(error) error{
+	mappers := map[string]func(context.Context, error) error{
 		"mapRoleError":      mapRoleError,
 		"mapMachineError":   mapMachineError,
 		"mapUserError":      mapUserError,
@@ -56,11 +58,12 @@ func TestFamilyMappers_PermissionRefusalIsPermissionDenied(t *testing.T) {
 		"mapShareError":     mapShareError,
 		"mapDynamicError":   mapDynamicError,
 		"mapSecretACLError": mapSecretACLError,
+		"mapSecretError":    mapSecretError,
 		"groupError":        groupError,
 	}
 	for name, m := range mappers {
 		t.Run(name, func(t *testing.T) {
-			got := m(fmt.Errorf("grant: %w", core.ErrPermissionDenied))
+			got := m(context.Background(), fmt.Errorf("grant: %w", core.ErrPermissionDenied))
 			assert.Equal(t, codes.PermissionDenied, status.Code(got), got.Error())
 		})
 	}

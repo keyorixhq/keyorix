@@ -39,7 +39,7 @@ func (s *GroupGRPCService) ListGroups(ctx context.Context, _ *emptypb.Empty) (*p
 	}
 	groups, err := s.core.ListGroups(ctx)
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	out := make([]*pb.Group, 0, len(groups))
 	for _, g := range groups {
@@ -58,7 +58,7 @@ func (s *GroupGRPCService) GetGroup(ctx context.Context, req *pb.GetGroupRequest
 	}
 	g, err := s.core.GetGroup(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return groupToProto(g), nil
 }
@@ -78,7 +78,7 @@ func (s *GroupGRPCService) CreateGroup(ctx context.Context, req *pb.CreateGroupR
 		Name: req.GetName(), Description: req.GetDescription(),
 	})
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return groupToProto(g), nil
 }
@@ -96,7 +96,7 @@ func (s *GroupGRPCService) UpdateGroup(ctx context.Context, req *pb.UpdateGroupR
 		ID: uint(req.GetId()), Name: req.GetName(), Description: req.GetDescription(),
 	})
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return groupToProto(g), nil
 }
@@ -111,7 +111,7 @@ func (s *GroupGRPCService) DeleteGroup(ctx context.Context, req *pb.DeleteGroupR
 		return nil, err
 	}
 	if err := s.core.DeleteGroup(ctx, actor.UserID, uint(req.GetId())); err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -131,7 +131,7 @@ func (s *GroupGRPCService) RestoreGroup(ctx context.Context, req *pb.RestoreGrou
 	}
 	g, err := s.core.RestoreGroup(ctx, actor.UserID, uint(req.GetId()))
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return groupToProto(g), nil
 }
@@ -146,7 +146,7 @@ func (s *GroupGRPCService) GetGroupMembers(ctx context.Context, req *pb.GetGroup
 	}
 	users, err := s.core.GetGroupMembers(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	out := make([]*pb.GroupMember, 0, len(users))
 	for _, u := range users {
@@ -188,7 +188,7 @@ func (s *GroupGRPCService) AddGroupMember(ctx context.Context, req *pb.GroupMemb
 		ctx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
 	}
 	if err := s.core.AddUserToGroup(ctx, actor.UserID, actorIsMachine, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0)
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -204,7 +204,7 @@ func (s *GroupGRPCService) RemoveGroupMember(ctx context.Context, req *pb.GroupM
 		return nil, err
 	}
 	if err := s.core.RemoveUserFromGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0)
-		return nil, groupError(err)
+		return nil, groupError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -239,7 +239,7 @@ func groupMemberToProto(u *models.User) *pb.GroupMember {
 // Postgres "permission denied for table groups" is a database-role fault, not an
 // authorization refusal (ERRSTRING-CLASS-1). An untyped error is Internal until it
 // is typed; a transient authorization-storage fault is Unavailable (retryable).
-func groupError(err error) error {
+func groupError(ctx context.Context, err error) error {
 	// Each family text is keyed on the sentinel it describes; any other sentinel of
 	// the class gets the classifier's default text (a project not-found is not
 	// "group not found").
@@ -259,5 +259,5 @@ func groupError(err error) error {
 	// The classifier answers an audit outage and a typed storage read fault Unavailable
 	// (retry), and a transient authorization-storage fault Unavailable with the gates'
 	// fixed text.
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "group operation", texts: texts})
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "group operation", texts: texts})
 }
