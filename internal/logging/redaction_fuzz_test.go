@@ -557,10 +557,7 @@ func (c *cursor) str(n int) string {
 	if c.i >= len(c.b0) {
 		return ""
 	}
-	end := c.i + n
-	if end > len(c.b0) {
-		end = len(c.b0)
-	}
+	end := min(c.i+n, len(c.b0))
 	s := string(c.b0[c.i:end])
 	c.i = end
 	return s
