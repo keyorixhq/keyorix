@@ -67,6 +67,7 @@ type HDriver struct {
 	cmd    *exec.Cmd
 	in     io.WriteCloser
 	out    *bufio.Reader
+	outf   *os.File // read end of the driver's stdout, closed by the harness, never by cmd.Wait
 	stderr *syncBuf
 	waitCh chan error
 }
@@ -100,22 +101,38 @@ func (d *HDriver) start() error {
 	if err != nil {
 		return err
 	}
-	out, err := cmd.StdoutPipe()
+	// Not cmd.StdoutPipe: Wait closes that pipe the moment the process has exited, and a driver's last
+	// answer can still be unread then (a driver that exits right after answering, on a loaded runner), which
+	// made the call "died" with exit status nil (#4390). The harness closes its end itself (closeOut).
+	out, outW, err := os.Pipe()
 	if err != nil {
 		return err
 	}
-	if err := cmd.Start(); err != nil {
+	cmd.Stdout = outW
+	err = cmd.Start()
+	_ = outW.Close() // the child holds its own copy
+	if err != nil {
+		_ = out.Close()
 		return err
 	}
-	d.cmd, d.in, d.out = cmd, in, bufio.NewReaderSize(out, 1<<20)
+	d.cmd, d.in, d.outf, d.out = cmd, in, out, bufio.NewReaderSize(out, 1<<20)
 	d.waitCh = make(chan error, 1)
 	go func() { d.waitCh <- cmd.Wait() }()
 	return nil
 }
 
+// closeOut releases the read end of the driver's stdout; a reader blocked on it returns at once, as it did when
+// cmd.Wait closed the pipe. Safe to call more than once and from any goroutine.
+func (d *HDriver) closeOut() {
+	if d.outf != nil {
+		_ = d.outf.Close()
+	}
+}
+
 func (d *HDriver) kill() {
 	if d.cmd != nil && d.cmd.Process != nil {
 		_ = d.cmd.Process.Kill()
+		d.closeOut()
 		select {
 		case err := <-d.waitCh:
 			_ = err
@@ -204,6 +221,7 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 				if r > hRSSCeilingKB {
 					reason.Store("rss")
 					_ = d.cmd.Process.Kill()
+					d.closeOut()
 					return
 				}
 			}
@@ -215,6 +233,7 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 	case <-time.After(hHardKill):
 		reason.Store("hang")
 		_ = d.cmd.Process.Kill()
+		d.closeOut()
 		r = <-ch
 	}
 	if last := rssKB(pid); last > peak.Load() {
@@ -236,6 +255,7 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 			info.Exit = fmt.Sprint(err)
 		case <-time.After(3 * time.Second):
 		}
+		d.closeOut()
 		d.cmd = nil
 		info.Stderr = d.stderr.take()
 		return nil, info
