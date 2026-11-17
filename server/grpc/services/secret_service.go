@@ -9,6 +9,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
@@ -734,10 +735,18 @@ func mapSecretMutationError(ctx context.Context, faults *core.AuthorizeFaultReco
 //   - core's per-refusal share text (ShareRefusalMessage);
 //   - core.ErrSecretAlreadyExists, which has no sentinel-table row (REST's CreateSecret
 //     handler answers it itself);
-//   - the untyped rotation validation errors, which only have text to match. That match
-//     runs last and only for an error the classifier calls Internal and that is not an
-//     outage: a typed fault or sentinel whose text happens to contain "out of range" or
-//     "exceeds" keeps its class.
+//   - the untyped rotation validation errors, which only have text to match.
+//
+// The last two run only for an error the classifier table leaves Internal
+// (secretErrorUnclassified): an audit or storage outage or a partial mutation that also
+// wraps ErrSecretAlreadyExists stays Unavailable, and a typed fault or sentinel whose text
+// happens to contain "out of range" or "exceeds" keeps its class. ErrSecretAlreadyExists
+// is a verdict, so it keeps AlreadyExists under a canceled ctx like the Conflict rows of
+// the table do; the rotation text match is skipped for an authorize-transient error.
+//
+// The "name already exists" text is given only to the two name/version conflicts the old
+// switch answered with it (ErrSecretAlreadyExists, ErrDuplicateSecretVersion); any other
+// Conflict sentinel (ErrDuplicateSecretDependency, ...) gets the class's default text.
 func mapSecretError(ctx context.Context, err error) error {
 	// Checked via errors.As, BEFORE anything text-based: this error's own message
 	// contains the substring "exceeds" (deliberately, so it names the actual limit),
@@ -758,10 +767,11 @@ func mapSecretError(ctx context.Context, err error) error {
 	if reason, ok := core.ShareRefusalMessage(err); ok {
 		return status.Error(codes.PermissionDenied, reason)
 	}
-	if errors.Is(err, core.ErrSecretAlreadyExists) {
+	unclassified := secretErrorUnclassified(err)
+	if unclassified && errors.Is(err, core.ErrSecretAlreadyExists) {
 		return status.Error(codes.AlreadyExists, secretAlreadyExistsText)
 	}
-	if errclass.Of(err) == errclass.Internal && !core.IsAuthorizeTransient(ctx, err) && isRotationValidationError(err) {
+	if unclassified && !core.IsAuthorizeTransient(ctx, err) && isRotationValidationError(err) {
 		// Fixed message, not the text: these are genuinely safe caller-echo validation
 		// text today (rotation_executor.go), but "exceeds" in particular is used for
 		// dozens of unrelated validations across internal/core; matching a coincidental
@@ -772,15 +782,28 @@ func mapSecretError(ctx context.Context, err error) error {
 	// core.ErrSecretTargetInvalid (CreateSecret's target environment is missing or in
 	// another project) is a NotFound row of the table, so a foreign environment reads
 	// the same as a missing one.
-	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "secret operation", texts: coreErrorTexts{
+	texts := coreErrorTexts{
 		errclass.NotFound:         "secret not found",
 		errclass.PermissionDenied: "access denied to this secret",
-		errclass.Conflict:         secretAlreadyExistsText,
-	}})
+	}
+	if errors.Is(err, storage.ErrDuplicateSecretVersion) {
+		texts[errclass.Conflict] = secretAlreadyExistsText
+	}
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "secret operation", texts: texts})
 }
 
 // secretAlreadyExistsText is the client text of a secret name or version that exists.
 const secretAlreadyExistsText = "secret with this name already exists"
+
+// secretErrorUnclassified reports whether the classifier table leaves err Internal: no
+// partial mutation, no audit or storage outage and no sentinel with a class. Only such an
+// error may be answered by mapSecretError's pre-checks that the table cannot express.
+func secretErrorUnclassified(err error) bool {
+	if _, ok := core.AsPartialMutationError(err); ok {
+		return false
+	}
+	return errclass.Of(err) == errclass.Internal
+}
 
 // isRotationValidationError reports whether err is one of the untyped rotation
 // validation errors of rotation_executor.go (no sentinel exists to match them by). It takes

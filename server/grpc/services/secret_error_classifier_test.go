@@ -2,8 +2,10 @@ package services
 
 // secret_error_classifier_test.go — GRPC-MAPPER-TAILS-1 item 3. mapSecretError and the
 // share scope resolver answer through coreErrorStatus. The codes and client texts the
-// hand-written switch gave stay; what changes is that an outage is Unavailable and a
-// typed error is never read as text.
+// hand-written switch gave for the sentinels it listed stay. What changes: an outage is
+// Unavailable, a typed error is never read as text, and a sentinel the old switch did
+// not list answers its class instead of Internal "secret operation failed"
+// (TestMapSecretError_UnlistedSentinelsAnswerTheirClass).
 
 import (
 	"context"
@@ -63,6 +65,60 @@ func TestMapSecretError_TypedFaultIsNotReadAsRotationText(t *testing.T) {
 func TestMapSecretError_AuditOutageIsUnavailable(t *testing.T) {
 	got := mapSecretError(context.Background(), fmt.Errorf("update: %w", core.ErrMutationAuditUnavailable))
 	assert.Equal(t, codes.Unavailable, status.Code(got), got.Error())
+}
+
+// Sentinels the old switch did not list answer their class with the class's default text.
+// Only the two name/version conflicts get the "name already exists" text; any other
+// conflict (a duplicate dependency) does not.
+func TestMapSecretError_UnlistedSentinelsAnswerTheirClass(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		code codes.Code
+		text string
+	}{
+		{"invalid input", fmt.Errorf("x: %w", core.ErrSecretInvalidInput), codes.InvalidArgument, "invalid request"},
+		{"not deleted", fmt.Errorf("x: %w", core.ErrSecretNotDeleted), codes.FailedPrecondition, "not allowed in the target's current state"},
+		{"duplicate dependency", fmt.Errorf("x: %w", storage.ErrDuplicateSecretDependency), codes.AlreadyExists, "already exists"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapSecretError(context.Background(), tc.err)
+			assert.Equal(t, tc.code, status.Code(got), got.Error())
+			assert.Equal(t, tc.text, status.Convert(got).Message())
+		})
+	}
+}
+
+// ErrSecretAlreadyExists has no sentinel-table row, so mapSecretError answers it in a
+// pre-check. That pre-check must not hide an outage the same error also wraps.
+func TestMapSecretError_AlreadyExistsDoesNotHideAnOutage(t *testing.T) {
+	exists := storage.Typed(core.ErrSecretAlreadyExists, "secret already exists", nil)
+
+	got := mapSecretError(context.Background(), errors.Join(exists, core.ErrMutationAuditUnavailable))
+	assert.Equal(t, codes.Unavailable, status.Code(got), got.Error())
+	assert.True(t, hasErrorInfoReason(got, auditUnavailableReason))
+
+	got = mapSecretError(context.Background(), errors.Join(exists, core.ReadFault(errors.New("driver: connection reset"))))
+	assert.Equal(t, codes.Unavailable, status.Code(got), got.Error())
+	assert.True(t, hasErrorInfoReason(got, storageUnavailableReason))
+
+	// A verdict, not an outage: like the table's Conflict rows (a duplicate version), it
+	// keeps AlreadyExists under a canceled ctx.
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, err := range []error{exists, fmt.Errorf("x: %w", storage.ErrDuplicateSecretVersion)} {
+		got = mapSecretError(canceled, err)
+		assert.Equal(t, codes.AlreadyExists, status.Code(got), got.Error())
+		assert.Equal(t, secretAlreadyExistsText, status.Convert(got).Message())
+	}
+	// The rotation text match is skipped for an authorize-transient error.
+	got = mapSecretError(canceled, errors.New("unknown rotation charset: klingon"))
+	assert.Equal(t, codes.Unavailable, status.Code(got), got.Error())
+
+	// A refusal that also says "already exists" stays the refusal (no existence oracle).
+	got = mapSecretError(context.Background(), errors.Join(exists, core.ErrPermissionDenied))
+	assert.Equal(t, codes.PermissionDenied, status.Code(got), got.Error())
 }
 
 // The share scope resolver's read failures keep their answers when rendered by the
