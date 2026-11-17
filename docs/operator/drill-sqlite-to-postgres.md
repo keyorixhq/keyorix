@@ -26,7 +26,9 @@ What it does and checks:
    `system_metadata` keys (listed in `scripts/migrate/migratecheck/main.go`).
 4. **The migrated instance works**: restore's own `verify-audit` says VALID; the chain
    also verifies against the checkpoint exported from SQLite before the move (no new
-   genesis: the only new event is `admin.restore_completed`); the retention anchor is
+   genesis: the only new event is `admin.restore_completed`); the source's head row keeps
+   its id and entry hash and `admin.restore_completed` carries it as `prev_hash`
+   (`migratecheck audit-link`); the retention anchor is
    byte-identical; schema epoch equal on both sides and to the binary's; the server
    boots on PostgreSQL, the MFA admin and the second MFA user log in, every secret
    decrypts, versions, share, machine token, revoked token, suspended and deleted secret,
