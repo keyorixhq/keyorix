@@ -35,7 +35,7 @@ func TestAllocOverBudget(t *testing.T) {
 // 73 MB "48 MB read buffer" bounds both failed it (5/5 on a fast host). Repeated
 // so a host-speed-dependent pass cannot hide a flaky budget.
 func TestKFZ2026130ReconnectChurnWithinBudget(t *testing.T) {
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		runInteraction(t, 0, 0, 44, 0, []byte("20000"))
 	}
 }
