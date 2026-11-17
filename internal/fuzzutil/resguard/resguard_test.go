@@ -216,7 +216,7 @@ func TestMeasureSlowPromotionMarksAllocUnmeasured(t *testing.T) {
 		allocSink = make([]byte, 1<<20)
 		time.Sleep(50 * time.Millisecond)
 	})
-	if !slow.Sampled || slow.LiveHeap == 0 {
+	if !slow.Sampled || slow.LiveHeapAbs == 0 {
 		t.Fatalf("slow input must be promoted to a live-heap sample: %+v", slow)
 	}
 	if slow.AllocSampled || slow.AllocBytes != 0 || slow.Mallocs != 0 {
