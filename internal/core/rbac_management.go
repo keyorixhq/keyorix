@@ -570,6 +570,13 @@ func (c *KeyorixCore) requireGrantTargetUser(ctx context.Context, actorID, userI
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
+	return c.requireGrantTargetExists(ctx, userID)
+}
+
+// requireGrantTargetExists is the existence half of requireGrantTargetUser, for a caller
+// that calls requireGranterHoldsRolePermissions itself (AssignUserRoleWithExpiry: the
+// grant-primitive gate table pins that direct call before the write).
+func (c *KeyorixCore) requireGrantTargetExists(ctx context.Context, userID uint) error {
 	if _, err := c.storage.GetUser(ctx, userID); err != nil {
 		if fault := ReadFault(err); fault != nil {
 			return fault
