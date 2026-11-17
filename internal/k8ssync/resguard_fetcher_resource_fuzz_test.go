@@ -91,10 +91,7 @@ func fetcherResourceServer(shape fetcherResourceShape) *httptest.Server {
 			return
 		}
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		tp := shape.totalPages
-		if tp < 1 {
-			tp = 1
-		}
+		tp := max(shape.totalPages, 1)
 		secrets := `[{"ID":41,"Name":"other"}]`
 		// Target appears only on the final page, so a resolution must walk every page.
 		if shape.targetOnETP && page >= tp {
