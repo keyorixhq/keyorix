@@ -211,7 +211,11 @@ var redisCases = []hostileCase{
 	{"negative-array-len", "any", []byte("*-5\r\n")},
 	// Length-prefix frames announcing gigabytes (array/bulk/map) are deliberately not
 	// here: one of them makes the client allocate >6 GB, which is a memory-bound
-	// finding, not a panic, and kills the test process. Tracked in the report.
+	// finding, not a panic, and kills the test process. There is no client-side bound to
+	// set: go-redis v9.23.0 takes the size straight from the reply header
+	// (internal/proto replyLen -> make([]byte, n+2) / make([]interface{}, n)) and has no
+	// Options field that caps it, so the fix is upstream (DYNAMIC-HOSTILE-TAILS-1 item 3;
+	// a conn-level RESP sniffer is the only local alternative and is not built).
 	{"negative-bulk-len", "any", []byte("$-2\r\n")},
 	{"empty-simple-string", "any", []byte("+")},
 	{"empty-error", "any", []byte("-\r\n")},
