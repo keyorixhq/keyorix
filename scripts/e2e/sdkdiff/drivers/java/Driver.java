@@ -63,6 +63,7 @@ public class Driver {
         String cmd = f[0];
         String base = field(f[1]) == null ? "" : field(f[1]);
         String token = field(f[2]) == null ? "" : field(f[2]);
+        curToken = token;
         int timeoutMs = Integer.parseInt(f[3]);
         String[] a = new String[Math.max(0, f.length - 4)];
         for (int i = 0; i < a.length; i++) a[i] = field(f[4 + i]);
@@ -148,6 +149,24 @@ public class Driver {
         }
     }
 
+    // The token of the current call. msg and full are capped, so token_seen is computed on the untruncated text:
+    // a token an SDK appends after a long echoed error body must still be reported (O4).
+    static String curToken = "";
+
+    static boolean leaks(String s) {
+        return !curToken.isEmpty() && (s.contains(curToken) || s.contains(curToken.replace("-", "%2D")));
+    }
+
+    // Checks the message of every link of the cause chain, not the rendered trace: building an uncapped trace of a
+    // 100 MiB message would not fit the driver's heap.
+    static boolean chainLeaks(Throwable e) {
+        int i = 0;
+        for (Throwable c = e; c != null && i < 20; c = c.getCause(), i++) {
+            if (leaks(String.valueOf(c.getMessage()))) return true;
+        }
+        return false;
+    }
+
     static String fail(Throwable e, String force) {
         String cls = "other";
         Integer status = null;
@@ -162,7 +181,8 @@ public class Driver {
         }
         return "{\"ok\":false,\"class\":" + js(cls) + ",\"status\":" + (status == null ? "null" : status.toString())
             + ",\"native\":" + js(e.getClass().getSimpleName()) + ",\"msg\":" + js(cap(String.valueOf(e.getMessage())))
-            + ",\"sdk_error\":" + (e instanceof KeyorixException) + ",\"full\":" + js(fullTrace(e)) + "}";
+            + ",\"sdk_error\":" + (e instanceof KeyorixException) + ",\"full\":" + js(fullTrace(e))
+            + ",\"token_seen\":" + chainLeaks(e) + "}";
     }
 
         static String secretList(List<Secret> l) {

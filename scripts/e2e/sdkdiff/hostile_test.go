@@ -99,11 +99,7 @@ func TestHostSrvDisarmUnblocksStalledWriter(t *testing.T) {
 	if len(reqs) != 1 || !reqs[0].Mutated {
 		t.Fatalf("requests %+v", reqs)
 	}
-	done := make(chan struct{})
-	go func() { srv.wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
+	if !srv.waitIdle(2 * time.Second) {
 		t.Fatal("handler still running after Disarm")
 	}
 }

@@ -55,6 +55,15 @@ def field(f):
     return bytes.fromhex(f).decode("utf-8", "replace")
 
 
+# The token of the current call. msg/full are cut to 20000 chars, so token_seen is computed on the untruncated text:
+# a token an SDK appends after a long echoed error body must still be reported (O4).
+CUR_TOKEN = ""
+
+
+def _leaks(s):
+    return CUR_TOKEN != "" and (CUR_TOKEN in s or CUR_TOKEN.replace("-", "%2D") in s)
+
+
 def classify(err, force=None):
     cls, status = "other", None
     if force:
@@ -79,14 +88,18 @@ def classify(err, force=None):
         full = "".join(traceback.format_exception(type(err), err, err.__traceback__))
     except Exception as e2:  # noqa: BLE001
         full = "format failed: " + type(e2).__name__
-    return {"ok": False, "class": cls, "status": status, "native": type(err).__name__, "msg": str(err)[:20000],
-            "sdk_error": isinstance(err, keyorix.KeyorixError), "full": full[:20000]}
+    msg = str(err)
+    return {"ok": False, "class": cls, "status": status, "native": type(err).__name__, "msg": msg[:20000],
+            "sdk_error": isinstance(err, keyorix.KeyorixError), "full": full[:20000],
+            "token_seen": _leaks(msg) or _leaks(full)}
 
 
 def run(f):
+    global CUR_TOKEN
     if MISSING:
         return {"driver_error": "SDK lacks " + ", ".join(MISSING)}
     cmd, base, token = f[0], field(f[1]) or "", field(f[2]) or ""
+    CUR_TOKEN = token
     timeout_ms = int(f[3] or 0)
     args = [field(x) for x in f[4:]]
     timeout = (timeout_ms / 1000.0) if timeout_ms > 0 else None

@@ -67,6 +67,7 @@ type HDriver struct {
 	cmd    *exec.Cmd
 	in     io.WriteCloser
 	out    *bufio.Reader
+	outF   *os.File // read end behind out; closed by kill and after a failed read, never by Wait
 	stderr *syncBuf
 	waitCh chan error
 }
@@ -100,14 +101,20 @@ func (d *HDriver) start() error {
 	if err != nil {
 		return err
 	}
-	out, err := cmd.StdoutPipe()
+	// A parent-owned pipe, not cmd.StdoutPipe: Wait closes a StdoutPipe's read end as soon as the process exits, which
+	// drops an answer the driver wrote just before exiting (read |0: file already closed, misreported as O1).
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		return err
 	}
+	cmd.Stdout = pw
 	if err := cmd.Start(); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
 		return err
 	}
-	d.cmd, d.in, d.out = cmd, in, bufio.NewReaderSize(out, 1<<20)
+	_ = pw.Close() // the child holds its own copy; EOF reaches pr only after the child's output has been read
+	d.cmd, d.in, d.outF, d.out = cmd, in, pr, bufio.NewReaderSize(pr, 1<<20)
 	d.waitCh = make(chan error, 1)
 	go func() { d.waitCh <- cmd.Wait() }()
 	return nil
@@ -122,7 +129,15 @@ func (d *HDriver) kill() {
 		case <-time.After(5 * time.Second):
 		}
 	}
+	d.closeOut()
 	d.cmd = nil
+}
+
+func (d *HDriver) closeOut() {
+	if d.outF != nil {
+		_ = d.outF.Close()
+		d.outF = nil
+	}
 }
 
 func rssKB(pid int) int64 {
@@ -215,6 +230,7 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 	case <-time.After(hHardKill):
 		reason.Store("hang")
 		_ = d.cmd.Process.Kill()
+		_ = d.outF.Close() // a grandchild holding the pipe open must not keep the read blocked
 		r = <-ch
 	}
 	if last := rssKB(pid); last > peak.Load() {
@@ -236,6 +252,7 @@ func (d *HDriver) call(line string) (map[string]any, callInfo) {
 			info.Exit = fmt.Sprint(err)
 		case <-time.After(3 * time.Second):
 		}
+		d.closeOut()
 		d.cmd = nil
 		info.Stderr = d.stderr.take()
 		return nil, info
@@ -480,10 +497,17 @@ func judge(sc *HScen, m *Mut, drv map[string]any, info callInfo, reqs []HReq, go
 		}
 		return true
 	}
+	seen := false
 	for _, f := range []string{"msg", "native", "full"} {
 		if o4(f, str(drv[f])) {
+			seen = true
 			break
 		}
+	}
+	// The drivers cut msg/full to 20000 chars; token_seen is computed on the untruncated text, so a token past the
+	// cut (an SDK that appends it after a long echoed error body) is still reported.
+	if !seen && drv["token_seen"] == true {
+		o4("the untruncated error text (past the 20000-char cut)", canary)
 	}
 	o4("stderr", info.Stderr)
 	sev := sevFor(sc, m)
@@ -792,7 +816,40 @@ func hostileRun(args []string) error {
 	rep := report(recs, cfg.label, time.Since(t0))
 	_ = os.WriteFile(filepath.Join(cfg.out, "report.txt"), []byte(rep), 0o600) // #nosec G306 -- operator path
 	fmt.Print(rep)
-	return err
+	if err != nil {
+		return err
+	}
+	// A failing C0 baseline (a broken driver) makes every R mutation "pass", because O3 fires only on success.
+	if bad := failingControls(recs); len(bad) > 0 {
+		return fmt.Errorf("C0 control failed, so the oracle verdicts of these SDKs are void: %s", fmtCounts(bad))
+	}
+	// Oracle violations alone do not fail the run: this is an exploratory tool and a violation is a finding to read
+	// in the report (hostile/README.md).
+	return nil
+}
+
+// failingControls counts, per SDK, the C0 (no mutation) records that did not succeed.
+func failingControls(recs []RunRec) map[string]int {
+	bad := map[string]int{}
+	for _, r := range recs {
+		if r.Mut == "C0" && r.Applied != "n/a" && r.Outcome != "ok" {
+			bad[r.SDK]++
+		}
+	}
+	return bad
+}
+
+func fmtCounts(m map[string]int) string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	parts := make([]string, 0, len(ks))
+	for _, k := range ks {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, m[k]))
+	}
+	return strings.Join(parts, " ")
 }
 
 // ---- report ----
@@ -805,6 +862,11 @@ func report(recs []RunRec, label string, took time.Duration) string {
 		sdks[r.SDK] = true
 	}
 	names := keys(sdks)
+	if bad := failingControls(recs); len(bad) > 0 {
+		fmt.Fprintf(&b, "!! C0 CONTROLS FAILING (per SDK: %s): the baseline is broken, so no verdict below can be trusted\n", fmtCounts(bad))
+	} else {
+		b.WriteString("C0 controls: all succeeded\n")
+	}
 	type cnt struct{ runs, applied, ok, errs, na, nr int }
 	cs := map[string]*cnt{}
 	vc := map[string]map[string]int{}

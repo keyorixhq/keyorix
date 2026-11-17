@@ -66,6 +66,7 @@ func handle(f []string) map[string]any {
 	cmd := f[0]
 	base := str(field(f[1]))
 	token := str(field(f[2]))
+	curToken = token
 	timeoutMs, _ := strconv.Atoi(f[3])
 	args := make([]*string, 0, len(f)-4)
 	for _, a := range f[4:] {
@@ -229,12 +230,31 @@ func fail(err error, force string) map[string]any {
 	}
 	msg := err.Error()
 	return map[string]any{"ok": false, "class": class, "status": status, "native": fmt.Sprintf("%T", err), "msg": capText(msg),
-		"sdk_error": strings.HasPrefix(msg, "keyorix:") || strings.Contains(fmt.Sprintf("%T", err), "keyorix."), "full": fullErr(err)}
+		"sdk_error": strings.HasPrefix(msg, "keyorix:") || strings.Contains(fmt.Sprintf("%T", err), "keyorix."), "full": fullErr(err), "token_seen": tokenSeen(err)}
 }
 
 // maxText caps msg and full like the other drivers do: an SDK that echoes a 100 MiB error body (B11) must not
 // turn into a 100 MB answer line.
 const maxText = 20000
+
+// curToken is the token of the current call. msg and full are cut to maxText, so token_seen is computed on the
+// untruncated text: a token an SDK appends after a long echoed error body must still be reported (O4).
+var curToken string
+
+func leaks(s string) bool {
+	return curToken != "" && (strings.Contains(s, curToken) || strings.Contains(s, strings.ReplaceAll(curToken, "-", "%2D")))
+}
+
+// tokenSeen checks the whole error chain, uncapped, the way msg and full render it.
+func tokenSeen(err error) bool {
+	for i := 0; err != nil && i < 20; i++ {
+		if leaks(err.Error()) || leaks(fmt.Sprintf("%+v", err)) {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
+}
 
 func capText(s string) string {
 	if len(s) > maxText {

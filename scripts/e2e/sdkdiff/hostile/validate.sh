@@ -4,6 +4,7 @@
 # For each plant it runs the plant's mutation subset on the planted SDK copy and on the unpatched checkout, then prints the
 # violations that exist only with the plant.  PH0 (no-op patch) must show none, on all four SDKs.
 # A run that fails or writes no results is reported as HARNESS-FAIL (with the tail of its log), never as MISSED.
+# The exit status is non-zero on any HARNESS-FAIL, any MISSED plant and any NOT-SILENT control.
 set -u
 BIN=$1; SDKS=$2; PLANTS=$3; BUILD=$4; W=$5
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -50,6 +51,8 @@ for spec in "${SPEC[@]}"; do
     else
       [ "$NEW" -ge 1 ] && V=DETECTED || V=MISSED
     fi
+    # A plant the harness missed, or a control that is not silent, is a validation failure: exit non-zero.
+    case "$V" in MISSED | NOT-SILENT) FAILS=$((FAILS + 1)) ;; esac
     echo "$P sdk=$K registered=$ORACLE verdict=$V ($TOT, registered-oracle new violations: $NEW)"
     echo "$OUT" | grep "^NEW" | head -3 | cut -c1-220 | sed 's/^/    /'
   done

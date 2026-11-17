@@ -134,8 +134,8 @@ type HostSrv struct {
 	ln    net.Listener
 	mu    sync.Mutex
 	sess  *hSession
-	conns map[net.Conn]struct{} // open connections; Disarm closes them so no handler outlives its session
-	wg    sync.WaitGroup
+	conns map[net.Conn]struct{} // open connections (one per running handler); Disarm closes them so no handler outlives its session
+	idle  *sync.Cond            // on mu; broadcast whenever a handler ends
 }
 
 // NewHostSrv listens on a free loopback port.
@@ -145,6 +145,7 @@ func NewHostSrv() (*HostSrv, error) {
 		return nil, err
 	}
 	s := &HostSrv{ln: ln, conns: map[net.Conn]struct{}{}}
+	s.idle = sync.NewCond(&s.mu)
 	go s.loop()
 	return s, nil
 }
@@ -181,19 +182,28 @@ func (s *HostSrv) Disarm() []HReq {
 	for _, c := range open {
 		_ = c.Close()
 	}
-	waitTimeout(&s.wg, 12*time.Second)
+	s.waitIdle(12 * time.Second)
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	return append([]HReq(nil), se.Reqs...)
 }
 
-func waitTimeout(wg *sync.WaitGroup, d time.Duration) {
-	ch := make(chan struct{})
-	go func() { wg.Wait(); close(ch) }()
-	select {
-	case <-ch:
-	case <-time.After(d):
+// waitIdle waits until no handler is running or d has passed, and reports which. Handlers are counted under s.mu
+// (not with a WaitGroup), so a connection accepted while Disarm waits, such as an SDK retry, cannot race the wait.
+func (s *HostSrv) waitIdle(d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	t := time.AfterFunc(d, func() {
+		s.mu.Lock()
+		s.idle.Broadcast()
+		s.mu.Unlock()
+	})
+	defer t.Stop()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for len(s.conns) > 0 && time.Now().Before(deadline) {
+		s.idle.Wait()
 	}
+	return len(s.conns) == 0
 }
 
 func (s *HostSrv) loop() {
@@ -205,14 +215,15 @@ func (s *HostSrv) loop() {
 		s.mu.Lock()
 		s.conns[c] = struct{}{}
 		s.mu.Unlock()
-		s.wg.Go(func() {
+		go func() {
 			defer func() {
 				s.mu.Lock()
 				delete(s.conns, c)
+				s.idle.Broadcast()
 				s.mu.Unlock()
 			}()
 			s.serve(c)
-		})
+		}()
 	}
 }
 

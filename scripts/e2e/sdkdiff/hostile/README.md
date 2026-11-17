@@ -24,12 +24,18 @@ Rules, oracles, mutation catalogue and thresholds are pre-registered in
 Results: `results.jsonl` and `report.txt` in the output directory. Drivers run
 niced, with bounded memory (RSS ceiling 1 GiB, 25 s wall clock per call).
 
+Exit status: `hostile run` exits 0 even when the report lists oracle violations, because it is an exploratory
+tool and a violation is a finding to read, not a failure of the run. It exits non-zero when the run itself is
+unsound: a driver or SDK that cannot start, or a failing C0 control (the report header then names the SDKs),
+since with a broken baseline every R mutation would "pass".
+
 ## Validating the oracles
 
 `plants/make-plants.sh` copies the SDK tree and applies small deliberate
 defects (PH1..PH6; PH0 is a no-op control) to the copies only.
 `validate.sh` runs the relevant subset against each copy and reports whether
 the oracles flag it (DETECTED) and that the control stays silent.
+It exits non-zero on a HARNESS-FAIL, a MISSED plant or a control that is not SILENT.
 
 ## jsonparser/
 

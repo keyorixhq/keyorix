@@ -38,6 +38,11 @@ function field(f) {
   return Buffer.from(f, 'hex').toString('utf8');
 }
 
+// The token of the current call. msg/full are cut to 20000 chars, so token_seen is computed on the untruncated text:
+// a token an SDK appends after a long echoed error body must still be reported (O4).
+let curToken = '';
+function leaks(s) { return curToken !== '' && (s.includes(curToken) || s.includes(curToken.replaceAll('-', '%2D'))); }
+
 function classify(err, force) {
   let cls = 'other';
   let status = null;
@@ -49,8 +54,9 @@ function classify(err, force) {
     else if (/^(Request failed|Server unreachable)/.test(err.message)) cls = 'network';
   } else if (err instanceof SyntaxError) cls = 'decode';
   let full = '';
-  try { full = util.inspect(err, { depth: 4 }).slice(0, 20000); } catch (e2) { full = 'inspect failed'; }
-  return { ok: false, class: cls, status, native: (err && err.constructor && err.constructor.name) || typeof err, msg: String(err && err.message !== undefined ? err.message : err).slice(0, 20000), sdk_error: err instanceof sdk.KeyorixError, full };
+  try { full = util.inspect(err, { depth: 4 }); } catch (e2) { full = 'inspect failed'; }
+  const msg = String(err && err.message !== undefined ? err.message : err);
+  return { ok: false, class: cls, status, native: (err && err.constructor && err.constructor.name) || typeof err, msg: msg.slice(0, 20000), sdk_error: err instanceof sdk.KeyorixError, full: full.slice(0, 20000), token_seen: leaks(msg) || leaks(full) };
 }
 
 async function run(f) {
@@ -58,6 +64,7 @@ async function run(f) {
   const cmd = f[0];
   const base = field(f[1]) ?? '';
   const token = field(f[2]) ?? '';
+  curToken = token;
   const timeoutMs = parseInt(f[3], 10) || 0;
   const args = f.slice(4).map(field);
   const copts = timeoutMs > 0 ? { timeout: timeoutMs } : {};

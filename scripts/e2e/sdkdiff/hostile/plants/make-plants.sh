@@ -4,12 +4,12 @@
 # The checkout itself is never modified.
 set -eu
 SRC=$(cd "$1" && pwd)
-OUT=$2
+OUT=${2:?usage: make-plants.sh <keyorix-sdks checkout> <out dir> <build-drivers.sh dir>}
 HERE=$(cd "$(dirname "$0")" && pwd)
 BUILD=$(cd "$3" && pwd)
 mkdir -p "$OUT"
 for P in PH0 PH1 PH2 PH3 PH4 PH5 PH6; do
-  rm -rf "$OUT/$P" "$OUT/build-$P"
+  rm -rf "${OUT:?}/$P" "${OUT:?}/build-$P"
   mkdir -p "$OUT/$P"
   for d in go node python java; do cp -R "$SRC/$d" "$OUT/$P/$d"; done
   python3 -I "$HERE/plant.py" "$P" "$OUT/$P"
