@@ -257,7 +257,7 @@ func (w *World) Fingerprint() map[string]string {
 		h := sha256.New()
 		h.Write([]byte{byte(status / 100)}) // #nosec G115 -- status is an HTTP status code, status/100 is at most 9
 		if v != nil {
-			lv := map[string]string{}
+			lv := map[string]string{} // nosemgrep: trailofbits.go.iterate-over-empty-map.iterate-over-empty-map -- lv is filled by leaves() on the next line before it is ranged
 			leaves("", v, lv)
 			keys := make([]string, 0, len(lv))
 			for k := range lv {
