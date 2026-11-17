@@ -761,7 +761,7 @@ func mapSecretError(ctx context.Context, err error) error {
 	if errors.Is(err, core.ErrSecretAlreadyExists) {
 		return status.Error(codes.AlreadyExists, secretAlreadyExistsText)
 	}
-	if errclass.Of(err) == errclass.Internal && !core.IsAuthorizeTransient(ctx, err) && isRotationValidationText(err.Error()) {
+	if errclass.Of(err) == errclass.Internal && !core.IsAuthorizeTransient(ctx, err) && isRotationValidationError(err) {
 		// Fixed message, not the text: these are genuinely safe caller-echo validation
 		// text today (rotation_executor.go), but "exceeds" in particular is used for
 		// dozens of unrelated validations across internal/core; matching a coincidental
@@ -782,9 +782,12 @@ func mapSecretError(ctx context.Context, err error) error {
 // secretAlreadyExistsText is the client text of a secret name or version that exists.
 const secretAlreadyExistsText = "secret with this name already exists"
 
-// isRotationValidationText reports whether msg is one of the untyped rotation
-// validation errors of rotation_executor.go (no sentinel exists to match them by).
-func isRotationValidationText(msg string) bool {
+// isRotationValidationError reports whether err is one of the untyped rotation
+// validation errors of rotation_executor.go (no sentinel exists to match them by). It takes
+// the error, not its text, so the text read stays visible to TestNoErrorTextClassification
+// (which does not follow error text passed through a parameter).
+func isRotationValidationError(err error) bool {
+	msg := err.Error()
 	for _, s := range []string{"unknown rotation charset", "out of range", "must be set together",
 		"unknown rotation backend", "no rotation backends", "exceeds"} {
 		if strings.Contains(msg, s) {
