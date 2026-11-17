@@ -27,6 +27,11 @@ describe('audit event label parity', () => {
         expect(emitted.has('admin.reset_mfa')).toBe(true);
         expect(emitted.has('access_request.approved')).toBe(true);
         expect(emitted.has('machine_identity.oidc_bound')).toBe(true);
+        // SAML-TAILS-1: an SSO login whose session could not be created is audited by
+        // internal/core/sso.go under a named constant. Pinned here so a refactor of the
+        // extractor cannot drop it, and the label assertion below then covers it.
+        expect(emitted.has('auth.sso_login_session_failed')).toBe(true);
+        expect(EVENT_LABELS['auth.sso_login_session_failed']).toBeTruthy();
     });
 
     it('every emitted event has a label or an intentionallyUnlabelled entry', () => {
