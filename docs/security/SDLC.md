@@ -157,9 +157,9 @@ guard `FuzzDigitorusPKCS7BoundedWork`).
   for why an ungrouped `codeql-action` bump broke CI twice (#1257, #1260)
   before the grouping was added.
 - **`govulncheck`** runs on every PR/push touching Go code (`static-analysis`
-  job) *and* on a standalone weekly schedule
-  (`.github/workflows/govulncheck-scheduled.yml`, Fridays, matching
-  OSV-Scanner's cadence) — closing the gap where a new entry lands in
+  job) *and* on a standalone schedule every 3 hours
+  (`.github/workflows/govulncheck-scheduled.yml`; OSV-Scanner keeps its own
+  weekly cadence) — closing the gap where a new entry lands in
   `vuln.go.dev` for a symbol this code already calls, between two PRs that
   happen not to touch Go.
 - **OSV-Scanner** (`.github/workflows/osv-scanner.yml`) — PR/push plus the

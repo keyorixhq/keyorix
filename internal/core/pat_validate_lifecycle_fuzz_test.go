@@ -109,6 +109,7 @@ func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixture
 	}
 	if sqlDB, e := db.DB(); e == nil {
 		sqlDB.SetMaxOpenConns(1) // :memory: gives each conn its own DB otherwise
+		t.Cleanup(func() { _ = sqlDB.Close() })
 	}
 	if err := db.AutoMigrate(
 		&models.User{}, &models.PersonalAccessToken{}, &models.Notification{},
@@ -185,8 +186,12 @@ func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixture
 	// 4. Combined restriction (scope + project + environment + CIDR), owner A.
 	entries = append(entries, mustIssue(userA, nil,
 		[]string{"secrets.read", "secrets.write"}, 3, 9, []string{"192.168.0.0/16"}))
-	// 5. Expired (past ExpiresAt, never revoked), owner A.
+	// 5. Expired (past ExpiresAt, never revoked), owner A. CreateOwnPAT refuses an
+	// expiry that is already past, so it is issued while still valid (an hour
+	// before `past`) and the fixed clock is then back at fixedNow, after it.
+	c.now = func() time.Time { return past.Add(-time.Hour) }
 	entries = append(entries, mustIssue(userA, &past, nil, 0, 0, nil))
+	c.now = func() time.Time { return fixedNow }
 	// 6. Revoked (owner B) — issue unrestricted, then revoke via the real path.
 	revokedEntry := mustIssue(userB, nil, nil, 0, 0, nil)
 	if _, err := c.RevokeOwnPAT(ctx, userB, revokedEntry.patID); err != nil {

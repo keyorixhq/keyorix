@@ -21,6 +21,11 @@
 set -eu
 
 die() { echo "offline-install: $*" >&2; exit 1; }
+
+# Absolute path of this script, resolved once (no readlink -f: not on macOS), so
+# the commands printed for the operator run from any directory.
+self_dir=$(CDPATH='' cd "$(dirname "$0")" && pwd) ||{ echo "offline-install: cannot resolve $0" >&2; exit 1; }
+self="$self_dir/$(basename -- "$0")"
 say() { printf '\n== %s\n' "$*"; }
 
 phase="${1:-}"
@@ -87,6 +92,8 @@ stop_server() {
         i=0
         while kill -0 "$pid" 2>/dev/null && [ $i -lt 30 ]; do sleep 1; i=$((i + 1)); done
         kill -0 "$pid" 2>/dev/null && die "server (pid $pid) did not stop"
+    elif kill -0 "$pid" 2>/dev/null; then
+        die "could not stop server (pid $pid)"
     fi
     rm -f server.pid
     echo "server stopped"
@@ -117,6 +124,7 @@ setup)
     mkdir -p "$dir"
     chmod 700 "$dir"
     cd "$dir"
+    dir=$(pwd) # absolute from here on: the commands printed below run from anywhere
     mkdir -p bin
     cp "$bin_dir/keyorix" "$bin_dir/keyorix-server" bin/
 
@@ -175,11 +183,12 @@ In a terminal of your own on this host:
 
 Move secrets/admin_password into your password manager, save the recovery codes
 'mfa activate' prints, then delete the file (shred -u, or rm -P on macOS).
-Then run:  $0 finish --dir $dir
+Then run:  sh $self finish --dir $dir
 EOF
     ;;
 finish)
     cd "$dir" || die "no $dir"
+    dir=$(pwd)
     use_db_password
     say "10. stop the server, drop the bootstrap token"
     stop_server
@@ -193,13 +202,13 @@ stopped, run this yourself, in your own terminal, and store the printed key offl
   cd $dir
   KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin recovery-key rotate --config ./keyorix.yaml
 
-Then run:  KEYORIX_RECOVERY_KEY_DONE=1 $0 finish --dir $dir
+Then run:  KEYORIX_RECOVERY_KEY_DONE=1 sh $self finish --dir $dir
 EOF
         exit 0
     fi
     say "11. proof: posture check"
     KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin validate --posture --config ./keyorix.yaml ||
-        die "posture check failed (an admin-mfa deviation means step 9 is not done: '$0 start --dir $dir', enrol, then 'finish' again)"
+        die "posture check failed (an admin-mfa deviation means step 9 is not done: 'sh $self start --dir $dir', enrol, then 'finish' again)"
     say "12. start the server"
     start_server
     cat <<EOF
@@ -210,7 +219,7 @@ SEPARATELY and offline: without it every stored secret is lost. Replace certs/se
 with a CA-issued certificate (same paths) before other machines connect.
 EOF
     ;;
-start) cd "$dir" || die "no $dir"; use_db_password; start_server ;;
+start) cd "$dir" || die "no $dir"; dir=$(pwd); use_db_password; start_server ;;
 stop) cd "$dir" || die "no $dir"; stop_server ;;
 *) die "usage: $0 setup|finish|start|stop [options] (see --help)" ;;
 esac

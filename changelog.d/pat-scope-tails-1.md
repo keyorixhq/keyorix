@@ -1,4 +1,0 @@
-### Fixed
-- **A personal access token whose stored scope list is whitespace only no longer authenticates with its owner's full rights.** Keyorix stores an empty value for "no scope list" and never writes whitespace, so such a row is corrupted or hand-edited; it was read as unscoped. It is now refused everywhere, like a scope list stored as `null` or `[]`. A token created without scopes (an empty value, or a token from before scopes existed) still inherits its owner's permissions.
-- **`PUT /api/v1/users/{id}/roles` and `PUT /api/v1/projects/{id}/members/{userId}` answer 403 when the caller asks for a role they cannot grant** (the grant ceiling), instead of 500 "Failed to update user roles".
-- **A storage fault while re-checking the caller's own authority in the second half of a role-set replacement is reported as retry-safe** (`retry_safe: true`), instead of "you no longer hold the authority to complete the change".

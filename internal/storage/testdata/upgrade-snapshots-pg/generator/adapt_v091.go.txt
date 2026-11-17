@@ -1,0 +1,28 @@
+// The per-tag API differences for v0.91.0: no actorIsMachine argument, no
+// internal/identity, and RotateSecret without an actor.
+package storage
+
+import (
+	"context"
+
+	"github.com/keyorixhq/keyorix/internal/core"
+)
+
+func w6AssignUserRole(c *core.KeyorixCore, ctx context.Context, actor, user, role uint, s core.Scope) error {
+	return c.AssignUserRole(ctx, actor, user, role, s)
+}
+
+func w6AssignGroupRole(c *core.KeyorixCore, ctx context.Context, actor, group, role uint, s core.Scope) error {
+	return c.AssignRoleToGroup(ctx, actor, group, role, s)
+}
+
+func w6AddGlobal(c *core.KeyorixCore, ctx context.Context, actor, user, group uint) error {
+	return c.AddUserToGroupGlobal(ctx, actor, user, group)
+}
+
+func w6Rotate(c *core.KeyorixCore, ctx context.Context, id uint, val []byte, actor uint) error {
+	_, err := c.RotateSecret(ctx, id, val, "admin")
+	return err
+}
+
+func w6Fold(string) string { return "" }

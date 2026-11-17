@@ -1,0 +1,1 @@
+internal/docsdrift/doc_cli_commands_test.go	QUICK_START.md,docs/SELF_HOSTING.md,docs/operator/*.md,docs/state-map/entrypoints.tsv,internal/docsdrift/testdata/doc_cli_exemptions.tsv,!**	keyorix commands in QUICK_START.md, docs/SELF_HOSTING.md and docs/operator/*.md against the entrypoints table plus its exemptions file; the operator/ module's own Markdown is not read

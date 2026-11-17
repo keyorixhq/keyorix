@@ -115,8 +115,7 @@ func zeroGrantSeedExtras(t *testing.T, w *patGuardWorld) {
 	// self-service routes with the admin's own rows. A canary-named, already-expired
 	// admin PAT makes GET /auth/tokens and /auth/tokens/expired trip the oracle then.
 	past := time.Now().Add(-time.Hour)
-	_, err = cs.CreateOwnPAT(ctx, admin.ID, patGuardCanary+"-admin-pat", &past, nil, 0, 0, nil)
-	require.NoError(t, err)
+	createExpiredOwnPATForTest(t, cs, ctx, admin.ID, patGuardCanary+"-admin-pat", past)
 	w.ids = append(w.ids, folder.ID, group.ID, role.ID, dep.ID, requesterID, ar.ID)
 }
 

@@ -46,6 +46,11 @@ type AuditFilter struct {
 	// ResourceType filters events by the resource type embedded in the event_type
 	// (the prefix before the first dot, e.g. "secret" from "secret.read").
 	ResourceType *string
+	// ExcludeSystemJobEvents drops the scheduler's own "job ran" rows: event_type
+	// admin_job.* whose displayed actor kind is "system" (#4184). An admin-triggered
+	// run (a real user id on the row) is kept. Read-side only: the audit log page
+	// never sets it, so every stored row stays listable there.
+	ExcludeSystemJobEvents bool
 
 	// Before is the keyset cursor of the newest-first order (event_time DESC,
 	// id DESC): only rows strictly after that position are returned and Page is
@@ -196,6 +201,19 @@ type AuditChainVerification struct {
 	// the walk before ThroughID or the end of the chain, so rows after HeadID
 	// were NOT verified.
 	Truncated bool
+
+	// LinkBroken is set by the storage walk from the chain start (AfterID ==
+	// 0) with Valid=false when the first failure is a row whose prev_hash does
+	// not link to the preceding row, or an earliest row that does not match the
+	// anchor passed in: the two failures a retention purge that ran during the
+	// walk also produces (#3944). It never makes the verdict valid; the core
+	// layer re-reads the authenticated anchor and, only if a sanctioned purge
+	// moved it forward, walks once more from it.
+	LinkBroken bool
+	// Reanchored is set by the core layer when that second walk ran: the
+	// verdict covers the chain from this anchor, so its PurgedEvents is the
+	// purged count that goes with ChainedEvents.
+	Reanchored *AuditChainAnchor
 
 	// Seals is the number of accepted audit losses (internal/core/audit_seal.go,
 	// `admin audit accept-loss`) the core's walk stepped over; SealReason

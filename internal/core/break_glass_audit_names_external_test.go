@@ -29,7 +29,7 @@ func TestBreakGlassAudit_NamesTheUser(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -39,11 +39,11 @@ func TestBreakGlassAudit_NamesTheUser(t *testing.T) {
 	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident #42", "")
 	require.NoError(t, err)
 	assert.Contains(t, breakGlassAuditDescription(t, h, core.EventBreakGlassActivated),
-		`break-glass: user 10 ("alice") self-granted "editor"`)
+		`break-glass: user 10 ("alice") self-granted "project_developer"`)
 
 	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID))
 	assert.Contains(t, breakGlassAuditDescription(t, h, core.EventBreakGlassRevoked),
-		`(user 10 ("alice"), role "editor") early`)
+		`(user 10 ("alice"), role "project_developer") early`)
 }
 
 // An unreadable user never fails the revocation: the description falls back to the
@@ -52,7 +52,7 @@ func TestBreakGlassAudit_DeletedUserFallsBackToTheID(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -66,6 +66,6 @@ func TestBreakGlassAudit_DeletedUserFallsBackToTheID(t *testing.T) {
 
 	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID), "an unreadable user must not fail the revoke")
 	desc := breakGlassAuditDescription(t, h, core.EventBreakGlassRevoked)
-	assert.Contains(t, desc, `(user 10, role "editor") early`)
+	assert.Contains(t, desc, `(user 10, role "project_developer") early`)
 	assert.NotContains(t, desc, "alice")
 }

@@ -76,8 +76,12 @@ Format: `INV-GRPCSVC-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   across a reconnect. Guard: `audit_stream_test.go`
   (`TestAuditService_StreamAuditLogs_ResumesFromCursor`, `_TailsNewEvents`).
 
-## Ledger gap
+## Ledger rows
 
-- None of INV-GRPCSVC-01/02/03/04 (sentinel, 403-for-both, share-expiry parity,
-  machine-ceiling) are seeded into `docs/adr-conformance-enforced.tsv` yet, despite tests
-  already existing and passing for each — low-effort follow-up.
+- LEDGER-SEED-1 seeded `docs/adr-conformance-enforced.d/` rows for INV-GRPCSVC-02
+  (`ADR-096-GRPC-403-FOR-BOTH`) and INV-GRPCSVC-04
+  (`ADR-030-GRPC-ADD-GROUP-MEMBER-ACTOR-KIND-DERIVED`).
+- INV-GRPCSVC-01 (sentinel) is a security closure, not an ADR property:
+  `docs/security-closures.d/FIX-4-sentinel.tsv`.
+- INV-GRPCSVC-03 (share-expiry parity) has no row: it is a REST/gRPC parity rule, not an
+  ADR-stated property. It stays guarded by `share_expiry_parity_test.go` only.

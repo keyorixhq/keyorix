@@ -42,7 +42,8 @@ func multiRowPGStoreInSchema(t *testing.T, schema string) *LocalStorage {
 	if dsn == "" {
 		t.Skip("KEYORIX_TEST_PG_DSN not set — PostgreSQL-only test")
 	}
-	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), &gorm.Config{Logger: logger.Discard})
+	tagged := pgdsn.WithApplicationName(pgdsn.PGSearchPathDSN(dsn, schema), pgdsn.UniqueApplicationName("kx_audit_mr"))
+	db, err := gorm.Open(postgres.Open(tagged), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if sqlDB, e := db.DB(); e == nil {
@@ -51,6 +52,12 @@ func multiRowPGStoreInSchema(t *testing.T, schema string) *LocalStorage {
 	})
 	return NewLocalStorage(db)
 }
+
+// The pg_sleep probes below scope pg_stat_activity to the backends of ls's own
+// pool (every connection of a multiRowPGStore carries the same application_name,
+// so current_setting('application_name') on ls.db names it), not to every
+// backend of the database: another package's pg_sleep must neither be returned
+// as "the slow batch" nor be terminated by the test.
 
 // enablePipeline lets this test's stores pipeline without a single-writer
 // server (production pipelines only with single_writer on).
@@ -316,7 +323,7 @@ func waitForSleepingAppend(t *testing.T, ls *LocalStorage) int64 {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var pid int64
-		require.NoError(t, ls.db.Raw(`SELECT COALESCE(max(pid), 0) FROM pg_stat_activity WHERE wait_event = 'PgSleep' AND datname = current_database()`).Scan(&pid).Error)
+		require.NoError(t, ls.db.Raw(`SELECT COALESCE(max(pid), 0) FROM pg_stat_activity WHERE wait_event = 'PgSleep' AND application_name = current_setting('application_name')`).Scan(&pid).Error)
 		if pid != 0 {
 			return pid
 		}
@@ -499,7 +506,12 @@ func TestPipelinedBatches_PostgresBackendDiesWhileNextInFlight(t *testing.T) {
 func lostConnPGStore(t *testing.T) (lost, plain *LocalStorage) {
 	t.Helper()
 	ls := multiRowPGStore(t)
-	cc, err := pgx.ParseConfig(pgdsn.PGSearchPathDSN(os.Getenv("KEYORIX_TEST_PG_DSN"), pipelinePGSchema(t, ls)))
+	// The lost store shares ls's application_name, so the "server side of the
+	// lost flight has finished" probe (run on ls) sees its backend.
+	var appName string
+	require.NoError(t, ls.db.Raw("SELECT current_setting('application_name')").Scan(&appName).Error)
+	cc, err := pgx.ParseConfig(pgdsn.WithApplicationName(
+		pgdsn.PGSearchPathDSN(os.Getenv("KEYORIX_TEST_PG_DSN"), pipelinePGSchema(t, ls)), appName))
 	require.NoError(t, err)
 	dial := cc.DialFunc
 	cc.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -556,7 +568,7 @@ END $$ LANGUAGE plpgsql`).Error)
 	// Wait for the server side of the lost flight to finish either way.
 	require.Eventually(t, func() bool {
 		var busy int64
-		return ls.db.Raw(`SELECT count(*) FROM pg_stat_activity WHERE wait_event = 'PgSleep' AND datname = current_database()`).Scan(&busy).Error == nil && busy == 0
+		return ls.db.Raw(`SELECT count(*) FROM pg_stat_activity WHERE wait_event = 'PgSleep' AND application_name = current_setting('application_name')`).Scan(&busy).Error == nil && busy == 0
 	}, 5*time.Second, 10*time.Millisecond)
 	stored := auditRowCount(t, plain, "LOST-CONN")
 	assert.LessOrEqual(t, stored, int64(1))

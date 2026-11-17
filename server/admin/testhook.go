@@ -9,9 +9,7 @@ package admin
 // never a security boundary of its own (holding a lock is not a mutation).
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 
 	"github.com/keyorixhq/keyorix/internal/serverguard"
 	"github.com/spf13/cobra"
@@ -41,6 +39,6 @@ func runHoldLockForTest(cmd *cobra.Command, args []string) error {
 	fmt.Println("LOCKED")
 	// Block until the parent test either closes our stdin or writes a line
 	// to it -- either way, ReadString returns and we release on defer.
-	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+	_, _ = readStdinLine()
 	return nil
 }

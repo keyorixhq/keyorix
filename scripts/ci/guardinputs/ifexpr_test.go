@@ -205,7 +205,7 @@ func (p *ifParser) primary() (ifVal, error) {
 		}
 		p.next()
 		switch t {
-		case "always", "success":
+		case "always", "success", "failure":
 			return ifVal{b: true, isB: true}, nil
 		case "contains":
 			if len(args) != 2 {

@@ -18,7 +18,7 @@ triage, containment and evidence. Section 5 lists what does exist and what is mi
 
 | Where | Command / signal | Verdicts |
 |---|---|---|
-| Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`; non-zero exit on the last two |
+| Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`, `SEALED` (prints the seal's `state_reason`); non-zero exit unless `VALID`, and `SEALED` exits 4 like `keyorix-server admin verify-audit` |
 | Prometheus | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_discontinuity` (1 while a sticky state discontinuity is recorded), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
 | Compliance posture | `GET /api/v1/compliance/posture`, field `audit_integrity` | reads the persisted state, walks nothing |
 | Offline, independent code | `keyorix-server admin verify-audit` | exit `0` VALID, `1` BROKEN, `2` INDETERMINATE, `3` usage/input error |
@@ -117,8 +117,8 @@ INDETERMINATE beats VALID). Strings are from `internal/auditverify/verify.go`.
 
 | Report says | Kind | Likely causes, in the order to rule them out |
 |---|---|---|
-| `entry_hash is valid under the pre-#1452 audit-hash encoding but not the current one ... un-migrated upgrade, NOT evidence of tampering` | content | Benign: the chain predates the 2026-08-16 encoding change. Section 4a. |
-| `event #N's entry_hash matches neither the current encoding nor the pre-#1452 one` | content | The row changed after it was written: tampering, or storage corruption. |
+| `event #N was hashed with the old audit-hash format ... not evidence of tampering` (JSON `reason_code`: `legacy_hash_encoding`) | content | Benign: the chain predates the 2026-08-16 encoding change. Section 4a. |
+| `event #N's recorded entry_hash does not match the row's contents — the row was changed after it was written` | content | The row changed after it was written: tampering, or storage corruption. |
 | `event #N's prev_hash does not link to the preceding event (row inserted, deleted, or reordered)` | linkage | Tampering, a manual `DELETE`, or a database restored/merged from two sources. |
 | `event #N has no entry_hash (chain data removed after a chained region began)` | content | Hash columns blanked or rows replaced by unchained rows. |
 | `audit trail truncated below signed checkpoint #N: it certified X chained events, only Y remain` | truncation | Rows removed from the tail, **or** the database is an older state (restore, stale copy, PITR). Section 4. |
@@ -136,7 +136,7 @@ The online report adds `Checkpoint:` (authenticated or not, key version) and `Re
 
 ## 4. Benign causes first
 
-**a. Un-migrated hash encoding.** Only when the reason says pre-#1452. Preview, then apply in
+**a. Un-migrated hash encoding.** Only when the reason says the event was hashed with the old audit-hash format (`reason_code` `legacy_hash_encoding`). Preview, then apply in
 a maintenance window with no other writers (the migration rewrites every chained row, re-signs
 the retention anchor if there is one, and appends an `audit.chain_migrated` event):
 
@@ -147,7 +147,11 @@ keyorix audit verify --full
 ```
 
 It refuses a chain that is inconsistent under both encodings, so it cannot be used to paper
-over a real break.
+over a real break. Over the API the refusal is `409 Conflict` with the reason in `message`
+("refusing to re-encode the audit chain: event N's prev_hash does not link ...") and
+`details.code` = `audit_chain_reencode_refused`, for the preview and for `--confirm` alike;
+it is not a server error, so do not retry it: go to section 5. On a healthy
+chain the preview prints `DRY RUN — nothing was written.` with the rows it would migrate.
 
 **b. A copy that is not the database.** A SQLite file copied without its `-wal`/`-shm`, a
 backup mounted from the wrong date, a replica that has not caught up: all look like
@@ -182,6 +186,23 @@ A server older than that release reports the chain broken (`docs/CONFIGURATION.m
 `.audit-highwater-witness` file unless `--allow-rollback` is given, and then records an
 `admin.restore_rollback_override` event saying how many events behind it went. Search the
 trail for that event, and ask who restored what.
+
+**f. A purge during a long online verification.** A retention purge takes no lock that a
+chain walk holds. On a chain longer than one walk batch (1000 events), a purge that lands
+while a walk from the chain start is part way through (`keyorix audit verify --full`, the
+rolling re-walk, a checkpoint write, the accept-loss re-seal) removes rows ahead of it, and the
+chain would read "prev_hash does not link to the preceding event" although nothing was lost.
+Since #3944 (AUDIT-WALK-TAILS-1 for the checkpoint write and the re-seal) those walks re-read
+the signed retention anchor on that failure and, only if a sanctioned purge moved it, walk the
+chain once more from the new anchor; the result counts the purged events. A reason that begins
+"after walking again from the retention re-anchor at audit event #N" is that second walk
+failing: the purge was not the cause, go to section 5. A delete outside a purge never moves
+the anchor and stays BROKEN. A server older than that fix, and the tail check from the latest
+checkpoint, do not walk again: once the purge job has finished (its `system.audit_purge`
+event is in the trail), run `keyorix audit verify --full`. It clears a failure recorded during
+the purge if the chain is sound (section 1); a break it repeats on a quiet database is real.
+The offline `keyorix-server admin verify-audit` is not affected on the configured database:
+it holds the exclusive admin lock, so no server (and no purge) runs alongside it.
 
 ## 5. Tampering or crash-truncation
 

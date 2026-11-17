@@ -401,6 +401,7 @@ func userPhase5Ops() []opSpec {
 			// then the granter ceilings for the assigned role and for the default
 			// system_viewer (CreateUserWithAssignments).
 			name: "user.create.assign", row: "CreateUserWithAssignments", targets: projTargets, grantArgs: true, globalHandler: true, selfMachineGranter: true,
+			invalidArg: legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), globalPerms: []string{"users.read", "users.write"},
@@ -515,6 +516,7 @@ func rolePhase5Ops() []opSpec {
 			// roles.assign route gate inside the users.read group, then the
 			// granter ceiling per added role.
 			name: "user.roles.set", row: "SetUserRoles", targets: projTargets, grantArgs: true,
+			invalidArg: legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), globalPerms: []string{"users.read", "roles.assign"}, ceiling: []roleAt{{rid, pid(fx, t)}}}
@@ -530,6 +532,7 @@ func rolePhase5Ops() []opSpec {
 		},
 		{
 			name: "userrole.assign", row: "AssignUserRole", targets: projTargets, grantArgs: true, selfMachineGranter: true,
+			invalidArg: legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}

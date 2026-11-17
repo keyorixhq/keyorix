@@ -1,0 +1,1 @@
+fuzz/thirdparty/pools	none	-	test-only pool schedule-race fuzz harness (gorm/pgx/sqlite pools, porcupine linearizability oracle); not part of any shipped build	test-helper

@@ -12,6 +12,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -64,18 +66,9 @@ func (h *SecretTemplateHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	tmpl, err := h.coreService.CreateSecretTemplate(r.Context(), req)
 	if err != nil {
-		msg := err.Error()
-		status := http.StatusInternalServerError
-		switch {
-		case strings.Contains(msg, "name is required"):
-			status = http.StatusBadRequest
-		case strings.Contains(msg, "invalid classification"):
-			status = http.StatusBadRequest
-		default:
-			log.Printf("Error creating secret template: %v", err)
-			msg = clientSafe(err)
-		}
-		sendError(w, "Error", msg, status, nil)
+		// Core types every template validation refusal (ErrSecretInvalidInput); the
+		// classifier answers it 400 with core's text (#4132 OPENAPI-STATEFUL-3).
+		answerCoreError(w, r, err, coreErrorAnswer{op: "creating secret template"})
 		return
 	}
 	sendCreated(w, tmpl, "Secret template created")
@@ -101,7 +94,10 @@ func (h *SecretTemplateHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	tmpl, err := h.coreService.GetSecretTemplate(r.Context(), uint(id))
 	if err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, storage.ErrSecretTemplateNotFound) {
 			sendError(w, "NotFound", errSecretTemplateNotFound, http.StatusNotFound, nil)
 			return
 		}

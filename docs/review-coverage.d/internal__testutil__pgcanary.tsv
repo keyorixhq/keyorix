@@ -1,0 +1,1 @@
+internal/testutil/pgcanary	none	-	PR #4099 (fuzz/secret-canary-leak-pg): PostgreSQL fixture for the canary fuzz targets (per-run database, snapshot/restore, whole-database dump); imported only by tests, skips without KEYORIX_TEST_PG_DSN; no production import, no auth or storage decisions in the product; self-tested by internal/testutil/pgcanary/pgcanary_test.go	test-helper

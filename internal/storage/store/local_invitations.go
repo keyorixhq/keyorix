@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
@@ -25,6 +26,8 @@ import (
 const (
 	invitationStatePending    = "pending"
 	accessRequestStatePending = "pending"
+	// accessRequestStateApproved mirrors core.AccessRequestApproved.
+	accessRequestStateApproved = "approved"
 )
 
 // --- Project invitations ---
@@ -127,17 +130,43 @@ func (ls *LocalStorage) GetAccessRequest(ctx context.Context, id uint) (*models.
 // The times are written in UTC (UTC-STORE-WRITERS-1). AccessRequest.BeforeSave
 // normalises ResolvedAt, but it runs on the empty Model, not on the struct passed to
 // Updates, so it never reached this write.
+//
+// CORE-ACTOR-RACE-1: approving a secret-scoped request is a child write under its
+// secret (INV-STORE-21). DeleteSecret and the DeleteProject cascade close only rows
+// that are already approved (closeApprovedSecretAccessRequests), so an approval whose
+// secret was deleted after the caller's own liveness check, and before this write,
+// was never swept and came back live on restore. The write is followed by
+// lockLiveParent on the secret in the same transaction (write-then-check); a deleted
+// secret rolls the approval back and answers ErrSecretNotFound.
 func (ls *LocalStorage) UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) (bool, error) {
 	req.CreatedAt = req.CreatedAt.UTC()
 	req.ExpiresAt, req.ResolvedAt = utcPtr(req.ExpiresAt), utcPtr(req.ResolvedAt)
-	res := ls.db.WithContext(ctx).Model(&models.AccessRequest{}).
-		Where("id = ? AND state = ?", req.ID, accessRequestStatePending).
-		Select("*").
-		Updates(req)
-	if res.Error != nil {
-		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	var updated bool
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&models.AccessRequest{}).
+			Where("id = ? AND state = ?", req.ID, accessRequestStatePending).
+			Select("*").
+			Updates(req)
+		if res.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+		}
+		updated = res.RowsAffected == 1
+		if !updated || req.State != accessRequestStateApproved || req.SecretID == nil {
+			return nil
+		}
+		live, err := lockLiveParent(tx, &models.SecretNode{}, "id = ?", *req.SecretID)
+		if err != nil {
+			return err
+		}
+		if !live {
+			return storage.NotFound(storage.ErrSecretNotFound, i18n.T("ErrorSecretNotFound", nil), nil)
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
 	}
-	return res.RowsAffected == 1, nil
+	return updated, nil
 }
 
 func (ls *LocalStorage) ListAccessRequests(ctx context.Context, projectID uint) ([]*models.AccessRequest, error) {

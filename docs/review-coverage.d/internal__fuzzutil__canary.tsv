@@ -1,0 +1,1 @@
+internal/fuzzutil/canary	none	-	PR #4099 (fuzz/secret-canary-leak-pg): canary planting, output capture and scanning helpers imported only by fuzz and canary tests; no production import, no auth, storage or network decisions in the product; self-tested by internal/fuzzutil/canary/canary_test.go	test-helper

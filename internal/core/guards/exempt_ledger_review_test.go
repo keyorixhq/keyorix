@@ -117,6 +117,7 @@ func readReviewLedgerRows(t *testing.T, path string) []reviewLedgerRow {
 // key (the keyCols columns) that appears twice where at least one of the two
 // rows is a fragment, naming both places; a key repeated only inside the flat
 // file is not reported, as before.
+// dir-listing-ok: ledger fragment *.tsv files under docs/<name>.d/
 func readExemptLedgerRows(t *testing.T, dir, name string, keyCols []int) (rows []reviewLedgerRow, dups []string) {
 	t.Helper()
 	flat := "docs/" + name
@@ -181,6 +182,7 @@ func checkReviewed(addedBy, reviewedBy string) string {
 	return ""
 }
 
+// dir-listing-ok: ledger *.tsv files under docs/
 func discoverExemptLedgers(t *testing.T, dir string) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(dir, "*exempt*.tsv"))
@@ -386,25 +388,37 @@ func TestExemptLedgers_FragmentRowsAreReviewed(t *testing.T) {
 
 var pendingRowRe = regexp.MustCompile(`pending: #(\d+)`)
 
+// pendingExemption is one "pending: #NNNN" mention in a registered ledger row.
+type pendingExemption struct{ where, pr string }
+
+// pendingExemptionRows scans the reason column of every row of every registered
+// ledger, reading the flat file PLUS the <name>.d/*.tsv fragments
+// (readExemptLedgerRows), so a pending row that lives only in a fragment is seen.
+func pendingExemptionRows(t *testing.T, dir string) []pendingExemption {
+	t.Helper()
+	var rows []pendingExemption
+	for _, name := range discoverExemptLedgers(t, dir) {
+		l, ok := exemptLedgers[name]
+		if !ok || l.reasonCol < 0 {
+			continue
+		}
+		ledgerRows, _ := readExemptLedgerRows(t, dir, name, l.keyCols)
+		for _, r := range ledgerRows {
+			for _, m := range pendingRowRe.FindAllStringSubmatch(field(r, l.reasonCol), -1) {
+				rows = append(rows, pendingExemption{r.where(), m[1]})
+			}
+		}
+	}
+	return rows
+}
+
 // TestExemptLedgers_PendingRowsNotMerged: a row exempting a site that an open fix
 // PR repairs says "pending: #NNNN". Once #NNNN merges the row is stale and must be
 // removed. Needs GitHub: skipped (with the reason) when GH_TOKEN is unset or the API
 // is unreachable. The ledgers' own guards fail a pending row past its expiry date
 // regardless, so an offline run is bounded, not blind.
 func TestExemptLedgers_PendingRowsNotMerged(t *testing.T) {
-	type pending struct{ where, pr string }
-	var rows []pending
-	for _, name := range discoverExemptLedgers(t, exemptLedgerDir) {
-		l, ok := exemptLedgers[name]
-		if !ok || l.reasonCol < 0 {
-			continue
-		}
-		for _, r := range readReviewLedgerRows(t, filepath.Join(exemptLedgerDir, name)) {
-			for _, m := range pendingRowRe.FindAllStringSubmatch(field(r, l.reasonCol), -1) {
-				rows = append(rows, pending{fmt.Sprintf("docs/%s:%d", name, r.line), m[1]})
-			}
-		}
-	}
+	rows := pendingExemptionRows(t, exemptLedgerDir)
 	if len(rows) == 0 {
 		return
 	}

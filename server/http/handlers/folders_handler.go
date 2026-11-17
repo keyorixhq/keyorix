@@ -13,11 +13,11 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
 )
@@ -107,31 +107,18 @@ func (h *FolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request) {
 
 	folder, err := h.coreService.CreateFolder(r.Context(), userCtx.UserID, reqBody.Name, reqBody.ProjectID, reqBody.EnvironmentID, reqBody.ParentID)
 	if err != nil {
-		if sendStorageUnavailable(w, err) {
-			return
+		// Through the shared classifier: a validation refusal is 400 by sentinel
+		// (core.ErrSecretInvalidInput) in every locale, not by the word "validation"
+		// in the English text (#4132 OPENAPI-STATEFUL-3); the two not-found shapes
+		// keep their texts.
+		notFound := "Environment not found"
+		if corestorage.IsSecretNotFound(err) {
+			notFound = "Parent folder not found"
 		}
-		log.Printf("Error creating folder: %v", err)
-		msg := err.Error()
-		status := http.StatusInternalServerError
-		errType := "InternalError"
-		respMsg := "Failed to create folder"
-		switch {
-		case corestorage.IsSecretNotFound(err):
-			status = http.StatusNotFound
-			errType = "NotFound"
-			respMsg = "Parent folder not found"
-		case errors.Is(err, core.ErrSecretTargetInvalid):
-			status = http.StatusNotFound
-			errType = "NotFound"
-			respMsg = "Environment not found"
-		case strings.Contains(msg, "validation") ||
-			strings.Contains(msg, "not a folder") ||
-			strings.Contains(msg, "does not belong to the same project"):
-			status = http.StatusBadRequest
-			errType = "ValidationError"
-			respMsg = msg
-		}
-		h.sendError(w, errType, respMsg, status, nil)
+		answerCoreError(w, r, err, coreErrorAnswer{op: "creating folder", texts: coreErrorTexts{
+			errclass.NotFound: notFound,
+			errclass.Internal: "Failed to create folder",
+		}})
 		return
 	}
 

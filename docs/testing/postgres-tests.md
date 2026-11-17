@@ -18,6 +18,23 @@ below against Postgres before you rely on it, not after CI has failed.
    `internal/storage/store`, `server`, `server/http`): they are large and
    write a lot to the Go work directory.
 
+## Why: one database per package, or `-p 1`
+
+Schema isolation separates rows, not the server's backends, locks or snapshots.
+`pg_stat_activity`, `pg_locks`, advisory-lock keys and the xmin horizon are
+database-wide, so two packages run in parallel against one database (the nightly
+runs `./internal/core/...` and `./internal/storage/...` that way) see each
+other's sessions: a lock-wait count, a "no backend left" check, a snapshot age or
+a `pg_terminate_backend` over `datname = current_database()` counts, or kills,
+the other package's. Run each package on a database of its own, or run the
+Postgres-backed packages with `-p 1`. A test that reads backend state must also
+be correct on a shared database: tag its connections with
+`pgdsn.WithApplicationName(dsn, pgdsn.UniqueApplicationName("kx_x"))` and filter
+`pg_stat_activity` on that `application_name` (or one `pid`), and take a lock-key
+or database-wide counter test to its own database with `pgdsn.IsolatedDatabase`.
+`TestSharedDatabaseActivityGuard` (`internal/testutil/pgdsn`) fails a test file
+that queries `pg_stat_activity` or `pg_locks` without such a scope.
+
 ## Packages that need a per-package database
 
 | Package | Notes |

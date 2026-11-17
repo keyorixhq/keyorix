@@ -47,7 +47,9 @@ func (c *KeyorixCore) DeletedSecretPurgeAt(ctx context.Context, id uint) (time.T
 	}
 	at, ok := c.SecretPurgeAt(s)
 	if !ok {
-		return time.Time{}, fmt.Errorf("%s: secret %d is not deleted", i18n.T("ErrorValidation", nil), id)
+		// Not a caller's input: the secret was restored between the delete and this
+		// read-back. Only the server log sees it (DeleteSecret's best-effort header).
+		return time.Time{}, fmt.Errorf("secret %d is not deleted", id)
 	}
 	return at, nil
 }
@@ -63,7 +65,7 @@ const maxRecycleBinLimit = 500
 // non-positive limit falls back to defaultRecycleBinLimit. Returns metadata only.
 func (c *KeyorixCore) ListDeletedSecrets(ctx context.Context, projectID uint, limit int) ([]*models.SecretNode, error) {
 	if projectID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return nil, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required"))
 	}
 	if limit <= 0 {
 		limit = defaultRecycleBinLimit

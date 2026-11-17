@@ -7,6 +7,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,12 +30,16 @@ func withUserCtxForExpiry(r *http.Request, userID uint) *http.Request {
 }
 
 // seedExpiredPAT inserts a non-revoked, expired PAT for userID directly into the
-// core's underlying DB by calling CreateOwnPAT with a past ExpiresAt.
-// Returns the inserted PAT result.
+// core's underlying storage (CreateOwnPAT refuses a past ExpiresAt, so a token
+// that has since expired is written as a row, the state it reaches with time).
 func seedExpiredPAT(t *testing.T, h *PATExpiryHandler, userID uint) {
 	t.Helper()
 	past := time.Now().Add(-24 * time.Hour)
-	_, err := h.coreService.CreateOwnPAT(context.Background(), userID, "expired-token", &past, nil, 0, 0, nil)
+	_, err := h.coreService.Storage().CreatePersonalAccessToken(context.Background(), &models.PersonalAccessToken{
+		UserID: userID, Name: "expired-token", TokenPrefix: "kx_pat_expd",
+		TokenHash: fmt.Sprintf("expired-%d-%d", userID, time.Now().UnixNano()),
+		ExpiresAt: &past, CreatedAt: past.Add(-time.Hour),
+	})
 	require.NoError(t, err)
 }
 

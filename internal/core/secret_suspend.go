@@ -108,7 +108,7 @@ func (c *KeyorixCore) SuspendSecretWithOptions(ctx context.Context, secretID, ac
 
 // ErrSuspendAuditUnavailable: a suspend asking to clear the synced copies could not
 // record its audit event, so nothing was changed. Retry once the audit store is back.
-var ErrSuspendAuditUnavailable = errors.New("could not record the suspension in the audit log; nothing was changed, retry")
+var ErrSuspendAuditUnavailable = errors.New("could not record the suspension in the audit log; nothing was changed, retry, or " + SuspendWithoutClearingHint)
 
 // SuspendWithoutClearingHint is the next step every transport gives with a refused
 // clear-synced-copies suspend (ErrSuspendAuditUnavailable, ErrBulkSuspendAuditUnavailable):
@@ -164,7 +164,7 @@ func (c *KeyorixCore) SuspendProjectSecrets(ctx context.Context, projectID, acto
 
 // ErrBulkSuspendAuditUnavailable is returned, with no secret touched, when a project-wide
 // suspension that asks to clear synced copies could not record that decision first.
-var ErrBulkSuspendAuditUnavailable = errors.New("bulk suspend audit event could not be recorded; nothing was suspended")
+var ErrBulkSuspendAuditUnavailable = errors.New("bulk suspend audit event could not be recorded; nothing was suspended; " + SuspendWithoutClearingHint)
 
 // SuspendProjectSecretsWithOptions is SuspendProjectSecrets with the same per-suspension
 // options as SuspendSecretWithOptions, applied to every secret it affects: each gets the
@@ -181,7 +181,7 @@ var ErrBulkSuspendAuditUnavailable = errors.New("bulk suspend audit event could 
 // best-effort audit. The per-secret events (secret.suspended) are unchanged.
 func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, projectID, actorID uint, reason string, opts SuspendOptions) (int, error) {
 	if projectID == 0 || actorID == 0 {
-		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required")
+		return 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required"))
 	}
 	secrets, err := c.listProjectSecrets(ctx, projectID)
 	if err != nil {
@@ -294,7 +294,7 @@ func (e *BulkSuspendPartialError) Unwrap() error {
 // returns how many it resumed. See SuspendProjectSecrets for semantics.
 func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actorID uint) (int, error) {
 	if projectID == 0 || actorID == 0 {
-		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required")
+		return 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required"))
 	}
 	secrets, err := c.listProjectSecrets(ctx, projectID)
 	if err != nil {

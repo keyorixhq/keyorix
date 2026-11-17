@@ -26,7 +26,7 @@ func TestSendUpdateSecretError_VersionContentionExhausted_Maps409NotGeneric500(t
 	w := httptest.NewRecorder()
 
 	wrapped := fmt.Errorf("Storage operation failed: %w", core.ErrSecretVersionContentionExhausted)
-	h.sendUpdateSecretError(w, wrapped)
+	h.sendUpdateSecretError(w, httptest.NewRequest(http.MethodPut, "/", nil), nil, wrapped)
 
 	assert.Equal(t, http.StatusConflict, w.Code, "contention exhaustion must be 409, not a generic 500: %s", w.Body.String())
 	assert.Contains(t, w.Body.String(), "retry", "the response should hint that retrying is the right move")
@@ -42,7 +42,7 @@ func TestSendUpdateSecretError_GenericError_StillMaps500(t *testing.T) {
 	h := &SecretHandler{}
 	w := httptest.NewRecorder()
 
-	h.sendUpdateSecretError(w, errors.New("some unrelated storage failure"))
+	h.sendUpdateSecretError(w, httptest.NewRequest(http.MethodPut, "/", nil), nil, errors.New("some unrelated storage failure"))
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

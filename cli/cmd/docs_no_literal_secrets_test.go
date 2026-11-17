@@ -16,7 +16,8 @@
 //     prose is not scanned, so "the --password flag" is fine.
 //   - Go and NOTES.txt: any line that is a quoted/$/<..> value after the flag, or
 //     any value on a line that mentions `keyorix`.
-//   - Shell scripts (scripts/**/*.sh, deploy/**/*.sh; SCRIPTS-SECRETS-1): an argv
+//   - Shell scripts (scripts/**/*.sh, deploy/**/*.sh, demo/**/*.sh; SCRIPTS-SECRETS-1,
+//     demo/ added by SECRETS-ARGV-RESIDUE-1): an argv
 //     is visible in ps and CI logs whether or not a human reads the script, so any
 //     secretFlags flag followed by a value on a non-comment line is a hit. There is
 //     no allowlist: a script that needs a secret uses KEYORIX_* env vars (the
@@ -25,7 +26,8 @@
 //     docker -e NAME=VALUE; the exact shapes and what is NOT recognised (variable-held
 //     headers, curl through a variable, wget, -F, interpreter argv) are listed above
 //     findSecretArgvShape. A curl body held in a bare variable is recognised
-//     (SCRIPTS-SECRETS-3).
+//     (SCRIPTS-SECRETS-3). A credential handed to jq as --arg/--argjson is recognised
+//     (SCRIPTS-ARGV-NOV-1, scanShellForJqArgs); the safe form is `P="$X" jq ... env.P`.
 //   - Only the flags in secretFlags. A new secret-carrying flag must be added.
 //
 // An intentional "don't do this" example opts out per line with the marker
@@ -39,6 +41,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -160,6 +163,8 @@ func scanTextForSecrets(content string) []docsSecretHit {
 func scanShellForSecrets(content string) []docsSecretHit {
 	var hits []docsSecretHit
 	hits = append(hits, scanShellForVarBodies(content)...)
+	hits = append(hits, scanShellForJqArgs(content)...)
+	hits = append(hits, scanShellForHeaderVars(content)...)
 	for i, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
@@ -203,8 +208,11 @@ func scanShellForSecrets(content string) []docsSecretHit {
 // body flag (the same list as above) whose value is a bare variable (`$NAME`, `${NAME}`,
 // `${NAME:-x}`, `$1`, `$@`) on the logical line, backslash continuations joined.
 //
-// NOT recognised, so a green run is not more than this: a header held in a variable
-// ("$hdr") or built by a function; a body built by a function or command substitution
+// Also recognised (SCRIPTS-SECRETS-4, scanShellForHeaderVars, shell scripts only): a credential
+// header assigned to a variable in the same file and passed as `-H "$NAME"`.
+//
+// NOT recognised, so a green run is not more than this: a header built by a function or from
+// several variables, or defined in another file; a body built by a function or command substitution
 // (`-d "$(...)"`) or mixed with literal text (`-d "x=$v"`); a curl invoked through a
 // variable or array (`"${CURL[@]}" -d "$b"`); wget --post-data; curl -F/--form; a header
 // split from its flag by a line continuation; a helm --set whose key is held in a
@@ -300,24 +308,112 @@ var curlVarBodyRE = regexp.MustCompile(`(?:^|[\s(])(?:-d|--data|--data-raw|--dat
 
 var curlWordRE = regexp.MustCompile(`\bcurl\b`)
 
-func scanShellForVarBodies(content string) []docsSecretHit {
-	var hits []docsSecretHit
+// shellLogicalLine is one shell command line with its backslash continuations joined.
+type shellLogicalLine struct {
+	first  int    // 0-based index of the first physical line
+	joined string // continuations joined with a single space, trimmed
+	text   string // the first physical line, trimmed (what a hit reports)
+}
+
+// shellLogicalLines joins backslash continuations. A shell comment does not continue onto
+// the next line, so a trailing backslash on one must not swallow the real command below it.
+// Comment-only lines and lines carrying the allow marker are dropped.
+func shellLogicalLines(content string) []shellLogicalLine {
+	var out []shellLogicalLine
 	lines := strings.Split(content, "\n")
 	for i := 0; i < len(lines); i++ {
 		first, joined := i, strings.TrimSpace(lines[i])
-		// A shell comment does not continue onto the next line, so a trailing backslash on
-		// one must not swallow the real command below it.
 		for !strings.HasPrefix(joined, "#") && strings.HasSuffix(joined, "\\") && i+1 < len(lines) {
 			i++
 			joined = strings.TrimSuffix(joined, "\\") + " " + strings.TrimSpace(lines[i])
 		}
-		if strings.HasPrefix(joined, "#") || strings.Contains(joined, docsSecretsAllowMarker) || !curlWordRE.MatchString(joined) {
+		if strings.HasPrefix(joined, "#") || strings.Contains(joined, docsSecretsAllowMarker) {
 			continue
 		}
-		if m := curlVarBodyRE.FindString(joined); m != "" {
-			hits = append(hits, docsSecretHit{first + 1, "curl body held in a variable on argv: " + strings.TrimSpace(m), strings.TrimSpace(lines[first])})
+		out = append(out, shellLogicalLine{first, joined, strings.TrimSpace(lines[first])})
+	}
+	return out
+}
+
+func scanShellForVarBodies(content string) []docsSecretHit {
+	var hits []docsSecretHit
+	for _, l := range shellLogicalLines(content) {
+		if !curlWordRE.MatchString(l.joined) {
+			continue
+		}
+		if m := curlVarBodyRE.FindString(l.joined); m != "" {
+			hits = append(hits, docsSecretHit{l.first + 1, "curl body held in a variable on argv: " + strings.TrimSpace(m), l.text})
 		}
 	}
+	return hits
+}
+
+// SCRIPTS-ARGV-NOV-1: a credential handed to jq as `--arg NAME VALUE` (or --argjson) lands in
+// jq's argv, visible in ps for as long as jq runs, even when jq only builds a JSON payload for
+// a file or a pipe. Recognised, on the logical line of a `jq` command: --arg/--argjson whose
+// NAME says it carries a credential (password, passwd, pass, pw, passphrase, tok(en), secret,
+// api key, mfa, totp, otp) with any value, or whose VALUE is a bare `$VAR` / `${VAR}` whose
+// variable name says so (ADMIN_PW, BOOTSTRAP_TOKEN, SECRET_VALUE, ...). The safe forms are an
+// environment prefix read inside the filter (`P="$PW" jq -n '{password: env.P}'`), `--rawfile` /
+// `--slurpfile` from a 0600 file, or building the document with printf into a file. Not
+// recognised: a credential variable with a neutral name (`--arg v "$X"`), a jq called through a
+// variable or function, or `--args` positionals.
+var (
+	jqWordRE        = regexp.MustCompile(`(?:^|[\s(|;&])jq\b`)
+	jqArgCredNameRE = regexp.MustCompile(`(?i)(?:^|[\s(])--arg(?:json)?\s+["']?[A-Za-z0-9_]*(?:password|passwd|pass|pw|passphrase|tok|secret|api_?key|mfa|totp|otp)[A-Za-z0-9_]*["']?\s+\S`)
+	jqArgCredVarRE  = regexp.MustCompile(`(?i)(?:^|[\s(])--arg(?:json)?\s+["']?[A-Za-z0-9_]+["']?\s+["']?\$\{?[A-Za-z0-9_]*(?:password|passwd|pass|pw|passphrase|tok|secret|api_?key|mfa|totp|otp)[A-Za-z0-9_]*`)
+)
+
+func scanShellForJqArgs(content string) []docsSecretHit {
+	var hits []docsSecretHit
+	for _, l := range shellLogicalLines(content) {
+		if !jqWordRE.MatchString(l.joined) {
+			continue
+		}
+		m := jqArgCredNameRE.FindString(l.joined)
+		if m == "" {
+			m = jqArgCredVarRE.FindString(l.joined)
+		}
+		if m != "" {
+			hits = append(hits, docsSecretHit{l.first + 1, "credential in jq --arg on argv (use `P=\"$X\" jq ... env.P`): " + strings.TrimSpace(m), l.text})
+		}
+	}
+	return hits
+}
+
+// SCRIPTS-SECRETS-4: a credential header held in a shell variable and handed to curl/wget as
+// `-H "$NAME"`. credHeaderFlagRE only sees a header NAME written next to the flag, so
+// `AUTH_HDR="Authorization: Bearer $TOKEN"` followed by `curl -H "$AUTH_HDR"` put the token
+// on argv unseen (demo/vault-migration/run.sh). Recognised, per file: an assignment
+// (`NAME=`, `local NAME=`, `export NAME=`, `declare [-flags] NAME=`, `readonly NAME=`) whose
+// value starts with a credential header name (the credHeaderFlagRE set), and a later
+// `-H` / `--header` (space, `=` or attached quote) whose value is `$NAME` / `${NAME}`. The hit is
+// reported on the USE line. Not recognised: a header assembled from several variables
+// (`H="$K: $V"`), an array element (`H=(-H "X-Vault-Token: $T")` is already caught by
+// credHeaderFlagRE), a header read from a file or stdin (the safe forms), and a variable
+// defined in another file. A header that is not a credential opts out with the usual marker.
+var (
+	credHeaderAssignRE = regexp.MustCompile(`(?i)^\s*(?:(?:local|export|readonly)\s+|declare\s+(?:-[A-Za-z]+\s+)?)?([A-Za-z_][A-Za-z0-9_]*)=["']?(?:Authorization|Proxy-Authorization|Cookie|X-[A-Za-z0-9-]*(?:Token|Key|Secret|Auth|Password)[A-Za-z0-9-]*)\s*:`)
+)
+
+func scanShellForHeaderVars(content string) []docsSecretHit {
+	var hits []docsSecretHit
+	lines := shellLogicalLines(content)
+	names := map[string]bool{}
+	for _, l := range lines {
+		if m := credHeaderAssignRE.FindStringSubmatch(l.joined); m != nil {
+			names[m[1]] = true
+		}
+	}
+	for name := range names {
+		useRE := regexp.MustCompile(`(?:^|[\s(])(?:-H|--header)(?:(?:=|\s+)["']?|["'])\$(?:` + regexp.QuoteMeta(name) + `|\{` + regexp.QuoteMeta(name) + `\})["']?(?:\s|$|\))`)
+		for _, l := range lines {
+			if m := useRE.FindString(l.joined); m != "" {
+				hits = append(hits, docsSecretHit{l.first + 1, "credential header held in $" + name + " on argv (write it to a 0600 file and use -H @file): " + strings.TrimSpace(m), l.text})
+			}
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].line < hits[j].line })
 	return hits
 }
 
@@ -329,7 +425,7 @@ var docsSecretsSkipDirs = map[string]bool{
 // TestDocsShowNoLiteralSecretOnCommandLine is the guard. See the file header.
 func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 	root := repoRoot(t)
-	scanned := 0
+	scanned, demoScripts := 0, 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -347,7 +443,7 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 		relSh, _ := filepath.Rel(root, path)
 		relSh = filepath.ToSlash(relSh)
 		isShell := strings.HasSuffix(name, ".sh") &&
-			(strings.HasPrefix(relSh, "scripts/") || strings.HasPrefix(relSh, "deploy/"))
+			(strings.HasPrefix(relSh, "scripts/") || strings.HasPrefix(relSh, "deploy/") || strings.HasPrefix(relSh, "demo/"))
 		if !isMD && !isNotes && !isGo && !isShell {
 			return nil
 		}
@@ -356,6 +452,9 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 			return rerr
 		}
 		scanned++
+		if isShell && strings.HasPrefix(relSh, "demo/") {
+			demoScripts++
+		}
 		var hits []docsSecretHit
 		switch {
 		case isMD:
@@ -383,6 +482,9 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 	// Liveness: a walk that matched nothing would pass vacuously.
 	if scanned < 20 {
 		t.Fatalf("scanned only %d files under %s; the walk is not reaching the docs", scanned, root)
+	}
+	if demoScripts == 0 {
+		t.Fatalf("no demo/**/*.sh script scanned under %s; the walk lost the demo/ root", root)
 	}
 }
 
@@ -471,6 +573,14 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"var body default":       `curl -sf "$URL" -d "${3:-}"`,
 		"var body attached":      `curl -sf "$URL" -d"$body"`,
 		"var body after comment": "# note \\\ncurl -sf \"$URL\" -d \"$body\"",
+		// SCRIPTS-ARGV-NOV-1 shapes: a credential given to jq as --arg / --argjson.
+		"jq arg pw var":      `jq -n --arg u "$ADMIN_USER" --arg p "$ADMIN_PW" '{username: $u, password: $p}' >"$f"`,
+		"jq arg token var":   `body=$(jq -n --arg t "${BOOTSTRAP_TOKEN}" '{bootstrap_token: $t}')`,
+		"jq arg secret name": `jq -n --arg value "$SECRET_VALUE" '{value: $value}'`,
+		"jq arg cred name":   `jq -n --arg password 'hunter2' '{password: $password}'`,
+		"jq arg on cont":     "jq -n --arg u \"$U\" \\\n    --arg p \"$ADMIN_PASSWORD\" \\\n    '{username: $u, password: $p}'",
+		"jq arg after pipe":  `echo '{}' | jq --arg tok "$TOK" '. + {token: $tok}'`,
+		"jq argjson token":   `jq -n --argjson mfa_code "$CODE_JSON" '{mfa: $mfa_code}'`,
 	} {
 		if len(scanShellForSecrets(sh)) == 0 {
 			t.Errorf("shell guard missed (%s): %q", name, sh)
@@ -518,6 +628,15 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"binary file var":  `curl -sf "$URL" --data-binary @"$f"`,
 		"no flag attached": `curl -sf "$URL" -dfoo`,
 		"cont marker":      "curl -sf \"$URL\" \\\n  -d \"$msg\" >/dev/null # docs-secrets:allow (alert text)",
+		// SCRIPTS-ARGV-NOV-1 safe forms.
+		"jq env prefix":    `JQ_PW="$ADMIN_PW" jq -n '{password: env.JQ_PW}' >"$f"`,
+		"jq plain args":    `jq -n --arg u "$ADMIN_USER" --arg e "$ADMIN_EMAIL" '{username: $u, email: $e}'`,
+		"jq argjson ids":   `jq -n --argjson pid "$PROJECT_ID" --argjson eid "$ENV_ID" '{p: $pid, e: $eid}'`,
+		"jq rawfile":       `jq -n --rawfile p "$pwfile" '{password: $p}'`,
+		"jq arg marker":    `jq -n --arg p "$PW" '{password: $p}' # docs-secrets:allow (fixture, not a real credential)`,
+		"jq arg comment":   `# the old form was jq -n --arg p "$ADMIN_PW" and leaked into ps`,
+		"non-jq --arg":     `getopt --arg p "$ADMIN_PW"`,
+		"jq passes lookup": `jq -r '.data.token' <<<"$out"`,
 	} {
 		if hits := scanShellForSecrets(sh); len(hits) != 0 {
 			t.Errorf("shell guard false positive (%s): %q -> %+v", name, sh, hits)

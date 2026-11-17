@@ -33,12 +33,12 @@ func migrateBreakGlass(t *testing.T, h *testhelper.RBACTestHelper) {
 	).Error)
 }
 
-// makeProjectMember gives the user a baseline (viewer) role at the project so they
+// makeProjectMember gives the user a baseline (project_viewer) role at the project so they
 // satisfy break-glass's project-eligibility gate — the realistic scenario is a member
 // who lacks the specific emergency power, not an unaffiliated outsider.
 func makeProjectMember(t *testing.T, h *testhelper.RBACTestHelper, userID, projectID uint) {
 	pid := projectID
-	h.AssignUserRole(t, userID, 4, &pid) // role 4 = viewer
+	h.AssignUserRole(t, userID, testhelper.RoleProjectViewer, &pid)
 }
 
 // Activating break-glass time-bound-grants the configured emergency role to the
@@ -47,7 +47,7 @@ func TestActivateBreakGlass_GrantsTimeBoundRole(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour) // role 3
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -57,14 +57,14 @@ func TestActivateBreakGlass_GrantsTimeBoundRole(t *testing.T) {
 	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident #42", "")
 	require.NoError(t, err)
 	assert.Equal(t, core.BreakGlassActive, act.State)
-	assert.Equal(t, uint(3), act.RoleID)
+	assert.Equal(t, testhelper.RoleProjectDeveloper, act.RoleID)
 	require.NotNil(t, act.ExpiresAt)
 	assert.WithinDuration(t, time.Now().Add(4*time.Hour), *act.ExpiresAt, 2*time.Minute)
 
-	// alice now holds the emergency (editor) role at the project, time-bound.
+	// alice now holds the emergency (project_developer) role at the project, time-bound.
 	ids, err := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: proj})
 	require.NoError(t, err)
-	assert.Contains(t, ids, uint(3), "emergency role is active")
+	assert.Contains(t, ids, testhelper.RoleProjectDeveloper, "emergency role is active")
 
 	list, err := h.CoreService.ListBreakGlassActivations(ctx, proj)
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestActivateBreakGlass_CapsTTL(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 1*time.Hour) // max 1h
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 1*time.Hour) // max 1h
 
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
@@ -95,7 +95,7 @@ func TestActivateBreakGlass_UnsetMaxTTLFloorsToDefault(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 0) // MaxTTL unset (0)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 0) // MaxTTL unset (0)
 
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
@@ -121,7 +121,7 @@ func TestActivateBreakGlass_DisabledAndJustificationRequired(t *testing.T) {
 	require.Error(t, err)
 
 	// Enabled but no justification → refused.
-	enableBreakGlass(h, "editor", time.Hour, time.Hour)
+	enableBreakGlass(h, "project_developer", time.Hour, time.Hour)
 	_, err = h.CoreService.ActivateBreakGlass(ctx, 2, 10, "", "")
 	require.Error(t, err)
 }
@@ -136,7 +136,7 @@ func TestActivateBreakGlass_RejectsWhitespaceOnlyAndTooShortJustification(t *tes
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", time.Hour, time.Hour)
+	enableBreakGlass(h, "project_developer", time.Hour, time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -170,7 +170,7 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -185,7 +185,7 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 	// The emergency role is gone.
 	ids, err := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: proj})
 	require.NoError(t, err)
-	assert.NotContains(t, ids, uint(3))
+	assert.NotContains(t, ids, testhelper.RoleProjectDeveloper)
 
 	// The record is revoked, and re-revoking fails.
 	list, err := h.CoreService.ListBreakGlassActivations(ctx, proj)
@@ -207,7 +207,7 @@ func TestRevokeBreakGlass_NotBlockedByExpiredState(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -239,7 +239,7 @@ func TestRevokeBreakGlass_RecordsActingMachineIdentity(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -268,7 +268,7 @@ func TestRevokeBreakGlassActivation_ConditionalUpdateOnlyFirstAttemptWins(t *tes
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -301,7 +301,7 @@ func TestRevokeBreakGlass_ConcurrentRevokesOnlyOneWins(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 	// A single shared connection so both goroutines' conditional UPDATEs interleave
 	// through the same in-memory SQLite database rather than each opening its own
 	// independent (and differently-seeded) :memory: connection.
@@ -367,7 +367,7 @@ func TestListBreakGlassActivations_ExpiredReconciliation(t *testing.T) {
 	ctx := context.Background()
 	past := time.Now().Add(-time.Hour)
 	require.NoError(t, h.DB.Create(&models.BreakGlassActivation{
-		ProjectID: proj, UserID: 10, RoleID: 3, RoleName: "editor",
+		ProjectID: proj, UserID: 10, RoleID: testhelper.RoleProjectDeveloper, RoleName: "project_developer",
 		Justification: "old", State: core.BreakGlassActive, ExpiresAt: &past, CreatedAt: past,
 	}).Error)
 
@@ -393,7 +393,7 @@ func TestBreakGlass_ExpiredGrantDeniesAuthorization(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour) // editor = role 3 (secrets.read + secrets.write)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour) // secrets.read + secrets.write
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -411,13 +411,13 @@ func TestBreakGlass_ExpiredGrantDeniesAuthorization(t *testing.T) {
 	// Simulate the grant lapsing: push its expiry into the past (equivalent to the TTL
 	// elapsing). Role resolution filters out expires_at <= now, so the role drops away.
 	require.NoError(t, h.DB.Model(&models.UserRole{}).
-		Where("user_id = ? AND role_id = ?", 10, 3).
+		Where("user_id = ? AND role_id = ?", 10, testhelper.RoleProjectDeveloper).
 		Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error)
 
 	// The emergency role no longer resolves...
 	ids, err := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: proj})
 	require.NoError(t, err)
-	assert.NotContains(t, ids, uint(3), "an expired emergency role must drop out of role resolution")
+	assert.NotContains(t, ids, testhelper.RoleProjectDeveloper, "an expired emergency role must drop out of role resolution")
 
 	// ...and Authorize denies the permission it used to grant.
 	ok, err = h.CoreService.Authorize(ctx, 10, "secrets.write", core.Scope{ProjectID: proj})
@@ -431,7 +431,7 @@ func TestActivateBreakGlass_RejectsNonMember(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	ctx := context.Background()
 	h.CreateTestUser(t, "outsider", 10) // created, but NOT a member of project 2
@@ -452,7 +452,7 @@ func TestActivateBreakGlass_RejectsConcurrentReactivation(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -489,7 +489,7 @@ func TestActivateBreakGlass_ReactivatesAfterNaturalExpiry(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour) // editor = role 3
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -513,7 +513,7 @@ func TestActivateBreakGlass_ReactivatesAfterNaturalExpiry(t *testing.T) {
 	// for simulating elapsed time needs to mirror that normalization by hand.
 	past := time.Now().UTC().Add(-time.Minute)
 	require.NoError(t, h.DB.Model(&models.UserRole{}).
-		Where("user_id = ? AND role_id = ?", 10, 3).
+		Where("user_id = ? AND role_id = ?", 10, testhelper.RoleProjectDeveloper).
 		Update("expires_at", past).Error)
 	require.NoError(t, h.DB.Model(&models.BreakGlassActivation{}).
 		Where("id = ?", first.ID).
@@ -528,7 +528,7 @@ func TestActivateBreakGlass_ReactivatesAfterNaturalExpiry(t *testing.T) {
 	// The fresh grant is live and authorizing.
 	ids, err := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: proj})
 	require.NoError(t, err)
-	assert.Contains(t, ids, uint(3), "the fresh reactivation grant is live")
+	assert.Contains(t, ids, testhelper.RoleProjectDeveloper, "the fresh reactivation grant is live")
 }
 
 // A user affiliated with the project ONLY via a global/install-wide role (e.g. the
@@ -538,7 +538,7 @@ func TestActivateBreakGlass_RejectsGlobalOnlyAffiliation(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 
 	ctx := context.Background()
 	h.CreateTestUser(t, "ssouser", 10)
@@ -552,7 +552,7 @@ func TestActivateBreakGlass_RejectsGlobalOnlyAffiliation(t *testing.T) {
 // The emergency role must not carry roles.assign: a time-bound role that can assign
 // roles (or issue credentials) could be used during the window to mint a PERMANENT
 // grant that outlives break-glass, defeating auto-expiry. A (non-admin) role carrying
-// roles.assign is refused; a contained role (editor — no roles.assign) is fine.
+// roles.assign is refused; a contained role (project_developer — no roles.assign) is fine.
 func TestActivateBreakGlass_RejectsRoleAssignEmergencyRole(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
@@ -574,8 +574,8 @@ func TestActivateBreakGlass_RejectsRoleAssignEmergencyRole(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "assign roles")
 
-	// editor is contained (no roles.assign) → allowed.
-	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	// project_developer is contained (no roles.assign) → allowed.
+	enableBreakGlass(h, "project_developer", 4*time.Hour, 24*time.Hour)
 	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.NoError(t, err)
 	assert.Equal(t, core.BreakGlassActive, act.State)

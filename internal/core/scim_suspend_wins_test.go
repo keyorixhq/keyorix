@@ -20,7 +20,8 @@ func newSCIMStateCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{}, &models.PersonalAccessToken{},
-		&models.UserRole{}, &models.Project{}, &models.Environment{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+		&models.UserRole{}, &models.Project{}, &models.Environment{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Role{})) // Role: the admin-rank ceiling's grant listing joins roles (#4025)
 	c := NewKeyorixCore(store.NewLocalStorage(db))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", IsActive: true, AccountState: AccountActive, ExternalID: "okta|alice"}).Error)
 	return c, db

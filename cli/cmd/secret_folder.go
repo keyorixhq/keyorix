@@ -2,10 +2,8 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -69,10 +67,10 @@ func runSecretFolderCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create folder: %w", err)
 	}
-	if resp.JSON200 == nil || resp.JSON200.Data == nil {
+	if resp.JSON201 == nil || resp.JSON201.Data == nil {
 		return httpStatusError("failed to create folder", resp.StatusCode(), resp.Body)
 	}
-	printFolder(resp.JSON200.Data)
+	printFolder(resp.JSON201.Data)
 	return nil
 }
 
@@ -181,9 +179,8 @@ func init() {
 }
 
 func confirmSecretFolderDeletion(prompt string) bool {
-	reader := bufio.NewReader(os.Stdin)
 	fmt.Printf("%s (yes/no): ", prompt)
-	input, _ := reader.ReadString('\n')
+	input, _ := stdinReader().ReadString('\n')
 	input = strings.TrimSpace(strings.ToLower(input))
 	return input == "yes" || input == "y"
 }

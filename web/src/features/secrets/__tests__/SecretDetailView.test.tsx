@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ALL_CAN } from '../../../test/can';
 import { render, screen, fireEvent, waitFor, act, within } from '../../../test/test-utils';
 import { SecretDetailView } from '../SecretDetailView';
 import { Secret } from '../../../types';
@@ -116,11 +117,11 @@ const makeSecret = (overrides: Partial<Secret> = {}): Secret => ({
 // What the signed-in user may do. Tests that exercise a control assume the user can; the
 // permission-aware cases flip fields on this object (see useCan.ts).
 const canState = vi.hoisted(() => ({
-    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+    value: {} as Record<string, boolean>,
 }));
 vi.mock('../../auth/useCan', () => ({ useCan: () => canState.value }));
 beforeEach(() => {
-    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+    canState.value = { ...ALL_CAN };
     mockAccessDegraded = false;
     mockAccessDegradedReasons = [];
 });
@@ -1519,7 +1520,7 @@ describe('SecretDetailView permission-aware controls (DEMO-UI-1)', () => {
     });
 
     it('an admin sees Transfer', () => {
-        canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+        canState.value = { ...ALL_CAN };
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.getByText('Transfer ownership')).toBeInTheDocument();
     });

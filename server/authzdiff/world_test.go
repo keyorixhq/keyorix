@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -482,6 +484,17 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 func newCore(ls *store.LocalStorage) *core.KeyorixCore {
 	c := core.NewKeyorixCore(ls)
 	c.SetCredentialDelivery(nil, "https://keyorix.example.invalid")
+	// Self-service emergency access, wired the way the server does from config
+	// (server start → SetBreakGlassPolicy). Enabled with a CONTAINED emergency
+	// role (project_developer: no roles.assign, not admin-bypass — the role
+	// config_access.go's own comment names as the safe choice), so the
+	// break-glass activate binding (v5) exercises core's real gate
+	// (ErrBreakGlassDisabled would otherwise mask it). Disabled cores still exist
+	// nowhere the harness probes — no bound op reads this policy except
+	// breakglass.activate.
+	c.SetBreakGlassPolicy(core.BreakGlassPolicy{
+		Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour,
+	})
 	return c
 }
 
@@ -521,22 +534,22 @@ const (
 	layerGRPC layer = "grpc"
 )
 
+// legsCreated counts newLeg calls in this test binary; the sweep logs it next
+// to the template size so the bytes cloned per sweep can be computed
+// (legs x template bytes) without fs tracing.
+var legsCreated atomic.Int64
+
 // newLeg clones the template and builds exactly the surface the layer needs.
 func newLeg(tb testing.TB, l layer) *leg {
 	tb.Helper()
 	b, fx := template(tb)
-	// Each leg owns its directory and is released by close() as soon as its
-	// case ends — NOT at the end of the (parallel) op subtest, which would let
-	// thousands of database copies accumulate on disk at once.
-	dir, err := os.MkdirTemp("", "authzdiff-leg-")
-	if err != nil {
-		tb.Fatalf("leg dir: %v", err)
-	}
-	path := filepath.Join(dir, "leg.db")
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		tb.Fatalf("clone: %v", err)
-	}
-	db := fuzzworld.OpenSQLite(tb, path, 1)
+	legsCreated.Add(1)
+	// Each leg owns a private in-memory database restored from the template
+	// image (nothing touches the disk: a file copy per leg wrote ~1 MB x
+	// 166k legs per sweep) and is released by close() as soon as its case
+	// ends — NOT at the end of the (parallel) op subtest, which would let
+	// thousands of database copies accumulate at once.
+	db := fuzzworld.OpenSQLiteFromImage(tb, b)
 	ls := store.NewLocalStorage(db)
 	c := newCore(ls)
 	lg := &leg{db: db, ls: ls, c: c, fx: fx}
@@ -544,7 +557,6 @@ func newLeg(tb testing.TB, l layer) *leg {
 		if s, e := db.DB(); e == nil {
 			_ = s.Close()
 		}
-		_ = os.RemoveAll(dir)
 	})
 	// Deliberately NO tb.Cleanup(lg.close) fallback: a cleanup closure keeps the
 	// whole leg (router, core, DB handle) reachable until the op subtest ends,
@@ -612,12 +624,44 @@ var allPerms = uint16(1<<len(customPermUniverse) - 1)
 
 var defaultVariation = variation{Mask: allPerms, Route: "user", Scope: "A"}
 
+// scopeProject maps a variation scope token to its project. Besides "A"/"B"/
+// "global", a token "A@prod"/"A@stg" (and the B forms) names a project PLUS an
+// environment (see scopeEnv) — the project part is the same "A"/"B".
 func (fx *fixtures) scopeProject(s string) uint {
-	switch s {
+	switch scopeProjectToken(s) {
 	case "A":
 		return fx.A.projectID
 	case "B":
 		return fx.B.projectID
+	}
+	return 0
+}
+
+// scopeProjectToken strips an "@env" suffix, leaving the project token.
+func scopeProjectToken(s string) string {
+	proj, _, _ := strings.Cut(s, "@")
+	return proj
+}
+
+// scopeEnv maps an environment-scoped variation token to its environment id. A
+// token with no "@env" suffix is project-wide (environment 0, the wildcard).
+//
+//	"<proj>@prod" -> that project's prod environment (perProject.envID)
+//	"<proj>@stg"  -> that project's second environment ("staging2", sx.targetEnvID)
+func (fx *fixtures) scopeEnv(s string) uint {
+	_, env, found := strings.Cut(s, "@")
+	if !found {
+		return 0
+	}
+	pp := &fx.A
+	if scopeProjectToken(s) == "B" {
+		pp = &fx.B
+	}
+	switch env {
+	case "prod":
+		return pp.envID
+	case "stg":
+		return pp.sx.targetEnvID
 	}
 	return 0
 }
@@ -640,23 +684,24 @@ func (lg *leg) applyVariation(tb testing.TB, v variation) {
 		_ = err // assigning an already-held / removing an absent permission may error; the model reads the result
 	}
 	proj := fx.scopeProject(v.Scope)
+	env := fx.scopeEnv(v.Scope) // non-zero only for an "@prod"/"@stg" token (V5b)
 	cust := fx.principals[pkCustom]
 	lg.db.Exec("DELETE FROM user_roles WHERE user_id = ? AND role_id = ?", cust.userID, fx.customRoleID)
 	lg.db.Exec("DELETE FROM group_roles WHERE group_id = ?", fx.customGroupID)
 	switch v.Route {
 	case "user":
-		if e := lg.db.Create(&models.UserRole{UserID: cust.userID, RoleID: fx.customRoleID, ProjectID: proj}).Error; e != nil {
+		if e := lg.db.Create(&models.UserRole{UserID: cust.userID, RoleID: fx.customRoleID, ProjectID: proj, EnvironmentID: env}).Error; e != nil {
 			tb.Fatalf("variation user grant: %v", e)
 		}
 	case "group":
-		if e := lg.db.Create(&models.GroupRole{GroupID: fx.customGroupID, RoleID: fx.customRoleID, ProjectID: proj}).Error; e != nil {
+		if e := lg.db.Create(&models.GroupRole{GroupID: fx.customGroupID, RoleID: fx.customRoleID, ProjectID: proj, EnvironmentID: env}).Error; e != nil {
 			tb.Fatalf("variation group grant: %v", e)
 		}
 	case "machine":
 		if proj == 0 {
 			tb.Fatalf("variation: a machine role cannot be global")
 		}
-		lg.db.Exec("UPDATE machine_identity_roles SET project_id = ? WHERE machine_identity_id = ? AND role_id = ?", proj, fx.principals[pkMachine].machineID, fx.customRoleID)
+		lg.db.Exec("UPDATE machine_identity_roles SET project_id = ?, environment_id = ? WHERE machine_identity_id = ? AND role_id = ?", proj, env, fx.principals[pkMachine].machineID, fx.customRoleID)
 	}
 }
 

@@ -18,8 +18,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -113,6 +115,9 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	response, err := h.coreService.CreateSecret(secretMutationAuditContext(r, userCtx), req)
 	if err != nil {
 		log.Printf("Error creating secret: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if h.trySendSecretSizeError(w, err) {
 			return
 		}
@@ -310,6 +315,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	}
 	if err != nil {
 		log.Printf("Error getting secret: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		if authorized && h.sendSecretReadRefusal(w, err) {
 			return
 		}
@@ -337,6 +345,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		}
 		if err != nil {
 			log.Printf("Error getting secret value: %v", err)
+			if sendStorageUnavailable(w, err) {
+				return
+			}
 			if h.sendSecretReadRefusal(w, err) {
 				return
 			}
@@ -521,6 +532,9 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 	}
 	if err != nil {
 		log.Printf("Error getting secret value by ref: %v", err)
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		// The route gate authorized the caller on this secret before this read.
 		if h.sendSecretReadRefusal(w, err) {
 			return
@@ -562,20 +576,18 @@ func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	// The secret.restored row commits with the restore (secretMutationAuditContext).
 	if err := h.coreService.RestoreSecret(secretMutationAuditContext(r, userCtx), userCtx.UserID, uint(id)); err != nil {
-		status := http.StatusInternalServerError
-		msg := err.Error()
+		// #3737: a live secret is a state conflict (409), not a storage failure; so is a
+		// restore under a deleted environment or project (core's own text names the parent).
+		// The not-found body is core's own text, as it was before the route moved onto the
+		// classifier (TestSecretRestore_MissingSecretStays404WithSameBody).
+		texts := coreErrorTexts{errclass.NotFound: err.Error()}
 		switch {
 		case errors.Is(err, core.ErrSecretNotDeleted):
-			// #3737: a live secret is a state conflict, not a storage failure.
-			status = http.StatusConflict
-			msg = fmt.Sprintf("secret %d is not deleted; nothing to restore", id)
-		case isSecretNotFound(err):
-			status = http.StatusNotFound
-		default:
-			log.Printf("Error restoring secret %d: %v", id, err)
-			msg = clientSafe(err)
+			texts[errclass.Precondition] = fmt.Sprintf("secret %d is not deleted; nothing to restore", id)
+		case errors.Is(err, storage.ErrParentDeleted):
+			texts[errclass.Precondition] = err.Error()
 		}
-		h.sendError(w, "Error", msg, status, nil)
+		answerCoreError(w, r, err, coreErrorAnswer{op: fmt.Sprintf("restoring secret %d", id), texts: texts})
 		return
 	}
 	h.sendSuccess(w, map[string]any{"id": id, "restored": true}, "Secret restored")
@@ -676,7 +688,9 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The secret.updated row, with its before/after diff, commits with the update.
-	ctx := secretMutationAuditContext(r, userCtx)
+	// The recorder tells a permission refusal core reached through a storage outage of
+	// the permission lookup from a verdict (#3873, as the gRPC twin does).
+	ctx, faults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(r, userCtx))
 	var response *models.SecretNode
 	if isMachine {
 		response, err = h.coreService.UpdateSecret(ctx, req)
@@ -685,7 +699,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("Error updating secret: %v", err)
-		h.sendUpdateSecretError(w, err)
+		h.sendUpdateSecretError(w, r, faults, err)
 		return
 	}
 
@@ -720,7 +734,9 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 
 	// The secret.deleted row commits with the delete (secretMutationAuditContext); core
 	// reads the name and project for it from the row it deletes.
-	ctx := secretMutationAuditContext(r, userCtx)
+	// The recorder tells a permission refusal core reached through a storage outage of
+	// the permission lookup from a verdict (#3873, as the gRPC twin does).
+	ctx, faults := core.WithAuthorizeFaultRecorder(secretMutationAuditContext(r, userCtx))
 	var deleteErr error
 	if isMachine {
 		deleteErr = h.coreService.DeleteSecret(ctx, uint(id))
@@ -728,14 +744,11 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 		deleteErr = h.coreService.DeleteSecretWithPermissionCheck(ctx, uint(id), userCtx.UserID)
 	}
 	if deleteErr != nil {
-		log.Printf("Error deleting secret: %v", deleteErr)
-		if isSecretNotFound(deleteErr) {
-			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
-		} else if isPermissionRefusal(deleteErr) {
-			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
-		} else {
-			h.sendError(w, "InternalError", "Failed to delete secret", http.StatusInternalServerError, nil)
-		}
+		answerCoreError(w, r, deleteErr, coreErrorAnswer{op: "deleting secret", faults: faults, texts: coreErrorTexts{
+			errclass.NotFound:         errSecretNotFound,
+			errclass.PermissionDenied: errAccessDenied,
+			errclass.Internal:         "Failed to delete secret",
+		}})
 		return
 	}
 
@@ -759,7 +772,11 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, err error) {
+// sendUpdateSecretError answers an UpdateSecret failure. faults is the recorder the
+// caller installed with core.WithAuthorizeFaultRecorder (nil when it did not): a
+// permission refusal core reached because the permission lookup hit a storage outage
+// is 503, not 403 (#3873).
+func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, r *http.Request, faults *core.AuthorizeFaultRecorder, err error) {
 	if h.trySendSecretSizeError(w, err) {
 		return
 	}
@@ -780,13 +797,11 @@ func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, err error) 
 		h.sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
 		return
 	}
-	if isSecretNotFound(err) {
-		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-	} else if isPermissionRefusal(err) {
-		h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
-	} else if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
-		h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
-	} else {
-		h.sendError(w, "InternalError", "Failed to update secret", http.StatusInternalServerError, nil)
-	}
+	// Everything else by sentinel through the shared classifier: a validation refusal
+	// is 400 in every locale (core.ErrSecretInvalidInput), not by the translated word.
+	answerCoreError(w, r, err, coreErrorAnswer{op: "updating secret", faults: faults, texts: coreErrorTexts{
+		errclass.NotFound:         "Secret not found",
+		errclass.PermissionDenied: "Access denied",
+		errclass.Internal:         "Failed to update secret",
+	}})
 }

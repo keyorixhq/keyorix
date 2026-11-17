@@ -284,12 +284,17 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 	if err != nil {
 		return nil, fmt.Errorf("failed to load audit chain re-anchor: %w", err)
 	}
-	raw, err := c.walkAuditChain(ctx, storage.AuditChainSegment{Anchor: anchor})
+	// A retention purge does not take this lock: one that overtakes the walk
+	// re-walks from the moved anchor, whose purged count is then the one below.
+	raw, err := c.walkAuditChainRacingPurge(ctx, storage.AuditChainSegment{Anchor: anchor})
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
 	}
 	if !raw.Valid {
 		return nil, fmt.Errorf("%w a chain that does not verify: %s", ErrAuditCheckpointRefused, raw.Reason)
+	}
+	if raw.Reanchored != nil {
+		anchor = raw.Reanchored
 	}
 	// #3257: chained rows removed by sanctioned purges, from the anchor the walk
 	// was just seeded from (authenticated, or nil → 0).

@@ -322,7 +322,7 @@ func TestDynamic_SetConfigEnabled_ConfigNotFound_S13(t *testing.T) {
 // perform still succeed, but the actual disable/enable UPDATE inside
 // TransitionDynamicSecretConfigDisabled fails with a raw, internal-looking
 // message. Before the G50 fix, SetConfigEnabled forwarded err.Error()
-// straight to the client, bypassing the isSafeDynamicSecretError/clientSafe
+// straight to the client, bypassing the dynamicSecretClientMessage/clientSafe
 // sanitization every sibling handler in this file already applies.
 func TestDynamic_SetConfigEnabled_StorageError_G50(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)

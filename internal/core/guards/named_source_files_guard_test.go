@@ -79,6 +79,8 @@ var namedFileAllowlist = map[string]string{
 	"internal/statemap/rest_composition_test.go:fixture.go":                                    synthetic,
 	"internal/statemap/test_tempdir_cleanup_guard_test.go:x_test.go":                           synthetic,
 	"server/http/full_row_overwrite_guard_test.go:overwrite_fixture.go":                        synthetic,
+	"server/http/machine_self_granter_tag_guard_test.go:core.go":                               synthetic,
+	"server/http/machine_self_granter_tag_guard_test.go:h.go":                                  synthetic,
 	"server/httpguards/secret_acl_gate_guard_test.go:server/http/handlers/zz_third.go":         synthetic,
 	"server/httpguards/secret_acl_gate_guard_test.go:x.go":                                     synthetic,
 	"server/httpguards/share_secret_isgroup_guard_test.go:x.go":                                synthetic,

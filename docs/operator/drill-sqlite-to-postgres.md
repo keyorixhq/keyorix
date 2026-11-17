@@ -19,7 +19,8 @@ What it does and checks:
 2. **Migrate**: `admin backup` of the stopped SQLite instance, `admin restore` into a
    config that points at an empty PostgreSQL database.
 3. **Every row present and equal**: row count and an order-independent SHA-256 of every
-   row, per table, for all 78 tables. The checksum reads columns through `database/sql`
+   row, per table, for every table (the script prints the count: `all 80 tables equal`
+   at the time of writing). The checksum reads columns through `database/sql`
    and normalises the SQLite/PostgreSQL type differences, so it is independent of the
    backup format. Not compared, by design: `secret_nodes.cache_epoch` and three
    `system_metadata` keys (listed in `scripts/migrate/migratecheck/main.go`).

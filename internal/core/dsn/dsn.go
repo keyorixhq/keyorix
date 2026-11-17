@@ -95,7 +95,11 @@ func SplitDSNHostList(field string) []string {
 		// every guard downstream of it) rejects a bracket-wrapped literal
 		// outright, which would otherwise fall through to net.LookupHost and
 		// silently skip validation for exactly this shape.
-		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 1 {
+		//
+		// An empty bracket pair ("[]") would strip to "" and be dropped by
+		// every caller, hiding a host the driver still sees (pgx dials the
+		// literal "[]"); keep the entry as written so it stays a candidate.
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 2 {
 			part = part[1 : len(part)-1]
 		}
 		hosts = append(hosts, part)
@@ -396,17 +400,24 @@ func ParseDSNHostsFromKeyValue(dsn string) []string {
 // pairs read before the error -- pgx then refuses the whole string, so those are
 // candidates at worst.
 func keywordValuePairs(s string) [][2]string {
+	out, _ := keywordValuePairsStrict(s)
+	return out
+}
+
+// keywordValuePairsStrict is keywordValuePairs that also reports whether the
+// whole string was read (false where pgx would refuse it).
+func keywordValuePairsStrict(s string) ([][2]string, bool) {
 	const space = " \t\n\r\v\f"
 	var out [][2]string
 	s = strings.TrimLeft(s, space)
 	for len(s) > 0 {
 		eq := strings.IndexByte(s, '=')
 		if eq < 0 {
-			return out
+			return out, false
 		}
 		key := strings.Trim(s[:eq], space)
 		if key == "" || strings.ContainsAny(key, space) {
-			return out
+			return out, false
 		}
 		s = strings.TrimLeft(s[eq+1:], space)
 		var val string
@@ -433,14 +444,14 @@ func keywordValuePairs(s string) [][2]string {
 				}
 			}
 			if end >= len(s) {
-				return out // unterminated quote: pgx refuses the string
+				return out, false // unterminated quote: pgx refuses the string
 			}
 			val = unescapeKeywordValue(s[:end])
 			s = strings.TrimLeft(s[end+1:], space)
 		}
 		out = append(out, [2]string{key, val})
 	}
-	return out
+	return out, true
 }
 
 // unescapeKeywordValue drops each backslash and keeps the byte after it

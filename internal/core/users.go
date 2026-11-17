@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"time"
 
@@ -74,7 +75,7 @@ func validateUsernameCharset(username string) error {
 
 func validateEmailFormat(email string) error {
 	if !emailRegex.MatchString(email) {
-		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEmail", nil))
+		return validationErrorf("%s: email address is not valid (expected name@domain.tld)", i18n.T("ErrorValidation", nil))
 	}
 	return nil
 }
@@ -173,6 +174,33 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 		OneTimePasswordExpiresAt: otpExpiresAt,
 	}
 	return user, string(hash), nil
+}
+
+// persistInactiveOnCreate stores is_active=false for a user that was created
+// inactive. models.User.IsActive is `gorm:"default:true"`, so the plain INSERT in
+// storage CreateUser treats a false (zero) value as "unset", omits the column and
+// the DB default stores true; the same zero value is also what every caller that
+// simply leaves IsActive unset passes, so storage cannot tell the two apart and
+// the model default must stay. A caller that KNOWS it wants an inactive account
+// (SCIM active=false, admin is_active=false) therefore writes the column
+// explicitly, inside the transaction that created the row so no committed state
+// has an inactive account listed as active. wantActive is the caller's intent
+// captured BEFORE the create: GORM back-fills the default into the struct, so
+// created.IsActive reads true afterwards. Fails closed: if the row did not match,
+// the whole create rolls back.
+func persistInactiveOnCreate(ctx context.Context, tx storage.Storage, created *models.User, wantActive bool) error {
+	if wantActive {
+		return nil
+	}
+	created.IsActive = false
+	ok, err := tx.UpdateUserIfActiveStateMatches(ctx, created, true)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if !ok {
+		return fmt.Errorf("%s: user %d vanished before is_active=false could be stored", i18n.T("ErrorStorageFailed", nil), created.ID)
+	}
+	return nil
 }
 
 // EventUserCreated/EventUserUpdated are audited on every user create/update,
@@ -282,10 +310,14 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 	// failure/panic must not roll back the user row — same accepted tradeoff as
 	// before, just tx-scoped now), so only a CreateUser failure can trigger rollback.
 	var createdUser *models.User
+	wantActive := user.IsActive // before the create: GORM back-fills the column default
 	createTx := func(tx storage.Storage, tgt auditTarget) error {
 		var txErr error
 		createdUser, txErr = tx.CreateUser(ctx, user, req.Password)
 		if txErr != nil {
+			return txErr
+		}
+		if txErr = persistInactiveOnCreate(ctx, tx, createdUser, wantActive); txErr != nil {
 			return txErr
 		}
 		// Auto-assign the system_viewer role (ADR-021): a minimal install-wide
@@ -332,7 +364,13 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 		if errors.Is(err, storage.ErrDuplicateUsername) {
 			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
 		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// #3225: the transaction may have committed and still reported an error (a
+		// lost acknowledgement). Answering failure then leaves a user the client was
+		// told does not exist, and a retry meets a duplicate. Read the row back: if it
+		// is there, the create succeeded and continues down the success path.
+		if landed, answer := c.userCreateLanded(ctx, "users.CreateUser", createdUser, err); !landed {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), answer)
+		}
 	}
 
 	// Seed password history with the initial password so the no-reuse rule
@@ -353,6 +391,58 @@ func (c *KeyorixCore) createUser(ctx context.Context, req *CreateUserRequest, au
 	// alongside the CreateUser write — see the fix/create-ops-atomicity comment there.
 
 	return createdUser, nil
+}
+
+// ErrUserCreateOutcomeUnknown marks a user create whose transaction reported an
+// error and whose read-back (userCreateLanded) failed too: the account may exist.
+// It wraps the transaction's error, so every existing classification of that error
+// still applies; the SCIM transport answers it 503 + Retry-After (a retry either
+// creates the account or finds it), the others keep their storage-error answer.
+var ErrUserCreateOutcomeUnknown = errors.New("the user create may have committed: its outcome could not be read back")
+
+// userCreateLanded reports whether the user the create transaction inserted is
+// present after the transaction returned writeErr (#3225: a commit whose
+// acknowledgement was lost). Every core path that inserts a user calls it on the
+// transaction's error (TestPartialCommit_EveryUserCreateSiteHandlesLostAck,
+// server/faultops); site names the caller in the log.
+//
+// created is the row the closure got back from the insert; nil means the insert
+// itself never succeeded, so nothing can have landed. The row is matched on ID and
+// username, so an ID reused after a rollback cannot be mistaken for ours. When it is
+// not there, answer is the error the caller returns: writeErr, or, when the lookup
+// itself failed (logged), writeErr wrapped in ErrUserCreateOutcomeUnknown. A failing
+// lookup never counts as landed (fail closed). Panic-safe.
+func (c *KeyorixCore) userCreateLanded(ctx context.Context, site string, created *models.User, writeErr error) (landed bool, answer error) {
+	if created == nil || created.ID == 0 {
+		return false, writeErr
+	}
+	// Unknown until the lookup answers: a panic in it leaves the outcome unknown.
+	answer = fmt.Errorf("%w: %w", ErrUserCreateOutcomeUnknown, writeErr)
+	besteffort.Run(ctx, site+".ReadBack", func() error {
+		got, err := c.storage.GetUser(ctx, created.ID)
+		if err != nil {
+			if isPositiveNotFound(err) {
+				answer = writeErr
+				return nil
+			}
+			log.Printf("%s: create of user %d reported %v and the read-back failed: %v; the user may exist", site, created.ID, writeErr, err)
+			return err
+		}
+		if got == nil {
+			// No row and no error is no answer either way: still unknown.
+			return nil
+		}
+		answer = writeErr
+		if got.ID == created.ID && got.Username == created.Username {
+			log.Printf("%s: create of user %d reported %v but the row is present; it committed and is delivered", site, created.ID, writeErr)
+			landed = true
+		}
+		return nil
+	})
+	if landed {
+		return true, nil
+	}
+	return false, answer
 }
 
 // maxUserCreateAssignments bounds how many project-scoped role assignments a
@@ -455,6 +545,7 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	// AUDIT-TX-2: the user, its role grants and its user.created row commit in
 	// ONE transaction (CreateUserWithRoleGrants nests as a savepoint).
 	var created *models.User
+	wantActive := user.IsActive // before the create: GORM back-fills the column default
 	if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		var err error
 		if created, err = tx.CreateUserWithRoleGrants(ctx, user, grants); err != nil {
@@ -467,10 +558,17 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 			}
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
+		if err = persistInactiveOnCreate(ctx, tx, created, wantActive); err != nil {
+			return err
+		}
 		c.logUserCreatedOn(ctx, tgt, actorID, created.ID, created.Username)
 		return nil
 	}); err != nil {
-		return nil, err
+		// #3225: a commit whose acknowledgement was lost committed the user, its
+		// grants and user.created together; read it back (see CreateUser).
+		if landed, answer := c.userCreateLanded(ctx, "users.CreateUserWithAssignments", created, err); !landed {
+			return nil, answer
+		}
 	}
 
 	// Best-effort password-history seed, after the atomic create (ADR-025).
@@ -616,6 +714,10 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
+	// What this request changes, decided (and validated) against the read above. The
+	// default branch's write applies exactly these to the row as it is under the
+	// row lock, never the rest of this read (#2653/#2654, FIX-USER-ROW-NARROW-1).
+	var setUsername, setEmail bool
 	if req.Username != "" && req.Username != user.Username {
 		// Checked here, not in validateUpdateUserRequest: a client that echoes
 		// the stored username back unchanged (a legacy name this rule would
@@ -642,6 +744,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		}
 		user.Username = req.Username
 		user.UsernameFolded = foldedUsername.Folded()
+		setUsername = true
 	}
 	if req.Email != "" && req.Email != user.Email {
 		foldedEmail, ferr := identity.NewFoldedName(req.Email)
@@ -659,6 +762,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		}
 		user.Email = req.Email
 		user.EmailFolded = foldedEmail.Folded()
+		setEmail = true
 	}
 	if req.DisplayName != "" {
 		user.DisplayName = req.DisplayName
@@ -741,7 +845,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 				deactivate.IsActive = false
 				deactivate.UpdatedAt = user.UpdatedAt
 				write, desc := &deactivate, "deactivated user %d (%s)"
-				if remainder = userIdentityChanges(req, locked); !remainder {
+				if remainder = userIdentityChanges(user, locked, setUsername, setEmail); !remainder {
 					if req.DisplayName != "" {
 						deactivate.DisplayName = req.DisplayName
 					}
@@ -832,14 +936,42 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		// email/username change can widen it (a reset link goes to the new address),
 		// so the user.updated row commits with the update or not at all (fail closed).
 		err = c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
-			matched, terr := tx.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
+			// #2653/#2654 (FIX-USER-ROW-NARROW-1): the write is built from the row as it
+			// is NOW, under its row lock (Postgres FOR UPDATE; SQLite's write
+			// transaction is BEGIN IMMEDIATE), with only this request's changes applied.
+			// It used to persist the unlocked read above, so a username or email change
+			// committing in between (an admin re-pointing a compromised account's reset
+			// address) was reverted by any concurrent edit, including a session-only
+			// display-name change. The gate on wasActive stays: a concurrent
+			// (de)activation is still a conflict, not overwritten.
+			locked, lerr := tx.LockUserForUpdate(ctx, req.ID)
+			if lerr != nil {
+				if storage.IsUserNotFound(lerr) {
+					// Deleted since the read: what the conditional write answered before.
+					return fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
+				}
+				return lerr
+			}
+			next := *locked
+			if setUsername {
+				next.Username, next.UsernameFolded = user.Username, user.UsernameFolded
+			}
+			if setEmail {
+				next.Email, next.EmailFolded = user.Email, user.EmailFolded
+			}
+			if req.DisplayName != "" {
+				next.DisplayName = req.DisplayName
+			}
+			next.IsActive = user.IsActive
+			next.UpdatedAt = user.UpdatedAt
+			matched, terr := tx.UpdateUserIfActiveStateMatches(ctx, &next, wasActive)
 			if terr != nil {
 				return terr
 			}
 			if !matched {
 				return fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
 			}
-			updated = user
+			updated = &next
 			c.writeAuditEventFullOn(ctx, tgt, EventUserUpdated, actorPtr(req.ActorID), nil, nil, "",
 				fmt.Sprintf("updated user %d (%s)", updated.ID, updated.Username))
 			return nil
@@ -875,12 +1007,14 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 			if lerr != nil {
 				return lerr
 			}
-			// Only the fields the request sets: the rest stay as stored.
+			// Only the fields the request changes: the rest stay as stored. A field the
+			// request merely echoes is the unlocked read's value, which a concurrent
+			// rename may have replaced since (REVIEW-4138-DEEP-1 F2).
 			next := *locked
-			if req.Username != "" {
+			if setUsername {
 				next.Username, next.UsernameFolded = user.Username, user.UsernameFolded
 			}
-			if req.Email != "" {
+			if setEmail {
 				next.Email, next.EmailFolded = user.Email, user.EmailFolded
 			}
 			if req.DisplayName != "" {
@@ -905,11 +1039,13 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	return updated, nil
 }
 
-// userIdentityChanges reports whether req changes the username or the email the stored
-// row has (cur, read on the row lock): the part of an update that can widen access (a
-// reset link goes to the new address).
-func userIdentityChanges(req *UpdateUserRequest, cur *models.User) bool {
-	return (req.Username != "" && req.Username != cur.Username) || (req.Email != "" && req.Email != cur.Email)
+// userIdentityChanges reports whether the request changes the username or the email the
+// stored row has (cur, read on the row lock): the part of an update that can widen access
+// (a reset link goes to the new address). want is the unlocked read with the request
+// applied; setUsername/setEmail say which of its fields the request changes. A field the
+// request only echoes is not a change, even if a concurrent rename has since replaced it.
+func userIdentityChanges(want, cur *models.User, setUsername, setEmail bool) bool {
+	return (setUsername && want.Username != cur.Username) || (setEmail && want.Email != cur.Email)
 }
 
 // EventUserDeleted/EventUserRestored are audited on the admin delete/restore path
@@ -1407,19 +1543,19 @@ func (c *KeyorixCore) GetUserByExternalID(ctx context.Context, externalID string
 
 func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 	if req.Username == "" {
-		return fmt.Errorf("%s", i18n.T("LabelUsername", nil))
+		return refuseField("username", fmt.Errorf("%s", i18n.T("LabelUsername", nil)))
 	}
 	if err := validateUsernameFormat(req.Username); err != nil {
-		return err
+		return refuseField("username", err)
 	}
 	if err := validateUsernameCharset(req.Username); err != nil {
-		return err
+		return refuseField("username", err)
 	}
 	if req.Email == "" {
-		return fmt.Errorf("%s", i18n.T("LabelEmail", nil))
+		return refuseField("email", fmt.Errorf("%s", i18n.T("LabelEmail", nil)))
 	}
 	if err := validateEmailFormat(req.Email); err != nil {
-		return err
+		return refuseField("email", err)
 	}
 	// DisplayName is optional at this layer (buildUserForCreate defaults it to
 	// Username when blank) — only format-check it when the caller actually
@@ -1427,11 +1563,11 @@ func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 	// semantics without re-imposing that requirement here.
 	if req.DisplayName != "" {
 		if err := validateDisplayNameFormat(req.DisplayName); err != nil {
-			return err
+			return refuseField("display_name", err)
 		}
 	}
 	if req.Password == "" {
-		return fmt.Errorf("%s", i18n.T("LabelPassword", nil))
+		return refuseField("password", fmt.Errorf("%s", i18n.T("LabelPassword", nil)))
 	}
 	return nil
 }

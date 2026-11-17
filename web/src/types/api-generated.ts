@@ -3093,6 +3093,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dynamic-secrets/configs/refused-admin-dsn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a project's configs whose admin DSN names a refused option
+         * @description Read-only. The configs in the project whose stored admin DSN names a driver option refused since #3952 (a server file such as sslrootcert or tlsCAFile, or ambient credentials): they can no longer issue. Fix each with PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn. Needs secrets.read on the project and dynamic-secret admin authority there (403), because the report is derived from the decrypted DSNs. Returns config and option names only, never a DSN or an option value.
+         */
+        get: operations["listDynamicSecretConfigsWithRefusedAdminDSN"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dynamic-secrets/configs/{id}": {
         parameters: {
             query?: never;
@@ -3131,6 +3151,26 @@ export interface paths {
          * @description Added for ADR-108 PR 1 (thin CLI `dynamic-secret classify`) — see listDynamicSecretConfigs above.
          */
         patch: operations["classifyDynamicSecretConfig"];
+        trace?: never;
+    };
+    "/api/v1/dynamic-secrets/configs/{id}/admin-dsn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Replace a dynamic-secret config's admin DSN
+         * @description Replaces the stored admin DSN in place, for example to remove an option refused since #3952 (a private-CA sslrootcert or tlsCAFile) without deleting and recreating the config. The same checks as config create apply: admin authority on the config's project/environment (403), the private-network egress policy and the refused driver options (400). The change and its audit row commit together; 503 `audit_unavailable` when the audit log refuses the row (nothing changed). While the config has an active or revoke_failed lease the new DSN must name the same host(s) (409 otherwise): those leases are revoked through it. The DSN is never returned.
+         */
+        patch: operations["updateDynamicSecretConfigAdminDSN"];
         trace?: never;
     };
     "/api/v1/dynamic-secrets/configs/{id}/issue": {
@@ -3625,6 +3665,32 @@ export interface paths {
          * @description Flag a user account so the user must change their password before they can proceed after next login.
          */
         post: operations["requirePasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/{id}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear a user's login lockout
+         * @description Clear the user's login-lockout state (the failed-attempt counter and any
+         *     active lock) after repeated failed logins. Requires `users.write`. The
+         *     unlock is audited fail-closed: when its audit event cannot be recorded the
+         *     lockout is not cleared and the response is 503 `audit_unavailable`; the
+         *     request is safe to retry.
+         */
+        post: operations["unlockUser"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4672,7 +4738,7 @@ export interface paths {
         };
         /**
          * Dashboard summary statistics
-         * @description The caller's own home dashboard (secret/share counts, expiring secrets). Requires the universal system.read baseline (every real principal holds it). The deployment-wide aggregate fields (activeUsers, auditEvents30d, auditLogins30d, auditSecretReads30d, failedAuthAttempts24h (failed password/SSO logins only), failedSecondFactors24h (refused TOTP, recovery code or passkey: mfa.failed + webauthn.failed), refusedSecretReads24h (refused secret reads: authorization denials), inactiveUsers) and the full recentActivity feed are additionally scoped to audit.read — a baseline-only caller gets zeroed aggregates and an activity feed limited to their own events.
+         * @description The caller's own home dashboard (secret/share counts, expiring secrets). Requires the universal system.read baseline (every real principal holds it). The deployment-wide aggregate fields (activeUsers, auditEvents30d, auditLogins30d, auditSecretReads30d, failedAuthAttempts24h (failed password/SSO logins only), failedSecondFactors24h (refused TOTP, recovery code or passkey: mfa.failed + webauthn.failed), refusedSecretReads24h (refused secret reads: authorization denials), inactiveUsers (users whose last login, or whose creation time if they never logged in, is more than 30 days ago)) and the full recentActivity feed are additionally scoped to audit.read — a baseline-only caller gets zeroed aggregates and an activity feed limited to their own events.
          */
         get: operations["getDashboardStats"];
         put?: never;
@@ -5578,11 +5644,17 @@ export interface components {
             secret_id?: number;
             name?: string;
             error?: string;
+            /** @description Stable code of a retryable outage item (audit_unavailable, storage_unavailable); absent for any other failure. */
+            code?: string;
+            /** @description True when the item failed because the audit log or storage was unavailable; nothing was changed and the call can be repeated. */
+            retryable?: boolean;
         };
         BulkDeleteResult: {
             deleted?: number[];
             failed?: components["schemas"]["BulkOpError"][];
             total?: number;
+            /** @description How many of `failed` are retryable outages. */
+            retryable?: number;
         };
         BulkRotateResult: {
             triggered?: number[];
@@ -5686,7 +5758,8 @@ export interface components {
             token_prefix?: string;
             user_id?: number;
             expires_at?: string;
-            last_used_at?: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
             expired?: boolean;
             stale?: boolean;
         };
@@ -5728,7 +5801,8 @@ export interface components {
             machine_identity_id?: number;
             name?: string;
             token_prefix?: string;
-            last_used_at?: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
             expired?: boolean;
             stale?: boolean;
         };
@@ -8197,7 +8271,20 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
-            403: components["responses"]["Error"];
+            /** @description The caller lacks roles.assign at this project, the user's email domain is not allowed, or the privilege ceiling refused the grant: the actor's own permissions at this project must include every permission `role` bundles. The ceiling applies to a machine-identity token the same way, judged against the machine's own roles, so a machine whose roles do not cover `role` gets this 403; one whose roles do is allowed (201). Same error envelope as components/responses/Error. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        success?: boolean;
+                        code?: number;
+                        error?: string;
+                        message?: string;
+                    };
+                };
+            };
             409: components["responses"]["Error"];
         };
     };
@@ -8688,6 +8775,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     listAccessRequests: {
@@ -8921,13 +9009,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data=null, message='deleted'}. */
-            200: {
+            /** @description Template deleted. No response body. */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
@@ -10271,6 +10360,7 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["SecretReadRefused"];
+            503: components["responses"]["AuthorizeUnavailable"];
         };
     };
     diffSecretVersions: {
@@ -11087,7 +11177,7 @@ export interface operations {
         };
         responses: {
             /** @description Envelope `{data, message}`. `data` is the created folder node. */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11174,7 +11264,7 @@ export interface operations {
         };
         responses: {
             /** @description Envelope `{data, message}`. `data` is the created template. */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11786,6 +11876,48 @@ export interface operations {
             503: components["responses"]["AuthorizeUnavailable"];
         };
     };
+    listDynamicSecretConfigsWithRefusedAdminDSN: {
+        parameters: {
+            query: {
+                project_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope `{success, data}`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            configs?: {
+                                id?: number;
+                                name?: string;
+                                project_id?: number;
+                                environment_id?: number;
+                                backend_type?: string;
+                                /** @description Refused option names, lower case (authMechanism with its value, e.g. `authmechanism=mongodb-aws`). */
+                                refused_options?: string[];
+                                /** @description Active and revoke_failed leases. */
+                                live_leases?: number;
+                            }[];
+                            /** @description Configs whose admin DSN could not be decrypted, so they were not checked. */
+                            unreadable?: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     getDynamicSecretConfig: {
         parameters: {
             query?: never;
@@ -11850,6 +11982,44 @@ export interface operations {
             404: components["responses"]["Error"];
         };
     };
+    updateDynamicSecretConfigAdminDSN: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: password */
+                    admin_dsn: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Envelope `{success, data, message}`. `data` is the sanitized config. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message?: string;
+                        data?: components["schemas"]["DynamicSecretConfig"];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
+        };
+    };
     issueDynamicSecretLease: {
         parameters: {
             query?: never;
@@ -11883,6 +12053,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             502: components["responses"]["Error"];
         };
     };
@@ -11980,9 +12151,11 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             502: components["responses"]["Error"];
         };
     };
@@ -12015,6 +12188,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             502: components["responses"]["Error"];
         };
     };
@@ -12262,6 +12436,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     evaluateRotationPolicies: {
@@ -12505,6 +12680,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     searchUsers: {
@@ -12651,6 +12827,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
         };
@@ -12673,6 +12850,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
         };
@@ -12744,6 +12922,32 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    unlockUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope with `message`; `data` is null. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     resendSetupLink: {
@@ -13321,6 +13525,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             503: components["responses"]["AuditUnavailable"];
@@ -14067,7 +14272,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data: status (valid|broken|not_proven|sealed; sealed: an audit loss was accepted with admin audit accept-loss, state_reason names it), valid (true only for status=valid), mode (incremental|full), chained_events, unchained_events, head_id, head_hash, checkpointed; when broken also first_broken_id and reason; when not_proven not_proven_reason; in incremental mode coverage {checkpoint_id, tail_from_id, tail_through_id, tail_complete}, last_full_verification_at (null if none), last_full_verification_started_at, last_full_verification_through_id, last_full_verification_source (rolling|job|checkpoint-full), rolling_cycle {started_at, target_id, verified_through_id}, state_reason. */
+            /** @description Envelope {data, message}. data: status (valid|broken|not_proven|sealed; sealed: an audit loss was accepted with admin audit accept-loss, state_reason names it), valid (true only for status=valid), mode (incremental|full), chained_events, unchained_events, head_id, head_hash, checkpointed; when broken also first_broken_id and reason; when sealed also reason (the seal text, as in state_reason; never empty); when not_proven not_proven_reason; in incremental mode coverage {checkpoint_id, tail_from_id, tail_through_id, tail_complete}, last_full_verification_at (null if none), last_full_verification_started_at, last_full_verification_through_id, last_full_verification_source (rolling|job|checkpoint-full), rolling_cycle {started_at, target_id, verified_through_id}, state_reason. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -14176,6 +14381,13 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            /** @description The pre-flight refused the chain (a gap, a broken link or a changed row), for a preview and dry_run=false alike: Error envelope, message = the refusal text, details.code = audit_chain_reencode_refused. Investigate (audit-chain-break runbook 4a); do not retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listAnomalyAlerts: {
@@ -14588,7 +14800,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data: totalSecrets, sharedSecrets, secretsSharedWithMe, activeUsers, auditEvents30d, auditLogins30d, auditSecretReads30d, failedAuthAttempts24h (failed password/SSO logins only), failedSecondFactors24h (refused TOTP, recovery code or passkey: mfa.failed + webauthn.failed), refusedSecretReads24h (refused secret reads: authorization denials), inactiveUsers; optional trend objects (totalSecretsTrend/sharedSecretsTrend/sharedWithMeTrend, each {value, isPositive}), expiringSecrets[] (id, name, environment, expiresAt, daysLeft, expired), and recentActivity[] (id, type, secretName, timestamp, actor). */
+            /** @description Envelope {data, message}. data: totalSecrets, sharedSecrets, secretsSharedWithMe, activeUsers, auditEvents30d, auditLogins30d, auditSecretReads30d, failedAuthAttempts24h (failed password/SSO logins only), failedSecondFactors24h (refused TOTP, recovery code or passkey: mfa.failed + webauthn.failed), refusedSecretReads24h (refused secret reads: authorization denials), inactiveUsers (users whose last login, or whose creation time if they never logged in, is more than 30 days ago); optional trend objects (totalSecretsTrend/sharedSecretsTrend/sharedWithMeTrend, each {value, isPositive}), expiringSecrets[] (id, name, environment, expiresAt, daysLeft, expired), and recentActivity[] (id, type, secretName, timestamp, actor). */
             200: {
                 headers: {
                     [name: string]: unknown;

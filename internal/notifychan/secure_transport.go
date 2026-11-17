@@ -93,13 +93,21 @@ func refuseDisallowedHost(host string) error {
 	return nil
 }
 
-// isDisallowedIP reports whether ip is a private or link-local address (loopback is
-// permitted as a dev target).
+// isDisallowedIP reports whether ip is refused as a notification-webhook target:
+// the shared webhook-tier SSRF policy (netutil.IsPrivateOrLinkLocalExceptLoopback)
+// — every private/link-local/IMDS/CGNAT range the backend tier refuses, in every
+// embedded-IPv4 IPv6 encoding (NAT64 64:ff9b::/96 well-known and local-use,
+// deprecated IPv4-compatible ::x, 6to4, Teredo), with loopback permitted as a
+// dev target.
+//
+// The unspecified address and the rest of 0.0.0.0/8 stay refused — connect() to
+// them reaches the local host, so they are not "loopback, as a dev target" but an
+// unvetted way onto the Keyorix host's own services: the shared predicate covers
+// them via 0.0.0.0/8 (direct and embedded). Delegating also adds RFC-6598 CGNAT
+// 100.64.0.0/10 (Alibaba cloud IMDS 100.100.100.200), which stdlib ip.IsPrivate()
+// does not cover, keeping this guard in lockstep with its siblings.
 func isDisallowedIP(ip net.IP) bool {
-	if ip.IsLoopback() {
-		return false
-	}
-	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+	return netutil.IsPrivateOrLinkLocalExceptLoopback(ip)
 }
 
 // refuseRedirectDowngrade blocks a redirect to a different host or a downgrade from

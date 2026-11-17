@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ALL_CAN } from '../../../test/can';
 import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { ProjectSettingsTab } from '../ProjectSettingsTab';
 import { ROUTES } from '../../../constants';
@@ -86,9 +87,10 @@ const canState = vi.hoisted(() => ({
     deleteSecrets: true,
     readAudit: true,
     manageMembers: true,
+    readRoles: true,
 }));
 vi.mock('../../../features/auth/useCan', () => ({
-    useCan: () => ({ ...canState }),
+    useCan: () => ({ ...ALL_CAN, ...canState }),
 }));
 
 describe('ProjectSettingsTab — promote environment', () => {
@@ -1320,7 +1322,27 @@ describe('ProjectSettingsTab — permission gating', () => {
     beforeEach(() => {
         mockPost.mockReset();
         mockGet.mockReset();
-        mockGet.mockResolvedValue({ data: { data: {} } });
+        // Seed the data the alert-style sections need, so they render and their controls can be asserted.
+        mockGet.mockImplementation((url: string) => {
+            const payload: Record<string, unknown> = {
+                '/secrets/expiring': { expiring: [{ id: 9, name: 'db', type: 'password', expired: true }] },
+                '/secrets/name-conformance': {
+                    policy_enabled: true,
+                    total_secrets: 1,
+                    violations: [{ id: 8, name: 'db-pass', type: 'password', reason: 'bad pattern' }],
+                },
+                '/secrets/orphaned': {
+                    orphaned: [
+                        { id: 21, name: 'legacy-key', type: 'apiKey', classification: 'internal', owner_id: 99 },
+                    ],
+                },
+                '/secrets/deleted': {
+                    deleted: [{ id: 31, name: 'old-token', type: 'apiKey', deleted_at: '2025-01-01T00:00:00Z' }],
+                },
+            };
+            const key = Object.keys(payload).find((k) => url.includes(k));
+            return Promise.resolve({ data: { data: key ? payload[key] : {} } });
+        });
         mockUseProjectEnvironments.mockReturnValue({
             data: [...defaultEnvironments, { id: 4, name: 'qa', deleted: true }],
             isLoading: false,
@@ -1331,7 +1353,57 @@ describe('ProjectSettingsTab — permission gating', () => {
             deleteSecrets: true,
             readAudit: true,
             manageMembers: true,
+            readRoles: true,
         });
+    });
+
+    it('shows Extend all, Apply renames, Restore secret and Reassign owner to a permitted session', async () => {
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(await screen.findByRole('button', { name: /extend all/i })).toBeInTheDocument();
+        expect(await screen.findByRole('button', { name: /apply renames/i })).toBeInTheDocument();
+        expect(await screen.findByTitle('Restore secret')).toBeInTheDocument();
+        expect(await screen.findByText(/reassign all from former owner #99/i)).toBeInTheDocument();
+        expect(screen.getByLabelText('New name for db-pass')).toBeEnabled();
+    });
+
+    it('hides Extend all, Apply renames and Restore secret, and disables the rename inputs, for a viewer', async () => {
+        Object.assign(canState, {
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            readAudit: false,
+            manageMembers: false,
+            readRoles: false,
+        });
+        render(<ProjectSettingsTab projectId={1} />);
+        // Wait for every seeded section to render, then assert the controls are absent.
+        expect(await screen.findByText('db')).toBeInTheDocument();
+        expect(await screen.findByText('old-token')).toBeInTheDocument();
+        expect(await screen.findByText('legacy-key')).toBeInTheDocument();
+        expect(screen.getByLabelText('New name for db-pass')).toBeDisabled();
+        expect(screen.queryByRole('button', { name: /extend all/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /apply renames/i })).not.toBeInTheDocument();
+        expect(screen.queryByTitle('Restore secret')).not.toBeInTheDocument();
+        expect(screen.queryByText(/reassign all from former owner/i)).not.toBeInTheDocument();
+    });
+
+    it('gates Extend all, Apply renames and Restore on secrets.write alone', async () => {
+        canState.writeSecrets = false;
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(await screen.findByText('old-token')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /extend all/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /apply renames/i })).not.toBeInTheDocument();
+        expect(screen.queryByTitle('Restore secret')).not.toBeInTheDocument();
+        // Reassign owner needs roles.assign, which this session keeps.
+        expect(screen.getByText(/reassign all from former owner #99/i)).toBeInTheDocument();
+    });
+
+    it('gates Reassign owner on roles.assign alone', async () => {
+        canState.manageMembers = false;
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(await screen.findByText('legacy-key')).toBeInTheDocument();
+        expect(screen.queryByText(/reassign all from former owner/i)).not.toBeInTheDocument();
+        expect(await screen.findByRole('button', { name: /extend all/i })).toBeInTheDocument();
     });
 
     it('offers every control to a session that holds the permissions (positive control)', () => {
@@ -1353,10 +1425,25 @@ describe('ProjectSettingsTab — permission gating', () => {
         expect(screen.queryByRole('button', { name: 'Freeze all secrets' })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Resume all' })).not.toBeInTheDocument();
         expect(screen.getByLabelText(/Project name/)).toBeDisabled();
-        // Only the MFA Save (roles.assign) is left.
-        expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1);
+        // The MFA Save needs secrets.write too (route) on top of roles.assign (handler): none left.
+        expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
         // The controls that need the other permissions stay.
         expect(screen.getAllByTitle('Delete environment').length).toBeGreaterThan(0);
+    });
+
+    it('hides the MFA Save from a custom role with roles.assign but without secrets.write', () => {
+        Object.assign(canState, { admin: false, writeSecrets: false, manageMembers: true });
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(screen.getByLabelText(/Require MFA for this project/)).toBeDisabled();
+        expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    });
+
+    it('hides the MFA Save from a custom role with secrets.write but without roles.assign', () => {
+        Object.assign(canState, { admin: false, writeSecrets: true, manageMembers: false });
+        render(<ProjectSettingsTab projectId={1} />);
+        expect(screen.getByLabelText(/Require MFA for this project/)).toBeDisabled();
+        // Only the General Save is left.
+        expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1);
     });
 
     it('hides Delete environment and Delete Project without secrets.delete', () => {

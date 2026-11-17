@@ -1,0 +1,1 @@
+internal/config/ignored_settings_docs_test.go	docs/UPGRADING.md,docs/upgrading.d/*.md	#4076: TestIgnoredSettingPaths_AreInAnUpgradeNote reads docs/UPGRADING.md and docs/upgrading.d/*.md to check every ignoredSettingPaths key is named in an upgrade note

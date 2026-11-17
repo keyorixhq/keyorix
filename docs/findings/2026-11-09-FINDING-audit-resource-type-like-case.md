@@ -43,9 +43,9 @@ itself is unaffected: every row is still stored and returned by other filters. C
 of the search get an empty result on PostgreSQL where SQLite would answer, not a wider one,
 so this is not an authorization or disclosure problem.
 
-## Not fixed here
+## Fixed (AUDIT-SEARCH-PARITY-1, #4090)
 
-No production code was changed. Options: lowercase the term in Go before `escapeLIKE`
-(event types are lowercase ASCII by construction), or apply one normal form on both sides
-as `foldedContainsClause` does. Until then the harness gates this exact shape in
-`ifaceKnownFindings`; the row is removed with the fix.
+`resource_type` is now matched case-sensitively on both backends: `GLOB` on SQLite,
+`LIKE` on PostgreSQL, each against the raw term (event types are lower-case constants, so a
+differently cased value is a caller error and matches nothing). The `ifaceKnownFindings`
+row and `TestIfaceKnownFinding_AuditResourceTypeLikeCase` were removed with the fix.

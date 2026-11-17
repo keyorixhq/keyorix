@@ -1,12 +1,12 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,9 +44,11 @@ prompt. With no terminal and neither variable set, login stops with an error.
 
 When the account has TOTP multi-factor authentication enabled, /auth/login answers with a
 second-factor challenge instead of a token; login then asks for an authenticator code (or
-an unused recovery code) and completes the challenge via POST /auth/mfa/verify. Pass
---mfa-code to supply it non-interactively. The code is used for that one request only: it
-is never echoed, never logged, and never written to the credential file.`,
+an unused recovery code) and completes the challenge via POST /auth/mfa/verify. To
+supply it non-interactively set KEYORIX_MFA_CODE, or KEYORIX_MFA_CODE_FILE to a file that
+holds it (the --mfa-code flag is refused: a code on the command line shows in ps and in
+shell history). The code is used for that one request only: it is never echoed, never
+logged, and never written to the credential file.`,
 	RunE: runLogin,
 }
 
@@ -467,11 +469,14 @@ func offerOldServerURLMigration() string {
 	return ""
 }
 
+// promptLine reads one line from the shared stdin reader, without its line ending. A final
+// line with no newline (`printf %s pw | keyorix login`) is a line: ReadString returns its
+// bytes together with io.EOF, and they are accepted. EOF is reported only when no byte was
+// read; any other read error is reported as is.
 func promptLine(prompt string) (string, error) {
 	fmt.Fprint(os.Stderr, prompt)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil {
+	line, err := stdinReader().ReadString('\n')
+	if err != nil && (line == "" || !errors.Is(err, io.EOF)) {
 		return "", err
 	}
 	return strings.TrimRight(line, "\r\n"), nil

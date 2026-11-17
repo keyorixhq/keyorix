@@ -189,13 +189,13 @@ func TestKeyOps_MissingKeyFiles_RefuseAndCreateNothing(t *testing.T) {
 	ops := []struct {
 		name      string
 		run       func(cfg *config.Config) error
-		returnsOK bool // status reports problems instead of failing
+		returnsOK bool // the op may report the problem and still return nil (none do since #4270)
 	}{
 		{"rotate", func(cfg *config.Config) error { return RotateWithConfig(cfg, true, false, zeroPassSrc()) }, false},
 		{"rotate --dry-run", func(cfg *config.Config) error { return RotateWithConfig(cfg, false, true, zeroPassSrc()) }, false},
 		{"upgrade-aad", func(cfg *config.Config) error { return UpgradeAADWithConfig(cfg, zeroPassSrc()) }, false},
 		{"validate", func(cfg *config.Config) error { return ValidateWithConfig(cfg, zeroPassSrc()) }, false},
-		{"status", func(cfg *config.Config) error { return StatusWithConfig(cfg, zeroPassSrc()) }, true},
+		{"status", func(cfg *config.Config) error { return StatusWithConfig(cfg, zeroPassSrc()) }, false},
 		{"fix-perms", func(cfg *config.Config) error { return FixPermsWithConfig(cfg, zeroPassSrc()) }, false},
 		{"rotate-kek", func(cfg *config.Config) error { return RotateKEKWithConfig(cfg, true, zeroPassSrc(), zeroPassSrc()) }, false},
 		{"migrate-provider", func(cfg *config.Config) error {

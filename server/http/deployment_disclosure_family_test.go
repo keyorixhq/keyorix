@@ -130,8 +130,7 @@ func seedFamilyFixtures(t *testing.T, c *core.KeyorixCore) familyFixtures {
 
 	// An expired-but-active PAT, so /pat-hygiene (#275) has a flagged entry.
 	pastExpiry := time.Now().Add(-1 * time.Hour)
-	_, err = c.CreateOwnPAT(ctx, admin.ID, "leaked-ci-token", &pastExpiry, nil, 0, 0, nil)
-	require.NoError(t, err)
+	createExpiredOwnPATForTest(t, c, ctx, admin.ID, "leaked-ci-token", pastExpiry)
 
 	// An expired-but-active machine credential, so /machine-token-hygiene (#274) has a
 	// flagged entry.

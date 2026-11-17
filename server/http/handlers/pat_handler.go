@@ -185,6 +185,10 @@ func (h *PATHandler) CreatePAT(w http.ResponseWriter, r *http.Request) {
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
 		}
+		if errors.Is(err, core.ErrPATExpiresInPast) {
+			sendError(w, "BadRequest", core.ErrPATExpiresInPast.Error(), http.StatusBadRequest, nil)
+			return
+		}
 		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
 			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 		} else {

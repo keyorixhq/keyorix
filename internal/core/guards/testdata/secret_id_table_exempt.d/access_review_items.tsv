@@ -1,0 +1,1 @@
+access_review_items	a review campaign's frozen snapshot of a grant plus the reviewer's decision (evidence); no permission check reads it, the live grant it mirrors is swept or kept on its own

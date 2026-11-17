@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ALL_CAN } from '../../../test/can';
 import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { ProjectAccessReviewCampaigns, lastUsedInfo } from '../ProjectAccessReviewCampaigns';
 
@@ -69,7 +70,7 @@ const canState = vi.hoisted(() => ({
     manageMembers: true,
 }));
 vi.mock('../../../features/auth/useCan', () => ({
-    useCan: () => ({ ...canState }),
+    useCan: () => ({ ...ALL_CAN, ...canState }),
 }));
 
 describe('ProjectAccessReviewCampaigns', () => {

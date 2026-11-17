@@ -1,0 +1,1 @@
+internal/core/guards/machine_actor_argument_guard_test.go	!operator/**/*.go	scans the core family's non-test .go files and server/http/handlers; operator/ Go is not walked

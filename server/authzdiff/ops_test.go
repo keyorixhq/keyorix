@@ -79,6 +79,11 @@ type opSpec struct {
 	// globalHandler: the REST route is served through a package-level handler
 	// global (the /users routes); the REST leg re-points it under routerMu.
 	globalHandler bool
+	// envScoped: the op authorizes at a SPECIFIC environment (req.env != 0), and
+	// the sweep/fuzzer additionally offer the custom principal an
+	// environment-scoped grant ("<proj>@prod"/"<proj>@stg" variation scopes). Only
+	// env-scoped ops pay those extra cases (envVariations). V5b area 1.
+	envScoped bool
 	// restOK, when set, decides "allowed" for a REST 2xx from the body (bulk
 	// ops answer 200 even when the item was refused). Nil = any 2xx is allowed.
 	restOK func(body []byte, fx *fixtures, t tgt) bool
@@ -110,6 +115,15 @@ func grantRole(fx *fixtures, a byte) (string, uint) {
 	return n, fx.roleIDs[n]
 }
 
+// legacyRoleAtProject: a legacy role (editor) granted on a project. Legacy
+// roles are install-wide only (LEGACY-ROLES-GLOBAL-1, db2d3b938), so every
+// transport refuses that grant for every principal (400) and the case is not
+// comparable. TestInvalidArgsFailAdminControl keeps checking the refusal.
+func legacyRoleAtProject(t tgt, a byte) bool {
+	n, _ := grantRole(nil, a)
+	return t != tGlobal && n == "editor"
+}
+
 func pid(fx *fixtures, t tgt) uint {
 	if t == tGlobal {
 		return 0
@@ -134,7 +148,9 @@ func actorCtx(ctx context.Context, p *principal) context.Context {
 
 // ops is every bound operation: the hand-bound Phase 2 set plus the Phase 4
 // family bindings. The sweep orders them by family (coverage_test.go).
-func ops() []opSpec { return append(append(baseOps(), familyOps()...), phase5Ops()...) }
+func ops() []opSpec {
+	return append(append(append(append(append(baseOps(), familyOps()...), phase5Ops()...), v5Ops()...), v8Ops()...), v5bOps()...)
+}
 
 func baseOps() []opSpec {
 	return []opSpec{
@@ -359,10 +375,11 @@ func baseOps() []opSpec {
 			// target = the SCOPE the role is granted at; the route gate is global roles.assign.
 			name: "group.role.assign", row: "AssignRoleToGroup", targets: []tgt{tA, tB, tGlobal}, grantArgs: true, selfMachineGranter: true,
 			// project-tier roles are not assignable at global scope (role scope
-			// rule, 400); editor is, and stays in the global case space.
+			// rule, 400); editor is, and stays in the global case space. Editor
+			// on a project is refused (legacyRoleAtProject).
 			invalidArg: func(t tgt, a byte) bool {
 				n, _ := grantRole(nil, a)
-				return t == tGlobal && n != "editor"
+				return (t == tGlobal) != (n == "editor")
 			},
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
@@ -512,6 +529,7 @@ func baseOps() []opSpec {
 		},
 		{
 			name: "machine.role.assign", row: "AssignMachineRole", targets: projTargets, grantArgs: true, selfMachineGranter: true,
+			invalidArg: legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}
@@ -531,6 +549,7 @@ func baseOps() []opSpec {
 		// ---- invitations ----
 		{
 			name: "invitation.create", row: "InviteToProjectWithLink", targets: projTargets, grantArgs: true,
+			invalidArg: legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}
@@ -563,6 +582,7 @@ func baseOps() []opSpec {
 		// ---- access requests ----
 		{
 			name: "accessrequest.approve", row: "ApproveAccessRequestWithExpiry", targets: projTargets, grantArgs: true,
+			invalidArg: legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), ceiling: []roleAt{{rid, pid(fx, t)}}}

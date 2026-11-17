@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	_ "time/tzdata" // real zone rules regardless of the host's tzdata
@@ -25,6 +26,7 @@ import (
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // ---- special instants and TTLs ----------------------------------------------
@@ -173,10 +175,17 @@ func buildFkcWorldWithEncryption(t testing.TB, start time.Time, enc *encryption.
 	if err := i18n.InitializeForTesting(); err != nil {
 		t.Fatalf("i18n.InitializeForTesting: %v", err)
 	}
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	// Logger.Discard: the default logger prints every "record not found" the mint and
+	// check paths read (thousands of lines a run under CI) and asserts nothing.
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
 		t.Fatal(err)
 	}
@@ -391,31 +400,39 @@ func TestFakeClockExtremes_Cross(t *testing.T) {
 	if os.Getenv("KEYORIX_FAKE_CLOCK_FULL_CROSS") != "" {
 		ttls = fakeClockTTLs
 	}
-	programs := 0
-	defer func() { t.Logf("%d TTLs, %d programs ran", len(ttls), programs) }()
+	var programs atomic.Int64
+	defer func() { t.Logf("%d TTLs, %d programs ran", len(ttls), programs.Load()) }()
 	// One key service for the whole run: its PBKDF2 derivation dominated the 1.4 s
-	// each program took under -race.
+	// each program took under -race. It holds no clock or credential state (see
+	// buildFkcWorldWithEncryption), so the start instants share it in parallel.
 	enc := newFkcEncryption(t)
-	for si, start := range fakeClockInstants {
-		for cred := range 3 {
-			for _, ttl := range ttls {
-				for kind := range uint8(9) {
-					// A fresh database, core and clock per program: a credential observed
-					// expired (or a lease renewed) in one program must not leak into the next.
-					w := buildFkcWorldWithEncryption(t, start, enc)
-					c, issue, expiry, ok, _ := fkcMint(t, w, cred, ttl)
-					if !ok {
-						break
-					}
-					programs++
-					steps := []fkcStep{{kind: kind, delta: int64(si)}, {kind: 3}, {kind: 8, delta: 0}}
-					if v := fkcRun(c, func(x time.Time) { w.clock.t = x }, issue, expiry, steps); len(v) > 0 {
-						t.Errorf("start#%d=%v cred=%d ttl=%v kind=%d: %s", si, start, cred, ttl, kind, strings.Join(v, "; "))
+	t.Run("instants", func(t *testing.T) {
+		for si, start := range fakeClockInstants {
+			// Every program owns its database, core and clock, so the start instants
+			// run in parallel; within one, the programs stay in order.
+			t.Run(fmt.Sprintf("start%02d", si), func(t *testing.T) {
+				t.Parallel()
+				for cred := range 3 {
+					for _, ttl := range ttls {
+						for kind := range uint8(9) {
+							// A fresh database, core and clock per program: a credential observed
+							// expired (or a lease renewed) in one program must not leak into the next.
+							w := buildFkcWorldWithEncryption(t, start, enc)
+							c, issue, expiry, ok, _ := fkcMint(t, w, cred, ttl)
+							if !ok {
+								break
+							}
+							programs.Add(1)
+							steps := []fkcStep{{kind: kind, delta: int64(si)}, {kind: 3}, {kind: 8, delta: 0}}
+							if v := fkcRun(c, func(x time.Time) { w.clock.t = x }, issue, expiry, steps); len(v) > 0 {
+								t.Errorf("start#%d=%v cred=%d ttl=%v kind=%d: %s", si, start, cred, ttl, kind, strings.Join(v, "; "))
+							}
+						}
 					}
 				}
-			}
+			})
 		}
-	}
+	})
 	// A refused mint breaks out of the kind loop, so without this a cell that stops
 	// minting would silently shrink the cross product.
 	mintable := 0
@@ -424,8 +441,8 @@ func TestFakeClockExtremes_Cross(t *testing.T) {
 			mintable++
 		}
 	}
-	if want := mintable * 3 * len(ttls) * 9; programs != want {
-		t.Errorf("%d programs ran, want %d (%d mintable instants x 3 credentials x %d TTLs x 9 step kinds)", programs, want, mintable, len(ttls))
+	if want, ran := mintable*3*len(ttls)*9, int(programs.Load()); ran != want {
+		t.Errorf("%d programs ran, want %d (%d mintable instants x 3 credentials x %d TTLs x 9 step kinds)", ran, want, mintable, len(ttls))
 	}
 }
 

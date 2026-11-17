@@ -234,6 +234,34 @@ Other things the clock touches:
 - **Licence.** Evaluated locally against the device clock, offline, and degrades
   rather than denies ([ADR-094](adr-094-time-handling.md)).
 
+### 5b. Footprint and architectures
+
+Four scripts guard what a small ARM board depends on. They are regression guards:
+each fails when something grows or stops being static, and none of them is a
+performance claim. Budgets are ceilings with headroom, kept in the repository,
+and raised in the PR that causes growth.
+
+| Script | What it checks | Runs the server? |
+|---|---|---|
+| `scripts/cgo-dependency-guard.sh` | No shipped binary can pick up cgo: every non-stdlib dependency is scanned for `import "C"` per OS, release build commands set `CGO_ENABLED=0`, and `--binaries DIR` checks built binaries with `go version -m`. | No |
+| `scripts/edge/crossbuild-check.sh` | The same cgo scan and static check for the server and the CLI on exactly the edge targets, `linux/arm64` and `linux/arm` (armv7). It catches cgo files that only apply to one architecture. `--self-test` shows it fails on a package that imports `"C"`. | No (cross-compile only) |
+| `scripts/edge/footprint.sh` | Stripped server size per platform and build profile (full and air-gapped), and peak memory of an idle SQLite server on the host, against `scripts/edge/footprint-budget.tsv`. | Host only |
+| `scripts/ci/footprint-check.sh` | Stripped server and CLI size and idle peak memory of a secure-baseline SQLite server against `scripts/ci/footprint-budget.json`; `--self-test` shows it fails on a tiny budget. | Host only |
+
+Run them from the repository root:
+
+```sh
+scripts/edge/crossbuild-check.sh              # or --self-test
+scripts/edge/footprint.sh --targets linux/arm64,linux/arm
+scripts/ci/footprint-check.sh --self-test
+```
+
+Memory is measured only for the platform the script runs on, so a budget for a
+platform with no memory row is skipped with a message, never passed. Nothing in
+this repository has run the server on a Raspberry Pi: the ARM targets are
+proven to compile and link, and the commissioning checklist
+([§10](#10-commissioning-checklist)) on your own device is what proves they run.
+
 ## 6. Backup and restore
 
 A complete backup is the database **and** the key-material files, bundled in
@@ -306,7 +334,8 @@ over as a credential file (`LoadCredential=` +
 `--passphrase-file=${CREDENTIALS_DIRECTORY}/…`), so it is neither in the
 environment nor on the command line
 ([ADR-099](adr-099-master-passphrase-sourcing.md)), waits for the data volume
-to be mounted, and never gives up retrying. `deploy/edge/edge_units_test.go`
+to be mounted, and never gives up retrying a start that can succeed (it stops
+on an exit that only an operator can fix; see "Start after a reboot"). `deploy/edge/edge_units_test.go`
 runs the unit's real `ExecStart` line against the built server, kills it and
 runs it again, and pins the directives above; it does not boot a real systemd
 or launchd (pending the e2e VM).
@@ -328,6 +357,161 @@ the device. Keep the master passphrase credential, the config and the
 recovery key backed up separately ([§6](#6-backup-and-restore)). A unit file
 only restarts the process: it cannot tell a healthy server from one that is up
 and refusing every request, so watch `/health` from outside.
+
+The five subsections below say what the code does today and what you must do.
+Where the code does not do something, it is written as a limit, not as a
+promise. File names are given so a reviewer can check each claim; look the
+function up by name, line numbers drift.
+
+### Start after a reboot: there is no unseal step
+
+The server has no sealed state and no unseal call. At every start it gets its
+key-encryption key (KEK) itself, then serves; if it cannot, the start fails
+(`initializeEncryption` in `server/boot_encryption.go`, called from
+`server/boot_core.go`). What it needs depends on
+`storage.encryption.key_provider.type`:
+
+| Provider | What the server does at start | Unattended? |
+|---|---|---|
+| `password` (default) | Reads the passphrase from `--passphrase-fd`, `--passphrase-file`, `--passphrase-stdin`, or `KEYORIX_MASTER_PASSWORD` / `KEYORIX_MASTER_PASSWORD_FILE`, in that order (`ResolvePassphrase`, `internal/crypto/passphrase.go`). It never prompts. | Only if the passphrase is stored on the device (the systemd credential file above). Then host access means key access ([§8](#8-securing-physical-access)). |
+| `file`, `env`, `exec` | Reads the KEK from a file, a variable, or the output of a command. | Yes, with the same consequence: whatever holds the KEK is on the device. |
+| `tpm` | Unseals the KEK inside the device's TPM (`internal/crypto/tpm_provider.go`). | Yes, on that TPM only; the blob cannot be unsealed anywhere else ([§6](#6-backup-and-restore)). |
+| `shamir` | Needs K shares from share files or variables at start (`internal/crypto/shamir_provider.go`). | Only if K shares stay on the device, which removes the point of splitting. Limit: there is no way to supply shares to a running, waiting server. |
+| `aws-kms`, `gcp-kms` | Calls the cloud KMS to decrypt the wrapped KEK, under a timeout (`KMSKeyProvider.KEK`, `internal/crypto/kms_provider.go`). | Only while the KMS is reachable. Limit: the server cannot start with the link down. |
+
+**A start that fails says what kind of failure it was.** The server exits with a
+status the service manager can act on, and prints one hint line last on stderr
+(plain text, even with `server.log.format: json`; it repeats no secret and no
+path, the line above it is the error as before). The numbers are constants in
+`server/boot_exit.go`; `deploy/edge/edge_exit_codes_test.go` fails if the shipped
+unit names different ones.
+
+| Exit status | Class | Examples | Shipped systemd unit |
+|---|---|---|---|
+| exit 78 | An operator must fix it; waiting cannot help. | Config file unreadable or invalid; key file missing, unreadable or inconsistent; master passphrase file missing, empty or wrong; transport or file-permission refusal; database login refused (an authentication error from Postgres); an undeclared transaction-mode pooler; a KMS that refused (access denied, key not found or disabled; for `aws-kms` and `azure-kms`, a TLS certificate the host does not trust: `gcp-kms` reports that as gRPC `UNAVAILABLE`, which is 75); an `exec` key helper that exited with an error. | `RestartPreventExitStatus=78`: not restarted. `systemctl status` shows the unit failed with `status=78`; fix the cause, then `systemctl restart keyorix-server`. |
+| exit 75 | A dependency that may come back. | The cloud KMS (`aws-kms`, `gcp-kms`, `azure-kms`, including the Entra ID token endpoint `azure-kms` signs in to first) or a remote database cannot be reached: connection refused, DNS failure, timeout. A KMS or Entra ID that answered "not now": HTTP 5xx or 429, an AWS throttling error, gRPC `UNAVAILABLE`, `INTERNAL`, `DEADLINE_EXCEEDED` or `RESOURCE_EXHAUSTED`. An `exec` key helper that did not finish within its 30 s timeout. A key-provider fallback chain (`key_provider.fallbacks`) in which at least one member could not be reached. | Restarted after `RestartSec=30` (`Restart=always`, `StartLimitIntervalSec=0`), for as long as it takes. |
+| exit 1 | Everything else, as before. | A crash, a listener port in use, a lock held by another server, a database that answered with a non-login error (starting up, too many connections), a connection closed during the Postgres login. | Restarted after `RestartSec=30`. |
+
+What the code does not do, written as limits:
+
+- The class comes from the failing step, not from a guess about the cause. A
+  network error while reaching the KMS or database, or a KMS answering with a
+  server-side or throttling error, is 75; a KMS that answered and refused
+  (wrong key, access denied) is 78 for the key provider. For `azure-kms`,
+  Entra ID refusing the sign-in (a wrong client secret or application) is 78;
+  a sign-in that got no answer is 75. A fallback chain is 78 only when every
+  member refused: a member that could not be reached may come back and serve
+  the KEK, so the chain is 75. A connection Postgres
+  (or a proxy in front of it) closed during the login is 1, not 78: a backend
+  that is down or restarting looks the same as refused credentials. A failure
+  no step classified stays 1 and is retried.
+- `RestartSec=30` is one delay for every restart, crashes included: after a
+  crash or an OOM kill the server is back after 30 s, not 5. systemd's growing
+  delay (`RestartSteps=`, `RestartMaxDelaySec=`) needs v254 and this guide
+  names no minimum systemd version, so the unit uses the fixed delay. The
+  launchd plist is unchanged (`KeepAlive`); it does not act on the status.
+- The server does not wait for a passphrase, does not come up in a reduced
+  mode, and sends no alert. After exit 78 nothing runs: the watch on `/health`
+  from outside, or an alert on a failed unit, is how you find out.
+- Run natively against the built binary: missing passphrase file, missing key
+  file, unparseable config, an `aws-kms` answering access denied (all 78), an
+  unreachable `aws-kms` endpoint, an `aws-kms` answering 500 or throttling, and
+  a Postgres nothing listens for (all 75), in
+  `server/boot_exit_codes_integration_test.go`, and a malformed Postgres DSN
+  (78). The Azure and GCP answers and the fallback chain are covered by unit
+  cases only; the Azure sign-in cases drive real `azidentity` credentials
+  against an Entra ID stub and a closed port (`server/boot_exit_chain_test.go`).
+  One case is still 78 although it may come back: a `gcp-kms` whose OAuth token
+  endpoint cannot be reached while the KMS endpoint can (gRPC reports it as
+  `UNAUTHENTICATED` with the cause only as text). With the uplink down the
+  KMS endpoint fails first and that is 75. Not run: a real systemd
+  honouring `RestartPreventExitStatus=` and `RestartSec=`, a container start,
+  and a real cloud KMS outage (pending e2e VM).
+
+### Stuck states: WAL left behind after `kill -9`
+
+The database runs in SQLite WAL mode (`_journal_mode=WAL` in `sqliteDSN`,
+`internal/storage/factory_local.go`). After `kill -9` or a power cut the
+`-wal` and `-shm` files stay beside the database. Keyorix has no repair step
+of its own: SQLite replays the log when the database is next opened, and the
+server then tightens the sidecars' mode to `0600`
+(`tightenExistingLocalStorageFiles`, same file). The lock files are covered in
+the table above.
+
+- **Do nothing and start the service.** The crash soak in [§4](#4-power-loss-what-to-expect)
+  exercises exactly this.
+- **Never delete or move the `-wal` file of a database that was not closed
+  cleanly.** Committed transactions can exist only in the log; removing it
+  loses them. Copying the database file alone is not a backup; use
+  `admin backup` ([§6](#6-backup-and-restore)).
+- Limit: this is a process-kill result. A power-cut run on a device that drops
+  unsynced writes has not been done ([§4](#4-power-loss-what-to-expect)).
+
+### Self-update and rollback
+
+Keyorix does not update itself. There is no network pull and nothing in the
+server swaps a binary in or out ([§7](#7-air-gapped-updates)); you replace
+the binary, or a unit file restarts the same one. What the server does do, at
+every start, is compare its schema epoch with the database's
+(`checkSchemaEpochFor`, `internal/storage/factory_schema_epoch.go`, called from
+`internal/storage/factory.go`): it applies pending migrations to an older
+database and refuses to start on one that is newer than itself or whose
+recorded compatibility floor is above its own epoch.
+
+- **Before an update:** take a backup and an audit anchor ([§6](#6-backup-and-restore)).
+- **After a bad update:** whether putting the old binary back works depends on
+  whether the new release raised the compatibility floor. If it did, rollback
+  is a restore of the backup. The decision, the commands and the refusal
+  messages are in [UPGRADING.md §7](UPGRADING.md#7-rollback) and
+  [operator/upgrade-rollback.md](operator/upgrade-rollback.md); they are not
+  repeated here.
+- Limits: there is no health-gated swap, no two-slot layout and no automatic
+  rollback. An unattended device that updates itself is something you build
+  around the server, and the restart loop above will keep restarting a binary
+  that refuses a newer database.
+
+### No NTP: where the clock matters in the code
+
+What a bad clock does, and what to do, is in [§5a](#5a-no-ntp-what-a-bad-clock-does).
+Where each part lives:
+
+- **TOTP.** A code is accepted for the current 30 s step and the one before
+  and after it (`validateTOTPStep`, `internal/core/mfa.go`); a step already
+  used is refused (`LastUsedStep`, `internal/storage/models/models.go`). A
+  clock more than about a minute off from the authenticator fails TOTP logins.
+- **Token, session, share and connect expiry.** Judged on the device clock,
+  clamped to an in-memory high-water mark so a small step back does not extend
+  anything (`authEffectiveNow` in `internal/core/auth.go`,
+  `shareEffectiveNow` in `internal/core/permissions.go`,
+  `connectEffectiveNow` in `internal/core/connect.go`). Limit: the mark lives
+  in process memory. A restart forgets it, so a clock that is still wrong
+  after a restart is trusted as it reads.
+- **Dynamic-secret leases** refuse a clock more than 30 s behind the mark
+  (`leaseClockRegressionTolerance`, `internal/core/dynamic_secrets.go`).
+- **Start-up checks.** A clock earlier than the binary's build date logs a
+  warning and the server still starts (`internal/clockcheck`, called from
+  `server/clock_warnings.go`); certificate validity is checked in the same
+  place. `admin init` refuses to mint a certificate on such a clock
+  (`server/admin/init_secure.go`).
+- **Audit timestamps** come from the same clock and do not order the chain
+  (§5a). Limit: the server cannot tell you which timestamps were written while
+  the clock was wrong.
+
+### Offline operation
+
+- **Licence:** evaluated locally against the device clock, with no call out;
+  the result is written to the audit record at start (`AuditLicenseState`,
+  `server/main.go`; [ADR-065](adr-065-offline-license-validation.md)).
+- **Updates:** signed bundles on removable media only ([§7](#7-air-gapped-updates)).
+- **What still needs a network:** anything you configure that points off the
+  device: a cloud KMS KEK provider (above), an identity provider for SSO, a
+  remote PostgreSQL, or a rotation or dynamic-secret target. The server reaches
+  them when it uses them; this guide has not tested each with the link down.
+  Limit: there is no offline substitute for a cloud KMS KEK, so a device that
+  must boot with no link needs a local KEK provider.
+- **What you must do:** at commissioning, start the service with the network
+  cable out and confirm it reaches `/health` and serves a secret read
+  ([§10](#10-commissioning-checklist)).
 
 ## 8. Securing physical access
 

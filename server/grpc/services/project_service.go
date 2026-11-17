@@ -10,6 +10,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
@@ -29,29 +30,28 @@ func NewProjectService(coreService *core.KeyorixCore) *ProjectGRPCService {
 	return &ProjectGRPCService{core: coreService}
 }
 
+// mapProjectError translates core/storage project errors into gRPC status codes
+// through the shared classifier (coreErrorStatus): an audit outage and a typed storage
+// read fault are Unavailable (retry), the texts are this family's own and fixed.
 func mapProjectError(err error) error {
-	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
-	if aerr, ok := auditUnavailableStatus(err); ok {
-		return aerr
-	}
-	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
-	switch {
 	// Not yet typed: storage's lockProjectRowForCascade (internal/storage/store/
 	// local_secrets.go) returns a bare fmt.Errorf("project not found") to
 	// DeleteProject/DeleteProjectIfEmpty for a missing or already-deleted project.
 	// Exact-text match, scoped to that one message, until it wraps
 	// storage.ErrProjectNotFound; then delete this line.
-	case err.Error() == "project not found":
+	if err.Error() == "project not found" {
 		return status.Error(codes.NotFound, "project not found")
-	case errors.Is(err, storage.ErrProjectNotFound), errors.Is(err, storage.ErrEnvironmentNotFound):
-		return status.Error(codes.NotFound, "project not found")
-	case errors.Is(err, storage.ErrDuplicateProjectName):
-		return status.Error(codes.AlreadyExists, "a project with this name already exists")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "access denied")
-	default:
-		return status.Error(codes.Internal, "project operation failed")
 	}
+	// Family texts keyed on the sentinels they describe; any other sentinel of the
+	// class gets the classifier's default text.
+	texts := coreErrorTexts{errclass.PermissionDenied: "access denied"}
+	switch {
+	case errors.Is(err, storage.ErrProjectNotFound), errors.Is(err, storage.ErrEnvironmentNotFound):
+		texts[errclass.NotFound] = "project not found"
+	case errors.Is(err, storage.ErrDuplicateProjectName):
+		texts[errclass.Conflict] = "a project with this name already exists"
+	}
+	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "project operation", texts: texts})
 }
 
 // ListProjects returns the projects the CALLER CAN READ, matching the HTTP route
@@ -80,7 +80,7 @@ func (s *ProjectGRPCService) ListProjects(ctx context.Context, _ *emptypb.Empty)
 	// so this keeps parity with both transports' prior behaviour).
 	vis, err := s.core.VisibleProjects(ctx, user.ActorKind(), user.PrincipalID(), permSecretsRead)
 	if err != nil {
-		return nil, status.Error(codes.Internal, "project operation failed")
+		return nil, internalFailure("project operation failed", err)
 	}
 	projects, err := s.core.ListProjects(ctx)
 	if err != nil {

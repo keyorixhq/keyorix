@@ -26,7 +26,7 @@ The stack is three containers:
 ## 2. Quick start
 
 ```sh
-git clone --branch v0.96.3 https://github.com/keyorixhq/keyorix.git   # a release tag: main can be ahead of the published images
+git clone --branch v0.97.0 https://github.com/keyorixhq/keyorix.git   # a release tag: main can be ahead of the published images
 cd keyorix
 cp .env.example .env
 ./scripts/selfhost/init-secrets.sh     # generates ./secrets/* and records KEYORIX_SECRETS_GID in .env
@@ -247,6 +247,12 @@ single transaction.  If the server crashes mid-sweep, the orphaned pending key
 file is detected and cleaned up automatically on the next `--confirm` run.
 Back up the `keyorix_keys` volume after a successful rotation.
 
+**There is no command that undoes a rotation.** `admin encryption` has no reverse subcommand
+and `rotate` takes only `--confirm` and `--dry-run`. The way back is `admin backup` taken
+*before* the rotation, restored with `admin restore` (every write made since the archive is
+lost), so take that backup first; otherwise roll forward by rotating again. See
+[operator/key-rotation-runbook.md](operator/key-rotation-runbook.md) §6 "Rollback".
+
 With several server replicas on one PostgreSQL database, stop all of them, and
 copy the new key files to every replica before starting it: a replica with the
 old `dek.key` refuses to start. See [`operator/j6-key-rotation.md`](operator/j6-key-rotation.md)
@@ -303,7 +309,11 @@ On a binary install (no Docker), run the same commands directly:
 **every** command, as for the server itself. The replacement host needs the config,
 the certificates and the secrets files, not `keys/`: restore installs the key files
 from the archive. Server stopped is only required for restore (and for
-`admin audit export-checkpoint`, `admin verify-audit` and `--exclusive`).
+`admin audit export-checkpoint`, `admin verify-audit`, `admin validate` and
+`--exclusive`): `admin validate --posture` beside a live server is refused like those
+(`a Keyorix server (or another admin command) appears to be using this database`).
+That includes the posture check the stale-staging-file paragraph below points at: it
+cannot be polled from a monitor while the server runs.
 
 On Postgres, this reads through a single `REPEATABLE READ` snapshot
 transaction by default — every table sees the identical point-in-time view,
@@ -322,6 +332,29 @@ On **SQLite** (single binary, `QUICK_START.md`), a backup always needs the
 database to itself: stop the server, run `keyorix-server admin backup
 --output <path>`, start it again. A backup beside a live SQLite server is
 refused rather than taken inconsistently.
+
+**When `admin backup` is refused.** A backup either restores and decrypts, or is
+refused with a non-zero exit, no archive written and no key file changed:
+
+- *A key rotation is running or was interrupted (found `<file>.pending`)*: wait for
+  a running rotation, otherwise start the server once so boot recovery finishes
+  it, then back up. Never delete a DEK's `.pending` file: it can be the only copy
+  of the new DEK. A `kek.salt.pending` that is still there after a server start
+  succeeded is unused (the start proved the active key set opens without it, and
+  its log says the file can be deleted): check that no `admin encryption rotate-kek`
+  is running, move the file out of the key directory, back up, and delete the moved
+  copy once that backup and a server start have succeeded. Until then
+  `admin validate --posture` reports `backups are refused: key-rotation staging
+  file present` and exits non-zero, so a cron'd backup that stops is visible there.
+  The refused backup itself exits with status **4** (every other failure exits 1)
+  and prints one stderr line a cron wrapper can match:
+  `keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="<files>"`.
+- *A DEK rotation committed its re-encryption sweep, but this key directory holds a
+  different `dek.key`* (Postgres, several key directories, `key_dir_lock: database`):
+  another key directory rotated the DEK and its new key set has not reached this
+  one. Finish the rotation in the key directory that holds `dek.key.pending`,
+  distribute the new key set to every replica
+  ([multi-replica-keys.md](multi-replica-keys.md), crash table), then back up.
 
 **Restore** (with the *same* `KEYORIX_MASTER_PASSWORD` and the same storage
 config the backup was taken from). `admin restore` always takes this
@@ -349,11 +382,15 @@ docker compose up -d
 database and the (also empty) `keyorix_keys` volume, then runs `verify-audit`
 (`verify-audit on the restored database: VALID`). Restore into the wiped volumes
 before the first `up -d`, as above (a stack that has already booted holds a non-empty database and keys,
-which restore refuses without `--overwrite-existing`).
+which restore refuses without `--overwrite-existing --replace-existing-data`).
 
 Restore refuses a non-empty target by default — the normal flow is restoring
 into a fresh database, not overwriting a live one. `--overwrite-existing` lets it
-proceed past that check: the existing key files and `keyset.manifest.json` (and, on
+proceed past that check, and on its own it is for re-running an interrupted restore
+into an empty database (existing key files, an empty migrated schema). Over a target
+that holds data it still refuses (`the restore target database holds data`, nothing
+changed); to replace a deployment's data on purpose pass `--overwrite-existing
+--replace-existing-data`. Then the existing key files and `keyset.manifest.json` (and, on
 SQLite, the database file) are moved aside as `*.pre-restore-<timestamp>`; on
 PostgreSQL the target's tables are emptied inside the load transaction and the
 archive's rows loaded in their place. **The replaced PostgreSQL rows are not kept
@@ -370,6 +407,7 @@ then restore with `--overwrite-existing`, which the existing key files still nee
 docker compose stop backend
 docker compose exec -T postgres psql -U keyorix -d keyorix \
   -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+# the database is an empty schema now; a v0.96.x binary has no --replace-existing-data
 docker compose run --rm -v "$PWD/keyorix-backup-YYYY-MM-DD.tar.gz:/tmp/backup.tar.gz:ro" \
   backend ./keyorix-server admin restore --input /tmp/backup.tar.gz --overwrite-existing
 docker compose up -d
@@ -505,7 +543,7 @@ undoes it (not committed); if it cannot vouch for a staged key file it refuses a
 nothing. Killed before that journal exists, it leaves only `*.restoring-*` files (removed by
 the next restore or `--recover`) and, after the migration step, the empty schema, so a plain re-run is
 refused: re-run with `--overwrite-existing`, which empties the target's tables inside the
-load transaction. What each failure point leaves, and the recovery, are in
+load transaction (that schema holds no data, so `--replace-existing-data` is not needed). What each failure point leaves, and the recovery, are in
 [operator/restore-failure-modes.md](operator/restore-failure-modes.md). (Releases up to
 v0.96.x installed the key files before the load; see the warning earlier in this section.)
 
@@ -554,8 +592,9 @@ path.
 ## 6. Upgrades
 
 ```sh
-# docker-compose.yml pins both images to one release tag (e.g. :0.96.0, no
-# leading "v"). `pull` alone fetches nothing new: first edit the `backend` and
+# docker-compose.yml pins both images to one release tag (release v0.97.0 is
+# image :0.97.0: the image tag has no leading "v"). `pull` alone fetches nothing
+# new: first edit the `backend` and
 # `web` tags to the release you are moving to, then:
 docker compose pull          # fetch the published images for those tags
 docker compose up -d         # recreate with the new images
@@ -584,15 +623,15 @@ kept. Across a floor change (v0.96.x → v0.97.0), the old release refuses to st
 the upgraded database, and the only way back is restoring the pre-upgrade backup.
 
 [operator/upgrade-rollback.md](operator/upgrade-rollback.md) is the step-by-step
-runbook, verified on 0.96.1 → 0.96.3 with the published images (SQLite and
+runbook, verified on v0.96.1 → v0.96.3 with the published images (SQLite and
 PostgreSQL). It covers the version/schema matrix, timings and what not to do. v0.96.2
-images were never published; go from 0.96.1 to 0.96.3. See
+images were never published; go from v0.96.1 to v0.96.3. See
 [UPGRADING.md](UPGRADING.md) for what changes on upgrade. In particular, from this
 release on, an upgraded deployment whose config never set `security.require_mfa` gets a
 grace period before MFA is enforced. It ends at the first administrator MFA enrolment
 or 30 days after the first start on the new release, whichever comes first
 ([details](UPGRADING.md#mfa-after-an-upgrade-the-grace-period-and-its-banner)). An
-upgrade within v0.96.x logs no grace line: 0.96.1 → 0.96.3 kept MFA enforced.
+upgrade within v0.96.x logs no grace line: v0.96.1 → v0.96.3 kept MFA enforced.
 
 ### Running more than one replica
 
@@ -725,7 +764,7 @@ export that root and point the CLI at it:
 `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`
 then `keyorix --ca-file $PWD/caddy-root.crt login --server https://localhost ...`, or
 store it once with `keyorix config set ca_file $PWD/caddy-root.crt` (CLI releases
-after 0.95.3; with an older CLI, `SSL_CERT_FILE=$PWD/caddy-root.crt` works on Linux
+after v0.95.3; with an older CLI, `SSL_CERT_FILE=$PWD/caddy-root.crt` works on Linux
 only). When running the `tls` profile,
 don't also expose web's `8088` publicly — front everything through Caddy on
 80/443.
@@ -812,7 +851,7 @@ curl -si -H 'X-Forwarded-Proto: https' -H 'Content-Type: application/json' \
 Invalid values (anything that is not an IP/CIDR, a bad mode, a non-numeric
 `max-age`) stop the container at start rather than trusting more than intended.
 These variables need a `web` image that contains this feature (releases after
-0.95.3); older images ignore them and send no HSTS.
+v0.95.3); older images ignore them and send no HSTS.
 
 Helm: the chart's Ingress routes every path to `web`, so browsers only ever see
 the web nginx's HSTS decision (the backend's header is stripped from proxied API
@@ -965,8 +1004,10 @@ wrong credential, so the response cannot be used to confirm a guess.
 
 For environments where Docker isn't available, `keyorix-server` is a single Go
 binary that runs against SQLite or PostgreSQL (a config with `storage.type: postgres`
-and a `dsn`, written by `admin init --storage-type postgres` on a build that has that flag
-(v0.96.3 and older do not: edit the config `admin init` generates), and
+and a `dsn`: `admin init --storage-type postgres` writes the config with `storage.type: postgres`
+on a build that has that flag (v0.96.3 and older do not: edit the config `admin init` generates);
+add the `dsn`, then run `admin init` again to finish. Init creates no SQLite file for it and
+leaves the database alone: `admin migrate` creates the schema), and
 `KEYORIX_MASTER_PASSWORD` + `KEYORIX_DB_PASSWORD` set, or their `_FILE` forms; the
 steps are in [operations/postgres-single-binary.md](operations/postgres-single-binary.md))
 — and it can serve the **web dashboard from the binary

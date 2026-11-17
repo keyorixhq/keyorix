@@ -24,7 +24,7 @@ type GroupShareSecretRequest struct {
 func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareSecretRequest) (*models.ShareRecord, error) {
 	// Validate request
 	if err := c.validateGroupShareSecretRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 
 	// Get the secret to check ownership.
@@ -73,7 +73,7 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 
 	// Validate the group share record
 	if err := models.ValidateGroupShare(shareRecord); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 
 	// Store the share record and its group_share_created row in ONE
@@ -109,7 +109,7 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 // (server/http/router.go), so it's safe to call from any transport.
 func (c *KeyorixCore) ListGroupShares(ctx context.Context, actorKind string, actorID, groupID uint) ([]*models.ShareRecord, error) {
 	if groupID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required"))
 	}
 	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permSecretsRead, Scope{}); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -136,7 +136,7 @@ func (c *KeyorixCore) ListGroupShares(ctx context.Context, actorKind string, act
 // above, closed the same way.
 func (c *KeyorixCore) ListGroupSharedSecrets(ctx context.Context, actorKind string, actorID, groupID uint) ([]*models.SecretNode, error) {
 	if groupID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required"))
 	}
 	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permSecretsRead, Scope{}); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -178,10 +178,10 @@ func (c *KeyorixCore) ListGroupSharedSecrets(ctx context.Context, actorKind stri
 // CheckUserGroupPermission checks if a user has permission to access a secret via group membership
 func (c *KeyorixCore) CheckUserGroupPermission(ctx context.Context, secretID, userID uint) (bool, string, error) {
 	if secretID == 0 {
-		return false, "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return false, "", validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required"))
 	}
 	if userID == 0 {
-		return false, "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return false, "", validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 
 	// This would require a new method in the storage interface

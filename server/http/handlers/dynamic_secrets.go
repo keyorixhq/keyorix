@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -21,51 +20,51 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// isSafeDynamicSecretError reports whether msg is one of the small set of
-// deliberately-crafted, safe messages core's dynamic-secret lease functions
-// (IssueLease/RevokeLease/RenewLease/RevokeLeasesForConfig) produce without
-// wrapping a lower-layer error. Everything else wraps (via %w) the actual
-// backend operation's error — issuing/revoking a credential against the
-// target database/cloud engine — which can carry connection detail (host,
-// driver wording) that must not reach the client verbatim (backlog #116).
-func isSafeDynamicSecretError(msg string) bool {
-	for _, safe := range []string{
-		"config not found",
-		"lease not found",
-		"lease is not active",
-		"lease has expired; issue a new lease instead",
-		"cannot issue from the",
-		"active-lease limit reached",
-		"mints self-expiring credentials that cannot be renewed",
-		"unsupported backend",
-	} {
-		if strings.Contains(msg, safe) {
-			return true
-		}
-	}
-	return false
-}
-
 // dynamicSecretClientMessage is the message an API caller gets for a failed dynamic-secret
 // operation, and logs op's failure server-side. The egress policy's refusal of a
 // private-network target is a deliberate, safe message (what was refused, which setting
-// allows it); the allowlisted core messages pass through; anything else is masked, because
-// it can carry driver, storage or connection detail (backlog #116).
+// allows it); core's typed not-found and lease-state refusals (core.ErrDynamicSecretNotFound,
+// core.ErrDynamicSecretPrecondition) carry only core's own text and pass through; anything
+// else is masked, because it can carry driver, storage or connection detail (backlog #116).
+// Classified by sentinel, never by the message text (CORE-ERR-FAMILY-7).
 func dynamicSecretClientMessage(err error, op string) string {
 	if refused, ok := errors.AsType[*core.DynamicSecretTargetRefusedError](err); ok {
 		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(refused)) // server-side only; the client gets ClientMessage()
 		return refused.ClientMessage()
 	}
+	if errors.Is(err, core.ErrPermissionDenied) {
+		return "Insufficient permissions"
+	}
 	if forbidden, ok := errors.AsType[*dsn.ForbiddenOptionError](err); ok {
 		log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(forbidden))
 		return forbidden.Error() // names only the option the caller wrote
 	}
-	msg := err.Error()
-	if isSafeDynamicSecretError(msg) {
-		return msg
+	if errors.Is(err, core.ErrDynamicSecretNotFound) || errors.Is(err, core.ErrDynamicSecretPrecondition) {
+		return err.Error()
 	}
 	log.Printf("%s: %s", op, dynamic.SanitizeErrorMessage(err))
 	return clientSafe(err)
+}
+
+// dynamicSecretStatus is the HTTP status for a failed dynamic-secret operation, by
+// sentinel: 404 for a config, lease, project or environment that is not there
+// (core.ErrDynamicSecretNotFound), 400 for a refused input (core.ErrValidation), 403 for
+// an authorization refusal (core.ErrPermissionDenied), 409 for a lease operation the
+// config or lease state refuses (core.ErrDynamicSecretPrecondition), and the route's own
+// fallback (400 for config writes, 502 for backend calls) for the rest.
+func dynamicSecretStatus(err error, fallback int) int {
+	switch {
+	case errors.Is(err, core.ErrDynamicSecretNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, core.ErrPermissionDenied):
+		return http.StatusForbidden
+	case errors.Is(err, core.ErrDynamicSecretPrecondition):
+		return http.StatusConflict
+	case errors.Is(err, core.ErrValidation):
+		return http.StatusBadRequest
+	default:
+		return fallback
+	}
 }
 
 // DynamicSecretHandler handles dynamic-secrets HTTP requests.
@@ -157,7 +156,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		msg := dynamicSecretClientMessage(err, "Error creating dynamic-secret config")
-		sendError(w, "Error", msg, http.StatusBadRequest, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadRequest), nil)
 		return
 	}
 	// Never echo the admin DSN ciphertext back.
@@ -218,7 +217,7 @@ func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error issuing dynamic-secret lease for config %d", cfg.ID))
-		sendError(w, "Error", msg, http.StatusBadGateway, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadGateway), nil)
 		return
 	}
 	sendSuccess(w, lease, "Credential issued — it is shown once and will auto-revoke at expiry.")
@@ -259,7 +258,7 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error revoking dynamic-secret lease %q", leaseID))
-		sendError(w, "Error", msg, http.StatusBadGateway, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadGateway), nil)
 		return
 	}
 	sendSuccess(w, map[string]any{"lease_id": leaseID, "status": "revoked"}, "Lease revoked.")
@@ -286,7 +285,7 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error renewing dynamic-secret lease %q", leaseID))
-		sendError(w, "Error", msg, http.StatusBadGateway, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadGateway), nil)
 		return
 	}
 	sendSuccess(w, map[string]any{"lease_id": leaseID, "expires_at": newExpiry}, "Lease renewed.")
@@ -306,7 +305,7 @@ func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Re
 	revoked, failed, err := h.coreService.RevokeLeasesForConfig(r.Context(), cfg.ID, userCtx.UserID, "bulk")
 	if err != nil {
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error revoking all dynamic-secret leases for config %d", cfg.ID))
-		sendError(w, "Error", msg, http.StatusBadGateway, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadGateway), nil)
 		return
 	}
 	sendSuccess(w, map[string]any{
@@ -338,7 +337,7 @@ func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Req
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error classifying dynamic-secret config %d", cfg.ID))
-		sendError(w, "Error", msg, http.StatusBadRequest, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadRequest), nil)
 		return
 	}
 	sendSuccess(w, sanitizeConfig(updated), "Classification updated.")
@@ -371,10 +370,86 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error setting enabled state for dynamic-secret config %d", cfg.ID))
-		sendError(w, "Error", msg, http.StatusBadRequest, nil)
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadRequest), nil)
 		return
 	}
 	sendSuccess(w, sanitizeConfig(updated), "Config enabled state updated.")
+}
+
+// UpdateConfigAdminDSN handles PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn —
+// replaces a config's admin DSN in place (DYNAMIC-ADMIN-DSN-1), e.g. to remove an
+// option refused since #3952. Core applies create's checks (admin authority, host
+// guard, refused options); the DSN is never echoed back or logged.
+func (h *DynamicSecretHandler) UpdateConfigAdminDSN(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	cfg, ok := h.loadConfig(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		AdminDSN string `json:"admin_dsn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
+		return
+	}
+	updated, err := h.coreService.UpdateDynamicSecretConfigAdminDSN(r.Context(), &core.UpdateDynamicSecretConfigAdminDSNRequest{
+		ConfigID: cfg.ID, AdminDSN: body.AdminDSN, ActorID: userCtx.PrincipalID(),
+	})
+	if err != nil {
+		if sendStorageUnavailable(w, err) || sendAuditUnavailable(w, err) {
+			return
+		}
+		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error updating the admin DSN of dynamic-secret config %d", cfg.ID))
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusBadRequest), nil)
+		return
+	}
+	sendSuccess(w, sanitizeConfig(updated), "Admin DSN updated.")
+}
+
+// ListConfigsWithRefusedAdminDSN handles
+// GET /api/v1/dynamic-secrets/configs/refused-admin-dsn?project_id= — read-only: the
+// project's configs whose stored admin DSN names an option refused since #3952,
+// i.e. the ones to fix with UpdateConfigAdminDSN (DYNAMIC-ADMIN-DSN-1). secrets.read
+// at the project here, dynamic-secret admin authority in core (the report is derived
+// from the decrypted DSNs). It returns config names and option names, never a DSN.
+func (h *DynamicSecretHandler) ListConfigsWithRefusedAdminDSN(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	projectID, _, ok := parseScopeQuery(w, r)
+	if !ok {
+		return
+	}
+	if projectID == 0 {
+		sendError(w, "InvalidParameter", "project_id is required", http.StatusBadRequest, nil)
+		return
+	}
+	if ok, mfaBlocked, lookupErr := h.authorize(r, permSecretsRead, core.Scope{ProjectID: projectID}); !ok {
+		h.denyAuthz(w, r, mfaBlocked, lookupErr)
+		return
+	}
+	rep, err := h.coreService.ListProjectConfigsWithRefusedAdminDSN(r.Context(), userCtx.PrincipalID(), projectID)
+	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error listing dynamic-secret configs with a refused admin DSN in project %d", projectID))
+		sendError(w, "Error", msg, dynamicSecretStatus(err, http.StatusInternalServerError), nil)
+		return
+	}
+	out := make([]map[string]any, 0, len(rep.Configs))
+	for _, c := range rep.Configs {
+		out = append(out, map[string]any{
+			"id": c.ConfigID, "name": c.Name, "project_id": c.ProjectID, "environment_id": c.EnvironmentID,
+			"backend_type": c.BackendType, "refused_options": c.Options, "live_leases": c.LiveLeases,
+		})
+	}
+	sendSuccess(w, map[string]any{"configs": out, "unreadable": rep.Unreadable}, "")
 }
 
 // loadConfig fetches the {id} config. #1645/ADR-096: authorization against

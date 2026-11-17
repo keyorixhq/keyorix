@@ -52,6 +52,13 @@ const (
 	// applied before the refusal. Class C means the applied part is NOT rolled
 	// back, so this event is the only record of it.
 	EventSSOReconcileRefused = "auth.sso_reconcile_refused"
+	// EventSSOLoginSessionFailed is written (Success=false) when an SSO login
+	// passed every gate, JIT provisioning and reconcile included, and then the
+	// session could not be created (#2839). Class C: the account and its
+	// reconciled groups/roles are kept, not rolled back, and the next login for
+	// the same identity reuses them (no duplicate account, no extra grant). This
+	// event is the record that the login itself failed after those writes.
+	EventSSOLoginSessionFailed = "auth.sso_login_session_failed"
 	// EventSSOReconcileLastAdminRefused replaces EventSSOReconcileRefused when one
 	// of the failed steps is a removal the last-admin guard refused: the IdP
 	// revoked the install's last administrator's admin-conferring group or role.
@@ -158,7 +165,9 @@ func (c *KeyorixCore) SSOCompleteURL(provider string) (string, bool) {
 func (c *KeyorixCore) oidcProvider(name string) (*SSOProvider, error) {
 	p, ok := c.ssoProviders[name]
 	if !ok || p.Type == "saml" || p.OAuth == nil {
-		return nil, fmt.Errorf("unknown SSO provider %q", name)
+		// #4059: a fixed text, never the caller's provider name (the begin route is
+		// unauthenticated and takes the name from the path).
+		return nil, errors.New("unknown SSO provider")
 	}
 	return p, nil
 }
@@ -260,7 +269,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", err
 	}
-	user, err := c.ensureSSOUser(ctx, p, resolved, sub, email, emailVerified, name)
+	user, err := c.ensureSSOUser(ctx, p, resolved, sub, email, emailVerified, name, ip)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -296,13 +305,13 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	// docs/atomicity-exempt.tsv (the JIT:(*KeyorixCore).CompleteSAML row, whose
 	// reconcile conditions cover this path too since #2907).
 	if p.GroupSync {
-		if rerr := c.syncSSOGroups(ctx, p, user.ID, rawID); rerr != nil {
+		if rerr := c.syncSSOGroups(ctx, p, user.ID, rawID, ip); rerr != nil {
 			log.Printf("CompleteSSO: refusing login for user %d: %v", user.ID, rerr)
 			return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgGroupReconcileRefused, rerr)
 		}
 	}
 	if len(p.GroupRoleMap) > 0 {
-		if rerr := c.syncSSORoles(ctx, p, user.ID, rawID); rerr != nil {
+		if rerr := c.syncSSORoles(ctx, p, user.ID, rawID, ip); rerr != nil {
 			log.Printf("CompleteSSO: refusing login for user %d: %v", user.ID, rerr)
 			return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgRoleReconcileRefused, rerr)
 		}
@@ -316,6 +325,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
+		c.auditSSOLoginSessionFailed(ctx, "SSO", providerName, user.ID, ip, err)
 		return nil, nil, "", err
 	}
 	// Lockout clear AFTER mintSession (#2894), and panic-safe for the same
@@ -328,7 +338,9 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	// with an orphan session. Every other login path already runs it
 	// panic-safe (goSafe in the handlers).
 	besteffort.Run(ctx, "sso.CompleteSSO.RecordLogin", func() error { return c.RecordLogin(ctx, user.ID) })
-	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
+	// The login event names the same client address the session records (ip is
+	// the handler's clientIP(r), trusted-proxy aware), as auth.login does (#2934).
+	c.writeAuditEventFull(ctx, EventSSOLogin, actorPtr(user.ID), nil, nil, ip,
 		fmt.Sprintf("SSO login via %s (subject=%s)", providerName, sub))
 	return session, user, st.ReturnTo, nil
 }
@@ -431,7 +443,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		// SAML-asserted email as verified regardless of the provider's own
 		// TrustAssertedEmail setting, reopening the #89 SAML account-takeover
 		// through the resolve-then-provision race window specifically.
-		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, p.TrustAssertedEmail, info.Name); err != nil {
+		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, p.TrustAssertedEmail, info.Name, ip); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -491,13 +503,13 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	// had already applied (finishSSOReconcile).
 	if info.GroupsPresent || len(info.Groups) > 0 {
 		if p.GroupSync {
-			if rerr := c.reconcileSSOGroups(ctx, p, user.ID, info.Groups); rerr != nil {
+			if rerr := c.reconcileSSOGroups(ctx, p, user.ID, info.Groups, ip); rerr != nil {
 				log.Printf("CompleteSAML: refusing login for user %d: %v", user.ID, rerr)
 				return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgGroupReconcileRefused, rerr)
 			}
 		}
 		if len(p.GroupRoleMap) > 0 {
-			if rerr := c.reconcileSSORoles(ctx, p, user.ID, info.Groups); rerr != nil {
+			if rerr := c.reconcileSSORoles(ctx, p, user.ID, info.Groups, ip); rerr != nil {
 				log.Printf("CompleteSAML: refusing login for user %d: %v", user.ID, rerr)
 				return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgRoleReconcileRefused, rerr)
 			}
@@ -512,15 +524,28 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
+		c.auditSSOLoginSessionFailed(ctx, "SAML", name, user.ID, ip, err)
 		return nil, nil, "", err
 	}
 	// Lockout clear after mint (#2894); both steps best-effort and panic-safe
 	// -- see the identical steps in CompleteSSO.
 	besteffort.Run(ctx, "sso.CompleteSAML.clearLoginFailures", func() error { c.clearLoginFailures(ctx, user); return nil })
 	besteffort.Run(ctx, "sso.CompleteSAML.RecordLogin", func() error { return c.RecordLogin(ctx, user.ID) })
-	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
+	c.writeAuditEventFull(ctx, EventSSOLogin, actorPtr(user.ID), nil, nil, ip,
 		fmt.Sprintf("SAML login via %s (subject=%s)", name, info.Subject))
 	return session, user, st.ReturnTo, nil
+}
+
+// auditSSOLoginSessionFailed records an SSO login refused because its session
+// could not be created after provisioning and reconcile had applied (#2839,
+// EventSSOLoginSessionFailed). The storage error goes to the log only; the
+// event says what was kept. writeAuditEventFailed recovers its own panic, so
+// the login's error answer stands whatever happens here.
+func (c *KeyorixCore) auditSSOLoginSessionFailed(ctx context.Context, kind, provider string, userID uint, ip string, err error) {
+	log.Printf("%s login via %s: session for user %d could not be created: %v", kind, provider, userID, err)
+	c.writeAuditEventFailed(ctx, EventSSOLoginSessionFailed, actorPtr(userID), nil, ip,
+		fmt.Sprintf("%s login via %s for user %d refused: the session could not be created; "+
+			"the account and its reconciled groups/roles are kept and the next login reuses them", kind, provider, userID))
 }
 
 // ssoExternalIDScheme namespaces an SSO-provider-managed identity inside the shared
@@ -643,14 +668,14 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email s
 // ensureSSOUser returns the resolved user if one exists; otherwise JIT-provisions one
 // via provisionSSOUser when p.AutoProvision is enabled. Extracted from CompleteSSO to
 // reduce its cognitive complexity.
-func (c *KeyorixCore) ensureSSOUser(ctx context.Context, p *SSOProvider, existing *models.User, sub, email string, emailVerified bool, name string) (*models.User, error) {
+func (c *KeyorixCore) ensureSSOUser(ctx context.Context, p *SSOProvider, existing *models.User, sub, email string, emailVerified bool, name, ip string) (*models.User, error) {
 	if existing != nil {
 		return existing, nil
 	}
 	if !p.AutoProvision {
 		return nil, fmt.Errorf("no Keyorix account matches this SSO identity")
 	}
-	return c.provisionSSOUser(ctx, p, sub, email, emailVerified, name)
+	return c.provisionSSOUser(ctx, p, sub, email, emailVerified, name, ip)
 }
 
 // completeIdPFirstLogin moves a SCIM-provisioned account out of pending_first_login
@@ -712,7 +737,9 @@ func (c *KeyorixCore) completeIdPFirstLogin(ctx context.Context, user *models.Us
 // pending_first_login (which would trap an SSO user in a password-change-only
 // restricted session they can never clear). The baseline role is the provider's
 // default_role (system_viewer when unset); an unknown role grants nothing.
-func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub, email string, emailVerified bool, name string) (*models.User, error) {
+// ip is the login's client address (the handler's clientIP(r)), written on the
+// auth.sso_jit_provisioned event like the login event's own.
+func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub, email string, emailVerified bool, name, ip string) (*models.User, error) {
 	if strings.TrimSpace(email) == "" {
 		return nil, fmt.Errorf("the IdP returned no email; cannot auto-provision an account")
 	}
@@ -810,11 +837,18 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		if errors.Is(err, storage.ErrDuplicateUsername) {
 			return nil, fmt.Errorf("a user with this username already exists")
 		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// #3225: the account and its default role commit together, so a lost
+		// acknowledgement leaves a complete account the next login reuses by its
+		// sso: external id, minus the auth.sso_jit_provisioned row below, which only this
+		// call writes. Read it back: a landed row continues to that row and the
+		// login.
+		if landed, answer := c.userCreateLanded(ctx, "sso.provisionSSOUser", created, err); !landed {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), answer)
+		}
 	}
 	role := roleName
 	detail, _ := json.Marshal(ssoJITProvisionDetail{Role: role, NonDefaultRole: role != ssoDefaultRole})
-	c.writeAuditEventDiff(ctx, EventSSOJITProvision, actorPtr(created.ID), nil, nil, "",
+	c.writeAuditEventDiff(ctx, EventSSOJITProvision, actorPtr(created.ID), nil, nil, ip,
 		fmt.Sprintf("SSO JIT-provisioned user %d via %s (externalId=%q, role=%s)", created.ID, p.Name, sub, role),
 		string(detail))
 	return created, nil
@@ -838,7 +872,7 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 // Returns reconcileSSOGroups' error (wrapping ErrSSOReconcileIncomplete), and
 // CompleteSSO refuses the login on it (#2907). It used to swallow every error so
 // the login always proceeded -- see CompleteSSO for why that was the bug.
-func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID uint, rawID string) error {
+func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID uint, rawID, ip string) error {
 	claim := strings.TrimSpace(p.GroupsClaim)
 	if claim == "" {
 		claim = ssoDefaultGroupClaim
@@ -847,7 +881,7 @@ func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID 
 	if !present {
 		return nil // IdP did not assert groups in the id_token — leave memberships untouched.
 	}
-	return c.reconcileSSOGroups(ctx, p, userID, asserted)
+	return c.reconcileSSOGroups(ctx, p, userID, asserted, ip)
 }
 
 // ErrSSOReconcileIncomplete marks a group/role reconciliation that did not fully
@@ -969,11 +1003,11 @@ const ssoLastAdminWayBack = "the identity provider revoked admin access from the
 // EventSSOReconcileRefused, or EventSSOReconcileLastAdminRefused when the last-
 // admin guard was one of the reasons, and the applied counts are stated as
 // applied-and-not-rolled-back, because class C does not roll them back.
-func (c *KeyorixCore) finishSSOReconcile(ctx context.Context, p *SSOProvider, userID uint, kind, okEvent, counts, blockedNote string, r *ssoReconcileReport) error {
+func (c *KeyorixCore) finishSSOReconcile(ctx context.Context, p *SSOProvider, userID uint, kind, okEvent, counts, blockedNote string, r *ssoReconcileReport, ip string) error {
 	err := r.err()
 	if err == nil {
 		if r.added > 0 || r.removed > 0 || r.blocked > 0 || r.scopeBlocked > 0 {
-			c.writeAuditEvent(ctx, okEvent, actorPtr(userID), nil,
+			c.writeAuditEventFull(ctx, okEvent, actorPtr(userID), nil, nil, ip,
 				fmt.Sprintf("SSO %s via %s: user %d (%s)%s", kind, p.Name, userID, counts, blockedNote))
 		}
 		return nil
@@ -986,7 +1020,7 @@ func (c *KeyorixCore) finishSSOReconcile(ctx context.Context, p *SSOProvider, us
 		msg += ". " + ssoLastAdminWayBack
 		log.Printf("SECURITY: %s", msg)
 	}
-	c.writeAuditEventFailed(ctx, event, actorPtr(userID), nil, "", msg)
+	c.writeAuditEventFailed(ctx, event, actorPtr(userID), nil, ip, msg)
 	return err
 }
 
@@ -1002,7 +1036,7 @@ func (c *KeyorixCore) finishSSOReconcile(ctx context.Context, p *SSOProvider, us
 //
 // Every step is attempted even after one fails, and the audit event written at
 // the end (finishSSOReconcile) records both what failed and what applied.
-func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, userID uint, asserted []string) error {
+func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, userID uint, asserted []string, ip string) error {
 	r := &ssoReconcileReport{}
 	c.applySSOGroupReconcile(ctx, userID, asserted, r)
 	blockedNote := ""
@@ -1010,7 +1044,7 @@ func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, us
 		blockedNote = fmt.Sprintf("; %d admin-conferring group(s) refused (IdP assertion cannot grant admin)", r.blocked)
 	}
 	return c.finishSSOReconcile(ctx, p, userID, "group sync", EventSSOGroupsSynced,
-		fmt.Sprintf("+%d/-%d native group memberships", r.added, r.removed), blockedNote, r)
+		fmt.Sprintf("+%d/-%d native group memberships", r.added, r.removed), blockedNote, r, ip)
 }
 
 func (c *KeyorixCore) applySSOGroupReconcile(ctx context.Context, userID uint, asserted []string, r *ssoReconcileReport) {
@@ -1145,7 +1179,7 @@ func (c *KeyorixCore) reconcileSSOGroupRemovals(ctx context.Context, userID uint
 // groups can't strip a user's roles). Its error refuses the login in CompleteSSO
 // (#2907), exactly as syncSSOGroups'.
 // Roles are bound at global scope (system roles); an unknown mapped role is skipped.
-func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID uint, rawID string) error {
+func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID uint, rawID, ip string) error {
 	claim := strings.TrimSpace(p.GroupsClaim)
 	if claim == "" {
 		claim = ssoDefaultGroupClaim
@@ -1154,7 +1188,7 @@ func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID u
 	if !present {
 		return nil // IdP did not assert groups in the id_token — leave roles untouched.
 	}
-	return c.reconcileSSORoles(ctx, p, userID, asserted)
+	return c.reconcileSSORoles(ctx, p, userID, asserted, ip)
 }
 
 // reconcileSSORoles reconciles the user's grants of the MAPPED roles to match the roles
@@ -1163,7 +1197,7 @@ func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID u
 // Returns ErrSSOReconcileIncomplete (wrapped) when any grant or revocation did
 // not apply -- see reconcileSSOGroups' doc for why the caller may want to refuse
 // the login on it.
-func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, userID uint, asserted []string) error {
+func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, userID uint, asserted []string, ip string) error {
 	rep := &ssoReconcileReport{}
 	c.applySSORoleReconcile(ctx, p, userID, asserted, rep)
 	blockedNote := ""
@@ -1175,7 +1209,7 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 			"map project roles through a Keyorix group with a project-scoped grant instead)", rep.scopeBlocked)
 	}
 	return c.finishSSOReconcile(ctx, p, userID, "role mapping", EventSSORolesSynced,
-		fmt.Sprintf("+%d/-%d mapped role grants", rep.added, rep.removed), blockedNote, rep)
+		fmt.Sprintf("+%d/-%d mapped role grants", rep.added, rep.removed), blockedNote, rep, ip)
 }
 
 func (c *KeyorixCore) applySSORoleReconcile(ctx context.Context, p *SSOProvider, userID uint, asserted []string, rep *ssoReconcileReport) {

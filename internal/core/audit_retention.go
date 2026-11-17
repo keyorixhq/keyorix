@@ -177,9 +177,12 @@ func (c *KeyorixCore) VerifyAuditChain(ctx context.Context) (*storage.AuditChain
 	}
 	// Sealed gaps (accepted losses, audit_seal.go) are stepped over at the
 	// exact rows their records name.
-	v, err := c.walkAuditChain(ctx, storage.AuditChainSegment{Anchor: anchor})
+	v, err := c.walkAuditChainRacingPurge(ctx, storage.AuditChainSegment{Anchor: anchor})
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
+	}
+	if v.Reanchored != nil {
+		anchor = v.Reanchored
 	}
 	if err := c.enforceAuditCheckpoint(ctx, v, anchorPurgedEvents(anchor)); err != nil {
 		return nil, fmt.Errorf("failed to verify audit checkpoint: %w", err)

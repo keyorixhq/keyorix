@@ -35,6 +35,7 @@ func TestStartImpersonationStoresSeenTimesAsUTCSoTouchSessionAdvances(t *testing
 		ms.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin"}, nil)
 		ms.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "alice", IsActive: true, AccountState: AccountActive}, nil)
 		ms.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
+		ms.On("ListUserRoleGrants", ctx, uint(2)).Return(nil, nil)
 		ms.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 		// CreateSession writes through the real store so the column holds whatever the core handed it.
 		created := &models.Session{}

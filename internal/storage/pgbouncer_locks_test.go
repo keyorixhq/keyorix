@@ -100,8 +100,10 @@ func TestPgBouncer_Locks_SurviveServerTimeouts(t *testing.T) {
 	}
 	// A backend takes database-level settings when it starts. End the ones
 	// that predate the ALTER (the migration's, and a pooler's idle server
-	// connections), so the storages below only ever get new ones.
-	require.NoError(t, admin.Exec("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()").Error)
+	// connections), so the storages below only ever get new ones. db is this
+	// test's own isolated database (pgBouncerTargetFor), named explicitly: the
+	// other backends of a shared database belong to parallel packages.
+	require.NoError(t, admin.Exec("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ? AND pid <> pg_backend_pid()", db).Error)
 	time.Sleep(500 * time.Millisecond)
 	a, b := tg.open(t, false), tg.open(t, false)
 	withBlockingLocks(t, func(t *testing.T, name string, with func(int, context.Context, func(context.Context) error) error) {

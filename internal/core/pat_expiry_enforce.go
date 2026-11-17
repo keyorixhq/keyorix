@@ -103,7 +103,7 @@ func (c *KeyorixCore) unreadPATExpiredUsedReminder(ctx context.Context, userID u
 // is in the past.
 func (c *KeyorixCore) ListExpiredOwnPATs(ctx context.Context, userID uint) ([]*models.PersonalAccessToken, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	return c.storage.ListExpiredPATsByUser(ctx, userID, c.now())
 }
@@ -112,7 +112,7 @@ func (c *KeyorixCore) ListExpiredOwnPATs(ctx context.Context, userID uint) ([]*m
 // and returns the revoked token hashes for auth-cache eviction.
 func (c *KeyorixCore) BulkRevokeExpiredOwnPATs(ctx context.Context, userID uint) ([]string, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	// AUDIT-TX-3: a revocation: the row is owed from the revoke's own transaction and
 	// appended after the eviction (the caller evicts too; this is idempotent).

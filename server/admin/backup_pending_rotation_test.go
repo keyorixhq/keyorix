@@ -93,9 +93,9 @@ func TestAdminBackup_RefusedWhileARotationIsPending(t *testing.T) {
 			sqliteBackupSource(t)
 			stderr := requireRefusedAndUntouched(t, plantStagingFiles(t, c.files...))
 			if c.saltAdvice {
-				require.Contains(t, stderr, "delete that file")
+				require.Contains(t, stderr, "move it out of the key directory")
 			} else {
-				require.NotContains(t, stderr, "delete that file",
+				require.NotContains(t, stderr, "move it out of the key directory",
 					"only an unused staging salt may ever be suggested for deletion")
 			}
 		})
@@ -155,6 +155,7 @@ func requireRestores(t *testing.T, archive string, overwrite bool) {
 	t.Helper()
 	restoreInput = archive
 	restoreOverwriteExisting = overwrite
+	restoreReplaceExistingData = overwrite // the same-host target holds the source's data
 	restoreMaxEntryBytes = 0
 	restoreMaxTotalBytes = 0
 	out, err := captureStdout(t, func() error { return runAdminRestore(nil, nil) })

@@ -32,7 +32,8 @@ func TestConcurrency_SetupLinkResendThrottle(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "resend.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.SetupToken{}, &models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.SetupToken{}, &models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{})) // the admin-rank ceiling's grant listing joins both (#4025)
 
 	st := store.NewLocalStorage(db)
 	c := core.NewKeyorixCore(st)

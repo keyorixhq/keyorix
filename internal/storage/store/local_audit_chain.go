@@ -976,6 +976,16 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context, anchor *storage.Au
 // incremental verification modes (docs/specs/audit-incremental-verification.md).
 // The zero segment is exactly VerifyAuditChain(ctx, nil). See the
 // storage.Storage interface doc for the contract.
+//
+// A retention purge can run while the walk does (the walk holds no audit
+// lock). One that removes rows past the walk's cursor leaves the next batch
+// starting at a row whose prev_hash names a deleted predecessor, and one
+// between the caller's anchor read and the first batch leaves an earliest row
+// the anchor does not name (#3944). Both read exactly like a row deleted
+// outside a purge, so the verdict stays broken; LinkBroken marks it (chain-
+// start walks only; the anchor check runs only on those) so that the core
+// layer, which can authenticate a re-read anchor, can tell whether a
+// sanctioned purge moved the anchor and walk again from it.
 func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage.AuditChainSegment) (*storage.AuditChainVerification, error) {
 	result := &storage.AuditChainVerification{Valid: true}
 
@@ -1027,6 +1037,7 @@ func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage
 					head.PrevHash != anchor.PrevHash || head.EntryHash != anchor.EntryHash {
 					brokenChain(result, head.ID,
 						"earliest surviving audit row does not match the last retention re-anchor (rows removed outside a sanctioned purge, or the re-anchor is stale)")
+					result.LinkBroken = true
 					return result, nil
 				}
 				// The anchor authenticates head's prev_hash as a legitimate chain
@@ -1038,6 +1049,7 @@ func (ls *LocalStorage) VerifyAuditChainSegment(ctx context.Context, seg storage
 		}
 		newPrev, newHead, newStarted, broke := verifyBatchEvents(batch, prevHash, started, result)
 		if broke {
+			result.LinkBroken = seg.AfterID == 0 && result.Reason == auditLinkMismatchReason
 			return result, nil
 		}
 		prevHash, started = newPrev, newStarted
@@ -1322,22 +1334,22 @@ func refuseIfAuditChainBroken(tx *gorm.DB, anchor *storage.AuditChainAnchor) err
 				started = true
 			}
 			if e.EntryHash == "" {
-				return fmt.Errorf("refusing to re-encode the audit chain: event %d has no entry_hash, so "+
+				return fmt.Errorf("%w: event %d has no entry_hash, so "+
 					"chain data was removed after it was written. Re-encoding would rewrite the chain around "+
-					"this gap and produce a chain that verifies. Investigate before migrating", e.ID)
+					"this gap and produce a chain that verifies. Investigate before migrating", storage.ErrAuditChainReencodeRefused, e.ID)
 			}
 			if e.PrevHash != prevHash {
-				return fmt.Errorf("refusing to re-encode the audit chain: event %d's prev_hash does not link "+
+				return fmt.Errorf("%w: event %d's prev_hash does not link "+
 					"to the preceding event, so a row was inserted, deleted, or reordered. Re-encoding "+
 					"rewrites prev_hash for every row and would repair this break invisibly. Investigate "+
-					"before migrating", e.ID)
+					"before migrating", storage.ErrAuditChainReencodeRefused, e.ID)
 			}
 			if !auditEntryHashMatchesAnyKnownEncoding(e) {
-				return fmt.Errorf("refusing to re-encode the audit chain: event %d's entry_hash matches "+
-					"neither the current encoding nor the pre-#1452 one, so its contents changed after it "+
+				return fmt.Errorf("%w: event %d's recorded entry_hash "+
+					"does not match the row's contents, so the row was changed after it "+
 					"was written -- this is not a stale encoding. Re-encoding would re-hash the modified "+
 					"contents and leave the chain verifying, destroying the evidence. Investigate before "+
-					"migrating", e.ID)
+					"migrating", storage.ErrAuditChainReencodeRefused, e.ID)
 			}
 			prevHash = e.EntryHash
 		}
@@ -1362,13 +1374,17 @@ func refuseIfAuditRowsOutsideWalk(tx *gorm.DB, lastID uint, walked int) error {
 	if err != nil || held == want {
 		return err
 	}
-	return fmt.Errorf("refusing to re-encode the audit chain: %s. Investigate before migrating",
-		auditRowsOutsideWalkReason(held, want, lastID))
+	return fmt.Errorf("%w: %s. Investigate before migrating",
+		storage.ErrAuditChainReencodeRefused, auditRowsOutsideWalkReason(held, want, lastID))
 }
 
 // errAuditMigrationDryRun is a sentinel used to force MigrateAuditChainEncoding's
 // transaction to roll back after computing (but never persisting) its result.
 var errAuditMigrationDryRun = errors.New("audit chain migration dry run")
+
+// auditLinkMismatchReason is the verdict for a row whose prev_hash is not the
+// preceding row's entry_hash.
+const auditLinkMismatchReason = "prev_hash does not link to the preceding event (row inserted, deleted, or reordered)"
 
 // verifyBatchEvents processes one page of audit events against the running hash chain.
 // Returns the new prevHash, the last verified headID, the updated started flag, and
@@ -1387,7 +1403,7 @@ func verifyBatchEvents(batch []*models.AuditEvent, prevHash string, started bool
 			return prevHash, headID, started, true
 		}
 		if e.PrevHash != prevHash {
-			brokenChain(result, e.ID, "prev_hash does not link to the preceding event (row inserted, deleted, or reordered)")
+			brokenChain(result, e.ID, auditLinkMismatchReason)
 			return prevHash, headID, started, true
 		}
 		if computeAuditEntryHash(e, e.PrevHash) != e.EntryHash {
@@ -1414,8 +1430,8 @@ func verifyBatchEvents(batch []*models.AuditEvent, prevHash string, started bool
 					"refuses if it finds a row that matches neither encoding")
 				return prevHash, headID, started, true
 			}
-			brokenChain(result, e.ID, "entry_hash matches neither the current encoding nor the pre-#1452 "+
-				"one, so this event's contents changed after it was written (event modified)")
+			brokenChain(result, e.ID, "the recorded entry_hash does not match this row's contents, "+
+				"so the row was changed after it was written (event modified)")
 			return prevHash, headID, started, true
 		}
 		prevHash = e.EntryHash

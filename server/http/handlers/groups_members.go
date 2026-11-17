@@ -99,7 +99,8 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, corestorage.ErrGroupNotFound) || corestorage.IsUserNotFound(err),
 			errors.Is(err, core.ErrMembershipTargetNotFound): // the domain-allowlist gate's user read
 			sendError(w, "NotFound", "User or group not found", http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "cannot grant this role"):
+		case errors.Is(err, core.ErrPermissionDenied):
+			// The grant ceiling (a role the actor cannot grant): a refusal, not a fault.
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		default:
 			sendError(w, "InternalError", "Failed to add group member", http.StatusInternalServerError, nil)

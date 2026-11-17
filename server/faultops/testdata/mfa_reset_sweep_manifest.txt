@@ -79,6 +79,9 @@ REST POST /api/v1/mfa-reset-requests	ListMFAResetRequests	1	panic
 REST POST /api/v1/mfa-reset-requests	ListMFAResetRequests	2	effect-then-error
 REST POST /api/v1/mfa-reset-requests	ListMFAResetRequests	2	error
 REST POST /api/v1/mfa-reset-requests	ListMFAResetRequests	2	panic
+REST POST /api/v1/mfa-reset-requests	ListUserRoleGrants	1	effect-then-error
+REST POST /api/v1/mfa-reset-requests	ListUserRoleGrants	1	error
+REST POST /api/v1/mfa-reset-requests	ListUserRoleGrants	1	panic
 REST POST /api/v1/mfa-reset-requests	ListUsers	1	effect-then-error
 REST POST /api/v1/mfa-reset-requests	ListUsers	1	error
 REST POST /api/v1/mfa-reset-requests	ListUsers	1	panic
@@ -103,9 +106,6 @@ REST POST /api/v1/mfa-reset-requests	ResolveUserPermissionAt	1	panic
 REST POST /api/v1/mfa-reset-requests	ResolveUserPermissionAt	2	effect-then-error
 REST POST /api/v1/mfa-reset-requests	ResolveUserPermissionAt	2	error
 REST POST /api/v1/mfa-reset-requests	ResolveUserPermissionAt	2	panic
-REST POST /api/v1/mfa-reset-requests	RoleSetBypassesPermissionChecks	1	effect-then-error
-REST POST /api/v1/mfa-reset-requests	RoleSetBypassesPermissionChecks	1	error
-REST POST /api/v1/mfa-reset-requests	RoleSetBypassesPermissionChecks	1	panic
 REST POST /api/v1/mfa-reset-requests	WithTransaction	1	effect-then-error
 REST POST /api/v1/mfa-reset-requests	WithTransaction	1	error
 REST POST /api/v1/mfa-reset-requests	WithTransaction	1	panic
@@ -217,6 +217,9 @@ REST POST /api/v1/mfa-reset-requests/{id}/approve	GetUserRoles	1	panic
 REST POST /api/v1/mfa-reset-requests/{id}/approve	ListSessionTokenHashesForUser	1	effect-then-error
 REST POST /api/v1/mfa-reset-requests/{id}/approve	ListSessionTokenHashesForUser	1	error
 REST POST /api/v1/mfa-reset-requests/{id}/approve	ListSessionTokenHashesForUser	1	panic
+REST POST /api/v1/mfa-reset-requests/{id}/approve	ListUserRoleGrants	1	effect-then-error
+REST POST /api/v1/mfa-reset-requests/{id}/approve	ListUserRoleGrants	1	error
+REST POST /api/v1/mfa-reset-requests/{id}/approve	ListUserRoleGrants	1	panic
 REST POST /api/v1/mfa-reset-requests/{id}/approve	ListUsers	1	effect-then-error
 REST POST /api/v1/mfa-reset-requests/{id}/approve	ListUsers	1	error
 REST POST /api/v1/mfa-reset-requests/{id}/approve	ListUsers	1	panic
@@ -256,9 +259,6 @@ REST POST /api/v1/mfa-reset-requests/{id}/approve	ResolveUserPermissionAt	2	pani
 REST POST /api/v1/mfa-reset-requests/{id}/approve	RevokeAllPersonalAccessTokensForUser	1	effect-then-error
 REST POST /api/v1/mfa-reset-requests/{id}/approve	RevokeAllPersonalAccessTokensForUser	1	error
 REST POST /api/v1/mfa-reset-requests/{id}/approve	RevokeAllPersonalAccessTokensForUser	1	panic
-REST POST /api/v1/mfa-reset-requests/{id}/approve	RoleSetBypassesPermissionChecks	1	effect-then-error
-REST POST /api/v1/mfa-reset-requests/{id}/approve	RoleSetBypassesPermissionChecks	1	error
-REST POST /api/v1/mfa-reset-requests/{id}/approve	RoleSetBypassesPermissionChecks	1	panic
 REST POST /api/v1/mfa-reset-requests/{id}/approve	SetAccountState	1	effect-then-error
 REST POST /api/v1/mfa-reset-requests/{id}/approve	SetAccountState	1	error
 REST POST /api/v1/mfa-reset-requests/{id}/approve	SetAccountState	1	panic

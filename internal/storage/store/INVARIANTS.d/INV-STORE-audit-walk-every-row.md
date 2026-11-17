@@ -31,3 +31,23 @@
   `TestIncrementalVerify_IDZeroRowCaughtByNextRequest` (and `_Postgres`),
   `internal/auditverify` `TestDifferential_TamperMatrix` ("forged row inserted with id 0") and
   `TestReviewAV_RowsOutsideTheWalkAreBroken` (online agrees).
+
+  A purge can also overtake the walk's cursor (remove rows past the batch just read, on a
+  chain longer than one batch), or run between the caller's anchor read and the first batch:
+  the next row's prev_hash then names a deleted predecessor, or the earliest row is not the
+  anchor's. The store walk cannot tell that from a delete outside a purge and stays broken,
+  but on exactly those two failures of a chain-start walk it sets `LinkBroken`. Only the core
+  layer can authenticate a re-read anchor: `walkAuditChainRacingPurge` (internal/core, used by
+  `VerifyAuditChain` and the rolling cycle's chain-start segment) re-reads it and, only if a
+  sanctioned purge moved it forward, walks once more from it, re-verifying every surviving row
+  and reporting `Reanchored` (whose `PurgedEvents` the checkpoint comparison then uses). An
+  anchor that did not move, a failure on the second walk, a pinned segment (`AfterID > 0`)
+  and every other failure (a row that does not recompute, a missing entry_hash, rows outside
+  the walk) stay broken (#3944). Guard:
+  `TestVerifyAuditChain_PurgeOvertakingTheWalkIsMarkedLinkBroken` (and `_Postgres`) and
+  internal/core `TestVerifyAuditChain_PurgeOvertakingTheWalkStaysValid` (and `_Postgres`: the
+  real `PurgeAuditLogs` inside the walk, with and without a checkpoint certified before it,
+  valid; a delete outside a purge and a tamper in the same window, broken).
+
+  The offline verifier (`internal/auditverify`) does not get this rule and keeps
+  `held != walked` exact: it reads a quiescent database, see INV-AUDITVERIFY-every-row-walked.

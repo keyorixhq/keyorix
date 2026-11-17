@@ -75,8 +75,12 @@ func assertSafeUsername(user string) error {
 	return nil
 }
 
+// openMySQLAdmin opens Issue's admin connection. A variable so tests can hand Issue
+// a fake driver that panics after CREATE USER (see dropUserOnPanic).
+var openMySQLAdmin = openMySQL
+
 func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (Credential, string, error) {
-	db, err := openMySQL(ctx, adminDSN, e.allowPrivateNetwork)
+	db, err := openMySQLAdmin(ctx, adminDSN, e.allowPrivateNetwork)
 	if err != nil {
 		return Credential{}, "", err
 	}
@@ -96,6 +100,10 @@ func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 	}
 
 	ref := mysqlAccountRef(user)
+	// Armed before CREATE USER: a panic while reading its reply can follow a CREATE
+	// the server already ran. user is fresh crypto/rand, so the DROP cannot hit an
+	// account this call did not create.
+	defer dropUserOnPanic(ctx, db, ref)()
 	if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE USER %s IDENTIFIED BY '%s'", ref, password)); err != nil { //nolint:gosec // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query // NOSONAR -- ref passes assertSafeUsername([a-z0-9_]), password is quote-free randString
 		return Credential{}, "", fmt.Errorf("create user: %w", err)
 	}
@@ -113,15 +121,41 @@ func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 	return Credential{Username: user, Password: password}, user, nil
 }
 
+// dropUserOnPanic returns Issue's deferred cleanup for a client-library panic after
+// the account may exist (#4378). Contain (contain.go) turns the panic into
+// *EngineClientPanicError one frame up, but no lease is written for a failed Issue,
+// so nothing would ever revoke the account. It drops the account the way the
+// template-failure path does and re-panics with the original value, so Contain still
+// logs it redacted and returns the typed error. A second panic from the DROP itself
+// (the connection may be the broken part) is dropped in favour of the first.
+func dropUserOnPanic(ctx context.Context, db *sql.DB, ref string) func() {
+	return func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		func() {
+			defer func() { _ = recover() }()
+			_, _ = db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS %s", ref)) //nolint:gosec // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query // NOSONAR -- ref passes assertSafeUsername([a-z0-9_]@%)
+		}()
+		panic(r)
+	}
+}
+
 // Revoke kills the account's live sessions (best-effort), then drops it. DROP USER
 // removes the account and all its privileges. roleName is the bare username.
 func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) error {
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	db, err := openMySQL(ctx, adminDSN, e.allowPrivateNetwork)
+	// allowAllFiles, which Issue refuses, is removed instead (#3980).
+	cfg, removed, err := parseMySQLRevokeDSN(adminDSN)
 	if err != nil {
 		return err
+	}
+	db, err := openMySQLConfig(ctx, cfg, e.allowPrivateNetwork)
+	if err != nil {
+		return revokeStrippedError(removed, false, err)
 	}
 	defer func() { _ = db.Close() }()
 
@@ -158,6 +192,10 @@ func openMySQL(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (
 	if err != nil {
 		return nil, fmt.Errorf("invalid mysql admin DSN: %w", err)
 	}
+	return openMySQLConfig(ctx, cfg, allowPrivateNetwork)
+}
+
+func openMySQLConfig(ctx context.Context, cfg *mysql.Config, allowPrivateNetwork bool) (*sql.DB, error) {
 	// Belt and braces behind the textual check: whatever the parser made of the
 	// DSN, never let the remote server request a local file (LOCAL INFILE).
 	if cfg.AllowAllFiles {
@@ -195,6 +233,6 @@ func killUserConnections(ctx context.Context, db *sql.DB, user string) {
 		}
 	}
 	for _, id := range ids {
-		_, _ = db.ExecContext(ctx, fmt.Sprintf("KILL %d", id))
+		_, _ = db.ExecContext(ctx, fmt.Sprintf("KILL %d", id)) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- id is an int64 rendered with %d
 	}
 }

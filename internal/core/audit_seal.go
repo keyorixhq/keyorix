@@ -572,7 +572,7 @@ func (c *KeyorixCore) walkAuditChainGaps(ctx context.Context, seg storage.AuditC
 		}
 		out.HeadID, out.HeadHash, out.Truncated = v.HeadID, v.HeadHash, v.Truncated
 		if !v.Valid {
-			out.Valid, out.FirstBrokenID, out.Reason = false, v.FirstBrokenID, v.Reason
+			out.Valid, out.FirstBrokenID, out.Reason, out.LinkBroken = false, v.FirstBrokenID, v.Reason, v.LinkBroken
 		}
 	}
 	walked := func() int { return int(out.ChainedEvents + out.UnchainedEvents) }

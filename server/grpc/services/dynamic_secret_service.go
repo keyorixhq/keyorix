@@ -10,7 +10,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
@@ -31,28 +33,42 @@ func NewDynamicSecretService(coreService *core.KeyorixCore) *DynamicSecretGRPCSe
 	return &DynamicSecretGRPCService{core: coreService}
 }
 
+// mapDynamicError translates core/storage dynamic-secret errors into gRPC status codes
+// through the shared classifier (coreErrorStatus), classified by sentinel, never by
+// err.Error() text: a backend or driver message that happens to say "permission" or
+// "required" is a backend failure, not a caller refusal.
 func mapDynamicError(err error) error {
-	// STORAGE-ERR-CLASS-1: a lease/config read fault is Unavailable with the stable
-	// storage_unavailable reason, not the backend-failure bucket below.
-	if serr, ok := storageUnavailableStatus(err); ok {
-		return serr
+	// An admin_dsn refused by policy (the caller's on create/update, the stored one on issue/
+	// renew/revoke): REST answers 400 with the same texts. No DSN in them: ForbiddenOptionError
+	// names only the option, ClientMessage only the DSN's host (never the resolved address).
+	if forbidden, ok := errors.AsType[*dsn.ForbiddenOptionError](err); ok {
+		return status.Error(codes.InvalidArgument, forbidden.Error()) // nosemgrep: keyorix-raw-error-to-client -- ForbiddenOptionError is built from the fixed option list only (internal/core/dsn/localfile.go), no DSN text; REST sends the same text with its 400
 	}
-	// ERR-CLASS-LEFTOVERS-1: classified by sentinel (errors.Is), never by err.Error() text.
-	// A backend or driver message that happens to say "permission" or "required" is a
-	// backend failure, not a caller refusal.
-	switch {
-	case errors.Is(err, core.ErrDynamicSecretNotFound):
-		return status.Error(codes.NotFound, "config or lease not found")
-	case errors.Is(err, core.ErrValidation):
+	if refused, ok := errors.AsType[*core.DynamicSecretTargetRefusedError](err); ok {
+		return status.Error(codes.InvalidArgument, refused.ClientMessage())
+	}
+	// Issue/renew/revoke reach the target database: an error the classifier does not
+	// know is backend trouble, answered Unavailable (this family's code for it, where
+	// the classifier's own answer would be Internal). A storage or audit fault is
+	// typed and answered by coreErrorStatus below (storage_unavailable / audit_unavailable).
+	if _, ok := storageUnavailableStatus(err); !ok && errclass.Of(err) == errclass.Internal {
+		if _, ok := auditUnavailableStatus(err); !ok {
+			return status.Error(codes.Unavailable, "dynamic-secret backend operation failed")
+		}
+	}
+	texts := coreErrorTexts{
+		errclass.NotFound: "config or lease not found",
 		// Fixed string, as in mapUserError/mapMachineError (GRPC-004): the wrapped text can
 		// carry submitted values or enum lists, so it is not echoed to the client.
-		return status.Error(codes.InvalidArgument, "invalid request parameters")
-	case errors.Is(err, core.ErrPermissionDenied):
-		return status.Error(codes.PermissionDenied, "access denied")
-	default:
-		// Issue/renew/revoke reach the target database; surface backend trouble as Unavailable.
-		return status.Error(codes.Unavailable, "dynamic-secret backend operation failed")
+		errclass.InvalidInput:     "invalid request parameters",
+		errclass.PermissionDenied: "access denied",
 	}
+	if errors.Is(err, core.ErrDynamicSecretPrecondition) {
+		// The config or lease state refuses the call (disabled config, lease not active
+		// or expired, active-lease limit, ...). Core's own text, no driver detail.
+		texts[errclass.Precondition] = err.Error() // nosemgrep: keyorix-raw-error-to-client -- matched by errors.Is(core.ErrDynamicSecretPrecondition), built only by core's dynamicPreconditionf from core's own words (no driver/storage text); REST sends the same text with its 409
+	}
+	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "dynamic-secret operation", texts: texts})
 }
 
 // loadConfigScoped loads a config by ID and authorizes perm at its project/env
@@ -158,6 +174,51 @@ func (s *DynamicSecretGRPCService) ClassifyConfig(ctx context.Context, req *pb.C
 		return nil, mapDynamicError(err)
 	}
 	return dynamicConfigToProto(cfg), nil
+}
+
+func (s *DynamicSecretGRPCService) UpdateConfigAdminDSN(ctx context.Context, req *pb.UpdateDynamicConfigAdminDSNRequest) (*pb.DynamicSecretConfig, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetId() == 0 || req.GetAdminDsn() == "" {
+		return nil, status.Error(codes.InvalidArgument, "id and admin_dsn are required")
+	}
+	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetId()), permSecretsWrite); err != nil {
+		return nil, err
+	}
+	cfg, err := s.core.UpdateDynamicSecretConfigAdminDSN(ctx, &core.UpdateDynamicSecretConfigAdminDSNRequest{
+		ConfigID: uint(req.GetId()), AdminDSN: req.GetAdminDsn(), ActorID: user.PrincipalID(),
+	})
+	if err != nil {
+		return nil, mapDynamicError(err)
+	}
+	return dynamicConfigToProto(cfg), nil
+}
+
+func (s *DynamicSecretGRPCService) ListConfigsWithRefusedAdminDSN(ctx context.Context, req *pb.ListRefusedAdminDSNConfigsRequest) (*pb.ListRefusedAdminDSNConfigsResponse, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetProjectId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+		return nil, err
+	}
+	rep, err := s.core.ListProjectConfigsWithRefusedAdminDSN(ctx, user.PrincipalID(), uint(req.GetProjectId()))
+	if err != nil {
+		return nil, mapDynamicError(err)
+	}
+	out := &pb.ListRefusedAdminDSNConfigsResponse{Unreadable: intToU32(rep.Unreadable)}
+	for _, c := range rep.Configs {
+		out.Configs = append(out.Configs, &pb.RefusedAdminDSNConfig{
+			Id: uintToU32(c.ConfigID), Name: c.Name, ProjectId: uintToU32(c.ProjectID), EnvironmentId: uintToU32(c.EnvironmentID),
+			BackendType: c.BackendType, RefusedOptions: c.Options, LiveLeases: intToU32(c.LiveLeases),
+		})
+	}
+	return out, nil
 }
 
 func (s *DynamicSecretGRPCService) IssueLease(ctx context.Context, req *pb.IssueLeaseRequest) (*pb.IssuedCredential, error) {

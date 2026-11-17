@@ -58,13 +58,22 @@ FROM nginx:alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5
 # packages ... breaks: world[libexpat=2.8.5-r0]"): release-dry-run, docker-publish
 # and release would all fail at tag time. A floor keeps the security intent (never
 # older than the fixed version) without breaking on the next revision bump.
-# Floors and the CVE each one closes:
-#   libuuid >= 2.42.3-r1   CVE-2026-53612/53613/53614/76642/78408/78409/78410
-#   libexpat >= 2.8.5-r0   CVE-2026-93990 (HIGH)
-#   libx11  >= 1.8.14-r0   CVE-2026-88806 (HIGH)
-#   pcre2   >= 10.49-r0    CVE-2026-103111 (HIGH)
-#   tiff    >= 4.7.2-r0    CVE-2026-4775 (HIGH)
-RUN apk update && apk add --no-cache --upgrade 'libuuid>=2.42.3-r1' 'libexpat>=2.8.5-r0' 'libx11>=1.8.14-r0' 'pcre2>=10.49-r0' 'tiff>=4.7.2-r0'
+# Floors and the CVE each one closes (keep the list and the RUN line sorted by
+# package: a bump is then a one-line diff, and deploy/web_dockerfile_floors_test.go
+# fails a malformed or unsorted floor in PR CI instead of in the nightly trivy gate):
+#   brotli-libs >= 1.2.1-r0   CVE-2026-111497 (CRITICAL)
+#   curl     >= 8.23.0-r0   CVE-2026-92392 (HIGH)
+#   libcurl  >= 8.23.0-r0   CVE-2026-92392 (HIGH; trivy lists curl and libcurl separately)
+#   libexpat >= 2.8.5-r0    CVE-2026-93990 (HIGH)
+#   libuuid  >= 2.42.3-r1   CVE-2026-53612/53613/53614/76642/78408/78409/78410
+#   libx11   >= 1.8.14-r0   CVE-2026-88806 (HIGH)
+#   musl-utils >= 1.2.6-r3  CVE-2026-107891 (HIGH)
+#   pcre2    >= 10.49-r0    CVE-2026-103111 (HIGH)
+#   tiff     >= 4.7.2-r0    CVE-2026-4775 (HIGH)
+# brotli-libs, curl, libcurl and musl-utils were added after the nightly
+# docker-publish trivy gate (run 42820322092) failed on them against this digest.
+# Drop a floor once a refreshed base digest ships the fixed version.
+RUN apk update && apk add --no-cache --upgrade 'brotli-libs>=1.2.1-r0' 'curl>=8.23.0-r0' 'libcurl>=8.23.0-r0' 'libexpat>=2.8.5-r0' 'libuuid>=2.42.3-r1' 'libx11>=1.8.14-r0' 'musl-utils>=1.2.6-r3' 'pcre2>=10.49-r0' 'tiff>=4.7.2-r0'
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY keyorix-backend.conf /etc/nginx/keyorix-backend.conf
 # HSTS-behind-a-load-balancer policy: nginx-hsts.conf is the "no trusted proxy,

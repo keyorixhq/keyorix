@@ -34,7 +34,7 @@ import (
 // need no password. currentPassword is ignored when the email is not changing.
 func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, displayName, email, currentPassword string) (*models.User, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 	// reauthed is the account whose bare current password (no second factor)
 	// authorised an email change; its lockout clear follows the update.
@@ -66,6 +66,13 @@ func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, display
 			} else {
 				reauthed = user
 			}
+		} else {
+			// Unchanged on the row the re-auth decision was made on: nothing to write.
+			// Passed on, UpdateUser would compare it with its own later read, and an
+			// email change committing in between (the web page always resends the
+			// email) would make this an email change that skipped re-auth (#2654,
+			// FIX-USER-ROW-NARROW-1).
+			email = ""
 		}
 	}
 	updated, err := c.UpdateUser(ctx, &UpdateUserRequest{
@@ -130,7 +137,7 @@ func (c *KeyorixCore) verifyCurrentPassword(ctx context.Context, user *models.Us
 // request), all of the user's sessions are dropped.
 func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, newPassword, keepSessionToken string) error {
 	if userID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 
 	user, err := c.storage.GetUser(ctx, userID)
@@ -478,7 +485,10 @@ func (e policyRefusal) Error() string { return e.msg }
 // RefusalMessage is the caller-facing text; see PolicyRefusalMessage.
 func (e policyRefusal) RefusalMessage() string { return e.msg }
 func (e policyRefusal) Is(target error) bool {
-	return target == ErrPasswordPolicy
+	// A refused new password is also a field-validation refusal: a transport that
+	// classifies by ErrValidation answers it 400 / InvalidArgument without knowing
+	// the password-policy sentinel.
+	return target == ErrPasswordPolicy || target == ErrValidation
 }
 
 // applyNewPassword hashes newPassword, stamps it on the user (clearing a restricted
@@ -689,7 +699,7 @@ func (c *KeyorixCore) CurrentSessionID(ctx context.Context, token string) uint {
 // ListOwnSessions returns the caller's active sessions.
 func (c *KeyorixCore) ListOwnSessions(ctx context.Context, userID uint) ([]*models.Session, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 	return c.storage.ListSessionsByUser(ctx, userID)
 }
@@ -704,16 +714,16 @@ const EventSessionRevoked = "session.revoked"
 
 func (c *KeyorixCore) RevokeOwnSession(ctx context.Context, userID, sessionID uint) error {
 	if userID == 0 || sessionID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user and session IDs are required")
+		return validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "user and session IDs are required")
 	}
 	notFound := fmt.Sprintf("%s: session not found", i18n.T("ErrorNotFound", nil))
 	session, err := c.storage.GetSessionByID(ctx, sessionID)
 	if err != nil {
 		// A read FAULT is a retry answer, not proof the session is gone.
-		return classifyReadError(err, notFound)
+		return classifyReadErrorAs(err, ErrSessionNotFound, notFound)
 	}
 	if session.UserID != userID {
-		return errors.New(notFound)
+		return notFoundAs(ErrSessionNotFound, notFound)
 	}
 	// AUDIT-TX-3: a revocation: its row is owed from the delete's transaction and
 	// appended after the eviction below, so the audit log never delays the logout.

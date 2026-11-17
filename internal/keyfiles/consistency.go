@@ -184,6 +184,12 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 	if enc == nil {
 		return &KeySetState{Fresh: true}, nil
 	}
+	// #4249: from another directory than the config's, relative key paths name
+	// other files; judging those would report a "fresh" or partial set that is
+	// not the one every other process uses.
+	if err := enc.CheckRelativeKeyPathBase(baseDir); err != nil {
+		return nil, err
+	}
 	paths, err := RequiredKeyFilePaths(enc, baseDir)
 	if err != nil {
 		return nil, err
@@ -219,6 +225,13 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 		st.Fresh = true // first-boot generation will create these shortly
 		return st, nil
 	}
+	// Before the manifest: with no manifest, they are what tells boot that an
+	// interrupted rotation may have left the active set incoherent.
+	for _, p := range paths {
+		if _, err := os.Stat(p + ".pending"); err == nil {
+			st.Leftovers = append(st.Leftovers, p+".pending")
+		}
+	}
 
 	m, err := LoadManifest(manifestPath)
 	if err != nil {
@@ -247,11 +260,6 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 			st.Unrecorded = append(st.Unrecorded, p)
 		}
 		st.Files = append(st.Files, f)
-	}
-	for _, p := range paths {
-		if _, err := os.Stat(p + ".pending"); err == nil {
-			st.Leftovers = append(st.Leftovers, p+".pending")
-		}
 	}
 	if len(foreign) == 0 && m.Next != nil {
 		if err := st.classifyIntent(); err != nil {
@@ -334,7 +342,9 @@ func (st *KeySetState) classifyIntent() error {
 			"key material is incoherent: an interrupted %s (generation %d in the key-set manifest %s) already "+
 				"replaced %s but not %s, and no staging file holds the content it was about to write — the active "+
 				"files no longer belong to one generation, so the first decrypt would fail. Re-run the operation, "+
-				"or restore the whole set from one backup with `keyorix-server admin restore --overwrite-existing`",
+				"or restore the whole set from one backup with `keyorix-server admin restore --overwrite-existing "+
+				"--replace-existing-data` (this host's database holds data, so --overwrite-existing alone is "+
+				"refused; the restore replaces that data with the backup's)",
 			next.Operation, next.Generation, st.ManifestPath, strings.Join(done, ", "), strings.Join(stuck, ", "))
 	}
 	st.Intent = IntentFinishable

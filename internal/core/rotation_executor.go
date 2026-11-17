@@ -455,7 +455,15 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 		failed[secret.ID] = rotationFailureDetail{SecretName: secret.Name, Detail: fmt.Sprintf("store new version: %v", rerr)}
 		sid := secret.ID
 		pid := secret.ProjectID
-		if secret.RotationBackend != "" {
+		switch {
+		case errors.Is(rerr, ErrRotatedValueStoredSecretDeleted):
+			// #2873: the value WAS stored; the secret was deleted under the
+			// rotation. Not drift: Keyorix holds the rotated value, behind a
+			// deleted secret.
+			c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
+				fmt.Sprintf("auto-rotation for secret %q: backend %q ref %q rotated upstream and the new value was stored, but the secret was deleted during the rotation: %v",
+					secret.Name, secret.RotationBackend, secret.RotationRef, rerr))
+		case secret.RotationBackend != "":
 			// The upstream credential was rotated but storing the new value failed: the
 			// live credential and Keyorix's record have now DRIFTED. Audit it distinctly
 			// (the backend-apply-failure path above is audited too) so an operator can
@@ -463,7 +471,7 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 			c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 				fmt.Sprintf("auto-rotation DRIFT for secret %q: backend %q ref %q rotated upstream but storing the new value failed: %v — the live credential may no longer match Keyorix",
 					secret.Name, secret.RotationBackend, secret.RotationRef, rerr))
-		} else {
+		default:
 			c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 				fmt.Sprintf("auto-rotation FAILED to store new version for secret %q: %v", secret.Name, rerr))
 		}

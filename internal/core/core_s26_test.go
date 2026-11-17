@@ -134,6 +134,7 @@ func TestUpdateUser_UserNotFound(t *testing.T) {
 	// S1 (CLI-split inventory #2012): the admin-rank ceiling runs before
 	// GetUser is ever reached.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(42)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(42)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(42)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
 	_, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 42})
@@ -148,6 +149,7 @@ func TestUpdateUser_UsernameAlreadyExists(t *testing.T) {
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	// Someone else already has username "bob"
 	ms.On("GetUserByUsername", mock.Anything, "bob").Return(&models.User{ID: 2, Username: "bob"}, nil)
@@ -165,6 +167,7 @@ func TestUpdateUser_EmailAlreadyExists(t *testing.T) {
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	// Username unchanged, so GetUserByUsername is NOT called for it.
 	// Email "bob@x.com" already taken by a different user (ID=2).
@@ -183,6 +186,7 @@ func TestUpdateUser_Success(t *testing.T) {
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), false).Return(true, nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil) // AUDIT-TX-3: the update commits with its audit row
@@ -200,6 +204,7 @@ func TestUpdateUser_StorageError(t *testing.T) {
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), false).Return(false, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -233,6 +238,7 @@ func TestUpdateUser_Reactivate_UsesConditionalPath(t *testing.T) {
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
 		return u.ID == 1 && u.IsActive
@@ -257,6 +263,7 @@ func TestUpdateUser_RedundantSameValueAssertion_UsesConditionalPath(t *testing.T
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
 		return u.ID == 1 && u.IsActive
@@ -281,6 +288,7 @@ func TestUpdateUser_Reactivate_LostRace_ReturnsConflictError(t *testing.T) {
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
 		return u.ID == 1 && u.IsActive
@@ -304,6 +312,7 @@ func TestUpdateUser_Deactivate_LostRace_ReturnsConflictError(t *testing.T) {
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	// guardLastAdminDeactivation (#G02) runs first — fixture user holds no
 	// roles, so IsGlobalAdmin resolves false and the guard is a no-op.
@@ -341,6 +350,7 @@ func TestUpdateUser_PlainFieldUpdate_UsesActiveStateConditionalPath(t *testing.T
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
 		return u.ID == 1 && u.DisplayName == "Alice Renamed"
@@ -365,6 +375,7 @@ func TestUpdateUser_PlainFieldUpdate_LostRace_ReturnsConflictError(t *testing.T)
 	// GetUser -- the fixture target holds no role scopes, so it passes
 	// trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(1)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(1)).Return(nil, nil)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
 	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), true).Return(false, nil)
 	c := NewKeyorixCore(ms)
@@ -388,6 +399,7 @@ func TestRestoreUser_NotFoundErr(t *testing.T) {
 	ms := new(MockStorage)
 	// S1 (CLI-split inventory #2012): the admin-rank ceiling runs first.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(7)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(7)).Return(nil, nil)
 	// storage.IsUserNotFound recognises ErrUserNotFound
 	ms.On("RestoreUser", mock.Anything, uint(7)).Return(storage.ErrUserNotFound)
 	c := NewKeyorixCore(ms)
@@ -401,6 +413,7 @@ func TestRestoreUser_StorageError(t *testing.T) {
 	ms := new(MockStorage)
 	// S1 (CLI-split inventory #2012): the admin-rank ceiling runs first.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(7)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(7)).Return(nil, nil)
 	ms.On("RestoreUser", mock.Anything, uint(7)).Return(errors.New("db exploded"))
 	c := NewKeyorixCore(ms)
 	err := c.RestoreUser(context.Background(), 0, 7)
@@ -415,6 +428,7 @@ func TestRestoreUser_Success(t *testing.T) {
 	// ceiling first (actor 1 != target 5) — the fixture target holds no role
 	// scopes, so it passes trivially.
 	ms.On("GetUserRoleScopes", mock.Anything, uint(5)).Return([]Scope{}, nil)
+	ms.On("ListUserRoleGrants", mock.Anything, uint(5)).Return(nil, nil)
 	ms.On("RestoreUser", mock.Anything, uint(5)).Return(nil)
 	restored := &models.User{ID: 5, Username: "alice", AccountState: "active"}
 	ms.On("GetUser", mock.Anything, uint(5)).Return(restored, nil)

@@ -99,22 +99,37 @@ func receiverTypeName(fd *ast.FuncDecl) string {
 	return ""
 }
 
-// auditUnavailableScan walks fd's body and returns the reaching coreService
-// calls it makes and whether it calls a mapper directly or (given non-nil
-// helper sets) a one-hop helper in funcHelpers / methodHelpers.
-func auditUnavailableScan(fd *ast.FuncDecl, reaching, funcHelpers, methodHelpers map[string]bool) (calls []string, mapped bool) {
+// isAuditUnavailableMapperCall is the audit guard's mapper predicate: a call to a
+// function in auditUnavailableMappers.
+func isAuditUnavailableMapperCall(n ast.Node) bool {
+	call, ok := n.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	id, ok := call.Fun.(*ast.Ident)
+	return ok && auditUnavailableMappers[id.Name]
+}
+
+// mappingScan walks fd's body and returns the reaching coreService calls it
+// makes and whether it contains a node isMapper accepts or (given non-nil helper
+// sets) calls a one-hop helper in funcHelpers / methodHelpers. Shared by this
+// guard and grant_ceiling_mapping_guard_test.go.
+func mappingScan(fd *ast.FuncDecl, reaching map[string]bool, isMapper func(ast.Node) bool, funcHelpers, methodHelpers map[string]bool) (calls []string, mapped bool) {
 	recvName, recvType := "", receiverTypeName(fd)
 	if recvType != "" && len(fd.Recv.List[0].Names) == 1 {
 		recvName = fd.Recv.List[0].Names[0].Name
 	}
 	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		if n != nil && isMapper(n) {
+			mapped = true
+		}
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 		switch fn := call.Fun.(type) {
 		case *ast.Ident:
-			if auditUnavailableMappers[fn.Name] || funcHelpers[fn.Name] {
+			if funcHelpers[fn.Name] {
 				mapped = true
 			}
 		case *ast.SelectorExpr:
@@ -134,6 +149,13 @@ func auditUnavailableScan(fd *ast.FuncDecl, reaching, funcHelpers, methodHelpers
 // "file:func -> M" whose function calls a reaching method M through coreService
 // without calling a mapper or a one-hop helper, and how many reaching calls it saw.
 func auditUnavailableMappingViolations(t *testing.T, dir string, reaching map[string]bool, exempt map[string]string) (violations []string, seen int) {
+	t.Helper()
+	return mappingViolations(t, dir, reaching, isAuditUnavailableMapperCall, exempt)
+}
+
+// mappingViolations is auditUnavailableMappingViolations with the mapper
+// predicate pluggable (see mappingScan).
+func mappingViolations(t *testing.T, dir string, reaching map[string]bool, isMapper func(ast.Node) bool, exempt map[string]string) (violations []string, seen int) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -165,7 +187,7 @@ func auditUnavailableMappingViolations(t *testing.T, dir string, reaching map[st
 			if !ok || fd.Body == nil {
 				continue
 			}
-			if _, mapped := auditUnavailableScan(fd, reaching, nil, nil); !mapped {
+			if _, mapped := mappingScan(fd, reaching, isMapper, nil, nil); !mapped {
 				continue
 			}
 			if recvType := receiverTypeName(fd); recvType != "" {
@@ -181,7 +203,7 @@ func auditUnavailableMappingViolations(t *testing.T, dir string, reaching map[st
 			if !ok || fd.Body == nil {
 				continue
 			}
-			calls, mapped := auditUnavailableScan(fd, reaching, funcHelpers, methodHelpers)
+			calls, mapped := mappingScan(fd, reaching, isMapper, funcHelpers, methodHelpers)
 			seen += len(calls)
 			if len(calls) == 0 || mapped {
 				continue

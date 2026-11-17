@@ -274,8 +274,9 @@ func TestUserService_CreateUser_InstallWideRoleInAProjectAssignmentIsRefused(t *
 
 	resp, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
 		Username: "frank", Email: "frank@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
-		ProjectAssignments: []*pb.ProjectAssignment{{ProjectId: 1, Role: "editor"}},
+		ProjectAssignments: []*pb.ProjectAssignment{{ProjectId: 1, Role: "project_developer"}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, 1, count(`SELECT COUNT(*) FROM user_roles WHERE user_id = ? AND role_id = 3 AND project_id = 1`, resp.GetUser().GetId()))
+	require.Equal(t, 1, count(`SELECT COUNT(*) FROM user_roles WHERE user_id = ? AND role_id = ? AND project_id = 1`,
+		resp.GetUser().GetId(), testhelper.RoleProjectDeveloper))
 }

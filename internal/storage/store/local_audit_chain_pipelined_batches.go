@@ -615,6 +615,11 @@ func (r *auditPipelineResults) QueryRow() pgx.Row {
 	return auditPipelineRow{rows: rows, err: err}
 }
 
+// Tx satisfies pgx.BatchResults (added in pgx v5.13.0). This reader never
+// begins a transaction through pgx.Batch.BeginTx: the audit pipeline sends its
+// own BEGIN/COMMIT statements, so there is no pgx.Tx to hand back.
+func (r *auditPipelineResults) Tx() pgx.Tx { return nil }
+
 // Close reads what is left of the transaction, up to and including its Sync.
 func (r *auditPipelineResults) Close() error {
 	if r.closed {

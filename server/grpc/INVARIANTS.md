@@ -121,8 +121,5 @@ Format: `INV-GRPC-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   retryable gRPC error, not a hard denial. Guard: `interceptors/auth.go`
   (`authenticateRequest`); `auth_roles_unavailable_test.go:TestAuthInterceptor_PATRoleResolutionUnavailable_IsRetryable`.
 
-## Ledger gap
-
-- `docs/adr-conformance-enforced.tsv` has zero rows for `server/grpc` or
-  `server/grpc/interceptors` despite real, tested properties above (items 04, 08, 10, 12, 13).
-  Low-effort follow-up: seed rows citing the tests already named here.
+ADR-conformance ledger rows for this package and what is deliberately left out of the ledger:
+`docs/INVARIANTS.md`, "Ledger gaps".

@@ -35,18 +35,17 @@ import (
 // of the bulk-approval defect in the same change, not a second ceiling bypass.
 func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string, projectID uint, identityType, name string, actorID, actorMachineID uint, suspendSource bool) (*models.MachineIdentity, error) {
 	if username == "" {
-		return nil, fmt.Errorf("username is required")
+		return nil, validationErrorf("username is required")
 	}
 	if projectID == 0 {
-		return nil, fmt.Errorf("project ID is required")
+		return nil, validationErrorf("project ID is required")
 	}
 
 	user, err := c.storage.GetUserByUsername(ctx, username)
 	if err != nil {
-		if fault := ReadFault(err); fault != nil {
-			return nil, fault
-		}
-		return nil, fmt.Errorf("user %q not found: %w", username, err)
+		// A missing user matches storage.ErrUserNotFound; a read fault matches
+		// ErrStorageReadUnavailable.
+		return nil, classifyReadErrorAs(err, storage.ErrUserNotFound, fmt.Sprintf("user %q not found", username))
 	}
 
 	if identityType == "" {

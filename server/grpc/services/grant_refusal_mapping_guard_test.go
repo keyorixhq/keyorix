@@ -1,0 +1,210 @@
+package services
+
+// grant_refusal_mapping_guard_test.go — FIX-ERRMAP-STRUCT-1 item 4 (#3979, #4020): every
+// gRPC service method that calls a GRANTING core method (one that enforces a grant
+// ceiling, read from internal/core/testdata/grant_ceiling_reaching_methods.txt, the one
+// derivation shared with the REST twin TestEveryGrantingHandlerMapsTheCeilingRefusal) hands
+// the error to a mapper that classifies core.ErrPermissionDenied (PermissionDenied,
+// never Internal): the shared adapter coreErrorStatus, or a same-package function
+// whose body evaluates errors.Is(_, core.ErrPermissionDenied).
+//
+// What it recognises: a method whose body calls `s.core.M(...)` with M in the derived
+// set; mapped when the body calls coreErrorStatus or a same-package function/method
+// whose body does, or whose body mentions core.ErrPermissionDenied (one hop). Not
+// followed: two hops, function values, mappers in another package.
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
+)
+
+// grantRefusalStatusExempt names services ("file.go:Func") that call a granting method
+// without mapping the refusal, each for a stated reason.
+var grantRefusalStatusExempt = map[string]string{}
+
+func mentionsPermissionDenied(fd *ast.FuncDecl) bool {
+	found := false
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			if x.Sel.Name == "ErrPermissionDenied" {
+				found = true
+			}
+		case *ast.CallExpr:
+			if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "coreErrorStatus" {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// grantRefusalStatusViolations returns each "file:func -> M" of dir whose method calls
+// a granting method M on s.core without routing the error through a mapper that
+// classifies ErrPermissionDenied, and how many granting calls it saw.
+func grantRefusalStatusViolations(t *testing.T, dir string, granting map[string]bool, exempt map[string]string) (violations []string, seen int) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	type parsed struct {
+		name string
+		file *ast.File
+	}
+	var files []parsed
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, parsed{name, f})
+	}
+	// Mappers: package-level functions and methods whose body classifies the sentinel.
+	mappers := map[string]bool{}
+	for _, pf := range files {
+		for _, d := range pf.file.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil && mentionsPermissionDenied(fd) {
+				mappers[fd.Name.Name] = true
+			}
+		}
+	}
+	for _, pf := range files {
+		for _, d := range pf.file.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			var calls []string
+			mapped := mentionsPermissionDenied(fd)
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch fn := call.Fun.(type) {
+				case *ast.Ident:
+					if mappers[fn.Name] {
+						mapped = true
+					}
+				case *ast.SelectorExpr:
+					if recv, ok := fn.X.(*ast.SelectorExpr); ok && recv.Sel.Name == "core" && granting[fn.Sel.Name] {
+						calls = append(calls, fn.Sel.Name)
+					} else if mappers[fn.Sel.Name] {
+						mapped = true
+					}
+				}
+				return true
+			})
+			seen += len(calls)
+			if len(calls) == 0 || mapped {
+				continue
+			}
+			if _, ok := exempt[pf.name+":"+fd.Name.Name]; ok {
+				continue
+			}
+			violations = append(violations, pf.name+":"+fd.Name.Name+" -> "+strings.Join(calls, ","))
+		}
+	}
+	slices.Sort(violations)
+	return violations, seen
+}
+
+// grantCeilingReachingMethodsFile is the granting set, derived once in internal/core
+// (grant_ceiling_reach_registry_test.go) and shared with the REST guard
+// (server/http/handlers/grant_ceiling_mapping_guard_test.go).
+const grantCeilingReachingMethodsFile = "../../../internal/core/testdata/grant_ceiling_reaching_methods.txt"
+
+func readGrantCeilingReachingMethods(t *testing.T) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile(grantCeilingReachingMethodsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
+		out[strings.TrimSpace(line)] = true
+	}
+	if len(out) < 10 {
+		t.Fatalf("%s lists %d methods: the derivation is broken", grantCeilingReachingMethodsFile, len(out))
+	}
+	return out
+}
+
+// TestEveryGrantingServiceMapsPermissionDenied reports through guardrules.Rollout
+// (report-only on pull requests while its docs/guard-rollout.d row exists).
+func TestEveryGrantingServiceMapsPermissionDenied(t *testing.T) {
+	g := guardrules.Rollout(t)
+	granting := readGrantCeilingReachingMethods(t)
+	violations, seen := grantRefusalStatusViolations(t, ".", granting, grantRefusalStatusExempt)
+	if seen < 4 {
+		t.Fatalf("saw only %d s.core calls of a granting method: the scan is broken", seen)
+	}
+	if len(violations) > 0 {
+		g.Errorf("these gRPC methods call a granting core method without a mapper that classifies "+
+			"core.ErrPermissionDenied (a grant-ceiling refusal would be Internal): route the error through "+
+			"coreErrorStatus, or add a reasoned exemption to grantRefusalStatusExempt:\n  %s", strings.Join(violations, "\n  "))
+	}
+}
+
+// TestGrantRefusalStatusGuardCalibration_SharedSetReachesNonPhraseCeilings runs the
+// scan with the REAL shared granting set over a planted IssueMachineToken call whose
+// mapper has no ErrPermissionDenied branch. IssueMachineToken refuses only with the
+// machine privilege ceiling (no "cannot grant this role" text); a derivation that
+// loses it drops machine_identity_service.go:IssueMachineToken from this guard.
+func TestGrantRefusalStatusGuardCalibration_SharedSetReachesNonPhraseCeilings(t *testing.T) {
+	granting := readGrantCeilingReachingMethods(t)
+	for _, must := range []string{"IssueMachineToken", "RestoreProject", "RestoreEnvironment"} {
+		if !granting[must] {
+			t.Fatalf("%s does not list %s: the derivation lost a ceiling refused with other wording", grantCeilingReachingMethodsFile, must)
+		}
+	}
+	dir := t.TempDir()
+	src := `package services
+func (s *S) Issue(ctx C, req R) error { if _, err := s.core.IssueMachineToken(); err != nil { return mapPlain(err) }; return nil }
+func mapPlain(err error) error { return err }
+`
+	if err := os.WriteFile(filepath.Join(dir, "synthetic.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	violations, seen := grantRefusalStatusViolations(t, dir, granting, nil)
+	want := []string{"synthetic.go:Issue -> IssueMachineToken"}
+	if seen != 1 || !slices.Equal(violations, want) {
+		t.Fatalf("calibration: seen=%d violations=%v, want 1 and exactly %v", seen, violations, want)
+	}
+}
+
+func TestGrantRefusalStatusGuardCalibration(t *testing.T) {
+	dir := t.TempDir()
+	src := `package services
+func (s *S) Bad(ctx C, req R) error      { if err := s.core.AssignUserRole(); err != nil { return status.Error(codes.Internal, "x") }; return nil }
+func (s *S) Adapter(ctx C, req R) error  { if err := s.core.AssignUserRole(); err != nil { return coreErrorStatus(ctx, err, coreErrorStatusOpts{}) }; return nil }
+func (s *S) Mapper(ctx C, req R) error   { if err := s.core.AssignUserRole(); err != nil { return mapRoleError(err) }; return nil }
+func (s *S) Plain(ctx C, req R) error    { if err := s.core.AssignUserRole(); err != nil { return mapPlain(err) }; return nil }
+func (s *S) NotGranting(ctx C, req R) error { if err := s.core.GetProject(); err != nil { return mapPlain(err) }; return nil }
+func mapRoleError(err error) error { if errors.Is(err, core.ErrPermissionDenied) { return nil }; return err }
+func mapPlain(err error) error { return err }
+`
+	if err := os.WriteFile(filepath.Join(dir, "synthetic.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	violations, seen := grantRefusalStatusViolations(t, dir, map[string]bool{"AssignUserRole": true}, nil)
+	want := []string{"synthetic.go:Bad -> AssignUserRole", "synthetic.go:Plain -> AssignUserRole"}
+	if seen != 4 || !slices.Equal(violations, want) {
+		t.Fatalf("calibration: seen=%d violations=%v, want 4 and exactly %v", seen, violations, want)
+	}
+}

@@ -14,6 +14,15 @@
 # provided by CodeQL and gosec on the production code paths.
 *_test.go
 
+# Skip-version upgrade snapshots (SQLite and PostgreSQL) — SQL dumps of a
+# freshly seeded old-schema database. The cost-4 bcrypt hashes in them belong to
+# synthetic fixture users (admin/alice/bob @example.com) with throwaway
+# passwords, same as the hashes in the *_test.go files above; they protect
+# nothing. The snapshots must stay byte-faithful to what the old release wrote,
+# so the hashes are not rewritten.
+internal/storage/testdata/upgrade-snapshots/
+internal/storage/testdata/upgrade-snapshots-pg/
+
 # InsecureSkipVerify=true — an explicit operator opt-in, guarded by a config
 # flag (insecure_skip_verify: true) and a loud WARNING log at startup.
 # Suppressed by // #nosec G402 for gosec; covered by CodeQL + SonarCloud.

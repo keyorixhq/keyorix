@@ -129,8 +129,11 @@ func (h *GroupHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	g, err := h.coreService.GetGroup(r.Context(), uint(id))
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error getting group: %v", err)
-		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
+		if errors.Is(err, storage.ErrGroupNotFound) {
 			sendError(w, "NotFound", errGroupNotFound, http.StatusNotFound, nil)
 			return
 		}
@@ -230,6 +233,10 @@ func (h *GroupHandler) RestoreGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.coreService.RestoreGroup(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		if sendAuditUnavailable(w, err) {
+			return
+		}
+		// The authority to reinstate the group's admin-tier role grants: a refusal, not a fault.
+		if sendGrantCeilingRefusal(w, err) {
 			return
 		}
 		log.Printf("Error restoring group: %v", err)

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -66,11 +67,21 @@ func TestCreateNotificationChannel_DNSGuardHarnessDetectsWeakenedGuard(t *testin
 	}
 	assert.NoError(t, weakened(host), "weakened guard accepts the private resolution: the refusal tests would go red against it")
 
-	// And the create path honours whichever validator it is given, so the tests
-	// above exercise the validator and not some earlier short-circuit.
-	c := NewKeyorixCore(new(MockStorage))
-	c.webhookURLValidator = validateWebhookURL
-	_, err := c.CreateNotificationChannel(context.Background(),
+	// Driven through CreateNotificationChannel, the weakened validator lets the
+	// same private resolution reach storage: the create succeeds and the mock's
+	// CreateNotificationChannel expectation is met. The refusal tests above go
+	// through the real validator, so they would fail against this one. (Swap
+	// `weakened` for validateWebhookURL here and this test goes red: create
+	// returns "private/link-local" and the storage write never happens.)
+	store := new(MockStorage)
+	store.On("CreateNotificationChannel", mock.Anything, mock.Anything).Return(nil)
+	store.On("UpdateNotificationChannel", mock.Anything, mock.Anything).Return(nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	c := NewKeyorixCore(store)
+	c.webhookURLValidator = weakened
+	created, err := c.CreateNotificationChannel(context.Background(),
 		&models.NotificationChannel{Name: "n", Type: "webhook", URL: host, Enabled: true}, "tester", 1)
-	require.Error(t, err)
+	require.NoError(t, err, "weakened validator must let the private resolution through create")
+	require.NotNil(t, created)
+	store.AssertCalled(t, "CreateNotificationChannel", mock.Anything, mock.Anything)
 }

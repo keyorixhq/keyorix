@@ -106,25 +106,8 @@ var ifaceIntendedDiffs = []ifaceDiffRule{
 // campaign looks past them. They are not intended differences: each one has a findings
 // document, and a fix removes the row. IFACE_DIFF_STRICT=1 turns every gate off for a
 // replay. Applies must stay as narrow as the reported shape.
-var ifaceKnownFindings = []ifaceDiffRule{
-	{
-		ID:  "F-AUDIT-RESOURCE-LIKE-CASE",
-		Why: "docs/findings/2026-11-09-FINDING-audit-resource-type-like-case.md",
-		Applies: func(c *ifaceDiffContext) bool {
-			return strings.HasPrefix(c.label, "Audit(mode=2,") && labelAfterHasUpper(c.label, "resource=") && !sameRows(c.sqlite, c.postgres)
-		},
-	},
-}
-
-// labelAfterHasUpper reports an uppercase ASCII letter in the quoted value after marker.
-func labelAfterHasUpper(label, marker string) bool {
-	_, rest, ok := strings.Cut(label, marker)
-	if !ok {
-		return false
-	}
-	v, _, _ := strings.Cut(rest, ",")
-	return strings.IndexFunc(v, func(r rune) bool { return r >= 'A' && r <= 'Z' }) >= 0
-}
+// F-AUDIT-RESOURCE-LIKE-CASE was fixed by AUDIT-SEARCH-PARITY-1 (#4090) and its row removed.
+var ifaceKnownFindings = []ifaceDiffRule{}
 
 // ifaceConstructionDiffs documents the intended differences this harness removes before
 // comparing, so no rule is needed for them. Each entry is enforced by the code named.

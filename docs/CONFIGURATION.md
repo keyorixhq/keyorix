@@ -476,8 +476,7 @@ state `sslmode` itself and it must equal `ssl_mode`, or the server refuses to
 start (`ssl=true` in a URL dsn is the driver's alias for `sslmode=require`).
 Leaving `ssl_mode` out next to a `dsn` is fine.
 
-**The effective sslmode.** With a `dsn`, the sslmode is the dsn's own; when
-the dsn has none, `PGSSLMODE`; otherwise the driver's default, `prefer`. With
+**The effective sslmode.** It is resolved by the order below, and with
 `sslrootcert=system` the driver always runs `verify-full`. Start-up
 validation, the insecure-settings warnings and `admin validate --posture` all
 read this effective value, so a dsn with `sslmode=disable` is reported as
@@ -655,6 +654,15 @@ empty database in its place
 Create the database deliberately with `keyorix-server admin init --database` (which creates the file
 with `O_CREATE|O_EXCL`), then start the server.
 
+In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
+pre-exist. The Postgres backend is unaffected too.
+
+**Why this is off by default:** the shipped first-boot paths (`server/entrypoint.sh`,
+`docker-compose.yml`) start the server directly and let it create the database, so turning this
+on by default would break every first boot that does not run `keyorix-server admin init --database`
+first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
+after that, a missing file can only mean something went wrong.
+
 ### Committing with fdatasync
 
 `storage.database.fdatasync` (SQLite only, default `false`).
@@ -713,14 +721,6 @@ often what a commit waits for, so a commit can be considerably faster.
   refused at once by the shared cache should give `BeginTx` a context with a short deadline, rather
   than expect the driver to fail the transaction on its own.
 
-In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
-pre-exist. The Postgres backend is unaffected too.
-
-**Why this is off by default:** the shipped first-boot paths (`server/entrypoint.sh`,
-`docker-compose.yml`) start the server directly and let it create the database, so turning this
-on by default would break every first boot that does not run `keyorix-server admin init --database`
-first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
-after that, a missing file can only mean something went wrong.
 ### Single-writer mode (`single_writer`)
 
 `storage.database.single_writer` (default `false`, PostgreSQL only) declares this server the only writer
@@ -1555,6 +1555,39 @@ per-config opt-in rather than a silent new requirement. See
   credential, or service account that the lease was minted from. That is available
   to operators today even though Keyorix cannot do it per-lease without affecting
   every other concurrent lease on the same identity.
+
+#### Revoking leases of a config whose `admin_dsn` names a server file
+
+An `admin_dsn` option that makes the driver read a file on the Keyorix server (or
+use its ambient credentials) is refused when a config is created, and again when a
+stored config issues or renews (#3952). A config stored before that release can
+still carry such an option. Its leases still revoke, by hand and through the expiry
+sweep: `Revoke` removes the option and connects with what is left, and never reads
+the named file (#3980). Issue from such a config keeps failing.
+
+| Backend | Option | What `Revoke` does |
+|---|---|---|
+| `postgres` | `sslcert`, `sslkey` (with `sslpassword`) | Removed: no client certificate is presented. A target that requires one refuses the login, and the lease stays `revoke_failed`. |
+| `postgres` | `passfile` | Removed: the `admin_dsn` must contain the admin password anyway. |
+| `postgres` | `sslrootcert` | Replaced by `sslrootcert=system`: the target's certificate is checked against the system trust store with `verify-full`, never with less checking than the stored DSN asked for, and without a plaintext fallback. A target signed by a private CA fails the TLS handshake; the lease stays `revoke_failed` and the error names `sslrootcert`. |
+| `postgres` | `service`, `servicefile` | Refused: they take the target itself from a server file. The lease stays `revoke_failed` with the option in its error. |
+| `mysql` | `allowAllFiles` | Removed: the driver refuses every `LOCAL INFILE` request. |
+| `mongodb` | `tlsCAFile`, `sslCertificateAuthorityFile` | Removed, with `tls=true`: system trust store. A target signed by a private CA fails the TLS handshake; the lease stays `revoke_failed` and the error names the option. |
+| `mongodb` | `tlsCertificateKeyFile`, `sslClientCertificateKeyFile`, `tlsCertificateFile`, `tlsPrivateKeyFile` | Removed, with `tls=true`: no client certificate is presented. |
+| `mongodb` | `authMechanism=MONGODB-AWS`, `MONGODB-OIDC`, `GSSAPI` | Refused: they change who authenticates. |
+
+At startup the server logs a `WARNING: dynamic secrets:` line with the number of
+such configs and their live (`active` or `revoke_failed`) leases, then one line per
+config. List the configs of a project that carry such an option with
+`keyorix dynamic-secret refused-dsn --project-id <id>` (config and option names only,
+never a DSN), and replace the stored DSN of each in place with
+`keyorix dynamic-secret set-admin-dsn <config-id>`. The new DSN is read from
+`KEYORIX_DYNAMIC_ADMIN_DSN` or from stdin (a hidden prompt on a terminal), and never
+from the command line, so it cannot land in shell history or a process listing. While
+the config has an `active` or `revoke_failed` lease the new DSN must name the same
+host(s) as the old one (409 otherwise), because those leases are revoked through it.
+Drop by hand the roles of any lease that stays `revoke_failed` (MongoDB and MySQL
+users have no expiry of their own).
 
 ---
 
@@ -2753,8 +2786,10 @@ of these happens:
 - the session lifetime ends. With `session.absolute_ttl` unset (the default) a session
   can be refreshed indefinitely, so it is not a dependable bound; set it if you rely on it.
 
-The inactivity sweep (`keyorix user suspend-inactive`) is **not scheduled**: nothing in the
-server runs it, and it skips global administrators. Run it by hand, or do not count on it.
+The inactivity sweep (`keyorix user suspend-inactive --days N`, `SuspendInactiveUsers`) is
+**not scheduled**: nothing in the server runs it (its only caller is the on-demand
+`POST /api/v1/admin/jobs/suspend-inactive-users`, which needs `system.write`), and it skips
+global administrators. Run it by hand, or do not count on it.
 
 To offboard such a user, as an administrator holding `users.write` (`users.delete` for
 the delete):
@@ -2765,15 +2800,23 @@ curl -s -H "Authorization: Bearer $KEYORIX_TOKEN" \
   "https://<host>/api/v1/users/by-email?email=leaver@example.com"
 
 # 2. Suspend: login is blocked and every session and PAT of the user is revoked at once.
-keyorix user suspend --id <user-id> --by admin@example.com
+keyorix user suspend --id <user-id>
 #    API equivalent:
 curl -s -X POST -H "Authorization: Bearer $KEYORIX_TOKEN" \
   "https://<host>/api/v1/users/<user-id>/suspend"
 
+# 3. Or deactivate: login is blocked, sessions and PATs are revoked.
+keyorix user update --id <user-id> --active false
+#    API equivalent: PUT /api/v1/users/<user-id> with {"active": false}
+
+# 4. Or remove the account (soft delete; sessions and PATs are revoked in the same step).
 # 3. Or remove the account (soft delete; sessions and PATs are revoked in the same step).
-keyorix user delete --id <user-id> --by admin@example.com --force
+keyorix user delete --id <user-id> --force
 #    API equivalent: DELETE /api/v1/users/<user-id>
 ```
+
+The `--by` flag of these commands is deprecated and ignored; the acting admin is the
+authenticated caller.
 
 Suspension is reversible (`keyorix user reactivate`), but the revoked PATs stay revoked.
 If the IdP later re-enables the person, nothing in Keyorix changes until you reactivate

@@ -1,0 +1,1 @@
+internal/fuzzutil/grammar	none	-	PR #4135 (fuzz/grammar-mutators): structure-aware DER/XML input generator imported only by fuzz targets; no production import, no auth, storage or network decisions; self-tested by internal/fuzzutil/grammar/grammar_test.go	test-helper

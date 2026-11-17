@@ -7,3 +7,11 @@
   `TestReviewAV_Postgres_IDZeroRowIsBroken` (review_adversarial_test.go).
   The online `VerifyAuditChain` (internal/storage/store) makes the same check since #3808
   (INV-STORE-audit-walk-every-row), and the guard tests assert both verifiers agree.
+  Unlike the online walk, this check stays exact (`held != walked`, a deficit included) and a
+  broken link is never retried against a moved retention anchor (#3944): the offline verifier
+  reads a quiescent database. On the configured database `admin audit verify` holds the
+  serverguard exclusive lock for its whole run, so no server (and so no scheduled or
+  API-triggered `PurgeAuditLogs`) runs alongside it; `--db`/`--pg-dsn` name a detached copy.
+  A deficit there can only be a delete outside a purge, so it is BROKEN. Not supported:
+  `--pg-dsn` pointed at the database a running server uses, or `--force` past the lock; a
+  purge during that walk can read BROKEN, the same false alarm the online walk used to give.

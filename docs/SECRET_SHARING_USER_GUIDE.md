@@ -241,6 +241,11 @@ Groups allow you to share secrets with multiple users at once. When you share wi
 
 ### Sharing with Groups
 
+A group, like a user, must be a member of the secret's project: give the group a
+project role first (`keyorix rbac assign-role-to-group --group <name> --role
+project_viewer --project <project>`). Without one the share is refused: "The recipient
+group has no role in this secret's project."
+
 #### Via Web Interface
 The Share dialog searches users only; it has no group option. Share with a
 group through the CLI (`keyorix share create --is-group`) or the API. Group
@@ -263,8 +268,9 @@ curl -X POST "https://api.keyorix.com/api/v1/secrets/123/share" \
 
 #### List Group Shares
 ```bash
-# filter the response for group shares
-curl -X GET "https://api.keyorix.com/api/v1/shares?recipient_type=group" \
+# only group shares (the query parameter is camelCase: recipientType; an
+# unknown name such as recipient_type is ignored and returns every share)
+curl -X GET "https://api.keyorix.com/api/v1/shares?recipientType=group" \
   -H "Authorization: Bearer your-token"
 ```
 

@@ -51,7 +51,7 @@ type AccessLogExportRow struct {
 func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, actorKind string, actorID, secretID uint, format string) ([]byte, string, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
 	if format != ExportFormatCSV && format != ExportFormatJSON {
-		return nil, "", errUnsupportedExportFormatf(format)
+		return nil, "", unsupportedExportFormat()
 	}
 
 	// Verify the secret exists before querying audit events. A storage failure is

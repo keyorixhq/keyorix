@@ -51,10 +51,38 @@ func validationErrorf(format string, a ...any) error {
 	return validationError(fmt.Errorf(format, a...))
 }
 
-// ErrMachineIdentityNotFound is matched (errors.Is) by every "the machine identity or
-// token this call names does not exist" refusal of the machine-identity and
-// machine-token paths, including a project or machine mismatch (reported as not found
-// so an id in another project cannot be probed). The gRPC mapper answers it NotFound by
+// fieldRefusal names the request field a validation refusal is about. It renders and
+// matches exactly as the wrapped error; ValidationField reads the field back.
+type fieldRefusal struct {
+	field string
+	err   error
+}
+
+func (e *fieldRefusal) Error() string { return e.err.Error() }
+func (e *fieldRefusal) Unwrap() error { return e.err }
+
+// refuseField tags err (nil stays nil) with the request field it is about.
+func refuseField(field string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &fieldRefusal{field: field, err: err}
+}
+
+// ValidationField returns the request field ("username", "email", "display_name",
+// "password") a user-field validation refusal names, or "" when err names none. A
+// transport uses it to tell the caller which input to fix, never the error text.
+func ValidationField(err error) string {
+	if f, ok := errors.AsType[*fieldRefusal](err); ok {
+		return f.field
+	}
+	return ""
+}
+
+// ErrMachineIdentityNotFound is matched (errors.Is) by every "the machine identity,
+// token, OIDC binding or role-binding environment this call names does not exist"
+// refusal of the machine-identity and machine-token paths, including a project or
+// machine mismatch (reported as not found so an id in another project cannot be probed). The gRPC mapper answers it NotFound by
 // sentinel. A storage read FAULT is never this error: it is ErrStorageReadUnavailable.
 var ErrMachineIdentityNotFound = errors.New("machine identity or token not found")
 
@@ -63,6 +91,33 @@ var ErrMachineIdentityNotFound = errors.New("machine identity or token not found
 // dynamic-secret paths. The gRPC mapper answers it NotFound by sentinel. A storage read
 // FAULT is never this error: it is ErrStorageReadUnavailable.
 var ErrDynamicSecretNotFound = errors.New("dynamic-secret config or lease not found")
+
+// ErrDynamicSecretPrecondition is matched (errors.Is) by every refusal of a lease
+// issue/renew/revoke that the state of the config, the lease or the server prevents: a
+// disabled config, a lease that is no longer active or has expired, the active-lease
+// limit, a backend whose TTL needs the disabled sweeper, a self-expiring credential that
+// cannot be renewed, a renewal the max-TTL ceiling stops. Its text is core's own (it names
+// no driver or storage detail), so a transport may show it. REST answers it 409, gRPC
+// FailedPrecondition. A backend or driver failure is never this error.
+var ErrDynamicSecretPrecondition = errors.New("dynamic-secret operation refused by the config or lease state")
+
+// dynamicPreconditionf is fmt.Errorf whose result matches ErrDynamicSecretPrecondition.
+func dynamicPreconditionf(format string, a ...any) error {
+	return refuseAs(ErrDynamicSecretPrecondition, fmt.Errorf(format, a...))
+}
+
+// ErrProjectHasSecrets is matched (errors.Is) by DeleteProject's refusal to delete a
+// project that still holds secrets without force (ADR-019). The refusal is about the
+// target's state, not the request's shape: REST answers 409, gRPC FailedPrecondition. Its
+// text is core's own and names only the secret count.
+var ErrProjectHasSecrets = errors.New("project still has secrets")
+
+// errProjectHasSecrets is the ErrProjectHasSecrets refusal for n (> 0) live secrets; the
+// text is unchanged from before it was typed.
+func errProjectHasSecrets(n int) error {
+	return storage.Typed(ErrProjectHasSecrets,
+		fmt.Sprintf("project has %d secret(s) — delete them first or use --force to cascade", n), nil)
+}
 
 // classifyReadErrorAs is classifyReadError whose not-found answer also matches sentinel:
 // a positive not-found keeps the caller's text, anything else is a storage fault.

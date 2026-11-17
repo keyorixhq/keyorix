@@ -305,7 +305,14 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 	}
 
 	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
-	if err := h.coreService.SetUserRoles(r.Context(), actor.UserID, userID, req.RoleIDs, scope, actor.ActorKind() == core.ActorTypeMachine); err != nil {
+	ctx := r.Context()
+	if actor.ActorKind() == core.ActorTypeMachine {
+		// A directly authenticated machine actor replacing roles as itself (not
+		// a /system proxy relay): tag ctx so the grant ceiling checks ITS real
+		// permissions instead of refusing unconditionally.
+		ctx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
+	}
+	if err := h.coreService.SetUserRoles(ctx, actor.UserID, userID, req.RoleIDs, scope, actor.ActorKind() == core.ActorTypeMachine); err != nil {
 		if sendAuditUnavailable(w, err) {
 			return
 		}

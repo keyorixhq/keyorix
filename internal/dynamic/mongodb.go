@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -107,9 +108,19 @@ func (e *MongoEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	client, err := connectMongo(ctx, adminDSN, e.allowPrivateNetwork, e.allowInsecureTransport)
+	// The tls*File options Issue refuses are removed instead, with TLS kept on
+	// (#3980): MongoDB users have no native expiry, so a refused revoke would
+	// leave them live on the target.
+	revokeURI, removed := stripMongoRevokeOptions(adminDSN)
+	client, err := connectMongo(ctx, revokeURI, e.allowPrivateNetwork, e.allowInsecureTransport)
 	if err != nil {
-		return err
+		if _, refused := errors.AsType[*dsn.ForbiddenOptionError](err); refused {
+			return err
+		}
+		caStripped := slices.ContainsFunc(removed, func(k string) bool {
+			return strings.EqualFold(k, "tlsCAFile") || strings.EqualFold(k, "sslCertificateAuthorityFile")
+		})
+		return revokeStrippedError(removed, caStripped, err)
 	}
 	defer func() { _ = client.Disconnect(context.Background()) }()
 

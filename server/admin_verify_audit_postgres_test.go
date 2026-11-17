@@ -52,6 +52,7 @@ server:
 		t.Fatalf("create keys dir: %v", err)
 	}
 
+	adminEncryptionInit(t, bin, dir, env)
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose (KEK derivation) failed: %v\n%s", err, out)
 	}

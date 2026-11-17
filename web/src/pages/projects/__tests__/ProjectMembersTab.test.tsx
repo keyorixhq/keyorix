@@ -1,5 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ALL_CAN } from '../../../test/can';
 import { render, screen, fireEvent, waitFor, within } from '../../../test/test-utils';
 import { ProjectMembersTab } from '../ProjectMembersTab';
 import { answerConfirm, queryConfirm } from '../../../test/confirm';
@@ -102,16 +103,16 @@ const makeMember = (overrides: Partial<ProjectMember> = {}): ProjectMember => ({
     ...overrides,
 });
 
+// GET /users row exactly as the server sends it (openapi UserSummary): snake_case, rows under
+// `users`. The tab used to be tested against a `{data: [...]}` envelope the server never
+// produces, which is how it shipped reading `.data` and showing no candidates for real.
 const otherUser = {
     id: 5,
     username: 'bob',
-    displayName: 'Bob Baker',
+    display_name: 'Bob Baker',
     email: 'bob@example.com',
-    role: 'user',
-    roles: [],
-    permissions: [],
-    preferences: {},
-    lastLogin: '',
+    active: true,
+    account_state: 'active',
 };
 
 function mockMembers(members: ProjectMember[], overrides: Partial<{ isLoading: boolean }> = {}) {
@@ -127,18 +128,18 @@ beforeEach(() => {
     usersApiListMock.mockReset();
 
     useProjectMock.mockReturnValue({ data: { id: 1, name: 'Payments API' } });
-    usersApiListMock.mockResolvedValue({ data: [otherUser], total: 1, page: 1, pageSize: 200, totalPages: 1 });
+    usersApiListMock.mockResolvedValue({ users: [otherUser], total: 1, page: 1, page_size: 200, total_pages: 1 });
     mockMembers([]);
 });
 
 // What the signed-in user may do. Tests that exercise a control assume the user can; the
 // permission-aware cases flip fields on this object (see useCan.ts).
 const canState = vi.hoisted(() => ({
-    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+    value: {} as Record<string, boolean>,
 }));
 vi.mock('../../../features/auth/useCan', () => ({ useCan: () => canState.value }));
 beforeEach(() => {
-    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+    canState.value = { ...ALL_CAN };
 });
 
 describe('ProjectMembersTab', () => {
@@ -389,13 +390,14 @@ describe('ProjectMembersTab', () => {
         });
 
         it('falls back to username and omits the email parenthetical for a candidate with neither', async () => {
-            // displayName uses `??`, which only falls through on null/undefined (not '').
+            // The server sends display_name "" for a user without one; the tab maps that to
+            // undefined so the label falls back to the username.
             usersApiListMock.mockResolvedValue({
-                data: [{ ...otherUser, id: 6, username: 'eve', displayName: undefined, email: '' }],
+                users: [{ ...otherUser, id: 6, username: 'eve', display_name: '', email: '' }],
                 total: 1,
                 page: 1,
-                pageSize: 200,
-                totalPages: 1,
+                page_size: 200,
+                total_pages: 1,
             });
             mockMembers([]);
             render(<ProjectMembersTab projectId={1} />);

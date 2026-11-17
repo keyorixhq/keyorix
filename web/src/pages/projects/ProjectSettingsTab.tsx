@@ -1479,7 +1479,8 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                 requireMfa,
                 setRequireMfa,
                 handleSaveMfa,
-                canSave: can.manageMembers,
+                // The route needs secrets.write and the handler roles.assign.
+                canSave: can.manageMembers && can.writeSecrets,
             })}
 
             {/* ── Environments ── */}

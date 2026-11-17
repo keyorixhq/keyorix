@@ -8,9 +8,16 @@
   and hash), and the verdict, first broken id and head of any chunking equal those of one
   whole-chain walk.
   Guard: `audit_long_reader_snapshot_test.go`
-  (`TestAuditLongReaders_RollingRewalkDoesNotHoldOneSnapshot`: WAL checkpoint progress, PG
-  snapshot age and writer stalls during a 300k-row tick), `audit_chunked_walk_differential_test.go`
+  (`TestAuditLongReaders_RollingRewalkDoesNotHoldOneSnapshot`: WAL checkpoint progress and
+  writer stalls during a 300k-row tick; on PostgreSQL, no one transaction of the walker's own
+  connections (tagged by `application_name`) seen holding a snapshot in half of the probes;
+  `TestAuditLongReaders_MutationOneSnapshotTickIsReportedPinned_Postgres`: the same tick on a
+  store inside one REPEATABLE READ transaction is reported pinned;
+  `TestAuditLongReaders_ForeignSnapshotIsNotTheWalks_Postgres`: a snapshot held by another
+  backend of the same database is not counted as the walk's),
+  `audit_chunked_walk_differential_test.go`
   (`TestAuditChunkedWalk_SameVerdictAsWholeChainWalk_SQLite`/`_Postgres`).
   **Not covered**: `MigrateAuditChainEncoding` deliberately walks inside one exclusive
-  transaction (it rewrites the chain); it is an operator action, not a reader.
-<!-- section: Audit (ADR-029) -->
+  transaction (it rewrites the chain); it is an operator action, not a reader. The probe
+  samples every 5 ms: a walk that held one snapshot for less than half of its probes is not
+  caught.

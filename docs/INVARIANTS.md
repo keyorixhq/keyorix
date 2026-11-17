@@ -12,10 +12,16 @@ finding. If you discover or add an invariant while working in a package, add it 
 package's file in the same PR; if a change would have to break one, stop and ask rather than
 silently removing it.
 
+Separate module, not counted in the table below: the reusable differential-fuzzing kit
+[`fuzzkit/diffkit/INVARIANTS.md`](../fuzzkit/diffkit/INVARIANTS.md) lives in the standalone `fuzzkit/`
+module (built with `GOWORK=off`, like `cli/` and `operator/`). Its invariants
+(`INV-FUZZDIFF-*`) are guarded by that module's own package tests and are deliberately
+excluded from the counts table, which tracks production packages only.
+
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
-| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 153 | 152 | 1 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 43 | 40 | 3 |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 154 | 154 | 0 |
+| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 44 | 41 | 3 |
 | `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 75 | 75 | 0 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 44 | 44 | 0 |
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 21 | 21 | 0 |
@@ -23,15 +29,43 @@ silently removing it.
 | `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 40 | 39 | 1 |
 | `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 20 | 20 | 0 |
 | `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 10 | 10 | 0 |
+| `server/authzdiff` | [server/authzdiff/INVARIANTS.md](../server/authzdiff/INVARIANTS.md) | 2 | 2 | 0 |
 | `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 19 | 19 | 0 |
 | `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 11 | 11 | 0 |
 | `internal/solewriter` | [internal/solewriter/INVARIANTS.md](../internal/solewriter/INVARIANTS.md) | 17 | 17 | 0 |
-| `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 7 | 2 |
+| `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 8 | 1 |
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/keyfiles` | [internal/keyfiles/INVARIANTS.md](../internal/keyfiles/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/restorejournal` | [internal/restorejournal/INVARIANTS.md](../internal/restorejournal/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/securefiles` | [internal/securefiles/INVARIANTS.md](../internal/securefiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
-| **Total** | | **509** | **502** | **7** |
+| `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/audit/siem` | [internal/audit/siem/INVARIANTS.md](../internal/audit/siem/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/notifychan` | [internal/notifychan/INVARIANTS.md](../internal/notifychan/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/rotation` | [internal/rotation/INVARIANTS.md](../internal/rotation/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/fuzzutil/complexity` | [internal/fuzzutil/complexity/INVARIANTS.md](../internal/fuzzutil/complexity/INVARIANTS.md) | 2 | 2 | 0 |
+| `internal/fuzzutil/resguard` | [internal/fuzzutil/resguard/INVARIANTS.md](../internal/fuzzutil/resguard/INVARIANTS.md) | 6 | 6 | 0 |
+| `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 2 | 2 | 0 |
+| `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 4 | 4 | 0 |
+| `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
+| `migrate/internal/splitjson` | [migrate/internal/splitjson/INVARIANTS.md](../migrate/internal/splitjson/INVARIANTS.md) | 1 | 1 | 0 |
+| `migrate/internal/vaultsource` | [migrate/internal/vaultsource/INVARIANTS.md](../migrate/internal/vaultsource/INVARIANTS.md) | 4 | 4 | 0 |
+| `internal/fuzzutil/boundedwork` | [internal/fuzzutil/boundedwork/INVARIANTS.md](../internal/fuzzutil/boundedwork/INVARIANTS.md) | 5 | 5 | 0 |
+| `scripts/fuzzing/time-travel` | [scripts/fuzzing/time-travel/INVARIANTS.md](../scripts/fuzzing/time-travel/INVARIANTS.md) | 2 | 1 | 1 |
+| `fuzz/thirdparty` | [fuzz/thirdparty/INVARIANTS.md](../fuzz/thirdparty/INVARIANTS.md) | 8 | 8 | 0 |
+| `internal/identity` | [internal/identity/INVARIANTS.md](../internal/identity/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/secrettemplate` | [internal/secrettemplate/INVARIANTS.md](../internal/secrettemplate/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 7 | 7 | 0 |
+| `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 4 | 4 | 0 |
+| `fuzz/thirdparty/otp` | [fuzz/thirdparty/otp/INVARIANTS.md](../fuzz/thirdparty/otp/INVARIANTS.md) | 5 | 5 | 0 |
+| `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
 
 ## Highest-priority UNGUARDED gaps
 
@@ -68,7 +102,9 @@ ledger gap.
 
 - The table is written by hand; no generator exists. `TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp`
   (`internal/docsdrift`) fails on a package listed twice, on a row whose Invariants is not
-  Guarded + UNGUARDED, on a Total that is not the column sums, and on any line of this table
+  Guarded + UNGUARDED, on a hand-kept Total row (there is none: two PRs editing it merged in
+  the queue into two Total rows or a wrong sum, #4237; the test computes the column sums and
+  logs them, run it with `-v` to read them), and on any line of this table
   that matches neither the package-row nor the Total pattern (it would otherwise be left out
   of the sums). It does not check a row against its package's files or that the linked file
   exists. When two PRs both change a row, keep ONE row with the current counts.

@@ -98,7 +98,9 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	// in projects they cannot see.
 	targetEnv, err := c.storage.GetEnvironment(ctx, targetEnvID)
 	if err != nil && !isEnvironmentNotFoundErr(err) {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		// Reading the target environment FAILED: a storage fault (503), not a refused
+		// input. It read "Validation error: <driver text>" before (CORE-ERR-FAMILY-7).
+		return nil, &storageReadFault{cause: err}
 	}
 	if err != nil || targetEnv.ProjectID != source.ProjectID {
 		return nil, errSecretTargetInvalidf("%s: target environment %d is not an environment of the source's project", i18n.T("ErrorValidation", nil), targetEnvID)

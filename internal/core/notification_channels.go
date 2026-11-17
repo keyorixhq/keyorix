@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -130,7 +131,7 @@ func (c *KeyorixCore) decryptNotificationChannelURL(ch *models.NotificationChann
 			return fmt.Errorf("notification channel %d URL is stored unencrypted while encryption is active: refusing it (no legitimate write path produces this, and an unencrypted URL carries no binding to the channel)", ch.ID)
 		}
 		ch.URL = string(payload)
-		return nil
+		return c.revalidateStoredChannelURL(ch)
 	default: // ports.NotificationChannelURLTagEncrypted -- Unwrap admits no other value
 		if !c.AuthEncryptionActive() {
 			return fmt.Errorf("notification channel %d URL is encrypted at rest but encryption is disabled: refusing to return the stored envelope as a URL", ch.ID)
@@ -147,8 +148,41 @@ func (c *KeyorixCore) decryptNotificationChannelURL(ch *models.NotificationChann
 			return fmt.Errorf("failed to decrypt notification channel %d URL: %w", ch.ID, derr)
 		}
 		ch.URL = plain
+		return c.revalidateStoredChannelURL(ch)
+	}
+}
+
+// revalidateStoredChannelURL re-runs the URL validator on a channel URL read
+// back from storage, before any caller (alert dispatch, the REST view) can use
+// it (#3625, CodeQL #1209). The create/update-time check cannot vouch for a row
+// that was rewritten afterwards: a URL that passes AAD decryption was still
+// written by whoever held the DEK-protected write path at the time, and a
+// plaintext-mode row carries no binding at all. Defence in depth, fail closed.
+//
+// Only webhook/slack/teams rows carry a dialled URL; an email channel's empty
+// URL is not validated. Without an injected validator the literal-only
+// send-time policy is used (scheme + IP literal): hostnames are resolved and
+// re-checked at dial time by escalationTransport, and a DNS lookup per row on
+// every list/get would add latency and a TOCTOU window of its own. The error
+// never carries the URL (a channel URL is a bearer credential, #3426).
+func (c *KeyorixCore) revalidateStoredChannelURL(ch *models.NotificationChannel) error {
+	switch ch.Type {
+	case "webhook", "slack", "teams":
+	default:
 		return nil
 	}
+	if ch.URL == "" {
+		return nil
+	}
+	validate := validateWebhookSendTimeURL
+	if c.webhookURLValidator != nil {
+		validate = c.webhookURLValidator
+	}
+	if err := validate(ch.URL); err != nil {
+		ch.URL = ""
+		return fmt.Errorf("notification channel %d: stored URL refused: %w", ch.ID, err)
+	}
+	return nil
 }
 
 // encryptNotificationChannelURL produces the url_enc/url_meta pair to store
@@ -357,7 +391,8 @@ func (c *KeyorixCore) validateNotificationChannel(ch *models.NotificationChannel
 		return invalidInput(fmt.Errorf("notification channel name is required"))
 	}
 	if _, ok := validChannelTypes[ch.Type]; !ok {
-		return invalidInput(fmt.Errorf("invalid notification channel type %q: must be one of webhook, slack, teams, email", ch.Type))
+		// #4059: the caller's type value is not quoted back.
+		return invalidInput(errors.New("invalid notification channel type: must be one of webhook, slack, teams, email"))
 	}
 	urlValidator := c.webhookURLValidator
 	if urlValidator == nil {
@@ -447,47 +482,25 @@ func parseWebhookURLLiteral(raw string) (*url.URL, error) {
 // time) directly testable end-to-end.
 var channelLookupIPAddr netutil.Resolver = netutil.DefaultResolver
 
-// isChannelDisallowedIP reports whether ip is a private, link-local, loopback or
-// unspecified ("this network") address — all of which are forbidden as outbound
-// webhook destinations (SSRF guard).
+// isChannelDisallowedIP reports whether ip is a private, link-local, loopback,
+// CGNAT or unspecified ("this network") address — all of which are forbidden as
+// outbound webhook destinations (SSRF guard). It is the strict backend policy
+// (netutil.IsPrivateOrLinkLocal): unlike the evidencesink/siem/notifychan
+// webhook tier, a notification channel refuses loopback too (a channel target is
+// not a local dev/test receiver).
 //
-// Checked both directly AND against ip's embedded IPv4 (netutil.EmbeddedIPv4),
-// mirroring netutil's own matchesCIDRsWithEmbedded "direct match OR embedded
-// match" shape — checking ONLY the decoded form would wrongly clear a genuine
-// IPv6 loopback/link-local literal (e.g. ::1 itself decodes, as deprecated
-// IPv4-compatible, to embedded 0.0.0.1, which is neither loopback nor private
-// in isolation). A NAT64 (64:ff9b::/96) or IPv4-compatible (::x) encoding of a
-// private/loopback/link-local IPv4 (e.g. 64:ff9b::a9fe:a9fe = cloud IMDS
-// 169.254.169.254) needs the embedded check: Go's own net.IP.IsPrivate/
-// IsLoopback/IsLinkLocalUnicast fold IPv4-MAPPED (::ffff:x) via To4, but NOT
-// these two encodings, so a bare stdlib check here disagreed with
-// netutil.IsPrivateOrLinkLocal (the guard every backend-infrastructure dial
-// site in this codebase shares) for exactly those two forms -- reachable both
-// from validateWebhookURL's construction-time check and, more importantly,
-// from escalationTransport's dial-time re-validation (alert_escalation.go),
-// which wires this exact function in as its netutil.Dialer.Disallow policy.
+// netutil.IsPrivateOrLinkLocal classifies ip directly AND against its embedded
+// IPv4 (NAT64 64:ff9b::/96 well-known and local-use, deprecated IPv4-compatible
+// ::x, 6to4, Teredo), so a NAT64/compat encoding of a private/loopback/
+// link-local IPv4 (e.g. 64:ff9b::a9fe:a9fe = cloud IMDS 169.254.169.254) cannot
+// slip past — Go's own net.IP.IsPrivate/IsLoopback fold only IPv4-mapped
+// (::ffff:x). It also refuses the unspecified address and the rest of 0.0.0.0/8
+// (Linux routes a connect() to 0.0.0.0 to loopback) and RFC-6598 CGNAT
+// 100.64.0.0/10 (Alibaba cloud IMDS 100.100.100.200), which the prior
+// hand-rolled stdlib check missed. Reachable both from validateWebhookURL's
+// construction-time check and, more importantly, from escalationTransport's
+// dial-time re-validation (alert_escalation.go), which wires this exact function
+// in as its netutil.Dialer.Disallow policy.
 func isChannelDisallowedIP(ip net.IP) bool {
-	if isChannelDisallowedIPDirect(ip) {
-		return true
-	}
-	if v4 := netutil.EmbeddedIPv4(ip); v4 != nil {
-		return isChannelDisallowedIPDirect(v4)
-	}
-	return false
-}
-
-// isChannelDisallowedIPDirect also refuses the unspecified address (0.0.0.0,
-// ::) and the rest of 0.0.0.0/8 ("this network", RFC 1122): Go's net.Dial
-// treats a literal unspecified host as the local system, and Linux routes a
-// connect() to 0.0.0.0 to loopback, so without this a URL host of 0.0.0.0 (or
-// a name resolving to it at dial time) reached the Keyorix host's own loopback
-// services despite IsLoopback. Same range netutil.IsPrivateOrLinkLocal refuses.
-func isChannelDisallowedIPDirect(ip net.IP) bool {
-	if ip.IsUnspecified() {
-		return true
-	}
-	if v4 := ip.To4(); v4 != nil && v4[0] == 0 {
-		return true
-	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+	return netutil.IsPrivateOrLinkLocal(ip)
 }

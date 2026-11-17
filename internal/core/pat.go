@@ -38,6 +38,11 @@ const (
 	EventPATRevoked = "pat.revoked"
 )
 
+// ErrPATExpiresInPast refuses a PAT whose expires_at is not after now: it would be
+// issued already expired and shown once, a credential that can never be used. It
+// wraps ErrInvalidInput so every transport answers it as a validation error (400).
+var ErrPATExpiresInPast = fmt.Errorf("%w: expires_at must be in the future", ErrInvalidInput)
+
 // CreatePATResult carries the freshly created token plus its one-time plaintext.
 // The plaintext is never persisted and never returned again.
 type CreatePATResult struct {
@@ -46,7 +51,8 @@ type CreatePATResult struct {
 }
 
 // CreateOwnPAT generates a new personal access token for the caller. expiresAt may
-// be nil for a non-expiring token. scopes, when non-empty, is a least-privilege
+// be nil for a non-expiring token; otherwise it must be after now
+// (ErrPATExpiresInPast). scopes, when non-empty, is a least-privilege
 // permission allowlist (ADR-042); projectScope/environmentScope, when non-zero,
 // confine the token to a single project / environment. All only ever NARROW the
 // token below its owner — they are enforced at request time as a filter
@@ -54,7 +60,7 @@ type CreatePATResult struct {
 // than its owner currently holds.
 func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string, expiresAt *time.Time, scopes []string, projectScope, environmentScope uint, allowedCIDRs []string) (*CreatePATResult, error) { // NOSONAR -- domain-driven parameter count
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	// PAT-GUARD-1: a restricted PAT must not mint a token. The child is
 	// unrestricted unless asked otherwise, so this was a one-call escape from every
@@ -64,17 +70,22 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 		return nil, ErrRestrictedPATCannotMintPAT
 	}
 	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("%s: token name is required", i18n.T("ErrorValidation", nil))
+		return nil, validationError(fmt.Errorf("%s: token name is required", i18n.T("ErrorValidation", nil)))
+	}
+	// nil = never expires; an expiry at or before now is refused here, in core, so
+	// every caller is covered, not only the HTTP handler.
+	if expiresAt != nil && !expiresAt.After(c.now()) {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrPATExpiresInPast)
 	}
 
 	scopesJSON, err := encodePATScopes(scopes)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 
 	cidrsJSON, err := encodePATCIDRs(allowedCIDRs)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, validationError(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 
 	b := make([]byte, 32)
@@ -117,7 +128,7 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 // ListOwnPATs returns the caller's tokens (hashes are never exposed by the HTTP DTO).
 func (c *KeyorixCore) ListOwnPATs(ctx context.Context, userID uint) ([]*models.PersonalAccessToken, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return nil, validationError(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	return c.storage.ListPersonalAccessTokensByUser(ctx, userID)
 }

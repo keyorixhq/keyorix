@@ -30,6 +30,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -64,10 +65,10 @@ func TestAuthInterceptor_MachineRoleResolutionUnavailable_IsUnavailableAndUnthro
 	// roles.assign at the target project scope — the seeded "admin" role (id 2)
 	// bundles it. Same setup as TestAuthInterceptor_MachineTokenNetworkAllowlistOverGRPC.
 	proj2 := uint(2)
-	h.AssignUserRole(t, 1, 2, &proj2)
+	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2)
 	tok, err := h.CoreService.IssueMachineToken(ctxBg, 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok-rolesdown"})
 	require.NoError(t, err)
-	require.NoError(t, h.CoreService.AssignMachineRole(ctxBg, m.ID, 4, core.Scope{ProjectID: 2}, 1, false))
+	require.NoError(t, h.CoreService.AssignMachineRole(ctxBg, m.ID, testhelper.RoleProjectViewer, core.Scope{ProjectID: 2}, 1, false))
 
 	// Sanity: the token authenticates fine against unwrapped storage, so a
 	// failure below can only come from the injected roles fault.

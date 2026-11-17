@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
 	"github.com/keyorixhq/keyorix/cli/internal/cliout"
@@ -142,7 +142,7 @@ func collectDoctorReport(ctx context.Context) *doctorReport {
 		skipRest(rep, "config")
 		return rep
 	}
-	serverURL, token, err := resolveServerAndToken(store)
+	serverURL, token, tokenSource, err := resolveServerAndTokenSource(store)
 	if tse, ok := errors.AsType[*tokenSourceError](err); ok {
 		rep.add("config", doctorFail, "cannot read the token: "+cliout.SanitizeForTerminal(tse.Error()), "fix the token file (mode 0600, one line), or unset KEYORIX_TOKEN_FILE")
 		skipRest(rep, "config")
@@ -155,7 +155,7 @@ func collectDoctorReport(ctx context.Context) *doctorReport {
 	}
 	rep.Server = serverURL
 	caFile, caSource := resolveCAFile()
-	rep.add(doctorConfigCheck(serverURL, token, caFile, caSource))
+	rep.add(doctorConfigCheck(serverURL, tokenSource, caFile, caSource))
 
 	client, err := newAPIClient(serverURL, token)
 	if err != nil {
@@ -193,22 +193,19 @@ func skipRest(rep *doctorReport, after string) {
 	}
 }
 
-func doctorConfigCheck(serverURL, token, caFile, caSource string) (string, string, string, string) {
+// doctorConfigCheck describes the settings the CLI would use. tokenSource is the source the
+// shared resolver reported (resolveServerAndTokenSource), never the token itself.
+func doctorConfigCheck(serverURL, tokenSource, caFile, caSource string) (string, string, string, string) {
 	var parts []string
 	srcServer := "the credentials file"
 	if os.Getenv("KEYORIX_SERVER") != "" {
 		srcServer = "KEYORIX_SERVER"
 	}
 	parts = append(parts, fmt.Sprintf("server %s (from %s)", cliout.SanitizeForTerminal(serverURL), srcServer))
-	switch {
-	case token == "":
+	if tokenSource == tokenSourceNone {
 		parts = append(parts, "no token")
-	case os.Getenv("KEYORIX_TOKEN") != "":
-		parts = append(parts, "token from KEYORIX_TOKEN")
-	case os.Getenv("KEYORIX_TOKEN_FILE") != "":
-		parts = append(parts, "token from KEYORIX_TOKEN_FILE")
-	default:
-		parts = append(parts, "token from the credentials file")
+	} else {
+		parts = append(parts, "token from "+tokenSource)
 	}
 	if caFile != "" {
 		parts = append(parts, fmt.Sprintf("CA file %s (from %s)", cliout.SanitizeForTerminal(caFile), caSource))
@@ -433,6 +430,10 @@ func doctorClock(rep *doctorReport, offset time.Duration, ok bool) {
 	}
 }
 
+// machineTokenPrefix is how the server's machine tokens start (ADR-030). doctor uses it only
+// to word the auth check; the server decides what a token may do.
+const machineTokenPrefix = "kx_machine_"
+
 // doctorAuth checks that the token is accepted. It returns whether it is.
 func doctorAuth(ctx context.Context, rep *doctorReport, client *apiclient.ClientWithResponses, token string, canTry bool) bool {
 	if !canTry {
@@ -470,6 +471,16 @@ func doctorAuth(ctx context.Context, rep *doctorReport, client *apiclient.Client
 		}
 		rep.add("auth", doctorPass, detail, "")
 		return true
+	case http.StatusNotFound:
+		// A machine principal has no user row, so the server answers its profile 404 after
+		// it has authenticated it (a bad token is 401). Only a machine token gets this
+		// reading: for a login or a PAT a 404 means the account is gone, and stays a FAIL.
+		if strings.HasPrefix(token, machineTokenPrefix) {
+			rep.add("auth", doctorPass, "machine token: profile not applicable (the server accepts the token)", "")
+			return true
+		}
+		rep.add("auth", doctorFail, "GET /api/v1/auth/profile answered HTTP 404: the account behind this token no longer exists", "run `keyorix login`")
+		return false
 	case http.StatusUnauthorized:
 		rep.add("auth", doctorFail, "the server rejected the token (HTTP 401): the session expired or was revoked", "run `keyorix login`")
 		return false

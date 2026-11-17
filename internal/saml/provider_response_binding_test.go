@@ -87,8 +87,8 @@ func TestParseResponse_RefusesArtifactBinding(t *testing.T) {
 	}))
 	defer ars.Close()
 	for i := range p.sp.IDPMetadata.IDPSSODescriptors {
-		p.sp.IDPMetadata.IDPSSODescriptors[i].ArtifactResolutionServices = []csaml.Endpoint{
-			{Binding: csaml.SOAPBinding, Location: ars.URL},
+		p.sp.IDPMetadata.IDPSSODescriptors[i].SSODescriptor.ArtifactResolutionServices = []csaml.IndexedEndpoint{
+			{Binding: csaml.SOAPBinding, Location: ars.URL, Index: 0},
 		}
 	}
 	const art = "AAQAAMFbLinlXaCM+FIxiDwGOLAy2T71gbpO7ZhNzAgEANlB90ECfpNEVLg="

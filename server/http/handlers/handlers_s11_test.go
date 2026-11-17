@@ -882,9 +882,9 @@ func TestDynamicSecrets_RevokeLease_AuthorizedLeaseNotActive_S11(t *testing.T) {
 	resp, err := ts.Client().Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
-	// "lease is not active" is a safe error → 502 (not 404).
-	assert.True(t, resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusOK,
-		"unexpected: %d", resp.StatusCode)
+	// "lease is not active" is a lease-state refusal (core.ErrDynamicSecretPrecondition) → 409
+	// (CORE-ERR-FAMILY-7; it was a 502 "backend failure" before).
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
 }
 
 // TestDynamicSecrets_RenewLease_AuthorizedLeaseNotActive_S11 — RenewLease
@@ -923,9 +923,8 @@ func TestDynamicSecrets_RenewLease_AuthorizedLeaseNotActive_S11(t *testing.T) {
 	resp, err := ts.Client().Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
-	// RenewLease on an already-revoked lease → "lease is not active" or similar.
-	assert.True(t, resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusOK,
-		"unexpected: %d", resp.StatusCode)
+	// RenewLease on an already-revoked lease → "lease is not active", a lease-state refusal → 409.
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
 }
 
 // ── ExtendExpiringSecrets ─────────────────────────────────────────────────────

@@ -42,7 +42,10 @@ package faultops
 
 import (
 	"context"
+	"fmt"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // knownUnauditedOperations is the reviewed baseline of opCatalog operations
@@ -258,9 +261,8 @@ func TestKnownUnauditedOperationsAreStillUnaudited(t *testing.T) {
 			if result.Success && auditEventCount(w) > before {
 				var types []string
 				w.db.Table("audit_events").Where("id > ?", beforeMaxID).Order("id asc").Pluck("event_type", &types)
-				t.Errorf("%s is listed in knownUnauditedOperations but succeeded AND wrote audit event(s) %v -- "+
-					"stale entry, remove it so FuzzAuditCompleteness asserts on it again",
-					op.Key, types)
+				guardrules.KnownFindingClosed(t, "knownUnauditedOperations/"+op.Key,
+					fmt.Sprintf("succeeded AND wrote audit event(s) %v -- stale entry, remove it so FuzzAuditCompleteness asserts on it again", types))
 			}
 		})
 	}

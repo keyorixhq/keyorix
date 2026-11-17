@@ -33,7 +33,10 @@ func signMutatedAssertion(t *testing.T, assertion *etree.Element, mutate func(*e
 	require.NoError(t, err)
 	children := signed.ChildElements()
 	sig := children[len(children)-1]
-	signed.RemoveChild(sig)
+	// Detach by index: with newer etree/goxmldsig the signature Parent() is not
+	// pointer-equal to signed, so RemoveChild(sig) is a silent no-op and the
+	// later InsertChildAt would leave a second ds:Signature behind.
+	signed.RemoveChildAt(len(signed.Child) - 1)
 	signed.InsertChildAt(1, sig) // after Issuer, as the schema orders it
 	return signed
 }

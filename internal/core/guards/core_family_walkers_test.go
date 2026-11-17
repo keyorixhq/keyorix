@@ -36,61 +36,53 @@ import (
 // them. Guards outside these directories (server/http, internal/statemap) are
 // not scanned.
 
-// dirListingAllowlist: "<dir>/<file>:<enclosing func>" -> why the listing there
-// is not a listing of core sources. Exact: a stale entry fails.
-var dirListingAllowlist = map[string]string{
-	"internal/core/guards/besteffort_callsite_guard_test.go:beScanDir": "lists a synthetic fixture dir or a mutated copy of " +
-		"the family; the real scan is beScanCore (srcpath.CoreFamilyGoFiles)",
-	"internal/core/cross_replica_forced_interleaving_test.go:g5SeedFile":      "fuzz seed files under testdata/fuzz-pending",
-	"internal/core/cross_replica_forced_interleaving_test.go:g5PendingIssues": "fuzz seed dirs under testdata/fuzz-pending",
-	"internal/core/guards/exempt_ledger_review_test.go:discoverExemptLedgers": "ledger *.tsv files under docs/",
-	"internal/core/guards/exempt_ledger_review_test.go:readExemptLedgerRows":  "ledger fragment *.tsv files under docs/<name>.d/",
-	"internal/core/fuzz_cross_replica_invariants_pending_seeds_test.go:TestPendingSeedsPromotedAfterFix": "fuzz " +
-		"seed dirs under testdata/fuzz-pending",
-	"internal/core/hook_storage_selftest_test.go:coreTestFiles": "lists the TEST files of internal/core and of " +
-		"srcpath.CoreTestOnlyDirs (re-pointed when the black-box tests moved to coretests), not core's sources",
-	"internal/core/secret_nodes_soft_delete_guard_test.go:TestSecretNodesSoftDelete_MutationKillsPredicate": "copies " +
-		"internal/storage/store, not core",
-	"internal/core/guards/core_clusters_guard_test.go:readClusters":                          "CLUSTERS.d/*.txt",
-	"internal/core/guards/core_clusters_guard_test.go:TestEveryCoreFileHasOneCluster":        "R4 is about package core itself, not the family",
-	"internal/core/guards/core_family_walkers_test.go:dirListingSites":                       "lists the test files this guard scans",
-	"internal/core/guards/client_time_utc_guard_test.go:modelHookInventory":                  "lists internal/storage/models (the BeforeSave hooks), not core sources",
-	"internal/core/guards/store_time_bind_utc_guard_test.go:storeSourceFiles":                "lists internal/storage/store (the readers it scans), not core sources",
-	"internal/core/guards/storage_read_error_folded_transport_test.go:scanTransportSources":  "lists server/http/handlers and server/grpc/services (the transports it scans), not core sources",
-	"internal/core/guards/core_family_walkers_test.go:TestCoreWalkersSeeEveryCoreFamilyFile": "the expected side of the coverage check",
-	"internal/core/guards/ledger_fragments_test.go:readLedgerRows":                           "ledger fragment *.tsv files",
-	"internal/core/guards/named_lock_order_static_test.go:namedLockStorageSources": "internal/core/storage and " +
-		"internal/storage/store; the core part comes from coreFamilySources",
-	"internal/core/guards/package_stays_light_guard_test.go:TestGuardsPackageStaysLight": "this guards package's own files",
-	"internal/core/guards/rotation_executor_registry_exhaustiveness_test.go:discoverRotationExecutorConstructors": "internal/rotation " +
-		"(and a synthetic dir), not core",
-}
+// dirListingMarker, in the doc comment of a function, says why the directory
+// listing(s) inside it are not a listing of core sources:
+//
+//	// dir-listing-ok: <reason>
+//
+// Inline, not a hand-kept "file:func" list, so a PR that adds, renames or moves
+// a listing function carries its own justification (guard-rollout-contract.md
+// rule 3). Exact: a marker on a function with no listing call, or with no
+// reason, fails.
+const dirListingMarker = "dir-listing-ok:"
 
 var dirListingFuncs = map[string]bool{"ReadDir": true, "Glob": true, "ParseDir": true, "Readdir": true, "Readdirnames": true}
 
 // dirListingSites returns "<rel>:<enclosing func>" for every directory-listing
-// call in the _test.go files directly in each of dirs (repository-relative).
-func dirListingSites(root string, dirs []string) (map[string]int, error) {
-	sites := map[string]int{}
+// call in the _test.go files directly in each of dirs (repository-relative),
+// and the dirListingMarker reason of every function whose doc comment has one
+// (same key; "" for a marker without reason text).
+// dir-listing-ok: lists the test files this guard scans
+func dirListingSites(root string, dirs []string) (sites map[string]int, markers map[string]string, err error) {
+	sites = map[string]int{}
+	markers = map[string]string{}
 	fset := token.NewFileSet()
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
 				continue
 			}
 			rel := dir + "/" + e.Name()
-			f, err := parser.ParseFile(fset, filepath.Join(root, filepath.FromSlash(rel)), nil, 0)
+			f, err := parser.ParseFile(fset, filepath.Join(root, filepath.FromSlash(rel)), nil, parser.ParseComments)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			for _, d := range f.Decls {
 				fd, ok := d.(*ast.FuncDecl)
 				if !ok || fd.Body == nil {
 					continue
+				}
+				if fd.Doc != nil {
+					for _, c := range fd.Doc.List {
+						if _, reason, found := strings.Cut(c.Text, dirListingMarker); found {
+							markers[rel+":"+fd.Name.Name] = strings.TrimSpace(reason)
+						}
+					}
 				}
 				ast.Inspect(fd.Body, func(n ast.Node) bool {
 					if call, ok := n.(*ast.CallExpr); ok {
@@ -103,21 +95,23 @@ func dirListingSites(root string, dirs []string) (map[string]int, error) {
 			}
 		}
 	}
-	return sites, nil
+	return sites, markers, nil
 }
 
-func dirListingViolations(sites map[string]int, allow map[string]string) []string {
+func dirListingViolations(sites map[string]int, markers map[string]string) []string {
 	var msgs []string
 	for _, k := range slices.Sorted(maps.Keys(sites)) {
-		if _, ok := allow[k]; !ok {
+		if _, ok := markers[k]; !ok {
 			msgs = append(msgs, fmt.Sprintf("%s lists a directory itself (%d call(s)). If it lists internal/core's sources, use "+
 				"coreFamilySources(t) / srcpath.CoreFamilyGoFiles so a file moved out of core stays covered (ADR-121 R5); "+
-				"otherwise add it to dirListingAllowlist with the reason", k, sites[k]))
+				"otherwise add a `// %s <reason>` line to the function's doc comment", k, sites[k], dirListingMarker))
 		}
 	}
-	for k := range allow {
+	for k, why := range markers {
 		if _, ok := sites[k]; !ok {
-			msgs = append(msgs, fmt.Sprintf("dirListingAllowlist entry %s matches no listing call: remove it", k))
+			msgs = append(msgs, fmt.Sprintf("%s has a dir-listing marker but no listing call: remove the marker", k))
+		} else if strings.TrimSpace(why) == "" {
+			msgs = append(msgs, fmt.Sprintf("%s has a dir-listing marker with no reason", k))
 		}
 	}
 	slices.Sort(msgs)
@@ -126,20 +120,15 @@ func dirListingViolations(sites map[string]int, allow map[string]string) []strin
 
 func TestNoAdHocCoreDirListing(t *testing.T) {
 	t.Parallel()
-	sites, err := dirListingSites(srcpath.RepoRoot(), append([]string{"internal/core", "internal/core/guards"}, srcpath.CoreTestOnlyDirs...))
+	sites, markers, err := dirListingSites(srcpath.RepoRoot(), append([]string{"internal/core", "internal/core/guards"}, srcpath.CoreTestOnlyDirs...))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(sites) < 5 {
 		t.Fatalf("found only %d listing sites: the scan is broken", len(sites))
 	}
-	for _, msg := range dirListingViolations(sites, dirListingAllowlist) {
+	for _, msg := range dirListingViolations(sites, markers) {
 		t.Error(msg)
-	}
-	for k, why := range dirListingAllowlist {
-		if strings.TrimSpace(why) == "" {
-			t.Errorf("dirListingAllowlist entry %s has no reason", k)
-		}
 	}
 }
 
@@ -148,11 +137,12 @@ func TestDirListingViolations_SelfTest(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{
 		"internal/core/a_test.go": "package core\nimport \"os\"\nfunc walk() { os.ReadDir(\".\") }\n" +
-			"func fixture(d string) { f, _ := os.Open(d); f.Readdirnames(0) }\n",
+			"// dir-listing-ok: synthetic dir\nfunc fixture(d string) { f, _ := os.Open(d); f.Readdirnames(0) }\n" +
+			"// dir-listing-ok: marker on a func that lists nothing\nfunc gone() {}\n",
 		"internal/core/guards/b_test.go": "package guards\nimport \"path/filepath\"\nfunc TestX() { filepath.Glob(\"../*.go\") }\n",
 		"internal/core/guards/c.go":      "package guards\nimport \"os\"\nfunc prod() { os.ReadDir(\"..\") }\n",
 	})
-	sites, err := dirListingSites(root, []string{"internal/core", "internal/core/guards"})
+	sites, markers, err := dirListingSites(root, []string{"internal/core", "internal/core/guards"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,16 +150,22 @@ func TestDirListingViolations_SelfTest(t *testing.T) {
 	if fmt.Sprint(sites) != fmt.Sprint(want) {
 		t.Fatalf("sites = %v, want %v (non-test files are not scanned)", sites, want)
 	}
-	allow := map[string]string{"internal/core/a_test.go:fixture": "synthetic dir", "internal/core/gone_test.go:x": "stale"}
-	msgs := dirListingViolations(sites, allow)
-	if len(msgs) != 3 || !strings.Contains(msgs[0], "gone_test.go:x matches no listing call") ||
+	// Red: an unmarked listing (walk, TestX) and a stale marker (gone).
+	msgs := dirListingViolations(sites, markers)
+	if len(msgs) != 3 || !strings.HasPrefix(msgs[0], "internal/core/a_test.go:gone has a dir-listing marker but no listing call") ||
 		!strings.HasPrefix(msgs[1], "internal/core/a_test.go:walk lists a directory itself") ||
 		!strings.HasPrefix(msgs[2], "internal/core/guards/b_test.go:TestX lists") {
-		t.Fatalf("unlisted walkers and stale entries must be red: %v", msgs)
+		t.Fatalf("unmarked listings and stale markers must be red: %v", msgs)
 	}
-	allow = map[string]string{"internal/core/a_test.go:fixture": "f", "internal/core/a_test.go:walk": "w", "internal/core/guards/b_test.go:TestX": "x"}
-	if msgs := dirListingViolations(sites, allow); len(msgs) != 0 {
-		t.Fatalf("an exact allowlist must be green: %v", msgs)
+	// Red: a marker with no reason text.
+	noReason := map[string]string{"internal/core/a_test.go:fixture": "", "internal/core/a_test.go:walk": "w", "internal/core/guards/b_test.go:TestX": "x"}
+	if msgs := dirListingViolations(sites, noReason); len(msgs) != 1 || !strings.Contains(msgs[0], "no reason") {
+		t.Fatalf("a marker without a reason must be red: %v", msgs)
+	}
+	// Green: exactly one marker per listing function.
+	exact := map[string]string{"internal/core/a_test.go:fixture": "f", "internal/core/a_test.go:walk": "w", "internal/core/guards/b_test.go:TestX": "x"}
+	if msgs := dirListingViolations(sites, exact); len(msgs) != 0 {
+		t.Fatalf("exact markers must be green: %v", msgs)
 	}
 }
 
@@ -178,6 +174,7 @@ func TestDirListingViolations_SelfTest(t *testing.T) {
 // here uses) returns its file together with every internal/core source file.
 // Not parallel: AddCoreFamilyDirForTesting changes what every guard sees while
 // it runs, and parallel tests only start after the sequential ones finish.
+// dir-listing-ok: the expected side of the coverage check
 func TestCoreWalkersSeeEveryCoreFamilyFile(t *testing.T) {
 	probe := t.TempDir()
 	writeTree(t, probe, map[string]string{"probe.go": "package probe\n", "probe_test.go": "package probe\n"})

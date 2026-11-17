@@ -8,6 +8,11 @@ import "errors"
 // errors.Is, never by message text.
 var ErrRoleAlreadyAssigned = errors.New("role already assigned")
 
+// ErrOIDCBindingAlreadyBound is returned (wrapped) by CreateOIDCBinding when the
+// (issuer, subject) pair is already bound to a machine identity. Classify with
+// errors.Is, never by message text.
+var ErrOIDCBindingAlreadyBound = errors.New("oidc subject already bound")
+
 // Typed returns an error that renders as msg exactly and matches sentinel (and
 // cause, when non-nil) under errors.Is. NotFound is the same constructor under
 // the name that fits not-found sentinels.

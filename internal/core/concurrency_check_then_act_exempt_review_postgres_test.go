@@ -48,6 +48,7 @@ import (
 	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 // ctaReview is one test's two-replica Postgres fixture: a bootstrapped admin
@@ -70,12 +71,30 @@ type ctaReview struct {
 	adminID   uint
 	projectID uint
 	envID     uint
+	// appName tags every Postgres connection of the fixture (empty on SQLite),
+	// so lockWaiters counts this fixture's backends and not those of a parallel
+	// test or another package on the same database.
+	appName string
 }
 
 func newCTAReview(t *testing.T) *ctaReview {
 	t.Helper()
-	dsn := pgIsolatedSchemaDSN(t, pgTestDSN(t))
-	return newCTAReviewOn(t, func() *gorm.DB { return pgOpen(t, dsn) })
+	appName := pgdsn.UniqueApplicationName("kx_cta")
+	dsn := pgdsn.WithApplicationName(pgIsolatedSchemaDSN(t, pgTestDSN(t)), appName)
+	f := newCTAReviewOn(t, func() *gorm.DB { return pgOpen(t, dsn) })
+	f.appName = appName
+	return f
+}
+
+// lockWaiters is the number of this fixture's backends waiting on a lock. Only
+// meaningful on Postgres.
+func (f *ctaReview) lockWaiters() int64 {
+	f.t.Helper()
+	var n int64
+	require.NoError(f.t, f.setupDB.Raw(
+		"SELECT count(*) FROM pg_stat_activity WHERE application_name = ? AND wait_event_type = 'Lock'", f.appName).
+		Scan(&n).Error)
+	return n
 }
 
 // newCTAReviewOn builds the fixture over any backend: open must return a NEW,
@@ -662,11 +681,14 @@ func TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres(t *testing.T) 
 	f := newCTAReview(t)
 	target := f.user("cta-suspendee", "project_viewer")
 
+	// After A's unlocked GetUser, not before A's UPDATE: A now holds the row lock
+	// there (FIX-USER-ROW-NARROW-1), so B run from that hook would deadlock on it.
 	var errB error
-	fired := f.beforeA("update", "users", func() { errB = f.coreB.SuspendUser(f.ctx, f.adminID, target.ID) })
+	fired := false
+	f.afterAUnlockedUserRead(target.ID, 1, func() { fired = true; errB = f.coreB.SuspendUser(f.ctx, f.adminID, target.ID) })
 	_, errA := f.coreA.UpdateUser(f.ctx, &UpdateUserRequest{ID: target.ID, ActorID: f.adminID, DisplayName: "renamed"})
 	t.Logf("UpdateUser (A) err=%v, SuspendUser (B) err=%v", errA, errB)
-	require.True(t, fired(), "the hook must have interleaved B's SuspendUser before A's user UPDATE")
+	require.True(t, fired, "the hook must have interleaved B's SuspendUser between A's read and A's write")
 	require.NoError(t, errB, "the suspension itself reported success")
 
 	var got models.User
@@ -696,13 +718,16 @@ func TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres(t *te
 	var before models.User
 	require.NoError(t, f.setupDB.First(&before, victim.ID).Error)
 
+	// Hook point: see the test above.
 	var errB error
-	fired := f.beforeA("update", "users", func() {
+	fired := false
+	f.afterAUnlockedUserRead(victim.ID, 1, func() {
+		fired = true
 		errB = f.coreB.ChangePassword(f.ctx, victim.ID, "UserPass123!xyz-long-enough", "NewUserPass456!abc-long-enough", "")
 	})
 	_, errA := f.coreA.UpdateOwnProfile(f.ctx, victim.ID, "stale-session-rename", "", "")
 	t.Logf("UpdateOwnProfile (A) err=%v, ChangePassword (B) err=%v", errA, errB)
-	require.True(t, fired(), "the hook must have interleaved B's ChangePassword before A's user UPDATE")
+	require.True(t, fired, "the hook must have interleaved B's ChangePassword between A's read and A's write")
 	require.NoError(t, errB, "the password change itself reported success")
 
 	var got models.User
@@ -1015,11 +1040,7 @@ func TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres(t *testing.T) 
 				return
 			default:
 			}
-			var waiting int64
-			require.NoError(t, f.setupDB.Raw(
-				"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").
-				Scan(&waiting).Error)
-			if waiting > 0 {
+			if f.lockWaiters() > 0 {
 				return
 			}
 			time.Sleep(10 * time.Millisecond)

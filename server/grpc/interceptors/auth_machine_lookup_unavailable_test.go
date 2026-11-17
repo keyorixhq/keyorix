@@ -15,6 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -39,10 +40,10 @@ func TestAuthInterceptor_MachineCredentialLookupFault_IsUnavailableAndUnthrottle
 	m, err := h.CoreService.CreateMachineIdentity(ctxBg, 2, "ci-bot-lookupdown", "service", "", "", 1, 0)
 	require.NoError(t, err)
 	proj2 := uint(2)
-	h.AssignUserRole(t, 1, 2, &proj2)
+	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2)
 	tok, err := h.CoreService.IssueMachineToken(ctxBg, 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok-lookupdown"})
 	require.NoError(t, err)
-	require.NoError(t, h.CoreService.AssignMachineRole(ctxBg, m.ID, 4, core.Scope{ProjectID: 2}, 1, false))
+	require.NoError(t, h.CoreService.AssignMachineRole(ctxBg, m.ID, testhelper.RoleProjectViewer, core.Scope{ProjectID: 2}, 1, false))
 
 	faulty := core.NewKeyorixCore(credentialLookupDownStorage{Storage: h.Storage})
 	const peerIP = "198.51.100.9"

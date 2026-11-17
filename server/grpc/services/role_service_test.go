@@ -313,16 +313,16 @@ func TestRoleService_GetUserRoles_RequiresRolesAssign(t *testing.T) {
 func TestRoleService_AssignRole_ScopedCrossProjectDenied(t *testing.T) {
 	svc, h := newRoleService(t)
 	proj1 := uint(1)
-	h.AssignUserRole(t, 50, 2, &proj1) // user 50 = admin (role 2) at project 1 only
+	h.AssignUserRole(t, 50, testhelper.RoleProjectAdmin, &proj1) // user 50 = project_admin at project 1 only
 	target := h.CreateTestUser(t, "xtarget", 600)
-	roles, err := svc.ListRoles(roleAdminCtx(), &pb.ListRolesRequest{})
-	require.NoError(t, err)
-	roleID := roles.GetRoles()[0].GetId()
+	// A project role: the legacy roles are install-wide only (#3605), so granting one
+	// at a project would be refused before the scoped authorization this test is about.
+	roleID := uint32(testhelper.RoleProjectViewer)
 	ctx := authCtx(50, "projadmin") // perms slice is ignored — authz is scope-resolved
 	p1, p2 := uint32(1), uint32(2)
 
 	// Within the caller's project: allowed (project-scoped admin bypass).
-	_, err = svc.AssignRole(ctx, &pb.AssignRoleRequest{
+	_, err := svc.AssignRole(ctx, &pb.AssignRoleRequest{
 		UserId: intToU32(int(target.ID)), RoleId: roleID, ProjectId: &p1,
 	})
 	require.NoError(t, err)
@@ -416,24 +416,26 @@ func TestRoleService_CreateRole_CannotClaimReservedAdminBypassName(t *testing.T)
 
 	ctx := authCtx(702, "attacker3")
 	// RBACTestHelper.SeedDefaultRolesAndPermissions pre-seeds "super_admin"/"admin"/
-	// "editor"/"viewer"/"auditor"/"system_viewer" as realistic fixture roles — a fresh
-	// create attempt for any of THOSE names would collide with the unique(name)
-	// constraint regardless of this fix, so AlreadyExists alone doesn't prove the
-	// reserved-name guard fired for them. "system_admin" and "project_admin" are NOT
-	// pre-seeded by this harness, so their rejection can only come from the guard.
+	// "editor"/"viewer"/"auditor"/"system_viewer" and the project_* roles as realistic
+	// fixture roles — a fresh create attempt for any of THOSE names would collide with
+	// the unique(name) constraint regardless of this fix, so AlreadyExists alone
+	// doesn't prove the reserved-name guard fired for them; the guard's own message
+	// does. "system_admin" is NOT pre-seeded by this harness, so its rejection can
+	// only come from the guard.
 	for _, reserved := range []string{"super_admin", "auditor", "admin", "system_admin", "project_admin"} {
 		_, err := svc.CreateRole(ctx, &pb.CreateRoleRequest{
 			Name: reserved, Description: "reserved-name attempt", Permissions: []string{"roles.write"},
 		})
 		require.Error(t, err, "creating a role named %q must be refused", reserved)
 		assert.Equal(t, codes.AlreadyExists, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "reserved", "%q: refused by the reserved-name guard", reserved)
 	}
 
 	var count int64
 	require.NoError(t, h.DB.Model(&models.Role{}).Where("name = ?", "system_admin").Count(&count).Error)
 	assert.Zero(t, count, "no role named system_admin must exist — this name isn't pre-seeded, so its rejection proves the guard fired")
 	require.NoError(t, h.DB.Model(&models.Role{}).Where("name = ?", "project_admin").Count(&count).Error)
-	assert.Zero(t, count, "no role named project_admin must exist — this name isn't pre-seeded, so its rejection proves the guard fired")
+	assert.Equal(t, int64(1), count, "project_admin is the fixture's seeded role only; the refused create added none")
 }
 
 func TestRoleService_RemoveRole(t *testing.T) {

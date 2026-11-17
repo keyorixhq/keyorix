@@ -41,10 +41,10 @@ var (
 // the reads (pass-through from the request); empty is tolerated.
 func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string, projectID, userID uint, username, ip, ua string) (string, error) {
 	if projectID == 0 {
-		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return "", secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required"))
 	}
 	if userID == 0 {
-		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+		return "", secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required"))
 	}
 	// #G10 (partial — see note): the review flags that this enumerates projectID's full
 	// environment list with no membership/authorization check. A hard project-role gate

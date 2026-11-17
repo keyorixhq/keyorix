@@ -123,7 +123,7 @@ func init() {
 	verifyAuditCmd.Flags().StringVar(&verifyAuditDBPath, "db", "",
 		"Verify this SQLite file directly (opened read-only), instead of the configured database")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditPGDSN, "pg-dsn", "",
-		"Verify this Postgres DSN directly, instead of the configured database")
+		"Verify this Postgres DSN directly, instead of the configured database. Point it at a detached copy, never at a database a running server uses: this mode takes no lock, and a purge running during the walk can make a valid chain read BROKEN")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditKeyFile, "checkpoint-key-file", "",
 		"Path to the derived audit-checkpoint signing key (hex or base64) -- enables checkpoint/high-water/truncation checks")
 	verifyAuditCmd.Flags().StringArrayVar(&verifyAuditPrevKeyFiles, "previous-checkpoint-key-file", nil,

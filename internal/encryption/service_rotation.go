@@ -26,6 +26,10 @@ import (
 // finish it. Its value is the new key version, for the recovery log line. Not secret.
 const dekRotationPromotePendingKey = "dek_rotation.promote_pending"
 
+// DEKRotationPromotePendingMetadataKey is dekRotationPromotePendingKey for
+// callers outside the package (`admin backup` refuses on it, #4104).
+const DEKRotationPromotePendingMetadataKey = dekRotationPromotePendingKey
+
 // RotateDEKWithSweep performs a true DEK rotation with a full re-encryption
 // sweep of all DEK-encrypted database rows (ADR-010).
 //
@@ -546,6 +550,9 @@ func (s *Service) AcquireExclusiveKeyLock() error {
 	defer s.mu.Unlock()
 	if s.serverLock != nil {
 		return nil
+	}
+	if s.keyPathErr != nil {
+		return s.keyPathErr // #4249: the lock would be another file than every other process's
 	}
 	f, err := acquireExclusiveKeyLock(s.keyManager.baseDir, s.keyManager.dekPath)
 	if err != nil {

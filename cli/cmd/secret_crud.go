@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -78,7 +77,7 @@ func readSecretValueFromFile(path string) ([]byte, error) {
 }
 
 // secretValueStdin is where `--from-file -` reads (a variable so tests can feed it).
-var secretValueStdin io.Reader = os.Stdin
+var secretValueStdin io.Reader = sharedStdin{}
 
 // readSecretValueFromStdin reads a secret value piped to the command, the way a script
 // supplies one without a temp file or argv: `printf %s "$V" | keyorix secret create
@@ -809,7 +808,7 @@ func findRemoteSecretByName(ctx context.Context, client *apiclient.ClientWithRes
 }
 
 func confirmSecretDeletion(secretName string) bool {
-	reader := bufio.NewReader(os.Stdin)
+	reader := stdinReader()
 	fmt.Printf("Type the secret name '%s' to confirm deletion: ", secretName)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)

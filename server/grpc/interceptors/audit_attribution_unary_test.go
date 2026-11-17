@@ -28,6 +28,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testhelper"
 )
 
 func TestAuthInterceptor_UnaryAuditRowCarriesActorKindMachineIDAndImpersonator(t *testing.T) {
@@ -53,7 +54,7 @@ func TestAuthInterceptor_UnaryAuditRowCarriesActorKindMachineIDAndImpersonator(t
 		m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "unary-bot", "service", "", "", 1, 0)
 		require.NoError(t, err)
 		proj2 := uint(2)
-		h.AssignUserRole(t, 1, 2, &proj2) // admin at project 2: the issuer's privilege ceiling
+		h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2) // admin at project 2: the issuer's privilege ceiling
 		tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
 		require.NoError(t, err)
 

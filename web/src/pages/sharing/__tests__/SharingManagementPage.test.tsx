@@ -230,6 +230,40 @@ describe('SharingManagementPage — table rendering', () => {
         expect(within(carolRow).getByText('in 5h')).toBeInTheDocument();
     });
 
+    // #3153: the SECRET column names the secret and links to it; the API omits the name when
+    // the secret has since been deleted (or the caller may not read it), so fall back to the id.
+    it('renders the secret name as a link, with its project, when the share record carries it', () => {
+        sharesState.data = makeResponse([
+            { ...shareAlice, secretName: 'db-password', projectName: 'payments' } as typeof shareAlice,
+        ]);
+        render(<SharingManagementPage />);
+
+        const link = screen.getByTestId('share-secret-name');
+        expect(link).toHaveTextContent('db-password');
+        expect(link).not.toHaveTextContent('Secret #');
+        expect(link).toHaveAttribute('href', '/secrets/101');
+        expect(screen.getByTestId('share-secret-project')).toHaveTextContent('payments');
+    });
+
+    it('falls back to "Secret #id" (still linked, no project line) when the secret no longer resolves', () => {
+        sharesState.data = makeResponse([shareOps]);
+        render(<SharingManagementPage />);
+
+        const link = screen.getByTestId('share-secret-name');
+        expect(link).toHaveTextContent('Secret #102');
+        expect(link).toHaveAttribute('href', '/secrets/102');
+        expect(screen.queryByTestId('share-secret-project')).not.toBeInTheDocument();
+    });
+
+    it('uses theme-token text classes for the secret name in the dark theme', () => {
+        sharesState.data = makeResponse([{ ...shareAlice, secretName: 'db-password' } as typeof shareAlice]);
+        render(<SharingManagementPage />);
+
+        const link = screen.getByTestId('share-secret-name');
+        expect(link.className).toContain('text-base-primary');
+        expect(link.className).toContain('dark:text-white');
+    });
+
     it('initially queries useShares with only page and pageSize', () => {
         render(<SharingManagementPage />);
         expect(sharesQueryMock).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
@@ -493,13 +527,27 @@ describe('SharingManagementPage — secret column (#3153)', () => {
         expect(within(rowFor('Carol Smith')).getByTestId('share-secret-name')).toHaveTextContent('Secret #103');
         expect(within(rowFor('Carol Smith')).queryByTestId('share-secret-project')).not.toBeInTheDocument();
     });
+
+    it('the secret name links to the secret detail page, also when the API withholds the name', () => {
+        sharesState.data = makeResponse([
+            { ...shareAlice, secretName: 'db-password', projectName: 'Payments' } as typeof shareAlice,
+            shareCarol,
+        ]);
+        render(<SharingManagementPage />);
+        expect(within(rowFor('Alice Anderson')).getByTestId('share-secret-name')).toHaveAttribute(
+            'href',
+            '/secrets/101'
+        );
+        expect(within(rowFor('Carol Smith')).getByTestId('share-secret-name')).toHaveAttribute('href', '/secrets/103');
+    });
 });
 
 describe('SharingManagementPage — per-row actions', () => {
-    it('View secret opens the view-secret modal request', () => {
+    it('View secret goes to the secret detail page (no modal: none renders it)', () => {
         render(<SharingManagementPage />);
         fireEvent.click(within(rowFor('Alice Anderson')).getByTitle('View secret'));
-        expect(openModalMock).toHaveBeenCalledWith('view-secret', { secretId: 101 });
+        expect(window.location.pathname).toBe('/secrets/101');
+        expect(openModalMock).not.toHaveBeenCalledWith('view-secret', expect.anything());
     });
 
     it('Revoke access opens the confirm dialog; confirming deletes the share and closes on success', () => {

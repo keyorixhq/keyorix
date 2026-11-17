@@ -74,6 +74,9 @@ const DEKEpochMetadataKey = dekEpochKey
 // fingerprint after it is the DEK being rotated away from.
 const dekEpochRotatingPrefix = "rotating:"
 
+// DEKEpochRotatingPrefix is dekEpochRotatingPrefix for callers outside the package.
+const DEKEpochRotatingPrefix = dekEpochRotatingPrefix
+
 // Timing of the fence. dekEpochFenceWait must exceed dekEpochMaxStaleness: a
 // replica that last confirmed the epoch just before the fence committed can
 // keep encrypting for up to dekEpochMaxStaleness; the rest is grace for an
@@ -218,14 +221,20 @@ func (w *dekEpochWatch) close() {
 // StartDEKEpochGuard checks, at server start-up, that this server's DEK is the
 // database's DEK, and then keeps checking it (see the file comment). db is a
 // handle the guard may keep for the server's lifetime; release, if non-nil,
-// is called once the guard stops (Shutdown). A no-op returning nil, without
-// calling release, when db is not PostgreSQL: the caller keeps the handle.
+// is called once the guard stops (Shutdown). When db is not PostgreSQL there
+// is no guard: it only records the rotation protocol (rotation_protocol.go) and
+// returns without calling release; the caller keeps the handle.
 //
 // Must run after Initialize and after the schema is migrated. Returns an
 // error wrapping ErrDEKEpochMismatch when the server must not start.
 func (s *Service) StartDEKEpochGuard(db *gorm.DB, release func()) error {
 	if !dekEpochApplies(db) {
-		return nil
+		if db == nil || db.Dialector == nil {
+			return nil
+		}
+		// SQLite: no epoch, but an older admin binary must still be kept from
+		// rotating or restoring over what this server serves.
+		return recordDEKRotationProtocol(db)
 	}
 	s.mu.RLock()
 	if !s.initialized {

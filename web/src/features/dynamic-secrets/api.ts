@@ -8,6 +8,8 @@ export const DYNAMIC_SECRET_KEYS = {
     list: (projectId: number, environmentId?: number) =>
         [...DYNAMIC_SECRET_KEYS.all, 'list', projectId, environmentId ?? 0] as const,
     leases: (configId: number) => [...DYNAMIC_SECRET_KEYS.all, 'leases', configId] as const,
+    // Keys carry ids only: never a DSN (the admin-DSN update is a mutation, not a query).
+    refusedAdminDsn: (projectId: number) => [...DYNAMIC_SECRET_KEYS.all, 'refused-admin-dsn', projectId] as const,
 };
 
 export function useDynamicConfigs(projectId: number, environmentId?: number) {
@@ -43,6 +45,41 @@ export function useClassifyDynamicConfig() {
         mutationFn: ({ id, classification }: { id: number; classification: string }) =>
             dynamicSecretsApi.classify(id, classification),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: DYNAMIC_SECRET_KEYS.all }),
+    });
+}
+
+// The project's configs whose stored admin DSN names a refused option. The server needs
+// dynamic-secret admin authority for it (403 otherwise), so callers pass `enabled` only for
+// roles that can manage configs, and a 403 is not retried.
+export function useRefusedAdminDsn(projectId: number, enabled = true) {
+    return useQuery({
+        queryKey: DYNAMIC_SECRET_KEYS.refusedAdminDsn(projectId),
+        queryFn: () => dynamicSecretsApi.listRefusedAdminDsn(projectId),
+        enabled: enabled && !!projectId,
+        staleTime: 30_000,
+        retry: false,
+    });
+}
+
+// Replaces a config's admin DSN. The DSN is a secret: it is only ever the mutation variable
+// (never a query key or a cached response), a failure surfaces as an AdminDsnUpdateError with
+// the DSN scrubbed, and gcTime 0 drops the mutation (and its variables) as soon as the form
+// unmounts. Success invalidates every dynamic-secrets query, which refreshes both the
+// configs list and the refused-DSN report.
+export function useUpdateDynamicConfigAdminDSN() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ id, adminDsn }: { id: number; adminDsn: string }) =>
+            dynamicSecretsApi.updateAdminDsn(id, adminDsn),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: DYNAMIC_SECRET_KEYS.all }),
+        // 'forbidden' covers a config that is gone as well as a missing authority (they read
+        // the same, INV-WEB-06): refresh the lists so a deleted config stops being offered.
+        onError: (error) => {
+            if ((error as { kind?: string }).kind === 'forbidden') {
+                void queryClient.invalidateQueries({ queryKey: DYNAMIC_SECRET_KEYS.all });
+            }
+        },
+        gcTime: SENSITIVE_GC_TIME,
     });
 }
 

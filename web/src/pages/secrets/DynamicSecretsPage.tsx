@@ -8,7 +8,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
-import { useAuth } from '../../features/auth';
+import { useCan } from '../../features/auth/useCan';
 import { classificationMeta, CLASSIFICATION_LEVELS } from '../../features/secrets/classification';
 import {
     DYNAMIC_BACKENDS,
@@ -22,16 +22,19 @@ import {
     useClassifyDynamicConfig,
 } from '../../features/dynamic-secrets/api';
 import { LeasesPanel } from '../../features/dynamic-secrets/LeasesPanel';
+import { RefusedAdminDsnBanner } from '../../features/dynamic-secrets/RefusedAdminDsnBanner';
+import { ReplaceAdminDsnModal, ReplaceAdminDsnTarget } from '../../features/dynamic-secrets/ReplaceAdminDsnModal';
 
 /**
  * Dynamic Secrets console (ADR-035). Configs are project + environment scoped, and
  * there is no global project/env in the shell, so this page carries its own
  * project/env picker (mirroring how the all-secrets page scopes its create flow).
- * Lists the configs for the selected scope with their data-classification, lets an
- * admin register a new target and reclassify, and expands each config to its leases.
+ * Lists the configs for the selected scope with their data-classification, lets a writer
+ * (secrets.write) register a new target and reclassify, and expands each config to its leases.
  */
 const DynamicSecretsPage: React.FC = () => {
-    const { isAdmin } = useAuth();
+    // The dynamic-secret routes (create, classify, lease issue/renew/revoke) all need secrets.write.
+    const { writeSecrets: canWrite } = useCan();
     const { data: projects = [] } = useProjects();
     const [projectId, setProjectId] = useState(0);
     const { data: environments = [] } = useProjectEnvironments(projectId);
@@ -53,6 +56,10 @@ const DynamicSecretsPage: React.FC = () => {
 
     const [expanded, setExpanded] = useState<number | null>(null);
     const [showCreate, setShowCreate] = useState(false);
+    // Which config the "Replace admin DSN" form is open for (an id and a name, never a DSN),
+    // and the name of the one just replaced, for the confirmation line.
+    const [replaceTarget, setReplaceTarget] = useState<ReplaceAdminDsnTarget | null>(null);
+    const [replacedName, setReplacedName] = useState('');
 
     const reclassify = (id: number, classification: string, current: string) => {
         if (classification === current) return;
@@ -104,7 +111,20 @@ const DynamicSecretsPage: React.FC = () => {
                                     </span>
                                 </span>
                             </button>
-                            {isAdmin ? (
+                            {canWrite && (
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    aria-label={`Replace admin DSN for ${c.name}`}
+                                    onClick={() =>
+                                        setReplaceTarget({ id: c.id, name: c.name, backendType: c.backendType })
+                                    }
+                                >
+                                    Replace admin DSN
+                                </Button>
+                            )}
+                            {canWrite ? (
                                 <select
                                     aria-label={`Classification for ${c.name}`}
                                     value={c.classification ?? ''}
@@ -134,7 +154,7 @@ const DynamicSecretsPage: React.FC = () => {
                                 </span>
                             )}
                         </div>
-                        {expanded === c.id && <LeasesPanel configId={c.id} canManage={isAdmin} />}
+                        {expanded === c.id && <LeasesPanel configId={c.id} canManage={canWrite} />}
                     </div>
                 ))}
             </div>
@@ -149,7 +169,7 @@ const DynamicSecretsPage: React.FC = () => {
                     <BoltIcon className="h-6 w-6" style={{ color: 'var(--accent)' }} />
                     Dynamic Secrets
                 </h1>
-                {isAdmin && projectId > 0 && (
+                {canWrite && projectId > 0 && (
                     <Button onClick={() => setShowCreate(true)}>
                         <PlusIcon className="size-4" />
                         New config
@@ -183,6 +203,21 @@ const DynamicSecretsPage: React.FC = () => {
                 </div>
             </div>
 
+            {replacedName && (
+                <div className="mb-4" role="status">
+                    <Alert type="success" message={`Admin DSN replaced for ${replacedName}.`} />
+                </div>
+            )}
+
+            <RefusedAdminDsnBanner
+                projectId={projectId}
+                canManage={canWrite}
+                onReplace={(target) => {
+                    setReplacedName('');
+                    setReplaceTarget(target);
+                }}
+            />
+
             {error ? (
                 <Alert
                     type="error"
@@ -190,6 +225,14 @@ const DynamicSecretsPage: React.FC = () => {
                 />
             ) : (
                 loadingOrContent
+            )}
+
+            {replaceTarget && (
+                <ReplaceAdminDsnModal
+                    config={replaceTarget}
+                    onClose={() => setReplaceTarget(null)}
+                    onReplaced={setReplacedName}
+                />
             )}
 
             {showCreate && (

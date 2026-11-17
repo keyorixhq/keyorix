@@ -160,14 +160,27 @@ func TestRunAlertEscalation_RedirectHarnessDetectsWeakenedGuard(t *testing.T) {
 		return &http.Client{Timeout: 10 * time.Second, Transport: tr} // CheckRedirect: nil == follow
 	}
 
-	t.Run("second public host is reached", func(t *testing.T) {
-		run := runEscalationAgainstRedirect(t, escalationRedirectTargets["second public host"], weakened)
-		assert.EqualValues(t, 1, run.followedHit, "weakened guard: the redirect was followed and the POST re-sent")
-		assert.NotContains(t, run.logs, "redirect refused")
-		assert.Equal(t, 1, run.result.Escalated)
-	})
-	t.Run("link-local IMDS is dialed", func(t *testing.T) {
-		run := runEscalationAgainstRedirect(t, escalationRedirectTargets["link-local IMDS"], weakened)
-		assert.Contains(t, run.dialed, "169.254.169.254:443", "weakened guard: the client tried to reach IMDS")
-	})
+	// All five targets of the guarded test above. Each one must be dialed once the
+	// guard is gone; the second public host also receives the re-sent POST.
+	wantDial := map[string]string{
+		"second public host": "hooks.second.test:443",
+		"loopback":           "127.0.0.1:8443",
+		"private":            "10.0.0.5:443",
+		"link-local IMDS":    "169.254.169.254:443",
+		"ipv6 loopback":      "[::1]:8443",
+	}
+	require.Len(t, wantDial, len(escalationRedirectTargets), "keep wantDial in step with escalationRedirectTargets")
+	for name, target := range escalationRedirectTargets {
+		t.Run(name+" is reached", func(t *testing.T) {
+			addr, ok := wantDial[name]
+			require.True(t, ok, "no expected dial address for %q", name)
+			run := runEscalationAgainstRedirect(t, target, weakened)
+			assert.Contains(t, run.dialed, addr, "weakened guard: the client followed the redirect and dialed the target")
+			assert.NotContains(t, run.logs, "redirect refused")
+			if name == "second public host" {
+				assert.EqualValues(t, 1, run.followedHit, "weakened guard: the redirect was followed and the POST re-sent")
+				assert.Equal(t, 1, run.result.Escalated)
+			}
+		})
+	}
 }

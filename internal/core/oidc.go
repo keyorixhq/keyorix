@@ -9,6 +9,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -87,16 +88,21 @@ func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*model
 // authority, matching the scope of what it actually claims.
 func (c *KeyorixCore) CreateOIDCBinding(ctx context.Context, projectID, machineID uint, issuer, subject string, actorID uint) (*models.MachineIdentityOIDCBinding, error) {
 	if strings.TrimSpace(issuer) == "" || strings.TrimSpace(subject) == "" {
-		return nil, fmt.Errorf("issuer and subject are required")
+		return nil, validationErrorf("issuer and subject are required")
 	}
 	if err := c.requireAdminAuthorityAt(ctx, actorID, 0); err != nil {
+		// Only the refusal is a permission denial; a failure to resolve the actor's
+		// roles stays a storage error.
+		if errors.Is(err, errAdminAuthorityRequired) {
+			return nil, permissionDeniedf("binding an OIDC subject requires install-wide admin authority: %w", err)
+		}
 		return nil, fmt.Errorf("binding an OIDC subject requires install-wide admin authority: %w", err)
 	}
 	// Surface operator typos early: a binding to an issuer Keyorix doesn't trust
 	// would never authenticate (Verify rejects untrusted issuers independently),
 	// so reject it at creation when OIDC is configured.
 	if c.oidcVerifier != nil && !c.oidcVerifier.TrustsIssuer(strings.TrimSpace(issuer)) {
-		return nil, fmt.Errorf("issuer %q is not a configured trusted OIDC issuer", issuer)
+		return nil, validationErrorf("issuer %q is not a configured trusted OIDC issuer", issuer)
 	}
 	m, err := c.machineInProject(ctx, projectID, machineID)
 	if err != nil {
@@ -133,10 +139,10 @@ func (c *KeyorixCore) DeleteOIDCBinding(ctx context.Context, projectID, machineI
 	}
 	b, err := c.storage.GetOIDCBindingByID(ctx, bindingID)
 	if err != nil {
-		return classifyReadError(err, "binding not found")
+		return classifyReadErrorAs(err, ErrMachineIdentityNotFound, "binding not found")
 	}
 	if b.MachineIdentityID != machineID {
-		return fmt.Errorf("binding not found")
+		return notFoundAs(ErrMachineIdentityNotFound, "binding not found")
 	}
 	if err := c.storage.DeleteOIDCBinding(ctx, bindingID); err != nil {
 		return err

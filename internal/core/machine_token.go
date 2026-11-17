@@ -201,6 +201,15 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 		}
 		ceilingType, ceilingID = ActorTypeMachine, callerID
 	}
+	// A user caller authenticated by a restricted PAT (ADR-042) must not mint a
+	// token: the minted kx_machine_ token is unrestricted and non-expiring unless
+	// the request asks otherwise, so this would be a one-call escape from every
+	// dimension of the restriction (project, environment, permissions, CIDR
+	// allowlist). The counterpart of PAT-GUARD-1 (ErrRestrictedPATCannotMintPAT)
+	// and of requireMachineCallerMayIssue for machine callers.
+	if ceilingType == ActorTypeUser && patRestrictionFromContext(ctx) != nil {
+		return nil, fmt.Errorf("%w: a restricted personal access token cannot issue machine tokens, because the token would carry none of its restrictions", ErrMachinePrivilegeCeilingDenied)
+	}
 	if err := c.requireMachinePrivilegeCeiling(ctx, ceilingType, ceilingID, projectID, machineID); err != nil {
 		return nil, err
 	}
@@ -654,13 +663,13 @@ func (c *KeyorixCore) requireEnvironmentInProject(ctx context.Context, scope Sco
 	}
 	env, err := c.storage.GetEnvironment(ctx, scope.EnvironmentID)
 	if err != nil {
-		if !isEnvironmentNotFoundErr(err) {
-			return fmt.Errorf("failed to verify target environment %d: %w", scope.EnvironmentID, err)
-		}
-		return fmt.Errorf("%s: environment %d not found", i18n.T("ErrorValidation", nil), scope.EnvironmentID)
+		// A missing environment matches ErrMachineIdentityNotFound; a read fault matches
+		// ErrStorageReadUnavailable and is never reported as a missing environment.
+		return classifyReadErrorAs(err, ErrMachineIdentityNotFound,
+			fmt.Sprintf("%s: environment %d not found", i18n.T("ErrorValidation", nil), scope.EnvironmentID))
 	}
 	if env.ProjectID != scope.ProjectID {
-		return fmt.Errorf("%s: environment %d does not belong to project %d", i18n.T("ErrorValidation", nil), scope.EnvironmentID, scope.ProjectID)
+		return validationErrorf("%s: environment %d does not belong to project %d", i18n.T("ErrorValidation", nil), scope.EnvironmentID, scope.ProjectID)
 	}
 	return nil
 }
@@ -689,7 +698,7 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 	}
 	role, err := c.storage.GetRole(ctx, roleID)
 	if err != nil {
-		return err
+		return classifyReadErrorAs(err, storage.ErrRoleNotFound, i18n.T("ErrorRoleNotFound", nil))
 	}
 	// #3546: machineInProject already refuses project 0 (a machine identity
 	// always belongs to a project); this keeps the role-scope rule explicit on

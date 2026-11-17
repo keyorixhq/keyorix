@@ -1100,29 +1100,6 @@ func TestFinishWebAuthnPasswordlessLogin_BadCredential_S7(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── isSafeDynamicSecretError ──────────────────────────────────────────────────
-
-// TestIsSafeDynamicSecretError_S7 exercises every safe sentinel and confirms
-// unknown messages return false (the direct-call form gives us branch coverage
-// without any HTTP overhead).
-func TestIsSafeDynamicSecretError_S7(t *testing.T) {
-	safeMsgs := []string{
-		"config not found",
-		"lease not found",
-		"lease is not active",
-		"lease has expired; issue a new lease instead",
-		"cannot issue from the disabled config",
-		"active-lease limit reached",
-		"mints self-expiring credentials that cannot be renewed",
-		"unsupported backend",
-	}
-	for _, msg := range safeMsgs {
-		assert.True(t, isSafeDynamicSecretError(msg), "expected safe: %q", msg)
-	}
-	assert.False(t, isSafeDynamicSecretError("connection refused"))
-	assert.False(t, isSafeDynamicSecretError(""))
-}
-
 // ── isSafeSSOError ────────────────────────────────────────────────────────────
 
 // TestIsSafeSSOError_S7 exercises every safe sentinel and confirms unsafe

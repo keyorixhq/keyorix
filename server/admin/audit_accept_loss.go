@@ -72,8 +72,8 @@ again without --confirm, read the plan (it says when the unfinished seal was
 recorded, by whom and why, and prints the same digest), and only if you started
 that acceptance complete it with --resume-seal <digest> --confirm. If you no longer
 have the error, the plan is where to get the digest. A resume never writes without
---resume-seal: a
-seal you did not just run is a rollback of the database until proven otherwise.
+--resume-seal: a seal you did not just run is a rollback of the database until
+proven otherwise.
 
 Afterwards every view reports the chain as "sealed": not_proven until a full
 verification completes, then sealed (online status, posture, evidence pack;

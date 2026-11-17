@@ -1172,17 +1172,6 @@ func TestAttestProjectAccessReview_NotFound(t *testing.T) {
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 }
 
-// ── isSafeDynamicSecretError ───────────────────────────────────────────────────
-
-func TestIsSafeDynamicSecretError_S5(t *testing.T) {
-	assert.True(t, isSafeDynamicSecretError("config not found"))
-	assert.True(t, isSafeDynamicSecretError("lease not found"))
-	assert.True(t, isSafeDynamicSecretError("lease is not active"))
-	assert.True(t, isSafeDynamicSecretError("active-lease limit reached"))
-	assert.False(t, isSafeDynamicSecretError("connection refused: host=db-prod:5432"))
-	assert.False(t, isSafeDynamicSecretError(""))
-}
-
 // ── AuthHandler — Login / RefreshToken / ListSessions / InitSystem ─────────────
 
 func TestAuthHandler_Login_MissingBody(t *testing.T) {

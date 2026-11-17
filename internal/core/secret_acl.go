@@ -91,12 +91,12 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 	if isMember, merr := c.IsProjectMember(ctx, userID, secret.ProjectID); merr != nil {
 		return fmt.Errorf("failed to verify project membership: %w", merr)
 	} else if !isMember {
-		return fmt.Errorf("%s: user %d is not a member of this secret's project", i18n.T("ErrorValidation", nil), userID)
+		return invalidACLRequest(fmt.Errorf("%s: user %d is not a member of this secret's project", i18n.T("ErrorValidation", nil), userID))
 	}
 
 	permsJSON, err := EncodeSecretACLPerms(perms)
 	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return invalidACLRequest(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 
 	acl := &models.SecretACL{

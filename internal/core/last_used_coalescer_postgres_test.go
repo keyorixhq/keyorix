@@ -23,6 +23,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 func TestLastUsed_Postgres_RequestsDoNotWaitOnCredentialRowLock(t *testing.T) {
@@ -34,8 +35,12 @@ func TestLastUsed_Postgres_RequestsDoNotWaitOnCredentialRowLock(t *testing.T) {
 	require.NoError(t, setup.Create(&models.Session{ID: 1, UserID: 1, SessionToken: "h-sess"}).Error)
 
 	// The application's pool: enough connections that a request would wait on
-	// the row lock, not on the pool.
-	app, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
+	// the row lock, not on the pool. Tagged, so the lock-wait probe below counts
+	// only this pool's backends: internal/core and internal/storage run in
+	// parallel on one database, and another package's lock waiter would match
+	// a datname filter (PG-TEST-ISOLATION-1).
+	appName := pgdsn.UniqueApplicationName("kx_lastused")
+	app, err := gorm.Open(postgres.Open(pgdsn.WithApplicationName(dsn, appName)), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	appSQL, err := app.DB()
 	require.NoError(t, err)
@@ -81,19 +86,20 @@ func TestLastUsed_Postgres_RequestsDoNotWaitOnCredentialRowLock(t *testing.T) {
 	}
 
 	// While the rows are held, poll (until every client has returned, or the
-	// hold window ends) for backends waiting on a lock in this database; the
-	// worst sample must be zero.
+	// hold window ends) for the application pool's backends waiting on a lock;
+	// the worst sample must be zero.
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
-	var waiting int64
+	var waiting, seen int64
 	holdEnds := time.After(hold)
 poll:
 	for {
-		var sample int64
+		var sample struct{ Waiting, Backends int64 }
 		require.NoError(t, setup.Raw(
-			"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").
+			"SELECT count(*) FILTER (WHERE wait_event_type = 'Lock') AS waiting, count(*) AS backends FROM pg_stat_activity WHERE application_name = ?", appName).
 			Scan(&sample).Error)
-		waiting = max(waiting, sample)
+		waiting = max(waiting, sample.Waiting)
+		seen = max(seen, sample.Backends)
 		select {
 		case <-done:
 			break poll
@@ -106,6 +112,7 @@ poll:
 	<-done
 
 	assert.Zero(t, waiting, "no request may wait on the credential's row lock")
+	assert.Positive(t, seen, "the probe never saw the application pool's backends: the application_name filter matched nothing")
 	var worst time.Duration
 	for _, d := range durations {
 		worst = max(worst, d)

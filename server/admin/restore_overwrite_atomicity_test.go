@@ -141,6 +141,7 @@ func newOverwriteFixture(t *testing.T, backend string, danglingRef bool) *overwr
 
 	restoreInput = f.archive
 	restoreOverwriteExisting = true
+	restoreReplaceExistingData = true // the deployment holds data: replacing it is the point
 	restoreAllowRollback = true
 	restoreMaxEntryBytes = 0
 	restoreMaxTotalBytes = 0
@@ -317,7 +318,7 @@ func TestAdminRestore_Postgres_OverwriteMatchesFreshRestore(t *testing.T) {
 	chdirTest(t, freshDir)
 	freshDSN := pgAdminIsolatedDatabaseDSN(t, pgAdminTestDSN(t))
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, freshDir, freshDSN)
-	restoreOverwriteExisting = false
+	restoreOverwriteExisting, restoreReplaceExistingData = false, false
 	restoreAllowRollback = false
 	_, err = captureStdout(t, func() error { return runAdminRestore(nil, nil) })
 	require.NoError(t, err)
@@ -358,7 +359,7 @@ func TestAdminRestoreKillPointHelper(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	configPathFlag = os.Getenv("KEYORIX_TEST_RESTORE_CFG")
 	restoreInput = os.Getenv("KEYORIX_TEST_RESTORE_INPUT")
-	restoreOverwriteExisting, restoreAllowRollback = true, true
+	restoreOverwriteExisting, restoreReplaceExistingData, restoreAllowRollback = true, true, true
 	restoreMaxEntryBytes, restoreMaxTotalBytes = 0, 0
 	restoreStepHook = func(s string) error {
 		if s == step {
