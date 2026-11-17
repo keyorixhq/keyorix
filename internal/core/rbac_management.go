@@ -553,6 +553,8 @@ func (c *KeyorixCore) withOrderedUserSoDLocks(ctx context.Context, ids []uint, f
 // instead of hardcoding false.
 func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope, actorIsMachine bool) error {
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
 	if err := c.requireGrantTargetUser(ctx, actorID, userID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}

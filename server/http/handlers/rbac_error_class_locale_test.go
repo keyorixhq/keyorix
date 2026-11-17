@@ -48,14 +48,12 @@ func rbacRealIDs(t *testing.T, db *gorm.DB) rbacIDs {
 	perm := mustCreatePermission(t, db, "fx.perm", "fx", "perm")
 	group := mustCreateGroup(t, db, "fx-group")
 	// rbacPlainID is a real, active account with no role: core refuses an actor whose
-	// account is missing or not active before any permission check (#4159).
+	// account is missing or not active before any permission check (#4159). It is also
+	// a real row because POST /user-roles refuses an absent target (ERRMAP-TAILS-NOV-4):
+	// a grant "to user 2" with no user 2 only ever passed because it was accepted.
 	require.NoError(t, db.Where(models.User{ID: rbacPlainID}).
-		Attrs(models.User{Username: "fx-plain", UsernameFolded: "fx-plain", Email: "fx-plain@example.com", EmailFolded: "fx-plain@example.com", IsActive: true}).
+		Attrs(models.User{Username: "fx-plain", UsernameFolded: "fx-plain", Email: "fx-plain@example.com", EmailFolded: "fx-plain@example.com", IsActive: true, AccountState: "active"}).
 		FirstOrCreate(&models.User{}).Error)
-	// The plain user is a real row: POST /user-roles refuses an absent target (ERRMAP-TAILS-NOV-4),
-	// so a grant "to user 2" with no user 2 only ever passed because it was accepted.
-	plain := models.User{ID: rbacPlainID, Username: "rbac_plain", Email: "rbac_plain@example.test", AccountState: "active"}
-	require.NoError(t, db.Where("id = ?", rbacPlainID).FirstOrCreate(&plain).Error)
 	return rbacIDs{
 		role:  strconv.FormatUint(uint64(role.ID), 10),
 		perm:  strconv.FormatUint(uint64(perm.ID), 10),
