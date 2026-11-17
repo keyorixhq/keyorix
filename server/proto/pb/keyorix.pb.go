@@ -9827,8 +9827,12 @@ type EmergencyAccessPosture struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	ActiveActivations int32                  `protobuf:"varint,1,opt,name=active_activations,json=activeActivations,proto3" json:"active_activations,omitempty"`
 	TotalActivations  int32                  `protobuf:"varint,2,opt,name=total_activations,json=totalActivations,proto3" json:"total_activations,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Break-glass activations committed while the audit log refused their rows
+	// whose owed audit rows are not yet in the hash chain. Non-zero means the
+	// audit record of an emergency elevation is incomplete and its review is owed.
+	DegradedActivations int32 `protobuf:"varint,3,opt,name=degraded_activations,json=degradedActivations,proto3" json:"degraded_activations,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *EmergencyAccessPosture) Reset() {
@@ -9871,6 +9875,13 @@ func (x *EmergencyAccessPosture) GetActiveActivations() int32 {
 func (x *EmergencyAccessPosture) GetTotalActivations() int32 {
 	if x != nil {
 		return x.TotalActivations
+	}
+	return 0
+}
+
+func (x *EmergencyAccessPosture) GetDegradedActivations() int32 {
+	if x != nil {
+		return x.DegradedActivations
 	}
 	return 0
 }
@@ -12432,10 +12443,11 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x0fIdentityPosture\x12!\n" +
 	"\factive_users\x18\x01 \x01(\x05R\vactiveUsers\x127\n" +
 	"\x18users_with_second_factor\x18\x02 \x01(\x05R\x15usersWithSecondFactor\x122\n" +
-	"\x15second_factor_percent\x18\x03 \x01(\x05R\x13secondFactorPercent\"t\n" +
+	"\x15second_factor_percent\x18\x03 \x01(\x05R\x13secondFactorPercent\"\xa7\x01\n" +
 	"\x16EmergencyAccessPosture\x12-\n" +
 	"\x12active_activations\x18\x01 \x01(\x05R\x11activeActivations\x12+\n" +
-	"\x11total_activations\x18\x02 \x01(\x05R\x10totalActivations\"\xc8\x01\n" +
+	"\x11total_activations\x18\x02 \x01(\x05R\x10totalActivations\x121\n" +
+	"\x14degraded_activations\x18\x03 \x01(\x05R\x13degradedActivations\"\xc8\x01\n" +
 	"\x14ClassificationCounts\x12\x14\n" +
 	"\x05total\x18\x01 \x01(\x05R\x05total\x12\x16\n" +
 	"\x06public\x18\x02 \x01(\x05R\x06public\x12\x1a\n" +
