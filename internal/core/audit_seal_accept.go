@@ -697,8 +697,8 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 		if at != id {
 			return nil, nil, auditLossRefused("the walk breaks at audit event #%d, not at #%d (%s)", at, id, v.Reason)
 		}
-		// Classified from the stored row, never from the verifier's reason text, so
-		// rewording that text cannot change this refusal.
+		// Classified from the stored rows and the verifier's typed fields, never
+		// from its reason text, so rewording that text cannot change a verdict.
 		legacy, err := c.auditEventIsPre1452Encoded(ctx, id)
 		if err != nil {
 			return nil, nil, err
@@ -706,7 +706,13 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 		if legacy {
 			return nil, nil, auditLossRefused("audit event #%d was written with the old audit-hash format: an upgrade step that was not run, not a loss (run `keyorix audit migrate-chain-encoding`)", id)
 		}
-		if !strings.Contains(v.Reason, "prev_hash does not link") {
+		// The storage walk sets LinkBroken on a walk from the chain start only:
+		// there it must be set. A walk pinned after a sealed gap never carries
+		// it; its broken link is proven from the rows below (row.PrevHash).
+		pinned := slices.ContainsFunc(all, func(g sealedGap) bool {
+			return g.ResumeID < id && (f.anchor == nil || g.ResumeID > f.anchor.RowID)
+		})
+		if !pinned && !v.LinkBroken {
 			return nil, nil, auditLossRefused("audit event #%d does not verify (%s): that is a modified row, not a lost one", id, v.Reason)
 		}
 		row, err := c.auditEventByID(ctx, id)
@@ -729,6 +735,14 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 		}
 		if !pre.Valid {
 			return nil, nil, auditLossRefused("the chain before audit event #%d does not verify (%s)", id, pre.Reason)
+		}
+		if pre.HeadID == 0 && f.anchor != nil {
+			// LinkBroken with no row before it: the earliest row does not match
+			// the retention re-anchor (a pinned walk always has a head).
+			return nil, nil, auditLossRefused("audit event #%d is the earliest audit row and does not match the retention re-anchor (%s): not a loss this command can prove", id, v.Reason)
+		}
+		if pre.HeadID != 0 && row.PrevHash == pre.HeadHash {
+			return nil, nil, auditLossRefused("audit event #%d links to #%d, the verified row before it: nothing was lost there", id, pre.HeadID)
 		}
 		if pre.HeadID+1 == id {
 			// The walk reads in id order: with no id between them, nothing
