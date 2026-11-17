@@ -8,6 +8,7 @@ package services
 // "record not found" for some other row) answered NotFound "group not found".
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -42,7 +43,7 @@ func TestGroupError_ClassifiesBySentinel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := groupError(tc.err)
+			got := groupError(context.Background(), tc.err)
 			assert.Equal(t, tc.code, status.Code(got), got.Error())
 			assert.Equal(t, tc.msg, status.Convert(got).Message())
 		})

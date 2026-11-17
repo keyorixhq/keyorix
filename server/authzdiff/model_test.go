@@ -171,6 +171,9 @@ func (m model) allowed(p *principal, req requirement) bool {
 	if p.suspended {
 		return false // a suspended account may do nothing (account_state.go)
 	}
+	if req.humanOnly && p.isMachine() {
+		return false // a human-only op refuses a machine actor (core refuseMachineActor)
+	}
 	for _, perm := range req.perms {
 		if !m.holds(p, perm, req.scope, req.env) {
 			return false
@@ -251,6 +254,21 @@ func (m model) allowed(p *principal, req requirement) bool {
 			if !m.holds(p, perm, r.scope, 0) {
 				return false
 			}
+			// A restricted PAT narrows the GRANTER ceiling too: the product checks
+			// every permission of the granted role through c.Authorize (authz.go
+			// checkGranterHoldsPermission → the default user branch), which applies
+			// the PAT restriction, so a PAT cannot grant a role bundling a
+			// permission the PAT itself may not exercise (else the grantee would
+			// receive, via a credential that cannot use it, an authority the
+			// credential is restricted from — a one-step escape past the PAT, the
+			// same reasoning as the req.perms loop above). Exposed by pkPATFull on
+			// member.setrole granting project_admin (which bundles secrets.write,
+			// outside the PAT's allowlist): fuzz seed 089fae899e68133c. No prior
+			// fixture PAT could reach a ceiling op — pkPAT fails the roles.assign
+			// gate first — so this stayed unmodelled until HF3.
+			if p.pat != nil && !p.pat.Allows(perm, core.Scope{ProjectID: r.scope}) {
+				return false
+			}
 		}
 	}
 	return true
@@ -293,10 +311,13 @@ type roleAt struct{ roleID, scope uint }
 
 // requirement is what an op needs for one concrete (target) call.
 type requirement struct {
-	perms   []string
-	scope   uint     // project id the perms are checked at, 0 = global
-	env     uint     // environment id the perms are checked at, 0 = project-wide (all environments)
-	ceiling []roleAt // roles the op grants (a group join grants all the group's roles); nil = not a grant
+	// humanOnly: the op's actor must be a user; a machine principal is refused
+	// whatever it holds (humanOnlyOps, set by withDerived).
+	humanOnly bool
+	perms     []string
+	scope     uint     // project id the perms are checked at, 0 = global
+	env       uint     // environment id the perms are checked at, 0 = project-wide (all environments)
+	ceiling   []roleAt // roles the op grants (a group join grants all the group's roles); nil = not a grant
 	// ownerUserID != 0: a documented owner-only rule applies (see allowed).
 	ownerUserID uint
 	// ownerOrPerm, with ownerUserID: a NON-owner USER holding this permission

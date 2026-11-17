@@ -22,6 +22,7 @@ import (
 func newCatalogHandlerBreakGlassS13(t *testing.T) *CatalogHandler {
 	t.Helper()
 	cs := freshCoreS12(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
 	return NewCatalogHandler(cs)
 }
 

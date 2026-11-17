@@ -227,6 +227,7 @@ func TestGRPCMutations_RequireReadGate_Family(t *testing.T) {
 			h := testhelper.NewRBACTestHelper(t)
 			t.Cleanup(h.Cleanup)
 			h.AssignUserRole(t, 1, 1, nil) // user 1 = super_admin, for target setup
+			h.EnsureActiveUser(t, 1)       // user 1 acts through core (#4159)
 			grantReadGatePrincipals(t, h, c)
 			call := c.setup(t, h)
 

@@ -209,6 +209,9 @@ func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) (*mode
 	if id == 0 {
 		return nil, invalidGroupRequest(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required"))
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	// #2455: GetGroupRoles, the ceiling check, and the restore write all run
 	// under sodGrantLockKey("group", id) -- the same key AssignRoleToGroup/
 	// AssignGroupRoleWithExpiry (rbac_management.go, jit_access.go) take
@@ -380,6 +383,9 @@ func (c *KeyorixCore) domainAllowedForGroupJoin(ctx context.Context, userID, gro
 func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsMachine bool, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
 		return invalidGroupRequest(fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil)))
+	}
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
 	}
 	// #PM-006: a group membership confers every role the group holds at the
 	// matching scope (see this function's doc comment above), which is exactly

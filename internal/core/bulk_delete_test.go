@@ -46,6 +46,7 @@ func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint, uint
 		// (CheckSecretPermission) to resolve.
 		&models.User{}, &models.Role{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Permission{}, &models.RolePermission{},
 	))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -61,9 +62,13 @@ func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint, uint
 
 	// The bulk-delete tests below authenticate as user 1, the OwnerID every mk()
 	// secret is created with; grant user 1 project membership so
-	// CheckSecretPermission's owner short-circuit resolves.
+	// CheckSecretPermission's owner short-circuit resolves. The role grants
+	// secrets.delete, as the bulk-delete route requires of its caller: an owner
+	// without it is refused (#4160, INV-CORE-secret-owner-mutation-needs-gate-permission).
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "tester", AccountState: "active"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "member"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.delete"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: projectID}).Error)
 
 	mk := func(name string) uint {
@@ -247,6 +252,7 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 		&models.SecretAccessSchedule{},
 		&models.User{}, &models.Role{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Permission{}, &models.RolePermission{},
 	))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -266,6 +272,8 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 	// a real cross-tenant caller who has no relationship to the other project at all.
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "tester", AccountState: "active"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "member"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.delete"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: proj1.ID}).Error)
 
 	// Create a secret in project 1 and a secret in project 2 — both owned by user

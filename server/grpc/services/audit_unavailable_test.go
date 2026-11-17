@@ -27,6 +27,7 @@ func TestAuditOutage_RPCsAnswerUnavailable(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
 	h.AssignUserRole(t, 1, 1, nil) // user 1 = super_admin (global)
+	h.EnsureActiveUser(t, 1)       // user 1 acts through core (#4159)
 
 	groups, projects, users, roles := NewGroupService(h.CoreService), NewProjectService(h.CoreService),
 		NewUserService(h.CoreService), NewRoleService(h.CoreService)

@@ -7,6 +7,7 @@ package services
 // InvalidArgument "unknown role"; mapUserError now answers it Unavailable (retry).
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -23,13 +24,13 @@ func TestMapUserError_StorageReadFaultIsUnavailable(t *testing.T) {
 	fault := core.ReadFault(errors.New("driver: connection reset by peer"))
 	require.Error(t, fault)
 
-	st, ok := status.FromError(mapUserError(fmt.Errorf("create user: %w", fault)))
+	st, ok := status.FromError(mapUserError(context.Background(), fmt.Errorf("create user: %w", fault)))
 	require.True(t, ok)
 	assert.Equal(t, codes.Unavailable, st.Code())
 	assert.Equal(t, core.StorageReadUnavailableMessage, st.Message())
 	assert.NotContains(t, st.Message(), "connection reset", "the driver cause must not reach the client")
 
 	// An absent role keeps its validation verdict.
-	st, _ = status.FromError(mapUserError(errors.New(`Validation error: unknown role "nope"`)))
+	st, _ = status.FromError(mapUserError(context.Background(), errors.New(`Validation error: unknown role "nope"`)))
 	assert.NotEqual(t, codes.Unavailable, st.Code())
 }

@@ -390,6 +390,7 @@ func TestRBACHandler_AssignRole_InvalidJSON_S12(t *testing.T) {
 // path (role 9999 and permission 9999 don't exist).
 func TestRBACHandler_AssignPermissionToRole_NotFound_S12(t *testing.T) {
 	cs := freshCoreS12(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
 	h := NewRBACHandler(cs)
 	body, _ := json.Marshal(map[string]any{"permission_id": uint(9999)})
 	req := withUserCtx(withChiParam(

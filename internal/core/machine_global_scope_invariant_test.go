@@ -87,6 +87,7 @@ func TestAssignMachineRole_SucceedsIfMachineLookupSomehowReturnedGlobal(t *testi
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 
+	stubActiveActors(ms) // the acting user is active (#4159)
 	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 0}, 1, false)
 
 	require.NoError(t, err, "machineInProject matches ProjectID 0 == 0 -- this documents the gap rather than hiding it")

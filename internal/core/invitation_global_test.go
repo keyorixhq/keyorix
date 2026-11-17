@@ -226,6 +226,7 @@ func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
 		store.On("AssignRole", ctx, uint(20), a.roleID, storage.Scope{ProjectID: a.pid}).Return(nil)
 	}
 
+	stubActiveActors(store) // the acting user is active (#4159)
 	err := c.applyInvitationGrants(ctx, inv, 20)
 	require.NoError(t, err)
 	store.AssertExpectations(t)

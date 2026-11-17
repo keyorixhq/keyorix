@@ -134,7 +134,7 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 		u, err = s.core.CreateUserWithAssignments(grantCtx, coreReq, role, assignments, actor.UserID, isMachine)
 	}
 	if err != nil {
-		return nil, mapUserError(err)
+		return nil, mapUserError(ctx, err)
 	}
 
 	resp.User = s.userToProto(ctx, u)
@@ -171,7 +171,7 @@ func (s *UserGRPCService) ReissueOneTimePassword(ctx context.Context, req *pb.Re
 		case errors.Is(err, core.ErrReissueAccountBlocked):
 			return nil, status.Error(codes.FailedPrecondition, core.ReissueAccountBlockedMessage)
 		case errors.Is(err, core.ErrInsufficientAdminAuthority):
-			return nil, mapUserError(err)
+			return nil, mapUserError(ctx, err)
 		case errors.Is(err, corestorage.ErrUserNotFound):
 			return nil, status.Error(codes.NotFound, "user not found")
 		}
@@ -199,7 +199,7 @@ func (s *UserGRPCService) GetUser(ctx context.Context, req *pb.GetUserRequest) (
 	}
 	u, err := s.core.GetUser(ctx, uint(req.GetId()))
 	if err != nil {
-		return nil, mapUserError(err)
+		return nil, mapUserError(ctx, err)
 	}
 	return s.userToProto(ctx, u), nil
 }
@@ -230,7 +230,7 @@ func (s *UserGRPCService) UpdateUser(ctx context.Context, req *pb.UpdateUserRequ
 			log.Printf("update of user %d partially applied: %s", req.GetId(), withFaultCause(err))
 			return nil, perr
 		}
-		return nil, mapUserError(err)
+		return nil, mapUserError(ctx, err)
 	}
 	return s.userToProto(ctx, u), nil
 }
@@ -249,7 +249,7 @@ func (s *UserGRPCService) DeleteUser(ctx context.Context, req *pb.DeleteUserRequ
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 	if err := s.core.DeleteUser(ctx, actor.UserID, uint(req.GetId())); err != nil {
-		return nil, mapUserError(err)
+		return nil, mapUserError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -378,7 +378,7 @@ func optStringValue(s string) *string {
 // four typed refusals that are not in its table and the two client messages core
 // supplies (role scope, password policy). The texts are this family's own and fixed
 // (GRPC-003: never an internal role name or a policy threshold).
-func mapUserError(err error) error {
+func mapUserError(ctx context.Context, err error) error {
 	// STORAGE-ERR-CLASS-2: an outage (partial mutation, audit, storage read fault) is
 	// answered before the typed refusals below, in coreErrorStatus's own order, so a
 	// refusal that wraps a failed read is retryable, not a terminal refusal.
@@ -416,7 +416,7 @@ func mapUserError(err error) error {
 	if errors.Is(err, identity.ErrEmpty) || errors.Is(err, core.ErrSetupBaseURLRequired) {
 		return status.Error(codes.InvalidArgument, "invalid request parameters")
 	}
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "user operation", texts: coreErrorTexts{
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "user operation", texts: coreErrorTexts{
 		errclass.NotFound:         "user not found",
 		errclass.Conflict:         "a user with that username or email already exists",
 		errclass.PermissionDenied: "insufficient privileges for this operation",

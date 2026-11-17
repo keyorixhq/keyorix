@@ -29,8 +29,10 @@ func TestRestoreOperationsAudit(t *testing.T) {
 		// secret's own soft-delete.
 		&models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.MachineIdentity{}, &models.MachineIdentityRole{},
 		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
+		&models.User{}, // the acting user's account (#4159)
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	ensureActiveActor(t, c.storage, 42) // the acting user of the restores is active (#4159)
 	ctx := context.Background()
 
 	auditActor := func(eventType string) *uint {

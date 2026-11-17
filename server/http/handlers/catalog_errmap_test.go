@@ -161,7 +161,8 @@ func TestRestoreEnvironment_PermissionRefusalKeepsCoreText(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req = withChiParams(req, map[string]string{"projectId": strconv.Itoa(int(p.ID)), "id": strconv.Itoa(int(e.ID))})
-	req = withUserCtxID(req, 2, "plain-user") // holds no global admin role
+	ensureActiveActorUser(t, w.cs.Storage(), 2) // the actor exists and is active, so core reaches the admin-grant check (#4159)
+	req = withUserCtxID(req, 2, "plain-user")   // holds no global admin role
 	rec := httptest.NewRecorder()
 	w.h.RestoreEnvironment(rec, req)
 
