@@ -1,0 +1,49 @@
+name: Process-crash red-proof (nightly)
+
+# TestProcessCrashRedProof and TestProcessCrashCalibration spawn real child
+# processes (about a minute, more with -race), so plain `go test` skips them
+# unless KEYORIX_PCRASH_EXHAUSTIVE is set. fuzz-changed.yml and the rig run
+# FuzzProcessCrashRecovery with -run='^$', which never reaches them, so this is
+# the job that keeps the oracles proven: a red-proof that stops firing on a day
+# nobody touched internal/encryption is caught here.
+on:
+  schedule:
+    # 05:17 UTC nightly, off the round minute, clear of this repo's other
+    # nightly cron slots.
+    - cron: '17 5 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  process-crash-red-proof:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run the crash-recovery red-proof and calibration
+        env:
+          KEYORIX_PCRASH_EXHAUSTIVE: '1'
+        run: go test ./internal/encryption/ -run '^TestProcessCrash(RedProof|Calibration)$' -count=1 -timeout 20m
+
+  alert:
+    needs: [process-crash-red-proof]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open, update or close the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+        run: ./scripts/ci/failure-issue.sh "$OUTCOME" "Scheduled process-crash red-proof is failing"
