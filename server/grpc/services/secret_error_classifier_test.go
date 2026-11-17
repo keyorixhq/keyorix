@@ -76,6 +76,20 @@ func TestShareScopeReadError_Answers(t *testing.T) {
 	assert.Equal(t, codes.Unavailable, status.Code(got), got.Error())
 	assert.Equal(t, authorizeUnavailableMessage, status.Convert(got).Message())
 
+	// Under a canceled ctx a sentinel-carrying error is still the authorization outage,
+	// not answered by its class (NotFound "not found", the storage ErrorInfo).
+	for _, err := range []error{
+		storage.ErrShareNotFound,
+		storage.ErrSecretNotFound,
+		fmt.Errorf("read share: %w", core.ErrStorageReadUnavailable),
+		fmt.Errorf("authorize: %w", core.ErrPermissionDenied),
+	} {
+		got = shareScopeReadError(canceled, err)
+		assert.Equal(t, codes.Unavailable, status.Code(got), "%v: %v", err, got)
+		assert.Equal(t, authorizeUnavailableMessage, status.Convert(got).Message(), "%v", err)
+		assert.False(t, hasErrorInfoReason(got, storageUnavailableReason), "%v", err)
+	}
+
 	got = shareScopeReadError(context.Background(), errors.New("boom: connection reset by peer"))
 	assert.Equal(t, codes.Unavailable, status.Code(got), got.Error())
 	assert.True(t, hasErrorInfoReason(got, storageUnavailableReason))
