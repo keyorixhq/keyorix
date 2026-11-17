@@ -16,7 +16,6 @@ package core
 // path, which reads inside its transaction.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -42,12 +41,14 @@ type revokeListWorld struct {
 	listCalls    int
 	evictedHash  []string
 	evictedUsers []uint
-	logs         *bytes.Buffer
+	// logs is the process-wide log output for the test; a goroutine leaked by an earlier test
+	// (e.g. a pinned advisory-lock watcher) can still log into it, so reads must be locked.
+	logs *syncBuffer
 }
 
 func newRevokeListWorld(t *testing.T, w *txClosureWorld, failListing bool) *revokeListWorld {
 	t.Helper()
-	rw := &revokeListWorld{txClosureWorld: w, logs: &bytes.Buffer{}}
+	rw := &revokeListWorld{txClosureWorld: w, logs: &syncBuffer{}}
 	h := &storeHooks{WrapTx: true}
 	h.ListSessionTokenHashesForUser = func(next storage.Storage, ctx context.Context, id uint) ([]string, error) {
 		rw.listCalls++

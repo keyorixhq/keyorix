@@ -1637,25 +1637,12 @@ jobs:
     # gated test silently skipped here, indefinitely (the same shape as the 13
     # HA-lock branches this container also exists to exercise: a mechanism
     # that only ever runs against SQLite verifies nothing about the Postgres
-    # path it was written for). Declared job-level (not leg-conditional) to
-    # keep this diff to "add the container + the DSN," matching every other
-    # leg's already-generous-timeout precedent rather than hand-picking which
-    # legs need it -- a service container that isn't used by a given leg's
-    # tests costs only its own startup time, not the leg's.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: keyorix
-          POSTGRES_PASSWORD: keyorix123
-          POSTGRES_DB: keyorix
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # path it was written for). MQ-LEG-STEPS-1: the container is no longer a job-level
+    # `services:` entry (that starts, serially and BEFORE the first step, in
+    # about 22 s on every leg, including a leg the merge-queue selection then
+    # skips). It is started in the background by "Start Postgres" below, only
+    # when the leg runs, and overlaps checkout, setup-go and the cache
+    # restore (about 33 s); "Wait for Postgres" gates go test.
     env:
       KEYORIX_TEST_PG_DSN: "host=localhost port=5432 dbname=keyorix user=keyorix sslmode=disable password=keyorix123"
     steps:
@@ -1703,6 +1690,26 @@ jobs:
             echo "only=$pkgs" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Start Postgres (background)
+        if: steps.leg.outputs.run == 'true'
+        run: |
+          # Same image, credentials, port and database as the former
+          # `services: postgres`. The pull (retried, as the runner's own
+          # service pull is) and the start run detached; the step returns at once.
+          # If all three pulls fail, `docker run` pulls once more and fails; the
+          # Wait step then prints the log and exits 1, so it still fails closed.
+          cat > "$RUNNER_TEMP/pg-leg.sh" <<'EOS'
+          for d in 0 15 45; do
+            sleep "$d"
+            docker pull -q postgres:16 && break
+          done
+          exec docker run --rm --name pg-leg -p 5432:5432 \
+            -e POSTGRES_USER=keyorix -e POSTGRES_PASSWORD=keyorix123 -e POSTGRES_DB=keyorix \
+            postgres:16
+          EOS
+          setsid nohup bash "$RUNNER_TEMP/pg-leg.sh" > "$RUNNER_TEMP/pg-leg.log" 2>&1 &
+          echo "Postgres start requested in the background at $(date -u +%T)"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.leg.outputs.run == 'true'
 
@@ -1730,6 +1737,31 @@ jobs:
           restore-keys: |
             go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
             go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-
+
+      # TCP check on 127.0.0.1 inside the container: the image's init phase
+      # runs a temporary server that listens on the unix socket only, so a
+      # socket-only pg_isready could pass before the final server is up.
+      - name: Wait for Postgres
+        if: steps.leg.outputs.run == 'true'
+        run: |
+          for i in $(seq 1 150); do
+            if docker exec pg-leg pg_isready -h 127.0.0.1 -p 5432 -U keyorix -d keyorix -q 2>/dev/null; then
+              echo "Postgres ready (waited ${i} s after the previous step)."
+              exit 0
+            fi
+            # `docker inspect` fails while the container does not exist yet (the
+            # pull is still running); 2>/dev/null plus the compare keeps that
+            # from ending the loop.
+            if [ "$(docker inspect -f '{{.State.Status}}' pg-leg 2>/dev/null)" = "exited" ]; then
+              echo "::error::Postgres container exited; log follows"
+              cat "$RUNNER_TEMP/pg-leg.log" || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Postgres not ready after 150 s; container log follows"
+          cat "$RUNNER_TEMP/pg-leg.log" || true
+          exit 1
 
       - name: go test (${{ matrix.leg }})
         if: steps.leg.outputs.run == 'true'
