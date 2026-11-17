@@ -34,6 +34,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // rotationCrash is the sentinel a simulated crash panics with, so the harness can
@@ -117,9 +119,8 @@ func FuzzKEKRotationCrashConsistency(f *testing.F) {
 			defer close(done)
 			runCrashConsistencyCase(dir, oldPass, newPass, target)
 		}()
-		select {
-		case <-done:
-		case <-time.After(kekRotationGuardDeadline):
+		if _, ok, fz := fuzzutil.Wait(done, kekRotationGuardDeadline); !ok {
+			t.Logf("stall monitor: process frozen %s of the wait window", fz)
 			t.Fatalf("kek-rotation-crash-consistency exceeded %s — possible hang", kekRotationGuardDeadline)
 		}
 	})

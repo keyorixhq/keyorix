@@ -62,6 +62,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 func init() { runtime.GOMAXPROCS(2) }
@@ -419,28 +421,28 @@ func runInteraction(t *testing.T, mode, opSel, lenMode, driveMode byte, body []b
 		ch <- res{e, f}
 	}()
 
-	select {
-	case r := <-ch:
-		runtime.ReadMemStats(&ms1)
-		dials1, bytes1 := dialer.dials.Load(), dialer.bytesRead.Load()
-		// oracle (b): the SCRAM password must never surface.
-		if r.err != nil && containsCanary(r.err.Error()) {
-			t.Fatalf("CANARY LEAK in error: %v", r.err)
-		}
-		if containsCanary(r.fmtd) {
-			t.Fatalf("CANARY LEAK in value: %s", r.fmtd)
-		}
-		// oracle (a): allocation not attributable to connection churn must stay
-		// under allocCeiling (see allocOverBudget). Churn itself is only scaled
-		// for, never bounded: see the "does NOT verify" note on allocCeiling.
-		dials, bytesRead := dials1-dials0, bytes1-bytes0
-		d := ms1.TotalAlloc - ms0.TotalAlloc
-		if over, bound := allocOverBudget(d, dials, bytesRead); over {
-			t.Fatalf("alloc delta %d exceeds bound %d (%d dials x %d + %d bytes read x %d + %d ceiling) for %d body bytes",
-				d, bound, dials, perDialAlloc, bytesRead, perByteAlloc, allocCeiling, len(body))
-		}
-	case <-time.After(callWallBound + 2*time.Second):
+	r, ok, fz := fuzzutil.Wait(ch, callWallBound+2*time.Second)
+	if !ok {
+		t.Logf("stall monitor: process frozen %s of the wait window", fz)
 		t.Fatalf("driver interaction did not return within bound (mode=%d opSel=%d lenMode=%d)", mode, opSel, lenMode)
+	}
+	runtime.ReadMemStats(&ms1)
+	dials1, bytes1 := dialer.dials.Load(), dialer.bytesRead.Load()
+	// oracle (b): the SCRAM password must never surface.
+	if r.err != nil && containsCanary(r.err.Error()) {
+		t.Fatalf("CANARY LEAK in error: %v", r.err)
+	}
+	if containsCanary(r.fmtd) {
+		t.Fatalf("CANARY LEAK in value: %s", r.fmtd)
+	}
+	// oracle (a): allocation not attributable to connection churn must stay
+	// under allocCeiling (see allocOverBudget). Churn itself is only scaled
+	// for, never bounded: see the "does NOT verify" note on allocCeiling.
+	dials, bytesRead := dials1-dials0, bytes1-bytes0
+	d := ms1.TotalAlloc - ms0.TotalAlloc
+	if over, bound := allocOverBudget(d, dials, bytesRead); over {
+		t.Fatalf("alloc delta %d exceeds bound %d (%d dials x %d + %d bytes read x %d + %d ceiling) for %d body bytes",
+			d, bound, dials, perDialAlloc, bytesRead, perByteAlloc, allocCeiling, len(body))
 	}
 }
 

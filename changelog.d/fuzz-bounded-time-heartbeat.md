@@ -1,3 +1,3 @@
 ### Testing
 
-- Hostile-server fuzz harnesses (pgx, mysql, redis) now tell a hung driver call from a frozen fuzz process before reporting a bounded-time violation; test-only change.
+- Fuzz wall-clock hang oracles (`fuzzutil.Guard`, the hostile-server harnesses, the encryption hang guards and several third-party targets) now tell a hung call from a frozen fuzz process before reporting: a deadline miss while the process was frozen gets one more full limit; test-only change.
