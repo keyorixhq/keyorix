@@ -11,6 +11,10 @@ package services
 // MAPPER set is derived here too: every function in this package whose body calls
 // auditUnavailableStatus (mapRoleError, groupError, ...).
 //
+// It also flags a mapper that takes a context.Context and calls context.Background() or
+// context.TODO() in its body (INV-GRPCSVC-mapper-takes-rpc-ctx); the exemption map covers
+// it too.
+//
 // What it recognises: a call `X.core.M(...)` (services reach core through a core
 // field) with M reaching, inside a top-level function; that function must call a
 // mapper or auditUnavailableStatus itself, directly. It does not follow the error
@@ -55,6 +59,14 @@ func grpcAuditUnavailableMappingViolations(funcs []grpcFuncCalls, exempt map[str
 	for _, f := range funcs {
 		if f.calls["auditUnavailableStatus"] || f.calls["coreErrorStatus"] {
 			mappers[f.name] = true
+			// A mapper that takes the RPC ctx and roots a new one drops the request's
+			// cancellation: a canceled request is not recognised as an authorize outage
+			// and answers Internal where REST answers 503 (GRPC-MAPPER-TAILS-1,
+			// INV-GRPCSVC-mapper-takes-rpc-ctx). A mapper with no ctx parameter is not
+			// flagged: it has none to drop.
+			if f.takesCtx && f.rootsCtx {
+				violations = append(violations, f.file+":"+f.name+" takes ctx but calls context.Background()/TODO()")
+			}
 		}
 	}
 	for _, f := range funcs {
@@ -113,13 +125,22 @@ func (s *S) Good() error { return mapX(s.core.AssignUserRole()) }
 func (s *S) Skip() error { return wrap(s.core.AssignUserRole()) }
 func mapY(ctx C, err error) error { return coreErrorStatus(ctx, err, o) }
 func (s *S) ViaAdapter() error { return mapY(ctx, s.core.AssignUserRole()) }
+func mapDrops(ctx context.Context, err error) error { return coreErrorStatus(context.Background(), err, o) }
+func mapDropsTODO(ctx context.Context, err error) error { return coreErrorStatus(context.TODO(), err, o) }
+func mapNoCtx(err error) error { return coreErrorStatus(context.Background(), err, o) }
+func mapKeeps(ctx context.Context, err error) error { return coreErrorStatus(ctx, err, o) }
 `
 	if err := os.WriteFile(filepath.Join(dir, "synthetic.go"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	violations, seen, mappers := grpcAuditUnavailableMappingViolations(
 		scanGRPCFuncs(t, dir, map[string]bool{"AssignUserRole": true}), map[string]string{"synthetic.go:Skip": "test"})
-	if seen != 4 || !mappers["mapX"] || !mappers["mapY"] || !slices.Equal(violations, []string{"synthetic.go:Bad -> AssignUserRole"}) {
+	want := []string{
+		"synthetic.go:Bad -> AssignUserRole",
+		"synthetic.go:mapDrops takes ctx but calls context.Background()/TODO()",
+		"synthetic.go:mapDropsTODO takes ctx but calls context.Background()/TODO()",
+	}
+	if seen != 4 || !mappers["mapX"] || !mappers["mapY"] || !mappers["mapKeeps"] || !slices.Equal(violations, want) {
 		t.Fatalf("self-test: seen=%d mappers=%v violations=%v", seen, mappers, violations)
 	}
 }
