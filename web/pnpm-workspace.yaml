@@ -4,6 +4,9 @@ allowBuilds:
 # form-data <4.0.6 has a CRLF-injection advisory (GHSA-hmw2-7cc7-3qxx); axios
 # pulls a vulnerable range transitively.
 overrides:
+  # minimatch >=7.0.0 <11.0.1: Dependabot #40 (GHSA-g3hv-75wg-m249, DoS via globparts amplification). Dev-only, pulled
+  # transitively by glob/test tooling.
+  minimatch@>=7.0.0 <11.0.1: ^11.0.1
   form-data@>=4.0.0 <4.0.6: ^4.0.6
   # undici <7.29.0: 6 CVEs (TLS bypass, SOCKS5 cross-origin routing, cache
   # whitespace bypass, Set-Cookie injection, SameSite downgrade, keep-alive
