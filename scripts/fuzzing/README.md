@@ -45,7 +45,8 @@ systemd unit's `ExecStart` points at `fuzz-runner.sh`.
   this supports (pve01 continuous rig, STEP 1 only — STEP 2 is blocked on
   PHASE0, see that doc's own banner).
 - **`race-pass.sh`** — runs the fuzz corpus under `-race` (needs cgo; dev/CI
-  only, since the rigs are `CGO_ENABLED=0`). Backs the data-race closure (#1870).
+  only: it is not a rig job). Backs the data-race closure (#1870). The rig itself
+  (vcd-keyorix-fuzz) builds with cgo, which the TPM simulator targets need.
 - **`harness-acceptance.sh`** — reach-check + coverage-delta gate for *in-wall*
   harnesses (see below).
 - **`DISCLOSURE-TRIAGE.md`** — the crash-feasibility gate a third-party-library

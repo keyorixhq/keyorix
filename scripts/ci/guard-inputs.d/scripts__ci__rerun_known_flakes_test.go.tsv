@@ -1,0 +1,1 @@
+scripts/ci/rerun_known_flakes_test.go	scripts/ci/rerun-known-flakes.py,scripts/ci/known-flakes.txt,scripts/ci/testdata/rerun/**,!scripts/**/*.md,!scripts/**/*.py,!scripts/**/*.txt	the flake-rerun wrapper, its allowlist and the recorded failed logs; the other scripts/ files the package walk sees are not read

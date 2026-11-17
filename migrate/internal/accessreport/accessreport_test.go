@@ -66,3 +66,27 @@ func TestWriteHTML_EscapesAndWrites(t *testing.T) {
 		t.Fatalf("expected the escaped form in output:\n%s", out)
 	}
 }
+
+// TestReadJSON_RejectsUnrecognisedOutcome is the red/green proof for the LH-FUZZ-1 finding:
+// encoding/json matches "outCome" to the Outcome field case-insensitively, and an unrecognised
+// value like "0" used to be accepted silently — Apply's switch then drops it as if it were
+// Skip/Conflict/Unmappable, instead of surfacing the corrupted line as an error.
+func TestReadJSON_RejectsUnrecognisedOutcome(t *testing.T) {
+	_, err := ReadJSON(strings.NewReader(`{"outCome":"0"}` + "\n"))
+	if err == nil {
+		t.Fatal("ReadJSON accepted an unrecognised outcome value without error")
+	}
+	if !strings.Contains(err.Error(), "line 1") || !strings.Contains(err.Error(), `"0"`) {
+		t.Fatalf("error should name the line and the bad value, got: %v", err)
+	}
+}
+
+// TestReadJSON_AcceptsValidOutcomesAndEmpty guards against isValidOutcome rejecting any of
+// accessplan's real Outcome values, or the empty string (a Line whose "outcome" key is absent).
+func TestReadJSON_AcceptsValidOutcomesAndEmpty(t *testing.T) {
+	for _, o := range []accessplan.Outcome{accessplan.Create, accessplan.Skip, accessplan.Conflict, accessplan.Unmappable, ""} {
+		if !isValidOutcome(o) {
+			t.Fatalf("isValidOutcome(%q) = false, want true", o)
+		}
+	}
+}

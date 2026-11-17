@@ -1,3 +1,5 @@
+//go:build !noazure
+
 package main
 
 // REVIEW-4213-DEEP-2 N1/N2: an Azure token endpoint that cannot be reached,
