@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 // parseDeadline bounds a single parse. Generous on purpose: we are catching a
@@ -46,6 +47,11 @@ func FuzzWebAuthnParsePublicKey(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte{0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}) // array w/ huge declared length
 
+	// PK2: resguard resource oracle (see resguard_webauthn_test.go).
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Cap input so a legitimately-large (but valid) buffer doesn't make the
 		// parse slow for an uninteresting reason; real COSE keys are small.
@@ -53,7 +59,11 @@ func FuzzWebAuthnParsePublicKey(f *testing.F) {
 			data = data[:1<<16]
 		}
 		start := time.Now()
-		_, _ = parseKey(data) // return ignored: reject is fine; we assert no panic + bounded time
+		c := rgProbe.Measure(len(data), func() { _, _ = parseKey(data) }) // reject is fine; assert no panic + bounded time
+		resguard.FeedCoverage(c)
+		if rgHaveBudget {
+			rgBudget.Check(t.Fatalf, c)
+		}
 		if elapsed := time.Since(start); elapsed > parseDeadline {
 			t.Fatalf("ParsePublicKey took %v (> %v) on %d bytes — unbounded work", elapsed, parseDeadline, len(data))
 		}

@@ -37,6 +37,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -45,7 +46,21 @@ func FuzzBcryptRoundTripHostileHash(f *testing.F) {
 	f.Add([]byte(""), []byte("not-a-hash"))
 	f.Add([]byte("p"), []byte("$2a$31$this.declares.cost.31.cpu.bomb.xxxxxxxxxxxxxxxxxxxxxx"))
 
+	// PK2: resguard resource oracle (see resguard_bcrypt_test.go). Records cost
+	// every input; the FATAL meter is alloc (a tripwire). cpu_ns/wall_ns are
+	// advisory; the cost-bomb stays guarded by the cost-skip below.
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, password, hostileHash []byte) {
+		n := len(password) + len(hostileHash)
+		c := rgProbe.Measure(n, func() { rgRun(password, hostileHash) })
+		resguard.FeedCoverage(c)
+		if rgHaveBudget {
+			rgBudget.Check(t.Fatalf, c)
+		}
+
 		// bcrypt refuses passwords > 72 bytes; keep within its domain for the
 		// round-trip oracle (longer inputs just get an error on Generate).
 		if len(password) > 72 {

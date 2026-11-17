@@ -34,6 +34,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -48,8 +49,19 @@ func FuzzSSHParseAuthorizedKey(f *testing.F) {
 	f.Add([]byte(""))
 	f.Add([]byte("# just a comment line\n"))
 
+	// PK2: resguard resource oracle (see resguard_ssh_test.go).
+	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
+	rgHaveBudget := rgErr == nil
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, data []byte) {
-		pub, _, _, _, err := ssh.ParseAuthorizedKey(data)
+		var pub ssh.PublicKey
+		var err error
+		c := rgProbe.Measure(len(data), func() { pub, _, _, _, err = ssh.ParseAuthorizedKey(data) })
+		resguard.FeedCoverage(c)
+		if rgHaveBudget {
+			rgBudget.Check(t.Fatalf, c)
+		}
 		if err != nil || pub == nil {
 			return // rejected input: nothing to round-trip, and no panic occurred
 		}
