@@ -63,10 +63,10 @@ const (
 // regression (removed cap, retry storm, amplification, extra dial) trips them, while
 // normal parsing never does.
 const (
-	dialCeiling      = 4           // ≤2 round-trips per Exchange (auth-style probe) + slack
-	allocCeiling     = 16 << 20    // 16 MiB; the 1 MiB body cap + JSON overhead is far below
-	netInCeiling     = 4 << 20     // 4 MiB; ~1 MiB body cap + headers, ×2 round-trips + slack
-	serverBodyCap    = 2 << 20     // harness self-limit on bytes it writes per response
+	dialCeiling      = 4        // ≤2 round-trips per Exchange (auth-style probe) + slack
+	allocCeiling     = 16 << 20 // 16 MiB; the 1 MiB body cap + JSON overhead is far below
+	netInCeiling     = 4 << 20  // 4 MiB; ~1 MiB body cap + headers, ×2 round-trips + slack
+	serverBodyCap    = 2 << 20  // harness self-limit on bytes it writes per response
 	exchangeDeadline = 5 * time.Second
 )
 
@@ -100,7 +100,9 @@ func rawResponse(status int, ctype string, lie bool, body []byte) (resp []byte, 
 
 // statusCarriesBody mirrors net/http's rule: 204 and 304 responses carry no body, so a
 // lying Content-Length on them is ignored by the reader and is not a truncation.
-func statusCarriesBody(status int) bool { return status != http.StatusNoContent && status != http.StatusNotModified }
+func statusCarriesBody(status int) bool {
+	return status != http.StatusNoContent && status != http.StatusNotModified
+}
 
 // selectContentType maps a fuzz byte to a content type, covering oauth2's two parse
 // branches (form-urlencoded/text-plain vs JSON default) and mime.ParseMediaType failure.
@@ -168,10 +170,10 @@ func FuzzOAuth2HostileTokenEndpoint(f *testing.F) {
 	f.Add(200, uint8(0), false, []byte(`{"access_token":"","token_type":"Bearer"}`)) // empty token → error
 	f.Add(200, uint8(0), false, []byte(`not json at all`))
 	f.Add(200, uint8(0), true, []byte(`{"access_token":"at","token_type":"Bearer"}`)) // truncated
-	f.Add(200, uint8(4), false, []byte(`{"access_token":"at","expires_in":"3600"}`))   // string expires_in, no ctype
-	f.Add(500, uint8(6), false, []byte(`<html>oops</html>`))                            // text/html + 5xx
-	f.Add(204, uint8(4), true, []byte(``))                                              // no-body status + lie
-	f.Add(200, uint8(0), false, []byte(`{"access_token":{"nested":true}}`))             // type-confused field
+	f.Add(200, uint8(4), false, []byte(`{"access_token":"at","expires_in":"3600"}`))  // string expires_in, no ctype
+	f.Add(500, uint8(6), false, []byte(`<html>oops</html>`))                          // text/html + 5xx
+	f.Add(204, uint8(4), true, []byte(``))                                            // no-body status + lie
+	f.Add(200, uint8(0), false, []byte(`{"access_token":{"nested":true}}`))           // type-confused field
 
 	nm := resguard.NewNetMeter() // air-gap: any non-loopback dial fails
 	probe := resguard.New(f, resguard.Options{SampleEvery: 32, Net: nm})
