@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/keyorixhq/keyorix/internal/core/dsn"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -81,6 +82,8 @@ func (e *RedisEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 
 	opCtx, cancel := context.WithTimeout(ctx, redisOpTimeout)
 	defer cancel()
+
+	ports.ReportIssuedRole(ctx, user) // before the first write (see PostgresEngine.Issue)
 
 	// ACL SETUSER <user> on >password <rules...>. Each element is a discrete arg —
 	// the generated username/password are typed bulk strings, never concatenated
