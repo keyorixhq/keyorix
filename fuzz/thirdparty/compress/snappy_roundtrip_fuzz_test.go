@@ -30,7 +30,7 @@ func FuzzSnappyRoundTrip(f *testing.F) {
 	f.Add([]byte(nil))
 	f.Add([]byte("hello world"))
 	f.Add(bytes.Repeat([]byte("ab"), 1000)) // highly compressible
-	f.Add(lcg(4096))                         // low compressibility
+	f.Add(lcg(4096))                        // low compressibility
 	f.Fuzz(func(t *testing.T, src []byte) {
 		var enc []byte
 		fuzzutil.Guard(t.Fatalf, "snappy.Encode", func() {
