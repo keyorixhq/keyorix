@@ -29,6 +29,13 @@ func rotationStaging(enc *config.EncryptionConfig) []stagingFile {
 	return files
 }
 
+// BackupRefusedReasonStagingFile names "admin backup is refused because a
+// rotation-staging file is present" (#4105) for machines: the reason= token of
+// the backup's structured stderr line and the reason of the server's
+// security.backup_refused status in GET /api/v1/system/info, so a monitor can
+// match one string for both.
+const BackupRefusedReasonStagingFile = "key-rotation-staging-file"
+
 // PendingRotationFile is a rotation-staging file present on disk.
 type PendingRotationFile struct {
 	Path string

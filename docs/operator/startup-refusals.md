@@ -1331,7 +1331,8 @@ and `keyorix-server admin diagnose`, which changes nothing, prints (after `confi
 
 followed by the same text as the refusal. With a `dek.key.pending` it adds a line saying to
 never delete it by hand and to recover with the rotate-kek recovery (covered by a test, not
-run on a real install here).
+run on a real install here). A running server also shows it in `GET /api/v1/system/info`
+as `security.backup_refused` (`system.write` callers; see `j6-key-rotation.md`).
 
 **Match:** `keyorix-backup-refused reason=key-rotation-staging-file`, `a key rotation is running or was interrupted`, `backups would be refused`, `will refuse until`
 
