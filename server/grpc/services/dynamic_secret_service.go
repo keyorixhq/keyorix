@@ -37,7 +37,7 @@ func NewDynamicSecretService(coreService *core.KeyorixCore) *DynamicSecretGRPCSe
 // through the shared classifier (coreErrorStatus), classified by sentinel, never by
 // err.Error() text: a backend or driver message that happens to say "permission" or
 // "required" is a backend failure, not a caller refusal.
-func mapDynamicError(err error) error {
+func mapDynamicError(ctx context.Context, err error) error {
 	// An admin_dsn refused by policy (the caller's on create/update, the stored one on issue/
 	// renew/revoke): REST answers 400 with the same texts. No DSN in them: ForbiddenOptionError
 	// names only the option, ClientMessage only the DSN's host (never the resolved address).
@@ -68,7 +68,7 @@ func mapDynamicError(err error) error {
 		// or expired, active-lease limit, ...). Core's own text, no driver detail.
 		texts[errclass.Precondition] = err.Error() // nosemgrep: keyorix-raw-error-to-client -- matched by errors.Is(core.ErrDynamicSecretPrecondition), built only by core's dynamicPreconditionf from core's own words (no driver/storage text); REST sends the same text with its 409
 	}
-	return coreErrorStatus(context.Background(), err, coreErrorStatusOpts{op: "dynamic-secret operation", texts: texts})
+	return coreErrorStatus(ctx, err, coreErrorStatusOpts{op: "dynamic-secret operation", texts: texts})
 }
 
 // loadConfigScoped loads a config by ID and authorizes perm at its project/env
@@ -104,7 +104,7 @@ func (s *DynamicSecretGRPCService) ListConfigs(ctx context.Context, req *pb.List
 	}
 	cfgs, err := s.core.ListDynamicSecretConfigs(ctx, uint(req.GetProjectId()), uint(req.GetEnvironmentId()))
 	if err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	out := make([]*pb.DynamicSecretConfig, 0, len(cfgs))
 	for _, c := range cfgs {
@@ -153,7 +153,7 @@ func (s *DynamicSecretGRPCService) CreateConfig(ctx context.Context, req *pb.Cre
 		ActorID:           user.PrincipalID(),
 	})
 	if err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	return dynamicConfigToProto(cfg), nil
 }
@@ -171,7 +171,7 @@ func (s *DynamicSecretGRPCService) ClassifyConfig(ctx context.Context, req *pb.C
 	}
 	cfg, err := s.core.ClassifyDynamicSecretConfig(ctx, user.UserID, uint(req.GetId()), req.GetClassification())
 	if err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	return dynamicConfigToProto(cfg), nil
 }
@@ -191,7 +191,7 @@ func (s *DynamicSecretGRPCService) UpdateConfigAdminDSN(ctx context.Context, req
 		ConfigID: uint(req.GetId()), AdminDSN: req.GetAdminDsn(), ActorID: user.PrincipalID(),
 	})
 	if err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	return dynamicConfigToProto(cfg), nil
 }
@@ -209,7 +209,7 @@ func (s *DynamicSecretGRPCService) ListConfigsWithRefusedAdminDSN(ctx context.Co
 	}
 	rep, err := s.core.ListProjectConfigsWithRefusedAdminDSN(ctx, user.PrincipalID(), uint(req.GetProjectId()))
 	if err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	out := &pb.ListRefusedAdminDSNConfigsResponse{Unreadable: intToU32(rep.Unreadable)}
 	for _, c := range rep.Configs {
@@ -234,7 +234,7 @@ func (s *DynamicSecretGRPCService) IssueLease(ctx context.Context, req *pb.Issue
 	}
 	lease, err := s.core.IssueLease(ctx, uint(req.GetConfigId()), int(req.GetTtlSeconds()), user.UserID)
 	if err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	return &pb.IssuedCredential{
 		LeaseId:   lease.LeaseID,
@@ -258,7 +258,7 @@ func (s *DynamicSecretGRPCService) ListLeases(ctx context.Context, req *pb.ListL
 	}
 	leases, err := s.core.ListDynamicSecretLeases(ctx, uint(req.GetConfigId()))
 	if err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	out := make([]*pb.DynamicSecretLease, 0, len(leases))
 	for _, l := range leases {
@@ -298,7 +298,7 @@ func (s *DynamicSecretGRPCService) RevokeLease(ctx context.Context, req *pb.Revo
 		return nil, err
 	}
 	if err := s.core.RevokeLease(ctx, req.GetLeaseId(), user.UserID, "manual"); err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -316,7 +316,7 @@ func (s *DynamicSecretGRPCService) RenewLease(ctx context.Context, req *pb.Renew
 	}
 	newExpiry, err := s.core.RenewLease(ctx, req.GetLeaseId(), int(req.GetTtlSeconds()), user.UserID)
 	if err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	return &pb.RenewLeaseResponse{LeaseId: req.GetLeaseId(), ExpiresAt: timestamppb.New(newExpiry)}, nil
 }
@@ -334,7 +334,7 @@ func (s *DynamicSecretGRPCService) RevokeAllLeases(ctx context.Context, req *pb.
 	}
 	revoked, failed, err := s.core.RevokeLeasesForConfig(ctx, uint(req.GetConfigId()), user.UserID, "bulk")
 	if err != nil {
-		return nil, mapDynamicError(err)
+		return nil, mapDynamicError(ctx, err)
 	}
 	return &pb.RevokeAllLeasesResponse{Revoked: intToU32(revoked), Failed: intToU32(failed)}, nil
 }

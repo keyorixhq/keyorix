@@ -167,7 +167,7 @@ func TestMapUserError_SetupBaseURLRequired(t *testing.T) {
 		core.ErrSetupBaseURLRequired,
 		fmt.Errorf("opaque prefix: %w", core.ErrSetupBaseURLRequired),
 	} {
-		assert.Equal(t, codes.InvalidArgument, status.Code(mapUserError(err)), "err=%v", err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(mapUserError(context.Background(), err)), "err=%v", err)
 	}
 }
 
@@ -348,7 +348,7 @@ func TestDeleteRole_BuiltinDenied_S21b(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMapShareError_Default_S21b(t *testing.T) {
-	err := mapShareError(errMsg("database connection timeout"))
+	err := mapShareError(context.Background(), errMsg("database connection timeout"))
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 

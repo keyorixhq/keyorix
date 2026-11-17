@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -15,7 +16,7 @@ import (
 // --- mapDynamicError ---
 
 func TestMapDynamicError_NotFound(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: config not found in database", core.ErrDynamicSecretNotFound))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: config not found in database", core.ErrDynamicSecretNotFound))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.NotFound {
 		t.Errorf("expected NotFound, got %v", st.Code())
@@ -23,7 +24,7 @@ func TestMapDynamicError_NotFound(t *testing.T) {
 }
 
 func TestMapDynamicError_InvalidArgument_CannotExceed(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: cannot exceed the allowed limit", core.ErrValidation))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: cannot exceed the allowed limit", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -31,7 +32,7 @@ func TestMapDynamicError_InvalidArgument_CannotExceed(t *testing.T) {
 }
 
 func TestMapDynamicError_InvalidArgument_Required(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: name is required", core.ErrValidation))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: name is required", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -39,7 +40,7 @@ func TestMapDynamicError_InvalidArgument_Required(t *testing.T) {
 }
 
 func TestMapDynamicError_InvalidArgument_ClassificationMust(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: classification must be one of: restricted, confidential", core.ErrValidation))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: classification must be one of: restricted, confidential", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -47,7 +48,7 @@ func TestMapDynamicError_InvalidArgument_ClassificationMust(t *testing.T) {
 }
 
 func TestMapDynamicError_PermissionDenied(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: permission denied for this config", core.ErrPermissionDenied))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: permission denied for this config", core.ErrPermissionDenied))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())
@@ -55,7 +56,7 @@ func TestMapDynamicError_PermissionDenied(t *testing.T) {
 }
 
 func TestMapDynamicError_Denied(t *testing.T) {
-	err := mapDynamicError(fmt.Errorf("%w: access denied by policy", core.ErrPermissionDenied))
+	err := mapDynamicError(context.Background(), fmt.Errorf("%w: access denied by policy", core.ErrPermissionDenied))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())
@@ -63,7 +64,7 @@ func TestMapDynamicError_Denied(t *testing.T) {
 }
 
 func TestMapDynamicError_Default_Unavailable(t *testing.T) {
-	err := mapDynamicError(errors.New("connection reset by peer"))
+	err := mapDynamicError(context.Background(), errors.New("connection reset by peer"))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.Unavailable {
 		t.Errorf("expected Unavailable, got %v", st.Code())
@@ -73,7 +74,7 @@ func TestMapDynamicError_Default_Unavailable(t *testing.T) {
 // --- mapMachineError ---
 
 func TestMapMachineError_NotFound(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: machine identity not found", core.ErrMachineIdentityNotFound))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: machine identity not found", core.ErrMachineIdentityNotFound))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.NotFound {
 		t.Errorf("expected NotFound, got %v", st.Code())
@@ -81,7 +82,7 @@ func TestMapMachineError_NotFound(t *testing.T) {
 }
 
 func TestMapMachineError_CannotTransition(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: cannot transition from active to active", core.ErrMachineTransitionInvalid))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: cannot transition from active to active", core.ErrMachineTransitionInvalid))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {
 		t.Errorf("expected FailedPrecondition, got %v", st.Code())
@@ -89,7 +90,7 @@ func TestMapMachineError_CannotTransition(t *testing.T) {
 }
 
 func TestMapMachineError_MustBeActive(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: must be active to issue a token", core.ErrMachineIdentityNotActive))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: must be active to issue a token", core.ErrMachineIdentityNotActive))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {
 		t.Errorf("expected FailedPrecondition, got %v", st.Code())
@@ -97,7 +98,7 @@ func TestMapMachineError_MustBeActive(t *testing.T) {
 }
 
 func TestMapMachineError_InvalidArgument(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: invalid machine identity name", core.ErrValidation))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: invalid machine identity name", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -105,7 +106,7 @@ func TestMapMachineError_InvalidArgument(t *testing.T) {
 }
 
 func TestMapMachineError_ClassificationMust(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: classification must be one of: restricted", core.ErrValidation))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: classification must be one of: restricted", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -113,7 +114,7 @@ func TestMapMachineError_ClassificationMust(t *testing.T) {
 }
 
 func TestMapMachineError_Required(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: name is required", core.ErrValidation))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: name is required", core.ErrValidation))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -121,7 +122,7 @@ func TestMapMachineError_Required(t *testing.T) {
 }
 
 func TestMapMachineError_PermissionDenied(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: permission denied", core.ErrPermissionDenied))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: permission denied", core.ErrPermissionDenied))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())
@@ -129,7 +130,7 @@ func TestMapMachineError_PermissionDenied(t *testing.T) {
 }
 
 func TestMapMachineError_Denied(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: access denied by RBAC", core.ErrPermissionDenied))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: access denied by RBAC", core.ErrPermissionDenied))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())
@@ -137,7 +138,7 @@ func TestMapMachineError_Denied(t *testing.T) {
 }
 
 func TestMapMachineError_Default_Internal(t *testing.T) {
-	err := mapMachineError(errors.New("unexpected storage failure"))
+	err := mapMachineError(context.Background(), errors.New("unexpected storage failure"))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.Internal {
 		t.Errorf("expected Internal, got %v", st.Code())
@@ -152,7 +153,7 @@ func TestMapMachineError_Default_Internal(t *testing.T) {
 // it fell through to the default codes.Internal bucket instead of
 // codes.PermissionDenied, even though the request was correctly denied.
 func TestMapMachineError_PrivilegeCeilingDenied(t *testing.T) {
-	err := mapMachineError(fmt.Errorf("%w: issuing a token for a machine identity that holds administrative roles requires administrative authority", core.ErrMachinePrivilegeCeilingDenied))
+	err := mapMachineError(context.Background(), fmt.Errorf("%w: issuing a token for a machine identity that holds administrative roles requires administrative authority", core.ErrMachinePrivilegeCeilingDenied))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())
@@ -162,7 +163,7 @@ func TestMapMachineError_PrivilegeCeilingDenied(t *testing.T) {
 // --- mapRoleError ---
 
 func TestMapRoleError_NotFound(t *testing.T) {
-	err := mapRoleError(fmt.Errorf("get role: %w", storage.ErrRoleNotFound))
+	err := mapRoleError(context.Background(), fmt.Errorf("get role: %w", storage.ErrRoleNotFound))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.NotFound {
 		t.Errorf("expected NotFound, got %v", st.Code())
@@ -170,7 +171,7 @@ func TestMapRoleError_NotFound(t *testing.T) {
 }
 
 func TestMapRoleError_AlreadyExists(t *testing.T) {
-	err := mapRoleError(fmt.Errorf("create role: %w", core.ErrRoleNameReserved))
+	err := mapRoleError(context.Background(), fmt.Errorf("create role: %w", core.ErrRoleNameReserved))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.AlreadyExists {
 		t.Errorf("expected AlreadyExists, got %v", st.Code())
@@ -178,7 +179,7 @@ func TestMapRoleError_AlreadyExists(t *testing.T) {
 }
 
 func TestMapRoleError_Duplicate(t *testing.T) {
-	err := mapRoleError(errors.New("UNIQUE constraint failed: roles.name_folded"))
+	err := mapRoleError(context.Background(), errors.New("UNIQUE constraint failed: roles.name_folded"))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.AlreadyExists {
 		t.Errorf("expected AlreadyExists, got %v", st.Code())
@@ -186,7 +187,7 @@ func TestMapRoleError_Duplicate(t *testing.T) {
 }
 
 func TestMapRoleError_Default(t *testing.T) {
-	err := mapRoleError(errors.New("something unexpected went wrong"))
+	err := mapRoleError(context.Background(), errors.New("something unexpected went wrong"))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.Internal {
 		t.Errorf("expected Internal, got %v", st.Code())
@@ -203,7 +204,7 @@ func TestMapRoleError_Default(t *testing.T) {
 // TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed for why that
 // distinction matters.
 func TestMapRoleError_Validation(t *testing.T) {
-	err := mapRoleError(core.WrapRoleValidation(fmt.Errorf("validation error: invalid name %q: control characters not allowed", "role\x00name")))
+	err := mapRoleError(context.Background(), core.WrapRoleValidation(fmt.Errorf("validation error: invalid name %q: control characters not allowed", "role\x00name")))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -224,7 +225,7 @@ func TestMapRoleError_Validation(t *testing.T) {
 // legitimate fix); FIX-4 restores the errors.Is check without reintroducing
 // #1669's real problem (see TestMapRoleError_Validation's fixed message).
 func TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed(t *testing.T) {
-	err := mapRoleError(errors.New("pq: insert failed: check constraint \"role_name_validation_chk\" violated"))
+	err := mapRoleError(context.Background(), errors.New("pq: insert failed: check constraint \"role_name_validation_chk\" violated"))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.Internal {
 		t.Errorf("expected Internal (not InvalidArgument) for an unmarked error that merely mentions \"validation\", got %v", st.Code())
@@ -237,7 +238,7 @@ func TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed(t *testing.T) {
 // AST-pattern-matched semgrep rule (Errorf, not Error) without being any
 // safer in substance, and had zero test coverage.
 func TestMapRoleError_BuiltIn(t *testing.T) {
-	err := mapRoleError(fmt.Errorf("permission denied: cannot update %w: system_admin", core.ErrBuiltinRole))
+	err := mapRoleError(context.Background(), fmt.Errorf("permission denied: cannot update %w: system_admin", core.ErrBuiltinRole))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {
 		t.Errorf("expected FailedPrecondition, got %v", st.Code())

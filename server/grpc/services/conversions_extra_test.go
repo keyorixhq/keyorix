@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -189,7 +190,7 @@ func TestMapSecretError(t *testing.T) {
 		{"some unexpected error", codes.Internal},
 	}
 	for _, c := range cases {
-		err := mapSecretError(errFromMsg(c.msg))
+		err := mapSecretError(context.Background(), errFromMsg(c.msg))
 		assert.Equalf(t, c.wantCode, status.Code(err), "mapSecretError(%q)", c.msg)
 	}
 }

@@ -12,11 +12,15 @@
   refusal reached through a recorded transient lookup fault is `Unavailable` with the gates'
   fixed text (`authorizeRefusal`), as `mapSecretMutationError` already did. The family mappers
   (`mapRoleError`, `mapMachineError`, `mapUserError`, `mapProjectError`, `mapShareError`,
-  `mapDynamicError`, `mapSecretACLError`, `groupError`) are callers of the adapter and keep only
+  `mapDynamicError`, `mapSecretACLError`, `mapSecretError`, `groupError`, and the share scope resolver's
+  `shareScopeReadError`) are callers of the adapter and keep only
   what the classifier cannot say (an explicit pre-check with its reason, or a per-sentinel client
-  text); `mapSecretError` and `authorizeShareScoped` are not yet. `ErrBuiltinRole` stays
+  text (`mapSecretError` keeps ResourceExhausted, Aborted, core's share refusal text, `ErrSecretAlreadyExists`
+  and the untyped rotation-validation text match, which runs last and only for an `Internal` class that
+  is not an outage; `shareScopeReadError` keeps the positive-absence test of `core.ReadFault`). `ErrBuiltinRole` stays
   `FailedPrecondition` in `mapRoleError` while REST answers 403 (ask
-  `errmap-grpc-builtin-role-code`). Guard: `TestFamilyMappers_TypedStorageReadFaultIsUnavailable`
+  `errmap-grpc-builtin-role-code`). Guard: `TestFamilyMappers_TypedStorageReadFaultIsUnavailable`, `TestMapSecretError_*` and
+  `TestShareScopeReadError_Answers` (secret_error_classifier_test.go)
   (one typed storage read fault is `Unavailable` + `storage_unavailable` on every family mapper),
   `TestFamilyMappers_PermissionRefusalIsPermissionDenied`, `TestCoreErrorStatus_EverySentinelRendersItsClass`,
   `TestCoreErrorStatus_TextsAndDetails` (every table row and the ErrorInfo details), the REST

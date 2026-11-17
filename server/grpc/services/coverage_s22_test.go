@@ -113,7 +113,7 @@ func TestRevokeBreakGlass_PermissionDenied_S22(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMapProjectError_Default_S22(t *testing.T) {
-	err := mapProjectError(errors.New("unexpected storage failure"))
+	err := mapProjectError(context.Background(), errors.New("unexpected storage failure"))
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 

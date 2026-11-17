@@ -48,6 +48,10 @@ type grpcFuncCalls struct {
 	file, name    string
 	reachingCalls []string
 	calls         map[string]bool // every called name (Ident or Sel)
+	// rootsCtx: the body calls context.Background() or context.TODO()
+	// (audit_unavailable_mapping_guard_test.go flags a mapper that does: it answers
+	// without the RPC ctx, whether or not it takes one as a parameter).
+	rootsCtx bool
 }
 
 func scanGRPCFuncs(t *testing.T, dir string, reaching map[string]bool) []grpcFuncCalls {
@@ -83,6 +87,9 @@ func scanGRPCFuncs(t *testing.T, dir string, reaching map[string]bool) []grpcFun
 					fc.calls[fn.Name] = true
 				case *ast.SelectorExpr:
 					fc.calls[fn.Sel.Name] = true
+					if x, ok := fn.X.(*ast.Ident); ok && x.Name == "context" && (fn.Sel.Name == "Background" || fn.Sel.Name == "TODO") {
+						fc.rootsCtx = true
+					}
 					if recv, ok := fn.X.(*ast.SelectorExpr); ok && recv.Sel.Name == "core" && reaching[fn.Sel.Name] {
 						fc.reachingCalls = append(fc.reachingCalls, fn.Sel.Name)
 					}
