@@ -197,6 +197,8 @@ var plants = append([]plant{
 		repl:           "   AND (user_roles.environment_id = ? OR 1 = 1) /* PLANT: env-scope clause removed */",
 		op:             "secret.read.env",
 		minUnexplained: 2,
+	},
+	{
 		// V8b: removes the risk-exception APPROVE router gate (RequirePermission
 		// system.write@global). core.ApproveRiskException performs no permission check
 		// (matrix core_refusal:"none"; it enforces only the dual-control business rules —
