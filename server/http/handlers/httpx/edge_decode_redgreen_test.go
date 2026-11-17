@@ -61,11 +61,11 @@ func TestGE1XOracle_Bounded_RedGreen(t *testing.T) {
 	budget := resguard.Budget{Target: "rg", Factor: 4, Meters: map[string]resguard.MeterBudget{
 		"alloc_bytes": {Floor: 4096, PerByte: 20},
 	}}
-	green := decodeObservation{status: 200, reached: true, okDecode: true, cost: resguard.Cost{InputLen: 100, Sampled: true, AllocBytes: 8000}}
+	green := decodeObservation{status: 200, reached: true, okDecode: true, cost: resguard.Cost{InputLen: 100, Sampled: true, AllocSampled: true, AllocBytes: 8000}}
 	if v := decodeEdgeViolation(green, budget); v != "" {
 		t.Fatalf("GREEN bounded should pass, got %q", v)
 	}
-	red := decodeObservation{status: 200, reached: true, okDecode: true, cost: resguard.Cost{InputLen: 100, Sampled: true, AllocBytes: 80 << 20}}
+	red := decodeObservation{status: 200, reached: true, okDecode: true, cost: resguard.Cost{InputLen: 100, Sampled: true, AllocSampled: true, AllocBytes: 80 << 20}}
 	if v := decodeEdgeViolation(red, budget); v == "" {
 		t.Fatal("RED: super-linear alloc must fire the bounded-work oracle")
 	}

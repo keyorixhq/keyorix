@@ -48,6 +48,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -207,8 +208,8 @@ func (s *edgeLogSink) scan() (leaked []string, sawPanic bool) {
 func chainUnary(ics ...grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		cur := handler
-		for i := len(ics) - 1; i >= 0; i-- {
-			ic := ics[i]
+		for _, ic := range slices.Backward(ics) {
+
 			next := cur
 			cur = func(c context.Context, r any) (any, error) { return ic(c, r, info, next) }
 		}
@@ -574,7 +575,7 @@ func edgeCalibrate(f *testing.F, w *edgeWorld, chain grpc.UnaryServerInterceptor
 	// calibrated against every code path's cost — crucially the success path
 	// (mode 2/3/4, a fixed input-independent cost) and the oversized-header path
 	// (a per-byte cost). ctxMode is varied too.
-	for m := byte(0); m < 12; m++ {
+	for m := range byte(12) {
 		cal = append(cal, []byte{m, 0})
 		cal = append(cal, []byte{m, 1, 'x', 'y', 'z'})
 		cal = append(cal, append([]byte{m, 0}, []byte(strings.Repeat("a", 4096))...))
@@ -584,7 +585,7 @@ func edgeCalibrate(f *testing.F, w *edgeWorld, chain grpc.UnaryServerInterceptor
 		append([]byte{8, 0}, []byte(strings.Repeat("\xff", 4096))...),
 	)
 	handler := func(ctx context.Context, _ any) (any, error) { return "ok", nil }
-	for i := 0; i < 3; i++ { // three passes to stabilise the p99
+	for range 3 { // three passes to stabilise the p99
 		for _, data := range cal {
 			globalGRPCTokenAuthFailureLimiter = &grpcIPFailureLimiter{limiters: map[string]*grpcPrincipalBucket{}}
 			md, _, cm := buildHostileMD(data, w)

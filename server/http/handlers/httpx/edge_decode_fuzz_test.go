@@ -193,7 +193,7 @@ func decodeCalibrate(f *testing.F, p *resguard.Probe) resguard.Budget {
 		decodeSeed{1, "application/json", []byte(`{"name":"` + strings.Repeat("a", 8192) + `"}`)},
 		decodeSeed{0, "application/json", []byte(`{"extra":{` + strings.Repeat(`"k":1,`, 2000) + `"z":1}}`)},
 	)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		for _, s := range seeds {
 			c := p.Measure(len(s.body), func() { _ = runDecodeInput(s.sel, s.ctype, s.body) })
 			samples = append(samples, c)

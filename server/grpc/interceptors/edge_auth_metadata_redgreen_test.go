@@ -100,11 +100,11 @@ func TestGE1Oracle_Bounded_RedGreen(t *testing.T) {
 	budget := resguard.Budget{Target: "rg", Factor: 4, Meters: map[string]resguard.MeterBudget{
 		"alloc_bytes": {Floor: 1024, PerByte: 10},
 	}}
-	green := edgeObservation{reached: true, reachedUC: &UserContext{UserID: 1}, cost: resguard.Cost{InputLen: 100, Sampled: true, AllocBytes: 2000}}
+	green := edgeObservation{reached: true, reachedUC: &UserContext{UserID: 1}, cost: resguard.Cost{InputLen: 100, Sampled: true, AllocSampled: true, AllocBytes: 2000}}
 	if v := edgeViolation(green, budget); v != "" {
 		t.Fatalf("GREEN bounded alloc should pass, got %q", v)
 	}
-	red := edgeObservation{reached: true, reachedUC: &UserContext{UserID: 1}, cost: resguard.Cost{InputLen: 100, Sampled: true, AllocBytes: 50 << 20}}
+	red := edgeObservation{reached: true, reachedUC: &UserContext{UserID: 1}, cost: resguard.Cost{InputLen: 100, Sampled: true, AllocSampled: true, AllocBytes: 50 << 20}}
 	if v := edgeViolation(red, budget); v == "" {
 		t.Fatal("RED: super-linear alloc must fire the bounded-work oracle")
 	}
