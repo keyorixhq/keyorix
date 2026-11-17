@@ -243,7 +243,7 @@ func newFakeServer(specs []respSpec) (*fakeServer, error) {
 		ln:        ln,
 		specs:     specs,
 		closed:    make(chan struct{}),
-		tlsConfig: &tls.Config{Certificates: []tls.Certificate{cert}},
+		tlsConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 	}
 	go fs.serve()
 	return fs, nil

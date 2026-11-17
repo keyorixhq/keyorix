@@ -3,7 +3,7 @@ package verifierflip
 import (
 	"bytes"
 	"fmt"
-	"math/rand/v2"
+	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- seeded PRNG for reproducible mutation sampling in a test harness, never used for secrets
 	"sort"
 )
 

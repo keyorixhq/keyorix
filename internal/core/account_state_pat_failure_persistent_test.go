@@ -6,7 +6,6 @@ package core
 // added to storagetest.StoreHooks with the fix.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -25,7 +24,7 @@ import (
 // listing and/or the PAT revocation fail on every call, inside the transaction too.
 func newPATFailureWorld(t *testing.T, w *txClosureWorld, failList, failRevoke bool) *revokeListWorld {
 	t.Helper()
-	rw := &revokeListWorld{txClosureWorld: w, logs: &bytes.Buffer{}}
+	rw := &revokeListWorld{txClosureWorld: w, logs: &syncBuffer{}}
 	h := &storeHooks{WrapTx: true}
 	if failList {
 		h.ListPersonalAccessTokensByUser = func(_ storage.Storage, _ context.Context, _ uint) ([]*models.PersonalAccessToken, error) {

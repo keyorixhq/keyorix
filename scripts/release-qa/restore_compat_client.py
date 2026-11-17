@@ -48,7 +48,7 @@ def call(url, path, body, token=None):
     if token:
         req.add_header("Authorization", "Bearer " + token)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310 - local test server
+        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310 - local test server  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- url is the operator-supplied local test server address, never user input
             return json.load(resp).get("data") or {}
     except urllib.error.HTTPError as e:
         die(f"POST {path}: HTTP {e.code}: {e.read().decode(errors='replace')[:400]}")
