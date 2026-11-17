@@ -15,6 +15,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"github.com/keyorixhq/keyorix/internal/core/dsn"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -86,6 +87,8 @@ func (e *MongoEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 	if err != nil {
 		return Credential{}, "", err
 	}
+
+	ports.ReportIssuedRole(ctx, user) // before the first write (see PostgresEngine.Issue)
 
 	// createUser takes the name/password/roles as typed BSON, so the generated
 	// credential can never be interpreted as a command — no quoting/escaping needed.
