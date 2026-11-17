@@ -144,6 +144,21 @@ func main() {
 		for _, r := range rows {
 			fmt.Printf("%d\t%s\t%s\n", r.ID, r.EventType, r.Description)
 		}
+	case "audit-link":
+		// Prints "<id> <prev_hash> <entry_hash>" for audit row --after, then the same for the
+		// next row: the harness asserts the head hash is unchanged by a move and that the first
+		// event written after it chains onto it.
+		gdb, err := storage.OpenGormDB(cfg)
+		if err != nil {
+			fatalf("open db: %v", err)
+		}
+		var rows []models.AuditEvent
+		if err := gdb.Where("id >= ?", *after).Order("id").Limit(2).Find(&rows).Error; err != nil {
+			fatalf("audit-link: %v", err)
+		}
+		for _, r := range rows {
+			fmt.Printf("%d\t%s\t%s\n", r.ID, r.PrevHash, r.EntryHash)
+		}
 	case "reset-pg":
 		if cfg.Storage.Type != "postgres" {
 			fatalf("reset-pg: config is not PostgreSQL")

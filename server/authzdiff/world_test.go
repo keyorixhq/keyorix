@@ -57,6 +57,14 @@ const (
 	pkExpired     principalKind = "expired-grant"
 	pkSuspended   principalKind = "suspended" // project_admin@A, account suspended after login
 	pkPAT         principalKind = "pat-restricted"
+	// pkPATFull is a PAT whose owner holds roles.assign plus full coverage of the
+	// target machine's permissions, but whose token carries a least-privilege
+	// permission allowlist that still includes the op's own gate. Unlike pkPAT
+	// (restricted to secrets.read, which fails the roles.assign gate), it passes
+	// the gate AND the target-coverage ceiling, so machine.token.issue reaches the
+	// #4332 restricted-PAT refusal (machine_token.go) as the SOLE denier — the one
+	// path that exercises the model's `if p.pat != nil` line on a token-mint.
+	pkPATFull principalKind = "pat-full-coverage"
 	// pkRequester is the author of project A's pending access request. Not a
 	// probed principal: it is the positive control for requester-only ops
 	// (accessrequest.withdraw), whose rule no other principal can satisfy.
@@ -68,10 +76,10 @@ const (
 // 0, account state, PAT restriction). The custom-role and machine principals
 // are NOT here: their permission sets are generated per operation
 // (genVariations), replacing the old hand-picked subsets.
-var namedPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkActor0, pkExpired, pkSuspended, pkPAT}
+var namedPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull}
 
 // allPrincipalKinds is every principal the fuzz target may pick.
-var allPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkCustom, pkMachine, pkActor0, pkExpired, pkSuspended, pkPAT}
+var allPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkCustom, pkMachine, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull}
 
 type principal struct {
 	kind            principalKind
@@ -305,6 +313,29 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	pr := must(c.CreateOwnPAT(ctx, patOwner.userID, "restricted", nil, []string{"secrets.read"}, fx.A.projectID, 0, nil))
 	patOwner.token = pr.PlainToken
 	patOwner.pat = &core.PATRestriction{Permissions: []string{"secrets.read"}, ProjectID: fx.A.projectID}
+
+	// PAT-full-coverage: owner is project_admin at BOTH projects, so it fully
+	// covers either target machine's project_auditor role (and holds
+	// roles.assign). The PAT is confined to a least-privilege permission allowlist
+	// that still includes machine.token.issue's own gate (roles.assign) and the
+	// target's permissions — so, unlike pkPAT, it PASSES the gate and the
+	// target-coverage ceiling. It carries NO project/environment/CIDR confinement:
+	// a CIDR restriction is enforced fail-closed at the transports against the
+	// request source IP, which the bufconn gRPC leg cannot supply, and an
+	// environment restriction is denied at the project-level roles.assign gate
+	// itself — so neither can reach the #4332 refusal on all three layers, whereas
+	// a permission allowlist that Allows the gate does (and is modelled by
+	// PATRestriction.Allows). The result: machine.token.issue is denied ONLY by
+	// the restricted-PAT refusal (machine_token.go), the one path exercising the
+	// model's `if p.pat != nil` token-mint line. See model_test.go / plants_test.go
+	// (fix-4332-pat-refusal-removed) and the HF3 report for the full analysis.
+	patFullScopes := []string{"roles.assign", "secrets.read", "users.read", "audit.read"}
+	patFull := addUserPrincipal(pkPATFull, "p-pat-full")
+	grant(patFull.userID, fx.roleIDs["project_admin"], fx.A.projectID, nil)
+	grant(patFull.userID, fx.roleIDs["project_admin"], fx.B.projectID, nil)
+	prFull := must(c.CreateOwnPAT(ctx, patFull.userID, "full-coverage", nil, patFullScopes, 0, 0, nil))
+	patFull.token = prFull.PlainToken
+	patFull.pat = &core.PATRestriction{Permissions: patFullScopes}
 
 	// g-custom: the "group" route of a generated permission set.
 	gc := must(c.CreateGroup(ctx, admin.ID, &core.CreateGroupRequest{Name: "g-custom", Description: "synthetic"}))
