@@ -1,0 +1,1 @@
+TestEveryRootReferenceIsInTheTriggerSet	scripts/ci/authzgate	#4358	new guard: a type-checked reference to a permission-decision root or permission constant (directly or through a function-value alias) inside a declaration the authz-oracle trigger set does not hold; green on main (985 references, 0 misses)

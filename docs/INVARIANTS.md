@@ -49,6 +49,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/rotation` | [internal/rotation/INVARIANTS.md](../internal/rotation/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/fuzzutil/complexity` | [internal/fuzzutil/complexity/INVARIANTS.md](../internal/fuzzutil/complexity/INVARIANTS.md) | 2 | 2 | 0 |
+| `internal/fuzzutil/resguard` | [internal/fuzzutil/resguard/INVARIANTS.md](../internal/fuzzutil/resguard/INVARIANTS.md) | 6 | 6 | 0 |
 | `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 2 | 2 | 0 |
 | `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |

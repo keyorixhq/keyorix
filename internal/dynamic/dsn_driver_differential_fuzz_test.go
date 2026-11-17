@@ -42,6 +42,7 @@ func FuzzDSNHostsCoverDriverHosts(f *testing.F) {
 		`host=169.254.169.25\4 user=a`,
 		"host=169.254.169.254 password=a://203.0.113.5",
 		"host=h1,h2,h3 port=1,2,3",
+		`host=0\ :`, // pgx host "0 :": the space survives SplitHostPort, the parser trims it
 		"postgres://203.0.113.5/db?host=169.254.169.254",
 		"postgres:///db?host=169.254.169.254",
 		"postgres://%31%36%39.254.169.254/db",
@@ -76,7 +77,7 @@ func FuzzDSNHostsCoverDriverHosts(f *testing.F) {
 				if g == want {
 					return true
 				}
-				if h, _, err := net.SplitHostPort(want); err == nil && g == h {
+				if h, _, err := net.SplitHostPort(want); err == nil && g == strings.TrimSpace(h) {
 					return true // pgx keeps a key/value "host=h:5432" whole; the parser strips the port
 				}
 			}
