@@ -86,27 +86,27 @@ const hostileCtxDeadline = 400 * time.Millisecond
 func FuzzCLIHostileServer(f *testing.F) {
 	// Seeds: a valid version reply, and the hostile shapes this target exists for.
 	f.Add(200, uint8(0x00), []byte(`{"api_version":3,"minimum_cli_version":"1.0.0"}`))
-	f.Add(404, uint8(0x00), []byte(``))                                           // old-server warning path
-	f.Add(500, uint8(0x40), []byte(`{"error":"boom","message":"[31minjected"}`)) // escape in message
-	f.Add(403, uint8(0x00), []byte(`{"error":"Forbidden","message":"no"}`))       // exit-code 4
-	f.Add(401, uint8(0x00), []byte(`{"error":"Unauthorized","message":"nope"}`))  // exit-code 3
-	f.Add(302, uint8(0x01), []byte(``))                                           // redirect -> evil loopback
-	f.Add(302, uint8(0x03), []byte(``))                                           // redirect -> metadata SSRF
-	f.Add(200, uint8(0x04), []byte(`{"api_version":1}`))                          // oversize -> cap
-	f.Add(200, uint8(0x10), []byte(`<html>not json</html>`))                      // 200 + wrong content-type
-	f.Add(200, uint8(0x08), []byte(`{"api_version":1}`))                          // truncated
-	f.Add(200, uint8(0x20), []byte(`{"api_version":2}`))                          // duplicate headers
-	f.Add(200, uint8(0x00), []byte(`{"api_version":`))                            // invalid JSON
-	f.Add(200, uint8(0x80), []byte(`{"api_version":1}`))                          // slow
+	f.Add(404, uint8(0x00), []byte(``))                                                      // old-server warning path
+	f.Add(500, uint8(0x40), []byte("{\"error\":\"boom\",\"message\":\"\x1b[31minjected\"}")) // escape in message
+	f.Add(403, uint8(0x00), []byte(`{"error":"Forbidden","message":"no"}`))                  // exit-code 4
+	f.Add(401, uint8(0x00), []byte(`{"error":"Unauthorized","message":"nope"}`))             // exit-code 3
+	f.Add(302, uint8(0x01), []byte(``))                                                      // redirect -> evil loopback
+	f.Add(302, uint8(0x03), []byte(``))                                                      // redirect -> metadata SSRF
+	f.Add(200, uint8(0x04), []byte(`{"api_version":1}`))                                     // oversize -> cap
+	f.Add(200, uint8(0x10), []byte(`<html>not json</html>`))                                 // 200 + wrong content-type
+	f.Add(200, uint8(0x08), []byte(`{"api_version":1}`))                                     // truncated
+	f.Add(200, uint8(0x20), []byte(`{"api_version":2}`))                                     // duplicate headers
+	f.Add(200, uint8(0x00), []byte(`{"api_version":`))                                       // invalid JSON
+	f.Add(200, uint8(0x80), []byte(`{"api_version":1}`))                                     // slow
 
 	// A single shared "evil" redirect target on loopback. It records every request and
 	// the Authorization header it saw. O4: refuseRedirect must keep this at zero forever.
-	var evilHits int64
-	var evilAuthSeen int64
+	var evilHits atomic.Int64
+	var evilAuthSeen atomic.Int64
 	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&evilHits, 1)
+		evilHits.Add(1)
 		if r.Header.Get("Authorization") != "" {
-			atomic.AddInt64(&evilAuthSeen, 1)
+			evilAuthSeen.Add(1)
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"api_version":99}`))
@@ -184,10 +184,10 @@ func FuzzCLIHostileServer(f *testing.F) {
 		}
 
 		// ---- O4 no credential forwarding after redirect -----------------------
-		if h := atomic.LoadInt64(&evilHits); h > 0 {
+		if h := evilHits.Load(); h > 0 {
 			t.Fatalf("REDIRECT-FORWARD: the evil redirect target received %d request(s); refuseRedirect did not fire", h)
 		}
-		if a := atomic.LoadInt64(&evilAuthSeen); a > 0 {
+		if a := evilAuthSeen.Load(); a > 0 {
 			t.Fatalf("CREDENTIAL-LEAK: the bearer token was forwarded to the redirect target %d time(s)", a)
 		}
 
