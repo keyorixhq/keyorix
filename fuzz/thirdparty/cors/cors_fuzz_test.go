@@ -33,6 +33,7 @@ package corshostile
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -129,10 +130,8 @@ func (m refMatcher) allowed(origin string) bool {
 		return true
 	}
 	o := strings.ToLower(origin)
-	for _, e := range m.exact {
-		if e == o {
-			return true
-		}
+	if slices.Contains(m.exact, o) {
+		return true
 	}
 	for _, w := range m.wild {
 		if len(o) >= len(w.prefix)+len(w.suffix) && strings.HasPrefix(o, w.prefix) && strings.HasSuffix(o, w.suffix) {
@@ -147,12 +146,7 @@ func (m refMatcher) allowed(origin string) bool {
 // can distinguish "exact-list config" (where "*" output is impossible-by-design) from
 // a genuine all-origins config.
 func hasExplicitStar(allowed []string) bool {
-	for _, o := range allowed {
-		if o == "*" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(allowed, "*")
 }
 
 // ---------------------------------------------------------------------------
