@@ -280,18 +280,26 @@ func runVerify(dsn, acksPath string, cutoffNanos int64) {
 		failed = true
 	}
 
+	chainBroken := false
 	res, err := st.VerifyAuditChain(context.Background(), nil)
 	switch {
 	case err != nil:
 		fmt.Printf("audit_chain_verify_error=%v\n", err)
-		failed = true
+		chainBroken = true
 	case res == nil || !res.Valid:
 		fmt.Printf("audit_chain_valid=false result=%+v\n", res)
-		failed = true
+		chainBroken = true
 	default:
 		fmt.Printf("audit_chain_valid=true\n")
 	}
 
+	// Exit 3 = the audit hash chain is broken (never acceptable, whatever the
+	// durability mode); exit 1 = acknowledged commits missing / nothing verified
+	// (by design under standard durability). 3 wins when both apply.
+	if chainBroken {
+		fmt.Println("RESULT=FAIL")
+		os.Exit(3)
+	}
 	if failed {
 		fmt.Println("RESULT=FAIL")
 		os.Exit(1)

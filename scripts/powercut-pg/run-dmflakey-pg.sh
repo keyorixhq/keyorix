@@ -116,7 +116,9 @@ PGLOG=$WORK/$NAME.pg.log
 LOOP=""
 WPID=""
 mkdir -p "$WORK" "$MNT" "$SOCKDIR"
-chmod 777 "$WORK"
+# 755, not 777: root runs $BIN from here, so no other user may write into it.
+# postgres only needs to traverse $WORK to reach the mount and its socket dir.
+chmod 755 "$WORK"
 # postgres (the system user) must be able to traverse to the mount and own the socket dir.
 chmod 755 "$MNT"
 chown postgres:postgres "$SOCKDIR"
@@ -193,7 +195,7 @@ as_pg "$PGBIN/initdb" -D "$PGDATA" --auth-local=trust --auth-host=trust -U postg
 # the stock defaults, pinned so a packaging change cannot silently weaken the
 # test: synchronous_commit=on + fsync=on is what makes a returned COMMIT under
 # -durability strict a real fsync.
-PGOPTS="-c port=$PORT -c unix_socket_directories=$SOCKDIR -c listen_addresses= -c fsync=on -c synchronous_commit=on -c full_page_writes=on -c wal_level=replica"
+PGOPTS="-c port=$PORT -c unix_socket_directories=$SOCKDIR -c listen_addresses= -c unix_socket_permissions=0700 -c fsync=on -c synchronous_commit=on -c full_page_writes=on -c wal_level=replica"
 [ "$CUT_MODE" = checkpoint ] && PGOPTS="$PGOPTS -c checkpoint_timeout=30s"
 
 touch "$PGLOG"; chown postgres:postgres "$PGLOG"
@@ -334,7 +336,8 @@ if [ "$ACRC" = 0 ]; then
 else
   echo "PG_AMCHECK FAILED: structural corruption after the power cut (log: $WORK/$NAME.amcheck.txt)" >&2
   head -20 "$WORK/$NAME.amcheck.txt" >&2 || true
-  [ "$RC" = 0 ] && RC=7
+  # A structural failure outranks verify's rc 1 (acknowledged commits missing).
+  if [ "$RC" = 0 ] || [ "$RC" = 1 ]; then RC=7; fi
 fi
 
 # Clean stop now that verification is done, then fsck the ext4.
@@ -349,7 +352,7 @@ if [ "$FRC" = 0 ]; then
   echo "e2fsck=clean"
 else
   echo "FSCK FAILED: e2fsck reported problems after the power cut (log: $WORK/$NAME.e2fsck.txt)" >&2
-  [ "$RC" = 0 ] && RC=5
+  if [ "$RC" = 0 ] || [ "$RC" = 1 ]; then RC=5; fi
 fi
 
 echo "RESULT_RC=$RC"

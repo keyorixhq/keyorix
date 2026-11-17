@@ -14,7 +14,11 @@
 #   - wal        standard : relaxed-durability differential CONTROL. synchronous_commit
 #                           is off, so acknowledged commits may be lost on the cut; a
 #                           RESULT=FAIL here is EXPECTED (ADR-112), proving the oracle
-#                           can go red — it is NOT a finding.
+#                           can go red — it is NOT a finding. Only the lost tail is
+#                           by design: recovery, audit_chain_valid=true, pg_amcheck
+#                           and e2fsck must still be clean, otherwise it IS a finding.
+#
+# Exit status: 0 when no finding, 1 when any run was a finding.
 #
 # The "real fault-injection run time" the task counts is the sum of each
 # run-dmflakey-pg.sh invocation's wall time, logged per round and totalled at the
@@ -42,7 +46,8 @@ done
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 RUNNER=$HERE/run-dmflakey-pg.sh
-mkdir -p "$(dirname "$LOG")"
+LOGDIR=$(dirname "$LOG")
+mkdir -p "$LOGDIR"
 
 if [ -z "$BIN" ]; then
   REPO=$(cd "$HERE/../.." && pwd)
@@ -69,6 +74,7 @@ cycle_secs=0
 findings=0
 pass=0
 control_red=0
+control_green=0
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   tuple=${rounds[$(( i % ${#rounds[@]} ))]}
   i=$(( i + 1 ))
@@ -82,7 +88,7 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   t1=$(date +%s)
   secs=$(( t1 - t0 ))
   cycle_secs=$(( cycle_secs + secs ))
-  summary=$(echo "$out" | grep -E 'acknowledged_before_cut=|postgres_recovery=|RESULT_RC=' | tr '\n' ' ' | sed 's/\t/ /g')
+  summary=$(echo "$out" | grep -E 'acknowledged_before_cut=|missing_acknowledged=|postgres_recovery=|audit_chain_valid=|audit_chain_verify_error=|pg_amcheck=|e2fsck=|FAILED|RESULT_RC=' | tr '\n' ' ' | sed 's/\t/ /g')
   printf '%s\t%s\t%s\t%s\t%d\t%d\t%s\n' "$(date +%s%N)" "$mode" "$dur" "$expect" "$rc" "$secs" "$summary" >>"$LOG"
   if [ "$expect" = pass ]; then
     if [ "$rc" = 0 ]; then
@@ -91,16 +97,36 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     else
       findings=$(( findings + 1 ))
       echo "[FIND] $mode/$dur rc=$rc ${secs}s :: $summary" >&2
-      echo "$out" >"/var/tmp/powercut-pg/FINDING-$(date +%s%N)-$mode-$dur.txt"
+      echo "$out" >"$LOGDIR/FINDING-$(date +%s%N)-$mode-$dur.txt"
     fi
   else
-    control_red=$(( control_red + 1 ))
-    echo "[ctl]  $mode/$dur rc=$rc ${secs}s (relaxed-durability control) :: $summary"
+    # maydrop (standard durability): losing the acknowledged tail is by design, but
+    # recovery, the audit hash chain, heap/btree pages and the filesystem must
+    # still be intact. Only a run that shows all four clean AND rc 0, or rc 1 with
+    # missing_acknowledged above 0 (and nothing else wrong), is a legitimate control.
+    if { [ "$rc" = 0 ] || { [ "$rc" = 1 ] && grep -qE 'missing_acknowledged=[1-9]' <<<"$out"; }; } \
+      && grep -q 'postgres_recovery=yes' <<<"$out" \
+      && grep -q 'audit_chain_valid=true' <<<"$out" \
+      && grep -q 'pg_amcheck=clean' <<<"$out" \
+      && grep -q 'e2fsck=clean' <<<"$out" \
+      && ! grep -qE 'RECOVERY FAILED|PG_AMCHECK FAILED|FSCK FAILED|audit_chain_valid=false|audit_chain_verify_error' <<<"$out"; then
+      if [ "$rc" = 0 ]; then
+        control_green=$(( control_green + 1 ))
+        echo "[ctl]  $mode/$dur rc=$rc ${secs}s (relaxed durability, nothing lost) :: $summary"
+      else
+        control_red=$(( control_red + 1 ))
+        echo "[ctl]  $mode/$dur rc=$rc ${secs}s (relaxed-durability control, tail lost by design) :: $summary"
+      fi
+    else
+      findings=$(( findings + 1 ))
+      echo "[FIND] $mode/$dur rc=$rc ${secs}s (relaxed durability, but recovery/chain/amcheck/fsck not clean) :: $summary" >&2
+      echo "$out" >"$LOGDIR/FINDING-$(date +%s%N)-$mode-$dur.txt"
+    fi
   fi
 done
 
 echo "----"
-echo "soak batch done: cut_cycle_seconds=$cycle_secs iterations=$i strict_pass=$pass strict_findings=$findings controls=$control_red"
+echo "soak batch done: cut_cycle_seconds=$cycle_secs iterations=$i strict_pass=$pass findings=$findings controls_lost_tail=$control_red controls_nothing_lost=$control_green"
 echo "cumulative (this log): $(awk -F'\t' 'NR>1{s+=$6; n++} END{printf "cut_cycle_seconds=%d iterations=%d", s, n}' "$LOG")"
 echo "log: $LOG"
-exit 0
+[ "$findings" -eq 0 ] || exit 1
