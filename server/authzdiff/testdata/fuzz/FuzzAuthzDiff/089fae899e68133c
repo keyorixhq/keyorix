@@ -1,0 +1,8 @@
+go test fuzz v1
+byte('ì')
+byte('A')
+byte('F')
+byte('b')
+uint16(116)
+byte('r')
+byte('6')
