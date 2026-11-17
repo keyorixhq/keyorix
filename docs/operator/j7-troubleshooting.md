@@ -48,7 +48,9 @@ failed to connect to postgres: failed to connect to `user=keyorix database=keyor
 	127.0.0.1:59999 (localhost): dial error: dial tcp 127.0.0.1:59999: connect: connection refused
 ```
 
-The server exits with status 1. An `admin` command (for example `admin validate`) reports the
+The server exits with status 75 and ends with `keyorix-server: exit 75 (dependency unavailable)`
+(the shipped systemd unit retries it every 30 s; see
+[startup-refusals.md](startup-refusals.md#exit-statuses)). An `admin` command (for example `admin validate`) reports the
 same cause after the prefix `cannot connect to the database to check for a running server:
 connect to postgres for server-presence check:`.
 

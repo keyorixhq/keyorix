@@ -66,7 +66,24 @@ backticked fragment searched for in non-test `.go` files under `server/` and `in
 a fragment that only appears there as a format string was checked against real output
 instead) and promoted the rows it reproduced natively from `C` to `R`.
 
+**Exit status (EDGE-STARTUP-NOV-1, #4213).** A boot failure exits 78 (only an operator can
+fix it), 75 (a dependency may come back) or 1 (everything else); `server/boot_exit.go` is the
+source and [startup-refusals.md](startup-refusals.md#exit-statuses) the operator text. The
+status follows the stage that refused, so each section below states one status for its rows
+and lists the rows that differ. Checked by running the native binary (SQLite and a fake
+Postgres endpoint, throwaway directory): an unparseable config, a `verify-full` dsn without a CA
+and a wrong master passphrase exit 78; Postgres not listening and a held DEK lock exit 75; a
+relative key path from another directory, a Postgres certificate the OS does not trust and a
+port in use exit 1; `--passphrase-fd=abc` exits 2 (the `flag` package, before any boot step).
+Rows in the other sections are from the code path (`bootFatal`, `operatorFix`,
+`log.Fatalf` call sites in `server/main.go`), not run. `admin` commands keep their own codes.
+
 ### Configuration (Validate, `Configuration is invalid:` / `Failed to load configuration:`)
+
+Exit **78** (`Failed to load configuration:` and `Configuration is invalid:` are both
+`operatorFixWith`), except: `Invalid secret_name_policy`, the logging setup failure and
+`Failed to initialize i18n system` exit **1** (`log.Fatalf`), and `invalid file descriptor`
+exits **2** (flag parsing).
 
 | | Where | Message (stable part) |
 |---|---|---|
@@ -100,11 +117,19 @@ instead) and promoted the rows it reproduced natively from `C` to `R`.
 | C | config.go:3339, 3378 | SAML `insecure_allow_idp_initiated_saml` unsupported; `cross-seam audience collision` |
 | C | config.go:3405-3429 | WebAuthn: `rp_id is not set`, `no rp_origins`, `rp_origin ... must use https`, host/rp_id mismatch |
 | C | main.go:862 | `Invalid secret_name_policy` |
-| C | main.go:188-189 | `logging.Setup` failure printed under the `Configuration is invalid:` prefix |
+| C | main.go:147 | `Failed to set up logging (server.log.format` (a `log.Fatalf` of its own since EDGE-STARTUP-NOV-1, no longer under the `Configuration is invalid:` prefix) |
 | C | main.go:228 | `Failed to initialize i18n system` |
 | C | main.go:148 | `invalid file descriptor` (`--passphrase-fd`) |
 
 ### TLS (listeners and database)
+
+Exit **78**: the rows checked by `Config.Validate` (`Configuration is invalid:`: the cipher,
+TLS mode, `database_tls.go` and `postgres_dsn.go` rows, which `Validate` reaches through
+`ResolvePostgresConnConfig`) and `listener has no TLS but security.require_transport_tls is set`
+(`transport security:`). Exit **1**: `no PEM certificates found in` (the checkpoint notary, in
+core-service initialisation), `invalid TLS configuration`, `autocert: cannot create cert cache dir`,
+`failed to bind HTTP listener` and `failed to listen on gRPC port` (listener start; port in use
+run for real).
 
 | | Where | Message (stable part) |
 |---|---|---|
@@ -129,6 +154,14 @@ instead) and promoted the rows it reproduced natively from `C` to `R`.
 
 ### Database and storage
 
+Exit **75**: `connect to postgres for server-presence check` and a Postgres that is not
+listening (run for real; both are network failures). Exit **78**: a database login the database
+refused (`config.PostgresAuthError`, unless the connection was merely closed during start-up,
+which is 1). Every other row is raised inside core-service initialisation
+(`failed to initialize core service:`, `server/main.go`) and exits **1** unless the cause is a
+network or availability error (then 75): the storage factory, the migration family and the
+`failed to init <...>` and `wire_*` rows are not marked as operator fixes.
+
 | | Where | Message (stable part) |
 |---|---|---|
 | C (j7) | serverguard.go:321 | `connect to postgres for server-presence check` (Postgres unreachable; real output is in j7) |
@@ -148,6 +181,14 @@ instead) and promoted the rows it reproduced natively from `C` to `R`.
 | C | pooler: database_pooler.go:60-100 | pooler / native_read_pool_max misuse (see HA) |
 
 ### Keys and secrets files
+
+Exit **78** for every row (`startup validation:`, `operatorFix` in `boot_encryption.go` and
+`key_dir_lock.go`, and the `bootRefusals` loop in `main.go`; a wrong master passphrase run for
+real), except: `another process already holds the DEK lock` exits **75** (run for real: the
+`EWOULDBLOCK` the lock returns is a `net.Error`, so the classifier reads it as a dependency
+that may come back; the 75 hint line names a KMS or database, which is wrong for this row),
+and `DEK-rotation crash recovery failed` and `bootstrap token:` exit **1** (plain errors). A KMS
+that is unreachable while the KEK is read is 75, not 78.
 
 | | Where | Message (stable part) |
 |---|---|---|
@@ -169,6 +210,10 @@ instead) and promoted the rows it reproduced natively from `C` to `R`.
 
 ### Upgrade, epoch, rollback
 
+Boot rows exit **1**: the schema epoch and floor checks run inside core-service initialisation
+and are not marked as operator fixes. The `restore.go` rows are `admin` commands and keep
+their own codes.
+
 | | Where | Message (stable part) |
 |---|---|---|
 | R | factory.go:1116 | `is newer than this binary's schema epoch` (no floor recorded, ADR-097) |
@@ -188,7 +233,7 @@ It refuses in two places only:
 
 | | Where | Message (stable part) |
 |---|---|---|
-| C | insecure_audit_skip_reads.go:50 | `is refused while the compliance profile` (unreachable today: `complianceProfileGates` is empty) |
+| C | insecure_audit_skip_reads.go:50 | `is refused while the compliance profile` (unreachable today: `complianceProfileGates` is empty; would exit 78 as a `Config.Validate` refusal) |
 | C | main.go:2160 | `security.require_transport_tls` (see TLS) |
 
 Warnings that are *not* refusals, listed so nobody searches for them here:
@@ -196,6 +241,14 @@ Warnings that are *not* refusals, listed so nobody searches for them here:
 cleartext/trusted-proxy lines, `no recovery key is configured`.
 
 ### HA and multi-replica
+
+Exit **78**: the `config.go` rows (`Config.Validate`), `database_pooler.go` rows, and
+`a transaction-mode connection pooler (for example PgBouncer pool_mode=transaction)` (the one
+refusal `poolerStepError` marks as an operator fix). Exit **1**: `an admin operation is running
+against this database` (the presence lock, a non-network error), the `solewriter.go` and
+`fence.go` rows (`log.Fatalf("single_writer: ...")`), `never runs without its write fence` and
+`failed to bind HTTP listener` (port in use, run for real). The `admin.go` rows are `admin`
+commands and keep their own codes.
 
 | | Where | Message (stable part) |
 |---|---|---|
