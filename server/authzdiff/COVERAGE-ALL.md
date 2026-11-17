@@ -149,7 +149,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 
 - [ ] `GRPC keyorix.v1.AuditService.WriteAuditCheckpoint` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [x] `GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass` — breakglass.activate
-- [ ] `GRPC keyorix.v1.BreakGlassService.RevokeBreakGlass` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
+- [x] `GRPC keyorix.v1.BreakGlassService.RevokeBreakGlass` — breakglass.revoke
 - [ ] `GRPC keyorix.v1.ConnectService.CreateRefGrant` — fixture: needs a Keyorix Connect connector configured
 - [ ] `GRPC keyorix.v1.ConnectService.DeleteRefGrant` — fixture: needs a Keyorix Connect connector configured
 - [ ] `GRPC keyorix.v1.ConnectService.ReadSecret` — fixture: needs a Keyorix Connect connector configured
@@ -251,7 +251,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/projects/{id}/access-review/revoke` — model: access-review campaign/attestation rules are not in the reference model
 - [x] `REST POST /api/v1/projects/{id}/break-glass` — breakglass.activate
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/review` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
-- [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
+- [x] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke` — breakglass.revoke
 - [ ] `REST POST /api/v1/rejection-reason-templates` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [x] `REST POST /api/v1/risk-exceptions` — riskexception.create
 - [x] `REST POST /api/v1/risk-exceptions/{id}/approve` — riskexception.approve
