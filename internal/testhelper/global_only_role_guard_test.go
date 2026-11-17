@@ -4,7 +4,8 @@ package testhelper
 // AssignGroupRole: a global-only role (the legacy super_admin/admin/editor/viewer/
 // auditor, the system_* roles) is not grantable at a project (#3605), so a fixture that
 // does it tests a grant no install can hold. The predicate is checked against the roles
-// the helper seeds; the helper's own t.Fatalf path is the same predicate.
+// the helper seeds; the helper's own t.Fatalf path is driven in a child run of the test
+// binary (global_only_role_guard_assign_test.go).
 
 import (
 	"testing"
