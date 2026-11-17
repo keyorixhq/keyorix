@@ -94,8 +94,16 @@ go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0
 PATH="$PWD/node_modules/.bin:$HOME/go/bin:$PATH" make release VERSION=vX.Y.Z
 ```
 
-Expect 14 binaries, 14 SBOMs, `keyorix-server_frontend_sbom.cdx.json` and `checksums.txt`
-(29 files in `dist/`, 29 lines in `checksums.txt`).
+Expect 14 binaries, 14 SBOMs, `keyorix-server_frontend_sbom.cdx.json` and `checksums.txt`:
+30 files in `dist/`, 29 lines in `checksums.txt`. The "29 files" that RELEASING.md and
+SECURITY.md quote is the number `checksums.txt` covers, so it **excludes `checksums.txt`
+itself** (counted on this tree with `make release VERSION=v0.97.0`, 2026-11-17).
+
+**In a sandboxed `kclone` clone:** run `git repack -a -d` once before `make release`.
+`cyclonedx-gomod` needs the clone's objects packed (found in the sandbox; the build above
+was run after the repack, so the failure itself was not reproduced here). Also put `node_modules/.bin` (cdxgen) and `$HOME/go/bin` on `PATH` for the
+`make` call itself (the command above does): without cdxgen the build compiles all 14
+binaries, then stops at the frontend SBOM with `could not find "cdxgen"`.
 
 ```sh
 cd dist && sha256sum --check --quiet checksums.txt && cd ..   # macOS: shasum -a 256 --check --quiet
