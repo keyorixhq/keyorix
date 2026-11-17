@@ -1,0 +1,10 @@
+ok  	github.com/keyorixhq/keyorix/scripts/metrics/surfacewalk	0.400s
+--- FAIL: TestEdgeUnattended_InterruptedMigrationCompletes (3.33s)
+    edge_unattended_integration_test.go:405: 3 of 4 `admin migrate` runs were killed mid-way
+    edge_unattended_integration_test.go:416: bootstrap answered already_initialized on a database no admin was ever created in: {"data":{"already_initialized":true},"message":"System already initialised","success":true}
+
+        Server log tail:
+        2026/11/14 23:47:22 Encryption initialised — KEK source: password, key version: v1
+FAIL
+FAIL	github.com/keyorixhq/keyorix/server	127.767s
+ok  	github.com/keyorixhq/keyorix/server/admin	7.104s
