@@ -110,11 +110,7 @@ func TestPgxNoticeFloodBounded(t *testing.T) {
 		defer func() { _ = conn.Close(ctx) }()
 		_, _ = conn.Exec(ctx, "ALTER ROLE kx_dyn WITH PASSWORD 'x'")
 	}()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Errorf("ORACLE bounded-time: pgx did not return within 10s under a NoticeResponse flood")
-	}
+	hostile.WaitBounded(t, done, 10*time.Second, "ORACLE bounded-time: pgx did not return within 10s under a NoticeResponse flood")
 }
 
 // newTLSConfig parses a config whose admin DSN requires TLS (sslmode=require), the common

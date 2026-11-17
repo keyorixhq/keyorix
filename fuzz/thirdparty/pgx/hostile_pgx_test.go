@@ -83,12 +83,7 @@ func runWithOracles(t *testing.T, fn func(ctx context.Context)) {
 		}()
 		fn(ctx)
 	}()
-	select {
-	case <-done:
-	case <-time.After(6 * time.Second):
-		// The 2s ctx deadline should have returned the call long before this.
-		t.Errorf("ORACLE bounded-time: driver call did not return within 6s of a hostile reply")
-	}
+	hostile.WaitBounded(t, done, 6*time.Second, "ORACLE bounded-time: driver call did not return within 6s of a hostile reply")
 }
 
 // FuzzPgxHandshake fuzzes the entire server→client stream from the auth phase on:
