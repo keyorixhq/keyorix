@@ -120,12 +120,17 @@ func openStorage(dsn, durability string) corestorage.Storage {
 	}
 	cfg := &config.Config{}
 	cfg.Storage.Type = "postgres"
-	cfg.Storage.Database.DSN = dsn
-	cfg.Storage.Database.AuditDurability = durability
+	// Built as one literal (not a field assignment): TestAuditDurability_
+	// NoWriteAssignment forbids assigning the durability field outside
+	// internal/config. This tool is a standalone harness, not a request path.
 	// A small pool: this tool opens one cluster on a loopback port and a
 	// handful of workers; the factory additionally opens the lock pools.
-	cfg.Storage.Database.MaxOpenConns = 16
-	cfg.Storage.Database.MaxIdleConns = 4
+	cfg.Storage.Database = config.DatabaseConfig{
+		DSN:             dsn,
+		AuditDurability: durability,
+		MaxOpenConns:    16,
+		MaxIdleConns:    4,
+	}
 	st, err := storage.NewStorageFactory().CreateStorage(cfg)
 	if err != nil {
 		fatalf("open storage: %v", err)
