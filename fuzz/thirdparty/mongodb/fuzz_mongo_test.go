@@ -5,7 +5,7 @@
 // parser — wire-message reader + BSON decoder — reachable from the client's PUBLIC
 // API only (Connect + Ping + RunCommand), with no Keyorix wrapper in the path.
 //
-// Keyorix pins go.mongodb.org/mongo-driver/v2 v2.9.2 (see go.mod). The client is
+// Keyorix pins go.mongodb.org/mongo-driver/v2 (version in go.mod). The client is
 // used in internal/dynamic/mongodb.go to connect to an operator-configured target
 // MongoDB and run createUser / dropUser; a compromised or malicious target can
 // return arbitrary wire bytes, which is the surface fuzzed here.
@@ -21,12 +21,15 @@
 //
 //	(a) no-panic / no-hang / bounded-memory. A panic fails the run. A hang is
 //	    bounded by the context deadline + the driver's connect/selection/socket
-//	    timeouts. Bounded memory is STRUCTURAL: the fuzzer-declared messageLength is
-//	    clamped to maxWireLen before the bytes reach the driver (the driver reads
-//	    the whole wire message into one buffer sized by messageLength, and parses
-//	    all BSON within that buffer, so clamping the outer length bounds every
-//	    allocation). It therefore does NOT prove the driver self-bounds the outer
-//	    length — that uncapped behaviour is probed once by TestWireLengthBound.
+//	    timeouts. Memory: the fuzzer-declared messageLength is clamped to
+//	    maxWireLen, which bounds each wire READ; and the TotalAlloc delta of one
+//	    interaction, minus perDialAlloc per TCP dial, must stay under allocCeiling
+//	    (see allocOverBudget). It does NOT bound connection churn: the driver's
+//	    heartbeat monitor reconnects with no backoff for the whole
+//	    ServerSelectionTimeout after a malformed hello (KFZ-2026-130), so total
+//	    allocation grows with host speed and is only scaled for, never limited,
+//	    here. It also does NOT prove the driver self-bounds the outer length —
+//	    that uncapped behaviour is probed once by TestWireLengthBound.
 //
 //	(b) canary. The client is given a secret canaryPassword via SCRAM credentials.
 //	    SCRAM never puts the password on the wire, so any appearance of it in a
@@ -52,6 +55,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -76,30 +80,38 @@ const (
 
 	callWallBound = 2 * time.Second
 
-	// driverDefaultMaxMessageSize mirrors go.mongodb.org/mongo-driver/v2's own
-	// defaultMaxMessageSize (x/mongo/driver/topology/connection.go): whenever a
-	// connection has not yet negotiated a server-advertised maxMessageSizeBytes
-	// (desc.MaxMessageSize == 0 -- true for the very first reply on a connection,
-	// before any hello has been parsed), the driver falls back to this hard-coded,
-	// spec-mandated value and allocates a read buffer sized up to it. That is
-	// legitimate driver behaviour, not a defect: KFZ-2026-130 (fuzz-corpus,
-	// private) records this exact allocation, reached via two different
-	// fuzzer inputs (one with a negotiated hello value, one via this unset/
-	// default fallback), misread as a bug because oracle (a) below used to
-	// bound allocation at a flat 32 MiB -- below this constant.
-	driverDefaultMaxMessageSize = 48_000_000
+	// allocCeiling is oracle (a)'s ceiling for allocation that is NOT attributable
+	// to connection churn (see perDialAlloc): 32 MiB per interaction. It is a
+	// sanity backstop, not a proof of boundedness.
+	//
+	// What it does NOT verify: connection churn per unit of time. With a malformed
+	// hello reply the driver's heartbeat monitor reconnects with no backoff for the
+	// whole ServerSelectionTimeout window (KFZ-2026-130: ~12k dials in 0.7 s on a
+	// fast host), so total allocation grows with host speed. Oracle (a) scales its
+	// budget by the dial count instead of bounding it; whether that reconnect loop
+	// is a driver defect is tracked outside this file (see the PR / fuzz-corpus).
+	// The outer wire length is clamped to maxWireLen, which bounds each READ, not
+	// the number of connections.
+	allocCeiling = 32 << 20
 
-	// allocBound is oracle (a)'s ceiling: the driver's own legitimate max (above)
-	// plus slack for bookkeeping overhead and the odd extra retry/connection
-	// attempt within callWallBound. Observed legitimate deltas for this exact
-	// fallback path: 43.6-65.3 MB across 20+ local runs (see KFZ-2026-130); 24
-	// MiB of slack on top of driverDefaultMaxMessageSize covers the observed
-	// range with margin while staying far below anything a real amplification
-	// bug would produce (the outer wire length reaching the driver is
-	// independently clamped to maxWireLen, so nothing here can hide a
-	// genuinely unbounded read).
-	allocBound = driverDefaultMaxMessageSize + 24<<20
+	// perDialAlloc is the per-connection allocation budget (newConnection, client
+	// metadata encode, hello handshake info, dial, topology compare). Profiled
+	// and measured at 10,505-10,508 B per dial over 20 runs of KFZ-2026-130
+	// (10k-12.6k dials), i.e. host-independent per dial even though the dial
+	// count is not. 12 KiB leaves ~14% margin and keeps a planted amplification
+	// visible on churny inputs; a driver upgrade that raises the per-dial cost
+	// fails loudly here instead of silently widening the budget.
+	perDialAlloc = 12 << 10
 )
+
+// allocOverBudget reports whether a TotalAlloc delta exceeds oracle (a)'s budget
+// for an interaction that made dials TCP dials, and returns that budget. Churn
+// (dials x perDialAlloc) is subtracted first; the remainder must stay under
+// allocCeiling.
+func allocOverBudget(delta uint64, dials int64) (over bool, bound uint64) {
+	bound = allocCeiling + uint64(max(dials, 0))*perDialAlloc
+	return delta > bound, bound
+}
 
 // ---- wire-message construction ---------------------------------------------
 
@@ -283,11 +295,15 @@ func readClientMessage(c net.Conn) (int32, error) {
 
 // ---- client ----------------------------------------------------------------
 
-type lingerDialer struct{}
+// lingerDialer counts every TCP dial the driver makes during one interaction. The
+// count is the unit oracle (a) scales its allocation budget by: the driver's
+// heartbeat monitor reconnects with no backoff, so allocation tracks dials.
+type lingerDialer struct{ dials atomic.Int64 }
 
-func (lingerDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	d := net.Dialer{Timeout: 500 * time.Millisecond}
-	c, err := d.DialContext(ctx, network, addr)
+func (d *lingerDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	d.dials.Add(1)
+	nd := net.Dialer{Timeout: 500 * time.Millisecond}
+	c, err := nd.DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -297,11 +313,11 @@ func (lingerDialer) DialContext(ctx context.Context, network, addr string) (net.
 	return c, nil
 }
 
-func newHostileClient(addr string) (*mongo.Client, error) {
+func newHostileClient(addr string, d *lingerDialer) (*mongo.Client, error) {
 	opts := options.Client().
 		SetHosts([]string{addr}).
 		SetDirect(true).
-		SetDialer(lingerDialer{}).
+		SetDialer(d).
 		SetConnectTimeout(500 * time.Millisecond).
 		SetServerSelectionTimeout(700 * time.Millisecond).
 		SetTimeout(time.Second).
@@ -338,7 +354,8 @@ func runInteraction(t *testing.T, mode, opSel, lenMode, driveMode byte, body []b
 	srv := newHostileServer(t, mode, opSel, lenMode, body)
 	defer srv.close()
 
-	client, err := newHostileClient(srv.addr())
+	dialer := &lingerDialer{}
+	client, err := newHostileClient(srv.addr(), dialer)
 	if err != nil {
 		// Connect only fails on invalid options, which are fixed here.
 		t.Fatalf("connect: %v", err)
@@ -375,12 +392,14 @@ func runInteraction(t *testing.T, mode, opSel, lenMode, driveMode byte, body []b
 		if containsCanary(r.fmtd) {
 			t.Fatalf("CANARY LEAK in value: %s", r.fmtd)
 		}
-		// oracle (a) bounded-memory sanity backstop (clamp is the real guarantee).
-		// allocBound already covers the driver's own legitimate
-		// defaultMaxMessageSize fallback (see its doc comment); this backstop is
-		// for anything beyond that, e.g. a genuine unbounded-amplification defect.
-		if d := ms1.TotalAlloc - ms0.TotalAlloc; d > allocBound {
-			t.Fatalf("alloc delta %d exceeds bound for %d body bytes", d, len(body))
+		// oracle (a): allocation not attributable to connection churn must stay
+		// under allocCeiling (see allocOverBudget). Churn itself is only scaled
+		// for, never bounded: see the "does NOT verify" note on allocCeiling.
+		dials := dialer.dials.Load()
+		d := ms1.TotalAlloc - ms0.TotalAlloc
+		if over, bound := allocOverBudget(d, dials); over {
+			t.Fatalf("alloc delta %d exceeds bound %d (%d dials x %d + %d ceiling) for %d body bytes",
+				d, bound, dials, perDialAlloc, allocCeiling, len(body))
 		}
 	case <-time.After(callWallBound + 2*time.Second):
 		t.Fatalf("driver interaction did not return within bound (mode=%d opSel=%d lenMode=%d)", mode, opSel, lenMode)

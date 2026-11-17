@@ -1,6 +1,6 @@
 # Hostile-server fuzz harness: MongoDB Go driver v2
 
-Attacks the real `go.mongodb.org/mongo-driver/v2` client (pinned v2.9.2 in the repo
+Attacks the real `go.mongodb.org/mongo-driver/v2` client (pinned in the repo
 `go.mod`) by driving it, through its **public API only** (`mongo.Connect` + `Ping` +
 `Database().RunCommand()`), against a loopback server whose MongoDB wire-protocol
 replies — message framing, `opCode`, `messageLength`, OP_MSG sections and the BSON
@@ -39,9 +39,12 @@ GOMAXPROCS=2 nice -n 10 go test ./fuzz/thirdparty/mongodb/ \
 
 See the package doc comment in `fuzz_mongo_test.go` for the four oracle classes and
 **exactly what each does not verify**. Host safety: the fuzzer-declared
-`messageLength` is clamped to `maxWireLen` (64 KiB) before the bytes reach the driver
-(the driver reads the whole wire message into one buffer sized by `messageLength` and
-parses all BSON within it, so clamping the outer length bounds every allocation). The
+`messageLength` is clamped to `maxWireLen` (64 KiB) before the bytes reach the driver,
+which bounds each wire read. It does **not** bound the number of connections: after a
+malformed hello the driver's heartbeat monitor reconnects with no backoff for the whole
+server-selection window (KFZ-2026-130, ~12k dials in 0.7 s on a fast host), so total
+allocation grows with host speed. Oracle (a) therefore budgets `allocCeiling` (32 MiB)
+plus `perDialAlloc` per counted TCP dial, and does not limit the dial count itself. The
 uncapped pre-allocation behaviour is probed once by `TestWireLengthBound`.
 
 ## Files
