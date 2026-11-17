@@ -49,6 +49,12 @@ type CertificateInfo struct {
 // already required. Holding project-wide secrets.read is not enough on its own: the
 // actor must also own the secret or hold an active share on it.
 func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID uint) (*CertificateInfo, error) {
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4162
+		return nil, err
+	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	if _, err := c.EnforceSecretReadPermission(ctx, secretID, actorID); err != nil {
 		return nil, err
 	}

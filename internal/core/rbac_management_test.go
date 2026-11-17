@@ -32,7 +32,9 @@ func newRBACManagementCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.Project{}, &models.Environment{}, &models.SoDPolicy{}, &models.Session{},
 	))
 	seedLiveProjects(t, db, 1, 3, 5, 7) // scoped grants need live projects rows (#2795)
-	return NewKeyorixCore(store.NewLocalStorage(db)), db
+	c := NewKeyorixCore(store.NewLocalStorage(db))
+	ensureActiveActor(t, c.storage, 9) // the acting user of these tests is active (#4159)
+	return c, db
 }
 
 // #169: an actor with NO permissions at all — the CVE's own escalation shape (a

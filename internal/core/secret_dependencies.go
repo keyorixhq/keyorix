@@ -100,6 +100,9 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 	if dependentID == dependsOnID {
 		return nil, errDependencyInvalidf("a secret cannot depend on itself")
 	}
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorKind == ActorTypeMachine)); err != nil { // #4159
+		return nil, err
+	}
 	dependent, err := c.requireSecret(ctx, dependentID)
 	if err != nil {
 		return nil, err // the caller is authorized on the path secret, so its status may differ
@@ -241,6 +244,9 @@ func secretDependencyGraphLockKey(projectID uint) string {
 // gets independently authorized below before the edge can be removed, since a per-secret
 // ACL grant on focalSecretID does not extend to it.
 func (c *KeyorixCore) RemoveSecretDependency(ctx context.Context, actorKind string, actorID, focalSecretID, edgeID uint) error {
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorKind == ActorTypeMachine)); err != nil { // #4159
+		return err
+	}
 	if _, err := c.requireSecret(ctx, focalSecretID); err != nil {
 		return err
 	}

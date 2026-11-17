@@ -570,6 +570,9 @@ func (c *KeyorixCore) revokeProjectDynamicSecretLeases(ctx context.Context, proj
 // event per identity, actor = actorID. An identity an admin suspended, or acted on
 // during the deletion window, stays as the admin left it.
 func (c *KeyorixCore) RestoreProject(ctx context.Context, actorID, id uint) error {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	if err := c.requireAuthorityToReinstateProjectRoles(ctx, actorID, id, "project"); err != nil {
 		return err
 	}
@@ -720,6 +723,9 @@ func (c *KeyorixCore) logEnvironmentDeletedOn(ctx context.Context, tgt auditTarg
 // #161: see RestoreProject — the same aggregate role-set ceiling check applies,
 // scoped to the owning project (the environment's own grants are a subset of it).
 func (c *KeyorixCore) RestoreEnvironment(ctx context.Context, actorID, projectID, id uint) error {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	if err := c.requireAuthorityToReinstateProjectRoles(ctx, actorID, projectID, "environment"); err != nil {
 		return err
 	}

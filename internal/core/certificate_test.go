@@ -106,12 +106,16 @@ func newCertCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{},
 		&models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
-		&models.SecretAccessSchedule{},
+		&models.SecretAccessSchedule{}, &models.User{},
 	))
 	// CheckSecretPermission gates the owner path on IsProjectMember (RBAC-001): user 9
 	// (the standard cert-test actor) must be a member of project 1 so the read succeeds.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
-	return &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}, db
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	for _, actor := range []uint{7, 9, 42} { // the cert tests' acting users are active accounts (#4159)
+		ensureActiveActor(t, c.storage, actor)
+	}
+	return c, db
 }
 
 // mkCertSecret stores a secret (no encryption → value lives in the version row), owned
@@ -306,8 +310,11 @@ func TestInspectCertificateEnforcesPerSecretPermission(t *testing.T) {
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.SecretAccessSchedule{}, &models.UserRole{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.SecretAccessSchedule{}, &models.UserRole{}, &models.User{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	for _, actor := range []uint{7, 9, 42} { // active accounts: the refusal under test is the permission one (#4159)
+		ensureActiveActor(t, c.storage, actor)
+	}
 
 	certPEM, _ := selfSignedPEM(t, "restricted.example.com", now.Add(30*24*time.Hour))
 	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "restricted-cert", IsSecret: true, Status: "active", Type: "certificate", OwnerID: 9, ProjectID: 1}).Error)

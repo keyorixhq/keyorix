@@ -37,7 +37,9 @@ import (
 // newCatalogHandlerS4 creates a CatalogHandler with the full s4 DB.
 func newCatalogHandlerS4(t *testing.T) *CatalogHandler {
 	t.Helper()
-	return NewCatalogHandler(newHandlerCoreS4(t))
+	cs := newHandlerCoreS4(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
+	return NewCatalogHandler(cs)
 }
 
 // ── access_request_proxy.go ───────────────────────────────────────────────────

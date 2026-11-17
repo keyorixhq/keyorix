@@ -122,6 +122,7 @@ func TestStreamAuthInterceptor_MachineTokenStampsMachineActorInAudit(t *testing.
 	require.NoError(t, err)
 	proj2 := uint(2)
 	h.AssignUserRole(t, 1, testhelper.RoleProjectAdmin, &proj2) // admin at project 2: the issuer's privilege ceiling
+	h.EnsureActiveUser(t, 1)                                    // the acting user is an active account (#4159)
 	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 
