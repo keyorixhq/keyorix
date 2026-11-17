@@ -48,10 +48,10 @@ type grpcFuncCalls struct {
 	file, name    string
 	reachingCalls []string
 	calls         map[string]bool // every called name (Ident or Sel)
-	// takesCtx: a parameter is a context.Context. rootsCtx: the body calls
-	// context.Background() or context.TODO() (audit_unavailable_mapping_guard_test.go
-	// flags a mapper that has both: it drops the RPC ctx).
-	takesCtx, rootsCtx bool
+	// rootsCtx: the body calls context.Background() or context.TODO()
+	// (audit_unavailable_mapping_guard_test.go flags a mapper that does: it answers
+	// without the RPC ctx, whether or not it takes one as a parameter).
+	rootsCtx bool
 }
 
 func scanGRPCFuncs(t *testing.T, dir string, reaching map[string]bool) []grpcFuncCalls {
@@ -77,15 +77,6 @@ func scanGRPCFuncs(t *testing.T, dir string, reaching map[string]bool) []grpcFun
 				continue
 			}
 			fc := grpcFuncCalls{file: name, name: fd.Name.Name, calls: map[string]bool{}}
-			if fd.Type.Params != nil {
-				for _, p := range fd.Type.Params.List {
-					if sel, ok := p.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "Context" {
-						if x, ok := sel.X.(*ast.Ident); ok && x.Name == "context" {
-							fc.takesCtx = true
-						}
-					}
-				}
-			}
 			ast.Inspect(fd.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {

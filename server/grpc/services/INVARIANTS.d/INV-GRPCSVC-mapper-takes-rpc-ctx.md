@@ -9,5 +9,8 @@
   `Unavailable` already (the target database is the dependency), so the ctx changes nothing there.
   Guard: `TestFamilyMappers_CanceledContextIsUnavailable` and
   `TestFamilyMappers_CanceledContextTypedReadFaultKeepsDetail` (table over every family mapper,
-  `family_mappers_canceled_ctx_test.go`); the audit-outage mapping guard flags a mapper that takes
-  `ctx` and passes `context.Background()` (`audit_unavailable_mapping_guard_test.go`).
+  `family_mappers_canceled_ctx_test.go`); the audit-outage mapping guard flags any mapper (a function
+  that calls `coreErrorStatus`/`auditUnavailableStatus`) that roots a new ctx with
+  `context.Background()`/`TODO()`, with or without a ctx parameter
+  (`audit_unavailable_mapping_guard_test.go`). Not seen by the guard: a root ctx obtained through a
+  helper or a package variable.

@@ -11,9 +11,12 @@ package services
 // MAPPER set is derived here too: every function in this package whose body calls
 // auditUnavailableStatus (mapRoleError, groupError, ...).
 //
-// It also flags a mapper that takes a context.Context and calls context.Background() or
-// context.TODO() in its body (INV-GRPCSVC-mapper-takes-rpc-ctx); the exemption map covers
-// it too.
+// It also flags a mapper whose body calls context.Background() or context.TODO()
+// (INV-GRPCSVC-mapper-takes-rpc-ctx), whether or not the mapper takes a context.Context:
+// the historical defect was `mapXError(err error)` handing coreErrorStatus a
+// context.Background(), with no ctx parameter at all. What it does not see: a mapper that
+// gets a root ctx from a helper or a package variable instead of calling context.Background()
+// or context.TODO() itself.
 //
 // What it recognises: a call `X.core.M(...)` (services reach core through a core
 // field) with M reaching, inside a top-level function; that function must call a
@@ -59,13 +62,13 @@ func grpcAuditUnavailableMappingViolations(funcs []grpcFuncCalls, exempt map[str
 	for _, f := range funcs {
 		if f.calls["auditUnavailableStatus"] || f.calls["coreErrorStatus"] {
 			mappers[f.name] = true
-			// A mapper that takes the RPC ctx and roots a new one drops the request's
-			// cancellation: a canceled request is not recognised as an authorize outage
-			// and answers Internal where REST answers 503 (GRPC-MAPPER-TAILS-1,
-			// INV-GRPCSVC-mapper-takes-rpc-ctx). A mapper with no ctx parameter is not
-			// flagged: it has none to drop.
-			if f.takesCtx && f.rootsCtx {
-				violations = append(violations, f.file+":"+f.name+" takes ctx but calls context.Background()/TODO()")
+			// A mapper that roots a new ctx answers without the request's cancellation: a
+			// canceled request is not recognised as an authorize outage and answers
+			// Internal where REST answers 503 (GRPC-MAPPER-TAILS-1,
+			// INV-GRPCSVC-mapper-takes-rpc-ctx). A mapper with no ctx parameter is flagged
+			// too: that was the shape of the original defect; it must take the RPC ctx.
+			if f.rootsCtx {
+				violations = append(violations, f.file+":"+f.name+" roots a new ctx (context.Background()/TODO()): take the RPC ctx")
 			}
 		}
 	}
@@ -129,6 +132,8 @@ func mapDrops(ctx context.Context, err error) error { return coreErrorStatus(con
 func mapDropsTODO(ctx context.Context, err error) error { return coreErrorStatus(context.TODO(), err, o) }
 func mapNoCtx(err error) error { return coreErrorStatus(context.Background(), err, o) }
 func mapKeeps(ctx context.Context, err error) error { return coreErrorStatus(ctx, err, o) }
+func mapNoCtxNoRoot(err error) error { if e, ok := auditUnavailableStatus(err); ok { return e }; return err }
+func helperRoots() C { return context.Background() }
 `
 	if err := os.WriteFile(filepath.Join(dir, "synthetic.go"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
@@ -137,10 +142,14 @@ func mapKeeps(ctx context.Context, err error) error { return coreErrorStatus(ctx
 		scanGRPCFuncs(t, dir, map[string]bool{"AssignUserRole": true}), map[string]string{"synthetic.go:Skip": "test"})
 	want := []string{
 		"synthetic.go:Bad -> AssignUserRole",
-		"synthetic.go:mapDrops takes ctx but calls context.Background()/TODO()",
-		"synthetic.go:mapDropsTODO takes ctx but calls context.Background()/TODO()",
+		"synthetic.go:mapDrops roots a new ctx (context.Background()/TODO()): take the RPC ctx",
+		"synthetic.go:mapDropsTODO roots a new ctx (context.Background()/TODO()): take the RPC ctx",
+		"synthetic.go:mapNoCtx roots a new ctx (context.Background()/TODO()): take the RPC ctx",
 	}
-	if seen != 4 || !mappers["mapX"] || !mappers["mapY"] || !mappers["mapKeeps"] || !slices.Equal(violations, want) {
+	// Green: mapKeeps (passes its ctx), mapNoCtxNoRoot (a mapper with no ctx that roots
+	// none), helperRoots (roots a ctx but is not a mapper).
+	if seen != 4 || !mappers["mapX"] || !mappers["mapY"] || !mappers["mapKeeps"] || !mappers["mapNoCtxNoRoot"] ||
+		mappers["helperRoots"] || !slices.Equal(violations, want) {
 		t.Fatalf("self-test: seen=%d mappers=%v violations=%v", seen, mappers, violations)
 	}
 }
