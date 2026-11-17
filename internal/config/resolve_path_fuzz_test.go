@@ -48,7 +48,7 @@ func FuzzResolveConfigRelativePath(f *testing.F) {
 		"keyorix.db?_pragma=journal_mode(WAL)",
 		"?mode=memory",
 		":memory:?_pragma=busy_timeout(5000)",
-		"some/path/db?mode=memory&cache=shared",
+		"some/path/db?mode=memory&cache=private",
 		"a/b/../c/keyorix.db",
 		"../../../tmp/x.db",
 		"db?mode=memory",
