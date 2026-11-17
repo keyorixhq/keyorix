@@ -7,6 +7,10 @@ test harness (the resguard `KDFMeter`) can count bcrypt invocations deterministi
 — the signal an account-enumeration timing oracle needs. See the package doc for
 the full rationale.
 
+Format: `INV-KDFMETER-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
+
+New invariants go in `INVARIANTS.d/INV-KDFMETER-<slug>.md`, one per file.
+
 - **INV-KDFMETER-zero-cost-when-off** With no observer installed (the production
   default), `GenerateFromPassword`/`CompareHashAndPassword` add exactly one atomic
   pointer load and a nil check over the wrapped bcrypt call, no allocation and no

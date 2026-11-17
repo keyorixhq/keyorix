@@ -39,6 +39,7 @@ var coreProductionKeyorixDeps = []string{
 	"internal/csvsafe",
 	"internal/i18n",
 	"internal/identity",
+	"internal/kdfmeter",
 	"internal/logging",
 	"internal/netutil",
 	"internal/oidcverify",
