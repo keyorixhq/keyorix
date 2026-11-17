@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 )
 
 // ──────────────────────────── PostgresEngine metadata ──────────────────────
@@ -250,6 +252,75 @@ func TestConnectRedis_InvalidURI(t *testing.T) {
 	_, err := connectRedis(context.Background(), "not-a-redis-uri://whatever", false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "redis admin URI")
+}
+
+// skip_verify=true in the DSN would satisfy the TLS requirement while turning
+// certificate verification off; it is refused unless the operator allowed
+// insecure transport.
+func TestConnectRedis_RefusesSkipVerify(t *testing.T) {
+	for _, d := range []string{
+		"rediss://:pass@redis.example.com:6380/0?skip_verify=true",
+		"rediss://:pass@redis.example.com:6380/0?skip_verify=1",
+		"rediss://:pass@redis.example.com:6380/0?skip%5Fverify=true",                 // encoded key
+		"rediss://:pass@redis.example.com:6380/0?skip_verify=false&skip_verify=true", // go-redis takes the last value
+	} {
+		_, err := connectRedis(context.Background(), d, true, false)
+		var fe *dsn.ForbiddenOptionError
+		require.ErrorAs(t, err, &fe, d)
+		assert.Equal(t, "skip_verify", fe.Option)
+		assert.NotContains(t, err.Error(), "pass", "the error must not quote the DSN")
+	}
+}
+
+func TestConnectRedis_SkipVerifyFalseIsNotRefused(t *testing.T) {
+	_, err := connectRedis(context.Background(), "rediss://:pass@localhost:19999/0?skip_verify=false", true, false)
+	require.Error(t, err) // unreachable host, but not a forbidden-option refusal
+	var fe *dsn.ForbiddenOptionError
+	assert.False(t, errors.As(err, &fe))
+}
+
+func TestRedisDSNWithoutSkipVerify(t *testing.T) {
+	assert.Equal(t, "rediss://:pass@h:6380/0", redisDSNWithoutSkipVerify("rediss://:pass@h:6380/0?skip_verify=true"))
+	assert.Equal(t, "rediss://:pass@h:6380/0?db=1", redisDSNWithoutSkipVerify("rediss://:pass@h:6380/0?skip_verify=true&db=1"))
+	assert.Equal(t, "rediss://:pass@h:6380/0", redisDSNWithoutSkipVerify("rediss://:pass@h:6380/0"))
+	assert.Equal(t, "%zz", redisDSNWithoutSkipVerify("%zz"))
+	assert.Equal(t, "rediss://:pass@h:6380/0", redisDSNWithoutSkipVerify("rediss://:pass@h:6380/0?skip%5Fverify=true"))
+	assert.Equal(t, "rediss://:pass@h:6380/0", redisDSNWithoutSkipVerify("rediss://:pass@h:6380/0?skip_verify=false&skip_verify=true"))
+}
+
+// go-redis accepts only true/false/1/0 for skip_verify; any other spelling
+// fails to parse, so it cannot turn verification off either.
+func TestConnectRedis_SkipVerifyOtherSpellingsFailToParse(t *testing.T) {
+	for _, v := range []string{"TRUE", "yes", "on"} {
+		_, err := connectRedis(context.Background(), "rediss://:pass@redis.example.com:6380/0?skip_verify="+v, true, false)
+		require.Error(t, err, v)
+		assert.Contains(t, err.Error(), "redis admin URI", v)
+		assert.NotContains(t, err.Error(), "pass", "the error must not quote the DSN")
+	}
+}
+
+// Revoke drops skip_verify instead of refusing, so a lease issued before the
+// refusal can still be revoked; a failed connect names the dropped option.
+func TestRedisEngine_Revoke_SkipVerifyIsDroppedNotRefused(t *testing.T) {
+	e := &RedisEngine{allowPrivateNetwork: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err := e.Revoke(ctx, "rediss://:pass@localhost:19999/0?skip_verify=true", "kx_dyn_test")
+	require.Error(t, err) // unreachable host
+	var fe *dsn.ForbiddenOptionError
+	assert.False(t, errors.As(err, &fe), "revoke must not refuse skip_verify: %v", err)
+	assert.Contains(t, err.Error(), "skip_verify")
+	assert.NotContains(t, err.Error(), "pass", "the error must not quote the DSN")
+}
+
+// Without skip_verify the revoke error is the connect error alone.
+func TestRedisEngine_Revoke_NoSkipVerifyNoHint(t *testing.T) {
+	e := &RedisEngine{allowPrivateNetwork: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err := e.Revoke(ctx, "rediss://:pass@localhost:19999/0", "kx_dyn_test")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "skip_verify")
 }
 
 func TestConnectRedis_UnreachableHost(t *testing.T) {
