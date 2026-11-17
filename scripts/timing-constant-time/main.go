@@ -299,9 +299,7 @@ func percentile(sortedAsc []float64, p float64) float64 {
 		return math.Inf(1)
 	}
 	idx := int(p / 100 * float64(len(sortedAsc)-1))
-	if idx < 0 {
-		idx = 0
-	}
+	idx = max(idx, 0)
 	if idx >= len(sortedAsc) {
 		idx = len(sortedAsc) - 1
 	}
