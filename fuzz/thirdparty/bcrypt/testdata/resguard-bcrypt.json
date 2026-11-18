@@ -1,0 +1,23 @@
+{
+  "target": "bcrypt_roundtrip",
+  "platform": "unsupported",
+  "factor": 4,
+  "seeds": 20,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 23008,
+      "per_byte": 17080,
+      "abs_max": 92032
+    },
+    "mallocs": {
+      "floor": 51,
+      "per_byte": 35,
+      "abs_max": 204
+    },
+    "wall_ns": {
+      "floor": 3338208,
+      "per_byte": 2457041,
+      "abs_max": 13352832
+    }
+  }
+}
