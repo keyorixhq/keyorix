@@ -43,6 +43,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/securefiles` | [internal/securefiles/INVARIANTS.md](../internal/securefiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/logging` | [internal/logging/INVARIANTS.md](../internal/logging/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/audit/siem` | [internal/audit/siem/INVARIANTS.md](../internal/audit/siem/INVARIANTS.md) | 1 | 1 | 0 |
