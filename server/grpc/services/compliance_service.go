@@ -99,8 +99,9 @@ func compliancePostureToProto(p *core.CompliancePosture) *pb.CompliancePosture {
 			SecondFactorPercent:   intToI32(p.Identity.SecondFactorPercent),
 		},
 		EmergencyAccess: &pb.EmergencyAccessPosture{
-			ActiveActivations: intToI32(p.EmergencyAccess.ActiveActivations),
-			TotalActivations:  intToI32(p.EmergencyAccess.TotalActivations),
+			ActiveActivations:   intToI32(p.EmergencyAccess.ActiveActivations),
+			TotalActivations:    intToI32(p.EmergencyAccess.TotalActivations),
+			DegradedActivations: intToI32(p.EmergencyAccess.DegradedActivations),
 		},
 		Classification: &pb.ClassificationPosture{
 			TotalSecrets:       intToI32(p.Classification.TotalSecrets),
