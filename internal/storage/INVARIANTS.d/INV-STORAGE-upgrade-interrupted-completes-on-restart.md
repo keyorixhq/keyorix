@@ -4,10 +4,8 @@
   -schema-matches-fresh-install). Why:
   operators restart after a crash and expect the database to converge, not to need a restore. Guard:
   `internal/storage` `FuzzUpgradeInterrupted`, red-proved by
-  `TestUpgradeOracles_RedProof/invariant5_*`. **Open defect**: v0.91.0 is outside the target
-  (`ugInterruptibleFrom`) because a stopped upgrade from it never gains
-  `secret_nodes.owner_machine_identity_id`, so every secret read fails afterwards;
-  `TestUpgradeInterrupted_V091_ColumnNeverAdded` pins it and goes red when it is fixed. A stop that
+  `TestUpgradeOracles_RedProof/invariant5_*`. Every source is covered, v0.91.0 included: the interruption goes through the real boot path, and the
+  bare-path artefact is pinned by `TestUpgradeInterrupted_V091_BarePathArtefact`. A stop that
   never fires is skipped with its reason, never passed
   (`TestUpgradeInterrupted_StopThatNeverFiresIsNotAPass`). **Not
   covered**: the stop is fail-stop at the gorm statement layer (no torn write inside SQLite);

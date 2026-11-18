@@ -11,7 +11,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -155,7 +154,7 @@ func TestUpgradeOracles_RedProof(t *testing.T) {
 	t.Run("invariant6_expected_difference_disappears", func(t *testing.T) {
 		// Someone fixes a listed difference and leaves its entry behind.
 		f := ugRun(t, tag, true, ugRedSeed, 0, ugHooks{afterMigrate: func(db *sql.DB) error {
-			return ugExecStmts(db, "CREATE INDEX idx_break_glass_activations_reviewed_by ON break_glass_activations (reviewed_by)")
+			return ugExecStmts(db, "ALTER TABLE notification_channels DROP COLUMN url")
 		}})
 		found := ugAssertFires(t, f, 6)
 		if !strings.Contains(found.Detail, "no longer occurs") || !strings.Contains(found.Detail, "ugExpectedSchemaDiffs") {
@@ -169,8 +168,8 @@ func TestUpgradeOracles_RedProof(t *testing.T) {
 		}
 	})
 
-	t.Run("invariant5_index_lost_outside_the_known_gaps", func(t *testing.T) {
-		// ugStopWindowDiffs tolerates exact lines only: another lost index still fires.
+	t.Run("invariant5_index_lost_after_a_stop", func(t *testing.T) {
+		// A restart that loses an index still fires, reported as oracle 5.
 		f := ugRun(t, tag, true, ugRedSeed, ugRedStop, ugHooks{afterMigrate: func(db *sql.DB) error {
 			return ugExecStmts(db, "DROP INDEX idx_secret_nodes_classification")
 		}})
@@ -247,7 +246,7 @@ func TestUpgradeInterrupted_StopThatNeverFiresIsNotAPass(t *testing.T) {
 		if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		outcome, err := ugInterruptedMigrate(t, dbPath, stop)
+		outcome, err := ugInterruptedMigrate(t, dbPath, stop, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -284,72 +283,12 @@ func TestUpgradeInterrupted_StopThatNeverFiresIsNotAPass(t *testing.T) {
 // the same stop rolls the table back too. The bare result is an artefact of the
 // harness shape, not a production defect; see
 // docs/findings/2026-11-09-FINDING-v091-interrupted-upgrade-artifact.md.
-// TestUpgradeInterrupted_KnownIndexGaps_StillOpen pins ugStopWindowDiffs, the
-// tolerated post-stop lines: each row must still show its missing index. It goes
-// red when one is fixed, and the row then has to go.
-func TestUpgradeInterrupted_KnownIndexGaps_StillOpen(t *testing.T) {
-	tpl, err := ugLoadTemplate(ugStopWindowSource)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fresh, err := ugFreshSchema()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range ugStopWindowDiffs {
-		t.Run(row.Stop, func(t *testing.T) {
-			dbPath := filepath.Join(t.TempDir(), "gap.db")
-			if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			outcome, err := ugInterruptedMigrateWhen(t, dbPath, func(_ int64, stmt string) bool { return strings.Contains(stmt, row.Stop) })
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !outcome.Fired {
-				t.Fatalf("no statement of the upgrade from %s mentions %s; update ugStopWindowDiffs", ugStopWindowSource, row.Stop)
-			}
-			st, err := NewStorageFactory().CreateStorage(ugLocalConfig(dbPath))
-			if err != nil {
-				t.Fatalf("restart after a stop at %s: %v", row.Stop, err)
-			}
-			if err := ugCloseStorage(st); err != nil {
-				t.Fatal(err)
-			}
-			raw, _, closeRaw := ugOpenRaw(t, dbPath)
-			defer closeRaw()
-			got, err := ugSchemaOf(raw)
-			if err != nil {
-				t.Fatal(err)
-			}
-			diff := ugSchemaDiff(fresh, got)
-			for _, line := range row.Lines {
-				if !slices.Contains(diff, line) {
-					t.Errorf("known index gap no longer occurs after a stop at %s on %s; remove the row from ugStopWindowDiffs: %s", row.Stop, ugStopWindowSource, line)
-				}
-			}
-		})
-	}
-}
-
-// TestUpgradeInterrupted_V091_ColumnNeverAdded pins an open finding and doubles
-// as the red-proof for FuzzUpgradeInterrupted: a v0.91.0 upgrade stopped after
-// the MFA step-up table is created, then restarted, reports success but leaves
-// secret_nodes without owner_machine_identity_id, so every secret read fails.
-// No step adds that column on an existing database; the fresh-install tail only
-// reached it on the first boot because the table's absence kept
-// freshInstallComplete false, and the restart sees the table and returns early.
-//
-// It asserts both halves: the bare path still fires (so the real path's
-// silence is not vacuous) and the real path, same source and same stop, is clean.
 func TestUpgradeInterrupted_V091_BarePathArtefact(t *testing.T) {
 	const tag, stop = "v0.91.0", 41
 
 	bare := ugRun(t, tag, false, nil, stop, ugHooks{bareInterrupt: true})
 	var sawSecretRead bool
 	for _, f := range bare {
-		if f.Invariant == 1 && strings.Contains(f.Detail, "owner_machine_identity_id") {
-	for _, f := range findings {
 		if f.Invariant == 5 && strings.Contains(f.Detail, "oracle 1") && strings.Contains(f.Detail, "owner_machine_identity_id") {
 			sawSecretRead = true
 		}

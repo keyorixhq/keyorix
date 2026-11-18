@@ -125,25 +125,17 @@ func ugSchemaDiff(fresh, upgraded []string) []string {
 	return out
 }
 
-// ugScenarioV091Stopped is the one interrupted v0.91.0 upgrade the harness runs
-// (TestUpgradeInterrupted_V091_ColumnNeverAdded, stop 41). v0.91.0 is outside
-// FuzzUpgradeInterrupted until that defect is fixed, and every other source's
-// interrupted upgrade has to end at its own uninterrupted schema.
-const ugScenarioV091Stopped = "v0.91.0 stopped"
-
-func ugSchemaScenario(tag string, stopAfter int) string {
-	if stopAfter > 0 && tag == ugSources[0] {
-		return ugScenarioV091Stopped
-	}
+// ugSchemaScenario names the schema expectation a run is checked against. An
+// interrupted upgrade goes through the real boot path (withMigrationLock), so
+// every source's interrupted upgrade has to end at its own uninterrupted schema.
+func ugSchemaScenario(tag string, _ int) string {
 	return tag
 }
 
 const (
-	ugWhyV091Defect = "known defect: an interrupted v0.91.0 upgrade never reaches the fresh-install tail (TestUpgradeInterrupted_V091_ColumnNeverAdded)"
-	ugWhyFreshOnly  = "open: only the fresh-install tail creates this and no step adds it to an existing table; below the v0.93.x support floor"
-	ugWhyNoIndex    = "open: an upgraded database never gets the index the model declares (no step creates it)"
-	ugWhyNotNull    = "open: the upgrade's ALTER declares NOT NULL, the model does not"
-	ugWhyRetained   = "by design: an upgrade does not drop a column a later release stopped using"
+	ugWhyFreshOnly = "open: only the fresh-install tail creates this and no step adds it to an existing table; below the v0.93.x support floor"
+	ugWhyNotNull   = "open: the upgrade's ALTER declares NOT NULL, the model does not"
+	ugWhyRetained  = "by design: an upgrade does not drop a column a later release stopped using"
 )
 
 // ugExpectedSchemaDiffs is every difference between an upgraded and a fresh
@@ -155,20 +147,7 @@ var ugExpectedSchemaDiffs = []struct {
 	Scenarios []string
 	Lines     []string
 }{
-	{ugWhyV091Defect, []string{ugScenarioV091Stopped}, []string{
-		"only in fresh: column audit_events.machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column groups.name_folded TEXT notnull=1 default= pk=0",
-		"only in fresh: column roles.name_folded TEXT notnull=1 default= pk=0",
-		"only in fresh: column secret_nodes.owner_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column users.email_folded TEXT notnull=0 default= pk=0",
-		"only in fresh: column users.username_folded TEXT notnull=1 default= pk=0",
-		"only in fresh: index secret_nodes.idx_secret_nodes_owner_machine_identity_id unique=0 partial=0 on owner_machine_identity_id",
-		"only in upgraded: column groups.name_folded TEXT notnull=1 default='' pk=0",
-		"only in upgraded: column roles.name_folded TEXT notnull=1 default='' pk=0",
-		"only in upgraded: column users.email_folded TEXT notnull=1 default='' pk=0",
-		"only in upgraded: column users.username_folded TEXT notnull=1 default='' pk=0",
-	}},
-	{ugWhyFreshOnly, []string{"v0.91.0", ugScenarioV091Stopped}, []string{
+	{ugWhyFreshOnly, []string{"v0.91.0"}, []string{
 		"only in fresh: column access_request_approvals.approver_machine_identity_id INTEGER notnull=1 default=0 pk=0",
 		"only in fresh: column access_requests.resolved_by_machine_identity_id INTEGER notnull=0 default= pk=0",
 		"only in fresh: column access_review_campaigns.closed_by_machine_identity_id INTEGER notnull=0 default= pk=0",
@@ -182,17 +161,14 @@ var ugExpectedSchemaDiffs = []struct {
 		"only in fresh: index access_request_approvals.ux_access_request_approver unique=1 partial=0 on request_id,approver_id,approver_machine_identity_id",
 		"only in upgraded: index access_request_approvals.ux_access_request_approver unique=1 partial=0 on request_id,approver_id",
 	}},
-	{ugWhyFreshOnly, []string{"v0.91.0", ugScenarioV091Stopped, "v0.92.1"}, []string{
+	{ugWhyFreshOnly, []string{"v0.91.0", "v0.92.1"}, []string{
 		"only in fresh: column sso_login_states.code_verifier TEXT notnull=0 default= pk=0",
 	}},
-	{ugWhyNoIndex, []string{"v0.91.0", ugScenarioV091Stopped, "v0.92.1", "v0.93.0", "v0.94.0", "v0.95.3"}, []string{
-		"only in fresh: index break_glass_activations.idx_break_glass_activations_reviewed_by unique=0 partial=0 on reviewed_by",
-	}},
-	{ugWhyNotNull, []string{ugScenarioV091Stopped, "v0.92.1", "v0.93.0", "v0.94.0", "v0.95.3", "v0.96.3"}, []string{
+	{ugWhyNotNull, []string{"v0.92.1", "v0.93.0", "v0.94.0", "v0.95.3", "v0.96.3"}, []string{
 		"only in fresh: column users.mfa_enrolment_required NUMERIC notnull=0 default=false pk=0",
 		"only in upgraded: column users.mfa_enrolment_required NUMERIC notnull=1 default=false pk=0",
 	}},
-	{ugWhyRetained, []string{"v0.91.0", ugScenarioV091Stopped}, []string{
+	{ugWhyRetained, []string{"v0.91.0"}, []string{
 		"only in upgraded: column sessions.encrypted_session_token BLOB notnull=0 default= pk=0",
 		"only in upgraded: column sessions.session_token_metadata BLOB notnull=0 default= pk=0",
 	}},
@@ -201,53 +177,8 @@ var ugExpectedSchemaDiffs = []struct {
 	}},
 }
 
-// ugStopWindowSource is the source the pin on ugStopWindowDiffs runs against.
-const ugStopWindowSource = "v0.93.0"
-
-// ugStopWindowDiffs are the indexes a restart does not repair. Open defect, same
-// shape every time: a step creates a table or column and then its index, gated on
-// the table or column, so a crash between the two skips the index on every later
-// boot. Stop is the statement to crash at, found by the index name in its SQL so a
-// step added elsewhere in the list does not move it. The lines are tolerated only
-// after a stop, where most stop positions do not produce them, so a missing line
-// cannot be judged per exec: TestUpgradeInterrupted_KnownIndexGaps_StillOpen pins
-// each row and fails when one stops occurring.
-var ugStopWindowDiffs = []struct {
-	Stop  string
-	Lines []string
-}{
-	{"idx_login_attempt_reservation_key", []string{"only in fresh: index login_attempts.idx_login_attempt_reservation_key unique=1 partial=0 on reservation_key"}},
-	{"idx_pending_audit_events_created_at", []string{"only in fresh: index pending_audit_events.idx_pending_audit_events_created_at unique=0 partial=0 on created_at"}},
-	{"idx_secret_templates_name", []string{"only in fresh: index secret_templates.idx_secret_templates_name unique=1 partial=0 on name"}},
-	{"idx_alert_escalation_policies_name", []string{"only in fresh: index alert_escalation_policies.idx_alert_escalation_policies_name unique=1 partial=0 on name"}},
-	{"idx_secret_version_comments_secret_id", []string{
-		"only in fresh: index secret_version_comments.idx_secret_version_comments_secret_id unique=0 partial=0 on secret_id",
-		"only in fresh: index secret_version_comments.idx_secret_version_comments_version_id unique=0 partial=0 on version_id",
-	}},
-	{"idx_mfa_stepup_tokens_expires_at", []string{
-		"only in fresh: index mfa_stepup_tokens.idx_mfa_stepup_tokens_expires_at unique=0 partial=0 on expires_at",
-		"only in fresh: index mfa_stepup_tokens.idx_mfa_stepup_tokens_user_id unique=1 partial=0 on user_id",
-	}},
-	{"idx_hygiene_trend_snapshots_snapshot_date", []string{"only in fresh: index hygiene_trend_snapshots.idx_hygiene_trend_snapshots_snapshot_date unique=1 partial=0 on snapshot_date"}},
-	{"idx_compliance_posture_snapshots_snapshot_date", []string{"only in fresh: index compliance_posture_snapshots.idx_compliance_posture_snapshots_snapshot_date unique=1 partial=0 on snapshot_date"}},
-	{"idx_mfa_reset_requests_expires_at", []string{
-		"only in fresh: index mfa_reset_requests.idx_mfa_reset_requests_expires_at unique=0 partial=0 on expires_at",
-		"only in fresh: index mfa_reset_requests.idx_mfa_reset_requests_status unique=0 partial=0 on status",
-		"only in fresh: index mfa_reset_requests.idx_mfa_reset_requests_target_user_id unique=0 partial=0 on target_user_id",
-	}},
-}
-
-func ugStopWindowLine(line string) bool {
-	for _, row := range ugStopWindowDiffs {
-		if slices.Contains(row.Lines, line) {
-			return true
-		}
-	}
-	return false
-}
-
 // ugCheckFreshSchema is oracle 6. raw must be the upgraded database.
-func ugCheckFreshSchema(t testing.TB, scenario string, stopped bool, raw *sql.DB) []ugFinding {
+func ugCheckFreshSchema(t testing.TB, scenario string, raw *sql.DB) []ugFinding {
 	t.Helper()
 	fresh, err := ugFreshSchema()
 	if err != nil {
@@ -270,7 +201,7 @@ func ugCheckFreshSchema(t testing.TB, scenario string, stopped bool, raw *sql.DB
 	}
 	var out []ugFinding
 	for _, l := range diff {
-		if _, ok := expected[l]; ok || (stopped && ugStopWindowLine(l)) {
+		if _, ok := expected[l]; ok {
 			continue
 		}
 		out = append(out, ugFinding{6, fmt.Sprintf("schema after upgrading (%s) differs from a fresh install: %s", scenario, l)})

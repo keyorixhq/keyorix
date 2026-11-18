@@ -6,6 +6,6 @@
   absent on upgraded databases. Guard: `internal/storage` `FuzzUpgradeFromOldSchema`,
   `FuzzUpgradeInterrupted`, red-proved by `TestUpgradeOracles_RedProof/invariant6_*`, including a
   listed difference that stops occurring, which is also a failure so an entry cannot outlive what it
-  records. **Open**: `ugStopWindowDiffs` are unique and plain indexes a crash between creating a table
-  or column and its index loses for good; `TestUpgradeInterrupted_KnownIndexGaps_StillOpen` pins them.
+  records. A stopped upgrade is held to the same schema: the boot migration runs in one
+  transaction (`withMigrationLock`), so a stop leaves nothing half-done for the restart to miss.
   **Not covered**: column order, triggers, the WHERE text of partial indexes, PostgreSQL (the FuzzUpgradePG* targets cover it with their own oracles, see upgrade_pg_fuzz_test.go).

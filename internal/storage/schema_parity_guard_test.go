@@ -279,7 +279,7 @@ func spBuildSQLite(t *testing.T, mutate func(db *sql.DB)) (upgraded, fresh *spSh
 		t.Fatalf("loading %s snapshot: %v", spOldestSupported, err)
 	}
 	upPath := filepath.Join(dir, "upgraded.db")
-	if err := ugCopyFile(tpl.dbFile, upPath); err != nil {
+	if err := os.WriteFile(upPath, tpl.image, 0o600); err != nil {
 		t.Fatalf("copying template: %v", err)
 	}
 	st, err = NewStorageFactory().CreateStorage(ugLocalConfig(upPath))
