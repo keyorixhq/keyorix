@@ -27,9 +27,12 @@
   adapter: the REST/gRPC parity check on the sentinel errors);
   `TestErrMap_StatefulFindingsAnswerDeclaredStatus` (the #4132 findings, en + pseudo-locale);
   `TestSecretMutation_PermissionLookupOutageIs503` and faultops
-  `TestLookupVerdict_SecretMutationPermissionFaultIs503` (#3873). Not covered: a handler that
-  calls a granting core method and does not map `ErrPermissionDenied` (the #3979 family) has no
-  REST guard in this tree yet; it lands with #4165 (`TestEveryGrantingHandlerMapsTheCeilingRefusal`).
+  `TestLookupVerdict_SecretMutationPermissionFaultIs503` (#3873). A handler that calls a granting
+  core method and does not map `ErrPermissionDenied` (the #3979 family) is caught by
+  `TestEveryGrantingHandlerMapsTheCeilingRefusal`, and `TestEveryGrantRouteMapsTheCeilingRefusalTo403`
+  drives every granting route (the invitation, access-request approve and membership-activate
+  routes of #4154 included) to the 403. Likewise `TestEveryAuditUnavailableReachingHandlerMapsTheOutage`
+  follows a one-hop helper (`sendMFAResetError`, #3858), so the MFA-reset handlers need no exemption.
   The gRPC twin is `TestEveryGrantingServiceMapsPermissionDenied`
   (`INV-GRPCSVC-core-error-status-through-shared-classifier`). A handler that classifies by text
   and never calls a granting method is caught only when its family migrates

@@ -60,11 +60,10 @@ var auditUnavailableMappingExempt = map[string]string{
 	"scim_groups.go:ReplaceGroup": "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
 	// MSG-ACCURACY-1 (#3912): core.BulkDeleteSecrets never returns the sentinel as a request
 	// error; bulkDeleteFailureMessage turns it into a per-item entry with
-	// core.MutationAuditUnavailableMessage. This handler passes an untagged r.Context(), so
-	// today DeleteSecret writes no audit row in its transaction and the sentinel cannot
-	// arise here (the post-commit audit is best effort; INV-CORE-secret-mutation-audit-same-tx
-	// "Not covered").
-	"secrets_bulk_delete.go:BulkDeleteSecrets": "never a request error: core reports it per item in the 200 body; this handler's untagged context does not reach it today",
+	// core.MutationAuditUnavailableMessage and the code audit_unavailable. The handler tags
+	// its context (ERRMAP-TAILS-NOV-4), so the outage does arise per item and shows in the 200
+	// body (TestBulkDeleteSecrets_AuditOutageIsRetryablePerItem).
+	"secrets_bulk_delete.go:BulkDeleteSecrets": "never a request error: core reports an audit outage per item (code audit_unavailable, retryable) in the 200 body",
 }
 
 func readAuditUnavailableReachingMethods(t *testing.T) map[string]bool {

@@ -47,6 +47,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 // errKnownChallengePanic is returned in place of the already-documented library
@@ -100,9 +102,15 @@ func httpClient() *http.Client {
 	// Trust the fake server's self-signed loopback cert. azcore requires TLS to
 	// attach the bearer token (see fakeserver.go); InsecureSkipVerify keeps the
 	// attack surface (response/challenge parsing) in scope without a real CA.
+	//
+	// PK1: route the dial through the package-global air-gapped NetMeter so (a) any
+	// non-loopback dial a regression introduced fails the air-gap oracle and (b)
+	// the response/request byte volume is metered per input. The fake server is on
+	// 127.0.0.1, so the loopback dial passes the air-gap unchanged.
 	return &http.Client{
 		Timeout: 4 * time.Second,
 		Transport: &http.Transport{
+			DialContext:     azureNet.DialContext,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // loopback fuzz fake
 		},
 	}
@@ -222,6 +230,7 @@ func runWithWatchdog(t *testing.T, label string, fn func() (any, error)) (out an
 
 func FuzzAzureGetSecret(f *testing.F) {
 	seedCorpus(f)
+	probe, budget, haveBudget := azureResguardProbe(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		specs := decodeSpecs(data)
 		fs, err := newFakeServer(specs)
@@ -235,11 +244,26 @@ func FuzzAzureGetSecret(f *testing.F) {
 			// driven fuzz finding; skip. The canary cannot have leaked here.
 			t.Skip()
 		}
-		out, oerr, timedOut := runWithWatchdog(t, "GetSecret", func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-			defer cancel()
-			return callGetSecret(cl, ctx)
+		var out any
+		var oerr error
+		var timedOut bool
+		// resguard meters alloc/CPU + network (air-gap + byte volume) across the
+		// real GetSecret call; the existing canary/echo/no-panic/no-hang oracles
+		// (checkOracles) are kept verbatim.
+		cost := probe.Measure(len(data), func() {
+			out, oerr, timedOut = runWithWatchdog(t, "GetSecret", func() (any, error) {
+				ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+				defer cancel()
+				return callGetSecret(cl, ctx)
+			})
 		})
+		resguard.FeedCoverage(cost)
 		checkOracles(t, "GetSecret", specs, out, oerr, timedOut, fs.lastResponseTruncated())
+		if cost.NonLoopbackDials > 0 {
+			t.Fatalf("AIR-GAP: azure connector made %d non-loopback dial(s)", cost.NonLoopbackDials)
+		}
+		if haveBudget {
+			budget.Check(t.Fatalf, cost)
+		}
 	})
 }

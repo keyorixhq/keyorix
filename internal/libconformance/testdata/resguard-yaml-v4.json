@@ -1,0 +1,30 @@
+{
+  "target": "yaml_v4_differential",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 64,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 342096,
+      "per_byte": 1681.6,
+      "abs_max": 1368384,
+      "mode": "absolute"
+    },
+    "cpu_ns": {
+      "floor": 3049000,
+      "per_byte": 160200,
+      "abs_max": 12196000
+    },
+    "mallocs": {
+      "floor": 5932,
+      "per_byte": 13.2,
+      "abs_max": 23728,
+      "mode": "absolute"
+    },
+    "wall_ns": {
+      "floor": 3748100,
+      "per_byte": 23383.2,
+      "abs_max": 14992400
+    }
+  }
+}

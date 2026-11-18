@@ -474,6 +474,11 @@ describe('scopeReads / requestParams / proseMissing / schemaAt (calibration)', (
             'X.page',
         ]);
     });
+    it('proseMissing: a field name is matched literally, never as a pattern', () => {
+        expect(proseMissing('data: items, total', ['it.ms', '(a|total)'], 'X')).toEqual(['X.it.ms', 'X.(a|total)']);
+        expect(proseMissing('a_items items_ xitems', ['items'], 'X')).toEqual(['X.items']);
+        expect(proseMissing('the items.', ['items'], 'X')).toEqual([]);
+    });
     it('proseOf: refuses an operation that has a schema (it belongs to the schema tier)', () => {
         expect(proseOf(doc, '/p', 'get')).toContain('items[]');
         expect(() => proseOf(doc, '/s', 'get')).toThrow(/now has a schema/);

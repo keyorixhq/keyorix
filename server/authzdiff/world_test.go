@@ -143,6 +143,14 @@ type fixtures struct {
 	freshUserID2     uint // a second one (membership.invite vs member.add must not collide)
 	requesterIDs     [2]uint
 	ux               userFixtures
+	// pendingRiskExceptionID is a global, PENDING, non-SoD risk exception whose
+	// creator (riskCreatorID) is a dedicated non-probed user. It is the target of
+	// the riskexception.approve binding (V8b): dual control (creator != approver,
+	// human-only) is satisfied for every probed principal by construction, so the
+	// only authorization that varies by principal is the router's system.write@global
+	// gate. See v8RiskExceptionApproveOps.
+	pendingRiskExceptionID uint
+	riskCreatorID          uint
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -493,6 +501,25 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 		pp.migrateUsername = fmt.Sprintf("u-mig-%d", i)
 		mkUser(pp.migrateUsername)
 	}
+	// Pending risk exception for the riskexception.approve binding (V8b). Created
+	// through core (CreateRiskException performs NO permission check — matrix
+	// core_refusal:"none" — it enforces only human-only + a bounded sunset + the
+	// SoD-live-violation check for category=="sod"), so a plain human user with no
+	// role can leave a pending, non-SoD exception. The creator is a DEDICATED user,
+	// NOT any probed principal and NOT the admin: so the dual-control rule
+	// (actorID != CreatedBy) and the human-only rule are satisfied for every
+	// principal the approve binding probes, and the only authorization that varies
+	// is the router's system.write@global gate. The admin positive control holds
+	// system.write@global (install-wide admin) and is a different human, so it
+	// approves successfully.
+	riskCreator := mkUser("u-risk-creator")
+	db.Exec("DELETE FROM user_roles WHERE user_id = ?", riskCreator.ID) // no role: proves create needs none
+	fx.riskCreatorID = riskCreator.ID
+	re := must(c.CreateRiskException(ctx, riskCreator.ID, false,
+		"synthetic-pending-title", "other", "synthetic-ref", "synthetic-justification-text",
+		time.Now().UTC().Add(24*time.Hour)))
+	fx.pendingRiskExceptionID = re.ID
+
 	if e := seedSecretFixtures(ctx, c, fx); e != nil {
 		return nil, e
 	}
