@@ -554,9 +554,11 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	session, err := c.mintLoginSession(ctx, user.ID, userAgent, ip, false)
 	if err != nil {
 		// Everything else committed: the account exists with its grants and the
-		// invitation is accepted. Only the automatic sign-in failed.
-		return nil, fmt.Errorf("%s: invitation %d was accepted and account %d created with its grants, but signing in failed; log in with the new password: %w",
-			i18n.T("ErrorStorageFailed", nil), inv.ID, user.ID, err)
+		// invitation is accepted. Only the automatic sign-in failed, so the
+		// transport answers "log in with your new password", not the dead link
+		// (#4409 shape 2): the link is spent and a retry of it cannot succeed.
+		return nil, fmt.Errorf("%w: %s: invitation %d was accepted and account %d created with its grants, but signing in failed; log in with the new password: %w",
+			ErrInvitationAcceptedSignInFailed, i18n.T("ErrorStorageFailed", nil), inv.ID, user.ID, err)
 	}
 	return &SetupConsumeResult{Session: session, User: user}, nil
 }
@@ -606,6 +608,12 @@ func (c *KeyorixCore) revertInvitationAcceptGrants(ctx context.Context, inv *mod
 // error, whose own text ("nothing was changed, retry") would not be true of the
 // accept as a whole.
 var ErrInvitationAcceptAbandoned = errors.New("invitation accept failed after the account was created")
+
+// ErrInvitationAcceptedSignInFailed is returned (wrapped) by an invitation accept
+// that committed (the account, its grants and the accepted invitation) and then
+// failed to mint the login session. Nothing is undone: the invitee logs in with
+// the password just set. The HTTP layer says so instead of the dead-link answer.
+var ErrInvitationAcceptedSignInFailed = errors.New("invitation accepted, but signing in failed")
 
 // abandonInvitationAccept undoes a failed invitation accept once the account exists:
 // every grant the invitation made is reverted (revokeInvitationGrants: owed
