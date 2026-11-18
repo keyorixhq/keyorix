@@ -138,7 +138,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `GetSecretWithPermissionCheck` | Y |  | typed+untyped | Authorize | POST /api/v1/secret-access-requests | — | no gRPC |
 | `GetUserIdentity` | Y |  | none |  | PUT /api/v1/auth/profile | — | no gRPC |
 | `GetUserRolesByID` | Y |  | none |  | PUT /api/v1/users/{id}/roles | — | no gRPC |
-| `GrantSecretACL` | Y |  | none |  | POST /api/v1/secrets/{id}/acl | keyorix.v1.SecretService.GrantSecretACL |  |
+| `GrantSecretACL` | Y |  | typed |  | POST /api/v1/secrets/{id}/acl | keyorix.v1.SecretService.GrantSecretACL |  |
 | `InspectCertificate` |  | Y | typed+untyped | Authorize | GET /api/v1/secrets/{id}/certificate | — | no gRPC |
 | `InviteGlobalWithLink` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | POST /api/v1/invitations | — | no gRPC |
 | `InviteMember` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | POST /api/v1/projects/{id}/memberships | — | no gRPC |
@@ -216,7 +216,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `ReplaceSCIMGroup` | Y |  | untyped |  | PATCH /scim/v2/Groups/{id}<br>PUT /scim/v2/Groups/{id} | — | no gRPC |
 | `RequestMFAReset` | Y |  | none | Authorize | POST /api/v1/mfa-reset-requests | — | no gRPC |
 | `RequestPasswordReset` | Y |  | none |  | POST /auth/password-reset | — | no gRPC |
-| `RequestProjectAccess` | Y |  | none |  | POST /api/v1/projects/{id}/access-requests | — | no gRPC |
+| `RequestProjectAccess` | Y |  | typed |  | POST /api/v1/projects/{id}/access-requests | — | no gRPC |
 | `RequestSecretAccess` | Y |  | none |  | POST /api/v1/secret-access-requests | — | no gRPC |
 | `RequirePasswordReset` | Y |  | none | Authorize | POST /api/v1/users/{id}/require-password-reset | — | no gRPC |
 | `ResendAccountSetupLink` | Y |  | none | Authorize | POST /api/v1/users/{id}/resend-setup-link | — | no gRPC |
@@ -242,8 +242,8 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `RevokeSecretACL` | Y |  | none |  | DELETE /api/v1/secrets/{id}/acl/{aclId} | keyorix.v1.SecretService.RevokeSecretACL |  |
 | `RevokeShare` | Y |  | typed | Authorize | DELETE /api/v1/shares/{id} | keyorix.v1.ShareService.RevokeShare |  |
 | `RevokeUserSessions` | Y |  | none | Authorize | POST /api/v1/users/{id}/revoke-sessions | — | no gRPC |
-| `RollbackSecret` | Y | Y | untyped | Authorize | POST /api/v1/secrets/{id}/rollback | — | no gRPC |
-| `RotateSecretOnDemand` | Y | Y | untyped | Authorize | POST /api/v1/secrets/{id}/rotate | — | no gRPC |
+| `RollbackSecret` | Y | Y | typed+untyped | Authorize | POST /api/v1/secrets/{id}/rollback | — | no gRPC |
+| `RotateSecretOnDemand` | Y | Y | typed+untyped | Authorize | POST /api/v1/secrets/{id}/rotate | — | no gRPC |
 | `RunAlertEscalation` | Y |  | none |  | POST /api/v1/admin/jobs/run-alert-escalation | — | no gRPC |
 | `SSOCompleteURL` | Y |  | none |  | GET /auth/sso/{provider}/callback<br>POST /auth/saml/{provider}/acs | — | no gRPC |
 | `SecretTotalReads` |  |  | none |  | GET /api/v1/secrets/{id} | — | no gRPC |
@@ -254,7 +254,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `SetDynamicSecretConfigEnabled` | Y |  | none |  | PATCH /api/v1/dynamic-secrets/configs/{id}/enabled | — | no gRPC |
 | `SetNotificationRetryPolicy` | Y |  | none |  | PUT /api/v1/notification-channels/{id}/retry-policy | — | no gRPC |
 | `SetProjectMemberRole` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize, guardLastProjectAdmin | PUT /api/v1/projects/{id}/members/{userId} | — | no gRPC |
-| `SetSecretAutoRotate` | Y |  | untyped | requireAdminAuthorityAt | PATCH /api/v1/secrets/{id}/auto-rotate | keyorix.v1.SecretService.SetSecretAutoRotate |  |
+| `SetSecretAutoRotate` | Y |  | typed+untyped | requireAdminAuthorityAt | PATCH /api/v1/secrets/{id}/auto-rotate | keyorix.v1.SecretService.SetSecretAutoRotate |  |
 | `SetSecretDescription` | Y |  | typed | Authorize | PATCH /api/v1/secrets/{id}/description | — | no gRPC |
 | `SetSecretRetentionOverride` | Y |  | none |  | PATCH /api/v1/secrets/{id}/retention | — | no gRPC |
 | `SetSecretSchedule` | Y |  | none |  | PUT /api/v1/secrets/{id}/schedule | — | no gRPC |
