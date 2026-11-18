@@ -351,7 +351,7 @@ func ctxLoadAllowlist(t *testing.T) map[string]ctxAllowRow {
 			t.Fatalf("ctx-threading guard: %v", err)
 		}
 		var cols []string
-		for _, line := range strings.Split(string(b), "\n") {
+		for line := range strings.SplitSeq(string(b), "\n") {
 			if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
